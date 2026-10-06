@@ -1,4 +1,9 @@
-import { type components, isWritableSkillProject, type Project } from "@clawdi/shared/api";
+import {
+	type components,
+	isWritableSkillProject,
+	type Project,
+	skillCapabilities,
+} from "@clawdi/shared/api";
 import { HERO_GRID_CLASS, skillsPageClasses } from "@clawdi/shared/ui";
 import {
 	displayProjectName,
@@ -26,8 +31,10 @@ import { SearchInput } from "../ui/search-input";
 import { SkillCard } from "../ui/skills/skill-card";
 import { Text } from "../ui/text";
 import { WebText, WebView } from "../ui/web-layout";
+import { ProjectCardActions } from "./project-card-actions";
 import { ProjectResourceBoundary, ProjectScopeHeader } from "./project-scope";
 import { useCloudProjects } from "./projects";
+import { SkillCardActions } from "./skill-card-actions";
 
 type Skill = components["schemas"]["SkillSummaryResponse"];
 
@@ -54,10 +61,14 @@ export function useCloudSkills(projectId?: string, search = "", enabled = true) 
 	});
 }
 
-export function SkillRow({ skill }: { skill: Skill }) {
+export function SkillRow({ skill, project }: { skill: Skill; project?: Project }) {
+	const capabilities = project ? skillCapabilities(skill, project) : undefined;
 	return (
 		<SkillCard
 			skill={skill}
+			readOnly={capabilities ? !capabilities.canUpdate : false}
+			provenanceLabel={capabilities?.provenanceLabel ?? undefined}
+			actions={project ? <SkillCardActions skill={skill} project={project} /> : undefined}
 			link={{
 				to: "/skills/detail",
 				search: { projectId: skill.project_id ?? "", skillKey: skill.skill_key },
@@ -117,6 +128,7 @@ function SkillsView({ project }: { project?: Project }) {
 									<ProjectResourceCard
 										key={p.id}
 										project={p}
+										actions={<ProjectCardActions project={p} />}
 										footer={[
 											formatResourceCount(p.skill_count, "skill"),
 											formatResourceCount(p.vault_count, "vault"),
@@ -159,7 +171,11 @@ function SkillsView({ project }: { project?: Project }) {
 							[0, 1, 2].map((i) => <HeroCardSkeleton compact key={i} />)
 						) : items.length ? (
 							items.map((skill) => (
-								<SkillRow key={`${skill.project_id}:${skill.skill_key}`} skill={skill} />
+								<SkillRow
+									key={`${skill.project_id}:${skill.skill_key}`}
+									skill={skill}
+									project={project}
+								/>
 							))
 						) : !skills.error ? (
 							<EmptyState description={t("skills.empty")} />

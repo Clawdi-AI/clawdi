@@ -1,7 +1,19 @@
 "use client";
 
 import type { components, RuntimeUiCredentials } from "@clawdi/shared/api";
-import { agentDisplayName, formatShortDate } from "@clawdi/shared/view";
+import {
+	agentChannelSectionClasses,
+	computeStatusDetailsClasses,
+	hostedAgentOverviewClasses,
+} from "@clawdi/shared/ui";
+import {
+	agentChannelLinkUnavailableReason,
+	agentChannelSectionCopy,
+	agentDisplayName,
+	aiBindingCopy,
+	computeStatusDetailsCopy,
+	formatShortDate,
+} from "@clawdi/shared/view";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
@@ -269,10 +281,7 @@ import {
 import { CHANNEL_CARD_GRID_CLASS, ChannelCard } from "@/hosted/v2/channels/channel-card";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client.logic";
-import {
-	agentProviderLinkReplacementRequired,
-	agentProviderLinkStatusUnknown,
-} from "@/hosted/v2/channels/channel-linking.logic";
+import { agentProviderLinkReplacementRequired } from "@/hosted/v2/channels/channel-linking.logic";
 import { channelKeys } from "@/hosted/v2/channels/channel-query-cache";
 import {
 	CHANNEL_DESTRUCTIVE_ACTION_CLASS,
@@ -961,25 +970,23 @@ export function ComputeStatusDetails({
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	return (
-		<div className="space-y-3 text-xs">
+		<div className={computeStatusDetailsClasses.root}>
 			{failure?.status.kind === "runtime_unavailable" ? (
-				<p className="text-warning-muted-foreground" role="status">
-					Clawdi is checking this agent.
+				<p className={computeStatusDetailsClasses.warning} role="status">
+					{computeStatusDetailsCopy.checking}
 				</p>
 			) : failure ? (
-				<div className="space-y-1 text-destructive-muted-foreground" role="status">
-					<p className="font-medium">{failure.title}</p>
-					<p className="line-clamp-2">{failure.reason}</p>
+				<div className={computeStatusDetailsClasses.failure} role="status">
+					<p className={computeStatusDetailsClasses.failureTitle}>{failure.title}</p>
+					<p className={computeStatusDetailsClasses.failureReason}>{failure.reason}</p>
 				</div>
 			) : status.kind === "failed" ? (
-				<p className="text-destructive-muted-foreground" role="status">
-					The last compute change did not complete.
+				<p className={computeStatusDetailsClasses.destructive} role="status">
+					{computeStatusDetailsCopy.failed}
 				</p>
 			) : deploymentTransitionEscalated ? (
 				<div className="flex flex-wrap items-center justify-between gap-2" role="status">
-					<p className="text-warning-muted-foreground">
-						This change appears to be stuck. You can cancel it and try again.
-					</p>
+					<p className={computeStatusDetailsClasses.warning}>{computeStatusDetailsCopy.stuck}</p>
 					<DeploymentCancelAction deployment={deployment} />
 				</div>
 			) : status.kind === "restarting" ? (
@@ -987,37 +994,37 @@ export function ComputeStatusDetails({
 					<Spinner className="size-3.5" /> Restarting
 				</p>
 			) : deploymentTransitionTimedOut ? (
-				<p className="text-warning-muted-foreground" role="status">
-					This compute change is taking longer than expected.
+				<p className={computeStatusDetailsClasses.warning} role="status">
+					{computeStatusDetailsCopy.slow}
 				</p>
 			) : status.kind === "updating" ? (
 				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
-					<Spinner className="size-3.5" /> Updating compute settings.
+					<Spinner className="size-3.5" /> {computeStatusDetailsCopy.updating}
 				</p>
 			) : isStartingStatus(status) ? (
 				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
-					<Spinner className="size-3.5" /> Startup is still in progress.
+					<Spinner className="size-3.5" /> {computeStatusDetailsCopy.starting}
 				</p>
 			) : status.kind === "stopping" ? (
-				<p className="text-muted-foreground" role="status">
-					Compute is stopping.
+				<p className={computeStatusDetailsClasses.neutral} role="status">
+					{computeStatusDetailsCopy.stopping}
 				</p>
 			) : status.kind === "stopped" ? (
-				<p className="text-muted-foreground" role="status">
+				<p className={computeStatusDetailsClasses.neutral} role="status">
 					Compute is stopped. Channels and {runtimeBrowserUiLabel(deployment.resource.spec.runtime)}{" "}
 					are unavailable.
 				</p>
 			) : status.kind === "deleting" ? (
-				<p className="text-muted-foreground" role="status">
-					Compute is being removed.
+				<p className={computeStatusDetailsClasses.neutral} role="status">
+					{computeStatusDetailsCopy.deleting}
 				</p>
 			) : status.kind === "deleted" ? (
-				<p className="text-muted-foreground" role="status">
-					Compute is no longer available.
+				<p className={computeStatusDetailsClasses.neutral} role="status">
+					{computeStatusDetailsCopy.deleted}
 				</p>
 			) : status.kind === "unknown" ? (
-				<p className="text-warning-muted-foreground" role="status">
-					Clawdi cannot confirm the current compute status.
+				<p className={computeStatusDetailsClasses.warning} role="status">
+					{computeStatusDetailsCopy.unknown}
 				</p>
 			) : null}
 		</div>
@@ -1410,7 +1417,7 @@ function OverviewTab({
 		connectors: connectorsModule,
 	};
 	const overview = (
-		<div className="flex flex-col gap-8">
+		<div className={hostedAgentOverviewClasses.root}>
 			<AgentOverviewTools>
 				<AgentDashboardOverview agentId={agentId} deployment={deployment} />
 				<OverviewNavigationCard
@@ -1477,11 +1484,11 @@ function OverviewTab({
 					section="settings"
 					title="Compute"
 					icon={Cpu}
-					tint="bg-identity-4-bg text-identity-4-fg"
+					tint={hostedAgentOverviewClasses.computeTint}
 					description={
 						<span
 							data-overview-compute-status
-							className="flex items-center gap-2"
+							className={hostedAgentOverviewClasses.computeStatus}
 							title={`Agent status: ${computeStatusPresentation.label}`}
 						>
 							<StatusDot status={computeStatusPresentation.tone} />
@@ -2241,7 +2248,7 @@ function AiProviderTab({
 					selected={bindingMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE}
 					icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
 					title={MANAGED_PROVIDER_LABEL}
-					description="No setup required. Usage draws from your Wallet."
+					description={aiBindingCopy.managedDescription}
 				/>
 				<EntityChoiceCard
 					onClick={() => setBindingMode("unmanaged")}
@@ -2252,7 +2259,7 @@ function AiProviderTab({
 						</IconChip>
 					}
 					title={authCardLabel("unmanaged")}
-					description="Configure model access inside the agent."
+					description={aiBindingCopy.unmanagedDescription}
 				/>
 				{providers.isLoading ? <EntityCardSkeleton titleBadge trailingBadge /> : null}
 				{shouldBlockQueryError(providers.error, providers.data) ? (
@@ -2294,8 +2301,8 @@ function AiProviderTab({
 					);
 				})}
 				<EntityAddCard
-					title="Add a provider"
-					description="Connect OpenAI, Anthropic, or another endpoint."
+					title={aiBindingCopy.addProvider}
+					description={aiBindingCopy.addProviderDescription}
 					onClick={() => setAddProviderOpen(true)}
 				/>
 			</div>
@@ -2334,7 +2341,7 @@ function AiProviderTab({
 				</p>
 			) : null}
 
-			<div className="flex items-center gap-2">
+			<div className={hostedAgentOverviewClasses.computeStatus}>
 				<Button
 					disabled={
 						!dirty || !managedPrimaryModelReady || updateDeployment.isPending || updateInProgress
@@ -2404,24 +2411,6 @@ function AgentChannelCard({ headerClassName, ...props }: AgentChannelCardProps) 
 			headerClassName={cn(AGENT_CHANNEL_CARD_HEADER_CLASS, headerClassName)}
 		/>
 	);
-}
-
-function agentChannelLinkUnavailableReason({
-	bot,
-	agentType,
-	linkedProviders,
-}: {
-	bot: AgentChannelCardItem;
-	agentType: HostedRuntime;
-	linkedProviders: ReadonlySet<string> | undefined;
-}): string | null {
-	if (!bot.available || !bot.canLink || bot.status.toLowerCase() !== "active") {
-		return bot.maxLinks !== null ? "At capacity" : "Unavailable";
-	}
-	if (agentProviderLinkStatusUnknown(agentType, bot.provider, linkedProviders)) {
-		return "Agent link status unavailable";
-	}
-	return null;
 }
 
 function ChannelsTab({
@@ -2718,28 +2707,28 @@ function ChannelsTab({
 		);
 	}
 	return (
-		<div data-agent-channels className="flex flex-col gap-8">
+		<div data-agent-channels className={hostedAgentOverviewClasses.root}>
 			<AgentChannelBotsSection
 				kind="clawdi"
 				title="Clawdi bots"
-				description="Clawdi-managed bots available to your account."
+				description={agentChannelSectionCopy.clawdiDescription}
 				bots={cardGroups.clawdiBots}
 				isLoading={botPool.isLoading}
 				error={shouldBlockQueryError(botPool.error, botPool.data) ? botPool.error : null}
 				onRetry={() => void botPool.refetch()}
-				emptyTitle="No Clawdi bots available"
+				emptyTitle={agentChannelSectionCopy.clawdiEmpty}
 				renderBot={renderBot}
 			/>
 
 			<AgentChannelBotsSection
 				kind="custom"
 				title="Custom bots"
-				description="Bots and WhatsApp accounts whose connection you manage."
+				description={agentChannelSectionCopy.customDescription}
 				bots={cardGroups.customBots}
 				isLoading={channels.isLoading}
 				error={shouldBlockQueryError(channels.error, channels.data) ? channels.error : null}
 				onRetry={() => void channels.refetch()}
-				emptyTitle="No custom bots yet"
+				emptyTitle={agentChannelSectionCopy.customEmpty}
 				action={
 					<Button
 						data-agent-add-custom-bot
@@ -2905,38 +2894,34 @@ function AgentChannelBotsSection({
 		<section
 			data-agent-channel-section={kind}
 			tabIndex={-1}
-			className="flex min-w-0 scroll-mt-6 flex-col gap-3 outline-none"
+			className={agentChannelSectionClasses.section}
 		>
-			<div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
-				<div className="min-w-0 flex-1">
+			<div className={agentChannelSectionClasses.header}>
+				<div className={agentChannelSectionClasses.copy}>
 					<SectionLabel count={bots.length}>{title}</SectionLabel>
-					<p className="mt-1 min-w-0 break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">
-						{description}
-					</p>
+					<p className={agentChannelSectionClasses.description}>{description}</p>
 				</div>
-				{action ? <div className="flex min-w-0 flex-wrap">{action}</div> : null}
+				{action ? <div className={agentChannelSectionClasses.actions}>{action}</div> : null}
 			</div>
 			{error ? (
 				<ApiErrorPanel error={error} title={`Couldn't load ${title}`} onRetry={onRetry} />
 			) : null}
 			{isLoading && bots.length === 0 ? (
 				<div role="status" className={CHANNEL_CARD_GRID_CLASS}>
-					<span className="sr-only">Loading {title}</span>
+					<span className={agentChannelSectionClasses.loadingLabel}>Loading {title}</span>
 					<EntityCardSkeleton actions />
 					<EntityCardSkeleton actions />
 				</div>
 			) : bots.length > 0 ? (
 				<div className={CHANNEL_CARD_GRID_CLASS}>
 					{bots.map((bot) => (
-						<div key={bot.id} className="h-full min-w-0">
+						<div key={bot.id} className={agentChannelSectionClasses.item}>
 							{renderBot(bot)}
 						</div>
 					))}
 				</div>
 			) : !isLoading && !error ? (
-				<div className="min-w-0 rounded-lg border border-dashed px-4 py-5 text-sm text-muted-foreground">
-					{emptyTitle}
-				</div>
+				<div className={agentChannelSectionClasses.empty}>{emptyTitle}</div>
 			) : null}
 		</section>
 	);
@@ -3653,7 +3638,7 @@ function ComputeSettingsSections({
 	}
 
 	return (
-		<div className="flex flex-col gap-8">
+		<div className={hostedAgentOverviewClasses.root}>
 			{canOfferStartNew ? (
 				<SubscriptionCreateDialog
 					open={subscriptionCreateOpen}

@@ -7,11 +7,12 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { ArrowLeft, ChevronDown } from "lucide-react-native";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useCloudAgent } from "../../features/cloud-inventory";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useMobileApi } from "../../providers/api-provider";
 import { Button } from "../button";
+import { useDashboardAgents } from "../dashboard/use-dashboard-agents";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../dialog";
 import { Icon } from "../icon";
 import { SectionLabel } from "../section-label";
@@ -20,11 +21,15 @@ import { AppView } from "../view";
 export function AgentSectionNavigation({
 	agentId,
 	section = "overview",
+	actions,
 }: {
 	agentId: string;
 	section?: MobileAgentSection;
+	actions?: ReactNode;
 }) {
 	const [open, setOpen] = useState(false);
+	const inventory = useDashboardAgents();
+	const deployment = inventory.inventory.data?.find((d) => d.agent_id === agentId);
 	const scope = useAccountScope(),
 		read = useAccountRead(),
 		{ agentProjects } = useMobileApi(),
@@ -88,6 +93,7 @@ export function AgentSectionNavigation({
 					<Text>{agentSectionCopy[section].label}</Text>
 					<Icon as={ChevronDown} />
 				</Button>
+				{actions}
 			</AppView>
 			<Dialog open={open} onOpenChange={setOpen}>
 				<DialogContent>
@@ -116,6 +122,20 @@ export function AgentSectionNavigation({
 								))}
 						</AppView>
 					))}
+					{deployment ? (
+						<Button
+							variant="ghost"
+							onPress={() => {
+								setOpen(false);
+								router.push({
+									pathname: "/deployments/[deploymentId]/terminal",
+									params: { deploymentId: deployment.resource.id },
+								});
+							}}
+						>
+							<Text>Terminal</Text>
+						</Button>
+					) : null}
 				</DialogContent>
 			</Dialog>
 		</>

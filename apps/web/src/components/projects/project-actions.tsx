@@ -1,6 +1,6 @@
 "use client";
 
-import { createProjectDialogClasses } from "@clawdi/shared/ui";
+import { createProjectDialogClasses, projectActionsClasses } from "@clawdi/shared/ui";
 import {
 	archiveProjectTitle,
 	createProjectDialogCopy,
@@ -113,7 +113,7 @@ export function ProjectActions({
 						</Button>
 					}
 				/>
-				<DropdownMenuContent align="end" className="min-w-40">
+				<DropdownMenuContent align="end" className={projectActionsClasses.menu}>
 					<DropdownMenuItem
 						onClick={() => {
 							setName(project.name);

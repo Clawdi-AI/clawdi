@@ -37,6 +37,8 @@ export function useDashboardAgents() {
 		envById = new Map(envs.map((env) => [env.id.toLowerCase(), env]));
 	const deployments = inventory.data ?? [],
 		claimed = claimedEnvIdsFromDeployments(deployments);
+	// Mobile is v2-only: legacy (v1 hosted) environment ids are read solely to keep
+	// those agents out of the list, never to render legacy tiles.
 	const legacy = useQuery({
 		queryKey: accountQueryKey(scope, "legacy-agent-ids"),
 		enabled: scope.isReady && Boolean(compute) && Boolean(capabilities.data?.can_use_v1),
@@ -64,7 +66,7 @@ export function useDashboardAgents() {
 				: inventory.isError
 					? "error"
 					: "loading",
-		showLegacyAgents: capabilities.data?.can_use_v1 ?? false,
+		showLegacyAgents: false,
 	});
 	return {
 		agents,

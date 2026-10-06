@@ -9,6 +9,7 @@ import {
 	verifiedDiscordPairingCommand,
 	verifiedWhatsAppPairLink,
 } from "@clawdi/shared/api";
+import { agentOwnershipKindFromId } from "@clawdi/shared/client";
 import {
 	agentsIndexClasses,
 	channelFormClasses,
@@ -19,7 +20,6 @@ import {
 	agentDisplayName,
 	agentSurfaceCopy,
 	channelFormCopy,
-	channelHealthSummary,
 	channelRemovalCopy,
 	channelRemovalTitle,
 	channelDetailCopy as copy,
@@ -65,11 +65,14 @@ import { PageHeader } from "../../ui/page-header";
 import { AppScrollView, AppText, AppView } from "../../ui/primitives";
 import { ReadScreen } from "../../ui/read-screen";
 import { SectionLabel } from "../../ui/section-label";
+import { Skeleton } from "../../ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../ui/tabs";
 import { useConfirmation } from "../../ui/use-confirmation";
 import { WebText, WebView, webView } from "../../ui/web-layout";
 import { BackButton, useCloudAgents } from "../cloud-inventory";
 import { routeParam } from "../read-helpers";
+import { useAgentOwnership } from "../use-agent-ownership";
+import { ChannelHealthTab } from "./health-tab";
 import { useChannelQuery } from "./queries";
 
 export function ChannelDetailScreen() {
@@ -128,8 +131,13 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 		Boolean(id),
 	);
 	const agents = useCloudAgents();
+	const ownership = useAgentOwnership();
+	const selectableAgents = (agents.data ?? []).filter((agent) => {
+		const kind = agentOwnershipKindFromId(agent.id, ownership.data ?? null);
+		return kind === "cloud" || kind === "connected";
+	});
 	const health = useChannelQuery(["health"], (api, signal) => api.health(signal));
-	const selected = agents.data?.find((agent) => agent.id === agentId);
+	const selected = selectableAgents.find((agent) => agent.id === agentId);
 	const agentLinks = useChannelQuery(
 		["agent", agentId],
 		(api, signal) => api.agentLinks(agentId, signal),
@@ -355,12 +363,14 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 										value={agentId}
 										options={[
 											{ value: "", label: channelFormCopy.chooseAgent },
-											...(agents.data ?? []).map((agent) => ({
+											...selectableAgents.map((agent) => ({
 												value: agent.id,
 												label: agent.name,
 											})),
 										]}
-										disabled={disabled || agents.isError}
+										disabled={
+											disabled || agents.isError || ownership.isFetching || ownership.isError
+										}
 										onValueChange={(value) => {
 											setAgentId(value);
 											setReplace(false);
@@ -399,6 +409,9 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 										}
 									/>
 								</DialogFooter>
+								{ownership.isError ? (
+									<ApiErrorPanel error={ownership.error} onRetry={() => void ownership.refetch()} />
+								) : null}
 								{action.error ? <ApiErrorPanel error={t("channels.failed")} /> : null}
 							</DialogContent>
 						</Dialog>
@@ -577,20 +590,18 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 						))}
 					</TabsContent>
 					<TabsContent value="health">
-						{health.isError ? (
-							<ApiErrorPanel error={health.error} onRetry={() => void health.refetch()} />
+						{health.isPending ? (
+							<Skeleton className={webView(styles.activitySkeleton)} />
+						) : health.isError ? (
+							<ApiErrorPanel
+								error={health.error}
+								title={agentSurfaceCopy.couldnTLoadChannelHealth}
+								onRetry={() => void health.refetch()}
+							/>
 						) : (
-							health.data?.items
-								.filter((item) => item.account_id === id)
-								.map((item) => {
-									const summary = channelHealthSummary(item);
-									return (
-										<WebView key={item.account_id} recipe={ENTITY_CARD_BASE}>
-											<AppText>{summary.label}</AppText>
-											<AppText>{summary.detail}</AppText>
-										</WebView>
-									);
-								})
+							<ChannelHealthTab
+								health={health.data?.items.find((item) => item.account_id === id)}
+							/>
 						)}
 					</TabsContent>
 					<TabsContent value="commands">

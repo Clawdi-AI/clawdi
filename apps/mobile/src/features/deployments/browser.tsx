@@ -3,7 +3,15 @@ import {
 	hermesOidcLoginUrl,
 	isRuntimeUiEndpointInfo,
 } from "@clawdi/shared/api";
+import { hostedAgentOverviewClasses } from "@clawdi/shared/ui";
+import {
+	agentOverviewCopy,
+	deploymentRuntimeUiIsReady,
+	deploymentRuntimeUiWithdrawn,
+	runtimeBrowserUiLabel,
+} from "@clawdi/shared/view";
 import * as WebBrowser from "expo-web-browser";
+import { PanelsTopLeft } from "lucide-react-native";
 import { useRef } from "react";
 import { Alert } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
@@ -12,9 +20,16 @@ import { useAccountRead, useAccountScope } from "../../platform/account-lifecycl
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
 import { ActionButton as NativeButton } from "../../ui/agents/controls";
+import { OverviewNavigationCard } from "../../ui/agents/overview";
 import { AppText } from "../../ui/primitives";
 
-export function RuntimeBrowser({ deployment }: { deployment: DeploymentRead }) {
+export function RuntimeBrowser({
+	deployment,
+	overview = false,
+}: {
+	deployment: DeploymentRead;
+	overview?: boolean;
+}) {
 	const t = useI18n();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -23,7 +38,10 @@ export function RuntimeBrowser({ deployment }: { deployment: DeploymentRead }) {
 	const { hosted, deploymentMutations } = useMobileApi();
 	const confirmation = useRef(0);
 	const endpoint = deployment.runtime_ui_endpoint;
-	const available = isRuntimeUiEndpointInfo(endpoint) && Boolean(hosted && deploymentMutations);
+	const available =
+		deploymentRuntimeUiIsReady(deployment) &&
+		isRuntimeUiEndpointInfo(endpoint) &&
+		Boolean(hosted && deploymentMutations);
 	const open = () => {
 		if (!available || !endpoint || !hosted || !deploymentMutations || action.busy) return;
 		const reviewedUrl = endpoint.url;
@@ -89,6 +107,26 @@ export function RuntimeBrowser({ deployment }: { deployment: DeploymentRead }) {
 			],
 		);
 	};
+	if (overview)
+		return (
+			<>
+				<OverviewNavigationCard
+					title={agentOverviewCopy.chatOnWeb}
+					description={
+						deploymentRuntimeUiWithdrawn(deployment.resource.status)
+							? `${runtimeBrowserUiLabel(deployment.resource.spec.runtime)} is unavailable. Your agent keeps running.`
+							: runtimeBrowserUiLabel(deployment.resource.spec.runtime)
+					}
+					icon={PanelsTopLeft}
+					tint={hostedAgentOverviewClasses.browserTint}
+					disabled={!available || action.busy}
+					onPress={available && !action.busy ? open : undefined}
+				/>
+				{action.error ? (
+					<AppText accessibilityRole="alert">{t("deployments.browserFailed")}</AppText>
+				) : null}
+			</>
+		);
 	return (
 		<>
 			<NativeButton

@@ -15,11 +15,13 @@ import {
 	isCustomProject,
 	LIBRARY_COPY,
 	PROJECT_LOCAL_TABS,
+	PROJECT_VAULT_COPY,
 	type ProjectAgentMetadata,
 	projectAgentFor,
 	projectAgentSyncLabel,
 	projectDetailDescription,
 	projectResourceHref,
+	projectVaultCreateDescription,
 } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
@@ -1469,10 +1471,7 @@ function CreateProjectVaultDialog({
 				<DialogContent className={projectDetailClasses.dialog}>
 					<DialogHeader>
 						<DialogTitle>{LIBRARY_COPY.createVault}</DialogTitle>
-						<DialogDescription>
-							Create an account-owned Vault for this {contextLabel}. It will also remain available
-							in your Vault library.
-						</DialogDescription>
+						<DialogDescription>{projectVaultCreateDescription(contextLabel)}</DialogDescription>
 					</DialogHeader>
 					<form
 						className={projectDetailClasses.form}
@@ -1484,20 +1483,18 @@ function CreateProjectVaultDialog({
 						}}
 					>
 						<div className={projectDetailClasses.fieldStack}>
-							<Label htmlFor={`project-vault-name-${projectId}`}>Vault name</Label>
+							<Label htmlFor={`project-vault-name-${projectId}`}>{PROJECT_VAULT_COPY.name}</Label>
 							<Input
 								id={`project-vault-name-${projectId}`}
 								name="project-vault-name"
 								value={vaultName}
 								onChange={(event) => setVaultName(event.target.value)}
-								placeholder="Production credentials…"
+								placeholder={PROJECT_VAULT_COPY.placeholder}
 								autoComplete="off"
 								className={projectDetailClasses.agentIdentity}
 							/>
 							{vaultName.trim() && !newVaultSlug ? (
-								<p className={projectDetailClasses.error}>
-									Use a name containing letters or numbers.
-								</p>
+								<p className={projectDetailClasses.error}>{PROJECT_VAULT_COPY.invalidName}</p>
 							) : null}
 						</div>
 						<DialogFooter>

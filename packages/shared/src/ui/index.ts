@@ -63,6 +63,9 @@ export const badgeVariants = cva(
 	},
 );
 
+/** Web badge descendant SVG scale, exposed for native icons. */
+export const statusBadgeIconClassName = "size-3";
+
 export const statusBadgeVariants = cva(
 	"inline-flex w-fit shrink-0 items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-xs font-medium whitespace-nowrap [&>svg]:pointer-events-none [&>svg]:size-3",
 	{
@@ -228,6 +231,7 @@ export * from "./account-alias-dialog";
 export * from "./account-alias-field";
 export * from "./add-agent-setup";
 export * from "./add-keys-dialog";
+export * from "./agent-channel-section";
 export * from "./agent-framework-icon";
 export * from "./agent-icon";
 export * from "./agent-label";
@@ -253,6 +257,8 @@ export * from "./channel-card";
 export * from "./channel-detail-page";
 export * from "./channels-page";
 export * from "./checkbox";
+export * from "./compute-dunning-banner";
+export * from "./compute-status-details";
 export * from "./compute-subscription-card";
 export * from "./confirm-action";
 export * from "./connect-bot-dialog";
@@ -274,11 +280,14 @@ export * from "./entity-card";
 export * from "./entity-icon";
 export * from "./filter-chip";
 export * from "./general-panel";
+export * from "./global-wallet-balance";
 export * from "./header-action-group";
+export * from "./hosted-agent-overview";
 export * from "./icon-chip";
 export * from "./input-group";
 export * from "./library-surfaces";
 export * from "./list-toolbar";
+export * from "./managed-model-picker";
 export * from "./markdown";
 export * from "./message-list";
 export * from "./onboarding-card";
@@ -287,8 +296,10 @@ export * from "./page-header";
 export * from "./page-width";
 export * from "./payment-methods-section";
 export * from "./plan-comparison";
+export * from "./project-actions";
 export * from "./project-metadata";
 export * from "./project-share-page";
+export * from "./project-vault-catalog";
 export * from "./provider-chooser";
 export * from "./provider-dialog";
 export * from "./provider-fields-form";
@@ -297,6 +308,7 @@ export * from "./public-session";
 export * from "./resource-identity";
 export * from "./resources-card";
 export * from "./route-loading-skeleton";
+export * from "./search-highlighted-text";
 export * from "./section";
 export * from "./section-label";
 export * from "./select";
@@ -314,7 +326,9 @@ export * from "./share-controls";
 export * from "./shared-session-links";
 export * from "./sheet";
 export * from "./site-header";
+export * from "./skill-transfer-dialog";
 export * from "./split-vault-dialog";
+export * from "./subscription-source-picker";
 export * from "./switch";
 export * from "./term-switcher";
 export * from "./this-week-card";

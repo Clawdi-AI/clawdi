@@ -27,37 +27,40 @@ import {
 } from "../ui/dropdown-menu";
 import { EmptyState } from "../ui/empty-state";
 import { HeroCardSkeleton } from "../ui/entity-card";
+import { HeaderActionGroup } from "../ui/header-action-group";
 import { Icon } from "../ui/icon";
 import { IconChip } from "../ui/icon-chip";
 import { PageHeader, PageHeaderSkeleton } from "../ui/page-header";
 import { ManageProjectAgentsDialog } from "../ui/projects/manage-project-agents-dialog";
 import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 import { Text } from "../ui/text";
-import { VaultCard } from "../ui/vault/vault-card";
 import { AppPressable } from "../ui/view";
 import { WebText, WebView, webBoth, webView } from "../ui/web-layout";
 import { agentDisplayName, isNotFound, useCloudAgents } from "./cloud-inventory";
 import { useProject } from "./project-scope";
 import { canManageSharing } from "./project-sharing-state";
-import { projectRouteFilter } from "./read-helpers";
+import { projectRouteFilter, routeParam } from "./read-helpers";
 import { ResourceError } from "./resource-error";
 import { SkillRow, useCloudSkills } from "./skills";
-import { useVaultCatalog } from "./vault/catalog";
+import { ProjectVaultCatalog } from "./vault/project-catalog";
 
 export function ProjectDetailScreen() {
 	const scope = useAccountScope();
-	const params = useLocalSearchParams<{ projectId?: string | string[] }>();
+	const params = useLocalSearchParams<{ projectId?: string | string[]; tab?: string | string[] }>();
 	const filter = projectRouteFilter(params.projectId);
+	const initialTab =
+		PROJECT_LOCAL_TABS.find((item) => item.id === routeParam(params.tab))?.id ?? "overview";
 	return (
 		<ProjectHub
-			key={`${scope.identity}:${scope.generation}:${filter.kind === "project" ? filter.id : ""}`}
+			key={`${scope.identity}:${scope.generation}:${filter.kind === "project" ? filter.id : ""}:${initialTab}`}
+			initialTab={initialTab}
 			id={filter.kind === "project" ? filter.id : undefined}
 		/>
 	);
 }
-function ProjectHub({ id }: { id?: string }) {
+function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 	const t = useI18n();
-	const [tab, setTab] = useState("overview");
+	const [tab, setTab] = useState(initialTab);
 	const [agentsOpen, setAgentsOpen] = useState(false);
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -65,7 +68,6 @@ function ProjectHub({ id }: { id?: string }) {
 	const query = useProject(id);
 	const project = query.data?.id === id && !query.isError ? query.data : undefined;
 	const skills = useCloudSkills(id, "", Boolean(id && tab === "skills"));
-	const vaults = useVaultCatalog("", id, Boolean(id && tab === "vaults"));
 	const agents = useCloudAgents(id);
 	const members = useQuery({
 		queryKey: accountQueryKey(scope, "project-members", id),
@@ -185,17 +187,20 @@ function ProjectHub({ id }: { id?: string }) {
 						<WebView recipe={projectDetailClasses.section}>
 							<WebView recipe={projectDetailClasses.sectionHeader}>
 								<WebView recipe={projectDetailClasses.sectionHeading}>
-									<WebText recipe={projectDetailClasses.heading}>
-										{t("skills.title")}{" "}
-										<WebText recipe={projectDetailClasses.resourceCount}>
-											{project.skill_count}
-										</WebText>
-									</WebText>
+									<WebView recipe={projectDetailClasses.paginationActions}>
+										<WebText recipe={projectDetailClasses.heading}>{t("skills.title")}</WebText>
+										<Badge
+											variant="secondary"
+											className={webBoth(projectDetailClasses.resourceCount)}
+										>
+											<Text>{project.skill_count}</Text>
+										</Badge>
+									</WebView>
 									<WebText recipe={projectDetailClasses.subtitle}>
 										{t("libraryPort.projectSkillsDescription")}
 									</WebText>
 								</WebView>
-								<WebView recipe={projectDetailClasses.paginationActions}>
+								<HeaderActionGroup>
 									<Button
 										variant="ghost"
 										size="sm"
@@ -219,7 +224,7 @@ function ProjectHub({ id }: { id?: string }) {
 											<Text>{t("libraryPort.addSkill")}</Text>
 										</Button>
 									) : null}
-								</WebView>
+								</HeaderActionGroup>
 							</WebView>
 							{skills.error ? (
 								<ApiErrorPanel error={skills.error} onRetry={() => void skills.refetch()} />
@@ -230,7 +235,9 @@ function ProjectHub({ id }: { id?: string }) {
 									) : (
 										skills.data?.pages
 											.flatMap((page) => page.items)
-											.map((skill) => <SkillRow key={skill.skill_key} skill={skill} />)
+											.map((skill) => (
+												<SkillRow key={skill.skill_key} skill={skill} project={project} />
+											))
 									)}
 								</WebView>
 							)}
@@ -248,42 +255,7 @@ function ProjectHub({ id }: { id?: string }) {
 							) : null}
 						</WebView>
 					) : null}
-					{tab === "vaults" ? (
-						<WebView recipe={projectDetailClasses.section}>
-							<WebText recipe={projectDetailClasses.heading}>{t("navigation.vaults")}</WebText>
-							<WebText recipe={projectDetailClasses.subtitle}>
-								{t("libraryPort.projectVaultsDescription")}
-							</WebText>
-							{vaults.error ? (
-								<ApiErrorPanel error={vaults.error} onRetry={() => void vaults.refetch()} />
-							) : (
-								<WebView recipe={HERO_GRID_CLASS}>
-									{vaults.isPending ? (
-										<HeroCardSkeleton />
-									) : (
-										vaults.data?.pages
-											.flatMap((page) => page.items)
-											.map((vault) => (
-												<VaultCard
-													key={vault.id}
-													vault={vault}
-													names={new Map([[project.id, project.name]])}
-												/>
-											))
-									)}
-								</WebView>
-							)}
-							<Button
-								variant="outline"
-								size="sm"
-								onPress={() =>
-									router.push({ pathname: "/vault", params: { projectId: project.id } })
-								}
-							>
-								<Text>{t("libraryPort.manageVaults")}</Text>
-							</Button>
-						</WebView>
-					) : null}
+					{tab === "vaults" ? <ProjectVaultCatalog project={project} /> : null}
 					{tab === "access" ? (
 						<WebView recipe={projectDetailClasses.section}>
 							<WebText recipe={projectDetailClasses.heading}>

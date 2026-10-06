@@ -1,18 +1,22 @@
 import { agentSourceBadgeClasses } from "@clawdi/shared/ui";
 import type { LucideIcon } from "lucide-react-native";
+import { Icon } from "../icon";
 import { StatusBadge } from "../status-badge";
-import { WebIcon, webView } from "../web-layout";
-export function AgentSourceBadge({ icon, legacy = false }: { icon: LucideIcon; legacy?: boolean }) {
+import { webBoth } from "../web-layout";
+
+/** Icon-only hosted badge from the Web agent tile (mobile shows no legacy v1 agents). */
+export function AgentSourceBadge({ icon }: { icon: LucideIcon }) {
 	return (
 		<StatusBadge
 			status="neutral"
-			className={webView(
-				`${legacy ? agentSourceBadgeClasses.legacyRoot : agentSourceBadgeClasses.root} ${agentSourceBadgeClasses.iconOnly} ${legacy ? "" : agentSourceBadgeClasses.hosted}`,
+			className={webBoth(
+				`${agentSourceBadgeClasses.root} ${agentSourceBadgeClasses.iconOnly} ${agentSourceBadgeClasses.hosted}`,
 			)}
 		>
-			<WebIcon
+			<Icon
 				as={icon}
-				recipe={`${agentSourceBadgeClasses.icon} ${legacy ? agentSourceBadgeClasses.legacyIcon : agentSourceBadgeClasses.hostedIcon}`}
+				fill="currentColor"
+				className={webBoth(`${agentSourceBadgeClasses.icon} ${agentSourceBadgeClasses.hostedIcon}`)}
 			/>
 		</StatusBadge>
 	);

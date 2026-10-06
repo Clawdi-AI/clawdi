@@ -12,10 +12,16 @@ import {
 	isValidHostedDeployTimezone,
 	normalizeHostedDeployLanguage,
 } from "@clawdi/shared/api";
-import { ENTITY_CHOICE_GRID_CLASS } from "@clawdi/shared/ui";
-import { agentSurfaceCopy, providerPresentation } from "@clawdi/shared/view";
+import {
+	agentSurfaceCopy,
+	aiBindingCopy,
+	firstModelForProvider,
+	isManagedProviderId,
+	primaryModelValue,
+} from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
+import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
@@ -23,16 +29,15 @@ import { useI18n } from "../../i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
 import { useMobileApi } from "../../providers/api-provider";
+import { AiBindingChoices } from "../../ui/agents/ai-binding-choices";
 import {
 	ActionButton as NativeButton,
 	ChoiceSelect as NativePicker,
 } from "../../ui/agents/controls";
-import { EntityChoiceCard } from "../../ui/entity-card";
-import { EntityIcon } from "../../ui/entity-icon";
+import { EntityAddCard } from "../../ui/entity-card";
 import { Input as AppTextInput } from "../../ui/input";
 import { AppText, AppView } from "../../ui/primitives";
-import { WebView } from "../../ui/web-layout";
-
+import { ProviderCreate } from "../provider-create";
 import type { RuntimeAttempt } from "./attempt";
 import { runtimeAttempts } from "./attempt-storage";
 
@@ -197,18 +202,24 @@ export function DeploymentControls({
 	const stable = state === "running" || state === "stopped" || state === "failed";
 	return (
 		<AppView className="gap-3">
-			<AppText accessibilityRole="header" className="text-xl font-semibold text-foreground">
-				{section === "ai" ? agentSurfaceCopy.aIProviders : t("runtime.title")}
-			</AppText>
-			<AppText>{t("runtime.warning")}</AppText>
+			{section !== "ai" ? (
+				<>
+					<AppText accessibilityRole="header" className="text-xl font-semibold text-foreground">
+						{t("runtime.title")}
+					</AppText>
+					<AppText>{t("runtime.warning")}</AppText>
+				</>
+			) : null}
 			{storageError ? (
 				<AppText accessibilityRole="alert">{t("runtime.storageError")}</AppText>
 			) : null}
-			<NativeButton
-				label={t("runtime.reloadAttempt")}
-				disabled={action.busy}
-				onPress={() => setRestoreEpoch((value) => value + 1)}
-			/>
+			{section !== "ai" || attempt || storageError ? (
+				<NativeButton
+					label={t("runtime.reloadAttempt")}
+					disabled={action.busy}
+					onPress={() => setRestoreEpoch((value) => value + 1)}
+				/>
+			) : null}
 			{attempt ? (
 				<>
 					<AppText accessibilityRole="alert">
@@ -392,9 +403,17 @@ function ModelSettings({
 	const read = useAccountRead();
 	const { aiProviders, compute } = useMobileApi();
 	const action = useAuthAction(scope.identity);
-	const [choice, setChoice] = useState("");
-	const [model, setModel] = useState("");
+	const router = useRouter();
 	const config = deployment.resource.spec.runtime_configuration;
+	const initialProvider = config.primary_model?.provider_id ?? config.providers[0]?.provider_id;
+	const initialChoice = !initialProvider
+		? "__unmanaged__"
+		: isManagedProviderId(initialProvider)
+			? "__managed__"
+			: initialProvider;
+	const initialModel = primaryModelValue(config.primary_model);
+	const [choice, setChoice] = useState(initialChoice);
+	const [model, setModel] = useState(initialModel);
 	const catalog = useQuery({
 		queryKey: accountQueryKey(scope, "runtime-model-catalog"),
 		queryFn: ({ signal }) =>
@@ -424,82 +443,48 @@ function ModelSettings({
 	const agentOwnsModels =
 		selected &&
 		["native", "custom", "connection"].includes(selected.configuration_mode ?? "catalog");
-	const options = [
-		{ value: "", label: t("runtime.chooseProvider") },
-		{ value: "__unmanaged__", label: t("runtime.unmanaged") },
-		{ value: "__managed__", label: "Clawdi AI" },
-		...available.map((provider) => ({
-			value: provider.provider_id,
-			label: provider.label || provider.provider_id,
-		})),
-	];
 	return (
 		<AppView className="gap-3">
-			<AppText accessibilityRole="header">{t("runtime.model")}</AppText>
-			<AppText selectable>
-				{currentIds.join(", ") || t("runtime.unmanaged")} · {config.primary_model?.model ?? ""}
-			</AppText>
 			{deployment.provider_conflicts?.length ? (
 				<AppText accessibilityRole="alert">{t("runtime.providerConflict")}</AppText>
 			) : null}
-			<NativeButton
-				label={t("runtime.refreshProviders")}
-				disabled={catalog.isFetching || action.busy}
-				onPress={() => void catalog.refetch()}
-			/>
-			<WebView recipe={ENTITY_CHOICE_GRID_CLASS}>
-				{options
-					.filter((option) => option.value)
-					.map((option) => {
-						const provider = available.find((item) => item.provider_id === option.value);
-						return (
-							<EntityChoiceCard
-								key={option.value}
-								icon={
-									<EntityIcon
-										kind="provider"
-										id={
-											provider
-												? providerPresentation(provider).iconId
-												: option.value === "__managed__"
-													? "clawdi"
-													: "custom"
-										}
-										label={option.label}
-									/>
-								}
-								title={option.label}
-								description={
-									provider
-										? providerPresentation(provider).summary
-										: option.value === "__managed__"
-											? agentSurfaceCopy.noSetupRequiredUsageDrawsFromYour
-											: "Configure model access inside the agent."
-								}
-								selected={choice === option.value}
-								disabled={disabled || catalog.isPending || catalog.isError}
-								onClick={() => {
-									setChoice(option.value);
-									setModel("");
-								}}
+			<AiBindingChoices
+				providers={catalog.data?.providers ?? []}
+				models={catalog.data?.managed ?? []}
+				choice={choice}
+				model={model}
+				disabled={disabled || catalog.isPending || catalog.isError}
+				runtime={deployment.resource.spec.runtime}
+				agentId={deployment.agent_id}
+				currentIds={currentIds}
+				onChoice={(next) => {
+					setChoice(next);
+					setModel(
+						firstModelForProvider(next, catalog.data?.providers ?? [], catalog.data?.managed ?? []),
+					);
+				}}
+				onModel={setModel}
+				onAdd={() => router.push("/ai-providers")}
+				addProvider={
+					<ProviderCreate
+						providers={catalog.data?.providers}
+						refresh={async () => {
+							const result = await catalog.refetch();
+							if (result.isError) throw new Error("Provider inventory unavailable");
+						}}
+						renderTrigger={(open) => (
+							<EntityAddCard
+								title={aiBindingCopy.addProvider}
+								description={aiBindingCopy.addProviderDescription}
+								onClick={open}
 							/>
-						);
-					})}
-			</WebView>
-			{choice === "__managed__" ? (
-				<NativePicker
-					value={model}
-					options={[
-						{ value: "", label: t("runtime.chooseModel") },
-						...(catalog.data?.managed ?? []).map((item) => ({
-							value: item.id,
-							label: item.display_name || item.id,
-						})),
-					]}
-					disabled={disabled}
-					onValueChange={setModel}
-				/>
-			) : selected && !agentOwnsModels ? (
+						)}
+					/>
+				}
+				onRetry={() => void catalog.refetch()}
+				error={catalog.error}
+			/>
+			{selected && !agentOwnsModels ? (
 				<AppTextInput
 					accessibilityLabel={t("runtime.modelId")}
 					placeholder={t("runtime.modelId")}
@@ -515,9 +500,12 @@ function ModelSettings({
 			) : null}
 			{choice === "__unmanaged__" ? <AppText>{t("runtime.unmanagedWarning")}</AppText> : null}
 			<NativeButton
-				label={t("runtime.saveModel")}
+				label={aiBindingCopy.save}
+				variant="default"
+				className="self-start"
 				disabled={
 					disabled ||
+					(choice === initialChoice && model === initialModel) ||
 					action.busy ||
 					!catalog.data ||
 					catalog.isError ||

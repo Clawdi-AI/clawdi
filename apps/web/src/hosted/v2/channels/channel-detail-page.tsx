@@ -3,6 +3,9 @@
 import { channelDetailPageClasses } from "@clawdi/shared/ui";
 import {
 	agentSurfaceCopy,
+	CHANNEL_HEALTH_COPY,
+	channelHealthReportedAt,
+	channelHealthStats,
 	channelRemovalCopy,
 	channelRemovalTitle,
 	channelDetailCopy as copy,
@@ -575,17 +578,12 @@ function HealthTab({ accountId }: { accountId: string }) {
 	if (!h)
 		return (
 			<EmptyState
-				title="Health unavailable"
-				description="Channel health data isn't available yet."
+				title={CHANNEL_HEALTH_COPY.unavailable}
+				description={CHANNEL_HEALTH_COPY.unavailableDescription}
 			/>
 		);
 
-	const stats = [
-		{ label: "Pending inbound", value: h.pending_inbox },
-		{ label: "Pending outbound", value: h.pending_deliveries },
-		{ label: "In progress", value: h.in_progress_deliveries },
-		{ label: "Failed", value: h.failed_deliveries },
-	];
+	const stats = channelHealthStats(h);
 	const transport = h.native_transport ? nativeTransportSummary(h.native_transport) : null;
 	const summary = channelHealthSummary(h);
 	const errorSummary = channelHealthErrorSummary(h);
@@ -607,19 +605,14 @@ function HealthTab({ accountId }: { accountId: string }) {
 			</div>
 
 			{errorSummary ? (
-				<div
-					className={cn(
-						ENTITY_CARD_BASE,
-						"flex flex-col gap-1 border-destructive/30 bg-destructive/5",
-					)}
-				>
+				<div className={cn(ENTITY_CARD_BASE, channelDetailPageClasses.healthError)}>
 					<div className={channelDetailPageClasses.errorTitle}>
 						<TriangleAlert className={channelDetailPageClasses.actionIcon} />
-						Last error
+						{CHANNEL_HEALTH_COPY.lastError}
 					</div>
 					<p className={channelDetailPageClasses.errorDescription}>{errorSummary}</p>
 					<p className={channelDetailPageClasses.healthMeta}>
-						Reported {relativeTime(h.last_error_at)}
+						{channelHealthReportedAt(h.last_error_at)}
 					</p>
 				</div>
 			) : null}
@@ -627,7 +620,7 @@ function HealthTab({ accountId }: { accountId: string }) {
 			{transport ? (
 				<div className={ENTITY_CARD_BASE}>
 					<SectionLabel className={channelDetailPageClasses.transportHeading}>
-						Message transport
+						{CHANNEL_HEALTH_COPY.transport}
 					</SectionLabel>
 					<dl className={channelDetailPageClasses.transportStats}>
 						<div>
@@ -635,11 +628,15 @@ function HealthTab({ accountId }: { accountId: string }) {
 							<dd className={channelDetailPageClasses.transportValue}>{transport.status}</dd>
 						</div>
 						<div>
-							<dt className={channelDetailPageClasses.healthMeta}>Connection</dt>
+							<dt className={channelDetailPageClasses.healthMeta}>
+								{CHANNEL_HEALTH_COPY.connection}
+							</dt>
 							<dd className={channelDetailPageClasses.transportValue}>{transport.connection}</dd>
 						</div>
 						<div>
-							<dt className={channelDetailPageClasses.healthMeta}>Message delivery</dt>
+							<dt className={channelDetailPageClasses.healthMeta}>
+								{CHANNEL_HEALTH_COPY.delivery}
+							</dt>
 							<dd className={channelDetailPageClasses.transportValue}>{transport.delivery}</dd>
 						</div>
 					</dl>

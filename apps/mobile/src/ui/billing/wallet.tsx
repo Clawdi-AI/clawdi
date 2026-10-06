@@ -10,6 +10,8 @@ import {
 	formatShortDate,
 	formatUsdExact,
 	isLowBalance,
+	paymentMethodPresentation,
+	paymentMethodsCopy,
 	transactionComputeDetails,
 	transactionDocumentAction,
 	transactionKindLabel,
@@ -18,19 +20,23 @@ import {
 	transactionStatusLabel,
 	transactionStatusTone,
 } from "@clawdi/shared/view";
+import { useQuery } from "@tanstack/react-query";
 import { openBrowserAsync } from "expo-web-browser";
 import { Coins, CreditCard, ExternalLink, Link2, Pencil, TriangleAlert } from "lucide-react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
 import type { Transaction } from "../../features/billing/helpers";
 import { useI18n } from "../../i18n";
-import { useAccountScope } from "../../platform/account-lifecycle";
+import { accountQueryKey, useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
 import { useForegroundLease } from "../../platform/use-foreground-lease";
+import { useMobileApi } from "../../providers/api-provider";
+import { ApiErrorPanel } from "../api-error-panel";
 import { Badge } from "../badge";
 import { Button } from "../button";
 import { Card, CardContent } from "../card";
 import { Icon } from "../icon";
 import { Input, Label } from "../input";
 import { SettingsSection } from "../settings/section";
+import { Skeleton } from "../skeleton";
 import { StatusBadge } from "../status-badge";
 import { Switch } from "../switch";
 import { Text } from "../text";
@@ -149,6 +155,19 @@ export function WalletSettingsSections({
 	>;
 }) {
 	const t = useI18n();
+	const { compute } = useMobileApi();
+	const scope = useAccountScope();
+	const read = useAccountRead();
+	const methods = useQuery({
+		queryKey: accountQueryKey(scope, "billing-payment-methods"),
+		enabled: scope.isReady && Boolean(compute),
+		retry: false,
+		queryFn: ({ signal }) =>
+			read((lease) => {
+				if (!compute) throw new Error("Compute unavailable");
+				return compute.getWalletPaymentMethods(lease);
+			}, signal),
+	});
 	return (
 		<>
 			<SettingsSection
@@ -162,9 +181,51 @@ export function WalletSettingsSections({
 				}
 			>
 				<WebView recipe={paymentMethodsSectionClasses.body}>
-					<WebText recipe={paymentMethodsSectionClasses.hint}>
-						{t("billing.paymentMethodsUnavailable")}
-					</WebText>
+					{methods.isPending ? (
+						<Skeleton className={webView(paymentMethodsSectionClasses.loading)} />
+					) : methods.isError ? (
+						<ApiErrorPanel
+							error={methods.error}
+							title={paymentMethodsCopy.error}
+							onRetry={() => void methods.refetch()}
+						/>
+					) : methods.data?.items.length ? (
+						<WebView recipe={paymentMethodsSectionClasses.list}>
+							{methods.data.items.map((method) => {
+								const copy = paymentMethodPresentation(method);
+								return (
+									<WebView
+										key={method.id}
+										recipe={paymentMethodsSectionClasses.item}
+										className="flex-row"
+									>
+										<Icon as={CreditCard} className={webView(paymentMethodsSectionClasses.icon)} />
+										<WebView recipe={paymentMethodsSectionClasses.copy}>
+											<WebText recipe={paymentMethodsSectionClasses.title}>{copy.title}</WebText>
+											<WebText recipe={paymentMethodsSectionClasses.hint}>{copy.expires}</WebText>
+										</WebView>
+										{method.is_default ? (
+											<Badge variant="outline">
+												<Text>{paymentMethodsCopy.billingDefault}</Text>
+											</Badge>
+										) : null}
+										{method.is_auto_reload ? (
+											<Badge variant="outline">
+												<Text>{paymentMethodsCopy.autoReload}</Text>
+											</Badge>
+										) : null}
+									</WebView>
+								);
+							})}
+						</WebView>
+					) : (
+						<WebText recipe={paymentMethodsSectionClasses.empty}>
+							{paymentMethodsCopy.empty}
+						</WebText>
+					)}
+					{methods.data?.has_more ? (
+						<WebText recipe={paymentMethodsSectionClasses.hint}>{paymentMethodsCopy.more}</WebText>
+					) : null}
 					<WebText recipe={paymentMethodsSectionClasses.hint}>
 						{t("billingParity.autoReloadCardHint")}
 					</WebText>

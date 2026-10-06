@@ -629,7 +629,7 @@ function VaultDetail({
 								<Input
 									accessibilityLabel={t("vault.importText")}
 									placeholder={formCopy.placeholder}
-									className={webBoth(addKeysDialogClasses.textarea)}
+									className={webBoth(addKeysDialogClasses.paste)}
 									value={draft}
 									onChangeText={setDraft}
 									editable={!action.busy}
@@ -665,13 +665,13 @@ function VaultDetail({
 									</Alert>
 								) : null}
 								{preview.conflicts.length > 0 && !preview.parsed.errors.length ? (
-									<WebView recipe={addKeysDialogClasses.overwrite} className="flex-row">
+									<WebView recipe={addKeysDialogClasses.conflicts} className="flex-row">
 										<Switch checked={replace} onCheckedChange={setReplace} disabled={action.busy} />
 										<WebView recipe={addKeysDialogClasses.newField} className="flex-1">
-											<Label className={webBoth(addKeysDialogClasses.overwriteLabel)}>
+											<Label className={webBoth(addKeysDialogClasses.label)}>
 												{formCopy.overwrite}
 											</Label>
-											<WebText recipe={addKeysDialogClasses.hint}>
+											<WebText recipe={addKeysDialogClasses.meta}>
 												{vaultImportConflictHint(preview.conflicts.length)}
 											</WebText>
 										</WebView>
@@ -686,7 +686,7 @@ function VaultDetail({
 								{preview.preview.length > 0 && !preview.parsed.errors.length ? (
 									<WebView recipe={addKeysDialogClasses.preview}>
 										<WebView recipe={addKeysDialogClasses.previewHeader} className="flex-row">
-											<WebText recipe={addKeysDialogClasses.previewLabel}>
+											<WebText recipe={addKeysDialogClasses.previewTitle}>
 												{formCopy.preview}
 											</WebText>
 											<WebView recipe={addKeysDialogClasses.badges} className="flex-row">
@@ -711,7 +711,7 @@ function VaultDetail({
 													recipe={addKeysDialogClasses.previewRow}
 													className="flex-row justify-between"
 												>
-													<WebText recipe={addKeysDialogClasses.keyName}>{row.key}</WebText>
+													<WebText recipe={addKeysDialogClasses.key}>{row.key}</WebText>
 													<Badge variant={row.action === "create" ? "secondary" : "outline"}>
 														<Text>{vaultImportActionLabel(row.action)}</Text>
 													</Badge>
@@ -755,7 +755,7 @@ function VaultDetail({
 										disabled={action.busy || !validImport}
 										onPress={importKeys}
 									>
-										<Icon as={Check} className={webBoth(addKeysDialogClasses.icon)} />
+										<Icon as={Check} className={webBoth(addKeysDialogClasses.iconSmall)} />
 										<Text>
 											{formCopy.save} {preview.importableRows.length || ""}
 										</Text>

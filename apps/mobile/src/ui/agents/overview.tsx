@@ -30,12 +30,14 @@ export function OverviewNavigationCard({
 	tint,
 	onPress,
 	children,
+	disabled = false,
 }: {
 	title: string;
 	description: ReactNode;
 	icon: LucideIcon;
 	tint: string;
 	onPress?: () => void;
+	disabled?: boolean;
 	children?: ReactNode;
 }) {
 	return (
@@ -53,7 +55,7 @@ export function OverviewNavigationCard({
 					accessibilityLabel={title}
 					onPress={onPress}
 					disabled={!onPress}
-					className={`${webView(children ? styles.headingLink : styles.statusLink)} flex-row`}
+					className={`${webView(disabled ? styles.disabledStatus : children ? styles.headingLink : styles.statusLink)} flex-row`}
 				>
 					<IconChip size="sm" tint={tint}>
 						<WebIcon as={icon} recipe={styles.arrowSkeleton} />
@@ -62,7 +64,7 @@ export function OverviewNavigationCard({
 						<CardTitle>{title}</CardTitle>
 						<CardDescription>{description}</CardDescription>
 					</WebView>
-					{onPress ? <WebIcon as={ArrowRight} recipe={styles.arrow} /> : null}
+					{onPress || disabled ? <WebIcon as={ArrowRight} recipe={styles.arrow} /> : null}
 				</AppPressable>
 			</CardHeader>
 			{children ? <CardContent className={webView(styles.content)}>{children}</CardContent> : null}

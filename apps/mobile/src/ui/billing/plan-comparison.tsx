@@ -42,6 +42,7 @@ export function PlanComparison({ plans }: { plans: Plan[] }) {
 			actions={
 				common.length > 1 ? (
 					<Tabs
+						className="w-full"
 						value={String(selected)}
 						onValueChange={(value) => {
 							const offer = common.find((item) => String(item.billing_term_months) === value);
@@ -53,7 +54,9 @@ export function PlanComparison({ plans }: { plans: Plan[] }) {
 								<TabsTrigger
 									key={offer.billing_term_months}
 									value={String(offer.billing_term_months)}
-									className={webView(termSwitcherClasses.item)}
+									className={webView(
+										termSwitcherClasses.item.replace(/(?:^|\s)flex-1(?=\s|$)/g, " "),
+									)}
 								>
 									<Text>{billingTermLabel(offer.billing_term_months)}</Text>
 								</TabsTrigger>

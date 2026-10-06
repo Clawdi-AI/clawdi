@@ -1,6 +1,7 @@
 "use client";
 
-import { formatShortDate } from "@clawdi/shared/view";
+import { computeDunningBannerClasses as styles } from "@clawdi/shared/ui";
+import { computeDunningCopy, computeDunningDescription } from "@clawdi/shared/view";
 import { Link } from "@tanstack/react-router";
 import { History, Info, LifeBuoy, TriangleAlert } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -12,7 +13,7 @@ import { activePlanChangeOperationName } from "@/hosted/billing/subscription/pla
 import { pendingComputePlanSlug } from "@/hosted/billing/subscription/subscription-utils";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { useProductAccess } from "@/lib/product-access";
-import { computeDunningState, fallbackReasonSentence } from "./compute-dunning.logic";
+import { computeDunningState } from "./compute-dunning.logic";
 
 export function ComputeDunningBanner({
 	deployment,
@@ -57,18 +58,7 @@ export function ComputeDunningBanner({
 	if (!state) return null;
 
 	const destructive = state.tone === "destructive";
-	const bannerDescription = [
-		state.fallbackOccurredAt && state.fallbackPlanLabel && state.fallbackReason
-			? fallbackReasonSentence(
-					state.fallbackReason,
-					state.fallbackPlanLabel,
-					formatShortDate(state.fallbackOccurredAt),
-				)
-			: null,
-		state.description,
-	]
-		.filter(Boolean)
-		.join(" ");
+	const bannerDescription = computeDunningDescription(state);
 
 	const BannerIcon = state.tone === "neutral" ? Info : TriangleAlert;
 
@@ -77,23 +67,16 @@ export function ComputeDunningBanner({
 			data-hosted="true"
 			variant={destructive ? "destructive" : "default"}
 			className={
-				destructive
-					? undefined
-					: state.tone === "warning"
-						? "border-warning/30 bg-warning-muted"
-						: "border-info-muted bg-info-muted text-info-muted-foreground"
+				destructive ? undefined : state.tone === "warning" ? styles.warning : styles.neutral
 			}
 		>
 			<BannerIcon aria-hidden />
 			<AlertTitle>{state.title}</AlertTitle>
-			<AlertDescription className="flex flex-col items-start gap-3">
+			<AlertDescription className={styles.description}>
 				<span>{bannerDescription}</span>
 				{!showPrimaryAction || hostedAccess.isLoading ? null : !hostedAccess.canCreateCloudAgents &&
 					primaryAction?.kind === "start_new" ? (
-					<span className="text-xs text-muted-foreground">
-						Starting a new subscription is temporarily unavailable. This agent remains visible and
-						manageable.
-					</span>
+					<span className={styles.unavailable}>{computeDunningCopy.startUnavailable}</span>
 				) : primaryAction ? (
 					<ComputeSubscriptionActionList
 						actions={[primaryAction]}
@@ -101,7 +84,7 @@ export function ComputeDunningBanner({
 						onStartNew={{
 							kind: "link",
 							href: startNewHref,
-							label: "Start a new subscription",
+							label: computeDunningCopy.startNew,
 						}}
 						checkChangeHref={checkChangeHref}
 						startNewIcon="plus"
@@ -110,7 +93,7 @@ export function ComputeDunningBanner({
 				) : null}
 				{state.secondaryTarget === "transactions" ? (
 					<Button render={transactionsLink} nativeButton={false} size="sm" variant="outline">
-						<History data-icon="inline-start" /> View transactions
+						<History data-icon="inline-start" /> {computeDunningCopy.transactions}
 					</Button>
 				) : state.secondaryTarget === "support" ? (
 					<Button
@@ -119,7 +102,7 @@ export function ComputeDunningBanner({
 						size="sm"
 						variant="outline"
 					>
-						<LifeBuoy data-icon="inline-start" /> Contact support
+						<LifeBuoy data-icon="inline-start" /> {computeDunningCopy.support}
 					</Button>
 				) : null}
 			</AlertDescription>

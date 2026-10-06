@@ -1,4 +1,5 @@
 import type { Project } from "@clawdi/shared/api";
+import { agentOwnershipKindFromId } from "@clawdi/shared/client";
 import { agentLabelClasses, projectDetailClasses } from "@clawdi/shared/ui";
 import {
 	agentIdentity,
@@ -64,7 +65,12 @@ export function ManageProjectAgentsDialog({
 	useEffect(() => {
 		setSelected(new Set(open ? linkedAgents?.map((agent) => agent.id) : []));
 	}, [open, linkedAgents]);
-	const ordered = [...(allAgents.data ?? [])].sort(compareAgentEnvironments);
+	const ordered = (allAgents.data ?? [])
+		.filter((agent) => {
+			const kind = agentOwnershipKindFromId(agent.id, ownership.data ?? null);
+			return kind === "cloud" || kind === "connected";
+		})
+		.sort(compareAgentEnvironments);
 	const linked = new Set(linkedAgents?.map((agent) => agent.id));
 	const add = ordered
 		.filter((agent) => selected.has(agent.id) && !linked.has(agent.id))
@@ -75,6 +81,9 @@ export function ManageProjectAgentsDialog({
 	const disabled =
 		action.busy ||
 		allAgents.isFetching ||
+		ownership.isFetching ||
+		ownership.isPending ||
+		ownership.isError ||
 		!linkedAgents ||
 		Boolean(project.archived_at) ||
 		allAgents.isError ||
@@ -113,7 +122,9 @@ export function ManageProjectAgentsDialog({
 				</DialogHeader>
 				{linkedError ? (
 					<ApiErrorPanel error={linkedError} onRetry={onRetryLinked} />
-				) : allAgents.isPending || !linkedAgents ? (
+				) : ownership.isError ? (
+					<ApiErrorPanel error={ownership.error} onRetry={() => void ownership.refetch()} />
+				) : allAgents.isPending || ownership.isPending || !linkedAgents ? (
 					<Skeleton className={webView(projectDetailClasses.textarea)} />
 				) : allAgents.error ? (
 					<ApiErrorPanel

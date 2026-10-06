@@ -2,14 +2,14 @@
 
 import { addKeysDialogClasses } from "@clawdi/shared/ui";
 import {
+	ADD_KEYS_COPY,
+	addKeysActionCopy,
+	addKeysConflictCopy,
+	addKeysDetectedCopy,
+	addKeysReadyCopy,
+	addKeysSummaryCopy,
 	errorMessage,
-	vaultKeyFormCopy as formCopy,
 	identityFor,
-	vaultImportActionLabel,
-	vaultImportConflictHint,
-	vaultImportDetectedCount,
-	vaultImportMore,
-	vaultImportSummaryLabel,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Plus } from "lucide-react";
@@ -90,7 +90,7 @@ export function AddKeysDialog({
 	const vaultItems = useMemo(
 		() => [
 			...ownVaults.map((vault) => ({ value: vault.id, label: vault.name })),
-			{ value: NEW_VAULT, label: "Create vault…" },
+			{ value: NEW_VAULT, label: ADD_KEYS_COPY.create },
 		],
 		[ownVaults],
 	);
@@ -218,7 +218,7 @@ export function AddKeysDialog({
 
 	const trigger = children ?? (
 		<Button size="sm">
-			<Plus className={addKeysDialogClasses.icon} />
+			<Plus className={addKeysDialogClasses.iconSmall} />
 			Add keys
 		</Button>
 	);
@@ -241,25 +241,25 @@ export function AddKeysDialog({
 				<DialogHeader>
 					<DialogTitle>Add keys</DialogTitle>
 					<DialogDescription>
-						{formCopy.addDescriptionBefore}
-						<span className={addKeysDialogClasses.mono}>{formCopy.format}</span>
-						{formCopy.addDescriptionAfter}
+						{ADD_KEYS_COPY.pasteBefore}{" "}
+						<span className={addKeysDialogClasses.mono}>{ADD_KEYS_COPY.assignment}</span>{" "}
+						{ADD_KEYS_COPY.pasteAfter}
 					</DialogDescription>
 				</DialogHeader>
 				<div className={addKeysDialogClasses.body}>
 					<Textarea
 						value={text}
 						onChange={(e) => setText(e.target.value)}
-						placeholder={formCopy.placeholder}
+						placeholder={ADD_KEYS_COPY.placeholder}
 						rows={7}
 						autoFocus
 						spellCheck={false}
-						className={addKeysDialogClasses.textarea}
+						className={addKeysDialogClasses.paste}
 					/>
 					{!vaultSlug ? (
-						<div className={addKeysDialogClasses.destinationRow}>
+						<div className={addKeysDialogClasses.destinationGrid}>
 							<div className={addKeysDialogClasses.field}>
-								<Label htmlFor="add-keys-vault">Into vault</Label>
+								<Label htmlFor="add-keys-vault">{ADD_KEYS_COPY.into}</Label>
 								<Select
 									items={vaultItems}
 									value={effectiveChoice}
@@ -268,7 +268,7 @@ export function AddKeysDialog({
 									}}
 								>
 									<SelectTrigger id="add-keys-vault" className={addKeysDialogClasses.trigger}>
-										<SelectValue placeholder="Choose a vault…" />
+										<SelectValue placeholder={ADD_KEYS_COPY.choose} />
 									</SelectTrigger>
 									<SelectContent>
 										{ownVaults.map((v) => (
@@ -280,7 +280,7 @@ export function AddKeysDialog({
 											</SelectItem>
 										))}
 										<SelectItem value={NEW_VAULT}>
-											<Plus className={addKeysDialogClasses.icon} />
+											<Plus className={addKeysDialogClasses.iconSmall} />
 											Create vault…
 										</SelectItem>
 									</SelectContent>
@@ -291,14 +291,12 @@ export function AddKeysDialog({
 									<Input
 										value={newVaultName}
 										onChange={(e) => setNewVaultName(e.target.value)}
-										placeholder="Vault name…"
+										placeholder={ADD_KEYS_COPY.name}
 										aria-label="Vault name"
 										className={addKeysDialogClasses.newInput}
 									/>
 									{newVaultSlugTaken ? (
-										<p className={addKeysDialogClasses.newError}>
-											That vault already exists. Choose it from the list or use a different name.
-										</p>
+										<p className={addKeysDialogClasses.error}>{ADD_KEYS_COPY.taken}</p>
 									) : null}
 								</div>
 							) : null}
@@ -315,8 +313,8 @@ export function AddKeysDialog({
 					) : null}
 					{importPlan.parsed.errors.length > 0 ? (
 						<Alert variant="destructive">
-							<AlertCircle className={addKeysDialogClasses.alertIcon} />
-							<AlertTitle>Fix import text</AlertTitle>
+							<AlertCircle className={addKeysDialogClasses.icon} />
+							<AlertTitle>{ADD_KEYS_COPY.invalid}</AlertTitle>
 							<AlertDescription>
 								<ul className={addKeysDialogClasses.errors}>
 									{importPlan.parsed.errors.map((error, index) => (
@@ -336,7 +334,7 @@ export function AddKeysDialog({
 						/>
 					) : null}
 					{importPlan.conflicts.length > 0 && importPlan.parsed.errors.length === 0 ? (
-						<div className={addKeysDialogClasses.overwrite}>
+						<div className={addKeysDialogClasses.conflicts}>
 							<Checkbox
 								id="add-keys-update-existing"
 								checked={updateExisting}
@@ -344,14 +342,11 @@ export function AddKeysDialog({
 								className={addKeysDialogClasses.checkbox}
 							/>
 							<div className={addKeysDialogClasses.newField}>
-								<Label
-									htmlFor="add-keys-update-existing"
-									className={addKeysDialogClasses.overwriteLabel}
-								>
-									Overwrite existing keys
+								<Label htmlFor="add-keys-update-existing" className={addKeysDialogClasses.label}>
+									{ADD_KEYS_COPY.overwrite}
 								</Label>
-								<p className={addKeysDialogClasses.hint}>
-									{vaultImportConflictHint(importPlan.conflicts.length)}
+								<p className={addKeysDialogClasses.meta}>
+									{addKeysConflictCopy(importPlan.conflicts.length)}
 								</p>
 							</div>
 						</div>
@@ -359,16 +354,16 @@ export function AddKeysDialog({
 					{importPlan.preview.length > 0 && importPlan.parsed.errors.length === 0 ? (
 						<div className={addKeysDialogClasses.preview}>
 							<div className={addKeysDialogClasses.previewHeader}>
-								<p className={addKeysDialogClasses.previewLabel}>Preview</p>
+								<p className={addKeysDialogClasses.previewTitle}>{ADD_KEYS_COPY.preview}</p>
 								<div className={addKeysDialogClasses.badges}>
 									<Badge variant="secondary">
-										{vaultImportSummaryLabel("new", importPlan.summary.created)}
+										{addKeysSummaryCopy(importPlan.summary.created, "create")}
 									</Badge>
 									{importPlan.conflicts.length > 0 ? (
 										<Badge variant="outline">
 											{updateExisting
-												? vaultImportSummaryLabel("update", importPlan.summary.updated)
-												: vaultImportSummaryLabel("skip", importPlan.summary.skipped)}
+												? addKeysSummaryCopy(importPlan.summary.updated, "update")
+												: addKeysSummaryCopy(importPlan.summary.skipped, "skip")}
 										</Badge>
 									) : null}
 								</div>
@@ -379,7 +374,7 @@ export function AddKeysDialog({
 										key={`${entry.line ?? "json"}-${entry.key}`}
 										className={addKeysDialogClasses.previewRow}
 									>
-										<span className={addKeysDialogClasses.keyName} translate="no">
+										<span className={addKeysDialogClasses.key} translate="no">
 											{entry.key}
 										</span>
 										<KeyImportActionBadge action={entry.action} />
@@ -387,17 +382,17 @@ export function AddKeysDialog({
 								))}
 								{importPlan.preview.length > 10 ? (
 									<p className={addKeysDialogClasses.more}>
-										{vaultImportMore(importPlan.preview.length - 10)}
+										{addKeysReadyCopy(importPlan.preview.length - 10)}
 									</p>
 								) : null}
 							</div>
 						</div>
 					) : null}
-					<div className={addKeysDialogClasses.footerRow}>
+					<div className={addKeysDialogClasses.footer}>
 						<span className={addKeysDialogClasses.count}>
-							{vaultImportDetectedCount(count, importPlan.summary.skipped)}
+							{addKeysDetectedCopy(count, importPlan.summary.skipped)}
 						</span>
-						<DialogFooter className={addKeysDialogClasses.footer}>
+						<DialogFooter className={addKeysDialogClasses.footerActions}>
 							<Button type="button" variant="ghost" onClick={() => setOpen(false)}>
 								Cancel
 							</Button>
@@ -405,8 +400,12 @@ export function AddKeysDialog({
 								onClick={() => void save.execute().catch(() => undefined)}
 								disabled={!canSave || save.isPending}
 							>
-								{save.isPending ? <Spinner /> : <Check className={addKeysDialogClasses.icon} />}
-								{formCopy.save} {importableCount > 0 ? importableCount : ""}
+								{save.isPending ? (
+									<Spinner />
+								) : (
+									<Check className={addKeysDialogClasses.iconSmall} />
+								)}
+								Save {importableCount > 0 ? importableCount : ""}
 							</Button>
 						</DialogFooter>
 					</div>
@@ -428,7 +427,7 @@ function saveDisabledForNewVault(
 function KeyImportActionBadge({ action }: { action: "create" | "update" | "skip" }) {
 	return (
 		<Badge variant={action === "create" ? "secondary" : "outline"}>
-			{vaultImportActionLabel(action)}
+			{addKeysActionCopy(action)}
 		</Badge>
 	);
 }

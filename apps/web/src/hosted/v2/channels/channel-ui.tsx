@@ -1,5 +1,6 @@
 "use client";
 
+import { channelHealthTone } from "@clawdi/shared/view";
 import { Check, CircleAlert, CircleCheck, Copy, TriangleAlert } from "lucide-react";
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
@@ -28,10 +29,10 @@ export function ProviderChip({
 	);
 }
 
-const HEALTH_META: Record<string, { tone: StatusTone; icon: typeof CircleCheck }> = {
-	ok: { tone: "success", icon: CircleCheck },
-	warning: { tone: "warning", icon: TriangleAlert },
-	error: { tone: "destructive", icon: CircleAlert },
+const HEALTH_META: Record<string, { icon: typeof CircleCheck }> = {
+	ok: { icon: CircleCheck },
+	warning: { icon: TriangleAlert },
+	error: { icon: CircleAlert },
 };
 
 /** Health chip (ok / warning / error) from `GET /v1/channels/health`. */
@@ -47,7 +48,7 @@ export function HealthBadge({
 	const Icon = m.icon;
 	return (
 		<StatusBadge
-			status={m.tone}
+			status={channelHealthTone(health.health_status)}
 			className={className}
 			title={summary.detail}
 			aria-label={`${summary.label}. ${summary.detail}`}

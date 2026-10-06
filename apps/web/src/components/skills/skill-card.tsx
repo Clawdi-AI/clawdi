@@ -6,6 +6,7 @@ import {
 	agentSurfaceCopy,
 	identityFor,
 	relativeTime,
+	skillRemovalTitle,
 	skillSearchSupportingText,
 } from "@clawdi/shared/view";
 import { Sparkles, Trash2 } from "lucide-react";
@@ -92,7 +93,7 @@ export function SkillCard({
 				{canSend && cloudSkill ? <SendSkillDialog skill={cloudSkill} /> : null}
 				{canUninstall ? (
 					<ConfirmAction
-						title={`Remove ${skill.name} from Project?`}
+						title={skillRemovalTitle(skill.name)}
 						description={<SkillRemovalDescription />}
 						confirmLabel="Remove from project"
 						destructive

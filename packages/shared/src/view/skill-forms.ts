@@ -36,13 +36,7 @@ export function sendSkillTitle(name: string) {
 	return `Copy or move ${name}`;
 }
 
-export function skillRemovalDescription(projectName?: string | null) {
-	return `Every Agent using ${projectName || "this Project"} loses this Skill. Other Projects keep their copies.`;
-}
-
-export function skillRemovalTitle(name: string) {
-	return `Remove ${name} from Project?`;
-}
+export { skillRemovalDescription, skillRemovalTitle } from "./skill-transfer-dialog";
 
 export function skillDraftUnchanged(draft: SkillTextDraft, original: SkillTextDraft) {
 	return (

@@ -1,5 +1,10 @@
 "use client";
 
+import { globalWalletBalanceClasses as styles } from "@clawdi/shared/ui";
+import {
+	headerWalletBalanceApplicable,
+	headerWalletBalanceControlPresentation,
+} from "@clawdi/shared/view";
 import { useRouter } from "@tanstack/react-router";
 import { WalletCards } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,15 +13,7 @@ import { formatUsdExact } from "@/hosted/billing/format";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { useProductAccess } from "@/lib/product-access";
 
-export function headerWalletBalanceApplicable({
-	canCreateCloudAgents,
-	existingCloudDeploymentCount,
-}: {
-	canCreateCloudAgents: boolean;
-	existingCloudDeploymentCount: number | null;
-}): boolean {
-	return canCreateCloudAgents || (existingCloudDeploymentCount ?? 0) > 0;
-}
+export { headerWalletBalanceApplicable } from "@clawdi/shared/view";
 
 function HeaderWalletBalanceControl({
 	state,
@@ -27,13 +24,11 @@ function HeaderWalletBalanceControl({
 	formattedBalance?: string | null;
 	onOpenWallet?: () => void;
 }) {
-	const displayedBalance = state === "ready" ? formattedBalance : null;
-	const statusLabel = displayedBalance
-		? `Wallet balance ${displayedBalance}`
-		: state === "loading"
-			? "Wallet balance loading"
-			: "Wallet balance unavailable";
-	const label = onOpenWallet ? `${statusLabel}. Open Wallet settings` : statusLabel;
+	const { displayedBalance, label } = headerWalletBalanceControlPresentation(
+		state,
+		formattedBalance,
+		Boolean(onOpenWallet),
+	);
 
 	return (
 		<Button
@@ -45,15 +40,13 @@ function HeaderWalletBalanceControl({
 			variant="ghost"
 			size="sm"
 			data-testid="global-wallet-balance"
-			className="w-full min-w-0 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
+			className={styles.control}
 		>
-			<WalletCards className="size-4" />
+			<WalletCards className={styles.icon} />
 			{state === "loading" ? (
-				<Skeleton aria-hidden="true" className="h-3.5 w-12" />
+				<Skeleton aria-hidden="true" className={styles.skeleton} />
 			) : displayedBalance ? (
-				<span className="min-w-0 flex-1 truncate font-medium text-foreground tabular-nums">
-					{displayedBalance}
-				</span>
+				<span className={styles.balance}>{displayedBalance}</span>
 			) : null}
 		</Button>
 	);
