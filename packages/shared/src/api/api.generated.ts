@@ -14,7 +14,10 @@ export interface paths {
         /** List Api Keys */
         get: operations["list_api_keys_v1_auth_keys_get"];
         put?: never;
-        /** Create Api Key */
+        /**
+         * Create Api Key
+         * @deprecated
+         */
         post: operations["create_api_key_v1_auth_keys_post"];
         delete?: never;
         options?: never;
@@ -4993,20 +4996,6 @@ export interface components {
             /** Ref */
             ref: string;
         };
-        /** ApiKeyCreate */
-        ApiKeyCreate: {
-            /** Label */
-            label: string;
-            /** Environment Id */
-            environment_id?: string | null;
-            /** Scopes */
-            scopes: string[];
-            /**
-             * Expires In Days
-             * @enum {integer}
-             */
-            expires_in_days: 7 | 30 | 90;
-        };
         /**
          * ApiKeyCreated
          * @description Returned only on creation — includes the raw key (shown once).
@@ -5033,6 +5022,11 @@ export interface components {
             scopes: string[] | null;
             /** Raw Key */
             raw_key: string;
+        };
+        /** ApiKeyCreationRetiredResponse */
+        ApiKeyCreationRetiredResponse: {
+            /** Detail */
+            detail: string;
         };
         /** ApiKeyResponse */
         ApiKeyResponse: {
@@ -10871,28 +10865,15 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ApiKeyCreate"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiKeyCreated"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiKeyCreationRetiredResponse"];
                 };
             };
         };

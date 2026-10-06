@@ -1089,12 +1089,8 @@ async def require_oauth_cli_auth(auth: AuthContext = Depends(get_auth)) -> AuthC
 
 def is_scoped_api_key(auth: AuthContext) -> bool:
     """Any api_key with an explicit scope list is treated as
-    "narrow capability" and rejected from user-only routes. Today
-    that's just Agent API keys with narrow scopes, but the
-    check is on the scope list rather than `environment_id` so a
-    future scoped Personal key — minted with explicit scopes but
-    no env binding — slips into the same protective bucket
-    instead of inheriting Personal's wide-access bypass."""
+    "narrow capability" and rejected from user-only routes, whether
+    or not the internal issuer supplied an environment binding."""
     return auth.is_cli and auth.api_key is not None and auth.api_key.scopes is not None
 
 
@@ -1147,8 +1143,7 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     CLI, the dashboard).
 
     Legacy v1 Agent environment keys with `scopes=None` PASS this
-    gate by explicit policy. New personal keys carry explicit scopes
-    and are rejected here. Strict-v2 runtime
+    gate by explicit policy. Strict-v2 runtime
     deployment keys carry explicit scopes and are evaluated as scoped
     keys. The blast-radius boundary for Agent API keys is enforced
     inside the route's own `project_ids_visible_to` /

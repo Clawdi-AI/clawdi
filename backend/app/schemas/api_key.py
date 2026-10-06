@@ -1,25 +1,11 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
-
-from app.core.api_scopes import PERSONAL_KEY_SCOPES
+from pydantic import BaseModel
 
 
-class ApiKeyCreate(BaseModel):
-    label: str
-    # Optional Agent binding; mint_api_key enforces ownership. Bound and
-    # unbound personal keys both require explicit permissions and expiry.
-    environment_id: str | None = None
-    scopes: list[str] = Field(min_length=1)
-    expires_in_days: Literal[7, 30, 90]
-
-    @field_validator("scopes")
-    @classmethod
-    def validate_scopes(cls, scopes: list[str]) -> list[str]:
-        if any(scope not in PERSONAL_KEY_SCOPES for scope in scopes):
-            raise ValueError("scopes must be a subset of personal key permissions")
-        return list(dict.fromkeys(scopes))
+class ApiKeyCreationRetiredResponse(BaseModel):
+    detail: str
 
 
 class ApiKeyResponse(BaseModel):

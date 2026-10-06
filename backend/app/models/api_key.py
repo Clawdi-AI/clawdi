@@ -47,7 +47,7 @@ class ApiKey(Base, TimestampMixin):
     # API permission set this key is allowed to act under. Examples:
     # `["sessions:write", "skills:read", "skills:write"]` (deploy-key
     # for `clawdi daemon`). NULL means full account access for existing keys
-    # and legacy/admin issuance. New personal keys require explicit scopes;
+    # and internal admin issuance. Scoped keys have narrowed permissions;
     # interactive `clawdi auth login` uses OAuth.
     scopes: Mapped[list[str] | None] = mapped_column(ARRAY(String(64)))
 

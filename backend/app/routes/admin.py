@@ -6,19 +6,12 @@ deployments that pre-date live sync, account-deletion webhooks, fleet
 revocation). Disabled by default — `settings.admin_api_key` must be
 set to a strong secret to enable.
 
-**Trust model:** admin-minted keys carry the same authority as keys
-the user mints for themselves via `POST /v1/auth/keys` — full
-account access by default. The X-Admin-Key is therefore a root
-credential: a leak grants an attacker the ability to mint full-power
-keys for any user. Protect it like a database password (rotate on
-suspicion, restrict to SaaS backend egress IPs at the infra layer,
-audit log access).
-
-The product reasoning: a user's hosted pod is the user's agent
-running on our infrastructure — it must be able to do everything
-the user can do on their own laptop. Capping admin-minted keys
-below user-mint power would make hosted strictly weaker than
-self-managed (vault reads, memory reads, etc. would silently fail).
+**Trust model:** admin-minted keys have full account access by default.
+The X-Admin-Key is therefore a root credential: a leak grants an attacker
+the ability to mint full-power keys for any user. Protect it like a database
+password (rotate on suspicion, restrict to SaaS backend egress IPs at the
+infra layer, audit log access). Users cannot mint personal keys; admin and
+Hosted/platform issuance are internal workflows.
 
 Surface kept minimal: just the operations that batch tooling
 genuinely can't accomplish via per-user Clerk JWTs. Future admin

@@ -1,9 +1,8 @@
 """ApiKey minting service.
 
-Single source of truth for ApiKey creation. Dashboard personal keys require
-explicit scopes and expiry, including keys with an Agent binding. Admin and
-platform issuers apply their own policies; legacy admin callers can still
-mint full-access, non-expiring keys. Interactive CLI login uses OAuth.
+Single source of truth for internal ApiKey creation. Admin and platform
+issuers apply their own scope and expiry policies. Users cannot create
+personal keys; CLI login uses OAuth.
 """
 
 from __future__ import annotations
@@ -58,9 +57,7 @@ async def mint_api_key(
     """Create a new ApiKey row.
 
     `scopes=None` means full account access for legacy/admin issuance.
-    Dashboard callers must supply explicit scopes and an `expires_at`
-    computed from the selected lifetime. Omitting expiry preserves existing
-    admin/platform issuance behavior.
+    Omitting expiry preserves existing admin/platform issuance behavior.
 
     `environment_id` binds the key to a single AgentEnvironment.
     A leaked deploy-key from pod A then can't write into pod B's
