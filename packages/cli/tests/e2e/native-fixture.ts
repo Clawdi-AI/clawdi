@@ -31,6 +31,8 @@ export interface NativeInstallerInput {
 	exactVersion?: boolean;
 	shadowClawdi?: boolean;
 	artifactDelaySeconds?: number;
+	includePrefixInPath?: boolean;
+	env?: NodeJS.ProcessEnv;
 }
 
 export function configuredNativeBinary(): string | null {
@@ -206,7 +208,12 @@ esac
 		FAKE_VERSION: input.fixture.version,
 		HOME: input.home,
 		NO_COLOR: "1",
-		PATH: `${fakeBin}:${input.prefix}/bin:${process.env.PATH ?? ""}`,
+		CLAWDI_NO_MODIFY_PATH: "",
+		SHELL: "/bin/sh",
+		ZDOTDIR: "",
+		XDG_CONFIG_HOME: "",
+		...input.env,
+		PATH: `${fakeBin}:${input.includePrefixInPath === false ? "" : `${input.prefix}/bin:`}${input.env?.PATH ?? process.env.PATH ?? ""}`,
 		...(input.exactVersion === false ? {} : { CLAWDI_VERSION: input.fixture.version }),
 	};
 	return { curlLog, env, script: resolve(import.meta.dir, "../../../../install.sh") };
