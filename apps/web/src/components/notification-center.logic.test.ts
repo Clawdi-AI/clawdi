@@ -66,6 +66,19 @@ describe("notification center logic", () => {
 		expect(resolveNotificationUrl("javascript:alert(1)", "https://cloud.clawdi.ai")).toBeNull();
 	});
 
+	test("preserves the path, search, and hash of same-origin notification actions", () => {
+		const origin = "https://cloud.clawdi.ai";
+		const path = "/agents/11111111-1111-4111-8111-111111111111";
+		const href = `${path}?settings=billing-wallet#billing`;
+		for (const value of [href, `${origin}${href}`]) {
+			const target = resolveNotificationUrl(value, origin);
+			expect(target?.kind).toBe("same-origin");
+			expect(target?.url.pathname).toBe(path);
+			expect(target?.url.search).toBe("?settings=billing-wallet");
+			expect(target?.url.hash).toBe("#billing");
+		}
+	});
+
 	test("includes the accepted Project name with a fallback", () => {
 		const accepted = getAcceptedProjectInvitationToastCopy("Shared Workspace");
 		expect(accepted.title).toBe("Joined Shared Workspace");
