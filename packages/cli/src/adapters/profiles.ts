@@ -54,7 +54,10 @@ export interface ProfileDiscovery {
 	watchPaths?: string[];
 }
 
-export async function discoverHermesProfiles(signal?: AbortSignal): Promise<LocalAgentProfile[]> {
+async function discoverHermesInventory(signal?: AbortSignal): Promise<{
+	profiles: LocalAgentProfile[];
+	root: string;
+}> {
 	const userHome = process.env.HOME || homedir();
 	const appRoot = runtimeAppRoot("hermes", userHome);
 	if (!appRoot || !existsSync(appRoot)) throw new Error("Hermes application path is unavailable");
@@ -121,7 +124,11 @@ export async function discoverHermesProfiles(signal?: AbortSignal): Promise<Loca
 			home: getHermesHome(),
 			reader: new HermesAdapter(getHermesHome()).sessions,
 		});
-	return mapped;
+	return { profiles: mapped, root: upstreamDefault.home };
+}
+
+export async function discoverHermesProfiles(signal?: AbortSignal): Promise<LocalAgentProfile[]> {
+	return (await discoverHermesInventory(signal)).profiles;
 }
 
 export async function discoverAgentProfiles(
@@ -131,12 +138,11 @@ export async function discoverAgentProfiles(
 	try {
 		signal?.throwIfAborted();
 		if (adapter.agentType === "hermes") {
-			const profiles = await discoverHermesProfiles(signal);
-			const root = profiles.find((profile) => profile.upstreamKey === "default")?.home;
+			const { profiles, root } = await discoverHermesInventory(signal);
 			return {
 				complete: true,
 				profiles,
-				watchPaths: root ? [join(root, "profiles")] : profileDiscoveryWatchPaths(adapter),
+				watchPaths: [join(root, "profiles")],
 			};
 		}
 		if (adapter.agentType === "openclaw") {

@@ -273,7 +273,11 @@ export function createProfileSync(
 					if (mcpSeen.has(profile.profileKey) || failed.has(profile.profileKey)) continue;
 					mcpSeen.add(profile.profileKey);
 					try {
-						await reconcileLocalHermesMcp(true, profile.upstreamKey, context?.signal);
+						await reconcileLocalHermesMcp(
+							true,
+							profile.isDefault ? undefined : profile.upstreamKey,
+							context?.signal,
+						);
 					} catch {
 						context?.signal.throwIfAborted();
 						if (profile.isDefault) log.warn("profiles.mcp_failed", { profile_key: "" });

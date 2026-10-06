@@ -18,7 +18,7 @@ function localHermesConfigContext(profile?: string): HermesConfigCommandContext 
 		...(profile ? { profile } : {}),
 		home,
 		cwd: process.cwd(),
-		environment: { HERMES_HOME: getHermesHome() },
+		environment: { HERMES_HOME: getHermesHome(), HERMES_PROFILE: "", HERMES_PROFILE_NAME: "" },
 	};
 }
 
@@ -63,7 +63,11 @@ export async function reconcileAllLocalHermesMcp(enabled: boolean): Promise<bool
 	let changed = false;
 	for (const profile of profiles) {
 		try {
-			changed = (await reconcileLocalHermesMcp(enabled, profile.upstreamKey)) || changed;
+			changed =
+				(await reconcileLocalHermesMcp(
+					enabled,
+					profile.isDefault ? undefined : profile.upstreamKey,
+				)) || changed;
 		} catch (error) {
 			if (profile.isDefault) throw error;
 			log.warn("profiles.mcp_failed", { profile_key: profile.profileKey });

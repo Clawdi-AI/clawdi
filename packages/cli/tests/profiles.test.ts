@@ -804,6 +804,36 @@ test("a conflicting upstream root skips only the named default profile", async (
 	}
 });
 
+test("a conflicting upstream default never redirects MCP away from HERMES_HOME", async () => {
+	const selectedHome = join(home, ".hermes", "profiles", "detached");
+	mkdirSync(selectedHome);
+	cpSync(join(fixture, ".hermes", "state.db"), join(selectedHome, "state.db"));
+	process.env.HERMES_HOME = selectedHome;
+	const { command, args } = resolveCurrentCliInvocation(["mcp"]);
+	const client = api(async () => response([row(""), row("work")]));
+	const warn = spyOn(log, "warn");
+	try {
+		const sync = createProfileSync(new HermesAdapter(), client, "env");
+		await sync.refresh();
+		expect(sync.watchPaths()).toEqual([join(home, ".hermes", "profiles")]);
+		expect(
+			parse(readFileSync(join(selectedHome, "config.yaml"), "utf8")).mcp_servers.clawdi,
+		).toEqual({
+			command,
+			args,
+		});
+		expect(existsSync(join(home, ".hermes", "config.yaml"))).toBeFalse();
+		expect(await reconcileAllLocalHermesMcp(true)).toBeFalse();
+		expect(existsSync(join(home, ".hermes", "config.yaml"))).toBeFalse();
+		expect(warn.mock.calls).toEqual([
+			["profiles.default_conflict", { profile_key: "default" }],
+			["profiles.default_conflict", { profile_key: "default" }],
+		]);
+	} finally {
+		warn.mockRestore();
+	}
+});
+
 test("malformed named rename metadata does not discard other profiles", async () => {
 	writeFileSync(join(home, ".hermes", "profiles", "work", "profile.yaml"), '{"previous_names":42}');
 	const client = api(async () => response([row(""), row("work", "removed")]));
