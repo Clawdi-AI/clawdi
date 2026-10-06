@@ -48,7 +48,6 @@ from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRunt
 from app.models.memory import Memory
 from app.models.session import (
     AgentEnvironment,
-    AgentProfile,
     Session,
     SessionEventChunk,
     SessionSyncSuppression,
@@ -151,7 +150,7 @@ from app.services.session_content import (
 )
 from app.services.session_content_notifications import notify_session_content_changed
 from app.services.session_export import session_to_markdown
-from app.services.session_profile import profile_required
+from app.services.session_profile import require_session_match, resolve_profile_key
 from app.services.session_refs import extract_related_refs
 from app.services.session_search import (
     SearchableSessionMessage,
@@ -2400,36 +2399,35 @@ async def batch_create_sessions(
     ).all()
     profile_rejected: list[str] = []
     rejected_pairs: set[tuple[UUID | None, str]] = set()
+    resolved_profiles = dict.fromkeys(incoming_pairs, body.profile_key)
     for item in body.sessions:
-        if body.profile_key is not None:
-            if item.profile_key is not None and item.profile_key != body.profile_key:
-                raise HTTPException(422, "A batch must contain only one profile")
-            item.profile_key = body.profile_key
-        if item.profile_key is None:
-            keys = {
-                row.origin_profile_key
-                for row in existing_rows
-                if row.origin_environment_id == item.environment_id
-                and row.local_session_id == item.local_session_id
-            }
-            if not keys:
-                keys = {
+        pair = (item.environment_id, item.local_session_id)
+        try:
+            resolved_profiles[pair] = resolve_profile_key(
+                body.profile_key,
+                (
+                    row.origin_profile_key
+                    for row in existing_rows
+                    if row.origin_environment_id == item.environment_id
+                    and row.local_session_id == item.local_session_id
+                ),
+                (
                     row.origin_profile_key
                     for row in suppression_rows
                     if row.origin_environment_id == item.environment_id
                     and row.local_session_id == item.local_session_id
-                }
-            if len(keys) > 1:
-                profile_rejected.append(item.local_session_id)
-                rejected_pairs.add((item.environment_id, item.local_session_id))
-                continue
-            item.profile_key = next(iter(keys), "")
+                ),
+            )
+        except HTTPException:
+            profile_rejected.append(item.local_session_id)
+            rejected_pairs.add(pair)
+            continue
         # During expand the old unique constraint still owns upserts. Never
         # update a different profile through its user/Agent/local-id conflict.
         if any(
             row.origin_environment_id == item.environment_id
             and row.local_session_id == item.local_session_id
-            and row.origin_profile_key != item.profile_key
+            and row.origin_profile_key != resolved_profiles[pair]
             for row in existing_rows
         ):
             profile_rejected.append(item.local_session_id)
@@ -2455,14 +2453,22 @@ async def batch_create_sessions(
         dict.fromkeys(
             s.local_session_id
             for s in body.sessions
-            if is_suppressed(s.environment_id, s.profile_key, s.local_session_id)
+            if is_suppressed(
+                s.environment_id,
+                resolved_profiles[(s.environment_id, s.local_session_id)],
+                s.local_session_id,
+            )
         )
     )
     active_sessions = [
         s
         for s in body.sessions
         if (s.environment_id, s.local_session_id) not in rejected_pairs
-        and not is_suppressed(s.environment_id, s.profile_key, s.local_session_id)
+        and not is_suppressed(
+            s.environment_id,
+            resolved_profiles[(s.environment_id, s.local_session_id)],
+            s.local_session_id,
+        )
     ]
     active_existing_rows = [
         row
@@ -2474,7 +2480,8 @@ async def batch_create_sessions(
             row.origin_environment_id is None
             or any(
                 item.environment_id == row.origin_environment_id
-                and item.profile_key == row.origin_profile_key
+                and resolved_profiles[(item.environment_id, item.local_session_id)]
+                == row.origin_profile_key
                 and item.local_session_id == row.local_session_id
                 for item in active_sessions
             )
@@ -2517,7 +2524,7 @@ async def batch_create_sessions(
             "user_id": auth.user_id,
             "environment_id": s.environment_id,
             "origin_environment_id": s.environment_id,
-            "origin_profile_key": s.profile_key,
+            "origin_profile_key": resolved_profiles[(s.environment_id, s.local_session_id)],
             "local_session_id": s.local_session_id,
             "project_path": s.project_path,
             "started_at": s.started_at,
@@ -2559,7 +2566,11 @@ async def batch_create_sessions(
     # below) re-enqueues the upload. Hash unchanged → file_key kept,
     # so a no-op re-push doesn't churn the blob.
     event_pairs = [
-        (s.environment_id, s.profile_key, s.local_session_id)
+        (
+            s.environment_id,
+            resolved_profiles[(s.environment_id, s.local_session_id)],
+            s.local_session_id,
+        )
         for s in active_sessions
         if s.content_protocol == "events-v1"
     ]
@@ -2674,7 +2685,11 @@ async def batch_create_sessions(
     rejected: list[str] = list(profile_rejected)
     upserted_pairs = {(row[0], row[1], row[2]) for row in upserted_id_rows}
     for s in active_sessions:
-        pair = (s.environment_id, s.profile_key, s.local_session_id)
+        pair = (
+            s.environment_id,
+            resolved_profiles[(s.environment_id, s.local_session_id)],
+            s.local_session_id,
+        )
         if pair not in upserted_pairs:
             # Kept for response compatibility and defensive handling of a
             # future conditional upsert. The current origin-fenced upsert
@@ -3003,23 +3018,6 @@ async def list_sessions(
         total = result_rows[0].total
         rows = [row[:-1] for row in result_rows if row[0] is not None]
 
-    profile_pairs = {(row[0].origin_environment_id, row[0].origin_profile_key) for row in rows}
-    labels = (
-        {
-            (p.environment_id, p.profile_key): p.display_name or p.upstream_key
-            for p in (
-                await db.execute(
-                    select(AgentProfile).where(
-                        tuple_(AgentProfile.environment_id, AgentProfile.profile_key).in_(
-                            profile_pairs
-                        )
-                    )
-                )
-            ).scalars()
-        }
-        if profile_pairs
-        else {}
-    )
     items: list[SessionListItemResponse] = []
     for row in rows:
         search_match: SessionSearchMatchResponse | None = None
@@ -3055,7 +3053,6 @@ async def list_sessions(
                 machine_name=machine_name,
                 is_shared=bool(shared),
                 search_match=search_match,
-                profile_display_name=labels.get((s.origin_environment_id, s.origin_profile_key)),
             )
         )
 
@@ -3100,14 +3097,6 @@ async def get_session_detail(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
     session, agent_type, display_name, default_name, machine_name, is_shared = row
-    profile = (
-        await db.execute(
-            select(AgentProfile).where(
-                AgentProfile.environment_id == session.origin_environment_id,
-                AgentProfile.profile_key == session.origin_profile_key,
-            )
-        )
-    ).scalar_one_or_none()
     return SessionDetailResponse(
         **_session_to_response(
             session,
@@ -3116,9 +3105,6 @@ async def get_session_detail(
             agent_default_name=default_name,
             machine_name=machine_name,
             is_shared=bool(is_shared),
-            profile_display_name=(profile.display_name or profile.upstream_key)
-            if profile
-            else None,
         ).model_dump(),
         has_content=session_has_uploaded_content(session),
     )
@@ -3237,23 +3223,15 @@ async def upload_session_content(
         if profile_key is not None:
             stmt = stmt.where(Session.origin_profile_key == profile_key)
         sessions = list((await db.execute(stmt)).scalars())
-        if not sessions:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
-        if len(sessions) != 1:
-            if len({row.origin_environment_id for row in sessions}) == 1:
-                raise profile_required()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "session_origin_required",
-                    "message": (
-                        "More than one Agent owns this local_session_id; "
-                        "send environment_id in the upload form or use an "
-                        "environment-bound credential."
-                    ),
-                },
-            )
-        session = sessions[0]
+        session = require_session_match(
+            sessions,
+            profile_key,
+            origin_required_message=(
+                "More than one Agent owns this local_session_id; "
+                "send environment_id in the upload form or use an "
+                "environment-bound credential."
+            ),
+        )
         if session.origin_environment_id is not None:
             await require_connected_agent_fence(
                 db,
@@ -3263,23 +3241,15 @@ async def upload_session_content(
                 lock=True,
             )
         sessions = list((await db.execute(stmt.with_for_update())).scalars())
-        if not sessions:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
-        if len(sessions) != 1:
-            if len({row.origin_environment_id for row in sessions}) == 1:
-                raise profile_required()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "session_origin_required",
-                    "message": (
-                        "More than one Agent owns this local_session_id; "
-                        "send environment_id in the upload form or use an "
-                        "environment-bound credential."
-                    ),
-                },
-            )
-        session = sessions[0]
+        session = require_session_match(
+            sessions,
+            profile_key,
+            origin_required_message=(
+                "More than one Agent owns this local_session_id; "
+                "send environment_id in the upload form or use an "
+                "environment-bound credential."
+            ),
+        )
 
         if session.content_protocol == "events-v1":
             raise HTTPException(
@@ -3689,15 +3659,9 @@ async def extract_session_memories(
     if profile_key is not None:
         stmt = stmt.where(Session.origin_profile_key == profile_key)
     matches = list((await db.execute(stmt)).scalars())
-    if not matches:
-        raise HTTPException(404, "Session not found")
-    if len(matches) > 1:
-        if len({row.origin_environment_id for row in matches}) == 1:
-            raise profile_required()
-        raise HTTPException(
-            409, detail={"code": "session_origin_required", "message": "Send environment_id."}
-        )
-    session = matches[0]
+    session = require_session_match(
+        matches, profile_key, origin_required_message="Send environment_id."
+    )
     if session.origin_environment_id is not None:
         await require_connected_agent_fence(
             db,
@@ -4020,7 +3984,6 @@ def _session_to_response(
     machine_name: str | None = None,
     is_shared: bool = False,
     search_match: SessionSearchMatchResponse | None = None,
-    profile_display_name: str | None = None,
 ) -> SessionListItemResponse:
     agent_name = (
         agent_name_from_fields(agent_display_name, agent_default_name, machine_name, None)
@@ -4031,7 +3994,6 @@ def _session_to_response(
         id=str(s.id),
         local_session_id=s.local_session_id,
         profile_key=s.origin_profile_key,
-        profile_display_name=profile_display_name if s.origin_profile_key else agent_name,
         project_path=s.project_path,
         agent_name=agent_name,
         agent_display_name=agent_display_name,

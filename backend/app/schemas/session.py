@@ -86,7 +86,6 @@ class SessionCreate(BaseModel):
     # Typed as UUID so Pydantic returns a 422 on garbage input — without this
     # the route's `uuid.UUID(...)` raises and FastAPI surfaces a 500.
     environment_id: uuid.UUID
-    profile_key: ProfileKey | None = None
     local_session_id: SafeLocalSessionId
     project_path: str | None = None
     started_at: datetime
@@ -492,7 +491,6 @@ class SessionSearchNavigationResponse(BaseModel):
 
 class SessionListItemResponse(BaseModel):
     profile_key: str = ""
-    profile_display_name: str | None = None
     id: str
     local_session_id: str
     project_path: str | None

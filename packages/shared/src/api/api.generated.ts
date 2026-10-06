@@ -4073,29 +4073,18 @@ export interface components {
             id: string;
             /** Profile Key */
             profile_key: string;
-            /** Upstream Key */
-            upstream_key: string;
             /** Is Default */
             is_default: boolean;
-            /** Display Name */
-            display_name: string | null;
             /**
              * State
              * @enum {string}
              */
             state: "active" | "removed";
-            /** Online */
-            online: boolean;
             /**
              * First Seen At
              * Format: date-time
              */
             first_seen_at: string;
-            /**
-             * Last Seen At
-             * Format: date-time
-             */
-            last_seen_at: string;
             /** Removed At */
             removed_at: string | null;
             /** Session Count */
@@ -9156,8 +9145,6 @@ export interface components {
              * Format: uuid
              */
             environment_id: string;
-            /** Profile Key */
-            profile_key?: string | null;
             /** Local Session Id */
             local_session_id: string;
             /** Project Path */
@@ -9222,8 +9209,6 @@ export interface components {
              * @default
              */
             profile_key: string;
-            /** Profile Display Name */
-            profile_display_name?: string | null;
             /** Id */
             id: string;
             /** Local Session Id */
@@ -9500,8 +9485,6 @@ export interface components {
              * @default
              */
             profile_key: string;
-            /** Profile Display Name */
-            profile_display_name?: string | null;
             /** Id */
             id: string;
             /** Local Session Id */

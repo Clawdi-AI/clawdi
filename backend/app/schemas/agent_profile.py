@@ -35,13 +35,9 @@ class ProfileInventoryRequest(BaseModel):
 class AgentProfileResponse(BaseModel):
     id: uuid.UUID
     profile_key: str
-    upstream_key: str
     is_default: bool
-    display_name: str | None
     state: Literal["active", "removed"]
-    online: bool
     first_seen_at: datetime
-    last_seen_at: datetime
     removed_at: datetime | None
     session_count: int
 
