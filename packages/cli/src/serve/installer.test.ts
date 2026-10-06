@@ -17,6 +17,7 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -118,50 +119,64 @@ describe("installer.install (macOS plist)", () => {
 		}
 	});
 
-	it("captures daemon credentials, endpoint, and update ownership", async () => {
-		const os = await import("node:os");
-		if (os.platform() !== "darwin") return;
+	it.each(["https://example.test", undefined])(
+		"captures daemon credentials, endpoint, and update ownership with token origin %s",
+		async (origin) => {
+			const os = await import("node:os");
+			if (os.platform() !== "darwin") return;
 
-		// Stub launchctl as before.
-		const stubBin = join(process.env.HOME ?? tmp, "stub-bin");
-		const { mkdirSync, chmodSync } = await import("node:fs");
-		mkdirSync(stubBin, { recursive: true });
-		const stubLaunchctl = join(stubBin, "launchctl");
-		writeFileSync(stubLaunchctl, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-		chmodSync(stubLaunchctl, 0o755);
-		const oldPath = process.env.PATH;
-		process.env.PATH = `${stubBin}:${oldPath}`;
+			// Stub launchctl as before.
+			const stubBin = join(process.env.HOME ?? tmp, "stub-bin");
+			const { mkdirSync, chmodSync } = await import("node:fs");
+			mkdirSync(stubBin, { recursive: true });
+			const stubLaunchctl = join(stubBin, "launchctl");
+			writeFileSync(stubLaunchctl, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+			chmodSync(stubLaunchctl, 0o755);
+			const oldPath = process.env.PATH;
+			process.env.PATH = `${stubBin}:${oldPath}`;
 
-		const oldToken = process.env.CLAWDI_AUTH_TOKEN;
-		const oldApiUrl = process.env.CLAWDI_API_URL;
-		const oldNoAutoUpdate = process.env.CLAWDI_NO_AUTO_UPDATE;
-		process.env.CLAWDI_AUTH_TOKEN = "clawdi_test_capture_token_value";
-		process.env.CLAWDI_API_URL = "https://example.test/api";
-		process.env.CLAWDI_NO_AUTO_UPDATE = "1";
+			const oldToken = process.env.CLAWDI_AUTH_TOKEN;
+			const oldOrigin = process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+			const oldApiUrl = process.env.CLAWDI_API_URL;
+			const oldNoAutoUpdate = process.env.CLAWDI_NO_AUTO_UPDATE;
+			process.env.CLAWDI_AUTH_TOKEN = "clawdi_test_capture_token_value";
+			if (origin === undefined) delete process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+			else process.env.CLAWDI_AUTH_TOKEN_ORIGIN = origin;
+			process.env.CLAWDI_API_URL = "https://example.test/api";
+			process.env.CLAWDI_NO_AUTO_UPDATE = "1";
 
-		try {
-			const { install } = await import("./installer");
-			const result = install();
-			const content = readFileSync(result.unit, "utf-8");
-			// Both keys baked into the plist so the daemon spawned by
-			// launchd after reboot still sees them. Without this, env-
-			// only auth (`CLAWDI_AUTH_TOKEN=… clawdi daemon install`)
-			// silently lost the token after the next login.
-			expect(content).toContain("<key>CLAWDI_AUTH_TOKEN</key>");
-			expect(content).toContain("clawdi_test_capture_token_value");
-			expect(content).toContain("<key>CLAWDI_API_URL</key>");
-			expect(content).toContain("https://example.test/api");
-			expect(content).toContain("<key>CLAWDI_NO_AUTO_UPDATE</key>");
-		} finally {
-			process.env.PATH = oldPath;
-			if (oldToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
-			else process.env.CLAWDI_AUTH_TOKEN = oldToken;
-			if (oldApiUrl === undefined) delete process.env.CLAWDI_API_URL;
-			else process.env.CLAWDI_API_URL = oldApiUrl;
-			if (oldNoAutoUpdate === undefined) delete process.env.CLAWDI_NO_AUTO_UPDATE;
-			else process.env.CLAWDI_NO_AUTO_UPDATE = oldNoAutoUpdate;
-		}
-	});
+			try {
+				const { install } = await import("./installer");
+				const result = install();
+				const content = readFileSync(result.unit, "utf-8");
+				// Credentials and their origin binding must survive launchd's
+				// environment filtering after the next login.
+				expect(content).toContain("<key>CLAWDI_AUTH_TOKEN</key>");
+				expect(content).toContain("clawdi_test_capture_token_value");
+				if (origin === undefined) {
+					expect(content).not.toContain("<key>CLAWDI_AUTH_TOKEN_ORIGIN</key>");
+				} else {
+					expect(content).toContain(
+						`<key>CLAWDI_AUTH_TOKEN_ORIGIN</key>\n    <string>${origin}</string>`,
+					);
+				}
+				expect(content).toContain("<key>CLAWDI_API_URL</key>");
+				expect(content).toContain("https://example.test/api");
+				expect(content).toContain("<key>CLAWDI_NO_AUTO_UPDATE</key>");
+				expect(statSync(result.unit).mode & 0o777).toBe(0o600);
+			} finally {
+				process.env.PATH = oldPath;
+				if (oldToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+				else process.env.CLAWDI_AUTH_TOKEN = oldToken;
+				if (oldOrigin === undefined) delete process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+				else process.env.CLAWDI_AUTH_TOKEN_ORIGIN = oldOrigin;
+				if (oldApiUrl === undefined) delete process.env.CLAWDI_API_URL;
+				else process.env.CLAWDI_API_URL = oldApiUrl;
+				if (oldNoAutoUpdate === undefined) delete process.env.CLAWDI_NO_AUTO_UPDATE;
+				else process.env.CLAWDI_NO_AUTO_UPDATE = oldNoAutoUpdate;
+			}
+		},
+	);
 
 	it("does NOT capture process.env.CLAWDI_ENVIRONMENT_ID into the plist EnvironmentVariables", async () => {
 		// Round 30 P2 regression: a shell-set CLAWDI_ENVIRONMENT_ID
@@ -258,6 +273,53 @@ describe("installer.install (macOS plist)", () => {
 });
 
 describe("installer.install (Linux systemd)", () => {
+	it.each(["https://example.test", undefined])(
+		"captures daemon credentials and endpoint with token origin %s",
+		async (origin) => {
+			const os = await import("node:os");
+			if (os.platform() !== "linux") return;
+
+			const stubBin = join(process.env.HOME ?? tmp, "stub-bin");
+			mkdirSync(stubBin, { recursive: true });
+			const stubSystemctl = join(stubBin, "systemctl");
+			writeFileSync(stubSystemctl, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+			chmodSync(stubSystemctl, 0o755);
+			const oldPath = process.env.PATH;
+			const oldToken = process.env.CLAWDI_AUTH_TOKEN;
+			const oldOrigin = process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+			const oldApiUrl = process.env.CLAWDI_API_URL;
+			process.env.PATH = `${stubBin}:${oldPath}`;
+			process.env.CLAWDI_AUTH_TOKEN = "clawdi_test_capture_token_value";
+			if (origin === undefined) delete process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+			else process.env.CLAWDI_AUTH_TOKEN_ORIGIN = origin;
+			process.env.CLAWDI_API_URL = "https://example.test/api";
+
+			try {
+				const { install } = await import("./installer");
+				const result = install();
+				const content = readFileSync(result.unit, "utf-8");
+				expect(content).toContain(
+					'Environment="CLAWDI_AUTH_TOKEN=clawdi_test_capture_token_value"',
+				);
+				if (origin === undefined) {
+					expect(content).not.toContain("CLAWDI_AUTH_TOKEN_ORIGIN=");
+				} else {
+					expect(content).toContain(`Environment="CLAWDI_AUTH_TOKEN_ORIGIN=${origin}"`);
+				}
+				expect(content).toContain('Environment="CLAWDI_API_URL=https://example.test/api"');
+				expect(statSync(result.unit).mode & 0o777).toBe(0o600);
+			} finally {
+				process.env.PATH = oldPath;
+				if (oldToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+				else process.env.CLAWDI_AUTH_TOKEN = oldToken;
+				if (oldOrigin === undefined) delete process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+				else process.env.CLAWDI_AUTH_TOKEN_ORIGIN = oldOrigin;
+				if (oldApiUrl === undefined) delete process.env.CLAWDI_API_URL;
+				else process.env.CLAWDI_API_URL = oldApiUrl;
+			}
+		},
+	);
+
 	it("stops without removing the unit and restart cold-starts it", async () => {
 		const os = await import("node:os");
 		if (os.platform() !== "linux") return;

@@ -98,7 +98,7 @@ function daemonProgramArgs(opts: InstallOpts): string[] {
  * shell env and `~/.clawdi/auth.json` was never written.
  *
  * Whitelist deliberately narrow:
- *   - CLAWDI_AUTH_TOKEN / CLAWDI_API_URL: auth + endpoint
+ *   - CLAWDI_AUTH_TOKEN / CLAWDI_AUTH_TOKEN_ORIGIN / CLAWDI_API_URL: auth + endpoint
  *   - CLAWDI_STATE_DIR: state dir override
  *   - CLAWDI_NO_AUTO_UPDATE: keep an embedding application in charge of updates
  *   - CLAWDI_DAEMON_RPC_HOST / CLAWDI_DAEMON_RPC_PORT /
@@ -120,6 +120,7 @@ function daemonProgramArgs(opts: InstallOpts): string[] {
  */
 const PERSISTED_ENV_KEYS = [
 	"CLAWDI_AUTH_TOKEN",
+	"CLAWDI_AUTH_TOKEN_ORIGIN",
 	"CLAWDI_API_URL",
 	"CLAWDI_STATE_DIR",
 	"CLAWDI_NO_AUTO_UPDATE",
