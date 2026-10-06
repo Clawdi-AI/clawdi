@@ -23,6 +23,7 @@ import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
 import { fetchGithubSkillArchive, readBoundedResponseBytes } from "../lib/github-skill-archive";
 import { resolveProjectId } from "../lib/project-resolver";
+import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
 import {
@@ -484,10 +485,22 @@ export async function skillInstall(
 	);
 }
 
-export async function skillRm(key: string, opts: { agent?: string; project?: string } = {}) {
+export async function skillRm(
+	key: string,
+	opts: { agent?: string; project?: string; yes?: boolean } = {},
+) {
 	requireAuth();
 	const api = new ApiClient();
 	const target = await resolveSkillMutationTarget(api, opts);
+	if (
+		isInteractive() &&
+		!(await confirmOrRequireYes(`Remove skill ${sanitizeMetadata(key)}?`, {
+			yes: opts.yes,
+			action: "remove this skill",
+		}))
+	) {
+		return;
+	}
 	if (target.agentId && target.adapter) {
 		const materialization = readProjectSkillMaterialization({
 			agentType: target.adapter.agentType,

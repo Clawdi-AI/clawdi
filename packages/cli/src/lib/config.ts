@@ -41,7 +41,7 @@ export interface ClawdiConfig {
 export const CONFIG_KEYS = ["apiUrl", "deployApiUrl", "autoUpdate"] as const;
 export type ConfigKey = (typeof CONFIG_KEYS)[number];
 
-export type ConfigValue = string | boolean;
+export type ConfigValue = string | boolean | string[];
 export type ConfigValueSource =
 	| "CLAWDI_API_URL"
 	| "CLAWDI_DEPLOY_API_URL"

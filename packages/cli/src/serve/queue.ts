@@ -58,6 +58,7 @@ type SkillOperationBase = ItemBase & {
 
 type SessionOperationBase = ItemBase & {
 	kind: "session_push";
+	profile_key?: string;
 	local_session_id: string;
 	content_hash: string;
 	// Optional only for legacy queue.jsonl rows. New enqueue inputs require the
@@ -188,6 +189,7 @@ function isQueueItem(raw: unknown): raw is QueueItem {
 	}
 	if (r.kind === "session_push") {
 		if (typeof r.local_session_id !== "string") return false;
+		if (r.profile_key !== undefined && typeof r.profile_key !== "string") return false;
 		if (typeof r.content_hash !== "string") return false;
 		if (r.api_origin !== undefined && typeof r.api_origin !== "string") return false;
 		if (r.environment_id !== undefined && typeof r.environment_id !== "string") return false;
@@ -598,10 +600,13 @@ function sameKey(a: QueueItem, b: QueueItem): boolean {
 				a.api_origin === b.api_origin &&
 				a.environment_id === b.environment_id &&
 				a.adapter === b.adapter &&
-				a.source_session_key === b.source_session_key
+				a.source_session_key === b.source_session_key &&
+				(a.profile_key ?? "") === (b.profile_key ?? "")
 			);
 		}
-		return a.local_session_id === b.local_session_id;
+		return (
+			a.local_session_id === b.local_session_id && (a.profile_key ?? "") === (b.profile_key ?? "")
+		);
 	}
 	return false;
 }

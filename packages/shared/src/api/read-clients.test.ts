@@ -35,6 +35,7 @@ const agent: components["schemas"]["AgentResponse"] = {
 };
 
 const session: components["schemas"]["SessionDetailResponse"] = {
+	profile_key: "",
 	id: "session-a",
 	local_session_id: "local-a",
 	project_path: null,

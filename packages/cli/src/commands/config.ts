@@ -2,6 +2,7 @@ import chalk from "chalk";
 import {
 	CONFIG_KEYS,
 	type ConfigKey,
+	type ConfigValue,
 	getClawdiDir,
 	getConfig,
 	getEffectiveConfig,
@@ -18,6 +19,10 @@ function isKnownKey(k: string): k is ConfigKey {
 function unknownKey(k: string) {
 	console.error(chalk.red(`Unknown config key: ${k}`));
 	console.error(chalk.gray(`  Known keys: ${CONFIG_KEYS.join(", ")}`));
+}
+
+export function formatConfigValue(value: ConfigValue): string {
+	return Array.isArray(value) ? value.join(",") : String(value);
 }
 
 export function configList(opts: { json?: boolean } = {}) {
@@ -38,7 +43,9 @@ export function configList(opts: { json?: boolean } = {}) {
 
 	for (const key of CONFIG_KEYS) {
 		const entry = effective[key];
-		console.log(`  ${chalk.cyan(key)} = ${String(entry.value)} ${chalk.gray(`(${entry.source})`)}`);
+		console.log(
+			`  ${chalk.cyan(key)} = ${formatConfigValue(entry.value)} ${chalk.gray(`(${entry.source})`)}`,
+		);
 	}
 }
 
@@ -47,7 +54,7 @@ export function configGet(key: string) {
 		unknownKey(key);
 		process.exit(1);
 	}
-	console.log(getEffectiveConfig()[key].value);
+	console.log(formatConfigValue(getEffectiveConfig()[key].value));
 }
 
 export function configSet(key: string, value: string) {

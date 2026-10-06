@@ -36,6 +36,7 @@ from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.middleware.skill_upload_preflight import SkillUploadPreflightMiddleware
 from app.routes.admin import router as admin_router
 from app.routes.admin import whatsapp_pairing_router as admin_whatsapp_pairing_router
+from app.routes.agent_profiles import router as agent_profiles_router
 from app.routes.agent_project_bindings import router as agent_project_bindings_router
 from app.routes.agent_skills import router as agent_skills_router
 from app.routes.ai_providers import router as ai_providers_router
@@ -383,6 +384,7 @@ _VERSIONED_ROUTERS = (
     session_events_router,
     session_shares_router,
     sessions_router,
+    agent_profiles_router,
     public_sessions_router,
     dashboard_router,
     projects_router,
