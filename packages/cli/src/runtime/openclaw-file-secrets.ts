@@ -92,33 +92,45 @@ export function openClawFileSecretEnvironmentKeys(home: string): Set<string> {
 
 const MANAGED_CREDENTIAL_FILE = /^openclaw-[a-f0-9]{64}\.json$/;
 
+function managedCredentialReferences(path: string, directory: string): string[] {
+	const result = new Set<string>();
+	visitOpenClawConfigDocuments(path, (value) => {
+		if (
+			value.source === "file" &&
+			typeof value.path === "string" &&
+			value.path === join(directory, basename(value.path)) &&
+			MANAGED_CREDENTIAL_FILE.test(basename(value.path))
+		)
+			result.add(basename(value.path));
+	});
+	return [...result].sort();
+}
+
+/** Capture the old generation before installers or config writers can replace it. */
+export function openClawCredentialGeneration(home: string): string[] {
+	const directory = join(home, ".clawdi", "runtime-credentials");
+	if (!existsSync(directory)) return [];
+	return managedCredentialReferences(join(home, ".openclaw", "openclaw.json"), directory);
+}
+
 /** Post-apply GC keeps native rollback references and two successful generations. */
-export function gcOpenClawFileSecrets(home: string): void {
+export function gcOpenClawFileSecrets(
+	home: string,
+	previousGeneration: readonly string[] = [],
+): void {
 	const directory = join(home, ".clawdi", "runtime-credentials");
 	if (!existsSync(directory)) return;
 	const fd = openTrustedDirectory(directory);
 	const pinned = `/proc/self/fd/${fd}`;
 	try {
 		const configPath = join(home, ".openclaw", "openclaw.json");
-		const references = (path: string): string[] => {
-			const result = new Set<string>();
-			visitOpenClawConfigDocuments(path, (value) => {
-				if (
-					value.source === "file" &&
-					typeof value.path === "string" &&
-					value.path === join(directory, basename(value.path)) &&
-					MANAGED_CREDENTIAL_FILE.test(basename(value.path))
-				)
-					result.add(basename(value.path));
-			});
-			return [...result].sort();
-		};
-		const current = references(configPath);
+		const current = managedCredentialReferences(configPath, directory);
 		const keep = new Set(current);
 		// Upstream CONFIG_BACKUP_COUNT=5; .pre-update is outside that ring.
 		for (const suffix of [".bak", ".bak.1", ".bak.2", ".bak.3", ".bak.4", ".pre-update"]) {
 			const path = configPath + suffix;
-			if (existsSync(path)) for (const name of references(path)) keep.add(name);
+			if (existsSync(path))
+				for (const name of managedCredentialReferences(path, directory)) keep.add(name);
 		}
 		const files = readdirSync(pinned)
 			.filter((name) => MANAGED_CREDENTIAL_FILE.test(name))
@@ -126,9 +138,8 @@ export function gcOpenClawFileSecrets(home: string): void {
 				const stat = lstatSync(join(pinned, name));
 				if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.geteuid?.())
 					throw new Error("Managed OpenClaw credentials have unsafe file identity");
-				return { name, mtime: stat.mtimeMs };
-			})
-			.sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name));
+				return name;
+			});
 		const generationsPath = join(directory, "openclaw-generations.json");
 		let previous: string[];
 		if (existsSync(generationsPath)) {
@@ -162,8 +173,8 @@ export function gcOpenClawFileSecrets(home: string): void {
 					? (generations[1] ?? [])
 					: (generations[0] ?? []);
 		} else {
-			// Upgrade: retain two recent files until the first successful generation is recorded.
-			previous = files.slice(0, 2).map((file) => file.name);
+			// Upgrade: the pre-apply config, never intermediate or failed candidate files.
+			previous = [...previousGeneration];
 		}
 		for (const name of previous) keep.add(name);
 		assertDirectoryIdentity(directory, fd);
@@ -171,7 +182,7 @@ export function gcOpenClawFileSecrets(home: string): void {
 			directoryFd: fd,
 			mode: 0o600,
 		});
-		for (const { name } of files) {
+		for (const name of files) {
 			if (keep.has(name)) continue;
 			assertDirectoryIdentity(directory, fd);
 			unlinkSync(join(pinned, name));

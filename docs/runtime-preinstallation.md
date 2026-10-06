@@ -46,7 +46,8 @@ its fences; its service and protocol were removed. Complete health proofs gate C
 After successful convergence, credential GC keeps references from the current
 JSON5 config (including includes), all five native `.bak` snapshots and
 `.pre-update`, plus two successful credential generations. Failed candidates do
-not advance that history; repeated applies retain the same generations. Other
+not advance that history; repeated applies retain the same generations. Upgrades
+capture the pre-apply config before any candidate writes. Other
 managed files are deleted through a pinned directory. Unreadable configs or
 unsafe file identities defer cleanup. New files contain referenced credentials
 only, never the entire environment.

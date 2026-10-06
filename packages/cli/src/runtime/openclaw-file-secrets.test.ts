@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	gcOpenClawFileSecrets,
+	openClawCredentialGeneration,
 	openClawFileSecretEnvironmentKeys,
 	projectOpenClawProviderFileSecrets,
 } from "./openclaw-file-secrets";
@@ -186,4 +187,27 @@ test("unreadable config and unsafe credential links defer GC without following o
 	symlinkSync(orphan.path, link);
 	expect(() => gcOpenClawFileSecrets(home)).toThrow("unsafe file identity");
 	expect(existsSync(orphan.path)).toBe(true);
+});
+
+test("upgrade GC retains the pre-apply generation even when multiple candidates are newer", () => {
+	const home = credentialHome();
+	const configPath = join(home, ".openclaw", "openclaw.json");
+	const running = credentialGeneration(home, "running");
+	writeFileSync(configPath, running.config);
+	const before = openClawCredentialGeneration(home);
+	const candidates = ["failed", "provider-only", "provider-and-channel"].map((key) =>
+		credentialGeneration(home, key),
+	);
+	const current = credentialGeneration(home, "committed");
+	writeFileSync(configPath, current.config);
+	gcOpenClawFileSecrets(home, before);
+	expect(existsSync(running.path)).toBe(true);
+	expect(existsSync(current.path)).toBe(true);
+	for (const candidate of candidates) expect(existsSync(candidate.path)).toBe(false);
+	gcOpenClawFileSecrets(home, openClawCredentialGeneration(home));
+	expect(existsSync(running.path)).toBe(true);
+	const next = credentialGeneration(home, "next");
+	writeFileSync(configPath, next.config);
+	gcOpenClawFileSecrets(home, openClawCredentialGeneration(home));
+	expect(existsSync(running.path)).toBe(false);
 });

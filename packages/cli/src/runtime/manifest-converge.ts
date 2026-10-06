@@ -115,7 +115,7 @@ import type { RuntimeConvergenceResult } from "./manifest-shared";
 import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
 import { loadCommittedRuntimeManifest, type RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
-import { gcOpenClawFileSecrets } from "./openclaw-file-secrets";
+import { gcOpenClawFileSecrets, openClawCredentialGeneration } from "./openclaw-file-secrets";
 import { removeLegacyManagedOpenClawProviderPlugin } from "./openclaw-legacy-provider-plugin";
 import {
 	beginOpenClawConfigTransaction,
@@ -192,6 +192,7 @@ interface RuntimeConvergenceContext {
 }
 
 interface RuntimeConvergenceState {
+	previousOpenClawCredentialGeneration: string[] | null;
 	skillEvidence: HostedSkillEvidence[];
 	nativeCredentialChangedRuntimes: Set<string>;
 	nativeCredentialProviderIds: Record<string, string[]>;
@@ -327,6 +328,7 @@ function initializeRuntimeConvergence(
 	const preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills ?? new Map();
 	const sourcedSkillsPrepared = opts.resourcePreparationFailures?.sourcedSkills === undefined;
 	const state: RuntimeConvergenceState = {
+		previousOpenClawCredentialGeneration: null,
 		skillEvidence: [],
 		nativeCredentialChangedRuntimes: new Set(),
 		nativeCredentialProviderIds: {},
@@ -1453,10 +1455,14 @@ function commitRuntimeConvergence(
 		},
 		transfers: commitProviderTransfers(context.providerOwnership.transfers),
 	});
-	if (manifest.runtimes.openclaw?.enabled === true) {
+	if (
+		manifest.runtimes.openclaw?.enabled === true &&
+		state.previousOpenClawCredentialGeneration !== null
+	) {
+		const previousGeneration = state.previousOpenClawCredentialGeneration;
 		try {
 			withRuntimeUserFileAccess(
-				() => gcOpenClawFileSecrets(context.projectionHome),
+				() => gcOpenClawFileSecrets(context.projectionHome, previousGeneration),
 				context.hostedRuntimeContract.identity,
 			);
 		} catch {
@@ -1553,6 +1559,14 @@ export function convergeRuntimeManifest(
 		return runtimeApplyFailure(context, state, error);
 	}
 	if (context.manifest.runtimes.openclaw?.enabled === true) {
+		try {
+			state.previousOpenClawCredentialGeneration = withRuntimeUserFileAccess(
+				() => openClawCredentialGeneration(context.projectionHome),
+				context.hostedRuntimeContract.identity,
+			);
+		} catch {
+			console.warn("OpenClaw credential cleanup deferred: pre-apply config unavailable");
+		}
 		withRuntimeUserFileAccess(() => {
 			for (const path of [
 				join(context.projectionHome, ".openclaw"),
