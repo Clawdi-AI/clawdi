@@ -10,13 +10,14 @@ from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import delete, select
 
-from app.core.auth import AuthContext
+from app.core.auth import AuthContext, get_auth_short_session
 from app.models.api_key import ApiKey
 from app.models.distributed_state import SyncSubscriptionLease
 from app.models.session import Session
 from app.models.user import User
 from app.routes.session_content_events import _read_version, session_content_events
 from app.services import sync_events
+from app.services.metrics import registry
 from app.services.session_content_notifications import (
     notify_session_content_changed,
     session_content_changed,
@@ -70,6 +71,30 @@ async def make_session_key(db, user):
     db.add_all([session, key])
     await db.commit()
     return session, key, HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+
+async def test_content_revalidation_does_not_count_additional_requests(db_session, seed_user):
+    session, key, credentials = await make_session_key(db_session, seed_user)
+    labels = {"kind": "personal_api_key", "surface": "user"}
+    before = registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels) or 0
+    auth = await get_auth_short_session(credentials)
+    assert auth.user_id == seed_user.id
+    # The handshake and stream loop revalidate the same credential repeatedly.
+    for _ in range(3):
+        await _read_version(session.id, credentials, seed_user.id)
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+        == before + 1
+    )
+    key.revoked_at = datetime.now(UTC)
+    await db_session.commit()
+    with pytest.raises(HTTPException) as revoked:
+        await _read_version(session.id, credentials, seed_user.id)
+    assert revoked.value.status_code == 401
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+        == before + 1
+    )
 
 
 async def test_content_authority_and_readiness(db_session, seed_user, environment_project):

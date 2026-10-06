@@ -207,8 +207,11 @@ async def test_legacy_mcp_config_preserves_cli_response_for_both_aliases(monkeyp
 @pytest.mark.asyncio
 async def test_legacy_composio_bridge_rejects_missing_and_invalid_bearer_tokens(monkeypatch):
     from app.core.config import settings
+    from app.services.metrics import registry
 
     monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
+    labels = {"kind": "mcp_bridge_token", "surface": "mcp_bridge"}
+    before = registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels) or 0
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         missing = await ac.post("/v1/mcp/composio", json={"method": "tools/list"})
@@ -223,12 +226,17 @@ async def test_legacy_composio_bridge_rejects_missing_and_invalid_bearer_tokens(
     assert invalid.status_code == 401, invalid.text
     assert invalid.json() == {"detail": "Invalid token"}
 
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels) or 0
+    ) == before
+
 
 @pytest.mark.asyncio
 async def test_legacy_composio_bridge_rejects_unknown_methods_without_upstream_session(monkeypatch):
     from app.core.config import settings
     from app.routes import mcp_bridge
     from app.services.composio import create_mcp_bridge_token
+    from app.services.metrics import registry
 
     async def unexpected_session(_user_id: str):
         raise AssertionError("unsupported methods must not create an upstream session")
@@ -236,6 +244,8 @@ async def test_legacy_composio_bridge_rejects_unknown_methods_without_upstream_s
     monkeypatch.setattr(settings, "encryption_key", "test-encryption-key-at-least-32-bytes")
     monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", unexpected_session)
     token = create_mcp_bridge_token("clerk_user_123")
+    labels = {"kind": "mcp_bridge_token", "surface": "mcp_bridge"}
+    before = registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels) or 0
     transport = ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         responses = [
@@ -254,6 +264,11 @@ async def test_legacy_composio_bridge_rejects_unknown_methods_without_upstream_s
             "id": rpc_id,
             "error": {"code": -32601, "message": "Method not found"},
         }
+
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+        == before + 2
+    )
 
 
 @pytest.mark.asyncio

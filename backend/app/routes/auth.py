@@ -1,5 +1,4 @@
-from datetime import UTC
-from uuid import UUID
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -9,78 +8,31 @@ from app.core.auth import AuthContext, get_auth, require_web_auth
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.schemas.api_key import (
-    ApiKeyCreate,
-    ApiKeyCreated,
+    ApiKeyCreationRetiredResponse,
     ApiKeyResponse,
     ApiKeyRevokeResponse,
 )
 from app.schemas.problem import AccountSuspendedProblem
 from app.schemas.user import CurrentUserResponse
-from app.services.api_key import mint_api_key
 from app.services.sync_events import notify_sync_subscriptions_changed
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/keys", response_model=ApiKeyCreated)
-async def create_api_key(
-    body: ApiKeyCreate,
-    # Dashboard-only: a leaked deploy-key must not be able to mint a
-    # broader-permission or unbounded key for itself. Minting flows live
-    # behind a human-in-browser action (settings → API Keys, or the
-    # device-flow approval). Headless callers should use the
-    # device-flow / OAuth path, not call this endpoint directly.
-    #
-    # When `body.environment_id` is set, this also serves as the
-    # "mint a deploy key for a hosted-agent pod" path — the
-    # dashboard hands the resulting key to the external control
-    # plane, which bakes it into the pod's
-    # CLAWDI_AUTH_TOKEN env. No backend-to-backend call required;
-    # the user's browser is the only conduit and `mint_api_key`
-    # service-layer validates env ownership against `auth.user_id`.
-    #
-    # Permission policy: deploy keys default to FULL account access —
-    # same as a key the user mints for their own laptop. The hosted
-    # agent should be able to do whatever the user can do (vault,
-    # memories, settings — not just push sessions/skills). The
-    # `scopes` body field is still honoured if the caller wants to
-    # narrow API permissions on purpose; passing `null`/omitting it
-    # = no permission narrowing.
-    auth: AuthContext = Depends(require_web_auth),
-    db: AsyncSession = Depends(get_session),
-):
-    env_uuid: UUID | None = None
-    if body.environment_id:
-        try:
-            env_uuid = UUID(body.environment_id)
-        except (TypeError, ValueError) as e:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, "environment_id is not a valid UUID"
-            ) from e
-    try:
-        minted = await mint_api_key(
-            db,
-            user_id=auth.user_id,
-            label=body.label,
-            scopes=body.scopes,
-            environment_id=env_uuid,
-        )
-    except ValueError as e:
-        # `mint_api_key` raises ValueError for cross-tenant
-        # environment_id — surface as 403 so the dashboard's UI
-        # doesn't accidentally dump the user_id mismatch detail.
-        raise HTTPException(status.HTTP_403_FORBIDDEN, str(e)) from e
-    api_key = minted.api_key
-    return ApiKeyCreated(
-        id=str(api_key.id),
-        label=api_key.label,
-        key_prefix=api_key.key_prefix,
-        created_at=api_key.created_at,
-        last_used_at=api_key.last_used_at,
-        expires_at=api_key.expires_at,
-        revoked_at=api_key.revoked_at,
-        raw_key=minted.raw_key,
-    )
+_RETIRED_API_KEY_CREATION_DETAIL = (
+    "API keys can no longer be created. Run `clawdi auth login` "
+    "(use `--no-open` on a server). Existing keys keep working until revoked."
+)
+
+
+@router.post(
+    "/keys",
+    status_code=status.HTTP_410_GONE,
+    response_model=ApiKeyCreationRetiredResponse,
+    deprecated=True,
+)
+async def create_api_key() -> ApiKeyCreationRetiredResponse:
+    raise HTTPException(status.HTTP_410_GONE, _RETIRED_API_KEY_CREATION_DETAIL)
 
 
 @router.get("/keys", response_model=list[ApiKeyResponse])
@@ -88,7 +40,7 @@ async def list_api_keys(
     # Dashboard-only: a leaked deploy key would otherwise be able
     # to enumerate every other key issued for the account (id /
     # label / prefix / permission scopes / env binding). Mirrors the lockdown
-    # already applied to POST + DELETE.
+    # applied to DELETE.
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ):
@@ -111,6 +63,7 @@ async def list_api_keys(
             last_used_at=k.last_used_at,
             expires_at=k.expires_at,
             revoked_at=k.revoked_at,
+            scopes=k.scopes,
         )
         for k in keys
     ]
@@ -119,14 +72,12 @@ async def list_api_keys(
 @router.delete("/keys/{key_id}")
 async def revoke_api_key(
     key_id: str,
-    # Dashboard-only for the same reason as create: a leaked key
+    # Dashboard-only: a leaked key
     # otherwise could revoke its own parent / sibling keys to lock
     # the user out of the dashboard recovery flow.
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> ApiKeyRevokeResponse:
-    from datetime import datetime
-
     result = await db.execute(
         select(ApiKey).where(ApiKey.id == key_id, ApiKey.user_id == auth.user_id)
     )

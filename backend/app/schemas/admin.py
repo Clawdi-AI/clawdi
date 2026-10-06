@@ -170,11 +170,9 @@ class AdminApiKeyCreate(BaseModel):
     `environment_id` is optional — if set, the minted key is bound
     to that env (deploy-key semantics). If null, the key is unbound.
 
-    `scopes` is optional — same API-permission semantics as the user-facing
-    `ApiKeyCreate`: `None` means full account access (the default
-    for both user-self-mint and admin-mint). Pass an explicit list
-    to narrow the minted key for ops tooling that doesn't need
-    everything.
+    `scopes=None` retains full account access for admin tooling. Pass an
+    explicit list to narrow permissions. `expires_in_days` is optional;
+    omission preserves non-expiring issuance for legacy callers.
     """
 
     model_config = ConfigDict(extra="forbid")

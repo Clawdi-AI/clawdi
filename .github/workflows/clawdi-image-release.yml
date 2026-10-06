@@ -341,6 +341,7 @@ jobs:
         env:
           KAMAL_SECRETS: ${{ secrets.KAMAL_SECRETS }}
           CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: ${{ secrets.CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN }}
+          METRICS_BEARER_TOKEN: ${{ secrets.METRICS_BEARER_TOKEN }}
           TS_AUTHKEY: ${{ secrets.WHATSAPP_TAILSCALE_AUTHKEY }}
           WHATSAPP_TAILSCALE_EGRESS_ENABLED: ${{ vars.WHATSAPP_TAILSCALE_EGRESS_ENABLED }}
         run: |
@@ -350,12 +351,18 @@ jobs:
           esac
           test "${#CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN}" -ge 43
           test "${#CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN}" -le 128
+          test -n "$METRICS_BEARER_TOKEN"
+          case "$METRICS_BEARER_TOKEN" in
+            *[!A-Za-z0-9_-]*) exit 1 ;;
+          esac
+          test "${#METRICS_BEARER_TOKEN}" -ge 43
+          test "${#METRICS_BEARER_TOKEN}" -le 128
           install -d -m 700 .kamal
           printf '%s\n' "$KAMAL_SECRETS" > .kamal/secrets
           secrets_tmp="$(mktemp)"
           trap 'rm -f "$secrets_tmp"' EXIT
           awk '
-            !/^CLOUDFLARE_ORIGIN_CERT=/ && !/^CLOUDFLARE_ORIGIN_KEY=/ { print }
+            !/^CLOUDFLARE_ORIGIN_CERT=/ && !/^CLOUDFLARE_ORIGIN_KEY=/ && !/^METRICS_BEARER_TOKEN=/ { print }
             END {
               print "CLOUDFLARE_ORIGIN_CERT=$CLOUDFLARE_ORIGIN_CERT"
               print "CLOUDFLARE_ORIGIN_KEY=$CLOUDFLARE_ORIGIN_KEY"
@@ -364,6 +371,7 @@ jobs:
           mv "$secrets_tmp" .kamal/secrets
           printf 'CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN=%s\n' \
             "$CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN" >> .kamal/secrets
+          printf 'METRICS_BEARER_TOKEN=%s\n' "$METRICS_BEARER_TOKEN" >> .kamal/secrets
           if [ "$WHATSAPP_TAILSCALE_EGRESS_ENABLED" = true ]; then
             case "$TS_AUTHKEY" in
               *[!A-Za-z0-9_-]*|"")

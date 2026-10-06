@@ -17,8 +17,8 @@ from starlette.types import Message, Send
 
 from app.core.auth import (
     AuthContext,
+    authenticate_credentials,
     bearer_scheme,
-    get_auth,
     require_auth_scopes,
     require_scope_short_session,
 )
@@ -58,7 +58,7 @@ async def _read_version(
     async with async_session_factory() as db:
         # Re-resolve the actual principal, scopes, key expiry/revocation and
         # user authority, rather than trusting the handshake's ORM objects.
-        auth = await get_auth(credentials, db)
+        auth = await authenticate_credentials(credentials, db)
         require_auth_scopes(auth, "sessions:read")
         stmt = select(Session).where(Session.id == session_id, Session.user_id == user_id)
         if auth.user_id != user_id:

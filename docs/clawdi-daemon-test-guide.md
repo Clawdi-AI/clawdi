@@ -336,10 +336,10 @@ default path in new documentation.
 ## Running `clawdi daemon` inside a managed runtime
 
 The daemon was designed for laptops but also works inside a managed runtime
-with three caveats. First-party hosted control planes can drive the dashboard's
-`POST /v1/auth/keys` flow on the user's behalf to mint a deploy key bound to
-the Agent, then inject that key into the runtime environment. No
-backend-to-backend secret is required; the user's Clerk JWT is the conduit.
+with three caveats. First-party hosted control planes issue Agent-bound keys
+through internal admin/platform contracts, then inject them into the runtime
+environment. Personal `POST /v1/auth/keys` is retired and returns 410; user
+login uses `clawdi auth login` (or `--no-open` on a server).
 
 ### Env vars the runtime must set
 

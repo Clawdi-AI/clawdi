@@ -6,19 +6,12 @@ deployments that pre-date live sync, account-deletion webhooks, fleet
 revocation). Disabled by default — `settings.admin_api_key` must be
 set to a strong secret to enable.
 
-**Trust model:** admin-minted keys carry the same authority as keys
-the user mints for themselves via `POST /v1/auth/keys` — full
-account access by default. The X-Admin-Key is therefore a root
-credential: a leak grants an attacker the ability to mint full-power
-keys for any user. Protect it like a database password (rotate on
-suspicion, restrict to SaaS backend egress IPs at the infra layer,
-audit log access).
-
-The product reasoning: a user's hosted pod is the user's agent
-running on our infrastructure — it must be able to do everything
-the user can do on their own laptop. Capping admin-minted keys
-below user-mint power would make hosted strictly weaker than
-self-managed (vault reads, memory reads, etc. would silently fail).
+**Trust model:** admin-minted keys have full account access by default.
+The X-Admin-Key is therefore a root credential: a leak grants an attacker
+the ability to mint full-power keys for any user. Protect it like a database
+password (rotate on suspicion, restrict to SaaS backend egress IPs at the
+infra layer, audit log access). Users cannot mint personal keys; admin and
+Hosted/platform issuance are internal workflows.
 
 Surface kept minimal: just the operations that batch tooling
 genuinely can't accomplish via per-user Clerk JWTs. Future admin
@@ -941,11 +934,8 @@ async def admin_mint_api_key(
                 status.HTTP_400_BAD_REQUEST, "environment_id is not a valid UUID"
             ) from e
 
-    # `scopes=None` is full API permission access — same default as
-    # user-self-mint via `POST /v1/auth/keys`. Callers may pass a
-    # narrower permission list to lock the minted key down (e.g. ops
-    # tooling that only needs to push sessions); the route doesn't
-    # impose a ceiling.
+    # Admin issuance retains full access and no expiry when omitted.
+    # Callers can explicitly narrow permissions and set a bounded lifetime.
     try:
         minted = await mint_api_key(
             db,
@@ -1013,6 +1003,7 @@ async def admin_mint_api_key(
         last_used_at=api_key.last_used_at,
         expires_at=api_key.expires_at,
         revoked_at=api_key.revoked_at,
+        scopes=api_key.scopes,
         raw_key=minted.raw_key,
     )
 

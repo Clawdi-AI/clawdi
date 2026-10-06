@@ -374,6 +374,80 @@ Conventions:
   `Operations(MigrationContext.configure(...))`, and isolate scratch tables in a
   temporary schema.
 
+## API key issuance
+
+Users cannot create personal API keys. `POST /v1/auth/keys` and its
+`/api/auth/keys` alias always return 410, with no request-body validation or
+key issuance:
+
+```json
+{"detail":"API keys can no longer be created. Run `clawdi auth login` (use `--no-open` on a server). Existing keys keep working until revoked."}
+```
+
+CLI login uses Clerk OAuth Device Authorization Grant, including on servers
+with `clawdi auth login --no-open`. `--manual` only pastes an existing key.
+Settings → API Keys lists and revokes existing keys; it has no creation UI.
+Existing keys retain their permissions and expiry behavior.
+
+Dashboard-authenticated `GET /v1/auth/keys` returns an array of metadata:
+`id`, `label`, `key_prefix`, `created_at`, nullable `last_used_at`, `expires_at`,
+`revoked_at`, and nullable `scopes`. It never returns `raw_key` or `key_hash`.
+`scopes: null` means full access for a legacy/internal key. Managed keys and
+revoked keys are hidden. `DELETE /v1/auth/keys/{key_id}` returns
+`{"status":"revoked"}`; it soft-revokes owned, unmanaged keys. List and revoke
+retain their `/api` aliases and dashboard authentication gate.
+
+Internal issuers use the admin route or the Hosted/platform contracts.
+`POST /v1/admin/auth/keys` permits optional `expires_in_days` from 1 through 365;
+omitted expiry/scopes retain non-expiring/full-access issuance, and audit
+details include `has_expiry`. Internal creation returns `ApiKeyCreated`, the
+same metadata as the list plus `raw_key` (once only).
+
+Legacy CLI `POST /v1/cli/auth/device` and dashboard-authenticated
+`POST /v1/cli/auth/approve` return 410 with
+`{"detail":"This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`."}`.
+Their `/api` aliases do the same. They create no keys or new authorizations.
+Existing `/poll`, `/lookup`, `/deny`, and `/oauth/*` behavior is preserved.
+See [API compatibility](api-compatibility.md#personal-key-issuance-exception).
+
+Done: `scripts/test.sh backend tests/test_auth_keys.py tests/test_cli_auth_device_flow.py tests/test_admin_endpoints.py`
+exits 0 against the runner's throwaway database.
+
+## Credential-kind request metrics
+
+`clawdi_backend_authenticated_requests_total` counts successful authentications
+once at the auth dependency boundary, including requests subsequently rejected
+by route authorization. Invalid/expired credentials are not counted. Its only
+labels are `kind` and `surface`; they never contain keys, IDs, or user data.
+
+- `kind`: `personal_api_key`, `env_api_key`, `managed_legacy_key`, `runtime_key`,
+  `clerk_oauth_cli`, `clerk_session`, `dev_bypass`, `mcp_bridge_token`,
+  `platform_workload`, `admin_key`.
+- `surface`: `user`, `mcp_bridge`, `admin`, `platform`, `v2_runtime`.
+
+Admin compatibility fallback is counted on its platform/runtime surface rather
+than as an admin-route request. OAuth token exchange and capability/share links
+are excluded. The existing Prometheus multiprocess registry aggregates workers.
+Counters reset with the multiprocess directory on deployment; compare readings
+from the same running instance for deltas.
+
+Session content SSE revalidation does not increment this request counter;
+the initial auth dependency records the request once. Counter failures are
+logged without rejecting authentication.
+
+Set `METRICS_BEARER_TOKEN` in deployment configuration before exposing these
+counts, and update any scrapers to send the token. The existing auth code rejects
+missing/incorrect tokens with 401 when configured. To inspect a local backend
+whose token is already available in the shell:
+
+```bash
+curl -fsS -H "Authorization: Bearer ${METRICS_BEARER_TOKEN}" http://localhost:8000/metrics \
+  | rg '^clawdi_backend_authenticated_requests_total'
+```
+
+Done: `scripts/test.sh backend tests/test_metrics.py` verifies bearer protection,
+fixed labels, and aggregation across processes.
+
 ## Generated API client
 
 `packages/shared/src/api/api.generated.ts` is generated from FastAPI OpenAPI.
@@ -710,7 +784,7 @@ Protocol references:
 The channels-worker role is non-proxied. Port 8000 is the worker process-local
 health/metrics listener, not an externally routed API endpoint. When running
 that process directly, or from inside its container/network namespace,
-`curl -fsS http://127.0.0.1:8000/metrics | rg 'msg_router_channel_(queue|retention)'`
+`curl -fsS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://127.0.0.1:8000/metrics | rg 'msg_router_channel_(queue|retention)'`
 prints the queue and retention metric families.
 
 ## SSE cancellation ownership
