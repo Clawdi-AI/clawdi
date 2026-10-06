@@ -767,17 +767,21 @@ API; it never fetches a pasted hostname.
 Optional `EXPO_PUBLIC_CLAWDI_LINK_HOSTS` is a comma-separated list of owned DNS
 hostnames, without schemes, ports, wildcards or paths. Build and runtime use the
 same validator. Expo config adds iOS `applinks` associations and Android verified
-HTTPS filters for `/s/` and `/vault-request`, preserving existing associations.
-No configured hosts means no new HTTPS associations. For an isolated config check:
+HTTPS filters for the paths in `apps/mobile/config/linking.cjs`, preserving
+existing associations. No configured hosts means no new HTTPS associations.
+For an isolated config check:
 
 ```bash
 EXPO_PUBLIC_CLAWDI_LINK_HOSTS=links.example.test bunx expo config --type public
 ```
 
-Done: the generated config includes `applinks:links.example.test` and the two
-Android paths. This does not establish OS verification: the owner must supply
-native application/signing identifiers and publish matching website AASA and
-assetlinks files, then verify delivery on signed iOS/Android builds.
+Done: the generated config includes `applinks:links.example.test` and matching
+Android paths. Web serves AASA and assetlinks from `/.well-known/`, with AASA
+components using the same path source. Configure the Web server's public
+`CLAWDI_APPLE_TEAM_ID` and `CLAWDI_ANDROID_CERT_SHA256` as described in the
+[Web README](../apps/web/README.md#mobile-app-links); each endpoint returns 404
+until its signing identity is valid. OS verification still requires published
+association files and signed iOS/Android builds.
 
 Allowed HTTPS Vault request links stay in a single-use, 60-second memory inbox;
 Router receives only a random intake reference, never the capability token.

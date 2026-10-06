@@ -16,7 +16,7 @@ function readLinkHosts(value) {
 
 module.exports = { readLinkHosts };
 
-// Android associations use the same Web URL roots as native intake.
+// Shared by Android intent filters and Web's AASA components. Keep URL paths here.
 const webLinkPaths = [
 	{ path: "/" },
 	...[

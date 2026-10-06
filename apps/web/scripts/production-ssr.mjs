@@ -7,7 +7,9 @@ import { AGENT_FILES } from "../src/lib/agent-files.ts";
 // Exercise the deployed bundle graph with real Clerk middleware and providers.
 // These syntactically valid fixture keys do not belong to a Clerk tenant.
 for (const key of Object.keys(process.env)) {
-	if (/^(VITE_|CLERK_|SENTRY_|VERCEL(?:_|$))/.test(key)) delete process.env[key];
+	if (/^(VITE_|CLERK_|SENTRY_|VERCEL(?:_|$)|CLAWDI_APPLE_|CLAWDI_ANDROID_CERT_)/.test(key)) {
+		delete process.env[key];
+	}
 }
 Object.assign(process.env, {
 	NODE_ENV: "production",
@@ -63,6 +65,42 @@ function authenticatedRequest(path) {
 	const authenticated = request(path);
 	authenticated.headers.set("authorization", `Bearer ${token}`);
 	return authenticated;
+}
+
+for (const [path, envKey, value] of [
+	["/.well-known/apple-app-site-association", "CLAWDI_APPLE_TEAM_ID", "ABCDE12345"],
+	["/.well-known/assetlinks.json", "CLAWDI_ANDROID_CERT_SHA256", Array(32).fill("AB").join(":")],
+]) {
+	for (const method of ["GET", "HEAD"]) {
+		for (const configured of [false, true]) {
+			test(`production ${method} ${path} bypasses auth (${configured ? "configured" : "unset"})`, async () => {
+				try {
+					if (configured) process.env[envKey] = value;
+					else delete process.env[envKey];
+					const input = new Request(request(path), { method });
+					// A stale credential must not start Clerk's authentication/handshake flow.
+					input.headers.set("authorization", "Bearer expired-session");
+					input.headers.set("cookie", "__session=expired-session");
+					const response = await server.fetch(input);
+					assert.equal(response.status, configured ? 200 : 404);
+					assert.equal(response.headers.get("location"), null);
+					assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+					assert.equal(response.headers.get("content-security-policy"), null);
+					assert.equal(response.headers.get("set-cookie"), null);
+					assert.equal(response.headers.get("x-clerk-auth-status"), null);
+					assert.equal(
+						response.headers.get("cache-control"),
+						configured ? "public, max-age=300" : "no-store",
+					);
+					if (configured && method === "GET") {
+						assert.match(await response.text(), /ai\.clawdi\.app/);
+					} else assert.equal(await response.text(), "");
+				} finally {
+					delete process.env[envKey];
+				}
+			});
+		}
+	}
 }
 
 test("production documents use fresh CSP nonces on every executable script", async () => {
