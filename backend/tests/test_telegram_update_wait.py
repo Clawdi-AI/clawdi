@@ -16,12 +16,12 @@ from app.services.channel_wakeups import (
     ChannelWakeup,
     wait_for_channel_inbound_messages,
 )
-from tests.test_channel_inbox import _add_message, _create_account_and_binding
-from tests.test_channels import (
+from tests.channel_helpers import (
     _create_paired_telegram_channel,
     _telegram_agent_headers,
     _telegram_bot_path,
 )
+from tests.test_channel_inbox import _add_message, _create_account_and_binding
 
 pytestmark = pytest.mark.committed_db
 

@@ -15,7 +15,7 @@ from app.models.channel import ChannelBinding, ChannelMessage
 from app.models.hosted_runtime import HostedRuntimeState
 from app.services import channel_webhook_delivery_worker as worker_module
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
-from tests.test_channels import (
+from tests.channel_helpers import (
     _create_paired_telegram_channel,
     _pair_telegram_chat,
     _telegram_agent_headers,
