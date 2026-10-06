@@ -140,15 +140,15 @@ function Catalog() {
 			? connectedNames.map((name, i) => {
 					const app = metadata[i]?.data ?? apps.find((app) => app.name === name);
 					return app ? (
-						<ConnectorCard key={name} app={app} isConnected />
+						<ConnectorCard key={`connected-${name}`} app={app} isConnected />
 					) : metadata[i]?.error ? (
 						<ApiErrorPanel
-							key={name}
+							key={`connected-error-${name}`}
 							error={metadata[i]?.error}
 							onRetry={() => void metadata[i]?.refetch()}
 						/>
 					) : (
-						<EntityCardSkeleton key={name} />
+						<EntityCardSkeleton key={`connected-loading-${name}`} />
 					);
 				})
 			: [];
@@ -171,7 +171,7 @@ function Catalog() {
 		</SectionLabel>,
 		...apps.map((app) => (
 			<ConnectorCard
-				key={app.name}
+				key={`catalog-${app.name}`}
 				app={app}
 				isConnected={connectedNames.includes(app.name)}
 				searchQuery={search}
@@ -427,7 +427,7 @@ function Detail({ name, form }: { name?: string; form: boolean }) {
 			</SheetPage>
 		);
 	const cells = [
-		...appAccounts.map((c) => <Account key={c.id} connection={c} />),
+		...appAccounts.map((c) => <Account key={`account-${c.id}`} connection={c} />),
 		<WebView recipe={connectorDetailClasses.toolList} key="tools-heading">
 			<DashboardSection>
 				<DashboardSectionHeader
@@ -447,7 +447,7 @@ function Detail({ name, form }: { name?: string; form: boolean }) {
 		</WebView>,
 		...filteredTools.map((tool, index) => (
 			<WebView
-				key={tool.name}
+				key={`tool-${tool.name}`}
 				recipe={`${connectorDetailClasses.toolRow} ${index ? "border-t" : ""}`}
 			>
 				<WebView recipe={connectorDetailClasses.toolBody}>

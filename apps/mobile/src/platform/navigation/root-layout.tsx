@@ -40,8 +40,10 @@ function Navigation() {
 }
 
 export default function RootLayout() {
-	const fontsReady = useAppFonts();
-	if (!fontsReady) return null;
+	// Font loading is best effort; the hook registers Geist when available while
+	// the system-font fallback keeps navigation usable if Metro cannot serve an
+	// asset. Do not gate the entire app on this optional resource.
+	useAppFonts();
 	const runtime = loadMobileRuntimeConfig();
 	const app = runtime.ok ? (
 		<MobileProviders config={runtime.value}>
