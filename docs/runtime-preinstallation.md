@@ -78,7 +78,8 @@ Each opted-in node applies the target within its declared remaining capacity;
 smaller targets preserve claims and in-flight fills.
 
 Enable only after releasing the paired CLI, reviewing artifacts/keys and opting
-in static node capability (architecture, fill concurrency, enabled). Then enable
+in static node capability (architecture, fill concurrency, enabled). Approved CLI
+specs must match the existing global `agent_v2_cli_package_spec` selector. Then enable
 small policy targets. Three consecutive node/runtime/shape fill failures emit
 `warm_pool_fill_failure`; ready-capacity absence past the configured interval
 emits `warm_pool_empty`; stuck resources, repeated teardown failures or removed
@@ -199,8 +200,21 @@ proves tenant-free pre-claim state, authenticated adoption and cleanup.
 
 ## Astra follow-up qualification
 
-The prior results above describe pre-follow-up source. Current CLI source
-`f2122dc89` is rebased onto main `109a66954`. Docker verification passed:
+The prior results above describe pre-follow-up source. Full Docker and native
+qualification tested CLI source `f2122dc89`, based on main `109a66954`. After the
+final fetch, the branch was rebased onto main `f6af1f7d3`; rebased qualification
+source is `fca2749a4`. The runtime/adapters, pool regression tests, test runners
+and locked dependencies match the tested source byte-for-byte. The new upstream
+code changes concern Windows native reinstalls. Original native runs remain
+bound to their original commits; source equivalence is not a second native run.
+Docker verification passed:
+
+Post-rebase full CLI/typecheck passed all 205 files, `ci` exited 0, and `cli-lint`
+passed nine task or upstream-touched files without modifications. Paired Hosted
+source `780b0b8d7` also passed 467 pool unit and 102 PostgreSQL tests with
+Ruff/format/types. The other full suites and native results below were not
+repeated after this final rebase; equivalent Git trees are recorded in the paired
+Hosted qualification record.
 
 | Suite | Result |
 | --- | --- |
