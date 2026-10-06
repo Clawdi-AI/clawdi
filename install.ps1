@@ -168,10 +168,6 @@ $bootstrap = $null
 $stage = $null
 try {
     if ($env:OS -ne 'Windows_NT') { throw 'This installer requires Windows.' }
-    $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
-    if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw 'Do not run the installer as administrator; run it as the target user.'
-    }
     $channel = if ($env:CLAWDI_CHANNEL) { $env:CLAWDI_CHANNEL } else { 'latest' }
     if (@('latest', 'beta') -cnotcontains $channel) { throw 'CLAWDI_CHANNEL must be latest or beta.' }
     $prefix = if ($env:CLAWDI_INSTALL_PREFIX) { $env:CLAWDI_INSTALL_PREFIX } else { Join-Path $env:USERPROFILE '.local' }
