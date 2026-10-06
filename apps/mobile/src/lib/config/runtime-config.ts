@@ -1,7 +1,7 @@
 import { readApiBaseUrl } from "@clawdi/shared/api";
+import { readLinkHosts } from "@clawdi/shared/linking";
 import type { OAuthProvider } from "@clerk/expo/types";
 import { readOAuthProviders } from "@/platform/auth/oauth-providers";
-import { readLinkHosts } from "../../../config/linking.cjs";
 
 export type MobileRuntimeConfig = Readonly<{
 	cloudApiUrl: string;

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { createMiddleware } from "@tanstack/react-start";
 import { setResponseHeader } from "@tanstack/react-start/server";
 import { AGENT_FILES } from "@/lib/agent-files";
+import { APP_LINK_ASSOCIATION_PATHS } from "@/lib/app-link-paths";
 
 const commonSecurityHeaders = {
 	"X-Content-Type-Options": "nosniff",
@@ -13,11 +14,12 @@ export const securityHeaders = createMiddleware().server(async ({ request, next 
 		setResponseHeader(name, value);
 	}
 
-	// Public agent files do not contain executable HTML or request-specific nonces.
+	// Public machine-readable files do not contain HTML or request-specific nonces.
 	const pathname = new URL(request.url).pathname;
 	if (
 		(request.method === "GET" || request.method === "HEAD") &&
-		Object.values(AGENT_FILES).some((file) => file.path === pathname)
+		(APP_LINK_ASSOCIATION_PATHS.has(pathname) ||
+			Object.values(AGENT_FILES).some((file) => file.path === pathname))
 	) {
 		const result = await next();
 		// Start does not merge contextual headers into redirect responses.

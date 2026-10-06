@@ -12,6 +12,7 @@
 		"./desktop": "./src/desktop.ts",
 		"./consts": "./src/consts/index.ts",
 		"./sharing": "./src/sharing/agent-handoff.ts",
+		"./linking": "./src/linking.js",
 		"./x402": "./src/x402/index.ts",
 		"./api": "./src/api/index.ts",
 		"./qr": "./src/qr.ts",
