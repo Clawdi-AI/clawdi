@@ -431,6 +431,10 @@ are excluded. The existing Prometheus multiprocess registry aggregates workers.
 Counters reset with the multiprocess directory on deployment; compare readings
 from the same running instance for deltas.
 
+Session content SSE revalidation does not increment this request counter;
+the initial auth dependency records the request once. Counter failures are
+logged without rejecting authentication.
+
 Set `METRICS_BEARER_TOKEN` in deployment configuration before exposing these
 counts, and update any scrapers to send the token. The existing auth code rejects
 missing/incorrect tokens with 401 when configured. To inspect a local backend
@@ -780,7 +784,7 @@ Protocol references:
 The channels-worker role is non-proxied. Port 8000 is the worker process-local
 health/metrics listener, not an externally routed API endpoint. When running
 that process directly, or from inside its container/network namespace,
-`curl -fsS http://127.0.0.1:8000/metrics | rg 'msg_router_channel_(queue|retention)'`
+`curl -fsS -H "Authorization: Bearer $METRICS_BEARER_TOKEN" http://127.0.0.1:8000/metrics | rg 'msg_router_channel_(queue|retention)'`
 prints the queue and retention metric families.
 
 ## SSE cancellation ownership

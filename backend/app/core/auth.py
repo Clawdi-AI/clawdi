@@ -36,7 +36,7 @@ from app.services.clerk_backend import (
     get_clerk_backend_client,
 )
 from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
-from app.services.metrics import authenticated_requests
+from app.services.metrics import record_authenticated_request
 from app.services.principal_lifecycle import (
     PrincipalIdentityConflictError,
     PrincipalSuspendedError,
@@ -214,10 +214,6 @@ def _credential_kind(ctx: AuthContext) -> str:
     if ctx.dev_bypass:
         return "dev_bypass"
     return "clerk_oauth_cli" if ctx.oauth_cli else "clerk_session"
-
-
-def _record_authenticated(kind: str, surface: str) -> None:
-    authenticated_requests.labels(kind=kind, surface=surface).inc()
 
 
 async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
@@ -949,23 +945,30 @@ async def get_auth(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_session),
 ) -> AuthContext:
+    ctx = await authenticate_credentials(credentials, db)
+    record_authenticated_request(_credential_kind(ctx), "user")
+    return ctx
+
+
+async def authenticate_credentials(
+    credentials: HTTPAuthorizationCredentials,
+    db: AsyncSession,
+) -> AuthContext:
+    """Resolve and revalidate credentials without counting a new HTTP request."""
     token = credentials.credentials
 
     ctx = await _auth_via_dev_bypass(token, db)
     if ctx:
-        _record_authenticated(_credential_kind(ctx), "user")
         return ctx
 
     # Try ApiKey first (fast path, prefix check)
     ctx = await _auth_via_api_key(token, db)
     if ctx:
-        _record_authenticated(_credential_kind(ctx), "user")
         return ctx
 
     # Fall through to Clerk JWT
     ctx = await _auth_via_clerk_jwt(token, db)
     if ctx:
-        _record_authenticated(_credential_kind(ctx), "user")
         return ctx
 
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
@@ -991,16 +994,9 @@ async def get_auth_short_session(
     """
     from app.core.database import async_session_factory
 
-    token = credentials.credentials
     async with async_session_factory() as db:
-        ctx = await _auth_via_dev_bypass(token, db)
-        if not ctx:
-            ctx = await _auth_via_api_key(token, db)
-        if not ctx:
-            ctx = await _auth_via_clerk_jwt(token, db)
-    if not ctx:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
-    _record_authenticated(_credential_kind(ctx), "user")
+        ctx = await authenticate_credentials(credentials, db)
+    record_authenticated_request(_credential_kind(ctx), "user")
     return ctx
 
 
@@ -1235,7 +1231,7 @@ async def optional_web_auth(
     token = credentials.credentials
     ctx = await _auth_via_dev_bypass(token, db)
     if ctx:
-        _record_authenticated(_credential_kind(ctx), "user")
+        record_authenticated_request(_credential_kind(ctx), "user")
         return ctx
     try:
         ctx = await _auth_via_clerk_jwt(token, db)
@@ -1246,7 +1242,7 @@ async def optional_web_auth(
         return None
     if ctx is None or ctx.oauth_cli:
         return None
-    _record_authenticated(_credential_kind(ctx), "user")
+    record_authenticated_request(_credential_kind(ctx), "user")
     return ctx
 
 
@@ -1291,7 +1287,7 @@ async def require_admin_api_key(
 ) -> None:
     verify_admin_api_key(x_admin_key)
     surface = "v2_runtime" if request.url.path.startswith("/v2/runtime/") else "admin"
-    _record_authenticated("admin_key", surface)
+    record_authenticated_request("admin_key", surface)
 
 
 class ShareTokenContext:

@@ -76,7 +76,7 @@ from app.services.memory_recall import (
     recall_counting_enabled,
     recall_ids_from_hits,
 )
-from app.services.metrics import authenticated_requests
+from app.services.metrics import record_authenticated_request
 from app.services.secret_detection import find_likely_secret, secret_memory_warning
 from app.services.session_content import (
     SessionContentInvalid,
@@ -797,7 +797,7 @@ def _extract_legacy_mcp_user_id(request: Request) -> str:
         user_id = verify_mcp_bridge_token(authorization[7:])
     except (jwt.PyJWTError, RuntimeError, ValueError):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token") from None
-    authenticated_requests.labels(kind="mcp_bridge_token", surface="mcp_bridge").inc()
+    record_authenticated_request("mcp_bridge_token", "mcp_bridge")
     return user_id
 
 

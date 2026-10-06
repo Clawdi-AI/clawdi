@@ -30,7 +30,7 @@ from app.models.platform_workload_auth import (
     PlatformWorkloadClient,
     PlatformWorkloadSigningKey,
 )
-from app.services.metrics import authenticated_requests
+from app.services.metrics import record_authenticated_request
 
 PLATFORM_WORKLOAD_ACCESS_TOKEN_AUDIENCE = "clawdi-cloud-platform-admin"
 PLATFORM_WORKLOAD_ACCESS_TOKEN_TTL_SECONDS = 300
@@ -811,7 +811,7 @@ def _require_platform_auth(required_scope: str, *, allow_legacy_admin: bool):
                     "workload auth storage or signing service is unavailable",
                 ) from None
             request.state.platform_mutation_auth = auth
-            authenticated_requests.labels(kind="platform_workload", surface=surface).inc()
+            record_authenticated_request("platform_workload", surface)
             return auth
 
         if admin_values:
@@ -833,7 +833,7 @@ def _require_platform_auth(required_scope: str, *, allow_legacy_admin: bool):
             verify_admin_api_key(admin_values[0])
             auth = PlatformMutationAuth(kind="admin")
             request.state.platform_mutation_auth = auth
-            authenticated_requests.labels(kind="admin_key", surface=surface).inc()
+            record_authenticated_request("admin_key", surface)
             return auth
 
         if allow_legacy_admin and settings.platform_legacy_admin_auth_enabled:
