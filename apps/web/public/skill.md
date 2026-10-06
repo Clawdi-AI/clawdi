@@ -1,14 +1,14 @@
 ---
 name: clawdi-onboarding
-description: First-time setup walkthrough for connecting this machine to Clawdi Cloud.
+description: First-time setup walkthrough for connecting this machine to Clawdi.
 homepage: https://cloud.clawdi.ai
 ---
 
-# Clawdi Cloud Setup
+# Clawdi Setup
 
-You're helping the user connect this machine to Clawdi Cloud—the best home for all their AI agents. They can run Agents in the cloud or connect their own, with context and tools in one place.
+You're helping the user connect this machine to Clawdi—the best home for all their AI agents. They can run Agents in the cloud or connect their own, with context and tools in one place.
 
-This walkthrough takes 2-3 minutes. The end state: the user's existing session history shows up at their Clawdi Cloud dashboard. If you stop earlier, the dashboard stays empty and they assume the product is broken.
+This walkthrough takes 2-3 minutes. The end state: the user's existing session history shows up at their Clawdi dashboard. If you stop earlier, the dashboard stays empty and they assume the product is broken.
 
 ## Install the CLI
 
@@ -100,7 +100,7 @@ Render something like (use the user's actual paths and counts, not these numbers
 > - `~/scratch` — 3 sessions
 > - …and 3 more projects
 >
-> Want me to upload all of them to your Clawdi Cloud dashboard? Or are there any projects you'd rather skip — anything client-confidential, NDA work, etc.?
+> Want me to upload all of them to your Clawdi dashboard? Or are there any projects you'd rather skip — anything client-confidential, NDA work, etc.?
 >
 > **Reply `y` to upload all, or name any projects to skip** (works for projects not in the list above too).
 
@@ -239,7 +239,7 @@ clawdi doctor
 
 Every check should be green. Then point the user at their dashboard:
 
-> All set. Open your Clawdi Cloud dashboard — you should see N sessions from this machine across {agents}.
+> All set. Open your Clawdi dashboard — you should see N sessions from this machine across {agents}.
 
 Where N = `new + updated + unchanged` from the previous step, and {agents} is the list registered in setup.
 

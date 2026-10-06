@@ -5,6 +5,7 @@ import { deploymentStatusFromResource, parseDeploymentStatus } from "@/hosted/de
 import {
 	canOpenHostedRuntimeUi,
 	claimedEnvIdsFromDeployments,
+	HostedInventoryUnavailableError,
 	hostedDeploymentMembers,
 	isHostedDeploymentVisible,
 	missingProjectionRefetchInterval,
@@ -59,6 +60,12 @@ function cancelledDelete(deploymentId: string): DeploymentOperation {
 }
 
 describe("hosted inventory resolution matrix", () => {
+	test("uses Cloud Agent terminology for unavailable inventory", () => {
+		const error = new HostedInventoryUnavailableError();
+		expect(error.message).toBe("Cloud Agents aren't available in this dashboard.");
+		expect(error.message).not.toContain("Clawdi Cloud");
+	});
+
 	test("distinguishes a successful empty snapshot from loading", () => {
 		expect(
 			resolveHostedInventory({

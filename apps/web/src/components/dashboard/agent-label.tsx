@@ -142,17 +142,15 @@ function cleanAgentName(value: string | null | undefined): string {
 }
 
 export function agentSourceLabel(source: AgentSourceKind): string {
-	return source === "hosted" ? "Cloud" : "Your machine";
+	return source === "hosted" ? "Cloud" : "Connected";
 }
 
 export function agentSourceKindLabel(source: AgentSourceKind): string {
-	return source === "hosted" ? "Clawdi Cloud agent" : "Your machine agent";
+	return source === "hosted" ? "Cloud Agent" : "Connected Agent";
 }
 
 export function agentSourceDescription(source: AgentSourceKind): string {
-	return source === "hosted"
-		? "Hosted and managed by Clawdi Cloud"
-		: "Runs from your machine or server";
+	return source === "hosted" ? "Runs on Clawdi" : "Runs from your machine or server";
 }
 
 export function AgentSourceBadge({

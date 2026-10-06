@@ -1,6 +1,6 @@
 # Clawdi Web
 
-TanStack Start dashboard for Clawdi Cloud.
+TanStack Start dashboard for Clawdi.
 
 ## Development
 

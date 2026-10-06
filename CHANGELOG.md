@@ -12,6 +12,9 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+- Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
+  name while keeping Cloud and Connected Agent distinctions intact.
+
 ### CLI 0.14.106
 
 - Rejected sessions retry after CLI upgrades or within a day, and concurrent pushes preserve newer session history while allowing confirmed local truncation.

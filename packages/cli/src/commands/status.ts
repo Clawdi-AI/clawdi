@@ -40,7 +40,7 @@ export async function status(opts: { json?: boolean } = {}) {
 		return;
 	}
 
-	console.log(chalk.bold("Clawdi Cloud Status"));
+	console.log(chalk.bold("Clawdi Status"));
 	console.log();
 
 	if (s.loggedIn) {

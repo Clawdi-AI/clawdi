@@ -120,7 +120,7 @@ async function expectInlineSidebarStatus(sidebar: Locator, source: "hosted" | "c
 	await expect(status.locator("[aria-hidden]").first()).toBeVisible();
 }
 
-// HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
+// HOSTED (Clawdi hosted deployment) smoke against the vite dev server with dev-auth-bypass
 // (NO Clerk key needed) + deploy-api enabled so /deploy renders. Exercises the
 // deploy wizard's Base UI Select asserting ZERO browser console/page errors.
 //
@@ -4507,7 +4507,7 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 	await page.evaluate(() => {
 		document.documentElement.dataset.deleteNotFoundFlash = "false";
 		const observer = new MutationObserver(() => {
-			if (document.body.textContent?.includes("Clawdi Cloud agent not found")) {
+			if (document.body.textContent?.includes("Agent not found")) {
 				document.documentElement.dataset.deleteNotFoundFlash = "true";
 			}
 			if (window.location.pathname === "/") observer.disconnect();

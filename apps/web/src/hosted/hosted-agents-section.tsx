@@ -170,7 +170,7 @@ export function HostedSecondaryCTA({
 }
 
 /**
- * The /agents index list. Hosted deployments render as one Clawdi Cloud agent
+ * The /agents index list. Hosted deployments render as one Clawdi hosted agent
  * each; self-managed and legacy hosted agents get their own section.
  */
 export function HostedAgentsByCompute({
@@ -249,7 +249,7 @@ export function HostedAgentsByCompute({
 						leading={<AgentSourceBadge source="hosted" compact />}
 						count={`${hostedTiles.length} agent${hostedTiles.length === 1 ? "" : "s"}`}
 					>
-						Clawdi Cloud
+						Cloud Agents
 					</SectionLabel>
 					<AgentTileGrid tiles={hostedTiles} />
 				</section>
