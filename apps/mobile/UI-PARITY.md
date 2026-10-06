@@ -21,11 +21,39 @@ ids may be read solely to keep those agents out of v2 lists.
   `@clawdi/shared/view`. Reuse them; do not re-derive Web logic in mobile.
   User-facing English copy must match the Web page verbatim.
 
-## Components: reuse Web classes, do not retype them
+## Architecture mapping
+
+| Web (`apps/web/src`) | Mobile (`apps/mobile`) |
+| --- | --- |
+| `routes/**` | `app/**`: thin Expo Router page exports and screen options |
+| `pages/**` | `src/pages/**`: same relative page paths and file names |
+| `components/<feature>/**` | `src/components/<feature>/**` |
+| `components/ui/**` | `src/components/ui/**`: same primitive names |
+| `hosted/**` | `src/hosted/**`: v2 hosted Agents, providers, channels and billing |
+| `lib/**`, `hooks/**` | `src/lib/**`, `src/hooks/**` |
+| Native platform integration | `src/platform/**`: lifecycle, secure storage, Clerk, RevenueCat, navigation |
+
+Source imports use `@/*` → `src/*`; Expo Metro resolves the TypeScript alias.
+The five native tabs use pathless groups over Web URLs: `/`, `/agents`,
+`/sessions`, Library resources and `/settings`. Agent sections use Web's
+`project-access`, `model-provider` and `channel-links` segments. Agent details
+retain nested resource URLs; Skill keys use the path rather than a query-only
+`detail` route, and Vault slugs resolve to a stable, account-scoped identity.
+Web's `?settings=<panel>` opens `/settings/<panel>`; Clerk management lives
+under `/settings/account/*`. Hosted deployments open through their Agent id.
+The previous deployment inventory screen is covered by the Agents inventory.
+
+Mobile-only tab hubs, Clerk management pages, development galleries and native
+form entry pages have no Web page counterpart. They reuse feature components;
+`src/pages/native/**` contains only the existing native form entry points.
+Web-only DOM, desktop, Stripe checkout and v1 legacy surfaces are not ported.
+`src/lib/i18n` owns mobile strings and reuses shared view copy where available.
+
+## Components: reuse shared Web classes
 
 Web class strings live once in `@clawdi/shared/ui` (`packages/shared/src/ui`).
 Web components import them; mobile renders the same strings through
-`resolveWebClasses` (`src/ui/web-classes.ts`):
+`resolveWebClasses` (`src/lib/web-classes.ts`):
 
 - state variants (`data-active:`, `group-data-[size=sm]/card:`, ...) resolve
   against an explicit state map; `hover:` becomes `active:`; responsive

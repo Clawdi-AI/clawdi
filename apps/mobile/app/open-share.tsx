@@ -1,1 +1,1 @@
-export { OpenShareScreen as default } from "@/pages/public-share/session-page";
+export { default } from "@/pages/public-share/open-page";

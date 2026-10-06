@@ -29,7 +29,7 @@ export function OnboardingCard({
 						<Button
 							size="lg"
 							className={webView(styles.deployAction)}
-							onPress={() => router.push("/agents/new")}
+							onPress={() => router.push("/deploy")}
 						>
 							<WebIcon as={Rocket} recipe={styles.titleIcon} />
 							<Text>{OVERVIEW_COPY.deploy}</Text>
@@ -39,7 +39,7 @@ export function OnboardingCard({
 						variant={canDeployOnClawdi ? "outline" : "default"}
 						size="lg"
 						className={webView(styles.connectAction)}
-						onPress={() => router.push("/agents/new")}
+						onPress={() => router.push("/deploy")}
 					>
 						<WebIcon as={TerminalSquare} recipe={styles.titleIcon} />
 						<Text>{OVERVIEW_COPY.connect}</Text>
@@ -54,7 +54,7 @@ export function ConnectAnotherCard() {
 		<Card className={webView(page.connectCard)}>
 			<CardContent className={`${webView(page.connectCardContent)} flex-col`}>
 				<WebText recipe={page.connectCardTitle}>{OVERVIEW_COPY.connectAnother}</WebText>
-				<Button size="sm" variant="outline" onPress={() => router.push("/agents/new")}>
+				<Button size="sm" variant="outline" onPress={() => router.push("/deploy")}>
 					<Text>{OVERVIEW_COPY.addAgent}</Text>
 				</Button>
 			</CardContent>

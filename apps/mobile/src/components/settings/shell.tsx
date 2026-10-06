@@ -28,22 +28,22 @@ export function SettingsShell({
 			id: "general",
 			label: t("settingsParity.general"),
 			icon: SlidersHorizontal,
-			href: "/(tabs)/account",
+			href: "/settings",
 		},
-		{ id: "api-keys", label: t("settingsParity.apiKeys"), icon: Key, href: "/api-keys" },
+		{ id: "api-keys", label: t("settingsParity.apiKeys"), icon: Key, href: "/settings/api-keys" },
 		...(compute
 			? [
 					{
 						id: "wallet",
 						label: t("billingParity.wallet"),
 						icon: WalletCards,
-						href: "/billing/wallet" as const,
+						href: "/settings/wallet" as const,
 					},
 					{
 						id: "compute",
 						label: t("billingParity.compute"),
 						icon: CreditCard,
-						href: "/billing" as const,
+						href: "/settings/compute" as const,
 					},
 				]
 			: []),
@@ -56,7 +56,7 @@ export function SettingsShell({
 						variant="ghost"
 						size="icon-sm"
 						accessibilityLabel={t("navigation.back")}
-						onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/account"))}
+						onPress={() => (router.canGoBack() ? router.back() : router.replace("/settings"))}
 					>
 						<Icon as={ArrowLeft} />
 					</Button>

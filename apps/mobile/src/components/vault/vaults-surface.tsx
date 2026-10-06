@@ -90,14 +90,19 @@ export function useVaultCatalog(
 
 export function VaultCatalogScreen() {
 	const scope = useAccountScope();
-	const params = useLocalSearchParams<{ agentId?: string; projectId?: string }>();
-	const agentId = routeParam(params.agentId);
+	const params = useLocalSearchParams<{
+		id?: string;
+		agentId?: string;
+		project?: string;
+		projectId?: string;
+	}>();
+	const agentId = routeParam(params.id ?? params.agentId);
 	if (agentId)
 		return (
 			<AgentVaultCatalog
 				key={`${scope.identity}:${scope.generation}:${agentId}`}
 				agentId={agentId}
-				projectId={routeParam(params.projectId)}
+				projectId={routeParam(params.projectId ?? params.project)}
 			/>
 		);
 	return (
@@ -212,7 +217,7 @@ function VaultCatalog({
 			await cache.invalidateQueries({ queryKey: accountQueryKey(scope, "vault-catalog") });
 			if (isCurrent() && visible())
 				router.push({
-					pathname: "/vault/detail",
+					pathname: "/vault/[slug]",
 					params: { vaultId: result.id, slug: result.slug },
 				});
 		});

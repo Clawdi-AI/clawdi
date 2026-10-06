@@ -9,7 +9,7 @@ export default function TabsLayout() {
 	const t = useI18n();
 	const { isLoaded, isSignedIn } = useAppAuth();
 	if (!isLoaded) return <LoadingScreen label={t("loading.authentication")} />;
-	if (!isSignedIn) return <Redirect href="/(auth)/sign-in" />;
+	if (!isSignedIn) return <Redirect href="/sign-in" />;
 	return <AppTabs />;
 }
 
@@ -38,26 +38,28 @@ function AppTabs() {
 				selected: { color: themeColor(foreground), fontFamily: "Geist-Medium" },
 			}}
 		>
-			<NativeTabs.Trigger name="index">
+			<NativeTabs.Trigger name="(overview)">
 				<NativeTabs.Trigger.Label>{t("navigation.home")}</NativeTabs.Trigger.Label>
 				<NativeTabs.Trigger.Icon sf="square.grid.2x2" md="dashboard" />
 			</NativeTabs.Trigger>
-			<NativeTabs.Trigger name="agents">
+			<NativeTabs.Trigger name="(agents)">
 				<NativeTabs.Trigger.Label>{t("navigation.agents")}</NativeTabs.Trigger.Label>
 				<NativeTabs.Trigger.Icon sf="desktopcomputer" md="computer" />
 			</NativeTabs.Trigger>
-			<NativeTabs.Trigger name="sessions">
+			<NativeTabs.Trigger name="(sessions)">
 				<NativeTabs.Trigger.Label>{t("navigation.sessions")}</NativeTabs.Trigger.Label>
 				<NativeTabs.Trigger.Icon sf="bubble.left" md="chat_bubble" />
 			</NativeTabs.Trigger>
-			<NativeTabs.Trigger name="library">
+			<NativeTabs.Trigger name="(library)">
 				<NativeTabs.Trigger.Label>{t("navigation.library")}</NativeTabs.Trigger.Label>
 				<NativeTabs.Trigger.Icon sf="books.vertical" md="library_books" />
 			</NativeTabs.Trigger>
-			<NativeTabs.Trigger name="account">
+			<NativeTabs.Trigger name="(account)">
 				<NativeTabs.Trigger.Label>{t("navigation.account")}</NativeTabs.Trigger.Label>
 				<NativeTabs.Trigger.Icon sf="person.crop.circle" md="person" />
 			</NativeTabs.Trigger>
 		</NativeTabs>
 	);
 }
+
+export const unstable_settings = { initialRouteName: "(overview)" };

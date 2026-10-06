@@ -406,7 +406,7 @@ export function MfaFormView({
 				<FormAction
 					label={t("phones.title")}
 					disabled={action.busy}
-					onPress={() => router.push("/phone-numbers")}
+					onPress={() => router.push("/settings/account/phone-numbers")}
 				/>
 				{phones
 					.filter((phone) => phone.verification.status === "verified")

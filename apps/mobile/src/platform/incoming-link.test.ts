@@ -17,7 +17,7 @@ test("verified-host links use existing Session and Vault contracts without routi
 		`/s/${id}`,
 	);
 	expect(mobileLinkDestination(`clawdi://s/${id}`, [], stage)).toBe(`/s/${id}`);
-	expect(mobileLinkDestination(link, hosts, stage)).toBe(`/vault-supply?intake=${id}`);
+	expect(mobileLinkDestination(link, hosts, stage)).toBe(`/vault-request?intake=${id}`);
 	expect(staged).toEqual([link]);
 	for (const value of [
 		link.replace("links.example.test", "evil.test"),
@@ -29,17 +29,17 @@ test("verified-host links use existing Session and Vault contracts without routi
 		expect(mobileLinkDestination(value, hosts, stage)).not.toContain(token);
 	}
 	expect(staged).toEqual([link]);
-	expect(mobileLinkDestination(`/vault-request#${token}`, hosts, stage)).toBe("/vault-supply");
+	expect(mobileLinkDestination(`/vault-request#${token}`, hosts, stage)).toBe("/vault-request");
 	expect(
-		mobileLinkDestination(`clawdi://vault-supply?token=${token}&intake=${id}`, hosts, stage),
-	).toBe(`/vault-supply?intake=${id}`);
+		mobileLinkDestination(`clawdi://vault-request?token=${token}&intake=${id}`, hosts, stage),
+	).toBe(`/vault-request?intake=${id}`);
 	expect(
 		mobileLinkDestination(
 			`clawdi://sign-in-oauth?rotating_token_nonce=secret&publicShareId=${id}`,
 			hosts,
 			stage,
 		),
-	).toBe(`/(auth)/sign-in?publicShareId=${id}`);
+	).toBe(`/sign-in?publicShareId=${id}`);
 	expect(mobileLinkDestination("javascript:alert(1)", hosts, stage)).toBe("/open-share");
 });
 

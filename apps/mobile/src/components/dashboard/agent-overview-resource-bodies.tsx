@@ -232,8 +232,8 @@ export function AgentOverview({
 								size="sm"
 								onPress={
 									compute.action.kind === "top_up"
-										? () => router.push("/billing/wallet")
-										: () => router.push("/billing")
+										? () => router.push("/settings/wallet")
+										: () => router.push("/settings/compute")
 								}
 							>
 								<Icon as={ComputeActionIcon} />
@@ -269,7 +269,12 @@ export function AgentOverview({
 						description={copy.channelsDescription}
 						icon={MessagesSquare}
 						tint={hostedStyles.channelsTint}
-						onPress={() => router.push({ pathname: "/channels", params: { agentId: agent.id } })}
+						onPress={() =>
+							router.push({
+								pathname: "/agents/[id]/[section]",
+								params: { id: agent.id, section: "channel-links" },
+							})
+						}
 					/>
 					<OverviewNavigationCard
 						title="AI Providers"
@@ -285,7 +290,10 @@ export function AgentOverview({
 						icon={BrainCircuit}
 						tint={hostedStyles.aiTint}
 						onPress={() =>
-							router.push({ pathname: "/ai-providers", params: { agentId: agent.id } })
+							router.push({
+								pathname: "/agents/[id]/[section]",
+								params: { id: agent.id, section: "model-provider" },
+							})
 						}
 					/>
 				</WebView>
@@ -300,7 +308,10 @@ export function AgentOverview({
 										variant="ghost"
 										size="sm"
 										onPress={() =>
-											router.push({ pathname: "/sessions", params: { agentId: agent.id } })
+											router.push({
+												pathname: "/agents/[id]/[section]",
+												params: { id: agent.id, section: "sessions" },
+											})
 										}
 									>
 										<Text>{copy.viewAll} →</Text>
@@ -335,7 +346,10 @@ export function AgentOverview({
 						icon={Laptop}
 						tint={detail.statusTint}
 						onPress={() =>
-							router.push({ pathname: "/agents/[agentId]/settings", params: { agentId: agent.id } })
+							router.push({
+								pathname: "/agents/[id]/[section]",
+								params: { section: "settings", id: agent.id },
+							})
 						}
 					>
 						<OverviewMetadata
@@ -360,7 +374,10 @@ export function AgentOverview({
 					icon={FolderKanban}
 					tint={RESOURCE_TINT_CLASSES.projects}
 					onPress={() =>
-						router.push({ pathname: "/agents/[agentId]/projects", params: { agentId: agent.id } })
+						router.push({
+							pathname: "/agents/[id]/[section]",
+							params: { section: "project-access", id: agent.id },
+						})
 					}
 				/>
 				{deployment || !agent.adapter_modules || agent.adapter_modules.includes("skills") ? (
@@ -386,7 +403,7 @@ export function AgentOverview({
 						icon={Sparkles}
 						tint={RESOURCE_TINT_CLASSES.skills}
 						onPress={() =>
-							router.push({ pathname: "/agents/[agentId]/skills", params: { agentId: agent.id } })
+							router.push({ pathname: "/agents/[id]/skills", params: { id: agent.id } })
 						}
 					/>
 				) : null}
@@ -400,7 +417,12 @@ export function AgentOverview({
 					)}
 					icon={KeyRound}
 					tint={RESOURCE_TINT_CLASSES.vaults}
-					onPress={() => router.push({ pathname: "/vault", params: { agentId: agent.id } })}
+					onPress={() =>
+						router.push({
+							pathname: "/agents/[id]/[section]",
+							params: { id: agent.id, section: "vaults" },
+						})
+					}
 				/>
 				{deployment ? (
 					<OverviewNavigationCard
@@ -417,7 +439,10 @@ export function AgentOverview({
 						icon={Blocks}
 						tint={hostedStyles.pluginsTint}
 						onPress={() =>
-							router.push({ pathname: "/agents/[agentId]/plugins", params: { agentId: agent.id } })
+							router.push({
+								pathname: "/agents/[id]/[section]",
+								params: { section: "plugins", id: agent.id },
+							})
 						}
 					/>
 				) : null}

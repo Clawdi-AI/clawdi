@@ -22,10 +22,10 @@ export default function AccountSettingsRoute() {
 				<SettingsSection title={t("account.profile")}>
 					{(
 						[
-							["profile.title", "/profile"],
-							["emails.title", "/email-addresses"],
-							["phones.title", "/phone-numbers"],
-							["connections.title", "/connected-accounts"],
+							["profile.title", "/settings/account/profile"],
+							["emails.title", "/settings/account/email-addresses"],
+							["phones.title", "/settings/account/phone-numbers"],
+							["connections.title", "/settings/account/connected-accounts"],
 						] as const
 					).map(([label, href]) => (
 						<Button key={href} variant="ghost" onPress={() => router.push(href)}>
@@ -36,10 +36,10 @@ export default function AccountSettingsRoute() {
 				<SettingsSection title={t("account.security")}>
 					{(
 						[
-							["password.title", "/password"],
-							["mfa.title", "/mfa"],
-							["passkeys.title", "/passkeys"],
-							["devices.title", "/device-sessions"],
+							["password.title", "/settings/account/password"],
+							["mfa.title", "/settings/account/mfa"],
+							["passkeys.title", "/settings/account/passkeys"],
+							["devices.title", "/settings/account/device-sessions"],
 						] as const
 					).map(([label, href]) => (
 						<Button key={href} variant="ghost" onPress={() => router.push(href)}>
@@ -48,7 +48,10 @@ export default function AccountSettingsRoute() {
 					))}
 				</SettingsSection>
 				<SettingsSection destructive title={t("deletion.title")}>
-					<Button variant="destructive" onPress={() => router.push("/delete-account")}>
+					<Button
+						variant="destructive"
+						onPress={() => router.push("/settings/account/delete-account")}
+					>
 						<Text>{t("deletion.title")}</Text>
 					</Button>
 				</SettingsSection>

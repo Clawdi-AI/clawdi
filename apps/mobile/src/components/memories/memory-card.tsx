@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
+import { useAgentRouteId } from "@/platform/navigation/use-agent-route";
 export function MemoryCard({
 	memory,
 	onDelete,
@@ -25,6 +26,7 @@ export function MemoryCard({
 	onEdit?: () => void;
 	searchQuery?: string;
 }) {
+	const agentId = useAgentRouteId();
 	const visibleContent = searchQuery
 		? searchExcerpt(memory.content, searchQuery, 320)
 		: memory.content;
@@ -32,7 +34,14 @@ export function MemoryCard({
 		<EntityCardChassis variant="resource" interactive>
 			<EntityCardLink
 				variant="resource"
-				to={{ pathname: "/memories/[memoryId]", params: { memoryId: memory.id } }}
+				to={
+					agentId
+						? {
+								pathname: "/agents/[id]/memories/[memoryId]",
+								params: { id: agentId, memoryId: memory.id },
+							}
+						: { pathname: "/memories/[id]", params: { id: memory.id } }
+				}
 				ariaLabel={`Open memory: ${memoryDisplayName(memory.content)}`}
 			/>
 			<WebView recipe="">

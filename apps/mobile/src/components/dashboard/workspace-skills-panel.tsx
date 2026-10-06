@@ -33,16 +33,23 @@ import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
+import { WorkspaceSkillsScreen } from "@/hosted/agents/hosted-workspace-skills-panel";
 import { HostedAgentLibrarySkillsScreen } from "@/hosted/agents/library-skill-picker";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 export function AgentLibrarySkillsScreen() {
-	const params = useLocalSearchParams<{ agentId?: string | string[] }>(),
-		id = routeParam(params.agentId);
+	const params = useLocalSearchParams<{ id?: string | string[]; tab?: string }>(),
+		id = routeParam(params.id);
 	const scope = useAccountScope();
-	return <WorkspaceSkills key={`${scope.accountKey}:${scope.generation}:${id}`} id={id} />;
+	return (
+		<WorkspaceSkills
+			key={`${scope.accountKey}:${scope.generation}:${id}`}
+			id={id}
+			workspaceTab={params.tab === "workspace"}
+		/>
+	);
 }
-function WorkspaceSkills({ id }: { id?: string }) {
+function WorkspaceSkills({ id, workspaceTab }: { id?: string; workspaceTab?: boolean }) {
 	const scope = useAccountScope(),
 		read = useAccountRead(),
 		api = useMobileApi(),
@@ -84,8 +91,13 @@ function WorkspaceSkills({ id }: { id?: string }) {
 				return api.hosted.listDeployments(s);
 			}, signal),
 	});
-	if (id && hosted.data?.some((deployment) => deployment.agent_id === id))
-		return <HostedAgentLibrarySkillsScreen />;
+	const deployment = hosted.data?.find((item) => item.agent_id === id);
+	if (id && deployment)
+		return workspaceTab ? (
+			<WorkspaceSkillsScreen deploymentId={deployment.resource.id} />
+		) : (
+			<HostedAgentLibrarySkillsScreen />
+		);
 	const failed = !id || agent.error || bindings.error || skills.error;
 	return (
 		<AgentCollection
@@ -137,8 +149,12 @@ function WorkspaceSkills({ id }: { id?: string }) {
 							provenanceLabel={agentSurfaceCopy.syncedFromAgent}
 							link={{
 								to: {
-									pathname: "/skills/detail",
-									params: { projectId: skill.project_id ?? "", skillKey: skill.skill_key },
+									pathname: "/agents/[id]/skills/[...key]",
+									params: {
+										id: id ?? "",
+										project: skill.project_id ?? "",
+										key: skill.skill_key.split("/"),
+									},
 								},
 							}}
 							actions={

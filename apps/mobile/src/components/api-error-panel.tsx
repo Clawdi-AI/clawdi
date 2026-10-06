@@ -54,10 +54,7 @@ export function ApiErrorPanel({
 				<Text>{normalizer ? normalizer.normalizeError(error) : normalizeApiError(error, t)}</Text>
 				<AppView className={webView(apiErrorPanelClasses.actions)}>
 					{expired ? (
-						<Button
-							size="sm"
-							onPress={onReauthenticate ?? (() => router.replace("/(auth)/sign-in"))}
-						>
+						<Button size="sm" onPress={onReauthenticate ?? (() => router.replace("/sign-in"))}>
 							<Icon as={LogIn} />
 							<Text>{t("composite.signInAgain")}</Text>
 						</Button>

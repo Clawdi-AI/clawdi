@@ -54,9 +54,7 @@ export function OpenShareScreen() {
 					<Button
 						variant="ghost"
 						size="sm"
-						onPress={() =>
-							router.canGoBack() ? router.back() : router.replace("/(tabs)/sessions")
-						}
+						onPress={() => (router.canGoBack() ? router.back() : router.replace("/sessions"))}
 					>
 						<Icon as={ArrowLeft} />
 						<Text>{t("sessionDetail.back")}</Text>
@@ -77,7 +75,7 @@ export function OpenShareScreen() {
 					<Button
 						disabled={!id}
 						onPress={() => {
-							if (id) router.push({ pathname: "/s/[shareId]", params: { shareId: id } });
+							if (id) router.push({ pathname: "/s/[id]", params: { id: id } });
 						}}
 					>
 						<Text>{t("sessionDetail.openShare")}</Text>
@@ -90,8 +88,8 @@ export function OpenShareScreen() {
 
 type Page = components["schemas"]["SessionMessagesPage"];
 export function PublicSessionScreen() {
-	const params = useLocalSearchParams<{ shareId?: string | string[] }>();
-	const id = publicSessionId(routeParam(params.shareId) ?? "");
+	const params = useLocalSearchParams<{ id?: string | string[] }>();
+	const id = publicSessionId(routeParam(params.id) ?? "");
 	const scope = useAccountScope();
 	return <PublicSession key={`${scope.identity}:${scope.generation}:${id}`} id={id} />;
 }
@@ -222,7 +220,7 @@ function PublicSession({ id }: { id: string | null }) {
 						source={require("../../../../web/public/clawdi-logo-transparent.png")}
 						className={webView(styles.brandImage)}
 					/>
-					<WebText recipe={styles.brandName} onPress={() => router.replace("/(tabs)/sessions")}>
+					<WebText recipe={styles.brandName} onPress={() => router.replace("/sessions")}>
 						{t("sessionDetail.brand")}
 					</WebText>
 				</WebView>
@@ -271,14 +269,12 @@ function PublicSession({ id }: { id: string | null }) {
 				</WebText>
 				{status === 401 && id ? (
 					<Button
-						onPress={() =>
-							router.push({ pathname: "/(auth)/sign-in", params: { publicShareId: id } })
-						}
+						onPress={() => router.push({ pathname: "/sign-in", params: { publicShareId: id } })}
 					>
 						<Text>{t("sessionDetail.signIn")}</Text>
 					</Button>
 				) : null}
-				<WebText recipe={styles.gateLink} onPress={() => router.replace("/(tabs)/sessions")}>
+				<WebText recipe={styles.gateLink} onPress={() => router.replace("/sessions")}>
 					{t("sessionDetail.goHome")}
 				</WebText>
 				{id && [401, 403, 409, 410].includes(status) ? (

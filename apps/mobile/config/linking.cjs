@@ -15,3 +15,29 @@ function readLinkHosts(value) {
 }
 
 module.exports = { readLinkHosts };
+
+// Android associations use the same Web URL roots as native intake.
+const webLinkPaths = [
+	{ path: "/" },
+	...[
+		"agents",
+		"sessions",
+		"projects",
+		"skills",
+		"memories",
+		"vault",
+		"vaults",
+		"connectors",
+		"channels",
+		"ai-providers",
+		"deploy",
+		"terminal",
+		"s",
+		"share",
+		"sign-in",
+		"sign-up",
+		"settings",
+	].map((root) => ({ pathPrefix: `/${root}` })),
+	{ path: "/vault-request" },
+];
+module.exports.webLinkPaths = webLinkPaths;

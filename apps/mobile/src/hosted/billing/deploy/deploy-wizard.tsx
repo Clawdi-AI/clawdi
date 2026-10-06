@@ -34,7 +34,7 @@ import {
 	runtimeBlurb,
 	subscriptionSourceCopy,
 } from "@clawdi/shared/view";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Crypto from "expo-crypto";
 import { useRouter } from "expo-router";
 import { Cpu, CreditCard, Plus, Rocket, WalletCards, Zap } from "lucide-react-native";
@@ -126,6 +126,7 @@ export function CreateAgentScreen() {
 }
 
 function CreationForm() {
+	const cache = useQueryClient();
 	const { compute, hosted, aiProviders } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -244,6 +245,21 @@ function CreationForm() {
 				option.billingTermMonths === quoteSelection.billingTermMonths,
 		);
 	const current = (owns: () => boolean) => owns() && scope.isCurrent() && !scope.signal.aborted;
+	const navigateDeployment = async (deploymentId: string, owns: () => boolean) => {
+		if (!hosted) throw new Error("Hosted API unavailable");
+		const deployment = await read((lease) => hosted.getDeployment(deploymentId, lease));
+		if (!current(owns)) return;
+		if (deployment.resource.id !== deploymentId || !deployment.agent_id)
+			throw new Error("Agent identity unavailable");
+		cache.setQueryData(
+			accountQueryKey(scope, "deployments"),
+			(existing: (typeof deployment)[] | undefined) => [
+				...(existing ?? []).filter((item) => item.resource.id !== deploymentId),
+				deployment,
+			],
+		);
+		router.push(`/agents/${encodeURIComponent(deployment.agent_id)}`);
+	};
 	const navigateRequest = async (id: string, owns: () => boolean) => {
 		if (!hosted) throw new Error("Hosted API unavailable");
 		const status = await read((s) => hosted.getDeploymentByRequest(id, s));
@@ -251,7 +267,7 @@ function CreationForm() {
 		const projection = projectHostedDeployRequest(status);
 		if (projection.kind === "terminal" || projection.kind === "deployment") setResolved(true);
 		if (projection.kind === "deployment") {
-			router.push(`/deployments/${encodeURIComponent(projection.deploymentId)}`);
+			await navigateDeployment(projection.deploymentId, owns);
 		} else if (projection.kind === "operation" || projection.kind === "operation_name") {
 			const operationId = operationIdFromName(
 				projection.kind === "operation" ? projection.operation.name : projection.operationName,
@@ -261,8 +277,7 @@ function CreationForm() {
 				projection.kind === "operation"
 					? projection.operation
 					: await read((s) => hosted.getOperation(operationId, s));
-			if (current(owns))
-				router.push(`/deployments/${encodeURIComponent(operation.metadata.deploymentId)}`);
+			if (current(owns)) await navigateDeployment(operation.metadata.deploymentId, owns);
 		} else
 			setMessage(
 				t(

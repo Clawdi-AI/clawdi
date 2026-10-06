@@ -12,6 +12,7 @@ import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
 import { WebView, webBoth } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
+import { useAgentRouteId } from "@/platform/navigation/use-agent-route";
 export function VaultCard({
 	vault,
 	names,
@@ -26,12 +27,13 @@ export function VaultCard({
 	searchQuery?: string;
 }) {
 	const t = useI18n();
+	const agentId = useAgentRouteId();
 	const identity = identityFor(vault.name);
 	const supportingText = searchQuery ? vaultSearchSupportingText(vault, searchQuery) : null;
 	const usedBy = vault.project_ids.map((id) => names.get(id)).filter(Boolean);
 	const open = () =>
 		router.push({
-			pathname: "/vault/detail",
+			pathname: "/vault/[slug]",
 			params: { vaultId: vault.id, slug: vault.slug, add: "1" },
 		});
 	return (
@@ -80,8 +82,23 @@ export function VaultCard({
 				) : undefined
 			}
 			link={{
-				to: "/vault/detail",
-				search: { vaultId: vault.id, slug: vault.slug, ...(projectId ? { projectId } : {}) },
+				to: agentId
+					? {
+							pathname: "/agents/[id]/vaults/[slug]",
+							params: {
+								id: agentId,
+								slug: vault.slug,
+								...(projectId ? { project: projectId } : {}),
+							},
+						}
+					: {
+							pathname: "/vault/[slug]",
+							params: {
+								vaultId: vault.id,
+								slug: vault.slug,
+								...(projectId ? { project: projectId } : {}),
+							},
+						},
 			}}
 			ariaLabel={`Open vault ${vault.name}`}
 		/>

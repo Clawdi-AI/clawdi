@@ -29,8 +29,8 @@ import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function HostedAgentLibrarySkillsScreen() {
-	const params = useLocalSearchParams<{ agentId?: string | string[] }>();
-	const id = routeParam(params.agentId) ?? "";
+	const params = useLocalSearchParams<{ id?: string | string[] }>();
+	const id = routeParam(params.id) ?? "";
 	const scope = useAccountScope();
 	return <AgentLibrarySkills key={`${scope.accountKey}:${scope.generation}:${id}`} id={id} />;
 }
@@ -167,10 +167,10 @@ function AgentLibrarySkills({ id }: { id: string }) {
 												disabled={!item.project_id || !item.source_skill_key}
 												onPress={() =>
 													router.push({
-														pathname: "/skills/detail",
+														pathname: "/skills/[key]",
 														params: {
 															projectId: item.project_id ?? "",
-															skillKey: item.source_skill_key ?? "",
+															key: item.source_skill_key ?? "",
 														},
 													})
 												}

@@ -6,7 +6,7 @@ import {
 	projectInvitationCounts,
 } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { useMobileApi } from "@/components/api-provider";
@@ -27,17 +27,22 @@ import { ReadScreen } from "@/platform/safe-area-screen";
 
 export function ProjectJoinScreen() {
 	const scope = useAccountScope();
-	return <JoinView key={`${scope.identity}:${scope.generation}`} />;
+	const { token } = useLocalSearchParams<{ token?: string }>();
+	const initialLink =
+		token && /^[A-Za-z0-9_-]{43}$/.test(token) ? `https://local.invalid/share/${token}` : "";
+	return (
+		<JoinView key={`${scope.identity}:${scope.generation}:${token}`} initialLink={initialLink} />
+	);
 }
 
-function JoinView() {
+function JoinView({ initialLink }: { initialLink: string }) {
 	const t = useI18n();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { sharing } = useMobileApi();
 	const cache = useQueryClient();
 	const action = useAuthAction(scope);
-	const [input, setInput] = useState("");
+	const [input, setInput] = useState(initialLink);
 	const [preview, setPreview] = useState<{
 		token: string;
 		data: components["schemas"]["ShareRedeemResponse"];

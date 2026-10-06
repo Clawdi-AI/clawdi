@@ -6,6 +6,7 @@ import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { EntityRow } from "@/components/entity-card";
 import { Icon } from "@/components/ui/icon";
 import { webBoth, webView } from "@/components/ui/web-layout";
+import { useAgentRouteId } from "@/platform/navigation/use-agent-route";
 export function ConnectorCard({
 	app,
 	isConnected = false,
@@ -17,6 +18,7 @@ export function ConnectorCard({
 	searchQuery?: string;
 	actions?: ReactNode;
 }) {
+	const agentId = useAgentRouteId();
 	return (
 		<EntityRow
 			className={webView(connectorCardClasses.root)}
@@ -29,7 +31,11 @@ export function ConnectorCard({
 			}
 			meta={searchQuery ? connectorSearchSupportingText(app, searchQuery) : app.description}
 			actions={actions}
-			link={{ to: { pathname: "/connectors/[appName]", params: { appName: app.name } } }}
+			link={{
+				to: agentId
+					? { pathname: "/agents/[id]/connectors/[name]", params: { id: agentId, name: app.name } }
+					: { pathname: "/connectors/[name]", params: { name: app.name } },
+			}}
 			ariaLabel={app.display_name}
 		/>
 	);

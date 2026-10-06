@@ -18,6 +18,7 @@ import {
 	vaultDetailClasses,
 } from "@clawdi/shared/ui";
 import {
+	fetchAllPages,
 	vaultKeyFormCopy as formCopy,
 	getProjectResourceDefinition,
 	identityFor,
@@ -73,19 +74,52 @@ import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/acc
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
-export function VaultDetailScreen() {
+export function VaultDetailScreen({ projectId: scopedProject }: { projectId?: string } = {}) {
 	const scope = useAccountScope();
 	const params = useLocalSearchParams<{
 		vaultId?: string | string[];
 		slug?: string | string[];
+		project?: string | string[];
+		projectId?: string | string[];
 		add?: string;
 	}>();
-	const id = routeParam(params.vaultId);
-	const slug = routeParam(params.slug);
+	const id = scopedProject ? undefined : routeParam(params.vaultId),
+		slug = routeParam(params.slug);
+	const projectId = scopedProject ?? routeParam(params.project ?? params.projectId);
+	const { vault } = useMobileApi(),
+		read = useAccountRead();
+	const lookup = useQuery({
+		queryKey: accountQueryKey(scope, "vault-route", slug, projectId),
+		enabled: scope.isReady && Boolean(slug) && !id,
+		retry: false,
+		queryFn: ({ signal }) =>
+			read(async (lease) => {
+				const rows = await fetchAllPages(
+					(page, page_size) => vault.list({ project_id: projectId, page, page_size }, lease),
+					{ resourceName: "Vault catalog" },
+				);
+				const matches = rows.items.filter((item) => item.slug === slug);
+				if (matches.length !== 1) throw new Error("Vault unavailable");
+				return matches[0];
+			}, signal),
+	});
+	const identity = id && slug ? { id, slug } : lookup.data;
+	if (slug && !id && lookup.isPending)
+		return (
+			<LibraryPage>
+				<PageHeaderSkeleton />
+			</LibraryPage>
+		);
+	if (lookup.isError)
+		return (
+			<LibraryPage>
+				<ApiErrorPanel error={lookup.error} onRetry={() => void lookup.refetch()} />
+			</LibraryPage>
+		);
 	return (
 		<VaultDetail
-			key={`${scope.identity}:${scope.generation}:${id}:${slug}`}
-			identity={id && slug ? { id, slug } : undefined}
+			key={`${scope.identity}:${scope.generation}:${identity?.id}:${slug}`}
+			identity={identity}
 			initialAdd={params.add === "1"}
 		/>
 	);

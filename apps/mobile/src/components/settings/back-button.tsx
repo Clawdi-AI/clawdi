@@ -11,7 +11,7 @@ export function SettingsBackButton() {
 			variant="ghost"
 			size="icon-sm"
 			accessibilityLabel={t("navigation.back")}
-			onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/account"))}
+			onPress={() => (router.canGoBack() ? router.back() : router.replace("/settings"))}
 		>
 			<Icon as={ArrowLeft} />
 		</Button>

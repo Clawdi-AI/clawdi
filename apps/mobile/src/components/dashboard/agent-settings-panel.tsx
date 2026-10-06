@@ -41,8 +41,8 @@ import { ReadScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function AgentSettingsScreen() {
-	const params = useLocalSearchParams<{ agentId?: string | string[] }>();
-	const id = routeParam(params.agentId);
+	const params = useLocalSearchParams<{ id?: string | string[] }>();
+	const id = routeParam(params.id);
 	const scope = useAccountScope();
 	return <Settings key={`${scope.accountKey}:${scope.generation}:${id}`} id={id} />;
 }

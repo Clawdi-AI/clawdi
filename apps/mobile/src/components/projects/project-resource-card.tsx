@@ -57,7 +57,7 @@ export function ProjectResourceCard({
 			link={
 				link ??
 				(project.id
-					? { to: { pathname: "/projects/[projectId]", params: { projectId: project.id } } }
+					? { to: { pathname: "/projects/[id]", params: { id: project.id } } }
 					: undefined)
 			}
 			ariaLabel={`Open ${name}`}

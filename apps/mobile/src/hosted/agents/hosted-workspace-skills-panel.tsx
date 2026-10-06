@@ -32,9 +32,9 @@ import { type SkillAttempt, skillAttemptAfterFailure } from "@/platform/skill-at
 import { skillAttempts } from "@/platform/skill-attempt-storage";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
-export function WorkspaceSkillsScreen() {
+export function WorkspaceSkillsScreen({ deploymentId }: { deploymentId?: string }) {
 	const params = useLocalSearchParams<{ deploymentId?: string | string[] }>();
-	const id = routeParam(params.deploymentId) ?? "";
+	const id = deploymentId ?? routeParam(params.deploymentId) ?? "";
 	const scope = useAccountScope();
 	return <WorkspaceSkills key={`${scope.accountKey}:${scope.generation}:${id}`} id={id} />;
 }

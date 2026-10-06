@@ -15,7 +15,7 @@ export function DeleteAccountScreen() {
 	const scope = useAccountScope();
 	const { isLoaded, user } = useUser();
 	if (!isLoaded) return <LoadingScreen />;
-	if (!user || !scope.isReady) return <Redirect href="/(auth)/sign-in" />;
+	if (!user || !scope.isReady) return <Redirect href="/sign-in" />;
 	if (user.id !== scope.accountKey) return <LoadingScreen />;
 	return (
 		<DeleteAccount
@@ -44,7 +44,7 @@ function DeleteAccount({ email }: { email: string }) {
 			await signOut({ sessionId: scope.sessionId });
 			const wasCurrent = scope.isCurrent();
 			clearAccountScope(scope, queries);
-			if (current() && wasCurrent) router.replace("/(auth)/sign-in");
+			if (current() && wasCurrent) router.replace("/sign-in");
 		});
 	const confirm = () => {
 		if (!compute || phrase !== t("deletion.phrase") || outcome !== "idle" || action.busy) return;

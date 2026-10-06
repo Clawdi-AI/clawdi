@@ -79,7 +79,7 @@ export function AgentTileView({ tile }: { tile: AgentTile }) {
 			accessibilityRole="link"
 			accessibilityLabel={`Open ${tile.name}${statusVisual ? `. Status: ${statusVisual.label}` : ""}`}
 			className={cn(ENTITY_CARD_BASE, webView(styles.card))}
-			onPress={() => router.push({ pathname: "/agents/[agentId]", params: { agentId: tile.id } })}
+			onPress={() => router.push({ pathname: "/agents/[id]", params: { id: tile.id } })}
 		>
 			<EntityHeader
 				icon={<AgentIcon agent={tile.agentType} size="lg" avatarUrl={tile.avatarUrl} />}

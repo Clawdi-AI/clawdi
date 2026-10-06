@@ -136,7 +136,7 @@ function Catalog() {
 	});
 	const total = catalog.data?.pages[0]?.total ?? 0;
 	const open = (name: string) =>
-		router.push({ pathname: "/connectors/[appName]", params: { appName: name } });
+		router.push({ pathname: "/connectors/[name]", params: { name: name } });
 	return (
 		<LibraryPage>
 			<PageHeader
@@ -234,8 +234,8 @@ function Catalog() {
 
 export function ConnectorDetailScreen() {
 	const scope = useAccountScope();
-	const params = useLocalSearchParams<{ appName?: string | string[] }>();
-	const name = routeParam(params.appName);
+	const params = useLocalSearchParams<{ name?: string | string[] }>();
+	const name = routeParam(params.name);
 	return <Detail key={`${scope.identity}:${scope.generation}:${name}`} name={name} />;
 }
 

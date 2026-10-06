@@ -29,8 +29,8 @@ import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function MemoryDetailScreen() {
-	const params = useLocalSearchParams<{ memoryId?: string | string[] }>();
-	const id = typeof params.memoryId === "string" ? routeParam(params.memoryId) : undefined;
+	const params = useLocalSearchParams<{ id?: string | string[]; memoryId?: string | string[] }>();
+	const id = routeParam(params.memoryId ?? params.id);
 	const scope = useAccountScope();
 	return <MemoryDetail key={`${scope.identity}:${scope.generation}:${id}`} id={id} />;
 }
@@ -162,8 +162,8 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 										size="sm"
 										onPress={() =>
 											router.push({
-												pathname: "/sessions/[sessionId]",
-												params: { sessionId: memory.source_session_id ?? "" },
+												pathname: "/sessions/[id]",
+												params: { id: memory.source_session_id ?? "" },
 											})
 										}
 									>

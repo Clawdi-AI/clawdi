@@ -26,7 +26,7 @@ export default function AccountRoute() {
 			await signOut({ sessionId: scope.sessionId });
 			const wasCurrent = scope.isCurrent();
 			clearAccountScope(scope, queries);
-			if (current() && wasCurrent) router.replace("/(auth)/sign-in");
+			if (current() && wasCurrent) router.replace("/sign-in");
 		});
 	return (
 		<SettingsShell>

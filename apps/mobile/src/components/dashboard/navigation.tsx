@@ -17,6 +17,7 @@ import { Text } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 export function AgentSectionNavigation({
 	agentId,
@@ -46,46 +47,12 @@ export function AgentSectionNavigation({
 	);
 	const navigate = (next: MobileAgentSection) => {
 		setOpen(false);
-		switch (next) {
-			case "overview":
-				router.push({ pathname: "/agents/[agentId]", params: { agentId } });
-				break;
-			case "sessions":
-				router.push({ pathname: "/sessions", params: { agentId } });
-				break;
-			case "memories":
-				router.push("/memories");
-				break;
-			case "connectors":
-				router.push("/connectors");
-				break;
-			case "vaults":
-				if (workspace) router.push({ pathname: "/vault", params: { agentId } });
-				break;
-			case "ai":
-				router.push({ pathname: "/ai-providers", params: { agentId } });
-				break;
-			case "channels":
-				router.push({ pathname: "/channels", params: { agentId } });
-				break;
-			case "projects":
-				router.push({ pathname: "/agents/[agentId]/projects", params: { agentId } });
-				break;
-			case "skills":
-				router.push({ pathname: "/agents/[agentId]/skills", params: { agentId } });
-				break;
-			case "plugins":
-				router.push({ pathname: "/agents/[agentId]/plugins", params: { agentId } });
-				break;
-			case "settings":
-				router.push({ pathname: "/agents/[agentId]/settings", params: { agentId } });
-				break;
-		}
+		router.push(agentSectionHref(agentId, next));
 	};
 	return (
 		<>
 			<AppView className="flex-row justify-between">
-				<Button variant="ghost" size="sm" onPress={() => router.push("/(tabs)/agents")}>
+				<Button variant="ghost" size="sm" onPress={() => router.push("/agents")}>
 					<Icon as={ArrowLeft} />
 					<Text>Agents</Text>
 				</Button>
@@ -128,8 +95,8 @@ export function AgentSectionNavigation({
 							onPress={() => {
 								setOpen(false);
 								router.push({
-									pathname: "/deployments/[deploymentId]/terminal",
-									params: { deploymentId: deployment.resource.id },
+									pathname: "/terminal/[id]",
+									params: { id: agentId },
 								});
 							}}
 						>

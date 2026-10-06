@@ -94,7 +94,7 @@ export function VaultSplit({
 									onPress={() => {
 										if (g.target)
 											router.push({
-												pathname: "/vault/detail",
+												pathname: "/vault/[slug]",
 												params: { vaultId: g.target.id, slug: g.target.slug },
 											});
 									}}

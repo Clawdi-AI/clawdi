@@ -17,7 +17,7 @@ editing recipes, run `bun run --cwd apps/mobile theme` and commit
   `IconChip` resolves identity colors directly from shared theme variables,
   including when those runtime classes are outside the static UI safelist.
 - Brand SVGs are generated from the exact LobeHub exports used by Web. Run
-  `bun apps/mobile/src/ui/generate-brand-assets.mjs` from the repository root
+  `bun apps/mobile/src/platform/generate-brand-assets.mjs` from the repository root
   to regenerate them. Channels use the same public PNG URLs as Web. Failed
   images fall back to the same monogram/device treatment.
 - `Tabs` uses string values; `TabsList` supports `default` and `line` (native

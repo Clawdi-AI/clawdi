@@ -23,6 +23,7 @@ import { SectionLabel } from "@/components/section-label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { useAgentRouteId } from "@/platform/navigation/use-agent-route";
 export function SessionCardSkeleton() {
 	return (
 		<WebView recipe={`${ENTITY_CARD_BASE} ${styles.card}`} style={{ minHeight: 80 }}>
@@ -101,6 +102,7 @@ export function SessionCard({
 	quietAutomated?: boolean;
 	searchQuery?: string;
 }) {
+	const agentId = useAgentRouteId();
 	const { title, projectFolder, totalTokens, isAutomated } = sessionCardModel(
 		session,
 		quietAutomated,
@@ -129,18 +131,22 @@ export function SessionCard({
 			style={{ minHeight: 80 }}
 			onPress={() => {
 				const { search } = sessionDetailLink(session, { searchQuery });
-				router.push({
-					pathname: "/sessions/[sessionId]",
-					params: {
-						sessionId: session.id,
-						...(search.matchKind ? { matchKind: search.matchKind } : {}),
-						...(search.matchPosition !== undefined
-							? { matchPosition: String(search.matchPosition) }
-							: {}),
-						...(search.matchRevision ? { matchRevision: search.matchRevision } : {}),
-						...(search.matchQuery ? { matchQuery: search.matchQuery } : {}),
-					},
-				});
+				const params = {
+					...(search.matchKind ? { matchKind: search.matchKind } : {}),
+					...(search.matchPosition !== undefined
+						? { matchPosition: String(search.matchPosition) }
+						: {}),
+					...(search.matchRevision ? { matchRevision: search.matchRevision } : {}),
+					...(search.matchQuery ? { matchQuery: search.matchQuery } : {}),
+				};
+				router.push(
+					agentId
+						? {
+								pathname: "/agents/[id]/sessions/[sessionId]",
+								params: { ...params, id: agentId, sessionId: session.id },
+							}
+						: { pathname: "/sessions/[id]", params: { ...params, id: session.id } },
+				);
 			}}
 		>
 			<AgentIcon agent={session.agent_type} size="lg" />

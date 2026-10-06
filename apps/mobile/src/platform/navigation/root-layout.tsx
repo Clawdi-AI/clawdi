@@ -26,7 +26,6 @@ export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
 function Navigation() {
 	return (
 		<Stack screenOptions={{ headerShown: false }}>
-			<Stack.Screen name="index" />
 			<Stack.Screen name="(auth)" />
 			<Stack.Screen name="(tabs)" />
 		</Stack>
@@ -70,3 +69,5 @@ export default function RootLayout() {
 		</RuntimeConfigProvider>
 	);
 }
+
+export const unstable_settings = { initialRouteName: "(tabs)" };

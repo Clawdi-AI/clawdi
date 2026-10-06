@@ -15,7 +15,7 @@ export function PasskeysScreen() {
 	const { isLoaded, user } = useUser();
 	const scope = useAccountScope();
 	if (!isLoaded) return <LoadingScreen />;
-	if (!user || !scope.isReady) return <Redirect href="/(auth)/sign-in" />;
+	if (!user || !scope.isReady) return <Redirect href="/sign-in" />;
 	return <Passkeys key={`${scope.identity}:${scope.generation}`} user={user} />;
 }
 

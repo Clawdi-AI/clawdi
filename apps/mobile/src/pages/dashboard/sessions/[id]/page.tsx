@@ -29,8 +29,8 @@ import { ReadScreen } from "@/platform/safe-area-screen";
 
 export default function SessionDetailRoute() {
 	const t = useI18n();
-	const params = useLocalSearchParams<{ sessionId?: string | string[] }>();
-	const sessionId = routeParam(params.sessionId);
+	const params = useLocalSearchParams<{ id?: string | string[]; sessionId?: string | string[] }>();
+	const sessionId = routeParam(params.sessionId ?? params.id);
 	const query = useCloudSession(sessionId);
 	const session = !query.isError ? query.data : undefined;
 	const back = (
@@ -38,7 +38,7 @@ export default function SessionDetailRoute() {
 			variant="ghost"
 			className="self-start"
 			size="sm"
-			onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/sessions"))}
+			onPress={() => (router.canGoBack() ? router.back() : router.replace("/sessions"))}
 		>
 			<Icon as={ArrowLeft} />
 			<Text>{t("sessionDetail.back")}</Text>

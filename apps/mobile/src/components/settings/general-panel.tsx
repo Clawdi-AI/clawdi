@@ -44,7 +44,7 @@ export function GeneralPanel() {
 							<WebText recipe={styles.email}>{user?.primaryEmailAddress?.emailAddress}</WebText>
 						</WebView>
 					</WebView>
-					<Button variant="outline" size="sm" onPress={() => router.push("/account-settings")}>
+					<Button variant="outline" size="sm" onPress={() => router.push("/settings/account")}>
 						<Icon as={UserCog} />
 						<Text>{t("settingsParity.manageAccount")}</Text>
 					</Button>

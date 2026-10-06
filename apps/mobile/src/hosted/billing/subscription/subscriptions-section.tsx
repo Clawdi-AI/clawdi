@@ -29,6 +29,7 @@ import {
 } from "@/hosted/billing/wallet/wallet-sections";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { ReadScreen } from "@/platform/safe-area-screen";
 
 function initialCursor(): string | undefined {
@@ -113,7 +114,7 @@ function BillingView() {
 													onPress={() => {
 														if (scope.isCurrent() && !scope.signal.aborted)
 															router.push(
-																`/billing/subscriptions/${encodeURIComponent(item.subscription_id)}`,
+																`/settings/compute/${encodeURIComponent(item.subscription_id)}`,
 															);
 													}}
 												>
@@ -279,6 +280,9 @@ export function SubscriptionDetailScreen({
 	const t = useI18n();
 	const router = useRouter();
 	const scope = useAccountScope();
+	const action = useAuthAction(scope);
+	const { hosted } = useMobileApi();
+	const read = useAccountRead();
 	const { compute } = useMobileApi();
 	const validId = validSubscriptionId(subscriptionId);
 	const query = useSubscriptions(validId);
@@ -328,12 +332,19 @@ export function SubscriptionDetailScreen({
 						onRetry={query.isFetching ? undefined : () => void query.refetch()}
 					/>
 				) : null}
+				{action.error ? <ApiErrorPanel error={action.error} /> : null}
 				{item ? (
 					<SubscriptionDetails
 						item={item}
 						onDeployment={() => {
-							if (scope.isCurrent() && !scope.signal.aborted && item.deployment_id)
-								router.push(`/deployments/${encodeURIComponent(item.deployment_id)}`);
+							void action.run(async (owns) => {
+								if (!hosted || !item.deployment_id) throw new Error("Agent unavailable");
+								const deployment = await read((lease) =>
+									hosted.getDeployment(item.deployment_id ?? "", lease),
+								);
+								if (owns() && scope.isCurrent() && !scope.signal.aborted && deployment.agent_id)
+									router.push(`/agents/${encodeURIComponent(deployment.agent_id)}`);
+							});
 						}}
 					/>
 				) : !query.isError ? (

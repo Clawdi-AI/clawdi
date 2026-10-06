@@ -116,7 +116,7 @@ export function AddAgentSetup() {
 									size="sm"
 									variant="outline"
 									onPress={() =>
-										router.push({ pathname: "/agents/[agentId]", params: { agentId: agent.id } })
+										router.push({ pathname: "/agents/[id]", params: { id: agent.id } })
 									}
 								>
 									<Text>{agentSurfaceCopy.openAgent}</Text>

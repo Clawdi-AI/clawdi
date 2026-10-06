@@ -78,7 +78,7 @@ export default function HomeRoute() {
 						<DropdownMenuContent>
 							<DropdownMenuItem
 								label={t("navigation.deployments")}
-								onSelect={() => router.push("/deployments")}
+								onSelect={() => router.push("/agents")}
 							/>
 							<DropdownMenuItem
 								label={t("publicSession.open")}
@@ -86,7 +86,7 @@ export default function HomeRoute() {
 							/>
 							<DropdownMenuItem
 								label={t("vault.supplyTitle")}
-								onSelect={() => router.push("/vault-supply")}
+								onSelect={() => router.push("/vault-request")}
 							/>
 						</DropdownMenuContent>
 					</DropdownMenu>

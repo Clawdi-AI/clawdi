@@ -40,10 +40,10 @@ test("authorization URLs cannot open credential-bearing or executable schemes", 
 
 test("native callback navigation drops secrets without rewriting other deep links", () => {
 	expect(accountOAuthNavigation(`${redirect}&rotating_token_nonce=secret`)).toBe(
-		"/connected-accounts",
+		"/settings/account/connected-accounts",
 	);
 	expect(accountOAuthNavigation("/account-oauth?rotating_token_nonce=secret")).toBe(
-		"/connected-accounts",
+		"/settings/account/connected-accounts",
 	);
 	expect(accountOAuthNavigation("clawdi://s/share-id")).toBe("clawdi://s/share-id");
 });
@@ -53,10 +53,10 @@ test("login callbacks cannot substitute account linking or change a public Sessi
 	const login = accountOAuthRedirect(attempt, "sign-in", attempt);
 	const signup = accountOAuthRedirect(attempt, "sign-up", attempt);
 	expect(accountOAuthNavigation(`${login}&rotating_token_nonce=secret`)).toBe(
-		`/(auth)/sign-in?publicShareId=${attempt}`,
+		`/sign-in?publicShareId=${attempt}`,
 	);
 	expect(accountOAuthNavigation(`${signup}&rotating_token_nonce=secret`)).toBe(
-		`/(auth)/sign-up?publicShareId=${attempt}`,
+		`/sign-up?publicShareId=${attempt}`,
 	);
 	expect(accountOAuthNonce(`${login}&rotating_token_nonce=nonce`, login)).toBe("nonce");
 	expect(() => accountOAuthNonce(`${redirect}&rotating_token_nonce=nonce`, login)).toThrow();
@@ -71,5 +71,5 @@ test("login callbacks cannot substitute account linking or change a public Sessi
 		accountOAuthNavigation(
 			"clawdi://sign-in-oauth?publicShareId=https://evil.test&rotating_token_nonce=secret",
 		),
-	).toBe("/(auth)/sign-in");
+	).toBe("/sign-in");
 });

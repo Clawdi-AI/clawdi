@@ -1,5 +1,5 @@
 import type { HostedDeployOperation } from "@clawdi/shared/api";
-import { agentsIndexClasses, ENTITY_CARD_BASE, ENTITY_GRID_CLASS } from "@clawdi/shared/ui";
+import { agentsIndexClasses } from "@clawdi/shared/ui";
 import {
 	agentOverviewCopy,
 	agentSurfaceCopy,
@@ -14,18 +14,16 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useMobileApi } from "@/components/api-provider";
 import { AgentOverview } from "@/components/dashboard/agent-overview-resource-bodies";
 import { AgentSourceBadge } from "@/components/dashboard/agent-section-source-badge";
-import { AgentCollection } from "@/components/dashboard/collection";
 import { ActionButton as NativeButton } from "@/components/dashboard/controls";
 import { AgentSectionNavigation } from "@/components/dashboard/navigation";
 import { EmptyState } from "@/components/empty-state";
-import { EntityCardSkeleton, EntityHeader } from "@/components/entity-card";
-import { EntityIcon } from "@/components/entity-icon";
+import { EntityCardSkeleton } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { ResourceError } from "@/components/resource-error";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
-import { AppPressable, AppScrollView, AppText } from "@/components/ui/primitives";
+import { AppScrollView, AppText } from "@/components/ui/primitives";
 import { Text } from "@/components/ui/text";
 import { WebView, webView } from "@/components/ui/web-layout";
 import { BackButton, isNotFound, useCloudAgent } from "@/hooks/cloud-inventory";
@@ -36,7 +34,6 @@ import {
 	canPollDeployment,
 	DEPLOYMENT_POLL_WINDOW_MS,
 	deploymentNeedsPolling,
-	deploymentSummaryKeys,
 	operationIdFromName,
 } from "@/hosted/deployment-status";
 import { useI18n } from "@/lib/i18n";
@@ -44,97 +41,6 @@ import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/acc
 import { ReadScreen } from "@/platform/safe-area-screen";
 
 export { deploymentsEn } from "@/lib/i18n/deployments-en";
-
-export function DeploymentListScreen() {
-	const { hosted } = useMobileApi();
-	const scope = useAccountScope();
-	const read = useAccountRead();
-	const router = useRouter();
-	const t = useI18n();
-	const query = useQuery({
-		queryKey: accountQueryKey(scope, "deployments"),
-		queryFn: ({ signal }) =>
-			read((s) => {
-				if (!hosted) throw new Error("Hosted API unavailable");
-				return hosted.listDeployments(s);
-			}, signal),
-		enabled: scope.isReady && Boolean(hosted),
-		retry: false,
-	});
-	if (!hosted)
-		return (
-			<AgentCollection
-				title={agentSurfaceCopy.agents}
-				description={agentSurfaceCopy.everyAgentInYourAccount}
-			>
-				<EmptyState
-					title={agentSurfaceCopy.unavailable}
-					description={t("deployments.unavailable")}
-				/>
-			</AgentCollection>
-		);
-	const refresh = () => {
-		if (!query.isFetching) void query.refetch();
-	};
-	return (
-		<AgentCollection
-			title={agentSurfaceCopy.agents}
-			description={agentSurfaceCopy.everyAgentInYourAccount}
-		>
-			{query.isError ? (
-				<ApiErrorPanel
-					error={query.error}
-					title={agentSurfaceCopy.couldnTLoadAgents}
-					onRetry={refresh}
-				/>
-			) : query.isPending ? (
-				<WebView recipe={ENTITY_GRID_CLASS}>
-					{[0, 1, 2].map((i) => (
-						<EntityCardSkeleton key={i} />
-					))}
-				</WebView>
-			) : !query.data?.length ? (
-				<EmptyState
-					title={agentSurfaceCopy.noAgentsYet}
-					description={agentSurfaceCopy.connectAnAgentToSeeItHere}
-				/>
-			) : (
-				<WebView recipe={ENTITY_GRID_CLASS}>
-					{query.data.map((deployment) => (
-						<AppPressable
-							key={deployment.resource.id}
-							accessibilityRole="link"
-							className={webView(ENTITY_CARD_BASE)}
-							onPress={() => {
-								if (scope.isCurrent() && !scope.signal.aborted)
-									router.push(`/deployments/${encodeURIComponent(deployment.resource.id)}`);
-							}}
-						>
-							<EntityHeader
-								title={deployment.resource.name}
-								icon={
-									<EntityIcon
-										kind="framework"
-										id={deployment.resource.spec.runtime}
-										label={deployment.resource.spec.runtime}
-									/>
-								}
-								meta={[
-									deployment.resource.spec.runtime,
-									t(
-										deployment.resource.status
-											? deploymentSummaryKeys[deployment.resource.status.summary_state]
-											: "deployments.unknown",
-									),
-								]}
-							/>
-						</AppPressable>
-					))}
-				</WebView>
-			)}
-		</AgentCollection>
-	);
-}
 
 export function DeploymentDetailScreen({ deploymentId }: { deploymentId: string | undefined }) {
 	const scope = useAccountScope();
@@ -355,8 +261,8 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 												onPress={() => {
 													setManagementOpen(false);
 													router.push({
-														pathname: "/deployments/[deploymentId]/terminal",
-														params: { deploymentId },
+														pathname: "/terminal/[id]",
+														params: { id: deployment.agent_id ?? "" },
 													});
 												}}
 											>
@@ -368,8 +274,8 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 												onPress={() => {
 													setManagementOpen(false);
 													router.push({
-														pathname: "/deployments/[deploymentId]/skills",
-														params: { deploymentId },
+														pathname: "/agents/[id]/skills",
+														params: { id: deployment.agent_id ?? "", tab: "workspace" },
 													});
 												}}
 											/>

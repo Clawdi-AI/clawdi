@@ -35,14 +35,20 @@ import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/acc
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
-export function AgentPluginsScreen() {
-	const params = useLocalSearchParams<{ agentId?: string | string[] }>();
-	const id = routeParam(params.agentId) ?? "";
+export function AgentPluginsScreen({ pluginName }: { pluginName?: string } = {}) {
+	const params = useLocalSearchParams<{ id?: string | string[] }>();
+	const id = routeParam(params.id) ?? "";
 	const scope = useAccountScope();
-	return <Plugins key={`${scope.accountKey}:${scope.generation}:${id}`} id={id} />;
+	return (
+		<Plugins
+			key={`${scope.accountKey}:${scope.generation}:${id}`}
+			id={id}
+			pluginName={pluginName}
+		/>
+	);
 }
 
-function Plugins({ id }: { id: string }) {
+function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 	const t = useI18n();
 	const confirmationDialog = useAgentConfirmation();
 	const scope = useAccountScope();
@@ -140,7 +146,9 @@ function Plugins({ id }: { id: string }) {
 	)
 		.filter(
 			(item) =>
-				agentPluginMatches(item, search) && (!category || item.catalog?.category === category),
+				(!pluginName || item.name === pluginName) &&
+				agentPluginMatches(item, search) &&
+				(!category || item.catalog?.category === category),
 		)
 		.map((item) => ({ ...item, id: item.name }));
 	return (

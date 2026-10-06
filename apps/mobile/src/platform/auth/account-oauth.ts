@@ -56,9 +56,8 @@ export function accountOAuthAuthorizationUrl(value: URL | null | undefined): str
 export function accountOAuthNavigation(path: string): string {
 	const match = /^(?:clawdi:\/\/\/?|\/?)(account|sign-in|sign-up)-oauth(?:[/?#]|$)/i.exec(path);
 	if (match) {
-		if (match[1]?.toLowerCase() === "account") return "/connected-accounts";
-		const destination =
-			match[1]?.toLowerCase() === "sign-up" ? "/(auth)/sign-up" : "/(auth)/sign-in";
+		if (match[1]?.toLowerCase() === "account") return "/settings/account/connected-accounts";
+		const destination = match[1]?.toLowerCase() === "sign-up" ? "/sign-up" : "/sign-in";
 		try {
 			const url = new URL(path, "clawdi:///");
 			const share = publicSessionId(url.searchParams.get("publicShareId") ?? "");

@@ -21,11 +21,7 @@ function ClerkAuthLayout() {
 	if (!isLoaded) return <LoadingScreen />;
 	if (isSignedIn)
 		return (
-			<Redirect
-				href={
-					returnShare ? { pathname: "/s/[shareId]", params: { shareId: returnShare } } : "/(tabs)"
-				}
-			/>
+			<Redirect href={returnShare ? { pathname: "/s/[id]", params: { id: returnShare } } : "/"} />
 		);
 	return (
 		<ReadScreen>

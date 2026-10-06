@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ExpoConfig } from "expo/config";
 import { parseMobileRuntimeConfig } from "@/lib/config/runtime-config";
-import { readLinkHosts } from "../../../config/linking.cjs";
+import { readLinkHosts, webLinkPaths } from "../../../config/linking.cjs";
 
 const configure: (value: { config: ExpoConfig }) => ExpoConfig = require("../../../app.config.js");
 test("native associations and runtime routing share the same explicit hostname configuration", () => {
@@ -31,10 +31,7 @@ test("native associations and runtime routing share the same explicit hostname c
 			action: "VIEW",
 			autoVerify: true,
 			category: ["BROWSABLE", "DEFAULT"],
-			data: [
-				{ scheme: "https", host: "links.example.test", pathPrefix: "/s/" },
-				{ scheme: "https", host: "links.example.test", path: "/vault-request" },
-			],
+			data: webLinkPaths.map((path) => ({ scheme: "https", host: "links.example.test", ...path })),
 		});
 		const parsed = parseMobileRuntimeConfig({
 			cloudApiUrl: "https://api.example.test",

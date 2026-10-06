@@ -1,4 +1,4 @@
-const { readLinkHosts } = require("./config/linking.cjs");
+const { readLinkHosts, webLinkPaths } = require("./config/linking.cjs");
 
 function publicValue(name) {
 	const value = process.env[name]?.trim();
@@ -53,10 +53,7 @@ module.exports = ({ config }) => {
 								action: "VIEW",
 								autoVerify: true,
 								category: ["BROWSABLE", "DEFAULT"],
-								data: [
-									{ scheme: "https", host, pathPrefix: "/s/" },
-									{ scheme: "https", host, path: "/vault-request" },
-								],
+								data: webLinkPaths.map((path) => ({ scheme: "https", host, ...path })),
 							})),
 						],
 					},

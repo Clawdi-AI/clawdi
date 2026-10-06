@@ -1,5 +1,1 @@
-import { SignInScreen } from "@/platform/auth/auth-screen";
-
-export default function SignInRoute() {
-	return <SignInScreen />;
-}
+export { default } from "@/pages/auth/sign-in";

@@ -1,5 +1,1 @@
-import { SignUpScreen } from "@/platform/auth/auth-screen";
-
-export default function SignUpRoute() {
-	return <SignUpScreen />;
-}
+export { default } from "@/pages/auth/sign-up";

@@ -18,7 +18,7 @@ import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountScope } from "@/platform/account-lifecycle";
 import { ReadScreen } from "@/platform/safe-area-screen";
 export default function AgentDetailRoute() {
-	const params = useLocalSearchParams<{ agentId?: string | string[] }>();
+	const params = useLocalSearchParams<{ id?: string | string[] }>();
 	const cache = useQueryClient();
 	const scope = useAccountScope();
 	const [refreshing, setRefreshing] = useState(false);
@@ -30,7 +30,7 @@ export default function AgentDetailRoute() {
 			setRefreshing(false);
 		}
 	};
-	const agentId = routeParam(params.agentId),
+	const agentId = routeParam(params.id),
 		agent = useCloudAgent(agentId);
 	const inventory = useDashboardAgents();
 	const deployment = inventory.inventory.data?.find((d) => d.agent_id === agentId);

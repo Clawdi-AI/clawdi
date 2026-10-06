@@ -47,8 +47,8 @@ import { ReadScreen } from "@/platform/safe-area-screen";
 
 export function ProjectSharingScreen() {
 	const scope = useAccountScope();
-	const params = useLocalSearchParams<{ projectId?: string | string[] }>();
-	const filter = projectRouteFilter(params.projectId);
+	const params = useLocalSearchParams<{ id?: string | string[]; projectId?: string | string[] }>();
+	const filter = projectRouteFilter(params.projectId ?? params.id);
 	const projectId = filter.kind === "project" ? filter.id : undefined;
 	return (
 		<ProjectGate key={`${scope.identity}:${scope.generation}:${projectId}`} projectId={projectId} />

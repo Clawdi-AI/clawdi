@@ -48,8 +48,8 @@ export function ChannelsScreen() {
 	return <ChannelsView key={`${scope.accountKey}:${scope.generation}`} />;
 }
 function ChannelsView() {
-	const params = useLocalSearchParams<{ agentId?: string | string[] }>(),
-		agentId = routeParam(params.agentId);
+	const params = useLocalSearchParams<{ id?: string | string[]; agentId?: string | string[] }>(),
+		agentId = routeParam(params.id ?? params.agentId);
 	const agent = useCloudAgent(agentId);
 	const linked = useChannelQuery(
 		["agent", agentId ?? "missing"],

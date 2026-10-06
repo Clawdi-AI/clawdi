@@ -37,7 +37,7 @@ export function GlobalWalletBalance() {
 			className={webView(styles.control).replace(/\bw-full\b/g, "")}
 			accessibilityLabel={label}
 			onPress={() => {
-				if (scope.isCurrent() && !scope.signal.aborted) router.push("/billing/wallet");
+				if (scope.isCurrent() && !scope.signal.aborted) router.push("/settings/wallet");
 			}}
 		>
 			<WebIcon as={WalletCards} recipe={styles.icon} />

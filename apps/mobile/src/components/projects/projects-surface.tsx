@@ -201,7 +201,7 @@ function ProjectsView() {
 							<DropdownMenuContent>
 								<DropdownMenuItem
 									label={t("sharing.joinLink")}
-									onSelect={() => router.push("/projects/join")}
+									onSelect={() => router.push("/share/new")}
 								/>
 								<DropdownMenuItem
 									label={t("sharing.received")}
@@ -262,8 +262,8 @@ function ProjectsView() {
 													label={t("projects.sharing")}
 													onSelect={() =>
 														router.push({
-															pathname: "/projects/[projectId]/sharing",
-															params: { projectId: project.id },
+															pathname: "/projects/[id]/sharing",
+															params: { id: project.id },
 														})
 													}
 												/>

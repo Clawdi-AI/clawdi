@@ -35,8 +35,11 @@ export function ProjectResourceBoundary({
 }) {
 	const scope = useAccountScope();
 	const t = useI18n();
-	const params = useLocalSearchParams<{ projectId?: string | string[] }>();
-	const filter = projectRouteFilter(params.projectId);
+	const params = useLocalSearchParams<{
+		project?: string | string[];
+		projectId?: string | string[];
+	}>();
+	const filter = projectRouteFilter(params.project ?? params.projectId);
 	const id = filter.kind === "project" ? filter.id : undefined;
 	const project = useProject(id);
 	if (
@@ -101,9 +104,7 @@ export function ProjectScopeHeader({ project }: { project?: Project }) {
 				<Button
 					variant="outline"
 					size="sm"
-					onPress={() =>
-						router.push({ pathname: "/projects/[projectId]", params: { projectId: project.id } })
-					}
+					onPress={() => router.push({ pathname: "/projects/[id]", params: { id: project.id } })}
 				>
 					<Text>{`${t("projects.open")}: ${project.name}`}</Text>
 				</Button>

@@ -46,8 +46,8 @@ import { useAuthAction } from "@/platform/auth/use-auth-action";
 
 export function AgentProjectsScreen() {
 	const scope = useAccountScope();
-	const params = useLocalSearchParams<{ agentId?: string | string[] }>();
-	const agentId = routeParam(params.agentId);
+	const params = useLocalSearchParams<{ id?: string | string[] }>();
+	const agentId = routeParam(params.id);
 	return (
 		<BindingsView key={`${scope.identity}:${scope.generation}:${agentId}`} agentId={agentId} />
 	);

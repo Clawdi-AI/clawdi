@@ -44,12 +44,17 @@ import { projectRouteFilter, routeParam } from "@/lib/route-params";
 import { SkillRow, useCloudSkills } from "@/pages/dashboard/skills/page";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 
-export function ProjectDetailScreen() {
+export function ProjectDetailScreen({ initialTab: requestedTab }: { initialTab?: string } = {}) {
 	const scope = useAccountScope();
-	const params = useLocalSearchParams<{ projectId?: string | string[]; tab?: string | string[] }>();
-	const filter = projectRouteFilter(params.projectId);
+	const params = useLocalSearchParams<{
+		id?: string | string[];
+		projectId?: string | string[];
+		tab?: string | string[];
+	}>();
+	const filter = projectRouteFilter(params.projectId ?? params.id);
 	const initialTab =
-		PROJECT_LOCAL_TABS.find((item) => item.id === routeParam(params.tab))?.id ?? "overview";
+		PROJECT_LOCAL_TABS.find((item) => item.id === (requestedTab ?? routeParam(params.tab)))?.id ??
+		"overview";
 	return (
 		<ProjectHub
 			key={`${scope.identity}:${scope.generation}:${filter.kind === "project" ? filter.id : ""}:${initialTab}`}
@@ -131,8 +136,8 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 												label={t("projects.sharing")}
 												onSelect={() =>
 													router.push({
-														pathname: "/projects/[projectId]/sharing",
-														params: { projectId: project.id },
+														pathname: "/projects/[id]/sharing",
+														params: { id: project.id },
 													})
 												}
 											/>
@@ -274,8 +279,8 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 									className="self-start"
 									onPress={() =>
 										router.push({
-											pathname: "/projects/[projectId]/sharing",
-											params: { projectId: project.id },
+											pathname: "/projects/[id]/sharing",
+											params: { id: project.id },
 										})
 									}
 								>
@@ -319,8 +324,8 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 										className={webView(projectDetailClasses.agentRow)}
 										onPress={() =>
 											router.push({
-												pathname: "/agents/[agentId]/projects",
-												params: { agentId: agent.id },
+												pathname: "/agents/[id]/[section]",
+												params: { section: "project-access", id: agent.id },
 											})
 										}
 									>

@@ -47,8 +47,11 @@ import { routeParam, uniqueSessions } from "@/lib/route-params";
 import { useAccountScope } from "@/platform/account-lifecycle";
 export default function SessionsRoute() {
 	const scope = useAccountScope(),
-		params = useLocalSearchParams<{ agentId?: string | string[] }>();
-	const agentId = typeof params.agentId === "string" ? routeParam(params.agentId) : undefined;
+		params = useLocalSearchParams<{ id?: string | string[]; agentId?: string | string[] }>();
+	const agentId =
+		typeof (params.id ?? params.agentId) === "string"
+			? routeParam(params.id ?? params.agentId)
+			: undefined;
 	return (
 		<SessionsView
 			key={`${scope.identity}:${scope.generation}:${agentId ?? "all"}`}

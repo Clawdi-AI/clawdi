@@ -116,7 +116,7 @@ export function SessionShareActions({
 						cache.invalidateQueries({ queryKey: accountQueryKey(scope, "cloud-sessions") }),
 						cache.invalidateQueries({ queryKey: accountQueryKey(scope, "session-shares") }),
 					]);
-					if (scope.isCurrent() && visible()) router.replace("/(tabs)/sessions");
+					if (scope.isCurrent() && visible()) router.replace("/sessions");
 				}}
 			>
 				<Button variant="outline" size="sm" textClassName="text-destructive">
@@ -294,8 +294,8 @@ function SharesView({
 							numberOfLines={1}
 							onPress={() =>
 								router.push({
-									pathname: "/sessions/[sessionId]",
-									params: { sessionId: share.session_id },
+									pathname: "/sessions/[id]",
+									params: { id: share.session_id },
 								})
 							}
 						>
@@ -374,7 +374,7 @@ function SharesView({
 						disabled={action.busy || !publicSessionInput(share.share_url)}
 						onPress={() => {
 							const id = publicSessionInput(share.share_url);
-							if (id) router.push({ pathname: "/s/[shareId]", params: { shareId: id } });
+							if (id) router.push({ pathname: "/s/[id]", params: { id: id } });
 						}}
 					>
 						<Icon as={ExternalLink} />
@@ -491,7 +491,7 @@ function SharesView({
 				<Dialog
 					open
 					onOpenChange={(open) => {
-						if (!open) router.canGoBack() ? router.back() : router.replace("/(tabs)/sessions");
+						if (!open) router.canGoBack() ? router.back() : router.replace("/sessions");
 					}}
 				>
 					<DialogContent>
@@ -567,11 +567,7 @@ function SharesView({
 							title={t("sessionDetail.sharedTitle")}
 							description={t("sessionDetail.sharedDescription")}
 							actions={
-								<Button
-									variant="outline"
-									size="sm"
-									onPress={() => router.replace("/(tabs)/sessions")}
-								>
+								<Button variant="outline" size="sm" onPress={() => router.replace("/sessions")}>
 									<Icon as={ArrowLeft} />
 									<Text>Sessions</Text>
 								</Button>
@@ -603,7 +599,7 @@ function SharesView({
 							title={t("sessionDetail.noLinks")}
 							description={t("sessionDetail.noLinksDescription")}
 							action={
-								<Button variant="outline" onPress={() => router.replace("/(tabs)/sessions")}>
+								<Button variant="outline" onPress={() => router.replace("/sessions")}>
 									<Text>{t("sessionDetail.browse")}</Text>
 								</Button>
 							}

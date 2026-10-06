@@ -111,9 +111,7 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 					setNotice(t("auth.sessionTaskRequired"));
 					return;
 				}
-				router.replace(
-					returnShare ? { pathname: "/s/[shareId]", params: { shareId: returnShare } } : "/(tabs)",
-				);
+				router.replace(returnShare ? { pathname: "/s/[id]", params: { id: returnShare } } : "/");
 			},
 		});
 	};
@@ -523,7 +521,7 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 						signingUp={signingUp}
 						busy={busy}
 						validEmail={validEmail}
-						onVault={() => router.replace("/vault-supply")}
+						onVault={() => router.replace("/vault-request")}
 						onEmailCode={() => void startEmailCode()}
 						onForgotPassword={() => {
 							clearError();
@@ -561,7 +559,7 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 				</FormText>
 				<Link
 					href={{
-						pathname: signingUp ? "/(auth)/sign-in" : "/(auth)/sign-up",
+						pathname: signingUp ? "/sign-in" : "/sign-up",
 						params: returnShare ? { publicShareId: returnShare } : {},
 					}}
 					replace

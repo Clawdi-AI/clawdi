@@ -46,8 +46,8 @@ import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { ReadScreen } from "@/platform/safe-area-screen";
 export function AiProvidersScreen() {
 	const scope = useAccountScope();
-	const params = useLocalSearchParams<{ agentId?: string | string[] }>(),
-		agentId = routeParam(params.agentId);
+	const params = useLocalSearchParams<{ id?: string | string[]; agentId?: string | string[] }>(),
+		agentId = routeParam(params.id ?? params.agentId);
 	if (agentId)
 		return (
 			<AgentProviders

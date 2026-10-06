@@ -29,7 +29,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: DeploymentRea
 			<WebView recipe={styles.description}>
 				<Text>{computeDunningDescription(state)}</Text>
 				{state.secondaryTarget === "transactions" ? (
-					<Button variant="outline" size="sm" onPress={() => router.push("/billing/wallet")}>
+					<Button variant="outline" size="sm" onPress={() => router.push("/settings/wallet")}>
 						<Text>{computeDunningCopy.transactions}</Text>
 					</Button>
 				) : null}

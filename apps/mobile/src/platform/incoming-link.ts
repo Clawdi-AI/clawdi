@@ -37,47 +37,122 @@ export function mobileLinkDestination(
 	hosts: readonly string[],
 	stageVault: (link: string) => string,
 ): string {
-	if (typeof path !== "string" || path.length > 8192) return "/open-share";
+	if (
+		typeof path !== "string" ||
+		path.length > 8192 ||
+		/[\r\n\\]/.test(path) ||
+		path.startsWith("//")
+	)
+		return "/open-share";
 	const oauth = accountOAuthNavigation(path);
 	if (oauth !== path) return oauth;
 	try {
-		if (/^\/?vault-request(?:[?#/]|$)/i.test(path)) return "/vault-supply";
-		const absolute = /^[a-z][a-z0-9+.-]*:/i.test(path);
-		if (!absolute) {
-			if (path.startsWith("//") || /[\r\n\\]/.test(path)) return "/open-share";
-			if (/^\/?vault-supply(?:[?#/]|$)/i.test(path)) return supplyPath(new URL(path, "clawdi:///"));
-			if (/^\/?s\//.test(path)) {
-				const share = publicSessionInput(`https://local.invalid/${path.replace(/^\//, "")}`);
-				return share ? `/s/${share}` : "/open-share";
-			}
-			return path;
-		}
-		const url = new URL(path);
+		const url = new URL(path, "clawdi:///");
 		if (url.username || url.password || url.port) return "/open-share";
-		if (url.protocol === "clawdi:") {
-			if (url.hostname === "vault-request" || url.pathname === "/vault-request")
-				return "/vault-supply";
-			if (url.hostname === "vault-supply" || url.pathname === "/vault-supply")
-				return supplyPath(url);
-			const share = publicSessionInput(path);
-			return share
-				? `/s/${share}`
-				: url.hostname === "s" || url.pathname.startsWith("/s/")
-					? "/open-share"
-					: path;
+		const custom = url.protocol === "clawdi:";
+		if (!custom && (url.protocol !== "https:" || !hosts.includes(url.hostname)))
+			return "/open-share";
+		const pathname =
+			(custom && url.hostname ? `/${url.hostname}${url.pathname}` : url.pathname) || "/";
+		if (pathname === "/vault-request" || pathname === "/vault-supply") {
+			if (!custom && vaultRequestToken(path)) {
+				const id = stageVault(path);
+				if (!publicSessionId(id)) throw new Error("Invalid intake reference");
+				return `/vault-request?intake=${encodeURIComponent(id)}`;
+			}
+			return supplyPath(url);
 		}
-		if (url.protocol !== "https:" || !hosts.includes(url.hostname)) return "/open-share";
-		if (url.pathname === "/vault-request") {
-			if (!vaultRequestToken(path)) return "/vault-supply";
-			const id = stageVault(path);
-			if (!publicSessionId(id)) throw new Error("Invalid intake reference");
-			return `/vault-supply?intake=${encodeURIComponent(id)}`;
+		if (pathname.startsWith("/s/")) {
+			const share = publicSessionInput(`https://local.invalid${pathname}${url.search}${url.hash}`);
+			return share ? `/s/${share}` : "/open-share";
 		}
-		const share = publicSessionInput(path);
-		return share ? `/s/${share}` : "/open-share";
+		// Cheap old-mobile aliases, retaining exact object identities.
+		if (pathname === "/skills/detail") {
+			const key = url.searchParams.get("key") ?? url.searchParams.get("skillKey");
+			if (!key) return "/skills";
+			url.searchParams.delete("key");
+			url.searchParams.delete("skillKey");
+			const query = url.searchParams.toString();
+			return `/skills/${encodeURIComponent(key)}${query ? `?${query}` : ""}`;
+		}
+		if (pathname === "/vault/detail") {
+			const slug = url.searchParams.get("slug");
+			if (!slug) return "/vault";
+			url.searchParams.delete("slug");
+			const query = url.searchParams.toString();
+			return `/vault/${encodeURIComponent(slug)}${query ? `?${query}` : ""}`;
+		}
+		if (pathname === "/" && url.searchParams.has("settings")) {
+			const panel = url.searchParams.get("settings");
+			return panel &&
+				["general", "api-keys", "wallet", "compute", "billing", "account"].includes(panel)
+				? `/settings/${panel}`
+				: "/settings";
+		}
+		if (!isWebPath(pathname)) return "/open-share";
+		return `${pathname}${url.search}`;
 	} catch {
 		return "/open-share";
 	}
+}
+
+function isWebPath(path: string): boolean {
+	const pieces = path.split("/").filter(Boolean).map(decodeURIComponent);
+	if (pieces.some((part) => !part || part.length > 256 || /[\r\n\\]/.test(part))) return false;
+	if (!pieces.length) return true;
+	const [root, id, section] = pieces;
+	if (
+		[
+			"agents",
+			"sessions",
+			"projects",
+			"skills",
+			"memories",
+			"vault",
+			"vaults",
+			"connectors",
+			"channels",
+		].includes(root ?? "")
+	) {
+		if (root !== "agents") return pieces.length <= 2;
+		if (pieces.length <= 2) return true;
+		if (
+			!id ||
+			!section ||
+			![
+				"sessions",
+				"memories",
+				"skills",
+				"vaults",
+				"connectors",
+				"plugins",
+				"project-access",
+				"console",
+				"files",
+				"terminal",
+				"model-provider",
+				"channel-links",
+				"settings",
+			].includes(section)
+		)
+			return false;
+		if (section === "skills") return true;
+		if (section === "project-access")
+			return (
+				pieces.length <= 4 ||
+				(pieces.length === 5 && ["skills", "vaults"].includes(pieces[4] ?? ""))
+			);
+		return ["sessions", "memories", "vaults", "connectors", "plugins"].includes(section)
+			? pieces.length <= 4
+			: pieces.length === 3;
+	}
+	if (root === "terminal") return pieces.length === 2;
+	if (root === "share") return pieces.length === 2 && /^[A-Za-z0-9_-]{43}$/.test(id ?? "");
+	if (root === "settings") return pieces.length <= 4;
+	return (
+		pieces.length === 1 &&
+		["ai-providers", "deploy", "sign-in", "sign-up", "library", "open-share"].includes(root ?? "")
+	);
 }
 
 function supplyPath(url: URL): string {
@@ -85,5 +160,5 @@ function supplyPath(url: URL): string {
 		url.searchParams.getAll("intake").length === 1
 			? publicSessionId(url.searchParams.get("intake") ?? "")
 			: null;
-	return id ? `/vault-supply?intake=${id}` : "/vault-supply";
+	return id ? `/vault-request?intake=${id}` : "/vault-request";
 }

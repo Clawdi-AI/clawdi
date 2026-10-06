@@ -79,14 +79,24 @@ import { ReadScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 type EditDraft = SkillTextDraft & { revision: string };
-export function SkillEditorScreen({ create = false }: { create?: boolean }) {
+export function SkillEditorScreen({
+	create = false,
+	projectId: scopedProject,
+}: {
+	create?: boolean;
+	projectId?: string;
+} = {}) {
 	const scope = useAccountScope();
 	const params = useLocalSearchParams<{
 		projectId?: string | string[];
+		project?: string | string[];
+		key?: string | string[];
 		skillKey?: string | string[];
 	}>();
-	const projectId = routeParam(params.projectId);
-	const skillKey = routeParam(params.skillKey);
+	const projectId = scopedProject ?? routeParam(params.project ?? params.projectId);
+	const skillKey = routeParam(
+		Array.isArray(params.key) ? params.key.join("/") : (params.key ?? params.skillKey),
+	);
 	if (create)
 		return (
 			<ProjectResourceBoundary>
@@ -647,4 +657,8 @@ function SkillEditor({
 			{confirmationDialog.dialog}
 		</ReadScreen>
 	);
+}
+
+export function NewSkillPage() {
+	return <SkillEditorScreen create />;
 }

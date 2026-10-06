@@ -6,6 +6,7 @@ import { AgentIcon } from "@/components/dashboard/agent-section-icon";
 import { EntityCardSkeleton } from "@/components/entity-card";
 import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { useAgentRouteId } from "@/platform/navigation/use-agent-route";
 export function AgentRecentSessions({
 	sessions,
 	loading,
@@ -15,6 +16,7 @@ export function AgentRecentSessions({
 	loading: boolean;
 	emptyMessage: string;
 }) {
+	const agentId = useAgentRouteId();
 	if (loading)
 		return (
 			<WebView recipe={styles.overviewList}>
@@ -36,7 +38,14 @@ export function AgentRecentSessions({
 						className={`${webView(`${ENTITY_CARD_BASE} ${styles.card}`)} flex-row`}
 						style={{ minHeight: 80 }}
 						onPress={() =>
-							router.push({ pathname: "/sessions/[sessionId]", params: { sessionId: session.id } })
+							router.push(
+								agentId
+									? {
+											pathname: "/agents/[id]/sessions/[sessionId]",
+											params: { id: agentId, sessionId: session.id },
+										}
+									: { pathname: "/sessions/[id]", params: { id: session.id } },
+							)
 						}
 					>
 						<AgentIcon agent={session.agent_type} size="lg" />

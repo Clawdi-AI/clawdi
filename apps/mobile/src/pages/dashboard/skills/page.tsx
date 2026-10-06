@@ -70,8 +70,10 @@ export function SkillRow({ skill, project }: { skill: Skill; project?: Project }
 			provenanceLabel={capabilities?.provenanceLabel ?? undefined}
 			actions={project ? <SkillCardActions skill={skill} project={project} /> : undefined}
 			link={{
-				to: "/skills/detail",
-				search: { projectId: skill.project_id ?? "", skillKey: skill.skill_key },
+				to: {
+					pathname: "/skills/[key]",
+					params: { key: skill.skill_key, project: skill.project_id ?? "" },
+				},
 			}}
 		/>
 	);

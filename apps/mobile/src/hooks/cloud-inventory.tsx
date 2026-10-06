@@ -154,9 +154,9 @@ export function SessionRow({
 			onPress={() => {
 				const { search } = sessionDetailLink(session, { searchQuery });
 				router.push({
-					pathname: "/sessions/[sessionId]",
+					pathname: "/sessions/[id]",
 					params: {
-						sessionId: session.id,
+						id: session.id,
 						...(search.matchKind ? { matchKind: search.matchKind } : {}),
 						...(search.matchPosition !== undefined
 							? { matchPosition: String(search.matchPosition) }
@@ -200,7 +200,7 @@ export function BackButton() {
 		<AppPressable
 			accessibilityRole="button"
 			className="self-start py-2"
-			onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)"))}
+			onPress={() => (router.canGoBack() ? router.back() : router.replace("/"))}
 		>
 			<AppText className="text-base font-semibold text-primary">‹ {t("navigation.back")}</AppText>
 		</AppPressable>

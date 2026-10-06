@@ -1,1 +1,1 @@
-export { default, ErrorBoundary } from "@/platform/navigation/root-layout";
+export { default, ErrorBoundary, unstable_settings } from "@/platform/navigation/root-layout";
