@@ -10,14 +10,21 @@ import { providerDialogClasses, providerOAuthFlowClasses as styles } from "@claw
 import { providerOAuthCopy as copy } from "@clawdi/shared/view";
 import { onlineManager } from "@tanstack/react-query";
 import { randomUUID } from "expo-crypto";
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Linking } from "react-native";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { ActionButton } from "@/components/dashboard/controls";
+import { ResourceError } from "@/components/resource-error";
+import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 import { Button } from "@/components/ui/button";
-import { DialogFooter } from "@/components/ui/dialog";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Text as AppText, Text } from "@/components/ui/text";
-import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { WebText, WebView } from "@/components/ui/web-layout";
+import {
+	useProviderInventory,
+	useRefreshProviders,
+} from "@/hosted/v2/ai-providers/providers-hooks";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -27,7 +34,7 @@ import { useForegroundLease } from "@/platform/use-foreground-lease";
 type Authorization = components["schemas"]["AiProviderOAuthDeviceStartResponse"];
 type AcceptBody = components["schemas"]["AiProviderAcceptRequest"];
 
-export function ProviderOAuth({
+export function ProviderOAuthFlow({
 	providers,
 	provider,
 	refresh,
@@ -35,6 +42,7 @@ export function ProviderOAuth({
 	startLabel,
 	startIcon,
 	dialogFooter = false,
+	onBusyChange,
 }: {
 	providers?: SavedAiProvider[];
 	provider?: SavedAiProvider;
@@ -43,13 +51,17 @@ export function ProviderOAuth({
 	startLabel?: string;
 	startIcon?: ReactNode;
 	dialogFooter?: boolean;
+	onBusyChange?: (busy: boolean) => void;
 }) {
-	const t = useI18n();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const capture = useForegroundLease();
 	const { aiProviders } = useMobileApi();
 	const action = useAuthAction(scope.identity);
+	useEffect(() => {
+		onBusyChange?.(action.busy);
+		return () => onBusyChange?.(false);
+	}, [action.busy, onBusyChange]);
 	const [authorization, setAuthorization] = useState<Authorization | null>(null);
 	const [issue, setIssue] = useState<"failed" | "expired" | null>(null);
 	const [ready, setReady] = useState(false);
@@ -257,34 +269,98 @@ export function ProviderOAuth({
 		aiProviders,
 		scope,
 	]);
+	return (
+		<ProviderOAuthView
+			authorization={authorization}
+			issue={issue}
+			ready={ready}
+			online={online}
+			busy={action.busy}
+			error={action.error}
+			accountReady={scope.isReady}
+			configured={Boolean(provider || providers)}
+			reconnecting={Boolean(provider)}
+			startLabel={startLabel}
+			startIcon={startIcon}
+			dialogFooter={dialogFooter}
+			begin={() => void begin()}
+			stop={stop}
+			restart={() => {
+				setIssue(null);
+				setRetry((value) => value + 1);
+			}}
+			open={() =>
+				void action.run(async () => {
+					if (!authorization || !scope.isCurrent() || !capture()()) return;
+					await Linking.openURL(codexDeviceVerificationUrl(authorization.verification_url));
+				})
+			}
+		/>
+	);
+}
+export function ProviderOAuthView({
+	authorization,
+	issue,
+	ready,
+	online,
+	busy,
+	error,
+	accountReady,
+	configured,
+	reconnecting,
+	startLabel,
+	startIcon,
+	dialogFooter = false,
+	begin,
+	stop,
+	restart,
+	open,
+}: {
+	authorization: Authorization | null;
+	issue: "failed" | "expired" | null;
+	ready: boolean;
+	online: boolean;
+	busy: boolean;
+	error: unknown;
+	accountReady: boolean;
+	configured: boolean;
+	reconnecting: boolean;
+	startLabel?: string;
+	startIcon?: ReactNode;
+	dialogFooter?: boolean;
+	begin: () => void;
+	stop: () => void;
+	restart: () => void;
+	open: () => void;
+}) {
+	const t = useI18n();
 	if (dialogFooter && !authorization)
 		return (
-			<DialogFooter className={webView(providerDialogClasses.footer)}>
+			<WebView recipe={providerDialogClasses.footer}>
 				{ready ? <AppText accessibilityRole="alert">{t("providers.oauthReady")}</AppText> : null}
-				{action.error ? (
+				{error ? (
 					<WebText recipe={styles.error} accessibilityRole="alert">
 						{t("providers.failed")}
 					</WebText>
 				) : null}
-				<Button
-					disabled={action.busy || !scope.isReady || !online || (!provider && !providers)}
-					onPress={() => void begin()}
-				>
+				<Button disabled={busy || !accountReady || !online || !configured} onPress={begin}>
 					{startIcon}
 					<Text>
-						{startLabel ?? t(provider ? "providers.reconnectOAuth" : "providers.connectOAuth")}
+						{startLabel ?? t(reconnecting ? "providers.reconnectOAuth" : "providers.connectOAuth")}
 					</Text>
 				</Button>
-			</DialogFooter>
+			</WebView>
 		);
 	return (
 		<WebView recipe={dialogFooter ? `${providerDialogClasses.body} ${styles.root}` : styles.root}>
 			{!authorization ? (
 				<ActionButton
-					label={startLabel ?? t(provider ? "providers.reconnectOAuth" : "providers.connectOAuth")}
+					label={
+						startLabel ?? t(reconnecting ? "providers.reconnectOAuth" : "providers.connectOAuth")
+					}
 					icon={startIcon}
-					disabled={action.busy || !scope.isReady || !online || (!provider && !providers)}
-					onPress={() => void begin()}
+					disabled={busy || !accountReady || !online || !configured}
+					onPress={begin}
 				/>
 			) : (
 				<>
@@ -297,24 +373,13 @@ export function ProviderOAuth({
 						</WebView>
 					</WebView>
 					<ActionButton
+						variant="default"
 						label={copy.open}
-						disabled={action.busy || issue === "expired"}
-						onPress={() =>
-							void action.run(async () => {
-								if (!scope.isCurrent() || !capture()()) return;
-								await Linking.openURL(codexDeviceVerificationUrl(authorization.verification_url));
-							})
-						}
+						disabled={busy || issue === "expired"}
+						onPress={open}
 					/>
 					{issue === "failed" ? (
-						<ActionButton
-							label={copy.restart}
-							disabled={!online}
-							onPress={() => {
-								setIssue(null);
-								setRetry((value) => value + 1);
-							}}
-						/>
+						<ActionButton label={copy.restart} disabled={!online} onPress={restart} />
 					) : null}
 					{issue ? (
 						<WebText recipe={styles.error} accessibilityRole="alert">
@@ -328,7 +393,55 @@ export function ProviderOAuth({
 				</>
 			)}
 			{ready ? <AppText accessibilityRole="alert">{t("providers.oauthReady")}</AppText> : null}
-			{action.error ? <AppText accessibilityRole="alert">{t("providers.failed")}</AppText> : null}
+			{error ? <AppText accessibilityRole="alert">{t("providers.failed")}</AppText> : null}
 		</WebView>
+	);
+}
+
+export function ProviderOAuth({ provider }: { provider?: SavedAiProvider }) {
+	const t = useI18n();
+	const scope = useAccountScope();
+	return (
+		<ActionButton
+			label={t("providers.reconnectOAuth")}
+			disabled={!scope.isReady || !provider}
+			onPress={() => {
+				if (provider)
+					router.push({
+						pathname: "/ai-providers/[providerId]/oauth",
+						params: { providerId: provider.provider_id },
+					});
+			}}
+		/>
+	);
+}
+export function ProviderOAuthScreen() {
+	const t = useI18n();
+	const scope = useAccountScope();
+	const { providerId } = useLocalSearchParams<{ providerId: string }>();
+	const inventory = useProviderInventory();
+	const refresh = useRefreshProviders();
+	const [busy, setBusy] = useState(false);
+	const provider = inventory.isError
+		? undefined
+		: inventory.data?.providers.find((item) => item.provider_id === providerId);
+	return (
+		<SheetPage title={t("providers.reconnectOAuth")} fallback="/ai-providers" busy={busy}>
+			{inventory.isPending ? (
+				<RouteLoadingSkeleton />
+			) : inventory.isError ? (
+				<ApiErrorPanel error={inventory.error} onRetry={() => void inventory.refetch()} />
+			) : provider &&
+				(provider.auth.type === "oauth_profile" || provider.auth.type === "agent_profile") ? (
+				<ProviderOAuthFlow
+					key={`${scope.accountKey}:${scope.generation}:${providerId}`}
+					provider={provider}
+					refresh={refresh}
+					onBusyChange={setBusy}
+				/>
+			) : (
+				<ResourceError missing />
+			)}
+		</SheetPage>
 	);
 }

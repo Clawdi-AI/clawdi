@@ -13,7 +13,7 @@ export default function SettingsPanelPage() {
 			return <GeneralPage />;
 		case "api-keys":
 			return (
-				<SettingsShell active="api-keys" back>
+				<SettingsShell active="api-keys" scroll={false}>
 					<ApiKeysPanel />
 				</SettingsShell>
 			);
@@ -24,7 +24,7 @@ export default function SettingsPanelPage() {
 			return <BillingScreen />;
 		default:
 			return (
-				<SettingsShell back>
+				<SettingsShell>
 					<EmptyState title="Settings unavailable" />
 				</SettingsShell>
 			);

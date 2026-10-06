@@ -2,9 +2,9 @@ import { useUser } from "@clerk/expo";
 import type { UserResource } from "@clerk/expo/types";
 import { Redirect } from "expo-router";
 import { useRef, useState } from "react";
-import { Alert } from "react-native";
 import { PasskeysFormView } from "@/components/settings/account-forms";
 import { LoadingScreen } from "@/components/ui/feedback";
+import { useConfirmation } from "@/components/ui/use-confirmation";
 import { useI18n } from "@/lib/i18n";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -28,11 +28,12 @@ function Passkeys({ user }: { user: UserResource }) {
 	const action = useAuthAction(scope.identity);
 	const reverification = useNativeReverification();
 	const confirmation = useRef(0);
+	const confirmationDialog = useConfirmation();
 	const [passkeys, setPasskeys] = useState([...user.passkeys]);
 	const [edit, setEdit] = useState<{ id: string; name: string } | null>(null);
 	const [saved, setSaved] = useState(false);
-	const run = (change?: Change) =>
-		void action.run(async (active) => {
+	const run = (change?: Change, propagate = false) =>
+		(propagate ? action.runOrThrow : action.run)(async (active) => {
 			const visible = capture();
 			const signal = scope.signal;
 			const current = () =>
@@ -80,7 +81,7 @@ function Passkeys({ user }: { user: UserResource }) {
 		const visible = capture();
 		const signal = scope.signal;
 		const ticket = ++confirmation.current;
-		Alert.alert(t("passkeys.remove"), t("passkeys.removeWarning"), [
+		confirmationDialog.show(t("passkeys.remove"), t("passkeys.removeWarning"), [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: t("passkeys.remove"),
@@ -88,23 +89,25 @@ function Passkeys({ user }: { user: UserResource }) {
 				onPress: () => {
 					if (ticket !== confirmation.current || !visible() || signal.aborted || !scope.isCurrent())
 						return;
-					confirmation.current++;
-					run({ kind: "remove", id });
+					return run({ kind: "remove", id }, true);
 				},
 			},
 		]);
 	};
 	return (
-		<PasskeysFormView
-			action={action}
-			reverification={reverification}
-			passkeys={passkeys}
-			edit={edit}
-			saved={saved}
-			setEdit={setEdit}
-			setSaved={setSaved}
-			run={run}
-			confirmRemove={confirmRemove}
-		/>
+		<>
+			{confirmationDialog.dialog}
+			<PasskeysFormView
+				action={action}
+				reverification={reverification}
+				passkeys={passkeys}
+				edit={edit}
+				saved={saved}
+				setEdit={setEdit}
+				setSaved={setSaved}
+				run={run}
+				confirmRemove={confirmRemove}
+			/>
+		</>
 	);
 }

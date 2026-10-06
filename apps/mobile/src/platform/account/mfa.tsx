@@ -3,9 +3,10 @@ import { useUser } from "@clerk/expo";
 import type { TOTPResource, UserResource } from "@clerk/expo/types";
 import { Redirect, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, AppState } from "react-native";
+import { AppState } from "react-native";
 import { MfaFormView } from "@/components/settings/account-forms";
 import { LoadingScreen } from "@/components/ui/feedback";
+import { useConfirmation } from "@/components/ui/use-confirmation";
 import { useI18n } from "@/lib/i18n";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -27,6 +28,7 @@ function MfaForm({ user }: { user: UserResource }) {
 	const action = useAuthAction(scope.identity);
 	const reverification = useNativeReverification();
 	const confirmation = useRef(0);
+	const confirmationDialog = useConfirmation();
 	const [enabled, setEnabled] = useState(user.totpEnabled);
 	const [mfaEnabled, setMfaEnabled] = useState(user.twoFactorEnabled);
 	const [phones, setPhones] = useState([...user.phoneNumbers]);
@@ -71,8 +73,9 @@ function MfaForm({ user }: { user: UserResource }) {
 			| "sms-disable"
 			| "sms-default",
 		phoneId?: string,
+		propagate = false,
 	) =>
-		void action.run(async (active) => {
+		(propagate ? action.runOrThrow : action.run)(async (active) => {
 			const visible = capture();
 			const current = () =>
 				active() &&
@@ -183,18 +186,21 @@ function MfaForm({ user }: { user: UserResource }) {
 		const label = t(
 			operation === "backup" ? "mfa.backup" : enabled ? "mfa.disable" : "mfa.discard",
 		);
-		Alert.alert(label, t(operation === "backup" ? "mfa.backupWarning" : "mfa.disableWarning"), [
-			{ text: t("account.cancel"), style: "cancel" },
-			{
-				text: label,
-				style: "destructive",
-				onPress: () => {
-					if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
-					confirmation.current++;
-					run(operation);
+		confirmationDialog.show(
+			label,
+			t(operation === "backup" ? "mfa.backupWarning" : "mfa.disableWarning"),
+			[
+				{ text: t("account.cancel"), style: "cancel" },
+				{
+					text: label,
+					style: "destructive",
+					onPress: () => {
+						if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
+						return run(operation, undefined, true);
+					},
 				},
-			},
-		]);
+			],
+		);
 	};
 	const confirmSms = (phoneId: string, operation: "sms-enable" | "sms-disable" | "sms-default") => {
 		const visible = capture();
@@ -206,7 +212,7 @@ function MfaForm({ user }: { user: UserResource }) {
 					? "mfa.smsDisable"
 					: "mfa.smsDefault",
 		);
-		Alert.alert(
+		confirmationDialog.show(
 			label,
 			t(operation === "sms-disable" ? "mfa.smsDisableWarning" : "mfa.smsEnableWarning"),
 			[
@@ -216,30 +222,32 @@ function MfaForm({ user }: { user: UserResource }) {
 					style: operation === "sms-disable" ? "destructive" : "default",
 					onPress: () => {
 						if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
-						confirmation.current++;
-						run(operation, phoneId);
+						return run(operation, phoneId, true);
 					},
 				},
 			],
 		);
 	};
 	return (
-		<MfaFormView
-			action={action}
-			reverification={reverification}
-			enabled={enabled}
-			mfaEnabled={mfaEnabled}
-			setup={setup}
-			qr={qr}
-			code={code}
-			codes={codes}
-			phones={phones}
-			success={success}
-			setCode={setCode}
-			clear={clear}
-			run={run}
-			confirm={confirm}
-			confirmSms={confirmSms}
-		/>
+		<>
+			{confirmationDialog.dialog}
+			<MfaFormView
+				action={action}
+				reverification={reverification}
+				enabled={enabled}
+				mfaEnabled={mfaEnabled}
+				setup={setup}
+				qr={qr}
+				code={code}
+				codes={codes}
+				phones={phones}
+				success={success}
+				setCode={setCode}
+				clear={clear}
+				run={run}
+				confirm={confirm}
+				confirmSms={confirmSms}
+			/>
+		</>
 	);
 }

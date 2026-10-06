@@ -17,26 +17,76 @@ import {
 	providerPresentation,
 } from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Pencil, RefreshCw } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, Linking, useWindowDimensions } from "react-native";
+import { AppState, Linking } from "react-native";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { ActionButton, ChoiceSelect } from "@/components/dashboard/controls";
-import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
+import { ResourceError } from "@/components/resource-error";
+import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 import { Icon } from "@/components/ui/icon";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Text as AppText } from "@/components/ui/text";
-import { AppView } from "@/components/ui/view";
-import { WebView, webView } from "@/components/ui/web-layout";
-import { ProviderDialogHeader } from "@/hosted/v2/ai-providers/provider-dialog-header";
+import { WebView } from "@/components/ui/web-layout";
 import { ProviderFieldsForm } from "@/hosted/v2/ai-providers/provider-fields-form";
-import { ProviderOAuth } from "@/hosted/v2/ai-providers/provider-oauth-flow";
+import { ProviderOAuthFlow } from "@/hosted/v2/ai-providers/provider-oauth-flow";
+import {
+	useProviderInventory,
+	useRefreshProviders,
+} from "@/hosted/v2/ai-providers/providers-hooks";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { useSheet } from "@/platform/navigation/use-sheet";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
-export function ProviderEdit({
+export function ProviderEdit({ provider }: { provider: SavedAiProvider }) {
+	const scope = useAccountScope();
+	return (
+		<ActionButton
+			label={copy.edit}
+			icon={<Icon as={Pencil} />}
+			disabled={!scope.isReady}
+			onPress={() =>
+				router.push({
+					pathname: "/ai-providers/[providerId]/edit",
+					params: { providerId: provider.provider_id },
+				})
+			}
+		/>
+	);
+}
+export function ProviderEditScreen() {
+	const { providerId } = useLocalSearchParams<{ providerId: string }>();
+	const scope = useAccountScope();
+	const inventory = useProviderInventory();
+	const refresh = useRefreshProviders();
+	const provider = inventory.isError
+		? undefined
+		: inventory.data?.providers.find((item) => item.provider_id === providerId);
+	if (!provider)
+		return (
+			<SheetPage title={copy.edit} fallback="/ai-providers">
+				{inventory.isPending ? (
+					<RouteLoadingSkeleton />
+				) : inventory.isError ? (
+					<ApiErrorPanel error={inventory.error} onRetry={() => void inventory.refetch()} />
+				) : (
+					<ResourceError missing />
+				)}
+			</SheetPage>
+		);
+	return (
+		<ProviderEditForm
+			key={`${scope.accountKey}:${scope.generation}:${providerId}`}
+			provider={provider}
+			refresh={refresh}
+		/>
+	);
+}
+function ProviderEditForm({
 	provider,
 	refresh,
 }: {
@@ -44,18 +94,18 @@ export function ProviderEdit({
 	refresh: () => Promise<void>;
 }) {
 	const t = useI18n();
-	const { height } = useWindowDimensions();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { aiProviders } = useMobileApi();
 	const action = useAuthAction(scope.identity);
 	const capture = useForegroundLease();
+	const [oauthBusy, setOAuthBusy] = useState(false);
+	const sheet = useSheet<boolean>({ fallback: "/ai-providers", busy: action.busy || oauthBusy });
 	const oauth = provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile";
 	const preset =
 		providerPresetById(provider.native_provider) ??
 		providerPresetForSavedProvider({ baseUrl: provider.base_url });
 	const defaults = derivedProviderFields(provider.type, oauth ? "oauth" : "api_key", preset);
-	const [open, setOpen] = useState(false);
 	const [label, setLabel] = useState(provider.label ?? "");
 	const [baseUrl, setBaseUrl] = useState(provider.base_url);
 	const [apiMode, setApiMode] = useState<ApiMode>(provider.api_mode ?? defaults.apiMode);
@@ -83,7 +133,6 @@ export function ProviderEdit({
 		attempt.current = null;
 		setSecret("");
 		setLocked(false);
-		setOpen(false);
 	}, []);
 	useFocusEffect(useCallback(() => clear, [clear]));
 	useEffect(() => {
@@ -151,108 +200,86 @@ export function ProviderEdit({
 			clear();
 			setUncertain(false);
 			await refresh();
+			await sheet.close(true);
 		});
 	return (
-		<AppView className="gap-3">
+		<SheetPage
+			title={`Edit ${providerPresentation(provider).label}`}
+			fallback="/ai-providers"
+			busy={action.busy || oauthBusy}
+			sheet={sheet}
+		>
 			{uncertain ? <AppText accessibilityRole="alert">{t("providers.uncertain")}</AppText> : null}
-			{!open ? (
-				<ActionButton
-					label={copy.edit}
-					icon={<Icon as={Pencil} />}
-					disabled={action.busy || !scope.isReady}
-					onPress={() => {
-						setLabel(provider.label ?? "");
-						setBaseUrl(provider.base_url);
-						setApiMode(provider.api_mode ?? defaults.apiMode);
-						setRegion(provider.native_variant ?? null);
-						action.clearError();
-						setOpen(true);
-					}}
+			<WebView
+				recipe={dialogStyles.body}
+				className="flex-none"
+				style={{ flex: 0, flexGrow: 0, flexShrink: 0, flexBasis: "auto" }}
+			>
+				{!oauth && native && preset?.region_variants?.length ? (
+					<ChoiceSelect
+						value={region ?? preset.region_variants[0]?.id ?? ""}
+						options={preset.region_variants.map((variant) => ({
+							value: variant.id,
+							label: variant.label,
+						}))}
+						disabled={locked || action.busy}
+						onValueChange={setRegion}
+					/>
+				) : null}
+				<ProviderFieldsForm
+					label={label}
+					placeholder={providerPresentation(provider).label}
+					onLabel={setLabel}
+					showRouting={!oauth && !native}
+					baseUrl={baseUrl}
+					onBaseUrl={setBaseUrl}
+					apiMode={apiMode}
+					onApiMode={setApiMode}
+					secret={secret}
+					onSecret={setSecret}
+					credentialLabel={preset?.credential_label ?? copy.apiKey}
+					credentialLinkLabel={providerCredentialLinkLabel(
+						preset?.credential_label ?? copy.apiKey,
+						preset?.credential_link_label,
+					)}
+					onCredentialHelp={openKeyHelp}
+					oauthContent={
+						oauth ? (
+							<ProviderOAuthFlow
+								provider={provider}
+								onBusyChange={setOAuthBusy}
+								refresh={refresh}
+								startLabel={copy.reconnect}
+								startIcon={<Icon as={RefreshCw} />}
+							/>
+						) : undefined
+					}
+					credentialPlaceholder={
+						provider.auth.type === "none" ? copy.apiKeyPlaceholder : copy.keepCredential
+					}
+					disabled={locked || action.busy}
+					oauth={oauth}
 				/>
-			) : (
-				<Dialog
-					open={open}
-					onOpenChange={(next) => {
-						if (!next && !action.busy) clear();
-					}}
-				>
-					<DialogContent
-						className={webView(dialogStyles.content)}
-						showCloseButton={!action.busy}
-						// Native equivalent of Web's min(36rem, calc(100dvh - 2rem)) scroll surface.
-						style={{ maxHeight: Math.min(36 * 16, height - 2 * 16) }}
-					>
-						<ProviderDialogHeader
-							title={`Edit ${providerPresentation(provider).label}`}
-							providerId={provider.native_provider ?? provider.type}
-							providerLabel={providerPresentation(provider).label}
-						/>
-						<WebView
-							recipe={dialogStyles.body}
-							className="flex-none"
-							style={{ flex: 0, flexGrow: 0, flexShrink: 0, flexBasis: "auto" }}
-						>
-							{!oauth && native && preset?.region_variants?.length ? (
-								<ChoiceSelect
-									value={region ?? preset.region_variants[0]?.id ?? ""}
-									options={preset.region_variants.map((variant) => ({
-										value: variant.id,
-										label: variant.label,
-									}))}
-									disabled={locked || action.busy}
-									onValueChange={setRegion}
-								/>
-							) : null}
-							<ProviderFieldsForm
-								label={label}
-								placeholder={providerPresentation(provider).label}
-								onLabel={setLabel}
-								showRouting={!oauth && !native}
-								baseUrl={baseUrl}
-								onBaseUrl={setBaseUrl}
-								apiMode={apiMode}
-								onApiMode={setApiMode}
-								secret={secret}
-								onSecret={setSecret}
-								credentialLabel={preset?.credential_label ?? copy.apiKey}
-								credentialLinkLabel={providerCredentialLinkLabel(
-									preset?.credential_label ?? copy.apiKey,
-									preset?.credential_link_label,
-								)}
-								onCredentialHelp={openKeyHelp}
-								oauthContent={
-									oauth ? (
-										<ProviderOAuth
-											provider={provider}
-											refresh={refresh}
-											startLabel={copy.reconnect}
-											startIcon={<Icon as={RefreshCw} />}
-										/>
-									) : undefined
-								}
-								credentialPlaceholder={
-									provider.auth.type === "none" ? copy.apiKeyPlaceholder : copy.keepCredential
-								}
-								disabled={locked || action.busy}
-								oauth={oauth}
-							/>
-						</WebView>
-						<DialogFooter className={webView(dialogStyles.footer)}>
-							<ActionButton label={t("account.cancel")} disabled={action.busy} onPress={clear} />
-							<ActionButton
-								label={locked ? t("providers.retrySame") : copy.save}
-								variant="default"
-								disabled={action.busy || !scope.isReady || !baseUrl.trim()}
-								onPress={() => void save()}
-							/>
-						</DialogFooter>
-						{action.error ? (
-							<AppText accessibilityRole="alert">{t("providers.failed")}</AppText>
-						) : null}
-					</DialogContent>
-				</Dialog>
-			)}
+			</WebView>
+			<WebView recipe={dialogStyles.footer}>
+				<ActionButton
+					label={t("account.cancel")}
+					disabled={action.busy}
+					onPress={() =>
+						void action.run(async () => {
+							await sheet.close();
+							clear();
+						})
+					}
+				/>
+				<ActionButton
+					label={locked ? t("providers.retrySame") : copy.save}
+					variant="default"
+					disabled={action.busy || !scope.isReady || !baseUrl.trim()}
+					onPress={() => void save()}
+				/>
+			</WebView>
 			{action.error ? <AppText accessibilityRole="alert">{t("providers.failed")}</AppText> : null}
-		</AppView>
+		</SheetPage>
 	);
 }

@@ -7,6 +7,7 @@ import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 import { SettingsPanelHeader, SettingsSection } from "@/components/settings/settings-panel-header";
 import { SettingsShell } from "@/components/settings/shell";
 import { Button } from "@/components/ui/button";
+import { NativeList } from "@/components/ui/native-list";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { uniqueBillingItems } from "@/hosted/billing/format";
@@ -42,86 +43,89 @@ function BillingView() {
 		(item) => item.subscription_id,
 	);
 	return (
-		<SettingsShell active="compute" back>
-			<WebView recipe={billingPageClass}>
-				<SettingsPanelHeader
-					title={t("billingParity.compute")}
-					description={t("billingParity.computeDescription")}
-				/>
-				{!compute ? (
-					<EmptyState variant="inset" title={t("billing.unavailable")} />
-				) : (
-					<>
+		<SettingsShell active="compute" scroll={false}>
+			<NativeList
+				data={items}
+				keyExtractor={(item) => item.subscription_id}
+				refreshing={subscriptions.isRefetching || plans.isRefetching}
+				onRefresh={() => {
+					void subscriptions.refetch();
+					void plans.refetch();
+				}}
+				hasMore={subscriptions.hasNextPage}
+				loadingMore={subscriptions.isFetching}
+				onLoadMore={() => void subscriptions.fetchNextPage()}
+				header={
+					<WebView recipe={billingPageClass}>
+						<SettingsPanelHeader
+							title={t("billingParity.compute")}
+							description={t("billingParity.computeDescription")}
+						/>
 						<SettingsSection
 							title={t("billingParity.subscriptions")}
 							description={t("billingParity.subscriptionsDescription")}
-						>
-							{subscriptions.isPending ? (
+						/>
+					</WebView>
+				}
+				empty={
+					!compute ? (
+						<EmptyState variant="inset" title={t("billing.unavailable")} />
+					) : subscriptions.isPending ? (
+						<RouteLoadingSkeleton />
+					) : subscriptions.isError ? (
+						<ApiErrorPanel
+							error={subscriptions.error}
+							onRetry={() => void subscriptions.refetch()}
+						/>
+					) : (
+						<EmptyState
+							variant="inset"
+							title={t("billingParity.emptySubscriptions")}
+							description={t("billingParity.emptySubscriptionsDescription")}
+						/>
+					)
+				}
+				renderItem={({ item }) => (
+					<ComputeSubscriptionCard
+						item={item}
+						actions={
+							<Button
+								variant="outline"
+								size="sm"
+								onPress={() => {
+									if (scope.isCurrent() && !scope.signal.aborted)
+										router.push(`/settings/compute/${encodeURIComponent(item.subscription_id)}`);
+								}}
+							>
+								<Text>{t("inventory.viewDetails")}</Text>
+							</Button>
+						}
+					/>
+				)}
+				footer={
+					<WebView recipe={billingPageClass}>
+						{subscriptions.isFetchingNextPage ? <RouteLoadingSkeleton /> : null}
+						{subscriptions.isError && subscriptions.data ? (
+							<ApiErrorPanel
+								error={subscriptions.error}
+								onRetry={() => void subscriptions.refetch()}
+							/>
+						) : null}
+						{compute ? (
+							plans.isPending ? (
 								<RouteLoadingSkeleton />
-							) : subscriptions.isError && !subscriptions.data ? (
-								<ApiErrorPanel
-									error={subscriptions.error}
-									onRetry={() => void subscriptions.refetch()}
-								/>
-							) : items.length ? (
-								<WebView recipe={transactionsSectionClasses.section}>
-									{items.map((item) => (
-										<ComputeSubscriptionCard
-											key={item.subscription_id}
-											item={item}
-											actions={
-												<Button
-													variant="outline"
-													size="sm"
-													onPress={() => {
-														if (scope.isCurrent() && !scope.signal.aborted)
-															router.push(
-																`/settings/compute/${encodeURIComponent(item.subscription_id)}`,
-															);
-													}}
-												>
-													<Text>{t("inventory.viewDetails")}</Text>
-												</Button>
-											}
-										/>
-									))}
-								</WebView>
+							) : plans.isError ? (
+								<ApiErrorPanel error={plans.error} onRetry={() => void plans.refetch()} />
 							) : (
-								<EmptyState
-									variant="inset"
-									title={t("billingParity.emptySubscriptions")}
-									description={t("billingParity.emptySubscriptionsDescription")}
-								/>
-							)}
-							{subscriptions.hasNextPage ? (
-								<Button
-									variant="outline"
-									disabled={subscriptions.isFetching}
-									onPress={() => void subscriptions.fetchNextPage()}
-								>
-									<Text>{t("inventory.loadMore")}</Text>
-								</Button>
-							) : null}
-							{subscriptions.isError && subscriptions.data ? (
-								<ApiErrorPanel
-									error={subscriptions.error}
-									onRetry={() => void subscriptions.refetch()}
-								/>
-							) : null}
-						</SettingsSection>
-						{plans.isPending ? (
-							<RouteLoadingSkeleton />
-						) : plans.isError ? (
-							<ApiErrorPanel error={plans.error} onRetry={() => void plans.refetch()} />
-						) : (
-							<PlanComparison plans={plans.data ?? []} />
-						)}
+								<PlanComparison plans={plans.data ?? []} />
+							)
+						) : null}
 						<WebText recipe={transactionsSectionClasses.description}>
 							{t("billing.noStore")}
 						</WebText>
-					</>
-				)}
-			</WebView>
+					</WebView>
+				}
+			/>
 		</SettingsShell>
 	);
 }

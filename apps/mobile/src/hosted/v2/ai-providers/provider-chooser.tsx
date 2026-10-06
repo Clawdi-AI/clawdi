@@ -5,14 +5,16 @@ import {
 	type ProviderChoice,
 	type ProviderGroup,
 } from "@clawdi/shared/view";
+import { Stack, useNavigation } from "expo-router";
 import { ChevronRight } from "lucide-react-native";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { SearchInput } from "@/components/ui/search-input";
+import { NativeList } from "@/components/ui/native-list";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
+import { useHeaderSearch } from "@/platform/navigation/native-header";
 
 /** Native rendering of Web's provider chooser, sharing its catalog and recipes. */
 export function ProviderChooser({
@@ -24,15 +26,26 @@ export function ProviderChooser({
 	selected: ProviderGroup | null;
 	onGroupChange: (group: ProviderGroup | null) => void;
 }) {
+	const navigation = useNavigation();
+	useEffect(() => () => navigation.setOptions({ headerSearchBarOptions: undefined }), [navigation]);
 	const [query, setQuery] = useState("");
 	const groups = filterProviderGroups(query);
+	const search = useHeaderSearch({
+		value: query,
+		onChange: setQuery,
+		placeholder: copy.searchPlaceholder,
+		maxLength: 256,
+	});
+	const entries = selected?.entries ?? [];
 	return (
-		<WebView recipe={styles.root}>
+		<>
+			<Stack.Screen options={{ headerSearchBarOptions: selected ? undefined : search }} />
 			{selected ? (
-				<WebView recipe={styles.variants}>
-					{selected.entries.map((entry) => (
+				<NativeList
+					data={entries}
+					keyExtractor={(entry) => entry.id}
+					renderItem={({ item: entry }) => (
 						<Button
-							key={entry.id}
 							variant="outline"
 							className={webBoth(styles.variant)}
 							onPress={() => onSelect(entry.choice)}
@@ -40,50 +53,35 @@ export function ProviderChooser({
 							<Text>{entry.label}</Text>
 							<Icon as={ChevronRight} className={webBoth(styles.chevron)} />
 						</Button>
-					))}
-				</WebView>
+					)}
+				/>
 			) : (
-				<>
-					<SearchInput
-						ariaLabel={copy.searchLabel}
-						value={query}
-						onChange={setQuery}
-						placeholder={copy.searchPlaceholder}
-					/>
-					<WebView recipe={styles.choices}>
-						{Array.from({ length: Math.ceil(groups.length / 2) }, (_, rowIndex) =>
-							groups.slice(rowIndex * 2, rowIndex * 2 + 2),
-						).map((row) => (
-							<WebView
-								key={row.map((group) => group.id).join(":")}
-								recipe={styles.choices}
-								className="flex-row"
-							>
-								{row.map((group) => (
-									<Button
-										key={group.id}
-										variant="outline"
-										className={`${webView(styles.choice)} flex-1`}
-										onPress={() => {
-											const first = group.entries[0];
-											if (group.entries.length === 1 && first) onSelect(first.choice);
-											else onGroupChange(group);
-										}}
-									>
-										<EntityIcon kind="provider" id={group.iconId} label={group.label} size="sm" />
-										<Text numberOfLines={1} className={webBoth(styles.label)}>
-											{group.label}
-										</Text>
-										{group.entries.length > 1 ? (
-											<Icon as={ChevronRight} className={webBoth(styles.chevron)} />
-										) : null}
-									</Button>
-								))}
-								{row.length === 1 ? <WebView recipe="" className="flex-1" /> : null}
-							</WebView>
-						))}
-					</WebView>
-					{!groups.length ? (
+				<NativeList
+					key="groups"
+					data={groups}
+					numColumns={2}
+					keyExtractor={(group) => group.id}
+					columnWrapperStyle={{ gap: 8 }}
+					renderItem={({ item: group }) => (
+						<Button
+							variant="outline"
+							className={`${webView(styles.choice)} flex-1`}
+							onPress={() => {
+								const first = group.entries[0];
+								if (group.entries.length === 1 && first) onSelect(first.choice);
+								else onGroupChange(group);
+							}}
+						>
+							<EntityIcon kind="provider" id={group.iconId} label={group.label} size="sm" />
+							<Text numberOfLines={1} className={webBoth(styles.label)}>
+								{group.label}
+							</Text>
+							{group.entries.length > 1 ? (
+								<Icon as={ChevronRight} className={webBoth(styles.chevron)} />
+							) : null}
+						</Button>
+					)}
+					empty={
 						<WebView recipe={styles.empty}>
 							<WebText recipe={styles.hint}>{copy.noResults}</WebText>
 							<Button
@@ -93,9 +91,9 @@ export function ProviderChooser({
 								<Text>{copy.customEndpoint}</Text>
 							</Button>
 						</WebView>
-					) : null}
-				</>
+					}
+				/>
 			)}
-		</WebView>
+		</>
 	);
 }

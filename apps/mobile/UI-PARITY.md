@@ -143,7 +143,9 @@ so tabs remain beneath the modal. Its inner native Stack supplies the header:
 Android formSheet itself does not create an AppBarLayout. Configure presentation
 in `root-layout.tsx` before opening; Android accepts at most three sorted detents.
 Content is an ordinary page, never an additional Dialog/Modal.
-Use `SheetPage` for title/cancel/scroll;
+Use `SheetPage` for title/cancel/scroll; pass `scroll={false}` when a
+`NativeList` owns the route scroll (the Provider chooser is the pilot). Its
+optional `actions` adds native step/back controls without drawing another header.
 forms with an existing dirty-state guard own their `NativeHeader` instead.
 
 ```tsx
@@ -240,3 +242,10 @@ Done: `bun run --cwd apps/mobile typecheck`, `bun run --cwd apps/mobile test`,
 the shared fixture and exercise header search, sheet swipe dismissal, native
 confirmation and pull-to-refresh; iOS large-title behavior requires iOS runtime
 verification in addition to the checked SDK contract.
+
+Read-only account, auth, OAuth, API-key result, WhatsApp and chat-pairing
+stories live at `/dev/account?panel=...`; `+native-intent` admits this exact
+development-only shape. Production Clerk/account controllers and external
+link allowlists remain guarded. Stories reuse presentation components and
+carry only synthetic data. `QrImage` accepts an optional `size` so pairing
+sheets can match Web's phone QR dimensions without changing other screens.

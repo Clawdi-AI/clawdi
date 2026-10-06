@@ -17,6 +17,13 @@ export const connectBotDialogClasses = {
 } as const;
 
 export const channelFormClasses = {
+	pairingIdentity: "min-w-0 truncate text-sm font-medium",
+	pairingDescription: "text-sm text-muted-foreground",
+	pairingQr: "flex items-center justify-center",
+	pairingExpiry: "text-center text-sm font-medium text-muted-foreground",
+	pairingInstructions: "space-y-2 rounded-lg border bg-muted/20 p-3 text-sm",
+	pairingCode: "min-w-0 rounded-md border bg-background p-3 font-mono text-xs text-foreground",
+
 	content: "sm:max-w-md",
 	field: "space-y-1.5",
 	trigger: "w-full",

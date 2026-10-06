@@ -124,6 +124,7 @@ function isWebPath(path: string): boolean {
 					memories: ["edit"],
 					vault: ["add-keys", "transfer", "split", "requests"],
 					connectors: ["connect"],
+					channels: ["link", "pair", "chats"],
 				};
 				return Boolean(section && forms[root ?? ""]?.includes(section));
 			}
@@ -169,6 +170,12 @@ function isWebPath(path: string): boolean {
 			? pieces.length <= 4
 			: pieces.length === 3;
 	}
+	if (root === "ai-providers")
+		return (
+			pieces.length === 1 ||
+			(pieces.length === 2 && id === "new") ||
+			(pieces.length === 3 && ["edit", "remove", "oauth"].includes(section ?? ""))
+		);
 	if (root === "terminal") return pieces.length === 2;
 	if (root === "share") return pieces.length === 2 && /^[A-Za-z0-9_-]{43}$/.test(id ?? "");
 	if (root === "settings") return pieces.length <= 4;

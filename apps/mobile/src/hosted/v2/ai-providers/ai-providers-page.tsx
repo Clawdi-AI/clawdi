@@ -1,10 +1,8 @@
 import { projectUserSelectableAiProviders } from "@clawdi/shared";
-import type { AiProviderRemovalResult, SavedAiProvider } from "@clawdi/shared/api";
+import type { SavedAiProvider } from "@clawdi/shared/api";
 import {
-	agentsIndexClasses,
 	aiProvidersUiClasses,
 	ENTITY_CARD_BASE,
-	ENTITY_GRID_CLASS,
 	aiProvidersPageClasses as styles,
 } from "@clawdi/shared/ui";
 import {
@@ -14,7 +12,7 @@ import {
 	providerPresentation,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { BrainCircuit, CheckCircle2, ShieldCheck } from "lucide-react-native";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -29,12 +27,11 @@ import { SectionLabel } from "@/components/section-label";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { NativeList } from "@/components/ui/native-list";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Text } from "@/components/ui/text";
-import { AppScrollView } from "@/components/ui/view";
 import { WebView, webView } from "@/components/ui/web-layout";
 import { DeploymentControls } from "@/hosted/agents/deployment-controls";
-import { ProviderCreate } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { ProviderEdit } from "@/hosted/v2/ai-providers/edit-provider-dialog";
 import { ProviderOAuth } from "@/hosted/v2/ai-providers/provider-oauth-flow";
 import { ProviderRemove } from "@/hosted/v2/ai-providers/remove-provider-dialog";
@@ -43,6 +40,7 @@ import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export function AiProvidersScreen() {
 	const scope = useAccountScope();
@@ -58,11 +56,10 @@ export function AiProvidersScreen() {
 	return <ProvidersView key={`${scope.accountKey}:${scope.generation}`} />;
 }
 function ProvidersView() {
-	const cache = useQueryClient(),
-		scope = useAccountScope(),
+	const scope = useAccountScope(),
 		read = useAccountRead(),
 		{ aiProviders } = useMobileApi();
-	const [removed, setRemoved] = useState<AiProviderRemovalResult | null>(null);
+	const router = useRouter();
 	const providers = useQuery({
 		queryKey: accountQueryKey(scope, "ai-providers"),
 		queryFn: ({ signal }) => read((lease) => aiProviders.list(lease), signal),
@@ -70,97 +67,87 @@ function ProvidersView() {
 		retry: false,
 	});
 	const list = projectUserSelectableAiProviders(providers.data?.providers ?? []);
-	const refresh = async () => {
-		await providers.refetch();
-	};
 	return (
 		<SafeAreaScreen>
-			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
-				<PageHeader
-					title={agentSurfaceCopy.aIProviders}
-					description={agentSurfaceCopy.chooseHowYourAgentsReachAModel}
-					actions={<ProviderCreate providers={providers.data?.providers} refresh={refresh} />}
-				/>
-				{removed ? (
-					<Text accessibilityRole="alert">
-						{removed.remote_revoke_status === "pending"
-							? "Provider removed. Remote access revocation is pending."
-							: "Provider removed."}
-					</Text>
-				) : null}
-				<WebView recipe={styles.section}>
-					<SectionLabel>{agentSurfaceCopy.clawdi}</SectionLabel>
-					<WebView recipe={ENTITY_CARD_BASE}>
-						<EntityHeader
-							align="start"
-							icon={
-								<IconChip tint={aiProvidersUiClasses.managedTint}>
-									<Icon as={BrainCircuit} />
-								</IconChip>
-							}
-							title={MANAGED_PROVIDER_LABEL}
-							titleAdornment={
-								<StatusBadge status="success">
-									<Icon as={ShieldCheck} className={webView(aiProvidersUiClasses.shield)} />
-									<Text>{agentSurfaceCopy.default}</Text>
-								</StatusBadge>
-							}
-							meta={[agentSurfaceCopy.noSetupRequired, agentSurfaceCopy.walletBilled]}
+			<NativeHeader
+				title={agentSurfaceCopy.aIProviders}
+				actions={[
+					{
+						id: "add",
+						label: "Add provider",
+						disabled: !providers.data || !scope.isReady,
+						onPress: () => router.push("/ai-providers/new"),
+					},
+				]}
+			/>
+			<NativeList
+				data={list}
+				keyExtractor={(provider) => provider.id}
+				refreshing={providers.isRefetching}
+				onRefresh={() => void providers.refetch()}
+				header={
+					<WebView recipe={styles.section}>
+						<PageHeader
+							title={agentSurfaceCopy.aIProviders}
+							description={agentSurfaceCopy.chooseHowYourAgentsReachAModel}
 						/>
+
+						<WebView recipe={styles.section}>
+							<SectionLabel>{agentSurfaceCopy.clawdi}</SectionLabel>
+							<WebView recipe={ENTITY_CARD_BASE}>
+								<EntityHeader
+									align="start"
+									icon={
+										<IconChip tint={aiProvidersUiClasses.managedTint}>
+											<Icon as={BrainCircuit} />
+										</IconChip>
+									}
+									title={MANAGED_PROVIDER_LABEL}
+									titleAdornment={
+										<StatusBadge status="success">
+											<Icon as={ShieldCheck} className={webView(aiProvidersUiClasses.shield)} />
+											<Text>{agentSurfaceCopy.default}</Text>
+										</StatusBadge>
+									}
+									meta={[agentSurfaceCopy.noSetupRequired, agentSurfaceCopy.walletBilled]}
+								/>
+							</WebView>
+						</WebView>
+						<SectionLabel
+							count={!providers.isPending && !providers.isError ? list.length : undefined}
+						>
+							{agentSurfaceCopy.yourProviders}
+						</SectionLabel>
 					</WebView>
-				</WebView>
-				<WebView recipe={styles.section}>
-					<SectionLabel
-						count={!providers.isPending && !providers.isError ? list.length : undefined}
-					>
-						{agentSurfaceCopy.yourProviders}
-					</SectionLabel>
-					{providers.isError && !providers.data ? (
+				}
+				empty={
+					providers.isError ? (
 						<ApiErrorPanel
 							error={providers.error}
 							title={agentSurfaceCopy.couldnTLoadProviders}
 							onRetry={() => void providers.refetch()}
 						/>
 					) : providers.isPending ? (
-						<WebView recipe={ENTITY_GRID_CLASS}>
-							{[0, 1, 2].map((i) => (
-								<EntityCardSkeleton key={i} metaLines={2} actions />
-							))}
-						</WebView>
-					) : !list.length ? (
+						<EntityCardSkeleton metaLines={2} actions />
+					) : (
 						<EmptyState
 							title={agentSurfaceCopy.noProvidersAdded}
 							description={agentSurfaceCopy.connectAProviderToUseYourOwn}
 						/>
-					) : (
-						<WebView recipe={ENTITY_GRID_CLASS}>
-							{list.map((provider) => (
-								<ProviderCard
-									key={provider.id}
-									provider={provider}
-									refresh={refresh}
-									onRemoved={async (result) => {
-										setRemoved(result);
-										await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
-									}}
-								/>
-							))}
-						</WebView>
-					)}
-				</WebView>
-			</AppScrollView>
+					)
+				}
+				footer={
+					providers.isError && providers.data ? (
+						<ApiErrorPanel error={providers.error} onRetry={() => void providers.refetch()} />
+					) : null
+				}
+				renderItem={({ item: provider }) => <ProviderCard provider={provider} />}
+			/>
 		</SafeAreaScreen>
 	);
 }
-function ProviderCard({
-	provider,
-	refresh,
-	onRemoved,
-}: {
-	provider: SavedAiProvider;
-	refresh: () => Promise<void>;
-	onRemoved: (result: AiProviderRemovalResult) => Promise<void>;
-}) {
+
+function ProviderCard({ provider }: { provider: SavedAiProvider }) {
 	const t = useI18n(),
 		scope = useAccountScope(),
 		read = useAccountRead(),
@@ -197,14 +184,10 @@ function ProviderCard({
 				]}
 			/>
 			<WebView recipe={styles.actions} className="flex-row">
-				<ProviderEdit provider={provider} refresh={refresh} />
-				<ProviderRemove
-					providerId={provider.provider_id}
-					providerLabel={presentation.label}
-					onRemoved={onRemoved}
-				/>
+				<ProviderEdit provider={provider} />
+				<ProviderRemove providerId={provider.provider_id} />
 				{provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile" ? (
-					<ProviderOAuth provider={provider} refresh={refresh} />
+					<ProviderOAuth provider={provider} />
 				) : null}
 				<Button
 					variant="ghost"

@@ -4,14 +4,16 @@ import Svg, { Path, Rect } from "react-native-svg";
 export function QrImage({
 	matrix,
 	label,
+	size = 280,
 }: {
 	matrix: NonNullable<ReturnType<typeof pairingQr>>;
 	label: string;
+	size?: number;
 }) {
 	return (
 		<Svg
-			width={280}
-			height={280}
+			width={size}
+			height={size}
 			viewBox={`0 0 ${matrix.size} ${matrix.size}`}
 			accessibilityLabel={label}
 			accessibilityRole="image"

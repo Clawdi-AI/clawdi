@@ -1,3 +1,5 @@
+import { pairingCommand } from "@clawdi/shared/api";
+import { pairingQr } from "@clawdi/shared/qr";
 import {
 	apiKeysPanelClasses,
 	billingPageClass,
@@ -21,7 +23,9 @@ import {
 	PasswordFormView,
 	ProfileFormView,
 } from "@/components/settings/account-forms";
+import { ApiKeyFormView } from "@/components/settings/api-keys-panel";
 import { SettingsPanelHeader, SettingsSection } from "@/components/settings/settings-panel-header";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { ComputeSubscriptionCard } from "@/hosted/billing/subscription/compute-subscription-card";
@@ -30,6 +34,9 @@ import { SubscriptionDetails } from "@/hosted/billing/subscription/subscription-
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
 import { TransactionRow } from "@/hosted/billing/wallet/transactions-section";
 import { WalletSettingsSections } from "@/hosted/billing/wallet/wallet-sections";
+import { ProviderOAuthView } from "@/hosted/v2/ai-providers/provider-oauth-flow";
+import { ChannelPairingView } from "@/hosted/v2/channels/pairing-dialog-ui";
+import { WhatsAppSessionView } from "@/hosted/v2/channels/whatsapp-device-onboarding";
 import { useI18n } from "@/lib/i18n";
 import { emptySignupDetails } from "@/platform/auth/signup-details";
 import { SignupDetailsForm } from "@/platform/auth/signup-details-form";
@@ -65,9 +72,135 @@ function AccountStories() {
 	const t = useI18n();
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
+	const [acknowledged, setAcknowledged] = useState(false);
 	const [details, setDetails] = useState(emptySignupDetails());
 	const noop = () => {};
 	const common = { action: { busy: false, error: null }, reverification: { prompt: null } };
+	if (panel.startsWith("pair-")) {
+		const provider = panel.replace("pair-", "");
+		const link =
+			provider === "telegram"
+				? "https://t.me/acme_ops_bot?start=FIXTURE"
+				: provider === "whatsapp"
+					? `https://wa.me/14155550123?text=${encodeURIComponent(pairingCommand("FIXTURE"))}`
+					: null;
+		return (
+			<SheetPage
+				title={`Pair ${provider === "telegram" ? "Telegram" : provider === "discord" ? "Discord" : "WhatsApp"}`}
+				fallback="/channels"
+			>
+				<ChannelPairingView
+					provider={provider}
+					identity="@acme_ops_bot"
+					pairing={{
+						id: "fixture-pair",
+						agent_link_id: "fixture-link",
+						agent_id: "fixture-agent",
+						code: "FIXTURE",
+						expires_at: new Date(Date.now() + 300_000).toISOString(),
+						pairing_command: pairingCommand("FIXTURE"),
+						bot_username: "acme_ops_bot",
+						discord_install_url:
+							"https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=bot&permissions=0",
+						discord_user_install_url:
+							"https://discord.com/oauth2/authorize?client_id=123456789012345678&integration_type=1&scope=applications.commands",
+					}}
+					link={link}
+					busy={false}
+					open={noop}
+				/>
+			</SheetPage>
+		);
+	}
+	if (panel.startsWith("whatsapp-")) {
+		const state =
+			panel === "whatsapp-connected"
+				? "connected"
+				: panel === "whatsapp-expired"
+					? "expired"
+					: "ready";
+		return (
+			<SheetPage title="Connect WhatsApp" fallback="/channels">
+				<WhatsAppSessionView
+					session={{
+						id: "fixture-session",
+						name: "Acme WhatsApp",
+						state,
+						method: panel === "whatsapp-code" ? "code" : "qr",
+						qr: "fixture-only-whatsapp-qr",
+						qr_expires_at: "2099-01-01T00:00:00Z",
+						pairing_code: panel === "whatsapp-code" ? "1234-5678" : null,
+						manual_pairing_code_supported: true,
+						started_at: "2026-10-06T12:00:00Z",
+						expires_at: "2099-01-01T00:00:00Z",
+					}}
+					expired={state === "expired"}
+					qr={panel === "whatsapp-qr" ? pairingQr("fixture-only-whatsapp-qr") : null}
+					focused
+					active
+					phone=""
+					setPhone={noop}
+					ready
+					busy={false}
+					requestCode={noop}
+					check={noop}
+					review={noop}
+					retry={noop}
+					cancel={noop}
+				/>
+			</SheetPage>
+		);
+	}
+	if (panel === "provider-oauth-code" || panel === "provider-oauth-result")
+		return (
+			<SheetPage title="Set up ChatGPT" fallback="/ai-providers">
+				<ProviderOAuthView
+					authorization={
+						panel === "provider-oauth-code"
+							? {
+									flow: "device_code",
+									oauth_provider: "codex",
+									provider_id: "fixture-chatgpt",
+									profile: "fixture-profile",
+									state: "fixture-state",
+									user_code: "FIXT-URE1",
+									verification_url: "https://auth.openai.com/codex/device",
+									expires_at: "2026-10-07T00:00:00Z",
+									poll_interval_seconds: 5,
+								}
+							: null
+					}
+					issue={null}
+					ready={panel === "provider-oauth-result"}
+					online
+					busy={false}
+					error={null}
+					accountReady
+					configured
+					reconnecting={false}
+					begin={noop}
+					stop={noop}
+					restart={noop}
+					open={noop}
+				/>
+			</SheetPage>
+		);
+	if (panel === "api-key-result")
+		return (
+			<ApiKeyFormView
+				label=""
+				setLabel={noop}
+				rawKey="clawdi_fixture_only_story_token"
+				sheet={{ close: async () => {} }}
+				acknowledged={acknowledged}
+				setAcknowledged={setAcknowledged}
+				busy={false}
+				ready
+				error={null}
+				create={noop}
+				finish={noop}
+			/>
+		);
 	if (panel === "profile")
 		return (
 			<ProfileFormView

@@ -2,9 +2,10 @@ import { useUser } from "@clerk/expo";
 import type { EmailAddressResource, PhoneNumberResource, UserResource } from "@clerk/expo/types";
 import { Redirect, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, AppState } from "react-native";
+import { AppState } from "react-native";
 import { AccountContactsFormView } from "@/components/settings/account-forms";
 import { LoadingScreen } from "@/components/ui/feedback";
+import { useConfirmation } from "@/components/ui/use-confirmation";
 import { useI18n } from "@/lib/i18n";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -55,6 +56,7 @@ function ContactAddresses({ user, kind }: { user: UserResource; kind: Kind }) {
 	const reverification = useNativeReverification();
 	const capture = useForegroundLease();
 	const confirmation = useRef(0);
+	const confirmationDialog = useConfirmation();
 	const [contacts, setContacts] = useState<Contact[]>([...getContacts()]);
 	const [primary, setPrimary] = useState(getPrimary());
 	const [draft, setDraft] = useState("");
@@ -72,8 +74,8 @@ function ContactAddresses({ user, kind }: { user: UserResource; kind: Kind }) {
 		setContacts([...getContacts()]);
 		setPrimary(getPrimary());
 	};
-	const run = (work: (current: () => boolean) => Promise<void>) =>
-		void action.run(async (active) => {
+	const run = (work: (current: () => boolean) => Promise<void>, propagate = false) =>
+		(propagate ? action.runOrThrow : action.run)(async (active) => {
 			const visible = capture();
 			const current = () =>
 				active() && scope.isCurrent() && user.id === scope.accountKey && visible();
@@ -138,15 +140,14 @@ function ContactAddresses({ user, kind }: { user: UserResource; kind: Kind }) {
 		const visible = capture();
 		const ticket = ++confirmation.current;
 		const label = t(remove ? `${kind}.remove` : `${kind}.makePrimary`);
-		Alert.alert(label, t(remove ? `${kind}.removeWarning` : `${kind}.primaryWarning`), [
+		confirmationDialog.show(label, t(remove ? `${kind}.removeWarning` : `${kind}.primaryWarning`), [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: label,
 				style: remove ? "destructive" : "default",
 				onPress: () => {
 					if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
-					confirmation.current++;
-					run(async (current) => {
+					return run(async (current) => {
 						await user.reload();
 						if (!current()) return;
 						sync();
@@ -173,29 +174,32 @@ function ContactAddresses({ user, kind }: { user: UserResource; kind: Kind }) {
 							setCode("");
 						}
 						setSaved(true);
-					});
+					}, true);
 				},
 			},
 		]);
 	};
 	return (
-		<AccountContactsFormView
-			action={action}
-			reverification={reverification}
-			kind={kind}
-			contacts={contacts}
-			primary={primary}
-			draft={draft}
-			verifying={verifying}
-			code={code}
-			saved={saved}
-			refresh={refresh}
-			sendCode={sendCode}
-			confirm={confirm}
-			verify={verify}
-			setCode={setCode}
-			setDraft={setDraft}
-			add={add}
-		/>
+		<>
+			{confirmationDialog.dialog}
+			<AccountContactsFormView
+				action={action}
+				reverification={reverification}
+				kind={kind}
+				contacts={contacts}
+				primary={primary}
+				draft={draft}
+				verifying={verifying}
+				code={code}
+				saved={saved}
+				refresh={refresh}
+				sendCode={sendCode}
+				confirm={confirm}
+				verify={verify}
+				setCode={setCode}
+				setDraft={setDraft}
+				add={add}
+			/>
+		</>
 	);
 }

@@ -3,19 +3,21 @@ import { apiKeysPanelClasses, generalPanelClasses, settingsDialogClasses } from 
 import type { OAuthProvider } from "@clerk/expo/types";
 import { useRouter } from "expo-router";
 import type { ReactNode } from "react";
+import { useResolveClassNames } from "uniwind";
 import {
 	ClerkAction as FormAction,
 	ClerkInput as FormInput,
 	ClerkSwitch as FormSwitch,
 	ClerkText as FormText,
 } from "@/components/auth/clerk-form";
-import { SettingsBackButton } from "@/components/settings/back-button";
 import { Avatar } from "@/components/ui/avatar";
+import { NativeList } from "@/components/ui/native-list";
 import { QrImage } from "@/components/ui/qr-image";
 import { Separator } from "@/components/ui/separator";
 import { AppScrollView, AppView } from "@/components/ui/view";
 import { webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
+import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 type ContactItem = {
@@ -94,12 +96,13 @@ export function ProfileFormView({
 	return (
 		<SafeAreaScreen>
 			<AppScrollView
+				contentInsetAdjustmentBehavior="automatic"
+				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("profile.title")}</FormText>
+				<NativeHeader title={t("profile.title")} />
 				<FormText>{t("profile.description")}</FormText>
 				<Separator />
 				{reverification.prompt}
@@ -218,12 +221,13 @@ export function PasswordFormView({
 	return (
 		<SafeAreaScreen>
 			<AppScrollView
+				contentInsetAdjustmentBehavior="automatic"
+				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("password.title")}</FormText>
+				<NativeHeader title={t("password.title")} />
 				<FormText>{t("password.description")}</FormText>
 				<FormText>{t(enabled ? "password.enabled" : "password.absent")}</FormText>
 				<Separator />
@@ -330,114 +334,130 @@ export function MfaFormView({
 	confirmSms,
 }: MfaFormViewProps) {
 	const t = useI18n();
+	const contentStyle = useResolveClassNames(
+		webView(`${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`),
+	);
 	const router = useRouter();
 
 	return (
 		<SafeAreaScreen>
-			<AppScrollView
-				contentContainerClassName={webView(
-					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
-				)}
-			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("mfa.title")}</FormText>
-				<FormText>{t("mfa.description")}</FormText>
-				<FormText>{t(enabled ? "mfa.enabled" : "mfa.disabled")}</FormText>
-				<Separator />
-				{reverification.prompt}
-				<FormAction
-					label={t("inventory.refresh")}
-					disabled={action.busy}
-					onPress={() => run("refresh")}
-				/>
-				{!enabled ? (
-					<>
+			<NativeList
+				data={
+					phones
+						.filter((phone) => phone.verification.status === "verified")
+						.map((phone) => (
+							<AppView key={phone.id} className={webView(apiKeysPanelClasses.card)}>
+								<FormText selectable>{phone.phoneNumber}</FormText>
+								<FormText>
+									{t(phone.reservedForSecondFactor ? "mfa.smsEnabled" : "mfa.smsDisabled")}
+								</FormText>
+								{phone.reservedForSecondFactor && phone.defaultSecondFactor ? (
+									<FormText>{t("mfa.smsPreferred")}</FormText>
+								) : null}
+								<FormAction
+									label={t(phone.reservedForSecondFactor ? "mfa.smsDisable" : "mfa.smsEnable")}
+									disabled={action.busy}
+									onPress={() =>
+										confirmSms(
+											phone.id,
+											phone.reservedForSecondFactor ? "sms-disable" : "sms-enable",
+										)
+									}
+								/>
+								{phone.reservedForSecondFactor && !phone.defaultSecondFactor ? (
+									<FormAction
+										label={t("mfa.smsDefault")}
+										disabled={action.busy}
+										onPress={() => confirmSms(phone.id, "sms-default")}
+									/>
+								) : null}
+							</AppView>
+						)) ?? []
+				}
+				keyExtractor={(row, index) => String(row.key ?? index)}
+				renderItem={({ item }) => item}
+				refreshing={action.busy}
+				onRefresh={() => run("refresh")}
+				contentContainerStyle={contentStyle}
+				header={
+					<AppView className="gap-3">
+						<NativeHeader title={t("mfa.title")} />
+						<FormText>{t("mfa.description")}</FormText>
+						<FormText>{t(enabled ? "mfa.enabled" : "mfa.disabled")}</FormText>
+						<Separator />
+						{reverification.prompt}
 						<FormAction
-							label={t("mfa.setup")}
-							disabled={action.busy || Boolean(setup)}
-							onPress={() => run("create")}
+							label={t("inventory.refresh")}
+							disabled={action.busy}
+							onPress={() => run("refresh")}
 						/>
-						{setup ? (
+						{!enabled ? (
+							<>
+								<FormAction
+									label={t("mfa.setup")}
+									disabled={action.busy || Boolean(setup)}
+									onPress={() => run("create")}
+								/>
+								{setup ? (
+									<AppView className={webView(apiKeysPanelClasses.card)}>
+										<FormText>{t("mfa.setupInstructions")}</FormText>
+										{qr ? <QrImage matrix={qr} label={t("mfa.qr")} /> : null}
+										<FormText selectable>{setup.secret}</FormText>
+									</AppView>
+								) : null}
+								<FormText>{t("mfa.codeHint")}</FormText>
+								<FormInput
+									accessibilityLabel={t("mfa.code")}
+									placeholder={t("mfa.code")}
+									value={code}
+									onChangeText={setCode}
+									editable={!action.busy}
+									secureTextEntry
+									autoComplete="one-time-code"
+									keyboardType="number-pad"
+									autoCorrect={false}
+								/>
+								<FormAction
+									variant="default"
+									label={t("mfa.verify")}
+									disabled={action.busy || !code.trim()}
+									onPress={() => run("verify")}
+								/>
+							</>
+						) : null}
+						<FormAction
+							label={t(enabled ? "mfa.disable" : "mfa.discard")}
+							disabled={action.busy}
+							onPress={() => confirm("disable")}
+						/>
+						<FormAction
+							label={t("mfa.backup")}
+							disabled={action.busy || !mfaEnabled}
+							onPress={() => confirm("backup")}
+						/>
+						{codes ? (
 							<AppView className={webView(apiKeysPanelClasses.card)}>
-								<FormText>{t("mfa.setupInstructions")}</FormText>
-								{qr ? <QrImage matrix={qr} label={t("mfa.qr")} /> : null}
-								<FormText selectable>{setup.secret}</FormText>
+								<FormText>{t("mfa.saveCodes")}</FormText>
+								<FormText selectable>{codes.join("\n")}</FormText>
+								<FormAction label={t("mfa.hide")} onPress={clear} />
 							</AppView>
 						) : null}
-						<FormText>{t("mfa.codeHint")}</FormText>
-						<FormInput
-							accessibilityLabel={t("mfa.code")}
-							placeholder={t("mfa.code")}
-							value={code}
-							onChangeText={setCode}
-							editable={!action.busy}
-							secureTextEntry
-							autoComplete="one-time-code"
-							keyboardType="number-pad"
-							autoCorrect={false}
-						/>
+						<FormText accessibilityRole="header">{t("mfa.smsTitle")}</FormText>
+						<FormText>{t("mfa.smsDescription")}</FormText>
 						<FormAction
-							variant="default"
-							label={t("mfa.verify")}
-							disabled={action.busy || !code.trim()}
-							onPress={() => run("verify")}
+							label={t("phones.title")}
+							disabled={action.busy}
+							onPress={() => router.push("/settings/account/phone-numbers")}
 						/>
-					</>
-				) : null}
-				<FormAction
-					label={t(enabled ? "mfa.disable" : "mfa.discard")}
-					disabled={action.busy}
-					onPress={() => confirm("disable")}
-				/>
-				<FormAction
-					label={t("mfa.backup")}
-					disabled={action.busy || !mfaEnabled}
-					onPress={() => confirm("backup")}
-				/>
-				{codes ? (
-					<AppView className={webView(apiKeysPanelClasses.card)}>
-						<FormText>{t("mfa.saveCodes")}</FormText>
-						<FormText selectable>{codes.join("\n")}</FormText>
-						<FormAction label={t("mfa.hide")} onPress={clear} />
 					</AppView>
-				) : null}
-				<FormText accessibilityRole="header">{t("mfa.smsTitle")}</FormText>
-				<FormText>{t("mfa.smsDescription")}</FormText>
-				<FormAction
-					label={t("phones.title")}
-					disabled={action.busy}
-					onPress={() => router.push("/settings/account/phone-numbers")}
-				/>
-				{phones
-					.filter((phone) => phone.verification.status === "verified")
-					.map((phone) => (
-						<AppView key={phone.id} className={webView(apiKeysPanelClasses.card)}>
-							<FormText selectable>{phone.phoneNumber}</FormText>
-							<FormText>
-								{t(phone.reservedForSecondFactor ? "mfa.smsEnabled" : "mfa.smsDisabled")}
-							</FormText>
-							{phone.reservedForSecondFactor && phone.defaultSecondFactor ? (
-								<FormText>{t("mfa.smsPreferred")}</FormText>
-							) : null}
-							<FormAction
-								label={t(phone.reservedForSecondFactor ? "mfa.smsDisable" : "mfa.smsEnable")}
-								disabled={action.busy}
-								onPress={() =>
-									confirmSms(phone.id, phone.reservedForSecondFactor ? "sms-disable" : "sms-enable")
-								}
-							/>
-							{phone.reservedForSecondFactor && !phone.defaultSecondFactor ? (
-								<FormAction
-									label={t("mfa.smsDefault")}
-									disabled={action.busy}
-									onPress={() => confirmSms(phone.id, "sms-default")}
-								/>
-							) : null}
-						</AppView>
-					))}
-				{action.error ? <FormText accessibilityRole="alert">{t("mfa.failed")}</FormText> : null}
-				{success ? <FormText accessibilityRole="alert">{t("mfa.saved")}</FormText> : null}
-			</AppScrollView>
+				}
+				footer={
+					<AppView className="gap-3">
+						{action.error ? <FormText accessibilityRole="alert">{t("mfa.failed")}</FormText> : null}
+						{success ? <FormText accessibilityRole="alert">{t("mfa.saved")}</FormText> : null}
+					</AppView>
+				}
+			/>
 		</SafeAreaScreen>
 	);
 }
@@ -467,76 +487,93 @@ export function PasskeysFormView({
 	confirmRemove,
 }: PasskeysFormViewProps) {
 	const t = useI18n();
+	const contentStyle = useResolveClassNames(
+		webView(`${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`),
+	);
 
 	return (
 		<SafeAreaScreen>
-			<AppScrollView
-				contentContainerClassName={webView(
-					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
-				)}
-			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("passkeys.title")}</FormText>
-				<FormText>{t("passkeys.description")}</FormText>
-				<Separator />
-				{reverification.prompt}
-				<FormAction label={t("inventory.refresh")} disabled={action.busy} onPress={() => run()} />
-				{passkeys.length === 0 ? <FormText>{t("passkeys.empty")}</FormText> : null}
-				{passkeys.map((passkey) => (
-					<AppView key={passkey.id} className={webView(apiKeysPanelClasses.card)}>
-						<FormText className="text-lg font-semibold text-foreground">
-							{passkey.name || t("passkeys.unnamed")}
-						</FormText>
-						<FormText>
-							{t("passkeys.lastUsed")}{" "}
-							{passkey.lastUsedAt && Number.isFinite(passkey.lastUsedAt.getTime())
-								? passkey.lastUsedAt.toLocaleString()
-								: t("passkeys.neverUsed")}
-						</FormText>
-						{edit?.id === passkey.id ? (
-							<>
-								<FormInput
-									accessibilityLabel={t("passkeys.name")}
-									value={edit.name}
-									onChangeText={(name) => setEdit({ id: passkey.id, name })}
-									editable={!action.busy}
-									autoCorrect={false}
-								/>
+			<NativeList
+				data={
+					passkeys.map((passkey) => (
+						<AppView key={passkey.id} className={webView(apiKeysPanelClasses.card)}>
+							<FormText className="text-lg font-semibold text-foreground">
+								{passkey.name || t("passkeys.unnamed")}
+							</FormText>
+							<FormText>
+								{t("passkeys.lastUsed")}{" "}
+								{passkey.lastUsedAt && Number.isFinite(passkey.lastUsedAt.getTime())
+									? passkey.lastUsedAt.toLocaleString()
+									: t("passkeys.neverUsed")}
+							</FormText>
+							{edit?.id === passkey.id ? (
+								<>
+									<FormInput
+										accessibilityLabel={t("passkeys.name")}
+										value={edit.name}
+										onChangeText={(name) => setEdit({ id: passkey.id, name })}
+										editable={!action.busy}
+										autoCorrect={false}
+									/>
+									<FormAction
+										label={t("passkeys.save")}
+										disabled={action.busy || !edit.name.trim()}
+										onPress={() => run({ kind: "rename", ...edit })}
+									/>
+									<FormAction
+										label={t("account.cancel")}
+										disabled={action.busy}
+										onPress={() => setEdit(null)}
+									/>
+								</>
+							) : (
 								<FormAction
-									label={t("passkeys.save")}
-									disabled={action.busy || !edit.name.trim()}
-									onPress={() => run({ kind: "rename", ...edit })}
-								/>
-								<FormAction
-									label={t("account.cancel")}
+									label={t("passkeys.rename")}
 									disabled={action.busy}
-									onPress={() => setEdit(null)}
-								/>
-							</>
-						) : (
-							<FormAction
-								label={t("passkeys.rename")}
-								disabled={action.busy}
-								onPress={() => {
-									setSaved(false);
+									onPress={() => {
+										setSaved(false);
 
-									setEdit({ id: passkey.id, name: passkey.name ?? "" });
-								}}
+										setEdit({ id: passkey.id, name: passkey.name ?? "" });
+									}}
+								/>
+							)}
+							<FormAction
+								label={t("passkeys.remove")}
+								disabled={action.busy}
+								onPress={() => confirmRemove(passkey.id)}
 							/>
-						)}
+						</AppView>
+					)) ?? []
+				}
+				keyExtractor={(row, index) => String(row.key ?? index)}
+				renderItem={({ item }) => item}
+				refreshing={action.busy}
+				onRefresh={() => run()}
+				contentContainerStyle={contentStyle}
+				header={
+					<AppView className="gap-3">
+						<NativeHeader title={t("passkeys.title")} />
+						<FormText>{t("passkeys.description")}</FormText>
+						<Separator />
+						{reverification.prompt}
 						<FormAction
-							label={t("passkeys.remove")}
+							label={t("inventory.refresh")}
 							disabled={action.busy}
-							onPress={() => confirmRemove(passkey.id)}
+							onPress={() => run()}
 						/>
+						{passkeys.length === 0 ? <FormText>{t("passkeys.empty")}</FormText> : null}
 					</AppView>
-				))}
-				<FormText>{t("passkeys.nativeUnavailable")}</FormText>
-				{action.error ? (
-					<FormText accessibilityRole="alert">{t("passkeys.failed")}</FormText>
-				) : null}
-				{saved ? <FormText accessibilityRole="alert">{t("passkeys.saved")}</FormText> : null}
-			</AppScrollView>
+				}
+				footer={
+					<AppView className="gap-3">
+						<FormText>{t("passkeys.nativeUnavailable")}</FormText>
+						{action.error ? (
+							<FormText accessibilityRole="alert">{t("passkeys.failed")}</FormText>
+						) : null}
+						{saved ? <FormText accessibilityRole="alert">{t("passkeys.saved")}</FormText> : null}
+					</AppView>
+				}
+			/>
 		</SafeAreaScreen>
 	);
 }
@@ -578,92 +615,107 @@ export function AccountContactsFormView({
 	add,
 }: AccountContactsFormViewProps) {
 	const t = useI18n();
+	const contentStyle = useResolveClassNames(
+		webView(`${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`),
+	);
 
 	return (
 		<SafeAreaScreen>
-			<AppScrollView
-				contentContainerClassName={webView(
-					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
-				)}
-			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t(`${kind}.title`)}</FormText>
-				<FormText>{t(`${kind}.description`)}</FormText>
-				<Separator />
-				{reverification.prompt}
-				<FormAction label={t("inventory.refresh")} disabled={action.busy} onPress={refresh} />
-				{contacts.map((contact) => (
-					<AppView key={contact.id} className={webView(apiKeysPanelClasses.card)}>
-						<FormText selectable>{contactValue(contact)}</FormText>
-						<FormText>
-							{t(
-								contact.id === primary
-									? `${kind}.primary`
-									: contact.verification.status === "verified"
-										? `${kind}.verified`
-										: `${kind}.unverified`,
-							)}
-						</FormText>
-						{contact.verification.status !== "verified" ? (
-							<FormAction
-								label={t(`${kind}.sendCode`)}
-								disabled={action.busy}
-								onPress={() => sendCode(contact.id)}
-							/>
-						) : null}
-						{contact.id !== primary ? (
-							<>
+			<NativeList
+				data={
+					contacts.map((contact) => (
+						<AppView key={contact.id} className={webView(apiKeysPanelClasses.card)}>
+							<FormText selectable>{contactValue(contact)}</FormText>
+							<FormText>
+								{t(
+									contact.id === primary
+										? `${kind}.primary`
+										: contact.verification.status === "verified"
+											? `${kind}.verified`
+											: `${kind}.unverified`,
+								)}
+							</FormText>
+							{contact.verification.status !== "verified" ? (
 								<FormAction
-									label={t(`${kind}.makePrimary`)}
-									disabled={action.busy || contact.verification.status !== "verified"}
-									onPress={() => confirm(contact.id, false)}
-								/>
-								<FormAction
-									label={t(`${kind}.remove`)}
+									label={t(`${kind}.sendCode`)}
 									disabled={action.busy}
-									onPress={() => confirm(contact.id, true)}
+									onPress={() => sendCode(contact.id)}
 								/>
-							</>
-						) : null}
-						{verifying === contact.id ? (
-							<>
-								<FormText>{t(`${kind}.codeSent`)}</FormText>
-								<FormInput
-									accessibilityLabel={t(`${kind}.code`)}
-									value={code}
-									onChangeText={setCode}
-									editable={!action.busy}
-									autoComplete="one-time-code"
-									keyboardType="number-pad"
-								/>
-								<FormAction
-									label={t(`${kind}.verify`)}
-									disabled={action.busy || !code.trim()}
-									onPress={verify}
-								/>
-							</>
-						) : null}
+							) : null}
+							{contact.id !== primary ? (
+								<>
+									<FormAction
+										label={t(`${kind}.makePrimary`)}
+										disabled={action.busy || contact.verification.status !== "verified"}
+										onPress={() => confirm(contact.id, false)}
+									/>
+									<FormAction
+										label={t(`${kind}.remove`)}
+										disabled={action.busy}
+										onPress={() => confirm(contact.id, true)}
+									/>
+								</>
+							) : null}
+							{verifying === contact.id ? (
+								<>
+									<FormText>{t(`${kind}.codeSent`)}</FormText>
+									<FormInput
+										accessibilityLabel={t(`${kind}.code`)}
+										value={code}
+										onChangeText={setCode}
+										editable={!action.busy}
+										autoComplete="one-time-code"
+										keyboardType="number-pad"
+									/>
+									<FormAction
+										label={t(`${kind}.verify`)}
+										disabled={action.busy || !code.trim()}
+										onPress={verify}
+									/>
+								</>
+							) : null}
+						</AppView>
+					)) ?? []
+				}
+				keyExtractor={(row, index) => String(row.key ?? index)}
+				renderItem={({ item }) => item}
+				refreshing={action.busy}
+				onRefresh={refresh}
+				contentContainerStyle={contentStyle}
+				header={
+					<AppView className="gap-3">
+						<NativeHeader title={t(`${kind}.title`)} />
+						<FormText>{t(`${kind}.description`)}</FormText>
+						<Separator />
+						{reverification.prompt}
+						<FormAction label={t("inventory.refresh")} disabled={action.busy} onPress={refresh} />
 					</AppView>
-				))}
-				<FormInput
-					accessibilityLabel={t(`${kind}.input`)}
-					placeholder={t(`${kind}.input`)}
-					value={draft}
-					onChangeText={setDraft}
-					editable={!action.busy}
-					autoComplete={kind === "emails" ? "email" : "tel"}
-					keyboardType={kind === "emails" ? "email-address" : "phone-pad"}
-					autoCapitalize="none"
-					autoCorrect={false}
-				/>
-				<FormAction
-					label={t(`${kind}.add`)}
-					disabled={action.busy || !draft.trim()}
-					onPress={add}
-				/>
-				{action.error ? <FormText accessibilityRole="alert">{t(`${kind}.failed`)}</FormText> : null}
-				{saved ? <FormText accessibilityRole="alert">{t(`${kind}.saved`)}</FormText> : null}
-			</AppScrollView>
+				}
+				footer={
+					<AppView className="gap-3">
+						<FormInput
+							accessibilityLabel={t(`${kind}.input`)}
+							placeholder={t(`${kind}.input`)}
+							value={draft}
+							onChangeText={setDraft}
+							editable={!action.busy}
+							autoComplete={kind === "emails" ? "email" : "tel"}
+							keyboardType={kind === "emails" ? "email-address" : "phone-pad"}
+							autoCapitalize="none"
+							autoCorrect={false}
+						/>
+						<FormAction
+							label={t(`${kind}.add`)}
+							disabled={action.busy || !draft.trim()}
+							onPress={add}
+						/>
+						{action.error ? (
+							<FormText accessibilityRole="alert">{t(`${kind}.failed`)}</FormText>
+						) : null}
+						{saved ? <FormText accessibilityRole="alert">{t(`${kind}.saved`)}</FormText> : null}
+					</AppView>
+				}
+			/>
 		</SafeAreaScreen>
 	);
 }
@@ -687,61 +739,76 @@ export function DeviceSessionsFormView({
 	revoke,
 }: DeviceSessionsFormViewProps) {
 	const t = useI18n();
+	const contentStyle = useResolveClassNames(
+		webView(`${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`),
+	);
 
 	return (
 		<SafeAreaScreen>
-			<AppScrollView
-				contentContainerClassName={webView(
-					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
-				)}
-			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("devices.title")}</FormText>
-				<FormText>{t("devices.description")}</FormText>
-				<Separator />
-				{reverification.prompt}
-				<FormAction label={t("devices.refresh")} disabled={action.busy} onPress={refresh} />
-				{sessions === null ? <FormText>{t("devices.loadHint")}</FormText> : null}
-				{sessions?.map((session) => (
-					<AppView key={session.id} className={webView(apiKeysPanelClasses.card)}>
-						<FormText>
-							{[
-								session.latestActivity.deviceType,
-								session.latestActivity.browserName,
-								session.latestActivity.browserVersion,
-							]
-								.filter(Boolean)
-								.join(" · ") || t("devices.unknown")}
-						</FormText>
-						<FormText selectable>
-							{[
-								session.latestActivity.city,
-								session.latestActivity.country,
-								session.latestActivity.ipAddress,
-							]
-								.filter(Boolean)
-								.join(" · ")}
-						</FormText>
-						<FormText>
-							{t("devices.lastActive")}{" "}
-							{Number.isFinite(session.lastActiveAt.getTime())
-								? session.lastActiveAt.toLocaleString()
-								: t("devices.unknown")}
-						</FormText>
-						{session.id === scope.sessionId ? (
-							<FormText>{t("devices.current")}</FormText>
-						) : (
-							<FormAction
-								label={t("devices.revoke")}
-								disabled={action.busy}
-								onPress={() => revoke(session.id)}
-							/>
-						)}
+			<NativeList
+				data={
+					sessions?.map((session) => (
+						<AppView key={session.id} className={webView(apiKeysPanelClasses.card)}>
+							<FormText>
+								{[
+									session.latestActivity.deviceType,
+									session.latestActivity.browserName,
+									session.latestActivity.browserVersion,
+								]
+									.filter(Boolean)
+									.join(" · ") || t("devices.unknown")}
+							</FormText>
+							<FormText selectable>
+								{[
+									session.latestActivity.city,
+									session.latestActivity.country,
+									session.latestActivity.ipAddress,
+								]
+									.filter(Boolean)
+									.join(" · ")}
+							</FormText>
+							<FormText>
+								{t("devices.lastActive")}{" "}
+								{Number.isFinite(session.lastActiveAt.getTime())
+									? session.lastActiveAt.toLocaleString()
+									: t("devices.unknown")}
+							</FormText>
+							{session.id === scope.sessionId ? (
+								<FormText>{t("devices.current")}</FormText>
+							) : (
+								<FormAction
+									label={t("devices.revoke")}
+									disabled={action.busy}
+									onPress={() => revoke(session.id)}
+								/>
+							)}
+						</AppView>
+					)) ?? []
+				}
+				keyExtractor={(row, index) => String(row.key ?? index)}
+				renderItem={({ item }) => item}
+				refreshing={action.busy}
+				onRefresh={refresh}
+				contentContainerStyle={contentStyle}
+				header={
+					<AppView className="gap-3">
+						<NativeHeader title={t("devices.title")} />
+						<FormText>{t("devices.description")}</FormText>
+						<Separator />
+						{reverification.prompt}
+						<FormAction label={t("devices.refresh")} disabled={action.busy} onPress={refresh} />
+						{sessions === null ? <FormText>{t("devices.loadHint")}</FormText> : null}
 					</AppView>
-				))}
-				{action.error ? <FormText accessibilityRole="alert">{t("devices.failed")}</FormText> : null}
-				{revoked ? <FormText accessibilityRole="alert">{t("devices.revoked")}</FormText> : null}
-			</AppScrollView>
+				}
+				footer={
+					<AppView className="gap-3">
+						{action.error ? (
+							<FormText accessibilityRole="alert">{t("devices.failed")}</FormText>
+						) : null}
+						{revoked ? <FormText accessibilityRole="alert">{t("devices.revoked")}</FormText> : null}
+					</AppView>
+				}
+			/>
 		</SafeAreaScreen>
 	);
 }
@@ -769,70 +836,87 @@ export function ConnectedAccountsFormView({
 	confirmRemove,
 }: ConnectedAccountsFormViewProps) {
 	const t = useI18n();
+	const contentStyle = useResolveClassNames(
+		webView(`${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`),
+	);
 
 	return (
 		<SafeAreaScreen>
-			<AppScrollView
-				contentContainerClassName={webView(
-					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
-				)}
-			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("connections.title")}</FormText>
-				<FormText>{t("connections.description")}</FormText>
-				<Separator />
-				{reverification.prompt}
-				<FormAction label={t("inventory.refresh")} disabled={action.busy} onPress={() => run()} />
-				{accounts.length === 0 ? <FormText>{t("connections.empty")}</FormText> : null}
-				{accounts.map((account) => (
-					<AppView key={account.id} className={webView(apiKeysPanelClasses.card)}>
-						<FormText>{account.providerTitle()}</FormText>
-						<FormText selectable>{account.accountIdentifier()}</FormText>
-						<FormText>
-							{t(
-								account.verification?.status === "verified"
-									? "connections.verified"
-									: "connections.unverified",
-							)}
-						</FormText>
+			<NativeList
+				data={
+					accounts.map((account) => (
+						<AppView key={account.id} className={webView(apiKeysPanelClasses.card)}>
+							<FormText>{account.providerTitle()}</FormText>
+							<FormText selectable>{account.accountIdentifier()}</FormText>
+							<FormText>
+								{t(
+									account.verification?.status === "verified"
+										? "connections.verified"
+										: "connections.unverified",
+								)}
+							</FormText>
+							<FormAction
+								label={t("connections.reauthorize")}
+								disabled={action.busy}
+								onPress={() => void authorize({ id: account.id })}
+							/>
+							<FormAction
+								label={t("connections.remove")}
+								disabled={action.busy}
+								onPress={() => confirmRemove(account.id)}
+							/>
+						</AppView>
+					)) ?? []
+				}
+				keyExtractor={(row, index) => String(row.key ?? index)}
+				renderItem={({ item }) => item}
+				refreshing={action.busy}
+				onRefresh={() => run()}
+				contentContainerStyle={contentStyle}
+				header={
+					<AppView className="gap-3">
+						<NativeHeader title={t("connections.title")} />
+						<FormText>{t("connections.description")}</FormText>
+						<Separator />
+						{reverification.prompt}
 						<FormAction
-							label={t("connections.reauthorize")}
+							label={t("inventory.refresh")}
 							disabled={action.busy}
-							onPress={() => void authorize({ id: account.id })}
+							onPress={() => run()}
 						/>
-						<FormAction
-							label={t("connections.remove")}
-							disabled={action.busy}
-							onPress={() => confirmRemove(account.id)}
-						/>
+						{accounts.length === 0 ? <FormText>{t("connections.empty")}</FormText> : null}
 					</AppView>
-				))}
-				<FormText>{t("connections.browserHint")}</FormText>
-				{providers.length === 0 ? <FormText>{t("connections.notConfigured")}</FormText> : null}
-				{providers
-					.filter(
-						(provider) =>
-							!accounts.some(
-								(account) =>
-									account.provider === provider && account.verification?.status === "verified",
-							),
-					)
-					.map((provider) => (
-						<FormAction
-							key={provider}
-							label={`${t("connections.connect")} · ${provider}`}
-							disabled={action.busy}
-							onPress={() => void authorize({ provider })}
-						/>
-					))}
-				{action.error ? (
-					<FormText accessibilityRole="alert">{t("connections.failed")}</FormText>
-				) : null}
-				{saved ? <FormText accessibilityRole="alert">{t("connections.saved")}</FormText> : null}
-				{reauthorized ? (
-					<FormText accessibilityRole="alert">{t("connections.reauthorized")}</FormText>
-				) : null}
-			</AppScrollView>
+				}
+				footer={
+					<AppView className="gap-3">
+						<FormText>{t("connections.browserHint")}</FormText>
+						{providers.length === 0 ? <FormText>{t("connections.notConfigured")}</FormText> : null}
+						{providers
+							.filter(
+								(provider) =>
+									!accounts.some(
+										(account) =>
+											account.provider === provider && account.verification?.status === "verified",
+									),
+							)
+							.map((provider) => (
+								<FormAction
+									key={provider}
+									label={`${t("connections.connect")} · ${provider}`}
+									disabled={action.busy}
+									onPress={() => void authorize({ provider })}
+								/>
+							))}
+						{action.error ? (
+							<FormText accessibilityRole="alert">{t("connections.failed")}</FormText>
+						) : null}
+						{saved ? <FormText accessibilityRole="alert">{t("connections.saved")}</FormText> : null}
+						{reauthorized ? (
+							<FormText accessibilityRole="alert">{t("connections.reauthorized")}</FormText>
+						) : null}
+					</AppView>
+				}
+			/>
 		</SafeAreaScreen>
 	);
 }
@@ -862,12 +946,13 @@ export function DeleteAccountFormView({
 	return (
 		<SafeAreaScreen>
 			<AppScrollView
+				contentInsetAdjustmentBehavior="automatic"
+				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("deletion.title")}</FormText>
+				<NativeHeader title={t("deletion.title")} />
 				<FormText>{email}</FormText>
 				<FormText>{t("deletion.warning")}</FormText>
 				{outcome === "idle" ? (

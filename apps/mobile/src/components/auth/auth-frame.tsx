@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 export function AuthFrame({
@@ -20,6 +21,7 @@ export function AuthFrame({
 }) {
 	return (
 		<SafeAreaScreen>
+			<NativeHeader title={title} />
 			<AppScrollView
 				keyboardShouldPersistTaps="handled"
 				contentContainerStyle={{ flexGrow: 1 }}
@@ -28,7 +30,6 @@ export function AuthFrame({
 				<Card className={webView(authPageClasses.cardBox)}>
 					<CardHeader>
 						<WebView recipe={settingsPanelHeaderClasses.copy} className="items-center">
-							<WebText recipe={settingsPanelHeaderClasses.title}>{title}</WebText>
 							<WebText recipe={settingsPanelHeaderClasses.description} className="text-center">
 								{subtitle}
 							</WebText>

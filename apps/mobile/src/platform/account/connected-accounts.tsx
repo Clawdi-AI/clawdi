@@ -4,9 +4,9 @@ import { randomUUID } from "expo-crypto";
 import { Redirect, useFocusEffect } from "expo-router";
 import { openAuthSessionAsync } from "expo-web-browser";
 import { useCallback, useRef, useState } from "react";
-import { Alert } from "react-native";
 import { ConnectedAccountsFormView } from "@/components/settings/account-forms";
 import { LoadingScreen } from "@/components/ui/feedback";
+import { useConfirmation } from "@/components/ui/use-confirmation";
 import { useMobileRuntimeConfig } from "@/lib/config/runtime";
 import { useI18n } from "@/lib/i18n";
 import { useAccountScope } from "@/platform/account-lifecycle";
@@ -37,6 +37,7 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 	const action = useAuthAction(scope.identity);
 	const reverification = useNativeReverification();
 	const confirmation = useRef(0);
+	const confirmationDialog = useConfirmation();
 	const pageEpoch = useRef(0);
 	useFocusEffect(
 		useCallback(
@@ -110,8 +111,8 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 				throw new Error("Connection authorization incomplete");
 			setReauthorized(true);
 		});
-	const run = (removeId?: string) =>
-		void action.run(async (active) => {
+	const run = (removeId?: string, propagate = false) =>
+		(propagate ? action.runOrThrow : action.run)(async (active) => {
 			const visible = capture();
 			const current = () =>
 				active() && visible() && scope.isCurrent() && user.id === scope.accountKey;
@@ -141,30 +142,32 @@ function ConnectedAccounts({ user }: { user: UserResource }) {
 	const confirmRemove = (id: string) => {
 		const visible = capture();
 		const ticket = ++confirmation.current;
-		Alert.alert(t("connections.remove"), t("connections.removeWarning"), [
+		confirmationDialog.show(t("connections.remove"), t("connections.removeWarning"), [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: t("connections.remove"),
 				style: "destructive",
 				onPress: () => {
 					if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
-					confirmation.current++;
-					run(id);
+					return run(id, true);
 				},
 			},
 		]);
 	};
 	return (
-		<ConnectedAccountsFormView
-			action={action}
-			reverification={reverification}
-			accounts={accounts}
-			providers={providers}
-			saved={saved}
-			reauthorized={reauthorized}
-			run={run}
-			authorize={authorize}
-			confirmRemove={confirmRemove}
-		/>
+		<>
+			{confirmationDialog.dialog}
+			<ConnectedAccountsFormView
+				action={action}
+				reverification={reverification}
+				accounts={accounts}
+				providers={providers}
+				saved={saved}
+				reauthorized={reauthorized}
+				run={run}
+				authorize={authorize}
+				confirmRemove={confirmRemove}
+			/>
+		</>
 	);
 }

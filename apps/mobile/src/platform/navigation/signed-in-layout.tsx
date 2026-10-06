@@ -10,6 +10,8 @@ const roots: Record<string, string> = {
 	"agents/index": "Agents",
 	"sessions/index": "Sessions",
 	library: "Library",
+	"channels/index": "Channels",
+	"ai-providers/index": "AI Providers",
 	"settings/index": "General",
 };
 
