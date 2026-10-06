@@ -187,7 +187,7 @@ for (const runtime of ["bun", "node"] as const) {
 					["push", "--dry-run", "--agent", "claude_code", "--modules", "nope", ...colorArgs],
 					colorEnv,
 				);
-				expect(result.code).toBe(0);
+				expect(result.code).toBe(1);
 				expect(result.output).toContain("clawdi push");
 				expect(result.output).toContain("Unknown module(s): nope");
 				expect(result.output).not.toContain(ansiEscape);
