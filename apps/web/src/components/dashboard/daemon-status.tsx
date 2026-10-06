@@ -16,6 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { statusDotVariants } from "@/components/ui/status-badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { cn, relativeTime } from "@/lib/utils";
 
 type Env = components["schemas"]["AgentResponse"];
@@ -596,28 +597,25 @@ function SyncSetupCliTab(_props: { env: Env }) {
 	);
 }
 
-function PromptBlock({ text }: { text: string }) {
-	const [copied, setCopied] = useState(false);
+export function PromptBlock({ text }: { text: string }) {
+	const { copied, copy } = useCopyToClipboard({
+		success: false,
+		error: "Couldn't copy. Select the prompt and copy it manually.",
+	});
 	// Match the visual treatment of <AgentTab>'s prompt block in
 	// add-agent-setup.tsx — same Copy chip, same border + muted bg —
 	// so the dialog reads as a peer to the onboarding card, not a
 	// separate one-off design.
-	const onCopy = () => {
-		navigator.clipboard
-			.writeText(text)
-			.then(() => {
-				setCopied(true);
-				setTimeout(() => setCopied(false), 1500);
-			})
-			.catch(() => {});
-	};
 	return (
 		<div className="rounded-lg border bg-muted/30">
 			<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
 				<span className="text-xs uppercase tracking-wide text-muted-foreground">Prompt</span>
+				<span className="sr-only" aria-live="polite">
+					{copied ? "Copied" : ""}
+				</span>
 				<button
 					type="button"
-					onClick={onCopy}
+					onClick={() => copy(text)}
 					className="text-xs text-muted-foreground hover:text-foreground"
 				>
 					{copied ? "Copied" : "Copy"}

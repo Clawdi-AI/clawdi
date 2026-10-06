@@ -42,7 +42,7 @@ program
 		"after",
 		`
 Examples:
-  $ clawdi auth login               Authenticate with Clawdi
+  $ clawdi auth login               Sign in to Clawdi
   $ clawdi deploy                   Create a Cloud Agent with the deploy wizard
   $ clawdi auth status --json       Inspect credential source without printing secrets
   $ clawdi setup                    Detect agents and register the current machine
@@ -134,11 +134,11 @@ any create or checkout mutation. No provider secrets are accepted as flags.`,
 // ─────────────────────────────────────────────────────────────
 // auth
 // ─────────────────────────────────────────────────────────────
-const authCmd = program.command("auth").description("Authenticate with Clawdi");
+const authCmd = program.command("auth").description("Sign in to Clawdi");
 
 authCmd
 	.command("login")
-	.description("Sign in once with Clerk OAuth Authorization Code + PKCE")
+	.description("Sign in through your browser")
 	.option("--manual", "Skip the browser flow and paste an API key instead")
 	.option("--no-open", "Print the authorization URL and securely paste the callback")
 	.addOption(new Option("--desktop").hideHelp())
@@ -334,7 +334,7 @@ program
 	)
 	.option(
 		"--exclude-project <path>",
-		"Exclude a project path (repeatable, mutex with --project)",
+		"Exclude a project path (repeatable, can't be combined with --project)",
 		(value: string, prev: string[] = []) => prev.concat(value),
 		[] as string[],
 	)

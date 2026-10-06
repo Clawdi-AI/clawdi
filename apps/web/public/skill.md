@@ -12,43 +12,64 @@ This walkthrough takes 2-3 minutes. The end state: the user's existing session h
 
 ## Install the CLI
 
-```bash
-bun add -g clawdi
-```
+If `clawdi --version` already works, run `clawdi update` and skip to **Sign in**.
 
-If `bun` isn't installed on the system, fall back to npm:
+On macOS or Linux, use the native installer (no Node.js needed, no sudo):
 
 ```bash
-npm install -g clawdi
+curl -fsSL https://clawdi.ai/install.sh | sh
 ```
 
-Verify it landed:
+It installs to `~/.local/bin`. If `clawdi` isn't found afterward, run
+`export PATH="$HOME/.local/bin:$PATH"` for this session and tell the user to add that line to
+their shell profile.
+
+On Windows, or if the user prefers npm, Node.js 24 or newer is required:
+
+```bash
+npm install -g clawdi@latest
+```
+
+Don't use `sudo`. Verify it landed:
 
 ```bash
 clawdi --version
 ```
 
-## Authenticate
+## Sign in
 
-The CLI hands the user a verification URL; they approve in their browser; you complete the handshake. Two phases because you can't block waiting for a browser click.
+Check whether this machine is already signed in:
 
-Start the authorization:
+```bash
+clawdi auth status --json
+```
+
+If `authenticated` is `true` and the email is the account the user expects, skip to the next
+step.
+
+Otherwise, ask the user to run this in their own terminal on this machine. It opens their
+browser and finishes on its own after they approve:
 
 ```bash
 clawdi auth login
 ```
 
-This prints a verification URL and a short user code, then exits immediately. Show both to the user in chat. Tell them: open the URL, confirm the code matches, click approve, and reply when they're done.
+Your shell can't receive the browser callback, so don't run that command yourself. When the
+user says they're done, run `clawdi auth status --json` again to confirm.
 
-When they reply, finish the handshake:
+If the user can't open a terminal, use the paste-back flow instead:
 
-```bash
-clawdi auth complete
-```
+1. Run `clawdi auth login --no-open`. It prints an authorization URL and exits. Show the URL
+   to the user.
+2. Ask them to open it, sign in, and approve. The browser then shows a connection error on a
+   `127.0.0.1` address. That's expected. Ask them to copy the full URL from the address bar
+   and paste it to you.
+3. Pass that URL on standard input, never as a command argument:
+   `printf '%s\n' '<callback URL>' | clawdi auth complete`
 
-If it prints "Still waiting for approval" (exit code 2), the user hasn't clicked approve yet. Ask them to finish in the browser, then re-run `clawdi auth complete`. The 10-minute window starts at `auth login`; if it expires, restart from there.
-
-⚠️ Don't pass `--manual` to `auth login` — that flag wants an interactive TTY password prompt and fails in agent contexts.
+The sign-in expires 10 minutes after `auth login`. If `auth complete` says the authorization
+expired, start again from `clawdi auth login`. Don't use `--manual`; it needs an interactive
+terminal and an API key.
 
 ## Register agents on this machine
 
@@ -57,6 +78,9 @@ clawdi setup
 ```
 
 Auto-detects every installed AI agent (Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode), registers each with the cloud, configures only the local modules each agent supports, and installs background sync daemons by default. Pi and OpenCode sync sessions only; neither receives skill or MCP installation. Without an `--agent` flag it picks up everything detected — which is what you want, so later sync steps can cover all of them.
+
+If `clawdi setup` reports that it couldn't install the daemon (for example, no systemd),
+registration still succeeded. Continue, and handle the daemon in **Verify live sync**.
 
 ## Sync the user's sessions
 
@@ -142,15 +166,6 @@ The install command writes a launchd unit on macOS or a systemd `--user` service
 - macOS: `tail -f ~/.clawdi/serve/logs/daemon.stderr.log`
 - Linux: `journalctl --user -u clawdi-serve.service -f`
 
-The control RPC listens on loopback HTTP by default; every RPC request requires the generated bearer token:
-
-```bash
-clawdi daemon run
-clawdi daemon ping
-```
-
-For non-loopback HTTP RPC, use a private network, SSH tunnel, or TLS proxy and pass the generated daemon token through `--token` on daemon commands or `CLAWDI_DAEMON_RPC_TOKEN`; treat it as an admin token.
-
 What the user gets:
 
 - Edit a SKILL.md locally → uploaded to the cloud within ~1s
@@ -163,11 +178,9 @@ push` remains a manual projection fallback; `clawdi pull --modules skills`
 requires an explicit Clawdi-owned workspace/personal `--project` and acts as an
 intentional local import.
 
-If install fails (no launchd / systemd, e.g. inside a minimal container), fall back to running the daemon in the foreground and ask the user to wire their own supervisor:
-
-```bash
-clawdi daemon run
-```
+If install fails (no launchd or systemd, for example in a minimal container), don't start
+the daemon in your own shell; it runs in the foreground and never exits. Tell the user to run
+`clawdi daemon run` under their own supervisor, or to use `clawdi push` for manual sync.
 
 ## Sync skills (optional one-time backup)
 
@@ -239,7 +252,7 @@ clawdi doctor
 
 Every check should be green. Then point the user at their dashboard:
 
-> All set. Open your Clawdi dashboard — you should see N sessions from this machine across {agents}.
+> All set. Open https://cloud.clawdi.ai/sessions — you should see N sessions from this machine across {agents}.
 
 Where N = `new + updated + unchanged` from the previous step, and {agents} is the list registered in setup.
 
@@ -251,7 +264,7 @@ After this their account has:
 
 - **Memory** — `memory_search` and `memory_create` MCP tools for long-term cross-agent recall. Seeded with extractions from the sessions just pushed (if memory extraction was configured).
 - **Connectors** — Gmail, GitHub, Notion, etc. They enable services in the dashboard; tools appear automatically in any registered agent.
-- **Session sync** — pushed today; future sessions sync via `clawdi push`.
+- **Session sync** — pushed today; new sessions sync automatically through the background daemon (or manually with `clawdi push`).
 - **Skill sync** — Agent filesystem skills projected read-only to Clawdi; explicit workspace/personal project imports remain user-directed.
 - **Vault** — encrypted secrets injected into commands via `clawdi run`.
 
@@ -264,10 +277,8 @@ rm -f ~/.clawdi/sessions-lock.json
 clawdi push --modules sessions --all-agents --all
 ```
 
-**`clawdi auth complete` keeps saying "Still waiting for approval".** The user hasn't clicked approve yet. Re-running is safe within the 10-minute window. If it expired, restart from `clawdi auth login`.
-
 **Older CLI doesn't recognize `--all-agents`.** Loop manually over the agents that registered in setup: `clawdi push --modules sessions --agent claude_code --all`, then `--agent codex`, and so on.
 
-**Older CLI doesn't recognize `--exclude-project`.** Tell the user to upgrade (`bun add -g clawdi` again) or accept the limitation — without it, only positive selection (`--project`) works.
+**Older CLI doesn't recognize `--exclude-project`.** Tell the user to upgrade with `clawdi update` or accept the limitation — without it, only positive selection (`--project`) works.
 
 **Older CLI doesn't have `clawdi session list`.** Use `clawdi push --modules sessions --all-agents --all --dry-run` — it prints scan totals per agent without the per-project breakdown.

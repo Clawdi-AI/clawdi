@@ -3,18 +3,23 @@
 import { Link } from "@tanstack/react-router";
 import { Bot, Check, Copy, Terminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 import { AgentLabel, AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
 import { agentRegistrationDescription } from "@/components/dashboard/agent-registration-status";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { useOpenApi } from "@/lib/api";
-import { cn, errorMessage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 // Fallback origin used during SSR and on the first client render before the
 // useEffect fires, so server and client markup match. The real origin is
 // swapped in post-mount.
 const DEFAULT_ORIGIN = "https://cloud.clawdi.ai";
+
+// Single source for the agent setup prompt and CLI install steps; tests keep README and skill.md in sync.
+export function agentSetupPrompt(origin: string): string {
+	return `Set up Clawdi on this machine. Read all of ${origin}/skill.md (for example, run \`curl -fsSL ${origin}/skill.md\`) and follow its steps in order.`;
+}
 
 function useOrigin() {
 	const [origin, setOrigin] = useState(DEFAULT_ORIGIN);
@@ -24,11 +29,11 @@ function useOrigin() {
 	return origin;
 }
 
-const CLI_STEPS = [
+export const CLI_STEPS = [
 	{
 		title: "Install the CLI",
-		code: "npm install -g clawdi@latest",
-		description: "Install the latest Clawdi CLI globally.",
+		code: "curl -fsSL https://clawdi.ai/install.sh | sh",
+		description: "Install the latest Clawdi CLI without Node.js or sudo.",
 	},
 	{
 		title: "Sign in",
@@ -41,23 +46,14 @@ const CLI_STEPS = [
 		description:
 			"Detects Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode; connects each one to your account and enables background sync.",
 	},
+	{
+		title: "Verify setup",
+		code: "clawdi doctor",
+		description: "Check that Clawdi is ready on this machine.",
+	},
 ];
 
-function useCopy(duration = 2000) {
-	const [copied, setCopied] = useState(false);
-	const copy = (text: string) => {
-		navigator.clipboard
-			.writeText(text)
-			.then(() => {
-				setCopied(true);
-				setTimeout(() => setCopied(false), duration);
-			})
-			.catch((e) => toast.error("Copy failed", { description: errorMessage(e) }));
-	};
-	return { copied, copy };
-}
-
-function CopyButton({
+export function CopyButton({
 	text,
 	label,
 	className,
@@ -66,17 +62,28 @@ function CopyButton({
 	label: string;
 	className?: string;
 }) {
-	const { copied, copy } = useCopy();
+	const { copied, copy } = useCopyToClipboard(
+		{
+			success: false,
+			error: "Couldn't copy. Select the prompt and copy it manually.",
+		},
+		2000,
+	);
 	return (
-		<Button
-			variant="ghost"
-			size="icon-xs"
-			onClick={() => copy(text)}
-			className={cn("text-muted-foreground hover:text-foreground", className)}
-			aria-label={label}
-		>
-			{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-		</Button>
+		<>
+			<span aria-live="polite" className="sr-only">
+				{copied ? "Copied" : ""}
+			</span>
+			<Button
+				variant="ghost"
+				size="icon-xs"
+				onClick={() => copy(text)}
+				className={cn("text-muted-foreground hover:text-foreground", className)}
+				aria-label={label}
+			>
+				{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+			</Button>
+		</>
 	);
 }
 
@@ -88,7 +95,7 @@ function CopyButton({
 export function AddAgentSetup() {
 	const api = useOpenApi();
 	const origin = useOrigin();
-	const prompt = `Set up Clawdi on this machine: fetch ${origin}/skill.md and follow its instructions, then confirm the installation with \`clawdi doctor\`.`;
+	const prompt = agentSetupPrompt(origin);
 	const baseline = useRef<Set<string> | null>(null);
 
 	// Live success detection: snapshot the env ids on first load, then poll
@@ -130,9 +137,15 @@ export function AddAgentSetup() {
 				<TabsContent value="commands" className="mt-2 space-y-4">
 					<div>
 						<p className="text-sm font-medium">Run these commands in order on the machine</p>
-						<p className="mt-1 text-xs text-muted-foreground">Node.js 24+ is required.</p>
-						<p className="mt-0.5 text-xs text-muted-foreground">
-							Prefer Bun? Use: bun add -g clawdi@latest
+						<p className="mt-1 text-xs text-muted-foreground">
+							Windows or npm? See{" "}
+							<a
+								href="https://docs.clawdi.ai/installation"
+								className="underline underline-offset-4"
+							>
+								installation
+							</a>
+							.
 						</p>
 					</div>
 					<CommandSteps steps={CLI_STEPS} numbered />
@@ -150,7 +163,7 @@ export function AddAgentSetup() {
 							<span className="text-2xs uppercase tracking-wider text-muted-foreground">
 								Setup prompt
 							</span>
-							<CopyButton text={prompt} label="Copy prompt" />
+							<CopyButton text={prompt} label="Copy setup prompt" />
 						</div>
 						<pre className="whitespace-pre-wrap p-3 font-mono text-xs leading-relaxed">
 							{prompt}
