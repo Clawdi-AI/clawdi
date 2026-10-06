@@ -34,6 +34,7 @@ from app.services.managed_ai_provider import (
     V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_ID,
 )
+from app.services.metrics import registry
 from app.services.whatsapp_native_transport import (
     WhatsAppSidecarCapabilities,
     WhatsAppSidecarHealth,
@@ -294,11 +295,17 @@ async def test_admin_v1_managed_provider_supports_metadata_only_repair(
 @pytest.mark.asyncio
 async def test_admin_mint_requires_admin_key(admin_client, seed_user):
     """Without the X-Admin-Key header, endpoint returns 401."""
+    labels = {"kind": "admin_key", "surface": "admin"}
+    before = registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels) or 0
     r = await admin_client.post(
         "/v1/admin/auth/keys",
         json={"target_clerk_id": seed_user.clerk_id, "label": "test"},
     )
     assert r.status_code == 401, r.text
+
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels) or 0
+    ) == before
 
 
 @pytest.mark.asyncio
@@ -399,18 +406,25 @@ async def test_admin_endpoints_disabled_when_unset(db_session, seed_user):
 
 @pytest.mark.asyncio
 async def test_admin_mint_default_grants_full_account_access(admin_client, db_session, seed_user):
-    """Mint via admin endpoint with no `scopes` field defaults to
-    full account access — same as user-self-mint via Clerk JWT."""
+    """Omitting scopes and expiry preserves admin full-access issuance."""
     from sqlalchemy import select
 
     from app.models.api_key import ApiKey
 
+    labels = {"kind": "admin_key", "surface": "admin"}
+    before = registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels) or 0
     r = await admin_client.post(
         "/v1/admin/auth/keys",
         headers=_AUTH,
         json={"target_clerk_id": seed_user.clerk_id, "label": "default-scopes"},
     )
     assert r.status_code == 200
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+        == before + 1
+    )
+    assert r.json()["scopes"] is None
+    assert r.json()["expires_at"] is None
 
     minted = (
         await db_session.execute(
@@ -418,11 +432,8 @@ async def test_admin_mint_default_grants_full_account_access(admin_client, db_se
         )
     ).scalar_one()
 
-    # `scopes=None` is the full-API-permission sentinel; matches
-    # user-self-mint behaviour. Hosted pods need full parity with
-    # self-managed installs (vault reads, memory reads) so the admin
-    # path does not impose a permission ceiling.
     assert minted.scopes is None
+    assert minted.expires_at is None
 
 
 @pytest.mark.asyncio
@@ -664,6 +675,7 @@ async def test_admin_mint_api_key_writes_control_plane_audit(admin_client, db_se
     assert event.details["key_prefix"] == body["key_prefix"]
     assert event.details["managed"] is True
     assert event.details["has_environment_binding"] is False
+    assert event.details["has_expiry"] is False
     assert body["raw_key"] not in str(event.details)
 
 
@@ -4302,3 +4314,52 @@ async def test_admin_delete_non_whatsapp_provider_regression(
     assert response.status_code == 204
     await db_session.refresh(account)
     assert account.archived_at is not None
+
+
+@pytest.mark.parametrize("days", [1, 30, 365])
+async def test_admin_key_optional_expiry_is_persisted_and_audited(
+    admin_client, db_session, seed_user, days
+):
+    from sqlalchemy import select
+
+    from app.models.api_key import ApiKey
+    from app.models.audit import ControlPlaneAuditEvent
+
+    before = datetime.now(UTC)
+    response = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "label": "expiring-admin",
+            "expires_in_days": days,
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["scopes"] is None
+    expiry = datetime.fromisoformat(body["expires_at"])
+    assert before + timedelta(days=days) <= expiry <= datetime.now(UTC) + timedelta(days=days)
+    minted = await db_session.scalar(select(ApiKey).where(ApiKey.id == body["id"]))
+    assert minted.expires_at == expiry
+    event = await db_session.scalar(
+        select(ControlPlaneAuditEvent).where(
+            ControlPlaneAuditEvent.resource_id == body["id"],
+            ControlPlaneAuditEvent.action == "api_key.mint",
+        )
+    )
+    assert event.details["has_expiry"] is True
+
+
+@pytest.mark.parametrize("days", [0, 366])
+async def test_admin_key_rejects_expiry_outside_one_to_365_days(admin_client, seed_user, days):
+    response = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "label": "invalid-expiry",
+            "expires_in_days": days,
+        },
+    )
+    assert response.status_code == 422, response.text

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { parse } from "yaml";
 import {
 	calculateClawdiImageRevisions,
@@ -9,6 +10,7 @@ import {
 } from "../../../scripts/clawdi-image-release-plan";
 
 interface WorkflowStep {
+	env?: Record<string, string>;
 	id?: string;
 	if?: string;
 	name?: string;
@@ -473,6 +475,57 @@ describe("backend image release workflow contract", () => {
 		);
 		expect(writeSecrets?.run).toContain('print "CLOUDFLARE_ORIGIN_CERT=$CLOUDFLARE_ORIGIN_CERT"');
 		expect(writeSecrets?.run).toContain('print "CLOUDFLARE_ORIGIN_KEY=$CLOUDFLARE_ORIGIN_KEY"');
+	});
+
+	test("requires a valid metrics token and writes it without exposing it", () => {
+		const step = imageRelease.jobs["deploy-vps"]?.steps?.find(
+			(candidate) => candidate.name === "Write Kamal secrets",
+		);
+		if (!step?.run) throw new Error("Missing Kamal secrets writer");
+		expect(step.env?.METRICS_BEARER_TOKEN).toBe(`\${{ secrets.METRICS_BEARER_TOKEN }}`);
+		const root = mkdtempSync(join(tmpdir(), "clawdi-metrics-secrets-"));
+		try {
+			const cases: [string, boolean][] = [
+				["", false],
+				["m".repeat(42), false],
+				["m".repeat(43), true],
+				["A_z-0".repeat(10), true],
+				["m".repeat(128), true],
+				["m".repeat(129), false],
+				[`${"m".repeat(43)}=`, false],
+				[`${"m".repeat(43)}+`, false],
+				[`${"m".repeat(43)}\n`, false],
+			];
+			for (const [index, [token, valid]] of cases.entries()) {
+				const dir = join(root, String(index));
+				mkdirSync(dir);
+				const result = spawnSync("bash", ["-eu", "-c", step.run], {
+					cwd: dir,
+					env: {
+						PATH: process.env.PATH,
+						TMPDIR: dir,
+						KAMAL_SECRETS: "ADMIN_API_KEY=fake-render-value\nMETRICS_BEARER_TOKEN=stale",
+						CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: "s".repeat(43),
+						METRICS_BEARER_TOKEN: token,
+						WHATSAPP_TAILSCALE_EGRESS_ENABLED: "false",
+					},
+					encoding: "utf8",
+				});
+				expect(result.status).toBe(valid ? 0 : 1);
+				expect(result.stdout).toBe("");
+				expect(result.stderr).toBe("");
+				if (valid) {
+					const path = join(dir, ".kamal/secrets");
+					const values = readFileSync(path, "utf8")
+						.split("\n")
+						.filter((line) => line.startsWith("METRICS_BEARER_TOKEN="));
+					expect(values).toEqual([`METRICS_BEARER_TOKEN=${token}`]);
+					expect(statSync(path).mode & 0o777).toBe(0o600);
+				}
+			}
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	test("wires Docker health to API and channels-worker readiness", () => {

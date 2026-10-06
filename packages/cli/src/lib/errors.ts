@@ -13,7 +13,7 @@ export function handleError(err: unknown): never {
 	if (err instanceof ApiError) {
 		process.stderr.write("\n");
 		console.error(chalk.red(`✗ ${err.message}`));
-		if (err.hint) console.error(chalk.gray(`  ${err.hint}`));
+		if (err.hint && !err.message.includes(err.hint)) console.error(chalk.gray(`  ${err.hint}`));
 		if (process.env.CLAWDI_DEBUG) {
 			if (err.status > 0) console.error(chalk.gray(`  HTTP ${err.status}`));
 			console.error(chalk.gray(err.stack ?? ""));

@@ -30,6 +30,15 @@ const USER_AGENT = `clawdi-cli/${getCliVersion()}`;
 const MACHINE_ID_HEADER = "X-Clawdi-Machine-Id";
 const MACHINE_ID_MAX_LENGTH = 200;
 
+function apiResponseDetail(body: string): string {
+	try {
+		const payload: unknown = JSON.parse(body);
+		return extractApiDetail(payload);
+	} catch {
+		return body;
+	}
+}
+
 function normalizedMachineId(value: string | undefined): string | undefined {
 	if (value === undefined) return undefined;
 	const machineId = value.trim();
@@ -59,20 +68,32 @@ export class ApiError extends Error {
 		isTimeout?: boolean;
 		url?: string;
 	}) {
+		const detail = apiResponseDetail(opts.body);
+		const expiredApiKey = opts.status === 401 && detail === "API key has expired";
+		const hint =
+			opts.status === 410 && detail
+				? detail
+				: expiredApiKey
+					? "Your API key has expired. Run `clawdi auth login` (use `--no-open` on a server). API keys can no longer be created."
+					: opts.hint;
 		const networkFailure = opts.status === 0 && opts.isNetwork && opts.body !== "aborted";
 		const message = networkFailure
 			? `Couldn't reach ${canonicalApiOrigin(opts.url ?? getConfig().apiUrl)}. Check your connection or CLAWDI_API_URL.`
 			: opts.status === 401
-				? "Not signed in, or your session expired. Run `clawdi auth login`."
-				: `API error ${opts.status}: ${opts.body || opts.hint}`;
+				? expiredApiKey
+					? hint
+					: "Not signed in, or your session expired. Run `clawdi auth login`."
+				: `API error ${opts.status}: ${(opts.status === 410 ? detail : opts.body) || hint}`;
 		super(message);
 		this.name = "ApiError";
 		this.status = opts.status;
 		this.body = opts.body;
 		this.hint =
-			opts.status === 401 || networkFailure || !opts.body || opts.hint === opts.body
-				? ""
-				: opts.hint;
+			opts.status === 410 || expiredApiKey
+				? hint
+				: opts.status === 401 || networkFailure || !opts.body || hint === opts.body
+					? ""
+					: hint;
 		this.isNetwork = opts.isNetwork ?? false;
 		this.isTimeout = opts.isTimeout ?? false;
 	}

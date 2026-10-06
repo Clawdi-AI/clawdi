@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -16,6 +17,28 @@ from prometheus_client import (
 from prometheus_client.exposition import generate_latest
 
 registry = CollectorRegistry()
+logger = logging.getLogger(__name__)
+
+authenticated_requests = Counter(
+    "clawdi_backend_authenticated_requests_total",
+    "Authenticated requests by credential kind",
+    ["kind", "surface"],
+    registry=registry,
+)
+
+
+def record_authenticated_request(kind: str, surface: str) -> None:
+    """Record successful authentication without making metrics an auth dependency."""
+    try:
+        authenticated_requests.labels(kind=kind, surface=surface).inc()
+    except Exception as exc:  # noqa: BLE001 - observability must never reject authentication
+        logger.warning(
+            "Authenticated request metric failed kind=%s surface=%s error_type=%s",
+            kind,
+            surface,
+            type(exc).__name__,
+        )
+
 
 inbound_messages = Counter(
     "msg_router_inbound_total",

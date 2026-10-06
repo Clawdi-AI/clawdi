@@ -29,6 +29,7 @@ secret_keys=(
 	PGBACKREST_REPO1_S3_KEY_SECRET
 	PGBACKREST_REPO1_CIPHER_PASS
 	ADMIN_API_KEY
+	METRICS_BEARER_TOKEN
 	CLERK_JWT_ISSUER
 	SENTRY_DSN
 	CLERK_SECRET_KEY
@@ -142,6 +143,14 @@ config.roles.each do |role|
 end
 
 web = config.role("web")
+%w[web channels-worker].each do |name|
+  role = config.role(name)
+  role_env = role.env(role.primary_host)
+  unless role_env.secret_keys.include?("METRICS_BEARER_TOKEN") &&
+      role_env.secrets["METRICS_BEARER_TOKEN"] == "fake-render-value"
+    raise "#{name} lost metrics bearer protection"
+  end
+end
 expected_web_env = {
   "WEB_CONCURRENCY" => 2,
   "DB_POOL_SIZE" => 8,

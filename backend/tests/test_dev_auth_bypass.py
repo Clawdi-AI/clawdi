@@ -17,6 +17,7 @@ from app.core.database import get_session
 from app.main import app
 from app.models.project import PROJECT_KIND_PERSONAL, Project
 from app.models.user import User
+from app.services.metrics import registry
 
 
 @pytest.mark.asyncio
@@ -62,12 +63,21 @@ async def test_dev_auth_bypass_authenticates_web_route_and_creates_personal_proj
     try:
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            labels = {"kind": "dev_bypass", "surface": "user"}
+            before = (
+                registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+                or 0
+            )
             response = await ac.get(
                 "/v1/auth/me",
                 headers={"Authorization": "Bearer dev-bypass"},
             )
 
         assert response.status_code == 200
+        assert (
+            registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+            == before + 1
+        )
         body = response.json()
         assert body["auth_type"] == "clerk"
         assert body["email"] == "dev-test@clawdi.local"

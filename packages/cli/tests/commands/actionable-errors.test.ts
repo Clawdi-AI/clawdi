@@ -90,6 +90,29 @@ describe("actionable CLI errors", () => {
 		expect(result.stderr.match(/Permission denied\./g)).toHaveLength(1);
 	});
 
+	it.each([
+		{ status: 401, detail: "API key has expired", expected: "Your API key has expired." },
+		{
+			status: 410,
+			detail:
+				"API keys can no longer be created. Run `clawdi auth login` (use `--no-open` on a server).",
+			expected: "API keys can no longer be created.",
+		},
+	])(
+		"prints the API key migration guidance once for HTTP $status",
+		({ status, detail, expected }) => {
+			const result = runError(`
+			import {ApiError} from ${source("lib/api-client.ts")};
+			handleError(new ApiError({status: ${status}, body: ${JSON.stringify(JSON.stringify({ detail }))}, hint: ""}));
+		`);
+			expect(result.status).toBe(1);
+			expect(result.stdout).toBe("");
+			expect(result.stderr).toContain(expected);
+			expect(result.stderr).toContain("--no-open");
+			expect(result.stderr.match(/clawdi auth login/g)).toHaveLength(1);
+		},
+	);
+
 	it.each([false, true])(
 		"gives a bug-report next step and shows stacks only in debug (debug=%s)",
 		(debug) => {

@@ -12,7 +12,7 @@ from uuid import UUID
 
 import httpx  # noqa: F401 - retained as a patch seam for Clerk transport tests
 import jwt
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
 from sqlalchemy import and_, bindparam, or_, select
@@ -36,6 +36,7 @@ from app.services.clerk_backend import (
     get_clerk_backend_client,
 )
 from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
+from app.services.metrics import record_authenticated_request
 from app.services.principal_lifecycle import (
     PrincipalIdentityConflictError,
     PrincipalSuspendedError,
@@ -165,6 +166,7 @@ class AuthContext:
         oauth_cli: bool = False,
         oauth_access_expires_at: datetime | None = None,
         credential_expires_at: datetime | None = None,
+        dev_bypass: bool = False,
     ):
         self.user = user
         self.api_key = api_key
@@ -172,6 +174,7 @@ class AuthContext:
         # scope and capability gates. OAuth CLI access tokens carry this
         # separate marker so routes can explicitly opt into that identity.
         self.oauth_cli = oauth_cli
+        self.dev_bypass = dev_bypass
         if oauth_cli and (
             oauth_access_expires_at is None
             or oauth_access_expires_at.tzinfo is None
@@ -197,6 +200,20 @@ class AuthContext:
     def bound_environment_id(self) -> UUID | None:
         """Environment fence carried by an Agent-bound API key."""
         return self.api_key.environment_id if self.api_key is not None else None
+
+
+def _credential_kind(ctx: AuthContext) -> str:
+    if is_runtime_deployment_principal(ctx):
+        return "runtime_key"
+    if ctx.api_key is not None:
+        if ctx.api_key.managed:
+            return "managed_legacy_key"
+        if ctx.api_key.environment_id is not None:
+            return "env_api_key"
+        return "personal_api_key"
+    if ctx.dev_bypass:
+        return "dev_bypass"
+    return "clerk_oauth_cli" if ctx.oauth_cli else "clerk_session"
 
 
 async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
@@ -334,7 +351,7 @@ async def _auth_via_dev_bypass(token: str, db: AsyncSession) -> AuthContext | No
         await db.refresh(user)
         logger.info("dev_auth_user_created clerk_id=%s user_id=%s", clerk_id, user.id)
     await _assert_active_user_or_401(db, user.id)
-    return AuthContext(user=user)
+    return AuthContext(user=user, dev_bypass=True)
 
 
 async def _fetch_clerk_primary_email(clerk_user_id: str) -> str | None:
@@ -928,6 +945,16 @@ async def get_auth(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_session),
 ) -> AuthContext:
+    ctx = await authenticate_credentials(credentials, db)
+    record_authenticated_request(_credential_kind(ctx), "user")
+    return ctx
+
+
+async def authenticate_credentials(
+    credentials: HTTPAuthorizationCredentials,
+    db: AsyncSession,
+) -> AuthContext:
+    """Resolve and revalidate credentials without counting a new HTTP request."""
     token = credentials.credentials
 
     ctx = await _auth_via_dev_bypass(token, db)
@@ -967,15 +994,9 @@ async def get_auth_short_session(
     """
     from app.core.database import async_session_factory
 
-    token = credentials.credentials
     async with async_session_factory() as db:
-        ctx = await _auth_via_dev_bypass(token, db)
-        if not ctx:
-            ctx = await _auth_via_api_key(token, db)
-        if not ctx:
-            ctx = await _auth_via_clerk_jwt(token, db)
-    if not ctx:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
+        ctx = await authenticate_credentials(credentials, db)
+    record_authenticated_request(_credential_kind(ctx), "user")
     return ctx
 
 
@@ -1064,12 +1085,8 @@ async def require_oauth_cli_auth(auth: AuthContext = Depends(get_auth)) -> AuthC
 
 def is_scoped_api_key(auth: AuthContext) -> bool:
     """Any api_key with an explicit scope list is treated as
-    "narrow capability" and rejected from user-only routes. Today
-    that's just Agent API keys with narrow scopes, but the
-    check is on the scope list rather than `environment_id` so a
-    future scoped Personal key — minted with explicit scopes but
-    no env binding — slips into the same protective bucket
-    instead of inheriting Personal's wide-access bypass."""
+    "narrow capability" and rejected from user-only routes, whether
+    or not the internal issuer supplied an environment binding."""
     return auth.is_cli and auth.api_key is not None and auth.api_key.scopes is not None
 
 
@@ -1121,9 +1138,8 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     surface is intended for the user themselves (their laptop
     CLI, the dashboard).
 
-    Legacy v1 Agent environment keys with `scopes=None` (the default
-    for keys minted via `POST /v1/auth/keys` with `environment_id`
-    set) PASS this gate by explicit policy. Strict-v2 runtime
+    Legacy v1 Agent environment keys with `scopes=None` PASS this
+    gate by explicit policy. Strict-v2 runtime
     deployment keys carry explicit scopes and are evaluated as scoped
     keys. The blast-radius boundary for Agent API keys is enforced
     inside the route's own `project_ids_visible_to` /
@@ -1215,6 +1231,7 @@ async def optional_web_auth(
     token = credentials.credentials
     ctx = await _auth_via_dev_bypass(token, db)
     if ctx:
+        record_authenticated_request(_credential_kind(ctx), "user")
         return ctx
     try:
         ctx = await _auth_via_clerk_jwt(token, db)
@@ -1223,7 +1240,10 @@ async def optional_web_auth(
         # public access permissions. We deliberately do NOT fall back to
         # API-key auth here (see docstring).
         return None
-    return None if ctx is not None and ctx.oauth_cli else ctx
+    if ctx is None or ctx.oauth_cli:
+        return None
+    record_authenticated_request(_credential_kind(ctx), "user")
+    return ctx
 
 
 async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext:
@@ -1241,9 +1261,7 @@ async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext
     return auth
 
 
-async def require_admin_api_key(
-    x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
-) -> None:
+def verify_admin_api_key(x_admin_key: str | None) -> None:
     """Gate admin-only endpoints (`POST/DELETE /v1/admin/auth/keys`) with
     a shared secret in the `X-Admin-Key` header. Used by SaaS batch tooling
     + ops-side scripts that don't have a per-user Clerk JWT in context.
@@ -1261,6 +1279,15 @@ async def require_admin_api_key(
         )
     if not x_admin_key or not hmac.compare_digest(x_admin_key, expected):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid admin auth")
+
+
+async def require_admin_api_key(
+    request: Request,
+    x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
+) -> None:
+    verify_admin_api_key(x_admin_key)
+    surface = "v2_runtime" if request.url.path.startswith("/v2/runtime/") else "admin"
+    record_authenticated_request("admin_key", surface)
 
 
 class ShareTokenContext:

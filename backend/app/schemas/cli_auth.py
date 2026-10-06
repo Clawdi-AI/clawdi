@@ -4,12 +4,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
-class DeviceStartRequest(BaseModel):
-    # Display label like "Claude Code · kingsley-mbp" so the user knows what
-    # they're authorizing. Optional; backend tolerates None.
-    client_label: str | None = None
-
-
 class DeviceStartResponse(BaseModel):
     device_code: str
     user_code: str
@@ -57,6 +51,10 @@ class DeviceDenyRequest(BaseModel):
 
 class DeviceTerminalResponse(BaseModel):
     status: Literal["approved", "denied"]
+
+
+class DeviceFlowRetiredResponse(BaseModel):
+    detail: str
 
 
 class OAuthConfigResponse(BaseModel):
