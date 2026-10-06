@@ -2,7 +2,7 @@ import "../../../global.css";
 import { ClerkProvider } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
 import { type ErrorBoundaryProps, Stack, usePathname } from "expo-router";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ConfigurationErrorScreen, ErrorState } from "@/components/ui/feedback";
@@ -22,7 +22,9 @@ import {
 
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
 	const pathname = usePathname();
-	useEffect(() => reportRootError(error, pathname), [error, pathname]);
+	const pathnameRef = useRef(pathname);
+	pathnameRef.current = pathname;
+	useEffect(() => reportRootError(error, pathnameRef.current), [error]);
 	return (
 		<I18nProvider>
 			<AppView className="flex-1 justify-center bg-background p-6">

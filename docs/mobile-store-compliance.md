@@ -52,7 +52,7 @@ transactions and breadcrumbs involving `/vault-request`; replay is disabled.
 | Email / Clerk and Cloud account | Contact Info: Email Address | Personal info: Email address | App functionality, account management | Linked; required for email login |
 | Name / Clerk account | Contact Info: Name | Personal info: Name | App functionality, profile | Linked; optional profile field |
 | User id / Clerk and Cloud APIs | Identifiers: User ID | Personal info: User IDs | App functionality, account management | Linked; required |
-| Purchase history / RevenueCat, StoreKit and Play Billing | Purchases: Purchase History | Financial info: Purchase history | App functionality, purchases, entitlement verification and restoration | SDK manifest says not linked; store label must declare linked if IAP integration associates purchases with the Clawdi account; required when purchasing |
+| Purchase history / RevenueCat, StoreKit and Play Billing | Purchases: Purchase History | Financial info: Purchase history | App functionality, purchases, entitlement verification and restoration | Linked via RevenueCat appUserID and credits funding the hosted Wallet; required when purchasing |
 | Crash reports / Sentry when DSN configured | Diagnostics: Crash Data | App info and performance: Crash logs | App functionality, reliability | Not explicitly linked; conditional on DSN |
 | Performance and diagnostic metadata / Sentry when DSN configured | Diagnostics: Performance Data, Other Diagnostic Data | App info and performance: Diagnostics | App functionality, reliability | Not explicitly linked; conditional on DSN |
 
@@ -64,8 +64,9 @@ Sentry and other processors qualify for Play's service-provider sharing exceptio
 against the owner's contracts; do not infer a blanket "no sharing" answer.
 
 The approved release plan uses store in-app purchases through RevenueCat. Keep the purchase-history
-declaration even before IAP wiring is complete; align the final store disclosures
-with the RevenueCat App User ID mapping and server-side purchase processing.
+declaration even before IAP wiring is complete. Purchase history is linked to the
+Clawdi account through RevenueCat appUserID and credits funding the hosted Wallet;
+the app manifest therefore declares `NSPrivacyCollectedDataTypeLinked: true`.
 Confirm payment data handled exclusively by Apple/Google versus data received by
 the app or RevenueCat; do not claim the app collects card details without evidence.
 

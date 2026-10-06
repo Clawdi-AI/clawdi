@@ -40,13 +40,11 @@ export function parseMobileRuntimeConfig(
 	{
 		requireClerk = true,
 		isDevelopment = false,
-		channel,
-		devAuthBypass = false,
+		environment,
 	}: {
 		requireClerk?: boolean;
 		isDevelopment?: boolean;
-		channel?: string | null;
-		devAuthBypass?: boolean;
+		environment?: string;
 	} = {},
 ): MobileRuntimeConfigResult {
 	const cloudApiUrl = requiredString(values.cloudApiUrl);
@@ -54,7 +52,7 @@ export function parseMobileRuntimeConfig(
 	const computeApiUrl = requiredString(values.computeApiUrl);
 	const revenueCatAppleKey = requiredString(values.revenueCatAppleKey);
 	const revenueCatGoogleKey = requiredString(values.revenueCatGoogleKey);
-	if (!isDevelopment && (!requireClerk || devAuthBypass)) return { ok: false, reason: "invalid" };
+	if (!isDevelopment && !requireClerk) return { ok: false, reason: "invalid" };
 	if (
 		!cloudApiUrl ||
 		(requireClerk && !clerkPublishableKey) ||
@@ -64,7 +62,11 @@ export function parseMobileRuntimeConfig(
 	}
 	if (clerkPublishableKey && !clerkPublishableKeyPattern.test(clerkPublishableKey))
 		return { ok: false, reason: "invalid" };
-	if (!isDevelopment && channel === "production" && !clerkPublishableKey?.startsWith("pk_live_"))
+	if (
+		!isDevelopment &&
+		environment === "production" &&
+		!clerkPublishableKey?.startsWith("pk_live_")
+	)
 		return { ok: false, reason: "invalid" };
 	if (values.computeApiUrl != null && typeof values.computeApiUrl !== "string")
 		return { ok: false, reason: "invalid" };

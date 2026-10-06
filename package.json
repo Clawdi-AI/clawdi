@@ -63,7 +63,6 @@
 				"react-native-worklets": "0.10.1",
 				"expo-font": "57.0.4",
 				"expo-updates": "57.0.25",
-				"expo-application": "57.0.3",
 				"expo-dev-client": "57.0.19",
 				"@sentry/react-native": "7.11.0"
 			}

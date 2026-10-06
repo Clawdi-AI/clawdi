@@ -129,8 +129,8 @@ social login, transfer, cancellation, MFA and browser/Router behavior remain gat
 
 `EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL` optionally enables the v2 compute control
 plane. It is separate from the Cloud identity/Session API and does not enable
-Hosted v1. A trailing `/v2` is normalized. An absent compute URL leaves Cloud
-browsing available; an explicitly unsafe URL fails configuration validation.
+Hosted v1. A trailing `/v2` is normalized. In development, an absent compute URL
+leaves Cloud browsing available; an explicitly unsafe URL fails configuration validation.
 The same captured-account token fence protects both API clients. No payment
 keys, signing material or private infrastructure addresses belong in this
 public configuration.
@@ -850,26 +850,49 @@ plugins and metadata, not native compilation, signing or store acceptance.
 
 ### Release configuration
 
-`apps/mobile/eas.json` defines development (dev client), preview (internal APK)
-and production (store) profiles, each with its own EAS environment and update
-channel. Production uses remote build numbers with auto-increment; all binaries
-use fingerprint runtime compatibility. The preview/production profiles commit
-only the three fixed public API/link values plus the channel fallback in `env`,
-as supported by [Expo's build-profile env documentation](https://docs.expo.dev/build/eas-json/#environment-variables).
-Credentials and account-specific values belong in the selected EAS environment:
-`EAS_PROJECT_ID`, `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY`, optional
-`EXPO_PUBLIC_SENTRY_DSN`, `SENTRY_ORG`, `SENTRY_PROJECT`, and `SENTRY_AUTH_TOKEN`.
-Keep the token secret; public values, including Clerk's publishable key and DSN,
-are readable in the binary. Never set `EXPO_PUBLIC_DEV_AUTH_*` for releases.
-Use secret visibility for the build upload token; the local OTA uploader needs
-the token supplied separately in its environment.
+`apps/mobile/eas.json` selects the matching EAS environment and update channel
+for development (dev client), preview (internal APK) and production (store).
+Production uses remote build numbers with auto-increment; all binaries use
+fingerprint runtime compatibility.
 
+Keep all `EXPO_PUBLIC_*` values in the selected EAS environment, with plaintext
+or sensitive visibility, never in build-profile `env`. [Expo Update uses that
+environment, not profile variables](https://docs.expo.dev/eas/environment-variables/usage/#using-environment-variables-with-eas-update).
+Configure these exact release values in **each** environment:
+
+| Variable | `preview` | `production` |
+| --- | --- | --- |
+| `EXPO_PUBLIC_CLAWDI_ENV` | `preview` | `production` |
+| `EXPO_PUBLIC_CLAWDI_API_URL` | `https://cloud-api.clawdi.ai` | `https://cloud-api.clawdi.ai` |
+| `EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL` | `https://api.clawdi.ai` | `https://api.clawdi.ai` |
+| `EXPO_PUBLIC_CLAWDI_LINK_HOSTS` | `cloud.clawdi.ai` | `cloud.clawdi.ai` |
+| `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` | Owner's Clerk publishable key | Owner's `pk_live_` key |
+| `EXPO_PUBLIC_CLERK_OAUTH_PROVIDERS` | Owner-enabled provider list, or unset | Owner-enabled provider list, or unset |
+| `EXPO_PUBLIC_REVENUECAT_APPLE_KEY` | Owner's public SDK key, or unset pending IAP setup | Owner's public SDK key, or unset pending IAP setup |
+| `EXPO_PUBLIC_REVENUECAT_GOOGLE_KEY` | Owner's public SDK key, or unset pending IAP setup | Owner's public SDK key, or unset pending IAP setup |
+| `EXPO_PUBLIC_SENTRY_DSN` | Owner's DSN, or unset | Owner's DSN, or unset |
+
+For `development`, set `EXPO_PUBLIC_CLAWDI_ENV=development`, a device-reachable
+development Cloud URL and a Clerk test key; compute, link hosts, OAuth providers,
+RevenueCat keys and DSN are optional, using the development values described
+above. Never set `EXPO_PUBLIC_DEV_AUTH_*` in preview or production. Public values,
+including publishable keys and DSNs, are readable in the binary.
+
+In each environment, set `EAS_PROJECT_ID` to the owner's Expo project UUID with
+plaintext or sensitive visibility so both Build and Update can resolve it.
+When unset, local config/prebuild omits the project id and update URL.
+Keep Sentry upload settings env-only: `SENTRY_ORG`, `SENTRY_PROJECT` and secret
+`SENTRY_AUTH_TOKEN`. Supply the token separately to the local OTA map uploader;
+EAS secret values are unavailable during Update. For builds without Sentry upload
+credentials, set the documented `SENTRY_DISABLE_AUTO_UPLOAD=true`.
+
+`EXPO_PUBLIC_CLAWDI_ENV` is the sole environment source for validation and
+Sentry, including when updates are disabled and their channel is empty.
 Non-development builds require HTTPS Cloud/compute APIs and real Clerk auth;
-the production channel additionally requires a `pk_live_` key. Invalid values
-show `ConfigurationErrorScreen`. CI exports both platforms with the bypass flag
-intentionally set and rejects any shipped fixture identity/token strings.
-It matches complete fixture literals; Clerk's SDK also contains its own
-`/dev_browser` route and `dev_browser_unauthenticated` error code.
+`production` additionally requires a `pk_live_` key. Invalid values show
+`ConfigurationErrorScreen`. CI exports both platforms with bypass requested and
+rejects complete fixture identity/token literals; Clerk itself also ships
+`/dev_browser` and `dev_browser_unauthenticated`.
 
 After the owner supplies Expo/signing credentials, from `apps/mobile`:
 
@@ -879,21 +902,25 @@ eas build --profile preview --platform android
 
 Done: the resulting APK is non-debuggable, has no release cleartext override,
 no backup and no blocked permissions. This remains an owner-run acceptance gate.
-`submit.production` has no invented app ids or credentials. EAS does not
+`submit.production` contains no invented app ids or credentials. EAS does not
 interpolate environment references in `eas.json`; the owner must provide the
 ASC app id and configure Play's service account through EAS credentials before
 submission. Non-interactive ASC configuration remains an unresolved spec input.
 
-Sentry is inactive without a DSN. With a DSN, it reports root exceptions and
-samples performance at 0.1, using the channel and native version/build. It drops
-Vault-request telemetry and strips identities, request bodies, URL queries and
-token parameters; session replay is not enabled. Native build source maps upload
-through the Expo Sentry plugin using env-only org/project/token. After an
-owner-authorized `eas update --environment production`, upload the generated
-maps with `bunx sentry-expo-upload-sourcemaps dist` in the same Sentry environment.
-Mirror the profile's public `env` values in that EAS environment for OTA: Update
-loads the selected environment, not `eas.json` build-profile variables.
-Store review precedes OTA; reserve OTA for compatible JavaScript fixes.
+Sentry is inactive without a DSN. When enabled, it reports root exceptions and
+samples performance at 0.1 using Sentry RN's native release/dist defaults. It
+drops Vault-request telemetry and strips identities, request bodies, URL queries
+and token parameters; session replay is disabled. The Expo Sentry plugin always
+installs native upload hooks, with env-only credentials. This keeps the plugin
+set stable between Build and Update. SDK57 fingerprinting includes resolved
+`extra` and loaded plugins: use the same public values and `EAS_PROJECT_ID` for
+both, and do not put build-only credentials in config. Changing these public
+config values can require a new binary.
+
+After an owner-authorized `eas update --channel production --environment production`,
+upload generated maps with `bunx sentry-expo-upload-sourcemaps dist` using the
+same Sentry org/project and a locally supplied auth token. Store review precedes
+OTA; reserve OTA for compatible JavaScript fixes.
 
 Done: a preview crash is symbolicated in Sentry, and a build without a DSN runs
 normally. These live checks, TestFlight privacy validation and store metadata

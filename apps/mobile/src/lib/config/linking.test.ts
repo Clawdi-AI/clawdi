@@ -67,8 +67,6 @@ test("release metadata stays usable without owner credentials and enables update
 	const config: ExpoConfig = {
 		name: "Test",
 		slug: "test",
-		updates: { url: "https://u.expo.dev/stale-project", fallbackToCacheTimeout: 0 },
-		extra: { eas: { projectId: "stale-project" } },
 	};
 	try {
 		delete process.env.EAS_PROJECT_ID;
@@ -80,13 +78,19 @@ test("release metadata stays usable without owner credentials and enables update
 		expect(local.android?.allowBackup).toBe(false);
 		expect(local.updates?.url).toBeUndefined();
 		expect(local.extra?.eas?.projectId).toBeUndefined();
-		expect(local.plugins).not.toContain("@sentry/react-native/expo");
+		expect(local.plugins).toContain("@sentry/react-native/expo");
+		expect(local.ios?.privacyManifests?.NSPrivacyCollectedDataTypes).toContainEqual({
+			NSPrivacyCollectedDataType: "NSPrivacyCollectedDataTypePurchaseHistory",
+			NSPrivacyCollectedDataTypeLinked: true,
+			NSPrivacyCollectedDataTypeTracking: false,
+			NSPrivacyCollectedDataTypePurposes: ["NSPrivacyCollectedDataTypePurposeAppFunctionality"],
+		});
 		process.env.EXPO_PUBLIC_SENTRY_DSN = "https://public@example.test/1";
 		process.env.EAS_PROJECT_ID = "00000000-0000-4000-8000-000000000000";
 		const linked = configure({ config });
 		expect(linked.extra?.eas?.projectId).toBe(process.env.EAS_PROJECT_ID);
 		expect(linked.updates?.url).toBe(`https://u.expo.dev/${process.env.EAS_PROJECT_ID}`);
-		expect(linked.plugins).toContain("@sentry/react-native/expo");
+		expect(linked.plugins).toEqual(local.plugins);
 		expect(linked.extra?.clawdi?.sentryDsn).toBe(process.env.EXPO_PUBLIC_SENTRY_DSN);
 	} finally {
 		if (previous === undefined) delete process.env.EAS_PROJECT_ID;

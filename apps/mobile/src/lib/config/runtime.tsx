@@ -1,5 +1,4 @@
 import Constants from "expo-constants";
-import * as Updates from "expo-updates";
 import { createContext, createElement, useContext } from "react";
 import {
 	type MobileRuntimeConfigResult,
@@ -31,8 +30,7 @@ export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
 		{
 			isDevelopment: __DEV__,
 			requireClerk: !isDevAuthBypass(),
-			devAuthBypass: isDevAuthBypass(),
-			channel: Updates.channel ?? process.env.EXPO_PUBLIC_CLAWDI_ENV,
+			environment: process.env.EXPO_PUBLIC_CLAWDI_ENV,
 		},
 	);
 }

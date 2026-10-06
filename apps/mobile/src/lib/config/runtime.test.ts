@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 import { parseMobileRuntimeConfig } from "@/lib/config/runtime-config";
 
 function parseDevelopmentConfig(
@@ -155,6 +156,23 @@ describe("release configuration", () => {
 		computeApiUrl: "https://api.clawdi.ai/v2/",
 		clerkPublishableKey: "pk_live_example",
 	};
+	test("an empty Updates channel still enforces production auth and Sentry environment", () => {
+		for (const dsn of ["", "https://public@example.test/1"]) {
+			const result = Bun.spawnSync(
+				[
+					process.execPath,
+					fileURLToPath(new URL("../../../scripts/tests/runtime-environment.ts", import.meta.url)),
+				],
+				{
+					cwd: fileURLToPath(new URL("../../../", import.meta.url)),
+					env: { ...process.env, EXPO_PUBLIC_CLAWDI_ENV: "production", TEST_SENTRY_DSN: dsn },
+					timeout: 10_000,
+				},
+			);
+			expect(result.stderr.toString()).toBe("");
+			expect(result.exitCode).toBe(0);
+		}
+	});
 	test("requires compute for account deletion in every non-development build", () => {
 		for (const computeApiUrl of [undefined, "", "   "]) {
 			expect(parseMobileRuntimeConfig({ ...values, computeApiUrl })).toEqual({
@@ -164,38 +182,37 @@ describe("release configuration", () => {
 		}
 	});
 	test("rejects cleartext for either API in preview and production", () => {
-		for (const channel of ["preview", "production"]) {
+		for (const environment of ["preview", "production"]) {
 			for (const key of ["cloudApiUrl", "computeApiUrl"]) {
 				expect(
-					parseMobileRuntimeConfig({ ...values, [key]: "http://api.example.test" }, { channel }),
+					parseMobileRuntimeConfig(
+						{ ...values, [key]: "http://api.example.test" },
+						{ environment },
+					),
 				).toEqual({ ok: false, reason: "invalid" });
 			}
 		}
 	});
-	test("requires a live Clerk key on the production channel", () => {
+	test("requires a live Clerk key on the production environment", () => {
 		expect(
 			parseMobileRuntimeConfig(
 				{ ...values, clerkPublishableKey: "pk_test_example" },
-				{ channel: "production" },
+				{ environment: "production" },
 			),
 		).toEqual({ ok: false, reason: "invalid" });
 		expect(
 			parseMobileRuntimeConfig(
 				{ ...values, clerkPublishableKey: "pk_test_example" },
-				{ channel: "preview" },
+				{ environment: "preview" },
 			).ok,
 		).toBe(true);
-		expect(parseMobileRuntimeConfig(values, { channel: "production" })).toEqual({
+		expect(parseMobileRuntimeConfig(values, { environment: "production" })).toEqual({
 			ok: true,
 			value: { ...values, computeApiUrl: "https://api.clawdi.ai" },
 		});
 	});
-	test("cannot relax authentication or enable fixture auth outside development", () => {
+	test("cannot relax authentication outside development", () => {
 		expect(parseMobileRuntimeConfig(values, { requireClerk: false })).toEqual({
-			ok: false,
-			reason: "invalid",
-		});
-		expect(parseMobileRuntimeConfig(values, { devAuthBypass: true })).toEqual({
 			ok: false,
 			reason: "invalid",
 		});

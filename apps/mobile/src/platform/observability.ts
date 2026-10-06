@@ -1,7 +1,5 @@
 import * as Sentry from "@sentry/react-native";
-import * as Application from "expo-application";
 import Constants from "expo-constants";
-import * as Updates from "expo-updates";
 import { scrubMobileBreadcrumb, scrubMobileEvent } from "./observability-scrubber";
 
 const configuredDsn: unknown = Constants.expoConfig?.extra?.clawdi?.sentryDsn;
@@ -9,14 +7,9 @@ const dsn = typeof configuredDsn === "string" ? configuredDsn.trim() : "";
 let pathname = "";
 
 if (dsn) {
-	const version = Application.nativeApplicationVersion;
-	const build = Application.nativeBuildVersion;
 	Sentry.init({
 		dsn,
-		environment: Updates.channel ?? process.env.EXPO_PUBLIC_CLAWDI_ENV ?? "development",
-		...(Application.applicationId && version && build
-			? { release: `${Application.applicationId}@${version}+${build}`, dist: build }
-			: {}),
+		environment: process.env.EXPO_PUBLIC_CLAWDI_ENV,
 		sendDefaultPii: false,
 		tracesSampleRate: 0.1,
 		beforeSend: (event) => scrubMobileEvent(event, pathname),
