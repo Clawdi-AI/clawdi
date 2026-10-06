@@ -67,7 +67,7 @@ describe("Pi session adapter", () => {
 		renameSync(file, target);
 		writeFileSync(
 			join(sessionDir, "a-unrelated.jsonl"),
-			`${JSON.stringify({ type: "session", version: 3, id: "unrelated", cwd: "/workspace/demo" })}\n{"text":"${"x".repeat(SESSION_RECORD_MAX_BYTES)}"}`,
+			`${JSON.stringify({ type: "session", version: 3, id: "unrelated", cwd: "/workspace/demo", metadata: "x".repeat(SESSION_RECORD_MAX_BYTES) })}\n`,
 		);
 
 		expect((await adapter.sessions.resolve("pi.fixture-session"))?.localSessionId).toBe(

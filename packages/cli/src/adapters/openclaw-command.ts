@@ -6,10 +6,13 @@ import { resolveRuntimeUserCommand } from "../runtime/runtime-user-command";
 
 const execFileAsync = promisify(execFile);
 let commandTail: Promise<void> = Promise.resolve();
-const OPENCLAW_COMMAND_ENV_OVERRIDES = {
-	OPENCLAW_STATE_DIR: undefined,
-	OPENCLAW_CONFIG_PATH: undefined,
-} as const;
+
+function inheritedOpenClawEnvironment(): Readonly<Record<string, string | undefined>> {
+	return {
+		OPENCLAW_STATE_DIR: process.env.OPENCLAW_STATE_DIR,
+		OPENCLAW_CONFIG_PATH: process.env.OPENCLAW_CONFIG_PATH,
+	};
+}
 
 export class OpenClawSdkExitError extends Error {
 	constructor(
@@ -22,7 +25,7 @@ export class OpenClawSdkExitError extends Error {
 
 export function runOpenClawCommand(
 	args: string[],
-	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal" | "env">,
+	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal">,
 ): Promise<string> {
 	return runOpenClawSubprocess("openclaw", args, options);
 }
@@ -30,7 +33,7 @@ export function runOpenClawCommand(
 export function runOpenClawSdkCommand(
 	sdkPath: string,
 	params: { agentId: string; sessionId: string; sessionKey: string },
-	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal" | "env">,
+	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal">,
 ): Promise<string> {
 	const source = `
 		import { writeFileSync } from 'node:fs';
@@ -57,7 +60,7 @@ export function runOpenClawSdkCommand(
 						JSON.stringify(params),
 					],
 					process.env.HOME ?? homedir(),
-					{ environmentOverrides: OPENCLAW_COMMAND_ENV_OVERRIDES },
+					{ environmentOverrides: inheritedOpenClawEnvironment() },
 				);
 				const running = spawn(child.command, child.args, {
 					stdio: ["ignore", "ignore", "ignore", "pipe"],
@@ -109,14 +112,14 @@ export function runOpenClawSdkCommand(
 function runOpenClawSubprocess(
 	executable: string,
 	args: string[],
-	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal" | "env">,
+	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal">,
 ): Promise<string> {
 	// Session reads and async Skill discovery share a subprocess slot, not the event loop.
 	return enqueueOpenClawCommand(async () => {
 		options.signal?.throwIfAborted();
 		const { signal, ...limits } = options;
 		const child = resolveRuntimeUserCommand(executable, args, process.env.HOME ?? homedir(), {
-			environmentOverrides: OPENCLAW_COMMAND_ENV_OVERRIDES,
+			environmentOverrides: inheritedOpenClawEnvironment(),
 		});
 		const running = execFileAsync(child.command, child.args, {
 			...limits,

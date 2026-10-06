@@ -24,7 +24,7 @@ function sdkFixture(source: string): string {
 const params = { agentId: "main", sessionId: "fixture", sessionKey: "agent:main:main" };
 
 describe("OpenClaw transcript SDK command", () => {
-	test("uses setpriv without pinning OpenClaw state and preserves fd 3", async () => {
+	test("uses setpriv and preserves inherited OpenClaw state plus fd 3", async () => {
 		const root = mkdtempSync(join(tmpdir(), "projection-rev7-runtime-user-"));
 		roots.push(root);
 		chmodSync(root, 0o755);
@@ -88,8 +88,10 @@ export function readVisibleSessionTranscriptMessageEntries() {
 			process.env.CLAWDI_RUNTIME_GID = "65534";
 			process.env.CLAWDI_TEST_OUTPUT = commandOutput;
 			process.env.CLAWDI_SET_PRIV_ARGS = setprivArgs;
-			process.env.OPENCLAW_STATE_DIR = "/wrong/state";
-			process.env.OPENCLAW_CONFIG_PATH = "/wrong/config";
+			const inheritedState = "/persisted/openclaw-state";
+			const inheritedConfig = "/persisted/openclaw-config.json";
+			process.env.OPENCLAW_STATE_DIR = inheritedState;
+			process.env.OPENCLAW_CONFIG_PATH = inheritedConfig;
 			process.env.HOME = root;
 			process.env.PATH = `${bin}:/usr/local/bin:/usr/bin:/bin`;
 			Object.defineProperty(process, "getuid", { configurable: true, value: () => 0 });
@@ -100,8 +102,8 @@ export function readVisibleSessionTranscriptMessageEntries() {
 			);
 			expect(readFileSync(commandOutput, "utf8").trim().split("|")).toEqual([
 				"65534",
-				"",
-				"",
+				inheritedState,
+				inheritedConfig,
 				root,
 				"projection-agent",
 			]);
@@ -118,10 +120,35 @@ export function readVisibleSessionTranscriptMessageEntries() {
 			expect(entries[0]?.entryId).toBe("runtime-user");
 			expect(JSON.parse(entries[0]?.message.content ?? "null")).toEqual({
 				marker: "65534",
+				state: inheritedState,
+				config: inheritedConfig,
+			});
+			expect(readFileSync(setprivArgs, "utf8")).toContain("--reuid=65534");
+
+			delete process.env.OPENCLAW_STATE_DIR;
+			delete process.env.OPENCLAW_CONFIG_PATH;
+			expect(await runOpenClawCommand(["--json"], { timeout: 5000, maxBuffer: 4096 })).toBe(
+				'{"ok":true}\n',
+			);
+			expect(readFileSync(commandOutput, "utf8").trim().split("|")).toEqual([
+				"65534",
+				"",
+				"",
+				root,
+				"projection-agent",
+			]);
+			const unsetEntries = JSON.parse(
+				await runOpenClawSdkCommand(
+					sdkPath,
+					{ agentId: "main", sessionId: "fixture", sessionKey: "agent:main:main" },
+					{ timeout: 5000, maxBuffer: 4096 },
+				),
+			) as Array<{ entryId: string; message: { content: string } }>;
+			expect(JSON.parse(unsetEntries[0]?.message.content ?? "null")).toEqual({
+				marker: "65534",
 				state: null,
 				config: null,
 			});
-			expect(readFileSync(setprivArgs, "utf8")).toContain("--reuid=65534");
 		} finally {
 			Object.defineProperty(process, "getuid", { configurable: true, value: originalGetuid });
 			Object.defineProperty(process, "geteuid", { configurable: true, value: originalGeteuid });
