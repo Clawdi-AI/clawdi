@@ -115,6 +115,7 @@ import type { RuntimeConvergenceResult } from "./manifest-shared";
 import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
 import { loadCommittedRuntimeManifest, type RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
+import { gcOpenClawFileSecrets } from "./openclaw-file-secrets";
 import { removeLegacyManagedOpenClawProviderPlugin } from "./openclaw-legacy-provider-plugin";
 import {
 	beginOpenClawConfigTransaction,
@@ -1452,6 +1453,18 @@ function commitRuntimeConvergence(
 		},
 		transfers: commitProviderTransfers(context.providerOwnership.transfers),
 	});
+	if (manifest.runtimes.openclaw?.enabled === true) {
+		try {
+			withRuntimeUserFileAccess(
+				() => gcOpenClawFileSecrets(context.projectionHome),
+				context.hostedRuntimeContract.identity,
+			);
+		} catch {
+			console.warn(
+				"post-commit OpenClaw credential cleanup deferred: config or file identity unavailable",
+			);
+		}
+	}
 	try {
 		gcFileBrowserCompanionCandidates(manifest, paths);
 	} catch (cleanupError) {

@@ -43,14 +43,13 @@ prepared unit whose capacity changed; user/native edits retain authority.
 Four native A/B samples showed only 0.39 s saved by the socket writer, including
 its fences; its service and protocol were removed. Complete health proofs gate Cloud `ok`.
 
-Old credential paths may belong to a running snapshot even when absent from disk
-config and rotating backups. Upstream
-[`refreshActiveProviderAuthRuntimeSnapshot`](https://github.com/openclaw/openclaw/blob/v2026.9.8/src/secrets/runtime.ts)
-resolves `activeSnapshot.sourceConfig`; disk-only GC would break that refresh.
-Native backups also include `.pre-update` outside the rotating `.bak` ring
-([source](https://github.com/openclaw/openclaw/blob/v2026.9.8/src/config/backup-rotation.ts)).
-Files remain private until live snapshot retirement can be proved. New files
-contain referenced credentials only, never the entire process environment.
+After successful convergence, credential GC keeps references from the current
+JSON5 config (including includes), all five native `.bak` snapshots and
+`.pre-update`, plus two successful credential generations. Failed candidates do
+not advance that history; repeated applies retain the same generations. Other
+managed files are deleted through a pinned directory. Unreadable configs or
+unsafe file identities defer cleanup. New files contain referenced credentials
+only, never the entire environment.
 
 ## Changes visible to existing runtimes
 
@@ -61,6 +60,7 @@ New private receipts are additive and optional.
 | --- | --- | --- |
 | Persisted step memos | Gated to hot apply or warm snapshot selection. Schema v2 ignores v1; keys bind CLI version captured before UID drops, helper/probe sources, OpenClaw package and SDK files. Includes never authorize skips; cleanup records equal before/after state only. | New-process CLI upgrade, real UID switch, package/layout upgrades in `persisted-step-revisions.test.ts`; cleanup/include races in `manifest-reconciliation.test.ts` |
 | Provider/channel writer extraction | Ordinary applies keep official single-step locking/validation; batch and file migration require hot apply. JSON5 local reuse rejects includes and falls back to native probes. | Existing provider drift, ownership, channel replacement/unlink and legacy/current layout fixtures |
+| File SecretRef retention | Applies only when the managed credential directory exists, including after hot apply is disabled. Successful commit retains current/include and native rollback references plus two successful generations; failures retain all files. | Rotation, revocation, includes, rollback and unsafe-link tests in `openclaw-file-secrets.test.ts`; failed authority commit in `manifest-reconciliation.test.ts` |
 | Native/connection ownership readers | Accept existing env refs and the additive managed file-ref form, including rollback after flag removal. No existing env ref changes meaning. | Native/connection transfer and failed-commit fixtures in `manifest-reconciliation.test.ts` |
 | Observation cadence / immediate recapture | Default remains 5 s for the existing 90 s convergence window and 60 s when ready. Only warm/hot apply uses 1 s or bounded immediate recapture; retry backoff is unchanged. | Default/opt-in schedules and tuple-rotation tests in `observation-producer.test.ts` |
 | Successful watch-parent comparison | Applied/not-modified events compare as successful only with exact current generation, ETag, source/apply authority, no self-reexec/error and explicitly healthy metadata. Parent/config/invocation fences remain. | Healthy-equivalence and unhealthy-parent tests in `observed-v2.test.ts` |

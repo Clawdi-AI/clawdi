@@ -1,8 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	gcOpenClawFileSecrets,
 	openClawFileSecretEnvironmentKeys,
 	projectOpenClawProviderFileSecrets,
 } from "./openclaw-file-secrets";
@@ -87,4 +97,93 @@ describe("OpenClaw file credentials", () => {
 		).toBe(input);
 		expect([...openClawFileSecretEnvironmentKeys(home)]).toEqual([]);
 	});
+});
+
+function credentialGeneration(home: string, key: string): { path: string; config: string } {
+	const config = projectOpenClawProviderFileSecrets(
+		JSON.stringify({
+			models: { providers: { clawdi: { apiKey: { source: "env", id: "CLAWDI_AI_API_KEY" } } } },
+		}),
+		{ CLAWDI_AI_API_KEY: key },
+		home,
+	);
+	return { path: JSON.parse(config).secrets.providers["clawdi-runtime"].path, config };
+}
+
+function credentialHome(): string {
+	const home = mkdtempSync(join(tmpdir(), "clawdi-credential-gc-"));
+	roots.push(home);
+	mkdirSync(join(home, ".openclaw"));
+	return home;
+}
+
+test("successful apply GC removes revoked generations, preserves rollback and stays idle on reuse", () => {
+	const home = credentialHome();
+	const configPath = join(home, ".openclaw", "openclaw.json");
+	const first = credentialGeneration(home, "revoked");
+	writeFileSync(configPath, first.config);
+	gcOpenClawFileSecrets(home);
+	const second = credentialGeneration(home, "rotated");
+	writeFileSync(configPath, second.config);
+	gcOpenClawFileSecrets(home);
+	const third = credentialGeneration(home, "current");
+	writeFileSync(configPath, third.config);
+	writeFileSync(`${configPath}.bak`, first.config);
+	gcOpenClawFileSecrets(home);
+	expect(existsSync(first.path)).toBe(true);
+	rmSync(`${configPath}.bak`);
+	gcOpenClawFileSecrets(home);
+	expect(existsSync(first.path)).toBe(false);
+	for (let iteration = 0; iteration < 3; iteration++) gcOpenClawFileSecrets(home);
+	expect(existsSync(second.path)).toBe(true);
+	expect(existsSync(third.path)).toBe(true);
+	writeFileSync(configPath, "{}");
+	gcOpenClawFileSecrets(home);
+	expect(existsSync(second.path)).toBe(false);
+	expect(existsSync(third.path)).toBe(true);
+	const fourth = credentialGeneration(home, "new-provider");
+	writeFileSync(configPath, fourth.config);
+	gcOpenClawFileSecrets(home);
+	expect(existsSync(third.path)).toBe(false);
+});
+
+test("GC scans JSON5 includes and all native rollback snapshots, and deletes only owned files", () => {
+	const home = credentialHome();
+	const configPath = join(home, ".openclaw", "openclaw.json");
+	const current = credentialGeneration(home, "current");
+	writeFileSync(configPath, current.config);
+	gcOpenClawFileSecrets(home);
+	const retained = [];
+	for (const suffix of [".bak", ".bak.1", ".bak.2", ".bak.3", ".bak.4", ".pre-update"]) {
+		const generation = credentialGeneration(home, suffix);
+		retained.push(generation.path);
+		writeFileSync(configPath + suffix, generation.config);
+	}
+	const included = credentialGeneration(home, "included");
+	writeFileSync(join(home, ".openclaw", "secrets.json5"), included.config);
+	writeFileSync(configPath, "{ $include: ['secrets.json5'], gateway: {} }");
+	const unrelated = join(home, ".clawdi", "runtime-credentials", "user.json");
+	writeFileSync(unrelated, "user data");
+	const discarded = credentialGeneration(home, "orphan");
+	gcOpenClawFileSecrets(home);
+	for (const path of [...retained, included.path, current.path, unrelated])
+		expect(existsSync(path)).toBe(true);
+	expect(existsSync(discarded.path)).toBe(false);
+});
+
+test("unreadable config and unsafe credential links defer GC without following or deleting them", () => {
+	const home = credentialHome();
+	const configPath = join(home, ".openclaw", "openclaw.json");
+	const first = credentialGeneration(home, "first");
+	writeFileSync(configPath, first.config);
+	gcOpenClawFileSecrets(home);
+	const orphan = credentialGeneration(home, "orphan");
+	writeFileSync(configPath, "{ $include: 'missing.json5' }");
+	expect(() => gcOpenClawFileSecrets(home)).toThrow();
+	expect(existsSync(orphan.path)).toBe(true);
+	writeFileSync(configPath, first.config);
+	const link = join(home, ".clawdi", "runtime-credentials", `openclaw-${"a".repeat(64)}.json`);
+	symlinkSync(orphan.path, link);
+	expect(() => gcOpenClawFileSecrets(home)).toThrow("unsafe file identity");
+	expect(existsSync(orphan.path)).toBe(true);
 });

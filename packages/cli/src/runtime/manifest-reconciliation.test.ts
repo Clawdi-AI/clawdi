@@ -80,6 +80,7 @@ import {
 	type HostedSkillSource,
 } from "./manifest-resources";
 import { parseHostedRuntimeBundleV2, type RuntimeManifestLoad } from "./manifest-source";
+import { gcOpenClawFileSecrets, projectOpenClawProviderFileSecrets } from "./openclaw-file-secrets";
 import { preinstallOpenClawBundledSkill } from "./openclaw-preinstallation";
 import { recordOpenClawPreinstalledService } from "./openclaw-preinstalled-service";
 import {
@@ -2994,6 +2995,52 @@ fi
 				.split("\n")
 				.filter((line) => line.startsWith("skills install ")),
 		).toHaveLength(1);
+	});
+
+	test("credential GC runs only after successful convergence authority commit", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome);
+		const input = JSON.stringify({
+			models: {
+				providers: {
+					native: {
+						apiKey: { source: "env", id: "TEST_KEY" },
+					},
+				},
+			},
+		});
+		const first = projectOpenClawProviderFileSecrets(input, { TEST_KEY: "active" }, paths.userHome);
+		writeFileSync(configPath, first);
+		gcOpenClawFileSecrets(paths.userHome);
+		const candidate = JSON.parse(
+			projectOpenClawProviderFileSecrets(input, { TEST_KEY: "failed-candidate" }, paths.userHome),
+		);
+		const candidatePath = candidate.secrets.providers["clawdi-runtime"].path;
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		writeFakeGatewayCli({
+			path: command,
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
+		const manifest = baseManifest(paths, {
+			openclaw: {
+				enabled: true,
+				services: {},
+				providerMode: "unmanaged",
+				run: runSettings(command, ["gateway", "run"]),
+			},
+		});
+		const failed = convergeRuntimeManifest(manifestLoad(manifest, "gc-failure"), paths, {
+			commitAuthority: () => {
+				throw new Error("fixture authority commit failed");
+			},
+		});
+		expect(failed.installErrors.join(";")).toContain("fixture authority commit failed");
+		expect(existsSync(candidatePath)).toBe(true);
+		const succeeded = convergeRuntimeManifest(manifestLoad(manifest, "gc-success"), paths);
+		expect(succeeded.installErrors).toEqual([]);
+		expect(existsSync(candidatePath)).toBe(false);
 	});
 
 	test("normal hot apply refreshes a gateway unit only when it still captures migrated credentials", () => {

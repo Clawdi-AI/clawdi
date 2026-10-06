@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
-import { join } from "node:path";
-import { writePrivateFileAtomic } from "../lib/private-file";
+import { closeSync, existsSync, lstatSync, readdirSync, unlinkSync } from "node:fs";
+import { basename, join } from "node:path";
+import { readPrivateFileEvidence, writePrivateFileAtomic } from "../lib/private-file";
+import { assertDirectoryIdentity, openTrustedDirectory } from "../lib/trusted-directory";
 import { isPlainRecord, recordValue } from "./manifest-shared";
-import { readPlainOpenClawConfig } from "./openclaw-config";
+import { readPlainOpenClawConfig, visitOpenClawConfigDocuments } from "./openclaw-config";
 
 export const OPENCLAW_FILE_SECRET_PROVIDER = "clawdi-runtime";
 
@@ -86,4 +88,95 @@ export function openClawFileSecretEnvironmentKeys(home: string): Set<string> {
 	};
 	visit(readPlainOpenClawConfig(join(home, ".openclaw", "openclaw.json")));
 	return keys;
+}
+
+const MANAGED_CREDENTIAL_FILE = /^openclaw-[a-f0-9]{64}\.json$/;
+
+/** Post-apply GC keeps native rollback references and two successful generations. */
+export function gcOpenClawFileSecrets(home: string): void {
+	const directory = join(home, ".clawdi", "runtime-credentials");
+	if (!existsSync(directory)) return;
+	const fd = openTrustedDirectory(directory);
+	const pinned = `/proc/self/fd/${fd}`;
+	try {
+		const configPath = join(home, ".openclaw", "openclaw.json");
+		const references = (path: string): string[] => {
+			const result = new Set<string>();
+			visitOpenClawConfigDocuments(path, (value) => {
+				if (
+					value.source === "file" &&
+					typeof value.path === "string" &&
+					value.path === join(directory, basename(value.path)) &&
+					MANAGED_CREDENTIAL_FILE.test(basename(value.path))
+				)
+					result.add(basename(value.path));
+			});
+			return [...result].sort();
+		};
+		const current = references(configPath);
+		const keep = new Set(current);
+		// Upstream CONFIG_BACKUP_COUNT=5; .pre-update is outside that ring.
+		for (const suffix of [".bak", ".bak.1", ".bak.2", ".bak.3", ".bak.4", ".pre-update"]) {
+			const path = configPath + suffix;
+			if (existsSync(path)) for (const name of references(path)) keep.add(name);
+		}
+		const files = readdirSync(pinned)
+			.filter((name) => MANAGED_CREDENTIAL_FILE.test(name))
+			.map((name) => {
+				const stat = lstatSync(join(pinned, name));
+				if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.geteuid?.())
+					throw new Error("Managed OpenClaw credentials have unsafe file identity");
+				return { name, mtime: stat.mtimeMs };
+			})
+			.sort((a, b) => b.mtime - a.mtime || a.name.localeCompare(b.name));
+		const generationsPath = join(directory, "openclaw-generations.json");
+		let previous: string[];
+		if (existsSync(generationsPath)) {
+			const evidence = readPrivateFileEvidence(generationsPath, {
+				uid: process.geteuid?.() ?? 0,
+				gid: process.getegid?.() ?? 0,
+				modes: [0o600],
+				maxBytes: 64 * 1024,
+			});
+			let generations: unknown;
+			try {
+				generations = JSON.parse(evidence.content.toString("utf8"));
+				evidence.assertCurrent();
+			} finally {
+				evidence.close();
+			}
+			if (
+				!Array.isArray(generations) ||
+				generations.length > 2 ||
+				generations.some(
+					(generation) =>
+						!Array.isArray(generation) ||
+						generation.some(
+							(name) => typeof name !== "string" || !MANAGED_CREDENTIAL_FILE.test(name),
+						),
+				)
+			)
+				throw new Error("Invalid credential generation record");
+			previous =
+				JSON.stringify(current) === JSON.stringify(generations[0])
+					? (generations[1] ?? [])
+					: (generations[0] ?? []);
+		} else {
+			// Upgrade: retain two recent files until the first successful generation is recorded.
+			previous = files.slice(0, 2).map((file) => file.name);
+		}
+		for (const name of previous) keep.add(name);
+		assertDirectoryIdentity(directory, fd);
+		writePrivateFileAtomic(generationsPath, `${JSON.stringify([current, previous])}\n`, {
+			directoryFd: fd,
+			mode: 0o600,
+		});
+		for (const { name } of files) {
+			if (keep.has(name)) continue;
+			assertDirectoryIdentity(directory, fd);
+			unlinkSync(join(pinned, name));
+		}
+	} finally {
+		closeSync(fd);
+	}
 }
