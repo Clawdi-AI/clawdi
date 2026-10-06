@@ -9,14 +9,15 @@ DB instead of mocked crypto.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 
 import httpx
 import pytest
 from httpx import ASGITransport
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, select, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.auth import AuthContext, get_auth
 from app.core.database import get_session
@@ -29,6 +30,7 @@ from app.models.vault import (
     VaultProjectAttachment,
     VaultProjectSlugAlias,
 )
+from app.schemas.vault import VaultCreate
 from app.services.vault_crypto import encrypt as vault_crypto_encrypt
 
 
@@ -1283,6 +1285,74 @@ async def test_vault_exact_attachment_preserves_owner_and_agent_boundaries(
     finally:
         await db_session.delete(other)
         await db_session.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+@pytest.mark.parametrize("first", ["create", "attach"])
+async def test_vault_attachment_entry_points_interleave_without_conflict(
+    db_session, engine, seed_user, workspace_project, monkeypatch, first
+):
+    """The legacy create-or-attach path and the exact attach path race on one link."""
+    from app.services import runtime_vaults
+    from app.services.vault import attach_account_vault, create_account_vault
+
+    auth = AuthContext(user=seed_user)
+    body = VaultCreate(slug="raced", name="Raced")
+    vault = await create_account_vault(db_session, auth, body, project_id=None, create_only=True)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    notified: list[AsyncSession] = []
+    inserted, release = asyncio.Event(), asyncio.Event()
+    original = runtime_vaults.notify_vault_changed
+
+    async def hold_first_insert(session, vault_id, **kwargs):
+        notified.append(session)
+        await original(session, vault_id, **kwargs)
+        if len(notified) == 1:
+            inserted.set()
+            await release.wait()
+
+    monkeypatch.setattr(runtime_vaults, "notify_vault_changed", hold_first_insert)
+
+    async def attach(kind: str, session: AsyncSession) -> Vault:
+        if kind == "create":
+            return await create_account_vault(
+                session, auth, body, project_id=workspace_project.id, create_only=False
+            )
+        return await attach_account_vault(session, auth, "raced", vault.id, workspace_project.id)
+
+    try:
+        async with sessions() as holder, sessions() as racer:
+            racer_pid = await racer.scalar(text("SELECT pg_backend_pid()"))
+            winner = asyncio.create_task(attach(first, holder))
+            await asyncio.wait_for(inserted.wait(), 5)
+            waiter = asyncio.create_task(attach("attach" if first == "create" else "create", racer))
+            # The racer must reach the unique link while the first insert is uncommitted.
+            async with engine.connect() as observer, asyncio.timeout(5):
+                while not await observer.scalar(
+                    text("SELECT cardinality(pg_blocking_pids(:pid)) > 0"), {"pid": racer_pid}
+                ):
+                    await asyncio.sleep(0.01)
+            release.set()
+            results = await asyncio.wait_for(asyncio.gather(winner, waiter), 5)
+            assert [result.id for result in results] == [vault.id, vault.id]
+            assert notified == [holder]
+
+        async with sessions() as check:
+            links = (
+                await check.scalars(
+                    select(VaultProjectAttachment.project_id).where(
+                        VaultProjectAttachment.vault_id == vault.id
+                    )
+                )
+            ).all()
+        assert links == [workspace_project.id]
+    finally:
+        release.set()
+        # Vault rows are not cascaded from the throwaway user; remove this test's row.
+        async with sessions() as cleanup:
+            await cleanup.execute(delete(Vault).where(Vault.id == vault.id))
+            await cleanup.commit()
 
 
 @pytest.mark.asyncio
