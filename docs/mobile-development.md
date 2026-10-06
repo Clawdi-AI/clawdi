@@ -127,51 +127,33 @@ Signed-out scope/page replacement retires a pending browser continuation.
 SignIn resource identity is also checked before and after nonce reload. Real
 social login, transfer, cancellation, MFA and browser/Router behavior remain gates.
 
-### Sign in with Apple
-
-On iOS, whenever the provider list is non-empty, sign-in and sign-up show
-Apple's native `AppleAuthenticationButton` (App Review 4.8). It uses Clerk's
-`useSignInWithApple` from `@clerk/expo/apple` with `expo-apple-authentication`
-instead of browser OAuth, so `apple` in the list does not also add a browser
-button on iOS. Results go through the same account-scope fence as other social
-sign-in; second factors and missing sign-up fields continue in the existing
-forms. Android shows the configured browser OAuth providers unchanged. The
-`expo-apple-authentication` config plugin adds the
-`com.apple.developer.applesignin` entitlement; EAS enables the capability on
-the App ID. Apple sign-in needs an iOS build; Expo Go and Android cannot test it.
-
 ### Clerk dashboard setup (owner)
 
 Production uses a Clerk production instance and its `pk_live_` publishable key.
-In the Clerk Dashboard:
+App Review 4.8 requires Sign in with Apple on iOS whenever another social
+sign-in is offered. In the Clerk Dashboard:
 
 1. **SSO connections** → **Add connection** → **For all users** → **Apple**,
-   then enable it for sign-up and sign-in. The native flow does not need an
-   Apple Services ID or private key; browser-based Apple OAuth (Android, if
-   `apple` is listed) does.
+   then enable it for sign-up and sign-in. Native iOS Apple sign-in does not
+   need an Apple Services ID or private key; browser-based Apple OAuth does.
 2. **Native applications**: register the iOS app (Team ID and bundle ID) and
    the Android app (namespace and package name).
 3. **Native applications** → **Allowlist for mobile SSO redirect**: add
    `clawdi://sign-in-oauth`, `clawdi://sign-up-oauth` and
-   `clawdi://account-oauth`. The app does not use Clerk's default
-   `{bundleIdentifier}://callback`.
-4. Enable the same social providers that `EXPO_PUBLIC_CLERK_OAUTH_PROVIDERS`
-   lists for the build.
-
-Done: on an iOS device build, Apple sign-up and sign-in create a session, and
-Google OAuth returns to `clawdi://sign-in-oauth` and completes sign-in.
+   `clawdi://account-oauth`.
 
 ### App icon and splash screen
 
 `bun run --cwd apps/mobile icons` renders `apps/web/public/clawdi.svg` into
 `apps/mobile/assets/`: an opaque 1024px `icon.png`, the Android adaptive
-foreground `brand-mark.png` (also the splash image), and the themed-icon layer
-`brand-mark-monochrome.png`, which keeps only the red claw. Backgrounds come from
-the shared `--background` tokens via `assets/app-colors.json`;
-`app-icons.test.ts` fails when that file is stale. The root layout holds the
-native splash until the stored appearance is applied and Clerk is no longer
-loading, so the first frame already uses the right theme. Native icon and
-splash changes need a new native build.
+foreground `brand-mark.png` (mark inside the 66dp safe zone), the themed-icon
+layer `brand-mark-monochrome.png` (red claw only), and the splash marks
+`splash-icon.png` / `splash-icon-dark.png` (the dark variant draws the outline
+in the dark `--foreground` token). Backgrounds come from the shared
+`--background` tokens via `assets/app-colors.json`; `app-icons.test.ts` fails
+when that file is stale. The root layout holds the native splash until the
+stored appearance is applied, so the first frame already uses the right theme.
+Icon and splash changes need a new native build.
 
 `EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL` optionally enables the v2 compute control
 plane. It is separate from the Cloud identity/Session API and does not enable

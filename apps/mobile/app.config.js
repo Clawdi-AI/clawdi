@@ -75,13 +75,13 @@ module.exports = ({ config }) => {
 			[
 				"expo-splash-screen",
 				{
-					image: "./assets/brand-mark.png",
-					imageWidth: 200,
+					image: "./assets/splash-icon.png",
+					// Largest width that keeps the mark inside Android 12's 192dp circular icon mask.
+					imageWidth: 150,
 					backgroundColor: appColors.light,
-					dark: { backgroundColor: appColors.dark },
+					dark: { image: "./assets/splash-icon-dark.png", backgroundColor: appColors.dark },
 				},
 			],
-			"expo-apple-authentication",
 		],
 		...(Object.keys(ios).length ? { ios } : {}),
 		...(Object.keys(android).length ? { android } : {}),

@@ -1,5 +1,5 @@
 /**
- * Builds the native app icon, Android adaptive icon layers, and splash mark from
+ * Builds the native app icon, Android adaptive icon layers, and splash marks from
  * the Web brand master (apps/web/public/clawdi.svg). Background colors come from
  * the shared `--background` tokens so launch surfaces match the first app frame.
  *
@@ -17,11 +17,7 @@ export const colorsPath = fileURLToPath(new URL("../assets/app-colors.json", imp
 const CANVAS = 1024;
 /** iOS/legacy icon: the mark's longest side relative to the canvas. */
 const ICON_MARK = 640;
-/**
- * `brand-mark.png` is both the adaptive icon foreground (108dp canvas, mark
- * inside the 66dp safe-zone circle) and the splash image, so Android 12's
- * circular splash icon mask never clips it.
- */
+/** Adaptive icon foreground (108dp canvas): the mark stays inside the 66dp safe-zone circle. */
 const SAFE_MARK = 480;
 
 /** oklch() → sRGB hex via OKLab (https://bottosson.github.io/posts/oklab/). */
@@ -58,17 +54,28 @@ export function buildAppColors(css: string) {
 	return { light: background(":root"), dark: background(".dark") };
 }
 
-/** Keeps the red claw and drops the dark outline: Android themed icons use only alpha. */
-function monochromeSvg(svg: string): string {
-	return svg.replace(/fill="#([0-9A-Fa-f]{6})"/g, (_, hex: string) =>
-		Number.parseInt(hex.slice(0, 2), 16) > 0x80 ? 'fill="#FFFFFF"' : 'fill="none"',
+/** Repaints the logo's two layers: the red claw and its near-black outline. */
+function recolor(svg: string, { claw, outline }: { claw?: string; outline: string }): string {
+	return svg.replace(/fill="#([0-9A-Fa-f]{6})"/g, (match, hex: string) =>
+		Number.parseInt(hex.slice(0, 2), 16) > 0x80
+			? claw
+				? `fill="${claw}"`
+				: match
+			: `fill="${outline}"`,
 	);
+}
+
+function darkForeground(css: string): string {
+	const value = declarations(block(css, ".dark")).get("--foreground");
+	if (!value) throw new Error("Shared theme is missing --foreground in .dark");
+	return oklchToHex(value);
 }
 
 async function generate() {
 	const { default: sharp } = await import("sharp");
 	const svg = await Bun.file(logoPath).text();
-	const colors = buildAppColors(readSharedTheme());
+	const css = readSharedTheme();
+	const colors = buildAppColors(css);
 	const render = (source: string) => sharp(Buffer.from(source), { density: 288 });
 	// Crop every variant to the full mark's bounds so the layers stay aligned.
 	const { info } = await render(svg).trim().toBuffer({ resolveWithObject: true });
@@ -100,8 +107,15 @@ async function generate() {
 		.removeAlpha()
 		.toFile(`${assetsDir}icon.png`);
 	await sharp(await layer(svg, SAFE_MARK)).toFile(`${assetsDir}brand-mark.png`);
-	await sharp(await layer(monochromeSvg(svg), SAFE_MARK)).toFile(
+	// Android themed icons use only alpha: keep the claw, drop the outline.
+	await sharp(await layer(recolor(svg, { claw: "#FFFFFF", outline: "none" }), SAFE_MARK)).toFile(
 		`${assetsDir}brand-mark-monochrome.png`,
+	);
+	// Splash marks fill their canvas; `imageWidth` in app.config.js sizes them.
+	// The dark outline would vanish on the dark background, so it takes the dark foreground.
+	await sharp(await layer(svg, CANVAS)).toFile(`${assetsDir}splash-icon.png`);
+	await sharp(await layer(recolor(svg, { outline: darkForeground(css) }), CANVAS)).toFile(
+		`${assetsDir}splash-icon-dark.png`,
 	);
 	writeFileSync(colorsPath, `${JSON.stringify(colors, null, "\t")}\n`);
 }

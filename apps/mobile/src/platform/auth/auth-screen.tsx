@@ -12,14 +12,13 @@ import { webView } from "@/components/ui/web-layout";
 // The root export in @clerk/expo 4.8 exposes the newer signal API instead.
 
 import { publicSessionId } from "@clawdi/shared/api";
-import { useSignInWithApple } from "@clerk/expo/apple";
 import { useSignIn, useSignUp } from "@clerk/expo/legacy";
 import type { OAuthProvider, SignInResource, SignUpResource } from "@clerk/expo/types";
 import { randomUUID } from "expo-crypto";
 import { Link, useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { openAuthSessionAsync } from "expo-web-browser";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, Platform } from "react-native";
+import { AppState } from "react-native";
 import { LoadingScreen } from "@/components/ui/feedback";
 import { AppView } from "@/components/ui/view";
 import { useMobileRuntimeConfig } from "@/lib/config/runtime";
@@ -31,8 +30,6 @@ import {
 	accountOAuthRedirect,
 	oauthReturnUrl,
 } from "@/platform/auth/account-oauth";
-import { AppleSignInButton } from "@/platform/auth/apple-sign-in-button";
-import { socialSignInOptions } from "@/platform/auth/oauth-providers";
 import { type SupportedSecondFactor, selectSecondFactor } from "@/platform/auth/sign-in-factor";
 import {
 	emptySignupDetails,
@@ -60,10 +57,7 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 	const scope = useAccountScope();
 	const capture = useForegroundLease();
 	const config = useMobileRuntimeConfig();
-	const social = socialSignInOptions(
-		config.ok ? (config.value.clerkOauthProviders ?? []) : [],
-		Platform.OS,
-	);
+	const providers = config.ok ? (config.value.clerkOauthProviders ?? []) : [];
 	const pageEpoch = useRef(0);
 	useFocusEffect(
 		useCallback(
@@ -78,7 +72,6 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 		typeof params.publicShareId === "string" ? publicSessionId(params.publicShareId) : null;
 	const signInHook = useSignIn();
 	const signUpHook = useSignUp();
-	const { startAppleAuthenticationFlow } = useSignInWithApple();
 	const { busy, error, run, clearError } = useAuthAction(mode);
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
@@ -279,24 +272,18 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 			} else setNotice(t("auth.unavailable"));
 		});
 
-	/** Social results apply only to this page visit and the signed-out account scope that started them. */
-	const socialAttempt = (active: () => boolean) => {
-		const epoch = pageEpoch.current;
-		const signal = scope.signal;
-		return () =>
-			active() &&
-			!signal.aborted &&
-			scope.isCurrent() &&
-			scope.identity === null &&
-			pageEpoch.current === epoch;
-	};
-
 	const startSocial = (provider: OAuthProvider) =>
 		run(async (active) => {
-			const current = socialAttempt(active);
+			const epoch = pageEpoch.current;
+			const signal = scope.signal;
+			const current = () =>
+				active() &&
+				!signal.aborted &&
+				scope.isCurrent() &&
+				scope.identity === null &&
+				pageEpoch.current === epoch;
 			const visible = capture();
-			if (!current() || !visible() || !signIn || !signUp || !social.oauth.includes(provider))
-				return;
+			if (!current() || !visible() || !signIn || !signUp || !providers.includes(provider)) return;
 			setNotice(null);
 			setPassword("");
 			setCode("");
@@ -320,28 +307,6 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 				const signup = await signUp.create({ transfer: true });
 				await advanceSignUp(signup, current);
 			} else await advanceSignIn(completed, current);
-		});
-
-	const startApple = () =>
-		run(async (active) => {
-			const current = socialAttempt(active);
-			const visible = capture();
-			if (!current() || !visible() || !signIn || !signUp || !social.nativeApple) return;
-			setNotice(null);
-			setPassword("");
-			setCode("");
-			setFactor(null);
-			const previous = { signIn: signIn.id, signUp: signUp.id };
-			// Clerk exchanges Apple's identity token and settles sign-in/sign-up transfer;
-			// a cancelled sheet returns no session and leaves both attempts untouched.
-			const result = await startAppleAuthenticationFlow();
-			if (!current()) return;
-			if (result.createdSessionId) await finish(result.createdSessionId, current);
-			// Second factors and missing sign-up fields continue through the shared steps.
-			else if (result.signIn?.id && result.signIn.id !== previous.signIn)
-				await advanceSignIn(result.signIn, current);
-			else if (result.signUp?.id && result.signUp.id !== previous.signUp)
-				await advanceSignUp(result.signUp, current);
 		});
 
 	const startEmailCode = () =>
@@ -439,15 +404,8 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 					</>
 				) : null}
 				{step === "sign-up-phone-code" ? <FormText>{t("signupDetails.phoneCode")}</FormText> : null}
-				{step === "credentials" && social.nativeApple ? (
-					<AppleSignInButton
-						signingUp={signingUp}
-						disabled={busy || !signInHook.isLoaded || !signUpHook.isLoaded}
-						onPress={() => void startApple()}
-					/>
-				) : null}
 				{step === "credentials"
-					? social.oauth.map((provider) => (
+					? providers.map((provider) => (
 							<FormAction
 								key={provider}
 								label={`${t("auth.continueWith")} · ${provider}`}

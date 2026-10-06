@@ -50,16 +50,3 @@ export function readOAuthProviders(value: unknown): OAuthProvider[] {
 	if (result.length > 64) throw new Error("Too many OAuth providers");
 	return result;
 }
-
-/**
- * App Review 4.8: iOS offers Sign in with Apple, through the native sheet,
- * whenever any third-party sign-in is offered. Other platforms keep the
- * configured browser OAuth list unchanged.
- */
-export function socialSignInOptions(providers: readonly OAuthProvider[], os: string) {
-	if (os !== "ios") return { nativeApple: false, oauth: [...providers] };
-	return {
-		nativeApple: providers.length > 0,
-		oauth: providers.filter((provider) => provider !== "apple"),
-	};
-}

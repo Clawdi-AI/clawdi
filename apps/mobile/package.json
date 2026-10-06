@@ -24,7 +24,6 @@
 		"class-variance-authority": "^0.7.1",
 		"cn": "^0.4.0",
 		"expo": "catalog:expo57",
-		"expo-apple-authentication": "57.0.2",
 		"expo-auth-session": "57.0.13",
 		"expo-blur": "57.0.3",
 		"expo-constants": "57.0.20",
