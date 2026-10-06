@@ -22,6 +22,7 @@ database migration, CI, and implementation details.
 ### CLI 0.15.2
 
 - **OpenClaw:** Profile discovery, session reads, and Skills workspace resolution find the installed CLI when running as the agent user with a restricted PATH. Transcript SDK reads also use an absolute runtime executable.
+- **Windows:** native install with `irm https://clawdi.ai/install.ps1 | iex` (no Node.js needed); `clawdi update` updates it in place.
 
 ### CLI 0.15.1
 
