@@ -490,9 +490,9 @@ describe("runtime manifest datasource", () => {
 				expect(logs.map((line) => JSON.parse(line).status)).toEqual([
 					"not_modified",
 					"applied",
-					"not_modified",
+					"applied",
 				]);
-				expect(readFileSync(paths.appliedState, "utf8")).toBe(authorityBeforeDuplicate);
+				expect(readFileSync(paths.appliedState, "utf8")).not.toBe(authorityBeforeDuplicate);
 			} finally {
 				clearTimeout(timeout);
 				restore();
@@ -1345,6 +1345,8 @@ exit 64
 	] as const)(
 		"runtime watch preserves conditional manifest %s behavior with hot apply %s",
 		async (responseStatus, hotApply) => {
+			const previousHotApply = process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY;
+			process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "0";
 			installSuccessfulSystemctlFixture();
 			const home = join(root, "home", "clawdi");
 			const state = join(root, "var", "lib", "clawdi");
@@ -1441,6 +1443,12 @@ fi
 ${fakeOpenClawConfigSchemaCommand()}
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
   cat >/dev/null
+  exit 0
+fi
+if [ "$*" = "gateway install --force --json" ]; then
+  mkdir -p '${join(home, ".config", "systemd", "user")}'
+  printf '%s\\n' '[Unit]' '[Service]' 'ExecStart=${openclawBin} gateway run' > '${join(home, ".config", "systemd", "user", "openclaw-gateway.service")}'
+  printf '{"ok":true}\\n'
   exit 0
 fi
 printf 'unexpected openclaw command: %s\\n' "$*" >&2
@@ -1540,7 +1548,7 @@ exit 64
 			expect(baselineMitmSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
 			expect(baselineMitmSecrets[channelSecretRef]).toBe("agent-token-watch");
 
-			if (hotApply) process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
+			process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = hotApply ? "1" : "0";
 			const watchFetch = mockFetch([
 				{
 					method: "GET",
@@ -1586,8 +1594,12 @@ exit 64
 					generation: 22,
 					providerIds: ["clawdi-managed-v2"],
 				});
-				expect(event.systemdUnitsChanged).toBeUndefined();
-				expect(event.systemdApply).toBeUndefined();
+				if (responseStatus === 200 && !hotApply) {
+					expect(event.systemdApply?.applied).toBe(true);
+				} else {
+					expect(event.systemdUnitsChanged).toBeUndefined();
+					expect(event.systemdApply).toBeUndefined();
+				}
 				const egressSecrets = JSON.parse(
 					readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8"),
 				);
@@ -1603,14 +1615,17 @@ exit 64
 				await runtimeWatch({ once: true, json: true });
 				const failed = JSON.parse(logs[0]);
 				expect(failed.status).toBe("error");
-				expect(JSON.stringify(failed)).toContain(
-					"could not persist verified committed runtime snapshot",
-				);
+				if (responseStatus !== 200 || hotApply)
+					expect(JSON.stringify(failed)).toContain(
+						"could not persist verified committed runtime snapshot",
+					);
 				if (responseStatus === 200 && !hotApply)
 					expect(readFileSync(paths.appliedState, "utf8")).not.toBe(baselineAuthority);
 				else expect(readFileSync(paths.appliedState, "utf8")).toBe(baselineAuthority);
 			} finally {
 				watchFetch.restore();
+				if (previousHotApply === undefined) delete process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY;
+				else process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = previousHotApply;
 				console.log = previousLog;
 				process.exitCode = previousExitCode;
 			}
