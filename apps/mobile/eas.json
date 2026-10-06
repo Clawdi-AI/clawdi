@@ -1,0 +1,32 @@
+{
+	"cli": { "appVersionSource": "remote" },
+	"build": {
+		"development": {
+			"developmentClient": true,
+			"distribution": "internal",
+			"channel": "development",
+			"environment": "development",
+			"bun": "1.4.2"
+		},
+		"preview": {
+			"distribution": "internal",
+			"android": { "buildType": "apk" },
+			"channel": "preview",
+			"environment": "preview",
+			"bun": "1.4.2"
+		},
+		"production": {
+			"distribution": "store",
+			"autoIncrement": true,
+			"channel": "production",
+			"environment": "production",
+			"bun": "1.4.2"
+		}
+	},
+	"submit": {
+		"production": {
+			"ios": {},
+			"android": { "track": "internal" }
+		}
+	}
+}

@@ -223,7 +223,11 @@ async function activateStagedNativeReleaseWithLease(
 	if (existsSync(finalDir)) {
 		validateInstalledVersion(finalDir, compiled);
 		lease.assertOwned();
-		rmSync(stageDir, { recursive: true, force: true });
+		try {
+			rmSync(stageDir, { recursive: true, force: true });
+		} catch {
+			// The staged executable may be running on Windows; stale stages are pruned later.
+		}
 	} else {
 		lease.assertOwned();
 		renameSync(stageDir, finalDir);
@@ -252,6 +256,7 @@ async function activateStagedNativeReleaseWithLease(
 		versionsRoot,
 		[activeExecutable, previous?.executable ?? null],
 		lease,
+		{ pruneVersions: previous?.executable !== realpathSync.native(activeExecutable) },
 	);
 	return {
 		launcher: windows ? join(launcher, executableName) : launcher,
@@ -569,28 +574,31 @@ function pruneNativeInstall(
 	versionsRoot: string,
 	keepExecutables: Array<string | null>,
 	lease: PrivateDirectoryLockLease,
+	options: { pruneVersions: boolean },
 ): void {
-	const keepDirectories = new Set(
-		keepExecutables.filter((path): path is string => path !== null).map((path) => dirname(path)),
-	);
-	for (const entry of readdirSync(versionsRoot, { withFileTypes: true })) {
-		if (!entry.isDirectory()) continue;
-		const directory = join(versionsRoot, entry.name);
-		if (keepDirectories.has(directory)) continue;
-		const identity = readNativeExecutableIdentity(
-			join(directory, process.platform === "win32" ? "clawdi.exe" : "clawdi"),
+	if (options.pruneVersions) {
+		const keepDirectories = new Set(
+			keepExecutables.filter((path): path is string => path !== null).map((path) => dirname(path)),
 		);
-		if (!identity) continue;
-		try {
-			validateInstalledVersion(directory, identity);
-		} catch {
-			continue;
-		}
-		lease.assertOwned();
-		try {
-			rmSync(directory, { recursive: true, force: true });
-		} catch {
-			// Retry locked or busy directories on a later install.
+		for (const entry of readdirSync(versionsRoot, { withFileTypes: true })) {
+			if (!entry.isDirectory()) continue;
+			const directory = join(versionsRoot, entry.name);
+			if (keepDirectories.has(directory)) continue;
+			const identity = readNativeExecutableIdentity(
+				join(directory, process.platform === "win32" ? "clawdi.exe" : "clawdi"),
+			);
+			if (!identity) continue;
+			try {
+				validateInstalledVersion(directory, identity);
+			} catch {
+				continue;
+			}
+			lease.assertOwned();
+			try {
+				rmSync(directory, { recursive: true, force: true });
+			} catch {
+				// Retry locked or busy directories on a later install.
+			}
 		}
 	}
 	for (const entry of readdirSync(nativeRoot, { withFileTypes: true })) {

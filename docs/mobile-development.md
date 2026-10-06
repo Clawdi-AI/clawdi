@@ -157,8 +157,8 @@ Icon and splash changes need a new native build.
 
 `EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL` optionally enables the v2 compute control
 plane. It is separate from the Cloud identity/Session API and does not enable
-Hosted v1. A trailing `/v2` is normalized. An absent compute URL leaves Cloud
-browsing available; an explicitly unsafe URL fails configuration validation.
+Hosted v1. A trailing `/v2` is normalized. In development, an absent compute URL
+leaves Cloud browsing available; an explicitly unsafe URL fails configuration validation.
 The same captured-account token fence protects both API clients. No payment
 keys, signing material or private infrastructure addresses belong in this
 public configuration.
@@ -868,20 +868,97 @@ Real-device cold/warm browser auth, account switching and revocation remain gate
 
 ### Native project generation
 
-The dynamic Expo config accepts owner-selected build-time
-`CLAWDI_IOS_BUNDLE_IDENTIFIER` and `CLAWDI_ANDROID_PACKAGE`. Neither has a
-production default. Existing `config.ios.bundleIdentifier` / `config.android.package`
-are preserved when the corresponding environment value is absent. Expo validates
-the native identifier during prebuild; these values are not runtime API settings.
-Use the identifiers registered for the intended app and signing environment;
-do not use the diagnostic `test.example.clawdi.probe` identifier for distribution.
+The dynamic Expo config commits `ai.clawdi.app` for both platforms. Native
+projects are generated and ignored; do not maintain a second native source tree.
+From `apps/mobile`, run `npx expo prebuild --no-install`. `EAS_PROJECT_ID` is
+optional for local prebuild; when unset, no update URL/project id is emitted.
+Done: generated identifiers match `ai.clawdi.app`, iOS contains
+`PrivacyInfo.xcprivacy`, and Android has `allowBackup="false"`. This checks
+plugins and metadata, not native compilation, signing or store acceptance.
 
-Run `bunx expo prebuild --platform android --no-install` (or `--platform ios`)
-from `apps/mobile` in the isolated build environment with the approved identifier.
-Native directories are generated and ignored, not a second hand-maintained source
-tree. This step checks config plugins and native metadata, not Gradle/Xcode
-compilation, signing, device login or store acceptance. `expo-system-ui` is pinned
-in the Expo workspace catalog to support Android automatic appearance.
+### Release configuration
+
+`apps/mobile/eas.json` selects the matching EAS environment and update channel
+for development (dev client), preview (internal APK) and production (store).
+Production uses remote build numbers with auto-increment; all binaries use
+fingerprint runtime compatibility.
+
+Keep all `EXPO_PUBLIC_*` values in the selected EAS environment, with plaintext
+or sensitive visibility, never in build-profile `env`. [Expo Update uses that
+environment, not profile variables](https://docs.expo.dev/eas/environment-variables/usage/#using-environment-variables-with-eas-update).
+Configure these exact release values in **each** environment:
+
+| Variable | `preview` | `production` |
+| --- | --- | --- |
+| `EXPO_PUBLIC_CLAWDI_ENV` | `preview` | `production` |
+| `EXPO_PUBLIC_CLAWDI_API_URL` | `https://cloud-api.clawdi.ai` | `https://cloud-api.clawdi.ai` |
+| `EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL` | `https://api.clawdi.ai` | `https://api.clawdi.ai` |
+| `EXPO_PUBLIC_CLAWDI_LINK_HOSTS` | `cloud.clawdi.ai` | `cloud.clawdi.ai` |
+| `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` | Owner's Clerk publishable key | Owner's `pk_live_` key |
+| `EXPO_PUBLIC_CLERK_OAUTH_PROVIDERS` | Owner-enabled provider list, or unset | Owner-enabled provider list, or unset |
+| `EXPO_PUBLIC_REVENUECAT_APPLE_KEY` | Owner's public SDK key, or unset pending IAP setup | Owner's public SDK key, or unset pending IAP setup |
+| `EXPO_PUBLIC_REVENUECAT_GOOGLE_KEY` | Owner's public SDK key, or unset pending IAP setup | Owner's public SDK key, or unset pending IAP setup |
+| `EXPO_PUBLIC_SENTRY_DSN` | Owner's DSN, or unset | Owner's DSN, or unset |
+
+For `development`, set `EXPO_PUBLIC_CLAWDI_ENV=development`, a device-reachable
+development Cloud URL and a Clerk test key; compute, link hosts, OAuth providers,
+RevenueCat keys and DSN are optional, using the development values described
+above. Never set `EXPO_PUBLIC_DEV_AUTH_*` in preview or production. Public values,
+including publishable keys and DSNs, are readable in the binary.
+
+In each environment, set `EAS_PROJECT_ID` to the owner's Expo project UUID with
+plaintext or sensitive visibility so both Build and Update can resolve it.
+When unset, local config/prebuild omits the project id and update URL.
+Keep Sentry upload settings env-only: `SENTRY_ORG`, `SENTRY_PROJECT` and secret
+`SENTRY_AUTH_TOKEN`. Supply the token separately to the local OTA map uploader;
+EAS secret values are unavailable during Update.
+
+`EXPO_PUBLIC_CLAWDI_ENV` is the sole environment source for validation and
+Sentry, including when updates are disabled and their channel is empty.
+Non-development builds require `EXPO_PUBLIC_CLAWDI_ENV=preview` or `production`,
+HTTPS Cloud/compute APIs and real Clerk auth;
+`production` additionally requires a `pk_live_` key. Invalid values show
+`ConfigurationErrorScreen`. CI exports both platforms with bypass requested and
+rejects complete fixture identity/token literals; Clerk itself also ships
+`/dev_browser` and `dev_browser_unauthenticated`.
+
+Owner's first-build checklist:
+
+1. **Without Sentry credentials, set `SENTRY_DISABLE_AUTO_UPLOAD=true` in the
+   selected EAS environment before the first build.** The plugin always installs
+   native upload hooks; omitting the DSN disables reporting, not those hooks.
+2. Configure the public values above and `EAS_PROJECT_ID` in that same environment.
+3. Supply Expo/signing credentials, then run from `apps/mobile`:
+
+```bash
+eas build --profile preview --platform android
+```
+
+Done: the resulting APK is non-debuggable, has no release cleartext override,
+no backup and no blocked permissions. This remains an owner-run acceptance gate.
+`submit.production` contains no invented app ids or credentials. EAS does not
+interpolate environment references in `eas.json`; the owner must provide the
+ASC app id and configure Play's service account through EAS credentials before
+submission. Non-interactive ASC configuration remains an unresolved spec input.
+
+Sentry is inactive without a DSN. When enabled, it reports root exceptions and
+samples performance at 0.1 using Sentry RN's native release/dist defaults. It
+drops Vault-request telemetry and strips identities, request bodies, URL queries
+and token parameters; session replay is disabled. The Expo Sentry plugin always
+installs native upload hooks, with env-only credentials. This keeps the plugin
+set stable between Build and Update. SDK57 fingerprinting includes resolved
+`extra` and loaded plugins: use the same public values and `EAS_PROJECT_ID` for
+both, and do not put build-only credentials in config. Changing these public
+config values can require a new binary.
+
+After an owner-authorized `eas update --channel production --environment production`,
+upload generated maps with `bunx sentry-expo-upload-sourcemaps dist` using the
+same Sentry org/project and a locally supplied auth token. Store review precedes
+OTA; reserve OTA for compatible JavaScript fixes.
+
+Done: a preview crash is symbolicated in Sentry, and a build without a DSN runs
+normally. These live checks, TestFlight privacy validation and store metadata
+inputs remain outstanding; see [mobile store compliance](mobile-store-compliance.md).
 
 The October 3 probe generated both Android and iOS projects in one disposable
 Bun 1.4.2 container with `test.example.clawdi.probe` and `links.example.test`.
