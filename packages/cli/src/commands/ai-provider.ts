@@ -37,6 +37,7 @@ import {
 	publicAiProviderAuthStatus,
 } from "../lib/ai-provider-test";
 import { ApiClient } from "../lib/api-client";
+import { parsePositiveInteger } from "../lib/cli-options";
 import { PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { collectAgentCredentialProfilePayload } from "./agent-credentials";
 
@@ -100,7 +101,7 @@ interface AiProviderImportOptions {
 
 interface AiProviderTestOptions {
 	model?: string;
-	timeout?: string;
+	timeout?: string | number;
 	live?: boolean;
 	probe?: boolean;
 	json?: boolean;
@@ -125,7 +126,7 @@ interface AiProviderConnectOptions {
 	tool?: string;
 	callback?: string;
 	redirectUri?: string;
-	timeout?: string;
+	timeout?: string | number;
 	open?: boolean;
 	dryRun?: boolean;
 	json?: boolean;
@@ -812,9 +813,9 @@ function parseOAuthCallbackMode(input: string): "loopback" | "manual" {
 	throw new Error("Invalid --callback. Supported modes: loopback, manual.");
 }
 
-function parseOAuthTimeout(input: string | undefined): number {
-	const timeout = Number(input ?? 600);
-	if (!Number.isFinite(timeout) || timeout < 1 || timeout > 3600) {
+function parseOAuthTimeout(input: string | number | undefined): number {
+	const timeout = input === undefined ? 600 : parsePositiveInteger(input);
+	if (timeout > 3600) {
 		throw new Error("--timeout must be a number of seconds between 1 and 3600.");
 	}
 	return timeout;

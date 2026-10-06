@@ -2,6 +2,7 @@ import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { Memory } from "../lib/api-schemas";
+import { parsePositiveInteger } from "../lib/cli-options";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { requireSearchQuery } from "../lib/search-query";
@@ -9,7 +10,7 @@ import { requireSearchQuery } from "../lib/search-query";
 interface ListOpts {
 	json?: boolean;
 	// `limit` is kept for CLI-flag compatibility; the backend names it `page_size`.
-	limit?: string;
+	limit?: string | number;
 	category?: string;
 	q?: string;
 }
@@ -17,7 +18,7 @@ interface ListOpts {
 function buildQuery(opts: ListOpts) {
 	return {
 		q: opts.q || undefined,
-		page_size: opts.limit ? Number(opts.limit) : undefined,
+		page_size: opts.limit === undefined ? undefined : parsePositiveInteger(opts.limit),
 		category: opts.category || undefined,
 	};
 }
@@ -43,6 +44,9 @@ export async function memoryList(opts: ListOpts = {}) {
 	const api = new ApiClient();
 	const page = unwrap(await api.GET("/v1/memories", { params: { query: buildQuery(opts) } }));
 	const memories = page.items;
+	if (memories.length < page.total) {
+		console.error(`Showing ${memories.length} of ${page.total}; pass --limit to see more.`);
+	}
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(memories, null, 2));
@@ -66,6 +70,9 @@ export async function memorySearch(query: string, opts: ListOpts = {}) {
 		await api.GET("/v1/memories", { params: { query: buildQuery({ ...opts, q: searchQuery }) } }),
 	);
 	const memories = page.items;
+	if (memories.length < page.total) {
+		console.error(`Showing ${memories.length} of ${page.total}; pass --limit to see more.`);
+	}
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(memories, null, 2));

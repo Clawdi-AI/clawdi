@@ -5,6 +5,7 @@ import type { RawSession } from "../adapters/base";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import type { SessionDetail, SessionListItem, SessionMessage } from "../lib/api-schemas";
+import { parsePositiveInteger } from "../lib/cli-options";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata, stripTerminalEscapes } from "../lib/sanitize";
 import { requireSearchQuery } from "../lib/search-query";
@@ -21,7 +22,7 @@ interface SessionListOpts {
 	project?: string;
 	all?: boolean;
 	since?: string;
-	limit?: string;
+	limit?: string | number;
 	json?: boolean;
 }
 
@@ -53,7 +54,7 @@ export async function sessionList(opts: SessionListOpts) {
 	// defeat the point of the command. `--project` opts back into a filter.
 	const projectFilter = opts.all ? undefined : opts.project;
 	const since = opts.since ? new Date(opts.since) : undefined;
-	const limit = opts.limit ? Number.parseInt(opts.limit, 10) : 100;
+	const limit = opts.limit === undefined ? 100 : parsePositiveInteger(opts.limit);
 
 	const collected: ListedSession[] = [];
 	for (const agentType of targetTypes) {
@@ -106,6 +107,9 @@ export async function sessionList(opts: SessionListOpts) {
 	collected.sort((a, b) => b.started_at.localeCompare(a.started_at));
 	const truncated = collected.length > limit;
 	const shown = collected.slice(0, limit);
+	if (truncated) {
+		console.error(`Showing ${shown.length} of ${collected.length}; pass --limit to see more.`);
+	}
 
 	if (opts.json) {
 		console.log(JSON.stringify(shown, null, 2));
@@ -189,13 +193,13 @@ function relativeTime(then: Date): string {
 interface CloudSessionOpts {
 	agent?: string;
 	since?: string;
-	limit?: string;
+	limit?: string | number;
 	json?: boolean;
 }
 
-function cloudSessionLimit(value?: string): number {
-	const limit = value === undefined ? 25 : Number(value);
-	if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+function cloudSessionLimit(value?: string | number): number {
+	const limit = value === undefined ? 25 : parsePositiveInteger(value);
+	if (limit > 200) {
 		throw new Error("--limit must be an integer between 1 and 200.");
 	}
 	return limit;
@@ -244,6 +248,9 @@ export async function sessionSearch(query: string, opts: CloudSessionOpts = {}):
 			},
 		}),
 	);
+	if (page.items.length < page.total) {
+		console.error(`Showing ${page.items.length} of ${page.total}; pass --limit to see more.`);
+	}
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(page.items, null, 2));
@@ -390,18 +397,12 @@ export async function sessionShareCreate(
 
 export async function sessionShareList(
 	sessionId: string | undefined,
-	opts: { page?: string; limit?: string; json?: boolean } = {},
+	opts: { page?: string | number; limit?: string | number; json?: boolean } = {},
 ) {
 	requireAuth();
-	const page = opts.page === undefined ? 1 : Number(opts.page);
-	const limit = opts.limit === undefined ? 25 : Number(opts.limit);
-	if (
-		!Number.isSafeInteger(page) ||
-		page < 1 ||
-		!Number.isSafeInteger(limit) ||
-		limit < 1 ||
-		limit > 100
-	) {
+	const page = opts.page === undefined ? 1 : parsePositiveInteger(opts.page);
+	const limit = opts.limit === undefined ? 25 : parsePositiveInteger(opts.limit);
+	if (limit > 100) {
 		throw new Error("--page must be a positive integer; --limit must be between 1 and 100.");
 	}
 	const result = unwrap(
@@ -409,6 +410,9 @@ export async function sessionShareList(
 			params: { query: { page, page_size: limit, session_id: sessionId } },
 		}),
 	);
+	if (result.items.length < result.total) {
+		console.error(`Showing ${result.items.length} of ${result.total}; pass --limit to see more.`);
+	}
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(result, null, 2));
 		return;

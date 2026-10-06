@@ -4,6 +4,7 @@ import {
 	type ConfigKey,
 	getClawdiDir,
 	getConfig,
+	getEffectiveConfig,
 	getStoredConfig,
 	setConfigKey,
 	unsetConfigKey,
@@ -19,31 +20,25 @@ function unknownKey(k: string) {
 	console.error(chalk.gray(`  Known keys: ${CONFIG_KEYS.join(", ")}`));
 }
 
-export function configList() {
-	const stored = getStoredConfig();
-	if (Object.keys(stored).length === 0) {
-		console.log(chalk.gray("(no configuration set — using defaults)"));
-	} else {
-		for (const [k, v] of Object.entries(stored)) {
-			console.log(`  ${chalk.cyan(k)} = ${v}`);
-		}
-	}
-
-	// Surface the env override so users aren't confused by a set-in-disk
-	// value being ignored at runtime.
-	if (process.env.CLAWDI_API_URL) {
-		console.log();
+export function configList(opts: { json?: boolean } = {}) {
+	const effective = getEffectiveConfig();
+	if (opts.json) {
 		console.log(
-			chalk.gray(`  note: CLAWDI_API_URL=${process.env.CLAWDI_API_URL} overrides apiUrl`),
-		);
-	}
-	if (process.env.CLAWDI_DEPLOY_API_URL) {
-		console.log();
-		console.log(
-			chalk.gray(
-				`  note: CLAWDI_DEPLOY_API_URL=${process.env.CLAWDI_DEPLOY_API_URL} overrides deployApiUrl`,
+			JSON.stringify(
+				{
+					schemaVersion: "clawdi.config.v1",
+					values: effective,
+				},
+				null,
+				2,
 			),
 		);
+		return;
+	}
+
+	for (const key of CONFIG_KEYS) {
+		const entry = effective[key];
+		console.log(`  ${chalk.cyan(key)} = ${String(entry.value)} ${chalk.gray(`(${entry.source})`)}`);
 	}
 }
 
@@ -52,12 +47,7 @@ export function configGet(key: string) {
 		unknownKey(key);
 		process.exit(1);
 	}
-	const value = getStoredConfig()[key];
-	if (value === undefined) {
-		// Exit code 1 matches `git config --get` behavior for unset keys.
-		process.exit(1);
-	}
-	console.log(value);
+	console.log(getEffectiveConfig()[key].value);
 }
 
 export function configSet(key: string, value: string) {
