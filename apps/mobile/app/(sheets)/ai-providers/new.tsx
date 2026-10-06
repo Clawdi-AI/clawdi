@@ -1,1 +1,1 @@
-export { ProviderCreateScreen as default } from "@/hosted/v2/ai-providers/add-provider-dialog";
+export { default } from "@/pages/dashboard/ai-providers/new/page";

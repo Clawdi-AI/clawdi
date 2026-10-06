@@ -53,7 +53,6 @@ export function ProviderOAuthFlow({
 	dialogFooter?: boolean;
 	onBusyChange?: (busy: boolean) => void;
 }) {
-	const t = useI18n();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const capture = useForegroundLease();
@@ -270,22 +269,84 @@ export function ProviderOAuthFlow({
 		aiProviders,
 		scope,
 	]);
+	return (
+		<ProviderOAuthView
+			authorization={authorization}
+			issue={issue}
+			ready={ready}
+			online={online}
+			busy={action.busy}
+			error={action.error}
+			accountReady={scope.isReady}
+			configured={Boolean(provider || providers)}
+			reconnecting={Boolean(provider)}
+			startLabel={startLabel}
+			startIcon={startIcon}
+			dialogFooter={dialogFooter}
+			begin={() => void begin()}
+			stop={stop}
+			restart={() => {
+				setIssue(null);
+				setRetry((value) => value + 1);
+			}}
+			open={() =>
+				void action.run(async () => {
+					if (!authorization || !scope.isCurrent() || !capture()()) return;
+					await Linking.openURL(codexDeviceVerificationUrl(authorization.verification_url));
+				})
+			}
+		/>
+	);
+}
+export function ProviderOAuthView({
+	authorization,
+	issue,
+	ready,
+	online,
+	busy,
+	error,
+	accountReady,
+	configured,
+	reconnecting,
+	startLabel,
+	startIcon,
+	dialogFooter = false,
+	begin,
+	stop,
+	restart,
+	open,
+}: {
+	authorization: Authorization | null;
+	issue: "failed" | "expired" | null;
+	ready: boolean;
+	online: boolean;
+	busy: boolean;
+	error: unknown;
+	accountReady: boolean;
+	configured: boolean;
+	reconnecting: boolean;
+	startLabel?: string;
+	startIcon?: ReactNode;
+	dialogFooter?: boolean;
+	begin: () => void;
+	stop: () => void;
+	restart: () => void;
+	open: () => void;
+}) {
+	const t = useI18n();
 	if (dialogFooter && !authorization)
 		return (
 			<WebView recipe={providerDialogClasses.footer}>
 				{ready ? <AppText accessibilityRole="alert">{t("providers.oauthReady")}</AppText> : null}
-				{action.error ? (
+				{error ? (
 					<WebText recipe={styles.error} accessibilityRole="alert">
 						{t("providers.failed")}
 					</WebText>
 				) : null}
-				<Button
-					disabled={action.busy || !scope.isReady || !online || (!provider && !providers)}
-					onPress={() => void begin()}
-				>
+				<Button disabled={busy || !accountReady || !online || !configured} onPress={begin}>
 					{startIcon}
 					<Text>
-						{startLabel ?? t(provider ? "providers.reconnectOAuth" : "providers.connectOAuth")}
+						{startLabel ?? t(reconnecting ? "providers.reconnectOAuth" : "providers.connectOAuth")}
 					</Text>
 				</Button>
 			</WebView>
@@ -294,10 +355,12 @@ export function ProviderOAuthFlow({
 		<WebView recipe={dialogFooter ? `${providerDialogClasses.body} ${styles.root}` : styles.root}>
 			{!authorization ? (
 				<ActionButton
-					label={startLabel ?? t(provider ? "providers.reconnectOAuth" : "providers.connectOAuth")}
+					label={
+						startLabel ?? t(reconnecting ? "providers.reconnectOAuth" : "providers.connectOAuth")
+					}
 					icon={startIcon}
-					disabled={action.busy || !scope.isReady || !online || (!provider && !providers)}
-					onPress={() => void begin()}
+					disabled={busy || !accountReady || !online || !configured}
+					onPress={begin}
 				/>
 			) : (
 				<>
@@ -309,25 +372,9 @@ export function ProviderOAuthFlow({
 							</WebText>
 						</WebView>
 					</WebView>
-					<ActionButton
-						label={copy.open}
-						disabled={action.busy || issue === "expired"}
-						onPress={() =>
-							void action.run(async () => {
-								if (!scope.isCurrent() || !capture()()) return;
-								await Linking.openURL(codexDeviceVerificationUrl(authorization.verification_url));
-							})
-						}
-					/>
+					<ActionButton label={copy.open} disabled={busy || issue === "expired"} onPress={open} />
 					{issue === "failed" ? (
-						<ActionButton
-							label={copy.restart}
-							disabled={!online}
-							onPress={() => {
-								setIssue(null);
-								setRetry((value) => value + 1);
-							}}
-						/>
+						<ActionButton label={copy.restart} disabled={!online} onPress={restart} />
 					) : null}
 					{issue ? (
 						<WebText recipe={styles.error} accessibilityRole="alert">
@@ -341,17 +388,12 @@ export function ProviderOAuthFlow({
 				</>
 			)}
 			{ready ? <AppText accessibilityRole="alert">{t("providers.oauthReady")}</AppText> : null}
-			{action.error ? <AppText accessibilityRole="alert">{t("providers.failed")}</AppText> : null}
+			{error ? <AppText accessibilityRole="alert">{t("providers.failed")}</AppText> : null}
 		</WebView>
 	);
 }
 
-export function ProviderOAuth({
-	provider,
-}: {
-	provider?: SavedAiProvider;
-	refresh: () => Promise<void>;
-}) {
+export function ProviderOAuth({ provider }: { provider?: SavedAiProvider }) {
 	const t = useI18n();
 	const scope = useAccountScope();
 	return (

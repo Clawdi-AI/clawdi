@@ -1,1 +1,1 @@
-export { ProviderEditScreen as default } from "@/hosted/v2/ai-providers/edit-provider-dialog";
+export { default } from "@/pages/dashboard/ai-providers/[providerId]/edit/page";

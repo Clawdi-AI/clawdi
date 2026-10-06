@@ -1,6 +1,6 @@
 import type { AiProviderRemovalImpact, AiProviderRemovalResult } from "@clawdi/shared/api";
 import { aiProvidersPageClasses } from "@clawdi/shared/ui";
-import { providerRemovalCopy as copy } from "@clawdi/shared/view";
+import { providerRemovalCopy as copy, settingsCopy } from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { router, useLocalSearchParams } from "expo-router";
 import { Trash2 } from "lucide-react-native";
@@ -27,13 +27,7 @@ import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
-export function ProviderRemove({
-	providerId,
-}: {
-	providerId: string;
-	providerLabel?: string;
-	onRemoved: (result: AiProviderRemovalResult) => Promise<void>;
-}) {
+export function ProviderRemove({ providerId }: { providerId: string }) {
 	const t = useI18n();
 	const scope = useAccountScope();
 	const { providerRemoval } = useMobileApi();
@@ -104,6 +98,7 @@ function ProviderRemoveForm({
 	const [impact, setImpact] = useState<AiProviderRemovalImpact | null>(null);
 	const [acknowledged, setAcknowledged] = useState(false);
 	const [uncertain, setUncertain] = useState(false);
+	const [result, setResult] = useState<AiProviderRemovalResult | null>(null);
 	const attempt = useRef<{ impact: AiProviderRemovalImpact; key: string } | null>(null);
 	const review = () =>
 		action.run(async (current) => {
@@ -143,8 +138,8 @@ function ProviderRemoveForm({
 			setUncertain(false);
 			setImpact(null);
 			setAcknowledged(false);
+			setResult(result);
 			await onRemoved(result);
-			await sheet.close(true);
 		});
 
 	const reviewRef = useRef(review);
@@ -152,6 +147,27 @@ function ProviderRemoveForm({
 	useEffect(() => {
 		void reviewRef.current();
 	}, []);
+	if (result)
+		return (
+			<SheetPage title="Provider removed" fallback="/ai-providers" busy={action.busy} sheet={sheet}>
+				<AppText accessibilityRole="alert">
+					{result.remote_revoke_status === "pending"
+						? "Provider removed. Remote access revocation is pending."
+						: "Provider removed."}
+				</AppText>
+				{action.error ? <ApiErrorPanel error={action.error} /> : null}
+				<ActionButton
+					label={settingsCopy.done}
+					disabled={action.busy}
+					onPress={() =>
+						void action.run(async () => {
+							await onRemoved(result);
+							await sheet.close(true);
+						})
+					}
+				/>
+			</SheetPage>
+		);
 	return (
 		<SheetPage
 			title={`Remove ${providerLabel}?`}

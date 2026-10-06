@@ -196,6 +196,7 @@ function ProviderCreateView() {
 	return (
 		<SheetPage
 			title={title}
+			scroll={step !== "choose"}
 			fallback="/ai-providers"
 			busy={action.busy || oauthBusy}
 			sheet={sheet}
@@ -223,8 +224,10 @@ function ProviderCreateView() {
 			{uncertain ? <AppText accessibilityRole="alert">{t("providers.uncertain")}</AppText> : null}
 			<WebView
 				recipe={dialogStyles.body}
-				className="flex-none"
-				style={{ flex: 0, flexGrow: 0, flexShrink: 0, flexBasis: "auto" }}
+				className={step === "choose" ? "flex-1" : "flex-none"}
+				style={
+					step === "choose" ? undefined : { flex: 0, flexGrow: 0, flexShrink: 0, flexBasis: "auto" }
+				}
 			>
 				{step === "choose" ? (
 					<ProviderChooser

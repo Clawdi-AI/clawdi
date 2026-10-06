@@ -1,5 +1,5 @@
 import { projectUserSelectableAiProviders } from "@clawdi/shared";
-import type { AiProviderRemovalResult, SavedAiProvider } from "@clawdi/shared/api";
+import type { SavedAiProvider } from "@clawdi/shared/api";
 import {
 	aiProvidersUiClasses,
 	ENTITY_CARD_BASE,
@@ -56,12 +56,10 @@ export function AiProvidersScreen() {
 	return <ProvidersView key={`${scope.accountKey}:${scope.generation}`} />;
 }
 function ProvidersView() {
-	const cache = useQueryClient(),
-		scope = useAccountScope(),
+	const scope = useAccountScope(),
 		read = useAccountRead(),
 		{ aiProviders } = useMobileApi();
 	const router = useRouter();
-	const [removed, setRemoved] = useState<AiProviderRemovalResult | null>(null);
 	const providers = useQuery({
 		queryKey: accountQueryKey(scope, "ai-providers"),
 		queryFn: ({ signal }) => read((lease) => aiProviders.list(lease), signal),
@@ -69,9 +67,6 @@ function ProvidersView() {
 		retry: false,
 	});
 	const list = projectUserSelectableAiProviders(providers.data?.providers ?? []);
-	const refresh = async () => {
-		await providers.refetch();
-	};
 	return (
 		<SafeAreaScreen>
 			<NativeHeader
@@ -96,13 +91,7 @@ function ProvidersView() {
 							title={agentSurfaceCopy.aIProviders}
 							description={agentSurfaceCopy.chooseHowYourAgentsReachAModel}
 						/>
-						{removed ? (
-							<Text accessibilityRole="alert">
-								{removed.remote_revoke_status === "pending"
-									? "Provider removed. Remote access revocation is pending."
-									: "Provider removed."}
-							</Text>
-						) : null}
+
 						<WebView recipe={styles.section}>
 							<SectionLabel>{agentSurfaceCopy.clawdi}</SectionLabel>
 							<WebView recipe={ENTITY_CARD_BASE}>
@@ -152,30 +141,13 @@ function ProvidersView() {
 						<ApiErrorPanel error={providers.error} onRetry={() => void providers.refetch()} />
 					) : null
 				}
-				renderItem={({ item: provider }) => (
-					<ProviderCard
-						provider={provider}
-						refresh={refresh}
-						onRemoved={async (result) => {
-							setRemoved(result);
-							await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
-						}}
-					/>
-				)}
+				renderItem={({ item: provider }) => <ProviderCard provider={provider} />}
 			/>
 		</SafeAreaScreen>
 	);
 }
 
-function ProviderCard({
-	provider,
-	refresh,
-	onRemoved,
-}: {
-	provider: SavedAiProvider;
-	refresh: () => Promise<void>;
-	onRemoved: (result: AiProviderRemovalResult) => Promise<void>;
-}) {
+function ProviderCard({ provider }: { provider: SavedAiProvider }) {
 	const t = useI18n(),
 		scope = useAccountScope(),
 		read = useAccountRead(),
@@ -212,14 +184,10 @@ function ProviderCard({
 				]}
 			/>
 			<WebView recipe={styles.actions} className="flex-row">
-				<ProviderEdit provider={provider} refresh={refresh} />
-				<ProviderRemove
-					providerId={provider.provider_id}
-					providerLabel={presentation.label}
-					onRemoved={onRemoved}
-				/>
+				<ProviderEdit provider={provider} />
+				<ProviderRemove providerId={provider.provider_id} />
 				{provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile" ? (
-					<ProviderOAuth provider={provider} refresh={refresh} />
+					<ProviderOAuth provider={provider} />
 				) : null}
 				<Button
 					variant="ghost"

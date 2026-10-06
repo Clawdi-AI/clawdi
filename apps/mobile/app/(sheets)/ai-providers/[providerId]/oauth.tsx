@@ -1,1 +1,1 @@
-export { ProviderOAuthScreen as default } from "@/hosted/v2/ai-providers/provider-oauth-flow";
+export { default } from "@/pages/dashboard/ai-providers/[providerId]/oauth/page";
