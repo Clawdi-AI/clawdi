@@ -6,11 +6,6 @@ import {
 	reconcileHermesConfigValue,
 } from "../runtime/hermes-config";
 
-const CLAWDI_HERMES_MCP_SERVER = {
-	command: "clawdi",
-	args: ["mcp"],
-};
-
 function localHermesConfigContext(): HermesConfigCommandContext {
 	const home = process.env.HOME?.trim() || homedir();
 	return {
@@ -21,7 +16,11 @@ function localHermesConfigContext(): HermesConfigCommandContext {
 	};
 }
 
-export function reconcileLocalHermesMcp(enabled: boolean): boolean {
+export function reconcileLocalHermesMcp(
+	enabled: boolean,
+	command: string,
+	args: readonly string[],
+): boolean {
 	const context = localHermesConfigContext();
 	const current = getHermesRawConfigValue(context, "mcp_servers");
 	if (
@@ -34,7 +33,7 @@ export function reconcileLocalHermesMcp(enabled: boolean): boolean {
 		? { ...(current.value as Record<string, unknown>) }
 		: {};
 	delete next["clawdi-mcp"];
-	if (enabled) next.clawdi = CLAWDI_HERMES_MCP_SERVER;
+	if (enabled) next.clawdi = { command, args: [...args] };
 	else delete next.clawdi;
 	return reconcileHermesConfigValue(
 		context,
