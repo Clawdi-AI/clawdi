@@ -27,6 +27,280 @@ import { addSessionModel, describeSessionContent, JsonlSessionSource } from "./s
 import { flatSkillModule } from "./skill-dir";
 import { readCommandVersion } from "./version";
 
+const ROLLED_BACK_SEMANTICS = {
+	lifecycle: "inactive" as const,
+	display: "hidden" as const,
+	compressed_summary: false,
+	display_kind: "rolled_back",
+};
+
+const CONTEXT_INJECTION_TAGS = [
+	["# AGENTS.md instructions", "</INSTRUCTIONS>"],
+	["<environment_context>", "</environment_context>"],
+	["<skill>", "</skill>"],
+	["<user_shell_command>", "</user_shell_command>"],
+	["<turn_aborted>", "</turn_aborted>"],
+	["<subagent_notification>", "</subagent_notification>"],
+	["<recommended_plugins>", "</recommended_plugins>"],
+	["<goal_context>", "</goal_context>"],
+] as const;
+
+// These are the stable prefixes used by Codex's injected developer/context
+// records. Keep this list deliberately literal: rollback ownership must not
+// classify an ordinary user prompt from a substring in its body.
+const DEVELOPER_PREFIXES = [
+	"<permissions instructions>",
+	"<model_switch>",
+	"<managed_developer_instructions>",
+	"<apps_instructions>",
+	"<collaboration_mode>",
+	"<multi_agent_mode>",
+	"<environments_instructions>",
+	"<git_attribution>",
+	"<plugins_instructions>",
+	"<realtime_conversation>",
+	"<skills_instructions>",
+	"<tools>",
+	"<personality_spec>",
+	"<token_budget>",
+	"<context_window>",
+	"<context_window_guidance>",
+	"<rollout_budget>",
+];
+
+interface RollbackRecordMeta {
+	recordSeq: number;
+	isAssistantOrCall: boolean;
+	userInputOrder: number | undefined;
+}
+
+interface RollbackBoundary {
+	alive: boolean;
+	userInputOrder: number | undefined;
+	records: number[];
+}
+
+interface RollbackPlan {
+	isUndone(recordSeq: number): boolean;
+}
+
+function numberValue(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isInteger(value) ? value : undefined;
+}
+
+function recordPayload(raw: JsonObject): JsonObject | null {
+	return jsonObject(raw.payload);
+}
+
+function recordType(raw: JsonObject): string | null {
+	return jsonString(raw.type) ?? jsonString(recordPayload(raw)?.type);
+}
+
+function recordText(raw: JsonObject): string {
+	const payload = recordPayload(raw);
+	const value = payload?.content ?? payload?.message ?? raw.content ?? raw.message;
+	if (typeof value === "string") return value;
+	if (Array.isArray(value)) {
+		return value
+			.map((part) => {
+				const object = jsonObject(part);
+				return object ? (jsonString(object.text) ?? jsonString(object.content) ?? "") : "";
+			})
+			.filter(Boolean)
+			.join("\n");
+	}
+	if (value && typeof value === "object") {
+		const object = jsonObject(value);
+		if (object) return recordText({ payload: object });
+	}
+	return "";
+}
+
+function userInputOrder(raw: JsonObject): number | undefined {
+	const payload = recordPayload(raw);
+	return numberValue(raw.user_input_order) ?? numberValue(payload?.user_input_order);
+}
+
+function turnId(raw: JsonObject): string | undefined {
+	const payload = recordPayload(raw);
+	return (
+		jsonString(raw.turn_id) ?? jsonString(payload?.turn_id) ?? jsonString(raw.turnId) ?? undefined
+	);
+}
+
+function isContextInjection(raw: JsonObject): boolean {
+	const text = recordText(raw).trim();
+	if (!text) return false;
+	if (
+		CONTEXT_INJECTION_TAGS.some(([start, end]) => text.startsWith(start) && text.endsWith(end)) ||
+		(text.startsWith("<external_") && text.match(/^<external_([^>]+)>[\s\S]*<\/external_\1>$/)) ||
+		(text.startsWith("<codex_internal_context") && text.endsWith("</codex_internal_context>")) ||
+		/^<hook_prompt\b[^>]*\bhook_run_id\s*=\s*["'][^"']+[^>]*>[\s\S]*<\/hook_prompt>$/.test(text)
+	)
+		return true;
+	if (
+		text.startsWith("Warning: The maximum number of unified exec processes you can keep open is") ||
+		(text.startsWith("Warning: apply_patch was requested via ") &&
+			text.endsWith("Use the apply_patch tool instead of exec_command.")) ||
+		text.startsWith("Warning: Your account was flagged for potentially high-risk cyber activity")
+	)
+		return true;
+	const lower = text.toLocaleLowerCase();
+	return DEVELOPER_PREFIXES.some((prefix) => lower.startsWith(prefix));
+}
+
+function sameUserResponseItem(previous: JsonObject | undefined, current: JsonObject): boolean {
+	if (previous?.type !== "response_item") return false;
+	const previousPayload = recordPayload(previous);
+	const currentPayload = recordPayload(current);
+	return (
+		jsonString(previousPayload?.type) === "message" &&
+		jsonString(previousPayload?.role) === "user" &&
+		jsonString(currentPayload?.type) === "user_message" &&
+		recordText(previous) === recordText(current)
+	);
+}
+
+/** Implements the upstream rollback boundary ownership rules in one pass. */
+class RollbackPlanner {
+	private boundaries: RollbackBoundary[] = [];
+	private stack: number[] = [];
+	private pendingContext: number[] = [];
+	private pendingTurnIds = new Set<string>();
+	private turnBoundaries = new Map<string, number>();
+	private records: RollbackRecordMeta[] = [];
+	private undoneBoundaries = new Set<number>();
+	private recordBoundaries = new Int32Array(1024).fill(-1);
+	private previousRaw: JsonObject | undefined;
+
+	private ensureRecordCapacity(recordSeq: number): void {
+		if (recordSeq < this.recordBoundaries.length) return;
+		let length = this.recordBoundaries.length;
+		while (length <= recordSeq) length *= 2;
+		const expanded = new Int32Array(length).fill(-1);
+		expanded.set(this.recordBoundaries);
+		this.recordBoundaries = expanded;
+	}
+
+	private assign(recordSeq: number, boundary: number | undefined): void {
+		this.ensureRecordCapacity(recordSeq);
+		if (boundary === undefined) return;
+		this.recordBoundaries[recordSeq] = boundary;
+		this.boundaries[boundary]?.records.push(recordSeq);
+	}
+
+	private pushBoundary(recordSeq: number, order: number | undefined): number {
+		const boundary = this.boundaries.length;
+		this.boundaries.push({ alive: true, userInputOrder: order, records: [] });
+		this.stack.push(boundary);
+		for (const pending of this.pendingContext) this.assign(pending, boundary);
+		this.pendingContext = [];
+		for (const id of this.pendingTurnIds) this.turnBoundaries.set(id, boundary);
+		this.pendingTurnIds.clear();
+		this.assign(recordSeq, boundary);
+		return boundary;
+	}
+
+	private rollback(count: number): void {
+		for (let index = 0; index < count && this.stack.length > 0; index++) {
+			const boundary = this.stack.pop();
+			if (boundary !== undefined) {
+				const item = this.boundaries[boundary];
+				if (item) item.alive = false;
+				this.undoneBoundaries.add(boundary);
+			}
+		}
+		this.pendingContext = [];
+		this.pendingTurnIds.clear();
+	}
+
+	observe(raw: JsonObject, recordSeq: number): void {
+		this.ensureRecordCapacity(recordSeq);
+		const payload = recordPayload(raw);
+		const type = recordType(raw);
+		const order = userInputOrder(raw);
+		const payloadType = jsonString(payload?.type);
+		const isAssistantOrCall =
+			(payloadType === "message" && jsonString(payload?.role) === "assistant") ||
+			payloadType === "function_call" ||
+			payloadType === "custom_tool_call";
+		this.records.push({ recordSeq, isAssistantOrCall, userInputOrder: order });
+
+		if (type === "thread_rolled_back" || payloadType === "thread_rolled_back") {
+			const count =
+				numberValue(raw.n) ??
+				numberValue(payload?.n) ??
+				numberValue(raw.num_turns) ??
+				numberValue(payload?.num_turns) ??
+				numberValue(raw.count) ??
+				0;
+			this.rollback(Math.max(0, count));
+			this.previousRaw = raw;
+			return;
+		}
+
+		const isTurnPending = type === "turn_started" || type === "turn_context";
+		if (isTurnPending) {
+			const id = turnId(raw);
+			if (id) this.pendingTurnIds.add(id);
+			this.previousRaw = raw;
+			return;
+		}
+
+		const id = turnId(raw);
+		const isResponseUser =
+			raw.type === "response_item" &&
+			payloadType === "message" &&
+			jsonString(payload?.role) === "user";
+		const isEventUser = raw.type === "event_msg" && payloadType === "user_message";
+		const mergedEventUser = isEventUser && sameUserResponseItem(this.previousRaw, raw);
+		const isAgentBoundary =
+			payloadType === "inter_agent_communication" ||
+			payloadType === "inter_agent_communication_metadata" ||
+			type === "inter_agent_communication" ||
+			type === "inter_agent_communication_metadata";
+		if (
+			(isResponseUser || (isEventUser && !mergedEventUser) || isAgentBoundary) &&
+			!isContextInjection(raw)
+		) {
+			this.pushBoundary(recordSeq, order);
+		} else if (isContextInjection(raw)) {
+			if (this.stack.length > 0) this.pendingContext.push(recordSeq);
+		} else {
+			const boundary = id ? this.turnBoundaries.get(id) : this.stack.at(-1);
+			this.assign(recordSeq, boundary);
+		}
+		if (id && this.turnBoundaries.has(id)) this.assign(recordSeq, this.turnBoundaries.get(id));
+		this.previousRaw = raw;
+	}
+
+	finish(): RollbackPlan {
+		const current = this.stack.at(-1);
+		if (current !== undefined)
+			for (const pending of this.pendingContext) this.assign(pending, current);
+		const threshold = Math.min(
+			...[...this.undoneBoundaries]
+				.map((boundary) => this.boundaries[boundary]?.userInputOrder)
+				.filter((value): value is number => value !== undefined),
+		);
+		const undone = new Set<number>();
+		for (const boundary of this.undoneBoundaries) {
+			for (const recordSeq of this.boundaries[boundary]?.records ?? []) undone.add(recordSeq);
+		}
+		if (Number.isFinite(threshold)) {
+			for (const record of this.records) {
+				if (
+					record.isAssistantOrCall &&
+					record.userInputOrder !== undefined &&
+					record.userInputOrder >= threshold
+				)
+					undone.add(record.recordSeq);
+			}
+		}
+		return { isUndone: (recordSeq) => undone.has(recordSeq) };
+	}
+}
+
 function codexDir() {
 	return getCodexHome();
 }
@@ -312,8 +586,10 @@ async function parseSessionFile(
 	let inputTokens = 0;
 	let outputTokens = 0;
 	let cacheReadTokens = 0;
+	const rollbackPlanner = new RollbackPlanner();
 
-	for await (const { data: raw } of source.records()) {
+	for await (const { data: raw, recordSeq } of source.records()) {
+		rollbackPlanner.observe(raw, recordSeq);
 		const parsed = raw as SessionLine;
 
 		const ts = parsed.timestamp ? new Date(parsed.timestamp) : null;
@@ -350,6 +626,7 @@ async function parseSessionFile(
 			}
 		}
 	}
+	const rollbackPlan = rollbackPlanner.finish();
 	if (!sessionId) return null;
 	if (!matchesProjectFilter(projectPath, absFilter)) return null;
 	const sessionKey = sessionId;
@@ -364,9 +641,12 @@ async function parseSessionFile(
 				continue;
 			}
 			const events = sequenceSessionEvents(
-				codexEventDrafts(raw, sessionKey, recordSeq).map((draft) =>
-					bindAssistantModel(draft, model),
-				),
+				codexEventDrafts(raw, sessionKey, recordSeq).map((draft) => {
+					const bound = bindAssistantModel(draft, model);
+					return rollbackPlan.isUndone(recordSeq)
+						? { ...bound, semantics: ROLLED_BACK_SEMANTICS }
+						: bound;
+				}),
 				seq,
 			);
 			seq += events.length;
@@ -378,7 +658,7 @@ async function parseSessionFile(
 		source.eager,
 		(message) => !message.content.startsWith("<environment_context>"),
 	);
-	if (description.messageCount === 0 || !startedAt) return null;
+	if (description.eventCount === 0 || !startedAt) return null;
 
 	endedAt ??= startedAt;
 	const firstRealUser = description.firstUser;
