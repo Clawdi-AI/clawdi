@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
+import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
+import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
 import {
 	managedSkillReservationState,
@@ -74,6 +76,49 @@ describe("ClaudeCodeAdapter.detect", () => {
 });
 
 describe("ClaudeCodeAdapter.collectSessions", () => {
+	it("ignores invalid metadata timestamps without changing uploaded content", async () => {
+		const adapter = new ClaudeCodeAdapter();
+		const original = (await adapter.sessions.collect({ kind: "complete" })).sessions[0];
+		if (!original) throw new Error("expected Claude fixture session");
+		writeFileSync(
+			original.rawFilePath,
+			`${readFileSync(original.rawFilePath, "utf8").replace(
+				"2026-04-20T10:00:00.000Z",
+				"not-a-timestamp",
+			)}${JSON.stringify({ type: "session-metadata", timestamp: "not-a-timestamp" })}\n`,
+		);
+		const current = (await adapter.sessions.collect({ kind: "complete" })).sessions[0];
+		if (!current) throw new Error("expected Claude fixture session with valid message timestamps");
+		expect(current.startedAt.toISOString()).toBe("2026-04-20T10:00:01.000Z");
+		expect(current.endedAt?.toISOString()).toBe("2026-04-20T10:00:05.000Z");
+		expect(current.events).toEqual(original.events);
+		expect((await prepareSessionUpload(current, "events-v1")).localHash).toBe(
+			(await prepareSessionUpload(original, "events-v1")).localHash,
+		);
+	});
+
+	it("bounds models in metadata records that emit no events", async () => {
+		const adapter = new ClaudeCodeAdapter();
+		const session = (await adapter.sessions.collect({ kind: "complete" })).sessions[0];
+		if (!session) throw new Error("expected Claude fixture session");
+		const records = Array.from({ length: 128 }, (_, index) =>
+			JSON.stringify({
+				type: "assistant",
+				message: { role: "assistant", model: `model-${index}`, content: [] },
+			}),
+		);
+		writeFileSync(
+			session.rawFilePath,
+			`${readFileSync(session.rawFilePath, "utf8")}${records.join("\n")}\n`,
+		);
+		await expect(adapter.sessions.collect({ kind: "complete" })).rejects.toThrow(
+			"session model metadata exceeds supported bounds",
+		);
+	});
+
+	it("preserves origin/main session bytes and localHash", async () => {
+		await assertSessionGolden("claude-code", new ClaudeCodeAdapter().sessions);
+	});
 	it("parses the fixture session with correct tokens and model", async () => {
 		const a = new ClaudeCodeAdapter();
 		const { sessions, dedupedCount } = await a.sessions.collect({ kind: "complete" });

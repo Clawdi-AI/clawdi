@@ -8,7 +8,7 @@ import type { RawSession, SessionEvent, SessionMessage, SyncReadContext } from "
 import { type JsonObject, jsonObject } from "./rich-event-mapping";
 
 export const SESSION_RECORD_MAX_BYTES = 8 * 1024 * 1024;
-const EAGER_SESSION_MAX_BYTES = 256 * 1024;
+export const EAGER_SESSION_MAX_BYTES = 256 * 1024;
 const READ_BUFFER_BYTES = 64 * 1024;
 
 export function addSessionModel(models: Set<string>, model: string): void {

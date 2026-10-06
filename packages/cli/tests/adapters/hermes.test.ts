@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { scanSessionModule } from "../../src/adapters/base";
 import { HermesAdapter } from "../../src/adapters/hermes";
+import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
 import { computeLastActivityIso } from "../../src/lib/session-activity";
 import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
@@ -49,6 +50,9 @@ describe("HermesAdapter.detect", () => {
 });
 
 describe("HermesAdapter.collectSessions", () => {
+	it("preserves origin/main session bytes and localHash", async () => {
+		await assertSessionGolden("hermes", new HermesAdapter().sessions);
+	});
 	it.each(["user", "tool"])(
 		"re-maps persisted %s inline images without invalid attachment metadata",
 		async (role) => {
@@ -710,14 +714,14 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 		expect(readFileSync(extracted, "utf-8")).toContain("description: A nested demo skill");
 	});
 
-	it("refuses to write shared content through a managed shared namespace", async () => {
+	it("refuses to write shared content over the reserved shared target", async () => {
 		const skillsRoot = join(tmpHome, ".hermes", "skills");
-		const sharedRoot = join(skillsRoot, "shared");
+		const sharedRoot = join(skillsRoot, "shared", "demo__owner");
 		mkdirSync(sharedRoot, { recursive: true });
 		writeFileSync(join(sharedRoot, "SKILL.md"), "# Managed shared namespace\n");
 		reserveManagedSkill({
 			targetDir: sharedRoot,
-			id: "shared",
+			id: "demo__owner",
 			version: 1,
 			digest: "a".repeat(64),
 			manager: "local-setup",
@@ -726,10 +730,9 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 
 		const adapter = new HermesAdapter();
 		await expect(adapter.skills.writeSharedArchive("demo", "owner", tarBytes)).rejects.toThrow(
-			"Skill shared is reserved by a managed Skill owner",
+			"Skill demo__owner is reserved by a managed Skill owner",
 		);
 		expect(readFileSync(join(sharedRoot, "SKILL.md"), "utf8")).toBe("# Managed shared namespace\n");
-		expect(existsSync(join(sharedRoot, "demo__owner"))).toBe(false);
 	});
 
 	it("getSkillPath returns the canonical SKILL.md anchor under skills/", () => {

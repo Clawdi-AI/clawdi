@@ -1431,7 +1431,7 @@ that bootstrap reuse fix also requires a compatible image. Ship this additive
 reader before qualifying the new image/CLI pair. No new receipt version or
 runtime verification command is required.
 
-Done: `bash scripts/test.sh cli tests/runtime.test.ts src/runtime/observed-v2.test.ts`
+Done: `bash scripts/test.sh cli tests/runtime-*.test.ts src/runtime/observed-v2.test.ts`
 passes bootstrap adoption without warnings, stale-metadata revalidation,
 invalid-state preservation, and the existing activation/rollback contracts.
 

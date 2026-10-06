@@ -96,5 +96,5 @@ The maintained coverage is in:
 
 - `packages/cli/src/runtime/manifest-reconciliation.test.ts` for strict Hosted
   admission and provider replacement;
-- `packages/cli/tests/runtime.test.ts` for full runtime convergence; and
+- `packages/cli/tests/runtime-*.test.ts` for full runtime convergence; and
 - `packages/cli/src/lib/ai-provider-projection.test.ts` for model-field mapping.

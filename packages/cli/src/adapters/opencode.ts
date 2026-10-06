@@ -19,7 +19,7 @@ import type {
 	SessionScanResult,
 	SyncReadContext,
 } from "./base";
-import { getOpenCodeDataDir, getOpenCodeDbPath } from "./paths";
+import { getOpenCodeDataDir, getOpenCodeDbPath, matchesProjectFilter } from "./paths";
 import {
 	canonicalStructuredString,
 	type JsonObject,
@@ -29,7 +29,11 @@ import {
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
-import { describeSessionContent, SESSION_RECORD_MAX_BYTES } from "./session-source";
+import {
+	describeSessionContent,
+	EAGER_SESSION_MAX_BYTES,
+	SESSION_RECORD_MAX_BYTES,
+} from "./session-source";
 import { openReadonlySqlite, type ReadonlySqliteDatabase } from "./sqlite";
 import { readCommandVersion } from "./version";
 
@@ -546,7 +550,7 @@ async function parseSession(
 	};
 	const description = await describeSessionContent(
 		readEvents,
-		!context?.streaming && size.bytes <= 256 * 1024,
+		!context?.streaming && size.bytes <= EAGER_SESSION_MAX_BYTES,
 	);
 	if (description.eventCount === 0) return null;
 	const eventModels = description.modelsUsed;
@@ -649,7 +653,7 @@ export class OpenCodeAdapter implements AgentAdapterCore {
 			for (const value of rows) {
 				const row = value as OpenCodeSessionRow;
 				if (context) await setImmediate(undefined, { signal: context.signal });
-				if (normalizedFilter !== null && resolve(row.directory) !== normalizedFilter) continue;
+				if (!matchesProjectFilter(row.directory, normalizedFilter)) continue;
 				const session = await parseSession(db, row, context);
 				if (session) sessions.push(session);
 			}

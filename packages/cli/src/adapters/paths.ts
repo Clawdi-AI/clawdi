@@ -1,6 +1,6 @@
 import { type Dirent, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 
 /**
  * Directory names to skip when scanning for skills. Applied by every adapter's
@@ -14,6 +14,20 @@ export function isPathWithinRoots(path: string, roots: readonly string[]): boole
 		const fromRoot = relative(root, path);
 		return fromRoot === "" || (!fromRoot.startsWith("..") && !isAbsolute(fromRoot));
 	});
+}
+
+/** Include a project and its descendants, with filesystem path boundaries. */
+export function matchesProjectFilter(
+	path: string | null | undefined,
+	absFilter: string | null,
+): boolean {
+	if (!absFilter) return true;
+	if (typeof path !== "string" || !path) return false;
+	const fromFilter = relative(absFilter, path);
+	return (
+		fromFilter === "" ||
+		(fromFilter !== ".." && !fromFilter.startsWith(`..${sep}`) && !isAbsolute(fromFilter))
+	);
 }
 
 /**
