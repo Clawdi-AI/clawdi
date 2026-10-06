@@ -270,7 +270,7 @@ describe("Hosted shared OAuth profile binding", () => {
 			},
 		});
 		await expect(mismatched.getPlans()).rejects.toThrow(
-			"doesn't match the current Cloud and Hosted endpoints",
+			"doesn't match the current API and deploy API endpoints",
 		);
 		expect(requests).toBe(0);
 
@@ -290,7 +290,7 @@ describe("Hosted shared OAuth profile binding", () => {
 			}),
 		);
 		await expect(snapshot.getPlans()).rejects.toThrow(
-			"doesn't match the current Cloud and Hosted endpoints",
+			"doesn't match the current API and deploy API endpoints",
 		);
 		expect(requests).toBe(0);
 	});

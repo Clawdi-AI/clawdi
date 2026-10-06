@@ -103,7 +103,7 @@ export function createHostedDeployAuthProvider(
 			} catch {
 				throw new HostedDeployAuthorizationError(
 					"hosted_endpoint_binding_mismatch",
-					"This sign-in doesn't match the current Cloud and Hosted endpoints. Restore your endpoint configuration, or run `clawdi auth logout` and then `clawdi auth login`.",
+					"This sign-in doesn't match the current API and deploy API endpoints. Restore your endpoint configuration, or run `clawdi auth logout` and then `clawdi auth login`.",
 				);
 			}
 			const token = await getClawdiAccessToken(profile.cloudApiUrl);
@@ -119,7 +119,7 @@ export function createHostedDeployAuthProvider(
 			} catch {
 				throw new HostedDeployAuthorizationError(
 					"hosted_endpoint_binding_mismatch",
-					"The refreshed sign-in doesn't match the current Cloud and Hosted endpoints. Run `clawdi auth login` again.",
+					"The refreshed sign-in doesn't match the current API and deploy API endpoints. Run `clawdi auth login` again.",
 				);
 			}
 			return { token, expiresAt: refreshed.accessTokenExpiresAt };

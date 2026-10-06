@@ -248,7 +248,7 @@ export interface DeployPromptAdapter {
 
 class DeployCancelledError extends Error {
 	constructor() {
-		super("Deployment canceled.");
+		super("Deploy canceled.");
 		this.name = "DeployCancelledError";
 	}
 }
@@ -1107,7 +1107,7 @@ export async function runDeployFlow(
 		const immediateFailure = operationFailure(operation);
 		if (immediateFailure) throw immediateFailure;
 		deploymentId = operation.metadata.deploymentId.trim() || null;
-		if (!deploymentId) throw new Error("Hosted deploy API accepted creation without an Agent ID.");
+		if (!deploymentId) throw new Error("The deploy API accepted creation without an Agent ID.");
 		onEvent({ stage: "accepted", message: `Accepted ${deploymentId} (${operation.name}).` });
 		completed = operation.done;
 		if (parsed.wait) {
