@@ -134,7 +134,7 @@ function SessionShareDialogContent({
 				: "Share session";
 	const description =
 		target.scope === "response"
-			? "Anyone with the link can view this Agent response."
+			? "Anyone with the link can view this agent response."
 			: target.scope === "through"
 				? "Anyone with the link can view the conversation through this message."
 				: "Anyone with the link can view this conversation. Future messages won’t be added.";
@@ -242,7 +242,7 @@ function SessionShareDialogContent({
 									<p className="mb-2 text-xs font-medium text-muted-foreground">Older link</p>
 									<ShareLinkRow
 										url={legacyUrl}
-										label="Live Session link"
+										label="Live session link"
 										detail={`Reflects future uploads · created ${relativeTime(legacyLink.created_at)}`}
 										onRevoke={revokeLegacyLink}
 										onRevoked={refreshShares}
@@ -269,7 +269,7 @@ function SessionShareDialogContent({
 }
 
 function shareLabel(share: SessionShareItem): string {
-	if (share.scope === "session") return "Full Session snapshot";
+	if (share.scope === "session") return "Full session snapshot";
 	if (share.scope === "response") return "Single response snapshot";
 	return `Conversation through message ${share.message_count}`;
 }
@@ -358,7 +358,7 @@ function ShareLinkRow({
 					<AlertDialogHeader>
 						<AlertDialogTitle>Turn off this share link?</AlertDialogTitle>
 						<AlertDialogDescription>
-							Anyone using this link will immediately lose access. The original Session stays
+							Anyone using this link will immediately lose access. The original session stays
 							unchanged.
 						</AlertDialogDescription>
 					</AlertDialogHeader>

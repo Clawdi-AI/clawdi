@@ -91,7 +91,7 @@ function ExpiredShare() {
 		<div className="mx-auto flex min-h-[60vh] max-w-md flex-col items-center justify-center px-6 text-center">
 			<div className="text-xs uppercase tracking-wide text-muted-foreground">Link turned off</div>
 			<h1 className="mt-2 text-2xl font-semibold tracking-tight">
-				This Session share is no longer available
+				This session share is no longer available
 			</h1>
 			<p className="mt-3 text-sm text-muted-foreground">
 				The owner revoked this link. Ask them to create a new share if you still need access.

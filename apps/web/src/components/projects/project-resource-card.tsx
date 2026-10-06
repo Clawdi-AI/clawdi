@@ -105,7 +105,7 @@ export function UnavailableProjectResourceCard({
 					<FolderKanban />
 				</IconChip>
 			}
-			title="Unavailable Project"
+			title="Unavailable project"
 			badges={<Badge variant="outline">Access unavailable</Badge>}
 			footer={footer}
 			actions={actions}

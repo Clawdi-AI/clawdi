@@ -211,7 +211,7 @@ function SkillsPageInner() {
 
 	const removeSkill = useMutation({
 		mutationFn: async (skillKey: string) => {
-			if (!selectedProject || !writable) throw new Error("This Project is read-only");
+			if (!selectedProject || !writable) throw new Error("This project is read-only");
 			return unwrap(
 				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
 					params: {
@@ -237,8 +237,8 @@ function SkillsPageInner() {
 					title="Skills"
 					description={
 						selectedProject
-							? `Skills in ${displayProjectName(selectedProject)}. Linked Agents use the whole Project.`
-							: "Choose a Project to view or add its Skills."
+							? `Skills in ${displayProjectName(selectedProject)}. Linked agents use the whole project.`
+							: "Choose a project to view or add its skills."
 					}
 					actions={
 						selectedProject ? (
@@ -272,17 +272,17 @@ function SkillsPageInner() {
 				<ApiErrorPanel
 					error={projectError}
 					onRetry={() => void projectsQuery.refetch()}
-					title="Couldn't load Projects"
+					title="Couldn't load projects"
 				/>
 			) : null}
 
 			{legacyTarget && !projectParam ? (
 				<Alert>
-					<AlertTitle>Agent Workspace Skills moved to the Agent</AlertTitle>
+					<AlertTitle>Agent workspace skills moved to the agent</AlertTitle>
 					<AlertDescription className="space-y-2">
 						<p>
-							A Workspace contains one Agent&apos;s private resources. Open that Agent to view its
-							Workspace Skills, or choose a Project here.
+							A workspace contains one agent&apos;s private resources. Open that agent to view its
+							workspace skills, or choose a project here.
 						</p>
 						<Button
 							variant="outline"
@@ -300,7 +300,7 @@ function SkillsPageInner() {
 				<Alert>
 					<AlertTitle>Project unavailable</AlertTitle>
 					<AlertDescription>
-						Choose another Project. It may have been archived or your access may have changed.
+						Choose another project. It may have been archived or your access may have changed.
 					</AlertDescription>
 				</Alert>
 			) : null}
@@ -315,7 +315,7 @@ function SkillsPageInner() {
 						await queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
 						selectProject(project.id);
 						toast.success("Project created", {
-							description: "Add the first Skill without leaving this page.",
+							description: "Add the first skill without leaving this page.",
 						});
 					}}
 				/>
@@ -329,7 +329,7 @@ function SkillsPageInner() {
 									void setSearch(v);
 									void setPage(1);
 								}}
-								placeholder="Search this Project…"
+								placeholder="Search this project…"
 							/>
 						}
 						filters={
@@ -337,8 +337,8 @@ function SkillsPageInner() {
 								projects={projects}
 								value={selectedProject.id}
 								onValueChange={selectProject}
-								placeholder="Choose a Project"
-								ariaLabel="Choose Project"
+								placeholder="Choose a project"
+								ariaLabel="Choose project"
 								className="w-full sm:w-72"
 							/>
 						}
@@ -346,9 +346,9 @@ function SkillsPageInner() {
 
 					{!writable ? (
 						<Alert>
-							<AlertTitle>Read-only Project</AlertTitle>
+							<AlertTitle>Read-only project</AlertTitle>
 							<AlertDescription>
-								You can view these Skills. Only the Project owner can add, edit, copy, move, or
+								You can view these skills. Only the project owner can add, edit, copy, move, or
 								remove them.
 							</AlertDescription>
 						</Alert>
@@ -367,10 +367,10 @@ function SkillsPageInner() {
 						isLoading={skillsQuery.isLoading}
 						emptyMessage={
 							search.trim()
-								? "No Skills in this Project match that search."
+								? "No skills in this project match that search."
 								: writable
-									? "No Skills yet. Add one with instructions or import one from GitHub."
-									: "No Skills are in this Project yet."
+									? "No skills yet. Add one with instructions or import one from GitHub."
+									: "No skills are in this project yet."
 						}
 						capabilitiesFor={(skill) => skillCapabilities(skill, selectedProject)}
 						actionsFor={(skill) =>
@@ -453,7 +453,7 @@ function ProjectSelection({
 		return (
 			<EmptyState
 				icon={FolderKanban}
-				description="Create a Project to bundle Skills and Vault access for Agents."
+				description="Create a project to bundle skills and vault access for agents."
 				action={
 					<CreateProjectDialog onCreated={onProjectCreated}>
 						<Button>
@@ -467,7 +467,7 @@ function ProjectSelection({
 	}
 	return (
 		<section className="space-y-3">
-			<h2 className="text-sm font-medium">Choose a Project</h2>
+			<h2 className="text-sm font-medium">Choose a project</h2>
 			<div className={HERO_GRID_CLASS}>
 				{projects.map((project) => (
 					<ProjectResourceCard
@@ -507,7 +507,7 @@ function ImportSkillDialog({
 				.replace(/^https?:\/\/github\.com\//, "")
 				.replace(/\/$/, "");
 			const parts = clean.split("/").filter(Boolean);
-			if (parts.length < 2) throw new Error("Enter owner/repository or a GitHub Skill path");
+			if (parts.length < 2) throw new Error("Enter owner/repository or a GitHub skill path");
 			return unwrap(
 				await api.POST("/v1/projects/{project_id}/skills/install", {
 					params: { path: { project_id: project.id } },
@@ -542,7 +542,7 @@ function ImportSkillDialog({
 				<DialogHeader>
 					<DialogTitle>Import from GitHub</DialogTitle>
 					<DialogDescription>
-						Copy a GitHub Skill into {displayProjectName(project)}. This Project owns the imported
+						Copy a GitHub skill into {displayProjectName(project)}. This project owns the imported
 						copy.
 					</DialogDescription>
 				</DialogHeader>
@@ -554,7 +554,7 @@ function ImportSkillDialog({
 					}}
 				>
 					<div className="space-y-1.5">
-						<Label htmlFor="github-skill-source">Repository or Skill path</Label>
+						<Label htmlFor="github-skill-source">Repository or skill path</Label>
 						<Input
 							id="github-skill-source"
 							value={source}

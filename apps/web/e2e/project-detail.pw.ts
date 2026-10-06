@@ -203,10 +203,10 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 	await projectTabs.getByRole("tab", { name: "Vaults" }).click();
 	await expect(page.getByRole("heading", { name: "Vaults", exact: true })).toBeVisible();
 	const catalog = page.getByTestId("project-vault-catalog");
-	const linked = catalog.getByRole("region", { name: "In this Project Vaults", exact: true });
-	const available = catalog.getByRole("region", { name: "Available Project Vaults" });
-	await expect(linked.getByText("In this Project", { exact: true }).locator("..")).toHaveText(
-		"In this Project1",
+	const linked = catalog.getByRole("region", { name: "In this project vaults", exact: true });
+	const available = catalog.getByRole("region", { name: "Available project vaults" });
+	await expect(linked.getByText("In this project", { exact: true }).locator("..")).toHaveText(
+		"In this project1",
 	);
 	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
 		"Available1",
@@ -215,9 +215,9 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 		.getByTestId("project-vault-card")
 		.filter({ hasText: "Release archive" });
 	await expect(
-		catalog.getByRole("button", { name: "Remove Already attached from Project" }),
+		catalog.getByRole("button", { name: "Remove Already attached from project" }),
 	).toBeVisible();
-	await catalog.getByLabel("Search Vaults").fill("release");
+	await catalog.getByLabel("Search vaults").fill("release");
 	await expect(catalog.getByTestId("project-vault-card")).toHaveCount(1);
 	await expect(linked).toHaveCount(0);
 	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
@@ -232,20 +232,20 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 		await route.fallback();
 	});
 	try {
-		await releaseVault.getByRole("button", { name: "Add Release archive to Project" }).click();
+		await releaseVault.getByRole("button", { name: "Add Release archive to project" }).click();
 		await expect(linked.getByRole("link", { name: "Open vault Release archive" })).toBeVisible();
 		await expect(releaseVault.getByRole("button")).toHaveText(["Adding…"]);
-		await expect(linked.getByText("In this Project", { exact: true }).locator("..")).toHaveText(
-			"In this Project1",
+		await expect(linked.getByText("In this project", { exact: true }).locator("..")).toHaveText(
+			"In this project1",
 		);
 		await expect(available).toHaveCount(0);
 	} finally {
 		releaseRefresh();
 	}
 	await expect(releaseVault.getByRole("button")).toHaveText(["Remove"]);
-	await catalog.getByLabel("Search Vaults").fill("");
-	await expect(linked.getByText("In this Project", { exact: true }).locator("..")).toHaveText(
-		"In this Project2",
+	await catalog.getByLabel("Search vaults").fill("");
+	await expect(linked.getByText("In this project", { exact: true }).locator("..")).toHaveText(
+		"In this project2",
 	);
 	await expect(available).toHaveCount(0);
 	await expect.poll(() => vaultCreateRequests).toHaveLength(1);
@@ -254,21 +254,21 @@ test("Project detail uses explicit local pages at mobile and desktop", async ({ 
 		name: "Release archive",
 	});
 	expect(vaultCreateRequests[0]?.url.searchParams.get("project_id")).toBe(projectId);
-	await releaseVault.getByRole("button", { name: "Remove Release archive from Project" }).click();
+	await releaseVault.getByRole("button", { name: "Remove Release archive from project" }).click();
 	await expect(
-		releaseVault.getByRole("button", { name: "Add Release archive to Project" }),
+		releaseVault.getByRole("button", { name: "Add Release archive to project" }),
 	).toBeEnabled();
 	await expect(available.getByRole("link", { name: "Open vault Release archive" })).toBeVisible();
-	await expect(linked.getByText("In this Project", { exact: true }).locator("..")).toHaveText(
-		"In this Project1",
+	await expect(linked.getByText("In this project", { exact: true }).locator("..")).toHaveText(
+		"In this project1",
 	);
 	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
 		"Available1",
 	);
-	await catalog.getByLabel("Search Vaults").fill("[]$");
-	await expect(catalog.getByText("No Vaults match that search.")).toBeVisible();
+	await catalog.getByLabel("Search vaults").fill("[]$");
+	await expect(catalog.getByText("No vaults match that search.")).toBeVisible();
 	await expect(catalog.getByRole("region")).toHaveCount(0);
-	await catalog.getByLabel("Search Vaults").fill("");
+	await catalog.getByLabel("Search vaults").fill("");
 	expect(vaultDetachRequests[0]?.searchParams.get("vault_id")).toBe(
 		"88888888-8888-4888-8888-888888888888",
 	);
@@ -387,7 +387,7 @@ test("legacy Skill detail stays view-only until the URL names a Project", async 
 
 	await page.goto("/skills/review-pr");
 	await expect(page.getByRole("heading", { name: "Review PR" })).toBeVisible({ timeout: 15_000 });
-	await expect(page.getByText("Choose a Project to make changes", { exact: true })).toBeVisible();
+	await expect(page.getByText("Choose a project to make changes", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Remove from project" })).toHaveCount(0);
 	expect(detailRequests).toEqual(["/v1/skills/review-pr"]);
@@ -396,7 +396,7 @@ test("legacy Skill detail stays view-only until the URL names a Project", async 
 	await page.goto(`/skills/review-pr?project=${projectId}`);
 	await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Remove from project" })).toBeVisible();
-	await expect(page.getByText("Choose a Project to make changes", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Choose a project to make changes", { exact: true })).toHaveCount(0);
 	expect(detailRequests).toEqual([
 		"/v1/skills/review-pr",
 		`/v1/projects/${projectId}/skills/review-pr`,
@@ -454,7 +454,7 @@ test("Skills library selects one Project before reading or creating Skills", asy
 	await expect(page.getByRole("heading", { name: "Skills", level: 1 })).toBeVisible({
 		timeout: 15_000,
 	});
-	await expect(page.getByRole("heading", { name: "Choose a Project" })).toBeVisible();
+	await expect(page.getByRole("heading", { name: "Choose a project" })).toBeVisible();
 	expect(skillRequests).toEqual([]);
 	await expectNoHorizontalOverflow(page);
 

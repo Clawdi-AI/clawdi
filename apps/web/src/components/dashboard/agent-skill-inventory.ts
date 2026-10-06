@@ -29,10 +29,10 @@ export async function fetchAgentProjectSkills(
 			async (page, pageSize) => {
 				const response = await fetchPage(projectId, page, pageSize);
 				if (!Number.isSafeInteger(response.total) || (response.total ?? -1) < 0) {
-					throw new Error("A Skill response did not include valid pagination metadata.");
+					throw new Error("A skill response did not include valid pagination metadata.");
 				}
 				if (response.items.length === 0 && loadedForProject < (response.total ?? 0)) {
-					throw new Error("A Skill inventory ended before every Project row was loaded.");
+					throw new Error("A skill inventory ended before every project row was loaded.");
 				}
 				loadedForProject += response.items.length;
 				return response;
@@ -40,13 +40,13 @@ export async function fetchAgentProjectSkills(
 			{
 				pageSize: options.pageSize ?? 200,
 				maxPages: options.maxPages ?? 50,
-				resourceName: "agent Skill",
+				resourceName: "agent skill",
 			},
 		);
 
 		for (const skill of result.items) {
 			if (skill.project_id !== projectId) {
-				throw new Error("A Skill response did not match the requested Project.");
+				throw new Error("A skill response did not match the requested project.");
 			}
 			skills.push(skill);
 		}

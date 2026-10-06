@@ -82,12 +82,12 @@ export function ShareProjectDialog({
 			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
 				<DialogHeader>
 					<DialogTitle className="pr-8 leading-snug break-words">
-						{isShareableProject ? `Share ${projectName}` : "Only Projects you create can be shared"}
+						{isShareableProject ? `Share ${projectName}` : "Only projects you create can be shared"}
 					</DialogTitle>
 					<DialogDescription>
 						{isShareableProject
-							? "People can view this Project and let their Agents use its keys. Only you can edit, and secret values stay hidden in the dashboard."
-							: "Sharing is available for Projects you create. An Agent's private Workspace cannot be shared."}
+							? "People can view this project and let their agents use its keys. Only you can edit, and secret values stay hidden in the dashboard."
+							: "Sharing is available for projects you create. An agent's private workspace cannot be shared."}
 					</DialogDescription>
 				</DialogHeader>
 				{isShareableProject ? (
@@ -104,7 +104,7 @@ export function ShareProjectDialog({
 						<AlertCircle />
 						<AlertTitle>This resource cannot be shared</AlertTitle>
 						<AlertDescription>
-							Only Projects you create can have members, invitations, and share links.
+							Only projects you create can have members, invitations, and share links.
 						</AlertDescription>
 					</Alert>
 				)}
@@ -215,7 +215,7 @@ function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean
 				</Button>
 			</div>
 			<p className="text-sm text-muted-foreground">
-				Anyone with the link can preview and join this Project.
+				Anyone with the link can preview and join this project.
 			</p>
 			{freshLink && !inactiveLinks.some((link) => link.id === freshLink.id) ? (
 				<FreshLinkBanner link={freshLink} onDismiss={() => setFreshLink(null)} />
@@ -344,7 +344,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 					</Button>
 				</div>
 				<details className="mt-2 text-sm">
-					<summary className="cursor-pointer">Send to an Agent</summary>
+					<summary className="cursor-pointer">Send to an agent</summary>
 					<Button
 						variant="ghost"
 						size="sm"
@@ -525,7 +525,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 					variant="destructive"
 					message={
 						invites.error instanceof ApiError && invites.error.status === 404
-							? "Email invitations are unavailable for this Project."
+							? "Email invitations are unavailable for this project."
 							: normalizeApiError(invites.error)
 					}
 				/>
@@ -728,7 +728,7 @@ function MembersPanel({ projectId }: { projectId: string }) {
 									renderedRemoveTarget.user_display ??
 									renderedRemoveTarget.user_id)
 								: "This member"}{" "}
-							will lose access to this Project.
+							will lose access to this project.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -798,7 +798,7 @@ function StopSharingPanel({ projectId }: { projectId: string }) {
 							className="text-destructive"
 							size="sm"
 							disabled={unshare.isPending}
-							aria-label="Stop all sharing for this Project"
+							aria-label="Stop all sharing for this project"
 						/>
 					}
 				>
@@ -809,7 +809,7 @@ function StopSharingPanel({ projectId }: { projectId: string }) {
 						<AlertDialogTitle>Stop all sharing?</AlertDialogTitle>
 						<AlertDialogDescription>
 							All invite links and pending invitations will stop working. Members will lose access.
-							Your Project content stays unchanged.
+							Your project content stays unchanged.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>

@@ -304,12 +304,12 @@ export function CopyKeysDialog({
 					{mode === "move" && attachedCount > 1 ? (
 						<p className="text-xs font-medium text-warning-muted-foreground">
 							{vault.name} is used by {attachedCount} Projects — moving these keys removes them from
-							all of those Projects.
+							all of those projects.
 						</p>
 					) : null}
 					{mode === "copy" ? (
 						<p className="text-xs text-muted-foreground">
-							Just want these keys available in another Project? Use{" "}
+							Just want these keys available in another project? Use{" "}
 							<span className="font-medium text-foreground">Link vault</span> on this vault instead
 							— one source of truth, changes apply everywhere.
 						</p>

@@ -99,7 +99,7 @@ export function CreateSkillDialog({
 				<DialogHeader>
 					<DialogTitle>Add skill</DialogTitle>
 					<DialogDescription>
-						Add instructions to {displayProjectName(project)}. Linked Agents receive the Skill
+						Add instructions to {displayProjectName(project)}. Linked agents receive the skill
 						automatically.
 					</DialogDescription>
 				</DialogHeader>
@@ -138,7 +138,7 @@ export function CreateSkillDialog({
 							maxLength={1024}
 							required
 							onChange={(event) => setDescription(event.target.value)}
-							placeholder="When and why an Agent should use this Skill"
+							placeholder="When and why an agent should use this skill"
 						/>
 					</div>
 					<div className="space-y-1.5">
@@ -148,7 +148,7 @@ export function CreateSkillDialog({
 							value={instructions}
 							maxLength={200 * 1024}
 							onChange={(event) => setInstructions(event.target.value)}
-							placeholder="Explain what the Agent should do, including constraints and examples."
+							placeholder="Explain what the agent should do, including constraints and examples."
 							className="min-h-48"
 						/>
 					</div>

@@ -102,7 +102,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
 	{
 		id: "billing-usage",
 		label: "AI Usage",
-		description: "LLM spend in USD, paid from Wallet",
+		description: "LLM spend in USD, paid from wallet",
 		icon: BarChart3,
 		cloudOnly: true,
 	},

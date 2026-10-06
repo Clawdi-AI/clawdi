@@ -50,7 +50,7 @@ export async function fetchAgentProjectVaults(
 			{
 				pageSize: options.pageSize ?? 200,
 				maxPages: options.maxPages ?? 50,
-				resourceName: "agent Vault",
+				resourceName: "agent vault",
 			},
 		);
 

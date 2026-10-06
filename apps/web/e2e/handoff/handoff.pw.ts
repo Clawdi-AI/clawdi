@@ -172,7 +172,7 @@ for (const scenario of [
 		await page.getByRole("link", { name: "Overview", exact: true }).click();
 		await expect(page).toHaveURL(`${cloud}/${scenario.search}`);
 		if (scenario.sidebar) {
-			await page.getByRole("button", { name: "New Agent", exact: true }).first().click();
+			await page.getByRole("button", { name: "New agent", exact: true }).first().click();
 			await page
 				.getByRole("dialog")
 				.getByRole("button", { name: /Deploy on Clawdi/ })

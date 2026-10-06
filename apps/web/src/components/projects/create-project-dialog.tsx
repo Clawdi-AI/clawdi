@@ -87,7 +87,7 @@ export function CreateProjectDialog({
 				<DialogHeader>
 					<DialogTitle>Create project</DialogTitle>
 					<DialogDescription>
-						{agentId ? "Create a Project for this Agent." : "Group Skills and Vaults in a Project."}
+						{agentId ? "Create a project for this agent." : "Group skills and vaults in a project."}
 					</DialogDescription>
 				</DialogHeader>
 				<form
@@ -116,7 +116,7 @@ export function CreateProjectDialog({
 							name="create-project-description"
 							value={description}
 							maxLength={2000}
-							placeholder="What should Agents use this Project for?"
+							placeholder="What should agents use this project for?"
 							autoComplete="off"
 							onChange={(event) => setDescription(event.target.value)}
 							className="min-h-24"

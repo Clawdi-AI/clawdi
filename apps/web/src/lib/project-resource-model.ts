@@ -41,7 +41,7 @@ export interface ProjectResourceDefinition {
 	countLabel?: string;
 }
 
-export const PROJECT_CANONICAL_DEFINITION = "A Project groups Skills and Vaults for your Agents.";
+export const PROJECT_CANONICAL_DEFINITION = "A project groups skills and vaults for your agents.";
 
 const PROJECT_RESOURCE_DEFINITIONS = [
 	{
@@ -51,7 +51,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Projects",
 		description: PROJECT_CANONICAL_DEFINITION,
 		managementDescription:
-			"Group Skills and Vaults into Projects, then choose which Agents use them.",
+			"Group skills and vaults into projects, then choose which agents use them.",
 		href: PROJECT_RESOURCE_LIST_PATHS.projects,
 		emptyCta: "Create project",
 		routeGroup: "projects",
@@ -64,9 +64,9 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Skills",
 		singularLabel: "Skill",
 		navLabel: "Skills",
-		description: "Reusable instructions that belong to a Project.",
+		description: "Reusable instructions that belong to a project.",
 		managementDescription:
-			"Skills belong to Projects. Choose a Project to add or change its Skills; linked Agents use the whole Project.",
+			"Skills belong to projects. Choose a project to add or change its skills; linked agents use the whole project.",
 		href: PROJECT_RESOURCE_LIST_PATHS.skills,
 		emptyCta: "Add skill",
 		routeGroup: "library",
@@ -81,9 +81,9 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Vaults",
 		singularLabel: "Vault",
 		navLabel: "Vaults",
-		description: "Encrypted key collections used by Projects.",
+		description: "Encrypted key collections used by projects.",
 		managementDescription:
-			"Keep API keys in a Vault, then add it to the Projects where Agents should use those keys.",
+			"Keep API keys in a vault, then add it to the projects where agents should use those keys.",
 		href: PROJECT_RESOURCE_LIST_PATHS.vaults,
 		emptyCta: "Create vault",
 		routeGroup: "library",
@@ -98,7 +98,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		label: "Sessions",
 		singularLabel: "Session",
 		navLabel: "Sessions",
-		description: "Conversation history synced from your Agents.",
+		description: "Conversation history synced from your agents.",
 		managementDescription:
 			"Sessions are agent activity. Browse conversations and filter by the agent that produced them.",
 		href: PROJECT_RESOURCE_LIST_PATHS.sessions,
@@ -229,7 +229,7 @@ export function projectResourceScopeLabel(scope: ProjectResourceScope): string {
 		case "container":
 			return "Project home";
 		case "project-managed":
-			return "Saved in a Project";
+			return "Saved in a project";
 		case "activity":
 			return "Account activity";
 		case "all-agents":
@@ -240,9 +240,9 @@ export function projectResourceScopeLabel(scope: ProjectResourceScope): string {
 export function projectResourceScopeDescription(resource: ProjectResourceDefinition): string {
 	switch (resource.projectScope) {
 		case "container":
-			return "Start here to create shareable Projects, then browse the Library for reusable Skills and Vaults.";
+			return "Start here to create shareable projects, then browse the Library for reusable skills and vaults.";
 		case "project-managed":
-			return "Saved in a Project. Pick the Project before you add, edit, or remove it.";
+			return "Saved in a project. Pick the project before you add, edit, or remove it.";
 		case "activity":
 			return "Activity from agents, shown with the agent that produced it.";
 		case "all-agents":

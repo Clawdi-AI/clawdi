@@ -52,12 +52,12 @@ export function mergeWorkspaceRuntimeSkills(
 			return {
 				entity:
 					projection && desired
-						? { ...projection, source: "Agent Workspace", source_repo: desiredSource }
+						? { ...projection, source: "Agent workspace", source_repo: desiredSource }
 						: (projection ??
 							workspaceRuntimeSkillEntity(skillKey, {
 								name: skillKey,
 								description: null,
-								source: "Agent Workspace",
+								source: "Agent workspace",
 								sourceRepo: desiredSource,
 							})),
 				cloudProjection: projection ?? null,

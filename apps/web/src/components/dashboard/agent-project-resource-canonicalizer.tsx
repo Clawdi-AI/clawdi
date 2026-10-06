@@ -88,7 +88,7 @@ function CanonicalizeProjectResource({
 					onRetry={() => {
 						void bindings.refetch();
 					}}
-					title="Couldn't load Workspace or Project access"
+					title="Couldn't load workspace or project access"
 				/>
 			) : (
 				<>

@@ -55,7 +55,7 @@ export function projectSupportingText(project: ProjectMetadata) {
 	const description = project.description?.trim();
 	if (description) return description;
 	if (!isProjectOwner(project)) return `Shared by ${projectOwnerLabel(project)}`;
-	if (project.kind === "environment") return "Private Agent Workspace";
+	if (project.kind === "environment") return "Private agent workspace";
 	return "Project you own";
 }
 
@@ -251,8 +251,8 @@ export function ProjectScopePicker({
 	label = "Project",
 	placeholder = "Choose project…",
 	allowAll = false,
-	allLabel = "All Readable Projects",
-	allDescription = "Show every Project you can read",
+	allLabel = "All readable projects",
+	allDescription = "Show every project you can read",
 	disabled,
 	layout = "inline",
 	className,
@@ -368,8 +368,8 @@ export function ProjectCompactPicker({
 	value,
 	onValueChange,
 	allowAll = false,
-	allLabel = "All Projects",
-	allDescription = "Show every Project you can read",
+	allLabel = "All projects",
+	allDescription = "Show every project you can read",
 	placeholder = "Project",
 	ariaLabel = "Project filter",
 	disabled,
@@ -620,8 +620,8 @@ export function projectKindMeta(kind: string): {
 	if (kind === "environment") {
 		return {
 			label: "Workspace",
-			groupLabel: "Agent Workspaces",
-			description: "Private Workspace permanently used by one Agent.",
+			groupLabel: "Agent workspaces",
+			description: "Private workspace permanently used by one agent.",
 			icon: Bot,
 			iconClassName: "border-border bg-muted/50 text-muted-foreground",
 			badgeClassName: "border-border bg-muted/50 text-muted-foreground",
@@ -679,12 +679,12 @@ function projectPickerGroups(projects: ProjectMetadata[]) {
 		},
 		{
 			id: "workspaces",
-			label: "Agent Workspaces",
+			label: "Agent workspaces",
 			projects: owned.filter((project) => project.kind === "environment"),
 		},
 		{
 			id: "other",
-			label: "Other Projects",
+			label: "Other projects",
 			projects: owned.filter(
 				(project) =>
 					!!project.kind &&

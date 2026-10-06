@@ -76,7 +76,7 @@ export function ProjectVaultCatalog({
 	const locked = useRef(false);
 	const canAttach = isCustomProject(project) && project.is_owner !== false;
 	const catalog = useVaultCatalog({ enabled: canAttach });
-	const context = project.kind === "environment" ? "Workspace" : "Project";
+	const context = project.kind === "environment" ? "workspace" : "project";
 	const attachedIds = new Set(attachedVaults?.map((vault) => vault.id));
 	const attachmentsKnown = attachedVaults !== undefined;
 	const scopedSnapshotIsNewer = attachedVaultsUpdatedAt > catalog.dataUpdatedAt;
@@ -114,7 +114,7 @@ export function ProjectVaultCatalog({
 				vault.is_owner === false ||
 				(!attached && (catalog.data === undefined || catalog.error))
 			)
-				throw new Error("Refresh Vault links and try again.");
+				throw new Error("Refresh vault links and try again.");
 			return attached
 				? unwrap(
 						await api.DELETE("/v1/vault/{slug}", {
@@ -136,7 +136,7 @@ export function ProjectVaultCatalog({
 			toast.success(`Vault ${attached ? "removed from" : "added to"} ${context}`);
 		},
 		onError: (error) =>
-			toast.error("Couldn't update Project Vaults", { description: normalizeApiError(error) }),
+			toast.error("Couldn't update project vaults", { description: normalizeApiError(error) }),
 		onSettled: () => {
 			locked.current = false;
 		},
@@ -149,29 +149,29 @@ export function ProjectVaultCatalog({
 					<SearchInput
 						value={search}
 						onChange={setSearch}
-						placeholder="Search Vaults…"
-						ariaLabel="Search Vaults"
+						placeholder="Search vaults…"
+						ariaLabel="Search vaults"
 					/>
 				}
 			/>
 			{canAttach ? (
 				<p className="text-sm text-muted-foreground">
-					Add Vaults from your Library to this {context}. Removing a Vault preserves its keys and
-					other Projects.
+					Add vaults from your library to this {context}. Removing a vault preserves its keys and
+					other projects.
 				</p>
 			) : null}
 			{error ? (
 				<ApiErrorPanel
 					error={error}
 					onRetry={onRetry}
-					title={`Couldn't load ${context} Vault links`}
+					title={`Couldn't load ${context} vault links`}
 				/>
 			) : null}
 			{canAttach && catalog.error ? (
 				<ApiErrorPanel
 					error={catalog.error}
 					onRetry={() => void catalog.refetch()}
-					title="Couldn't load Vault catalog"
+					title="Couldn't load vault catalog"
 				/>
 			) : null}
 			{rows.length ? (
@@ -182,7 +182,7 @@ export function ProjectVaultCatalog({
 							className="space-y-3"
 							aria-label={
 								group.label
-									? `${group.label}${group.label === "Available" ? ` ${context}` : ""} Vaults`
+									? `${group.label}${group.label === "Available" ? ` ${context}` : ""} vaults`
 									: undefined
 							}
 						>
@@ -275,7 +275,7 @@ export function ProjectVaultCatalog({
 				(!canAttach || !shouldBlockQueryError(catalog.error, catalog.data)) ? (
 				<EmptyState
 					variant="inset"
-					description={search.trim() ? "No Vaults match that search." : "No Vaults available yet."}
+					description={search.trim() ? "No vaults match that search." : "No vaults available yet."}
 				/>
 			) : null}
 		</div>

@@ -190,7 +190,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 	const emptyMessage =
 		searchQuery || apiCategory
 			? "No matches — try a different search or category."
-			: "No memories yet. Create one above, or your Agents will create them automatically as they work.";
+			: "No memories yet. Create one above, or your agents will create them automatically as they work.";
 	const paginationFooter = (
 		<DataTablePagination
 			page={page}
@@ -576,7 +576,7 @@ function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 			setOpen(false);
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
 			toast.success("Memory created", {
-				description: "It is available to every Agent on this account.",
+				description: "It is available to every agent on this account.",
 				action: {
 					label: "Open memory",
 					onClick: () => void router.navigate({ href: memoryDetailHrefForScope(scope, memory.id) }),
@@ -635,7 +635,7 @@ function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 					{secretFinding ? (
 						<ApiErrorPanel
 							error={formatSecretMemoryWarning(secretFinding)}
-							title="Use Vault for secrets"
+							title="Use vault for secrets"
 						/>
 					) : null}
 					<div className="space-y-1.5">

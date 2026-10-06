@@ -202,11 +202,11 @@ for (const viewport of [
 		const dialog = page.getByRole("dialog");
 		await expect(dialog.getByText("Only you have access", { exact: true })).toBeVisible();
 		await expect(
-			dialog.getByRole("button", { name: "Stop all sharing for this Project" }),
+			dialog.getByRole("button", { name: "Stop all sharing for this project" }),
 		).toBeHidden();
 		await expect(
 			dialog.getByText(
-				"People can view this Project and let their Agents use its keys. Only you can edit, and secret values stay hidden in the dashboard.",
+				"People can view this project and let their agents use its keys. Only you can edit, and secret values stay hidden in the dashboard.",
 				{ exact: true },
 			),
 		).toHaveCount(1);
@@ -228,7 +228,7 @@ for (const viewport of [
 			"https://example.com/share/test-token",
 		);
 		await expect(dialog.getByRole("button", { name: /Copy agent handoff prompt/ })).toBeHidden();
-		await dialog.getByText("Send to an Agent", { exact: true }).click();
+		await dialog.getByText("Send to an agent", { exact: true }).click();
 		await expect(dialog.getByRole("button", { name: /Copy agent handoff prompt/ })).toBeVisible();
 		await page.keyboard.press("Escape");
 		await expect(dialog).toBeHidden();
@@ -260,12 +260,12 @@ test("sharing management stays disclosed and failed actions remain retryable", a
 	await expect(page.getByText("Couldn't create link. Try again.", { exact: true })).toBeVisible();
 	await expect(dialog.getByRole("button", { name: "Create invite link" })).toBeEnabled();
 	await dialog.getByText("Manage sharing", { exact: true }).click();
-	await dialog.getByRole("button", { name: "Stop all sharing for this Project" }).press("Enter");
+	await dialog.getByRole("button", { name: "Stop all sharing for this project" }).press("Enter");
 	const confirmation = page.getByRole("alertdialog");
 	await confirmation.getByRole("button", { name: "Keep sharing" }).click();
 	await expect(confirmation).toBeHidden();
 	await expect(dialog.getByText("member@example.com", { exact: true })).toBeVisible();
-	await dialog.getByRole("button", { name: "Stop all sharing for this Project" }).press("Enter");
+	await dialog.getByRole("button", { name: "Stop all sharing for this project" }).press("Enter");
 	await page.route(
 		"**/v1/projects/project-sharing/unshare",
 		(route) => json(route, { detail: "Internal error" }, 500),

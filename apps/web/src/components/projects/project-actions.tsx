@@ -208,7 +208,7 @@ export function ProjectActions({
 				title={`Archive ${projectName}?`}
 				description={
 					<p>
-						Agents will stop using this Project's Skills and Vaults. The Project will disappear from
+						Agents will stop using this project's skills and vaults. The project will disappear from
 						your library.
 					</p>
 				}

@@ -353,7 +353,7 @@ function UserMessageBody({
 	if (isSkillExpansion(content)) {
 		return (
 			<CollapsibleBlock
-				label="Skill Setup Text"
+				label="Skill setup text"
 				content={content}
 				highlightQuery={highlightQuery}
 				revealMatch={revealCollapsedMatch}
