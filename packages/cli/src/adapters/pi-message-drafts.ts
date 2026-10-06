@@ -22,6 +22,16 @@ function validTimestamp(value: string | number): string | undefined {
 	return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
 }
 
+// OpenClaw-authored transcript bookkeeping is content, not provider model output.
+const OPENCLAW_BOOKKEEPING_MODELS = new Set([
+	"delivery-mirror", "gateway-injected", "acp-runtime", "automation-result",
+]);
+
+export function isOpenClawBookkeepingMessage(message: JsonObject): boolean {
+	return message.role === "assistant" && message.provider === "openclaw" &&
+		typeof message.model === "string" && OPENCLAW_BOOKKEEPING_MODELS.has(message.model);
+}
+
 /** Shared Pi-format message projection, with adapter-owned source identities. */
 export function piMessageDrafts(
 	message: JsonObject,
@@ -70,7 +80,9 @@ export function piMessageDrafts(
 	if (role === "assistant") {
 		if (message.stopReason === "deferred") return [];
 		const content = Array.isArray(message.content) ? message.content : [];
-		const model = jsonString(message.model) ?? fallbackModel ?? undefined;
+		const model = isOpenClawBookkeepingMessage(message)
+			? undefined
+			: jsonString(message.model) ?? fallbackModel ?? undefined;
 		const drafts: SessionEventDraft[] = [];
 		const parts = visibleContentParts(message.content);
 		if (parts.length > 0) {

@@ -42,7 +42,7 @@ import {
 	resolveOpenClawAgentWorkspaceAsync,
 } from "./openclaw-workspace";
 import { getOpenClawHome, isPathWithinRoots, matchesProjectFilter } from "./paths";
-import { piMessageDrafts } from "./pi-message-drafts";
+import { isOpenClawBookkeepingMessage, piMessageDrafts } from "./pi-message-drafts";
 import {
 	type JsonObject,
 	jsonObject,
@@ -652,7 +652,7 @@ function officialTranscriptReader(entry: OfficialSessionEntry, context?: SyncRea
 			seq += events.length;
 			yield* events;
 			const model = jsonString(message.model);
-			if (model) {
+			if (model && !isOpenClawBookkeepingMessage(message)) {
 				addSessionModel(state.modelsUsed, model);
 				state.model = model;
 			}
