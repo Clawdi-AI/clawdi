@@ -354,7 +354,9 @@ async def test_real_http_runtime_watch(db_session, seed_user, monkeypatch, conne
         process = await asyncio.create_subprocess_exec(
             "bun",
             "test",
-            "src/serve/vault-daemon.test.ts" if connected else "tests/runtime.test.ts",
+            "src/serve/vault-daemon.test.ts"
+            if connected
+            else "tests/runtime-manifest-source.test.ts",
             "--test-name-pattern",
             "connected daemon Vault delivery"
             if connected
