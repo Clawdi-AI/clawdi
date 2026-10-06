@@ -1,208 +1,101 @@
-# Anonymous runtime preinstallation
+# Anonymous runtime preparation and warm adoption
 
-Software-only preparation of a Hosted data volume without a Cloud identity or
-manifest. The provisioning owner (Hosted golden builder) owns scheduling,
-expiry, copying and cleanup. Tenant convergence finds the prepared, content-addressed artifacts and skips
-their downloads. OpenClaw preparation also moves tenant-independent official
-service and bundled Skill installation off first apply.
+Implementation review draft. Hosted owns golden/pool lifecycle; the CLI owns
+installation, native configuration and readiness. Provisioning defaults off.
+OpenClaw hot apply requires `CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY=1`; ordinary
+provisioning and restart reconciliation remain the default.
 
 ```bash
 clawdi runtime prepare --spec spec.json --installer install.sh --cli-archive clawdi.tgz
+clawdi runtime warm --runtime openclaw
+clawdi runtime warm --runtime hermes
 ```
 
-The root-only hidden command accepts a strict `clawdi.runtime-preinstallation.v1`
-spec: exact `cliPackageSpec` (this CLI's own version) and its npm `cliIntegrity`,
-`architecture`, `imageFingerprint`, `runtime`, exact `runtimeVersion` (OpenClaw
-release or Hermes commit), official `installerUrl` and `installerSha256`, and
-optional pinned `egressEngine` and `fileBrowserAsset`. OpenClaw also requires the
-official npm `runtimeTarballUrl` and `runtimeIntegrity`. Unknown fields, tenant
-identifiers, mutable versions and integrity mismatches are rejected.
+These root-only commands require empty homes and a strict
+`clawdi.runtime-preinstallation.v1` spec binding CLI integrity, architecture,
+image, runtime version/commit and pinned official installers/artifacts.
+Tenant inputs, mutable versions and integrity mismatches are rejected.
 
-Preparation requires empty `/home/clawdi` and `/var/lib/clawdi`, then:
+Preparation uses official installers and builds Hermes assets. Sealed OpenClaw
+is disabled and token-free. A root-owned 0400 receipt binds software, home digest
+and probes to launcher/package/source identity; mismatches retain ordinary probes.
 
-1. runs the verified official installer as the runtime user in a clean
-   environment (OpenClaw `--runtime-only --no-onboard`; Hermes `--commit
-   --force-commit --skip-setup --skip-browser --non-interactive`) and checks the
-   installed identity;
-2. for Hermes, builds the dashboard with the shared build helper and revision
-   marker;
-3. for Hosted OpenClaw, installs the official gateway unit and the bundled
-   Clawdi Skill through the same native installer and reservation transaction as
-   tenant apply. The unit is stopped and disabled before sealing; the anonymous
-   token is removed. No tenant identity or credentials enter the reservation;
-4. records probe answers (`--version`, Hermes `config path`) with the launcher
-   file revision and installed source identity (Hermes git commit or OpenClaw
-   package version);
-5. prefetches the pinned mitmproxy egress engine and Files companion binary into
-   their content-addressed managed locations, and bootstraps Codex;
-6. installs this exact CLI from the integrity-verified archive into the managed
-   CLI layout with a verified receipt, so the image shim executes it without npm.
+## First apply
 
-OpenClaw probe preparation includes version-bound auth SDK capability answers
-and empty-store discovery. JSON5 roster inputs are supported; included native
-config retains live roster and auth-cleanup probes. Auth-cleanup reuse checks the auth configuration,
-agent roster and native store write identities; provider, channel and Skill
-changes do not invalidate it alone.
+Warm-up rejects tenant inputs. OpenClaw starts an anonymous gateway with a private
+random token/CA; Hermes prepares assets and stops anonymous services.
 
-A root-only `0400` receipt at `/var/lib/clawdi/preinstallation/receipt.json`
-records the spec, health, probes and home content digest.
+Anonymous egress denies managed traffic until one atomic snapshot publishes the
+claimed policy and credentials. Adoption proves hash ACK, idle invocation, units,
+environment and CA. A one-second metadata watcher reads changed files; requests
+perform no snapshot I/O. Transient I/O errors retain valid policy; invalid replacements
+revoke credentials/ACK and stop the engine. First readiness removes snapshot
+selection; the next projection restores legacy inputs and sidecar reconciliation.
 
-During tenant convergence the recorded `--version`/`config path` answers are
-reused only while the launcher revision and source identity still match; any
-update or reinstall falls back to the live probes. Reusing the sealed version
-output also keeps the prebuilt Hermes dashboard revision stable, instead of
-depending on upstream update notices in live `--version` output.
+Hot apply batches gateway, providers, channels and agents through one official
+runtime-UID SDK mutation with locking, CAS, ownership, validation and `afterWrite:auto`.
+Referenced credentials become private file SecretRefs; versioned paths couple
+rotation to native reload. Structural config, environment, CA, software and
+non-hybrid modes retain restart reconciliation. The official installer refreshes
+units capturing migrated keys. Prepared heap sizing changes only for an unchanged
+prepared unit whose capacity changed; user/native edits retain authority.
 
-Verify through the hermetic entrypoint:
+Four native A/B samples showed only 0.39 s saved by the socket writer, including
+its fences; its service and protocol were removed. Complete health proofs gate Cloud `ok`.
+
+Old credential paths may belong to a running snapshot even when absent from disk
+config and rotating backups. Upstream
+[`refreshActiveProviderAuthRuntimeSnapshot`](https://github.com/openclaw/openclaw/blob/v2026.9.8/src/secrets/runtime.ts)
+resolves `activeSnapshot.sourceConfig`; disk-only GC would break that refresh.
+Native backups also include `.pre-update` outside the rotating `.bak` ring
+([source](https://github.com/openclaw/openclaw/blob/v2026.9.8/src/config/backup-rotation.ts)).
+Files remain private until live snapshot retirement can be proved. New files
+contain referenced credentials only, never the entire process environment.
+
+## Changes visible to existing runtimes
+
+Existing apply, boot, watch, provider and systemd receipts remain readable.
+New private receipts are additive and optional.
+
+| Change | Default / upgrade behavior | Compatibility evidence |
+| --- | --- | --- |
+| Persisted step memos | Gated to hot apply or warm snapshot selection. Schema v2 ignores v1; keys bind CLI version captured before UID drops, helper/probe sources, OpenClaw package and SDK files. Includes never authorize skips; cleanup records equal before/after state only. | New-process CLI upgrade, real UID switch, package/layout upgrades in `persisted-step-revisions.test.ts`; cleanup/include races in `manifest-reconciliation.test.ts` |
+| Provider/channel writer extraction | Ordinary applies keep official single-step locking/validation; batch and file migration require hot apply. JSON5 local reuse rejects includes and falls back to native probes. | Existing provider drift, ownership, channel replacement/unlink and legacy/current layout fixtures |
+| Native/connection ownership readers | Accept existing env refs and the additive managed file-ref form, including rollback after flag removal. No existing env ref changes meaning. | Native/connection transfer and failed-commit fixtures in `manifest-reconciliation.test.ts` |
+| Observation cadence / immediate recapture | Default remains 5 s for the existing 90 s convergence window and 60 s when ready. Only warm/hot apply uses 1 s or bounded immediate recapture; retry backoff is unchanged. | Default/opt-in schedules and tuple-rotation tests in `observation-producer.test.ts` |
+| Successful watch-parent comparison | Applied/not-modified events compare as successful only with exact current generation, ETag, source/apply authority, no self-reexec/error and explicitly healthy metadata. Parent/config/invocation fences remain. | Healthy-equivalence and unhealthy-parent tests in `observed-v2.test.ts` |
+| Unchanged conditional HTTP 200 | A fully validated response reuses only exact committed source/content/apply identity and verified snapshot. Forced repair still reconciles drift; old/missing state uses ordinary apply. | Conditional response, stale snapshot/authority and forced-repair tests in `tests/runtime.test.ts` |
+| Initial bootstrap watch event | Writes the successful bootstrap event only when no watch status exists; existing failures remain authoritative. | Bootstrap/watch parent fixtures in `tests/runtime.test.ts` and `observed-v2.test.ts` |
+| Systemd manager batching | Explicit unit IDs, enablement and per-unit fallback preserve old manager output, pending-job admission and final proof. | Real `runtime-systemd` suite plus released receipt reconciliation fixtures |
+| Early sidecar start / startup ordering | Early start is gated to the private warm marker; existing first applies retain their order. Hermes overlap additionally requires acknowledged warm egress. | Default marker absence and real systemd ordering regressions |
+| Hermes dashboard helper | Extracts the existing build/cache procedure with the same revision marker, install/build timeouts and commands. | Existing service prerequisite/build fixtures |
+| Version/config-path reuse | Only a matching anonymous receipt avoids native probes. Existing tenants without it retain probes; Hermes version timeout is bounded at 60 s for upstream first-use maintenance. | `preinstalled-probes.test.ts`, official upstream Hermes contract |
+| CLI, Files, egress and Skill helpers | Shared helpers accept anonymous inputs; ordinary integrity, permissions, installer options and reservation semantics remain. | Existing managed CLI/Files/egress/Skill suites plus preinstallation tests |
+| Profiling | Default off; `CLAWDI_RUNTIME_PROFILE=1` emits static labels, PID and duration without argv, secrets or payloads. | `profile.test.ts` |
+
+Hosted retains its ordinary readiness polling. Nodes without golden/pool config
+perform one history lookup instead of invoking every feature hook; persisted
+copies and claims keep their hooks after configuration removal for crash replay.
+No tenant or production enablement was performed.
+
+## Verification and limits
 
 ```bash
-bash scripts/test.sh cli src/runtime/preinstallation.test.ts src/runtime/preinstalled-probes.test.ts
+bash scripts/test.sh cli
+bash scripts/test.sh runtime-systemd
+bash scripts/test.sh cli-lint <changed-files>
+bash scripts/test.sh hermes-upstream-contract
 ```
 
-For a paired native fixture, pack the CLI exactly as published into a task-owned
-empty directory inside this checkout (the caller removes it):
+Pack fixtures with `preinstallation-artifact` into an empty checkout-local
+directory. Paired Hosted qualification runs `backend-golden-native` under
+`/tmp/clawdi-golden-native.lock`, three pool samples per runtime; results live in
+its design document. Production and real model/chat/channel traffic are unqualified.
 
-```bash
-bash scripts/test.sh preinstallation-artifact /path/to/checkout/task-artifacts
-```
+The final pool medians are 16.95 s OpenClaw and 14.23 s Hermes versus 18.87/13.18 s
+previously. All six samples and cleanup passed; Hermes Cloud `ok` increased 1.05 s
+despite faster init/HTTP readiness, so its non-regression remains unproved.
 
-Done: CLI typecheck and these tests pass; native qualification is run by the
-Hosted `backend-golden-native` suite.
-
-## Anonymous warm qualification and opt-in hot apply
-
-The hidden root-only `clawdi runtime warm` command keeps its existing interface.
-It requires an unclaimed Hosted OpenClaw home with no runtime context, applied state, last-good
-manifest or cached tenant secrets. It creates this instance's egress CA and a
-random gateway token, reuses the prepared official unit, starts the gateway and
-records its unit, drop-in, environment, CA and structural-config identity.
-The provisioning owner controls when and where this command runs.
-
-`clawdi runtime warm --runtime hermes` uses the same unclaimed-state guard. It
-refreshes the copied managed CLI verification, installs the official gateway
-unit without starting it, prepares the instance's egress CA, byte-compiles the
-application and dependency tree, then starts the official dashboard in a
-transient user unit on loopback to complete first-use
-local work. Warm-up stops that unit and any gateway it started before returning.
-The first tenant apply starts fresh services with the tenant's environment and
-OAuth gate; Hermes authentication is resolved at process startup and is not
-hot-adopted. No placeholder manifest or Cloud identity is used. Warm-up can be
-repeated on an unclaimed home; failed warm-up must not qualify it for a claim.
-A root-owned private warm marker enables first-apply ordering on small tenant
-shapes: when anonymous egress has been safely adopted, overlap fresh dashboard
-startup with platform activation, then wait for dashboard HTTP before starting
-the gateway. Without that proof, platform activation remains first. Normal gateway and
-channel observation still determine readiness. Existing tenants keep their
-normal startup order. Final systemd state is freshly read in one batch per
-scope, including unit enablement; warm-up does not replace this proof.
-
-Tenant apply opts in with `CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY=1`; absence keeps the
-existing restart behavior. The flag propagates into root-managed watch and
-daemon units. Managed catalog, native/connection provider and channel credentials
-become runtime-user-owned file SecretRefs (0700 directory, 0600 files). One
-official config writer commits gateway, provider, channel and agent changes
-under the native config lock with `afterWrite: auto`. Key rotation changes the
-versioned credential path so the gateway reloads config and keys together.
-Normal rotation does not require a secrets RPC.
-
-The official installer fixes heap sizing at installation. A private platform
-receipt binds the anonymous unit revision to observed memory capacity. A copy
-with different capacity replaces only that exact prepared unit through the
-official uninstaller and installer, preserving native updates and user edits.
-Warm-up does this before qualification; normal apply retains its restart boundary.
-
-An existing official unit that still captures a migrated credential is refreshed
-through the official installer on its next opted-in normal apply. Changing the
-unit, process environment, CA or runtime/plugin installation keeps the normal
-restart boundary. Hybrid reload is required for hot adoption; native `off`,
-`hot` and `restart` preferences retain normal service reconciliation.
-
-Old credential versions remain private and are retained for active snapshots and
-native rollback backups. The official `secrets reload` refreshes the active
-snapshot's source config; success does not prove it has adopted the latest file
-path from disk. Retention cleanup needs a separate live snapshot acknowledgement
-and is deferred rather than deleting credentials a running gateway may still use.
-
-Verify Hermes warm safety through the same hermetic runner:
-
-```bash
-bash scripts/test.sh cli tests/runtime-warm-hermes.test.ts
-```
-
-Done: Docker CLI tests and changed-file Biome pass; the paired native fixture
-proves tenant-free state and stopped anonymous Hermes services before claim,
-authenticated OpenClaw adoption with unchanged gateway PID, and stop/start
-preservation. Warm-up does not qualify model calls or a production latency
-bound. Production enablement and Hosted pool lifecycle belong to the
-provisioning owner.
-
-## Startup diagnostics
-
-`CLAWDI_RUNTIME_PROFILE=1` records static step/command labels, process IDs,
-start timestamps and durations on stderr. It emits no argv, payload, environment
-or error text. The default has no diagnostic output. The provisioning owner's
-native fixture collects these spans only after readiness.
-
-A new first-apply egress sidecar may start while native config projection runs.
-Activation joins that same systemd job, checks its candidate identity, then keeps
-the normal fresh manager/enablement and service-readiness proof. Existing sidecar
-inventories retain their startup order. An observation invalidated while boot or
-watch health settles is re-attested and recaptured once immediately; network
-failure backoff and steady heartbeat cadence are unchanged.
-
-Anonymous warm-up also starts the prepared root-managed egress sidecar. It has
-no tenant identity, policy or credentials and denies managed traffic until
-claim. A root-owned atomic snapshot binds the complete policy and credential
-set; the engine validates it, clears stale credentials on an invalid replacement,
-and privately acknowledges its SHA-256. A background watcher acknowledges
-replacement without requiring a request. Snapshot paths are tenant-independent.
-The script loader's synchronous `running` hook schedules the asynchronous
-watcher; shutdown cancels it. Both warm commands refresh managed CLI verification
-after the golden volume copy, before the first claim's shim invocation.
-The official OpenClaw mutation helper also enables Node's runtime-user-local
-module compile cache when supported. The anonymous warm mutation seeds it;
-Node verifies source/version identity when reusing compiled modules. Config
-reads, native locking, plugin validation and hot reload still run normally.
-Unsupported Node versions or an unavailable cache retain uncached behavior.
-Existing tenants without the warm-created private enablement marker retain
-the legacy sidecar inputs and normal restart behavior.
-
-First apply reuses that engine only while its active, idle invocation, effective
-systemd configuration, unit, environment and CA match the private warm receipt.
-The exact claimed snapshot must be acknowledged before activation succeeds;
-normal fresh systemd proof still runs. Changed engine or platform inputs keep
-the normal restart boundary. The single-use warm receipt is consumed after
-successful activation. Neither warm command's CLI interface changes.
-
-Anonymous OpenClaw warm-up also preloads the official config-mutation SDK in a
-runtime-user service with a root-owned 0600 single-use socket. Its root-private
-receipt binds the idle invocation, effective units, socket inode, Node binary
-and installed SDK source graph, including dependency symlink targets. Source
-identity uses inode, nanosecond ctime/mtime, ownership, mode and size; editing and
-restoring file bytes/mtime still invalidates adoption. Warm-up completes an
-anonymous official snapshot read and plugin validation before socket readiness.
-First hot apply persists a consumed marker before sending its batch, checks an
-acknowledgement bound to the request UUID/hash,
-and re-attests ownership before stopping the service/socket. Native config reads,
-cross-process locking, CAS and full validation still run for that batch. Stale
-or absent receipts select the normal official writer; crash/replay never resends
-a consumed request. The temporary service is outside tenant unit inventory.
-Both warm commands refuse an existing runtime context before mutating services.
-
-When anonymous egress has been re-attested and acknowledged for the claimed
-snapshot, first Hermes activation overlaps the dashboard with platform startup
-and starts the gateway only after dashboard HTTP readiness. Normal/fallback
-activation keeps its previous ordering. The producer accepts equivalent successful
-watch events only under the exact current apply
-and source authority, while retaining complete parent/health fences. Manager
-status reads batch by explicit unit ID with per-unit fallback. Initial readiness
-observations use a one-second retry cadence; network backoff and the
-60-second steady cadence are unchanged. Successful bootstrap publishes its actual
-initial watch event without overwriting existing watcher health. Fully validated unchanged HTTP 200 conditional responses
-reuse only exact committed source/content/apply authority and a verified snapshot;
-periodic forced repair remains enabled. Static discard and pending-unit spans
-identify first-readiness gates. Qualification belongs to the paired provisioning
-fixture; no 10 s readiness bound is claimed.
-
-Done: Docker CLI typecheck, focused systemd/producer regressions and Biome pass;
-latency qualification belongs to the paired provisioning fixture.
+Done: Docker CLI typecheck/tests, real systemd and changed-file Biome pass;
+PostgreSQL regressions cover fallback/preservation. Paired native qualification
+proves tenant-free pre-claim state, authenticated adoption and cleanup.

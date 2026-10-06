@@ -16,9 +16,8 @@ database migration, CI, and implementation details.
   name while keeping Cloud and Connected Agent distinctions intact.
 ### CLI (next release)
 
-- Newly deployed hosted agents report readiness within about a second of
-  becoming healthy, and hosted runtimes prepared ahead of time start without
-  reinstalling software.
+- Opt-in warm hosted agents report readiness promptly after becoming healthy
+  and start without reinstalling prepared software.
 
 ### CLI 0.15.5
 
