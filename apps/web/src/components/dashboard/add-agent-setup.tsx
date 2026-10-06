@@ -16,8 +16,7 @@ import { cn } from "@/lib/utils";
 // swapped in post-mount.
 const DEFAULT_ORIGIN = "https://cloud.clawdi.ai";
 
-// Keep in sync with clawdi-hosted/apps/web/src/components/marketing/landing/landing-ui.tsx;
-// docs.clawdi.ai/getting-started/connect-agents references it.
+// Single source; marketing and docs deep-link to this dialog (?connect=agent).
 export function agentSetupPrompt(origin: string): string {
 	return `Set up Clawdi on this machine. Read all of ${origin}/skill.md (for example, run \`curl -fsSL ${origin}/skill.md\`) and follow its steps in order.`;
 }
@@ -30,11 +29,11 @@ function useOrigin() {
 	return origin;
 }
 
-const CLI_STEPS = [
+export const CLI_STEPS = [
 	{
 		title: "Install the CLI",
-		code: "npm install -g clawdi@latest",
-		description: "Install the latest Clawdi CLI globally.",
+		code: "curl -fsSL https://clawdi.ai/install.sh | sh",
+		description: "Install the latest Clawdi CLI without Node.js or sudo.",
 	},
 	{
 		title: "Sign in",
@@ -46,6 +45,11 @@ const CLI_STEPS = [
 		code: "clawdi setup",
 		description:
 			"Detects Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode; connects each one to your account and enables background sync.",
+	},
+	{
+		title: "Verify setup",
+		code: "clawdi doctor",
+		description: "Check that Clawdi is ready on this machine.",
 	},
 ];
 
@@ -135,9 +139,15 @@ export function AddAgentSetup() {
 				<TabsContent value="commands" className="mt-2 space-y-4">
 					<div>
 						<p className="text-sm font-medium">Run these commands in order on the machine</p>
-						<p className="mt-1 text-xs text-muted-foreground">Node.js 24+ is required.</p>
-						<p className="mt-0.5 text-xs text-muted-foreground">
-							Prefer Bun? Use: bun add -g clawdi@latest
+						<p className="mt-1 text-xs text-muted-foreground">
+							Windows or npm? See{" "}
+							<a
+								href="https://docs.clawdi.ai/installation"
+								className="underline underline-offset-4"
+							>
+								installation
+							</a>
+							.
 						</p>
 					</div>
 					<CommandSteps steps={CLI_STEPS} numbered />

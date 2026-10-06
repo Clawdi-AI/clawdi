@@ -79,6 +79,9 @@ clawdi setup
 
 Auto-detects every installed AI agent (Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode), registers each with the cloud, configures only the local modules each agent supports, and installs background sync daemons by default. Pi and OpenCode sync sessions only; neither receives skill or MCP installation. Without an `--agent` flag it picks up everything detected — which is what you want, so later sync steps can cover all of them.
 
+If `clawdi setup` reports that it couldn't install the daemon (for example, no systemd),
+registration still succeeded. Continue, and handle the daemon in **Verify live sync**.
+
 ## Sync the user's sessions
 
 This step fills the dashboard with the user's conversation history. Don't ask them to make a decision in the abstract — show them what's actually on their machine first, then ask. Like `git status` before `git commit`.

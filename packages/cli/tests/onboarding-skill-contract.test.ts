@@ -4,6 +4,17 @@ import { fileURLToPath } from "node:url";
 
 const srcEntry = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const skillPath = new URL("../../../apps/web/public/skill.md", import.meta.url);
+const webRoot = fileURLToPath(new URL("../../../apps/web/", import.meta.url));
+
+function quickstartCommands(path: URL, heading: string): string[] {
+	const section = readFileSync(path, "utf8").split(`## ${heading}\n`)[1]?.split("\n## ")[0];
+	const block = section?.match(/^```bash\n([\s\S]*?)^```/m)?.[1];
+	if (!block?.trim()) throw new Error(`Missing ${heading} commands in ${path.pathname}`);
+	return block
+		.trim()
+		.split("\n")
+		.map((line) => line.trim());
+}
 
 function skillCommands(markdown: string): Map<string, Set<string>> {
 	const commands = new Map<string, Set<string>>();
@@ -50,6 +61,37 @@ async function help(path: string) {
 }
 
 describe("onboarding skill CLI contract", () => {
+	test("README quickstarts and dashboard steps agree and are documented in the skill", async () => {
+		const rootCommands = quickstartCommands(
+			new URL("../../../README.md", import.meta.url),
+			"Start",
+		);
+		const cliCommands = quickstartCommands(new URL("../README.md", import.meta.url), "Quickstart");
+		// Load the exported steps in the web app's normal alias and test environment.
+		const proc = Bun.spawn(
+			[
+				"bun",
+				"--preload",
+				"./test-setup.ts",
+				"-e",
+				'import { CLI_STEPS } from "./src/components/dashboard/add-agent-setup.tsx"; process.stdout.write(JSON.stringify(CLI_STEPS.map(({ code }) => code)));',
+			],
+			{ cwd: webRoot, stdout: "pipe", stderr: "pipe" },
+		);
+		const [stdout, stderr, code] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+			proc.exited,
+		]);
+		expect(code, stderr).toBe(0);
+		expect(JSON.parse(stdout)).toEqual(rootCommands);
+		expect(cliCommands).toEqual(rootCommands);
+		const skillLines = readFileSync(skillPath, "utf8")
+			.split("\n")
+			.map((line) => line.trim());
+		for (const command of rootCommands) expect(skillLines).toContain(command);
+	});
+
 	test("extracts flags from inline commands, multiline code, and piped stdin", () => {
 		const commands = skillCommands(
 			"`clawdi --version`\n`clawdi\npush --all`\n`printf '%s\\n' '<callback URL>' | clawdi auth complete`\n```bash\nclawdi session extract <id> --json\n```",
