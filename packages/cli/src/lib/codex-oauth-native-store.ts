@@ -84,11 +84,10 @@ export const OPENCLAW_SDK_EXPORT_PATHS = {
 	sessionTranscript: "session-transcript-runtime",
 } as const;
 
-export function resolveOpenClawSdkExport(
+export function openClawPackageRoots(
 	home: string,
 	startPaths: ReadonlyArray<string | null | undefined>,
-	exportPath: (typeof OPENCLAW_SDK_EXPORT_PATHS)[keyof typeof OPENCLAW_SDK_EXPORT_PATHS],
-): string | null {
+): Set<string> {
 	const packageRoots = new Set<string>();
 	const stateRoot = join(home, ".openclaw");
 	for (const startPath of [
@@ -123,7 +122,15 @@ export function resolveOpenClawSdkExport(
 			current = parent;
 		}
 	}
-	for (const packageRoot of packageRoots) {
+	return packageRoots;
+}
+
+export function resolveOpenClawSdkExport(
+	home: string,
+	startPaths: ReadonlyArray<string | null | undefined>,
+	exportPath: (typeof OPENCLAW_SDK_EXPORT_PATHS)[keyof typeof OPENCLAW_SDK_EXPORT_PATHS],
+): string | null {
+	for (const packageRoot of openClawPackageRoots(home, startPaths)) {
 		try {
 			const resolved = createRequire(join(packageRoot, "package.json")).resolve(
 				`openclaw/plugin-sdk/${exportPath}`,

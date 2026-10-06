@@ -335,10 +335,10 @@ export function warmFirstOpenClawWriter(
 			throw new Error("anonymous writer refuses an unowned unit");
 	}
 	const previous = readReceipt(paths);
-	if (previous && readComponentServiceState(paths, "system", SERVICE))
+	if (readComponentServiceState(paths, "system", SERVICE)) {
+		if (!previous) throw new Error("anonymous writer has no current ownership receipt");
 		stopMatchingWriter(paths, sdkPath, previous.identity);
-	else if (readComponentServiceState(paths, "system", SERVICE))
-		throw new Error("anonymous writer has no current ownership receipt");
+	}
 	ensureRuntimePlatformDirectory(paths, files.root, { mode: 0o711 });
 	writeRuntimePlatformFileAtomic(paths, files.script, FIRST_WRITER_SCRIPT, { mode: 0o644 });
 	const node = nativeNodePath();
@@ -383,8 +383,7 @@ export function tryFirstOpenClawWrite(
 		paths.userHome !== home ||
 		!runningAsRoot() ||
 		readRuntimeAppliedState(paths) ||
-		existsSync(files.used) ||
-		!privateRootFile(files.receipt)
+		existsSync(files.used)
 	)
 		return profileRuntimeStep("writer.admission.ineligible", () => false);
 	const receipt = readReceipt(paths);
@@ -417,16 +416,14 @@ export function tryFirstOpenClawWrite(
 				maxBuffer: 4096,
 			}),
 		);
-		const ack = z
-			.object({
-				schemaVersion: z.literal("clawdi.openclawFirstWriteAck.v1"),
-				requestId: z.literal(requestId),
-				requestHash: z.literal(hash(raw)),
-				ok: z.literal(true),
-			})
+		z.object({
+			schemaVersion: z.literal("clawdi.openclawFirstWriteAck.v1"),
+			requestId: z.literal(requestId),
+			requestHash: z.literal(hash(raw)),
+			ok: z.literal(true),
+		})
 			.strict()
 			.parse(JSON.parse(output));
-		if (!ack.ok) throw new Error("native writer rejected the first config mutation");
 		return true;
 	} catch {
 		// Keep failure details and tenant values out of the public apply error.

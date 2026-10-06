@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../serve/log";
 import { readRuntimeAppliedState } from "./applied-state";
+import { egressSnapshotEnabled } from "./egress-snapshot";
 import { hermesWasWarmed } from "./hermes-warm-state";
 import { withoutOomProtection } from "./oom-protection";
 import type { getRuntimePaths } from "./paths";
@@ -224,6 +225,7 @@ export function beginFirstApplyEgress(
 	before: SystemdUnitSnapshot,
 ): (() => void) | null {
 	if (
+		!egressSnapshotEnabled(paths) ||
 		!shouldApplySystemdRuntimeUpdate(paths) ||
 		readRuntimeAppliedState(paths) ||
 		before.system.has(RUNTIME_SIDECAR_SYSTEM_UNIT)

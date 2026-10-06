@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+	appendFileSync,
 	chmodSync,
 	chownSync,
 	cpSync,
@@ -71,6 +72,7 @@ import {
 	officialInstallArgs,
 } from "./manifest-contract";
 import { runtimeCommandCurrentRevision } from "./manifest-install";
+import { removeOpenClawManagedProviderAuthProfiles } from "./manifest-oauth";
 import { openClawGatewayHostedPatch } from "./manifest-providers";
 import {
 	AGENT_PLUGINS_SCHEMA_1_0_0,
@@ -88,6 +90,7 @@ import {
 	commitOpenClawConfigTransaction,
 } from "./openclaw-provider-config";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
+import { loadPersistedStepRevisions, persistedStepRevision } from "./persisted-step-revisions";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 import {
 	HERMES_DASHBOARD_BUILD_REVISION_FILE,
@@ -3114,6 +3117,46 @@ fi
 		expect(readFileSync(commandLog, "utf8").trim().split("\n")).toHaveLength(4);
 	});
 
+	test("auth cleanup never memoizes a concurrent native config mutation", () => {
+		const paths = tempRuntimePaths();
+		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome);
+		const context = createOpenClawHostedContext(baseManifest(paths, {}), paths.userHome);
+		context.agentDirs.managed = [context.agentDirs.main];
+		const sdk = context.requireSdkExport("providerAuth");
+		appendFileSync(
+			sdk,
+			`
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(configPath)}, JSON.stringify({auth:{concurrent:"native"}}));
+`,
+		);
+		loadPersistedStepRevisions(paths);
+		removeOpenClawManagedProviderAuthProfiles(context, paths.userHome, "same");
+		expect(
+			persistedStepRevision(`openclaw.managedProviderAuthCleanup:${paths.userHome}`),
+		).toBeUndefined();
+		expect(JSON.parse(readFileSync(configPath, "utf8")).auth.concurrent).toBe("native");
+	});
+
+	test("included channel config always runs the native writer", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
+		const imports = join(paths.userHome, "channel-imports.log");
+		writeFakeOpenClawConfigMutationSdk(paths.userHome, {
+			importLog: imports,
+			initialConfig: { $include: "channels.json", channels: {} },
+		});
+		const context = createOpenClawHostedContext(baseManifest(paths, {}), paths.userHome);
+		loadPersistedStepRevisions(paths);
+		for (let iteration = 0; iteration < 2; iteration += 1) {
+			applyOpenClawHostedChannelPatch({ channels: {} }, null, [], context, paths.userHome);
+		}
+		expect(readFileSync(imports, "utf8").trim().split("\n")).toEqual([
+			"config-mutation",
+			"config-mutation",
+		]);
+	});
+
 	test("batches hot provider, gateway, agent and channel changes with the native writer", () => {
 		const paths = tempRuntimePaths();
 		process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
@@ -3135,6 +3178,7 @@ fi
 			GEMINI_API_KEY: "native-key",
 			CLAWDI_AI_API_KEY: "managed-key",
 			CLAWDI_CHANNEL_TEST_AGENT_TOKEN: "channel-key",
+			UNRELATED_SECRET: "never-copy",
 		};
 		beginOpenClawConfigTransaction(context, env);
 		applyOpenClawHostedProviderPatch(
@@ -3210,7 +3254,11 @@ fi
 		expect(config.agents.defaults.model.primary).toBe("clawdi/model-one");
 		expect(
 			JSON.parse(readFileSync(config.secrets.providers["clawdi-runtime"].path, "utf8")),
-		).toEqual(env);
+		).toEqual({
+			CLAWDI_AI_API_KEY: "managed-key",
+			GEMINI_API_KEY: "native-key",
+			CLAWDI_CHANNEL_TEST_AGENT_TOKEN: "channel-key",
+		});
 		expect(runtimeSystemdCommonEnvironment(paths).CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY).toBe("1");
 	});
 
@@ -3258,6 +3306,7 @@ fi
 	});
 
 	test("reuses version-only OpenClaw probes and invalidates live provider and roster state", () => {
+		process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
 		const paths = tempRuntimePaths();
 		const commandLog = join(paths.serviceStateRoot, "openclaw-probe-commands.log");
 		const sdkLog = join(paths.serviceStateRoot, "openclaw-probe-sdk.log");
@@ -3334,7 +3383,13 @@ fi
 
 		expect(converge(manifestFor("https://provider.example.test/v1", 1)).installErrors).toEqual([]);
 		expect(hotspotCounts()).toEqual(firstHotspots);
-		expect(sdkCounts()).toEqual(firstSdkCalls);
+		// Cleanup may change its own input stores; only a subsequent unchanged
+		// successful run can authorize reuse.
+		expect(sdkCounts()["device-bootstrap"]).toBe(firstSdkCalls["device-bootstrap"]);
+		expect(converge(manifestFor("https://provider.example.test/v1", 1)).installErrors).toEqual([]);
+		const settledSdkCalls = sdkCounts();
+		expect(converge(manifestFor("https://provider.example.test/v1", 1)).installErrors).toEqual([]);
+		expect(sdkCounts()).toEqual(settledSdkCalls);
 
 		const driftedConfig = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
 		const driftedModels = driftedConfig.models as Record<string, unknown>;

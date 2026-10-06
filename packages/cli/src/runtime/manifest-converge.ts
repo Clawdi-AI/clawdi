@@ -16,7 +16,7 @@ import {
 	validateConnectionProviderEnvironments,
 } from "./connection-provider-config";
 import { buildEgressProfileBundle, hasEnabledEgressProfiles } from "./egress-profiles";
-import { publishClaimedEgressSnapshot } from "./egress-snapshot";
+import { egressSnapshotEnabled, publishClaimedEgressSnapshot } from "./egress-snapshot";
 import {
 	ensureFileBrowserCompanion,
 	gcFileBrowserCompanionCandidates,
@@ -1513,7 +1513,7 @@ export function convergeRuntimeManifest(
 	const { context, state } = profileRuntimeStep("converge.initialize", () =>
 		initializeRuntimeConvergence(load, paths, opts),
 	);
-	loadPersistedStepRevisions(paths);
+	loadPersistedStepRevisions(paths, openClawHotApplyEnabled() || egressSnapshotEnabled(paths));
 	try {
 		if (load.manifest.providerHandoffs?.length)
 			throw new Error(

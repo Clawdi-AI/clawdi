@@ -1,13 +1,17 @@
-import { readFileSync } from "node:fs";
 import type { OpenClawHostedContext } from "./hosted-openclaw-context";
 import type { RuntimeManifest } from "./manifest-contract";
 import { runtimeFileCurrentRevision } from "./manifest-install";
 import { canonicalJsonEqual, isPlainRecord, recordValue } from "./manifest-shared";
+import { readPlainOpenClawConfig } from "./openclaw-config";
 import { OPENCLAW_CONFIG_MUTATION_HELPER } from "./openclaw-config-mutation-script";
-import { projectOpenClawProviderFileSecrets } from "./openclaw-file-secrets";
+import {
+	openClawFileSecretEnvironmentKeys,
+	projectOpenClawProviderFileSecrets,
+} from "./openclaw-file-secrets";
 import { tryFirstOpenClawWrite } from "./openclaw-first-writer";
 import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import {
+	openClawStepIdentity,
 	persistedStepRevision,
 	recordPersistedStepRevision,
 	runtimeFilesContentRevision,
@@ -40,6 +44,7 @@ export interface OpenClawConfigTransaction {
 	}>;
 	afterCommit: Array<() => void>;
 	environment: Record<string, string>;
+	fileSecretKeys: Set<string>;
 }
 
 export function beginOpenClawConfigTransaction(
@@ -48,7 +53,12 @@ export function beginOpenClawConfigTransaction(
 ): void {
 	if (context.configMutationState.transaction)
 		throw new Error("OpenClaw config transaction is already active");
-	context.configMutationState.transaction = { operations: [], afterCommit: [], environment };
+	context.configMutationState.transaction = {
+		operations: [],
+		afterCommit: [],
+		environment,
+		fileSecretKeys: openClawFileSecretEnvironmentKeys(context.home),
+	};
 }
 
 export function commitOpenClawConfigTransaction(
@@ -100,6 +110,7 @@ export function applyOpenClawContextMergePatch(
 				JSON.stringify(patch),
 				transaction.environment,
 				context.home,
+				transaction.fileSecretKeys,
 			),
 		);
 		transaction.operations.push({ kind: "provider", input, exactProviderIds: [] });
@@ -123,7 +134,12 @@ export function applyOpenClawHostedProviderPatch(
 	const sdkPath = context.requireSdkExport("configMutation");
 	const transaction = context.configMutationState.transaction;
 	const desiredContent = transaction
-		? projectOpenClawProviderFileSecrets(patch.content, transaction.environment, context.home)
+		? projectOpenClawProviderFileSecrets(
+				patch.content,
+				transaction.environment,
+				context.home,
+				transaction.fileSecretKeys,
+			)
 		: patch.content;
 	const content = adaptOpenClawMemorySearchPatch(
 		desiredContent,
@@ -135,6 +151,7 @@ export function applyOpenClawHostedProviderPatch(
 	const patchRevision = runtimeImpactRevision({
 		providerRevision,
 		content,
+		implementation: openClawStepIdentity(context.home, [OPENCLAW_CONFIG_MUTATION_HELPER]),
 		sdk: runtimeFileCurrentRevision(sdkPath),
 	});
 	// Across processes the patch content and SDK decide the result; the live config
@@ -142,6 +159,7 @@ export function applyOpenClawHostedProviderPatch(
 	const persistedKey = `openclaw.providerPatch:${context.configPath}`;
 	const persistedRevision = runtimeImpactRevision({
 		content,
+		implementation: openClawStepIdentity(context.home, [OPENCLAW_CONFIG_MUTATION_HELPER]),
 		sdk: runtimeFileCurrentRevision(sdkPath),
 	});
 	if (
@@ -218,20 +236,35 @@ export function applyOpenClawHostedChannelPatch(
 				JSON.stringify(patch),
 				transaction.environment,
 				context.home,
+				transaction.fileSecretKeys,
 			),
 		);
-	if (openClawChannelPatchIsNoop(patch, previousChannels, context.configPath)) return;
+	if (
+		openClawHotApplyEnabled() &&
+		openClawChannelPatchIsNoop(patch, previousChannels, context.configPath)
+	)
+		return;
 	const sdkPath = context.requireSdkExport("configMutation");
 	const input = JSON.stringify({ patch, previousChannels, availableChannelEnv });
 	// Skip only when this exact input already produced the current config bytes.
 	const persistedKey = `openclaw.channelPatch:${context.configPath}`;
-	const inputRevision = runtimeImpactRevision({ input, sdk: runtimeFileCurrentRevision(sdkPath) });
+	const inputRevision = runtimeImpactRevision({
+		input,
+		implementation: openClawStepIdentity(context.home, [OPENCLAW_CONFIG_MUTATION_HELPER]),
+		sdk: runtimeFileCurrentRevision(sdkPath),
+	});
 	const appliedState = () =>
 		`${inputRevision}\n${runtimeFilesContentRevision([context.configPath])}`;
-	if (persistedStepRevision(persistedKey) === appliedState()) return;
+	const before = appliedState();
+	const record = () => {
+		if (readPlainOpenClawConfig(context.configPath) && appliedState() === before)
+			recordPersistedStepRevision(persistedKey, before);
+	};
+	if (readPlainOpenClawConfig(context.configPath) && persistedStepRevision(persistedKey) === before)
+		return;
 	if (transaction) {
 		transaction.operations.push({ kind: "channels", input: JSON.parse(input) });
-		transaction.afterCommit.push(() => recordPersistedStepRevision(persistedKey, appliedState()));
+		transaction.afterCommit.push(record);
 		return;
 	}
 	// No custom IO: the official writer owns its cross-process lock, snapshot and commit checks.
@@ -249,7 +282,7 @@ export function applyOpenClawHostedChannelPatch(
 		context.home,
 		workspaceRoot,
 	);
-	recordPersistedStepRevision(persistedKey, appliedState());
+	record();
 }
 
 const OPENCLAW_MANAGED_CHANNEL_PROVIDERS = ["telegram", "discord", "whatsapp"] as const;
@@ -285,14 +318,7 @@ function openClawChannelPatchIsNoop(
 	if (hasManagedChannelAccounts(patch.channels) || hasManagedChannelAccounts(previousChannels)) {
 		return false;
 	}
-	let current: Record<string, unknown> | null;
-	try {
-		const text = readFileSync(configPath, "utf-8");
-		if (text.includes("$include")) return false;
-		current = recordValue(JSON.parse(text) as unknown);
-	} catch {
-		return false;
-	}
+	const current = readPlainOpenClawConfig(configPath);
 	const currentChannels = recordValue(current?.channels);
 	if (
 		!currentChannels ||
@@ -345,10 +371,13 @@ function openClawMemorySearchLayout(
 	workspaceRoot: string,
 	sdkPath: string,
 ): OpenClawMemorySearchLayout {
-	const revision = [
-		runtimeFileCurrentRevision(commandPath),
-		runtimeFileCurrentRevision(sdkPath),
-	].join("\0");
+	const stateRevision = () =>
+		[
+			openClawStepIdentity(home, ["config schema", jsonSchemaHasPropertyPath.toString()]),
+			runtimeFileCurrentRevision(commandPath),
+			runtimeFileCurrentRevision(sdkPath),
+		].join("\0");
+	const revision = stateRevision();
 	const cached = openClawMemorySearchLayouts.get(commandPath);
 	if (cached?.revision === revision) return cached.layout;
 	// Version-only: the installed command and SDK files decide the schema layout.
@@ -379,8 +408,10 @@ function openClawMemorySearchLayout(
 		throw new Error("installed OpenClaw memory search schema is unsupported");
 	}
 	const layout: OpenClawMemorySearchLayout = topLevel ? "top-level" : "agents-defaults";
-	openClawMemorySearchLayouts.set(commandPath, { revision, layout });
-	recordPersistedStepRevision(persistedKey, `${revision}\n${layout}`);
+	if (stateRevision() === revision) {
+		openClawMemorySearchLayouts.set(commandPath, { revision, layout });
+		recordPersistedStepRevision(persistedKey, `${revision}\n${layout}`);
+	}
 	return layout;
 }
 
@@ -482,7 +513,8 @@ export function openClawConfigPatchIsApplied(
 	exactProviderIds: readonly string[] = [],
 ): boolean {
 	try {
-		const current = JSON.parse(readFileSync(context.configPath, "utf-8")) as unknown;
+		const current = readPlainOpenClawConfig(context.configPath);
+		if (!current) return false;
 		if (!jsonMergePatchIsApplied(current, patch)) return false;
 		const currentProviders = recordValue(recordValue(recordValue(current)?.models)?.providers);
 		const desiredProviders = recordValue(recordValue(patch.models)?.providers);

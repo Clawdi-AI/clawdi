@@ -28,20 +28,7 @@ import { generateAnonymousEgressCa, warmAnonymousEgressSidecar } from "./runtime
 
 const GATEWAY_READY_TIMEOUT_MS = 180_000;
 
-/**
- * Pool warm-up for a booted instance that has not been claimed (experimental,
- * default-off). It reads no manifest, credential or tenant identity:
- *
- * 1. generates this instance's egress CA with the pinned engine and publishes
- *    the CA bundle the runtime trusts, so the gateway can start before a tenant;
- * 2. writes the structural gateway settings every hosted tenant uses with a
- *    random instance-local token, plus empty channel containers;
- * 3. installs and starts the official gateway with the environment of a
- *    Clawdi-managed-provider tenant (placeholders and CA paths only);
- * 4. seeds the version-only OpenClaw probes and auth-store discovery;
- * 5. records the gateway's start identity so the first tenant apply can adopt
- *    the running process, and OpenClaw hot-reloads the tenant config.
- */
+/** Warm anonymous gateway/egress and seed probes before single-use adoption. */
 export async function warmHostedOpenClawRuntime(
 	paths: RuntimePaths,
 	runtimeUser = "clawdi",
@@ -112,7 +99,7 @@ async function waitForGatewayHealth(): Promise<void> {
 		} catch {
 			// Not listening yet.
 		}
-		await sleep(250);
+		await sleep(1_000);
 	}
 	throw new Error("anonymous OpenClaw gateway did not become healthy");
 }

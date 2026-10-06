@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -74,6 +74,7 @@ describe("failed runtime systemd unit recovery", () => {
 			const paths = {
 				...getRuntimePaths({ mode: "hosted" }),
 				appliedState: join(root, "applied.json"),
+				statusRoot: join(root, "status"),
 				systemdSystemRoot: join(root, "units"),
 				systemdUserRoot: join(root, "user-units"),
 				systemdEnvRoot: join(root, "env"),
@@ -101,6 +102,10 @@ esac
 			process.env.CLAWDI_SYSTEMCTL_PATH = command;
 			const before = { system: new Map<string, string>(), user: new Map<string, string>() };
 			writeManager();
+			expect(beginFirstApplyEgress(paths, before)).toBeNull();
+			if (process.getuid?.() !== 0) return;
+			writeFixture(root, "status/egress-snapshot-enabled", "v1\n");
+			chmodSync(join(root, "status/egress-snapshot-enabled"), 0o600);
 			const finish = beginFirstApplyEgress(paths, before);
 			expect(finish).not.toBeNull();
 			expect(readFileSync(log, "utf8")).toContain(`start --no-block ${unit}`);

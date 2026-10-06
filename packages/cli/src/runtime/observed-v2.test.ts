@@ -123,7 +123,7 @@ echo "$*" >> '${commands}'
 case "$*" in
  *--property=Id*)
   printf 'Id=${second}\\nActiveState=inactive\\nSubState=dead\\n\\n'
-  ${incomplete ? "exit 0" : "printf 'Id=" + first + "\\nActiveState=active\\nSubState=running\\n'"} ;;
+  ${incomplete ? "exit 0" : `printf 'Id=${first}\\nActiveState=active\\nSubState=running\\n'`} ;;
  *${first}*) printf 'ActiveState=active\\nSubState=running\\n' ;;
  *) printf 'ActiveState=inactive\\nSubState=dead\\n' ;;
 esac

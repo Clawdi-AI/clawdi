@@ -121,7 +121,7 @@ async function warmAnonymousDashboard(
 			} catch {
 				// The official dashboard is still starting.
 			}
-			await sleep(250);
+			await sleep(1_000);
 		}
 		if (!healthy) throw new Error("anonymous Hermes dashboard did not become healthy");
 	} catch (error) {

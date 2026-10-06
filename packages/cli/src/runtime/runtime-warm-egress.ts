@@ -87,7 +87,7 @@ export async function generateAnonymousEgressCa(
 					throw new Error(
 						`anonymous egress CA creation failed (${engineProcess.exitCode ?? "timeout"}): ${diagnostic.trim()}`,
 					);
-				await sleep(100);
+				await sleep(1_000);
 			}
 		} finally {
 			if (engineProcess.exitCode === null) engineProcess.kill("SIGTERM");

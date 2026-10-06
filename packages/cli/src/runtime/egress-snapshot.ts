@@ -138,7 +138,7 @@ export function waitForEgressSnapshot(paths: RuntimePaths, timeoutMs = 15_000): 
 		} catch (error) {
 			if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
 		}
-		Atomics.wait(pause, 0, 0, 25);
+		Atomics.wait(pause, 0, 0, 100);
 	}
 	throw new Error("egress engine did not acknowledge the candidate snapshot");
 }
@@ -189,4 +189,9 @@ export function adoptableWarmEgress(paths: RuntimePaths): boolean {
 
 export function consumeWarmEgress(paths: RuntimePaths): void {
 	rmSync(egressSnapshotPaths(paths).warm, { force: true });
+}
+
+/** After first readiness the next normal projection restores legacy inputs. */
+export function retireEgressSnapshot(paths: RuntimePaths): void {
+	rmSync(egressSnapshotPaths(paths).enabled, { force: true });
 }

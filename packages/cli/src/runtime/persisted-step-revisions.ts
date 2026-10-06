@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { openClawPackageRoots } from "../lib/codex-oauth-native-store";
+import { getCliVersion } from "../lib/version";
 import { log, toErrorMessage } from "../serve/log";
 import type { RuntimePaths } from "./paths";
 import { writeRuntimePlatformFileAtomic } from "./state";
@@ -14,7 +16,7 @@ import { writeRuntimePlatformFileAtomic } from "./state";
  */
 const STORE_SCHEMA = z
 	.object({
-		schemaVersion: z.literal("clawdi.runtimeStepRevisions.v1"),
+		schemaVersion: z.literal("clawdi.runtimeStepRevisions.v2"),
 		entries: z.record(z.string(), z.string()),
 	})
 	.strict();
@@ -28,10 +30,10 @@ function storePath(paths: RuntimePaths): string {
 }
 
 /** Load once per convergence, while running with the platform identity. */
-export function loadPersistedStepRevisions(paths: RuntimePaths): void {
-	entries = new Map();
+export function loadPersistedStepRevisions(paths: RuntimePaths, enabled = true): void {
+	entries = enabled ? new Map() : null;
 	dirty = false;
-	if (paths.mode !== "hosted") return;
+	if (!enabled || paths.mode !== "hosted") return;
 	const path = storePath(paths);
 	try {
 		const stat = lstatSync(path);
@@ -68,7 +70,7 @@ export function flushPersistedStepRevisions(paths: RuntimePaths): void {
 		paths,
 		storePath(paths),
 		`${JSON.stringify({
-			schemaVersion: "clawdi.runtimeStepRevisions.v1",
+			schemaVersion: "clawdi.runtimeStepRevisions.v2",
 			entries: Object.fromEntries(entries),
 		})}\n`,
 		{ mode: 0o600 },
@@ -132,4 +134,25 @@ export function runtimeSubdirectoryNames(path: string): string[] | null {
 export function resetPersistedStepRevisionsForTest(): void {
 	entries = null;
 	dirty = false;
+}
+
+/** Upgrade and helper changes invalidate both in-process and durable memos. */
+export function openClawStepIdentity(home: string, sources: readonly string[]): string {
+	const packages = [
+		...openClawPackageRoots(home, [
+			join(home, ".local/bin/openclaw"),
+			join(home, ".openclaw/bin/openclaw"),
+		]),
+	]
+		.sort()
+		.map((root) => join(root, "package.json"));
+	return createHash("sha256")
+		.update(
+			JSON.stringify({
+				cli: getCliVersion(),
+				packages: runtimeFilesContentRevision(packages),
+				sources,
+			}),
+		)
+		.digest("hex");
 }

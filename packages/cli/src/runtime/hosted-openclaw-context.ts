@@ -1,11 +1,9 @@
-import { readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
 	CLAWDI_MANAGED_PROVIDER_ID,
 	isClawdiManagedV2ProviderId,
 	MANAGED_AI_PROVIDER_RUNTIME_ENV,
 } from "@clawdi/shared";
-import JSON5 from "json5";
 import {
 	type OpenClawAgentWorkspace,
 	parseOpenClawAgentWorkspaces,
@@ -17,8 +15,13 @@ import {
 import { agentTargetProjectionInput, hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
 import { runtimeFileCurrentRevision } from "./manifest-install";
+import { readPlainOpenClawConfig } from "./openclaw-config";
 import type { OpenClawConfigTransaction } from "./openclaw-provider-config";
-import { persistedStepRevision, recordPersistedStepRevision } from "./persisted-step-revisions";
+import {
+	openClawStepIdentity,
+	persistedStepRevision,
+	recordPersistedStepRevision,
+} from "./persisted-step-revisions";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
 import { parseSystemctlShow, systemctlPath } from "./systemd";
@@ -86,36 +89,14 @@ function parseOfficialWorkspaceRoster(stdout: string): string {
 }
 
 export function openClawRosterConfigRevision(home: string): string | null {
-	try {
-		const config = JSON5.parse(
-			readFileSync(join(home, ".openclaw", "openclaw.json"), "utf8"),
-		) as unknown;
-		if (!config || typeof config !== "object" || Array.isArray(config)) return null;
-		const hasInclude = (value: unknown): boolean => {
-			if (!value || typeof value !== "object") return false;
-			return Object.hasOwn(value, "$include") || Object.values(value).some(hasInclude);
-		};
-		if (hasInclude(config)) return null;
-		const root =
-			config && typeof config === "object" && !Array.isArray(config)
-				? (config as Record<string, unknown>)
-				: {};
-		const agents =
-			root.agents && typeof root.agents === "object" && !Array.isArray(root.agents)
-				? (root.agents as Record<string, unknown>)
-				: {};
-		const defaults =
-			agents.defaults && typeof agents.defaults === "object" && !Array.isArray(agents.defaults)
-				? (agents.defaults as Record<string, unknown>)
-				: {};
-		return runtimeImpactRevision({
-			defaultWorkspace: defaults.workspace ?? null,
-			entries: agents.entries ?? null,
-			list: agents.list ?? null,
-		});
-	} catch {
-		return null;
-	}
+	const root = readPlainOpenClawConfig(join(home, ".openclaw", "openclaw.json"));
+	if (!root) return null;
+	const agents = recordValue(root.agents);
+	const defaults = recordValue(agents?.defaults);
+	return runtimeImpactRevision({
+		workspace: defaults?.workspace ?? null,
+		list: agents?.list ?? null,
+	});
 }
 
 function openClawGatewayIsTransitioning(home: string): boolean {
@@ -146,7 +127,13 @@ function waitForOpenClawGatewayTransition(): void {
 export function resolveHostedOpenClawWorkspace(home: string): string {
 	const command = commandPath(home);
 	const rosterRevision = openClawRosterConfigRevision(home);
-	const revision = [runtimeFileCurrentRevision(command), rosterRevision].join("\0");
+	const stateRevision = () =>
+		[
+			openClawStepIdentity(home, ["agents list --json"]),
+			runtimeFileCurrentRevision(command),
+			openClawRosterConfigRevision(home),
+		].join("\0");
+	const revision = stateRevision();
 	const cached = openClawWorkspaces.get(home);
 	if (rosterRevision !== null && cached?.revision === revision) return cached.workspace;
 	const persistedKey = `openclaw.workspace:${home}`;
@@ -176,9 +163,10 @@ export function resolveHostedOpenClawWorkspace(home: string): string {
 	if (openClawDoctorRepairRequired(result)) throw new OpenClawWorkspaceRosterError(true);
 	if (result.status !== 0) throw new OpenClawWorkspaceRosterError(false);
 	const workspace = parseOfficialWorkspaceRoster(String(result.stdout));
-	openClawWorkspaces.set(home, { revision, workspace });
-	if (rosterRevision !== null)
+	if (rosterRevision !== null && stateRevision() === revision) {
+		openClawWorkspaces.set(home, { revision, workspace });
 		recordPersistedStepRevision(persistedKey, `${revision}\n${workspace}`);
+	}
 	return workspace;
 }
 

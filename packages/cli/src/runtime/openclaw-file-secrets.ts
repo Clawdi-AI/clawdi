@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { isPlainRecord, recordValue } from "./manifest-shared";
+import { readPlainOpenClawConfig } from "./openclaw-config";
 
 export const OPENCLAW_FILE_SECRET_PROVIDER = "clawdi-runtime";
 
@@ -16,10 +16,11 @@ export function projectOpenClawProviderFileSecrets(
 	content: string,
 	environment: Record<string, string>,
 	home: string,
+	referencedKeys = openClawFileSecretEnvironmentKeys(home),
 ): string {
 	const patch = recordValue(JSON.parse(content) as unknown);
 	if (!patch) throw new Error("OpenClaw provider patch must be an object");
-	const values: Record<string, string> = { ...environment };
+	const values: Record<string, string> = {};
 	let projected = false;
 	const project = (value: unknown): void => {
 		if (Array.isArray(value)) {
@@ -35,6 +36,7 @@ export function projectOpenClawProviderFileSecrets(
 				Object.hasOwn(environment, child.id)
 			) {
 				projected = true;
+				referencedKeys.add(child.id);
 				value[key] = {
 					source: "file",
 					provider: OPENCLAW_FILE_SECRET_PROVIDER,
@@ -45,6 +47,9 @@ export function projectOpenClawProviderFileSecrets(
 	};
 	project(patch);
 	if (!projected) return content;
+	for (const key of referencedKeys) {
+		if (Object.hasOwn(environment, key)) values[key] = environment[key];
+	}
 	const payload = `${JSON.stringify(Object.fromEntries(Object.entries(values).sort()))}\n`;
 	const digest = createHash("sha256").update(payload).digest("hex");
 	const path = join(home, ".clawdi", "runtime-credentials", `openclaw-${digest}.json`);
@@ -79,10 +84,6 @@ export function openClawFileSecretEnvironmentKeys(home: string): Set<string> {
 		}
 		for (const child of Object.values(value)) visit(child);
 	};
-	try {
-		visit(JSON.parse(readFileSync(join(home, ".openclaw", "openclaw.json"), "utf8")) as unknown);
-	} catch {
-		// Missing/unreadable config is not evidence that an environment key is unused.
-	}
+	visit(readPlainOpenClawConfig(join(home, ".openclaw", "openclaw.json")));
 	return keys;
 }

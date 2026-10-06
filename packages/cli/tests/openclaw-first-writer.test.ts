@@ -223,7 +223,7 @@ test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1")(
  `,
 		);
 		const units = ["openclaw-first-writer.socket", "openclaw-first-writer.service"];
-		const policy = join(paths.systemdSystemRoot, units[1] + ".d", "10-fixture-policy.conf");
+		const policy = join(paths.systemdSystemRoot, `${units[1]}.d`, "10-fixture-policy.conf");
 		mkdirSync(dirname(policy), { recursive: true });
 		writeFileSync(policy, "[Service]\nUser=0\n");
 

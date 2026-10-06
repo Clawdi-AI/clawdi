@@ -1,12 +1,14 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+	egressSnapshotEnabled,
 	egressSnapshotPaths,
 	initializeAnonymousEgressSnapshot,
 	publishEgressSnapshot,
+	retireEgressSnapshot,
 	waitForEgressSnapshot,
 } from "./egress-snapshot";
 import { getRuntimePaths } from "./paths";
@@ -41,4 +43,21 @@ test("warm egress rejects claimed data and requires the exact private live ackno
 	rmSync(files.ack);
 	writeFileSync(files.ack, ack(), { mode: 0o644 });
 	expect(() => waitForEgressSnapshot(paths, 10)).toThrow("did not acknowledge");
+});
+
+test("first readiness retires snapshot selection while preserving the active policy", () => {
+	const root = mkdtempSync(join(tmpdir(), "clawdi-egress-retirement-"));
+	roots.push(root);
+	process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+	process.env.CLAWDI_RUN_DIR = join(root, "run");
+	process.env.CLAWDI_EGRESS_UID = String(process.getuid?.());
+	process.env.CLAWDI_EGRESS_GID = String(process.getgid?.());
+	const paths = getRuntimePaths({ mode: "hosted" });
+	mkdirSync(paths.statusRoot, { recursive: true });
+	initializeAnonymousEgressSnapshot(paths);
+	expect(existsSync(egressSnapshotPaths(paths).enabled)).toBe(true);
+	const input = readFileSync(egressSnapshotPaths(paths).input, "utf8");
+	retireEgressSnapshot(paths);
+	expect(egressSnapshotEnabled(paths)).toBe(false);
+	expect(readFileSync(egressSnapshotPaths(paths).input, "utf8")).toBe(input);
 });

@@ -1,11 +1,12 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import {
 	flushPersistedStepRevisions,
 	loadPersistedStepRevisions,
+	openClawStepIdentity,
 	persistedStepRevision,
 	recordPersistedStepRevision,
 	resetPersistedStepRevisionsForTest,
@@ -68,4 +69,53 @@ test("file content revisions change with content and presence", () => {
 	const present = runtimeFilesContentRevision([file]);
 	writeFileSync(file, '{"changed":true}');
 	expect(new Set([absent, present, runtimeFilesContentRevision([file])]).size).toBe(3);
+});
+
+test("old memos and disabled adoption cannot skip upgrade work", () => {
+	const paths = hostedPaths();
+	writeFileSync(
+		join(paths.statusRoot, "runtime-step-revisions.json"),
+		JSON.stringify({
+			schemaVersion: "clawdi.runtimeStepRevisions.v1",
+			entries: { step: "old" },
+		}),
+		{ mode: 0o600 },
+	);
+	loadPersistedStepRevisions(paths);
+	expect(persistedStepRevision("step")).toBeUndefined();
+	loadPersistedStepRevisions(paths, false);
+	recordPersistedStepRevision("step", "new");
+	flushPersistedStepRevisions(paths);
+	expect(persistedStepRevision("step")).toBeUndefined();
+});
+
+test("CLI, helper and package upgrades invalidate a memo with identical launcher bytes", () => {
+	const paths = hostedPaths();
+	const home = paths.userHome;
+	const nativePackage = join(home, ".local/tools/node/lib/node_modules/openclaw/package.json");
+	mkdirSync(join(nativePackage, ".."), { recursive: true });
+	writeFileSync(nativePackage, JSON.stringify({ name: "openclaw", version: "1.0.0" }));
+	const first = openClawStepIdentity(home, ["probe-v1"]);
+	expect(openClawStepIdentity(home, ["probe-v2"])).not.toBe(first);
+	writeFileSync(nativePackage, JSON.stringify({ name: "openclaw", version: "2.0.0" }));
+	expect(openClawStepIdentity(home, ["probe-v1"])).not.toBe(first);
+	const cliPackage = join(import.meta.dir, "../../package.json");
+	const original = readFileSync(cliPackage, "utf8");
+	const before = openClawStepIdentity(home, ["probe-v1"]);
+	try {
+		writeFileSync(cliPackage, JSON.stringify({ ...JSON.parse(original), version: "upgrade-test" }));
+		expect(openClawStepIdentity(home, ["probe-v1"])).not.toBe(before);
+	} finally {
+		writeFileSync(cliPackage, original);
+	}
+});
+
+test("legacy OpenClaw package layout upgrades invalidate memos", () => {
+	const paths = hostedPaths();
+	const nativePackage = join(paths.userHome, ".local/lib/node_modules/openclaw/package.json");
+	mkdirSync(join(nativePackage, ".."), { recursive: true });
+	writeFileSync(nativePackage, JSON.stringify({ name: "openclaw", version: "1.0.0" }));
+	const before = openClawStepIdentity(paths.userHome, ["probe"]);
+	writeFileSync(nativePackage, JSON.stringify({ name: "openclaw", version: "2.0.0" }));
+	expect(openClawStepIdentity(paths.userHome, ["probe"])).not.toBe(before);
 });

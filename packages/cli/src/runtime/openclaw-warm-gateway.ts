@@ -1,9 +1,9 @@
 import { lstatSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import JSON5 from "json5";
 import { z } from "zod";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import { isPlainRecord } from "./manifest-shared";
+import { readPlainOpenClawConfig } from "./openclaw-config";
 import type { RuntimePaths } from "./paths";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import {
@@ -28,18 +28,11 @@ export function openClawHotApplyEnabled(): boolean {
 
 /** Keep the normal restart boundary when native config disables hybrid reload. */
 export function openClawConfigCanHotReload(home: string): boolean {
-	try {
-		const config = JSON5.parse(
-			readFileSync(join(home, ".openclaw", "openclaw.json"), "utf8"),
-		) as unknown;
-		if (!isPlainRecord(config) || Object.hasOwn(config, "$include")) return false;
-		const gateway = isPlainRecord(config.gateway) ? config.gateway : {};
-		if (Object.hasOwn(gateway, "$include")) return false;
-		const reload = isPlainRecord(gateway.reload) ? gateway.reload : {};
-		return reload.mode === undefined || reload.mode === "hybrid";
-	} catch {
-		return false;
-	}
+	const config = readPlainOpenClawConfig(join(home, ".openclaw", "openclaw.json"));
+	if (!config) return false;
+	const gateway = isPlainRecord(config.gateway) ? config.gateway : {};
+	const reload = isPlainRecord(gateway.reload) ? gateway.reload : {};
+	return reload.mode === undefined || reload.mode === "hybrid";
 }
 
 const MARKER_SCHEMA = z
@@ -103,7 +96,7 @@ function warmOpenClawGatewayIdentity(paths: RuntimePaths): string | null {
 			environment: read(systemdEnvironmentFilePath(paths, name)).replace(DIGEST_LINE, ""),
 			egressCaBundle: read(paths.egressSystemCaFile),
 			gateway: gatewayRestartSettings(
-				JSON.parse(read(join(paths.userHome, ".openclaw", "openclaw.json"))) as unknown,
+				readPlainOpenClawConfig(join(paths.userHome, ".openclaw", "openclaw.json")),
 			),
 		});
 	} catch {

@@ -1,14 +1,7 @@
 /** Shared by normal native writes and the anonymous single-use writer. */
 export const OPENCLAW_MUTATION_IMPORTS = `import { readFileSync } from "node:fs";
-import * as nodeModule from "node:module";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-
-// Warm-up seeds this runtime-user cache. Node validates source/version identity;
-// unavailable caching is harmless and never replaces native config validation.
-nodeModule.enableCompileCache?.(join(homedir(), ".cache", "clawdi", "openclaw-config-writer"));
 
 let mutationProfileEnabled = process.env.CLAWDI_RUNTIME_PROFILE === "1";
 const emitMutationSpan = (label, startedAt, started) => {

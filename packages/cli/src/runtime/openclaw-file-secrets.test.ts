@@ -25,7 +25,11 @@ describe("OpenClaw file credentials", () => {
 			},
 		});
 		const first = JSON.parse(
-			projectOpenClawProviderFileSecrets(input, { CLAWDI_AI_API_KEY: "key-one" }, home),
+			projectOpenClawProviderFileSecrets(
+				input,
+				{ CLAWDI_AI_API_KEY: "key-one", UNRELATED_SECRET: "never-copy" },
+				home,
+			),
 		);
 		const path = first.secrets.providers["clawdi-runtime"].path;
 		expect(first.models.providers.clawdi.apiKey).toEqual({
@@ -63,6 +67,11 @@ describe("OpenClaw file credentials", () => {
 			);
 			expect(openClawConfigCanHotReload(home)).toBe(mode === undefined || mode === "hybrid");
 		}
+		writeFileSync(
+			join(home, ".openclaw", "openclaw.json"),
+			`{ gateway: { reload: { $include: 'reload.json5' } } }`,
+		);
+		expect(openClawConfigCanHotReload(home)).toBe(false);
 	});
 
 	test("does not withdraw unrelated env credentials", () => {

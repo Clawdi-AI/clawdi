@@ -161,6 +161,7 @@ describe("hosted runtime observation producer", () => {
 	test.each([false, true])(
 		"bounds immediate recapture and fences a changed identity (%s)",
 		async (changeIdentity) => {
+			process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
 			const paths = tempRuntimePaths();
 			writeApplyIdentityFile(paths, 1);
 			writeRuntimeAppliedState(appliedState(1), paths);
@@ -605,13 +606,20 @@ describe("hosted runtime observation producer", () => {
 		expect(isPermanentRuntimeObservationRejection({ response: { status } })).toBe(expected);
 	});
 
-	test("reports a non-ok to ok transition within one second", async () => {
+	test("reports an opted-in non-ok to ok transition within one second", async () => {
+		process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
 		expect(await observationSchedule("error", 2_000, true)).toEqual([
 			{ at: 0, status: "error" },
 			{ at: 1_000, status: "ok" },
 		]);
 	});
 
+	test("existing runtimes retain five-second convergence observations", async () => {
+		expect(await observationSchedule("error", 6_000, true)).toEqual([
+			{ at: 0, status: "error" },
+			{ at: 5_000, status: "ok" },
+		]);
+	});
 	test("reports a successful converge without waiting for the steady cadence", async () => {
 		const paths = tempRuntimePaths();
 		writeApplyIdentityFile(paths, 1);
@@ -654,7 +662,7 @@ describe("hosted runtime observation producer", () => {
 			"bounds non-ok fast observations to ninety seconds",
 			"error",
 			151_000,
-			[...Array.from({ length: 91 }, (_, index) => index * 1_000), 150_000],
+			[...Array.from({ length: 19 }, (_, index) => index * 5_000), 150_000],
 		],
 		["keeps ready observations on the steady cadence", "ok", 61_000, [0, 60_000]],
 	] as const)("%s", async (_name, status, stopAtMs, expectedTimes) => {
