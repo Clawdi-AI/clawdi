@@ -36,7 +36,7 @@ async def _seed_session(client: httpx.AsyncClient) -> tuple[str, str, list[dict[
         json={
             "machine_id": "share-machine",
             "machine_name": "Share machine",
-            "agent_type": "claude-code",
+            "agent_type": "claude_code",
             "agent_version": "1.0.0",
             "os": "linux",
         },

@@ -89,7 +89,7 @@ async def _register_env(client: httpx.AsyncClient) -> uuid.UUID:
         json={
             "machine_id": f"session-delete-{uuid.uuid4().hex}",
             "machine_name": "Session deletion test",
-            "agent_type": "claude-code",
+            "agent_type": "claude_code",
             "agent_version": "test",
             "os": "linux",
         },
