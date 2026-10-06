@@ -23,7 +23,7 @@ from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.sql.selectable import Subquery
+from sqlalchemy.sql.selectable import Select, Subquery
 
 from app.core.cleanup import finish_cleanup
 from app.core.config import settings
@@ -3356,17 +3356,25 @@ async def consume_pending_inbound_messages_for_bindings(
     return len(messages)
 
 
-def _offline_agent_observations(*, now: datetime) -> Subquery:
+def _offline_agent_observations(
+    *,
+    now: datetime,
+    environment_ids: Select[tuple[UUID]] | None = None,
+) -> Subquery:
     """Only Agents with observed boot sessions can be classified as offline."""
     freshness_deadline = func.max(V2RuntimeObservationHead.freshness_deadline).filter(
         V2RuntimeObservationHead.tombstoned_at.is_(None)
     )
-    return (
-        select(
-            V2RuntimeObservationHead.environment_id,
-            func.max(V2RuntimeObservationHead.last_seen_received_at).label("last_seen"),
+    observations = select(
+        V2RuntimeObservationHead.environment_id,
+        func.max(V2RuntimeObservationHead.last_seen_received_at).label("last_seen"),
+    )
+    if environment_ids is not None:
+        observations = observations.where(
+            V2RuntimeObservationHead.environment_id.in_(environment_ids)
         )
-        .group_by(V2RuntimeObservationHead.environment_id)
+    return (
+        observations.group_by(V2RuntimeObservationHead.environment_id)
         .having(
             or_(
                 freshness_deadline.is_(None),
@@ -3420,7 +3428,12 @@ async def consume_inbound_messages_for_offline_agents(
     if not pending:
         return ()
     now = datetime.now(UTC)
-    offline = _offline_agent_observations(now=now)
+    offline = _offline_agent_observations(
+        now=now,
+        environment_ids=select(ChannelBotAgentLink.agent_id).where(
+            ChannelBotAgentLink.id.in_({binding.bot_agent_link_id for _message, binding in pending})
+        ),
+    )
     rows = (
         await db.execute(
             select(ChannelBinding, offline.c.last_seen)
