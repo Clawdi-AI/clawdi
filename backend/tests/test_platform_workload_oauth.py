@@ -16,7 +16,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.pool import QueuePool
 
 from app.core import database
 from app.core.auth import AuthContext, get_auth_short_session
@@ -132,6 +133,20 @@ async def workload_harness(db_session, seed_user) -> AsyncIterator[WorkloadHarne
     async def _override_get_session():
         yield db_session
 
+    async def _override_get_control_session():
+        # Keep route transactions separate from the fixture's ORM identity map:
+        # auth rollback must not expire the test's seeded objects.
+        await db_session.flush()
+        connection = await db_session.connection()
+        async with AsyncSession(
+            bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint"
+        ) as session:
+            yield session
+
+    async def _override_get_observation_session():
+        async for session in _override_get_control_session():
+            yield session
+
     def _override_resolver():
         return resolver
 
@@ -147,9 +162,9 @@ async def workload_harness(db_session, seed_user) -> AsyncIterator[WorkloadHarne
     settings.public_api_url = "http://test"
     settings.platform_workload_token_endpoint = ""
     settings.platform_workload_issuer = "clawdi-cloud-platform-test"
-    app.dependency_overrides[get_control_session] = _override_get_session
+    app.dependency_overrides[get_control_session] = _override_get_control_session
     app.dependency_overrides[get_session] = _override_get_session
-    app.dependency_overrides[get_runtime_observation_session] = _override_get_session
+    app.dependency_overrides[get_runtime_observation_session] = _override_get_observation_session
     app.dependency_overrides[get_platform_workload_key_resolver] = _override_resolver
     try:
         async with httpx.AsyncClient(
@@ -244,6 +259,108 @@ async def _access_token(harness: WorkloadHarness, scope: str) -> str:
     response = await _token_response(harness, scope=scope)
     assert response.status_code == 200, response.text
     return response.json()["access_token"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_workload_reads_release_single_control_slot_before_observation_session(
+    workload_harness,
+    db_session,
+    seed_user,
+    monkeypatch,
+):
+    from app.services.runtime_observation import (
+        provision_runtime_environment_fence,
+        register_runtime_observation_consumer,
+    )
+    from tests.conftest import create_env_with_project
+
+    environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"workload-read-pool-{uuid.uuid4().hex}",
+        machine_name="Workload read pool",
+    )
+    environment_id = environment.id
+    deployment_id = f"deployment-{environment_id}"
+    await provision_runtime_environment_fence(
+        db_session,
+        environment_id=environment_id,
+        owner_id=seed_user.id,
+        deployment_id=deployment_id,
+    )
+    registered = await register_runtime_observation_consumer(
+        db_session,
+        environment_id=environment_id,
+        owner_id=seed_user.id,
+        deployment_id=deployment_id,
+        consumer_id="hosted-controller",
+    )
+    await db_session.commit()
+
+    monkeypatch.setattr(settings, "db_pool_timeout", 0.25)
+    control = database._create_engine(pool_size=1, max_overflow=0)
+    pool = control.sync_engine.pool
+    assert isinstance(pool, QueuePool)
+    monkeypatch.setattr(
+        database,
+        "control_session_factory",
+        async_sessionmaker(
+            control,
+            class_=database.control_session_factory.class_,
+            expire_on_commit=False,
+        ),
+    )
+    monkeypatch.delitem(app.dependency_overrides, get_control_session)
+    opened = []
+
+    async def real_observation_session():
+        assert pool.checkedout() == 0, "workload auth retained the only control connection"
+        async for session in get_runtime_observation_session():
+            assert session is not db_session
+            opened.append(session)
+            yield session
+
+    monkeypatch.setitem(
+        app.dependency_overrides, get_runtime_observation_session, real_observation_session
+    )
+    try:
+        token = await _access_token(workload_harness, "platform:runtime-observations:consume")
+        requests = [
+            (
+                "/v2/runtime/environments/drift-summary:batchRead",
+                {
+                    "bindings": [
+                        {"environmentId": str(environment_id), "deploymentId": deployment_id}
+                    ],
+                },
+            ),
+            (
+                f"/v2/runtime/environments/{environment_id}/observations/read",
+                {
+                    "expectedApplyIdentity": {
+                        "generation": 1,
+                        "manifestETag": '"manifest-etag-0001"',
+                        "applyReceiptId": "apply-receipt-00000001",
+                        "bootNonce": "boot-nonce-0000000001",
+                    },
+                    "afterCursor": registered["cursor"],
+                },
+            ),
+        ]
+        async with asyncio.timeout(5):
+            for path, body in requests:
+                response = await workload_harness.client.post(
+                    path,
+                    json=body,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert response.status_code == 200, response.text
+                assert pool.checkedout() == 0
+        assert len(opened) == 2
+        assert opened[0] is not opened[1]
+    finally:
+        await control.dispose()
 
 
 @pytest.mark.asyncio
@@ -580,6 +697,15 @@ async def test_deployment_control_survives_slow_admin_and_gateway_pressure(
                             headers={"X-Admin-Key": _ADMIN_KEY},
                         )
                         assert result.status_code == 200, result.text
+                    source_token = await _access_token(
+                        workload_harness, "platform:runtime-state:write"
+                    )
+                    source = await client.get(
+                        f"/v1/platform/agents/{agent_id}/runtime-state",
+                        params=owner,
+                        headers={"Authorization": f"Bearer {source_token}"},
+                    )
+                    assert source.status_code == 200, source.text
                     recovered = await client.request(
                         "DELETE",
                         f"/v1/platform/agents/{agent_id}",
@@ -1213,6 +1339,9 @@ async def test_v2_provision_precedes_scoped_deploy_key_and_retirement_replays_ex
             raise RuntimeError("injected transition audit failure")
         return original_record_audit(db, **kwargs)
 
+    # Preserve the committed provisioning setup before testing the route's
+    # independent transaction rollback.
+    await db_session.commit()
     monkeypatch.setattr(v2_routes, "record_control_plane_audit", fail_transition_audit)
     with pytest.raises(RuntimeError, match="injected transition audit failure"):
         await workload_harness.client.post(path, headers=first_headers, json=body)
@@ -1482,6 +1611,7 @@ async def test_observation_consumer_identity_is_bound_to_admin_actor(
         {"environment_id": environment.id, "consumer_id": "hosted-controller"},
     )
     assert cursor is not None
+    await db_session.refresh(cursor)
     assert cursor.state == "active"
     assert cursor.acked_stream_position == 0
     assert cursor.reset_at is not None
@@ -1655,7 +1785,12 @@ async def test_retired_runtime_state_cleanup_works_for_archived_agent(
         "runtimeStateStatus": "absent",
         "cleanedAt": response.json()["cleanedAt"],
     }
-    assert await db_session.get(HostedRuntimeState, environment.id) is None
+    assert (
+        await db_session.scalar(
+            select(HostedRuntimeState).where(HostedRuntimeState.environment_id == environment.id)
+        )
+        is None
+    )
     await db_session.refresh(payload)
     assert payload.consumer_environment_id is None
     assert payload.consumer_runtime is None

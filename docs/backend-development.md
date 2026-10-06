@@ -469,6 +469,10 @@ checks remain mandatory; a URL prefix or client-supplied header never selects
 the pool for an ordinary route. Platform credentials must be read from this
 pool to authenticate even while ordinary traffic is saturated.
 
+Successful workload authentication rolls back its SELECT-only transaction before
+returning. This releases the single control connection before drift-summary or
+observation reads open their separate RR session on that same pool.
+
 Each API process reserves one control transaction connection and one separate
 control runtime-source snapshot connection, both without overflow. A source
 read holds its authorization transaction while opening a consistent snapshot;
