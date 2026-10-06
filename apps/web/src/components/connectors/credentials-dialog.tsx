@@ -109,7 +109,7 @@ export function ConnectorCredentialsDialog({
 		} catch {
 			if (gen !== openGenRef.current) return;
 			setSubmitError(
-				"The account couldn’t be connected. Try again. If the problem persists, contact support.",
+				"The account couldn't be connected. Try again, or contact support if this continues.",
 			);
 		} finally {
 			inflightSubmitRef.current = false;

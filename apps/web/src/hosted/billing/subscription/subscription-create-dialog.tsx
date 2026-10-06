@@ -321,7 +321,7 @@ export function SubscriptionCreateDialog({
 				return;
 			}
 			toast.error("Couldn’t start checkout", {
-				description: "No checkout URL was returned. Please try again.",
+				description: "No checkout URL was returned. Try again.",
 			});
 		} catch (error) {
 			if (isReusableSubscriptionUnavailableError(error)) {

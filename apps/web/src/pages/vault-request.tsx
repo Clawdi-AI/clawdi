@@ -179,13 +179,13 @@ export function VaultRequestPage() {
 					setPhase("ready");
 				} else if (response.status === 410 || response.status === 422) setPhase("unavailable");
 				else {
-					setError("Could not load this request. Try again.");
+					setError("Couldn't load this request. Try again.");
 					setPhase("error");
 				}
 			})
 			.catch(() => {
 				if (!controller.signal.aborted) {
-					setError("Could not connect. Try again.");
+					setError("Couldn't connect. Try again.");
 					setPhase("error");
 				}
 			});
@@ -248,14 +248,14 @@ export function VaultRequestPage() {
 						);
 					} else {
 						setSelectionError(
-							"Could not check selected fields. The server is unavailable. Try again.",
+							"Couldn't check selected fields. The server is unavailable. Try again.",
 						);
 						setSelectionRetryable(true);
 					}
 				})
 				.catch(() => {
 					if (controller.signal.aborted || generation !== selectionGeneration.current) return;
-					setSelectionError("Could not connect to check selected fields. Try again.");
+					setSelectionError("Couldn't connect to check selected fields. Try again.");
 					setSelectionRetryable(true);
 				});
 		}, 300);
@@ -299,17 +299,17 @@ export function VaultRequestPage() {
 					token.current = "";
 					setPhase("unavailable");
 				} else if (response.status === 409) {
-					setError("Could not preview these fields. A selected field changed or is reserved.");
+					setError("Couldn't preview these fields. A selected field changed or is reserved.");
 				} else if (response.status === 422) {
 					setError("Selected field names are invalid. Use distinct names and at most 32 fields.");
 				} else {
-					setError("Could not preview these fields. The server is unavailable. Try again.");
+					setError("Couldn't preview these fields. The server is unavailable. Try again.");
 				}
 				return;
 			}
 			setPreview({ entries: parsed.entries, updateFields: data.update_fields });
 		} catch {
-			setError("Could not connect. Try previewing again.");
+			setError("Couldn't connect. Try previewing again.");
 		} finally {
 			setImportBusy(false);
 		}
@@ -368,12 +368,12 @@ export function VaultRequestPage() {
 				setPreview(undefined);
 				setPhase("unavailable");
 			} else {
-				setError("Could not save. Supply every requested field and try again.");
+				setError("Couldn't save. Supply every requested field and try again.");
 				setPhase("ready");
 			}
 		} catch {
 			setError(
-				"Save could not be confirmed. Ask your agent to check the request status before trying again.",
+				"Save couldn't be confirmed. Ask your agent to check the request status before trying again.",
 			);
 			setPhase("ready");
 		}
@@ -429,7 +429,7 @@ export function VaultRequestPage() {
 							</p>
 							{copyState === "error" && (
 								<p role="alert" className="text-sm text-destructive">
-									Could not copy. Select and copy the message above manually.
+									Couldn't copy. Select and copy the message above manually.
 								</p>
 							)}
 							<div className="flex justify-end">
@@ -599,7 +599,7 @@ export function VaultRequestPage() {
 															),
 														);
 													} catch {
-														setError("Could not read a UTF-8 text file.");
+														setError("Couldn't read a UTF-8 text file.");
 													} finally {
 														setImportBusy(false);
 													}

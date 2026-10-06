@@ -275,7 +275,7 @@ function terminalDeployRequestError(status: HostedDeployRequestStatus): BillingA
 		status,
 		status.request_status === "superseded"
 			? "This agent creation was superseded by a newer attempt."
-			: "The agent could not be created.",
+			: "The agent couldn't be created.",
 	);
 }
 
@@ -446,7 +446,7 @@ function planChangeTerminalError(
 	}
 	return new PlanChangeTerminalError(
 		409,
-		"The subscription change could not be completed. Review the details and try again.",
+		"The subscription change couldn't be completed. Review the details and try again.",
 		undefined,
 		operation.progress.changeKind,
 		operation.progress.fundingSource,

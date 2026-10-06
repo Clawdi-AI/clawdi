@@ -178,7 +178,7 @@ describe("deployment failure status rendering", () => {
 
 		expect(markup).toContain("Agent configuration failed");
 		expect(markup).toContain("The WhatsApp channel could not be set up on this agent.");
-		expect(markup).not.toContain("The Clawdi service could not complete this request.");
+		expect(markup).not.toContain("The Clawdi service couldn&#x27;t complete this request.");
 	});
 
 	test("renders a later runtime failure without blaming a successful restart", () => {
@@ -442,7 +442,7 @@ describe("deployment transition timeout rendering", () => {
 
 		expect(markup).toContain("Agent setup failed");
 		expect(markup).not.toContain("Retry startup");
-		expect(markup).toContain("The Clawdi service could not complete this request.");
+		expect(markup).toContain("The Clawdi service couldn&#x27;t complete this request.");
 		expect(markup).not.toContain("Internal operation failure");
 		expect(markup).not.toContain("Contact support");
 	});
@@ -746,7 +746,7 @@ describe("deployment mutation settlement", () => {
 		const failedStatus = requiredDeploymentStatus(failed?.[0]);
 		expect(failedStatus.summary_state).toBe("failed");
 		expect(deploymentFailureReason(failedStatus)).toBe(
-			"The Clawdi service could not complete this request.",
+			"The Clawdi service couldn't complete this request.",
 		);
 	});
 

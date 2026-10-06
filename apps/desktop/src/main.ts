@@ -560,7 +560,7 @@ async function safeConnectAction<T>(
 	} catch (error) {
 		console.error(`Could not ${label}`, error);
 		if (error instanceof DesktopCliError || error instanceof DesktopConnectError) throw error;
-		throw new Error(`Could not ${label}. Try again.`);
+		throw new Error(`Couldn't ${label}. Try again.`);
 	}
 }
 
@@ -574,7 +574,7 @@ async function safeDashboardAction<T>(
 		return await action();
 	} catch (error) {
 		console.error(`Could not ${label}`, error);
-		throw new Error(`Could not ${label}. Try again.`);
+		throw new Error(`Couldn't ${label}. Try again.`);
 	}
 }
 
@@ -937,7 +937,7 @@ function hardenLocalWindow(
 			showMessageBox(
 				{
 					type: "warning",
-					message: `${label} could not recover`,
+					message: `${label} couldn't recover`,
 					detail: "Close this window and open it again from Clawdi.",
 				},
 				window,
@@ -1133,7 +1133,7 @@ async function setSyncEnabled(enabled: boolean): Promise<void> {
 		console.error("Could not enable sync", error);
 		await showMessageBox({
 			type: "warning",
-			message: "Sync could not be enabled",
+			message: "Sync couldn't be enabled",
 			detail: "Open Connect an Agent to check the local setup.",
 		});
 	} finally {
@@ -1152,7 +1152,7 @@ async function turnOffBackgroundSync(): Promise<void> {
 		await refreshTrayState();
 		await showMessageBox({
 			type: "warning",
-			message: "Sync could not be turned off",
+			message: "Sync couldn't be turned off",
 			detail: "Try again, or open Connect an Agent to inspect the local setup.",
 		});
 	}
@@ -1198,7 +1198,7 @@ function wasOpenedAtLogin(): boolean {
 async function showLoginItemError(): Promise<void> {
 	await showMessageBox({
 		type: "warning",
-		message: "The login item could not be changed",
+		message: "The login item couldn't be changed",
 		detail: "Review Clawdi in System Settings > General > Login Items and try again.",
 	});
 }
@@ -1263,7 +1263,7 @@ async function promptToMove(detail: string): Promise<void> {
 		console.error("Could not move Clawdi to Applications", error);
 		await showMessageBox({
 			type: "warning",
-			message: "Clawdi could not be moved",
+			message: "Clawdi couldn't be moved",
 			detail: "Move Clawdi to Applications in Finder, reopen it, and try again.",
 		});
 	}

@@ -251,7 +251,7 @@ function knownBillingRecovery(error: unknown): string | null {
 		return "This agent request is already linked to a different payment flow.";
 	}
 	if (code === "idempotency_key_reused") {
-		return "This attempt could not be matched to the earlier request.";
+		return "This attempt couldn't be matched to the earlier request.";
 	}
 	if (error.detail === "payment_method_required") {
 		return "Add a payment method before trying again.";
@@ -392,7 +392,7 @@ export function normalizeBillingError(error: unknown): string {
 			: "We couldn't reach the billing service. Check your connection and try again.";
 	}
 	if (isAuthError(error)) {
-		return "Your session has expired. Please sign in again to continue.";
+		return "Your session expired. Sign in again to continue.";
 	}
 	if (isServerError(error)) {
 		return "The billing request couldn’t be completed right now. Try again in a moment.";
@@ -415,30 +415,30 @@ export function normalizeBillingError(error: unknown): string {
 			return "This checkout has expired. Try again to open a new checkout.";
 		}
 		if (code === "checkout_payment_pending") {
-			return "Your subscription is updating. Please check again shortly.";
+			return "Your subscription is updating. Check again shortly.";
 		}
 		if (code === "checkout_reconciliation_required") {
-			return "We could not confirm your previous checkout. Contact support before starting another payment.";
+			return "We couldn't confirm your previous checkout. Contact support before starting another payment.";
 		}
 		if (code === "checkout_target_reserved") {
 			return "A checkout is already open for this agent. Continue with the same subscription choice.";
 		}
 		if (typeof code === "string") {
-			return "The billing request could not be completed. Refresh and try again.";
+			return "The billing request couldn't be completed. Refresh and try again.";
 		}
 		// A bare snake_case token is an internal error code, not product copy.
 		if (/^[a-z0-9_]+$/.test(error.detail)) {
 			if (error.detail === "payment_method_required") {
 				return "Add a payment method and try again.";
 			}
-			return "The billing request could not be completed. Review the details and try again.";
+			return "The billing request couldn't be completed. Review the details and try again.";
 		}
-		return "The billing request could not be completed. Review the details and try again.";
+		return "The billing request couldn't be completed. Review the details and try again.";
 	}
 	if (error instanceof Error) {
-		return "The billing request could not be completed. Try again.";
+		return "The billing request couldn't be completed. Try again.";
 	}
-	return "Something went wrong. Please try again.";
+	return "Couldn't complete the request. Try again.";
 }
 
 /**

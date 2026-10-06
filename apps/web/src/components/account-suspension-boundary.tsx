@@ -97,7 +97,7 @@ function AccountAccessDeniedState({ suspended }: { suspended: boolean }) {
 			// then re-runs protected admission; use its secure dedicated login fallback.
 			await signOut({ redirectUrl: suspended ? "/sign-in" : signInActionHref(href) });
 		} catch {
-			setSignOutError("We couldn't sign you out. Please try again.");
+			setSignOutError("We couldn't sign you out. Try again.");
 			setSigningOut(false);
 		}
 	};

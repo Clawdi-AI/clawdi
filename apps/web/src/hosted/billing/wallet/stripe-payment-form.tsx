@@ -59,7 +59,7 @@ function InnerForm({
 				},
 			});
 			if (result.error) {
-				setError(result.error.message ?? "We couldn't process that payment. Please try again.");
+				setError(result.error.message ?? "We couldn't process that payment. Try again.");
 				finishSubmitting();
 				return;
 			}

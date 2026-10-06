@@ -160,7 +160,7 @@ export function WalletPage() {
 					return {
 						status: null,
 						paymentIntentId: null,
-						errorMessage: "Payments are temporarily unavailable. Please try again later.",
+						errorMessage: "Payments are temporarily unavailable. Try again later.",
 					};
 				}
 				const stripe = await getStripe(key);
@@ -230,7 +230,7 @@ export function WalletPage() {
 						status: null,
 						setupIntentId: null,
 						setupIdentity: pending.setupIdentity,
-						errorMessage: "Card authorization is temporarily unavailable. Please try again later.",
+						errorMessage: "Card authorization is temporarily unavailable. Try again later.",
 					};
 				}
 				const stripe = await getStripe(key);

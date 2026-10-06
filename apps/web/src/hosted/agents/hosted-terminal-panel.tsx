@@ -369,7 +369,7 @@ export function HostedTerminalPanel({
 					);
 					return;
 				}
-				handleConnectionFailure("Secure terminal could not be opened.", mode);
+				handleConnectionFailure("Secure terminal couldn't be opened.", mode);
 				return;
 			}
 			ws.binaryType = "arraybuffer";
@@ -494,12 +494,12 @@ export function HostedTerminalPanel({
 				websocketUrl = await requestWebsocketUrlRef.current();
 			} catch {
 				if (disposed || generation !== connectionGeneration) return;
-				handleConnectionFailure("Fresh terminal access could not be requested. Try again.", mode);
+				handleConnectionFailure("Fresh terminal access couldn't be requested. Try again.", mode);
 				return;
 			}
 			if (disposed || generation !== connectionGeneration) return;
 			if (!websocketUrl) {
-				handleConnectionFailure("Secure terminal could not be opened. Try again.", mode);
+				handleConnectionFailure("Secure terminal couldn't be opened. Try again.", mode);
 				return;
 			}
 			openWebSocket(terminalWebSocketTarget(websocketUrl), websocketUrl, mode, generation);

@@ -140,7 +140,7 @@ export function SendSkillDialog({
 					description:
 						`${skill.name} is now available in ${targetLabel}.` +
 						(sourceRemoved === false
-							? " It could not be removed from the source; remove it after checking the new copy."
+							? " It couldn't be removed from the source; remove it after checking the new copy."
 							: ""),
 				},
 			);

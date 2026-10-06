@@ -21,7 +21,7 @@ export function normalizeWorkspaceSkillError(error: unknown): string {
 		case "workspace_skill_source_invalid":
 			return "Couldn't find a valid Skill at this GitHub path. Check the repository and try again.";
 		case "workspace_skill_source_unavailable":
-			return "GitHub is temporarily unavailable. Please try again.";
+			return "GitHub is temporarily unavailable. Try again.";
 		case "workspace_skill_source_conflict":
 			return "A Skill with this name is installed from another repository. Uninstall it first.";
 		case "workspace_skill_reserved":
@@ -32,7 +32,7 @@ export function normalizeWorkspaceSkillError(error: unknown): string {
 	if (error instanceof BillingApiError && error.status === 404) {
 		return "This Skill or Agent is no longer available.";
 	}
-	return "Couldn't load or update this Skill. Please try again.";
+	return "Couldn't load or update this skill. Try again.";
 }
 
 export const workspaceSkillErrorNormalizer = {

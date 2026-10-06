@@ -435,8 +435,8 @@ function SyncHelpDialog({
 										<>
 											<p className="text-xs text-muted-foreground">
 												{isHosted
-													? "This change could not be synced. Confirm that each Skill is under 25 MB, then save again."
-													: "This change could not be synced. Correct the source, then save again to retry."}
+													? "This change couldn't be synced. Confirm that each skill is under 25 MB, then save again."
+													: "This change couldn't be synced. Correct the source, then save again to retry."}
 											</p>
 											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>

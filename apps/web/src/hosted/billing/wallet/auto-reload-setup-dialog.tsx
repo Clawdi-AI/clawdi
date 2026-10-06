@@ -135,7 +135,7 @@ export function AutoReloadSetupDialog({
 			.then((nextAttempt) => {
 				if (startGenerationRef.current !== generation) return;
 				if (!setupResultMatchesRequest(nextAttempt, session.request, amountPolicy)) {
-					setError("The card setup response could not be verified. Close and start a new attempt.");
+					setError("The card setup response couldn't be verified. Close and start a new attempt.");
 					return;
 				}
 				if (nextAttempt.status === "canceled" || nextAttempt.status === "succeeded") {

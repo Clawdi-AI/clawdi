@@ -58,7 +58,7 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 	const [cancellingAuth, setCancellingAuth] = useState(false);
 
 	const fail = useCallback((error: unknown) => {
-		setFailure(error instanceof Error ? error.message : "Setup could not be completed.");
+		setFailure(error instanceof Error ? error.message : "Setup couldn't be completed.");
 		setStage("error");
 	}, []);
 

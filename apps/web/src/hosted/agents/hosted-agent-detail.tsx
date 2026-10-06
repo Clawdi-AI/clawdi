@@ -1741,7 +1741,7 @@ export function ConsoleTab({
 				credentialError !== null ? (
 					<EmptyState
 						icon={AlertCircle}
-						title={`${browserUiLabel} could not be opened`}
+						title={`${browserUiLabel} couldn't be opened`}
 						description="Clawdi couldn't establish this browser session."
 						action={
 							<Button
@@ -1832,8 +1832,8 @@ function FilesFrame({ deploymentId, url }: { deploymentId: string; url: string }
 			{bootstrap === "error" ? (
 				<EmptyState
 					icon={FolderOpen}
-					title="Files could not be opened"
-					description="We could not authenticate your Files session. Refresh the page and try again."
+					title="Files couldn't be opened"
+					description="We couldn't authenticate your files session. Refresh the page and try again."
 				/>
 			) : bootstrap === "pending" ? (
 				<EmptyState

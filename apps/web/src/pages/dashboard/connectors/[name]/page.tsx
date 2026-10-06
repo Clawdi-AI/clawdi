@@ -100,7 +100,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			oauthState.error !== null || oauthState.status === "error" || oauthState.status === "failed";
 		if (!failed) return;
 		toast.error("Connection failed", {
-			description: "The account could not be connected. Try again from this page.",
+			description: "The account couldn't be connected. Try again from this page.",
 		});
 		void setOauthState({ error: null, status: null }, { history: "replace" });
 	}, [oauthState.error, oauthState.status, setOauthState]);

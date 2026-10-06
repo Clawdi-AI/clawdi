@@ -928,7 +928,7 @@ export function DeployWizard() {
 						});
 					if (outcome.flowType !== "subscription_activation") {
 						throw new Error(
-							"Wallet payment could not be confirmed. Review the payment method and try again.",
+							"Wallet payment couldn't be confirmed. Review the payment method and try again.",
 						);
 					}
 					forgetIdempotencyAttempt("subscription-wallet-deploy", fingerprint);
@@ -998,7 +998,7 @@ export function DeployWizard() {
 				}
 				if (redirectTo(checkoutRedirectUrl(result))) return;
 				throw new Error(
-					"Secure checkout could not be opened. Review the payment method and try again.",
+					"Secure checkout couldn't be opened. Review the payment method and try again.",
 				);
 			}
 			if (subscriptionSource.mode !== "included") return;

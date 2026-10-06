@@ -369,7 +369,7 @@ test("selection failures distinguish retry, invalid names, conflict and terminal
 	await expect(retry).toBeVisible();
 	failure = "network";
 	await retry.click();
-	await expect(page.getByRole("alert")).toContainText("Could not connect");
+	await expect(page.getByRole("alert")).toContainText("Couldn't connect");
 	await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-draft");
 	failure = 422;
 	await retry.click();

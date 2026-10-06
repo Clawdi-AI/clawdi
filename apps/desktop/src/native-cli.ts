@@ -380,7 +380,7 @@ export class DesktopCliService {
 		try {
 			result = await this.runJson(cli, ["auth", "status", "--json"]);
 		} catch (cause) {
-			throw new DesktopCliError("Could not read the local sign-in state.", { cause });
+			throw new DesktopCliError("Couldn't read the local sign-in state.", { cause });
 		}
 		const authenticated =
 			result.authenticated === true && readString(result.credentialType) === "clerk-oauth";
@@ -477,7 +477,7 @@ function runtimeStartError(cause: unknown): DesktopCliError {
 			cause,
 		});
 	}
-	return new DesktopCliError("The bundled Clawdi runtime could not start. Reinstall Clawdi.", {
+	return new DesktopCliError("The bundled Clawdi runtime couldn't start. Reinstall Clawdi.", {
 		cause,
 	});
 }

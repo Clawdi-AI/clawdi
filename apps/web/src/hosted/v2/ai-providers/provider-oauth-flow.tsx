@@ -72,7 +72,7 @@ export function ProviderOAuthFlow({
 					</p>
 				) : issue === "failed" ? (
 					<p className="flex items-center gap-2 text-xs text-destructive">
-						<CircleAlert className="size-3.5" /> Sign-in could not be completed. Start again and
+						<CircleAlert className="size-3.5" /> Sign-in couldn't be completed. Start again and
 						retry.
 					</p>
 				) : (
