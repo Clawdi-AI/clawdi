@@ -105,6 +105,7 @@ failures; only say background sync is on if setup installed it:
 > background sync, so your session history and skills upload to your Clawdi account
 > automatically. {N} sessions are already there: {dashboard link from setup}
 >
+> To skip a project: `clawdi config set excludeProjects <path>`.
 > To stop background sync: `clawdi daemon uninstall`. You can delete uploaded sessions in the
 > dashboard.
 

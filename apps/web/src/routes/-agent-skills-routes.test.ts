@@ -136,6 +136,7 @@ for (const hosted of [false, true]) {
 			expect(guide).toContain("totals.sessions");
 			expect(guide).toContain("new + updated + unchanged");
 			expect(guide).toContain("DeepSeek Harness (`dsh`)");
+			expect(guide).toContain("To skip a project: `clawdi config set excludeProjects <path>`");
 			expect(guide).toContain("Agents that aren't installed on this machine show as skipped.");
 			expect(guide).not.toContain("exits 1 in that case");
 		});

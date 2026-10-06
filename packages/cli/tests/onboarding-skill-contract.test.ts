@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { CONFIG_KEYS } from "../src/lib/config";
 
 const srcEntry = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const skillPath = new URL("../../../apps/web/src/content/get-started.md", import.meta.url);
@@ -106,13 +107,20 @@ describe("onboarding skill CLI contract", () => {
 		]);
 	});
 
-	const commands = skillCommands(readFileSync(skillPath, "utf8"));
+	const skill = readFileSync(skillPath, "utf8");
+	const commands = skillCommands(skill);
 	test("documents device sign-in, non-interactive updates, and JSON sync", () => {
 		expect(commands.has("auth login")).toBe(true);
 		expect(commands.has("auth complete")).toBe(true);
 		expect(commands.get("auth status")).toContain("--json");
 		expect(commands.get("update")).toContain("--yes");
 		expect(commands.get("push")).toContain("--json");
+	});
+
+	test("documents a supported project-sync opt-out", () => {
+		expect(skill).toContain("To skip a project: `clawdi config set excludeProjects <path>`");
+		expect(commands.has("config set")).toBe(true);
+		expect(CONFIG_KEYS).toContain("excludeProjects");
 	});
 
 	for (const [path, flags] of commands) {
