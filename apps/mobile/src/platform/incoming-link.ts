@@ -82,7 +82,7 @@ export function mobileLinkDestination(
 			const query = url.searchParams.toString();
 			return `/vault/${encodeURIComponent(slug)}${query ? `?${query}` : ""}`;
 		}
-		if (pathname === "/" && url.searchParams.has("settings")) {
+		if (isWebPath(pathname) && url.searchParams.has("settings")) {
 			const panel = url.searchParams.get("settings");
 			return panel &&
 				["general", "api-keys", "wallet", "compute", "billing", "account"].includes(panel)

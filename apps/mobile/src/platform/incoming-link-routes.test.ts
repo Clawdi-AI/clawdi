@@ -64,6 +64,11 @@ test("Web paths resolve identically for custom scheme and verified universal lin
 			() => "",
 		),
 	).toBe("/settings/wallet");
+	for (const page of ["/agents/agent-id", "/sessions", "/skills/key"]) {
+		expect(mobileLinkDestination(`clawdi://${page.slice(1)}?settings=wallet`, [], () => "")).toBe(
+			"/settings/wallet",
+		);
+	}
 });
 test("resource links reject unverified hosts and unsupported or malformed routes", () => {
 	for (const path of [
