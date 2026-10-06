@@ -860,6 +860,8 @@ export type HostedApiStubOptions = {
 	deploymentsResponse?: StubResponse;
 	accountNotifications?: readonly AccountNotification[];
 	readAllRequests?: ReadAllRequest[];
+	readAllResponses?: StubResponse[];
+	deleteNotificationResponses?: StubResponse[];
 	fixPaymentRequests?: string[];
 	plans?: readonly unknown[];
 	planCMutationRequests?: string[];
@@ -921,6 +923,8 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		if (p === "/v1/me/notifications/read-all" && method === "POST") {
 			const body = JSON.parse(r.request().postData() ?? "{}") as ReadAllRequest;
 			options.readAllRequests?.push(body);
+			const response = options.readAllResponses?.shift();
+			if (response) return fulfillJson(r, response.body, response.status);
 			const watermark = body.up_to_id
 				? accountNotifications.find((item) => item.id === body.up_to_id)
 				: undefined;
@@ -953,6 +957,8 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		}
 		if (notificationMatch && method === "DELETE") {
 			const notificationId = decodeURIComponent(notificationMatch[1] ?? "");
+			const response = options.deleteNotificationResponses?.shift();
+			if (response) return fulfillJson(r, response.body, response.status);
 			accountNotifications = accountNotifications.filter((item) => item.id !== notificationId);
 			return r.fulfill({ status: 204, body: "" });
 		}

@@ -145,15 +145,14 @@ export function NotificationCenter({ account }: { account?: AccountNotificationS
 	const attentionCount = getPendingNotificationCount(invitationItems, account?.unreadCount);
 	const triggerLabel = getNotificationCenterTriggerLabel(attentionCount);
 
+	function handleOpenChange(nextOpen: boolean) {
+		setOpen(nextOpen);
+		if (nextOpen) account?.onOpen();
+		else account?.onClose();
+	}
+
 	return (
-		<Popover
-			open={open}
-			onOpenChange={(nextOpen) => {
-				setOpen(nextOpen);
-				if (nextOpen) account?.onOpen();
-				else account?.onClose();
-			}}
-		>
+		<Popover open={open} onOpenChange={handleOpenChange}>
 			<PopoverTrigger
 				render={
 					<Button
@@ -205,7 +204,7 @@ export function NotificationCenter({ account }: { account?: AccountNotificationS
 					declineInvitation={(invitation) => decline.mutate(invitation.id)}
 					acceptingId={accept.isPending ? accept.variables?.id : undefined}
 					decliningId={decline.isPending ? decline.variables : undefined}
-					onOpenAccountAction={() => setOpen(false)}
+					onOpenAccountAction={() => handleOpenChange(false)}
 				/>
 			</PopoverContent>
 		</Popover>
@@ -364,7 +363,7 @@ function AccountNotificationRow({
 						<div className="min-w-0">
 							<div className={cn("text-sm", isNew ? "font-semibold" : "font-medium")}>
 								{notification.title}
-								{isNew ? <span className="sr-only"> (unread)</span> : null}
+								{isNew ? <span className="sr-only"> (new)</span> : null}
 							</div>
 							<time
 								dateTime={notification.createdAt.toISOString()}

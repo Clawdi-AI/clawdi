@@ -50,13 +50,6 @@ function toAccountNotification(item: ApiNotification): AccountNotification {
 	};
 }
 
-function isAtOrOlder(item: ApiNotification, watermark: ApiNotification): boolean {
-	const itemTime = Date.parse(item.created_at);
-	const watermarkTime = Date.parse(watermark.created_at);
-	if (itemTime !== watermarkTime) return itemTime < watermarkTime;
-	return item.id <= watermark.id;
-}
-
 export function HostedNotificationCenter() {
 	const { getToken, isSignedIn, userId } = useDashboardAuth();
 	const queryClient = useQueryClient();
@@ -109,28 +102,23 @@ export function HostedNotificationCenter() {
 			if (!result.response.ok || !result.data) throw responseError(result.response);
 			return result.data;
 		},
-		onMutate: async ({ upToId }) => {
+		onMutate: async () => {
 			await queryClient.cancelQueries({ queryKey });
 			const previous = queryClient.getQueryData<NotificationQueryData>(queryKey);
-			const watermark = previous?.pages
-				.flatMap((page) => page.items)
-				.find((item) => item.id === upToId);
-			if (!previous || !watermark) return { previous };
+			if (!previous) return { previous };
 
 			const readAt = new Date().toISOString();
-			let markedCount = 0;
 			const pages = previous.pages.map((page) => ({
 				...page,
 				items: page.items.map((item) => {
-					if (item.read_at != null || !isAtOrOlder(item, watermark)) return item;
-					markedCount += 1;
+					if (item.read_at != null) return item;
 					return { ...item, read_at: readAt };
 				}),
 			}));
 			const optimistic = {
 				pages: pages.map((page) => ({
 					...page,
-					unread_count: Math.max(0, page.unread_count - markedCount),
+					unread_count: 0,
 				})),
 				pageParams: previous.pageParams,
 			};
