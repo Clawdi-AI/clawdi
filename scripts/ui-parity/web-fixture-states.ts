@@ -160,15 +160,10 @@ async function main() {
 			});
 			await runCase(`${theme}-api-key`, page, async () => {
 				await visit(page, "/?settings=api-keys");
-				await page.getByRole("button", { name: "Create API key", exact: true }).click();
-				await page.getByLabel("Key name", { exact: true }).fill(`Fixture ${theme}`);
-				await page
-					.getByRole("dialog")
-					.last()
-					.getByRole("button", { name: "Create API key", exact: true })
-					.click();
-				await capture(page, theme, "api-key-one-time", "Save your API key");
-				await expect(page.getByText(/clawdi_fixture_only_/)).toBeVisible();
+				await capture(page, theme, "api-keys-read-only", "API keys can no longer be created.");
+				await expect(page.getByRole("button", { name: "Create API key", exact: true })).toHaveCount(
+					0,
+				);
 			});
 			await runCase(`${theme}-mem0`, page, async () => {
 				await settings({ memory_provider: "builtin", mem0_api_key: null });

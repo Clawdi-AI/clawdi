@@ -1,5 +1,5 @@
 import {
-	apiKeysPanelClasses,
+	formLayoutClasses,
 	generalPanelClasses,
 	settingsPanelHeaderClasses,
 } from "@clawdi/shared/ui";
@@ -31,7 +31,7 @@ export function ClerkInput({
 	...props
 }: ComponentProps<typeof Input>) {
 	return (
-		<WebView recipe={apiKeysPanelClasses.field}>
+		<WebView recipe={formLayoutClasses.field}>
 			<Label>{accessibilityLabel ?? placeholder}</Label>
 			<Input accessibilityLabel={accessibilityLabel} placeholder={placeholder} {...props} />
 		</WebView>
@@ -68,9 +68,7 @@ export function ClerkSwitch({
 	return (
 		<WebView recipe={generalPanelClasses.identity} className="flex-row">
 			<Switch checked={value} onCheckedChange={onValueChange} disabled={disabled} />
-			<Text className={`${webBoth(apiKeysPanelClasses.acknowledgementLabel)} flex-1 min-w-0`}>
-				{label}
-			</Text>
+			<Text className={`${webBoth(formLayoutClasses.checkLabel)} flex-1 min-w-0`}>{label}</Text>
 		</WebView>
 	);
 }

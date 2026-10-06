@@ -247,7 +247,7 @@ the shared fixture and exercise header search, sheet swipe dismissal, native
 confirmation and pull-to-refresh; iOS large-title behavior requires iOS runtime
 verification in addition to the checked SDK contract.
 
-Read-only account, auth, OAuth, API-key result, WhatsApp and chat-pairing
+Read-only account, auth, OAuth, WhatsApp and chat-pairing
 stories live at `/dev/account?panel=...`; `+native-intent` admits this exact
 development-only shape. Production Clerk/account controllers and external
 link allowlists remain guarded. Stories reuse presentation components and

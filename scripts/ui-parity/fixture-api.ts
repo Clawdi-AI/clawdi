@@ -2786,27 +2786,16 @@ on("PATCH", "/v1/settings", async ({ request }) => {
 	}
 	return { status: "updated" } satisfies Schemas["SettingsUpdateResponse"];
 });
-on("POST", "/v1/auth/keys", async ({ request }) => {
-	const body = await bodyObject(request);
-	const label = requiredString(body, "label");
-	if (label.length > 200) return new Reply(400, { detail: "Key label is too long" });
-	const id = fixtureId();
-	const key = {
-		id,
-		label,
-		key_prefix: "clawdi_fixture",
-		created_at: ago(0),
-		last_used_at: null,
-		expires_at: null,
-		revoked_at: null,
-		scopes: null,
-	} satisfies Schemas["ApiKeyResponse"];
-	apiKeys.push(key);
-	return {
-		...key,
-		raw_key: `clawdi_fixture_only_${id.replaceAll("-", "")}`,
-	} satisfies Schemas["ApiKeyCreated"];
-});
+// Personal API key creation is retired; the backend answers 410 with this detail.
+on(
+	"POST",
+	"/v1/auth/keys",
+	() =>
+		new Reply(410, {
+			detail:
+				"API keys can no longer be created. Run `clawdi auth login` (use `--no-open` on a server). Existing keys keep working until revoked.",
+		}),
+);
 on("DELETE", "/v1/auth/keys/{key_id}", ({ params }) => {
 	removeWhere(apiKeys, (item) => item.id === params.key_id);
 	return { status: "revoked" } satisfies Schemas["ApiKeyRevokeResponse"];

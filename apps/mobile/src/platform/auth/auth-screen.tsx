@@ -1,4 +1,4 @@
-import { apiKeysPanelClasses } from "@clawdi/shared/ui";
+import { formLayoutClasses } from "@clawdi/shared/ui";
 import { AuthFields } from "@/components/auth/auth-fields";
 import { AuthFrame } from "@/components/auth/auth-frame";
 import {
@@ -389,7 +389,7 @@ function AuthScreen({ mode }: { mode: "sign-in" | "sign-up" }) {
 							: t("auth.signInSubtitle")
 			}
 		>
-			<AppView className={webView(apiKeysPanelClasses.form)}>
+			<AppView className={webView(formLayoutClasses.form)}>
 				{step === "sign-up-details" ? (
 					<>
 						<FormText>{t("signupDetails.description")}</FormText>

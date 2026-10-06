@@ -1,20 +1,21 @@
 import { apiKeysPanelClasses as styles } from "@clawdi/shared/ui";
-import { activeApiKeys, formatShortDate, settingsCopy } from "@clawdi/shared/view";
+import {
+	activeApiKeys,
+	describeApiKeyScopes,
+	formatShortDate,
+	settingsCopy,
+} from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useFocusEffect, useRouter } from "expo-router";
-import { Laptop, Plus, ShieldCheck, Trash2 } from "lucide-react-native";
-import { useCallback, useEffect, useState } from "react";
-import { AppState } from "react-native";
+import { Terminal, Trash2 } from "lucide-react-native";
+import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Icon } from "@/components/ui/icon";
-import { Input, Label } from "@/components/ui/input";
 import { NativeList } from "@/components/ui/native-list";
-import { SheetPage } from "@/components/ui/sheet-page";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
@@ -22,7 +23,6 @@ import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { NativeHeader } from "@/platform/navigation/native-header";
-import { useSheet } from "@/platform/navigation/use-sheet";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 function useApiKeys() {
@@ -36,13 +36,27 @@ function useApiKeys() {
 		retry: false,
 	});
 }
+
+/** Web's API keys panel: review and revoke existing keys; new keys are internal only. */
 export function ApiKeysPanel() {
 	const scope = useAccountScope();
 	return <ApiKeysView key={`${scope.accountKey}:${scope.generation}`} />;
 }
+
+function KeysRetiredNote() {
+	return (
+		<Text>
+			{settingsCopy.keysRetiredBefore}
+			<WebText recipe={styles.command}>{settingsCopy.loginCommand}</WebText>
+			{settingsCopy.keysRetiredBetween}
+			<WebText recipe={styles.command}>{settingsCopy.noOpenFlag}</WebText>
+			{settingsCopy.keysRetiredAfter}
+		</Text>
+	);
+}
+
 function ApiKeysView() {
 	const t = useI18n();
-	const router = useRouter();
 	const scope = useAccountScope();
 	const cache = useQueryClient();
 	const { account } = useMobileApi();
@@ -51,37 +65,24 @@ function ApiKeysView() {
 	const action = useAuthAction(scope.identity);
 	const capture = useForegroundLease();
 	const [target, setTarget] = useState<{ id: string; label: string } | null>(null);
-	const openCreate = () => router.push("/settings/api-keys/new");
+	const active = activeApiKeys(keys.data);
+	const isEmpty = !keys.isPending && !keys.isError && active.length === 0;
 	return (
 		<>
-			<NativeHeader
-				title={settingsCopy.apiKeys}
-				actions={[
-					{
-						id: "create",
-						label: settingsCopy.createKey,
-						disabled: action.busy || !scope.isReady,
-						onPress: openCreate,
-					},
-				]}
-			/>
+			<NativeHeader title={settingsCopy.apiKeys} />
 			<NativeList
-				data={activeApiKeys(keys.data)}
+				data={active}
 				keyExtractor={(key) => key.id}
 				refreshing={keys.isRefetching}
 				onRefresh={() => void keys.refetch()}
 				header={
 					<WebView recipe={styles.panel}>
-						<WebText recipe={styles.description}>{settingsCopy.apiKeysDescription}</WebText>
-						<WebView recipe={styles.notice} className="flex-row">
-							<Icon as={Laptop} className={styles.noticeIcon} />
-							<Text className="flex-1 text-sm text-muted-foreground">
-								<WebText recipe={styles.strong}>{settingsCopy.laptopTitle}</WebText>{" "}
-								{t("settingsParity.laptopBefore")}
-								<WebText recipe={styles.command}>{settingsCopy.laptopCommand}</WebText>
-								{t("settingsParity.laptopAfter")}
-							</Text>
-						</WebView>
+						<WebText recipe={styles.factLabel}>{settingsCopy.apiKeysDescription}</WebText>
+						{isEmpty ? null : (
+							<Alert icon={Terminal}>
+								<KeysRetiredNote />
+							</Alert>
+						)}
 						{action.error ? <ApiErrorPanel error={t("account.actionFailed")} /> : null}
 					</WebView>
 				}
@@ -91,16 +92,7 @@ function ApiKeysView() {
 					) : keys.isError ? (
 						<ApiErrorPanel error={keys.error} onRetry={() => void keys.refetch()} />
 					) : (
-						<EmptyState
-							title={settingsCopy.emptyKeys}
-							description={t("settingsParity.emptyKeysDescription")}
-							action={
-								<Button onPress={openCreate}>
-									<Icon as={Plus} />
-									<Text>{settingsCopy.createKey}</Text>
-								</Button>
-							}
-						/>
+						<EmptyState title={settingsCopy.emptyKeys} description={<KeysRetiredNote />} />
 					)
 				}
 				footer={
@@ -134,13 +126,19 @@ function ApiKeysView() {
 								{ label: settingsCopy.lastUsed, value: key.last_used_at },
 								...(key.expires_at ? [{ label: settingsCopy.expires, value: key.expires_at }] : []),
 							].map((fact) => (
-								<WebView key={fact.label} recipe={styles.factBody} className="flex-1">
-									<WebText recipe={styles.muted}>{fact.label}</WebText>
-									<WebText recipe={styles.description}>
+								<WebView key={fact.label} recipe={styles.factBody} className="w-1/2">
+									<WebText recipe={styles.factLabel}>{fact.label}</WebText>
+									<WebText recipe={styles.factValue}>
 										{fact.value ? formatShortDate(fact.value) : settingsCopy.never}
 									</WebText>
 								</WebView>
 							))}
+							<WebView recipe={styles.factWide} className="w-full">
+								<WebText recipe={styles.factLabel}>{settingsCopy.permissions}</WebText>
+								<WebText recipe={styles.permissionsValue}>
+									{describeApiKeyScopes(key.scopes)}
+								</WebText>
+							</WebView>
 						</WebView>
 					</WebView>
 				)}
@@ -150,7 +148,7 @@ function ApiKeysView() {
 				onOpenChange={(open) => {
 					if (!open) setTarget(null);
 				}}
-				title={settingsCopy.revokeTitle.replace("{label}", target?.label ?? "API key")}
+				title={settingsCopy.revokeTitle.replace("{label}", () => target?.label ?? "API key")}
 				description={settingsCopy.revokeDescription}
 				destructive
 				confirmLabel={settingsCopy.revokeKey}
@@ -167,157 +165,5 @@ function ApiKeysView() {
 				}
 			/>
 		</>
-	);
-}
-
-export function ApiKeyCreateScreen() {
-	const scope = useAccountScope();
-	return <ApiKeyCreateView key={`${scope.accountKey}:${scope.generation}`} />;
-}
-function ApiKeyCreateView() {
-	const scope = useAccountScope();
-	const cache = useQueryClient();
-	const { account } = useMobileApi();
-	const read = useAccountRead();
-	const action = useAuthAction(scope.identity);
-	const capture = useForegroundLease();
-	const [label, setLabel] = useState("");
-	const [rawKey, setRawKey] = useState<string | null>(null);
-	const [acknowledged, setAcknowledged] = useState(false);
-	const sheet = useSheet<boolean>({
-		fallback: "/settings/api-keys",
-		busy: action.busy || Boolean(rawKey),
-	});
-	const clear = useCallback(() => {
-		setRawKey(null);
-		setAcknowledged(false);
-	}, []);
-	useFocusEffect(useCallback(() => clear, [clear]));
-	useEffect(() => {
-		const listener = AppState.addEventListener("change", (state) => {
-			if (state !== "active") clear();
-		});
-		return () => listener.remove();
-	}, [clear]);
-	const create = () =>
-		void action.run(async (current) => {
-			if (!label.trim() || label.trim().length > 200 || rawKey) return;
-			const visible = capture();
-			if (!visible()) return;
-			const created = await read((signal) => account.createApiKey({ label: label.trim() }, signal));
-			if (!current()) return;
-			if (visible()) {
-				setRawKey(created.raw_key);
-				setAcknowledged(false);
-			}
-			setLabel("");
-			await cache.invalidateQueries({
-				queryKey: accountQueryKey(scope, "account-api-keys"),
-			});
-		});
-	const finish = () =>
-		void action.run(async () => {
-			if (!acknowledged) return;
-			await sheet.close(true);
-			clear();
-		});
-	return (
-		<ApiKeyFormView
-			label={label}
-			setLabel={setLabel}
-			rawKey={rawKey}
-			acknowledged={acknowledged}
-			setAcknowledged={setAcknowledged}
-			busy={action.busy}
-			ready={scope.isReady}
-			error={action.error}
-			sheet={sheet}
-			create={create}
-			finish={finish}
-		/>
-	);
-}
-export function ApiKeyFormView({
-	label,
-	setLabel,
-	rawKey,
-	acknowledged,
-	setAcknowledged,
-	busy,
-	ready,
-	error,
-	sheet,
-	create,
-	finish,
-}: {
-	label: string;
-	setLabel: (value: string) => void;
-	rawKey: string | null;
-	acknowledged: boolean;
-	setAcknowledged: (value: boolean) => void;
-	busy: boolean;
-	ready: boolean;
-	error: unknown;
-	sheet?: { close: () => Promise<void> };
-	create: () => void;
-	finish: () => void;
-}) {
-	const t = useI18n();
-	return (
-		<SheetPage
-			title={t(rawKey ? "settingsParity.saveKey" : "settingsParity.createKey")}
-			description={t(
-				rawKey ? "settingsParity.saveKeyDescription" : "settingsParity.createDescription",
-			)}
-			fallback="/settings/api-keys"
-			busy={busy || Boolean(rawKey)}
-			sheet={sheet}
-		>
-			<WebView recipe={styles.form}>
-				{rawKey ? (
-					<>
-						<WebView recipe={styles.createdAlert}>
-							<Icon as={ShieldCheck} />
-							<WebText recipe={styles.strong}>{settingsCopy.keyCreated}</WebText>
-							<WebText recipe={styles.description}>{settingsCopy.storeKey}</WebText>
-						</WebView>
-						<WebView recipe={styles.secretBox}>
-							<WebText selectable recipe={styles.secret}>
-								{rawKey}
-							</WebText>
-						</WebView>
-						<WebView recipe={styles.acknowledgement} className="flex-row">
-							<Checkbox checked={acknowledged} onCheckedChange={setAcknowledged} />
-							<WebText recipe={styles.acknowledgementLabel} className="flex-1">
-								{settingsCopy.acknowledgeKey}
-							</WebText>
-						</WebView>
-						<Button disabled={!acknowledged || busy} onPress={finish}>
-							<Text>{settingsCopy.done}</Text>
-						</Button>
-					</>
-				) : (
-					<>
-						<WebView recipe={styles.field}>
-							<Label>{settingsCopy.keyName}</Label>
-							<Input
-								maxLength={200}
-								accessibilityLabel={settingsCopy.keyName}
-								placeholder={settingsCopy.keyPlaceholder}
-								value={label}
-								onChangeText={setLabel}
-								editable={!busy}
-							/>
-							<WebText recipe={styles.description}>{settingsCopy.keyNameHelp}</WebText>
-						</WebView>
-						<Button disabled={busy || !ready || !label.trim()} onPress={create}>
-							<Icon as={Plus} />
-							<Text>{settingsCopy.createKey}</Text>
-						</Button>
-					</>
-				)}
-				{error ? <ApiErrorPanel error={t("account.actionFailed")} /> : null}
-			</WebView>
-		</SheetPage>
 	);
 }

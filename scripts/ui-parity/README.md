@@ -82,7 +82,7 @@ in `mem0_api_key` (plus `mem0_api_key_configured`) for the existing clients.
 | Received invitations | `GET /v1/me/invitations`: Partner Research (`1a710000-0002-4000-8000-000000000002`) and Platform Operations (`1a710000-0003-4000-8000-000000000003`). Web notification bell exposes Accept/Decline. Accepted Partner Research/Platform Operations joins the project inventory with IDs `a0f1c2d3-0006-4a00-8000-000000000006` / `a0f1c2d3-0007-4a00-8000-000000000007`. |
 | Member invitation | Acme Web App has pending `sam@acme.dev`, ID `1a710000-0001-4000-8000-000000000001`. Project → Access → Manage sharing exposes cancellation. |
 | Project invite link | Acme link `51aee000-0001-4000-8000-000000000001`, label Design review. Preview/join token `fixture_project_acme_0000000000000000000000`, Web `/share/fixture_project_acme_0000000000000000000000`. Creation returns a one-time URL/token; revocation invalidates preview. |
-| API-key result | Settings → API Keys → Create API key returns a synthetic `clawdi_fixture_only_…` raw key once. Subsequent GET lists metadata only. |
+| API keys | Settings → API Keys lists two legacy full-access keys with revoke. Creation is retired: `POST /v1/auth/keys` answers 410 like the backend. |
 | Vault prefix groups | `acme-prod` adds two actual key names each under `stripe/` and `sentry/` in its default section, making Split into vaults… reachable. Original keys stay unchanged. |
 | Vault supply | Request `5ecae000-0001-4000-8000-000000000001` requests DEPLOY_TOKEN and DATABASE_URL, with DATABASE_URL marked Update. Token `v2_fixture_acme_000000000000000000000000000000`; Web `/vault-request#<token>`. Inspect/supply accept unauthenticated token requests, matching the public API. Supply retains receipt metadata only. |
 | Channels | Original Telegram/Discord accounts now have owner capabilities in bot-pool; three paired-chat rows match their original link counts. Link Agent, Pair, Unlink, paired-chat Unpair, and Publish commands are reachable. Telegram's QR payload matches its deep link. Additional unlinked Telegram bot `c4a00000-0004-4000-8000-000000000004` (@acme_review_bot) exposes Replace link when choosing OpenClaw. |
@@ -116,7 +116,7 @@ Each has detail, workspace-skills, `request-<deployment-id>` recovery lookup,
 Open its Agent route for status/action presentation; Settings → Billing shows
 the overdue subscription.
 
-State retained per process: invitations, project links, API-key metadata,
+State retained per process: invitations, project links, API-key revocations,
 Mem0 settings, vault request receipts, WhatsApp sessions/request IDs, channel
 links/bindings, plugin desired state, connector account metadata and session
 shares/permissions. Restart the isolated process to restore the seeds.

@@ -1,6 +1,5 @@
 /** Product copy from Web settings, reused by the native translation catalog. */
 export const settingsCopy = {
-	keyNameHelp: "For example, the server, container, or automation that will use this key.",
 	general: "General",
 	generalDescription: "Account and app preferences.",
 	account: "Account",
@@ -13,34 +12,25 @@ export const settingsCopy = {
 	dark: "Dark",
 	system: "System",
 	apiKeys: "API Keys",
-	apiKeysDescription:
-		"Manage bearer tokens for servers, containers, and other headless environments.",
-	createKey: "Create API key",
-	laptopTitle: "Using Clawdi on a laptop?",
-	laptopBefore: "Run ",
-	laptopCommand: "clawdi auth login",
-	laptopAfter: " instead; it completes sign-in without a manually managed key.",
+	apiKeysDescription: "Review and revoke bearer tokens created for servers and automation.",
+	keysRetiredBefore:
+		"API keys can no longer be created. To connect Clawdi on your computer or a server, run ",
+	loginCommand: "clawdi auth login",
+	keysRetiredBetween: " (use ",
+	noOpenFlag: "--no-open",
+	keysRetiredAfter: " on a server). Existing keys keep working until you revoke them.",
 	created: "Created",
 	lastUsed: "Last used",
 	expires: "Expires",
+	permissions: "Permissions",
 	never: "Never",
 	revoke: "Revoke",
 	revokeTitle: "Revoke “{label}”?",
 	revokeKey: "Revoke key",
 	emptyKeys: "No active API keys",
-	emptyKeysDescription:
-		"Create a key to authenticate a server, container, or other client that can’t open a browser.",
-	keyName: "Key name",
-	keyPlaceholder: "Production server",
-	createDescription: "Use a recognizable name so you know which client can be revoked later.",
-	saveKey: "Save your API key",
-	saveKeyDescription: "Copy this key now. For your security, it won’t be available again.",
-	keyCreated: "Key created",
-	storeKey: "Store it in your secret manager and set it as CLAWDI_AUTH_TOKEN on the client.",
 	done: "Done",
-	acknowledgeKey: "I have copied and stored this API key safely.",
 	revokeDescription:
-		"Requests using this key will stop working. This can’t be undone; create and install a new key to reconnect the client.",
+		"Requests using this key will stop working. This can’t be undone; reconnect the client with clawdi auth login.",
 } as const;
 export const billingCopy = {
 	usedBy: "Used by",

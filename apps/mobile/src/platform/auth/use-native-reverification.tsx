@@ -1,4 +1,4 @@
-import { apiKeysPanelClasses } from "@clawdi/shared/ui";
+import { apiKeysPanelClasses, formLayoutClasses } from "@clawdi/shared/ui";
 import { useReverification, useSession } from "@clerk/expo";
 import type { SessionVerificationResource } from "@clerk/expo/types";
 import { useFocusEffect } from "expo-router";
@@ -188,7 +188,7 @@ export function useNativeReverification() {
 		)?.filter(supported) ?? [];
 	const prompt = request ? (
 		<WebView recipe={apiKeysPanelClasses.card}>
-			<WebView recipe={apiKeysPanelClasses.form}>
+			<WebView recipe={formLayoutClasses.form}>
 				<ClerkText accessibilityRole="header">{t("reverification.title")}</ClerkText>
 				<ClerkText>{t("reverification.description")}</ClerkText>
 				{!attempt ? (

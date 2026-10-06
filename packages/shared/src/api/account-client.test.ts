@@ -19,13 +19,11 @@ test("account requests preserve authentication, methods, bodies and escaped key 
 	await client.getSettings();
 	await client.updateSettings({ settings: { memory_enabled: false } });
 	await client.listApiKeys();
-	await client.createApiKey({ label: "Phone" });
 	await client.revokeApiKey("key/with?symbols");
 	expect(requests).toEqual([
 		{ method: "GET", path: "/v1/settings", body: null },
 		{ method: "PATCH", path: "/v1/settings", body: { settings: { memory_enabled: false } } },
 		{ method: "GET", path: "/v1/auth/keys", body: null },
-		{ method: "POST", path: "/v1/auth/keys", body: { label: "Phone" } },
 		{ method: "DELETE", path: "/v1/auth/keys/key%2Fwith%3Fsymbols", body: null },
 	]);
 });

@@ -1,4 +1,4 @@
-import { apiKeysPanelClasses } from "@clawdi/shared/ui";
+import { formLayoutClasses } from "@clawdi/shared/ui";
 import { ClerkInput } from "@/components/auth/clerk-form";
 import { WebView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
@@ -19,7 +19,7 @@ export function AuthFields({
 }) {
 	const t = useI18n();
 	return (
-		<WebView recipe={apiKeysPanelClasses.form}>
+		<WebView recipe={formLayoutClasses.form}>
 			<ClerkInput
 				accessibilityLabel={t("auth.email")}
 				placeholder={t("auth.email")}

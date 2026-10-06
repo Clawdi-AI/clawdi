@@ -1,8 +1,4 @@
-import {
-	apiKeysPanelClasses,
-	authPageClasses,
-	settingsPanelHeaderClasses,
-} from "@clawdi/shared/ui";
+import { authPageClasses, formLayoutClasses, settingsPanelHeaderClasses } from "@clawdi/shared/ui";
 import type { ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { AppScrollView } from "@/components/ui/view";
@@ -36,7 +32,7 @@ export function AuthFrame({
 						</WebView>
 					</CardHeader>
 					<CardContent>
-						<WebView recipe={apiKeysPanelClasses.form}>{children}</WebView>
+						<WebView recipe={formLayoutClasses.form}>{children}</WebView>
 					</CardContent>
 				</Card>
 			</AppScrollView>

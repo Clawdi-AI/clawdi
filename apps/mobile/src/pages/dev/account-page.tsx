@@ -1,8 +1,8 @@
 import { pairingCommand } from "@clawdi/shared/api";
 import { pairingQr } from "@clawdi/shared/qr";
 import {
-	apiKeysPanelClasses,
 	billingPageClass,
+	formLayoutClasses,
 	generalPanelClasses,
 	settingsDialogClasses,
 	transactionsSectionClasses,
@@ -23,7 +23,6 @@ import {
 	PasswordFormView,
 	ProfileFormView,
 } from "@/components/settings/account-forms";
-import { ApiKeyFormView } from "@/components/settings/api-keys-panel";
 import { SettingsPanelHeader, SettingsSection } from "@/components/settings/settings-panel-header";
 import { SheetPage } from "@/components/ui/sheet-page";
 import { AppScrollView } from "@/components/ui/view";
@@ -72,7 +71,6 @@ function AccountStories() {
 	const t = useI18n();
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
-	const [acknowledged, setAcknowledged] = useState(false);
 	const [details, setDetails] = useState(emptySignupDetails());
 	const noop = () => {};
 	const common = { action: { busy: false, error: null }, reverification: { prompt: null } };
@@ -184,22 +182,6 @@ function AccountStories() {
 					open={noop}
 				/>
 			</SheetPage>
-		);
-	if (panel === "api-key-result")
-		return (
-			<ApiKeyFormView
-				label=""
-				setLabel={noop}
-				rawKey="clawdi_fixture_only_story_token"
-				sheet={{ close: async () => {} }}
-				acknowledged={acknowledged}
-				setAcknowledged={setAcknowledged}
-				busy={false}
-				ready
-				error={null}
-				create={noop}
-				finish={noop}
-			/>
 		);
 	if (panel === "profile")
 		return (
@@ -403,7 +385,7 @@ function AccountStories() {
 						onForgotPassword={noop}
 					/>
 				) : null}
-				<WebView recipe={apiKeysPanelClasses.form} className="flex-row flex-wrap justify-center">
+				<WebView recipe={formLayoutClasses.form} className="flex-row flex-wrap justify-center">
 					<ClerkText>{t(panel === "sign-in" ? "auth.noAccount" : "auth.haveAccount")}</ClerkText>
 					<ClerkText className="text-primary font-semibold">
 						{t(panel === "sign-in" ? "auth.createAccount" : "auth.returnToSignIn")}

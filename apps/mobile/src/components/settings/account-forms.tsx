@@ -1,5 +1,10 @@
 import type { pairingQr } from "@clawdi/shared/qr";
-import { apiKeysPanelClasses, generalPanelClasses, settingsDialogClasses } from "@clawdi/shared/ui";
+import {
+	apiKeysPanelClasses,
+	formLayoutClasses,
+	generalPanelClasses,
+	settingsDialogClasses,
+} from "@clawdi/shared/ui";
 import type { OAuthProvider } from "@clerk/expo/types";
 import { useRouter } from "expo-router";
 import type { ReactNode } from "react";
@@ -99,7 +104,7 @@ export function ProfileFormView({
 				contentInsetAdjustmentBehavior="automatic"
 				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
-					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
+					`${generalPanelClasses.panel.replace("gap-8", "")} ${formLayoutClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
 				<NativeHeader title={t("profile.title")} />
@@ -224,7 +229,7 @@ export function PasswordFormView({
 				contentInsetAdjustmentBehavior="automatic"
 				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
-					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
+					`${generalPanelClasses.panel.replace("gap-8", "")} ${formLayoutClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
 				<NativeHeader title={t("password.title")} />
@@ -335,7 +340,7 @@ export function MfaFormView({
 }: MfaFormViewProps) {
 	const t = useI18n();
 	const contentStyle = useResolveClassNames(
-		webView(`${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`),
+		webView(`${formLayoutClasses.form} ${settingsDialogClasses.panel}`),
 	);
 	const router = useRouter();
 
@@ -488,7 +493,7 @@ export function PasskeysFormView({
 }: PasskeysFormViewProps) {
 	const t = useI18n();
 	const contentStyle = useResolveClassNames(
-		webView(`${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`),
+		webView(`${formLayoutClasses.form} ${settingsDialogClasses.panel}`),
 	);
 
 	return (
@@ -616,7 +621,7 @@ export function AccountContactsFormView({
 }: AccountContactsFormViewProps) {
 	const t = useI18n();
 	const contentStyle = useResolveClassNames(
-		webView(`${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`),
+		webView(`${formLayoutClasses.form} ${settingsDialogClasses.panel}`),
 	);
 
 	return (
@@ -740,7 +745,7 @@ export function DeviceSessionsFormView({
 }: DeviceSessionsFormViewProps) {
 	const t = useI18n();
 	const contentStyle = useResolveClassNames(
-		webView(`${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`),
+		webView(`${formLayoutClasses.form} ${settingsDialogClasses.panel}`),
 	);
 
 	return (
@@ -837,7 +842,7 @@ export function ConnectedAccountsFormView({
 }: ConnectedAccountsFormViewProps) {
 	const t = useI18n();
 	const contentStyle = useResolveClassNames(
-		webView(`${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`),
+		webView(`${formLayoutClasses.form} ${settingsDialogClasses.panel}`),
 	);
 
 	return (
@@ -949,7 +954,7 @@ export function DeleteAccountFormView({
 				contentInsetAdjustmentBehavior="automatic"
 				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
-					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
+					`${generalPanelClasses.panel.replace("gap-8", "")} ${formLayoutClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
 				<NativeHeader title={t("deletion.title")} />

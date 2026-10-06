@@ -7,8 +7,6 @@ import {
 	readResourceId,
 } from "./read-transport";
 
-export type ApiKeyCreate =
-	paths["/v1/auth/keys"]["post"]["requestBody"]["content"]["application/json"];
 export type SettingsUpdate =
 	paths["/v1/settings"]["patch"]["requestBody"]["content"]["application/json"];
 
@@ -25,8 +23,6 @@ export function createAccountApiClient(options: ApiClientOptions) {
 			transport.read((init) => api.PATCH("/v1/settings", { ...init, body }), signal),
 		listApiKeys: (signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v1/auth/keys", init), signal),
-		createApiKey: (body: ApiKeyCreate, signal?: AbortSignal) =>
-			transport.read((init) => api.POST("/v1/auth/keys", { ...init, body }), signal),
 		revokeApiKey: (keyId: string, signal?: AbortSignal) =>
 			transport.read(
 				(init) =>

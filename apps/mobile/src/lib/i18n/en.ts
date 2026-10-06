@@ -952,10 +952,7 @@ export const en = {
 		signOut: "Sign out",
 		signOutFailed: "We could not sign you out. Please try again.",
 		accountUnavailable: "Account details are not available yet.",
-		createApiKey: "Create API key",
-		revokeApiKey: "Revoke API key",
 		cancel: "Cancel",
-		dismissKey: "I have saved the key",
 		actionFailed: "The action could not be confirmed. Refresh the key list before trying again.",
 	},
 } as const;
