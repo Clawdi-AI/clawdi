@@ -24,7 +24,7 @@ describe("Agent Skill detail Project scope", () => {
 				async () => ({ project_id: "other" }),
 				(error) => error instanceof NotFoundError,
 			),
-		).rejects.toThrow("did not match the requested Workspace or Project");
+		).rejects.toThrow("did not match the requested workspace or project");
 	});
 
 	test("returns the final not-found result after all bound Projects miss", async () => {

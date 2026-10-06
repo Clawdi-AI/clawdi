@@ -21,7 +21,7 @@ describe("skillCapabilities", () => {
 			canSend: false,
 			readOnlyReason: "agent-sync",
 			badgeLabel: "Read-only",
-			provenanceLabel: "Synced from Agent",
+			provenanceLabel: "Synced from agent",
 		});
 	});
 
@@ -30,7 +30,7 @@ describe("skillCapabilities", () => {
 			canUpdate: false,
 			readOnlyReason: "agent-project",
 			badgeLabel: "Read-only",
-			provenanceLabel: "Agent Workspace",
+			provenanceLabel: "Agent workspace",
 		});
 	});
 

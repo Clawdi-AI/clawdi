@@ -158,7 +158,7 @@ test("same-slug Vault cards preserve UUID identity through detail and cache", as
 	);
 	await expect(page.getByText("SHARED_ONLY", { exact: true })).toHaveCount(0);
 
-	await page.getByRole("combobox", { name: "Project to add this Vault to" }).click();
+	await page.getByRole("combobox", { name: "Project to add this vault to" }).click();
 	await expect(page.getByRole("option", { name: "Release Project" })).toBeVisible();
 	await expect(page.getByRole("option", { name: /private workspace|Owned/ })).toHaveCount(0);
 	await page.keyboard.press("Escape");

@@ -50,7 +50,7 @@ function AgentVaultInventory({ agentId }: { agentId: string }) {
 				<div className={`${CENTERED_PAGE_WIDTH_CLASS.page} px-4 lg:px-6`}>
 					<ApiErrorPanel
 						error={scopeError ?? bindings.error}
-						title="Couldn't load Agent Vault access"
+						title="Couldn't load agent vault access"
 						onRetry={() => {
 							void bindings.refetch();
 							void agent.refetch();

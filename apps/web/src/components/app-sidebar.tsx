@@ -444,7 +444,7 @@ function AgentSectionList({
 								: agentProjectResourceHref(agentId, primaryProject.id, section),
 						icon: item.icon,
 						tint: item.tint,
-						tooltip: section === "vaults" ? "Available Vaults" : `${item.label} in Workspace`,
+						tooltip: section === "vaults" ? "Available vaults" : `${item.label} in workspace`,
 						active:
 							section === "vaults"
 								? activeAgentRoute?.section === "vaults" || activePrimaryProjectResource === section

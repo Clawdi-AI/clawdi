@@ -372,7 +372,7 @@ export function AgentSettingsPanel({
 				>
 					<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 						<p className="max-w-md text-sm text-muted-foreground">
-							Sync stops and retained Sessions, Skills, files, and Projects stay in your account.
+							Sync stops and retained sessions, skills, files, and projects stay in your account.
 						</p>
 						<ConfirmAction
 							title="Disconnect this agent?"

@@ -265,15 +265,15 @@ export function SkillDetailContent({
 
 	const startEdit = () => {
 		if (!capabilities?.canUpdate) {
-			toast.error("This Skill is read-only here");
+			toast.error("This skill is read-only here");
 			return;
 		}
 		if (!targetProjectId) {
-			toast.error("Open this Skill from a Project before editing it");
+			toast.error("Open this skill from a project before editing it");
 			return;
 		}
 		if (!skill?.content) {
-			toast.error("This Skill has no instructions to edit");
+			toast.error("This skill has no instructions to edit");
 			return;
 		}
 		setDraftName(skill.name);
@@ -300,8 +300,8 @@ export function SkillDetailContent({
 	const saveEdit = useMutation({
 		mutationFn: async () => {
 			if (!targetProjectId) throw new Error("No project available for this skill");
-			if (!capabilities?.canUpdate) throw new Error("This Skill is read-only here");
-			if (!editingHash) throw new Error("Reload this Skill before saving");
+			if (!capabilities?.canUpdate) throw new Error("This skill is read-only here");
+			if (!editingHash) throw new Error("Reload this skill before saving");
 			// `content_hash` here is an If-Match PRECONDITION — the
 			// hash the editor saw when this page loaded, NOT the
 			// new content's hash. The backend route accepts it as
@@ -327,7 +327,7 @@ export function SkillDetailContent({
 		},
 		onSuccess: () => {
 			toast.success("Skill saved", {
-				description: "The Project Skill was updated.",
+				description: "The project skill was updated.",
 			});
 			setIsEditing(false);
 			setDraftName("");
@@ -359,7 +359,7 @@ export function SkillDetailContent({
 	const uninstall = useMutation({
 		mutationFn: async () => {
 			if (!targetProjectId) throw new Error("Project not loaded yet");
-			if (!capabilities?.canDelete) throw new Error("This Skill is read-only here");
+			if (!capabilities?.canDelete) throw new Error("This skill is read-only here");
 			return unwrap(
 				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
 					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
@@ -367,16 +367,16 @@ export function SkillDetailContent({
 			);
 		},
 		onSuccess: async () => {
-			toast.success("Skill removed from Project", {
+			toast.success("Skill removed from project", {
 				description: sourceProjectName
-					? `Removed from ${sourceProjectName}. Other Projects keep their copies.`
-					: "Removed from this Project. Other Projects keep their copies.",
+					? `Removed from ${sourceProjectName}. Other projects keep their copies.`
+					: "Removed from this project. Other projects keep their copies.",
 			});
 			await removeDeletedSkillQueries(queryClient, skillKey);
 			void router.navigate({ href: skillListHref });
 		},
 		onError: (e) =>
-			toast.error("Couldn't remove Skill from Project", { description: errorMessage(e) }),
+			toast.error("Couldn't remove skill from project", { description: errorMessage(e) }),
 	});
 
 	const onUninstall = () => {
@@ -385,7 +385,7 @@ export function SkillDetailContent({
 			return;
 		}
 		if (!capabilities?.canDelete) {
-			toast.error("This Skill is read-only here");
+			toast.error("This skill is read-only here");
 			return;
 		}
 		uninstall.mutate();
@@ -395,7 +395,7 @@ export function SkillDetailContent({
 	const agentCaption = isAgentSyncProjection
 		? skillAgentLabel
 			? `synced from ${skillAgentLabel}`
-			: "synced from Agent"
+			: "synced from agent"
 		: sourceProjectName
 			? `in ${sourceProjectName}`
 			: null;
@@ -428,15 +428,15 @@ export function SkillDetailContent({
 					onRetry={() => {
 						void scopedBindings.refetch();
 					}}
-					title="Couldn't load Agent Skill access"
+					title="Couldn't load agent skill access"
 				/>
 			) : agentProjectUnavailable ? (
 				<DetailNotFound
-					title="Project not available to this Agent"
+					title="Project not available to this agent"
 					message={
 						!selectedProjectId
-							? "The Workspace is not available yet. Return to Projects and try again."
-							: "The requested Project is not available through this Agent. Choose an available Project first."
+							? "The workspace is not available yet. Return to Projects and try again."
+							: "The requested project is not available through this agent. Choose an available project first."
 					}
 				/>
 			) : viewState === "missing-key" ? (
@@ -446,7 +446,7 @@ export function SkillDetailContent({
 					title="Skill not found"
 					message={
 						isAgentScope
-							? "This Skill was not found in this Agent's Projects."
+							? "This skill was not found in this agent's projects."
 							: errorMessage(skillQuery.error)
 					}
 				/>
@@ -466,9 +466,9 @@ export function SkillDetailContent({
 				<>
 					{needsExplicitProject ? (
 						<Alert>
-							<AlertTitle>Choose a Project to make changes</AlertTitle>
+							<AlertTitle>Choose a project to make changes</AlertTitle>
 							<AlertDescription>
-								This older link is view-only. Open the Skill from a Project&apos;s Skills page to
+								This older link is view-only. Open the skill from a project&apos;s Skills page to
 								edit or remove that exact copy.
 							</AlertDescription>
 						</Alert>
@@ -487,8 +487,8 @@ export function SkillDetailContent({
 									variant="secondary"
 									title={
 										needsExplicitProject
-											? "Open this Skill from a Project to make changes."
-											: "This Skill must be changed from its source."
+											? "Open this skill from a project to make changes."
+											: "This skill must be changed from its source."
 									}
 								>
 									{needsExplicitProject
@@ -513,7 +513,7 @@ export function SkillDetailContent({
 										disabled={!skill.content || !isProjectReady}
 										title={
 											!skill.content
-												? "No instructions are available for this Skill yet"
+												? "No instructions are available for this skill yet"
 												: !isProjectReady
 													? "Project unavailable"
 													: undefined
@@ -523,7 +523,7 @@ export function SkillDetailContent({
 										Edit
 									</Button>
 									<ConfirmAction
-										title={`Remove ${skill.name} from Project?`}
+										title={`Remove ${skill.name} from project?`}
 										description={<SkillRemovalDescription projectName={sourceProjectName} />}
 										confirmLabel="Remove from project"
 										destructive
@@ -573,7 +573,7 @@ export function SkillDetailContent({
 						}
 						status={
 							<DetailMeta>
-								<span>{isAgentSyncProjection ? "Workspace Skill" : "Project Skill"}</span>
+								<span>{isAgentSyncProjection ? "Workspace skill" : "Project skill"}</span>
 								{skill.source_repo ? (
 									<>
 										<span>·</span>
@@ -626,8 +626,8 @@ export function SkillDetailContent({
 								</div>
 								<p className="text-xs text-muted-foreground">
 									{isAgentSyncProjection
-										? "This Skill is synced from the Agent and is read-only here. Manage it on the Agent."
-										: "This Skill belongs to this Project. Linked Agents use it automatically."}
+										? "This skill is synced from the agent and is read-only here. Manage it on the agent."
+										: "This skill belongs to this project. Linked agents use it automatically."}
 								</p>
 							</div>
 							<Badge variant={isReadOnly ? "secondary" : "outline"}>
@@ -646,7 +646,7 @@ export function SkillDetailContent({
 						) : (
 							<EmptyState
 								variant="inset"
-								description="No Project information is available for this Skill."
+								description="No project information is available for this skill."
 							/>
 						)}
 					</DetailPanel>
@@ -656,7 +656,7 @@ export function SkillDetailContent({
 							<div>
 								<h2 className="text-sm font-semibold">Edit skill</h2>
 								<p className="mt-1 text-xs text-muted-foreground">
-									Saving updates this Project Skill. Linked Agents receive the new version
+									Saving updates this project skill. Linked agents receive the new version
 									automatically, and imported support files stay attached.
 								</p>
 							</div>
@@ -704,8 +704,8 @@ export function SkillDetailContent({
 									</div>
 									<p className="text-xs text-muted-foreground">
 										{isAgentSyncProjection
-											? "This Skill belongs to the Agent's Workspace. Edit it on the Agent."
-											: "This instruction file belongs to the Project. Linked Agents use updates automatically."}
+											? "This skill belongs to the agent's workspace. Edit it on the agent."
+											: "This instruction file belongs to the project. Linked agents use updates automatically."}
 									</p>
 								</div>
 								<Badge variant="secondary">
@@ -719,7 +719,7 @@ export function SkillDetailContent({
 							) : (
 								<EmptyState
 									variant="inset"
-									description="This Skill has no additional instructions."
+									description="This skill has no additional instructions."
 								/>
 							)}
 						</DetailPanel>
@@ -733,8 +733,8 @@ export function SkillDetailContent({
 									</div>
 									<p className="text-xs text-muted-foreground">
 										{isAgentSyncProjection
-											? "This Skill was synced from the Agent, but its instructions are not available yet."
-											: "This Project Skill has no editable instruction body."}
+											? "This skill was synced from the agent, but its instructions are not available yet."
+											: "This project skill has no editable instruction body."}
 									</p>
 								</div>
 								<Badge variant="secondary">
@@ -745,8 +745,8 @@ export function SkillDetailContent({
 								variant="inset"
 								description={
 									isAgentSyncProjection
-										? "The preview will appear after the Agent syncs its Skill files."
-										: "This Skill has no instructions."
+										? "The preview will appear after the agent syncs its skill files."
+										: "This skill has no instructions."
 								}
 							/>
 						</DetailPanel>

@@ -138,8 +138,8 @@ export function AgentsCard({
 					// the message — render no empty state to avoid contradicting it.
 					<EmptyState
 						variant="inset"
-						title="No Agents yet"
-						description="Connect an Agent to see it here."
+						title="No agents yet"
+						description="Connect an agent to see it here."
 					/>
 				)}
 				{hostedStatus?.error ? (

@@ -117,7 +117,7 @@ export function NotificationCenter({ account }: { account?: AccountNotificationS
 			toast.success(copy.title, {
 				description: copy.description,
 				action: {
-					label: "Open Project",
+					label: "Open project",
 					onClick: () => void router.navigate({ href: projectDetailHref(result.project_id) }),
 				},
 			});

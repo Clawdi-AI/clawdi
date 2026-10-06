@@ -330,7 +330,7 @@ export default function ProjectDetailPage({
 							params: { query: { project_id: projectId, page, page_size: pageSize } },
 						}),
 					),
-				{ pageSize: 200, resourceName: "Project Vaults" },
+				{ pageSize: 200, resourceName: "Project vaults" },
 			),
 		enabled:
 			showVaults &&
@@ -389,10 +389,10 @@ export default function ProjectDetailPage({
 			),
 		onSuccess: () => {
 			refresh();
-			toast.success("Skill removed from Project");
+			toast.success("Skill removed from project");
 		},
 		onError: (error) =>
-			toast.error("Couldn't remove Skill from Project", {
+			toast.error("Couldn't remove skill from project", {
 				description: normalizeApiError(error),
 			}),
 	});
@@ -473,7 +473,7 @@ export default function ProjectDetailPage({
 				{isApiNotFoundError(blockingError) ? (
 					<DetailNotFound
 						title="Project not found"
-						message="This Project may have been removed, or your account no longer has access."
+						message="This project may have been removed, or your account no longer has access."
 					/>
 				) : (
 					<ApiErrorPanel
@@ -484,7 +484,7 @@ export default function ProjectDetailPage({
 						}}
 						title={
 							blockingScopeError
-								? "Couldn't load Workspace or Project access"
+								? "Couldn't load workspace or project access"
 								: "Couldn't load project"
 						}
 					/>
@@ -503,7 +503,7 @@ export default function ProjectDetailPage({
 				/>
 				<DetailNotFound
 					title="Project not found"
-					message="This Project may have been removed, or your account no longer has access."
+					message="This project may have been removed, or your account no longer has access."
 				/>
 			</div>
 		);
@@ -519,7 +519,7 @@ export default function ProjectDetailPage({
 				/>
 				<DetailNotFound
 					title="Project not found"
-					message="This page is for user-created Projects. Open an Agent to manage its private Workspace."
+					message="This page is for user-created projects. Open an agent to manage its private workspace."
 				/>
 			</div>
 		);
@@ -588,7 +588,7 @@ export default function ProjectDetailPage({
 			? {
 					title: "Skills",
 					description:
-						"Skills available in this Agent's Workspace. Skills synced from the Agent are read-only.",
+						"Skills available in this agent's workspace. Skills synced from the agent are read-only.",
 					icon:
 						focusedResourceIdentity && FocusedResourceIcon ? (
 							<IconChip tint={focusedResourceIdentity.tint}>
@@ -614,7 +614,7 @@ export default function ProjectDetailPage({
 			onRetry={() => {
 				void workspaceAgent.refetch();
 			}}
-			title="Couldn't load the Agent identity"
+			title="Couldn't load the agent identity"
 		/>
 	) : null;
 
@@ -649,8 +649,8 @@ export default function ProjectDetailPage({
 					description={
 						isWorkspace
 							? focus === "vaults"
-								? "Vaults available through this Agent’s Workspace."
-								: "This Agent's fixed Workspace for installed Skills and Vaults."
+								? "Vaults available through this agent's workspace."
+								: "This agent's fixed workspace for installed skills and vaults."
 							: projectDetailDescription(project, isOwner)
 					}
 					actions={
@@ -682,7 +682,7 @@ export default function ProjectDetailPage({
 					<CheckCircle2 className="size-4" />
 					<AlertTitle>Project added</AlertTitle>
 					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-						<span>Linking lets an Agent use this Project&apos;s Skills and Vaults together.</span>
+						<span>Linking lets an agent use this project&apos;s skills and vaults together.</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
 							<Bot className="mr-1.5 size-3.5" />
 							Manage agents
@@ -722,7 +722,7 @@ export default function ProjectDetailPage({
 						<h2 className="text-sm font-semibold">Project bundle</h2>
 						<p className="text-sm text-muted-foreground">
 							{project.description ||
-								"Keep reusable Skills and Vault access together, then link the whole Project to any Agent that needs it."}
+								"Keep reusable skills and vault access together, then link the whole project to any agent that needs it."}
 						</p>
 					</div>
 					<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -743,12 +743,12 @@ export default function ProjectDetailPage({
 				description={
 					isWorkspaceView
 						? isWorkspace
-							? "Installed Skills in this Agent's fixed Workspace."
-							: "Skills included in this Project."
+							? "Installed skills in this agent's fixed workspace."
+							: "Skills included in this project."
 						: project.kind === "environment"
-							? "Skills synced from this Agent. Manage them on the Agent."
+							? "Skills synced from this agent. Manage them on the agent."
 							: isOwner
-								? "Reusable instructions that belong to this Project."
+								? "Reusable instructions that belong to this project."
 								: "Readable instructions shared by the owner."
 				}
 				action={
@@ -812,13 +812,13 @@ export default function ProjectDetailPage({
 						onRetry={() => {
 							void skills.refetch();
 						}}
-						title="Couldn't load Project Skills"
+						title="Couldn't load project skills"
 					/>
 				) : (
 					<SkillCardGrid
 						skills={skills.data?.items ?? []}
 						isLoading={skills.isLoading}
-						emptyMessage="No skills are visible in this Project yet."
+						emptyMessage="No skills are visible in this project yet."
 						emptyVariant="inset"
 						capabilitiesFor={(skill) => skillCapabilities(skill, project)}
 						onUninstall={
@@ -853,11 +853,11 @@ export default function ProjectDetailPage({
 				description={
 					isWorkspaceView
 						? isWorkspace
-							? "Vaults available through this Agent’s Workspace."
-							: "Vaults included in this Project."
+							? "Vaults available through this agent's workspace."
+							: "Vaults included in this project."
 						: isOwner
-							? "Vaults included in this Project."
-							: "Read-only vaults shared through this Project."
+							? "Vaults included in this project."
+							: "Read-only vaults shared through this project."
 				}
 				action={
 					(!focus || !isWorkspaceView) && (isWorkspaceView || isOwner) ? (
@@ -897,7 +897,7 @@ export default function ProjectDetailPage({
 					id="people"
 					title="People"
 					count={peopleCount}
-					description="Members see Skills and key names. Key values stay protected, and their linked Agents can use them."
+					description="Members see skills and key names. Key values stay protected, and their linked agents can use them."
 					action={
 						<ShareProjectDialog
 							projectId={project.id}
@@ -919,10 +919,10 @@ export default function ProjectDetailPage({
 							onRetry={() => {
 								void members.refetch();
 							}}
-							title="Couldn't load Project members"
+							title="Couldn't load project members"
 						/>
 					) : (members.data?.length ?? 0) === 0 ? (
-						<EmptyLine message="Only you so far. Share this Project to give a teammate viewer access." />
+						<EmptyLine message="Only you so far. Share this project to give a teammate viewer access." />
 					) : (
 						<div className="divide-y overflow-hidden rounded-lg border bg-card">
 							{(members.data ?? []).map((member) => (
@@ -945,7 +945,7 @@ export default function ProjectDetailPage({
 				<HubSection
 					id="people"
 					title="Your access"
-					description="You have viewer access. Linked Agents use this Project's Skills and Vaults together."
+					description="You have viewer access. Linked agents use this project's skills and vaults together."
 				>
 					<SharedAccessPanel
 						project={project}
@@ -960,14 +960,14 @@ export default function ProjectDetailPage({
 			{!isWorkspaceView && localTab === "agents" ? (
 				<HubSection
 					id="agents"
-					title="Your Agents"
+					title="Your agents"
 					count={agentCount}
 					description={
 						project.kind === "environment"
-							? "Agent that owns this Workspace."
+							? "Agent that owns this workspace."
 							: project.kind === "personal"
-								? "Private library items are not linked to individual Agents."
-								: "Agents you own that use this Project's Skills and Vaults."
+								? "Private library items are not linked to individual agents."
+								: "Agents you own that use this project's skills and vaults."
 					}
 				>
 					{boundAgents.isLoading ? (
@@ -978,16 +978,16 @@ export default function ProjectDetailPage({
 							onRetry={() => {
 								void boundAgents.refetch();
 							}}
-							title="Couldn't load Project agent bindings"
+							title="Couldn't load project agent bindings"
 						/>
 					) : (boundAgents.data?.length ?? 0) === 0 ? (
 						<EmptyLine
 							message={
 								project.kind === "environment"
-									? "The home Agent for this Workspace is unavailable."
+									? "The home agent for this workspace is unavailable."
 									: project.kind === "personal"
-										? "Private library items have no Agent links."
-										: "None of your Agents are linked yet. Link this Project to let one use its Skills and Vaults."
+										? "Private library items have no agent links."
+										: "None of your agents are linked yet. Link this project to let one use its skills and vaults."
 							}
 						/>
 					) : (
@@ -1205,11 +1205,11 @@ function projectDetailDescription(project: ProjectRow, isOwner: boolean) {
 	const access = isOwner ? "you own" : "shared with you";
 	if (project.kind === "workspace") {
 		return isOwner
-			? "Add Skills and Vaults here, then choose which Agents use this Project."
-			: "Project shared with you. Linked Agents use its Skills and Vaults together.";
+			? "Add skills and vaults here, then choose which agents use this project."
+			: "Project shared with you. Linked agents use its skills and vaults together.";
 	}
 	if (project.kind === "environment") {
-		return `Workspace ${access}. This private Workspace belongs to one Agent and cannot be shared.`;
+		return `Workspace ${access}. This private workspace belongs to one agent and cannot be shared.`;
 	}
 	if (project.kind === "personal") {
 		return `Private resources ${access}.`;
@@ -1238,8 +1238,8 @@ function SharedAccessPanel({
 					<h2 className="text-sm font-semibold">You have viewer access</h2>
 				</div>
 				<p className="text-xs text-muted-foreground">
-					You can read this Project and link it to an Agent. The Agent then uses the Project&apos;s
-					Skills and Vaults together.
+					You can read this project and link it to an agent. The agent then uses the project&apos;s
+					skills and vaults together.
 				</p>
 			</div>
 			<div className="rounded-md border bg-background/60 p-3">
@@ -1266,8 +1266,8 @@ function SharedAccessPanel({
 					<AlertDialogHeader>
 						<AlertDialogTitle>Leave {displayProjectName(project)}?</AlertDialogTitle>
 						<AlertDialogDescription>
-							This removes your access and unlinks the Project from your Agents. Those Agents will
-							stop using its Skills and Vaults.
+							This removes your access and unlinks the project from your agents. Those agents will
+							stop using its skills and vaults.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -1372,7 +1372,7 @@ function ManageProjectAgentsDialog({
 			onOpenChange(false);
 		},
 		onError: (error) => {
-			toast.error("Couldn't update Agent access", {
+			toast.error("Couldn't update agent access", {
 				description: normalizeApiError(error),
 			});
 		},
@@ -1395,19 +1395,19 @@ function ManageProjectAgentsDialog({
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
 					<DialogTitle>Manage agents</DialogTitle>
-					<DialogDescription>Choose which Agents can use this Project.</DialogDescription>
+					<DialogDescription>Choose which agents can use this project.</DialogDescription>
 				</DialogHeader>
 
 				{isLoadingAgents ? (
 					<Skeleton className="h-24 w-full" />
 				) : agentsError ? (
-					<ApiErrorPanel error={agentsError} onRetry={onRetryAgents} title="Couldn't load Agents" />
+					<ApiErrorPanel error={agentsError} onRetry={onRetryAgents} title="Couldn't load agents" />
 				) : orderedEnvironments.length === 0 ? (
 					<Alert>
 						<Bot className="size-4" />
-						<AlertTitle>No Agents available</AlertTitle>
+						<AlertTitle>No agents available</AlertTitle>
 						<AlertDescription>
-							Add an Agent from Overview first, then link this Project here or from the Agent&apos;s{" "}
+							Add an agent from Overview first, then link this project here or from the agent&apos;s{" "}
 							{AGENT_PROJECTS_SECTION_LABEL} section.
 						</AlertDescription>
 					</Alert>
@@ -1498,7 +1498,7 @@ function CreateProjectVaultDialog({
 		mutationFn: async (nextName: string) => {
 			const normalizedName = nextName.trim();
 			const slug = slugFromVaultName(normalizedName);
-			if (!slug) throw new Error("Use a Vault name containing letters or numbers");
+			if (!slug) throw new Error("Use a vault name containing letters or numbers");
 			return unwrap(
 				await api.POST("/v1/vault", {
 					params: { query: { project_id: projectId, create_only: true } },
@@ -1511,7 +1511,7 @@ function CreateProjectVaultDialog({
 			setCreateOpen(false);
 			onChanged();
 			toast.success(`Vault created for this ${contextLabel}`, {
-				description: "Its key values stay protected, and this Project or Workspace can use them.",
+				description: "Its key values stay protected, and this project or workspace can use them.",
 			});
 		},
 		onError: (error) =>
@@ -1536,8 +1536,8 @@ function CreateProjectVaultDialog({
 					<DialogHeader>
 						<DialogTitle>Create vault</DialogTitle>
 						<DialogDescription>
-							Create an account-owned Vault for this {contextLabel}. It will also remain available
-							in your Vault library.
+							Create an account-owned vault for this {contextLabel}. It will also remain available
+							in your vault library.
 						</DialogDescription>
 					</DialogHeader>
 					<form

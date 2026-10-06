@@ -89,7 +89,7 @@ export function SkillCard({
 				{canSend && cloudSkill ? <SendSkillDialog skill={cloudSkill} /> : null}
 				{canUninstall ? (
 					<ConfirmAction
-						title={`Remove ${skill.name} from Project?`}
+						title={`Remove ${skill.name} from project?`}
 						description={<SkillRemovalDescription />}
 						confirmLabel="Remove from project"
 						destructive
@@ -103,7 +103,7 @@ export function SkillCard({
 							size="icon-sm"
 							disabled={uninstallPending}
 							className="text-muted-foreground hover:text-destructive"
-							aria-label={`Remove ${skill.name} from Project`}
+							aria-label={`Remove ${skill.name} from project`}
 						>
 							<Trash2 className="size-3.5" />
 						</Button>

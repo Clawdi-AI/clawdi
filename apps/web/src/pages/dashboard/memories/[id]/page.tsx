@@ -165,7 +165,7 @@ export default function MemoryDetailPage({
 							<h2 className="text-sm font-semibold">Recall Scope</h2>
 							<p className="text-xs text-muted-foreground">
 								This is account-level context. Agents can recall it across runs; it is not shared
-								through Projects.
+								through projects.
 							</p>
 						</div>
 						{memory.tags?.length ? (

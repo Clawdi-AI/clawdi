@@ -15,7 +15,7 @@ export async function fetchAgentScopedSkillDetail<T extends { project_id?: strin
 			const skill = await fetchSkill(projectId);
 			if (skill.project_id !== projectId) {
 				throw new Error(
-					"A Skill detail response did not match the requested Workspace or Project.",
+					"A skill detail response did not match the requested workspace or project.",
 				);
 			}
 			return skill;
@@ -26,5 +26,5 @@ export async function fetchAgentScopedSkillDetail<T extends { project_id?: strin
 	}
 
 	if (lastNotFoundError !== undefined) throw lastNotFoundError;
-	throw new Error("This Agent has no available Workspace or Project for this Skill.");
+	throw new Error("This agent has no available workspace or project for this skill.");
 }

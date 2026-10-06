@@ -85,7 +85,7 @@ function ConnectorsListSkeleton({ embedded }: { embedded: boolean }) {
 				</div>
 			</section>
 			<section className="space-y-3">
-				<SectionLabel>All Connectors</SectionLabel>
+				<SectionLabel>All connectors</SectionLabel>
 				<div className={CONNECTOR_GRID_CLASS}>
 					{Array.from({ length: 16 }).map((_, i) => (
 						<ConnectorCardSkeleton key={i} />
@@ -402,7 +402,7 @@ function CatalogSection({
 	}
 	return (
 		<section className="space-y-3">
-			<SectionLabel count={count}>All Connectors</SectionLabel>
+			<SectionLabel count={count}>All connectors</SectionLabel>
 			{content}
 		</section>
 	);

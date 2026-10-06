@@ -92,7 +92,7 @@ export function getNotificationCenterDescription(): string {
 }
 
 export function getProjectInvitationAccessCopy(): string {
-	return "View shared Projects and link them to your Agents. Only the owner can edit.";
+	return "View shared projects and link them to your agents. Only the owner can edit.";
 }
 
 export function getAcceptedProjectInvitationToastCopy(projectName?: string): {
@@ -101,6 +101,6 @@ export function getAcceptedProjectInvitationToastCopy(projectName?: string): {
 } {
 	return {
 		title: projectName ? `Joined ${projectName}` : "Project joined",
-		description: "Open the Project to view its resources or link it to an Agent.",
+		description: "Open the project to view its resources or link it to an agent.",
 	};
 }

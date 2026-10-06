@@ -69,7 +69,7 @@ export function AgentResourceRouteGate({
 				{agentMissing ? (
 					<DetailNotFound
 						title="Agent not found"
-						message="This Agent does not exist or is no longer available."
+						message="This agent does not exist or is no longer available."
 					/>
 				) : (
 					<ApiErrorPanel
@@ -77,7 +77,7 @@ export function AgentResourceRouteGate({
 						onRetry={() => {
 							void agent.refetch();
 						}}
-						title="Couldn't verify Agent access"
+						title="Couldn't verify agent access"
 					/>
 				)}
 			</div>
@@ -153,15 +153,15 @@ function AgentProjectAccessGate({
 						onRetry={() => {
 							void access.refetch();
 						}}
-						title="Couldn't verify Workspace or Project access"
+						title="Couldn't verify workspace or project access"
 					/>
 				) : (
 					<DetailNotFound
-						title="Project not available to this Agent"
+						title="Project not available to this agent"
 						message={
 							projectId
-								? "The requested Project is not available through this Agent. Choose an available Project first."
-								: "Choose the Workspace or a linked Project before opening its Skills or Vaults."
+								? "The requested project is not available through this agent. Choose an available project first."
+								: "Choose the workspace or a linked project before opening its skills or vaults."
 						}
 					/>
 				)}

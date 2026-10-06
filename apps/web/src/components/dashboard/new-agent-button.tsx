@@ -74,8 +74,8 @@ export function NewAgentButton({
 
 	const trigger = (
 		<SidebarMenuButton
-			tooltip={compact ? undefined : "New Agent"}
-			aria-label="New Agent"
+			tooltip={compact ? undefined : "New agent"}
+			aria-label="New agent"
 			onClick={handleClick}
 			disabled={checkingDeployAccess}
 			className={cn(
@@ -85,7 +85,7 @@ export function NewAgentButton({
 			)}
 		>
 			<CirclePlus />
-			<span className={compact ? "sr-only" : undefined}>New Agent</span>
+			<span className={compact ? "sr-only" : undefined}>New agent</span>
 		</SidebarMenuButton>
 	);
 
@@ -95,7 +95,7 @@ export function NewAgentButton({
 				<Tooltip>
 					<TooltipTrigger render={trigger} />
 					<TooltipContent side="right" align="center">
-						New Agent
+						New agent
 					</TooltipContent>
 				</Tooltip>
 			) : (
@@ -105,11 +105,11 @@ export function NewAgentButton({
 			<Dialog open={chooserOpen} onOpenChange={setChooserOpen}>
 				<DialogContent className="sm:max-w-lg">
 					<DialogHeader>
-						<DialogTitle>New Agent</DialogTitle>
+						<DialogTitle>New agent</DialogTitle>
 						<DialogDescription>
 							{canDeployOnClawdi
-								? "Deploy on Clawdi, or connect an Agent on your machine."
-								: "Connect an Agent on your machine."}
+								? "Deploy on Clawdi, or connect an agent on your machine."
+								: "Connect an agent on your machine."}
 						</DialogDescription>
 					</DialogHeader>
 					{deployAccessError ? (
@@ -132,7 +132,7 @@ export function NewAgentButton({
 						) : null}
 						<ChoiceCard
 							icon={<TerminalSquare />}
-							title="Connect an Agent on your machine"
+							title="Connect an agent on your machine"
 							description={
 								desktopBridge
 									? "Find and connect Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode."
