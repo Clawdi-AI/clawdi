@@ -257,18 +257,18 @@ export function HostedAgentsByCompute({
 
 			{connectedTiles.length > 0 ? (
 				<section className="space-y-2">
-					<SectionLabel>Other agents</SectionLabel>
+					<SectionLabel>Connected Agents</SectionLabel>
 					<AgentTileGrid tiles={connectedTiles} />
 				</section>
 			) : null}
 
 			{selfManagedError ? (
 				<section className="space-y-2">
-					<SectionLabel>Other agents</SectionLabel>
+					<SectionLabel>Connected Agents</SectionLabel>
 					<ApiErrorPanel
 						error={selfManagedError}
 						onRetry={onRetrySelfManaged}
-						title="Couldn't load agents"
+						title="Couldn't load Connected Agents"
 					/>
 				</section>
 			) : null}

@@ -84,7 +84,7 @@ export function HostedDeploymentDeleteAction({
 		}
 	}
 
-	const keepDescription = `Keep subscription — it becomes available to choose for a future Agent.${
+	const keepDescription = `Keep subscription — it becomes available to choose for a future agent.${
 		periodEnd === "—" ? "" : ` Valid through ${periodEnd}.`
 	}`;
 	const cancelDescription = computeSubscriptionCancellationCopy({

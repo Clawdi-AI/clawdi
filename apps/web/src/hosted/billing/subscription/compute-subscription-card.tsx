@@ -31,7 +31,7 @@ export type ComputeSubscriptionPaymentSource = "included" | "stripe" | "wallet" 
 
 export function computeSubscriptionPlanLabel(planSlug: string): string {
 	if (planSlug === "compute_basic" || planSlug === "compute_performance") {
-		return `${computeTierLabel(planSlug)} compute`;
+		return `${computeTierLabel(planSlug)} plan`;
 	}
 	return planSlug.replace(/^compute_/, "").replaceAll("_", " ");
 }

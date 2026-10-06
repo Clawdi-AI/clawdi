@@ -121,7 +121,7 @@ for (const firstTimeViewport of [
 		await expect(connectDialog).toBeVisible();
 		await expect(page.getByRole("dialog")).toHaveCount(1);
 		await expect(connectDialog).toContainText(
-			"Add a Custom bot you manage. When possible, it will be linked to this Agent automatically.",
+			"Add a custom bot you manage. When possible, it will be linked to this agent automatically.",
 		);
 		const agentInterfaceHint = connectDialog.locator("[data-other-provider-hint]");
 		await expect(agentInterfaceHint).toContainText(
@@ -133,7 +133,7 @@ for (const firstTimeViewport of [
 		await expect(agentInterfaceHint.locator('[data-slot="alert"]')).toHaveCount(0);
 		await expect(connectDialog.locator("[data-agent-link-warning]")).toHaveCount(0);
 		await expect(connectDialog.getByRole("status")).toContainText(
-			"The new Custom bot will be linked to this Agent automatically.",
+			"The new custom bot will be linked to this agent automatically.",
 		);
 		await connectDialog.getByRole("button", { name: "WhatsApp", exact: true }).click();
 		await expect(connectDialog.getByRole("heading", { name: "Configure WhatsApp" })).toBeVisible();
@@ -408,11 +408,11 @@ test("channel detail links, pairs, and unlinks an Agent in place", async ({ page
 
 	await page.goto("/channels");
 	const sharedBotCard = page.locator(`[data-shared-channel-account-id="${sharedChannelId}"]`);
-	await sharedBotCard.getByRole("button", { name: "Link Agent", exact: true }).click();
-	const sharedBotLinkDialog = page.getByRole("dialog", { name: "Link Agent" });
+	await sharedBotCard.getByRole("button", { name: "Link agent", exact: true }).click();
+	const sharedBotLinkDialog = page.getByRole("dialog", { name: "Link agent" });
 	await sharedBotLinkDialog.getByRole("combobox", { name: "Agent" }).click();
 	await page.getByRole("option", { name: "Shared Bot Agent" }).click();
-	await sharedBotLinkDialog.getByRole("button", { name: "Link Agent", exact: true }).click();
+	await sharedBotLinkDialog.getByRole("button", { name: "Link agent", exact: true }).click();
 	await expect
 		.poll(() => linkAgentRequests)
 		.toEqual([{ accountId: sharedChannelId, body: JSON.stringify({ agent_id: sharedAgentId }) }]);
@@ -431,11 +431,11 @@ test("channel detail links, pairs, and unlinks an Agent in place", async ({ page
 
 	await page.goto(`/channels/${channelId}`);
 	await expect(page.getByRole("heading", { name: "Channel Detail Telegram" })).toBeVisible();
-	await page.getByRole("button", { name: "Link Agent", exact: true }).click();
-	const linkDialog = page.getByRole("dialog", { name: "Link Agent" });
+	await page.getByRole("button", { name: "Link agent", exact: true }).click();
+	const linkDialog = page.getByRole("dialog", { name: "Link agent" });
 	await linkDialog.getByRole("combobox", { name: "Agent" }).click();
 	await page.getByRole("option", { name: "Channel Agent" }).click();
-	await linkDialog.getByRole("button", { name: "Link Agent", exact: true }).click();
+	await linkDialog.getByRole("button", { name: "Link agent", exact: true }).click();
 
 	await expect
 		.poll(() => linkAgentRequests)
@@ -458,13 +458,13 @@ test("channel detail links, pairs, and unlinks an Agent in place", async ({ page
 
 	const linkedAgent = page.locator(`[data-channel-agent-link-id="${linkId}"]`);
 	await expect(linkedAgent.getByText("Channel Agent", { exact: true })).toBeVisible();
-	await linkedAgent.getByRole("button", { name: "Unlink Agent" }).click();
-	const unlinkDialog = page.getByRole("alertdialog", { name: "Unlink Agent?" });
-	await unlinkDialog.getByRole("button", { name: "Unlink Agent", exact: true }).click();
+	await linkedAgent.getByRole("button", { name: "Unlink agent" }).click();
+	const unlinkDialog = page.getByRole("alertdialog", { name: "Unlink agent?" });
+	await unlinkDialog.getByRole("button", { name: "Unlink agent", exact: true }).click();
 	await expect
 		.poll(() => unlinkAgentRequests)
 		.toEqual([`/v1/channels/${channelId}/agent-links/${linkId}`]);
-	await expect(page.getByText("No Agents linked", { exact: true })).toBeVisible();
+	await expect(page.getByText("No agents linked", { exact: true })).toBeVisible();
 	await expect(page).toHaveURL(`/channels/${channelId}`);
 	expect(errors, `channel detail relationship flow: ${errors.join(" | ")}`).toEqual([]);
 });

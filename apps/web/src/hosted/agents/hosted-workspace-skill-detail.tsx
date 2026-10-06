@@ -84,7 +84,7 @@ export default function HostedWorkspaceSkillDetail({
 		},
 		enabled: Boolean(isWorkspace && deploymentId && (desired || referenceId)),
 	});
-	const { copy } = useCopyToClipboard({ success: "Skill copied", error: "Couldn't copy Skill" });
+	const { copy } = useCopyToClipboard({ success: "Skill copied", error: "Couldn't copy skill" });
 	const skill = detail.data?.skill;
 	useSetBreadcrumbTitle(desired || referenceId ? (skill?.name ?? skillKey) : null);
 
@@ -120,7 +120,7 @@ export default function HostedWorkspaceSkillDetail({
 				<ApiErrorPanel
 					error={error}
 					normalizer={error === bindings.error ? undefined : workspaceSkillErrorNormalizer}
-					title="Couldn't load this Skill"
+					title="Couldn't load this skill"
 					onRetry={() => {
 						if (bindings.error) void bindings.refetch();
 						else if (resolution.error) void resolution.refetch();
@@ -165,7 +165,7 @@ export default function HostedWorkspaceSkillDetail({
 							)}
 							className="text-sm text-muted-foreground hover:text-foreground"
 						>
-							View source Skill
+							View source skill
 						</Link>
 					) : null}
 					<DetailPanel>

@@ -40,7 +40,7 @@ test("wallet top-up completion refreshes an automatically paid open invoice", as
 	await expect(page.getByRole("button", { name: /Retry payment/ })).toHaveCount(0);
 
 	await pastDueAlert.getByRole("button", { name: "Top up" }).click();
-	const topUpDialog = page.getByRole("dialog").filter({ hasText: "Top up Wallet" });
+	const topUpDialog = page.getByRole("dialog").filter({ hasText: "Top up wallet" });
 	await expect(topUpDialog).toBeVisible();
 	await topUpDialog.getByRole("button", { name: "Continue with $25.00" }).click();
 

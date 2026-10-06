@@ -38,10 +38,10 @@ async function hydrateAcceptedDeployment({
 }): Promise<HostedDeployment> {
 	const authoritative = await getDeployment(deploymentId);
 	if (authoritative.resource.id !== deploymentId) {
-		throw new Error("The deployment service returned a different deployment.");
+		throw new Error("Clawdi returned a different agent.");
 	}
 	if (!isAgentRouteId(authoritative.agent_id)) {
-		throw new Error("The deployment service returned an invalid Agent identity.");
+		throw new Error("Clawdi returned an invalid agent identity.");
 	}
 
 	// A list read that started before acceptance can be older than the committed

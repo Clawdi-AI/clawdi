@@ -174,7 +174,7 @@ export function HostedUnavailableBanner({
 			error={error}
 			onRetry={onRetry}
 			normalizer={normalizer}
-			title="Cloud Agents unavailable"
+			title="Cloud Agents aren't available here"
 		/>
 	);
 }

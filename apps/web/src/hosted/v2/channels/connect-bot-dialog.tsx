@@ -117,7 +117,7 @@ export function ConnectBotDialog({
 		? {
 				title: "Agent link status unavailable",
 				description:
-					"Couldn't check this Agent's existing links. The new Custom bot will be added without a link to this Agent.",
+					"Couldn't check this agent's existing links. The new custom bot will be added without a link to this agent.",
 			}
 		: null;
 
@@ -187,10 +187,10 @@ export function ConnectBotDialog({
 				toast.success(result.linkOutcome === "linked" ? "Custom bot linked" : "Custom bot added", {
 					description:
 						result.linkOutcome === "linked"
-							? `${data.name} was added and linked to this Agent.`
+							? `${data.name} was added and linked to this agent.`
 							: agentId
-								? `${data.name} was added to Custom bots without linking to this Agent.`
-								: `${data.name} was added to Custom bots.`,
+								? `${data.name} was added to custom bots without linking to this agent.`
+								: `${data.name} was added to custom bots.`,
 				});
 			}
 		} finally {
@@ -219,7 +219,7 @@ export function ConnectBotDialog({
 			Need a provider that Clawdi Channels doesn&apos;t support?{" "}
 			{agentId ? (
 				<>
-					Configure it in this Agent&apos;s{" "}
+					Configure it in this agent&apos;s{" "}
 					<Link
 						{...agentSectionLink(agentId, "console")}
 						className="font-medium text-foreground underline underline-offset-4"
@@ -230,7 +230,7 @@ export function ConnectBotDialog({
 					.
 				</>
 			) : (
-				"Open the relevant Agent's OpenClaw Control UI or Hermes Dashboard to configure it."
+				"Open the relevant agent's OpenClaw Control UI or Hermes Dashboard to configure it."
 			)}
 		</p>
 	);
@@ -290,10 +290,10 @@ export function ConnectBotDialog({
 									{created.name}
 								</span>{" "}
 								{created.linkOutcome === "linked"
-									? "was added to Custom bots and linked to this Agent."
+									? "was added to custom bots and linked to this agent."
 									: agentId
-										? "was added to Custom bots without linking to this Agent."
-										: "was added to Custom bots. Link it from an Agent when you’re ready."}
+										? "was added to custom bots without linking to this agent."
+										: "was added to custom bots. Link it from an agent when you're ready."}
 							</DialogDescription>
 						</DialogHeader>
 						<DialogFooter>
@@ -309,7 +309,7 @@ export function ConnectBotDialog({
 								nativeButton={false}
 								className="min-w-0 whitespace-normal"
 							>
-								View Custom bot
+								View custom bot
 							</Button>
 						</DialogFooter>
 					</>
@@ -319,8 +319,8 @@ export function ConnectBotDialog({
 							<DialogTitle>Add channel</DialogTitle>
 							<DialogDescription>
 								{agentId
-									? "Add a Custom bot you manage. When possible, it will be linked to this Agent automatically."
-									: "Add a Custom bot you manage to your inventory."}
+									? "Add a custom bot you manage. When possible, it will be linked to this agent automatically."
+									: "Add a custom bot you manage to your inventory."}
 							</DialogDescription>
 						</DialogHeader>
 
@@ -348,12 +348,12 @@ export function ConnectBotDialog({
 										</Alert>
 									) : providerLinkConflict ? (
 										<p role="status" className="text-xs text-muted-foreground" aria-live="polite">
-											Adding this bot will ask you to replace this Agent&apos;s existing{" "}
+											Adding this bot will ask you to replace this agent&apos;s existing{" "}
 											{meta.label} link.
 										</p>
 									) : autoLinkAgentId ? (
 										<p role="status" className="text-xs text-muted-foreground" aria-live="polite">
-											The new Custom bot will be linked to this Agent automatically.
+											The new custom bot will be linked to this agent automatically.
 										</p>
 									) : null}
 									{whatsappSelected ? (

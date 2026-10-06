@@ -35,7 +35,7 @@ export function LowBalanceBanner({
 		? "Auto-reload was declined"
 		: needsAction
 			? "Your bank needs to confirm a top-up"
-			: "Your Wallet balance is running low";
+			: "Your wallet balance is running low";
 
 	const services = hasWalletCompute ? "Clawdi AI and wallet-funded compute" : "Clawdi AI";
 	const body = declined

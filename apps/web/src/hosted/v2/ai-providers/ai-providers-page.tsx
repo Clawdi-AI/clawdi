@@ -171,7 +171,7 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 						: deployable
 							? null
 							: provider.usable
-								? "This setup isn't available for hosted agents. Review the provider settings."
+								? "This setup isn't available for Cloud Agents. Review the provider settings."
 								: "Finish setup before assigning this provider to an agent.",
 				]}
 			/>
@@ -295,7 +295,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 						{impact.isFetching ? (
 							<p className="flex items-center gap-2 text-muted-foreground">
 								<Spinner />
-								Checking affected Agents…
+								Checking affected agents…
 							</p>
 						) : impactError ? (
 							<ApiErrorPanel
@@ -306,7 +306,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 						) : affectedAgents.length > 0 ? (
 							<>
 								<p>
-									These Agents will keep running with Provider unset, but model features stop until
+									These agents will keep running with Provider unset, but model features stop until
 									you choose a new provider. There's no fallback to Clawdi AI.
 								</p>
 								<ul className="space-y-1 text-foreground">
@@ -316,7 +316,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 								</ul>
 							</>
 						) : (
-							<p>No hosted agents currently use this provider.</p>
+							<p>No Cloud Agents use this provider.</p>
 						)}
 					</AlertDialogDescription>
 				</AlertDialogHeader>

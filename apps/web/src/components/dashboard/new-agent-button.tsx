@@ -118,7 +118,7 @@ export function NewAgentButton({
 							onRetry={() => {
 								void hostedAccess.refetch();
 							}}
-							title="Couldn't check Cloud deployment access"
+							title="Couldn't check Cloud Agent access"
 						/>
 					) : null}
 					<div className={cn("grid gap-3", canDeployOnClawdi && "sm:grid-cols-2")}>

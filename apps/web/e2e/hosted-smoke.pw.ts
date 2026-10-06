@@ -377,7 +377,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }) => {
 
 	const overview = page.locator("main");
 	const overviewTitleRow = page.locator('[data-slot="page-header"]');
-	await expect(overviewTitleRow.getByText("Cloud", { exact: true })).toHaveCount(1);
+	await expect(overviewTitleRow.getByText("Cloud Agent", { exact: true })).toHaveCount(1);
 	await expect(overviewTitleRow.getByText("Legacy", { exact: true })).toHaveCount(0);
 	await expect(overview.getByRole("heading", { name: "Workspace", exact: true })).toBeVisible({
 		timeout: 12_000,
@@ -489,7 +489,9 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }) => {
 	await page.goto(`/agents/${railHostedEnvironmentId}/sessions`);
 	const sessionsHeading = page.getByRole("heading", { name: "Sessions", exact: true });
 	await expect(sessionsHeading).toBeVisible();
-	await expect(sessionsHeading.locator("..").getByText("Cloud", { exact: true })).toHaveCount(0);
+	await expect(sessionsHeading.locator("..").getByText("Cloud Agent", { exact: true })).toHaveCount(
+		0,
+	);
 	await expect(page.getByRole("button", { name: "Chat on the web", exact: true })).toHaveCount(0);
 });
 

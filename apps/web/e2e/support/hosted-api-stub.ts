@@ -2208,7 +2208,7 @@ export async function gotoHostedAgentSettings(
 	for (let attempt = 0; attempt < 2; attempt += 1) {
 		await page.goto(`/agents/${agentId}/settings${search}`);
 		try {
-			await expect(page.getByText(`${tier} compute`, { exact: true })).toBeVisible();
+			await expect(page.getByText(`${tier} plan`, { exact: true })).toBeVisible();
 			// Do not open a modal while React is still hydrating the sidebar; Base UI's
 			// focus isolation mutates aria-hidden and can create a false mismatch.
 			await page.waitForLoadState("networkidle");

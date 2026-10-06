@@ -59,8 +59,8 @@ export function LibrarySkillPicker({
 				<ProjectCompactPicker
 					projects={libraryProjects}
 					value={projectId}
-					ariaLabel="Library Project"
-					placeholder="Choose a Project"
+					ariaLabel="Library project"
+					placeholder="Choose a project"
 					disabled={disabled || projects.isLoading}
 					onValueChange={(id) => {
 						setProjectId(id);
@@ -72,7 +72,7 @@ export function LibrarySkillPicker({
 				<ApiErrorPanel
 					error={projects.error}
 					onRetry={() => void projects.refetch()}
-					title="Couldn't load Library Projects"
+					title="Couldn't load library projects"
 				/>
 			) : null}
 			{selectedProject ? (
@@ -84,8 +84,8 @@ export function LibrarySkillPicker({
 						disabled={disabled || skills.isLoading || Boolean(skills.error)}
 						onValueChange={(id) => onChange(skills.data?.find((skill) => skill.id === id) ?? null)}
 					>
-						<SelectTrigger className="w-full" aria-label="Library Skill">
-							<SelectValue placeholder="Choose a Skill" />
+						<SelectTrigger className="w-full" aria-label="Library skill">
+							<SelectValue placeholder="Choose a skill" />
 						</SelectTrigger>
 						<SelectContent>
 							{(skills.data ?? []).map((skill) => (
@@ -96,7 +96,7 @@ export function LibrarySkillPicker({
 						</SelectContent>
 					</Select>
 					{!skills.isLoading && !skills.error && skills.data?.length === 0 ? (
-						<p className="text-sm text-muted-foreground">No Skills in this Project.</p>
+						<p className="text-sm text-muted-foreground">No skills in this project.</p>
 					) : null}
 					{value?.description ? (
 						<p className="text-sm text-muted-foreground">{value.description}</p>
@@ -107,11 +107,11 @@ export function LibrarySkillPicker({
 				<ApiErrorPanel
 					error={skills.error}
 					onRetry={() => void skills.refetch()}
-					title="Couldn't load Library Skills"
+					title="Couldn't load library skills"
 				/>
 			) : null}
 			<p className="text-xs text-muted-foreground">
-				This Agent will use the Skill from your Library and receive its updates.
+				This agent will use the skill from your library and receive its updates.
 			</p>
 		</div>
 	);

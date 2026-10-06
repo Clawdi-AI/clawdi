@@ -51,7 +51,7 @@ import { LinkChannelAgentAction } from "@/hosted/v2/channels/link-channel-agent-
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "Manage Custom bots and discover Clawdi bots for your Agents.";
+const DESCRIPTION = "Manage custom bots and discover Clawdi bots for your agents.";
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 
 export function ChannelsPage() {
@@ -252,7 +252,7 @@ function SharedBotsSection({
 			<div>
 				<SectionLabel count={!isLoading ? visibleBots.length : undefined}>Clawdi bots</SectionLabel>
 				<p className="mt-1 text-xs text-muted-foreground">
-					Link an Agent and pair a chat without leaving this page.
+					Link an agent and pair a chat without leaving this page.
 				</p>
 			</div>
 			{content}
@@ -268,7 +268,7 @@ function SharedBotCard({ bot }: { bot: ChannelBotPoolItem }) {
 		: !bot.capabilities.link_agent
 			? "You don't have permission to link this bot."
 			: atCapacity
-				? "This bot has reached its Agent limit."
+				? "This bot has reached its agent limit."
 				: undefined;
 	return (
 		<div data-shared-channel-account-id={bot.id} className="h-full min-w-0">
@@ -314,7 +314,7 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: Ch
 						/>
 						<ConfirmAction
 							title={`Delete ${channel.name}?`}
-							description="This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone."
+							description="This deletes the custom bot, its agent links, and its paired chats. This can't be undone."
 							confirmLabel="Delete custom bot"
 							destructive
 							onConfirm={() => del.mutateAsync({ params: { path: { account_id: channel.id } } })}

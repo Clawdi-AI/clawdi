@@ -54,7 +54,7 @@ export function SubscriptionSourcePicker({
 								<Cpu />
 							</IconChip>
 						}
-						title="Basic compute"
+						title="Basic plan"
 						description="Use your included Basic entitlement."
 						details={<span className="text-xs font-medium text-foreground">$0 due now</span>}
 						badge={<Badge variant="secondary">Included</Badge>}

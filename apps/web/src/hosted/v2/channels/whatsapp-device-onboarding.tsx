@@ -82,7 +82,7 @@ export function WhatsAppDeviceOnboarding({
 				<TriangleAlert aria-hidden />
 				<AlertTitle>Use a dedicated number</AlertTitle>
 				<AlertDescription className="text-xs">
-					Clawdi connects as a WhatsApp linked device, and Agent replies come from this account. Use
+					Clawdi connects as a WhatsApp linked device, and agent replies come from this account. Use
 					a separate number, not your personal one.
 				</AlertDescription>
 			</Alert>
@@ -99,7 +99,7 @@ export function WhatsAppDeviceOnboarding({
 				Connect your account
 			</Button>
 			<p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-				This adds the account under Custom bots. Agent Link and chat Pair are separate next steps.
+				This adds the account under custom bots. Agent link and chat pair are separate next steps.
 			</p>
 		</div>
 	);
@@ -326,7 +326,7 @@ function YourWhatsAppFlow({
 						autoComplete="off"
 					/>
 					<p className="text-xs text-muted-foreground">
-						This names the Custom bot inventory entry. It does not rename your WhatsApp account.
+						This names the custom bot inventory entry. It does not rename your WhatsApp account.
 					</p>
 				</div>
 				{requestError ? (
@@ -388,7 +388,7 @@ function YourWhatsAppFlow({
 			{session.state === "connected" ? (
 				<Button type="button" className="w-full min-w-0 whitespace-normal" onClick={onDone}>
 					<Bot className="size-4 shrink-0" />
-					{repairAccountId ? "Done" : "Review Custom bots"}
+					{repairAccountId ? "Done" : "Review custom bots"}
 				</Button>
 			) : session.state === "expired" || session.state === "error" ? (
 				<PairingDialogActions>
@@ -465,8 +465,8 @@ export function WhatsAppSessionState({
 				title="WhatsApp connected"
 				description={
 					repairing
-						? "WhatsApp reconnected. Existing Custom bot settings, Agent Links, paired chats, and history remain unchanged."
-						: "The account now appears under Custom bots. Link it to an Agent, then pair an authorized chat."
+						? "WhatsApp reconnected. Existing custom bot settings, agent links, paired chats, and history remain unchanged."
+						: "The account now appears under custom bots. Link it to an agent, then pair an authorized chat."
 				}
 			/>
 		);

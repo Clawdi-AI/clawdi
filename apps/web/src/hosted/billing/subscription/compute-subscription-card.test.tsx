@@ -8,7 +8,7 @@ describe("ComputeSubscriptionCard", () => {
 			<ComputeSubscriptionCard
 				view={{
 					status: { label: "Active", tone: "success" },
-					plan: "Performance compute",
+					plan: "Performance plan",
 					commercialFacts: [],
 				}}
 				identity={{ kind: "available", label: "Available for a new agent" }}

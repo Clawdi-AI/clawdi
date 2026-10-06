@@ -829,7 +829,7 @@ test("paid card subscription switches future renewals to Wallet", async ({ page 
 		funding_source: "wallet",
 	});
 	await expect(changeDialog.getByText("$0.00", { exact: true })).toBeVisible();
-	await expect(changeDialog.getByText("Future renewals use Wallet", { exact: true })).toBeVisible();
+	await expect(changeDialog.getByText("Future renewals use wallet", { exact: true })).toBeVisible();
 	await changeDialog.getByRole("button", { name: "Update payment source" }).click();
 
 	await expect.poll(() => planChangeRequests.length).toBe(1);
@@ -837,7 +837,7 @@ test("paid card subscription switches future renewals to Wallet", async ({ page 
 		operation_id: "op_card_to_wallet",
 	});
 	await expect(page.getByText("Payment method updated", { exact: true })).toBeVisible();
-	await expect(page.getByText("Future renewals will use Wallet.", { exact: true })).toBeVisible();
+	await expect(page.getByText("Future renewals will use wallet.", { exact: true })).toBeVisible();
 	expect(errors, `card to Wallet switch: ${errors.join(" | ")}`).toEqual([]);
 });
 

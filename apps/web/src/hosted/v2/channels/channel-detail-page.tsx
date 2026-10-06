@@ -251,8 +251,8 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 						title={`${disconnectsWhatsApp ? "Disconnect" : "Delete"} ${ch.name}?`}
 						description={
 							disconnectsWhatsApp
-								? "This logs out Clawdi as a linked device and removes the Custom bot. Linked Agents will stop sending and receiving."
-								: "This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone."
+								? "This logs out Clawdi as a linked device and removes the custom bot. Linked agents will stop sending and receiving."
+								: "This deletes the custom bot, its agent links, and its paired chats. This can't be undone."
 						}
 						confirmLabel={disconnectsWhatsApp ? "Disconnect and remove" : "Delete custom bot"}
 						destructive
@@ -288,7 +288,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 			{providerUnavailable ? (
 				<InfoCard icon={TriangleAlert} title="Provider unavailable">
 					This provider is no longer available for new native channels. Existing channel data
-					remains visible, and you can delete the Custom bot.
+					remains visible, and you can delete the custom bot.
 				</InfoCard>
 			) : null}
 			{ch.provider === "discord" && !providerUnavailable ? (
@@ -356,7 +356,7 @@ function AgentsTab({
 			<ApiErrorPanel
 				error={links.error}
 				onRetry={() => links.refetch()}
-				title="Couldn't load linked Agents"
+				title="Couldn't load linked agents"
 			/>
 		);
 	}
@@ -365,7 +365,7 @@ function AgentsTab({
 			<ApiErrorPanel
 				error={envs.error}
 				onRetry={() => envs.refetch()}
-				title="Couldn't load Agent names"
+				title="Couldn't load agent names"
 			/>
 		);
 	}
@@ -374,7 +374,7 @@ function AgentsTab({
 	return (
 		<div className="flex flex-col gap-3">
 			<SectionHeader
-				label="Linked Agents"
+				label="Linked agents"
 				count={items.length}
 				action={
 					canManage ? (
@@ -390,8 +390,8 @@ function AgentsTab({
 			{items.length === 0 ? (
 				<EmptyState
 					variant="inset"
-					title="No Agents linked"
-					description="Link an Agent here, then pair a chat for it."
+					title="No agents linked"
+					description="Link an agent here, then pair a chat for it."
 				/>
 			) : (
 				<div className={CHANNEL_RELATION_LIST_CLASS}>
@@ -431,15 +431,15 @@ function AgentsTab({
 									nativeButton={false}
 									variant="ghost"
 									size="icon-sm"
-									aria-label="Open Agent Channels"
+									aria-label="Open agent Channels"
 								>
 									<ArrowUpRight className="size-3.5" />
 								</Button>
 								{canManage ? (
 									<ConfirmAction
-										title="Unlink Agent?"
+										title="Unlink agent?"
 										description={<p>Its paired chats will stop using this channel.</p>}
-										confirmLabel="Unlink Agent"
+										confirmLabel="Unlink agent"
 										destructive
 										onConfirm={() =>
 											unlinkAgent.execute({ agentId: link.agent_id, linkId: link.id })
@@ -449,7 +449,7 @@ function AgentsTab({
 											variant="ghost"
 											size="icon-sm"
 											className="text-muted-foreground hover:text-destructive"
-											aria-label="Unlink Agent"
+											aria-label="Unlink agent"
 										>
 											<Unplug className="size-3.5" />
 										</Button>

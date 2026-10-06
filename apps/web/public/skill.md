@@ -6,7 +6,7 @@ homepage: https://cloud.clawdi.ai
 
 # Clawdi Setup
 
-You're helping the user connect this machine to Clawdi—the best home for all their AI agents. They can run Agents in the cloud or connect their own, with context and tools in one place.
+You're helping the user connect this machine to Clawdi—the best home for all their AI agents. They can run agents in the cloud or connect their own, with context and tools in one place.
 
 This walkthrough takes 2-3 minutes. The end state: the user's existing session history shows up at their Clawdi dashboard. If you stop earlier, the dashboard stays empty and they assume the product is broken.
 
@@ -56,7 +56,7 @@ If it prints "Still waiting for approval" (exit code 2), the user hasn't clicked
 clawdi setup
 ```
 
-Auto-detects every installed AI agent (Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode), registers each with the cloud, configures only the local modules each agent supports, and installs background sync daemons by default. Pi and OpenCode sync Sessions only; neither receives Skill or MCP installation. Without an `--agent` flag it picks up everything detected — which is what you want, so later sync steps can cover all of them.
+Auto-detects every installed AI agent (Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode), registers each with the cloud, configures only the local modules each agent supports, and installs background sync daemons by default. Pi and OpenCode sync sessions only; neither receives skill or MCP installation. Without an `--agent` flag it picks up everything detected — which is what you want, so later sync steps can cover all of them.
 
 ## Sync the user's sessions
 
@@ -125,7 +125,7 @@ Note the "X new, Y updated, Z unchanged" total from the push output — you'll c
 
 ## Verify live sync (recommended)
 
-`clawdi setup` installs the sync daemon by default. Connected Skills sync from the Agent and are managed there. For Hosted managed Workspace Skills, the dashboard can request installation or removal, while the runtime remains the only writer of Skill files. Verify the daemon is running:
+`clawdi setup` installs the sync daemon by default. Connected Agent skills sync from the agent and are managed there. For Cloud Agent workspace skills, the dashboard can request installation or removal, while the runtime remains the only writer of skill files. Verify the daemon is running:
 
 ```bash
 clawdi daemon status
@@ -154,13 +154,13 @@ For non-loopback HTTP RPC, use a private network, SSH tunnel, or TLS proxy and p
 What the user gets:
 
 - Edit a SKILL.md locally → uploaded to the cloud within ~1s
-- Agent Skills appear as read-only filesystem projections in the dashboard
-- Cloud events never write or delete the Agent's local Skill files
+- Agent skills appear as read-only filesystem projections in the dashboard
+- Clawdi events never write or delete the agent's local skill files
 - Daemon offline status visible in the dashboard's agent detail page
 
 Skip this step only if the user explicitly says they want manual sync. `clawdi
 push` remains a manual projection fallback; `clawdi pull --modules skills`
-requires an explicit Cloud-owned workspace/personal `--project` and acts as an
+requires an explicit Clawdi-owned workspace/personal `--project` and acts as an
 intentional local import.
 
 If install fails (no launchd / systemd, e.g. inside a minimal container), fall back to running the daemon in the foreground and ask the user to wire their own supervisor:
@@ -179,23 +179,23 @@ clawdi push --modules skills --all-agents
 
 Most users have zero or a handful of authored skills — no preview needed (unlike sessions, skills are deliberately created and don't have privacy concerns). The bundled `clawdi` skill that `clawdi setup` installs is automatically excluded. Re-running this is a no-op for unchanged skills.
 
-To intentionally import Skills from a Cloud-owned workspace/personal Project,
-name that Project explicitly:
+To intentionally import skills from a Clawdi-owned workspace/personal project,
+name that project explicitly:
 
 ```bash
 clawdi pull --modules skills --project <project> --agent <agent-type>
 ```
 
-Agent Project rows are read-only projections, not a restore source, and are
+Agent project rows are read-only projections, not a restore source, and are
 rejected by this command. The explicit import commits guarded local bytes;
-normal Agent sync then projects them to the target Agent Project.
+normal agent sync then projects them to the target agent project.
 
-If the user has zero authored skills, `push` is a no-op. Do not run a Skill
-import unless the user selected a Cloud-owned source Project.
+If the user has zero authored skills, `push` is a no-op. Do not run a skill
+import unless the user selected a Clawdi-owned source project.
 
 ## Extract memories from sessions (optional)
 
-Seed the user's Memory module by extracting facts, preferences, and decisions from the sessions they just pushed. The cloud's configured LLM does the extraction — the agent loops over recent sessions and calls the per-session endpoint via the CLI.
+Seed the user's memory module by extracting facts, preferences, and decisions from the sessions they just pushed. The cloud's configured LLM does the extraction — the agent loops over recent sessions and calls the per-session endpoint via the CLI.
 
 If the user opted out of session upload above, skip this step entirely (there's nothing in the cloud to extract from).
 
@@ -252,7 +252,7 @@ After this their account has:
 - **Memory** — `memory_search` and `memory_create` MCP tools for long-term cross-agent recall. Seeded with extractions from the sessions just pushed (if memory extraction was configured).
 - **Connectors** — Gmail, GitHub, Notion, etc. They enable services in the dashboard; tools appear automatically in any registered agent.
 - **Session sync** — pushed today; future sessions sync via `clawdi push`.
-- **Skill sync** — Agent filesystem Skills projected read-only to Cloud; explicit workspace/personal Project imports remain user-directed.
+- **Skill sync** — Agent filesystem skills projected read-only to Clawdi; explicit workspace/personal project imports remain user-directed.
 - **Vault** — encrypted secrets injected into commands via `clawdi run`.
 
 ## Troubleshooting

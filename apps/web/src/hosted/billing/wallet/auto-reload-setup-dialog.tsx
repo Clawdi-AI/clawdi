@@ -220,7 +220,7 @@ export function AutoReloadSetupDialog({
 						<DialogTitle>{title}</DialogTitle>
 					</div>
 					<DialogDescription>
-						Confirm the automatic Wallet reload terms, then enter a card.
+						Confirm the automatic wallet reload terms, then enter a card.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -228,7 +228,7 @@ export function AutoReloadSetupDialog({
 					<div className="border-l-2 border-primary/50 pl-3 text-sm leading-5">
 						<p className="font-medium">Authorization summary</p>
 						<ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-muted-foreground">
-							<li>Clawdi saves this card only for automatic Wallet reloads.</li>
+							<li>Clawdi saves this card only for automatic wallet reloads.</li>
 							<li>
 								Clawdi charges it off-session when your balance drops below{" "}
 								{formatCents(thresholdCents ?? 0)}.

@@ -29,8 +29,8 @@ describe("funding source switch quote", () => {
 
 		expect(markup).toContain("Due now");
 		expect(markup).toContain("$0.00");
-		expect(markup).toContain("Future renewals use Wallet");
-		expect(markup).toContain("does not debit your Wallet today");
+		expect(markup).toContain("Future renewals use wallet");
+		expect(markup).toContain("does not debit your wallet today");
 		expect(markup).not.toContain("Wallet balance");
 		expect(markup).not.toContain("proration");
 	});

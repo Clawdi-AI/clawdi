@@ -81,7 +81,7 @@ export function PlanComparison({
 
 	if (plansQuery.isLoading) {
 		return (
-			<SettingsSection headingLevel={3} title="Plans" description="Compare hosted compute plans.">
+			<SettingsSection headingLevel={3} title="Plans" description="Compare Cloud Agent plans.">
 				<div className="grid gap-3 lg:grid-cols-2">
 					<Skeleton className="h-72 w-full rounded-lg" />
 					<Skeleton className="h-72 w-full rounded-lg" />
@@ -92,7 +92,7 @@ export function PlanComparison({
 
 	if (shouldBlockQueryError(plansQuery.error, plansQuery.data)) {
 		return (
-			<SettingsSection headingLevel={3} title="Plans" description="Compare hosted compute plans.">
+			<SettingsSection headingLevel={3} title="Plans" description="Compare Cloud Agent plans.">
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={plansQuery.error}
@@ -147,7 +147,7 @@ export function PlanComparison({
 			description={
 				sharedPricingUnavailable
 					? "A shared Basic and Performance billing term is not currently available."
-					: "Compare hosted compute plans."
+					: "Compare Cloud Agent plans."
 			}
 		>
 			<div>
@@ -156,7 +156,7 @@ export function PlanComparison({
 					<Card size="sm">
 						<CardHeader className="gap-2">
 							<CardTitle className="flex items-center gap-2">
-								<Cpu className="size-5 text-muted-foreground" aria-hidden /> Compute Basic
+								<Cpu className="size-5 text-muted-foreground" aria-hidden /> Basic
 							</CardTitle>
 							<CardDescription>Balanced capacity for everyday workloads.</CardDescription>
 							<div className="min-h-20 pt-1">
@@ -185,7 +185,7 @@ export function PlanComparison({
 					<Card size="sm" className="border-primary/30">
 						<CardHeader className="gap-2">
 							<CardTitle className="flex items-center gap-2">
-								<Zap className="size-5 text-primary" aria-hidden /> Compute Performance
+								<Zap className="size-5 text-primary" aria-hidden /> Performance
 							</CardTitle>
 							<CardDescription>Higher capacity for production workloads.</CardDescription>
 							<div className="min-h-20 pt-1">
