@@ -762,7 +762,7 @@ function renderJoinedSuccess(
 		console.log(chalk.gray(`  Linked to ${bound.length} Agent${bound.length === 1 ? "" : "s"}.`));
 	} else {
 		console.log(
-			chalk.gray(`  Link to Agent: clawdi agent projects link <agent-id> --project ${projectRef}`),
+			chalk.gray(`  Link to agent: clawdi agent projects link <agent-id> --project ${projectRef}`),
 		);
 	}
 	console.log(chalk.gray(`  Next (optional): clawdi pull --project ${projectRef}`));

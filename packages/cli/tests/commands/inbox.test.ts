@@ -340,7 +340,7 @@ describe("inboxAcceptCommand", () => {
 		expect(out).toContain("Local share ticket removed from this device.");
 		expect(out).toContain("Role: viewer (read access).");
 		expect(out).toContain(
-			"Link to Agent: clawdi agent projects link <agent-id> --project uuid-project-shared",
+			"Link to agent: clawdi agent projects link <agent-id> --project uuid-project-shared",
 		);
 		expect(out).toContain("Next (optional): clawdi pull --project uuid-project-shared");
 		expect(out).not.toContain(rawToken);

@@ -929,7 +929,7 @@ export async function runDeployFlow(
 			const selected = await prompts.select(
 				"Payment",
 				[
-					{ value: "wallet", label: "Clawdi Wallet", hint: "Exact quote and confirmation next" },
+					{ value: "wallet", label: "Clawdi wallet", hint: "Exact quote and confirmation next" },
 					{
 						value: "card",
 						label: "Card",
