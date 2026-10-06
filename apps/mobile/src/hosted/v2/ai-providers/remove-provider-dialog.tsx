@@ -5,7 +5,6 @@ import { randomUUID } from "expo-crypto";
 import { Trash2 } from "lucide-react-native";
 import { useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { ActionButton } from "@/components/dashboard/controls";
 import {
 	AlertDialog,
@@ -21,9 +20,10 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/ui/icon";
 import { Label } from "@/components/ui/input";
-import { AppText, AppView } from "@/components/ui/primitives";
-import { Text } from "@/components/ui/text";
+import { Text as AppText, Text } from "@/components/ui/text";
+import { AppView } from "@/components/ui/view";
 import { WebView, webView } from "@/components/ui/web-layout";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";

@@ -4,7 +4,8 @@ import type { ReactNode } from "react";
 import { HeaderActionGroup } from "@/components/header-action-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WebContent, WebText, WebView, webText, webView } from "@/components/ui/web-layout";
-export interface PageHeaderProps {
+
+interface PageHeaderProps {
 	title: ReactNode;
 	titleAdornment?: ReactNode;
 	description?: ReactNode;

@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
-import { MobileApiProvider } from "@/components/api-provider";
+import { MobileApiProvider } from "@/lib/api-provider";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime";
 import { AccountScopeProvider } from "@/platform/account-lifecycle";
 import { AppLifecycleBridge } from "@/platform/app-lifecycle";

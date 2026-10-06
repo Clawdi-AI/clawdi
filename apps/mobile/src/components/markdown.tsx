@@ -12,9 +12,9 @@ import { openBrowserAsync } from "expo-web-browser";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, AppState } from "react-native";
 import { ImagePreview } from "@/components/ui/image-preview";
-import { AppScrollView, AppText, AppView } from "@/components/ui/primitives";
 import { Separator } from "@/components/ui/separator";
-import { TextClassContext } from "@/components/ui/text";
+import { Text as AppText, TextClassContext } from "@/components/ui/text";
+import { AppScrollView, AppView } from "@/components/ui/view";
 import { WebView, webBoth, webText, webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
 import { useAccountScope } from "@/platform/account-lifecycle";
@@ -146,7 +146,7 @@ export function Markdown({
 	);
 }
 
-export function MarkdownTree({
+function MarkdownTree({
 	tree,
 	query,
 	open,

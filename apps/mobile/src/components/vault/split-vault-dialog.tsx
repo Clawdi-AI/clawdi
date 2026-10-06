@@ -19,8 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { AppText } from "@/components/ui/primitives";
-import { Text } from "@/components/ui/text";
+import { Text as AppText, Text } from "@/components/ui/text";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
 

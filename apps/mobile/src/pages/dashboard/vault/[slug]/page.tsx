@@ -37,7 +37,6 @@ import { AlertCircle, ArrowRight, Check, ListChecks, Plus, Trash2 } from "lucide
 import { useCallback, useState } from "react";
 import { AppState } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { ChoiceSelect } from "@/components/detail/choice-select";
 import { DetailBackLink, LibraryPage } from "@/components/detail/layout";
 import { EntityCardSkeleton } from "@/components/entity-card";
@@ -59,15 +58,16 @@ import {
 } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
-import { AppView } from "@/components/ui/primitives";
 import { SearchInput } from "@/components/ui/search-input";
 import { Switch } from "@/components/ui/switch";
 import { Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
+import { AppView } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webText, webView } from "@/components/ui/web-layout";
 import { VaultRequests } from "@/components/vault/secret-requests";
 import { VaultSplit } from "@/components/vault/split-vault-dialog";
 import { useVaultCatalog } from "@/components/vault/vaults-surface";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";

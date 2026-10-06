@@ -4,14 +4,15 @@ import { useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, KeyboardAvoidingView, Platform } from "react-native";
 import { useUniwind } from "uniwind";
-import { useMobileApi } from "@/components/api-provider";
-import { ActionButton as NativeButton } from "@/components/dashboard/controls";
-import { AppText, AppView } from "@/components/ui/primitives";
-import { BackButton } from "@/hooks/cloud-inventory";
+import { ActionButton } from "@/components/dashboard/controls";
+import { BackButton } from "@/components/detail/back-link";
+import { Text as AppText } from "@/components/ui/text";
+import { AppView } from "@/components/ui/view";
 import TerminalDom from "@/hosted/agents/terminal-dom";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function TerminalScreen({ deploymentId }: { deploymentId: string | undefined }) {
@@ -99,7 +100,7 @@ function Terminal({ deploymentId }: { deploymentId: string | undefined }) {
 		return session.websocket_url;
 	};
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<KeyboardAvoidingView
 				style={{ flex: 1 }}
 				behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -114,7 +115,7 @@ function Terminal({ deploymentId }: { deploymentId: string | undefined }) {
 							{!terminal || !deployment.data || !deploymentTerminalIsAvailable(deployment.data) ? (
 								<AppText>{t("terminal.unavailable")}</AppText>
 							) : null}
-							<NativeButton
+							<ActionButton
 								label={t("terminal.connect")}
 								disabled={
 									!terminal || !deployment.data || !deploymentTerminalIsAvailable(deployment.data)
@@ -122,7 +123,7 @@ function Terminal({ deploymentId }: { deploymentId: string | undefined }) {
 								onPress={connect}
 							/>
 							{hosted && deploymentId ? (
-								<NativeButton
+								<ActionButton
 									label={t("terminal.reload")}
 									disabled={deployment.isFetching}
 									onPress={() => {
@@ -133,9 +134,9 @@ function Terminal({ deploymentId }: { deploymentId: string | undefined }) {
 						</>
 					) : (
 						<>
-							<NativeButton label={t("terminal.disconnect")} onPress={disconnect} />
+							<ActionButton label={t("terminal.disconnect")} onPress={disconnect} />
 							{status === "disconnected" ? (
-								<NativeButton
+								<ActionButton
 									label={t("terminal.reconnect")}
 									onPress={() => setReconnectRequest((value) => value + 1)}
 								/>
@@ -147,7 +148,7 @@ function Terminal({ deploymentId }: { deploymentId: string | undefined }) {
 									{ label: "Ctrl+C", value: "\u0003" },
 								].map((key) => (
 									<AppView key={key.label} className="flex-1">
-										<NativeButton
+										<ActionButton
 											label={key.label}
 											disabled={status !== "connected"}
 											onPress={() =>
@@ -188,6 +189,6 @@ function Terminal({ deploymentId }: { deploymentId: string | undefined }) {
 					/>
 				) : null}
 			</KeyboardAvoidingView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

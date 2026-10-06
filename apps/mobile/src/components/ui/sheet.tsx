@@ -24,10 +24,10 @@ export function SheetTrigger(props: ModalControlProps) {
 export function SheetClose(props: ModalControlProps) {
 	return <ModalControl close {...props} />;
 }
-export function SheetPortal({ children }: SlotProps) {
+function SheetPortal({ children }: SlotProps) {
 	return children;
 }
-export function SheetOverlay(_props: SlotProps) {
+function SheetOverlay(_props: SlotProps) {
 	return null;
 }
 /** Native Modal slides into Web's requested edge, bounded by safe areas. */

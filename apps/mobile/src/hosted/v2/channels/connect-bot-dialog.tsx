@@ -9,7 +9,6 @@ import { router, useFocusEffect } from "expo-router";
 import { ExternalLink, Plus } from "lucide-react-native";
 import { useCallback, useEffect, useState } from "react";
 import { AppState, Linking, useWindowDimensions } from "react-native";
-import { useMobileApi } from "@/components/api-provider";
 import { ActionButton } from "@/components/dashboard/controls";
 import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
@@ -23,9 +22,10 @@ import {
 } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
-import { AppText, AppView } from "@/components/ui/primitives";
-import { AppPressable } from "@/components/ui/view";
+import { Text as AppText } from "@/components/ui/text";
+import { AppPressable, AppView } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -129,7 +129,7 @@ export function ChannelCreate({
 											onClick={() => {
 												if (id === "whatsapp") {
 													clear();
-													router.push("/channels/whatsapp");
+													router.push("/native/channels/whatsapp");
 												} else {
 													setProvider(id);
 													setToken("");

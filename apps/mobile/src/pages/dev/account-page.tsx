@@ -27,15 +27,13 @@ import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { ComputeSubscriptionCard } from "@/hosted/billing/subscription/compute-subscription-card";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { SubscriptionDetails } from "@/hosted/billing/subscription/subscription-details";
-import {
-	BalanceCard,
-	TransactionRow,
-	WalletSettingsSections,
-} from "@/hosted/billing/wallet/wallet-sections";
+import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
+import { TransactionRow } from "@/hosted/billing/wallet/transactions-section";
+import { WalletSettingsSections } from "@/hosted/billing/wallet/wallet-sections";
 import { useI18n } from "@/lib/i18n";
 import { emptySignupDetails } from "@/platform/auth/signup-details";
 import { SignupDetailsForm } from "@/platform/auth/signup-details-form";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 const subscriptionFixture = {
 	subscription_id: "csub_fixture",
@@ -283,19 +281,19 @@ function AccountStories() {
 		);
 	if (panel === "subscription-details")
 		return (
-			<ReadScreen>
+			<SafeAreaScreen>
 				<AppScrollView
 					contentContainerClassName={webView(`${billingPageClass} ${settingsDialogClasses.panel}`)}
 				>
 					<SettingsPanelHeader title={t("billing.details")} />
 					<SubscriptionDetails item={subscriptionFixture} onDeployment={noop} />
 				</AppScrollView>
-			</ReadScreen>
+			</SafeAreaScreen>
 		);
 
 	if (panel === "billing" || panel === "wallet")
 		return (
-			<ReadScreen>
+			<SafeAreaScreen>
 				<AppScrollView
 					contentContainerClassName={webView(`${billingPageClass} ${settingsDialogClasses.panel}`)}
 				>
@@ -393,13 +391,13 @@ function AccountStories() {
 						</>
 					)}
 				</AppScrollView>
-			</ReadScreen>
+			</SafeAreaScreen>
 		);
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView contentContainerClassName={webView(generalPanelClasses.panel)}>
 				<ClerkText>{t("account.settings")}</ClerkText>
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

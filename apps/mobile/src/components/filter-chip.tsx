@@ -5,7 +5,8 @@ import { Content } from "@/components/ui/content";
 import { TextClassContext } from "@/components/ui/text";
 import { AppPressable } from "@/components/ui/view";
 import { resolveWebClasses } from "@/lib/web-classes";
-export function filterChipClass(active: boolean, className?: string) {
+
+function filterChipClass(active: boolean, className?: string) {
 	return cn(
 		styles.root,
 		ENTITY_CARD_BUTTON_FOCUS_CLASS,

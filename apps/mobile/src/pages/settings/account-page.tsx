@@ -7,12 +7,12 @@ import { Text } from "@/components/ui/text";
 import { AppScrollView } from "@/components/ui/view";
 import { webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export default function AccountSettingsRoute() {
 	const t = useI18n();
 	const router = useRouter();
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView contentContainerClassName={webView(generalPanelClasses.panel)}>
 				<SettingsBackButton />
 				<SettingsPanelHeader
@@ -56,6 +56,6 @@ export default function AccountSettingsRoute() {
 					</Button>
 				</SettingsSection>
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

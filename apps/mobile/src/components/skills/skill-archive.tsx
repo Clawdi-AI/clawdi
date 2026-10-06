@@ -14,7 +14,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { isAvailableAsync, shareAsync } from "expo-sharing";
 import { ArrowRight, Copy } from "lucide-react-native";
 import { useRef, useState } from "react";
-import { useMobileApi } from "@/components/api-provider";
+import { BackButton } from "@/components/detail/back-link";
 import { ChoiceSelect } from "@/components/detail/choice-select";
 import { PageHeader } from "@/components/page-header";
 import { useCloudProjects } from "@/components/projects/projects-surface";
@@ -30,16 +30,16 @@ import {
 } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
-import { AppScrollView, AppText } from "@/components/ui/primitives";
-import { Text } from "@/components/ui/text";
+import { Text as AppText, Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
+import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
-import { BackButton } from "@/hooks/cloud-inventory";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function SkillArchiveScreen() {
@@ -209,7 +209,7 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 			});
 		});
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			{existing ? (
 				<Dialog
 					open
@@ -390,6 +390,6 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 				</AppScrollView>
 			)}
 			{confirmationDialog.dialog}
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

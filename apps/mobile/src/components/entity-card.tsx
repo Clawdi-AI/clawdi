@@ -1,24 +1,17 @@
 import {
 	type EntityCardVariant,
+	entityCardClasses,
 	ENTITY_CARD_ACTIONS_ALWAYS_CLASS as WEB_ENTITY_CARD_ACTIONS_ALWAYS_CLASS,
 	ENTITY_CARD_ACTIONS_CLASS as WEB_ENTITY_CARD_ACTIONS_CLASS,
 	ENTITY_CARD_BASE as WEB_ENTITY_CARD_BASE,
-	ENTITY_CARD_BUTTON_FOCUS_CLASS as WEB_ENTITY_CARD_BUTTON_FOCUS_CLASS,
 	ENTITY_CARD_CHASSIS_CLASS as WEB_ENTITY_CARD_CHASSIS_CLASS,
-	ENTITY_CARD_GRID_CLASS as WEB_ENTITY_CARD_GRID_CLASS,
-	ENTITY_CARD_MASONRY_CLASS as WEB_ENTITY_CARD_MASONRY_CLASS,
 	ENTITY_CARD_STRETCHED_LINK_CLASS as WEB_ENTITY_CARD_STRETCHED_LINK_CLASS,
 	ENTITY_CHOICE_GRID_CLASS as WEB_ENTITY_CHOICE_GRID_CLASS,
 	ENTITY_GRID_CLASS as WEB_ENTITY_GRID_CLASS,
 	ENTITY_STRETCHED_LINK_CLASS as WEB_ENTITY_STRETCHED_LINK_CLASS,
-	HERO_CARD_BASE as WEB_HERO_CARD_BASE,
 	HERO_GRID_CLASS as WEB_HERO_GRID_CLASS,
 	HERO_STRETCHED_LINK_CLASS as WEB_HERO_STRETCHED_LINK_CLASS,
 } from "@clawdi/shared/ui";
-
-export type { EntityCardVariant } from "@clawdi/shared/ui";
-
-import { entityCardClasses } from "@clawdi/shared/ui";
 import { cn } from "cn";
 import { type Href, router } from "expo-router";
 import { Check, ChevronRight, Plus } from "lucide-react-native";
@@ -35,30 +28,26 @@ import { useI18n } from "@/lib/i18n";
 import { TouchTargetContext, touchTargetsFor } from "@/platform/touch-target";
 
 /** Web entity-card family; grids are single-column phone stacks, links use Expo Router. */
-export const ENTITY_CARD_CHASSIS_CLASS = {
+const ENTITY_CARD_CHASSIS_CLASS = {
 	resource: webView(WEB_ENTITY_CARD_CHASSIS_CLASS.resource),
 	compact: webView(WEB_ENTITY_CARD_CHASSIS_CLASS.compact),
 };
-export const ENTITY_CARD_GRID_CLASS = {
-	resource: webView(WEB_ENTITY_CARD_GRID_CLASS.resource),
-	compact: webView(WEB_ENTITY_CARD_GRID_CLASS.compact),
-};
-export const ENTITY_CARD_MASONRY_CLASS = webView(WEB_ENTITY_CARD_MASONRY_CLASS);
+
 export const ENTITY_CARD_BASE = webView(WEB_ENTITY_CARD_BASE);
-export const HERO_CARD_BASE = webView(WEB_HERO_CARD_BASE);
+
 export const HERO_GRID_CLASS = webView(WEB_HERO_GRID_CLASS);
 export const ENTITY_GRID_CLASS = webView(WEB_ENTITY_GRID_CLASS);
 export const ENTITY_CHOICE_GRID_CLASS = webView(WEB_ENTITY_CHOICE_GRID_CLASS);
-export const ENTITY_CARD_STRETCHED_LINK_CLASS = {
+const ENTITY_CARD_STRETCHED_LINK_CLASS = {
 	resource: webView(WEB_ENTITY_CARD_STRETCHED_LINK_CLASS.resource),
 	compact: webView(WEB_ENTITY_CARD_STRETCHED_LINK_CLASS.compact),
 };
-export const ENTITY_STRETCHED_LINK_CLASS = webView(WEB_ENTITY_STRETCHED_LINK_CLASS);
-export const HERO_STRETCHED_LINK_CLASS = webView(WEB_HERO_STRETCHED_LINK_CLASS);
-export const ENTITY_CARD_BUTTON_FOCUS_CLASS = webView(WEB_ENTITY_CARD_BUTTON_FOCUS_CLASS);
-export const ENTITY_CARD_ACTIONS_CLASS = webView(WEB_ENTITY_CARD_ACTIONS_CLASS);
-export const ENTITY_CARD_ACTIONS_ALWAYS_CLASS = webView(WEB_ENTITY_CARD_ACTIONS_ALWAYS_CLASS);
-export function entityCardChassisClass({
+const ENTITY_STRETCHED_LINK_CLASS = webView(WEB_ENTITY_STRETCHED_LINK_CLASS);
+const HERO_STRETCHED_LINK_CLASS = webView(WEB_HERO_STRETCHED_LINK_CLASS);
+
+const ENTITY_CARD_ACTIONS_CLASS = webView(WEB_ENTITY_CARD_ACTIONS_CLASS);
+const ENTITY_CARD_ACTIONS_ALWAYS_CLASS = webView(WEB_ENTITY_CARD_ACTIONS_ALWAYS_CLASS);
+function entityCardChassisClass({
 	variant,
 	interactive = false,
 	className,
@@ -159,7 +148,7 @@ export function EntityCardLink({
 		/>
 	);
 }
-export function entityChoiceCardClass({
+function entityChoiceCardClass({
 	variant = "card",
 	selected = false,
 	interactive = false,

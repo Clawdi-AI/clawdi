@@ -13,7 +13,7 @@ import { ChevronDown, ChevronRight, Link2, UserMinus } from "lucide-react-native
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Share } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
+import { BackButton } from "@/components/detail/back-link";
 import { useProject } from "@/components/projects/project-scope";
 import {
 	canManageSharing,
@@ -32,18 +32,18 @@ import {
 import { ErrorState, LoadingScreen } from "@/components/ui/feedback";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
-import { AppText, AppView } from "@/components/ui/primitives";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Text } from "@/components/ui/text";
+import { Text as AppText, Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
-import { AppPressable } from "@/components/ui/view";
+import { AppPressable, AppView } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webText, webView } from "@/components/ui/web-layout";
-import { BackButton, formatDate } from "@/hooks/cloud-inventory";
+import { formatDate } from "@/hooks/cloud-inventory";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { projectRouteFilter } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 export function ProjectSharingScreen() {
 	const scope = useAccountScope();
@@ -66,7 +66,7 @@ function ProjectGate({ projectId }: { projectId?: string }) {
 	)
 		return <SharingView project={project.data} />;
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppView className="gap-4 p-6">
 				<BackButton />
 				{projectId && project.isPending ? (
@@ -77,17 +77,11 @@ function ProjectGate({ projectId }: { projectId?: string }) {
 					<AppText>{t("sharing.unavailable")}</AppText>
 				)}
 			</AppView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }
 
-export function SharingView({
-	project,
-	embedded = false,
-}: {
-	project: Project;
-	embedded?: boolean;
-}) {
+function SharingView({ project, embedded = false }: { project: Project; embedded?: boolean }) {
 	const t = useI18n();
 	const confirmationDialog = useConfirmation();
 	const scope = useAccountScope();
@@ -417,7 +411,7 @@ export function SharingView({
 	return embedded ? (
 		content
 	) : (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<Dialog
 				open
 				onOpenChange={(next) => {
@@ -437,6 +431,6 @@ export function SharingView({
 					{content}
 				</DialogContent>
 			</Dialog>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

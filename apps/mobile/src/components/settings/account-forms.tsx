@@ -16,7 +16,7 @@ import { Separator } from "@/components/ui/separator";
 import { AppScrollView, AppView } from "@/components/ui/view";
 import { webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 type ContactItem = {
 	id: string;
@@ -53,7 +53,7 @@ type ConnectedAccountItem = {
 	accountIdentifier: () => string;
 };
 
-export type ProfileFormViewProps = {
+type ProfileFormViewProps = {
 	action: { busy: boolean; error: unknown };
 	reverification: { prompt?: ReactNode };
 	firstName: string;
@@ -92,7 +92,7 @@ export function ProfileFormView({
 	const t = useI18n();
 
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
@@ -175,11 +175,11 @@ export function ProfileFormView({
 					onPress={save}
 				/>
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }
 
-export type PasswordFormViewProps = {
+type PasswordFormViewProps = {
 	action: { busy: boolean; error: unknown };
 	reverification: { prompt?: ReactNode };
 	enabled: boolean;
@@ -216,7 +216,7 @@ export function PasswordFormView({
 	const t = useI18n();
 
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
@@ -291,11 +291,11 @@ export function PasswordFormView({
 				) : null}
 				{success ? <FormText accessibilityRole="alert">{t("password.saved")}</FormText> : null}
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }
 
-export type MfaFormViewProps = {
+type MfaFormViewProps = {
 	action: { busy: boolean; error: unknown };
 	reverification: { prompt?: ReactNode };
 	enabled: boolean;
@@ -333,7 +333,7 @@ export function MfaFormView({
 	const router = useRouter();
 
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
@@ -438,11 +438,11 @@ export function MfaFormView({
 				{action.error ? <FormText accessibilityRole="alert">{t("mfa.failed")}</FormText> : null}
 				{success ? <FormText accessibilityRole="alert">{t("mfa.saved")}</FormText> : null}
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }
 
-export type PasskeysFormViewProps = {
+type PasskeysFormViewProps = {
 	action: { busy: boolean; error: unknown };
 	reverification: { prompt?: ReactNode };
 	passkeys: PasskeyItem[];
@@ -469,7 +469,7 @@ export function PasskeysFormView({
 	const t = useI18n();
 
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
@@ -537,11 +537,11 @@ export function PasskeysFormView({
 				) : null}
 				{saved ? <FormText accessibilityRole="alert">{t("passkeys.saved")}</FormText> : null}
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }
 
-export type AccountContactsFormViewProps = {
+type AccountContactsFormViewProps = {
 	action: { busy: boolean; error: unknown };
 	reverification: { prompt?: ReactNode };
 	kind: "emails" | "phones";
@@ -580,7 +580,7 @@ export function AccountContactsFormView({
 	const t = useI18n();
 
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
@@ -664,11 +664,11 @@ export function AccountContactsFormView({
 				{action.error ? <FormText accessibilityRole="alert">{t(`${kind}.failed`)}</FormText> : null}
 				{saved ? <FormText accessibilityRole="alert">{t(`${kind}.saved`)}</FormText> : null}
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }
 
-export type DeviceSessionsFormViewProps = {
+type DeviceSessionsFormViewProps = {
 	action: { busy: boolean; error: unknown };
 	reverification: { prompt?: ReactNode };
 	sessions: DeviceSessionItem[] | null;
@@ -689,7 +689,7 @@ export function DeviceSessionsFormView({
 	const t = useI18n();
 
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
@@ -742,11 +742,11 @@ export function DeviceSessionsFormView({
 				{action.error ? <FormText accessibilityRole="alert">{t("devices.failed")}</FormText> : null}
 				{revoked ? <FormText accessibilityRole="alert">{t("devices.revoked")}</FormText> : null}
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }
 
-export type ConnectedAccountsFormViewProps = {
+type ConnectedAccountsFormViewProps = {
 	action: { busy: boolean; error: unknown };
 	reverification: { prompt?: ReactNode };
 	accounts: ConnectedAccountItem[];
@@ -771,7 +771,7 @@ export function ConnectedAccountsFormView({
 	const t = useI18n();
 
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
@@ -833,11 +833,11 @@ export function ConnectedAccountsFormView({
 					<FormText accessibilityRole="alert">{t("connections.reauthorized")}</FormText>
 				) : null}
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }
 
-export type DeleteAccountFormViewProps = {
+type DeleteAccountFormViewProps = {
 	action: { busy: boolean; error: unknown };
 	email: string;
 	compute: unknown;
@@ -860,7 +860,7 @@ export function DeleteAccountFormView({
 	const t = useI18n();
 
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
@@ -904,6 +904,6 @@ export function DeleteAccountFormView({
 					<FormText accessibilityRole="alert">{t("account.signOutFailed")}</FormText>
 				) : null}
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

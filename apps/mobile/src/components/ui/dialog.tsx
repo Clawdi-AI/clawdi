@@ -27,10 +27,10 @@ export function DialogClose(props: ModalControlProps) {
 	return <ModalControl close {...props} />;
 }
 /** Native Modal owns portal/backdrop; these compatibility slots don't add another layer. */
-export function DialogPortal({ children }: SlotProps) {
+function DialogPortal({ children }: SlotProps) {
 	return children;
 }
-export function DialogOverlay(_props: SlotProps) {
+function DialogOverlay(_props: SlotProps) {
 	return null;
 }
 export function DialogContent({

@@ -2,7 +2,7 @@ import type { SessionListItem } from "@clawdi/shared/api";
 import { ENTITY_CARD_BASE, sessionFeedClasses as styles } from "@clawdi/shared/ui";
 import { formatNumber, relativeTime, sessionCardModel } from "@clawdi/shared/view";
 import { router } from "expo-router";
-import { AgentIcon } from "@/components/dashboard/agent-section-icon";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { EntityCardSkeleton } from "@/components/entity-card";
 import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";

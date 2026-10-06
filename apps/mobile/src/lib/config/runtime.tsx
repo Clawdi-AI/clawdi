@@ -6,7 +6,7 @@ import {
 } from "@/lib/config/runtime-config";
 import { isDevAuthBypass } from "@/platform/auth/auth-client";
 
-export type { MobileRuntimeConfig, MobileRuntimeConfigResult } from "@/lib/config/runtime-config";
+export type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
 
 function configuredValue(name: string): unknown {
 	const extra = Constants.expoConfig?.extra;

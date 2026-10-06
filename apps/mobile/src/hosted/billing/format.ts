@@ -2,7 +2,7 @@ import type { DeployComponents } from "@clawdi/shared/api";
 
 export type Subscription = DeployComponents["schemas"]["V2ComputeSubscriptionListItem"];
 export type Transaction = DeployComponents["schemas"]["V2WalletTransactionItemResponse"];
-export type SubscriptionPage = DeployComponents["schemas"]["V2ComputeSubscriptionListResponse"];
+type SubscriptionPage = DeployComponents["schemas"]["V2ComputeSubscriptionListResponse"];
 type CursorPage = Pick<SubscriptionPage, "has_more" | "next_cursor">;
 
 /** Preserve the server's decimal USD amount, including sub-cent precision. */

@@ -35,13 +35,13 @@ import { KeyRound, RefreshCw, Trash2, TriangleAlert, Unplug } from "lucide-react
 import { useCallback, useEffect, useState } from "react";
 import { AppState, Linking } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
-import { AgentIcon } from "@/components/dashboard/agent-section-icon";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
-	ActionButton as NativeButton,
+	ActionButton,
 	ChoiceSelect as NativePicker,
 	NativeSwitch,
 } from "@/components/dashboard/controls";
+import { BackButton } from "@/components/detail/back-link";
 import { EmptyState } from "@/components/empty-state";
 import { EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
@@ -58,21 +58,23 @@ import {
 } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { Label } from "@/components/ui/input";
-import { AppScrollView, AppText, AppView } from "@/components/ui/primitives";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Text as AppText } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
+import { AppScrollView, AppView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
-import { BackButton, useCloudAgents } from "@/hooks/cloud-inventory";
+import { useCloudAgents } from "@/hooks/cloud-inventory";
 import { useAgentOwnership } from "@/hooks/use-agent-ownership";
 import { ChannelHealthTab } from "@/hosted/v2/channels/channel-health-tab";
 import { ChannelInfoCard } from "@/hosted/v2/channels/channel-info-card";
 import { useChannelQuery } from "@/hosted/v2/channels/channels-hooks";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function ChannelDetailScreen() {
@@ -245,7 +247,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 			await Linking.openURL(url);
 		});
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
 				<BackButton />
 				<PageHeader
@@ -254,7 +256,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 					actions={
 						ownedBot ||
 						(bot?.access === "owner" && bot.capabilities.manage_account && !pool.isError) ? (
-							<NativeButton
+							<ActionButton
 								label={ownedBot?.provider === "whatsapp" ? agentSurfaceCopy.disconnect : "Delete"}
 								icon={<Icon as={ownedBot?.provider === "whatsapp" ? Unplug : Trash2} />}
 								disabled={disabled}
@@ -289,7 +291,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 						/>
 					}
 				/>
-				<NativeButton
+				<ActionButton
 					label={t("channels.refresh")}
 					onPress={() =>
 						action.run(async () => {
@@ -345,7 +347,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 				) : null}
 				{bot?.capabilities.link_agent && bot.available ? (
 					<>
-						<NativeButton
+						<ActionButton
 							label={channelFormCopy.linkTitle}
 							disabled={disabled}
 							onPress={() => setLinkOpen(true)}
@@ -396,12 +398,12 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 									</>
 								) : null}
 								<DialogFooter>
-									<NativeButton
+									<ActionButton
 										label={t("account.cancel")}
 										disabled={action.busy}
 										onPress={() => setLinkOpen(false)}
 									/>
-									<NativeButton
+									<ActionButton
 										label={t("channels.link")}
 										disabled={linkDisabled}
 										onPress={() => {
@@ -443,7 +445,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 									meta={[`Linked ${relativeTime(link.created_at)}`]}
 								/>
 								{bot?.capabilities.pair_chat ? (
-									<NativeButton
+									<ActionButton
 										label={t("channels.pair")}
 										disabled={disabled}
 										onPress={() =>
@@ -465,7 +467,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 										}
 									/>
 								) : null}
-								<NativeButton
+								<ActionButton
 									label={t("channels.unlink")}
 									icon={<Icon as={Unplug} />}
 									variant="ghost"
@@ -499,7 +501,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 							) : null}
 							<AppText>{pairing.expires_at}</AppText>
 							{pairingLink ? (
-								<NativeButton
+								<ActionButton
 									label={t("channels.openPair")}
 									onPress={() => open(pairingLink)}
 									disabled={action.busy}
@@ -517,7 +519,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 										},
 									].map(({ value, label }) =>
 										value ? (
-											<NativeButton
+											<ActionButton
 												key={label}
 												label={label}
 												onPress={() => open(value)}
@@ -526,7 +528,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 										) : null,
 									)
 								: null}
-							<NativeButton label={t("account.cancel")} onPress={clearPairing} />
+							<ActionButton label={t("account.cancel")} onPress={clearPairing} />
 						</DialogContent>
 					</Dialog>
 				) : null}
@@ -537,7 +539,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 						<AppText selectable>
 							{binding.external_chat_name ?? binding.external_chat_id} · {binding.status}
 						</AppText>
-						<NativeButton
+						<ActionButton
 							label={t("channels.unpair")}
 							disabled={disabled}
 							onPress={() =>
@@ -569,11 +571,14 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 					</AppView>
 				))}
 				{ownedBot?.provider === "whatsapp" ? (
-					<NativeButton
+					<ActionButton
 						label={t("whatsapp.repair")}
 						disabled={disabled}
 						onPress={() =>
-							router.push({ pathname: "/channels/whatsapp", params: { accountId: ownedBot.id } })
+							router.push({
+								pathname: "/native/channels/whatsapp",
+								params: { accountId: ownedBot.id },
+							})
 						}
 					/>
 				) : null}
@@ -621,7 +626,7 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 								)}
 							</ChannelInfoCard>
 							{supportsPairingCommands(provider) ? (
-								<NativeButton
+								<ActionButton
 									label={action.busy ? copy.publishing : copy.publishCommands}
 									variant="default"
 									icon={<Icon as={RefreshCw} />}
@@ -665,6 +670,6 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 				</Tabs>
 			</AppScrollView>
 			{confirmationDialog.dialog}
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

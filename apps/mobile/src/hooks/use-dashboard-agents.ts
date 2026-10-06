@@ -4,8 +4,8 @@ import {
 	selectUnifiedAgentList,
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
-import { useMobileApi } from "@/components/api-provider";
 import { useCloudAgents } from "@/hooks/cloud-inventory";
+import { useMobileApi } from "@/lib/api-provider";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 /** Both inventories are account-fenced. Unresolved membership never claims an empty account. */
 export function useDashboardAgents() {

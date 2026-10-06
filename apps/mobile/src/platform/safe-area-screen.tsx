@@ -4,7 +4,7 @@ import { withUniwind } from "uniwind";
 
 const AppSafeAreaView = withUniwind(SafeAreaView);
 
-export function ReadScreen({ children }: { children: ReactNode }) {
+export function SafeAreaScreen({ children }: { children: ReactNode }) {
 	return (
 		<AppSafeAreaView edges={["top", "bottom", "left", "right"]} className="flex-1 bg-background">
 			{children}

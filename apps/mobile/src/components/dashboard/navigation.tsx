@@ -8,7 +8,6 @@ import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { ArrowLeft, ChevronDown } from "lucide-react-native";
 import { type ReactNode, useState } from "react";
-import { useMobileApi } from "@/components/api-provider";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -18,6 +17,7 @@ import { AppView } from "@/components/ui/view";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
 import { agentSectionHref } from "@/lib/agent-routes";
+import { useMobileApi } from "@/lib/api-provider";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 export function AgentSectionNavigation({
 	agentId,

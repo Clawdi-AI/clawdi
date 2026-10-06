@@ -17,7 +17,7 @@ const AGENT_SECTION_SEGMENTS = {
 	plugins: "plugins",
 	settings: "settings",
 } as const;
-export type AgentSectionId = keyof typeof AGENT_SECTION_SEGMENTS;
+type AgentSectionId = keyof typeof AGENT_SECTION_SEGMENTS;
 
 export function parseAgentSectionSegment(value: string): AgentSectionId | undefined {
 	return (Object.keys(AGENT_SECTION_SEGMENTS) as AgentSectionId[]).find(

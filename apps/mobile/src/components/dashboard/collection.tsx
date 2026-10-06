@@ -4,9 +4,9 @@ import type { ReactNode } from "react";
 import { IconChip } from "@/components/icon-chip";
 import { PageHeader } from "@/components/page-header";
 import { Icon } from "@/components/ui/icon";
-import { AppScrollView } from "@/components/ui/primitives";
+import { AppScrollView } from "@/components/ui/view";
 import { WebIcon, webView } from "@/components/ui/web-layout";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export function AgentCollection({
 	title,
 	icon,
@@ -25,7 +25,7 @@ export function AgentCollection({
 	children: ReactNode;
 }) {
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
 				{navigation}
 				<PageHeader
@@ -44,6 +44,6 @@ export function AgentCollection({
 				/>
 				{children}
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

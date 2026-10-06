@@ -49,12 +49,11 @@ import {
 } from "lucide-react-native";
 import type { ReactNode } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import {
 	AgentOverviewHeading,
 	OverviewMetadata,
 	OverviewNavigationCard,
-} from "@/components/dashboard/overview";
+} from "@/components/dashboard/agent-overview-layout";
 import { OverviewComputeBody } from "@/components/dashboard/overview-compute-body";
 import { AgentRecentSessions } from "@/components/dashboard/recent-sessions";
 import { Button } from "@/components/ui/button";
@@ -66,6 +65,7 @@ import { WebView } from "@/components/ui/web-layout";
 import { type CloudAgent, useCloudSessions } from "@/hooks/cloud-inventory";
 import { RuntimeBrowser } from "@/hosted/agents/runtime-handoff";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
+import { useMobileApi } from "@/lib/api-provider";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 export function AgentOverview({
 	agent,

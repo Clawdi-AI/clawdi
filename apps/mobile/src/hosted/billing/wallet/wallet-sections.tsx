@@ -1,147 +1,27 @@
 import type { DeployComponents } from "@clawdi/shared/api";
 import {
 	autoReloadCardClasses,
-	balanceCardClasses as balance,
 	paymentMethodsSectionClasses,
-	transactionsSectionClasses as transactions,
 	x402CardClasses,
 } from "@clawdi/shared/ui";
-import {
-	formatShortDate,
-	formatUsdExact,
-	isLowBalance,
-	paymentMethodPresentation,
-	paymentMethodsCopy,
-	transactionComputeDetails,
-	transactionDocumentAction,
-	transactionKindLabel,
-	transactionPaymentSourceLabel,
-	transactionSignedAmount,
-	transactionStatusLabel,
-	transactionStatusTone,
-} from "@clawdi/shared/view";
+import { paymentMethodPresentation, paymentMethodsCopy } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
-import { openBrowserAsync } from "expo-web-browser";
-import { Coins, CreditCard, ExternalLink, Link2, Pencil, TriangleAlert } from "lucide-react-native";
+import { CreditCard, Link2, Pencil } from "lucide-react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { SettingsSection } from "@/components/settings/settings-panel-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
-import type { Transaction } from "@/hosted/billing/format";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
-import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 type Wallet = DeployComponents["schemas"]["V2WalletResponse"];
-export function BalanceCard({ wallet }: { wallet: Pick<Wallet, "balance_usd"> }) {
-	const t = useI18n();
-	const low = isLowBalance(wallet.balance_usd);
-	return (
-		<Card>
-			<CardContent className={webView(balance.layout)}>
-				<WebView recipe={balance.copy}>
-					<WebView recipe={balance.label} className="flex-row">
-						<Icon as={Coins} />
-						<Text>{t("billingParity.walletBalance")}</Text>
-					</WebView>
-					<WebText recipe={low ? balance.negativeBalance : balance.balance}>
-						{formatUsdExact(wallet.balance_usd)}
-					</WebText>
-					<WebText recipe={balance.meta}>{t("billingParity.walletExplanation")}</WebText>
-					{low ? (
-						<WebView recipe={balance.warning} className="flex-row">
-							<Icon as={TriangleAlert} />
-							<Text>{t("billingParity.lowBalance")}</Text>
-						</WebView>
-					) : null}
-				</WebView>
-				<WebView recipe={balance.actions}>
-					<Button disabled>
-						<Icon as={CreditCard} />
-						<Text>{t("billingParity.topUp")}</Text>
-					</Button>
-				</WebView>
-			</CardContent>
-		</Card>
-	);
-}
-export function TransactionRow({ item }: { item: Transaction }) {
-	const t = useI18n();
-	const scope = useAccountScope();
-	const action = useAuthAction(scope.identity);
-	const capture = useForegroundLease();
-	const document = transactionDocumentAction(item);
-	let documentUrl: string | null = null;
-	try {
-		const url = document ? new URL(document.url) : null;
-		if (url?.protocol === "https:" && !url.username && !url.password) documentUrl = url.href;
-	} catch {
-		// Malformed document links remain visible but cannot open a browser.
-	}
-	const openDocument = () =>
-		void action.run(async (current) => {
-			if (!documentUrl || !current() || !scope.isCurrent() || !capture()()) return;
-			await openBrowserAsync(documentUrl);
-		});
-	return (
-		<WebView recipe={transactions.mobileRow} className="flex-row">
-			<WebView recipe={transactions.mobileCopy} className="flex-1">
-				<WebText recipe={transactions.label}>{transactionKindLabel(item.kind)}</WebText>
-				{transactionComputeDetails(item).map((detail) => (
-					<WebText key={detail} recipe={transactions.reference}>
-						{detail}
-					</WebText>
-				))}
-				<WebView recipe={transactions.mobileHeading} className="flex-row">
-					<Badge variant="outline">
-						<Text>{transactionPaymentSourceLabel(item.funding)}</Text>
-					</Badge>
-					<StatusBadge status={transactionStatusTone(item.status)}>
-						<Text>{transactionStatusLabel(item.status)}</Text>
-					</StatusBadge>
-					<WebText recipe={transactions.description}>{formatShortDate(item.occurred_at)}</WebText>
-				</WebView>
-				{document ? (
-					<Button
-						variant="link"
-						size="xs"
-						className={webView(transactions.inlineAction)}
-						disabled={!documentUrl || action.busy}
-						onPress={openDocument}
-					>
-						<Text>{document.label}</Text>
-						<Icon as={ExternalLink} />
-					</Button>
-				) : (
-					<WebText recipe={transactions.muted}>—</WebText>
-				)}
-				{action.error ? (
-					<WebText accessibilityRole="alert" recipe={transactions.description}>
-						{t("account.actionFailed")}
-					</WebText>
-				) : null}
-			</WebView>
-			<WebText
-				recipe={transactions.amount}
-				className={item.direction === "credit" ? "text-success-muted-foreground" : undefined}
-			>
-				{transactionSignedAmount(item)}
-			</WebText>
-		</WebView>
-	);
-}
-
-/** Native payments remain outside this read-only presentation. */
 export function WalletSettingsSections({
 	wallet,
 }: {

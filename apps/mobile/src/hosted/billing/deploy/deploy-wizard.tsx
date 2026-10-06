@@ -40,10 +40,9 @@ import { useRouter } from "expo-router";
 import { Cpu, CreditCard, Plus, Rocket, WalletCards, Zap } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { AddAgentSetup } from "@/components/dashboard/add-agent-setup";
 import {
-	ActionButton as NativeButton,
+	ActionButton,
 	ChoiceSelect as NativePicker,
 	NativeSwitch,
 } from "@/components/dashboard/controls";
@@ -61,8 +60,8 @@ import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Input as AppTextInput } from "@/components/ui/input";
-import { AppText } from "@/components/ui/primitives";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Text as AppText } from "@/components/ui/text";
 import { AppScrollView, AppView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { formatDate } from "@/hooks/cloud-inventory";
@@ -78,6 +77,7 @@ import { nextBillingCursor, subscriptionPrice, uniqueBillingItems } from "@/host
 import { operationIdFromName } from "@/hosted/deployment-status";
 import { ProviderCreate } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { AiBindingChoices } from "@/hosted/v2/ai-providers/ai-binding-choices";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -87,9 +87,7 @@ import {
 	replaceAttempt,
 	saveAttempt,
 } from "@/platform/creation-storage";
-import { ReadScreen } from "@/platform/safe-area-screen";
-
-export { creationEn } from "@/lib/i18n/creation-en";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 const initialDraft: HostedDeployWizardDraft = {
 	runtime: "hermes",
@@ -104,7 +102,7 @@ export function CreateAgentScreen() {
 	const scope = useAccountScope();
 	const [tab, setTab] = useState("connect");
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<WebView recipe={agentsIndexClasses.page}>
 				<PageHeader title={tab === "deploy" ? agentSurfaceCopy.deployAnAgent : "Add an Agent"} />
 				<Tabs value={tab} onValueChange={setTab}>
@@ -121,7 +119,7 @@ export function CreateAgentScreen() {
 					<AddAgentSetup key={`${scope.accountKey}:${scope.generation}`} />
 				</AppScrollView>
 			)}
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }
 
@@ -582,7 +580,7 @@ function CreationForm() {
 									<ApiErrorPanel error={reusable.error} onRetry={() => void reusable.refetch()} />
 								) : null}
 								{reusable.hasNextPage ? (
-									<NativeButton
+									<ActionButton
 										label={t("inventory.loadMore")}
 										disabled={reusable.isFetching || action.busy}
 										onPress={() => void reusable.fetchNextPage()}
@@ -754,7 +752,7 @@ function CreationForm() {
 											</WebView>
 										</WebView>
 										<AppText>{t("creation.quoteNotice")}</AppText>
-										<NativeButton
+										<ActionButton
 											label={t("creation.quote")}
 											disabled={action.busy || !quoteAvailable || inventory.isError}
 											onPress={() => {
@@ -828,7 +826,7 @@ function CreationForm() {
 							<>
 								<AppText>{t("creation.saved")}</AppText>
 								<AppText selectable>{attempt.id}</AppText>
-								<NativeButton
+								<ActionButton
 									label={t("creation.recover")}
 									disabled={action.busy}
 									onPress={() => {
@@ -836,7 +834,7 @@ function CreationForm() {
 									}}
 								/>
 								{resolved || canDiscardCreationAttempt(attempt) ? (
-									<NativeButton
+									<ActionButton
 										label={t(resolved ? "creation.clear" : "creation.discard")}
 										disabled={action.busy}
 										onPress={() => {
@@ -905,7 +903,7 @@ function CreationForm() {
 						</WebText>
 					) : null}
 
-					<NativeButton
+					<ActionButton
 						label={attempt ? t("creation.retry") : deployFormCopy.deploy}
 						icon={<Icon as={Rocket} />}
 						variant="default"

@@ -24,7 +24,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useAgentRouteId } from "@/platform/navigation/use-agent-route";
-export function SessionCardSkeleton() {
+
+function SessionCardSkeleton() {
 	return (
 		<WebView recipe={`${ENTITY_CARD_BASE} ${styles.card}`} style={{ minHeight: 80 }}>
 			<Skeleton className={webView(styles.avatarSkeleton)} />
@@ -91,7 +92,7 @@ export function SessionFeed({
 		<WebView recipe={styles.list}>{sessions.map(card)}</WebView>
 	);
 }
-export function SessionCard({
+function SessionCard({
 	session,
 	showAgent = true,
 	quietAutomated = true,

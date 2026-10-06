@@ -12,7 +12,6 @@ import { useLocalSearchParams } from "expo-router";
 import { Plus, Sparkles, Trash2 } from "lucide-react-native";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { AgentCollection } from "@/components/dashboard/collection";
 import { ActionButton } from "@/components/dashboard/controls";
 import { AgentSectionNavigation } from "@/components/dashboard/navigation";
@@ -35,6 +34,7 @@ import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { WorkspaceSkillsScreen } from "@/hosted/agents/hosted-workspace-skills-panel";
 import { HostedAgentLibrarySkillsScreen } from "@/hosted/agents/library-skill-picker";
+import { useMobileApi } from "@/lib/api-provider";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 export function AgentLibrarySkillsScreen() {

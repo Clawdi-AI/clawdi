@@ -24,16 +24,14 @@ import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypt
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { Alert } from "react-native";
-import { useMobileApi } from "@/components/api-provider";
-import {
-	ActionButton as NativeButton,
-	ChoiceSelect as NativePicker,
-} from "@/components/dashboard/controls";
+import { ActionButton, ChoiceSelect as NativePicker } from "@/components/dashboard/controls";
 import { EntityAddCard } from "@/components/entity-card";
 import { Input as AppTextInput } from "@/components/ui/input";
-import { AppText, AppView } from "@/components/ui/primitives";
+import { Text as AppText } from "@/components/ui/text";
+import { AppView } from "@/components/ui/view";
 import { ProviderCreate } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { AiBindingChoices } from "@/hosted/v2/ai-providers/ai-binding-choices";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -214,7 +212,7 @@ export function DeploymentControls({
 				<AppText accessibilityRole="alert">{t("runtime.storageError")}</AppText>
 			) : null}
 			{section !== "ai" || attempt || storageError ? (
-				<NativeButton
+				<ActionButton
 					label={t("runtime.reloadAttempt")}
 					disabled={action.busy}
 					onPress={() => setRestoreEpoch((value) => value + 1)}
@@ -231,13 +229,13 @@ export function DeploymentControls({
 									: "runtime.uncertain",
 						)}
 					</AppText>
-					<NativeButton
+					<ActionButton
 						label={t("runtime.retry")}
 						disabled={action.busy || rejected || !storageKey || storageError}
 						onPress={() => void submit(attempt)}
 					/>
 					{attempt.status !== "uncertain" ? (
-						<NativeButton
+						<ActionButton
 							label={t("runtime.review")}
 							disabled={action.busy || !storageKey || storageError}
 							onPress={() =>
@@ -259,7 +257,7 @@ export function DeploymentControls({
 			{section !== "ai" &&
 			deploymentLifecycleAvailable("start", state) &&
 			deployment?.start_action === "start" ? (
-				<NativeButton
+				<ActionButton
 					label={t("runtime.start")}
 					disabled={busy}
 					onPress={() => confirm({ action: "start" })}
@@ -269,28 +267,28 @@ export function DeploymentControls({
 				<AppText>{t("runtime.paymentRequired")}</AppText>
 			) : null}
 			{section !== "ai" && deploymentLifecycleAvailable("stop", state) ? (
-				<NativeButton
+				<ActionButton
 					label={t("runtime.stop")}
 					disabled={busy}
 					onPress={() => confirm({ action: "stop" })}
 				/>
 			) : null}
 			{section !== "ai" && deploymentLifecycleAvailable("restart", state) ? (
-				<NativeButton
+				<ActionButton
 					label={t("runtime.restart")}
 					disabled={busy}
 					onPress={() => confirm({ action: "restart" })}
 				/>
 			) : null}
 			{section !== "ai" && stable ? (
-				<NativeButton
+				<ActionButton
 					label={t("runtime.resetAccess")}
 					disabled={busy}
 					onPress={() => confirm({ action: "reset_runtime_ui_access" })}
 				/>
 			) : null}
 			{section !== "ai" && deploymentLifecycleAvailable("delete", state) ? (
-				<NativeButton
+				<ActionButton
 					label={t("runtime.deleteAgent")}
 					disabled={writeBlocked}
 					onPress={() =>
@@ -371,7 +369,7 @@ function LocaleSettings({
 				editable={!disabled}
 			/>
 			{!valid ? <AppText>{t("runtime.invalidLocale")}</AppText> : null}
-			<NativeButton
+			<ActionButton
 				label={t("runtime.saveLocale")}
 				disabled={
 					disabled ||
@@ -499,7 +497,7 @@ function ModelSettings({
 				<AppText>{t("runtime.modelsInAgent")}</AppText>
 			) : null}
 			{choice === "__unmanaged__" ? <AppText>{t("runtime.unmanagedWarning")}</AppText> : null}
-			<NativeButton
+			<ActionButton
 				label={aiBindingCopy.save}
 				variant="default"
 				className="self-start"

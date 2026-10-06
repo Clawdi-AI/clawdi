@@ -1,5 +1,5 @@
 import { ErrorState } from "@/components/ui/feedback";
-import { AppText } from "@/components/ui/primitives";
+import { Text as AppText } from "@/components/ui/text";
 import { useI18n } from "@/lib/i18n";
 export function ResourceError({ missing, onRetry }: { missing: boolean; onRetry?: () => void }) {
 	const t = useI18n();

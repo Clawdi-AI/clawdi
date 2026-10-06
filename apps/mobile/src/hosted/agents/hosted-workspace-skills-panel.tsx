@@ -12,18 +12,19 @@ import { useLocalSearchParams } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { AgentCollection } from "@/components/dashboard/collection";
 import { useAgentConfirmation } from "@/components/dashboard/confirmation";
-import { ActionButton as NativeButton } from "@/components/dashboard/controls";
+import { ActionButton } from "@/components/dashboard/controls";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCard, HeroCardSkeleton } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input as AppTextInput } from "@/components/ui/input";
-import { AppText, AppView } from "@/components/ui/primitives";
+import { Text as AppText } from "@/components/ui/text";
+import { AppView } from "@/components/ui/view";
 import { WebView } from "@/components/ui/web-layout";
 import { canPollDeployment } from "@/hosted/deployment-status";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -216,7 +217,7 @@ function WorkspaceSkills({ id }: { id: string }) {
 					accessibilityLabel={t("workspaceSkills.source")}
 					placeholder={t("workspaceSkills.source")}
 				/>
-				<NativeButton
+				<ActionButton
 					label={t("workspaceSkills.install")}
 					disabled={!enabled || !install}
 					onPress={() => {
@@ -231,7 +232,7 @@ function WorkspaceSkills({ id }: { id: string }) {
 								? `${saved.mutation.request.repo}/${saved.mutation.request.path ?? ""}`
 								: saved.mutation.skillKey}
 						</AppText>
-						<NativeButton
+						<ActionButton
 							label={t("workspaceSkills.retry")}
 							disabled={
 								action.busy || storageError || !storageKey || !client || saved.status === "rejected"
@@ -239,7 +240,7 @@ function WorkspaceSkills({ id }: { id: string }) {
 							onPress={() => submit(saved)}
 						/>
 						{saved.status !== "uncertain" ? (
-							<NativeButton
+							<ActionButton
 								label={t("workspaceSkills.discard")}
 								disabled={action.busy || storageError}
 								onPress={() =>
@@ -268,7 +269,7 @@ function WorkspaceSkills({ id }: { id: string }) {
 				{storageError ? (
 					<AppText accessibilityRole="alert">{t("workspaceSkills.storageError")}</AppText>
 				) : null}
-				<NativeButton
+				<ActionButton
 					label={t("workspaceSkills.reload")}
 					disabled={action.busy}
 					onPress={() => setEpoch((value) => value + 1)}
@@ -370,14 +371,14 @@ function WorkspaceSkillItem({
 				footer={[t(`workspaceSkills.${item.status}`), item.source.url]}
 				actions={
 					<>
-						<NativeButton
+						<ActionButton
 							label={t("workspaceSkills.open")}
 							onPress={() => {
 								setOpen(true);
 								if (open) void detail.refetch();
 							}}
 						/>
-						<NativeButton
+						<ActionButton
 							label="Uninstall"
 							disabled={disabled || item.skill_key === "clawdi"}
 							onPress={onRemove}
@@ -397,7 +398,7 @@ function WorkspaceSkillItem({
 					) : (
 						<HeroCardSkeleton />
 					)}
-					<NativeButton label="Done" onPress={() => setOpen(false)} />
+					<ActionButton label="Done" onPress={() => setOpen(false)} />
 				</DialogContent>
 			</Dialog>
 		</>

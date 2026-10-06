@@ -6,7 +6,7 @@ import type {
 } from "@clawdi/shared/api";
 import { sessionTimelineCategories } from "@clawdi/shared/api";
 
-export type TimelinePage = components["schemas"]["SessionTimelinePage"];
+type TimelinePage = components["schemas"]["SessionTimelinePage"];
 export type TimelineCursor = {
 	offset: number;
 	limit: number;

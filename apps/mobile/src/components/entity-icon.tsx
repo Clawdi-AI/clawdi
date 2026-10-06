@@ -34,8 +34,8 @@ const SIZE = {
 		mono: webText(entityIconClasses.largeMonogram),
 	},
 } as const;
-export type EntityIconSize = keyof typeof SIZE;
-export type EntityKind = "channel" | "provider" | "framework";
+type EntityIconSize = keyof typeof SIZE;
+type EntityKind = "channel" | "provider" | "framework";
 export function EntityIcon({
 	kind,
 	id,

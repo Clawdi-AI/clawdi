@@ -9,12 +9,13 @@ import { Text } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
 import { webView } from "@/components/ui/web-layout";
 import { type Translator, useI18n } from "@/lib/i18n";
-export interface ApiErrorNormalizer {
+
+interface ApiErrorNormalizer {
 	isAuthError: (error: unknown) => boolean;
 	normalizeError: (error: unknown) => string;
 }
 /** Same Web error copy, using the shared client's error boundary and hiding internals. */
-export function normalizeApiError(error: unknown, t: Translator): string {
+function normalizeApiError(error: unknown, t: Translator): string {
 	if (error instanceof ApiClientNetworkError)
 		return t(error.kind === "timeout" ? "composite.timeout" : "composite.offline");
 	if (error instanceof ApiClientError) {

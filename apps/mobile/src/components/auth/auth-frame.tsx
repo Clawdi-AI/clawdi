@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 export function AuthFrame({
 	title,
@@ -19,7 +19,7 @@ export function AuthFrame({
 	children: ReactNode;
 }) {
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				keyboardShouldPersistTaps="handled"
 				contentContainerStyle={{ flexGrow: 1 }}
@@ -39,6 +39,6 @@ export function AuthFrame({
 					</CardContent>
 				</Card>
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

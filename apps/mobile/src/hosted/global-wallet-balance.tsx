@@ -3,10 +3,10 @@ import { headerWalletBalancePresentation } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { WalletCards } from "lucide-react-native";
-import { useMobileApi } from "@/components/api-provider";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WebIcon, WebText, webView } from "@/components/ui/web-layout";
+import { useMobileApi } from "@/lib/api-provider";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 
 export function GlobalWalletBalance() {

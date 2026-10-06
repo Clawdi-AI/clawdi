@@ -12,21 +12,21 @@ import { buildVaultSupplyAgentMessage, VAULT_REQUEST_COPY } from "@clawdi/shared
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import { AppState, Share } from "react-native";
-import { useMobileApi } from "@/components/api-provider";
+import { BackButton } from "@/components/detail/back-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
-import { AppScrollView, AppText } from "@/components/ui/primitives";
-import { Text } from "@/components/ui/text";
+import { Text as AppText, Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
+import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { SecretInput } from "@/components/vault/secret-input";
-import { BackButton } from "@/hooks/cloud-inventory";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { incomingVaultLink } from "@/platform/incoming-link";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 type Context = components["schemas"]["VaultSecretRequestStatus"];
@@ -220,7 +220,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 		});
 	};
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				contentContainerClassName={webView(vaultRequestClasses.page)}
 				keyboardShouldPersistTaps="handled"
@@ -427,6 +427,6 @@ function VaultSupply({ intake }: { intake: string | null }) {
 				</Card>
 			</AppScrollView>
 			{confirmationDialog.dialog}
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

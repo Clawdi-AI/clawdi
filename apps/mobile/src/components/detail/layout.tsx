@@ -7,7 +7,7 @@ import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
 import { AppScrollView } from "@/components/ui/view";
 import { WebView, webView } from "@/components/ui/web-layout";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export function LibraryPage({
 	children,
 	detail = false,
@@ -16,7 +16,7 @@ export function LibraryPage({
 	detail?: boolean;
 }) {
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
@@ -25,7 +25,7 @@ export function LibraryPage({
 			>
 				{children}
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }
 export function DetailPanel({ children, className }: { children: ReactNode; className?: string }) {

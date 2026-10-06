@@ -2,9 +2,10 @@ import { canCancelDeploymentOperation, type HostedDeployOperation } from "@clawd
 import { CryptoDigestAlgorithm, digestStringAsync } from "expo-crypto";
 import { useRef, useState } from "react";
 import { Alert } from "react-native";
-import { useMobileApi } from "@/components/api-provider";
-import { ActionButton as NativeButton } from "@/components/dashboard/controls";
-import { AppText, AppView } from "@/components/ui/primitives";
+import { ActionButton } from "@/components/dashboard/controls";
+import { Text as AppText } from "@/components/ui/text";
+import { AppView } from "@/components/ui/view";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -62,7 +63,7 @@ export function CancelOperation({
 	};
 	return (
 		<AppView className="gap-3">
-			<NativeButton
+			<ActionButton
 				label={t("deployments.cancelChange")}
 				disabled={action.busy || requested || !scope.isReady || !deploymentMutations}
 				onPress={confirm}

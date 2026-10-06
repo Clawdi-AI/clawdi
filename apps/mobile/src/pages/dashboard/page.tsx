@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { ArrowRight, MoreHorizontal } from "lucide-react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { AgentsCard } from "@/components/dashboard/agents-card";
 import {
 	ActivityGraphSkeleton,
@@ -29,6 +28,7 @@ import { WebIcon, WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useCloudSessions } from "@/hooks/cloud-inventory";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
 import { GlobalWalletBalance } from "@/hosted/global-wallet-balance";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useCurrentUser } from "@/platform/auth/auth-client";

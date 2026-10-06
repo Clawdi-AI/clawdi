@@ -3,7 +3,7 @@ import { Redirect, Stack, useGlobalSearchParams } from "expo-router";
 import { LoadingScreen } from "@/components/ui/feedback";
 import { useAppAuth } from "@/platform/auth/auth-client";
 import { ClerkOnly } from "@/platform/auth/clerk-only";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 export default function AuthLayout() {
 	return (
@@ -24,8 +24,8 @@ function ClerkAuthLayout() {
 			<Redirect href={returnShare ? { pathname: "/s/[id]", params: { id: returnShare } } : "/"} />
 		);
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<Stack screenOptions={{ headerShown: false, animation: "fade" }} />
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

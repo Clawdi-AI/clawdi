@@ -11,7 +11,6 @@ import { router } from "expo-router";
 import { MoreHorizontal, Pencil } from "lucide-react-native";
 import { useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
@@ -33,6 +32,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
 import { WebView, webBoth } from "@/components/ui/web-layout";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -86,7 +86,7 @@ export function ProjectCardActions({ project }: { project: Project }) {
 						label={PROJECT_ACTION_COPY.share}
 						onSelect={() =>
 							router.push({
-								pathname: "/projects/[id]/sharing",
+								pathname: "/native/projects/[id]/sharing",
 								params: { id: project.id },
 							})
 						}

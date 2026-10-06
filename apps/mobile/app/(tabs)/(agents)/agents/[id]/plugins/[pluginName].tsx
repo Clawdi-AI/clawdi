@@ -1,1 +1,1 @@
-export { default } from "@/hosted/v2/agent-plugins/agent-plugin-detail";
+export { default } from "@/pages/dashboard/agents/agent-plugin-detail-page";

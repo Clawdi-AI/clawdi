@@ -11,11 +11,11 @@ import { useRouter } from "expo-router";
 import { MoreHorizontal, TerminalSquare } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { AgentOverview } from "@/components/dashboard/agent-overview-resource-bodies";
 import { AgentSourceBadge } from "@/components/dashboard/agent-section-source-badge";
-import { ActionButton as NativeButton } from "@/components/dashboard/controls";
+import { ActionButton } from "@/components/dashboard/controls";
 import { AgentSectionNavigation } from "@/components/dashboard/navigation";
+import { BackButton } from "@/components/detail/back-link";
 import { EmptyState } from "@/components/empty-state";
 import { EntityCardSkeleton } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
@@ -23,10 +23,10 @@ import { ResourceError } from "@/components/resource-error";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
-import { AppScrollView, AppText } from "@/components/ui/primitives";
-import { Text } from "@/components/ui/text";
+import { Text as AppText, Text } from "@/components/ui/text";
+import { AppScrollView } from "@/components/ui/view";
 import { WebView, webView } from "@/components/ui/web-layout";
-import { BackButton, isNotFound, useCloudAgent } from "@/hooks/cloud-inventory";
+import { isNotFound, useCloudAgent } from "@/hooks/cloud-inventory";
 import { ComputeStatusDetails } from "@/hosted/agents/compute-status-details";
 import { CancelOperation } from "@/hosted/agents/deployment-cancel-action";
 import { DeploymentControls } from "@/hosted/agents/deployment-controls";
@@ -36,11 +36,10 @@ import {
 	deploymentNeedsPolling,
 	operationIdFromName,
 } from "@/hosted/deployment-status";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
-import { ReadScreen } from "@/platform/safe-area-screen";
-
-export { deploymentsEn } from "@/lib/i18n/deployments-en";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 export function DeploymentDetailScreen({ deploymentId }: { deploymentId: string | undefined }) {
 	const scope = useAccountScope();
@@ -150,7 +149,7 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 	};
 	const activeOperation = operation.data ?? accepted ?? deployment?.accepted_operation;
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
 				{deployment?.agent_id ? (
 					<AgentSectionNavigation
@@ -220,7 +219,7 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 								</DialogHeader>
 								<AppScrollView>
 									{deployment ? <ComputeStatusDetails deployment={deployment} /> : null}
-									<NativeButton
+									<ActionButton
 										label={t("deployments.refresh")}
 										disabled={query.isFetching || operation.isFetching}
 										onPress={() => {
@@ -269,7 +268,7 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 												<Icon as={TerminalSquare} />
 												<Text>{t("terminal.title")}</Text>
 											</Button>
-											<NativeButton
+											<ActionButton
 												label={t("workspaceSkills.title")}
 												onPress={() => {
 													setManagementOpen(false);
@@ -324,7 +323,7 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 											) : null}
 
 											{deployment.agent_id ? (
-												<NativeButton
+												<ActionButton
 													label={t("deployments.agent")}
 													onPress={() => {
 														if (deployment.agent_id && scope.isCurrent() && !scope.signal.aborted)
@@ -342,6 +341,6 @@ function DeploymentDetail({ deploymentId }: { deploymentId: string | undefined }
 					</>
 				)}
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

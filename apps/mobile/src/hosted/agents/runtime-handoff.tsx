@@ -14,10 +14,10 @@ import * as WebBrowser from "expo-web-browser";
 import { PanelsTopLeft } from "lucide-react-native";
 import { useRef } from "react";
 import { Alert } from "react-native";
-import { useMobileApi } from "@/components/api-provider";
-import { ActionButton as NativeButton } from "@/components/dashboard/controls";
-import { OverviewNavigationCard } from "@/components/dashboard/overview";
-import { AppText } from "@/components/ui/primitives";
+import { OverviewNavigationCard } from "@/components/dashboard/agent-overview-layout";
+import { ActionButton } from "@/components/dashboard/controls";
+import { Text as AppText } from "@/components/ui/text";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -129,7 +129,7 @@ export function RuntimeBrowser({
 		);
 	return (
 		<>
-			<NativeButton
+			<ActionButton
 				label={t("deployments.openDashboard")}
 				disabled={!available || action.busy}
 				onPress={open}

@@ -22,7 +22,6 @@ import { useRouter } from "expo-router";
 import { MoreHorizontal, Pencil, Plus } from "lucide-react-native";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { LibraryPage } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCardSkeleton } from "@/components/entity-card";
@@ -51,6 +50,7 @@ import { SearchInput } from "@/components/ui/search-input";
 import { Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { WebView, webView } from "@/components/ui/web-layout";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -65,18 +65,6 @@ export function useCloudProjects() {
 		enabled: scope.isReady,
 		retry: false,
 	});
-}
-
-export function ProjectRow({ project }: { project: Project }) {
-	return (
-		<ProjectResourceCard
-			project={project}
-			footer={[
-				formatResourceCount(project.skill_count, "skill"),
-				formatResourceCount(project.vault_count, "vault"),
-			]}
-		/>
-	);
 }
 
 export function ProjectsScreen() {
@@ -205,7 +193,7 @@ function ProjectsView() {
 								/>
 								<DropdownMenuItem
 									label={t("sharing.received")}
-									onSelect={() => router.push("/projects/invitations")}
+									onSelect={() => router.push("/native/projects/invitations")}
 								/>
 							</DropdownMenuContent>
 						</DropdownMenu>
@@ -262,7 +250,7 @@ function ProjectsView() {
 													label={t("projects.sharing")}
 													onSelect={() =>
 														router.push({
-															pathname: "/projects/[id]/sharing",
+															pathname: "/native/projects/[id]/sharing",
 															params: { id: project.id },
 														})
 													}

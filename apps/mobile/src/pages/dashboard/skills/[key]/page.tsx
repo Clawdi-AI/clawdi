@@ -46,7 +46,6 @@ import {
 	X,
 } from "lucide-react-native";
 import { useRef, useState } from "react";
-import { useMobileApi } from "@/components/api-provider";
 import { ChoiceSelect } from "@/components/detail/choice-select";
 import { DetailBackLink, DetailMeta, DetailPanel } from "@/components/detail/layout";
 import { IconChip } from "@/components/icon-chip";
@@ -67,15 +66,16 @@ import {
 import { ErrorState } from "@/components/ui/feedback";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
-import { AppScrollView, AppText, AppView } from "@/components/ui/primitives";
-import { Text } from "@/components/ui/text";
+import { Text as AppText, Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
+import { AppScrollView, AppView } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webText, webView } from "@/components/ui/web-layout";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 type EditDraft = SkillTextDraft & { revision: string };
@@ -400,7 +400,7 @@ function SkillEditor({
 		</DetailPanel>
 	);
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(detailLayoutClasses.detailPage)}
@@ -580,7 +580,7 @@ function SkillEditor({
 												disabled={action.busy || detail.isError}
 												onPress={() =>
 													router.push({
-														pathname: "/skills/archive",
+														pathname: "/native/skills/archive",
 														params: { projectId, skillKey: skillKey ?? "" },
 													})
 												}
@@ -655,7 +655,7 @@ function SkillEditor({
 				) : null}
 			</AppScrollView>
 			{confirmationDialog.dialog}
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }
 

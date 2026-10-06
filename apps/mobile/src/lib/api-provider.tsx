@@ -48,7 +48,7 @@ import type { MobileRuntimeConfig } from "@/lib/config/runtime";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { useAppAuth } from "@/platform/auth/auth-client";
 
-export type MobileApiClients = Readonly<{
+type MobileApiClients = Readonly<{
 	cloud: CloudApiClient;
 	publicSessions: PublicSessionClient;
 	agentExtensions: AgentExtensionsClient;

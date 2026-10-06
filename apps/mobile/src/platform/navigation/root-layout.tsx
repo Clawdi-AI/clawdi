@@ -4,14 +4,14 @@ import { tokenCache } from "@clerk/expo/token-cache";
 import { type ErrorBoundaryProps, Stack } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { AppearanceProvider } from "@/components/appearance-provider";
-import { MobileProviders } from "@/components/mobile-providers";
 import { ConfigurationErrorScreen, ErrorState } from "@/components/ui/feedback";
-import { AppView } from "@/components/ui/primitives";
+import { AppView } from "@/components/ui/view";
 import { loadMobileRuntimeConfig, RuntimeConfigProvider } from "@/lib/config/runtime";
 import { I18nProvider } from "@/lib/i18n";
+import { AppearanceProvider } from "@/platform/appearance-provider";
 import { isDevAuthBypass } from "@/platform/auth/auth-client";
 import { useAppFonts } from "@/platform/fonts";
+import { MobileProviders } from "@/platform/mobile-providers";
 
 export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
 	return (

@@ -6,10 +6,9 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { AgentCollection } from "@/components/dashboard/collection";
 import { useAgentConfirmation } from "@/components/dashboard/confirmation";
-import { ActionButton as NativeButton } from "@/components/dashboard/controls";
+import { ActionButton } from "@/components/dashboard/controls";
 import { AgentSectionNavigation } from "@/components/dashboard/navigation";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCard, HeroCardSkeleton } from "@/components/entity-card";
@@ -17,10 +16,11 @@ import { IconChip } from "@/components/icon-chip";
 import { ListToolbar } from "@/components/list-toolbar";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AppText } from "@/components/ui/primitives";
 import { SearchInput } from "@/components/ui/search-input";
+import { Text as AppText } from "@/components/ui/text";
 import { WebView } from "@/components/ui/web-layout";
 import { canPollDeployment } from "@/hosted/deployment-status";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { useCloudSkills } from "@/pages/dashboard/skills/page";
@@ -107,7 +107,7 @@ function AgentLibrarySkills({ id }: { id: string }) {
 			description="Skills available in this Agent's Workspace."
 			navigation={<AgentSectionNavigation agentId={id} section="skills" />}
 			actions={
-				<NativeButton
+				<ActionButton
 					label="+ Install skill"
 					onPress={() => setBrowse(true)}
 					disabled={action.busy}
@@ -162,7 +162,7 @@ function AgentLibrarySkills({ id }: { id: string }) {
 								actions={
 									item.source === "library" && item.skill_id ? (
 										<>
-											<NativeButton
+											<ActionButton
 												label={t("agentExtensions.view")}
 												disabled={!item.project_id || !item.source_skill_key}
 												onPress={() =>
@@ -175,7 +175,7 @@ function AgentLibrarySkills({ id }: { id: string }) {
 													})
 												}
 											/>
-											<NativeButton
+											<ActionButton
 												label="Uninstall"
 												disabled={disabled || item.read_only}
 												onPress={() => {
@@ -215,7 +215,7 @@ function AgentLibrarySkills({ id }: { id: string }) {
 									title={item.name}
 									description={item.description}
 									actions={
-										<NativeButton
+										<ActionButton
 											label="Install"
 											disabled={
 												disabled ||
@@ -231,13 +231,13 @@ function AgentLibrarySkills({ id }: { id: string }) {
 						</WebView>
 					)}
 					{library.hasNextPage ? (
-						<NativeButton
+						<ActionButton
 							label={t("inventory.loadMore")}
 							disabled={library.isFetching}
 							onPress={() => void library.fetchNextPage()}
 						/>
 					) : null}
-					<NativeButton label="Done" onPress={() => setBrowse(false)} />
+					<ActionButton label="Done" onPress={() => setBrowse(false)} />
 				</DialogContent>
 			</Dialog>
 			{confirmationDialog.dialog}

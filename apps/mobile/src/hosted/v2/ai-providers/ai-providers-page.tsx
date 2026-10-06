@@ -18,7 +18,6 @@ import { useLocalSearchParams } from "expo-router";
 import { BrainCircuit, CheckCircle2, ShieldCheck } from "lucide-react-native";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { AgentCollection } from "@/components/dashboard/collection";
 import { AgentSectionNavigation } from "@/components/dashboard/navigation";
 import { EmptyState } from "@/components/empty-state";
@@ -30,20 +29,21 @@ import { SectionLabel } from "@/components/section-label";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { AppScrollView } from "@/components/ui/primitives";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Text } from "@/components/ui/text";
+import { AppScrollView } from "@/components/ui/view";
 import { WebView, webView } from "@/components/ui/web-layout";
 import { DeploymentControls } from "@/hosted/agents/deployment-controls";
 import { ProviderCreate } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { ProviderEdit } from "@/hosted/v2/ai-providers/edit-provider-dialog";
 import { ProviderOAuth } from "@/hosted/v2/ai-providers/provider-oauth-flow";
 import { ProviderRemove } from "@/hosted/v2/ai-providers/remove-provider-dialog";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export function AiProvidersScreen() {
 	const scope = useAccountScope();
 	const params = useLocalSearchParams<{ id?: string | string[]; agentId?: string | string[] }>(),
@@ -74,7 +74,7 @@ function ProvidersView() {
 		await providers.refetch();
 	};
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
 				<PageHeader
 					title={agentSurfaceCopy.aIProviders}
@@ -149,7 +149,7 @@ function ProvidersView() {
 					)}
 				</WebView>
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }
 function ProviderCard({

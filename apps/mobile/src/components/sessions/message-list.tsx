@@ -27,8 +27,8 @@ import { Markdown } from "@/components/markdown";
 import { ModelBadge } from "@/components/sessions/meta";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { AppPressable, AppScrollView } from "@/components/ui/primitives";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AppPressable, AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webText, webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
 

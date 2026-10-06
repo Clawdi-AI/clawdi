@@ -21,7 +21,7 @@
 import { cn } from "cn";
 
 export type WebClassState = Readonly<Record<string, boolean | undefined>>;
-export type ResolvedWebClasses = Readonly<{ view: string; text: string }>;
+type ResolvedWebClasses = Readonly<{ view: string; text: string }>;
 
 const KEPT_VARIANTS = new Set(["dark", "active", "disabled", "focus"]);
 const VARIANT_ALIASES: Readonly<Record<string, string>> = {

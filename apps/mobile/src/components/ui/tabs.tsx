@@ -15,7 +15,7 @@ import { AppPressable, AppView } from "@/components/ui/view";
 import { resolveWebClasses } from "@/lib/web-classes";
 import { WebView } from "@/components/ui/web-layout";
 
-export { tabsListVariants } from "@clawdi/shared/ui";
+
 
 const TabsContext = createContext({
 	value: "",

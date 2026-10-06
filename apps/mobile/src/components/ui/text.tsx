@@ -15,7 +15,7 @@ export const TextColorContext = createContext<string | undefined>(undefined);
 
 export const TextClassContext = createContext<string | undefined>(undefined);
 
-export type TextClassName = { className?: string };
+type TextClassName = { className?: string };
 
 export function Text({ className, style, ...props }: TextProps & TextClassName) {
 	const inherited = useContext(TextClassContext);

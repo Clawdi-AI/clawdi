@@ -33,7 +33,6 @@ import {
 import { useState } from "react";
 import { FlatList, Share } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -54,16 +53,17 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
-import { AppScrollView } from "@/components/ui/primitives";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Text } from "@/components/ui/text";
+import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webText, webView } from "@/components/ui/web-layout";
 import { useCloudSession } from "@/hooks/cloud-inventory";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 type SessionShare = components["schemas"]["SessionShareListItemResponse"];
@@ -487,7 +487,7 @@ function SharesView({
 				(target.scope === "session" || matching.some((value) => value.id === share.id)),
 		);
 		return (
-			<ReadScreen>
+			<SafeAreaScreen>
 				<Dialog
 					open
 					onOpenChange={(open) => {
@@ -547,11 +547,11 @@ function SharesView({
 						</DialogFooter>
 					</DialogContent>
 				</Dialog>
-			</ReadScreen>
+			</SafeAreaScreen>
 		);
 	}
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<FlatList
 				data={failure && !items.length ? [] : items}
 				keyExtractor={sessionShareIdentity}
@@ -608,6 +608,6 @@ function SharesView({
 				}
 				ListFooterComponent={pagination}
 			/>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

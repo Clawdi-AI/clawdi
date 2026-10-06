@@ -9,7 +9,6 @@ import { useCSSVariable } from "uniwind";
 import { TextClassContext, TextColorContext } from "@/components/ui/text";
 import { WebContent, WebView } from "@/components/ui/web-layout";
 
-export type { IconChipSize } from "@clawdi/shared/ui";
 /** The direct-SVG selector supplies glyph size to RN's explicit Icon context. */
 export function IconChip({
 	size = "md",

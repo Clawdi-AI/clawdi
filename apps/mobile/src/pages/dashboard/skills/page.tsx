@@ -16,7 +16,6 @@ import { router } from "expo-router";
 import { Plus } from "lucide-react-native";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { LibraryPage } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCardSkeleton } from "@/components/entity-card";
@@ -33,6 +32,7 @@ import { Icon } from "@/components/ui/icon";
 import { SearchInput } from "@/components/ui/search-input";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView } from "@/components/ui/web-layout";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 
@@ -106,7 +106,7 @@ function SkillsView({ project }: { project?: Project }) {
 						<Button
 							size="sm"
 							onPress={() =>
-								router.push({ pathname: "/skills/new", params: { projectId: project.id } })
+								router.push({ pathname: "/native/skills/new", params: { projectId: project.id } })
 							}
 						>
 							<Icon as={Plus} />
@@ -157,7 +157,10 @@ function SkillsView({ project }: { project?: Project }) {
 									variant="outline"
 									size="sm"
 									onPress={() =>
-										router.push({ pathname: "/skills/archive", params: { projectId: project.id } })
+										router.push({
+											pathname: "/native/skills/archive",
+											params: { projectId: project.id },
+										})
 									}
 								>
 									<Text>{t("skillArchive.title")}</Text>

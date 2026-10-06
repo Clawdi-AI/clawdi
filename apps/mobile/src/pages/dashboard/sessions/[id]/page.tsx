@@ -19,13 +19,13 @@ import { MessagesSkeleton } from "@/components/sessions/skeleton";
 import { Transcript } from "@/components/sessions/virtualized-message-list";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { AppScrollView } from "@/components/ui/primitives";
 import { Text } from "@/components/ui/text";
+import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { isNotFound, useCloudSession } from "@/hooks/cloud-inventory";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 export default function SessionDetailRoute() {
 	const t = useI18n();
@@ -46,7 +46,7 @@ export default function SessionDetailRoute() {
 	);
 	if (!session)
 		return (
-			<ReadScreen>
+			<SafeAreaScreen>
 				<AppScrollView contentContainerStyle={{ padding: 16 }}>
 					<WebView recipe={styles.page} className="px-0">
 						{back}
@@ -65,7 +65,7 @@ export default function SessionDetailRoute() {
 						)}
 					</WebView>
 				</AppScrollView>
-			</ReadScreen>
+			</SafeAreaScreen>
 		);
 	const header = (
 		<WebView recipe={styles.header}>

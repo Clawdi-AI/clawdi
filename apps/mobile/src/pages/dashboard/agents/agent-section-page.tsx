@@ -1,4 +1,4 @@
-import { useLocalSearchParams, useSegments } from "expo-router";
+import { useLocalSearchParams } from "expo-router";
 import { AgentProjectsScreen } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsScreen } from "@/components/dashboard/agent-settings-panel";
 import { AgentLibrarySkillsScreen } from "@/components/dashboard/workspace-skills-panel";
@@ -18,8 +18,7 @@ import TerminalPage from "@/pages/terminal-page";
 
 export default function AgentSectionPage() {
 	const params = useLocalSearchParams<{ section?: string | string[] }>();
-	const segments = useSegments();
-	const segment = routeParam(params.section) ?? (segments.at(-1) === "skills" ? "skills" : "");
+	const segment = routeParam(params.section) ?? "";
 	switch (parseAgentSectionSegment(segment)) {
 		case "overview":
 			return <AgentDetailPage />;
@@ -56,4 +55,8 @@ export default function AgentSectionPage() {
 				</LibraryPage>
 			);
 	}
+}
+
+export function AgentSkillsPage() {
+	return <AgentLibrarySkillsScreen />;
 }

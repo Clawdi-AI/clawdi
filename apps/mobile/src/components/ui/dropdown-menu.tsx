@@ -157,7 +157,7 @@ export function DropdownMenuLabel(_props: SlotProps) {
 export function DropdownMenuSeparator(_props: SlotProps) {
 	return null;
 }
-export function DropdownMenuPortal(_props: SlotProps) {
+function DropdownMenuPortal(_props: SlotProps) {
 	return null;
 }
 export function DropdownMenuSub(_props: SlotProps) {
@@ -170,6 +170,6 @@ export function DropdownMenuSubContent(_props: SlotProps) {
 	return null;
 }
 /** Keyboard-only Web shortcut is omitted on native. */
-export function DropdownMenuShortcut(_props: SlotProps) {
+function DropdownMenuShortcut(_props: SlotProps) {
 	return null;
 }

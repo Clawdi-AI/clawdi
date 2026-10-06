@@ -1,20 +1,4 @@
-import type { DeployComponents, DeploymentRead } from "@clawdi/shared/api";
-
-export const deploymentSummaryKeys = {
-	creating: "deployments.creating",
-	starting: "deployments.starting",
-	running: "deployments.running",
-	stopping: "deployments.stopping",
-	stopped: "deployments.stopped",
-	restarting: "deployments.restarting",
-	updating: "deployments.updating",
-	deleting: "deployments.deleting",
-	deleted: "deployments.deleted",
-	failed: "deployments.failed",
-} as const satisfies Record<
-	DeployComponents["schemas"]["HostedDeploymentStatus"]["summary_state"],
-	string
->;
+import type { DeploymentRead } from "@clawdi/shared/api";
 
 export const DEPLOYMENT_POLL_WINDOW_MS = 120_000;
 

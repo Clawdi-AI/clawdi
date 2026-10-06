@@ -18,18 +18,18 @@ import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp } from "lucide-react-
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { FlatList } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { EmptyState } from "@/components/empty-state";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
 import { MessagesSkeleton } from "@/components/sessions/skeleton";
 import { TimelineRow } from "@/components/sessions/timeline-row";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { AppPressable, AppView } from "@/components/ui/primitives";
 import { SearchInput } from "@/components/ui/search-input";
 import { Text } from "@/components/ui/text";
+import { AppPressable, AppView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { isNotFound } from "@/hooks/cloud-inventory";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import {
 	adjacentTimelineCursor,
@@ -38,7 +38,7 @@ import {
 	timelineRequest,
 } from "@/lib/timeline-state";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 type Props = {
 	sessionId: string;
@@ -169,7 +169,7 @@ function TranscriptView({
 		if (next && !messages.isFetching && scope.isCurrent()) setAnchor(next);
 	};
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<WebView recipe={styles.page} className="px-4 pt-4">
 				<WebView recipe={styles.context}>
 					{header}
@@ -435,6 +435,6 @@ function TranscriptView({
 					</Button>
 				</AppView>
 			) : null}
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

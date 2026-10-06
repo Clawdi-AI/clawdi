@@ -1,6 +1,1 @@
-export {
-	FRAMEWORK_BRAND_ICON_IDS,
-	type FrameworkBrandIconId,
-	PROVIDER_BRAND_ICON_IDS,
-	type ProviderBrandIconId,
-} from "@clawdi/shared/view";
+export type { FrameworkBrandIconId, ProviderBrandIconId } from "@clawdi/shared/view";

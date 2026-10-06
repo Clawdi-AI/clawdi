@@ -17,8 +17,7 @@ import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { RotateCcw, Save, Settings as SettingsIcon, Trash2, Upload } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { useMobileApi } from "@/components/api-provider";
-import { AgentIcon } from "@/components/dashboard/agent-section-icon";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { AgentSourceBadge } from "@/components/dashboard/agent-section-source-badge";
 import { useAgentConfirmation } from "@/components/dashboard/confirmation";
 import { ActionButton } from "@/components/dashboard/controls";
@@ -28,16 +27,18 @@ import { ResourceError } from "@/components/resource-error";
 import { SettingsSection } from "@/components/settings-section";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
-import { AppScrollView, AppText } from "@/components/ui/primitives";
+import { Text as AppText } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
+import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { type CloudAgent, isNotFound, useCloudAgent } from "@/hooks/cloud-inventory";
 import { useAgentOwnership } from "@/hooks/use-agent-ownership";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function AgentSettingsScreen() {
@@ -166,7 +167,7 @@ function Settings({ id }: { id: string | undefined }) {
 		});
 	};
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
 				{id ? <AgentSectionNavigation agentId={id} section="settings" /> : null}
 				<PageHeader
@@ -334,6 +335,6 @@ function Settings({ id }: { id: string | undefined }) {
 			</AppScrollView>
 			{confirmationDialog.dialog}
 			{unsavedDialog.dialog}
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

@@ -10,7 +10,8 @@ import { cn } from "cn";
 import { Inbox, type LucideIcon } from "lucide-react-native";
 import { isValidElement, type ReactNode } from "react";
 import { WebContent, WebIcon, WebView } from "@/components/ui/web-layout";
-export type EmptyStateVariant = "page" | "inset";
+
+type EmptyStateVariant = "page" | "inset";
 export function EmptyState({
 	icon = Inbox,
 	title,

@@ -5,7 +5,8 @@ import type { ReactNode } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { WebContent, WebIcon, WebText, WebView, webView } from "@/components/ui/web-layout";
-export type DashboardSectionPriority = "primary" | "secondary" | "quiet";
+
+type DashboardSectionPriority = "primary" | "secondary" | "quiet";
 export function DashboardSection({
 	children,
 	priority = "secondary",

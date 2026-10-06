@@ -39,6 +39,6 @@ function StatusDot({ className, status = "neutral" }: { className?: string; stat
 	);
 }
 
-export { statusTextVariants } from "@clawdi/shared/ui";
+
 export type { StatusTone };
 export { StatusBadge, StatusDot };

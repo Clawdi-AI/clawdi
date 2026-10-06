@@ -19,21 +19,22 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { QrCode, TriangleAlert } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState } from "react-native";
-import { useMobileApi } from "@/components/api-provider";
-import { ActionButton as NativeButton, NativeSwitch } from "@/components/dashboard/controls";
+import { ActionButton, NativeSwitch } from "@/components/dashboard/controls";
 import { Alert } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { Input as AppTextInput, Label } from "@/components/ui/input";
-import { AppText, AppView } from "@/components/ui/primitives";
 import { QrImage } from "@/components/ui/qr-image";
+import { Text as AppText } from "@/components/ui/text";
+import { AppView } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { useChannelQuery } from "@/hosted/v2/channels/channels-hooks";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function WhatsAppScreen() {
@@ -220,7 +221,7 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 			: null;
 	const qr = useMemo(() => (qrValue ? pairingQr(qrValue) : null), [qrValue]);
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<Dialog
 				open
 				onOpenChange={(next) => {
@@ -251,7 +252,7 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 									? copy.checking
 									: whatsappReadinessMessage(readiness.data, readiness.isError)}
 							</WebText>
-							<NativeButton
+							<ActionButton
 								label={copy.connectAccount}
 								variant="default"
 								className={webView(styles.connectAction)}
@@ -295,7 +296,7 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 										disabled={action.busy}
 										label={t("whatsapp.approve")}
 									/>
-									<NativeButton
+									<ActionButton
 										label={
 											started
 												? t("whatsapp.retryStart")
@@ -315,7 +316,7 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 										}
 									/>
 									{started ? <AppText>{t("whatsapp.uncertain")}</AppText> : null}
-									<NativeButton
+									<ActionButton
 										label={t("channels.refresh")}
 										disabled={action.busy}
 										onPress={() =>
@@ -372,7 +373,7 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 														autoCorrect={false}
 														editable={!action.busy}
 													/>
-													<NativeButton
+													<ActionButton
 														label={copy.requestCode}
 														disabled={
 															!ready ||
@@ -390,13 +391,13 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 										</>
 									) : null}
 									{session.state !== "connected" ? (
-										<NativeButton
+										<ActionButton
 											label={t("whatsapp.check")}
 											disabled={!ready || action.busy}
 											onPress={() => void run((signal) => whatsapp.get(session.id, signal))}
 										/>
 									) : (
-										<NativeButton
+										<ActionButton
 											label={t("whatsapp.review")}
 											disabled={action.busy}
 											onPress={() => router.replace("/channels")}
@@ -405,14 +406,14 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 									{session.state === "expired" ||
 									session.state === "error" ||
 									session.state === "canceled" ? (
-										<NativeButton
+										<ActionButton
 											label={t("whatsapp.retry")}
 											disabled={!ready || action.busy}
 											onPress={() => void run((signal) => whatsapp.retry(session.id, signal))}
 										/>
 									) : null}
 									{whatsappOnboardingRequiresCleanup(session.state) ? (
-										<NativeButton
+										<ActionButton
 											label={t("whatsapp.cancel")}
 											disabled={!ready || action.busy}
 											onPress={() => void run((signal) => whatsapp.cancel(session.id, signal))}
@@ -427,6 +428,6 @@ function WhatsAppFlow({ accountId, invalidRoute }: { accountId?: string; invalid
 					)}
 				</DialogContent>
 			</Dialog>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

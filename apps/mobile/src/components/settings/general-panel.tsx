@@ -2,7 +2,6 @@ import { APPEARANCE_MODES, isAppearanceMode } from "@clawdi/shared/consts";
 import { generalPanelClasses as styles } from "@clawdi/shared/ui";
 import { useRouter } from "expo-router";
 import { UserCog } from "lucide-react-native";
-import { useAppearance } from "@/components/appearance-provider";
 import { SettingsPanelHeader, SettingsSection } from "@/components/settings/settings-panel-header";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -18,6 +17,7 @@ import {
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
+import { useAppearance } from "@/platform/appearance-provider";
 import { useCurrentUser } from "@/platform/auth/auth-client";
 
 export function GeneralPanel() {

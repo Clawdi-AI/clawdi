@@ -10,12 +10,12 @@ import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { Bot, Terminal } from "lucide-react-native";
 import { useEffect, useRef } from "react";
-import { useMobileApi } from "@/components/api-provider";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { useMobileApi } from "@/lib/api-provider";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 export function AddAgentSetup() {
 	const scope = useAccountScope(),

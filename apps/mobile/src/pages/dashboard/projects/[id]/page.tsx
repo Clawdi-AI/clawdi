@@ -12,8 +12,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { ArrowRight, Bot, MoreHorizontal, Plus, Share2 } from "lucide-react-native";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
-import { AgentIcon } from "@/components/dashboard/agent-section-icon";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { DetailBackLink, DetailPanel, LibraryPage } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCardSkeleton } from "@/components/entity-card";
@@ -39,6 +38,7 @@ import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { ProjectVaultCatalog } from "@/components/vault/project-vault-catalog";
 import { agentDisplayName, isNotFound, useCloudAgents } from "@/hooks/cloud-inventory";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { projectRouteFilter, routeParam } from "@/lib/route-params";
 import { SkillRow, useCloudSkills } from "@/pages/dashboard/skills/page";
@@ -136,7 +136,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 												label={t("projects.sharing")}
 												onSelect={() =>
 													router.push({
-														pathname: "/projects/[id]/sharing",
+														pathname: "/native/projects/[id]/sharing",
 														params: { id: project.id },
 													})
 												}
@@ -222,7 +222,10 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 											variant="outline"
 											size="sm"
 											onPress={() =>
-												router.push({ pathname: "/skills/new", params: { projectId: project.id } })
+												router.push({
+													pathname: "/native/skills/new",
+													params: { projectId: project.id },
+												})
 											}
 										>
 											<Icon as={Plus} />
@@ -279,7 +282,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 									className="self-start"
 									onPress={() =>
 										router.push({
-											pathname: "/projects/[id]/sharing",
+											pathname: "/native/projects/[id]/sharing",
 											params: { id: project.id },
 										})
 									}

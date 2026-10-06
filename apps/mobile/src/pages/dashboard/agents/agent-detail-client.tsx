@@ -9,14 +9,14 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentOverview } from "@/components/dashboard/agent-overview-resource-bodies";
 import { AgentSectionNavigation } from "@/components/dashboard/navigation";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
-import { AppScrollView } from "@/components/ui/primitives";
+import { AppScrollView } from "@/components/ui/view";
 import { WebIcon, webView } from "@/components/ui/web-layout";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
 import { DeploymentDetailScreen } from "@/hosted/agents/hosted-agent-detail";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountScope } from "@/platform/account-lifecycle";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export default function AgentDetailRoute() {
 	const params = useLocalSearchParams<{ id?: string | string[] }>();
 	const cache = useQueryClient();
@@ -36,7 +36,7 @@ export default function AgentDetailRoute() {
 	const deployment = inventory.inventory.data?.find((d) => d.agent_id === agentId);
 	if (deployment) return <DeploymentDetailScreen deploymentId={deployment.resource.id} />;
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				contentContainerClassName={webView(agentsIndexClasses.page)}
 				refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
@@ -61,6 +61,6 @@ export default function AgentDetailRoute() {
 					</>
 				)}
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

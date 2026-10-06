@@ -33,7 +33,7 @@ const ZAI = createBrandIcon(brandAssets.ZAI);
 import type { BrandIconComponent } from "@/components/brand-icon-tile";
 import type { FrameworkBrandIconId, ProviderBrandIconId } from "@/lib/entity-brand-icon-ids";
 
-export type BrandIconMetadata = {
+type BrandIconMetadata = {
 	icon: BrandIconComponent;
 	iconClassName?: string;
 	iconScale?: number;

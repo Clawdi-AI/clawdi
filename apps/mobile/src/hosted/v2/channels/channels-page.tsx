@@ -33,8 +33,8 @@ import { PageHeader } from "@/components/page-header";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { AppScrollView } from "@/components/ui/primitives";
 import { Text } from "@/components/ui/text";
+import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { ChannelCard } from "@/hosted/v2/channels/channel-card";
@@ -42,7 +42,7 @@ import { useChannelQuery } from "@/hosted/v2/channels/channels-hooks";
 import { ChannelCreate } from "@/hosted/v2/channels/connect-bot-dialog";
 import { routeParam } from "@/lib/route-params";
 import { useAccountScope } from "@/platform/account-lifecycle";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export function ChannelsScreen() {
 	const scope = useAccountScope();
 	return <ChannelsView key={`${scope.accountKey}:${scope.generation}`} />;
@@ -79,7 +79,7 @@ function ChannelsView() {
 	};
 	if (agentId && groups)
 		return (
-			<ReadScreen>
+			<SafeAreaScreen>
 				<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
 					<AgentSectionNavigation agentId={agentId} section="channels" />
 					<PageHeader title={agentSurfaceCopy.channels} description={scopedCopy.description} />
@@ -199,10 +199,10 @@ function ChannelsView() {
 						<ApiErrorPanel error={linked.error} onRetry={() => void linked.refetch()} />
 					) : null}
 				</AppScrollView>
-			</ReadScreen>
+			</SafeAreaScreen>
 		);
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
 				{agentId ? <AgentSectionNavigation agentId={agentId} section="channels" /> : null}
 				<PageHeader
@@ -372,9 +372,9 @@ function ChannelsView() {
 				<ActionButton
 					label="WhatsApp"
 					variant="ghost"
-					onPress={() => router.push("/channels/whatsapp")}
+					onPress={() => router.push("/native/channels/whatsapp")}
 				/>
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

@@ -11,7 +11,6 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { LibraryPage } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCardSkeleton } from "@/components/entity-card";
@@ -42,13 +41,14 @@ import { Text } from "@/components/ui/text";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { WebView, webView } from "@/components/ui/web-layout";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 
 type Memory = components["schemas"]["MemoryResponse"];
 
-export function useCloudMemories(search = "", category = "all") {
+function useCloudMemories(search = "", category = "all") {
 	const { cloud } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -76,9 +76,6 @@ export function useCloudMemories(search = "", category = "all") {
 	});
 }
 
-export function MemoryRow({ memory }: { memory: Memory; onOpen?: () => void }) {
-	return <MemoryCard memory={memory} />;
-}
 export function MemoriesScreen() {
 	const scope = useAccountScope();
 	return <MemoriesView key={`${scope.accountKey}:${scope.generation}`} />;

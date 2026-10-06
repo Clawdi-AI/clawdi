@@ -45,11 +45,13 @@ The previous deployment inventory screen is covered by the Agents inventory.
 
 Mobile-only tab hubs, Clerk management pages, development galleries and native
 form entry pages have no Web page counterpart. They reuse feature components;
-`src/pages/native/**` contains only the existing native form entry points.
+`src/pages/native/**` contains only the existing native form entry points,
+under `/native/**` so forms do not reserve Web resource keys.
 Web-only DOM, desktop, Stripe checkout and v1 legacy surfaces are not ported.
-`src/lib/i18n` owns mobile strings and reuses shared view copy where available.
+`src/lib/i18n/en.ts` owns mobile strings and reuses shared view copy where
+available; feature-specific translation files and unused keys are removed.
 
-## Components: reuse shared Web classes
+## Shared Web styling
 
 Web class strings live once in `@clawdi/shared/ui` (`packages/shared/src/ui`).
 Web components import them; mobile renders the same strings through

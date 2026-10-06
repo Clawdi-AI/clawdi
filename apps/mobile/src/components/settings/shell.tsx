@@ -2,13 +2,13 @@ import { settingsDialogClasses as styles } from "@clawdi/shared/ui";
 import { useRouter } from "expo-router";
 import { ArrowLeft, CreditCard, Key, SlidersHorizontal, WalletCards } from "lucide-react-native";
 import type { ReactNode } from "react";
-import { useMobileApi } from "@/components/api-provider";
 import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
 import { AppSafeAreaView, AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 
 export function SettingsShell({

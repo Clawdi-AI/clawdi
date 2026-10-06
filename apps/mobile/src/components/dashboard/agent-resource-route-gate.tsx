@@ -2,10 +2,10 @@ import { resolveAgentProjectScope, resolveAgentWorkspaceProjectId } from "@clawd
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { LibraryPage } from "@/components/detail/layout";
 import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
+import { useMobileApi } from "@/lib/api-provider";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 
 export function AgentResourceRouteGate({

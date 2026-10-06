@@ -4,7 +4,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react-native";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -18,6 +17,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
 import { Text } from "@/components/ui/text";
 import { WebView, webView } from "@/components/ui/web-layout";
+import { useMobileApi } from "@/lib/api-provider";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 

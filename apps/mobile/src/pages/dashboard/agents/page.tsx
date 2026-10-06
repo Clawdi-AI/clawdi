@@ -22,13 +22,13 @@ import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
-import { AppScrollView } from "@/components/ui/primitives";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Text } from "@/components/ui/text";
+import { AppScrollView } from "@/components/ui/view";
 import { WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { useCloudAgents } from "@/hooks/cloud-inventory";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export default function AgentsRoute() {
 	return (
 		<ProjectResourceBoundary>
@@ -43,7 +43,7 @@ function AgentsView({ project }: { project?: Project }) {
 	const hostedTiles = dashboard.tiles.filter((tile) => tile.source === "on-clawdi");
 	const otherTiles = dashboard.tiles.filter((tile) => tile.source !== "on-clawdi");
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView
 				contentContainerClassName={webView(agentsIndexClasses.page)}
 				refreshControl={
@@ -143,6 +143,6 @@ function AgentsView({ project }: { project?: Project }) {
 					/>
 				)}
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

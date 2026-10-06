@@ -156,9 +156,9 @@ export function SelectLabel(_props: SlotProps) {
 export function SelectSeparator(_props: SlotProps) {
 	return null;
 }
-export function SelectScrollUpButton(_props: SlotProps) {
+function SelectScrollUpButton(_props: SlotProps) {
 	return null;
 }
-export function SelectScrollDownButton(_props: SlotProps) {
+function SelectScrollDownButton(_props: SlotProps) {
 	return null;
 }

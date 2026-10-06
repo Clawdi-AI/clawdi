@@ -15,7 +15,6 @@ import { useEffect, useRef, useState } from "react";
 import { AppState, FlatList, Image, Share } from "react-native";
 import { withUniwind } from "uniwind";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { useMobileApi } from "@/components/api-provider";
 import { PageHeader } from "@/components/page-header";
 import { SessionTimelineRowView } from "@/components/sessions/message-list";
 import { AgentInline, DetailMeta, DetailStats, ModelBadge, Stat } from "@/components/sessions/meta";
@@ -29,15 +28,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
-import { AppScrollView } from "@/components/ui/primitives";
 import { Text } from "@/components/ui/text";
+import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { useMobileApi } from "@/lib/api-provider";
 import { useMobileRuntimeConfig } from "@/lib/config/runtime";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 const BrandImage = withUniwind(Image);
@@ -48,7 +48,7 @@ export function OpenShareScreen() {
 	const [value, setValue] = useState("");
 	const id = publicSessionInput(value);
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView contentContainerStyle={{ padding: 16 }}>
 				<WebView recipe={styles.page} className="px-0">
 					<Button
@@ -82,7 +82,7 @@ export function OpenShareScreen() {
 					</Button>
 				</WebView>
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }
 
@@ -288,7 +288,7 @@ function PublicSession({ id }: { id: string | null }) {
 			</WebView>
 		) : null;
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			{brand}
 			{action.error ? <ApiErrorPanel error={null} title={t("sessionDetail.failed")} /> : null}
 			<FlatList
@@ -411,6 +411,6 @@ function PublicSession({ id }: { id: string | null }) {
 					) : null
 				}
 			/>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

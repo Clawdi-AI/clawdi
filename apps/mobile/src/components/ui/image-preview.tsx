@@ -6,7 +6,8 @@ import { useAccountScope } from "@/platform/account-lifecycle";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 import { loadImageSource } from "@/platform/image-source";
 import { NativeButton } from "@/platform/native-controls";
-import { AppText, AppView } from "@/components/ui/primitives";
+import { Text as AppText } from "@/components/ui/text";
+import { AppView } from "@/components/ui/view";
 
 export function ImagePreview({ url, alt, close }: { url: string; alt: string; close: () => void }) {
 	const t = useI18n();

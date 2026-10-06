@@ -19,10 +19,10 @@ export function AlertDialog(props: ModalRootProps) {
 export function AlertDialogTrigger(props: ModalControlProps) {
 	return <ModalControl {...props} />;
 }
-export function AlertDialogPortal({ children }: SlotProps) {
+function AlertDialogPortal({ children }: SlotProps) {
 	return children;
 }
-export function AlertDialogOverlay(_props: SlotProps) {
+function AlertDialogOverlay(_props: SlotProps) {
 	return null;
 }
 /** Card-styled native Modal keeps asynchronous confirmations visible until accepted. */

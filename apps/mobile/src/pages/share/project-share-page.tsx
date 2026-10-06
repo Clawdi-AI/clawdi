@@ -9,21 +9,21 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
-import { useMobileApi } from "@/components/api-provider";
+import { BackButton } from "@/components/detail/back-link";
 import { PageHeader } from "@/components/page-header";
 import { shareTokenFromUrl } from "@/components/sharing/project-sharing-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { AppScrollView, AppText } from "@/components/ui/primitives";
 import { Separator } from "@/components/ui/separator";
-import { Text } from "@/components/ui/text";
+import { Text as AppText, Text } from "@/components/ui/text";
+import { AppScrollView } from "@/components/ui/view";
 import { WebText, webView } from "@/components/ui/web-layout";
-import { BackButton } from "@/hooks/cloud-inventory";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 export function ProjectJoinScreen() {
 	const scope = useAccountScope();
@@ -100,7 +100,7 @@ function JoinView({ initialLink }: { initialLink: string }) {
 			await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
 		});
 	return (
-		<ReadScreen>
+		<SafeAreaScreen>
 			<AppScrollView contentContainerClassName={webView(detailLayoutClasses.detailPage)}>
 				<BackButton />
 				<PageHeader title={t("sharing.joinLink")} />
@@ -168,6 +168,6 @@ function JoinView({ initialLink }: { initialLink: string }) {
 					<AppText accessibilityRole="alert">{t("sharing.joinFailed")}</AppText>
 				) : null}
 			</AppScrollView>
-		</ReadScreen>
+		</SafeAreaScreen>
 	);
 }

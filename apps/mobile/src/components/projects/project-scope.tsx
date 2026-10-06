@@ -2,19 +2,20 @@ import type { Project } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import { Fragment, type ReactNode } from "react";
-import { useMobileApi } from "@/components/api-provider";
+import { BackButton } from "@/components/detail/back-link";
 import { ChoiceSelect } from "@/components/detail/choice-select";
 import { PageHeaderSkeleton } from "@/components/page-header";
 import { useCloudProjects } from "@/components/projects/projects-surface";
 import { ResourceError } from "@/components/resource-error";
 import { Button } from "@/components/ui/button";
-import { AppText, AppView } from "@/components/ui/primitives";
-import { Text } from "@/components/ui/text";
-import { BackButton, isNotFound } from "@/hooks/cloud-inventory";
+import { Text as AppText, Text } from "@/components/ui/text";
+import { AppView } from "@/components/ui/view";
+import { isNotFound } from "@/hooks/cloud-inventory";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { projectRouteFilter } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
-import { ReadScreen } from "@/platform/safe-area-screen";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 export function useProject(id?: string) {
 	const scope = useAccountScope();
@@ -47,7 +48,7 @@ export function ProjectResourceBoundary({
 		(id && (!project.data || project.isError || project.data.id !== id))
 	) {
 		return (
-			<ReadScreen>
+			<SafeAreaScreen>
 				<AppView className="gap-4 p-6">
 					<BackButton />
 					{id && project.isPending ? (
@@ -70,7 +71,7 @@ export function ProjectResourceBoundary({
 						<Text>{t("projects.all")}</Text>
 					</Button>
 				</AppView>
-			</ReadScreen>
+			</SafeAreaScreen>
 		);
 	}
 	return (
