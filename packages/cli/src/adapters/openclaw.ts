@@ -22,16 +22,17 @@ import {
 	withManagedTargetRollback,
 } from "../runtime/managed-skill-delivery";
 import { mutateUserSkillTarget } from "../runtime/managed-skill-reservation";
-import type {
-	AgentAdapterCore,
-	RawSession,
-	RawSkill,
-	SessionBatchScan,
-	SessionEvent,
-	SessionScanRequest,
-	SessionScanResult,
-	SessionUserActivity,
-	SyncReadContext,
+import {
+	type AgentAdapterCore,
+	collectFromScan,
+	type RawSession,
+	type RawSkill,
+	type SessionBatchScan,
+	type SessionEvent,
+	type SessionScanRequest,
+	type SessionScanResult,
+	type SessionUserActivity,
+	type SyncReadContext,
 } from "./base";
 import { runOpenClawCommand, runOpenClawSdkCommand } from "./openclaw-command";
 import {
@@ -51,6 +52,7 @@ import {
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
+import { jsonlPathsWithin } from "./session-files";
 import {
 	addSessionModel,
 	describeSessionContent,
@@ -633,7 +635,7 @@ function officialTranscriptReader(entry: OfficialSessionEntry, context?: SyncRea
 			const encoded = JSON.stringify(message);
 			if (Buffer.byteLength(encoded) > SESSION_RECORD_MAX_BYTES)
 				throw new Error("OpenClaw transcript record exceeds supported source size");
-			digest.update(encoded).update("\\n");
+			digest.update(encoded).update("\n");
 			state.userActivity = mergeUserActivity(
 				state.userActivity,
 				computeOpenClawRealUserActivity([message], entry.key, entry),
@@ -932,8 +934,9 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			context?.signal.throwIfAborted();
 			return "events-v1" as const;
 		},
-		collect: (request: SessionScanRequest, context?: SyncReadContext) =>
-			this.collectSessions(request, context),
+		collect: collectFromScan((request, revisions, context) =>
+			this.scanSessions(request, revisions, context),
+		),
 		scan: (
 			request: SessionScanRequest,
 			knownSourceRevisions: ReadonlyMap<string, string>,
@@ -979,21 +982,6 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		return (
 			readCommandVersion("openclaw", ["--version"]) ?? readCommandVersion("openclaw", ["--help"])
 		);
-	}
-
-	private async collectSessions(
-		request: SessionScanRequest,
-		context?: SyncReadContext,
-	): Promise<SessionScanResult> {
-		context?.signal.throwIfAborted();
-		const scan = await this.scanSessions(request, new Map(), context);
-		const sessions: RawSession[] = [];
-		let dedupedCount = 0;
-		for await (const batch of scan.batches) {
-			sessions.push(...batch.sessions);
-			dedupedCount += batch.dedupedCount;
-		}
-		return { sessions, dedupedCount, coverage: scan.coverage };
 	}
 
 	private async scanSessions(
@@ -1052,30 +1040,16 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				coverage: "complete",
 			};
 		}
-		if (request.paths.length === 0) {
+		const sessionRoots = listAgentDirs().map((dir) => resolve(dir, "sessions"));
+		const paths = jsonlPathsWithin(request, sessionRoots);
+		if (!paths) {
 			return this.collectLegacySessions(
 				{ kind: "complete", projectFilter: request.projectFilter },
 				knownSourceRevisions,
 				context,
 			);
 		}
-		const sessionRoots = listAgentDirs().map((dir) => resolve(dir, "sessions"));
-		const transcriptPaths = new Set<string>();
-		for (const path of request.paths) {
-			const normalized = resolve(path);
-			if (
-				!isPathWithinRoots(normalized, sessionRoots) ||
-				basename(normalized) === "sessions.json" ||
-				!normalized.endsWith(".jsonl")
-			) {
-				return this.collectLegacySessions(
-					{ kind: "complete", projectFilter: request.projectFilter },
-					knownSourceRevisions,
-					context,
-				);
-			}
-			transcriptPaths.add(normalized);
-		}
+		const transcriptPaths = new Set(paths);
 
 		const collection = await this.collectLegacySessionsMatching(
 			request,
@@ -1143,11 +1117,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		}
 
 		const { projectFilter } = opts;
-		let absFilter: string | null = null;
-		if (projectFilter) {
-			const { resolve } = await import("node:path");
-			absFilter = resolve(projectFilter);
-		}
+		const absFilter = projectFilter ? resolve(projectFilter) : null;
 
 		const sessions: RawSession[] = [];
 		const observedLocalSessionIds: string[] = [];

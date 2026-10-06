@@ -1,25 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import inlineImage from "../../tests/fixtures/hermes-inline-image.json";
-import {
-	completeJsonlRecords,
-	reasoningContent,
-	toolResultContent,
-	visibleContentParts,
-} from "./rich-event-mapping";
+import { reasoningContent, toolResultContent, visibleContentParts } from "./rich-event-mapping";
 
 describe("rich event mapping", () => {
-	test("keeps complete JSONL records without a trailing newline and ignores a partial tail", () => {
-		const records = completeJsonlRecords('{"id":"first"}\n{"partial":\n{"id":"last"}');
-		expect(records).toEqual([
-			{ data: { id: "first" }, recordSeq: 0 },
-			{ data: { id: "last" }, recordSeq: 2 },
-		]);
-		expect(completeJsonlRecords('{"id":"first"}\n{"partial":')).toEqual([
-			{ data: { id: "first" }, recordSeq: 0 },
-		]);
-	});
-
 	test("keeps safe attachment references and degrades inline/local content to metadata", () => {
 		const inlineBytes = Buffer.from("inline image bytes");
 		const inlineData = inlineBytes.toString("base64");

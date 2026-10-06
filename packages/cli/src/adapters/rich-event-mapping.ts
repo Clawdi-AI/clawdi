@@ -16,24 +16,6 @@ export function jsonString(value: unknown): string | null {
 	return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-export function completeJsonlRecords(
-	content: string,
-): Array<{ data: JsonObject; recordSeq: number }> {
-	const records: Array<{ data: JsonObject; recordSeq: number }> = [];
-	const physicalLines = content.split("\n");
-	for (let recordSeq = 0; recordSeq < physicalLines.length; recordSeq++) {
-		const line = physicalLines[recordSeq]?.trim();
-		if (!line) continue;
-		try {
-			const data = jsonObject(JSON.parse(line));
-			if (data) records.push({ data, recordSeq });
-		} catch {
-			// A partially written tail or isolated malformed record is not publishable.
-		}
-	}
-	return records;
-}
-
 export function canonicalStructuredString(value: unknown): string | undefined {
 	if (value === undefined) return undefined;
 	if (typeof value === "string") {

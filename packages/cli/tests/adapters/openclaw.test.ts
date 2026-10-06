@@ -182,6 +182,16 @@ describe("OpenClawAdapter.detect", () => {
 });
 
 describe("OpenClawAdapter.collectSessions", () => {
+	it("preserves origin/main Gateway session bytes and localHash", async () => {
+		const stateRoot = join(tmpHome, ".openclaw");
+		const agentRoot = join(stateRoot, "agents", "main", "agent");
+		mkdirSync(agentRoot, { recursive: true });
+		writeFileSync(join(agentRoot, "openclaw-agent.sqlite"), "fixture");
+		writeFileSync(join(stateRoot, "sqlite-session-test"), "enabled");
+		rmSync(join(stateRoot, "agents", "main", "sessions", "sessions.json"));
+		await assertSessionGolden("openclaw-gateway", new OpenClawAdapter().sessions);
+	});
+
 	it("preserves origin/main legacy session bytes and localHash", async () => {
 		rmSync(join(tmpHome, "bin", "openclaw"));
 		process.env.PATH = join(tmpHome, "bin");

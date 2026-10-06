@@ -1,4 +1,4 @@
-import { type Dirent, existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
@@ -11,7 +11,7 @@ import type {
 	SessionScanResult,
 	SyncReadContext,
 } from "./base";
-import { getCodexHome, isPathWithinRoots, matchesProjectFilter } from "./paths";
+import { getCodexHome, matchesProjectFilter } from "./paths";
 import {
 	canonicalStructuredString,
 	type JsonObject,
@@ -22,6 +22,7 @@ import {
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
+import { jsonlPathsWithin, listJsonlFiles } from "./session-files";
 import { addSessionModel, describeSessionContent, JsonlSessionSource } from "./session-source";
 import { flatSkillModule } from "./skill-dir";
 import { readCommandVersion } from "./version";
@@ -284,36 +285,6 @@ function bindAssistantModel(draft: SessionEventDraft, model: string | null): Ses
 	return { ...draft, model };
 }
 
-function collectJsonlFiles(root: string): string[] {
-	const results: string[] = [];
-	if (!existsSync(root)) return results;
-
-	// Directory layout: YYYY/MM/DD/rollout-*.jsonl. Complete inventory
-	// collection walks every file; watcher and queue paths use the bounded
-	// collectors below.
-	const walk = (dir: string) => {
-		let entries: Dirent[];
-		try {
-			entries = readdirSync(dir, { withFileTypes: true }) as Dirent[];
-		} catch {
-			return;
-		}
-
-		for (const entry of entries) {
-			if (entry.name.startsWith(".")) continue;
-			const full = join(dir, entry.name);
-			if (entry.isDirectory()) {
-				walk(full);
-			} else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-				results.push(full);
-			}
-		}
-	};
-
-	walk(root);
-	return results;
-}
-
 function resolveProjectFilter(projectFilter?: string): string | null {
 	return projectFilter ? resolve(projectFilter) : null;
 }
@@ -469,21 +440,14 @@ export class CodexAdapter implements AgentAdapterCore {
 		context?.signal.throwIfAborted();
 		const absFilter = resolveProjectFilter(request.projectFilter);
 		if (request.kind === "paths") {
-			if (request.paths.length === 0) {
+			const paths = jsonlPathsWithin(request, sessionRoots());
+			if (!paths)
 				return this.collectSessions(
 					{ kind: "complete", projectFilter: request.projectFilter },
 					context,
 				);
-			}
-			const roots = sessionRoots().map((root) => resolve(root));
 			const files = new Set<string>();
-			for (const path of request.paths.map((candidate) => resolve(candidate))) {
-				if (!isPathWithinRoots(path, roots) || !path.endsWith(".jsonl")) {
-					return this.collectSessions(
-						{ kind: "complete", projectFilter: request.projectFilter },
-						context,
-					);
-				}
+			for (const path of paths) {
 				for (const [sessionId, knownPath] of this.sessionPaths) {
 					if (knownPath === path && !existsSync(path)) this.sessionPaths.delete(sessionId);
 				}
@@ -504,7 +468,7 @@ export class CodexAdapter implements AgentAdapterCore {
 		const sessionsById = new Map<string, RawSession>();
 		const pathsById = new Map<string, string>();
 		for (const root of sessionRoots()) {
-			for (const filePath of collectJsonlFiles(root)) {
+			for (const filePath of listJsonlFiles(root, { skipHidden: true })) {
 				if (context) await setImmediate(undefined, { signal: context.signal });
 				const session = await parseSessionFile(filePath, absFilter, context);
 				if (session && !sessionsById.has(session.localSessionId)) {

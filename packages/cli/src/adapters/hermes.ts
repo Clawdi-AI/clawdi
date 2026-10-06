@@ -11,19 +11,19 @@ import {
 } from "../lib/session-events";
 import { describeSkillKey, isValidSkillKey } from "../lib/skill-key";
 import { log } from "../serve/log";
-import type {
-	AgentAdapterCore,
-	RawSession,
-	SessionBatchScan,
-	SessionContentPart,
-	SessionEvent,
-	SessionEventDisplayMetadata,
-	SessionEventSemantics,
-	SessionMessage,
-	SessionScanRequest,
-	SessionScanResult,
-	SessionUserActivity,
-	SyncReadContext,
+import {
+	type AgentAdapterCore,
+	collectFromScan,
+	type RawSession,
+	type SessionBatchScan,
+	type SessionContentPart,
+	type SessionEvent,
+	type SessionEventDisplayMetadata,
+	type SessionEventSemantics,
+	type SessionMessage,
+	type SessionScanRequest,
+	type SessionUserActivity,
+	type SyncReadContext,
 } from "./base";
 import { getHermesHome } from "./paths";
 import {
@@ -34,6 +34,7 @@ import {
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
+import { EAGER_SESSION_MAX_BYTES, SESSION_RECORD_MAX_BYTES } from "./session-source";
 import { flatSkillModule } from "./skill-dir";
 import { openReadonlySqlite, type ReadonlySqliteDatabase } from "./sqlite";
 import { readCommandVersion } from "./version";
@@ -111,9 +112,7 @@ const HERMES_CONTENT_JSON_PREFIX = "\0json:";
 const HERMES_SESSION_SCAN_BATCH_SIZE = 32;
 // Bump when persisted Hermes rows map to different Session/Event bytes.
 const HERMES_SESSION_PROJECTION_REVISION = 4;
-const HERMES_EAGER_MAX_BYTES = 256 * 1024;
 const HERMES_EAGER_MAX_ROWS = 512;
-const HERMES_MESSAGE_MAX_BYTES = 8 * 1024 * 1024;
 
 function messagePayloadSizeSql(columns: readonly TableInfoRow[]): string {
 	const names = new Set(columns.map((column) => column.name));
@@ -140,7 +139,7 @@ function modernMessageSelectColumns(columns: readonly TableInfoRow[]): string {
 	const names = new Set(columns.map((column) => column.name));
 	const size = messagePayloadSizeSql(columns);
 	const bounded = (name: string) =>
-		`CASE WHEN (${size}) <= ${HERMES_MESSAGE_MAX_BYTES} THEN ${name} ELSE NULL END AS ${name}`;
+		`CASE WHEN (${size}) <= ${SESSION_RECORD_MAX_BYTES} THEN ${name} ELSE NULL END AS ${name}`;
 	return [
 		"id",
 		"role",
@@ -522,8 +521,9 @@ export class HermesAdapter implements AgentAdapterCore {
 	readonly agentType = "hermes" as const;
 	readonly sessions = {
 		contentProtocol: (context?: SyncReadContext) => this.getContentProtocol(context),
-		collect: (request: SessionScanRequest, context?: SyncReadContext) =>
-			this.collectSessions(request, context),
+		collect: collectFromScan((request, revisions, context) =>
+			this.scanSessions(request, revisions, context),
+		),
 		scan: (
 			request: SessionScanRequest,
 			knownSourceRevisions: ReadonlyMap<string, string>,
@@ -562,21 +562,6 @@ export class HermesAdapter implements AgentAdapterCore {
 		} finally {
 			db.close();
 		}
-	}
-
-	private async collectSessions(
-		request: SessionScanRequest,
-		context?: SyncReadContext,
-	): Promise<SessionScanResult> {
-		context?.signal.throwIfAborted();
-		const scan = await this.scanSessions(request, new Map(), context);
-		const sessions: RawSession[] = [];
-		let dedupedCount = 0;
-		for await (const batch of scan.batches) {
-			sessions.push(...batch.sessions);
-			dedupedCount += batch.dedupedCount;
-		}
-		return { sessions, dedupedCount, coverage: scan.coverage };
 	}
 
 	private async scanSessions(
@@ -740,7 +725,7 @@ export class HermesAdapter implements AgentAdapterCore {
 		const durationSeconds = durationSecondsBetween(startedAt, endedAt);
 		const stream =
 			context?.streaming ||
-			size.size_bytes > HERMES_EAGER_MAX_BYTES ||
+			size.size_bytes > EAGER_SESSION_MAX_BYTES ||
 			size.row_count > HERMES_EAGER_MAX_ROWS;
 		const path = stateDbPath();
 		const readEvents =
@@ -755,8 +740,8 @@ export class HermesAdapter implements AgentAdapterCore {
 					MessageRow | ModernMessageRow
 				>);
 		for (const message of messageRows) {
-			if ("source_bytes" in message && message.source_bytes > HERMES_MESSAGE_MAX_BYTES)
-				throw new Error(`Hermes message exceeds ${HERMES_MESSAGE_MAX_BYTES} source bytes`);
+			if ("source_bytes" in message && message.source_bytes > SESSION_RECORD_MAX_BYTES)
+				throw new Error(`Hermes message exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`);
 		}
 		const events = modern
 			? sequenceSessionEvents(
@@ -840,13 +825,13 @@ export class HermesAdapter implements AgentAdapterCore {
 		try {
 			let count = 0;
 			const statement = db.prepare(
-				`SELECT role, CASE WHEN octet_length(content) <= ${HERMES_MESSAGE_MAX_BYTES} THEN content ELSE NULL END AS content, octet_length(content) AS source_bytes, timestamp FROM messages WHERE session_id = ? AND role IN ('user', 'assistant') AND content IS NOT NULL ORDER BY timestamp ASC`,
+				`SELECT role, CASE WHEN octet_length(content) <= ${SESSION_RECORD_MAX_BYTES} THEN content ELSE NULL END AS content, octet_length(content) AS source_bytes, timestamp FROM messages WHERE session_id = ? AND role IN ('user', 'assistant') AND content IS NOT NULL ORDER BY timestamp ASC`,
 			);
 			for (const value of statement.iterate(row.id)) {
 				context?.signal.throwIfAborted();
 				const message = value as MessageRow & { source_bytes: number };
-				if (message.source_bytes > HERMES_MESSAGE_MAX_BYTES)
-					throw new Error(`Hermes legacy message exceeds ${HERMES_MESSAGE_MAX_BYTES} source bytes`);
+				if (message.source_bytes > SESSION_RECORD_MAX_BYTES)
+					throw new Error(`Hermes legacy message exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`);
 				yield {
 					role: message.role as "user" | "assistant",
 					content: message.content ?? "",
@@ -895,9 +880,9 @@ export class HermesAdapter implements AgentAdapterCore {
 			for (const value of readers.messages.iterate(row.id, lastId)) {
 				context?.signal.throwIfAborted();
 				const message = value as ModernMessageRow;
-				if (message.source_bytes > HERMES_MESSAGE_MAX_BYTES)
+				if (message.source_bytes > SESSION_RECORD_MAX_BYTES)
 					throw new Error(
-						`Hermes message ${message.id} exceeds ${HERMES_MESSAGE_MAX_BYTES} source bytes`,
+						`Hermes message ${message.id} exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`,
 					);
 				const events = sequenceSessionEvents(
 					hermesEventDrafts(message, row.id, parseModelField(row.model)),

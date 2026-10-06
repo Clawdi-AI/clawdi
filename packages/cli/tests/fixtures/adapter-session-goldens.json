@@ -70,5 +70,13 @@
 			"localHash": "9bb1fe3fd59a8fcc4116bb43bd8697dc9f7285b38efce7bc502549f317bcc88c",
 			"sourceRevision": "jsonl-v1:906:b35e689cd1b4d239d7ded0293c52ed74bf0c825da27781c670b5b8ef3ee0425b"
 		}
+	],
+	"openclaw-gateway": [
+		{
+			"id": "sqlite-session-001",
+			"eventNdjson": "{\"event_id\":\"399fee4e18a3ef1a451d54e438ca147808d14f318f91f099ceb48e4ef7130af4\",\"parts\":[{\"text\":\"kept question\",\"type\":\"text\"}],\"role\":\"user\",\"seq\":0,\"source\":{\"adapter\":\"openclaw\",\"part_index\":0,\"record_id\":\"active-user\",\"record_seq\":0,\"session_key\":\"main:sqlite-session-001\"},\"timestamp\":\"2026-04-15T10:00:00.000Z\",\"type\":\"message\"}\n{\"event_id\":\"634d8256c78adb9420d6ed4a4440454d074f89ccc43c081267ab643b8cde8d10\",\"model\":\"gpt-5.6-sol\",\"parts\":[{\"text\":\"kept answer\",\"type\":\"text\"}],\"role\":\"assistant\",\"seq\":1,\"source\":{\"adapter\":\"openclaw\",\"part_index\":0,\"record_id\":\"active-assistant\",\"record_seq\":1,\"session_key\":\"main:sqlite-session-001\"},\"timestamp\":\"2026-04-15T10:00:05.000Z\",\"type\":\"message\"}\n",
+			"localHash": "d8a262e35ea8d414f2e4c8ea2fa8a259dfd32665b462db2df2e30be61b3faa3a",
+			"sourceRevision": "sqlite-session-001:1776247205000"
+		}
 	]
 }

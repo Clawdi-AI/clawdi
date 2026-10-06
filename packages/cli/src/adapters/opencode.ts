@@ -29,7 +29,11 @@ import {
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
-import { describeSessionContent, SESSION_RECORD_MAX_BYTES } from "./session-source";
+import {
+	describeSessionContent,
+	EAGER_SESSION_MAX_BYTES,
+	SESSION_RECORD_MAX_BYTES,
+} from "./session-source";
 import { openReadonlySqlite, type ReadonlySqliteDatabase } from "./sqlite";
 import { readCommandVersion } from "./version";
 
@@ -546,7 +550,7 @@ async function parseSession(
 	};
 	const description = await describeSessionContent(
 		readEvents,
-		!context?.streaming && size.bytes <= 256 * 1024,
+		!context?.streaming && size.bytes <= EAGER_SESSION_MAX_BYTES,
 	);
 	if (description.eventCount === 0) return null;
 	const eventModels = description.modelsUsed;

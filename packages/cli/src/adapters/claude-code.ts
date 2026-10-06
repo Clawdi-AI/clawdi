@@ -11,7 +11,7 @@ import type {
 	SessionScanResult,
 	SyncReadContext,
 } from "./base";
-import { getClaudeHome, isPathWithinRoots, matchesProjectFilter } from "./paths";
+import { getClaudeHome, matchesProjectFilter } from "./paths";
 import {
 	canonicalStructuredString,
 	type JsonObject,
@@ -22,7 +22,8 @@ import {
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
-import { describeSessionContent, JsonlSessionSource } from "./session-source";
+import { jsonlPathsWithin } from "./session-files";
+import { addSessionModel, describeSessionContent, JsonlSessionSource } from "./session-source";
 import { flatSkillModule } from "./skill-dir";
 import { withSessionIndex } from "./sqlite";
 import { readCommandVersion } from "./version";
@@ -191,22 +192,16 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		const absFilter = projectFilter ? resolve(projectFilter) : null;
 		if (request.kind === "paths") {
 			const root = resolve(projectsDir());
+			const paths = jsonlPathsWithin(request, [root]);
+			if (!paths) return this.collectSessions({ kind: "complete", projectFilter }, context);
 			const projectDirNames = new Set<string>();
-			for (const candidate of request.paths) {
-				const path = resolve(candidate);
+			for (const path of paths) {
 				const parts = relative(root, path).split(/[\\/]/);
-				if (
-					!isPathWithinRoots(path, [root]) ||
-					parts.length !== 2 ||
-					!parts[1].endsWith(".jsonl")
-				) {
+				if (parts.length !== 2)
 					return this.collectSessions({ kind: "complete", projectFilter }, context);
-				}
 				projectDirNames.add(parts[0]);
 			}
-			if (projectDirNames.size > 0) {
-				return this.collectProjectSessions([...projectDirNames], absFilter, "partial", context);
-			}
+			return this.collectProjectSessions([...projectDirNames], absFilter, "partial", context);
 		}
 
 		let projectDirs = readdirSync(projectsDir(), { withFileTypes: true }).filter((d) =>
@@ -369,8 +364,10 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 
 			if (entry.timestamp) {
 				const ts = new Date(entry.timestamp);
-				if (!startedAt) startedAt = ts;
-				endedAt = ts;
+				if (!Number.isNaN(ts.getTime())) {
+					startedAt ??= ts;
+					endedAt = ts;
+				}
 			}
 
 			if (entry.cwd && !projectPath) {
@@ -390,7 +387,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			}
 
 			if (role === "assistant" && msg?.model) {
-				modelsUsed.add(msg.model);
+				addSessionModel(modelsUsed, msg.model);
 				model = msg.model;
 			}
 
