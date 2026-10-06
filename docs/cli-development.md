@@ -306,6 +306,20 @@ Pi Skills are managed as directories under `$PI_CODING_AGENT_DIR/skills`
 (default `~/.pi/agent/skills`), including setup's bundled `clawdi` Skill and
 connected Project Skills. Pi's single-file `.md` skills are not managed.
 
+DeepSeek Harness (`dsh`, npm `@deepseek-ai/dsh`) supports local detection,
+`dsh --version`, and directory Skills under `$DSH_HOME/skills` (default
+`~/.dsh/skills`). Setup installs the bundled Skill at `skills/clawdi` and
+shows a manual MCP configuration hint; it does not write Cordis patches.
+Session sync and Hosted runtimes are not supported. Single-file `.md` skills
+are not managed.
+
+```bash
+bash scripts/test.sh cli src/adapters/dsh.test.ts tests/commands/setup.test.ts
+```
+
+Done: dsh registers only the `skills` module and setup installs its bundled
+Skill without modifying MCP configuration.
+
 Skill keys preserve local directory spelling: each of up to four `/`-separated
 components starts with an ASCII letter or digit and then uses letters, digits,
 `.`, `_`, or `-`; total length is at most 200 characters. Nested keys cannot end

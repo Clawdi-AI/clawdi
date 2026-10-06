@@ -5,6 +5,7 @@ export const DESKTOP_AGENT_TYPES = [
 	"hermes",
 	"pi",
 	"opencode",
+	"dsh",
 ] as const;
 
 export type DesktopAgentType = (typeof DESKTOP_AGENT_TYPES)[number];

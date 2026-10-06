@@ -31,6 +31,7 @@ _AGENT_TYPE_LABELS = {
     "codex": "Codex",
     "pi": "Pi",
     "opencode": "OpenCode",
+    "dsh": "DeepSeek Harness",
 }
 
 

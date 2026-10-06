@@ -3,6 +3,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node
 import { join } from "node:path";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
 import { CodexAdapter } from "../../src/adapters/codex";
+import { DshAdapter } from "../../src/adapters/dsh";
 import { HermesAdapter } from "../../src/adapters/hermes";
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
 import { PiAdapter } from "../../src/adapters/pi";
@@ -20,6 +21,7 @@ describe.each([
 	["hermes", HermesAdapter, [".hermes", "skills"], ["core/demo", "linked", "source/linked-source"]],
 	["openclaw", OpenClawAdapter, [".openclaw", "agents", "main", "skills"], ["demo", "linked"]],
 	["pi", PiAdapter, [".pi", "agent", "skills"], ["demo", "linked"]],
+	["dsh", DshAdapter, [".dsh", "skills"], ["demo", "linked"]],
 ] as const)("%s Skill discovery contract", (agent, Adapter, rootParts, expectedKeys) => {
 	let tmpHome: string;
 	let originalEnv: NodeJS.ProcessEnv;
@@ -28,9 +30,9 @@ describe.each([
 		originalEnv = { ...process.env };
 		snapshotAndClearAgentHomeOverrides();
 		delete process.env.OPENCLAW_AGENT_ID;
-		tmpHome = copyFixtureToTmp(agent);
+		tmpHome = copyFixtureToTmp(agent === "dsh" ? "pi" : agent);
 		process.env.HOME = tmpHome;
-		if (agent === "pi") {
+		if (agent === "pi" || agent === "dsh") {
 			const demo = join(tmpHome, ...rootParts, "demo");
 			mkdirSync(demo, { recursive: true });
 			writeFileSync(join(demo, "SKILL.md"), "---\nname: demo\ndescription: Demo skill\n---\n");

@@ -90,6 +90,7 @@ const TYPE_LABEL: Record<string, string> = {
 	openclaw: "OpenClaw",
 	opencode: "OpenCode",
 	pi: "Pi",
+	dsh: "DeepSeek Harness",
 };
 
 export function agentTypeLabel(type: string | null | undefined): string {

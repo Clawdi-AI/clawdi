@@ -99,6 +99,36 @@ def _assert_agent_list_response_matches_environment(
 
 
 @pytest.mark.asyncio
+async def test_dsh_default_label_is_visible_on_canonical_and_legacy_agent_routes(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    from app.services.agent_environments import register_agent_environment
+
+    registered = await register_agent_environment(
+        db_session,
+        user_id=seed_user.id,
+        environment_id=uuid.uuid4(),
+        machine_id="dsh-label-machine",
+        machine_name="Dsh Label Laptop",
+        agent_type="dsh",
+        agent_version="0.2.0-rc.2",
+        os_name="linux",
+        sort_order=0,
+    )
+    assert registered.env.default_name == "DeepSeek Harness"
+
+    canonical = await client.get(f"/v1/agents/{registered.env.id}")
+    legacy = await client.get(f"/v1/environments/{registered.env.id}")
+    _assert_agent_response_matches_environment(canonical, legacy)
+    assert canonical.status_code == 200, canonical.text
+    assert canonical.json()["agent_type"] == "dsh"
+    assert canonical.json()["default_name"] == "DeepSeek Harness"
+    assert canonical.json()["name"] == "DeepSeek Harness"
+
+
+@pytest.mark.asyncio
 async def test_oauth_cli_rebind_preserves_agent_identity(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

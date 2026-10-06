@@ -129,6 +129,46 @@ afterEach(() => {
 });
 
 describe("setup daemon install", () => {
+	it.each(["default", "override"])(
+		"registers dsh Skills and preserves Cordis patches at the %s home",
+		async (source) => {
+			const { captured } = installEnvironmentMock("env-dsh");
+			const dshHome = source === "default" ? join(home, ".dsh") : join(home, "custom-dsh");
+			if (source === "override") process.env.DSH_HOME = dshHome;
+			mkdirSync(join(dshHome, "profiles", "headless"), { recursive: true });
+			const patch = "plugins:\n  custom: !!js fixture-expression\n";
+			const patchPaths = [
+				join(dshHome, "cordis.patch.yml"),
+				join(dshHome, "profiles", "headless", "cordis.patch.yml"),
+			];
+			for (const path of patchPaths) writeFileSync(path, patch);
+			writeExecutable(
+				join(home, "bin", "dsh"),
+				'#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/dsh-args"\n[ "$*" = "--version" ] || exit 99\nprintf "0.2.0-rc.2\\n"\n',
+			);
+
+			await setup({ agent: "dsh", yes: true, daemon: false });
+
+			const registration = captured.find(
+				(req) => req.method === "POST" && req.path === "/v1/agents",
+			);
+			expect(registration?.body).toMatchObject({
+				agent_type: "dsh",
+				agent_version: "0.2.0-rc.2",
+				adapter_modules: ["skills"],
+			});
+			expect(
+				JSON.parse(readFileSync(join(home, ".clawdi", "environments", "dsh.json"), "utf8")),
+			).toMatchObject({ id: "env-dsh", agentType: "dsh" });
+			const target = join(dshHome, "skills", "clawdi");
+			expect(existsSync(join(target, "SKILL.md"))).toBe(true);
+			expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
+			for (const path of patchPaths) expect(readFileSync(path, "utf8")).toBe(patch);
+			expect(readFileSync(join(home, "dsh-args"), "utf8").trim()).toBe("--version");
+			expect(consoleOutput.join("\n")).toContain("configure Clawdi MCP manually");
+		},
+	);
+
 	it("registers MCP when the idempotency probe fails", async () => {
 		installEnvironmentMock("env-codex-probe");
 		writeExecutable(

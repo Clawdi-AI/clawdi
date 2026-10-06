@@ -1,6 +1,6 @@
 import { type Dirent, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -94,6 +94,15 @@ export function getGhConfigHome(): string {
 /** Hermes: honors `$HERMES_HOME`; fallback `~/.hermes`. */
 export function getHermesHome(): string {
 	return process.env.HERMES_HOME?.trim() || join(home(), ".hermes");
+}
+
+/** DeepSeek Harness: honors `$DSH_HOME`; fallback `~/.dsh`. */
+export function getDshHome(): string {
+	const override = process.env.DSH_HOME;
+	const path = override?.trim() ? override : join(home(), ".dsh");
+	if (path === "~") return home();
+	if (path.startsWith("~/") || path.startsWith("~\\")) return resolve(join(home(), path.slice(2)));
+	return resolve(path);
 }
 
 /** Pi coding agent: honors `$PI_CODING_AGENT_DIR`; fallback `~/.pi/agent`. */

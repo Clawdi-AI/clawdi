@@ -5,6 +5,7 @@ export const FRAMEWORK_BRAND_ICON_IDS = [
 	"codex",
 	"pi",
 	"opencode",
+	"dsh",
 ] as const;
 export type FrameworkBrandIconId = (typeof FRAMEWORK_BRAND_ICON_IDS)[number];
 

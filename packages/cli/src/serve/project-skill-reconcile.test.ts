@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SkillModule } from "../adapters/base";
 import { CodexAdapter } from "../adapters/codex";
+import { DshAdapter } from "../adapters/dsh";
 import { PiAdapter } from "../adapters/pi";
 import { ApiClient } from "../lib/api-client";
 import {
@@ -31,6 +32,7 @@ describe("Connected Project Skill reconcile", () => {
 	let originalClawdiHome: string | undefined;
 	let originalCodexHome: string | undefined;
 	let originalPiHome: string | undefined;
+	let originalDshHome: string | undefined;
 	let originalApiUrl: string | undefined;
 	let originalFetch: typeof fetch;
 
@@ -40,12 +42,14 @@ describe("Connected Project Skill reconcile", () => {
 		originalClawdiHome = process.env.CLAWDI_HOME;
 		originalCodexHome = process.env.CODEX_HOME;
 		originalPiHome = process.env.PI_CODING_AGENT_DIR;
+		originalDshHome = process.env.DSH_HOME;
 		originalApiUrl = process.env.CLAWDI_API_URL;
 		originalFetch = globalThis.fetch;
 		process.env.HOME = root;
 		process.env.CLAWDI_HOME = join(root, ".clawdi");
 		process.env.CODEX_HOME = join(root, ".codex");
 		process.env.PI_CODING_AGENT_DIR = join(root, ".pi", "agent");
+		process.env.DSH_HOME = join(root, ".dsh");
 		process.env.CLAWDI_API_URL = apiOrigin;
 	});
 
@@ -59,6 +63,8 @@ describe("Connected Project Skill reconcile", () => {
 		else process.env.CODEX_HOME = originalCodexHome;
 		if (originalPiHome === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = originalPiHome;
+		if (originalDshHome === undefined) delete process.env.DSH_HOME;
+		else process.env.DSH_HOME = originalDshHome;
 		if (originalApiUrl === undefined) delete process.env.CLAWDI_API_URL;
 		else process.env.CLAWDI_API_URL = originalApiUrl;
 		rmSync(root, { recursive: true, force: true });
@@ -125,6 +131,7 @@ describe("Connected Project Skill reconcile", () => {
 	it.each([
 		["Codex", CodexAdapter],
 		["Pi", PiAdapter],
+		["DeepSeek Harness", DshAdapter],
 	] as const)(
 		"installs the desired inventory through %s and records ownership",
 		async (_name, Adapter) => {

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentFrameworkIcon } from "@/components/agent-framework-icon";
 import { FRAMEWORK_BRAND_ICON_IDS } from "@/components/entity-brand-icon-ids";
-import { frameworkBrandIcon } from "@/components/entity-brand-icons";
+import { frameworkBrandIcon, providerBrandIcon } from "@/components/entity-brand-icons";
 
 const FRAMEWORKS = {
 	openclaw: { label: "OpenClaw" },
@@ -11,7 +11,10 @@ const FRAMEWORKS = {
 	codex: { label: "Codex" },
 	pi: { label: "Pi" },
 	opencode: { label: "OpenCode" },
+	dsh: { label: "DeepSeek Harness" },
 } as const;
+
+const ICON_TITLES: Record<string, string> = { opencode: "opencode", dsh: "DeepSeek" };
 
 describe("AgentFrameworkIcon", () => {
 	test("renders all supported framework IDs as accessible official LobeHub SVG components", () => {
@@ -25,10 +28,14 @@ describe("AgentFrameworkIcon", () => {
 			expect(markup).toContain("<svg");
 			expect(markup).toContain('role="img"');
 			expect(markup).toContain(`aria-label="${label}"`);
-			expect(markup).toContain(`<title>${id === "opencode" ? "opencode" : label}</title>`);
+			expect(markup).toContain(`<title>${ICON_TITLES[id] ?? label}</title>`);
 			expect(markup).toContain('data-icon-source="lobehub"');
 			expect(markup).not.toContain("<img");
 		}
+	});
+
+	test("reuses the DeepSeek provider brand for dsh", () => {
+		expect(frameworkBrandIcon("dsh")?.icon).toBe(providerBrandIcon("deepseek")?.icon);
 	});
 
 	test("preserves the claude_code wire alias", () => {
