@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { OpenClawSdkExitError, runOpenClawSdkCommand } from "./openclaw-command";
+import {
+	OpenClawSdkExitError,
+	runOpenClawCommand,
+	runOpenClawSdkCommand,
+} from "./openclaw-command";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -19,6 +24,114 @@ function sdkFixture(source: string): string {
 const params = { agentId: "main", sessionId: "fixture", sessionKey: "agent:main:main" };
 
 describe("OpenClaw transcript SDK command", () => {
+	test("uses setpriv without pinning OpenClaw state and preserves fd 3", async () => {
+		const root = mkdtempSync(join(tmpdir(), "projection-rev7-runtime-user-"));
+		roots.push(root);
+		chmodSync(root, 0o755);
+		const bin = join(root, "bin");
+		mkdirSync(bin);
+		chmodSync(bin, 0o755);
+		const commandOutput = join(root, "command-env.txt");
+		writeFileSync(commandOutput, "", { mode: 0o666 });
+		chmodSync(commandOutput, 0o666);
+		const setprivArgs = join(root, "setpriv-args.txt");
+		writeFileSync(setprivArgs, "", { mode: 0o666 });
+		chmodSync(setprivArgs, 0o666);
+		const privilegeDropBinary = ["set", "priv"].join("");
+		writeFileSync(
+			join(bin, privilegeDropBinary),
+			`#!/bin/sh
+printf '%s\\n' "$*" > "$CLAWDI_SET_PRIV_ARGS"
+while [ "$1" != "--" ]; do shift; done
+shift
+export CLAWDI_TEST_SETUID=65534
+exec "$@"
+`,
+			{ mode: 0o755 },
+		);
+		writeFileSync(
+			join(bin, "openclaw"),
+			`#!/bin/sh
+printf '%s|%s|%s|%s|%s\\n' "$CLAWDI_TEST_SETUID" "$OPENCLAW_STATE_DIR" "$OPENCLAW_CONFIG_PATH" "$HOME" "$USER" > "$CLAWDI_TEST_OUTPUT"
+printf '{"ok":true}\\n'
+`,
+			{ mode: 0o755 },
+		);
+		const sdkPath = join(root, "sdk.mjs");
+		writeFileSync(
+			sdkPath,
+			`console.log("sdk stdout log");
+export function readVisibleSessionTranscriptMessageEntries() {
+  return [{ entryId: "runtime-user", message: { role: "user", content: JSON.stringify({ marker: process.env.CLAWDI_TEST_SETUID ?? null, state: process.env.OPENCLAW_STATE_DIR ?? null, config: process.env.OPENCLAW_CONFIG_PATH ?? null }) } }];
+}
+`,
+			{ mode: 0o644 },
+		);
+
+		const keys = [
+			"CLAWDI_RUNTIME_USER",
+			"CLAWDI_RUNTIME_UID",
+			"CLAWDI_RUNTIME_GID",
+			"CLAWDI_TEST_OUTPUT",
+			"CLAWDI_SET_PRIV_ARGS",
+			"OPENCLAW_STATE_DIR",
+			"OPENCLAW_CONFIG_PATH",
+			"HOME",
+			"PATH",
+		] as const;
+		const previous = new Map(keys.map((key) => [key, process.env[key]]));
+		const originalGetuid = process.getuid;
+		const originalGeteuid = process.geteuid;
+		try {
+			process.env.CLAWDI_RUNTIME_USER = "projection-agent";
+			process.env.CLAWDI_RUNTIME_UID = "65534";
+			process.env.CLAWDI_RUNTIME_GID = "65534";
+			process.env.CLAWDI_TEST_OUTPUT = commandOutput;
+			process.env.CLAWDI_SET_PRIV_ARGS = setprivArgs;
+			process.env.OPENCLAW_STATE_DIR = "/wrong/state";
+			process.env.OPENCLAW_CONFIG_PATH = "/wrong/config";
+			process.env.HOME = root;
+			process.env.PATH = `${bin}:/usr/local/bin:/usr/bin:/bin`;
+			Object.defineProperty(process, "getuid", { configurable: true, value: () => 0 });
+			Object.defineProperty(process, "geteuid", { configurable: true, value: () => 0 });
+
+			expect(await runOpenClawCommand(["--json"], { timeout: 5000, maxBuffer: 4096 })).toBe(
+				'{"ok":true}\n',
+			);
+			expect(readFileSync(commandOutput, "utf8").trim().split("|")).toEqual([
+				"65534",
+				"",
+				"",
+				root,
+				"projection-agent",
+			]);
+			const commandDropArgs = readFileSync(setprivArgs, "utf8");
+			expect(commandDropArgs).toContain("--reuid=65534");
+
+			const entries = JSON.parse(
+				await runOpenClawSdkCommand(
+					sdkPath,
+					{ agentId: "main", sessionId: "fixture", sessionKey: "agent:main:main" },
+					{ timeout: 5000, maxBuffer: 4096 },
+				),
+			) as Array<{ entryId: string; message: { content: string } }>;
+			expect(entries[0]?.entryId).toBe("runtime-user");
+			expect(JSON.parse(entries[0]?.message.content ?? "null")).toEqual({
+				marker: "65534",
+				state: null,
+				config: null,
+			});
+			expect(readFileSync(setprivArgs, "utf8")).toContain("--reuid=65534");
+		} finally {
+			Object.defineProperty(process, "getuid", { configurable: true, value: originalGetuid });
+			Object.defineProperty(process, "geteuid", { configurable: true, value: originalGeteuid });
+			for (const [key, value] of previous) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+		}
+	});
+
 	test("reads entries on the dedicated pipe despite SDK stdout logging", async () => {
 		const entries = [{ entryId: "fixture-user", message: { role: "user", content: "Prompt" } }];
 		const path = sdkFixture(`

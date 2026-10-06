@@ -6,6 +6,10 @@ import { resolveRuntimeUserCommand } from "../runtime/runtime-user-command";
 
 const execFileAsync = promisify(execFile);
 let commandTail: Promise<void> = Promise.resolve();
+const OPENCLAW_COMMAND_ENV_OVERRIDES = {
+	OPENCLAW_STATE_DIR: undefined,
+	OPENCLAW_CONFIG_PATH: undefined,
+} as const;
 
 export class OpenClawSdkExitError extends Error {
 	constructor(
@@ -53,6 +57,7 @@ export function runOpenClawSdkCommand(
 						JSON.stringify(params),
 					],
 					process.env.HOME ?? homedir(),
+					{ environmentOverrides: OPENCLAW_COMMAND_ENV_OVERRIDES },
 				);
 				const running = spawn(child.command, child.args, {
 					stdio: ["ignore", "ignore", "ignore", "pipe"],
@@ -110,7 +115,9 @@ function runOpenClawSubprocess(
 	return enqueueOpenClawCommand(async () => {
 		options.signal?.throwIfAborted();
 		const { signal, ...limits } = options;
-		const child = resolveRuntimeUserCommand(executable, args, process.env.HOME ?? homedir());
+		const child = resolveRuntimeUserCommand(executable, args, process.env.HOME ?? homedir(), {
+			environmentOverrides: OPENCLAW_COMMAND_ENV_OVERRIDES,
+		});
 		const running = execFileAsync(child.command, child.args, {
 			...limits,
 			killSignal: "SIGKILL",

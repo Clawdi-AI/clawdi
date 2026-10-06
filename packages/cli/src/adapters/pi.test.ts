@@ -60,6 +60,21 @@ describe("Pi session adapter", () => {
 		]);
 	});
 
+	test("resolves a target after an unrelated oversized file", async () => {
+		const { adapter, file } = fixtureSession();
+		const sessionDir = dirname(file);
+		const target = join(sessionDir, "target.jsonl");
+		renameSync(file, target);
+		writeFileSync(
+			join(sessionDir, "a-unrelated.jsonl"),
+			`${JSON.stringify({ type: "session", version: 3, id: "unrelated", cwd: "/workspace/demo" })}\n{"text":"${"x".repeat(SESSION_RECORD_MAX_BYTES)}"}`,
+		);
+
+		expect((await adapter.sessions.resolve("pi.fixture-session"))?.localSessionId).toBe(
+			"pi.fixture-session",
+		);
+	});
+
 	test.each(["environment", "global settings"])(
 		"collects, resolves, and watches the directory from %s",
 		async (source) => {
