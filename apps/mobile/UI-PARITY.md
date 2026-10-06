@@ -64,8 +64,10 @@ Web components import them; mobile renders the same strings through
 - the result splits into view and text classes, because RN text does not
   inherit (`TextClassContext` carries text classes to nested `Text`/`Icon`).
 
-`bun run theme` safelists every class reachable from `packages/shared/src/ui`
-so Uniwind compiles them; `scripts/theme.test.ts` fails when it is stale.
+`bun run theme` safelists every string literal (including template chunks) in
+`packages/shared/src/ui` and `packages/shared/src/view` so Uniwind compiles
+view tables such as tones and tints too; `src/lib/theme.test.ts` fails when the
+safelist is stale or misses a shared view class table.
 
 Porting a Web component:
 
@@ -189,7 +191,7 @@ the existing server-side expiration/cancellation semantics.
 `src/platform/native-confirmation.ts`. String yes/no prompts use `Alert.alert`
 with destructive style. The controller locks duplicate taps, fences stale
 completions and re-presents the same prompt with safe failure copy on rejection.
-Rich content/secondary actions use `rich-confirm-action.tsx`'s native sheet;
+Rich content/secondary actions use `ConfirmAction`'s native bottom sheet;
 forms use route sheets. Guarded callbacks must return their Promise and reject
 on failure; use `useAuthAction.runOrThrow` when using that action wrapper.
 

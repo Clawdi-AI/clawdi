@@ -57,7 +57,6 @@ module.exports = ({ config }) => {
 		orientation: "portrait",
 		userInterfaceStyle: "automatic",
 		platforms: ["ios", "android"],
-		newArchEnabled: true,
 		experiments: {
 			typedRoutes: true,
 		},

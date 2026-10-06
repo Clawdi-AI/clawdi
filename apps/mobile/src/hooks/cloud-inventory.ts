@@ -78,17 +78,6 @@ export function useCloudSession(sessionId: string | undefined) {
 	});
 }
 
-export function agentDisplayName(
-	agent: Pick<CloudAgent, "display_name" | "name" | "default_name" | "machine_name">,
-) {
-	return (
-		agent.display_name?.trim() ||
-		agent.name.trim() ||
-		agent.default_name?.trim() ||
-		agent.machine_name
-	);
-}
-
 export function formatDate(value: string | null | undefined): string | null {
 	if (!value) return null;
 	const date = new Date(value);

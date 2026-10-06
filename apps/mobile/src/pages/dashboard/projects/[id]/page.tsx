@@ -1,5 +1,6 @@
 import { HERO_GRID_CLASS, PROJECT_STAT_TILE_TINTS, projectDetailClasses } from "@clawdi/shared/ui";
 import {
+	agentDisplayName,
 	displayProjectName,
 	identityFor,
 	OVERVIEW_COPY,
@@ -30,7 +31,7 @@ import { Text } from "@/components/ui/text";
 import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { ProjectVaultCatalog } from "@/components/vault/project-vault-catalog";
-import { agentDisplayName, isNotFound, useCloudAgents } from "@/hooks/cloud-inventory";
+import { isNotFound, useCloudAgents } from "@/hooks/cloud-inventory";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { projectRouteFilter, routeParam } from "@/lib/route-params";

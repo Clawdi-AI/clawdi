@@ -171,15 +171,16 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 				}),
 			);
 			if (!current()) return;
-			setResult(
+			const outcome =
 				transferred.sourceRemoved === true
 					? "moved"
 					: transferred.sourceRemoved === false
 						? "partial"
-						: "copied",
-			);
+						: "copied";
+			setResult(outcome);
 			await invalidate();
-			if (current() && visible()) await sheet.close(true);
+			// A partial move keeps the sheet open so the retained-source notice stays visible.
+			if (outcome !== "partial" && current() && visible()) await sheet.close(true);
 		});
 	const download = () =>
 		action.run(async (current) => {

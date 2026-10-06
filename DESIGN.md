@@ -228,6 +228,11 @@ multi-hue colors; never use them for controls or status.
   Agents" / "Connected Agents", and an agent's online state never says "Connected". User-facing
   plan names are Basic and Performance; plan ids and Stripe ids are unchanged. Supersedes the
   2026-10-05 object-noun capitalization rule (D1).
+- 2026-10-06 — Web class strings and shadcn cva variants live once in `@clawdi/shared/ui`
+  (`packages/shared/src/ui`) so the mobile app renders the same classes. `apps/web/src/components/ui/*`
+  import those recipes. When the shadcn CLI regenerates or updates a component, move its class
+  strings and variants back into `packages/shared/src/ui/<file>.ts` and keep the import; see
+  `apps/mobile/UI-PARITY.md`.
 
 ## Banned (CI-greppable)
 
