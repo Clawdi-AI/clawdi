@@ -4,6 +4,7 @@ import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-events";
+import { log } from "../serve/log";
 import type {
 	AgentAdapterCore,
 	RawSession,
@@ -34,6 +35,41 @@ function claudeDir() {
 }
 function projectsDir() {
 	return join(claudeDir(), "projects");
+}
+
+interface ClaudeSessionFile {
+	filePath: string;
+	localSessionId: string;
+	isSubagent: boolean;
+}
+
+// Matches Cloud's local_session_id boundary without accepting a trailing newline.
+function validLocalSessionId(id: string): boolean {
+	return /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.exec(id)?.[0] === id;
+}
+
+function* projectSessionFiles(projectPath: string): Iterable<ClaudeSessionFile> {
+	for (const entry of readdirSync(projectPath, { withFileTypes: true })) {
+		if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+			yield {
+				filePath: join(projectPath, entry.name),
+				localSessionId: basename(entry.name, ".jsonl"),
+				isSubagent: false,
+			};
+		} else if (entry.isDirectory()) {
+			const subagentsPath = join(projectPath, entry.name, "subagents");
+			if (!existsSync(subagentsPath)) continue;
+			for (const agent of readdirSync(subagentsPath, { withFileTypes: true })) {
+				if (!agent.isFile() || !agent.name.startsWith("agent-") || !agent.name.endsWith(".jsonl"))
+					continue;
+				yield {
+					filePath: join(subagentsPath, agent.name),
+					localSessionId: `${entry.name}.${basename(agent.name, ".jsonl")}`,
+					isSubagent: true,
+				};
+			}
+		}
+	}
 }
 
 interface SessionJsonlEntry {
@@ -212,7 +248,10 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			const projectDirNames = new Set<string>();
 			for (const path of paths) {
 				const parts = relative(root, path).split(/[\\/]/);
-				if (parts.length !== 2)
+				if (
+					parts.length !== 2 &&
+					!(parts.length === 4 && parts[2] === "subagents" && parts[3].startsWith("agent-"))
+				)
 					return this.collectSessions({ kind: "complete", projectFilter }, context);
 				projectDirNames.add(parts[0]);
 			}
@@ -248,11 +287,20 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		context?: SyncReadContext,
 	): Promise<RawSession | null> {
 		context?.signal.throwIfAborted();
-		if (!existsSync(projectsDir()) || basename(localSessionId) !== localSessionId) return null;
+		if (!existsSync(projectsDir()) || !validLocalSessionId(localSessionId)) return null;
+		const subagentMarker = localSessionId.indexOf(".agent-");
+		const transcriptPath =
+			subagentMarker === -1
+				? `${localSessionId}.jsonl`
+				: join(
+						localSessionId.slice(0, subagentMarker),
+						"subagents",
+						`${localSessionId.slice(subagentMarker + 1)}.jsonl`,
+					);
 		const matches: Array<{ filePath: string; projectDirName: string }> = [];
 		for (const projectDir of readdirSync(projectsDir(), { withFileTypes: true })) {
 			if (!projectDir.isDirectory()) continue;
-			const filePath = join(projectsDir(), projectDir.name, `${localSessionId}.jsonl`);
+			const filePath = join(projectsDir(), projectDir.name, transcriptPath);
 			if (existsSync(filePath)) matches.push({ filePath, projectDirName: projectDir.name });
 		}
 		if (matches.length !== 1) {
@@ -286,25 +334,32 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			const insertSource = index.prepare(
 				"INSERT INTO inventory VALUES (?, ?, (SELECT count(*) FROM uuids WHERE source_key=?))",
 			);
-			const sources: Array<{ session: RawSession; sourceKey: number }> = [];
+			const sources: Array<{ session: RawSession; sourceKey: number; isSubagent: boolean }> = [];
 			let sourceKey = 0;
 			for (const projectDirName of projectDirNames) {
 				const projectPath = join(projectsDir(), projectDirName);
 				if (!existsSync(projectPath)) continue;
-				for (const file of readdirSync(projectPath).filter((name) => name.endsWith(".jsonl"))) {
+				for (const file of projectSessionFiles(projectPath)) {
 					if (context) await setImmediate(undefined, { signal: context.signal });
+					if (!validLocalSessionId(file.localSessionId)) {
+						log.warn("claude_code.invalid_session_id_skipped", {
+							reason: "invalid_local_session_id",
+							id_length: file.localSessionId.length,
+						});
+						continue;
+					}
 					const key = sourceKey++;
 					try {
-						const session = await this.parseRawSession(join(projectPath, file), context, (uuid) =>
-							insertUuid.run(key, uuid),
-						);
+						const session = await this.parseRawSession(file, context, (uuid) => {
+							if (!file.isSubagent) insertUuid.run(key, uuid);
+						});
 						if (!session) continue;
 						const cwd = session.projectPath;
 						if (!matchesProjectFilter(cwd, absFilter)) {
 							continue;
 						}
-						insertSource.run(key, cwd, key);
-						sources.push({ session, sourceKey: key });
+						if (!file.isSubagent) insertSource.run(key, cwd, key);
+						sources.push({ session, sourceKey: key, isSubagent: file.isSubagent });
 					} catch (error) {
 						context?.signal.throwIfAborted();
 						if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
@@ -323,9 +378,10 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 				) LIMIT 1
 			`);
 			const dedupedIds = new Set<string>();
-			for (const { session, sourceKey: key } of sources) {
+			for (const { session, sourceKey: key, isSubagent } of sources) {
 				context?.signal.throwIfAborted();
-				if (subset.get(session.projectPath, key, key)) dedupedIds.add(session.localSessionId);
+				if (!isSubagent && subset.get(session.projectPath, key, key))
+					dedupedIds.add(session.localSessionId);
 			}
 			return {
 				sessions: sources
@@ -338,21 +394,27 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 	}
 
 	private async parseRawSession(
-		filePath: string,
+		file: ClaudeSessionFile,
 		context: SyncReadContext | undefined,
 		observeUuid: (uuid: string) => void,
 	): Promise<RawSession | null> {
-		const parsed = await this.parseSessionJsonl(filePath, context, observeUuid);
+		const parsed = await this.parseSessionJsonl(
+			file.filePath,
+			file.localSessionId,
+			context,
+			observeUuid,
+		);
 		if (!parsed) return null;
 		return {
 			...parsed,
-			localSessionId: basename(filePath, ".jsonl"),
-			rawFilePath: filePath,
+			localSessionId: file.localSessionId,
+			rawFilePath: file.filePath,
 		};
 	}
 
 	private async parseSessionJsonl(
 		filePath: string,
+		sourceSessionKey: string,
 		context: SyncReadContext | undefined,
 		observeUuid: (uuid: string) => void,
 	): Promise<ParsedSession | null> {
@@ -421,7 +483,6 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 				cacheReadTokens += msg.usage.cache_read_input_tokens ?? 0;
 			}
 		}
-		const sourceSessionKey = basename(filePath, ".jsonl");
 		const readEvents = async function* () {
 			let seq = 0;
 			for await (const { data: raw, recordSeq } of source.records()) {
@@ -458,9 +519,9 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 
 	private getSessionsWatchPaths(): string[] {
 		// Claude Code dumps each conversation as a JSONL file under
-		// `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`. New
-		// projects appear as new subdirs; the watcher attaches
-		// recursively from the projects root.
+		// `projects/<encoded-cwd>/<session-id>.jsonl` and documented subagent
+		// transcripts at `<session-id>/subagents/agent-*.jsonl`. The projects
+		// root covers both recursively, including newly created subagents.
 		return [projectsDir()];
 	}
 }

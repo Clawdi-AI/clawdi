@@ -1,0 +1,2 @@
+{"type":"user","uuid":"shared-user","sessionId":"parent-a","agentId":"child","isSidechain":true,"cwd":"/Users/fixture/project","timestamp":"2026-10-06T01:00:00.000Z","message":{"role":"user","content":"Subagent task"}}
+{"type":"assistant","uuid":"shared-assistant","sessionId":"parent-a","agentId":"child","isSidechain":true,"timestamp":"2026-10-06T01:00:01.000Z","message":{"role":"assistant","content":"Subagent answer","model":"claude-opus-4-7"}}
