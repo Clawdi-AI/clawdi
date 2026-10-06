@@ -1,6 +1,7 @@
 import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
+import { parsePositiveInteger } from "../lib/cli-options";
 import { askYesNo } from "../lib/prompts";
 import { isInteractive } from "../lib/tty";
 
@@ -34,7 +35,7 @@ interface ChannelLinkOptions extends JsonOption {
 interface ChannelPairCodeOptions extends JsonOption {
 	agent?: string;
 	link?: string;
-	ttl?: string;
+	ttl?: string | number;
 }
 
 interface ChannelRotateTokenOptions extends JsonOption {
@@ -453,10 +454,10 @@ function parseProvider(value: string): ChannelProvider {
 	throw new Error("provider must be one of: telegram, discord, whatsapp");
 }
 
-function parseTtl(raw: string | undefined): number {
+function parseTtl(raw: string | number | undefined): number {
 	if (raw === undefined) return 300;
-	const ttl = Number(raw);
-	if (!Number.isInteger(ttl) || ttl < 60 || ttl > 86_400) {
+	const ttl = parsePositiveInteger(raw);
+	if (ttl < 60 || ttl > 86_400) {
 		throw new Error("--ttl must be an integer number of seconds between 60 and 86400.");
 	}
 	return ttl;

@@ -68,6 +68,46 @@ describe("cloud session commands", () => {
 		});
 	});
 
+	it("reports truncated JSON results on stderr", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/sessions",
+				response: () =>
+					jsonResponse({
+						items: [
+							{
+								id: "00000000-0000-0000-0000-000000000123",
+								local_session_id: "local-123",
+								summary: "Fixture",
+								agent_type: "codex",
+								last_activity_at: "2026-08-27T12:00:00Z",
+							},
+						],
+						total: 2,
+						page: 1,
+						page_size: 1,
+					}),
+			},
+		]);
+		const output: string[] = [];
+		const errors: string[] = [];
+		const originalLog = console.log;
+		const originalError = console.error;
+		console.log = (value?: unknown) => output.push(String(value));
+		console.error = (value?: unknown) => errors.push(String(value));
+		try {
+			await sessionSearch("fixture", { limit: "1", json: true });
+		} finally {
+			console.log = originalLog;
+			console.error = originalError;
+			restore();
+		}
+
+		expect(JSON.parse(output[0])).toHaveLength(1);
+		expect(errors).toContain("Showing 1 of 2; pass --limit to see more.");
+	});
+
 	it("prints the best matching message excerpt in terminal output", async () => {
 		const { restore } = mockFetch([
 			{

@@ -5,6 +5,7 @@ import { Command, Option } from "commander";
 import { AGENT_TYPE_HELP_LABEL, SKILL_AGENT_TYPE_HELP_LABEL } from "./adapters/registry.js";
 import { registerServeCommand } from "./commands/serve-cli.js";
 import { loadAuthTokenFile } from "./lib/auth-token-file.js";
+import { parsePositiveInteger } from "./lib/cli-options.js";
 import { handleError } from "./lib/errors.js";
 import { getCliVersion } from "./lib/version.js";
 import { evaluateHostPolicyForCommand } from "./runtime/host-policy.js";
@@ -265,14 +266,15 @@ const configCmd = program
 
 configCmd
 	.command("list")
-	.description("Show all configured values")
-	.action(async () => {
+	.description("Show effective values and their sources")
+	.option("--json", "Output as JSON")
+	.action(async (opts: { json?: boolean }) => {
 		const { configList } = await import("./commands/config.js");
-		configList();
+		configList(opts);
 	});
 
 configCmd
-	.command("paths", { hidden: true })
+	.command("paths")
 	.description("Show local and hosted runtime paths used by the CLI")
 	.option("--json", "Output as JSON")
 	.action(async (opts: { json?: boolean }) => {
@@ -282,7 +284,7 @@ configCmd
 
 configCmd
 	.command("get <key>")
-	.description("Print the stored value for a key (exit 1 if unset)")
+	.description("Print the effective value for a key")
 	.action(async (key) => {
 		const { configGet } = await import("./commands/config.js");
 		configGet(key);
@@ -538,7 +540,7 @@ aiProviderCmd
 	.command("test <provider-id>")
 	.description("Check provider config and auth availability")
 	.option("--model <model>", "Model to validate against when a provider-specific probe supports it")
-	.option("--timeout <seconds>", "Provider probe timeout in seconds", "10")
+	.option("--timeout <seconds>", "Provider probe timeout in seconds", parsePositiveInteger, 10)
 	.option("--live", "Also run a direct provider metadata probe")
 	.option("--probe", "Deprecated alias for --live")
 	.option("--no-probe", "Compatibility flag; live probes are disabled unless --live is passed")
@@ -555,7 +557,7 @@ aiProviderCmd
 	.option("--tool <tool>", "Tool sign-in profile to connect, currently codex")
 	.option("--callback <mode>", "OAuth callback mode: loopback or manual")
 	.option("--redirect-uri <uri>", "Override OAuth redirect URI for manual callback mode")
-	.option("--timeout <seconds>", "Seconds to wait for loopback callback", "600")
+	.option("--timeout <seconds>", "Seconds to wait for loopback callback", parsePositiveInteger, 600)
 	.option("--no-open", "Do not open the browser automatically")
 	.option("--dry-run", "Show the OAuth start request without running it")
 	.option("--json", "Emit machine-readable JSON")
@@ -728,7 +730,7 @@ channelCmd
 	.description("Create a one-time code to pair an external chat to an agent link")
 	.option("--agent <agent-id>", "Create or reuse a link for this agent")
 	.option("--link <link-id>", "Use an existing bot-agent link")
-	.option("--ttl <seconds>", "Pair code TTL in seconds", "300")
+	.option("--ttl <seconds>", "Pair code TTL in seconds", parsePositiveInteger, 300)
 	.option("--json", "Emit machine-readable JSON")
 	.addHelpText(
 		"after",
@@ -1185,7 +1187,7 @@ sessionCmd
 	.option("--project <path>", "Restrict to one project path")
 	.option("--all", "List sessions from all projects (default when --project not set)")
 	.option("--since <date>", "Only list sessions started after this date")
-	.option("--limit <n>", "Cap results", "100")
+	.option("--limit <n>", "Cap results", parsePositiveInteger, 100)
 	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
@@ -1205,7 +1207,7 @@ sessionCmd
 	.description("Search uploaded session summaries, messages, projects, and IDs")
 	.option("--agent <type>", "Filter by agent type")
 	.option("--since <date>", "Only sessions active after this date")
-	.option("--limit <n>", "Cap results (1-200)", "25")
+	.option("--limit <n>", "Cap results (1-200)", parsePositiveInteger, 25)
 	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
@@ -1249,8 +1251,8 @@ sessionCmd
 sessionCmd
 	.command("shares [session-id]")
 	.description("List active snapshot and legacy links")
-	.option("--page <n>", "Page number", "1")
-	.option("--limit <n>", "Page size (1-100)", "25")
+	.option("--page <n>", "Page number", parsePositiveInteger, 1)
+	.option("--limit <n>", "Page size (1-100)", parsePositiveInteger, 25)
 	.option("--json", "Output as JSON")
 	.action(async (id, opts) => {
 		const { sessionShareList } = await import("./commands/session.js");
@@ -1296,7 +1298,7 @@ memoryCmd
 	.command("list")
 	.description("List memories")
 	.option("--json", "Output as JSON")
-	.option("--limit <n>", "Max number of memories")
+	.option("--limit <n>", "Max number of memories", parsePositiveInteger)
 	.option("--category <cat>", "Filter by category (fact/preference/pattern/decision/context)")
 	.action(async (opts) => {
 		const { memoryList } = await import("./commands/memory.js");
@@ -1307,7 +1309,7 @@ memoryCmd
 	.command("search <query>")
 	.description("Search memories by text")
 	.option("--json", "Output as JSON")
-	.option("--limit <n>", "Max number of memories")
+	.option("--limit <n>", "Max number of memories", parsePositiveInteger)
 	.option("--category <cat>", "Filter by category")
 	.addHelpText(
 		"after",
@@ -1876,7 +1878,7 @@ agentProjectsCmd
 	.alias("attach")
 	.description("Link a project for vault resolution")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
-	.option("--order <n>", "Vault resolution priority (>=1)")
+	.option("--order <n>", "Vault resolution priority (>=1)", parsePositiveInteger)
 	.action(async (agentId, opts) => {
 		const { agentProjectsAddContextCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsAddContextCommand(agentId, opts);
