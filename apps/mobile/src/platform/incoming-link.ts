@@ -114,13 +114,30 @@ function isWebPath(path: string): boolean {
 			"channels",
 		].includes(root ?? "")
 	) {
-		if (root !== "agents")
+		if (root !== "agents") {
+			if (pieces.length <= 2) return true;
+			if (pieces.length === 3) {
+				const forms: Record<string, readonly string[]> = {
+					sessions: ["sharing"],
+					projects: ["sharing", "edit", "agents"],
+					skills: ["archive"],
+					memories: ["edit"],
+					vault: ["add-keys", "transfer", "split", "requests"],
+					connectors: ["connect"],
+				};
+				return Boolean(section && forms[root ?? ""]?.includes(section));
+			}
 			return (
-				pieces.length <= 2 ||
-				(pieces.length === 3 &&
-					((root === "projects" && section === "sharing") ||
-						(root === "skills" && section === "archive")))
+				(root === "projects" &&
+					pieces.length === 4 &&
+					section === "vaults" &&
+					pieces[3] === "new") ||
+				(root === "connectors" &&
+					pieces.length === 5 &&
+					section === "accounts" &&
+					pieces[4] === "rename")
 			);
+		}
 		if (pieces.length <= 2) return true;
 		if (
 			!id ||

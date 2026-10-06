@@ -20,7 +20,6 @@ import { useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCardSkeleton } from "@/components/entity-card";
-import { HeaderActionGroup } from "@/components/header-action-group";
 import { PageHeader } from "@/components/page-header";
 import { ProjectResourceCard } from "@/components/projects/project-resource-card";
 import { ResourceError } from "@/components/resource-error";
@@ -152,43 +151,27 @@ function ProjectsView() {
 						<PageHeader
 							title={t("projects.title")}
 							description={getProjectResourceDefinition("projects").managementDescription}
-							actions={
-								<HeaderActionGroup>
-									<Button
-										size="sm"
-										disabled={action.busy}
-										onPress={() => {
-											router.push("/projects/new");
-										}}
-									>
-										<Icon as={Plus} />
-										<Text>{t("libraryPort.createProject")}</Text>
-									</Button>
-									<DropdownMenu>
-										<DropdownMenuTrigger
-											render={
-												<Button
-													variant="ghost"
-													size="icon-sm"
-													accessibilityLabel={t("projects.title")}
-												>
-													<Icon as={MoreHorizontal} />
-												</Button>
-											}
-										/>
-										<DropdownMenuContent>
-											<DropdownMenuItem
-												label={t("sharing.joinLink")}
-												onSelect={() => router.push("/projects/join")}
-											/>
-											<DropdownMenuItem
-												label={t("sharing.received")}
-												onSelect={() => router.push("/projects/invitations")}
-											/>
-										</DropdownMenuContent>
-									</DropdownMenu>
-								</HeaderActionGroup>
-							}
+							headerMenu={{
+								label: t("projects.title"),
+								items: [
+									{
+										id: "create",
+										label: t("libraryPort.createProject"),
+										disabled: action.busy,
+										onPress: () => router.push("/projects/new"),
+									},
+									{
+										id: "join",
+										label: t("sharing.joinLink"),
+										onPress: () => router.push("/projects/join"),
+									},
+									{
+										id: "invitations",
+										label: t("sharing.received"),
+										onPress: () => router.push("/projects/invitations"),
+									},
+								],
+							}}
 						/>
 						{projects.error ? (
 							<ApiErrorPanel error={projects.error} onRetry={() => void projects.refetch()} />

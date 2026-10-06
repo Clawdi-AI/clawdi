@@ -146,17 +146,16 @@ function MemoriesView() {
 						<PageHeader
 							title={t("memories.title")}
 							description={getProjectResourceDefinition("memories").managementDescription}
-							actions={
-								<Button
-									size="sm"
-									onPress={() => {
-										router.push("/memories/new");
-									}}
-								>
-									<Icon as={Plus} />
-									<Text>{t("libraryPort.createMemory")}</Text>
-								</Button>
-							}
+							headerMenu={{
+								label: t("memories.title"),
+								items: [
+									{
+										id: "create",
+										label: t("libraryPort.createMemory"),
+										onPress: () => router.push("/memories/new"),
+									},
+								],
+							}}
 						/>
 						<ListToolbar
 							filters={

@@ -13,7 +13,6 @@ import {
 } from "@clawdi/shared/view";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { router, Stack } from "expo-router";
-import { Plus } from "lucide-react-native";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -27,7 +26,6 @@ import { useCloudProjects } from "@/components/projects/projects-surface";
 import { SkillCardActions } from "@/components/skills/skill-actions";
 import { SkillCard } from "@/components/skills/skill-card";
 import { Button } from "@/components/ui/button";
-import { Icon } from "@/components/ui/icon";
 import { NativeList } from "@/components/ui/native-list";
 import { Text } from "@/components/ui/text";
 import { WebText } from "@/components/ui/web-layout";
@@ -108,18 +106,20 @@ function SkillsView({ project }: { project?: Project }) {
 			<PageHeader
 				title={t("skills.title")}
 				description={skillsPageDescription(project)}
-				actions={
-					project && writable ? (
-						<Button
-							size="sm"
-							onPress={() =>
-								router.push({ pathname: "/skills/new", params: { projectId: project.id } })
+				headerMenu={
+					project && writable
+						? {
+								label: t("skills.title"),
+								items: [
+									{
+										id: "create",
+										label: t("libraryPort.createSkill"),
+										onPress: () =>
+											router.push({ pathname: "/skills/new", params: { projectId: project.id } }),
+									},
+								],
 							}
-						>
-							<Icon as={Plus} />
-							<Text>{t("libraryPort.createSkill")}</Text>
-						</Button>
-					) : undefined
+						: undefined
 				}
 			/>
 		</>

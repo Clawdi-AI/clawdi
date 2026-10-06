@@ -9,7 +9,7 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
-import { ArrowRight, Bot, MoreHorizontal, Plus, Share2 } from "lucide-react-native";
+import { ArrowRight, Plus, Share2 } from "lucide-react-native";
 import { type ReactElement, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -24,12 +24,6 @@ import { ResourceError } from "@/components/resource-error";
 import { canManageSharing } from "@/components/sharing/project-sharing-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
 import { NativeList } from "@/components/ui/native-list";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -160,41 +154,30 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 								{identity.emoji}
 							</IconChip>
 						}
-						actions={
-							<>
-								<Button
-									size="sm"
-									onPress={() =>
-										router.push({ pathname: "/projects/[id]/agents", params: { id: project.id } })
-									}
-								>
-									<Icon as={Bot} />
-									<Text>{t("libraryPort.manageAgents")}</Text>
-								</Button>
-								{canManageSharing(project) ? (
-									<DropdownMenu>
-										<DropdownMenuTrigger
-											render={
-												<Button variant="ghost" size="icon-sm" accessibilityLabel={project.name}>
-													<Icon as={MoreHorizontal} />
-												</Button>
-											}
-										/>
-										<DropdownMenuContent>
-											<DropdownMenuItem
-												label={t("projects.sharing")}
-												onSelect={() =>
+						headerMenu={{
+							label: displayProjectName(project),
+							items: [
+								{
+									id: "agents",
+									label: t("libraryPort.manageAgents"),
+									onPress: () =>
+										router.push({ pathname: "/projects/[id]/agents", params: { id: project.id } }),
+								},
+								...(canManageSharing(project)
+									? [
+											{
+												id: "sharing",
+												label: t("projects.sharing"),
+												onPress: () =>
 													router.push({
 														pathname: "/projects/[id]/sharing",
 														params: { id: project.id },
-													})
-												}
-											/>
-										</DropdownMenuContent>
-									</DropdownMenu>
-								) : null}
-							</>
-						}
+													}),
+											},
+										]
+									: []),
+							],
+						}}
 					/>
 					<Tabs value={tab} onValueChange={navigate}>
 						<TabsList variant="default" className={webView(projectDetailClasses.tabs)}>

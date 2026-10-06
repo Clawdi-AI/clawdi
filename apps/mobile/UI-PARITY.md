@@ -107,6 +107,7 @@ native Stack. Root screens enable `headerLargeTitleEnabled` (the SDK 57 name
 for the deprecated `headerLargeTitle`). Titles use Web copy, shared color
 tokens and Geist. `PageHeader` and `SettingsPanelHeader` keep descriptions,
 identity/status/adornments; native stacks own titles and back controls.
+`PageHeader` accepts `headerActions` and `headerMenu` descriptors directly.
 Prefer action descriptors: iOS uses native `Stack.Toolbar`, Android uses
 Compose buttons/menus via its documented `asChild` slot. Existing Web action
 JSX can use `contentActions` during migration; menus remain native `MenuView`.

@@ -224,31 +224,28 @@ function VaultCatalog({
 									? t("libraryPort.agentVaultsDescription")
 									: getProjectResourceDefinition("vaults").managementDescription
 							}
-							actions={
-								canCreate ? (
-									<>
-										<Button
-											variant="outline"
-											size="sm"
-											onPress={() => router.push("/vault/add-keys")}
-										>
-											<Icon as={Plus} />
-											<Text>{t("libraryPort.addKeys")}</Text>
-										</Button>
-										<Button
-											size="sm"
-											onPress={() =>
-												router.push({
-													pathname: "/vault/new",
-													params: { projectId: project?.id ?? "" },
-												})
-											}
-										>
-											<Icon as={Plus} />
-											<Text>{t("libraryPort.createVault")}</Text>
-										</Button>
-									</>
-								) : undefined
+							headerMenu={
+								canCreate
+									? {
+											label: getProjectResourceDefinition("vaults").label,
+											items: [
+												{
+													id: "add",
+													label: t("libraryPort.addKeys"),
+													onPress: () => router.push("/vault/add-keys"),
+												},
+												{
+													id: "create",
+													label: t("libraryPort.createVault"),
+													onPress: () =>
+														router.push({
+															pathname: "/vault/new",
+															params: { projectId: project?.id ?? "" },
+														}),
+												},
+											],
+										}
+									: undefined
 							}
 						/>
 						<ListToolbar
