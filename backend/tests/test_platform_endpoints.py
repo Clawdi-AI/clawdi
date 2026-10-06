@@ -389,7 +389,7 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
         json={**_agent_body(owner, agent_id), "default_name": "e2e-2"},
     )
     assert created.status_code == 200, created.text
-    assert created.json() == {"id": str(agent_id)}
+    assert created.json() == {"id": str(agent_id), "dashboard_url": None}
     agent = await db_session.get(AgentEnvironment, agent_id)
     assert agent is not None
     assert agent.default_name == "e2e-2"

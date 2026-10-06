@@ -1,5 +1,9 @@
 import { isAbsolute, join } from "node:path";
-import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
+import {
+	execRuntimeUserCommand,
+	executableExists,
+	spawnRuntimeUserCommand,
+} from "./runtime-user-command";
 
 const RESOLVE_TIMEOUT_MS = 30_000;
 const RESOLVE_MAX_BUFFER_BYTES = 64 * 1024;
@@ -67,5 +71,42 @@ function hermesStorePython(home: string): string {
 	if (typeof python !== "string" || !isAbsolute(python) || !executableExists(python)) {
 		throw new Error("Hermes launcher did not publish its runtime Python");
 	}
+	return python;
+}
+
+/** Async counterpart for daemon discovery; uses the same managed runtime contract. */
+export async function hermesManagedPythonAsync(
+	home: string,
+	appRoot: string,
+	signal?: AbortSignal,
+): Promise<string> {
+	const inTree = join(appRoot, "venv", "bin", "python");
+	if (executableExists(inTree)) return inTree;
+	const options = {
+		maxBufferBytes: RESOLVE_MAX_BUFFER_BYTES,
+		timeoutMs: RESOLVE_TIMEOUT_MS,
+		signal,
+	};
+	const published = await execRuntimeUserCommand(
+		join(home, ".local", "bin", "hermes"),
+		["--print-runtime-command"],
+		home,
+		home,
+		options,
+	);
+	const command: unknown = JSON.parse(published.stdout);
+	const storePython = Array.isArray(command) ? command[0] : null;
+	if (typeof storePython !== "string" || !isAbsolute(storePython) || !executableExists(storePython))
+		throw new Error("Hermes launcher did not publish its runtime Python");
+	const result = await execRuntimeUserCommand(
+		storePython,
+		["-I", "-c", COMMITTED_VENV_PYTHON, appRoot],
+		home,
+		home,
+		{ ...options, environmentOverrides: { HERMES_HOME: join(home, ".hermes") } },
+	);
+	const python = result.stdout.trim();
+	if (!isAbsolute(python) || !executableExists(python))
+		throw new Error("Hermes committed Python environment is unavailable");
 	return python;
 }

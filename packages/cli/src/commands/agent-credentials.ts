@@ -11,6 +11,7 @@ import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getConfig } from "../lib/config";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { resolveProjectId } from "../lib/project-resolver";
+import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 
 const MAX_PROFILE_FILE_BYTES = 1024 * 1024;
@@ -541,16 +542,14 @@ export async function collectAgentCredentialProfilePayload(
 		}
 	}
 
-	if (!opts.yes) {
-		const destination = opts.destinationLabel ?? "Clawdi vault";
-		const ok = await p.confirm({
-			output: process.stderr,
-			message: `Import this credential profile into ${destination}?`,
-		});
-		if (p.isCancel(ok) || !ok) {
-			p.cancel("Cancelled.", { output: process.stderr });
-			return null;
-		}
+	const destination = opts.destinationLabel ?? "Clawdi vault";
+	if (
+		!(await confirmOrRequireYes(`Import this credential profile into ${destination}?`, {
+			yes: opts.yes,
+			action: `import this credential profile into ${destination}`,
+		}))
+	) {
+		return null;
 	}
 
 	const files = await Promise.all(previewPlans.map(snapshotFile));
@@ -658,15 +657,13 @@ export async function materializeAgentCredentialProfilePayload(
 
 	if (opts.dryRun) return null;
 
-	if (!opts.yes) {
-		const ok = await p.confirm({
-			output: process.stderr,
-			message: "Write these local credential files?",
-		});
-		if (p.isCancel(ok) || !ok) {
-			p.cancel("Cancelled.", { output: process.stderr });
-			return null;
-		}
+	if (
+		!(await confirmOrRequireYes("Write these local credential files?", {
+			yes: opts.yes,
+			action: "write these local credential files",
+		}))
+	) {
+		return null;
 	}
 
 	for (const { file, targetPath } of targets) {

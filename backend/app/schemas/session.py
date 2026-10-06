@@ -16,6 +16,7 @@ from pydantic import (
 )
 
 from app.core.agent_types import SupportedAgentType
+from app.schemas.agent_profile import ProfileKey
 from app.schemas.runtime_observed import (
     HostedRuntimeObservedProviderPayload,
     RuntimeObservedConfigResponse,
@@ -85,6 +86,7 @@ class SessionCreate(BaseModel):
     # Typed as UUID so Pydantic returns a 422 on garbage input — without this
     # the route's `uuid.UUID(...)` raises and FastAPI surfaces a 500.
     environment_id: uuid.UUID
+    profile_key: ProfileKey | None = None
     local_session_id: SafeLocalSessionId
     project_path: str | None = None
     started_at: datetime
@@ -209,6 +211,7 @@ class SessionBatchRequest(BaseModel):
     # exceed 32767` for users with > ~1900 sessions. 500 leaves
     # ample headroom (8500 params) and the CLI side now chunks
     # to match (packages/cli/src/commands/push.ts).
+    profile_key: ProfileKey | None = None
     sessions: list[SessionCreate] = Field(max_length=500)
 
 
@@ -239,6 +242,7 @@ class EnvironmentCreate(BaseModel):
 
 class EnvironmentCreatedResponse(BaseModel):
     id: str
+    dashboard_url: str | None = None
 
 
 class EnvironmentUpdate(BaseModel):
@@ -487,6 +491,8 @@ class SessionSearchNavigationResponse(BaseModel):
 
 
 class SessionListItemResponse(BaseModel):
+    profile_key: str = ""
+    profile_display_name: str | None = None
     id: str
     local_session_id: str
     project_path: str | None

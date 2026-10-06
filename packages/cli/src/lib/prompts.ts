@@ -28,6 +28,24 @@ export async function askYesNo(message: string, def = true): Promise<boolean> {
 	return result as boolean;
 }
 
+export async function confirmOrRequireYes(
+	message: string,
+	opts: { yes?: boolean; action: string },
+): Promise<boolean> {
+	if (opts.yes) return true;
+	if (!isInteractive()) {
+		throw new Error(
+			`Confirmation required to ${opts.action}. Re-run with --yes in a non-interactive shell.`,
+		);
+	}
+	const result = await p.confirm({ message, output: process.stderr });
+	if (p.isCancel(result) || !result) {
+		p.cancel("Cancelled.", { output: process.stderr });
+		return false;
+	}
+	return result;
+}
+
 export async function askMulti<T extends string>(
 	message: string,
 	options: SelectOption<T>[],
