@@ -12,9 +12,11 @@ import {
 	readFileSync,
 	realpathSync,
 	renameSync,
+	rmdirSync,
 	rmSync,
 	statSync,
 	symlinkSync,
+	unlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -325,7 +327,7 @@ function activateWindowsLauncherTransaction(
 		}
 	} catch (error) {
 		lease.assertOwned();
-		if (created) rmSync(input.launcher, { recursive: true, force: true });
+		if (created) removeLauncherJunction(input.launcher);
 		if (backedUp && input.previous) {
 			renameSync(backup, input.launcher);
 			const restored = readIdentity(join(input.launcher, "clawdi.exe"));
@@ -342,8 +344,14 @@ function activateWindowsLauncherTransaction(
 	}
 	if (backedUp) {
 		lease.assertOwned();
-		rmSync(backup, { recursive: true, force: true });
+		removeLauncherJunction(backup);
 	}
+}
+
+function removeLauncherJunction(path: string): void {
+	// Remove only the reparse point; Unix fixtures use a directory symlink.
+	if (process.platform === "win32") rmdirSync(path);
+	else unlinkSync(path);
 }
 
 function readOwnedLauncher(
@@ -579,7 +587,11 @@ function pruneNativeInstall(
 			continue;
 		}
 		lease.assertOwned();
-		rmSync(directory, { recursive: true, force: true });
+		try {
+			rmSync(directory, { recursive: true, force: true });
+		} catch {
+			// Retry locked or busy directories on a later install.
+		}
 	}
 	for (const entry of readdirSync(nativeRoot, { withFileTypes: true })) {
 		if (!entry.name.startsWith(".stage-") || !entry.isDirectory()) continue;
@@ -610,7 +622,11 @@ function pruneNativeInstall(
 			continue;
 		}
 		lease.assertOwned();
-		rmSync(directory, { recursive: true, force: true });
+		try {
+			rmSync(directory, { recursive: true, force: true });
+		} catch {
+			// Retry locked or busy directories on a later install.
+		}
 	}
 }
 

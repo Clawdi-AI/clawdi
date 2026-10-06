@@ -88,6 +88,10 @@ const enabled = process.platform === "win32" && testRoot && nativeBinary;
 					.map((entry) => `${entry}-win32-x64`)
 					.sort(),
 			);
+			const previousDir = join(nativeRoot, "versions", `${version}-g2.2-win32-x64`);
+			for (const file of ["clawdi.exe", "clawdi-cli-manifest-v2.txt", "skills/clawdi/SKILL.md"]) {
+				expect(lstatSync(join(previousDir, file)).isFile()).toBeTrue();
+			}
 			expect(
 				readdirSync(nativeRoot).some(
 					(entry) => entry.startsWith("current.old-") || entry.startsWith(".stage-"),
