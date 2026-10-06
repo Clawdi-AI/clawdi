@@ -71,9 +71,9 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 				onPress: () => {
 					if (ticket !== confirmation.current || signal.aborted || !scope.isCurrent() || !visible())
 						return;
-					confirmation.current++;
-					return action.run(async (current) => {
+					return action.runOrThrow(async (current) => {
 						await read((s) => cloud.deleteMemory(id, s), signal);
+						confirmation.current++;
 						// Cache invalidation survives leaving this screen, but never crosses accounts.
 						if (!scope.isCurrent()) return;
 						queries.removeQueries({ queryKey: key, exact: true });
