@@ -25,10 +25,13 @@ const writeText = mock<(value: string) => Promise<void>>(() => Promise.resolve()
 const execCommand = mock(() => true);
 const appendChild = mock(() => undefined);
 
-function copyFromHook(options?: Parameters<typeof useCopyToClipboard>[0]) {
+function copyFromHook(
+	options?: Parameters<typeof useCopyToClipboard>[0],
+	duration?: Parameters<typeof useCopyToClipboard>[1],
+) {
 	let copy: ReturnType<typeof useCopyToClipboard>["copy"] | undefined;
 	function Harness() {
-		copy = useCopyToClipboard(options).copy;
+		copy = useCopyToClipboard(options, duration).copy;
 		return null;
 	}
 	// Mount the hook with React's server renderer; only browser I/O is mocked.
@@ -81,6 +84,14 @@ describe("useCopyToClipboard", () => {
 		expect(writeText).toHaveBeenCalledWith("setup prompt");
 		expect(execCommand).not.toHaveBeenCalled();
 		expect(toast.success).toHaveBeenCalledWith("Copied to clipboard");
+		expect(timerSpy).toHaveBeenCalledWith(expect.any(Function), 1500);
+	});
+
+	test("preserves the setup button's two-second success feedback without a toast", async () => {
+		await copyFromHook({ success: false }, 2000)("setup prompt");
+		expect(writeText).toHaveBeenCalledWith("setup prompt");
+		expect(timerSpy).toHaveBeenCalledWith(expect.any(Function), 2000);
+		expect(toast.success).not.toHaveBeenCalled();
 	});
 
 	test("falls back to selection after clipboard rejection and restores focus", async () => {

@@ -53,7 +53,7 @@ export const CLI_STEPS = [
 	},
 ];
 
-function CopyButton({
+export function CopyButton({
 	text,
 	label,
 	className,
@@ -62,20 +62,18 @@ function CopyButton({
 	label: string;
 	className?: string;
 }) {
-	const { copied, copy } = useCopyToClipboard({
-		success: false,
-		error: "Couldn't copy. Select the prompt and copy it manually.",
-	});
+	const { copied, copy } = useCopyToClipboard(
+		{
+			success: false,
+			error: "Couldn't copy. Select the prompt and copy it manually.",
+		},
+		2000,
+	);
 	return (
-		<span className="inline-flex items-center gap-1.5">
+		<>
 			<span aria-live="polite" className="sr-only">
 				{copied ? "Copied" : ""}
 			</span>
-			{copied ? (
-				<span aria-hidden="true" className="text-xs text-muted-foreground">
-					Copied
-				</span>
-			) : null}
 			<Button
 				variant="ghost"
 				size="icon-xs"
@@ -85,7 +83,7 @@ function CopyButton({
 			>
 				{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
 			</Button>
-		</span>
+		</>
 	);
 }
 

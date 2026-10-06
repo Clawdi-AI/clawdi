@@ -597,7 +597,7 @@ function SyncSetupCliTab(_props: { env: Env }) {
 	);
 }
 
-function PromptBlock({ text }: { text: string }) {
+export function PromptBlock({ text }: { text: string }) {
 	const { copied, copy } = useCopyToClipboard({
 		success: false,
 		error: "Couldn't copy. Select the prompt and copy it manually.",
@@ -610,18 +610,16 @@ function PromptBlock({ text }: { text: string }) {
 		<div className="rounded-lg border bg-muted/30">
 			<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
 				<span className="text-xs uppercase tracking-wide text-muted-foreground">Prompt</span>
-				<span className="inline-flex items-center gap-1.5">
-					<span className="sr-only" aria-live="polite">
-						{copied ? "Copied" : ""}
-					</span>
-					<button
-						type="button"
-						onClick={() => copy(text)}
-						className="text-xs text-muted-foreground hover:text-foreground"
-					>
-						{copied ? "Copied" : "Copy"}
-					</button>
+				<span className="sr-only" aria-live="polite">
+					{copied ? "Copied" : ""}
 				</span>
+				<button
+					type="button"
+					onClick={() => copy(text)}
+					className="text-xs text-muted-foreground hover:text-foreground"
+				>
+					{copied ? "Copied" : "Copy"}
+				</button>
 			</div>
 			<pre className="whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed">{text}</pre>
 		</div>

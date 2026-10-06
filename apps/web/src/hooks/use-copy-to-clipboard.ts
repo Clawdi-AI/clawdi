@@ -29,12 +29,13 @@ function copyWithSelection(value: string): boolean {
 
 /**
  * Shared copy-to-clipboard affordance: writes to the clipboard, flips a
- * `copied` flag true for ~1.5s, and toasts. Each surface passes its own toast
- * copy so wording stays put; only the clipboard write, the reset, and the
+ * `copied` flag true for the requested duration (default 1.5s), and toasts.
+ * Each surface passes its own toast copy so wording stays put; only the
+ * clipboard write, the reset, and the
  * success/failure split are shared. Used by the billing `CopyButton` and the
  * channels token/inline copy controls.
  */
-export function useCopyToClipboard(toasts: CopyToastCopy = {}) {
+export function useCopyToClipboard(toasts: CopyToastCopy = {}, duration = 1500) {
 	const [copied, setCopied] = useState(false);
 	const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const mounted = useRef(true);
@@ -56,7 +57,7 @@ export function useCopyToClipboard(toasts: CopyToastCopy = {}) {
 			if (resetTimer.current !== null) clearTimeout(resetTimer.current);
 			setCopied(true);
 			if (toasts.success !== false) toast.success(toasts.success ?? "Copied to clipboard");
-			resetTimer.current = setTimeout(() => setCopied(false), 1500);
+			resetTimer.current = setTimeout(() => setCopied(false), duration);
 		} catch {
 			if (!mounted.current) return;
 			if (resetTimer.current !== null) clearTimeout(resetTimer.current);
