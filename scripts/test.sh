@@ -394,7 +394,7 @@ run_in_container() {
 			;;
 		cli-lint)
 			install_js
-			bunx --no-install biome check "${@:-packages/cli/src}"
+			BIOME_THREADS=2 bunx --no-install biome check "${@:-packages/cli/src}"
 			;;
 		preinstallation-artifact)
 			install_js
