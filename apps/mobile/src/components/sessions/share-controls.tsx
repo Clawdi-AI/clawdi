@@ -57,9 +57,11 @@ type SessionShare = components["schemas"]["SessionShareListItemResponse"];
 
 export function SessionShareActions({
 	sessionId,
+	title,
 	hasContent,
 }: {
 	sessionId: string;
+	title: string;
 	hasContent: boolean;
 }) {
 	const t = useI18n(),
@@ -82,6 +84,7 @@ export function SessionShareActions({
 	return (
 		<>
 			<NativeHeader
+				title={title}
 				actions={[
 					{
 						id: "share",

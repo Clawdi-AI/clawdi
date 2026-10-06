@@ -37,7 +37,7 @@ export default function SessionDetailRoute() {
 					<WebView recipe={styles.page} className="px-0">
 						{query.isPending && sessionId ? (
 							<>
-								<PageHeaderSkeleton actions description={false} />
+								<PageHeaderSkeleton description={false} />
 								<MessagesSkeleton />
 							</>
 						) : isNotFound(query.error) || !sessionId ? (
@@ -91,7 +91,11 @@ export default function SessionDetailRoute() {
 					</DetailMeta>
 				}
 			/>
-			<SessionShareActions sessionId={session.id} hasContent={session.has_content} />
+			<SessionShareActions
+				title={sessionTitle(session)}
+				sessionId={session.id}
+				hasContent={session.has_content}
+			/>
 		</WebView>
 	);
 	return (

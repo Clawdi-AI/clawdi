@@ -380,6 +380,7 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 			}
 		>
 			<NativeHeader
+				title="Skills"
 				actions={[
 					{
 						id: "install",
