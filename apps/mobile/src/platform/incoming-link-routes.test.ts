@@ -44,6 +44,7 @@ const paths = [
 	"/channels/whatsapp",
 	"/channels/channel-id",
 	"/channels/channel-id/link",
+	"/channels/channel-id/chats?linkId=link-id",
 	"/channels/channel-id/pair?linkId=link-id",
 	"/ai-providers",
 	"/ai-providers/new",

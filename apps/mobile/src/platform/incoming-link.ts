@@ -120,7 +120,7 @@ function isWebPath(path: string): boolean {
 				(pieces.length === 3 &&
 					((root === "projects" && section === "sharing") ||
 						(root === "skills" && section === "archive") ||
-						(root === "channels" && ["link", "pair"].includes(section ?? ""))))
+						(root === "channels" && ["link", "pair", "chats"].includes(section ?? ""))))
 			);
 		if (pieces.length <= 2) return true;
 		if (

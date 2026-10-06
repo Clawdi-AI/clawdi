@@ -14,6 +14,7 @@ import {
 	channelDetailPageClasses as styles,
 } from "@clawdi/shared/ui";
 import {
+	agentChannelPairedChatsLabel,
 	agentDisplayName,
 	agentSurfaceCopy,
 	channelFormCopy,
@@ -70,7 +71,7 @@ import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
-export function ChannelDetailScreen({ mode }: { mode?: "link" | "pair" } = {}) {
+export function ChannelDetailScreen({ mode }: { mode?: "link" | "pair" | "chats" } = {}) {
 	const scope = useAccountScope();
 	const params = useLocalSearchParams<{
 		id?: string | string[];
@@ -101,7 +102,7 @@ function ChannelDetail({
 	id?: string;
 	initialAgentId?: string;
 	linkId?: string;
-	mode?: "link" | "pair";
+	mode?: "link" | "pair" | "chats";
 	initialAction?: string;
 }) {
 	const t = useI18n();
@@ -142,7 +143,7 @@ function ChannelDetail({
 	const bindings = useChannelQuery(
 		[id ?? "missing", "bindings"],
 		(api, signal) => api.bindings(id ?? "", signal),
-		Boolean(id),
+		Boolean(id && mode === "chats"),
 	);
 	const activity = useChannelQuery(
 		[id ?? "missing", "activity"],
@@ -454,6 +455,16 @@ function ChannelDetail({
 							title={linkedAgent ? agentDisplayName(linkedAgent) : "Agent unavailable"}
 							meta={[`Linked ${relativeTime(link.created_at)}`]}
 						/>
+						<ActionButton
+							label={agentChannelPairedChatsLabel(link.binding_count ?? 0)}
+							disabled={disabled}
+							onPress={() =>
+								router.push({
+									pathname: "/channels/[id]/chats",
+									params: { id: id ?? "", linkId: link.id },
+								})
+							}
+						/>
 						{bot?.capabilities.pair_chat ? (
 							<ActionButton
 								label={t("channels.pair")}
@@ -484,39 +495,78 @@ function ChannelDetail({
 				);
 			}) ?? [];
 	const bindingCards =
-		bindings.data?.map((binding) => (
-			<AppView key={binding.id} className={webView(ENTITY_CARD_BASE)}>
-				<AppText selectable>
-					{binding.external_chat_name ?? binding.external_chat_id} · {binding.status}
-				</AppText>
-				<ActionButton
-					label={t("channels.unpair")}
-					disabled={disabled}
-					onPress={() =>
-						confirm(t("channels.unpair"), t("channels.unpairWarning"), () =>
-							action.runOrThrow(async (current) => {
-								const visible = capture();
-								if (!ready || !visible()) return;
-								const result = await read((signal) =>
-									channels.unpair(id ?? "", binding.id, signal),
-								);
-								if (!current() || !visible()) return;
-								setNotice(
-									!result.unpaired
-										? "unpairNotConfirmed"
-										: result.warning ||
-												result.notification_status === "failed" ||
-												result.provider_cleanup_status === "failed"
-											? "cleanupWarning"
-											: "done",
-								);
-								await refresh();
-							}),
+		bindings.data
+			?.filter((binding) => binding.agent_link_id === linkId)
+			.map((binding) => (
+				<AppView key={binding.id} className={webView(ENTITY_CARD_BASE)}>
+					<AppText selectable>
+						{binding.external_chat_name ?? binding.external_chat_id} · {binding.status}
+					</AppText>
+					<ActionButton
+						label={t("channels.unpair")}
+						disabled={disabled}
+						onPress={() =>
+							confirm(t("channels.unpair"), t("channels.unpairWarning"), () =>
+								action.runOrThrow(async (current) => {
+									const visible = capture();
+									if (!ready || !visible()) return;
+									const result = await read((signal) =>
+										channels.unpair(id ?? "", binding.id, signal),
+									);
+									if (!current() || !visible()) return;
+									setNotice(
+										!result.unpaired
+											? "unpairNotConfirmed"
+											: result.warning ||
+													result.notification_status === "failed" ||
+													result.provider_cleanup_status === "failed"
+												? "cleanupWarning"
+												: "done",
+									);
+									await refresh();
+								}),
+							)
+						}
+					/>
+				</AppView>
+			)) ?? [];
+	if (mode === "chats")
+		return (
+			<SheetPage
+				title={t("channels.bindings")}
+				fallback={id ? `/channels/${encodeURIComponent(id)}` : "/channels"}
+				busy={action.busy}
+				sheet={sheet}
+				scroll={false}
+			>
+				<NativeList
+					data={bindingCards}
+					keyExtractor={(row, index) => String(row.key ?? index)}
+					renderItem={({ item }) => item}
+					refreshing={bindings.isRefetching}
+					onRefresh={() => void bindings.refetch()}
+					header={
+						<>
+							<AppText>{bot?.name ?? ownedBot?.name}</AppText>
+							{notice ? (
+								<AppText accessibilityRole="alert">{t(`channels.${notice}`)}</AppText>
+							) : null}
+							{action.error ? <ApiErrorPanel error={t("channels.failed")} /> : null}
+						</>
+					}
+					empty={
+						bindings.isPending ? (
+							<Skeleton className={webView(styles.activitySkeleton)} />
+						) : bindings.isError ? (
+							<ApiErrorPanel error={bindings.error} onRetry={() => void bindings.refetch()} />
+						) : (
+							<EmptyState title={t("channels.noBindings")} />
 						)
 					}
 				/>
-			</AppView>
-		)) ?? [];
+				{confirmationDialog.dialog}
+			</SheetPage>
+		);
 	const eventCards =
 		tab === "activity"
 			? (activity.data?.items.map((event) => (
@@ -531,11 +581,6 @@ function ChannelDetail({
 			: [];
 	const listRows = [
 		...linkCards,
-		<SectionLabel key="paired-heading">Paired chats</SectionLabel>,
-		...(bindings.data?.length === 0
-			? [<AppText key="no-bindings">{t("channels.noBindings")}</AppText>]
-			: []),
-		...bindingCards,
 		...(ownedBot?.provider === "whatsapp"
 			? [
 					<ActionButton
@@ -587,15 +632,9 @@ function ChannelDetail({
 				data={listRows}
 				keyExtractor={(row, index) => String(row.key ?? index)}
 				renderItem={({ item }) => item}
-				refreshing={
-					links.isRefetching ||
-					bindings.isRefetching ||
-					activity.isRefetching ||
-					health.isRefetching
-				}
+				refreshing={links.isRefetching || activity.isRefetching || health.isRefetching}
 				onRefresh={() => {
 					void links.refetch();
-					void bindings.refetch();
 					void activity.refetch();
 					void health.refetch();
 				}}
@@ -608,7 +647,6 @@ function ChannelDetail({
 						/>
 						{action.error ||
 						links.isError ||
-						bindings.isError ||
 						activity.isError ||
 						pool.isError ||
 						agents.isError ||
