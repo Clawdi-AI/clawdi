@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { projectEventsToMessages, sequenceSessionEvents } from "../lib/session-events";
 import {
 	canonicalStructuredString,
 	reasoningContent,
@@ -23,6 +24,19 @@ function richProjection() {
 			signature: "opaque",
 		}),
 		arguments: canonicalStructuredString('{"signature":"hidden","query":"fixture"}'),
+		snapshot: projectEventsToMessages(
+			sequenceSessionEvents([
+				{
+					type: "message",
+					role: "assistant",
+					parts: [
+						{ type: "text", text: "" },
+						{ type: "text", text: "Visible snapshot" },
+					],
+					source: { adapter: "hermes", session_key: "fixture", record_id: "1" },
+				},
+			]),
+		),
 	};
 }
 

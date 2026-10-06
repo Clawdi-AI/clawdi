@@ -22,7 +22,7 @@ export function assertProjectionGolden(fixture: string, projected: unknown): voi
 	);
 }
 
-// Captured before production edits from origin/main @ 9db534992.
+// Adapter fixtures are checked against the current projection revision below.
 const goldens: Record<
 	string,
 	Array<{ id: string; eventNdjson: string; localHash: string; sourceRevision: string | undefined }>
