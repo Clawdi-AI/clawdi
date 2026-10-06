@@ -532,7 +532,7 @@ export async function serveLogs(opts: ServeLogsOpts): Promise<void> {
 	} else if (platform === "win32") {
 		const path = windowsTaskLogPath(getClawdiDir());
 		if (!existsSync(path)) {
-			console.error("No daemon log file yet. Enable Sync first.");
+			console.error("No daemon log file yet. Run `clawdi daemon install` first.");
 			process.exit(1);
 		}
 		cmd = "powershell.exe";
@@ -550,11 +550,20 @@ export async function serveLogs(opts: ServeLogsOpts): Promise<void> {
 		process.exit(1);
 	}
 	const proc = spawn(cmd, args, { stdio: "inherit", windowsHide: true });
-	proc.on("error", () => {
-		console.error("Could not open daemon logs.");
+	const reportFailure = (reason: string) => {
+		const command = platform === "linux" ? "journalctl --user -u clawdi-serve.service" : cmd;
+		console.error(
+			`Couldn't run ${command} (${reason}). Is the daemon installed? Run \`clawdi daemon status\`.`,
+		);
+	};
+	proc.once("error", (error) => {
+		reportFailure(error.message);
 		process.exitCode = 1;
 	});
-	proc.on("exit", (code) => process.exit(code ?? 0));
+	proc.once("exit", (code, signal) => {
+		if (code !== 0) reportFailure(signal ? `signal ${signal}` : `exit code ${code}`);
+		process.exitCode = code ?? 1;
+	});
 }
 
 interface ServeDoctorOpts {

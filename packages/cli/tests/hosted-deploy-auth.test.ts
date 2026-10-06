@@ -67,13 +67,37 @@ describe("Hosted deploy auth boundary", () => {
 		);
 	});
 
-	test("requires the single Clerk OAuth sign-in", async () => {
+	test("requires browser sign-in with an actionable command", async () => {
 		const provider = createHostedDeployAuthProvider({
 			cloudApiUrl: "https://cloud.example.test",
 			hostedApiUrl: "https://deploy.example.test",
 		});
 		await expect(provider.getAccessToken()).rejects.toBeInstanceOf(HostedDeployAuthorizationError);
+		await expect(provider.getAccessToken()).rejects.toThrow(
+			"Deploying a Cloud Agent needs a browser sign-in. Run `clawdi auth login` (not --manual).",
+		);
 	});
+
+	test.each([
+		{
+			credential: { token: "invalid", expiresAt: "invalid" },
+			message:
+				"Deploying a Cloud Agent needs a browser sign-in. Run `clawdi auth login` (not --manual).",
+		},
+		{
+			credential: { token: oauthToken(2_000_000_000), expiresAt: "invalid" },
+			message: "Your sign-in has an invalid expiry. Run `clawdi auth login` again.",
+		},
+		{
+			credential: { token: oauthToken(1_000_000_000), expiresAt: "2020-01-01T00:00:00Z" },
+			message: "Your sign-in expired. Run `clawdi auth login` again.",
+		},
+	])(
+		"explains invalid credentials without naming the auth vendor: $message",
+		({ credential, message }) => {
+			expect(() => assertHostedDeployAccessToken(credential)).toThrow(message);
+		},
+	);
 
 	test("rejects legacy Cloud keys and expired OAuth credentials", () => {
 		const now = Date.parse("2026-07-28T00:00:00Z");

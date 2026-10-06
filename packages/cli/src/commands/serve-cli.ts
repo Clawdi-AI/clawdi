@@ -185,7 +185,9 @@ Examples:
 
 	serveCmd
 		.command("logs")
-		.description("Tail a daemon's stderr log (delegates to `tail -F`)")
+		.description(
+			"Show the daemon's recent log lines (journald on Linux, log file on macOS/Windows)",
+		)
 		.option("--follow", "Stream new lines as they arrive (default: print last 200 and exit)")
 		.action(async (_opts, cmd) => {
 			const h = await get();

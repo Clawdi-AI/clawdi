@@ -1280,8 +1280,14 @@ export function safeDeployError(error: unknown): { code: string; message: string
 	if (error instanceof DeployInputError) return { code: error.code, message: error.message };
 	if (error instanceof PublicDeployFailure) return { code: error.code, message: error.message };
 	if (error instanceof DeployCancelledError) return { code: "cancelled", message: error.message };
-	if (error instanceof HostedDeployAuthorizationError || error instanceof ClerkOAuthError) {
+	if (error instanceof HostedDeployAuthorizationError) {
 		return { code: error.code, message: error.message };
+	}
+	if (error instanceof ClerkOAuthError) {
+		return {
+			code: error.code,
+			message: "Your sign-in is unavailable. Run `clawdi auth login` again.",
+		};
 	}
 	if (error instanceof HostedDeployApiError) {
 		if (error.status === 0) {
@@ -1356,8 +1362,10 @@ export async function deployCommand(
 		parsed = parseDeployCommandOptions(options);
 		const interactive = terminalInteractive && !parsed.json;
 		machineOutput = parsed.json || !interactive;
+		const client = dependencies.client ?? new HostedDeployClient();
+		if (client instanceof HostedDeployClient) await client.checkAuthorization();
 		const result = await runDeployFlow(parsed, {
-			client: dependencies.client ?? new HostedDeployClient(),
+			client,
 			interactive,
 			onEvent: parsed.json
 				? undefined

@@ -66,19 +66,34 @@ export class ApiError extends Error {
 		hint: string;
 		isNetwork?: boolean;
 		isTimeout?: boolean;
+		url?: string;
 	}) {
 		const detail = apiResponseDetail(opts.body);
+		const expiredApiKey = opts.status === 401 && detail === "API key has expired";
 		const hint =
 			opts.status === 410 && detail
 				? detail
-				: opts.status === 401 && detail === "API key has expired"
+				: expiredApiKey
 					? "Your API key has expired. Run `clawdi auth login` (use `--no-open` on a server). API keys can no longer be created."
 					: opts.hint;
-		super(`API error ${opts.status}: ${(opts.status === 410 ? detail : opts.body) || hint}`);
+		const networkFailure = opts.status === 0 && opts.isNetwork && opts.body !== "aborted";
+		const message = networkFailure
+			? `Couldn't reach ${canonicalApiOrigin(opts.url ?? getConfig().apiUrl)}. Check your connection or CLAWDI_API_URL.`
+			: opts.status === 401
+				? expiredApiKey
+					? hint
+					: "Not signed in, or your session expired. Run `clawdi auth login`."
+				: `API error ${opts.status}: ${(opts.status === 410 ? detail : opts.body) || hint}`;
+		super(message);
 		this.name = "ApiError";
 		this.status = opts.status;
 		this.body = opts.body;
-		this.hint = hint;
+		this.hint =
+			opts.status === 410 || expiredApiKey
+				? hint
+				: opts.status === 401 || networkFailure || !opts.body || hint === opts.body
+					? ""
+					: hint;
 		this.isNetwork = opts.isNetwork ?? false;
 		this.isTimeout = opts.isTimeout ?? false;
 	}
@@ -243,6 +258,7 @@ export async function retryingFetch(
 				hint: isTimeout ? "Request timed out; the service may be slow or unreachable." : hintFor(0),
 				isNetwork: true,
 				isTimeout,
+				url: req.url,
 			});
 			if (retry) continue;
 			throw lastErr;
@@ -281,7 +297,14 @@ export async function retryingFetch(
 	}
 
 	throw (
-		lastErr ?? new ApiError({ status: 0, body: "unknown error", hint: hintFor(0), isNetwork: true })
+		lastErr ??
+		new ApiError({
+			status: 0,
+			body: "unknown error",
+			hint: hintFor(0),
+			isNetwork: true,
+			url: req.url,
+		})
 	);
 }
 
