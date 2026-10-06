@@ -8,7 +8,7 @@ import { connectBotDialogCopy as copy, PROVIDER_META } from "@clawdi/shared/view
 import { router, useFocusEffect } from "expo-router";
 import { ExternalLink, Plus } from "lucide-react-native";
 import { useCallback, useEffect, useState } from "react";
-import { AppState, Linking } from "react-native";
+import { AppState, Linking, useWindowDimensions } from "react-native";
 import { useAuthAction } from "../../auth/use-auth-action";
 import { useI18n } from "../../i18n";
 import { useAccountRead, useAccountScope } from "../../platform/account-lifecycle";
@@ -28,6 +28,7 @@ import { EntityIcon } from "../../ui/entity-icon";
 import { Icon } from "../../ui/icon";
 import { Input, Label } from "../../ui/input";
 import { AppText, AppView } from "../../ui/primitives";
+import { AppPressable } from "../../ui/view";
 import { WebText, WebView, webBoth, webView } from "../../ui/web-layout";
 
 export function ChannelCreate({
@@ -38,6 +39,7 @@ export function ChannelCreate({
 	scoped?: boolean;
 }) {
 	const t = useI18n();
+	const { height } = useWindowDimensions();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { channels } = useMobileApi();
@@ -99,7 +101,7 @@ export function ChannelCreate({
 						}
 					}}
 				>
-					<DialogContent>
+					<DialogContent style={{ maxHeight: height - 96 }}>
 						<DialogHeader>
 							<DialogTitle>{copy.title}</DialogTitle>
 							<DialogDescription>{copy.description}</DialogDescription>
@@ -146,10 +148,12 @@ export function ChannelCreate({
 								<WebText recipe={styles.configurationTitle}>
 									Configure {PROVIDER_META[provider].label}
 								</WebText>
-								<WebText recipe={styles.hint}>
-									{provider === "telegram" ? copy.telegramSetupPrefix : copy.discordSetupPrefix}
-									<WebText
-										recipe={styles.setupLink}
+								<WebView recipe={styles.hint} className="flex-row flex-wrap">
+									<WebText recipe={styles.hint}>
+										{provider === "telegram" ? copy.telegramSetupPrefix : copy.discordSetupPrefix}
+									</WebText>
+									<AppPressable
+										className={`${webView(styles.setupLink)} flex-row`}
 										accessibilityRole="link"
 										onPress={() =>
 											void action.run(async () => {
@@ -158,10 +162,12 @@ export function ChannelCreate({
 											})
 										}
 									>
-										{provider === "telegram" ? copy.telegramSetup : copy.discordSetup}{" "}
+										<WebText recipe={styles.setupLink}>
+											{provider === "telegram" ? copy.telegramSetup : copy.discordSetup}
+										</WebText>
 										<Icon as={ExternalLink} className={webBoth(styles.setupIcon)} />
-									</WebText>
-								</WebText>
+									</AppPressable>
+								</WebView>
 								<WebView recipe={styles.form}>
 									<WebView recipe={styles.field}>
 										<Label>{copy.name}</Label>
