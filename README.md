@@ -40,7 +40,13 @@ clawdi setup
 clawdi doctor
 ```
 
-Alternative for Windows, Node.js users, or CI (requires Node.js 24+):
+On Windows (PowerShell):
+
+```powershell
+irm https://clawdi.ai/install.ps1 | iex
+```
+
+For package-manager users (requires Node.js 24+):
 
 ```bash
 npm i -g clawdi
