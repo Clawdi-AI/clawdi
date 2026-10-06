@@ -48,7 +48,7 @@ import type {
 	SessionScanRequest,
 	SkillModule,
 } from "../adapters/base";
-import { scanSessionModule } from "../adapters/base";
+import { type SyncReadContext, scanSessionModule } from "../adapters/base";
 import { profileSessionKey } from "../adapters/profiles";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { canonicalApiOrigin } from "../lib/api-origin";
@@ -529,6 +529,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			}
 		}
 		if (opts.abort.aborted) return;
+		await profileSync.refresh({ signal: opts.abort });
 
 		const common: Omit<CommonSyncRuntime, "scope"> = {
 			api,
@@ -566,7 +567,12 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			...moduleOptions("sessions"),
 			prepare: sessions
 				? (scope) =>
-						prepareSessionSync({ ...opts, abort: scope.signal }, sessions, attemptCommon(scope))
+						prepareSessionSync(
+							{ ...opts, abort: scope.signal },
+							sessions,
+							attemptCommon(scope),
+							profileSync.refresh,
+						)
 				: null,
 		});
 		const skillSlot = new SyncModule<PreparedSkillSync>({
@@ -580,6 +586,22 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 
 		const tasks = [
 			...moduleTasks,
+			...(!sessions
+				? [
+						watchSessions({
+							paths: profileSync.watchPaths(),
+							abort: opts.abort,
+							forcePoll: opts.forcePollWatcher,
+							onPathStable: () => profileSync.refreshIfChanged({ signal: opts.abort }),
+						}),
+						(async () => {
+							while (!opts.abort.aborted) {
+								await sleep(RECONCILE_INTERVAL_MS, opts.abort);
+								if (!opts.abort.aborted) await profileSync.refresh({ signal: opts.abort });
+							}
+						})(),
+					]
+				: []),
 			...(skills || vaultSync.enabled
 				? [
 						consumeSse({
@@ -645,15 +667,6 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				stopDisconnectedAgent,
 				async () => {
 					await reconcileVaultFiles();
-					if (!sessions) {
-						try {
-							await profileSync.refresh({ signal: opts.abort });
-							health.clear("projection", "profiles");
-						} catch (error) {
-							if (isAuthFailure(error)) triggerAuthFailureAbort("profiles");
-							else health.set("projection", "profiles", `Profiles: ${toErrorMessage(error)}`);
-						}
-					}
 				},
 				triggerAuthFailureAbort,
 			),
@@ -1094,6 +1107,7 @@ async function prepareSessionSync(
 	opts: EngineOpts,
 	sessions: SessionModule,
 	common: CommonSyncRuntime,
+	refreshProfiles: (context?: SyncReadContext) => Promise<void>,
 ): Promise<PreparedSessionSync> {
 	const { api, queue, health, inFlightSessionHash } = common;
 	const protocol = await negotiateSessionProtocol(api, sessions, { signal: opts.abort });
@@ -1226,7 +1240,10 @@ async function prepareSessionSync(
 				(async () => {
 					while (!opts.abort.aborted) {
 						await sleep(RECONCILE_INTERVAL_MS, opts.abort);
-						if (!opts.abort.aborted) await requestScan();
+						if (!opts.abort.aborted) {
+							await refreshProfiles({ signal: opts.abort });
+							await requestScan();
+						}
 					}
 				})(),
 			]);

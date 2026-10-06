@@ -386,7 +386,7 @@ async function scanOneAgent(
 	let skillsCacheSkipped = 0;
 	const profileSync = createProfileSync(adapter, sessionApi, envId, { readOnly: opts.dryRun });
 	const sessionsModule = modules.includes("sessions") ? profileSync.sessions : undefined;
-	if (!sessionsModule) await profileSync.refresh();
+	await profileSync.refresh();
 	if (sessionsModule) {
 		// `collectSessions` also reports a `dedupedCount` (resume chains it
 		// collapsed). That's internal housekeeping — not actionable and not

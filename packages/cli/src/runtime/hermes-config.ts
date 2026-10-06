@@ -1,9 +1,14 @@
 import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import { parseDocument } from "yaml";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { stripTerminalEscapes } from "../lib/sanitize";
-import { RuntimeUserCommandTimeoutError, spawnRuntimeUserCommand } from "./runtime-user-command";
+import {
+	execRuntimeUserCommand,
+	RuntimeUserCommandTimeoutError,
+	spawnRuntimeUserCommand,
+} from "./runtime-user-command";
 
 const HERMES_CONFIG_COMMAND_TIMEOUT_MS = 30_000;
 
@@ -257,4 +262,35 @@ function configDocumentRoot(document: ReturnType<typeof parseDocument>): Record<
 	if (parsed === null || parsed === undefined) return {};
 	if (!isConfigRecord(parsed)) throw new Error("Hermes config must be an object");
 	return parsed;
+}
+
+/** Resolve the official per-profile config without blocking the daemon. */
+export async function beginHermesConfigTransactionAsync(
+	context: HermesConfigCommandContext,
+	signal?: AbortSignal,
+): Promise<HermesConfigTransaction> {
+	const result = await execRuntimeUserCommand(
+		context.command,
+		[...(context.profile ? ["-p", context.profile] : []), "config", "path"],
+		context.home,
+		context.cwd,
+		{
+			environment: context.environment,
+			maxBufferBytes: 64 * 1024,
+			timeoutMs: HERMES_CONFIG_COMMAND_TIMEOUT_MS,
+			signal,
+		},
+	);
+	const path = commandText(result.stdout);
+	if (!isAbsolute(path)) throw new Error("Hermes config path returned a non-absolute path");
+	let content = "";
+	try {
+		content = await readFile(path, "utf8");
+	} catch (error) {
+		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+	}
+	const document = parseDocument(content);
+	if (document.errors.length > 0) throw new Error("Hermes config is invalid YAML");
+	configDocumentRoot(document);
+	return { context, path, sourceContent: content, document, changed: false };
 }

@@ -29,6 +29,7 @@ import {
 	type RawSkill,
 	type SessionBatchScan,
 	type SessionEvent,
+	type SessionModule,
 	type SessionScanRequest,
 	type SessionScanResult,
 	type SessionUserActivity,
@@ -368,12 +369,11 @@ const OPENCLAW_COMMAND_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 
 async function runOpenClawJson(
 	args: string[],
-	home: string,
+	_home: string,
 	context?: SyncReadContext,
 ): Promise<JsonObject | null> {
 	try {
 		const stdout = await runOpenClawCommand(args, {
-			env: { ...process.env, OPENCLAW_STATE_DIR: home },
 			signal: context?.signal,
 			maxBuffer: OPENCLAW_COMMAND_MAX_BUFFER_BYTES,
 			timeout: 120_000,
@@ -468,7 +468,7 @@ async function readOfficialSessionInventory(
 
 async function readOfficialSessionMessagesFromSdk(
 	entry: OfficialSessionEntry,
-	home: string,
+	_home: string,
 	context?: SyncReadContext,
 ): Promise<JsonObject[] | null> {
 	if (!entry.sessionId) return null;
@@ -492,7 +492,6 @@ async function readOfficialSessionMessagesFromSdk(
 					signal: context?.signal,
 					maxBuffer: OPENCLAW_COMMAND_MAX_BUFFER_BYTES,
 					timeout: 120_000,
-					env: { ...process.env, OPENCLAW_STATE_DIR: home },
 				},
 			),
 		);
@@ -870,10 +869,16 @@ async function materializeOpenClawJsonlSession(input: {
 export class OpenClawAdapter implements AgentAdapterCore {
 	private readonly profileAgentId: string | undefined;
 	constructor(
-		profileAgentId?: string,
+		profileAgentId?: string | null,
 		private readonly home = getOpenClawHome(),
+		private readonly inventoryReader?: (
+			context?: SyncReadContext,
+		) => Promise<OfficialSessionInventory | null>,
 	) {
-		this.profileAgentId = profileAgentId ?? process.env.OPENCLAW_AGENT_ID?.trim();
+		this.profileAgentId =
+			profileAgentId === null
+				? undefined
+				: (profileAgentId ?? process.env.OPENCLAW_AGENT_ID?.trim());
 	}
 	private profileAgentDirectoryListing(): AgentDirectoryListing {
 		return listAgentDirsWithCompleteness(this.home, this.profileAgentId);
@@ -941,11 +946,9 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	): Promise<SessionBatchScan> {
 		const materializeCanonicalActivity =
 			request.kind === "complete" && knownSourceRevisions.size === 0;
-		const officialInventory = await readOfficialSessionInventory(
-			this.home,
-			context,
-			this.profileAgentId,
-		);
+		const officialInventory = this.inventoryReader
+			? await this.inventoryReader(context)
+			: await readOfficialSessionInventory(this.home, context, this.profileAgentId);
 		if (officialInventory) {
 			const collection = await this.collectOfficialSessionsMatching(
 				officialInventory,
@@ -1035,11 +1038,9 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		context?: SyncReadContext,
 	): Promise<RawSession | null> {
 		context?.signal.throwIfAborted();
-		const officialInventory = await readOfficialSessionInventory(
-			this.home,
-			context,
-			this.profileAgentId,
-		);
+		const officialInventory = this.inventoryReader
+			? await this.inventoryReader(context)
+			: await readOfficialSessionInventory(this.home, context, this.profileAgentId);
 		if (officialInventory) {
 			return (
 				(
@@ -1364,4 +1365,23 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			rmSync(stagingRoot, { recursive: true, force: true });
 		}
 	}
+}
+
+/** The official all-agents inventory is shared by the readers in each scan. */
+export function createOpenClawProfileReaders(
+	agentIds: readonly string[],
+	home: string,
+): Map<string, SessionModule> {
+	const inventories = new WeakMap<object, Promise<OfficialSessionInventory | null>>();
+	const read = (context?: SyncReadContext) => {
+		const token = context?.profileScanToken ?? context;
+		if (!token) return readOfficialSessionInventory(home, context);
+		let inventory = inventories.get(token);
+		if (!inventory) {
+			inventory = readOfficialSessionInventory(home, context);
+			inventories.set(token, inventory);
+		}
+		return inventory;
+	};
+	return new Map(agentIds.map((id) => [id, new OpenClawAdapter(id, home, read).sessions]));
 }

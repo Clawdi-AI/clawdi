@@ -262,7 +262,7 @@ export const openClawMcpLifecycle: McpLifecycle = commandLifecycle({
 export const hermesMcpLifecycle: McpLifecycle = {
 	async register() {
 		try {
-			if (!reconcileAllLocalHermesMcp(true)) {
+			if (!(await reconcileAllLocalHermesMcp(true))) {
 				console.log(chalk.gray("✓ MCP server already registered in Hermes"));
 				return;
 			}
@@ -274,7 +274,7 @@ export const hermesMcpLifecycle: McpLifecycle = {
 	},
 	async unregister() {
 		try {
-			if (reconcileAllLocalHermesMcp(false)) {
+			if (await reconcileAllLocalHermesMcp(false)) {
 				console.log(chalk.green("Hermes: removed MCP server registration"));
 			} else {
 				console.log(chalk.gray("Hermes: MCP server already absent"));

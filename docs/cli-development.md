@@ -44,9 +44,12 @@ separately. Hermes uses its managed Python and upstream `list_profile_names()`,
 `get_profile_dir()`, and `profile.yaml.previous_names`. OpenClaw uses
 `agents list --json`; `OPENCLAW_AGENT_ID`, or `main` when unset, remains the
 default Agent regardless of upstream `isDefault`. Readers take explicit homes
-and select their own profile. Enumeration failures scan only the default and
-send `complete: false`; a backend profile endpoint returning 404 selects the
-default-only compatibility mode.
+and select their own profile. The Hermes home used before upgrading retains the
+Cloud default key, even when it names an upstream profile; the upstream root
+then uses the named key `default`, unless that conflicts. Enumeration failures
+send `complete: false`: Hermes retains complete default coverage and OpenClaw
+reads all legacy agents into the default. Profile endpoint 404/5xx responses
+select the same legacy behavior for that cycle.
 
 Hermes rename attribution applies only when a newly discovered key records a
 known removed key in upstream rename history. A durable API/Agent-fenced journal
@@ -64,7 +67,16 @@ collection, reconciliation, and linked Project installation use only the default
 profile, including OpenClaw's default Agent workspace. Hermes MCP uses the
 official `hermes -p <profile> config` mechanism for every profile; OpenClaw MCP
 remains gateway-wide. Profile inventory refresh also runs with session sync
-disabled.
+disabled. Discovery runs asynchronously at startup, five-minute reconciliation,
+and profile inventory changes observed through the existing watcher/stat path.
+Session-file changes do not rediscover profiles. Hermes MCP is reconciled at
+setup and once for each newly seen profile; named failures remain offline while
+the default continues. OpenClaw shares one official all-agents session inventory
+per scan and attributes only newly observed IDs.
+
+The CLI release must wait for the web profile list and filter PR. The backend
+expand release retains the legacy Session unique constraint; repeated local IDs
+across profiles require the later contract release and are rejected meanwhile.
 
 ```bash
 scripts/test.sh cli tests/profiles.test.ts tests/adapters/openclaw.test.ts

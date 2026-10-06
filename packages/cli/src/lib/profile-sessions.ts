@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import {
@@ -15,13 +16,14 @@ import {
 import {
 	discoverAgentProfiles,
 	type LocalAgentProfile,
+	legacyProfileDiscovery,
 	parseProfileSessionKey,
 	profileDiscoveryWatchPaths,
 	profileSessionKey,
 } from "../adapters/profiles";
 import { reconcileLocalHermesMcp } from "../commands/hermes-mcp";
 import { log } from "../serve/log";
-import { type ApiClient, unwrap } from "./api-client";
+import { type ApiClient, ApiError, unwrap } from "./api-client";
 import { canonicalApiOrigin } from "./api-origin";
 import { getClawdiDir } from "./config";
 import { writePrivateFileAtomic } from "./private-file";
@@ -92,24 +94,76 @@ export function createProfileSync(
 	api: ApiClient,
 	environmentId: string | null,
 	options: { readOnly?: boolean } = {},
-): { refresh(context?: SyncReadContext): Promise<void>; sessions?: SessionModule } {
-	let profiles: LocalAgentProfile[] = [];
+): {
+	refresh(context?: SyncReadContext): Promise<void>;
+	refreshIfChanged(context?: SyncReadContext): Promise<void>;
+	watchPaths(): string[];
+	sessions?: SessionModule;
+} {
+	let profiles = legacyProfileDiscovery(adapter).profiles;
+	let initialized = false;
+	let refreshing: Promise<void> | null = null;
+	let discoveryPaths = profileDiscoveryWatchPaths(adapter);
+	let inventorySignature = "";
+	const mcpSeen = new Set<string>();
+	const failed = new Set<string>();
+	const attributed = new Map<string, Set<string>>();
 	let supported = false;
-	let inventoryComplete = false;
-	const refresh = async (context?: SyncReadContext): Promise<void> => {
+	let inventoryComplete = true;
+	const fallback = () => {
+		profiles = legacyProfileDiscovery(adapter).profiles;
+		supported = false;
+		inventoryComplete = true;
+	};
+	const signature = async () =>
+		JSON.stringify(
+			await Promise.all(
+				discoveryPaths.map(async (path) => {
+					try {
+						const entry = await stat(path);
+						return [path, entry.mtimeMs, entry.size];
+					} catch {
+						return [path, null];
+					}
+				}),
+			),
+		);
+	const putInventory = (complete: boolean) =>
+		api.PUT("/v1/agents/{agent_id}/profiles", {
+			params: { path: { agent_id: environmentId ?? "" } },
+			body: {
+				complete,
+				profiles: profiles
+					.filter((profile) => !failed.has(profile.profileKey))
+					.map((profile) => ({
+						upstream_key: profile.upstreamKey,
+						is_default: profile.isDefault,
+					})),
+			},
+		});
+	const failProfile = async (profileKey: string) => {
+		if (!failed.has(profileKey)) log.warn("profiles.sync_failed", { profile_key: profileKey });
+		failed.add(profileKey);
+		if (supported && environmentId && !options.readOnly) {
+			try {
+				unwrap(await putInventory(true));
+			} catch {
+				/* Default sync remains available. */
+			}
+		}
+	};
+	const performRefresh = async (context?: SyncReadContext): Promise<void> => {
 		const discovery = await discoverAgentProfiles(adapter, context?.signal);
 		profiles = discovery.profiles;
-		inventoryComplete = discovery.complete;
+		failed.clear();
+		inventoryComplete = true;
+		discoveryPaths = discovery.watchPaths ?? profileDiscoveryWatchPaths(adapter);
 		if (options.readOnly || !environmentId) return;
 		const prior = await api.GET("/v1/agents/{agent_id}/profiles", {
 			params: { path: { agent_id: environmentId } },
 		});
-		if (prior.response.status === 404) {
-			// MCP is account-wide and does not depend on Cloud profile support.
-			if (adapter.agentType === "hermes")
-				for (const profile of profiles) reconcileLocalHermesMcp(true, profile.upstreamKey);
-			supported = false;
-			profiles = profiles.filter((profile) => profile.isDefault);
+		if (prior.response.status === 404 || prior.response.status >= 500) {
+			fallback();
 			return;
 		}
 		const known = unwrap(prior);
@@ -153,58 +207,100 @@ export function createProfileSync(
 			if (pending.length > 0) journal.write(pending);
 		}
 		// Mark missing identities removed before applying recorded upstream renames.
-		const roster = unwrap(
-			await api.PUT("/v1/agents/{agent_id}/profiles", {
-				params: { path: { agent_id: environmentId } },
-				body: {
-					complete: discovery.complete,
-					profiles: profiles.map((profile) => ({
-						upstream_key: profile.upstreamKey,
-						is_default: profile.isDefault,
-					})),
-				},
-			}),
-		);
+		const inventory = await putInventory(discovery.complete);
+		if (inventory.response.status === 404 || inventory.response.status >= 500) {
+			fallback();
+			return;
+		}
+		const roster = unwrap(inventory);
 		supported = true;
 		if (adapter.agentType === "hermes") {
 			for (const rename of [...pending]) {
 				const profile = profiles.find((row) => row.profileKey === rename.targetKey);
 				if (!profile) continue;
-				const source = roster.find((row) => row.profile_key === rename.sourceKey);
-				const target = roster.find((row) => row.profile_key === rename.targetKey);
-				if (source) {
-					if (source.id !== rename.sourceId || source.state !== "removed")
-						throw new Error(
-							"Pending Hermes rename no longer matches the recorded upstream identity",
+				try {
+					const source = roster.find((row) => row.profile_key === rename.sourceKey);
+					const target = roster.find((row) => row.profile_key === rename.targetKey);
+					if (source) {
+						if (source.id !== rename.sourceId || source.state !== "removed")
+							throw new Error(
+								"Pending Hermes rename no longer matches the recorded upstream identity",
+							);
+						unwrap(
+							await api.POST("/v1/agents/{agent_id}/profiles/{profile_key}/rename", {
+								params: { path: { agent_id: environmentId, profile_key: rename.sourceKey } },
+								body: { new_upstream_key: profile.upstreamKey },
+							}),
 						);
-					unwrap(
-						await api.POST("/v1/agents/{agent_id}/profiles/{profile_key}/rename", {
-							params: { path: { agent_id: environmentId, profile_key: rename.sourceKey } },
-							body: { new_upstream_key: profile.upstreamKey },
-						}),
+					} else if (target?.id !== rename.sourceId) {
+						throw new Error(
+							"Pending Hermes rename destination does not preserve its Cloud identity",
+						);
+					}
+					moveProfileSessionReceipts(
+						api,
+						environmentId,
+						adapter.agentType,
+						rename.sourceKey,
+						rename.targetKey,
 					);
-				} else if (target?.id !== rename.sourceId) {
-					throw new Error("Pending Hermes rename destination does not preserve its Cloud identity");
+					pending = pending.filter((entry) => entry !== rename);
+					journal.write(pending);
+				} catch {
+					context?.signal.throwIfAborted();
+					await failProfile(profile.profileKey);
 				}
-				moveProfileSessionReceipts(
-					api,
-					environmentId,
-					adapter.agentType,
-					rename.sourceKey,
-					rename.targetKey,
-				);
-				pending = pending.filter((entry) => entry !== rename);
-				journal.write(pending);
 			}
-			for (const profile of profiles) reconcileLocalHermesMcp(true, profile.upstreamKey);
+			if (discovery.complete)
+				for (const profile of profiles) {
+					if (mcpSeen.has(profile.profileKey) || failed.has(profile.profileKey)) continue;
+					mcpSeen.add(profile.profileKey);
+					try {
+						await reconcileLocalHermesMcp(true, profile.upstreamKey, context?.signal);
+					} catch {
+						context?.signal.throwIfAborted();
+						if (profile.isDefault) log.warn("profiles.mcp_failed", { profile_key: "" });
+						else await failProfile(profile.profileKey);
+					}
+				}
 		}
+	};
+	const refresh = async (context?: SyncReadContext): Promise<void> => {
+		if (refreshing) return refreshing;
+		refreshing = (async () => {
+			try {
+				await performRefresh(context);
+			} catch (error) {
+				context?.signal.throwIfAborted();
+				// Auth failures retain the engine's established revocation behavior.
+				if (error instanceof ApiError && (error.status === 401 || error.status === 403))
+					throw error;
+				fallback();
+				log.warn("profiles.inventory_unavailable", { profile_key: "" });
+			}
+			initialized = true;
+			inventorySignature = await signature();
+		})().finally(() => {
+			refreshing = null;
+		});
+		return refreshing;
+	};
+	const refreshIfChanged = async (context?: SyncReadContext) => {
+		if (!initialized || (await signature()) !== inventorySignature) await refresh(context);
 	};
 	const module: SessionModule = {
 		contentProtocol: async (context) => {
-			await refresh(context);
-			for (const profile of profiles)
-				if (profile.reader && (await profile.reader.contentProtocol(context)) === "events-v1")
-					return "events-v1";
+			if (!initialized) await refresh(context);
+			for (const profile of profiles) {
+				if (!profile.reader || failed.has(profile.profileKey)) continue;
+				try {
+					if ((await profile.reader.contentProtocol(context)) === "events-v1") return "events-v1";
+				} catch (error) {
+					context?.signal.throwIfAborted();
+					if (profile.isDefault) throw error;
+					await failProfile(profile.profileKey);
+				}
+			}
 			return "snapshot-v1";
 		},
 		collect: collectFromScan((request, revisions, context) =>
@@ -213,71 +309,88 @@ export function createProfileSync(
 				: Promise.reject(new Error("Profile scanner is unavailable")),
 		),
 		scan: async (request: SessionScanRequest, revisions, context) => {
-			await refresh(context);
+			await refreshIfChanged(context);
+			context = {
+				...context,
+				signal: context?.signal ?? new AbortController().signal,
+				profileScanToken: {},
+			};
 			const readers = profiles.filter(
 				(profile): profile is LocalAgentProfile & { reader: SessionModule } =>
-					profile.reader !== undefined,
+					profile.reader !== undefined && !failed.has(profile.profileKey),
 			);
 			async function* batches() {
 				for (const profile of readers) {
-					const knownRevisions = new Map<string, string>();
-					for (const [key, revision] of revisions) {
-						const source = parseProfileSessionKey(key);
-						if (source.profileKey === profile.profileKey)
-							knownRevisions.set(source.localSessionId, revision);
-					}
-					const contentProtocol = await profile.reader.contentProtocol(context);
-					const scan = await scanSessionModule(profile.reader, request, knownRevisions, context);
-					if (scan.coverage !== "complete") result.coverage = "partial";
-					userActivity.complete &&= scan.userActivity?.complete ?? false;
-					const lastInput = scan.userActivity?.lastUserInputAt;
-					if (
-						lastInput &&
-						(!userActivity.lastUserInputAt || lastInput > userActivity.lastUserInputAt)
-					)
-						userActivity.lastUserInputAt = lastInput;
-					for await (const batch of scan.batches) {
-						context?.signal.throwIfAborted();
-						if (
-							supported &&
-							environmentId &&
-							adapter.agentType === "openclaw" &&
-							profile.profileKey
-						) {
-							for (let offset = 0; offset < batch.observedLocalSessionIds.length; offset += 1000) {
-								const ids = batch.observedLocalSessionIds.slice(offset, offset + 1000);
-								unwrap(
-									await api.POST(
-										"/v1/agents/{agent_id}/profiles/{profile_key}/attribute-sessions",
-										{
-											params: {
-												path: { agent_id: environmentId, profile_key: profile.profileKey },
-											},
-											body: { local_session_ids: [...ids] },
-										},
-									),
-								);
-								moveProfileSessionReceipts(
-									api,
-									environmentId,
-									adapter.agentType,
-									"",
-									profile.profileKey,
-									ids,
-								);
-							}
+					try {
+						const knownRevisions = new Map<string, string>();
+						for (const [key, revision] of revisions) {
+							const source = parseProfileSessionKey(key);
+							if (source.profileKey === profile.profileKey)
+								knownRevisions.set(source.localSessionId, revision);
 						}
-						yield {
-							...batch,
-							sessions: batch.sessions.map((session) => ({
-								...session,
-								contentProtocol,
-								...(supported || options.readOnly ? { profileKey: profile.profileKey } : {}),
-							})),
-							observedLocalSessionIds: batch.observedLocalSessionIds.map((id) =>
-								profileSessionKey(profile.profileKey, id),
-							),
-						};
+						const contentProtocol = await profile.reader.contentProtocol(context);
+						const scan = await scanSessionModule(profile.reader, request, knownRevisions, context);
+						if (scan.coverage !== "complete") result.coverage = "partial";
+						userActivity.complete &&= scan.userActivity?.complete ?? false;
+						const lastInput = scan.userActivity?.lastUserInputAt;
+						if (
+							lastInput &&
+							(!userActivity.lastUserInputAt || lastInput > userActivity.lastUserInputAt)
+						)
+							userActivity.lastUserInputAt = lastInput;
+						for await (const batch of scan.batches) {
+							context?.signal.throwIfAborted();
+							if (
+								supported &&
+								environmentId &&
+								adapter.agentType === "openclaw" &&
+								profile.profileKey
+							) {
+								const seen = attributed.get(profile.profileKey) ?? new Set<string>();
+								attributed.set(profile.profileKey, seen);
+								const newlyObserved = batch.observedLocalSessionIds.filter((id) => !seen.has(id));
+								for (let offset = 0; offset < newlyObserved.length; offset += 1000) {
+									const ids = newlyObserved.slice(offset, offset + 1000);
+									unwrap(
+										await api.POST(
+											"/v1/agents/{agent_id}/profiles/{profile_key}/attribute-sessions",
+											{
+												params: {
+													path: { agent_id: environmentId, profile_key: profile.profileKey },
+												},
+												body: { local_session_ids: [...ids] },
+											},
+										),
+									);
+									for (const id of ids) seen.add(id);
+									moveProfileSessionReceipts(
+										api,
+										environmentId,
+										adapter.agentType,
+										"",
+										profile.profileKey,
+										ids,
+									);
+								}
+							}
+							yield {
+								...batch,
+								sessions: batch.sessions.map((session) => ({
+									...session,
+									contentProtocol,
+									...(supported || options.readOnly ? { profileKey: profile.profileKey } : {}),
+								})),
+								observedLocalSessionIds: batch.observedLocalSessionIds.map((id) =>
+									profileSessionKey(profile.profileKey, id),
+								),
+							};
+						}
+					} catch (error) {
+						context?.signal.throwIfAborted();
+						if (profile.isDefault) throw error;
+						result.coverage = "partial";
+						userActivity.complete = false;
+						await failProfile(profile.profileKey);
 					}
 				}
 			}
@@ -293,32 +406,36 @@ export function createProfileSync(
 			return result;
 		},
 		resolve: async (key, context) => {
-			if (profiles.length === 0) await refresh(context);
+			if (!initialized) await refresh(context);
 			const source = parseProfileSessionKey(key);
 			const profile = profiles.find((row) => row.profileKey === source.profileKey);
-			const session = await profile?.reader?.resolve(source.localSessionId, context);
-			if (!session || !profile) return null;
-			return {
-				...session,
-				contentProtocol: await profile.reader?.contentProtocol(context),
-				...(supported ? { profileKey: source.profileKey } : {}),
-			};
+			if (!profile || failed.has(profile.profileKey)) return null;
+			try {
+				const session = await profile.reader?.resolve(source.localSessionId, context);
+				if (!session) return null;
+				return {
+					...session,
+					contentProtocol: await profile.reader?.contentProtocol(context),
+					...(supported ? { profileKey: source.profileKey } : {}),
+				};
+			} catch (error) {
+				context?.signal.throwIfAborted();
+				if (profile.isDefault) throw error;
+				await failProfile(profile.profileKey);
+				return null;
+			}
 		},
 		watchPaths: () => [
 			...new Set([
-				...profileDiscoveryWatchPaths(adapter),
+				...discoveryPaths,
 				...profiles.flatMap((profile) => profile.reader?.watchPaths() ?? []),
 			]),
 		],
 	};
-	return { refresh, ...(adapter.sessions ? { sessions: module } : {}) };
-}
-
-export function profileSessionModule(
-	adapter: AgentAdapter,
-	api: ApiClient,
-	environmentId: string | null,
-	options: { readOnly?: boolean } = {},
-): SessionModule | undefined {
-	return createProfileSync(adapter, api, environmentId, options).sessions;
+	return {
+		refresh,
+		refreshIfChanged,
+		watchPaths: () => [...discoveryPaths],
+		...(adapter.sessions ? { sessions: module } : {}),
+	};
 }

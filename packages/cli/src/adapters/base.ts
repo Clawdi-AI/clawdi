@@ -177,6 +177,8 @@ export interface SyncReadContext {
 	signal: AbortSignal;
 	/** Keep content lazy even for small sessions during whole-inventory synchronization. */
 	streaming?: boolean;
+	/** Shared inventory lifetime for one multi-profile scan. */
+	profileScanToken?: object;
 }
 
 export interface SessionModule {
@@ -222,7 +224,11 @@ export async function scanSessionModule(
 	context?: SyncReadContext,
 ): Promise<SessionBatchScan> {
 	context?.signal.throwIfAborted();
-	const readContext = { signal: context?.signal ?? new AbortController().signal, streaming: true };
+	const readContext = {
+		...context,
+		signal: context?.signal ?? new AbortController().signal,
+		streaming: true,
+	};
 	if (module.scan) return module.scan(request, knownSourceRevisions, readContext);
 	const result = await module.collect(request, readContext);
 	context?.signal.throwIfAborted();

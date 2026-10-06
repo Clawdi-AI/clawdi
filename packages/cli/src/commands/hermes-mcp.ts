@@ -3,6 +3,8 @@ import { getHermesHome } from "../adapters/paths";
 import { discoverHermesProfiles } from "../adapters/profiles";
 import { resolveCurrentCliInvocation } from "../lib/current-cli-invocation";
 import {
+	beginHermesConfigTransactionAsync,
+	commitHermesConfigTransaction,
 	getHermesRawConfigValue,
 	type HermesConfigCommandContext,
 	reconcileHermesConfigValue,
@@ -19,10 +21,15 @@ function localHermesConfigContext(profile?: string): HermesConfigCommandContext 
 	};
 }
 
-export function reconcileLocalHermesMcp(enabled: boolean, profile?: string): boolean {
+export async function reconcileLocalHermesMcp(
+	enabled: boolean,
+	profile?: string,
+	signal?: AbortSignal,
+): Promise<boolean> {
 	const { command, args } = resolveCurrentCliInvocation(["mcp"]);
 	const context = localHermesConfigContext(profile);
-	const current = getHermesRawConfigValue(context, "mcp_servers");
+	const transaction = await beginHermesConfigTransactionAsync(context, signal);
+	const current = getHermesRawConfigValue(transaction, "mcp_servers");
 	if (
 		current.exists &&
 		(typeof current.value !== "object" || current.value === null || Array.isArray(current.value))
@@ -35,21 +42,24 @@ export function reconcileLocalHermesMcp(enabled: boolean, profile?: string): boo
 	delete next["clawdi-mcp"];
 	if (enabled) next.clawdi = { command, args: [...args] };
 	else delete next.clawdi;
-	return reconcileHermesConfigValue(
-		context,
+	const changed = reconcileHermesConfigValue(
+		transaction,
 		"mcp_servers",
 		Object.keys(next).length > 0 ? next : undefined,
 	);
+	if (commitHermesConfigTransaction(transaction) === "conflict")
+		throw new Error("Hermes config changed during reconciliation");
+	return changed;
 }
 
-export function reconcileAllLocalHermesMcp(enabled: boolean): boolean {
+export async function reconcileAllLocalHermesMcp(enabled: boolean): Promise<boolean> {
 	let names: string[];
 	try {
-		names = discoverHermesProfiles().map((profile) => profile.upstreamKey);
+		names = (await discoverHermesProfiles()).map((profile) => profile.upstreamKey);
 	} catch {
 		names = ["default"];
 	}
 	let changed = false;
-	for (const name of names) changed = reconcileLocalHermesMcp(enabled, name) || changed;
+	for (const name of names) changed = (await reconcileLocalHermesMcp(enabled, name)) || changed;
 	return changed;
 }

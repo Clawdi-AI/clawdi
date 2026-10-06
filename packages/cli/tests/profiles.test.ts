@@ -6,6 +6,7 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,12 +22,8 @@ import {
 } from "../src/adapters/profiles";
 import { reconcileAllLocalHermesMcp } from "../src/commands/hermes-mcp";
 import { ApiClient } from "../src/lib/api-client";
-import {
-	createProfileSync,
-	moveProfileSessionReceipts,
-	profileSessionModule,
-} from "../src/lib/profile-sessions";
-import { sessionFence } from "../src/lib/session-upload";
+import { createProfileSync, moveProfileSessionReceipts } from "../src/lib/profile-sessions";
+import { planSessionUpload, prepareSessionUpload, sessionFence } from "../src/lib/session-upload";
 import {
 	cacheKey,
 	persistFencedSessionEntry,
@@ -35,6 +32,7 @@ import {
 	sessionFenceKey,
 } from "../src/lib/sessions-lock";
 import { log } from "../src/serve/log";
+import { enqueueChangedSessionsAfterStability } from "../src/serve/sync-engine";
 import { cleanupTmp, copyFixtureToTmp } from "./adapters/helpers";
 
 const savedFetch = globalThis.fetch;
@@ -66,7 +64,7 @@ beforeEach(() => {
 		`
 import json, os
 from pathlib import Path
-root = Path(os.environ['HERMES_HOME'])
+root = Path(os.environ['HOME']) / '.hermes'
 def get_profile_dir(name):
     return root if name == 'default' else root / 'profiles' / name
 def list_profile_names():
@@ -133,8 +131,8 @@ function row(key: string, state = "active", count = 0) {
 	};
 }
 
-test("official Hermes discovery ignores shells and tombstones and exposes upstream rename history", () => {
-	const profiles = discoverHermesProfiles();
+test("official Hermes discovery ignores shells and tombstones and exposes upstream rename history", async () => {
+	const profiles = await discoverHermesProfiles();
 	expect(profiles.map((profile) => profile.profileKey)).toEqual(["", "work"]);
 	expect(profiles[1]?.previousNames).toEqual(["old"]);
 	expect(profiles[1]?.reader?.watchPaths()).toContain(
@@ -174,12 +172,12 @@ test("default receipt keys remain byte-identical and named profiles cannot colli
 	expect(readFencedSessionEntry(readSessionsLock(), fence)).toBeUndefined();
 });
 
-test("Hermes MCP uses the official selector for every profile and preserves other servers", () => {
+test("Hermes MCP uses the official selector for every profile and preserves other servers", async () => {
 	const defaultConfig = join(home, ".hermes", "config.yaml");
 	const workConfig = join(home, ".hermes", "profiles", "work", "config.yaml");
 	writeFileSync(defaultConfig, "mcp_servers:\n  other:\n    command: other\n");
 	writeFileSync(workConfig, "mcp_servers:\n  work-only:\n    command: helper\n");
-	expect(reconcileAllLocalHermesMcp(true)).toBeTrue();
+	expect(await reconcileAllLocalHermesMcp(true)).toBeTrue();
 	expect(parse(readFileSync(defaultConfig, "utf8"))).toEqual({
 		mcp_servers: { other: { command: "other" }, clawdi: { command: "clawdi", args: ["mcp"] } },
 	});
@@ -189,8 +187,8 @@ test("Hermes MCP uses the official selector for every profile and preserves othe
 			clawdi: { command: "clawdi", args: ["mcp"] },
 		},
 	});
-	expect(reconcileAllLocalHermesMcp(true)).toBeFalse();
-	expect(reconcileAllLocalHermesMcp(false)).toBeTrue();
+	expect(await reconcileAllLocalHermesMcp(true)).toBeFalse();
+	expect(await reconcileAllLocalHermesMcp(false)).toBeTrue();
 	expect(parse(readFileSync(workConfig, "utf8"))).toEqual({
 		mcp_servers: { "work-only": { command: "helper" } },
 	});
@@ -201,7 +199,7 @@ test("per-profile readers preserve duplicate imported IDs and projection bytes",
 		const request = input instanceof Request ? input : new Request(input);
 		return response(request.method === "PUT" ? [row(""), row("work")] : []);
 	});
-	const module = profileSessionModule(new HermesAdapter(), client, "env");
+	const module = createProfileSync(new HermesAdapter(), client, "env").sessions;
 	if (!module) throw new Error("Expected session module");
 	const scan = await scanSessionModule(module, { kind: "complete" });
 	const sessions = [];
@@ -226,7 +224,7 @@ test("discovery failure reports incomplete inventory and only scans default", as
 	const discovery = await discoverAgentProfiles(new HermesAdapter());
 	expect(discovery.complete).toBeFalse();
 	expect(discovery.profiles.map((profile) => profile.profileKey)).toEqual([""]);
-	const module = profileSessionModule(new HermesAdapter(), client, "env");
+	const module = createProfileSync(new HermesAdapter(), client, "env").sessions;
 	if (!module) throw new Error("Expected session module");
 	const result = await module.collect({ kind: "complete" });
 	expect(result.sessions.every((session) => session.profileKey === "")).toBeTrue();
@@ -237,15 +235,11 @@ test("discovery failure reports incomplete inventory and only scans default", as
 
 test("old backend capability fallback uploads only default and omits profile metadata", async () => {
 	const client = api(async () => response({ detail: "Not Found" }, 404));
-	const module = profileSessionModule(new HermesAdapter(), client, "env");
+	const module = createProfileSync(new HermesAdapter(), client, "env").sessions;
 	if (!module) throw new Error("Expected session module");
 	const result = await module.collect({ kind: "complete" });
 	expect(result.sessions.length).toBeGreaterThan(0);
 	expect(result.sessions.every((session) => session.profileKey === undefined)).toBeTrue();
-	expect(
-		parse(readFileSync(join(home, ".hermes", "profiles", "work", "config.yaml"), "utf8"))
-			.mcp_servers.clawdi,
-	).toEqual({ command: "clawdi", args: ["mcp"] });
 });
 
 test("Hermes upstream rename moves Cloud before reading sessions and retains local receipts", async () => {
@@ -268,7 +262,7 @@ test("Hermes upstream rename moves Cloud before reading sessions and retains loc
 		local_hash: "unchanged",
 		event_revision: 2,
 	});
-	const module = profileSessionModule(new HermesAdapter(), client, "env");
+	const module = createProfileSync(new HermesAdapter(), client, "env").sessions;
 	if (!module) throw new Error("Expected session module");
 	await module.collect({ kind: "complete" });
 	expect(calls).toEqual([
@@ -326,7 +320,7 @@ for (const lostResponse of ["inventory", "rename"] as const) {
 			local_hash: "unchanged",
 			event_revision: 2,
 		});
-		await expect(createProfileSync(new HermesAdapter(), client, "env").refresh()).rejects.toThrow();
+		await createProfileSync(new HermesAdapter(), client, "env").refresh();
 		restarted = true;
 		await createProfileSync(new HermesAdapter(), client, "env").refresh();
 		expect(renames).toBe(1);
@@ -515,9 +509,9 @@ test("OpenClaw official roster honors the configured default and attributes rece
 		local_hash: "unchanged",
 		event_revision: 2,
 	});
-	const result = await createProfileSync(new OpenClawAdapter(), client, "env").sessions?.collect({
-		kind: "complete",
-	});
+	const sync = createProfileSync(new OpenClawAdapter(), client, "env");
+	const result = await sync.sessions?.collect({ kind: "complete" });
+	await sync.sessions?.collect({ kind: "complete" });
 	expect(inventories).toEqual([
 		{
 			complete: true,
@@ -539,4 +533,233 @@ test("OpenClaw official roster honors the configured default and attributes rece
 			profileKey: "main",
 		})?.local_hash,
 	).toBe("unchanged");
+});
+
+test("HERMES_HOME keeps the default identity and content receipts when it selects a named profile", async () => {
+	const selectedHome = join(home, ".hermes", "profiles", "work");
+	process.env.HERMES_HOME = selectedHome;
+	const adapter = new HermesAdapter();
+	const before = await adapter.sessions.collect({ kind: "complete" });
+	const old = before.sessions.find((session) => session.localSessionId === "s-modern");
+	if (!old) throw new Error("Expected fixture session");
+	const client = api(async () => response([row(""), row("default")]));
+	const plan = planSessionUpload(old, "events-v1");
+	const fence = sessionFence(client, {
+		environmentId: "env",
+		adapter: "hermes",
+		sourceSessionKey: old.localSessionId,
+	});
+	persistFencedSessionEntry(fence, { protocol: plan.protocol, local_hash: plan.localHash });
+	const sync = createProfileSync(adapter, client, "env");
+	const result = await sync.sessions?.collect({ kind: "complete" });
+	const current = result?.sessions.find(
+		(session) => session.profileKey === "" && session.localSessionId === old.localSessionId,
+	);
+	if (!current) throw new Error("Expected unchanged default session");
+	expect((await prepareSessionUpload(current, "events-v1")).localHash).toBe(plan.localHash);
+	expect(
+		sessionFenceKey(
+			sessionFence(client, {
+				environmentId: "env",
+				adapter: "hermes",
+				sourceSessionKey: profileSessionKey(current.profileKey, current.localSessionId),
+				profileKey: current.profileKey,
+			}),
+		),
+	).toBe(sessionFenceKey(fence));
+	expect(result?.sessions.some((session) => session.profileKey === "default")).toBeTrue();
+	expect(sync.sessions?.watchPaths()).toContain(join(selectedHome, "state.db"));
+	const queued: unknown[] = [];
+	const uploaded = await enqueueChangedSessionsAfterStability({
+		abort: new AbortController().signal,
+		sessions: [current],
+		queue: {
+			enqueueWhenAvailable: async (item) => {
+				queued.push(item);
+				return 1;
+			},
+		},
+		lastPushedHash: new Map([[current.localSessionId, plan.localHash]]),
+		inFlightHash: new Map(),
+		protocol: "events-v1",
+		fenceFor: () => fence,
+		onBlocked: () => {},
+	});
+	expect(uploaded.enqueued).toBe(0);
+	expect(queued).toEqual([]);
+});
+
+test("inventory refreshes only at start, reconcile and directory changes; MCP runs once per discovered key", async () => {
+	const commandLog = join(home, "mcp-commands");
+	executable(
+		join(home, "bin", "hermes"),
+		`printf '%s\n' "$*" >> '${commandLog}'
+exec '${process.execPath}' '${configMock}' "$@"`,
+	);
+	let gets = 0;
+	const client = api(async (input) => {
+		const request = input instanceof Request ? input : new Request(input);
+		if (request.method === "GET") gets++;
+		return response([]);
+	});
+	const sync = createProfileSync(new HermesAdapter(), client, "env");
+	await sync.refresh();
+	await sync.sessions?.contentProtocol();
+	await sync.sessions?.collect({ kind: "complete" });
+	utimesSync(join(home, ".hermes", "state.db"), new Date(), new Date());
+	await sync.sessions?.collect({ kind: "complete" });
+	expect(gets).toBe(1);
+	await sync.refresh();
+	expect(gets).toBe(2);
+	expect(readFileSync(commandLog, "utf8").trim().split("\n")).toHaveLength(2);
+	const newHome = join(home, ".hermes", "profiles", "research");
+	mkdirSync(newHome);
+	cpSync(join(fixture, ".hermes", "state.db"), join(newHome, "state.db"));
+	roster(["default", "work", "research"]);
+	const result = await sync.sessions?.collect({ kind: "complete" });
+	expect(gets).toBe(3);
+	expect(result?.sessions.some((session) => session.profileKey === "research")).toBeTrue();
+	expect(readFileSync(commandLog, "utf8").trim().split("\n")).toHaveLength(3);
+});
+
+test("async Hermes discovery leaves the event loop available", async () => {
+	executable(
+		join(home, ".hermes", "hermes-agent", "venv", "bin", "python"),
+		`sleep 0.05
+exec python3 "$@"`,
+	);
+	let yielded = false;
+	const timer = setTimeout(() => {
+		yielded = true;
+	}, 0);
+	try {
+		await discoverHermesProfiles();
+		expect(yielded).toBeTrue();
+	} finally {
+		clearTimeout(timer);
+	}
+});
+
+test("a failed named profile stays offline and leaves the default scanning", async () => {
+	writeFileSync(join(home, ".hermes", "profiles", "work", "config.yaml"), "[invalid-config]");
+	const inventories: unknown[] = [];
+	const client = api(async (input) => {
+		const request = input instanceof Request ? input : new Request(input);
+		if (request.method === "PUT") inventories.push(await request.json());
+		return response([row(""), row("work")]);
+	});
+	const warn = spyOn(log, "warn");
+	try {
+		const result = await createProfileSync(new HermesAdapter(), client, "env").sessions?.collect({
+			kind: "complete",
+		});
+		expect(result?.sessions.length).toBeGreaterThan(0);
+		expect(result?.sessions.every((session) => session.profileKey === "")).toBeTrue();
+		expect(inventories.at(-1)).toEqual({
+			complete: true,
+			profiles: [{ upstream_key: "default", is_default: true }],
+		});
+		expect(warn.mock.calls).toEqual([["profiles.sync_failed", { profile_key: "work" }]]);
+	} finally {
+		warn.mockRestore();
+	}
+});
+
+for (const status of [404, 503]) {
+	test(`profile endpoint ${status} retains the default's complete legacy coverage`, async () => {
+		const client = api(async () => response({ detail: "unavailable" }, status));
+		const result = await createProfileSync(new HermesAdapter(), client, "env").sessions?.collect({
+			kind: "complete",
+		});
+		expect(result?.coverage).toBe("complete");
+		expect(result?.sessions.length).toBeGreaterThan(0);
+		expect(result?.sessions.every((session) => session.profileKey === undefined)).toBeTrue();
+	});
+}
+
+test("OpenClaw profiles share one official all-agents inventory without injecting a state directory", async () => {
+	delete process.env.OPENCLAW_STATE_DIR;
+	const calls = join(home, "session-inventory-calls");
+	executable(
+		join(home, "bin", "openclaw"),
+		`
+if [ "$*" = "agents list --json" ]; then
+    printf '[{"id":"main","workspace":"%s/main"},{"id":"work","workspace":"%s/work"}]' "$HOME" "$HOME"
+elif [ "$*" = "sessions --json --all-agents --limit all" ]; then
+    [ -z "\${OPENCLAW_STATE_DIR+x}" ] || exit 65
+    printf '.\n' >> '${calls}'
+    printf '{"sessions":[],"stores":[]}'
+else exit 1; fi`,
+	);
+	const client = api(async () => response([row(""), row("work")]));
+	await createProfileSync(new OpenClawAdapter(), client, "env").sessions?.collect({
+		kind: "complete",
+	});
+	expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
+});
+
+test("OpenClaw discovery failure reads all legacy agents into the default", async () => {
+	const state = join(home, ".openclaw");
+	for (const name of ["main", "work"]) {
+		const dir = join(state, "agents", name, "sessions");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			join(dir, "sessions.json"),
+			JSON.stringify({ [name]: { sessionId: name, updatedAt: 1776247200000 } }),
+		);
+		writeFileSync(
+			join(dir, `${name}.jsonl`),
+			JSON.stringify({
+				type: "message",
+				timestamp: 1776247200000,
+				message: { role: "user", content: "fixture input" },
+			}),
+		);
+	}
+	executable(join(home, "bin", "openclaw"), "exit 1");
+	const client = api(async () => response([]));
+	const result = await createProfileSync(new OpenClawAdapter(), client, "env").sessions?.collect({
+		kind: "complete",
+	});
+	expect(result?.coverage).toBe("complete");
+	expect(
+		result?.sessions.map((session) => [session.profileKey, session.localSessionId]).sort(),
+	).toEqual([
+		["", "main"],
+		["", "work"],
+	]);
+});
+
+test("a conflicting upstream root skips only the named default profile", async () => {
+	const customHome = join(home, "custom-home");
+	mkdirSync(customHome);
+	cpSync(join(fixture, ".hermes", "state.db"), join(customHome, "state.db"));
+	process.env.HERMES_HOME = customHome;
+	const warn = spyOn(log, "warn");
+	try {
+		const profiles = await discoverHermesProfiles();
+		expect(profiles.find((profile) => profile.isDefault)?.home).toBe(customHome);
+		expect(profiles.some((profile) => profile.profileKey === "default")).toBeFalse();
+		expect(profiles.some((profile) => profile.profileKey === "work")).toBeTrue();
+		expect(warn.mock.calls).toEqual([["profiles.default_conflict", { profile_key: "default" }]]);
+	} finally {
+		warn.mockRestore();
+	}
+});
+
+test("malformed named rename metadata does not discard other profiles", async () => {
+	writeFileSync(join(home, ".hermes", "profiles", "work", "profile.yaml"), '{"previous_names":42}');
+	const client = api(async () => response([row(""), row("work", "removed")]));
+	const warn = spyOn(log, "warn");
+	try {
+		const result = await createProfileSync(new HermesAdapter(), client, "env").sessions?.collect({
+			kind: "complete",
+		});
+		expect(result?.coverage).toBe("complete");
+		expect(result?.sessions.length).toBeGreaterThan(0);
+		expect(result?.sessions.every((session) => session.profileKey === "")).toBeTrue();
+		expect(warn.mock.calls).toEqual([["profiles.read_failed", { profile_key: "work" }]]);
+	} finally {
+		warn.mockRestore();
+	}
 });
