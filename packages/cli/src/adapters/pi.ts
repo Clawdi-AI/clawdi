@@ -206,7 +206,11 @@ async function* readPiEvents(
 			if (v4 && lane) setLane.run(lane, id);
 			if (!v4) {
 				if (data.type === "message") addUsage(usage, jsonObject(data.message)?.usage);
-				else if (data.type === "compaction" || data.type === "branch_summary")
+				else if (
+					data.type === "usage" ||
+					data.type === "compaction" ||
+					data.type === "branch_summary"
+				)
 					addUsage(usage, data.usage);
 			}
 		}
