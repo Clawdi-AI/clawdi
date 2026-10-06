@@ -54,7 +54,7 @@ function WalletView() {
 		(item) => item.id,
 	);
 	return (
-		<SettingsShell active="wallet" back scroll={false}>
+		<SettingsShell active="wallet" scroll={false}>
 			<NativeList
 				data={wallet.data && !wallet.isError ? rows : []}
 				keyExtractor={(item) => item.id}

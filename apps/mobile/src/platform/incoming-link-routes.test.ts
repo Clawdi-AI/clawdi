@@ -43,7 +43,13 @@ const paths = [
 	"/channels",
 	"/channels/whatsapp",
 	"/channels/channel-id",
+	"/channels/channel-id/link",
+	"/channels/channel-id/pair?linkId=link-id",
 	"/ai-providers",
+	"/ai-providers/new",
+	"/ai-providers/provider-id/edit",
+	"/ai-providers/provider-id/remove",
+	"/ai-providers/provider-id/oauth",
 	"/deploy",
 	"/terminal/agent-id",
 	`/share/${"a".repeat(43)}`,
@@ -89,6 +95,9 @@ test("resource links reject unverified hosts and unsupported or malformed routes
 		"clawdi://skills/%5C",
 		"//evil.test/agents/id",
 		"clawdi://share/invalid",
+		"clawdi://ai-providers/provider-id/unknown",
+		"clawdi://channels/channel-id/unknown",
+		"clawdi://dev/account?panel=profile",
 	]) {
 		expect(mobileLinkDestination(path, ["links.example.test"], () => "")).toBe("/open-share");
 	}

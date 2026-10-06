@@ -74,10 +74,7 @@ function ChannelsView() {
 	const total = (owned.data?.length ?? 0) + shared.length;
 	const custom = orderedChannelsForFilter(owned.data ?? [], filter),
 		bots = orderedChannelsForFilter(shared, filter);
-	const refresh = async () => {
-		const results = await Promise.all([pool.refetch(), owned.refetch(), linked.refetch()]);
-		if (results.some((r) => r.isError)) throw new Error("Channel inventory unavailable");
-	};
+
 	if (agentId && groups)
 		return (
 			<SafeAreaScreen>
@@ -102,7 +99,7 @@ function ChannelsView() {
 												: scopedCopy.customDescription}
 										</WebText>
 									</WebView>
-									{kind === "custom" ? <ChannelCreate refresh={refresh} scoped /> : null}
+									{kind === "custom" ? <ChannelCreate scoped /> : null}
 								</WebView>
 								{query.isError ? (
 									<ApiErrorPanel error={query.error} onRetry={() => void query.refetch()} />

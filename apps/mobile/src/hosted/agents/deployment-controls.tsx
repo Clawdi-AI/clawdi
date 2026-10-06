@@ -466,10 +466,6 @@ function ModelSettings({
 				addProvider={
 					<ProviderCreate
 						providers={catalog.data?.providers}
-						refresh={async () => {
-							const result = await catalog.refetch();
-							if (result.isError) throw new Error("Provider inventory unavailable");
-						}}
 						renderTrigger={(open) => (
 							<EntityAddCard
 								title={aiBindingCopy.addProvider}

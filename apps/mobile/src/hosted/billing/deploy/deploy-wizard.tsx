@@ -478,10 +478,6 @@ function CreationForm() {
 								addProvider={
 									<ProviderCreate
 										providers={inventory.data?.providers}
-										refresh={async () => {
-											const result = await inventory.refetch();
-											if (result.isError) throw new Error("Provider inventory unavailable");
-										}}
 										renderTrigger={(open) => (
 											<EntityAddCard
 												title={aiBindingCopy.addProvider}

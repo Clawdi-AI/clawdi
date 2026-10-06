@@ -47,7 +47,6 @@ export function ProviderCreate({
 	renderTrigger,
 }: {
 	providers: SavedAiProvider[] | undefined;
-	refresh: () => Promise<void>;
 	renderTrigger?: (open: () => void) => ReactNode;
 }) {
 	const scope = useAccountScope();

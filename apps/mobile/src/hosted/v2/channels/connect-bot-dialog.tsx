@@ -26,12 +26,7 @@ import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
-export function ChannelCreate({
-	scoped = false,
-}: {
-	refresh: () => Promise<void>;
-	scoped?: boolean;
-}) {
+export function ChannelCreate({ scoped = false }: { scoped?: boolean }) {
 	const scope = useAccountScope();
 	return (
 		<ActionButton

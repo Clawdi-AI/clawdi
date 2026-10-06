@@ -43,7 +43,7 @@ function BillingView() {
 		(item) => item.subscription_id,
 	);
 	return (
-		<SettingsShell active="compute" back scroll={false}>
+		<SettingsShell active="compute" scroll={false}>
 			<NativeList
 				data={items}
 				keyExtractor={(item) => item.subscription_id}
