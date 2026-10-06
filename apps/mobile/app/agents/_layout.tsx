@@ -1,1 +1,1 @@
-export { SignedInLayout as default } from "../../src/ui/signed-in-layout";
+export { SignedInLayout as default } from "@/platform/navigation/signed-in-layout";

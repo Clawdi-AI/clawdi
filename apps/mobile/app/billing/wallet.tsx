@@ -1,2 +1,2 @@
-import { WalletScreen } from "../../src/features/billing/screens";
+import { WalletScreen } from "@/hosted/billing/subscription/subscriptions-section";
 export default WalletScreen;

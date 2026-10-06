@@ -1,1 +1,1 @@
-export { ProjectInvitationsScreen as default } from "../../src/features/project-invitations";
+export { ProjectInvitationsScreen as default } from "@/components/sharing/project-invitations";

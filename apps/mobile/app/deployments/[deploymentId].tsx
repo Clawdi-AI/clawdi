@@ -1,5 +1,5 @@
 import { useLocalSearchParams } from "expo-router";
-import { DeploymentDetailScreen } from "../../src/features/deployments";
+import { DeploymentDetailScreen } from "@/hosted/agents/hosted-agent-detail";
 
 export default function DeploymentRoute() {
 	const { deploymentId } = useLocalSearchParams<{ deploymentId?: string | string[] }>();

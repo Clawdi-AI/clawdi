@@ -1,5 +1,5 @@
-import { ClerkOnly } from "../src/auth/clerk-only";
-import { DeviceSessionsScreen } from "../src/features/device-sessions";
+import { DeviceSessionsScreen } from "@/platform/account/device-sessions";
+import { ClerkOnly } from "@/platform/auth/clerk-only";
 
 export default function AccountManagementRoute() {
 	return (

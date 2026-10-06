@@ -3,7 +3,10 @@
 	"compilerOptions": {
 		"strict": true,
 		"noEmit": true,
-		"types": ["react", "react-native"]
+		"types": ["react", "react-native"],
+		"paths": {
+			"@/*": ["./src/*"]
+		}
 	},
 	"include": ["**/*.ts", "**/*.tsx", "uniwind-types.d.ts", ".expo/types/**/*.ts", "expo-env.d.ts"],
 	"exclude": ["compatibility", "scripts", "**/*.test.ts", "**/*.test.tsx"]

@@ -1,1 +1,1 @@
-export { SkillEditorScreen as default } from "../../src/features/skill-editor";
+export { SkillEditorScreen as default } from "@/pages/dashboard/skills/[key]/page";

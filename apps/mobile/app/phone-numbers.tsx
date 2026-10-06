@@ -1,5 +1,5 @@
-import { ClerkOnly } from "../src/auth/clerk-only";
-import { PhoneNumbersScreen } from "../src/features/account-contacts";
+import { PhoneNumbersScreen } from "@/platform/account/account-contacts";
+import { ClerkOnly } from "@/platform/auth/clerk-only";
 
 export default function AccountManagementRoute() {
 	return (

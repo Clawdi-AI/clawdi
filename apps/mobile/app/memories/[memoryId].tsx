@@ -1,1 +1,1 @@
-export { MemoryDetailScreen as default } from "../../src/features/memory-detail";
+export { MemoryDetailScreen as default } from "@/pages/dashboard/memories/[id]/page";

@@ -1,1 +1,1 @@
-export { AgentPluginsScreen as default } from "../../../src/features/agent-plugins";
+export { AgentPluginsScreen as default } from "@/hosted/v2/agent-plugins/agent-plugins-surface";

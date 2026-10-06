@@ -1,5 +1,5 @@
-import { ClerkOnly } from "../src/auth/clerk-only";
-import { PasskeysScreen } from "../src/features/passkeys";
+import { PasskeysScreen } from "@/platform/account/passkeys";
+import { ClerkOnly } from "@/platform/auth/clerk-only";
 
 export default function AccountManagementRoute() {
 	return (

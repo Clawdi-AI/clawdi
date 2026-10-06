@@ -1,3 +1,3 @@
-import { MemoriesScreen } from "../../src/features/memories";
+import { MemoriesScreen } from "@/components/memories/memories-surface";
 
 export default MemoriesScreen;

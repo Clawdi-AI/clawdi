@@ -8,7 +8,7 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { possibleNativeClasses } from "../src/ui/web-classes";
+import { possibleNativeClasses } from "@/lib/web-classes";
 
 const sourcePath = fileURLToPath(
 	new URL("../../../packages/shared/src/style/theme.css", import.meta.url),

@@ -1,1 +1,1 @@
-export { CreateAgentScreen as default } from "../../src/features/creation";
+export { CreateAgentScreen as default } from "@/hosted/billing/deploy/deploy-wizard";

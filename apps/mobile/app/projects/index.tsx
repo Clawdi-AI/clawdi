@@ -1,3 +1,3 @@
-import { ProjectsScreen } from "../../src/features/projects";
+import { ProjectsScreen } from "@/components/projects/projects-surface";
 
 export default ProjectsScreen;

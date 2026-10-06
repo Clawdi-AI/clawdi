@@ -1,4 +1,4 @@
-import { SignUpScreen } from "../../src/auth/auth-screen";
+import { SignUpScreen } from "@/platform/auth/auth-screen";
 
 export default function SignUpRoute() {
 	return <SignUpScreen />;

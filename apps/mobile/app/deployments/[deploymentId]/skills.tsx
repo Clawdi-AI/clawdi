@@ -1,1 +1,1 @@
-export { WorkspaceSkillsScreen as default } from "../../../src/features/deployments/workspace-skills";
+export { WorkspaceSkillsScreen as default } from "@/hosted/agents/hosted-workspace-skills-panel";

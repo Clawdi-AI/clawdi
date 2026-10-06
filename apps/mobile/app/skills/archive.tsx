@@ -1,1 +1,1 @@
-export { SkillArchiveScreen as default } from "../../src/features/skill-archive";
+export { SkillArchiveScreen as default } from "@/components/skills/skill-archive";

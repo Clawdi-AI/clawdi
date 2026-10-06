@@ -1,5 +1,5 @@
-import { ApiKeysPanel } from "../src/ui/settings/api-keys-panel";
-import { SettingsShell } from "../src/ui/settings/shell";
+import { ApiKeysPanel } from "@/components/settings/api-keys-panel";
+import { SettingsShell } from "@/components/settings/shell";
 export default function ApiKeysRoute() {
 	return (
 		<SettingsShell active="api-keys" back>

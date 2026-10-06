@@ -1,1 +1,1 @@
-export { ProjectJoinScreen as default } from "../../src/features/project-join";
+export { ProjectJoinScreen as default } from "@/pages/share/project-share-page";

@@ -1,5 +1,5 @@
-import { ClerkOnly } from "../src/auth/clerk-only";
-import { ConnectedAccountsScreen } from "../src/features/connected-accounts";
+import { ConnectedAccountsScreen } from "@/platform/account/connected-accounts";
+import { ClerkOnly } from "@/platform/auth/clerk-only";
 
 export default function AccountManagementRoute() {
 	return (

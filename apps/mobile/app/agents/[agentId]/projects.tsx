@@ -1,1 +1,1 @@
-export { AgentProjectsScreen as default } from "../../../src/features/agent-projects";
+export { AgentProjectsScreen as default } from "@/components/dashboard/agent-projects-tab";

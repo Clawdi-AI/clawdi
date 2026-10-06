@@ -1,1 +1,1 @@
-export { SessionSharesScreen as default } from "../../src/features/session-sharing";
+export { SessionSharesScreen as default } from "@/components/sessions/share-controls";

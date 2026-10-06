@@ -1,5 +1,5 @@
-import { ClerkOnly } from "../src/auth/clerk-only";
-import { DeleteAccountScreen } from "../src/features/delete-account";
+import { DeleteAccountScreen } from "@/platform/account/delete-account";
+import { ClerkOnly } from "@/platform/auth/clerk-only";
 
 export default function AccountManagementRoute() {
 	return (

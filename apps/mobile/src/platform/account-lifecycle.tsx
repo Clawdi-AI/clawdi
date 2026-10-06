@@ -13,16 +13,16 @@ import {
 	createAccountScope,
 	isObsoleteAccountQuery,
 	readInAccountScope,
-} from "../auth/account-scope";
-import { useAppAuth } from "../auth/auth-client";
+} from "@/platform/auth/account-scope";
+import { useAppAuth } from "@/platform/auth/auth-client";
 
-export type { AccountRead, AccountScope } from "../auth/account-scope";
+export type { AccountRead, AccountScope } from "@/platform/auth/account-scope";
 export {
 	AccountScopeChangedError,
 	accountQueryKey,
 	clearAccountScope,
 	readInAccountScope,
-} from "../auth/account-scope";
+} from "@/platform/auth/account-scope";
 
 const AccountScopeContext = createContext<AccountScope | null>(null);
 

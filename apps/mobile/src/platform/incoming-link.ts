@@ -1,5 +1,5 @@
 import { publicSessionId, publicSessionInput, vaultRequestToken } from "@clawdi/shared/api";
-import { accountOAuthNavigation } from "../auth/account-oauth";
+import { accountOAuthNavigation } from "@/platform/auth/account-oauth";
 
 /** One pending capability, never Router state, storage, logs or query keys. */
 export function createVaultLinkInbox(now = Date.now) {

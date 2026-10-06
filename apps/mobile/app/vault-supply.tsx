@@ -1,1 +1,1 @@
-export { VaultSupplyScreen as default } from "../src/features/vault/supply";
+export { VaultSupplyScreen as default } from "@/pages/vault-request";

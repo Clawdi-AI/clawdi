@@ -1,1 +1,1 @@
-export { ConnectorDetailScreen as default } from "../../src/features/connectors/screens";
+export { ConnectorDetailScreen as default } from "@/components/connectors/connectors-surface";

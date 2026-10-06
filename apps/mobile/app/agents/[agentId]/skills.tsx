@@ -1,1 +1,1 @@
-export { AgentLibrarySkillsScreen as default } from "../../../src/features/agent-workspace-skills";
+export { AgentLibrarySkillsScreen as default } from "@/components/dashboard/workspace-skills-panel";

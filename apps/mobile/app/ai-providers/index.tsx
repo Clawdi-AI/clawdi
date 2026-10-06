@@ -1,3 +1,3 @@
-import { AiProvidersScreen } from "../../src/features/ai-providers";
+import { AiProvidersScreen } from "@/hosted/v2/ai-providers/ai-providers-page";
 
 export default AiProvidersScreen;

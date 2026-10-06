@@ -1,1 +1,1 @@
-export { VaultCatalogScreen as default } from "../../src/features/vault/catalog";
+export { VaultCatalogScreen as default } from "@/components/vault/vaults-surface";

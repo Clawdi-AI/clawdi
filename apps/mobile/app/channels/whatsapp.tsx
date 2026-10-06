@@ -1,1 +1,1 @@
-export { WhatsAppScreen as default } from "../../src/features/channels/whatsapp";
+export { WhatsAppScreen as default } from "@/hosted/v2/channels/whatsapp-device-onboarding";

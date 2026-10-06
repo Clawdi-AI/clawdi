@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { createVaultLinkInbox, mobileLinkDestination } from "./incoming-link";
+import { createVaultLinkInbox, mobileLinkDestination } from "@/platform/incoming-link";
 
 const id = "a1234567-1234-1234-1234-123456789abc";
 const other = "b1234567-1234-1234-1234-123456789abc";

@@ -1,1 +1,1 @@
-export { ProjectDetailScreen as default } from "../../src/features/project-detail";
+export { ProjectDetailScreen as default } from "@/pages/dashboard/projects/[id]/page";

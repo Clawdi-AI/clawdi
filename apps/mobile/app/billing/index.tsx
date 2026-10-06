@@ -1,1 +1,1 @@
-export { BillingScreen as default } from "../../src/features/billing";
+export { BillingScreen as default } from "@/hosted/billing";
