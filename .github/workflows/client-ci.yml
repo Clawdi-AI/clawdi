@@ -277,6 +277,27 @@ jobs:
           trap 'rm -rf "$mobile_exports"' EXIT
           bunx expo export --platform ios --output-dir "$mobile_exports/ios"
           bunx expo export --platform android --output-dir "$mobile_exports/android"
+      - name: Production mobile bundles exclude development authentication
+        if: needs.changes.outputs.mobile == 'true'
+        working-directory: apps/mobile
+        env:
+          EXPO_PUBLIC_DEV_AUTH_BYPASS: "1"
+          EXPO_PUBLIC_CLAWDI_ENV: production
+          EXPO_PUBLIC_CLAWDI_API_URL: https://cloud-api.clawdi.ai
+          EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL: https://api.clawdi.ai
+          EXPO_PUBLIC_CLAWDI_LINK_HOSTS: cloud.clawdi.ai
+        run: |
+          mobile_exports=$(mktemp -d)
+          trap 'rm -rf "$mobile_exports"' EXIT
+          bunx expo export --platform all --no-bytecode --output-dir "$mobile_exports"
+          # Match fixture literals; Clerk also ships /dev_browser and dev_browser_unauthenticated.
+          if grep -R -a -l -E "[\"'](dev_browser(_session)?|dev-bypass|avery@clawdi\.dev)[\"']" "$mobile_exports"; then
+            echo 'Production export contains development authentication fixtures' >&2
+            exit 1
+          else
+            status=$?
+            [[ "$status" == 1 ]] || exit "$status"
+          fi
 
   deploy-contract-drift:
     needs: changes

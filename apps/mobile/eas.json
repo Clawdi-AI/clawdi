@@ -1,0 +1,44 @@
+{
+	"cli": { "appVersionSource": "remote" },
+	"build": {
+		"development": {
+			"developmentClient": true,
+			"distribution": "internal",
+			"channel": "development",
+			"environment": "development",
+			"bun": "1.4.2"
+		},
+		"preview": {
+			"distribution": "internal",
+			"android": { "buildType": "apk" },
+			"channel": "preview",
+			"environment": "preview",
+			"bun": "1.4.2",
+			"env": {
+				"EXPO_PUBLIC_CLAWDI_ENV": "preview",
+				"EXPO_PUBLIC_CLAWDI_API_URL": "https://cloud-api.clawdi.ai",
+				"EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL": "https://api.clawdi.ai",
+				"EXPO_PUBLIC_CLAWDI_LINK_HOSTS": "cloud.clawdi.ai"
+			}
+		},
+		"production": {
+			"distribution": "store",
+			"autoIncrement": true,
+			"channel": "production",
+			"environment": "production",
+			"bun": "1.4.2",
+			"env": {
+				"EXPO_PUBLIC_CLAWDI_ENV": "production",
+				"EXPO_PUBLIC_CLAWDI_API_URL": "https://cloud-api.clawdi.ai",
+				"EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL": "https://api.clawdi.ai",
+				"EXPO_PUBLIC_CLAWDI_LINK_HOSTS": "cloud.clawdi.ai"
+			}
+		}
+	},
+	"submit": {
+		"production": {
+			"ios": {},
+			"android": { "track": "internal" }
+		}
+	}
+}
