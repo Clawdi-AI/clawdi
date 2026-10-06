@@ -419,7 +419,7 @@ test("Console actions remain reachable on narrow screens", async ({ page }) => {
 
 	const main = page.locator("main");
 	await page.setViewportSize({ width: 320, height: 568 });
-	const connectAgent = main.getByRole("button", { name: "Connect an agent on your machine" });
+	const connectAgent = main.getByRole("button", { name: "Connect your own agent" });
 	await expect(connectAgent).toBeVisible();
 	await expectContainedInOwnerAndViewport(
 		page,

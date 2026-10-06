@@ -175,10 +175,10 @@ for (const scenario of [
 			await page.getByRole("button", { name: "New agent", exact: true }).first().click();
 			await page
 				.getByRole("dialog")
-				.getByRole("button", { name: /Deploy on Clawdi/ })
+				.getByRole("button", { name: /Deploy a Cloud Agent/ })
 				.click();
 		} else {
-			const link = page.getByRole("button", { name: "Deploy on Clawdi", exact: true });
+			const link = page.getByRole("button", { name: "Deploy a Cloud Agent", exact: true });
 			await expect(link).toHaveAttribute("href", `/deploy${scenario.search}`);
 			await link.click();
 		}

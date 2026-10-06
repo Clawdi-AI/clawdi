@@ -34,11 +34,11 @@ export function OnboardingCard({
 			: "Let's connect your first agent";
 	const description = isAdditionalAgent
 		? canDeployOnClawdi
-			? "Deploy another agent on Clawdi, or connect one from your machine."
-			: "Connect another agent on your machine and manage it from this dashboard."
+			? "Deploy a Cloud Agent, or connect an agent you already run."
+			: "Connect another agent you run and manage it from this dashboard."
 		: canDeployOnClawdi
-			? "Deploy an agent on Clawdi, or connect one from your machine."
-			: "Connect an agent on your machine and manage it from this dashboard.";
+			? "Deploy a Cloud Agent, or connect an agent you already run."
+			: "Connect an agent you run and manage it from this dashboard.";
 	const connectAgent = () => {
 		if (desktopBridge) {
 			void desktopBridge.openConnectWizard().catch(() => setConnectOpen(true));
@@ -70,7 +70,7 @@ export function OnboardingCard({
 								size="lg"
 								className="w-full"
 							>
-								<Rocket data-icon="inline-start" /> Deploy on Clawdi
+								<Rocket data-icon="inline-start" /> Deploy a Cloud Agent
 							</Button>
 						) : null}
 						<Button
@@ -80,7 +80,7 @@ export function OnboardingCard({
 							className="h-auto min-h-10 w-full whitespace-normal py-2"
 							onClick={connectAgent}
 						>
-							<TerminalSquare data-icon="inline-start" /> Connect an agent on your machine
+							<TerminalSquare data-icon="inline-start" /> Connect your own agent
 						</Button>
 					</div>
 				</CardContent>

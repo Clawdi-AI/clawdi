@@ -100,7 +100,7 @@ for (const channel of [null, "sui"] as const) {
 		await page.getByRole("button", { name: "Complete simulated auth return" }).click();
 		await expect(page).toHaveURL(`${cloud}/${search}`);
 		await expect(page.getByTestId("dashboard-page-content")).toBeVisible();
-		await page.getByRole("button", { name: "Deploy on Clawdi", exact: true }).click();
+		await page.getByRole("button", { name: "Deploy a Cloud Agent", exact: true }).click();
 		await expect(page).toHaveURL(`${cloud}/deploy${search}`);
 		if (!channel) return;
 		await expect(page.getByRole("button", { name: /Sui bundle/ })).toHaveAttribute(
