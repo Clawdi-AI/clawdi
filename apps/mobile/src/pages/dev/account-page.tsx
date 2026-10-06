@@ -1,3 +1,4 @@
+import { pairingCommand } from "@clawdi/shared/api";
 import { pairingQr } from "@clawdi/shared/qr";
 import {
 	apiKeysPanelClasses,
@@ -81,7 +82,7 @@ function AccountStories() {
 			provider === "telegram"
 				? "https://t.me/acme_ops_bot?start=FIXTURE"
 				: provider === "whatsapp"
-					? "https://wa.me/14155550123?text=pair%20FIXTURE"
+					? `https://wa.me/14155550123?text=${encodeURIComponent(pairingCommand("FIXTURE"))}`
 					: null;
 		return (
 			<SheetPage
@@ -97,7 +98,7 @@ function AccountStories() {
 						agent_id: "fixture-agent",
 						code: "FIXTURE",
 						expires_at: new Date(Date.now() + 300_000).toISOString(),
-						pairing_command: "/pair FIXTURE",
+						pairing_command: pairingCommand("FIXTURE"),
 						bot_username: "acme_ops_bot",
 						discord_install_url:
 							"https://discord.com/oauth2/authorize?client_id=123456789012345678&scope=bot&permissions=0",
