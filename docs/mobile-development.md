@@ -769,6 +769,12 @@ hostnames, without schemes, ports, wildcards or paths. Build and runtime use the
 same validator. Expo config adds iOS `applinks` associations and Android verified
 HTTPS filters for the paths in `@clawdi/shared/linking`, preserving
 existing associations. No configured hosts means no new HTTPS associations.
+The shared module is synchronous ESM JavaScript, which Vite and Metro consume
+directly. Expo's `app.config.js` uses Node 24's native `require(ESM)` support;
+no TypeScript loader or generated CommonJS copy is needed. See
+[Expo dynamic configuration](https://docs.expo.dev/workflow/configuration/),
+[Node ESM interoperability](https://nodejs.org/api/modules.html#loading-ecmascript-modules-using-require),
+and [Vite linked dependencies](https://vite.dev/guide/dep-pre-bundling#monorepos-and-linked-dependencies).
 For an isolated config check:
 
 ```bash

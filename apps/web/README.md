@@ -31,7 +31,7 @@ its signing identity is missing or malformed. Only these two exact paths bypass
 Clerk; other `/.well-known/` paths retain their existing middleware behavior.
 Successful responses use the same public cache policy as agent files; 404s use
 `no-store`. AASA paths come directly from
-[`@clawdi/shared/linking`](../../packages/shared/src/linking.cjs); `webcredentials`
+[`@clawdi/shared/linking`](../../packages/shared/src/linking.js); `webcredentials`
 uses the same Apple application identifier. Password autofill additionally
 requires the app's `webcredentials` associated-domain entitlement. See
 [Apple's association format](https://developer.apple.com/documentation/xcode/supporting-associated-domains)

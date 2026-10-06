@@ -1,5 +1,5 @@
 /** Shared by Expo's CommonJS build config and native runtime validation. */
-function readLinkHosts(value) {
+export function readLinkHosts(value) {
 	if (value == null || value === "") return [];
 	if (typeof value !== "string" || value.length > 4096) throw new Error("Invalid link hosts");
 	const hosts = value.split(",").map((host) => host.trim().toLowerCase());
@@ -14,10 +14,8 @@ function readLinkHosts(value) {
 	return [...new Set(hosts)];
 }
 
-module.exports = { readLinkHosts };
-
 // Shared by Android intent filters and Web's AASA components. Keep URL paths here.
-const webLinkPaths = [
+export const webLinkPaths = [
 	{ path: "/" },
 	...[
 		"agents",
@@ -40,17 +38,15 @@ const webLinkPaths = [
 	].flatMap((root) => [{ path: `/${root}` }, { pathPrefix: `/${root}/` }]),
 	{ path: "/vault-request" },
 ];
-module.exports.webLinkPaths = webLinkPaths;
-
 // Public machine-readable Web files must stay in a browser.
-const agentFilePaths = {
+export const agentFilePaths = {
 	getStarted: "/get-started.md",
 	legacyGuide: "/skill.md",
 	skill: "/skills/clawdi/SKILL.md",
 	discoveryIndex: "/.well-known/agent-skills/index.json",
 	llms: "/llms.txt",
 };
-const webLinkExclusions = [...Object.values(agentFilePaths), "/skills/*/SKILL.md"];
+export const webLinkExclusions = [...Object.values(agentFilePaths), "/skills/*/SKILL.md"];
 const browserPathMatchers = webLinkExclusions.map(
 	(pattern) =>
 		new RegExp(
@@ -60,7 +56,6 @@ const browserPathMatchers = webLinkExclusions.map(
 				.join(".*")}$`,
 		),
 );
-module.exports.agentFilePaths = agentFilePaths;
-module.exports.webLinkExclusions = webLinkExclusions;
-module.exports.isBrowserLinkPath = (path) =>
-	browserPathMatchers.some((pattern) => pattern.test(path));
+export function isBrowserLinkPath(path) {
+	return browserPathMatchers.some((pattern) => pattern.test(path));
+}
