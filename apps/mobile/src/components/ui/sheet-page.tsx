@@ -5,6 +5,7 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AppScrollView } from "@/components/ui/view";
 import { WebText, webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
+import type { HeaderAction } from "@/platform/navigation/native-header-types";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
@@ -12,6 +13,7 @@ import { SafeAreaScreen } from "@/platform/safe-area-screen";
 /** A route sheet has ordinary page content. The parent Stack owns its presentation. */
 export function SheetPage({
 	title,
+	actions = [],
 	description,
 	children,
 	fallback,
@@ -19,6 +21,7 @@ export function SheetPage({
 	sheet: suppliedSheet,
 }: {
 	title: string;
+	actions?: HeaderAction[];
 	description?: ReactNode;
 	children: ReactNode;
 	fallback: Href;
@@ -35,6 +38,7 @@ export function SheetPage({
 			<NativeHeader
 				title={title}
 				actions={[
+					...actions,
 					{
 						id: "close",
 						label: t("composite.cancel"),

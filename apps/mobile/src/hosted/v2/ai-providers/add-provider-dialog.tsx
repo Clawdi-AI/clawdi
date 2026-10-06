@@ -18,44 +18,70 @@ import {
 	providerCredentialLinkLabel,
 } from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { Plus } from "lucide-react-native";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { AppState, Linking, useWindowDimensions } from "react-native";
+import { AppState, Linking } from "react-native";
 import { ActionButton, ChoiceSelect } from "@/components/dashboard/controls";
-import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Text as AppText } from "@/components/ui/text";
-import { AppView } from "@/components/ui/view";
-import { WebView, webView } from "@/components/ui/web-layout";
+import { WebView } from "@/components/ui/web-layout";
 import { ProviderChooser } from "@/hosted/v2/ai-providers/provider-chooser";
-import { ProviderDialogHeader } from "@/hosted/v2/ai-providers/provider-dialog-header";
 import { ProviderFieldsForm } from "@/hosted/v2/ai-providers/provider-fields-form";
-import { ProviderOAuth } from "@/hosted/v2/ai-providers/provider-oauth-flow";
+import { ProviderOAuthFlow } from "@/hosted/v2/ai-providers/provider-oauth-flow";
+import {
+	useProviderInventory,
+	useRefreshProviders,
+} from "@/hosted/v2/ai-providers/providers-hooks";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { useSheet } from "@/platform/navigation/use-sheet";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 type AcceptRequest = components["schemas"]["AiProviderAcceptRequest"];
 export function ProviderCreate({
 	providers,
-	refresh,
 	renderTrigger,
 }: {
 	providers: SavedAiProvider[] | undefined;
 	refresh: () => Promise<void>;
 	renderTrigger?: (open: () => void) => ReactNode;
 }) {
+	const scope = useAccountScope();
+	const open = () => {
+		if (scope.isReady && providers) router.push("/ai-providers/new");
+	};
+	return renderTrigger ? (
+		renderTrigger(open)
+	) : (
+		<ActionButton
+			label={copy.add}
+			variant="default"
+			icon={<Icon as={Plus} />}
+			disabled={!providers || !scope.isReady}
+			onPress={open}
+		/>
+	);
+}
+export function ProviderCreateScreen() {
+	const scope = useAccountScope();
+	return <ProviderCreateView key={`${scope.accountKey}:${scope.generation}`} />;
+}
+function ProviderCreateView() {
+	const inventory = useProviderInventory();
+	const providers = inventory.data?.providers;
+	const refresh = useRefreshProviders();
 	const t = useI18n();
-	const { height } = useWindowDimensions();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { aiProviders } = useMobileApi();
 	const action = useAuthAction(scope.identity);
 	const capture = useForegroundLease();
-	const [open, setOpen] = useState(false);
+	const [oauthBusy, setOAuthBusy] = useState(false);
+	const sheet = useSheet<boolean>({ fallback: "/ai-providers", busy: action.busy || oauthBusy });
 	const [step, setStep] = useState<"choose" | "configure">("choose");
 	const [group, setGroup] = useState<ProviderGroup | null>(null);
 	const [oauth, setOAuth] = useState(false);
@@ -73,7 +99,6 @@ export function ProviderCreate({
 		setSecret("");
 		attempt.current = null;
 		setLocked(false);
-		setOpen(false);
 		setStep("choose");
 		setGroup(null);
 	}, []);
@@ -162,174 +187,140 @@ export function ProviderCreate({
 			setUncertain(false);
 			setLabel("");
 			await refresh();
+			await sheet.close(true);
 		});
-	const begin = () => {
-		if (action.busy || !providers || !scope.isReady) return;
-		action.clearError();
-		setStep("choose");
-		setGroup(null);
-		setOAuth(false);
-		setOpen(true);
-	};
+	const title =
+		step === "choose"
+			? (group?.label ?? copy.addTitle)
+			: `Set up ${identity.label ?? identity.providerId}`;
 	return (
-		<AppView className="gap-3">
-			{uncertain ? <AppText accessibilityRole="alert">{t("providers.uncertain")}</AppText> : null}
-			{!open ? (
-				renderTrigger ? (
-					renderTrigger(begin)
-				) : (
-					<ActionButton
-						label={copy.add}
-						variant="default"
-						icon={<Icon as={Plus} />}
-						disabled={action.busy || !providers || !scope.isReady}
-						onPress={begin}
-					/>
-				)
-			) : (
-				<Dialog
-					open={open}
-					onOpenChange={(next) => {
-						if (!next && !action.busy) clearSensitive();
-					}}
-				>
-					<DialogContent
-						className={webView(dialogStyles.content)}
-						showCloseButton={!action.busy}
-						// Native equivalent of Web's min(36rem, calc(100dvh - 2rem)) scroll surface.
-						style={{ maxHeight: Math.min(36 * 16, height - 2 * 16) }}
-					>
-						<ProviderDialogHeader
-							title={
-								step === "choose"
-									? (group?.label ?? copy.addTitle)
-									: oauth
-										? `Set up ${identity.label ?? identity.providerId}`
-										: `Set up ${identity.label ?? identity.providerId}`
-							}
-							providerId={
-								step === "configure" ? (oauth ? "openai" : (preset?.id ?? type)) : group?.iconId
-							}
-							providerLabel={group?.label ?? preset?.label ?? PROVIDER_TYPE_META[type].label}
-							disabled={locked || action.busy}
-							onBack={
-								step === "configure" || group
-									? () => {
-											if (step === "configure") {
-												setStep("choose");
-												setSecret("");
-											} else setGroup(null);
-										}
-									: undefined
-							}
-						/>
-						<WebView
-							recipe={dialogStyles.body}
-							className="flex-none"
-							style={{ flex: 0, flexGrow: 0, flexShrink: 0, flexBasis: "auto" }}
-						>
-							{step === "choose" ? (
-								<ProviderChooser
-									selected={group}
-									onGroupChange={setGroup}
-									onSelect={(selected: ProviderChoice) => {
+		<SheetPage
+			title={title}
+			fallback="/ai-providers"
+			busy={action.busy || oauthBusy}
+			sheet={sheet}
+			actions={
+				step === "configure" || group
+					? [
+							{
+								id: "back",
+								label: t("navigation.back"),
+								disabled: locked || action.busy || oauthBusy,
+								onPress: () => {
+									if (step === "configure") {
+										setStep("choose");
 										setSecret("");
-										setOAuth(selected.kind === "oauth");
-										if (selected.kind !== "oauth") {
-											const id = selected.kind === "preset" ? selected.preset.id : selected.type;
-											setChoice(id);
-											setType(
-												selected.kind === "preset" ? selected.preset.provider_type : selected.type,
-											);
-											setRegion(selected.kind === "preset" ? (selected.regionId ?? null) : null);
-										}
-										setStep("configure");
-									}}
-								/>
-							) : oauth ? (
-								<ProviderFieldsForm
-									label={label}
-									placeholder={identity.label ?? PROVIDER_TYPE_META.openai.label}
-									onLabel={setLabel}
-									showRouting={false}
-									baseUrl={baseUrl}
-									onBaseUrl={setBaseUrl}
-									apiMode={apiMode}
-									onApiMode={setApiMode}
-									secret={secret}
-									onSecret={setSecret}
-									disabled={locked || action.busy}
-									oauth
-								/>
-							) : (
-								<>
-									{preset?.region_variants?.length ? (
-										<ChoiceSelect
-											value={region ?? preset.region_variants[0]?.id ?? ""}
-											options={preset.region_variants.map((variant) => ({
-												value: variant.id,
-												label: variant.label,
-											}))}
-											disabled={locked || action.busy}
-											onValueChange={(value) => {
-												setRegion(value);
-												setSecret("");
-											}}
-										/>
-									) : null}
-									<ProviderFieldsForm
-										label={label}
-										placeholder={identity.label ?? preset?.label ?? PROVIDER_TYPE_META[type].label}
-										onLabel={setLabel}
-										showRouting={custom}
-										baseUrl={baseUrl}
-										onBaseUrl={setBaseUrl}
-										apiMode={apiMode}
-										onApiMode={setApiMode}
-										secret={secret}
-										onSecret={setSecret}
-										credentialLabel={preset?.credential_label ?? copy.apiKey}
-										credentialLinkLabel={providerCredentialLinkLabel(
-											preset?.credential_label ?? copy.apiKey,
-											preset?.credential_link_label,
-										)}
-										onCredentialHelp={openKeyHelp}
-										disabled={locked || action.busy}
-									/>
-								</>
-							)}
-						</WebView>
-						{step === "configure" && oauth ? (
-							<ProviderOAuth
-								dialogFooter
-								providers={providers}
-								refresh={refresh}
-								label={label}
-								startLabel={copy.continueChatGpt}
+									} else setGroup(null);
+								},
+							},
+						]
+					: []
+			}
+		>
+			{inventory.isError ? (
+				<AppText accessibilityRole="alert">{t("providers.failed")}</AppText>
+			) : null}
+			{uncertain ? <AppText accessibilityRole="alert">{t("providers.uncertain")}</AppText> : null}
+			<WebView
+				recipe={dialogStyles.body}
+				className="flex-none"
+				style={{ flex: 0, flexGrow: 0, flexShrink: 0, flexBasis: "auto" }}
+			>
+				{step === "choose" ? (
+					<ProviderChooser
+						selected={group}
+						onGroupChange={setGroup}
+						onSelect={(selected: ProviderChoice) => {
+							setSecret("");
+							setOAuth(selected.kind === "oauth");
+							if (selected.kind !== "oauth") {
+								const id = selected.kind === "preset" ? selected.preset.id : selected.type;
+								setChoice(id);
+								setType(selected.kind === "preset" ? selected.preset.provider_type : selected.type);
+								setRegion(selected.kind === "preset" ? (selected.regionId ?? null) : null);
+							}
+							setStep("configure");
+						}}
+					/>
+				) : oauth ? (
+					<ProviderFieldsForm
+						label={label}
+						placeholder={identity.label ?? PROVIDER_TYPE_META.openai.label}
+						onLabel={setLabel}
+						showRouting={false}
+						baseUrl={baseUrl}
+						onBaseUrl={setBaseUrl}
+						apiMode={apiMode}
+						onApiMode={setApiMode}
+						secret={secret}
+						onSecret={setSecret}
+						disabled={locked || action.busy}
+						oauth
+					/>
+				) : (
+					<>
+						{preset?.region_variants?.length ? (
+							<ChoiceSelect
+								value={region ?? preset.region_variants[0]?.id ?? ""}
+								options={preset.region_variants.map((variant) => ({
+									value: variant.id,
+									label: variant.label,
+								}))}
+								disabled={locked || action.busy}
+								onValueChange={(value) => {
+									setRegion(value);
+									setSecret("");
+								}}
 							/>
 						) : null}
-						{step === "configure" && !oauth ? (
-							<DialogFooter className={webView(dialogStyles.footer)}>
-								<ActionButton
-									label={locked ? t("providers.retrySame") : copy.add}
-									variant="default"
-									disabled={
-										action.busy ||
-										!providers ||
-										!secret.trim() ||
-										(custom && (!baseUrl.trim() || !label.trim()))
-									}
-									onPress={() => void submit()}
-								/>
-							</DialogFooter>
-						) : null}
-						{action.error ? (
-							<AppText accessibilityRole="alert">{t("providers.failed")}</AppText>
-						) : null}
-					</DialogContent>
-				</Dialog>
-			)}
+						<ProviderFieldsForm
+							label={label}
+							placeholder={identity.label ?? preset?.label ?? PROVIDER_TYPE_META[type].label}
+							onLabel={setLabel}
+							showRouting={custom}
+							baseUrl={baseUrl}
+							onBaseUrl={setBaseUrl}
+							apiMode={apiMode}
+							onApiMode={setApiMode}
+							secret={secret}
+							onSecret={setSecret}
+							credentialLabel={preset?.credential_label ?? copy.apiKey}
+							credentialLinkLabel={providerCredentialLinkLabel(
+								preset?.credential_label ?? copy.apiKey,
+								preset?.credential_link_label,
+							)}
+							onCredentialHelp={openKeyHelp}
+							disabled={locked || action.busy}
+						/>
+					</>
+				)}
+			</WebView>
+			{step === "configure" && oauth ? (
+				<ProviderOAuthFlow
+					dialogFooter
+					providers={providers}
+					onBusyChange={setOAuthBusy}
+					refresh={refresh}
+					label={label}
+					startLabel={copy.continueChatGpt}
+				/>
+			) : null}
+			{step === "configure" && !oauth ? (
+				<WebView recipe={dialogStyles.footer}>
+					<ActionButton
+						label={locked ? t("providers.retrySame") : copy.add}
+						variant="default"
+						disabled={
+							action.busy ||
+							!providers ||
+							!secret.trim() ||
+							(custom && (!baseUrl.trim() || !label.trim()))
+						}
+						onPress={() => void submit()}
+					/>
+				</WebView>
+			) : null}
 			{action.error ? <AppText accessibilityRole="alert">{t("providers.failed")}</AppText> : null}
-		</AppView>
+		</SheetPage>
 	);
 }

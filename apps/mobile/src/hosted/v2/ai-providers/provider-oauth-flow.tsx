@@ -10,14 +10,21 @@ import { providerDialogClasses, providerOAuthFlowClasses as styles } from "@claw
 import { providerOAuthCopy as copy } from "@clawdi/shared/view";
 import { onlineManager } from "@tanstack/react-query";
 import { randomUUID } from "expo-crypto";
-import { useFocusEffect } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Linking } from "react-native";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { ActionButton } from "@/components/dashboard/controls";
+import { ResourceError } from "@/components/resource-error";
+import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 import { Button } from "@/components/ui/button";
-import { DialogFooter } from "@/components/ui/dialog";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Text as AppText, Text } from "@/components/ui/text";
-import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { WebText, WebView } from "@/components/ui/web-layout";
+import {
+	useProviderInventory,
+	useRefreshProviders,
+} from "@/hosted/v2/ai-providers/providers-hooks";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -27,7 +34,7 @@ import { useForegroundLease } from "@/platform/use-foreground-lease";
 type Authorization = components["schemas"]["AiProviderOAuthDeviceStartResponse"];
 type AcceptBody = components["schemas"]["AiProviderAcceptRequest"];
 
-export function ProviderOAuth({
+export function ProviderOAuthFlow({
 	providers,
 	provider,
 	refresh,
@@ -35,6 +42,7 @@ export function ProviderOAuth({
 	startLabel,
 	startIcon,
 	dialogFooter = false,
+	onBusyChange,
 }: {
 	providers?: SavedAiProvider[];
 	provider?: SavedAiProvider;
@@ -43,6 +51,7 @@ export function ProviderOAuth({
 	startLabel?: string;
 	startIcon?: ReactNode;
 	dialogFooter?: boolean;
+	onBusyChange?: (busy: boolean) => void;
 }) {
 	const t = useI18n();
 	const scope = useAccountScope();
@@ -50,6 +59,10 @@ export function ProviderOAuth({
 	const capture = useForegroundLease();
 	const { aiProviders } = useMobileApi();
 	const action = useAuthAction(scope.identity);
+	useEffect(() => {
+		onBusyChange?.(action.busy);
+		return () => onBusyChange?.(false);
+	}, [action.busy, onBusyChange]);
 	const [authorization, setAuthorization] = useState<Authorization | null>(null);
 	const [issue, setIssue] = useState<"failed" | "expired" | null>(null);
 	const [ready, setReady] = useState(false);
@@ -259,7 +272,7 @@ export function ProviderOAuth({
 	]);
 	if (dialogFooter && !authorization)
 		return (
-			<DialogFooter className={webView(providerDialogClasses.footer)}>
+			<WebView recipe={providerDialogClasses.footer}>
 				{ready ? <AppText accessibilityRole="alert">{t("providers.oauthReady")}</AppText> : null}
 				{action.error ? (
 					<WebText recipe={styles.error} accessibilityRole="alert">
@@ -275,7 +288,7 @@ export function ProviderOAuth({
 						{startLabel ?? t(provider ? "providers.reconnectOAuth" : "providers.connectOAuth")}
 					</Text>
 				</Button>
-			</DialogFooter>
+			</WebView>
 		);
 	return (
 		<WebView recipe={dialogFooter ? `${providerDialogClasses.body} ${styles.root}` : styles.root}>
@@ -330,5 +343,58 @@ export function ProviderOAuth({
 			{ready ? <AppText accessibilityRole="alert">{t("providers.oauthReady")}</AppText> : null}
 			{action.error ? <AppText accessibilityRole="alert">{t("providers.failed")}</AppText> : null}
 		</WebView>
+	);
+}
+
+export function ProviderOAuth({
+	provider,
+}: {
+	provider?: SavedAiProvider;
+	refresh: () => Promise<void>;
+}) {
+	const t = useI18n();
+	const scope = useAccountScope();
+	return (
+		<ActionButton
+			label={t("providers.reconnectOAuth")}
+			disabled={!scope.isReady || !provider}
+			onPress={() => {
+				if (provider)
+					router.push({
+						pathname: "/ai-providers/[providerId]/oauth",
+						params: { providerId: provider.provider_id },
+					});
+			}}
+		/>
+	);
+}
+export function ProviderOAuthScreen() {
+	const t = useI18n();
+	const scope = useAccountScope();
+	const { providerId } = useLocalSearchParams<{ providerId: string }>();
+	const inventory = useProviderInventory();
+	const refresh = useRefreshProviders();
+	const [busy, setBusy] = useState(false);
+	const provider = inventory.isError
+		? undefined
+		: inventory.data?.providers.find((item) => item.provider_id === providerId);
+	return (
+		<SheetPage title={t("providers.reconnectOAuth")} fallback="/ai-providers" busy={busy}>
+			{inventory.isPending ? (
+				<RouteLoadingSkeleton />
+			) : inventory.isError ? (
+				<ApiErrorPanel error={inventory.error} onRetry={() => void inventory.refetch()} />
+			) : provider &&
+				(provider.auth.type === "oauth_profile" || provider.auth.type === "agent_profile") ? (
+				<ProviderOAuthFlow
+					key={`${scope.accountKey}:${scope.generation}:${providerId}`}
+					provider={provider}
+					refresh={refresh}
+					onBusyChange={setBusy}
+				/>
+			) : (
+				<ResourceError missing />
+			)}
+		</SheetPage>
 	);
 }
