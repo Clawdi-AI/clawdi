@@ -4,14 +4,14 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "anyio>=4.15.1",
-    "fastapi>=0.115",
+    "fastapi>=0.142.2",
     "uvicorn[standard]>=0.54.0",
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg==0.31.0",
     "alembic>=1.20.0",
     "pydantic-settings>=2.14.0",
-    "pyjwt[crypto]==2.15.0",
-    "cryptography>=50.0.1",
+    "pyjwt[crypto]==2.15.1",
+    "cryptography>=50.0.2",
     # SafePublicHttpClient relies on request extension forwarding and
     # sni_hostname handling verified in these exact paired releases.
     "httpcore==1.0.9",
@@ -22,9 +22,9 @@ dependencies = [
     "aiofiles>=24.1",
     "psycopg2-binary>=2.9.13",
     "pgvector>=0.2.5",
-    "openai>=3.19.2",
+    "openai>=3.24.0",
     "fastembed>=0.8.1",
-    "sentry-sdk[fastapi]==2.70.0",
+    "sentry-sdk[fastapi]==2.71.0",
     # https://pypi.org/pypi/websockets/17.0.1/json
     "websockets==17.1",
     "zstandard>=0.25.0",
@@ -34,7 +34,7 @@ dependencies = [
     "composio==0.21.1",
     "composio-client==1.43.0",
     # Official Streamable HTTP client lifecycle for Composio Tool Router.
-    "mcp==2.2.0",
+    "mcp==2.3.0",
     "prometheus-client>=0.25.0",
     # Keep the runtime and generated typing distributions on their latest
     # common public patch. https://pypi.org/pypi/boto3/1.43.67/json
@@ -63,7 +63,7 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "aiosqlite>=0.20",
-    "ruff>=0.16.9",
+    "ruff>=0.16.10",
     # Catch "import declared in code but not in deps" drift —
     # the same class of bug that let mem0/mem0ai stay
     # undeclared for months without CI noticing.
