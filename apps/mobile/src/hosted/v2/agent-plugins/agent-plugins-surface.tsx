@@ -9,7 +9,7 @@ import {
 import { agentPluginsSurfaceClasses as styles } from "@clawdi/shared/ui";
 import { agentSurfaceCopy, identityFor } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery } from "@tanstack/react-query";
-import { useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
 import { Blocks } from "lucide-react-native";
 import { useState } from "react";
@@ -24,7 +24,6 @@ import { IconChip } from "@/components/icon-chip";
 import { ListToolbar } from "@/components/list-toolbar";
 import { SectionLabel } from "@/components/section-label";
 import { Icon } from "@/components/ui/icon";
-import { SearchInput } from "@/components/ui/search-input";
 import { Text as AppText } from "@/components/ui/text";
 import { WebView } from "@/components/ui/web-layout";
 import { canPollDeployment } from "@/hosted/deployment-status";
@@ -33,6 +32,7 @@ import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { useHeaderSearch } from "@/platform/navigation/native-header";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function AgentPluginsScreen({ pluginName }: { pluginName?: string } = {}) {
@@ -111,8 +111,8 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 		void catalog.refetch();
 		if (hosted) void deployments.refetch();
 	};
-	const mutate = (name: string, version?: string) =>
-		action.run(async (current) => {
+	const mutate = (name: string, version?: string, guarded = false) =>
+		(guarded ? action.runOrThrow : action.run)(async (current) => {
 			if (
 				disabled ||
 				(version !== undefined && (!supportedRuntime || catalog.isError || deployments.isFetching))
@@ -135,7 +135,8 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 			description: t("agentExtensions.pluginRemoveWarning"),
 			confirmLabel: t("agentExtensions.pluginRemove"),
 			onConfirm: () => {
-				if (foreground() && scope.isCurrent() && !signal.aborted) void mutate(name);
+				if (foreground() && scope.isCurrent() && !signal.aborted)
+					return mutate(name, undefined, true);
 			},
 		});
 	};
@@ -151,21 +152,103 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 				(!category || item.catalog?.category === category),
 		)
 		.map((item) => ({ ...item, id: item.name }));
+	const headerSearch = useHeaderSearch({
+		value: search,
+		onChange: setSearch,
+		placeholder: agentSurfaceCopy.searchPlugins,
+		maxLength: 200,
+	});
+	const grouped = [true, false].flatMap((installed) =>
+		items.filter((item) => Boolean(item.desired) === installed),
+	);
 	return (
 		<AgentCollection
+			data={
+				inventory.isPending || catalog.isPending || inventory.isError || catalog.isError
+					? []
+					: grouped
+			}
+			keyExtractor={(item) => item.name}
+			refreshing={inventory.isRefetching || catalog.isRefetching}
+			onRefresh={refresh}
+			renderItem={({ item, index }) => {
+				const installed = Boolean(item.desired),
+					previous = grouped[index - 1];
+				const first = !previous || Boolean(previous.desired) !== installed;
+				const count = grouped.filter((row) => Boolean(row.desired) === installed).length;
+				const state = supportedRuntime ? agentPluginActionState(item, supportedRuntime) : null;
+				const kind = state?.primaryAction?.kind ?? "unavailable",
+					actionable = kind === "install" || kind === "update" || kind === "retry";
+				return (
+					<WebView recipe={styles.section}>
+						{first ? (
+							<SectionLabel count={count}>
+								{installed ? agentSurfaceCopy.installed : agentSurfaceCopy.available}
+							</SectionLabel>
+						) : null}
+						<HeroCard
+							key={item.name}
+							icon={
+								<IconChip size="sm" tint={identityFor(item.name).colorClasses}>
+									<Icon as={Blocks} />
+								</IconChip>
+							}
+							title={pluginDisplayName(item)}
+							description={
+								item.catalog?.description ??
+								agentSurfaceCopy.thisPluginIsNoLongerAvailableInTheStore
+							}
+							footer={[
+								item.catalog?.publisher,
+								state?.version ?? item.desired?.version,
+								item.catalog ? agentPluginComponentSummary(item.catalog) : null,
+							]}
+							footerWrap
+							actionsVisibility="always"
+							actions={
+								<>
+									<ActionButton
+										label={
+											kind === "installed"
+												? agentSurfaceCopy.installed
+												: kind === "update"
+													? "Update"
+													: kind === "retry"
+														? "Retry"
+														: kind === "install"
+															? "Install"
+															: agentSurfaceCopy.unavailable
+										}
+										disabled={
+											disabled || !actionable || catalog.isFetching || deployments.isFetching
+										}
+										onPress={() => {
+											if (item.catalog && actionable) void mutate(item.name, item.catalog.version);
+										}}
+									/>
+									{item.desired ? (
+										<ActionButton
+											label="Remove"
+											variant="ghost"
+											disabled={disabled}
+											onPress={() => remove(item.name)}
+										/>
+									) : null}
+								</>
+							}
+						/>
+					</WebView>
+				);
+			}}
 			icon={Blocks}
 			navigation={id ? <AgentSectionNavigation agentId={id} section="plugins" /> : null}
-			title={agentSurfaceCopy.plugins}
+			title={
+				pluginName ? pluginDisplayName(items[0] ?? { name: pluginName }) : agentSurfaceCopy.plugins
+			}
 			description="Install Skills and MCP servers for this agent."
 		>
+			<Stack.Screen options={{ headerSearchBarOptions: pluginName ? undefined : headerSearch }} />
 			<ListToolbar
-				search={
-					<SearchInput
-						value={search}
-						onChange={setSearch}
-						placeholder={agentSurfaceCopy.searchPlugins}
-					/>
-				}
 				filters={
 					<ChoiceSelect
 						value={category}
@@ -198,85 +281,7 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 					title={agentSurfaceCopy.noPluginsFound}
 					description={agentSurfaceCopy.tryADifferentSearchOrCategory}
 				/>
-			) : (
-				[true, false].map((installed) => {
-					const group = items.filter((item) => Boolean(item.desired) === installed);
-					if (!group.length) return null;
-					return (
-						<WebView key={String(installed)} recipe={styles.section}>
-							<SectionLabel count={group.length}>
-								{installed ? agentSurfaceCopy.installed : agentSurfaceCopy.available}
-							</SectionLabel>
-							<WebView recipe={HERO_GRID_CLASS}>
-								{group.map((item) => {
-									const state = supportedRuntime
-										? agentPluginActionState(item, supportedRuntime)
-										: null;
-									const kind = state?.primaryAction?.kind ?? "unavailable",
-										actionable = kind === "install" || kind === "update" || kind === "retry";
-									return (
-										<HeroCard
-											key={item.name}
-											icon={
-												<IconChip size="sm" tint={identityFor(item.name).colorClasses}>
-													<Icon as={Blocks} />
-												</IconChip>
-											}
-											title={pluginDisplayName(item)}
-											description={
-												item.catalog?.description ??
-												agentSurfaceCopy.thisPluginIsNoLongerAvailableInTheStore
-											}
-											footer={[
-												item.catalog?.publisher,
-												state?.version ?? item.desired?.version,
-												item.catalog ? agentPluginComponentSummary(item.catalog) : null,
-											]}
-											footerWrap
-											actionsVisibility="always"
-											actions={
-												<>
-													<ActionButton
-														label={
-															kind === "installed"
-																? agentSurfaceCopy.installed
-																: kind === "update"
-																	? "Update"
-																	: kind === "retry"
-																		? "Retry"
-																		: kind === "install"
-																			? "Install"
-																			: agentSurfaceCopy.unavailable
-														}
-														disabled={
-															disabled ||
-															!actionable ||
-															catalog.isFetching ||
-															deployments.isFetching
-														}
-														onPress={() => {
-															if (item.catalog && actionable)
-																void mutate(item.name, item.catalog.version);
-														}}
-													/>
-													{item.desired ? (
-														<ActionButton
-															label="Remove"
-															variant="ghost"
-															disabled={disabled}
-															onPress={() => remove(item.name)}
-														/>
-													) : null}
-												</>
-											}
-										/>
-									);
-								})}
-							</WebView>
-						</WebView>
-					);
-				})
-			)}
+			) : null}
 			{confirmationDialog.dialog}
 		</AgentCollection>
 	);

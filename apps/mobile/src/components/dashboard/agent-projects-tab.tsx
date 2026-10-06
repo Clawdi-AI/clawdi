@@ -13,7 +13,7 @@ import {
 	projectSearchRank,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocalSearchParams } from "expo-router";
+import { Stack, useLocalSearchParams } from "expo-router";
 import { FolderKanban, MoreHorizontal } from "lucide-react-native";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -22,8 +22,6 @@ import { useAgentConfirmation } from "@/components/dashboard/confirmation";
 import { ActionButton } from "@/components/dashboard/controls";
 import { AgentSectionNavigation } from "@/components/dashboard/navigation";
 import { HERO_GRID_CLASS, HeroCardSkeleton } from "@/components/entity-card";
-import { ListToolbar } from "@/components/list-toolbar";
-import { AgentCreateProjectDialog } from "@/components/projects/create-project-dialog";
 import { ProjectResourceCard } from "@/components/projects/project-resource-card";
 import { useCloudProjects } from "@/components/projects/projects-surface";
 import { SectionLabel } from "@/components/section-label";
@@ -35,7 +33,6 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
-import { SearchInput } from "@/components/ui/search-input";
 import { WebView } from "@/components/ui/web-layout";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { useMobileApi } from "@/lib/api-provider";
@@ -43,6 +40,7 @@ import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { useHeaderSearch } from "@/platform/navigation/native-header";
 
 export function AgentProjectsScreen() {
 	const scope = useAccountScope();
@@ -88,8 +86,11 @@ function BindingsView({ agentId }: { agentId?: string }) {
 	const refresh = async () => {
 		await Promise.all([bindings.refetch(), projects.refetch(), agent.refetch()]);
 	};
-	const mutate = (operation: (id: string, signal: AbortSignal) => Promise<unknown>) =>
-		action.run(async (isCurrent) => {
+	const mutate = (
+		operation: (id: string, signal: AbortSignal) => Promise<unknown>,
+		guarded = false,
+	) =>
+		(guarded ? action.runOrThrow : action.run)(async (isCurrent) => {
 			if (!agentId || disabled) return;
 			await read((signal) => operation(agentId, signal));
 			if (isCurrent()) await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
@@ -102,7 +103,10 @@ function BindingsView({ agentId }: { agentId?: string }) {
 			confirmLabel: t("bindings.unlink"),
 			onConfirm: () => {
 				if (signal.aborted || !scope.isCurrent() || binding.binding_type !== "context") return;
-				void mutate((id, requestSignal) => agentProjects.unlink(id, binding.id, requestSignal));
+				return mutate(
+					(id, requestSignal) => agentProjects.unlink(id, binding.id, requestSignal),
+					true,
+				);
 			},
 		});
 	};
@@ -118,25 +122,109 @@ function BindingsView({ agentId }: { agentId?: string }) {
 				(projectSearchRank(a, search) ?? 0) - (projectSearchRank(b, search) ?? 0) ||
 				compareProjectsForUse(a, b),
 		);
+	const headerSearch = useHeaderSearch({
+		value: search,
+		onChange: setSearch,
+		placeholder: "Search projects…",
+		maxLength: 200,
+	});
+	const grouped = [true, false].flatMap((linked) =>
+		rows.filter(
+			(project) => context.some((binding) => binding.project_id === project.id) === linked,
+		),
+	);
 	return (
 		<AgentCollection
+			data={failed || loading ? [] : grouped}
+			keyExtractor={(project) => project.id}
+			refreshing={busy}
+			onRefresh={() => void refresh()}
+			renderItem={({ item: project, index }) => {
+				const binding = context.find((item) => item.project_id === project.id);
+				const linked = Boolean(binding);
+				const count = grouped.filter(
+					(item) => context.some((b) => b.project_id === item.id) === linked,
+				).length;
+				const previous = grouped[index - 1];
+				const first = !previous || context.some((b) => b.project_id === previous.id) !== linked;
+				return (
+					<WebView recipe={HERO_GRID_CLASS}>
+						{first ? (
+							<SectionLabel count={count}>
+								{linked ? "Linked" : agentSurfaceCopy.available}
+							</SectionLabel>
+						) : null}
+						<ProjectResourceCard
+							key={project.id}
+							project={project}
+							searchQuery={search.trim() || undefined}
+							footer={[
+								formatResourceCount(project.skill_count, "skill"),
+								formatResourceCount(project.vault_count, "vault"),
+								project.is_owner === false && (project.owner_display || project.owner_handle)
+									? `by ${project.owner_display || project.owner_handle}`
+									: null,
+							]}
+							actions={
+								<>
+									<ActionButton
+										label={linked ? "Unlink" : "Link"}
+										variant={linked ? "ghost" : "default"}
+										disabled={disabled || (!linked && project.kind !== "workspace")}
+										onPress={() => {
+											if (binding) unlink(binding);
+											else void mutate((id, signal) => agentProjects.link(id, project.id, signal));
+										}}
+									/>
+									{binding ? (
+										<DropdownMenu>
+											<DropdownMenuTrigger>
+												<Button variant="ghost" size="icon-sm" accessibilityLabel="Project actions">
+													<Icon as={MoreHorizontal} />
+												</Button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent>
+												<DropdownMenuItem
+													label="Move up"
+													disabled={disabled || context[0]?.id === binding.id}
+													onSelect={() =>
+														void mutate((id, signal) =>
+															agentProjects.reorder(
+																id,
+																buildContextBindingReorder(ordered, binding.id, -1),
+																signal,
+															),
+														)
+													}
+												/>
+												<DropdownMenuItem
+													label="Move down"
+													disabled={disabled || context[context.length - 1]?.id === binding.id}
+													onSelect={() =>
+														void mutate((id, signal) =>
+															agentProjects.reorder(
+																id,
+																buildContextBindingReorder(ordered, binding.id, 1),
+																signal,
+															),
+														)
+													}
+												/>
+											</DropdownMenuContent>
+										</DropdownMenu>
+									) : null}
+								</>
+							}
+						/>
+					</WebView>
+				);
+			}}
 			icon={FolderKanban}
 			navigation={agentId ? <AgentSectionNavigation agentId={agentId} section="projects" /> : null}
 			title="Projects"
 			description="Choose the Projects this Agent can use."
-			actions={
-				agentId ? (
-					<AgentCreateProjectDialog
-						key={`${scope.accountKey}:${scope.generation}`}
-						agentId={agentId}
-						disabled={disabled}
-					/>
-				) : null
-			}
 		>
-			<ListToolbar
-				search={<SearchInput value={search} onChange={setSearch} placeholder="Search projects…" />}
-			/>
+			<Stack.Screen options={{ headerSearchBarOptions: headerSearch }} />
 			{failed ? (
 				<ApiErrorPanel
 					error={bindings.error ?? agent.error ?? projects.error}
@@ -149,97 +237,7 @@ function BindingsView({ agentId }: { agentId?: string }) {
 						<HeroCardSkeleton key={i} />
 					))}
 				</WebView>
-			) : (
-				[true, false].map((linked) => {
-					const group = rows.filter(
-						(project) => context.some((binding) => binding.project_id === project.id) === linked,
-					);
-					if (!group.length) return null;
-					return (
-						<WebView key={String(linked)} recipe={HERO_GRID_CLASS}>
-							<SectionLabel count={group.length}>
-								{linked ? "Linked" : agentSurfaceCopy.available}
-							</SectionLabel>
-							{group.map((project) => {
-								const binding = context.find((item) => item.project_id === project.id);
-								return (
-									<ProjectResourceCard
-										key={project.id}
-										project={project}
-										searchQuery={search.trim() || undefined}
-										footer={[
-											formatResourceCount(project.skill_count, "skill"),
-											formatResourceCount(project.vault_count, "vault"),
-											project.is_owner === false && (project.owner_display || project.owner_handle)
-												? `by ${project.owner_display || project.owner_handle}`
-												: null,
-										]}
-										actions={
-											<>
-												<ActionButton
-													label={linked ? "Unlink" : "Link"}
-													variant={linked ? "ghost" : "default"}
-													disabled={disabled || (!linked && project.kind !== "workspace")}
-													onPress={() => {
-														if (binding) unlink(binding);
-														else
-															void mutate((id, signal) =>
-																agentProjects.link(id, project.id, signal),
-															);
-													}}
-												/>
-												{binding ? (
-													<DropdownMenu>
-														<DropdownMenuTrigger>
-															<Button
-																variant="ghost"
-																size="icon-sm"
-																accessibilityLabel="Project actions"
-															>
-																<Icon as={MoreHorizontal} />
-															</Button>
-														</DropdownMenuTrigger>
-														<DropdownMenuContent>
-															<DropdownMenuItem
-																label="Move up"
-																disabled={disabled || context[0]?.id === binding.id}
-																onSelect={() =>
-																	void mutate((id, signal) =>
-																		agentProjects.reorder(
-																			id,
-																			buildContextBindingReorder(ordered, binding.id, -1),
-																			signal,
-																		),
-																	)
-																}
-															/>
-															<DropdownMenuItem
-																label="Move down"
-																disabled={
-																	disabled || context[context.length - 1]?.id === binding.id
-																}
-																onSelect={() =>
-																	void mutate((id, signal) =>
-																		agentProjects.reorder(
-																			id,
-																			buildContextBindingReorder(ordered, binding.id, 1),
-																			signal,
-																		),
-																	)
-																}
-															/>
-														</DropdownMenuContent>
-													</DropdownMenu>
-												) : null}
-											</>
-										}
-									/>
-								);
-							})}
-						</WebView>
-					);
-				})
-			)}
+			) : null}
 			{action.error ? (
 				<ApiErrorPanel error={action.error} title="Couldn't update Project link" />
 			) : null}

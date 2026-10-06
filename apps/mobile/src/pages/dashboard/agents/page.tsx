@@ -1,33 +1,28 @@
 import type { Project } from "@clawdi/shared/api";
-import {
-	agentSourceBadgeClasses,
-	agentsIndexClasses,
-	ENTITY_GRID_CLASS,
-	hostedAgentGroupsClasses,
-} from "@clawdi/shared/ui";
+import { agentSourceBadgeClasses, hostedAgentGroupsClasses } from "@clawdi/shared/ui";
 import {
 	agentSourceLabel,
 	agentSurfaceCopy,
+	compareAgentTiles,
 	hostedAgentCountLabel,
 	hostedAgentGroupsCopy,
 	selfManagedAgentTiles,
 } from "@clawdi/shared/view";
+import { router } from "expo-router";
 import { Cloud } from "lucide-react-native";
-import { useState } from "react";
-import { RefreshControl } from "react-native";
 import { AgentsCard, AgentTileView } from "@/components/dashboard/agents-card";
 import { PageHeader } from "@/components/page-header";
-import { ProjectResourceBoundary, ProjectScopeHeader } from "@/components/projects/project-scope";
+import { ProjectResourceBoundary } from "@/components/projects/project-scope";
+import { useCloudProjects } from "@/components/projects/projects-surface";
 import { SectionLabel } from "@/components/section-label";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
+import { NativeList } from "@/components/ui/native-list";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Text } from "@/components/ui/text";
-import { AppScrollView } from "@/components/ui/view";
-import { WebView, webBoth, webView } from "@/components/ui/web-layout";
+import { WebView, webBoth } from "@/components/ui/web-layout";
 import { useCloudAgents } from "@/hooks/cloud-inventory";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
+import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export default function AgentsRoute() {
 	return (
@@ -39,52 +34,65 @@ export default function AgentsRoute() {
 function AgentsView({ project }: { project?: Project }) {
 	const agents = useCloudAgents(project?.id);
 	const dashboard = useDashboardAgents();
-	const [scopeOpen, setScopeOpen] = useState(false);
-	const hostedTiles = dashboard.tiles.filter((tile) => tile.source === "on-clawdi");
-	const otherTiles = dashboard.tiles.filter((tile) => tile.source !== "on-clawdi");
+	const projects = useCloudProjects();
+	const loading = project
+		? agents.isPending
+		: dashboard.agents.isPending || dashboard.hostedStatus?.isLoading === true;
+	const error = project
+		? agents.data
+			? null
+			: agents.error
+		: (dashboard.hostedStatus?.error ?? (dashboard.agents.data ? null : dashboard.agents.error));
+	const tiles = project ? selfManagedAgentTiles(agents.data) : dashboard.tiles;
+	const hosted = tiles.filter((tile) => tile.source === "on-clawdi").sort(compareAgentTiles);
+	const other = tiles.filter((tile) => tile.source !== "on-clawdi").sort(compareAgentTiles);
+	const rows = loading || error ? [] : [...hosted, ...other];
+	const refresh = () => {
+		void agents.refetch();
+		if (!project) {
+			void dashboard.agents.refetch();
+			dashboard.hostedStatus?.onRetry();
+		}
+	};
 	return (
 		<SafeAreaScreen>
-			<AppScrollView
-				contentContainerClassName={webView(agentsIndexClasses.page)}
-				refreshControl={
-					<RefreshControl
-						refreshing={agents.isRefetching}
-						onRefresh={() => void agents.refetch()}
+			<NativeHeader
+				title={agentSurfaceCopy.agents}
+				actions={[{ id: "create", label: "Create Agent", onPress: () => router.push("/deploy") }]}
+				menu={{
+					label: "Project scope",
+					items: [
+						{
+							id: "all",
+							label: "All Projects",
+							onPress: () => router.setParams({ projectId: undefined }),
+						},
+						...(projects.data ?? []).map((item) => ({
+							id: item.id,
+							label: item.name,
+							onPress: () => router.setParams({ projectId: item.id }),
+						})),
+					],
+				}}
+			/>
+			<NativeList
+				data={rows}
+				keyExtractor={(tile) => `${tile.source}:${tile.id}`}
+				refreshing={agents.isRefetching || dashboard.agents.isRefetching}
+				onRefresh={refresh}
+				header={
+					<PageHeader
+						title={agentSurfaceCopy.agents}
+						description={agentSurfaceCopy.everyAgentInYourAccount}
 					/>
 				}
-			>
-				<PageHeader
-					title={agentSurfaceCopy.agents}
-					description={agentSurfaceCopy.everyAgentInYourAccount}
-					titleAdornment={
-						<Button
-							variant="ghost"
-							size="icon-xs"
-							accessibilityLabel="Project scope"
-							onPress={() => setScopeOpen(true)}
-						>
-							<Text>⋯</Text>
-						</Button>
-					}
-				/>
-				<Dialog open={scopeOpen} onOpenChange={setScopeOpen}>
-					<DialogContent>
-						<DialogHeader>
-							<DialogTitle>Project scope</DialogTitle>
-						</DialogHeader>
-						<ProjectScopeHeader project={project} />
-					</DialogContent>
-				</Dialog>
-				{!project &&
-				!dashboard.agents.isPending &&
-				!dashboard.hostedStatus?.isLoading &&
-				!dashboard.hostedStatus?.error &&
-				dashboard.tiles.length ? (
-					<WebView recipe={hostedAgentGroupsClasses.root}>
-						{hostedTiles.length ? (
-							<WebView recipe={hostedAgentGroupsClasses.section}>
+				empty={<AgentsCard agents={[]} isLoading={loading} error={error} onRetry={refresh} />}
+				renderItem={({ item, index }) => (
+					<WebView recipe={hostedAgentGroupsClasses.section}>
+						{!project && (index === 0 || index === hosted.length) ? (
+							item.source === "on-clawdi" ? (
 								<SectionLabel
-									count={hostedAgentCountLabel(hostedTiles.length)}
+									count={hostedAgentCountLabel(hosted.length)}
 									leading={
 										<StatusBadge
 											className={webBoth(
@@ -102,47 +110,14 @@ function AgentsView({ project }: { project?: Project }) {
 								>
 									{hostedAgentGroupsCopy.cloud}
 								</SectionLabel>
-								<WebView recipe={ENTITY_GRID_CLASS}>
-									{hostedTiles.map((tile) => (
-										<AgentTileView key={tile.id} tile={tile} />
-									))}
-								</WebView>
-							</WebView>
-						) : null}
-						{otherTiles.length ? (
-							<WebView recipe={hostedAgentGroupsClasses.section}>
+							) : (
 								<SectionLabel>{hostedAgentGroupsCopy.other}</SectionLabel>
-								<WebView recipe={ENTITY_GRID_CLASS}>
-									{otherTiles.map((tile) => (
-										<AgentTileView key={tile.id} tile={tile} />
-									))}
-								</WebView>
-							</WebView>
+							)
 						) : null}
+						<AgentTileView tile={item} />
 					</WebView>
-				) : (
-					<AgentsCard
-						agents={project ? selfManagedAgentTiles(agents.data) : dashboard.tiles}
-						isLoading={
-							project
-								? agents.isPending
-								: dashboard.agents.isPending || dashboard.hostedStatus?.isLoading === true
-						}
-						error={
-							project
-								? agents.data
-									? null
-									: agents.error
-								: (dashboard.hostedStatus?.error ??
-									(dashboard.agents.data ? null : dashboard.agents.error))
-						}
-						onRetry={() => {
-							void agents.refetch();
-							if (!project) dashboard.hostedStatus?.onRetry();
-						}}
-					/>
 				)}
-			</AppScrollView>
+			/>
 		</SafeAreaScreen>
 	);
 }

@@ -7,7 +7,7 @@ type Confirmation = {
 	confirmLabel: string;
 	onConfirm: () => unknown;
 };
-/** Present the existing account/foreground-guarded callback through the Web dialog. */
+/** Present the existing account/foreground-guarded callback through the native confirmation helper. */
 export function useAgentConfirmation() {
 	const [pending, setPending] = useState<Confirmation | null>(null);
 	return {
