@@ -284,6 +284,19 @@ AI Providers, not the local `ai-provider list` catalog.
 
 ## Cloud context and remote Skills
 
+Pi session discovery uses `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` in
+the global `$PI_CODING_AGENT_DIR/settings.json` (default
+`~/.pi/agent/settings.json`), then `$PI_CODING_AGENT_DIR/sessions`.
+Project-level `.pi/settings.json` values cannot be inferred globally; set the
+environment override when syncing those sessions.
+
+```bash
+bash scripts/test.sh cli src/adapters/paths.test.ts src/adapters/pi.test.ts
+```
+
+Done: both test files pass, including discovery and resolution from custom Pi
+session directories.
+
 Skill keys preserve local directory spelling: each of up to four `/`-separated
 components starts with an ASCII letter or digit and then uses letters, digits,
 `.`, `_`, or `-`; total length is at most 200 characters. Nested keys cannot end

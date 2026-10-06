@@ -5,6 +5,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -15,11 +16,14 @@ import { PiAdapter } from "./pi";
 import { assertSessionGolden } from "./session-golden.test-support";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+const originalSessionDir = process.env.PI_CODING_AGENT_SESSION_DIR;
 const temporaryRoots: string[] = [];
 
 afterEach(() => {
 	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+	if (originalSessionDir === undefined) delete process.env.PI_CODING_AGENT_SESSION_DIR;
+	else process.env.PI_CODING_AGENT_SESSION_DIR = originalSessionDir;
 	for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -27,6 +31,7 @@ function fixtureSession(): { adapter: PiAdapter; file: string; root: string } {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-pi-adapter-"));
 	temporaryRoots.push(root);
 	process.env.PI_CODING_AGENT_DIR = root;
+	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 	const file = join(root, "sessions", "--workspace-demo--", "session.jsonl");
 	mkdirSync(dirname(file), { recursive: true });
 	copyFileSync(join(import.meta.dir, "../../tests/fixtures/pi/session-v3.jsonl"), file);
@@ -41,6 +46,30 @@ function copyFixture(root: string, fixture: string, name: string): string {
 }
 
 describe("Pi session adapter", () => {
+	test.each(["environment", "global settings"])(
+		"collects, resolves, and watches the directory from %s",
+		async (source) => {
+			const { adapter, root } = fixtureSession();
+			const sessionDir = join(root, "custom-sessions");
+			renameSync(join(root, "sessions"), sessionDir);
+			if (source === "environment") process.env.PI_CODING_AGENT_SESSION_DIR = sessionDir;
+			else writeFileSync(join(root, "settings.json"), JSON.stringify({ sessionDir }));
+			expect(adapter.sessions.watchPaths()).toEqual([sessionDir]);
+			expect((await adapter.sessions.collect({ kind: "complete" })).sessions).toHaveLength(1);
+			expect(
+				(
+					await adapter.sessions.collect({
+						kind: "paths",
+						paths: [join(sessionDir, "--workspace-demo--", "session.jsonl")],
+					})
+				).sessions,
+			).toHaveLength(1);
+			expect((await adapter.sessions.resolve("pi.fixture-session"))?.localSessionId).toBe(
+				"pi.fixture-session",
+			);
+		},
+	);
+
 	test("adds v3 usage entries across the full history without changing projected bytes", async () => {
 		const { adapter, file } = fixtureSession();
 		const before = await adapter.sessions.resolve("pi.fixture-session");
