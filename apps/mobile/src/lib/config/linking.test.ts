@@ -33,6 +33,42 @@ test("native associations and runtime routing share the same explicit hostname c
 			category: ["BROWSABLE", "DEFAULT"],
 			data: webLinkPaths.map((path) => ({ scheme: "https", host: "links.example.test", ...path })),
 		});
+		const androidData = output.android?.intentFilters?.[0]?.data;
+		if (!Array.isArray(androidData)) throw new Error("Missing Android link filters");
+		const androidMatches = (path: string) =>
+			androidData.some((filter) =>
+				filter.path !== undefined
+					? filter.path === path
+					: filter.pathPrefix !== undefined && path.startsWith(filter.pathPrefix),
+			);
+		for (const path of [
+			"/s",
+			"/s/example",
+			"/sign-in",
+			"/vaults",
+			"/vaults/example",
+			"/vault-request",
+			"/skills",
+			"/skills/owner/repository/skill",
+		]) {
+			expect(androidMatches(path)).toBe(true);
+		}
+		for (const path of [
+			"/skill.md",
+			"/skills.md",
+			"/silly",
+			"/sign-in-extra",
+			"/vault-request-extra",
+			"/vaults-extra",
+			"/shareholder",
+			"/get-started.md",
+			"/llms.txt",
+			"/.well-known/agent-skills/index.json",
+		]) {
+			expect(androidMatches(path)).toBe(false);
+		}
+		// Legacy Android cannot negate a static pathPrefix; native intake opens these in Custom Tabs.
+		expect(androidMatches("/skills/clawdi/SKILL.md")).toBe(true);
 		const parsed = parseMobileRuntimeConfig({
 			cloudApiUrl: "https://api.example.test",
 			clerkPublishableKey: "pk_test_example",

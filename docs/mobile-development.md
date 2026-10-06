@@ -783,6 +783,16 @@ components using the same path source. Configure the Web server's public
 until its signing identity is valid. OS verification still requires published
 association files and signed iOS/Android builds.
 
+Each shared link root has an exact match and a slash-delimited prefix, so `/s`
+does not capture `/skill.md` or `/sign-in`. AASA and Android 15+ Dynamic App Links
+(on devices with Google services) exclude public agent files, including
+`/skills/*/SKILL.md`, before resource matches. Older Android static filters cannot
+negate `/skills/` descendants;
+native intake opens verified-host agent files with `expo-web-browser.openBrowserAsync`
+(Android Custom Tabs with an explicit browser package; iOS SFSafariViewController).
+It never reopens these URLs with `Linking.openURL`. Warm intake preserves the
+current native screen; browser launch failure goes to manual link input.
+
 Allowed HTTPS Vault request links stay in a single-use, 60-second memory inbox;
 Router receives only a random intake reference, never the capability token.
 The focused supply screen requires explicit inspection and submission. Its

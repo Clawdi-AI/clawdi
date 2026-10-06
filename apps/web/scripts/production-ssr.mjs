@@ -90,7 +90,9 @@ for (const [path, envKey, value] of [
 					assert.equal(response.headers.get("x-clerk-auth-status"), null);
 					assert.equal(
 						response.headers.get("cache-control"),
-						configured ? "public, max-age=300" : "no-store",
+						configured
+							? "public, max-age=300, s-maxage=300, stale-while-revalidate=86400"
+							: "no-store",
 					);
 					if (configured && method === "GET") {
 						assert.match(await response.text(), /ai\.clawdi\.app/);
@@ -206,29 +208,61 @@ for (const path of [
 	});
 }
 
-test("public discovery bypasses Clerk while consecutive dashboard requests retain authentication", async () => {
-	for (const path of [
-		"/.well-known/agent-skills/index.json",
-		"/dashboard",
-		"/.well-known/agent-skills/index.json",
-		"/dashboard",
-	]) {
-		const response = await server.fetch(authenticatedRequest(path));
-		if (path === "/dashboard") {
-			// Only Clerk's authenticated context can admit the protected alias.
-			assert.equal(response.status, 307);
-			assert.equal(response.headers.get("location"), "/");
-			assert.equal(await response.text(), "");
-		} else {
-			assert.equal(response.status, 200);
-			assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
-			assert.equal(response.headers.get("location"), null);
-			assert.equal(response.headers.get("set-cookie"), null);
-			assert.equal(response.headers.get("x-clerk-auth-status"), null);
-			assert.ok((await response.json()).skills.length > 0);
+test("only association files bypass Clerk while consecutive dashboard requests retain authentication", async () => {
+	try {
+		process.env.CLAWDI_APPLE_TEAM_ID = "ABCDE12345";
+		for (const path of [
+			"/.well-known/apple-app-site-association",
+			"/dashboard",
+			"/.well-known/apple-app-site-association",
+			"/dashboard",
+		]) {
+			const response = await server.fetch(authenticatedRequest(path));
+			if (path === "/dashboard") {
+				// Only Clerk's authenticated context can admit the protected alias.
+				assert.equal(response.status, 307);
+				assert.equal(response.headers.get("location"), "/");
+				assert.equal(await response.text(), "");
+			} else {
+				assert.equal(response.status, 200);
+				assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+				assert.equal(response.headers.get("location"), null);
+				assert.equal(response.headers.get("set-cookie"), null);
+				assert.equal(response.headers.get("x-clerk-auth-status"), null);
+				assert.equal(response.headers.get("content-security-policy"), null);
+				assert.match(await response.text(), /ABCDE12345\.ai\.clawdi\.app/);
+			}
 		}
+	} finally {
+		delete process.env.CLAWDI_APPLE_TEAM_ID;
 	}
 });
+
+test("agent-skills discovery retains Clerk and main's public-file nonce exemption", async () => {
+	const response = await server.fetch(request("/.well-known/agent-skills/index.json"));
+	assert.equal(response.status, 200);
+	assert.equal(response.headers.get("x-clerk-auth-status"), "signed-out");
+	assert.equal(response.headers.get("content-security-policy"), null);
+	assert.ok((await response.json()).skills.length > 0);
+});
+
+for (const path of ["/.well-known/unknown", "/.well-known/assetlinks.json/extra"]) {
+	test(`unknown association path ${path} retains Clerk and a document nonce`, async () => {
+		const response = await server.fetch(request(path));
+		assert.equal(response.status, 404);
+		assert.equal(response.headers.get("x-clerk-auth-status"), "signed-out");
+		assert.match(response.headers.get("content-type") ?? "", /text\/html/);
+		// Start's unmatched-route 404 drops contextual response headers, as on main.
+		// The rendered nonce proves security middleware still ran for this request.
+		const html = await response.text();
+		const nonce = html.match(/<meta name="csp-nonce" content="([^"]+)"/)?.[1];
+		assert.ok(nonce);
+		for (const [tag] of html.matchAll(/<script\b[^>]*>/g)) {
+			if (/type="(?:application\/json|application\/ld\+json)"/.test(tag)) continue;
+			assert.ok(tag.includes(`nonce="${nonce}"`), `Script without matching nonce: ${tag}`);
+		}
+	});
+}
 
 for (const search of ["", "?deploy_profile=sui&settings=billing-wallet"]) {
 	test(`production SSR admits dashboard alias ${search} before redirecting to overview`, async () => {

@@ -1,6 +1,12 @@
-import { webLinkPaths } from "@clawdi/shared/linking";
+import { webLinkExclusions, webLinkPaths } from "@clawdi/shared/linking";
+import { PUBLIC_FILE_CACHE_CONTROL } from "@/lib/agent-file-headers";
 
 const appId = "ai.clawdi.app";
+
+const linkComponents = [
+	...webLinkExclusions.map((path) => ({ "/": path, exclude: true })),
+	...webLinkPaths.map((path) => ({ "/": path.path ?? `${path.pathPrefix}*` })),
+];
 
 /** Owner-supplied public signing identities, read only on the server. */
 function readAppLinkConfig() {
@@ -23,7 +29,7 @@ function associationResponse(body: unknown): Response {
 		status: body === null ? 404 : 200,
 		headers: {
 			"Content-Type": "application/json; charset=utf-8",
-			"Cache-Control": body === null ? "no-store" : "public, max-age=300",
+			"Cache-Control": body === null ? "no-store" : PUBLIC_FILE_CACHE_CONTROL,
 		},
 	});
 }
@@ -37,7 +43,7 @@ export function appleAppSiteAssociation(): Response {
 			details: [
 				{
 					appIDs: [applicationId],
-					components: webLinkPaths.map((path) => ({ "/": path.path ?? `${path.pathPrefix}*` })),
+					components: linkComponents,
 				},
 			],
 		},
@@ -55,6 +61,12 @@ export function androidAssetLinks(): Response {
 				namespace: "android_app",
 				package_name: appId,
 				sha256_cert_fingerprints: androidCertSha256,
+			},
+			// Android 15+ applies ordered exclusions; older devices use native browser fallback.
+			relation_extensions: {
+				"delegate_permission/common.handle_all_urls": {
+					dynamic_app_link_components: [...linkComponents, { "/": "*", exclude: true }],
+				},
 			},
 		},
 	]);

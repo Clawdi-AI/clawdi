@@ -37,7 +37,30 @@ const webLinkPaths = [
 		"sign-in",
 		"sign-up",
 		"settings",
-	].map((root) => ({ pathPrefix: `/${root}` })),
+	].flatMap((root) => [{ path: `/${root}` }, { pathPrefix: `/${root}/` }]),
 	{ path: "/vault-request" },
 ];
 module.exports.webLinkPaths = webLinkPaths;
+
+// Public machine-readable Web files must stay in a browser.
+const agentFilePaths = {
+	getStarted: "/get-started.md",
+	legacyGuide: "/skill.md",
+	skill: "/skills/clawdi/SKILL.md",
+	discoveryIndex: "/.well-known/agent-skills/index.json",
+	llms: "/llms.txt",
+};
+const webLinkExclusions = [...Object.values(agentFilePaths), "/skills/*/SKILL.md"];
+const browserPathMatchers = webLinkExclusions.map(
+	(pattern) =>
+		new RegExp(
+			`^${pattern
+				.split("*")
+				.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+				.join(".*")}$`,
+		),
+);
+module.exports.agentFilePaths = agentFilePaths;
+module.exports.webLinkExclusions = webLinkExclusions;
+module.exports.isBrowserLinkPath = (path) =>
+	browserPathMatchers.some((pattern) => pattern.test(path));

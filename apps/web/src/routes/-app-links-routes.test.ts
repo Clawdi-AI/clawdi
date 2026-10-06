@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { webLinkPaths } from "@clawdi/shared/linking";
+import { webLinkExclusions, webLinkPaths } from "@clawdi/shared/linking";
 import { z } from "zod";
+import { AGENT_FILES } from "@/lib/agent-files";
 import { GET as apple } from "./[.]well-known/apple-app-site-association";
 import { GET as android } from "./[.]well-known/assetlinks[.]json";
 
@@ -9,6 +10,50 @@ const playFingerprint = Array(32).fill("AB").join(":");
 const uploadFingerprint = Array(32).fill("CD").join(":");
 const envKeys = ["CLAWDI_APPLE_TEAM_ID", "CLAWDI_ANDROID_CERT_SHA256"] as const;
 const originalEnv = envKeys.map((key) => process.env[key]);
+const componentsSchema = z.array(z.object({ "/": z.string(), exclude: z.boolean().optional() }));
+
+// Apple and Android dynamic rules use ordered, first-match glob components.
+function matchesLink(components: z.infer<typeof componentsSchema>, candidate: string) {
+	const match = components.find(({ "/": pattern }) => {
+		const glob = pattern
+			.split("*")
+			.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+			.join(".*");
+		return new RegExp(`^${glob}$`).test(candidate);
+	});
+	return Boolean(match && !match.exclude);
+}
+
+function assertLinkBoundaries(components: z.infer<typeof componentsSchema>) {
+	for (const path of [
+		"/",
+		"/s",
+		"/s/example",
+		"/share/example",
+		"/sign-in",
+		"/vaults",
+		"/vaults/example",
+		"/vault-request",
+		"/skills",
+		"/skills/owner/repository/skill",
+	]) {
+		expect(matchesLink(components, path)).toBe(true);
+	}
+	for (const path of [
+		...Object.values(AGENT_FILES).map((file) => file.path),
+		"/skills/another/SKILL.md",
+		"/skills/owner/repository/SKILL.md",
+		"/skills.md",
+		"/silly",
+		"/sign-in-extra",
+		"/vault-request-extra",
+		"/vaults-extra",
+		"/shareholder",
+		"/unrelated-page",
+	]) {
+		expect(matchesLink(components, path)).toBe(false);
+	}
+}
 
 beforeEach(() => {
 	for (const key of envKeys) delete process.env[key];
@@ -33,6 +78,9 @@ describe("mobile association routes", () => {
 			expect(response.status).toBe(200);
 			expect(response.headers.get("content-type")).toBe("application/json; charset=utf-8");
 			expect(response.headers.get("location")).toBeNull();
+			expect(response.headers.get("cache-control")).toBe(
+				"public, max-age=300, s-maxage=300, stale-while-revalidate=86400",
+			);
 		});
 
 		for (const unset of [undefined, "", "  "]) {
@@ -54,31 +102,34 @@ describe("mobile association routes", () => {
 			applinks: { details: [{ appIDs: [`${appleTeamId}.ai.clawdi.app`] }] },
 			webcredentials: { apps: [`${appleTeamId}.ai.clawdi.app`] },
 		});
-		const { components } = z
-			.object({ components: z.array(z.object({ "/": z.string() })) })
-			.parse(data.applinks.details[0]);
-		expect(components).toHaveLength(webLinkPaths.length);
+		const components = componentsSchema.parse(data.applinks.details[0].components);
+		expect(components.slice(0, webLinkExclusions.length)).toEqual(
+			webLinkExclusions.map((path) => ({ "/": path, exclude: true })),
+		);
+		expect(components).toHaveLength(webLinkPaths.length + webLinkExclusions.length);
 		expect(components).toContainEqual({ "/": "/" });
 		expect(components).toContainEqual({ "/": "/vault-request" });
-		expect(components).toContainEqual({ "/": "/s*" });
-		expect(components).toContainEqual({ "/": "/share*" });
-		const matches = (candidate: string) =>
-			components.some(({ "/": pattern }) =>
-				pattern.endsWith("*") ? candidate.startsWith(pattern.slice(0, -1)) : candidate === pattern,
-			);
+		expect(components).toContainEqual({ "/": "/s" });
+		expect(components).toContainEqual({ "/": "/s/*" });
+		expect(components).toContainEqual({ "/": "/share" });
+		expect(components).toContainEqual({ "/": "/share/*" });
 		for (const path of webLinkPaths) {
-			if (path.path !== undefined) expect(matches(path.path)).toBe(true);
+			if (path.path !== undefined) expect(matchesLink(components, path.path)).toBe(true);
 			else {
-				expect(matches(path.pathPrefix)).toBe(true);
-				expect(matches(`${path.pathPrefix}/example`)).toBe(true);
+				expect(matchesLink(components, path.pathPrefix)).toBe(true);
+				expect(matchesLink(components, `${path.pathPrefix}example`)).toBe(true);
 			}
 		}
-		expect(matches("/unrelated-page")).toBe(false);
+		assertLinkBoundaries(components);
 	});
 
 	test("assetlinks grants URL handling to the app with all configured certificates", async () => {
 		process.env.CLAWDI_ANDROID_CERT_SHA256 = ` ${playFingerprint.toLowerCase()}, ${uploadFingerprint},${playFingerprint} `;
-		expect(await android().json()).toEqual([
+		process.env.CLAWDI_APPLE_TEAM_ID = appleTeamId;
+		const appleData = await apple().json();
+		const linkComponents = componentsSchema.parse(appleData.applinks.details[0].components);
+		const data = await android().json();
+		expect(data).toEqual([
 			{
 				relation: ["delegate_permission/common.handle_all_urls"],
 				target: {
@@ -86,8 +137,18 @@ describe("mobile association routes", () => {
 					package_name: "ai.clawdi.app",
 					sha256_cert_fingerprints: [playFingerprint, uploadFingerprint],
 				},
+				relation_extensions: {
+					"delegate_permission/common.handle_all_urls": {
+						dynamic_app_link_components: [...linkComponents, { "/": "*", exclude: true }],
+					},
+				},
 			},
 		]);
+		const dynamic = componentsSchema.parse(
+			data[0].relation_extensions["delegate_permission/common.handle_all_urls"]
+				.dynamic_app_link_components,
+		);
+		assertLinkBoundaries(dynamic);
 	});
 
 	test("invalid signing identities fail closed without affecting the other platform", () => {

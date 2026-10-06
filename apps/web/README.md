@@ -27,12 +27,21 @@ Set these public signing identities in the Web server's deployment environment
 
 `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json`
 serve public JSON without authentication or redirects. Each returns 404 when
-its signing identity is missing or malformed. AASA paths come directly from
+its signing identity is missing or malformed. Only these two exact paths bypass
+Clerk; other `/.well-known/` paths retain their existing middleware behavior.
+Successful responses use the same public cache policy as agent files; 404s use
+`no-store`. AASA paths come directly from
 [`@clawdi/shared/linking`](../../packages/shared/src/linking.cjs); `webcredentials`
 uses the same Apple application identifier. Password autofill additionally
 requires the app's `webcredentials` associated-domain entitlement. See
 [Apple's association format](https://developer.apple.com/documentation/xcode/supporting-associated-domains)
 and [Android's certificate guidance](https://developer.android.com/training/app-links/configure-assetlinks).
+
+Link roots match their exact path and slash-delimited descendants. AASA excludes
+public agent files before matching those roots. Android 15+ with Google services
+uses the same ordered exclusions through Dynamic App Links. Older Android versions
+still match skill files under `/skills/` in the manifest; mobile intake opens them with
+`expo-web-browser` in a Custom Tab pinned to a browser package to avoid recapture.
 
 With the local Web server running and the relevant variable set, verify:
 
