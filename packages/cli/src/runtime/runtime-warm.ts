@@ -16,7 +16,11 @@ import {
 	seedAnonymousOpenClawAuthProbes,
 } from "./openclaw-preinstallation";
 import { applyOpenClawConfigMergePatch } from "./openclaw-provider-config";
-import { recordWarmOpenClawGateway, warmOpenClawGatewayEnvironment } from "./openclaw-warm-gateway";
+import {
+	openClawHotApplyEnabled,
+	recordWarmOpenClawGateway,
+	warmOpenClawGatewayEnvironment,
+} from "./openclaw-warm-gateway";
 import type { RuntimePaths } from "./paths";
 import {
 	flushPersistedStepRevisions,
@@ -85,7 +89,7 @@ export async function warmHostedOpenClawRuntime(
 	seedAnonymousOpenClawAuthProbes(paths, command);
 	flushPersistedStepRevisions(paths);
 	recordWarmOpenClawGateway(paths);
-	warmFirstOpenClawWriter(paths, sdk, identity.uid, identity.gid);
+	if (openClawHotApplyEnabled()) warmFirstOpenClawWriter(paths, sdk, identity.uid, identity.gid);
 }
 
 async function waitForGatewayHealth(): Promise<void> {
