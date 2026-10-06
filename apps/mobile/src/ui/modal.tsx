@@ -120,6 +120,12 @@ export function ModalSurface({
 	const dismiss = () => {
 		if (dismissible) modal.setOpen(false);
 	};
+	const surfaceTokens = cn(surface, className).split(/\s+/);
+	const isPadding = (token: string) => /(?:^|:)p[xytrblse]?-/.test(token);
+	// ScrollView viewport padding can clip its last child on Android. Keep the
+	// shared recipe's padding in the scrollable content so the footer is reachable.
+	const viewportClasses = surfaceTokens.filter((token) => !isPadding(token)).join(" ");
+	const contentClasses = surfaceTokens.filter(isPadding).join(" ");
 	return (
 		<Modal
 			transparent
@@ -138,7 +144,8 @@ export function ModalSurface({
 						<AppScrollView
 							accessibilityViewIsModal
 							keyboardShouldPersistTaps="handled"
-							className={cn(surface, className)}
+							className={viewportClasses}
+							contentContainerClassName={contentClasses}
 							style={[{ flexGrow: 0, flexShrink: 1 }, style]}
 							contentContainerStyle={{ flexGrow: 1 }}
 						>
