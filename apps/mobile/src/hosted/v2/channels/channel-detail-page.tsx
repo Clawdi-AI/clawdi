@@ -14,7 +14,6 @@ import {
 	channelDetailPageClasses as styles,
 } from "@clawdi/shared/ui";
 import {
-	agentChannelPairedChatsLabel,
 	agentDisplayName,
 	agentSurfaceCopy,
 	channelFormCopy,
@@ -456,7 +455,7 @@ function ChannelDetail({
 							meta={[`Linked ${relativeTime(link.created_at)}`]}
 						/>
 						<ActionButton
-							label={agentChannelPairedChatsLabel(link.binding_count ?? 0)}
+							label={t("channels.bindings")}
 							disabled={disabled}
 							onPress={() =>
 								router.push({
@@ -655,7 +654,6 @@ function ChannelDetail({
 								error={
 									action.error ??
 									links.error ??
-									bindings.error ??
 									activity.error ??
 									pool.error ??
 									agents.error ??
