@@ -84,3 +84,10 @@ function shellArgument(value: string): string {
 	if (/^[a-zA-Z0-9_./:@+-]+$/.test(value)) return value;
 	return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
+
+export const workspaceSkillInstallCopy = {
+	title: "Install skill",
+	description: "Choose a Skill from your Library or a public GitHub repository.",
+	library: "Library",
+	github: "GitHub",
+} as const;

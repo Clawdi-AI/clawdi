@@ -5,7 +5,7 @@ import {
 	workspaceSkillMutationsAvailable,
 } from "@clawdi/shared/api";
 import { HERO_GRID_CLASS } from "@clawdi/shared/ui";
-import { agentSurfaceCopy, identityFor } from "@clawdi/shared/view";
+import { agentSurfaceCopy, identityFor, workspaceSkillInstallCopy } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
 import { router, useLocalSearchParams } from "expo-router";
@@ -15,32 +15,49 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentCollection } from "@/components/dashboard/collection";
 import { useAgentConfirmation } from "@/components/dashboard/confirmation";
 import { ActionButton } from "@/components/dashboard/controls";
+import { AgentSectionNavigation } from "@/components/dashboard/navigation";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCard, HeroCardSkeleton } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
-import { Input as AppTextInput } from "@/components/ui/input";
+import { Input as AppTextInput, Label } from "@/components/ui/input";
 import { SheetPage } from "@/components/ui/sheet-page";
 import { Text as AppText } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
 import { WebView } from "@/components/ui/web-layout";
+import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
 import { canPollDeployment } from "@/hosted/deployment-status";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { NativeHeader } from "@/platform/navigation/native-header";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
+import { useSheet } from "@/platform/navigation/use-sheet";
 import { type SkillAttempt, skillAttemptAfterFailure } from "@/platform/skill-attempt";
 import { skillAttempts } from "@/platform/skill-attempt-storage";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
-export function WorkspaceSkillsScreen({ deploymentId }: { deploymentId?: string }) {
+export function WorkspaceSkillsScreen({
+	deploymentId,
+	install = false,
+}: {
+	deploymentId?: string;
+	install?: boolean;
+}) {
 	const params = useLocalSearchParams<{ deploymentId?: string | string[] }>();
 	const id = deploymentId ?? routeParam(params.deploymentId) ?? "";
 	const scope = useAccountScope();
-	return <WorkspaceSkills key={`${scope.accountKey}:${scope.generation}:${id}`} id={id} />;
+	return (
+		<WorkspaceSkills
+			key={`${scope.accountKey}:${scope.generation}:${id}`}
+			id={id}
+			install={install}
+		/>
+	);
 }
 
-function WorkspaceSkills({ id }: { id: string }) {
+function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 	const t = useI18n();
 	const confirmationDialog = useAgentConfirmation();
 	const scope = useAccountScope();
@@ -87,6 +104,12 @@ function WorkspaceSkills({ id }: { id: string }) {
 				if (!hosted) throw new Error(agentSurfaceCopy.unavailable);
 				return hosted.getDeployment(id, lease);
 			}, signal),
+	});
+	const installSheet = useSheet<boolean>({
+		fallback: deployment.data?.agent_id
+			? `/agents/${deployment.data.agent_id}/skills?tab=workspace`
+			: "/agents",
+		busy: install && action.busy,
 	});
 	useEffect(() => {
 		let mounted = true;
@@ -156,6 +179,7 @@ function WorkspaceSkills({ id }: { id: string }) {
 				setAccepted(true);
 				setStartedAt(Date.now());
 				await refresh();
+				if (install && owns()) await installSheet.close(true);
 			} catch (error) {
 				const rejected = skillAttemptAfterFailure(attempt, error);
 				if (owns() && rejected.status === "rejected") {
@@ -198,12 +222,133 @@ function WorkspaceSkills({ id }: { id: string }) {
 			submit(attempt, true, true),
 		);
 	};
-	let install: WorkspaceSkillMutation | null = null;
+	let installRequest: WorkspaceSkillMutation | null = null;
 	try {
-		install = { action: "install", request: parseWorkspaceSkillGitHubInput(source) };
+		installRequest = { action: "install", request: parseWorkspaceSkillGitHubInput(source) };
 	} catch {
 		/* Invalid drafts stay local. */
 	}
+	const form = (
+		<AppView className="gap-3">
+			{install && !enabled && !saved ? <AppText>{t("workspaceSkills.unavailable")}</AppText> : null}
+			{install ? (
+				<>
+					<Label>{agentSurfaceCopy.gitHubSkillRepository}</Label>
+					<AppTextInput
+						value={source}
+						onChangeText={setSource}
+						editable={enabled}
+						maxLength={2048}
+						accessibilityLabel={t("workspaceSkills.source")}
+						placeholder={t("workspaceSkills.source")}
+					/>
+					<ActionButton
+						label={t("workspaceSkills.install")}
+						disabled={!enabled || !installRequest}
+						onPress={() => {
+							if (installRequest) prepare(installRequest);
+						}}
+					/>
+				</>
+			) : null}
+			{saved ? (
+				<>
+					<AppText>{t("workspaceSkills.uncertain")}</AppText>
+					<AppText selectable>
+						{saved.mutation.action === "install"
+							? `${saved.mutation.request.repo}/${saved.mutation.request.path ?? ""}`
+							: saved.mutation.skillKey}
+					</AppText>
+					<ActionButton
+						label={t("workspaceSkills.retry")}
+						disabled={
+							action.busy || storageError || !storageKey || !client || saved.status === "rejected"
+						}
+						onPress={() => void submit(saved)}
+					/>
+					{saved.status !== "uncertain" ? (
+						<ActionButton
+							label={t("workspaceSkills.discard")}
+							disabled={action.busy || storageError}
+							onPress={() =>
+								confirm(t("workspaceSkills.discard"), t("workspaceSkills.discardWarning"), () =>
+									action.runOrThrow(async (current) => {
+										if (!storageKey) return;
+										await skillAttempts.clearAttempt(
+											storageKey,
+											saved,
+											() => current() && scope.isCurrent(),
+										);
+										if (current()) {
+											setSaved(null);
+											await refresh();
+										}
+									}),
+								)
+							}
+						/>
+					) : null}
+				</>
+			) : null}
+			{storageError ? (
+				<AppText accessibilityRole="alert">{t("workspaceSkills.storageError")}</AppText>
+			) : null}
+			{saved || storageError ? (
+				<ActionButton
+					label={t("workspaceSkills.reload")}
+					disabled={action.busy}
+					onPress={() => setEpoch((value) => value + 1)}
+				/>
+			) : null}
+			{accepted ? (
+				<AppText accessibilityRole="alert">{t("workspaceSkills.accepted")}</AppText>
+			) : null}
+			{action.error ? (
+				<AppText accessibilityRole="alert">{t("workspaceSkills.error")}</AppText>
+			) : null}
+		</AppView>
+	);
+	if (install)
+		return (
+			<SheetPage
+				title={workspaceSkillInstallCopy.title}
+				description={workspaceSkillInstallCopy.description}
+				busy={action.busy}
+				sheet={installSheet}
+				fallback={
+					deployment.data?.agent_id
+						? `/agents/${deployment.data.agent_id}/skills?tab=workspace`
+						: "/agents"
+				}
+			>
+				<NativeSegments
+					value="github"
+					options={[
+						{ value: "library", label: workspaceSkillInstallCopy.library },
+						{ value: "github", label: workspaceSkillInstallCopy.github },
+					]}
+					disabled={action.busy}
+					onChange={(value) => {
+						if (value === "library" && deployment.data?.agent_id)
+							router.replace({
+								pathname: "/agents/[id]/skills/browse",
+								params: { id: deployment.data.agent_id },
+							});
+					}}
+				/>
+				{inventory.isError || deployment.isError ? (
+					<ApiErrorPanel
+						error={inventory.error ?? deployment.error}
+						onRetry={() => {
+							void inventory.refetch();
+							void deployment.refetch();
+						}}
+					/>
+				) : null}
+				{form}
+				{confirmationDialog.dialog}
+			</SheetPage>
+		);
 	return (
 		<AgentCollection
 			title="Skills"
@@ -228,78 +373,30 @@ function WorkspaceSkills({ id }: { id: string }) {
 					onRemove={() => prepare({ action: "uninstall", skillKey: item.skill_key })}
 				/>
 			)}
+			navigation={
+				deployment.data?.agent_id ? (
+					<AgentSectionNavigation agentId={deployment.data.agent_id} section="skills" />
+				) : undefined
+			}
 		>
-			<AppView className="gap-3">
-				{!enabled && !saved ? <AppText>{t("workspaceSkills.unavailable")}</AppText> : null}
-				<AppTextInput
-					value={source}
-					onChangeText={setSource}
-					editable={enabled}
-					maxLength={2048}
-					accessibilityLabel={t("workspaceSkills.source")}
-					placeholder={t("workspaceSkills.source")}
-				/>
-				<ActionButton
-					label={t("workspaceSkills.install")}
-					disabled={!enabled || !install}
-					onPress={() => {
-						if (install) prepare(install);
-					}}
-				/>
-				{saved ? (
-					<>
-						<AppText>{t("workspaceSkills.uncertain")}</AppText>
-						<AppText selectable>
-							{saved.mutation.action === "install"
-								? `${saved.mutation.request.repo}/${saved.mutation.request.path ?? ""}`
-								: saved.mutation.skillKey}
-						</AppText>
-						<ActionButton
-							label={t("workspaceSkills.retry")}
-							disabled={
-								action.busy || storageError || !storageKey || !client || saved.status === "rejected"
-							}
-							onPress={() => void submit(saved)}
-						/>
-						{saved.status !== "uncertain" ? (
-							<ActionButton
-								label={t("workspaceSkills.discard")}
-								disabled={action.busy || storageError}
-								onPress={() =>
-									confirm(t("workspaceSkills.discard"), t("workspaceSkills.discardWarning"), () =>
-										action.runOrThrow(async (current) => {
-											if (!storageKey) return;
-											await skillAttempts.clearAttempt(
-												storageKey,
-												saved,
-												() => current() && scope.isCurrent(),
-											);
-											if (current()) {
-												setSaved(null);
-												await refresh();
-											}
-										}),
-									)
-								}
-							/>
-						) : null}
-					</>
-				) : null}
-				{storageError ? (
-					<AppText accessibilityRole="alert">{t("workspaceSkills.storageError")}</AppText>
-				) : null}
-				<ActionButton
-					label={t("workspaceSkills.reload")}
-					disabled={action.busy}
-					onPress={() => setEpoch((value) => value + 1)}
-				/>
-				{accepted ? (
-					<AppText accessibilityRole="alert">{t("workspaceSkills.accepted")}</AppText>
-				) : null}
-				{action.error ? (
-					<AppText accessibilityRole="alert">{t("workspaceSkills.error")}</AppText>
-				) : null}
-			</AppView>
+			<NativeHeader
+				actions={[
+					{
+						id: "install",
+						label: "Install skill",
+						disabled: !deployment.data?.agent_id,
+						onPress: () => {
+							if (deployment.data?.agent_id)
+								router.push({
+									pathname: "/agents/[id]/skills/browse",
+									params: { id: deployment.data.agent_id },
+								});
+						},
+					},
+				]}
+			/>
+			{form}
+
 			{inventory.isError || deployment.isError ? (
 				<ApiErrorPanel
 					error={inventory.error ?? deployment.error}
@@ -409,6 +506,27 @@ export function WorkspaceSkillDetailScreen() {
 				<ApiErrorPanel error={detail.error} onRetry={() => void detail.refetch()} />
 			) : detail.data ? (
 				<AppText selectable>{detail.data.content}</AppText>
+			) : (
+				<HeroCardSkeleton />
+			)}
+		</SheetPage>
+	);
+}
+
+export function WorkspaceSkillInstallScreen() {
+	const params = useLocalSearchParams<{ id?: string | string[] }>();
+	const id = routeParam(params.id);
+	const { inventory } = useDashboardAgents();
+	const matches = inventory.data?.filter((item) => item.agent_id === id);
+	if (matches?.length === 1 && matches[0])
+		return <WorkspaceSkillsScreen deploymentId={matches[0].resource.id} install />;
+	return (
+		<SheetPage
+			title={workspaceSkillInstallCopy.title}
+			fallback={id ? `/agents/${id}/skills` : "/agents"}
+		>
+			{inventory.isError || inventory.data ? (
+				<ApiErrorPanel error={inventory.error} onRetry={() => void inventory.refetch()} />
 			) : (
 				<HeroCardSkeleton />
 			)}

@@ -1,7 +1,7 @@
 "use client";
-
 import {
 	parseWorkspaceSkillGitHubInput,
+	workspaceSkillInstallCopy,
 	workspaceSkillMutationsAvailable,
 } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -388,10 +388,8 @@ function HostedWorkspaceSkillsPanelContent({
 			>
 				<DialogContent className="sm:max-w-md">
 					<DialogHeader>
-						<DialogTitle>Install skill</DialogTitle>
-						<DialogDescription>
-							Choose a Skill from your Library or a public GitHub repository.
-						</DialogDescription>
+						<DialogTitle>{workspaceSkillInstallCopy.title}</DialogTitle>
+						<DialogDescription>{workspaceSkillInstallCopy.description}</DialogDescription>
 					</DialogHeader>
 					<Tabs
 						value={installSource}

@@ -1,6 +1,6 @@
 import type { components } from "@clawdi/shared/api";
 import { HERO_GRID_CLASS } from "@clawdi/shared/ui";
-import { agentSurfaceCopy, identityFor } from "@clawdi/shared/view";
+import { agentSurfaceCopy, identityFor, workspaceSkillInstallCopy } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
@@ -25,6 +25,7 @@ import { useCloudSkills } from "@/pages/dashboard/skills/page";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { NativeHeader, useHeaderSearch } from "@/platform/navigation/native-header";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
@@ -141,6 +142,19 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 					onLoadMore={() => void library.fetchNextPage()}
 					header={
 						<>
+							<NativeSegments
+								value="library"
+								options={[
+									{ value: "library", label: workspaceSkillInstallCopy.library },
+									{ value: "github", label: workspaceSkillInstallCopy.github },
+								]}
+								disabled={action.busy}
+								onChange={(value) => {
+									if (value === "github")
+										router.replace({ pathname: "/agents/[id]/skills/github", params: { id } });
+								}}
+							/>
+
 							{closeError ? <ApiErrorPanel error={closeError} /> : null}
 							{action.error ? (
 								<ApiErrorPanel error={action.error} title="Couldn't update Skill" />
