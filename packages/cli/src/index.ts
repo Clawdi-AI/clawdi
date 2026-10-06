@@ -1329,6 +1329,10 @@ program
 	.command("update")
 	.description("Install the latest CLI through the current installation owner")
 	.option("--check", "Only check for updates, don't install")
+	.option(
+		"-y, --yes",
+		"Install without prompting (required to install from a non-interactive shell)",
+	)
 	.option("--json", "Output as JSON")
 	.addOption(new Option("--background-worker").hideHelp())
 	.addOption(new Option("--current-version <version>").hideHelp())
@@ -1341,6 +1345,10 @@ program
 	.addOption(new Option("--native-version <version>").hideHelp())
 	.addOption(new Option("--native-target <target>").hideHelp())
 	.addOption(new Option("--native-lock-timeout-ms <milliseconds>").hideHelp())
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi update\n  $ clawdi update --yes\n  $ clawdi update --yes --json\n  $ clawdi update --check --json",
+	)
 	.action(async (opts) => {
 		if (opts.nativeIdentity) {
 			const { nativeIdentityOutput } = await import("./lib/native-activation.js");

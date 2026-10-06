@@ -52,14 +52,34 @@ const npmOwnership = {
 	executable: "/owned/npm/bin/clawdi",
 };
 
-async function withStdoutTty<T>(fn: () => Promise<T>): Promise<T> {
+async function withStdoutTty<T>(fn: () => Promise<T>, tty = true): Promise<T> {
 	const ttyDesc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
-	Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+	Object.defineProperty(process.stdout, "isTTY", { value: tty, configurable: true });
 	try {
 		return await fn();
 	} finally {
 		if (ttyDesc) Object.defineProperty(process.stdout, "isTTY", ttyDesc);
 		else Object.defineProperty(process.stdout, "isTTY", { value: undefined, configurable: true });
+	}
+}
+
+async function captureOutput(fn: () => Promise<void>) {
+	const originalLog = console.log;
+	const originalError = console.error;
+	let stdout = "";
+	let stderr = "";
+	console.log = (...args: unknown[]) => {
+		stdout += `${args.map(String).join(" ")}\n`;
+	};
+	console.error = (...args: unknown[]) => {
+		stderr += `${args.map(String).join(" ")}\n`;
+	};
+	try {
+		await fn();
+		return { stdout, stderr };
+	} finally {
+		console.log = originalLog;
+		console.error = originalError;
 	}
 }
 
@@ -391,26 +411,87 @@ describe("update --json", () => {
 		expect(result.upgradeAvailable).toBe(false);
 	});
 
-	it("reports latest=null when registry is unreachable", async () => {
-		const orig = console.log;
-		let captured = "";
-		console.log = (...args: unknown[]) => {
-			captured = args.map(String).join(" ");
-		};
+	it.each(["http", "network"] as const)(
+		"reports a registry %s failure as an error with exit 1",
+		async (failure) => {
+			const { restore } = mockFetch([
+				{
+					path: "/clawdi",
+					response: () => {
+						if (failure === "network") throw new TypeError("fetch failed");
+						return new Response("unavailable", { status: 503 });
+					},
+				},
+			]);
+			try {
+				const { stdout, stderr } = await captureOutput(() =>
+					withStdoutTty(() => update({}), false),
+				);
+				const result = JSON.parse(stdout);
+				expect(result).toMatchObject({
+					latest: null,
+					error: {
+						code: "registry_unreachable",
+						message: "Could not reach https://registry.npmjs.org/clawdi",
+					},
+				});
+				expect(result).not.toHaveProperty("upgradeAvailable");
+				expect(stderr).toContain(result.error.message);
+				expect(process.exitCode).toBe(1);
+			} finally {
+				restore();
+			}
+		},
+	);
 
-		// No handler installed → mockFetch 404s the registry call
+	it("fails a TTY check when the registry is unreachable", async () => {
 		const { restore } = mockFetch([]);
 		try {
-			await update({ json: true });
+			const { stdout, stderr } = await captureOutput(() =>
+				withStdoutTty(() => update({ check: true })),
+			);
+			expect(stdout).toBe("");
+			expect(stderr).toContain("Could not reach https://registry.npmjs.org/clawdi");
+			expect(process.exitCode).toBe(1);
 		} finally {
-			console.log = orig;
 			restore();
 		}
-
-		const result = JSON.parse(captured) as { latest: string | null; upgradeAvailable: boolean };
-		expect(result.latest).toBeNull();
-		expect(result.upgradeAvailable).toBe(false);
 	});
+
+	it.each([{}, { yes: true, check: true }])(
+		"keeps non-TTY runs check-only without install authorization: %j",
+		async (opts) => {
+			const { restore } = mockFetch([
+				{ path: "/clawdi", response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }) },
+			]);
+			let installed = false;
+			try {
+				const { stdout, stderr } = await captureOutput(() =>
+					withStdoutTty(
+						() =>
+							update(opts, {
+								detectOwnership: () => npmOwnership,
+								installRunner: () => {
+									installed = true;
+									return 0;
+								},
+							}),
+						false,
+					),
+				);
+				expect(JSON.parse(stdout)).toMatchObject({
+					latest: "99.0.0",
+					upgradeAvailable: true,
+					installed: false,
+				});
+				expect(stderr).toContain("clawdi v99.0.0 is available. Re-run with --yes to install.");
+				expect(installed).toBe(false);
+				expect(process.exitCode).toBe(0);
+			} finally {
+				restore();
+			}
+		},
+	);
 
 	it("rejects a registry dist-tag value that is not an exact semver", async () => {
 		const orig = console.log;
@@ -436,6 +517,97 @@ describe("update --json", () => {
 });
 
 describe("update install", () => {
+	it.each(["npm", "bun"] as const)(
+		"installs via the owning %s with --yes in non-TTY",
+		async (installer) => {
+			const calls: { command: string; args: string[] }[] = [];
+			const ownership = { ...npmOwnership, installer };
+			const { restore } = mockFetch([
+				{ path: "/clawdi", response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }) },
+			]);
+			try {
+				const { stdout, stderr } = await captureOutput(() =>
+					withStdoutTty(
+						() =>
+							update(
+								{ yes: true },
+								{
+									detectOwnership: () => ownership,
+									installRunner: (command, args) => {
+										calls.push({ command, args });
+										return 0;
+									},
+									versionReader: () => (calls.length === 1 ? "99.0.0" : null),
+								},
+							),
+						false,
+					),
+				);
+				expect(calls).toEqual([
+					{
+						command: ownership.installerExecutable,
+						args: [installer === "npm" ? "i" : "add", "-g", "clawdi@99.0.0"],
+					},
+				]);
+				expect(JSON.parse(stdout)).toMatchObject({
+					latest: "99.0.0",
+					upgradeAvailable: true,
+					installed: true,
+				});
+				expect(stderr).toContain("clawdi v99.0.0 installed.");
+				expect(process.exitCode).toBe(0);
+			} finally {
+				restore();
+			}
+		},
+	);
+
+	it("keeps installer progress out of JSON stdout with --yes --json", () => {
+		if (process.platform === "win32") return;
+		const installerPath = join(tmpHome, "fake-npm");
+		const executable = join(tmpHome, "fake-clawdi");
+		writeFileSync(
+			installerPath,
+			'#!/bin/sh\nprintf "%s\\n" "$@" > "$0.args"\nprintf "Installing fake release\\n"\n',
+			{ mode: 0o700 },
+		);
+		writeFileSync(executable, '#!/bin/sh\nprintf "99.0.0\\n"\n', { mode: 0o700 });
+		const script = join(tmpHome, "update-json.ts");
+		const modulePath = new URL("../../src/commands/update.ts", import.meta.url).pathname;
+		writeFileSync(
+			script,
+			[
+				`import { update } from ${JSON.stringify(modulePath)};`,
+				'globalThis.fetch = async () => new Response(JSON.stringify({ "dist-tags": { latest: "99.0.0", beta: "99.0.0" } }));',
+				`await update({ yes: true, json: true }, { isDesktopManaged: () => false, isHomebrewManaged: () => false, detectOwnership: () => (${JSON.stringify({ ...npmOwnership, installerExecutable: installerPath, executable })}) });`,
+			].join("\n"),
+		);
+		const result = spawnSync(process.execPath, [script], { encoding: "utf8" });
+		expect(result.status).toBe(0);
+		expect(JSON.parse(result.stdout)).toMatchObject({ latest: "99.0.0", installed: true });
+		expect(result.stderr).toContain("Installing fake release");
+		expect(readFileSync(`${installerPath}.args`, "utf8").trim().split("\n")).toEqual([
+			"i",
+			"-g",
+			"clawdi@99.0.0",
+		]);
+	});
+
+	it("reports an unreachable native manifest with exit 1 in non-TTY", async () => {
+		const captured = await runNativeForegroundFailure(
+			testFetcher(async () => {
+				throw new TypeError("fetch failed");
+			}),
+			undefined,
+			true,
+		);
+		expect(JSON.parse(captured.stdout)).toMatchObject({ latest: "99.0.0", installed: false });
+		expect(captured.stderr).toContain(
+			"Could not reach the native release manifest. Check your network and retry.",
+		);
+		expect(process.exitCode).toBe(1);
+	});
+
 	it.each([
 		{
 			name: "manifest 404",
@@ -459,9 +631,9 @@ describe("update install", () => {
 			}),
 		},
 	])("reports a sanitized native $name", async ({ expected, fetcher }) => {
-		const captured = await runNativeForegroundFailure(fetcher);
-		expect(captured).toContain(`${expected} Try manually:`);
-		expect(captured).toContain("CLAWDI_VERSION=99.0.0 sh");
+		const { stdout } = await runNativeForegroundFailure(fetcher);
+		expect(stdout).toContain(`${expected} Try manually:`);
+		expect(stdout).toContain("CLAWDI_VERSION=99.0.0 sh");
 	});
 
 	it("reports a native download deadline without exposing an internal path", async () => {
@@ -473,99 +645,108 @@ describe("update install", () => {
 					});
 				}),
 		);
-		const captured = await runNativeForegroundFailure(fetcher, 5);
-		expect(captured).toContain("Native release download timed out. Try manually:");
-		expect(captured).not.toContain(tmpHome);
+		const { stdout } = await runNativeForegroundFailure(fetcher, 5);
+		expect(stdout).toContain("Native release download timed out. Try manually:");
+		expect(stdout).not.toContain(tmpHome);
 	});
 
-	it("downloads an exact native archive and executes its staged activation child", async () => {
-		const prefix = join(tmpHome, "native-prefix");
-		const payload = join(tmpHome, "native-payload");
-		const archivePath = join(tmpHome, "native.tar.gz");
-		const probeLog = join(tmpHome, "native-probe.log");
-		mkdirSync(join(payload, "egress-addon"), { recursive: true });
-		mkdirSync(join(payload, "skills", "clawdi"), { recursive: true });
-		mkdirSync(join(payload, "skills", "hosted-versions", "1", "clawdi"), {
-			recursive: true,
-		});
-		writeFileSync(
-			join(payload, "clawdi"),
-			'#!/bin/sh\nprintf "%s\\n" "$0" "$@" > "$CLAWDI_NATIVE_PROBE_LOG"\nexit 0\n',
-			{ mode: 0o755 },
-		);
-		writeFileSync(join(payload, "egress-addon", "clawdi_egress_addon.py"), "addon\n");
-		writeFileSync(join(payload, "skills", "clawdi", "SKILL.md"), "# skill\n");
-		writeFileSync(
-			join(payload, "skills", "hosted-versions", "1", "clawdi", "SKILL.md"),
-			"# hosted\n",
-		);
-		const tarResult = spawnSync("tar", [
-			"-czf",
-			archivePath,
-			"-C",
-			payload,
-			"clawdi",
-			"egress-addon",
-			"skills",
-		]);
-		expect(tarResult.status).toBe(0);
-		const archive = readFileSync(archivePath);
-		const checksum = createHash("sha256").update(archive).digest("hex");
-		const manifest = nativeManifest("99.0.0", checksum);
-		const nativeFetcher = testFetcher(async (input) =>
-			String(input).endsWith("clawdi-cli-manifest.txt")
-				? new Response(manifest)
-				: new Response(archive),
-		);
-		const ownership = {
-			kind: "native" as const,
-			prefix,
-			versionsRoot: join(prefix, "share", "clawdi", "versions"),
-			versionDir: join(prefix, "share", "clawdi", "versions", "1.2.3-linux-x64"),
-			version: "1.2.3",
-			target: "linux-x64" as const,
-			executable: join(prefix, "share", "clawdi", "versions", "1.2.3-linux-x64", "clawdi"),
-			launcher: join(prefix, "bin", "clawdi"),
-		};
-		const { restore } = mockFetch([
-			{
-				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
-			},
-		]);
-		process.env.CLAWDI_NATIVE_PROBE_LOG = probeLog;
-		try {
-			await withStdoutTty(() =>
-				update(
-					{},
-					{
-						detectOwnership: () => ownership,
-						nativeReleaseBaseUrl: "https://example.invalid/clawdi-cli-v99.0.0",
-						nativeFetcher,
-					},
-				),
+	it.each([false, true])(
+		"downloads an exact native archive and executes its staged activation child (yes=%s)",
+		async (yes) => {
+			const prefix = join(tmpHome, "native-prefix");
+			const payload = join(tmpHome, "native-payload");
+			const archivePath = join(tmpHome, "native.tar.gz");
+			const probeLog = join(tmpHome, "native-probe.log");
+			mkdirSync(join(payload, "egress-addon"), { recursive: true });
+			mkdirSync(join(payload, "skills", "clawdi"), { recursive: true });
+			mkdirSync(join(payload, "skills", "hosted-versions", "1", "clawdi"), {
+				recursive: true,
+			});
+			writeFileSync(
+				join(payload, "clawdi"),
+				'#!/bin/sh\nprintf "%s\\n" "$0" "$@" > "$CLAWDI_NATIVE_PROBE_LOG"\nexit 0\n',
+				{ mode: 0o755 },
 			);
-		} finally {
-			delete process.env.CLAWDI_NATIVE_PROBE_LOG;
-			restore();
-		}
-		const [commandPath, ...args] = readFileSync(probeLog, "utf8").trim().split("\n");
-		expect(commandPath).toMatch(/\/share\/clawdi\/\.stage-[^/]+\/clawdi$/);
-		const stageIndex = args.indexOf("--native-stage");
-		expect(stageIndex).toBeGreaterThan(-1);
-		expect(args[stageIndex + 1]).toBe(dirname(commandPath ?? ""));
-		expect(args).toContain("--native-activate");
-		expect(
-			args.slice(args.indexOf("--native-prefix"), args.indexOf("--native-prefix") + 2),
-		).toEqual(["--native-prefix", prefix]);
-		expect(
-			args.slice(args.indexOf("--native-version"), args.indexOf("--native-version") + 2),
-		).toEqual(["--native-version", "99.0.0"]);
-		expect(
-			args.slice(args.indexOf("--native-target"), args.indexOf("--native-target") + 2),
-		).toEqual(["--native-target", "linux-x64"]);
-	});
+			writeFileSync(join(payload, "egress-addon", "clawdi_egress_addon.py"), "addon\n");
+			writeFileSync(join(payload, "skills", "clawdi", "SKILL.md"), "# skill\n");
+			writeFileSync(
+				join(payload, "skills", "hosted-versions", "1", "clawdi", "SKILL.md"),
+				"# hosted\n",
+			);
+			const tarResult = spawnSync("tar", [
+				"-czf",
+				archivePath,
+				"-C",
+				payload,
+				"clawdi",
+				"egress-addon",
+				"skills",
+			]);
+			expect(tarResult.status).toBe(0);
+			const archive = readFileSync(archivePath);
+			const checksum = createHash("sha256").update(archive).digest("hex");
+			const manifest = nativeManifest("99.0.0", checksum);
+			const nativeFetcher = testFetcher(async (input) =>
+				String(input).endsWith("clawdi-cli-manifest.txt")
+					? new Response(manifest)
+					: new Response(archive),
+			);
+			const ownership = {
+				kind: "native" as const,
+				prefix,
+				versionsRoot: join(prefix, "share", "clawdi", "versions"),
+				versionDir: join(prefix, "share", "clawdi", "versions", "1.2.3-linux-x64"),
+				version: "1.2.3",
+				target: "linux-x64" as const,
+				executable: join(prefix, "share", "clawdi", "versions", "1.2.3-linux-x64", "clawdi"),
+				launcher: join(prefix, "bin", "clawdi"),
+			};
+			const { restore } = mockFetch([
+				{
+					method: "GET",
+					path: "/clawdi",
+					response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
+				},
+			]);
+			process.env.CLAWDI_NATIVE_PROBE_LOG = probeLog;
+			try {
+				const { stdout } = await captureOutput(() =>
+					withStdoutTty(
+						() =>
+							update(
+								{ yes },
+								{
+									detectOwnership: () => ownership,
+									nativeReleaseBaseUrl: "https://example.invalid/clawdi-cli-v99.0.0",
+									nativeFetcher,
+								},
+							),
+						!yes,
+					),
+				);
+				if (yes) expect(JSON.parse(stdout)).toMatchObject({ latest: "99.0.0", installed: true });
+				expect(process.exitCode).toBe(0);
+			} finally {
+				delete process.env.CLAWDI_NATIVE_PROBE_LOG;
+				restore();
+			}
+			const [commandPath, ...args] = readFileSync(probeLog, "utf8").trim().split("\n");
+			expect(commandPath).toMatch(/\/share\/clawdi\/\.stage-[^/]+\/clawdi$/);
+			const stageIndex = args.indexOf("--native-stage");
+			expect(stageIndex).toBeGreaterThan(-1);
+			expect(args[stageIndex + 1]).toBe(dirname(commandPath ?? ""));
+			expect(args).toContain("--native-activate");
+			expect(
+				args.slice(args.indexOf("--native-prefix"), args.indexOf("--native-prefix") + 2),
+			).toEqual(["--native-prefix", prefix]);
+			expect(
+				args.slice(args.indexOf("--native-version"), args.indexOf("--native-version") + 2),
+			).toEqual(["--native-version", "99.0.0"]);
+			expect(
+				args.slice(args.indexOf("--native-target"), args.indexOf("--native-target") + 2),
+			).toEqual(["--native-target", "linux-x64"]);
+		},
+	);
 
 	it("uses safe Windows command vectors for exact npm install and owned executable smoke", async () => {
 		const installs: { command: string; args: string[] }[] = [];
@@ -1385,15 +1566,7 @@ function writeInstalledDaemon(agent: string): void {
 	writeFileSync(path, "test daemon unit\n");
 }
 
-async function runNativeForegroundFailure(
-	fetcher: typeof fetch,
-	timeoutMs?: number,
-): Promise<string> {
-	let captured = "";
-	const original = console.log;
-	console.log = (...args: unknown[]) => {
-		captured += `${args.map(String).join(" ")}\n`;
-	};
+async function runNativeForegroundFailure(fetcher: typeof fetch, timeoutMs?: number, yes = false) {
 	const prefix = join(tmpHome, "prefix");
 	const ownership = {
 		kind: "native" as const,
@@ -1413,22 +1586,24 @@ async function runNativeForegroundFailure(
 		},
 	]);
 	try {
-		await withStdoutTty(() =>
-			update(
-				{},
-				{
-					detectOwnership: () => ownership,
-					nativeReleaseBaseUrl: "https://example.invalid/clawdi-cli-v99.0.0",
-					nativeFetcher: fetcher,
-					nativeDownloadTimeoutMs: timeoutMs,
-				},
+		return await captureOutput(() =>
+			withStdoutTty(
+				() =>
+					update(
+						{ yes },
+						{
+							detectOwnership: () => ownership,
+							nativeReleaseBaseUrl: "https://example.invalid/clawdi-cli-v99.0.0",
+							nativeFetcher: fetcher,
+							nativeDownloadTimeoutMs: timeoutMs,
+						},
+					),
+				!yes,
 			),
 		);
 	} finally {
-		console.log = original;
 		restore();
 	}
-	return captured;
 }
 
 function nativeManifest(version: string, linuxX64Sha: string): string {
