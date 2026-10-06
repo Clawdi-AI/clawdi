@@ -23,6 +23,7 @@ from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import Case
 from sqlalchemy.sql.selectable import Select, Subquery
 
 from app.core.cleanup import finish_cleanup
@@ -226,8 +227,8 @@ DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE = "discord_bot_guild_membership_unavail
 DISCORD_DM_CHAT_TYPES = frozenset({"dm", "direct_messages", "group_dm", "private"})
 DELIVERY_LINK_LOCK_CONTENTION_ERROR = "channel agent link is being updated"
 DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS = 30
-# A delivery lease must outlive the bounded provider send so a live worker
-# has a short margin to finalize before another worker can reclaim the row.
+# The lease starts immediately before the bounded provider send; its 30-second
+# margin covers finalization before another worker can reclaim the row.
 DELIVERY_SEND_TIMEOUT_SECONDS = 120
 DELIVERY_LEASE_SECONDS = DELIVERY_SEND_TIMEOUT_SECONDS + 30
 DELIVERY_CANCEL_CLEANUP_TIMEOUT_SECONDS = 5
@@ -3420,6 +3421,7 @@ async def consume_inbound_messages_for_offline_agents(
     *,
     account: ChannelAccount,
     messages: list[tuple[ChannelMessage, ChannelBinding | None]],
+    claim_reply: bool,
 ) -> tuple[ChannelBinding, ...]:
     pending: list[tuple[ChannelMessage, ChannelBinding]] = []
     for message, binding in messages:
@@ -3442,6 +3444,8 @@ async def consume_inbound_messages_for_offline_agents(
             .join(ChannelMessage, ChannelMessage.binding_id == ChannelBinding.id)
             .where(
                 ChannelBinding.account_id == account.id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
                 ChannelMessage.id.in_([message.id for message, _binding in pending]),
                 ChannelMessage.delivered_at.is_(None),
             )
@@ -3454,6 +3458,9 @@ async def consume_inbound_messages_for_offline_agents(
         [(message, binding) for message, binding in pending if binding.id in offline_binding_ids],
         delivered_at=now,
     )
+    if not claim_reply:
+        await db.flush()
+        return ()
     claimed: list[ChannelBinding] = []
     for binding, last_seen in rows:
         if await _claim_agent_offline_reply(
@@ -5073,6 +5080,13 @@ async def claim_next_channel_delivery(
     return delivery
 
 
+def _channel_delivery_retry_status() -> Case[str]:
+    return case(
+        (ChannelDelivery.attempts >= ChannelDelivery.max_attempts, DELIVERY_STATUS_FAILED),
+        else_=DELIVERY_STATUS_PENDING,
+    )
+
+
 async def reap_expired_channel_delivery_leases(db: AsyncSession, *, limit: int = 100) -> int:
     """Return in-progress deliveries whose attempt lease expired to the queue.
 
@@ -5106,13 +5120,7 @@ async def reap_expired_channel_delivery_leases(db: AsyncSession, *, limit: int =
         update(ChannelDelivery)
         .where(ChannelDelivery.id.in_(delivery_ids))
         .values(
-            status=case(
-                (
-                    ChannelDelivery.attempts >= ChannelDelivery.max_attempts,
-                    DELIVERY_STATUS_FAILED,
-                ),
-                else_=DELIVERY_STATUS_PENDING,
-            ),
+            status=_channel_delivery_retry_status(),
             next_attempt_at=now,
             locked_at=None,
             locked_by=None,
@@ -5226,10 +5234,11 @@ async def _release_cancelled_channel_delivery(
                     ChannelDelivery.locked_by == lease_token,
                 )
                 .values(
-                    status=DELIVERY_STATUS_PENDING,
+                    status=_channel_delivery_retry_status(),
                     next_attempt_at=datetime.now(UTC),
                     locked_at=None,
                     locked_by=None,
+                    last_error=DELIVERY_ERROR_FAILED,
                 )
                 .execution_options(synchronize_session=False)
             )
@@ -5306,6 +5315,7 @@ async def _prepare_channel_delivery_send(
         _apply_delivery_error(owned, exc, provider=provider)
         await db.flush()
         return None
+    owned.locked_at = datetime.now(UTC)
     return _ChannelDeliverySend(
         account=account,
         external_chat_id=message.external_chat_id,
@@ -7196,7 +7206,12 @@ async def record_discord_dispatch(
         payload=payload,
     )
     offline_bindings = (
-        await consume_inbound_messages_for_offline_agents(db, account=account, messages=messages)
+        await consume_inbound_messages_for_offline_agents(
+            db,
+            account=account,
+            messages=messages,
+            claim_reply=_discord_is_user_message_create(frame),
+        )
         if not binding_result.command_handled
         else ()
     )
@@ -7248,6 +7263,21 @@ async def record_discord_dispatch(
     return True
 
 
+def _discord_is_user_message_create(frame: JsonObject) -> bool:
+    data = frame.get("d")
+    if frame.get("t") != "MESSAGE_CREATE" or not isinstance(data, dict):
+        return False
+    author = data.get("author")
+    # DEFAULT and REPLY are the ordinary user-authored message types.
+    # https://discord.com/developers/docs/resources/message#message-object-message-types
+    return (
+        data.get("type", 0) in {0, 19}
+        and isinstance(author, dict)
+        and author.get("bot") is not True
+        and data.get("webhook_id") is None
+    )
+
+
 async def _record_discord_unpaired_message_and_maybe_instruct(
     db: AsyncSession,
     *,
@@ -7259,17 +7289,10 @@ async def _record_discord_unpaired_message_and_maybe_instruct(
     provider_event_id: str | None,
 ) -> bool:
     data = frame.get("d")
-    if frame.get("t") != "MESSAGE_CREATE" or not isinstance(data, dict) or channel_id is None:
-        return False
-    message_type = data.get("type", 0)
-    author = data.get("author")
     if (
-        # DEFAULT and REPLY are the ordinary user-authored message types.
-        # https://discord.com/developers/docs/resources/message#message-object-message-types
-        message_type not in {0, 19}
-        or not isinstance(author, dict)
-        or author.get("bot") is True
-        or data.get("webhook_id") is not None
+        not _discord_is_user_message_create(frame)
+        or not isinstance(data, dict)
+        or channel_id is None
     ):
         return False
     if guild_id is not None:

@@ -109,6 +109,22 @@ async def test_provider_send_holds_no_row_locks_or_pooled_connection(
     delivery, binding = await _queue_linked_delivery(
         db_session, user=seed_user, agent=channel_agent, monkeypatch=monkeypatch
     )
+    current_time = datetime.now(UTC)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current_time
+
+    async def slow_prepare_authority(*_args: object, **_kwargs: object) -> bool:
+        nonlocal current_time
+        current_time += timedelta(seconds=channel_service.DELIVERY_LEASE_SECONDS + 1)
+        return True
+
+    monkeypatch.setattr(channel_service, "datetime", Clock)
+    monkeypatch.setattr(
+        channel_service, "bot_agent_link_has_strict_v2_authority", slow_prepare_authority
+    )
     sending = asyncio.Event()
     release = asyncio.Event()
 
@@ -137,6 +153,7 @@ async def test_provider_send_holds_no_row_locks_or_pooled_connection(
             assert claimed.status == DELIVERY_STATUS_IN_PROGRESS
             assert claimed.locked_by is not None
             assert claimed.attempts == 1
+            assert claimed.locked_at == current_time
             await probe.execute(
                 select(ChannelBotAgentLink.id)
                 .where(ChannelBotAgentLink.id == binding.bot_agent_link_id)
@@ -148,6 +165,9 @@ async def test_provider_send_holds_no_row_locks_or_pooled_connection(
                 .with_for_update(nowait=True)
             )
             await probe.rollback()
+        async with sessionmaker() as reaper:
+            assert await channel_service.reap_expired_channel_delivery_leases(reaper) == 0
+            await reaper.commit()
     finally:
         release.set()
         assert await asyncio.wait_for(task, timeout=10) == delivery.id
