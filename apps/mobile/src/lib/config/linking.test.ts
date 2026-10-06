@@ -6,18 +6,14 @@ import { parseMobileRuntimeConfig } from "@/lib/config/runtime-config";
 const configure: (value: { config: ExpoConfig }) => ExpoConfig = require("../../../app.config.js");
 test("native associations and runtime routing share the same explicit hostname configuration", () => {
 	const previous = process.env.EXPO_PUBLIC_CLAWDI_LINK_HOSTS;
-	const previousIos = process.env.CLAWDI_IOS_BUNDLE_IDENTIFIER;
-	const previousAndroid = process.env.CLAWDI_ANDROID_PACKAGE;
 	const config: ExpoConfig = {
 		name: "Test",
 		slug: "test",
 		ios: { associatedDomains: ["webcredentials:existing.example.test"] },
 	};
 	try {
-		delete process.env.CLAWDI_IOS_BUNDLE_IDENTIFIER;
-		delete process.env.CLAWDI_ANDROID_PACKAGE;
 		delete process.env.EXPO_PUBLIC_CLAWDI_LINK_HOSTS;
-		expect(configure({ config }).ios).toEqual(config.ios);
+		expect(configure({ config }).ios?.associatedDomains).toEqual(config.ios?.associatedDomains);
 		process.env.EXPO_PUBLIC_CLAWDI_LINK_HOSTS =
 			"Links.Example.Test,second.example.test,links.example.test";
 		const output = configure({ config });
@@ -69,23 +65,18 @@ test("native associations and runtime routing share the same explicit hostname c
 		}
 		// Legacy Android cannot negate a static pathPrefix; native intake opens these in Custom Tabs.
 		expect(androidMatches("/skills/clawdi/SKILL.md")).toBe(true);
-		const parsed = parseMobileRuntimeConfig({
-			cloudApiUrl: "https://api.example.test",
-			clerkPublishableKey: "pk_test_example",
-			linkHosts: output.extra?.clawdi.linkHosts,
-		});
+		const parsed = parseMobileRuntimeConfig(
+			{
+				cloudApiUrl: "https://api.example.test",
+				clerkPublishableKey: "pk_test_example",
+				linkHosts: output.extra?.clawdi.linkHosts,
+			},
+			{ isDevelopment: true },
+		);
 		if (!parsed.ok) throw new Error("Invalid fixture config");
 		expect(parsed.value.linkHosts).toEqual(["links.example.test", "second.example.test"]);
-		expect(output.ios?.bundleIdentifier).toBeUndefined();
-		expect(output.android?.package).toBeUndefined();
-		process.env.CLAWDI_IOS_BUNDLE_IDENTIFIER = "test.example.clawdi.ios";
-		process.env.CLAWDI_ANDROID_PACKAGE = "test.example.clawdi.android";
-		const native = configure({ config });
-		expect(native.ios?.bundleIdentifier).toBe("test.example.clawdi.ios");
-		expect(native.android?.package).toBe("test.example.clawdi.android");
-		expect(native.ios?.associatedDomains).toEqual(output.ios?.associatedDomains);
-		expect(native.android?.intentFilters).toEqual(output.android?.intentFilters);
-		expect(native.extra).toEqual(output.extra);
+		expect(output.ios?.bundleIdentifier).toBe("ai.clawdi.app");
+		expect(output.android?.package).toBe("ai.clawdi.app");
 		for (const invalid of [
 			"*.example.test",
 			"https://example.test",
@@ -101,11 +92,46 @@ test("native associations and runtime routing share the same explicit hostname c
 			expect(() => readLinkHosts(invalid)).toThrow();
 		}
 	} finally {
-		if (previousIos === undefined) delete process.env.CLAWDI_IOS_BUNDLE_IDENTIFIER;
-		else process.env.CLAWDI_IOS_BUNDLE_IDENTIFIER = previousIos;
-		if (previousAndroid === undefined) delete process.env.CLAWDI_ANDROID_PACKAGE;
-		else process.env.CLAWDI_ANDROID_PACKAGE = previousAndroid;
 		if (previous === undefined) delete process.env.EXPO_PUBLIC_CLAWDI_LINK_HOSTS;
 		else process.env.EXPO_PUBLIC_CLAWDI_LINK_HOSTS = previous;
+	}
+});
+
+test("release metadata stays usable without owner credentials and enables updates when configured", () => {
+	const previous = process.env.EAS_PROJECT_ID;
+	const previousDsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
+	const config: ExpoConfig = {
+		name: "Test",
+		slug: "test",
+	};
+	try {
+		delete process.env.EAS_PROJECT_ID;
+		delete process.env.EXPO_PUBLIC_SENTRY_DSN;
+		const local = configure({ config });
+		expect(local.runtimeVersion).toEqual({ policy: "fingerprint" });
+		expect(local.ios?.config?.usesNonExemptEncryption).toBe(false);
+		expect(local.ios?.supportsTablet).toBe(false);
+		expect(local.android?.allowBackup).toBe(false);
+		expect(local.updates?.url).toBeUndefined();
+		expect(local.extra?.eas?.projectId).toBeUndefined();
+		expect(local.plugins).toContain("@sentry/react-native/expo");
+		expect(local.ios?.privacyManifests?.NSPrivacyCollectedDataTypes).toContainEqual({
+			NSPrivacyCollectedDataType: "NSPrivacyCollectedDataTypePurchaseHistory",
+			NSPrivacyCollectedDataTypeLinked: true,
+			NSPrivacyCollectedDataTypeTracking: false,
+			NSPrivacyCollectedDataTypePurposes: ["NSPrivacyCollectedDataTypePurposeAppFunctionality"],
+		});
+		process.env.EXPO_PUBLIC_SENTRY_DSN = "https://public@example.test/1";
+		process.env.EAS_PROJECT_ID = "00000000-0000-4000-8000-000000000000";
+		const linked = configure({ config });
+		expect(linked.extra?.eas?.projectId).toBe(process.env.EAS_PROJECT_ID);
+		expect(linked.updates?.url).toBe(`https://u.expo.dev/${process.env.EAS_PROJECT_ID}`);
+		expect(linked.plugins).toEqual(local.plugins);
+		expect(linked.extra?.clawdi?.sentryDsn).toBe(process.env.EXPO_PUBLIC_SENTRY_DSN);
+	} finally {
+		if (previous === undefined) delete process.env.EAS_PROJECT_ID;
+		else process.env.EAS_PROJECT_ID = previous;
+		if (previousDsn === undefined) delete process.env.EXPO_PUBLIC_SENTRY_DSN;
+		else process.env.EXPO_PUBLIC_SENTRY_DSN = previousDsn;
 	}
 });

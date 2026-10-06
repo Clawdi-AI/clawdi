@@ -27,7 +27,11 @@ export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
 			clerkOauthProviders: configuredValue("clerkOauthProviders"),
 			linkHosts: configuredValue("linkHosts"),
 		},
-		{ requireClerk: !isDevAuthBypass() },
+		{
+			isDevelopment: __DEV__,
+			requireClerk: !isDevAuthBypass(),
+			environment: process.env.EXPO_PUBLIC_CLAWDI_ENV,
+		},
 	);
 }
 

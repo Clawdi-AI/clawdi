@@ -37,16 +37,64 @@ function fontPluginOptions() {
 
 module.exports = ({ config }) => {
 	const linkHosts = readLinkHosts(publicValue("EXPO_PUBLIC_CLAWDI_LINK_HOSTS"));
-	// Build-time identifiers are owner-selected; never infer a production app identity.
-	const bundleIdentifier = publicValue("CLAWDI_IOS_BUNDLE_IDENTIFIER");
-	const packageName = publicValue("CLAWDI_ANDROID_PACKAGE");
+	const projectId = publicValue("EAS_PROJECT_ID");
 	const ios = {
 		...config.ios,
-		...(bundleIdentifier ? { bundleIdentifier } : {}),
+		bundleIdentifier: "ai.clawdi.app",
+		supportsTablet: false,
+		config: { ...config.ios?.config, usesNonExemptEncryption: false },
+		privacyManifests: {
+			NSPrivacyTracking: false,
+			// Union of the RN/Expo manifests, Sentry Cocoa 8.58.0 and RevenueCat iOS 5.92.0.
+			NSPrivacyAccessedAPITypes: [
+				{
+					NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryFileTimestamp",
+					NSPrivacyAccessedAPITypeReasons: ["C617.1", "0A2A.1", "3B52.1"],
+				},
+				{
+					NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategorySystemBootTime",
+					NSPrivacyAccessedAPITypeReasons: ["35F9.1"],
+				},
+				{
+					NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryDiskSpace",
+					NSPrivacyAccessedAPITypeReasons: ["E174.1", "85F4.1"],
+				},
+				{
+					NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryUserDefaults",
+					NSPrivacyAccessedAPITypeReasons: ["CA92.1"],
+				},
+			],
+			NSPrivacyCollectedDataTypes: [
+				["EmailAddress", true],
+				["Name", true],
+				["UserID", true],
+				["PurchaseHistory", true],
+				["CrashData", false],
+				["PerformanceData", false],
+				["OtherDiagnosticData", false],
+			].map(([type, linked]) => ({
+				NSPrivacyCollectedDataType: `NSPrivacyCollectedDataType${type}`,
+				NSPrivacyCollectedDataTypeLinked: linked,
+				NSPrivacyCollectedDataTypeTracking: false,
+				NSPrivacyCollectedDataTypePurposes: ["NSPrivacyCollectedDataTypePurposeAppFunctionality"],
+			})),
+		},
 	};
 	const android = {
 		...config.android,
-		...(packageName ? { package: packageName } : {}),
+		package: "ai.clawdi.app",
+		allowBackup: false,
+		// App files use the system picker or app-private cache, never legacy shared storage.
+		blockedPermissions: [
+			...new Set([
+				...(config.android?.blockedPermissions ?? []),
+				"android.permission.SYSTEM_ALERT_WINDOW",
+				"android.permission.READ_EXTERNAL_STORAGE",
+				"android.permission.WRITE_EXTERNAL_STORAGE",
+				"android.permission.USE_FINGERPRINT",
+				"android.permission.VIBRATE",
+			]),
+		],
 	};
 	return {
 		...config,
@@ -60,9 +108,17 @@ module.exports = ({ config }) => {
 		experiments: {
 			typedRoutes: true,
 		},
-		plugins: ["expo-router", "expo-secure-store", ["expo-font", fontPluginOptions()]],
-		...(Object.keys(ios).length ? { ios } : {}),
-		...(Object.keys(android).length ? { android } : {}),
+		runtimeVersion: { policy: "fingerprint" },
+		...(projectId ? { updates: { url: `https://u.expo.dev/${projectId}` } } : {}),
+		plugins: [
+			"expo-router",
+			"expo-secure-store",
+			["expo-font", fontPluginOptions()],
+			// Keep native hooks stable for Build/Update; upload scripts read org/project/token from env.
+			"@sentry/react-native/expo",
+		],
+		ios,
+		android,
 		...(linkHosts.length
 			? {
 					ios: {
@@ -90,7 +146,9 @@ module.exports = ({ config }) => {
 			: {}),
 		extra: {
 			...config.extra,
+			...(projectId ? { eas: { projectId } } : {}),
 			clawdi: {
+				sentryDsn: publicValue("EXPO_PUBLIC_SENTRY_DSN"),
 				cloudApiUrl: publicValue("EXPO_PUBLIC_CLAWDI_API_URL"),
 				computeApiUrl: publicValue("EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL"),
 				revenueCatAppleKey: publicValue("EXPO_PUBLIC_REVENUECAT_APPLE_KEY"),

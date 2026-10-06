@@ -1679,7 +1679,9 @@ async def discord_webhook(
         if binding is not None and message.delivered_at is None
     ]
     if not binding_result.command_handled:
-        await consume_inbound_messages_for_offline_agents(db, account=account, messages=messages)
+        await consume_inbound_messages_for_offline_agents(
+            db, account=account, messages=messages, claim_reply=False
+        )
     agent_offline = any(message.delivered_at is not None for message in pending_messages)
     for message, binding in messages:
         if (
@@ -1718,6 +1720,8 @@ async def discord_webhook(
         # callback path is used.
         # https://discord.com/developers/docs/interactions/receiving-and-responding#interaction-callback
         if agent_offline:
+            if payload.get("type") == 4:
+                return {"type": 8, "data": {"choices": []}}
             return {"type": 4, "data": {"content": AGENT_OFFLINE_REPLY, "flags": 64}}
         return Response(status_code=status.HTTP_202_ACCEPTED)
     if command is None and payload.get("type") == 4:
