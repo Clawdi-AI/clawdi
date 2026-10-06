@@ -19,18 +19,18 @@ export function normalizeWorkspaceSkillError(error: unknown): string {
 	}
 	switch (billingErrorDetail(error)?.code) {
 		case "workspace_skill_source_invalid":
-			return "Couldn't find a valid Skill at this GitHub path. Check the repository and try again.";
+			return "Couldn't find a valid skill at this GitHub path. Check the repository and try again.";
 		case "workspace_skill_source_unavailable":
 			return "GitHub is temporarily unavailable. Try again.";
 		case "workspace_skill_source_conflict":
-			return "A Skill with this name is installed from another repository. Uninstall it first.";
+			return "A skill with this name is installed from another repository. Uninstall it first.";
 		case "workspace_skill_reserved":
-			return "This Skill is built in and can't be changed.";
+			return "This skill is built in and can't be changed.";
 		case "workspace_skills_capability_unavailable":
-			return "Skill installation will be available when your Agent is ready and up to date.";
+			return "Skill installation will be available when your agent is ready and up to date.";
 	}
 	if (error instanceof BillingApiError && error.status === 404) {
-		return "This Skill or Agent is no longer available.";
+		return "This skill or agent is no longer available.";
 	}
 	return "Couldn't load or update this skill. Try again.";
 }

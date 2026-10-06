@@ -354,13 +354,13 @@ function registerIpc(): void {
 		safeConnectAction(event, "check the app location", async () => installationState()),
 	);
 	ipcMain.handle(DESKTOP_IPC.detectAgents, (event) =>
-		safeConnectAction(event, "inspect local Agents", () => {
+		safeConnectAction(event, "inspect local agents", () => {
 			assertRuntimeLocation();
 			return cli.detectAgents();
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.listReconnectableAgents, (event) =>
-		safeConnectAction(event, "find reconnectable Agents", () => {
+		safeConnectAction(event, "find reconnectable agents", () => {
 			assertRuntimeLocation();
 			return cli.listReconnectableAgents();
 		}),
@@ -383,7 +383,7 @@ function registerIpc(): void {
 		})),
 	);
 	ipcMain.handle(DESKTOP_IPC.connectAgents, (event, rawConnections: unknown) =>
-		safeConnectAction(event, "connect the selected Agents", async () => {
+		safeConnectAction(event, "connect the selected agents", async () => {
 			assertSafeDaemonMutation();
 			const result = await withCriticalOperation(() =>
 				cli.connectAgents(readAgentConnections(rawConnections)),
@@ -605,13 +605,13 @@ function assertConnectSender(event: IpcMainInvokeEvent): void {
 
 function readAgentConnections(value: unknown): DesktopAgentConnection[] {
 	if (!Array.isArray(value) || value.length === 0) {
-		throw new Error("Choose at least one supported Agent.");
+		throw new Error("Choose at least one supported agent.");
 	}
 	const connections: DesktopAgentConnection[] = [];
 	const types = new Set<DesktopAgentType>();
 	for (const item of value) {
 		if (!isRecord(item) || !isDesktopAgentType(item.type) || types.has(item.type)) {
-			throw new Error("Choose each supported Agent once.");
+			throw new Error("Choose each supported agent once.");
 		}
 		const reconnectAgentId = item.reconnectAgentId;
 		const confirmTakeover = item.confirmTakeover;
@@ -621,10 +621,10 @@ function readAgentConnections(value: unknown): DesktopAgentConnection[] {
 				!reconnectAgentId.trim() ||
 				reconnectAgentId.length > 256)
 		) {
-			throw new Error("Choose a valid Agent to reconnect.");
+			throw new Error("Choose a valid agent to reconnect.");
 		}
 		if (confirmTakeover !== undefined && typeof confirmTakeover !== "boolean") {
-			throw new Error("Choose a valid Agent takeover confirmation.");
+			throw new Error("Choose a valid agent takeover confirmation.");
 		}
 		if (confirmTakeover === true && typeof reconnectAgentId !== "string") {
 			throw new Error("Agent takeover confirmation requires a reconnect target.");
@@ -1217,7 +1217,7 @@ function assertRuntimeLocation(): void {
 function assertSafeDaemonMutation(): void {
 	if (!installationState().requiresMove) return;
 	throw new DesktopConnectError(
-		"Move Clawdi to Applications before connecting Agents or repairing sync.",
+		"Move Clawdi to Applications before connecting agents or repairing sync.",
 	);
 }
 

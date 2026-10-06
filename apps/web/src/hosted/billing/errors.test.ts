@@ -230,7 +230,7 @@ describe("deploySubmissionErrorPresentation", () => {
 		expect(assignment.description).not.toMatch(/payment|wallet/i);
 		expect(wallet.title).toBe("We couldn’t confirm this attempt");
 		expect(wallet.description).toContain("safely resume the same attempt");
-		expect(wallet.description).not.toContain("No Wallet payment was made");
+		expect(wallet.description).not.toContain("No wallet payment was made");
 		expect(included.title).toBe("We couldn’t confirm agent creation");
 		expect(included.description).toContain("safely resume the same attempt");
 		expect(included.description).not.toContain("raw deployment driver failure");
@@ -243,7 +243,7 @@ describe("deploySubmissionErrorPresentation", () => {
 		);
 
 		expect(presentation.title).toBe("Payment and creation didn’t start");
-		expect(presentation.description).toContain("No Wallet payment was made");
+		expect(presentation.description).toContain("No wallet payment was made");
 		expect(presentation.description).not.toContain("internal validation trace");
 	});
 });

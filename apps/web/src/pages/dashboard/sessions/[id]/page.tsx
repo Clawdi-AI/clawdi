@@ -148,8 +148,8 @@ export function SessionDetailContent({
 	const sessionsHref = agentId ? agentSectionHref(agentId, "sessions") : (returnTo ?? "/sessions");
 	const deleteSession = $api.useMutation("delete", "/v1/sessions/{session_id}", {
 		onSuccess: () => {
-			toast.success("Cloud Session permanently deleted", {
-				description: "Local data and extracted Memories remain. This Session will not sync again.",
+			toast.success("Cloud session permanently deleted", {
+				description: "Local data and extracted memories remain. This session will not sync again.",
 			});
 			void queryClient.invalidateQueries({
 				queryKey: ["get", "/v1/memories"],
@@ -482,7 +482,7 @@ export function SessionDetailContent({
 		if (notifiedStaleAnchorRef.current !== anchorIdentity) {
 			notifiedStaleAnchorRef.current = anchorIdentity;
 			toast.info("Search result changed", {
-				description: "This Session has newer content, so the conversation opened normally.",
+				description: "This session has newer content, so the conversation opened normally.",
 			});
 		}
 	}, [anchorIdentity, highlightedMessageKey, isContentPlaceholderData, pagesData]);
@@ -663,18 +663,18 @@ export function SessionDetailContent({
 						<div className="flex items-center gap-2">
 							<SessionShareButton onClick={() => openShare({ scope: "session" })} />
 							<ConfirmAction
-								title="Permanently delete this cloud Session?"
+								title="Permanently delete this cloud session?"
 								description={
 									<>
 										<p>
-											This permanently deletes the cloud Session, its history, and all sharing
+											This permanently deletes the cloud session, its history, and all sharing
 											access.
 										</p>
 										<p>
-											Local agent files remain untouched, but this Session will never sync again.
+											Local agent files remain untouched, but this session will never sync again.
 										</p>
 										<p>
-											Extracted account-level Memories remain, with this Session&apos;s provenance
+											Extracted account-level memories remain, with this session&apos;s provenance
 											removed.
 										</p>
 									</>

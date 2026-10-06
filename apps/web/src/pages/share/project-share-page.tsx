@@ -165,12 +165,12 @@ export default function SharePage({ token }: { token: string }) {
 						<Alert>
 							<CheckCircle2 />
 							<AlertTitle>Invitation accepted</AlertTitle>
-							<AlertDescription>Opening Project…</AlertDescription>
+							<AlertDescription>Opening project…</AlertDescription>
 						</Alert>
 					) : isOwner ? (
 						<Alert>
 							<ShieldCheck />
-							<AlertTitle>This is your Project</AlertTitle>
+							<AlertTitle>This is your project</AlertTitle>
 							<AlertDescription>You already have access.</AlertDescription>
 						</Alert>
 					) : isSignedIn ? (
@@ -188,7 +188,7 @@ export default function SharePage({ token }: { token: string }) {
 								<Alert>
 									<CheckCircle2 />
 									<AlertDescription>
-										You already have access. Open this Project from your dashboard.
+										You already have access. Open this project from your dashboard.
 									</AlertDescription>
 								</Alert>
 							) : upgrade.error ? (
@@ -232,9 +232,9 @@ export default function SharePage({ token }: { token: string }) {
 function ViewerAccessSummary({ hasVaults }: { hasVaults: boolean }) {
 	return (
 		<p className="text-sm text-muted-foreground">
-			You can view this Project and link it to your Agents. Only the owner can edit.
+			You can view this project and link it to your agents. Only the owner can edit.
 			{hasVaults
-				? " Your Agents and the Clawdi CLI can use its keys; secret values stay hidden in the dashboard."
+				? " Your agents and the Clawdi CLI can use its keys; secret values stay hidden in the dashboard."
 				: ""}
 		</p>
 	);
@@ -305,7 +305,7 @@ function titleForError(code: ShareErrorCode): string {
 		case "already_member":
 			return "Already joined";
 		case "already_owner":
-			return "This is your Project";
+			return "This is your project";
 		default:
 			return "Couldn't load invitation";
 	}
@@ -318,9 +318,9 @@ function describeError(code: ShareErrorCode): string {
 		case "revoked":
 			return "This invite link is no longer active. Ask the owner for a new one.";
 		case "already_member":
-			return "You already have access. Open this Project from your dashboard.";
+			return "You already have access. Open this project from your dashboard.";
 		case "already_owner":
-			return "You own this Project. There is nothing to accept.";
+			return "You own this project. There is nothing to accept.";
 		default:
 			return "Try again. If the problem continues, contact the owner.";
 	}

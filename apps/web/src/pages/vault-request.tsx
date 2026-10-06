@@ -409,7 +409,7 @@ export function VaultRequestPage() {
 								? "Saved securely"
 								: phase === "unavailable"
 									? "Link unavailable"
-									: "Save to Vault"}
+									: "Save to vault"}
 						</h1>
 					</CardTitle>
 				</CardHeader>
@@ -469,7 +469,7 @@ export function VaultRequestPage() {
 								</p>
 							</div>
 							<p className="text-sm text-muted-foreground">
-								Only these fields will be saved. Anyone with Vault access can use them.
+								Only these fields will be saved. Anyone with vault access can use them.
 							</p>
 							{!!updates.length && (
 								<p className="text-sm text-muted-foreground">
@@ -625,7 +625,7 @@ export function VaultRequestPage() {
 																? "Fill requested field"
 																: "Add field"}
 														{preview.updateFields.includes(entry.key)
-															? " · Update existing Vault value on save"
+															? " · Update existing vault value on save"
 															: ""}
 													</li>
 												))}

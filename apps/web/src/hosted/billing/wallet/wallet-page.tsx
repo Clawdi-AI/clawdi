@@ -84,7 +84,7 @@ export function WalletPage() {
 		confirmed: Parameters<WalletSetupReturnFinalizer>[0],
 		errorMessage: string,
 	) {
-		toast.warning("Card authorized; Wallet hasn’t saved it yet", {
+		toast.warning("Card authorized; wallet hasn't saved it yet", {
 			description: errorMessage,
 			action: {
 				label: "Retry saving",
@@ -95,7 +95,7 @@ export function WalletPage() {
 							return;
 						}
 						toast.success("Auto-reload card authorized", {
-							description: "Your Wallet card authorization is saved.",
+							description: "Your wallet card authorization is saved.",
 						});
 					});
 				},
@@ -279,7 +279,7 @@ export function WalletPage() {
 			}
 			if (status === "succeeded") {
 				toast.success("Auto-reload card authorized", {
-					description: "Your Wallet card authorization is saved.",
+					description: "Your wallet card authorization is saved.",
 				});
 				return;
 			}

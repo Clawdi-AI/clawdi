@@ -238,7 +238,7 @@ for (const viewport of [
 		await page.getByRole("button", { name: "Preview import", exact: true }).click();
 		await expect(page.getByText("Replace entered value", { exact: false })).toBeVisible();
 		await expect(
-			page.getByText("Update existing Vault value on save", { exact: false }),
+			page.getByText("Update existing vault value on save", { exact: false }),
 		).toBeVisible();
 		await expect(page.getByLabel("API_KEY", { exact: true })).toHaveValue("synthetic-draft");
 		await page.screenshot({

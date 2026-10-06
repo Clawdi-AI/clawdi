@@ -162,7 +162,7 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		const requested: DesktopAgentConnection[] = requestedTypes.map((type) => {
 			const mode = connectionModes.get(type);
 			if (selected.has(type) && !mode) {
-				throw new Error("Choose whether to reconnect or create a new Agent.");
+				throw new Error("Choose whether to reconnect or create a new agent.");
 			}
 			const candidate = reconnectCandidates.find((item) => item.id === mode);
 			return {
@@ -317,7 +317,7 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 				{stage === "connecting" ? (
 					<Centered
 						icon={<LoaderCircle className="spin" />}
-						title="Connecting your Agents"
+						title="Connecting your agents"
 						description="Clawdi is registering them and starting sync."
 					/>
 				) : null}
@@ -376,8 +376,8 @@ function Welcome({ agents, onContinue }: { agents: DesktopDetectedAgent[]; onCon
 				<h2>Welcome to Clawdi</h2>
 				<p>
 					{detected.length > 0
-						? `We found ${detected.length} supported Agent${detected.length === 1 ? "" : "s"} on this computer. Sign in to connect or recover them.`
-						: "Sign in to Clawdi, then connect a supported Agent whenever it is available on this computer."}
+						? `We found ${detected.length} supported agent${detected.length === 1 ? "" : "s"} on this computer. Sign in to connect or recover them.`
+						: "Sign in to Clawdi, then connect a supported agent whenever it is available on this computer."}
 				</p>
 			</div>
 			{detected.length > 0 ? (
@@ -460,8 +460,8 @@ function AgentSelection({
 		<div className="stack">
 			<div className="section-heading">
 				<div>
-					<h2>{found > 0 ? `Found ${found} Agent${found === 1 ? "" : "s"}` : "No Agents found"}</h2>
-					<p>{account ? `Connecting to ${account}` : "Select the Agents to connect."}</p>
+					<h2>{found > 0 ? `Found ${found} agent${found === 1 ? "" : "s"}` : "No agents found"}</h2>
+					<p>{account ? `Connecting to ${account}` : "Select the agents to connect."}</p>
 				</div>
 				<button
 					aria-label="Scan again"
@@ -514,7 +514,7 @@ function AgentSelection({
 										<option value="" disabled>
 											Choose how to connect…
 										</option>
-										<option value="new">Connect as a new Agent</option>
+										<option value="new">Connect as a new agent</option>
 										{candidates.map((candidate) => (
 											<option value={candidate.id} key={candidate.id}>
 												Reconnect to {candidate.name} · {candidate.machineName}
@@ -535,7 +535,7 @@ function AgentSelection({
 						<TriangleAlert />
 					</span>
 					<div>
-						<h2>Reconnect an existing Agent</h2>
+						<h2>Reconnect an existing agent</h2>
 						<p>
 							{reconnectSelections
 								.map(

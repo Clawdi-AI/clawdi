@@ -138,7 +138,7 @@ describe("deployment failure status rendering", () => {
 			}),
 		);
 
-		expect(markup).toContain("The last compute change did not complete");
+		expect(markup).toContain("The last change to this agent didn&#x27;t complete");
 		expect(markup).not.toContain("mailto:");
 		expect(markup).not.toContain("try again");
 		expect(markup).not.toContain("Deployment operation");
@@ -254,12 +254,12 @@ describe("deployment failure status rendering", () => {
 			{ status: "restarting", copy: "Restarting", spinner: true },
 			{
 				status: "stopped",
-				copy: "Compute is stopped. Channels and OpenClaw Control UI are unavailable.",
+				copy: "Agent is stopped. Channels and OpenClaw Control UI are unavailable.",
 				spinner: false,
 			},
 			{
 				status: null,
-				copy: "Clawdi cannot confirm the current compute status.",
+				copy: "Clawdi can&#x27;t confirm this agent&#x27;s status.",
 				spinner: false,
 			},
 		] as const) {
@@ -347,7 +347,7 @@ describe("deployment transition timeout rendering", () => {
 			expect(markup).toContain(fixture.title);
 			expect(markup).toContain(fixture.activeLabel);
 			expect(markup).toContain(fixture.step);
-			expect(markup).toContain('aria-label="Deployment progress"');
+			expect(markup).toContain('aria-label="Setup progress"');
 			for (const [stage, state] of Object.entries(fixture.states)) {
 				expect(markup).toMatch(
 					new RegExp(

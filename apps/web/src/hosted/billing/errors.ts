@@ -245,7 +245,7 @@ function knownBillingRecovery(error: unknown): string | null {
 
 	const code = billingErrorDetail(error)?.code;
 	if (code === "open_refund_debt") {
-		return "Top up your Wallet before trying again.";
+		return "Top up your wallet before trying again.";
 	}
 	if (code === "deploy_request_funding_conflict") {
 		return "This agent request is already linked to a different payment flow.";
@@ -305,7 +305,7 @@ export function deploySubmissionErrorPresentation(
 		if (isDefinitiveBillingRejection(error)) {
 			return {
 				title: "Payment and creation didn’t start",
-				description: `${knownRecovery ?? "The request was rejected."} No Wallet payment was made. Review your choices and retry.`,
+				description: `${knownRecovery ?? "The request was rejected."} No wallet payment was made. Review your choices and retry.`,
 			};
 		}
 		const reason = isNetworkError(error)
@@ -384,7 +384,7 @@ export function isPaymentMethodRequiredError(error: unknown): boolean {
 export function normalizeBillingError(error: unknown): string {
 	if (error instanceof DeploymentConflictError) return DEPLOYMENT_CONFLICT_MESSAGE;
 	if (isInsufficientBalanceError(error)) {
-		return "Your Wallet balance is too low. Top up or turn on auto-reload to keep Clawdi AI and hosted Agents running.";
+		return "Your wallet balance is too low. Top up or turn on auto-reload to keep Clawdi AI and Cloud Agents running.";
 	}
 	if (error instanceof BillingNetworkError) {
 		return error.kind === "timeout"
@@ -403,10 +403,10 @@ export function normalizeBillingError(error: unknown): string {
 			return "Billing for this subscription needs review. Contact support before making changes.";
 		}
 		if (code === "open_refund_debt") {
-			return "Top up your Wallet to continue. New funds will first settle the outstanding balance.";
+			return "Top up your wallet to continue. New funds will first settle the outstanding balance.";
 		}
 		if (code === "deploy_request_funding_conflict") {
-			return "This deployment is already linked to another payment.";
+			return "This agent is already linked to another payment.";
 		}
 		if (code === "idempotency_key_reused") {
 			return "This request conflicts with an earlier submission. Review the details and try again.";

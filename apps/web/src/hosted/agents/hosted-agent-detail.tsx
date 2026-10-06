@@ -817,7 +817,7 @@ function HostedProjectionNotice({
 				<AlertTitle>Some agent details are not ready</AlertTitle>
 				<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<span>
-						Projects, Skills, Vaults, and Channels will appear when this agent is ready. Available
+						Projects, skills, vaults, and channels will appear when this agent is ready. Available
 						actions and tools still work.
 					</span>
 					<Button type="button" variant="outline" size="sm" disabled={isChecking} onClick={onRetry}>
@@ -978,7 +978,7 @@ export function ComputeStatusDetails({
 				</div>
 			) : status.kind === "failed" ? (
 				<p className="text-destructive-muted-foreground" role="status">
-					The last compute change did not complete.
+					The last change to this agent didn't complete.
 				</p>
 			) : deploymentTransitionEscalated ? (
 				<div className="flex flex-wrap items-center justify-between gap-2" role="status">
@@ -993,11 +993,11 @@ export function ComputeStatusDetails({
 				</p>
 			) : deploymentTransitionTimedOut ? (
 				<p className="text-warning-muted-foreground" role="status">
-					This compute change is taking longer than expected.
+					This change is taking longer than expected.
 				</p>
 			) : status.kind === "updating" ? (
 				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
-					<Spinner className="size-3.5" /> Updating compute settings.
+					<Spinner className="size-3.5" /> Updating agent settings.
 				</p>
 			) : isStartingStatus(status) ? (
 				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
@@ -1005,24 +1005,24 @@ export function ComputeStatusDetails({
 				</p>
 			) : status.kind === "stopping" ? (
 				<p className="text-muted-foreground" role="status">
-					Compute is stopping.
+					Agent is stopping.
 				</p>
 			) : status.kind === "stopped" ? (
 				<p className="text-muted-foreground" role="status">
-					Compute is stopped. Channels and {runtimeBrowserUiLabel(deployment.resource.spec.runtime)}{" "}
+					Agent is stopped. Channels and {runtimeBrowserUiLabel(deployment.resource.spec.runtime)}{" "}
 					are unavailable.
 				</p>
 			) : status.kind === "deleting" ? (
 				<p className="text-muted-foreground" role="status">
-					Compute is being removed.
+					Agent is being deleted.
 				</p>
 			) : status.kind === "deleted" ? (
 				<p className="text-muted-foreground" role="status">
-					Compute is no longer available.
+					Agent was deleted.
 				</p>
 			) : status.kind === "unknown" ? (
 				<p className="text-warning-muted-foreground" role="status">
-					Clawdi cannot confirm the current compute status.
+					Clawdi can't confirm this agent's status.
 				</p>
 			) : null}
 		</div>
@@ -1117,7 +1117,7 @@ export function InitialDeploymentPage({
 				? {
 						label: `Installing and starting ${runtimeLabel}`,
 						description:
-							"Provisioning a private workspace, installing the Agent, and confirming readiness.",
+							"Provisioning a private workspace, installing the agent, and confirming readiness.",
 					}
 				: {
 						label: "Ready",
@@ -1177,7 +1177,7 @@ export function InitialDeploymentPage({
 						</p>
 					</div>
 					<p className="mt-2 text-sm text-muted-foreground">{activeStage.description}</p>
-					<ol aria-label="Deployment progress" className="mt-4 grid w-full grid-cols-3 gap-2">
+					<ol aria-label="Setup progress" className="mt-4 grid w-full grid-cols-3 gap-2">
 						{stages.map((stage, index) => {
 							const stageState =
 								status.kind === "running" || index < activeStageIndex
@@ -1808,8 +1808,8 @@ function FilesTab({ deployment, url }: { deployment: HostedDeployment; url: stri
 				title={isStarting ? startingTitle() : "Agent is not running"}
 				description={
 					isStarting
-						? "Files opens once your agent and its private Workspace service are ready. This page updates automatically."
-						: `Start the agent to browse its Workspace. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+						? "Files opens once your agent and its private workspace service are ready. This page updates automatically."
+						: `Start the agent to browse its workspace. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
 				}
 				action={canStartDeployment(status) ? <StartComputeAction deployment={deployment} /> : null}
 			/>
@@ -1839,7 +1839,7 @@ function FilesFrame({ deploymentId, url }: { deploymentId: string; url: string }
 				<EmptyState
 					icon={FolderOpen}
 					title="Opening Files…"
-					description="Authenticating your private Workspace session."
+					description="Authenticating your private workspace session."
 				/>
 			) : (
 				<iframe
@@ -2247,7 +2247,7 @@ function AiProviderTab({
 					selected={bindingMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE}
 					icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
 					title={MANAGED_PROVIDER_LABEL}
-					description="No setup required. Usage draws from your Wallet."
+					description="No setup required. Usage draws from your wallet."
 				/>
 				<EntityChoiceCard
 					onClick={() => setBindingMode("unmanaged")}
@@ -2638,7 +2638,7 @@ function ChannelsTab({
 					link.reset();
 					acceptLinkedChannel(existing);
 					toast.info("Bot already linked", {
-						description: "Using the existing link for this Agent.",
+						description: "Using the existing link for this agent.",
 					});
 					return;
 				}
@@ -2995,7 +2995,7 @@ function AgentChannelBotCard({
 		bot.visibility === "private" && !bot.link ? (
 			<ConfirmAction
 				title={`Delete ${bot.name}?`}
-				description="This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone."
+				description="This deletes the custom bot, its agent links, and its paired chats. This can't be undone."
 				confirmLabel="Delete custom bot"
 				destructive
 				onConfirm={onDelete}
@@ -3442,7 +3442,7 @@ function ComputeSettingsSections({
 				} catch {
 					toast.error("Agent deployed, but details couldn’t load", {
 						id: `checkout-deployment-${checkoutDeploymentId}`,
-						description: "Retrying loads the deployed Agent without repeating checkout.",
+						description: "Retrying loads the deployed agent without repeating checkout.",
 						duration: Number.POSITIVE_INFINITY,
 						action: {
 							label: "Retry",
@@ -3683,7 +3683,7 @@ function ComputeSettingsSections({
 				/>
 			) : null}
 
-			<SettingsSection title="Compute plan" description="Compute resources for this hosted agent.">
+			<SettingsSection title="Compute plan" description="Compute resources for this Cloud Agent.">
 				<ComputeSubscriptionCard
 					headingLevel={3}
 					view={computeCardView}

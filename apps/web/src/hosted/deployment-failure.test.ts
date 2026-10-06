@@ -201,7 +201,7 @@ describe("deploymentFailureReason", () => {
 		});
 
 		expect(deploymentFailureProjection(deployment)).toEqual({
-			reason: "Clawdi is checking this Agent. Open Agent settings for details.",
+			reason: "Clawdi is checking this agent. Open agent settings for details.",
 			failedVerb: null,
 			retryable: true,
 			code: "runtime_unreachable",
@@ -209,7 +209,7 @@ describe("deploymentFailureReason", () => {
 		expect(deploymentFailurePresentation(deployment)).toMatchObject({
 			title: "Temporarily unavailable",
 			failedVerb: null,
-			description: "Clawdi is checking this Agent. Open Agent settings for details.",
+			description: "Clawdi is checking this agent. Open agent settings for details.",
 			status: {
 				kind: "runtime_unavailable",
 				label: "Temporarily unavailable",
@@ -239,7 +239,7 @@ describe("deploymentFailureReason", () => {
 			{
 				code: "runtime_unreachable",
 				title: "Temporarily unavailable",
-				reason: "Clawdi is checking this Agent. Open Agent settings for details.",
+				reason: "Clawdi is checking this agent. Open agent settings for details.",
 			},
 			{
 				code: "operation_aborted",
@@ -385,7 +385,7 @@ describe("deploymentMutationErrorMessage", () => {
 		};
 		const error = new BillingApiError(409, "Internal funding fence", problem);
 		const message = deploymentMutationErrorMessage(error);
-		expect(message).toContain("Open Agent settings and choose a subscription");
+		expect(message).toContain("Open agent settings and choose a subscription");
 		expect(message).not.toMatch(/internal|retry|container|volume|disk/i);
 		expect(deploymentMutationErrorMessage(new DeploymentConflictError({ cause: error }))).toBe(
 			message,

@@ -26,7 +26,7 @@ test("explains Project access once and opens the Project after accepting", async
 	await page.goto("/share/invitation-preview");
 	await expect(page.getByText("Team Knowledge", { exact: true })).toBeVisible();
 	await expect(
-		page.getByText(/You can view this Project and link it to your Agents/),
+		page.getByText(/You can view this project and link it to your agents/),
 	).toBeVisible();
 	for (const width of [1280, 390]) {
 		await page.setViewportSize({ width, height: 900 });

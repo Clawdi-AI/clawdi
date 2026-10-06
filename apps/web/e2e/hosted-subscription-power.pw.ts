@@ -125,7 +125,7 @@ test("a manually stopped paid agent still starts normally and explains a funding
 	await expect(page.getByRole("button", { name: "Subscribe to start" })).toHaveCount(0);
 	await page.getByRole("button", { name: "Start", exact: true }).click();
 	await expect(page.locator("[data-sonner-toast]")).toContainText(
-		"Open Agent settings and choose a subscription",
+		"Open agent settings and choose a subscription",
 	);
 	await expect(page.locator("[data-sonner-toast]")).not.toContainText(
 		/internal|another session|container|volume|disk/i,
