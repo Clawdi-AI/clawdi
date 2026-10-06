@@ -217,6 +217,53 @@ launcher=$("$stage_dir/clawdi" update --native-activate \
   --native-target "$target") || fail 'native activation did not complete; inspect the stable launcher and retry'
 stage_dir=''
 
+path_marker='# Added by the Clawdi installer (https://clawdi.ai/install.sh)'
+quoted_bin=$(printf '%s' "$PREFIX/bin" | sed 's/[\\$`"]/\\&/g')
+
+append_path_profile() {
+  profile_file=$1
+  if [ -L "$profile_file" ]; then
+    owned_profile=$(find -L "$profile_file" -prune -user "$(id -u)" -exec printf '%s' owned \; 2>/dev/null)
+    [ "$owned_profile" = owned ] || return 1
+  fi
+  if [ -f "$profile_file" ]; then
+    if grep -Fqx "$path_marker" "$profile_file" 2>/dev/null; then
+      return 0
+    else
+      [ "$?" = 1 ] || return 1
+    fi
+  fi
+  (
+    mkdir -p "$(dirname "$profile_file")" || exit 1
+    if [ "$shell_name" = fish ]; then
+      fish_quoted_bin=$(printf '%s' "$PREFIX/bin" | sed 's/[\\$"]/\\&/g')
+      printf '\n%s\nfish_add_path -g "%s"\n' "$path_marker" "$fish_quoted_bin" >> "$profile_file"
+    else
+      # Expand PATH when the shell profile is loaded, not during installation.
+      # shellcheck disable=SC2016
+      printf '\n%s\ncase ":$PATH:" in *":%s:"*) ;; *) export PATH="%s:$PATH" ;; esac\n' \
+        "$path_marker" "$quoted_bin" "$quoted_bin" >> "$profile_file"
+    fi
+  ) 2>/dev/null || return 1
+}
+
+configure_path() {
+  [ -n "${HOME:-}" ] || return 1
+  shell_name=${SHELL:-}
+  shell_name=${shell_name##*/}
+  case "$shell_name" in
+    zsh) profile_notice=${ZDOTDIR:-$HOME}/.zshrc ;;
+    bash) profile_notice=$HOME/.bashrc ;;
+    fish) profile_notice=${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/clawdi.fish ;;
+    *) profile_notice=$HOME/.profile ;;
+  esac
+  append_path_profile "$profile_notice" || return 1
+  if [ "$shell_name" = bash ] && [ "$os" = darwin ] && [ -f "$HOME/.bash_profile" ]; then
+    append_path_profile "$HOME/.bash_profile" || return 1
+    profile_notice="$profile_notice, $HOME/.bash_profile"
+  fi
+}
+
 printf 'clawdi %s installed at %s\n' "$version" "$launcher"
 case ":${PATH:-}:" in
   *":$PREFIX/bin:"*)
@@ -224,5 +271,16 @@ case ":${PATH:-}:" in
     [ "$resolved" = "$launcher" ] ||
       printf 'Put %s/bin before other PATH entries to run this native installation.\n' "$PREFIX"
     ;;
-  *) printf 'Add %s/bin to PATH to run clawdi.\n' "$PREFIX" ;;
+  *)
+    if [ "${CLAWDI_NO_MODIFY_PATH:-}" = 1 ]; then
+      printf 'Add %s/bin to PATH to run clawdi. (CLAWDI_NO_MODIFY_PATH is set.)\n' "$PREFIX"
+    elif configure_path; then
+      # Keep the manual command ready to expand PATH in the user's shell.
+      # shellcheck disable=SC2016
+      printf 'Added %s/bin to PATH in %s. Open a new terminal, or run: export PATH="%s:$PATH"\n' \
+        "$PREFIX" "$profile_notice" "$quoted_bin"
+    else
+      printf 'Add %s/bin to PATH to run clawdi.\n' "$PREFIX"
+    fi
+    ;;
 esac
