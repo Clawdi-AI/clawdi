@@ -129,14 +129,15 @@ esac
 		}
 	});
 
-	test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1")(
-		"fresh Hermes overlaps platform startup and retains pending-job admission",
-		() => {
+	test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1").each([false, true])(
+		"fresh Hermes preserves startup ordering and job admission with pool snapshot=%s",
+		(poolSnapshot) => {
 			const root = mkdtempSync(join(tmpdir(), "hermes-start-order-"));
 			roots.push(root);
 			const environment = { ...process.env };
 			const paths = {
-				...getRuntimePaths({ mode: "local" }),
+				...getRuntimePaths({ mode: "hosted" }),
+				statusRoot: join(root, "status"),
 				runRoot: join(root, "run"),
 				appliedState: join(root, "applied.json"),
 				systemdSystemRoot: join(root, "system"),
@@ -157,6 +158,10 @@ esac
 						`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\nExecStart=/fixture\n`,
 					);
 			writeFixture(root, "run/hermes-warmed", "prepared\n");
+			if (poolSnapshot) {
+				writeFixture(root, "status/egress-snapshot-enabled", "v1\n");
+				chmodSync(join(paths.statusRoot, "egress-snapshot-enabled"), 0o600);
+			}
 			const command = join(root, "bin/systemctl");
 			const log = join(root, "commands");
 			const pending = join(root, "pending");
@@ -201,9 +206,14 @@ esac
 					applySystemdRuntimeUpdate(paths, snapshot, snapshot, { earlyFreshHermes: true }).applied,
 				).toBe(true);
 				const calls = readFileSync(log, "utf8").trim().split("\n");
-				expect(calls.indexOf(`--user start ${dashboard}`)).toBeLessThan(
-					calls.indexOf(`start ${platform}`),
-				);
+				if (poolSnapshot)
+					expect(calls.indexOf(`--user start ${dashboard}`)).toBeLessThan(
+						calls.indexOf(`start ${platform}`),
+					);
+				else
+					expect(calls.indexOf(`start ${platform}`)).toBeLessThan(
+						calls.indexOf(`--user start ${dashboard}`),
+					);
 				expect(calls.indexOf(`start ${platform}`)).toBeLessThan(
 					calls.indexOf(`--user start ${gateway}`),
 				);
