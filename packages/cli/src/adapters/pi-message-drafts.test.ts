@@ -91,32 +91,67 @@ function drafts(events: readonly SessionEvent[]) {
 
 describe("shared Pi message projection", () => {
 	test("keeps redacted thinking as opaque reasoning without placeholder text", () => {
-		const events = piMessageDrafts({
-			role: "assistant",
-			content: [{ type: "thinking", thinking: "[Reasoning redacted]", redacted: true, thinkingSignature: "opaque-redacted" }],
-		}, {
-			recordId: "redacted",
-			source: () => ({ adapter: "pi", session_key: "fixture", record_id: "redacted" }),
-		});
-		expect(events).toEqual([{
-			type: "reasoning", kind: "redacted", parts: [], payload_json: '{"signature":"opaque-redacted"}',
-			source: { adapter: "pi", session_key: "fixture", record_id: "redacted" },
-		}]);
+		const events = piMessageDrafts(
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "thinking",
+						thinking: "[Reasoning redacted]",
+						redacted: true,
+						thinkingSignature: "opaque-redacted",
+					},
+				],
+			},
+			{
+				recordId: "redacted",
+				source: () => ({ adapter: "pi", session_key: "fixture", record_id: "redacted" }),
+			},
+		);
+		expect(events).toEqual([
+			{
+				type: "reasoning",
+				kind: "redacted",
+				parts: [],
+				payload_json: '{"signature":"opaque-redacted"}',
+				source: { adapter: "pi", session_key: "fixture", record_id: "redacted" },
+			},
+		]);
 		expect(JSON.stringify(events)).not.toContain("[Reasoning redacted]");
 	});
 
 	test("accepts the OpenClaw gateway lowercase toolcall display type", () => {
-		const events = piMessageDrafts({
-			role: "assistant",
-			content: [{ type: "toolcall", id: "gateway-call", name: "read", arguments: { path: "README.md" } }],
-		}, {
-			recordId: "gateway",
-			source: (partIndex) => ({ adapter: "openclaw", session_key: "fixture", record_id: "gateway", part_index: partIndex }),
-		});
-		expect(events).toEqual([{
-			type: "tool_call", call_id: "gateway-call", name: "read", arguments_json: '{"path":"README.md"}',
-			source: { adapter: "openclaw", session_key: "fixture", record_id: "gateway", part_index: 1 },
-		}]);
+		const events = piMessageDrafts(
+			{
+				role: "assistant",
+				content: [
+					{ type: "toolcall", id: "gateway-call", name: "read", arguments: { path: "README.md" } },
+				],
+			},
+			{
+				recordId: "gateway",
+				source: (partIndex) => ({
+					adapter: "openclaw",
+					session_key: "fixture",
+					record_id: "gateway",
+					part_index: partIndex,
+				}),
+			},
+		);
+		expect(events).toEqual([
+			{
+				type: "tool_call",
+				call_id: "gateway-call",
+				name: "read",
+				arguments_json: '{"path":"README.md"}',
+				source: {
+					adapter: "openclaw",
+					session_key: "fixture",
+					record_id: "gateway",
+					part_index: 1,
+				},
+			},
+		]);
 	});
 	test.each(cases)(
 		"projects identical %s drafts through Pi and OpenClaw",

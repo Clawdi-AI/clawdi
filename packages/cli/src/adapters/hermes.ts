@@ -640,7 +640,13 @@ export class HermesAdapter implements AgentAdapterCore {
 				for (const row of rows) {
 					const size = readers.size.get(row.id) as SessionSizeRow;
 					const sourceRevision = readers.revision
-						? await sessionSourceRevision(row, readers.revision, this.sessionModelsUsed(readers, row), context, size.last_id)
+						? await sessionSourceRevision(
+								row,
+								readers.revision,
+								this.sessionModelsUsed(readers, row),
+								context,
+								size.last_id,
+							)
 						: undefined;
 					if (sourceRevision && knownSourceRevisions.get(row.id) === sourceRevision) continue;
 					const session = await this.materializeSession(
@@ -685,7 +691,13 @@ export class HermesAdapter implements AgentAdapterCore {
 			return await this.materializeSession(
 				row,
 				readers.revision
-					? await sessionSourceRevision(row, readers.revision, this.sessionModelsUsed(readers, row), context, size.last_id)
+					? await sessionSourceRevision(
+							row,
+							readers.revision,
+							this.sessionModelsUsed(readers, row),
+							context,
+							size.last_id,
+						)
 					: undefined,
 				readers,
 				size,
@@ -702,23 +714,38 @@ export class HermesAdapter implements AgentAdapterCore {
 		const names = new Set(messageColumns.map((column) => column.name));
 		const displayScope = `(${names.has("active") ? "active" : "1"} = 1 OR ${names.has("compacted") ? "compacted" : "0"} = 1)`;
 		const hasIdentity = names.has("display_identity");
-		const hasModelUsage = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_model_usage'").get());
+		const hasModelUsage = Boolean(
+			db
+				.prepare(
+					"SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_model_usage'",
+				)
+				.get(),
+		);
 		return {
 			modern,
-			models: hasModelUsage ? db.prepare("SELECT model FROM session_model_usage WHERE session_id = ? GROUP BY model ORDER BY min(first_seen), model") : null,
-			displayDuplicates: modern && hasIdentity ? db.prepare(`
+			models: hasModelUsage
+				? db.prepare(
+						"SELECT model FROM session_model_usage WHERE session_id = ? GROUP BY model ORDER BY min(first_seen), model",
+					)
+				: null,
+			displayDuplicates:
+				modern && hasIdentity
+					? db.prepare(`
 				SELECT id FROM (
 					SELECT id, row_number() OVER (PARTITION BY display_identity ORDER BY id) AS generation
 					FROM messages WHERE session_id = ? AND id <= ? AND ${displayScope}
 					AND display_identity IS NOT NULL
 				) WHERE generation > 1
-			`) : null,
-			displayFallback: modern ? db.prepare(`
+			`)
+					: null,
+			displayFallback: modern
+				? db.prepare(`
 				SELECT ${modernMessageSelectColumns(messageColumns)} FROM messages
 				WHERE session_id = ? AND id <= ? AND ${displayScope}
 				${hasIdentity ? "AND display_identity IS NULL" : ""}
 				ORDER BY id
-			`) : null,
+			`)
+				: null,
 			size: db.prepare(
 				`SELECT count(*) AS row_count, coalesce(sum(${messagePayloadSizeSql(messageColumns)}), 0) AS size_bytes, ${modern ? "coalesce(max(id), 0)" : "0"} AS last_id FROM messages WHERE session_id = ?`,
 			),
@@ -741,7 +768,10 @@ export class HermesAdapter implements AgentAdapterCore {
 		};
 	}
 
-	private sessionModelsUsed(readers: ReturnType<HermesAdapter["sessionReaders"]>, row: SessionRow): string[] {
+	private sessionModelsUsed(
+		readers: ReturnType<HermesAdapter["sessionReaders"]>,
+		row: SessionRow,
+	): string[] {
 		if (!readers.models) {
 			const model = parseModelField(row.model);
 			return model ? [model] : [];
@@ -775,7 +805,9 @@ export class HermesAdapter implements AgentAdapterCore {
 			context?.signal.throwIfAborted();
 			const row = value as ModernMessageRow;
 			if (row.source_bytes > SESSION_RECORD_MAX_BYTES)
-				throw new Error(`Hermes message ${row.id} exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`);
+				throw new Error(
+					`Hermes message ${row.id} exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`,
+				);
 			const decodedCalls = decodeOptionalJson(row.tool_calls);
 			const calls = Array.isArray(decodedCalls) ? decodedCalls : [];
 			const callIds = calls.map((value) => {
@@ -787,10 +819,18 @@ export class HermesAdapter implements AgentAdapterCore {
 				return null;
 			});
 			const stableCalls = row.role === "assistant" && callIds.length > 0 && callIds.every(Boolean);
-			const key = createHash("sha256").update(JSON.stringify([
-				row.role, stableCalls ? null : row.content, row.timestamp, row.tool_call_id,
-				stableCalls ? callIds : row.tool_calls, row.tool_name,
-			])).digest("hex");
+			const key = createHash("sha256")
+				.update(
+					JSON.stringify([
+						row.role,
+						stableCalls ? null : row.content,
+						row.timestamp,
+						row.tool_call_id,
+						stableCalls ? callIds : row.tool_calls,
+						row.tool_name,
+					]),
+				)
+				.digest("hex");
 			if (seen.has(key)) hidden.add(row.id);
 			else seen.add(key);
 			if (++count % 128 === 0)
@@ -831,7 +871,9 @@ export class HermesAdapter implements AgentAdapterCore {
 			if ("source_bytes" in message && message.source_bytes > SESSION_RECORD_MAX_BYTES)
 				throw new Error(`Hermes message exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`);
 		}
-		const hiddenRows = stream ? new Set<number>() : await this.hiddenDisplayRowIds(readers, row.id, size.last_id, context);
+		const hiddenRows = stream
+			? new Set<number>()
+			: await this.hiddenDisplayRowIds(readers, row.id, size.last_id, context);
 		const events = modern
 			? sequenceSessionEvents(
 					(messageRows as ModernMessageRow[]).flatMap((message) =>
@@ -959,7 +1001,13 @@ export class HermesAdapter implements AgentAdapterCore {
 					!current ||
 					!readers.revision ||
 					current.model !== row.model ||
-					(await sessionSourceRevision(row, readers.revision, this.sessionModelsUsed(readers, row), context, lastId)) !== revision
+					(await sessionSourceRevision(
+						row,
+						readers.revision,
+						this.sessionModelsUsed(readers, row),
+						context,
+						lastId,
+					)) !== revision
 				)
 					throw new Error(`Hermes session ${row.id} changed during sync; retry with a fresh scan`);
 			};
@@ -975,7 +1023,12 @@ export class HermesAdapter implements AgentAdapterCore {
 						`Hermes message ${message.id} exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`,
 					);
 				const events = sequenceSessionEvents(
-					hermesEventDrafts(message, row.id, parseModelField(row.model), hiddenRows.has(message.id)),
+					hermesEventDrafts(
+						message,
+						row.id,
+						parseModelField(row.model),
+						hiddenRows.has(message.id),
+					),
 					seq,
 				);
 				seq += events.length;

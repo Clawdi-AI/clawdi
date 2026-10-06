@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { scanSessionModule } from "../../src/adapters/base";
+import { type SessionEvent, scanSessionModule } from "../../src/adapters/base";
 import { HermesAdapter } from "../../src/adapters/hermes";
 import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
 import { computeLastActivityIso } from "../../src/lib/session-activity";
@@ -54,96 +54,151 @@ describe("HermesAdapter.collectSessions", () => {
 	it("preserves origin/main session bytes and localHash", async () => {
 		await assertSessionGolden("hermes", new HermesAdapter().sessions);
 	});
-	it.each([false, true])("retains rewind and superseded rows as hidden audit events (streaming=%s)", async (streaming) => {
-		const db = new Database(join(tmpHome, ".hermes", "state.db"));
-		try {
-			db.run("DELETE FROM messages");
-			const insert = db.prepare("INSERT INTO messages (session_id, role, content, timestamp, active, compacted, display_metadata) VALUES ('s-modern', ?, ?, ?, ?, ?, ?)");
-			insert.run("user", "Rewound prompt", 1776247201, 0, 0, null);
-			insert.run("assistant", "Rewound answer", 1776247202, 0, 0, null);
-			insert.run("user", "Superseded original prompt", 1776247203, 0, 0, null);
-			insert.run("assistant", "Superseded original answer", 1776247204, 0, 0, null);
-			insert.run("user", "Model-only prompt", 1776247205, 1, 0, '{"model_only":true}');
-			insert.run("assistant", "Model-only answer", 1776247206, 1, 0, '{"model_only":1}');
-			insert.run("user", "Archived prompt", 1776247207, 0, 1, null);
-			insert.run("assistant", "Current answer", 1776247208, 1, 0, null);
-		} finally {
-			db.close();
-		}
-		const session = await new HermesAdapter().sessions.resolve("s-modern", {
-			streaming,
-			signal: new AbortController().signal,
-		});
-		if (!session) throw new Error("Expected Hermes rewind fixture");
-		const events = [];
-		for await (const event of session.readEvents?.() ?? session.events ?? []) events.push(event);
-		expect(events).toHaveLength(8);
-		expect(events.slice(0, 4).map((event) => event.semantics)).toEqual(
-			Array(4).fill({ lifecycle: "inactive", display: "hidden", compressed_summary: false }),
-		);
-		expect(events.slice(4, 6).map((event) => event.semantics)).toEqual(
-			Array(2).fill({ lifecycle: "active", display: "hidden", compressed_summary: false }),
-		);
-		expect(projectEventsToMessages(events).map((message) => message.content)).toEqual([
-			"Archived prompt", "Current answer",
-		]);
-		expect(session.messageCount).toBe(2);
-	});
-	it.each([false, true])("hides later compaction generations (display_identity=%s)", async (withIdentity) => {
-		const db = new Database(join(tmpHome, ".hermes", "state.db"));
-		try {
-			db.run("DELETE FROM messages");
-			if (withIdentity) db.run("ALTER TABLE messages ADD COLUMN display_identity BLOB");
-			const insert = db.prepare("INSERT INTO messages (id, session_id, role, content, timestamp, active, compacted, _compressed_summary, tool_calls, tool_call_id, tool_name) VALUES (?, 's-modern', ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-			const calls = (argumentsValue: string) => JSON.stringify([
-				{ id: "call-tail", type: "function", function: { name: "read", arguments: argumentsValue } },
-			]);
-			insert.run(1, "user", "Tail prompt", 1776247201, 0, 0, 0, null, null, null);
-			insert.run(2, "user", "Tail prompt", 1776247201, 0, 1, 0, null, null, null);
-			insert.run(3, "assistant", "Tail answer", 1776247202, 0, 1, 0, null, null, null);
-			insert.run(4, "assistant", null, 1776247203, 0, 1, 0, calls('{"path":"README.md","context":"full"}'), null, null);
-			insert.run(5, "tool", "Full output", 1776247204, 0, 1, 0, null, "call-tail", "read");
-			insert.run(6, "assistant", "Summary", 1776247210, 1, 0, 1, null, null, null);
-			insert.run(7, "user", "Tail prompt", 1776247201, 1, 0, 0, null, null, null);
-			insert.run(8, "assistant", "Tail answer", 1776247202, 1, 0, 0, null, null, null);
-			insert.run(9, "assistant", null, 1776247203, 1, 0, 0, JSON.stringify([{ id: "response-item", call_id: "call-tail|response-item", function: { name: "read", arguments: '{"path":"README.md"}' } }]), null, null);
-			insert.run(10, "tool", "Full output", 1776247204, 1, 0, 0, null, "call-tail", "read");
-			insert.run(11, "user", "Tail prompt", 1776247211, 1, 0, 0, null, null, null);
-			// Pruned tool results keep their payload in the key, unlike assistant calls.
-			insert.run(12, "tool", "Pruned output", 1776247204, 1, 0, 0, null, "call-tail", "read");
-			if (withIdentity) {
-				db.run("UPDATE messages SET display_identity = X'01' WHERE id IN (1, 2, 7)");
-				db.run("UPDATE messages SET display_identity = X'02' WHERE id IN (3, 8)");
-				// Durable identities take precedence over the fallback content key.
-				db.run("UPDATE messages SET content = 'Tail answer copy' WHERE id = 8");
+	it.each([false, true])(
+		"retains rewind and superseded rows as hidden audit events (streaming=%s)",
+		async (streaming) => {
+			const db = new Database(join(tmpHome, ".hermes", "state.db"));
+			try {
+				db.run("DELETE FROM messages");
+				const insert = db.prepare(
+					"INSERT INTO messages (session_id, role, content, timestamp, active, compacted, display_metadata) VALUES ('s-modern', ?, ?, ?, ?, ?, ?)",
+				);
+				insert.run("user", "Rewound prompt", 1776247201, 0, 0, null);
+				insert.run("assistant", "Rewound answer", 1776247202, 0, 0, null);
+				insert.run("user", "Superseded original prompt", 1776247203, 0, 0, null);
+				insert.run("assistant", "Superseded original answer", 1776247204, 0, 0, null);
+				insert.run("user", "Model-only prompt", 1776247205, 1, 0, '{"model_only":true}');
+				insert.run("assistant", "Model-only answer", 1776247206, 1, 0, '{"model_only":1}');
+				insert.run("user", "Archived prompt", 1776247207, 0, 1, null);
+				insert.run("assistant", "Current answer", 1776247208, 1, 0, null);
+			} finally {
+				db.close();
 			}
-		} finally {
-			db.close();
-		}
-		let eagerEvents;
-		for (const streaming of [false, true]) {
 			const session = await new HermesAdapter().sessions.resolve("s-modern", {
-				streaming, signal: new AbortController().signal,
+				streaming,
+				signal: new AbortController().signal,
 			});
-			if (!session) throw new Error("Expected Hermes generation fixture");
+			if (!session) throw new Error("Expected Hermes rewind fixture");
 			const events = [];
 			for await (const event of session.readEvents?.() ?? session.events ?? []) events.push(event);
-			expect(events).toHaveLength(12);
-			expect(events.filter((event) => event.semantics?.display === "hidden").map((event) => event.source.record_id)).toEqual(["1", "7", "8", "9", "10"]);
+			expect(events).toHaveLength(8);
+			expect(events.slice(0, 4).map((event) => event.semantics)).toEqual(
+				Array(4).fill({ lifecycle: "inactive", display: "hidden", compressed_summary: false }),
+			);
+			expect(events.slice(4, 6).map((event) => event.semantics)).toEqual(
+				Array(2).fill({ lifecycle: "active", display: "hidden", compressed_summary: false }),
+			);
 			expect(projectEventsToMessages(events).map((message) => message.content)).toEqual([
-				"Tail prompt", "Tail answer", "Summary", "Tail prompt",
+				"Archived prompt",
+				"Current answer",
 			]);
-			expect(events.find((event) => event.source.record_id === "4")).toMatchObject({
-				type: "tool_call", arguments_json: '{"context":"full","path":"README.md"}',
-				semantics: { lifecycle: "compacted", display: "message" },
-			});
-			expect(events.find((event) => event.source.record_id === "9")).toMatchObject({
-				type: "tool_call", semantics: { lifecycle: "active", display: "hidden" },
-			});
-			if (streaming) expect(events).toEqual(eagerEvents);
-			else eagerEvents = events;
-		}
-	});
+			expect(session.messageCount).toBe(2);
+		},
+	);
+	it.each([false, true])(
+		"hides later compaction generations (display_identity=%s)",
+		async (withIdentity) => {
+			const db = new Database(join(tmpHome, ".hermes", "state.db"));
+			try {
+				db.run("DELETE FROM messages");
+				if (withIdentity) db.run("ALTER TABLE messages ADD COLUMN display_identity BLOB");
+				const insert = db.prepare(
+					"INSERT INTO messages (id, session_id, role, content, timestamp, active, compacted, _compressed_summary, tool_calls, tool_call_id, tool_name) VALUES (?, 's-modern', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				);
+				const calls = (argumentsValue: string) =>
+					JSON.stringify([
+						{
+							id: "call-tail",
+							type: "function",
+							function: { name: "read", arguments: argumentsValue },
+						},
+					]);
+				insert.run(1, "user", "Tail prompt", 1776247201, 0, 0, 0, null, null, null);
+				insert.run(2, "user", "Tail prompt", 1776247201, 0, 1, 0, null, null, null);
+				insert.run(3, "assistant", "Tail answer", 1776247202, 0, 1, 0, null, null, null);
+				insert.run(
+					4,
+					"assistant",
+					null,
+					1776247203,
+					0,
+					1,
+					0,
+					calls('{"path":"README.md","context":"full"}'),
+					null,
+					null,
+				);
+				insert.run(5, "tool", "Full output", 1776247204, 0, 1, 0, null, "call-tail", "read");
+				insert.run(6, "assistant", "Summary", 1776247210, 1, 0, 1, null, null, null);
+				insert.run(7, "user", "Tail prompt", 1776247201, 1, 0, 0, null, null, null);
+				insert.run(8, "assistant", "Tail answer", 1776247202, 1, 0, 0, null, null, null);
+				insert.run(
+					9,
+					"assistant",
+					null,
+					1776247203,
+					1,
+					0,
+					0,
+					JSON.stringify([
+						{
+							id: "response-item",
+							call_id: "call-tail|response-item",
+							function: { name: "read", arguments: '{"path":"README.md"}' },
+						},
+					]),
+					null,
+					null,
+				);
+				insert.run(10, "tool", "Full output", 1776247204, 1, 0, 0, null, "call-tail", "read");
+				insert.run(11, "user", "Tail prompt", 1776247211, 1, 0, 0, null, null, null);
+				// Pruned tool results keep their payload in the key, unlike assistant calls.
+				insert.run(12, "tool", "Pruned output", 1776247204, 1, 0, 0, null, "call-tail", "read");
+				if (withIdentity) {
+					db.run("UPDATE messages SET display_identity = X'01' WHERE id IN (1, 2, 7)");
+					db.run("UPDATE messages SET display_identity = X'02' WHERE id IN (3, 8)");
+					// Durable identities take precedence over the fallback content key.
+					db.run("UPDATE messages SET content = 'Tail answer copy' WHERE id = 8");
+				}
+			} finally {
+				db.close();
+			}
+			let eagerEvents: SessionEvent[] | undefined;
+			for (const streaming of [false, true]) {
+				const session = await new HermesAdapter().sessions.resolve("s-modern", {
+					streaming,
+					signal: new AbortController().signal,
+				});
+				if (!session) throw new Error("Expected Hermes generation fixture");
+				const events = [];
+				for await (const event of session.readEvents?.() ?? session.events ?? [])
+					events.push(event);
+				expect(events).toHaveLength(12);
+				expect(
+					events
+						.filter((event) => event.semantics?.display === "hidden")
+						.map((event) => event.source.record_id),
+				).toEqual(["1", "7", "8", "9", "10"]);
+				expect(projectEventsToMessages(events).map((message) => message.content)).toEqual([
+					"Tail prompt",
+					"Tail answer",
+					"Summary",
+					"Tail prompt",
+				]);
+				expect(events.find((event) => event.source.record_id === "4")).toMatchObject({
+					type: "tool_call",
+					arguments_json: '{"context":"full","path":"README.md"}',
+					semantics: { lifecycle: "compacted", display: "message" },
+				});
+				expect(events.find((event) => event.source.record_id === "9")).toMatchObject({
+					type: "tool_call",
+					semantics: { lifecycle: "active", display: "hidden" },
+				});
+				if (streaming) expect(events).toEqual(eagerEvents);
+				else eagerEvents = events;
+			}
+		},
+	);
 	it("reads modelsUsed in first_seen order without changing projected event bytes", async () => {
 		const adapter = new HermesAdapter();
 		const before = await adapter.sessions.resolve("s-modern");
@@ -163,7 +218,8 @@ describe("HermesAdapter.collectSessions", () => {
 		}
 		for (const streaming of [false, true]) {
 			const after = await adapter.sessions.resolve("s-modern", {
-				streaming, signal: new AbortController().signal,
+				streaming,
+				signal: new AbortController().signal,
 			});
 			if (!after) throw new Error("Expected Hermes model-usage fixture");
 			expect(after.model).toBe(before.model);
@@ -171,11 +227,17 @@ describe("HermesAdapter.collectSessions", () => {
 			const events = [];
 			for await (const event of after.readEvents?.() ?? after.events ?? []) events.push(event);
 			expect(events).toEqual(before.events);
-			expect((await prepareSessionUpload(after, "events-v1")).localHash).toBe((await prepareSessionUpload(before, "events-v1")).localHash);
+			expect((await prepareSessionUpload(after, "events-v1")).localHash).toBe(
+				(await prepareSessionUpload(before, "events-v1")).localHash,
+			);
 			expect(after.sourceRevision).not.toBe(before.sourceRevision);
 		}
 		const cleanup = new Database(join(tmpHome, ".hermes", "state.db"));
-		try { cleanup.exec("DROP TABLE session_model_usage"); } finally { cleanup.close(); }
+		try {
+			cleanup.exec("DROP TABLE session_model_usage");
+		} finally {
+			cleanup.close();
+		}
 		expect((await adapter.sessions.resolve("s-modern"))?.modelsUsed).toEqual(["gpt-5.3-codex"]);
 	});
 	it.each(["user", "tool"])(

@@ -24,12 +24,19 @@ function validTimestamp(value: string | number): string | undefined {
 
 // OpenClaw-authored transcript bookkeeping is content, not provider model output.
 const OPENCLAW_BOOKKEEPING_MODELS = new Set([
-	"delivery-mirror", "gateway-injected", "acp-runtime", "automation-result",
+	"delivery-mirror",
+	"gateway-injected",
+	"acp-runtime",
+	"automation-result",
 ]);
 
 export function isOpenClawBookkeepingMessage(message: JsonObject): boolean {
-	return message.role === "assistant" && message.provider === "openclaw" &&
-		typeof message.model === "string" && OPENCLAW_BOOKKEEPING_MODELS.has(message.model);
+	return (
+		message.role === "assistant" &&
+		message.provider === "openclaw" &&
+		typeof message.model === "string" &&
+		OPENCLAW_BOOKKEEPING_MODELS.has(message.model)
+	);
 }
 
 /** Shared Pi-format message projection, with adapter-owned source identities. */
@@ -82,7 +89,7 @@ export function piMessageDrafts(
 		const content = Array.isArray(message.content) ? message.content : [];
 		const model = isOpenClawBookkeepingMessage(message)
 			? undefined
-			: jsonString(message.model) ?? fallbackModel ?? undefined;
+			: (jsonString(message.model) ?? fallbackModel ?? undefined);
 		const drafts: SessionEventDraft[] = [];
 		const parts = visibleContentParts(message.content);
 		if (parts.length > 0) {
@@ -112,7 +119,8 @@ export function piMessageDrafts(
 					...(model ? { model } : {}),
 				});
 			}
-			if (part.type !== "toolCall" && part.type !== "toolcall" && part.type !== "tool_use") continue;
+			if (part.type !== "toolCall" && part.type !== "toolcall" && part.type !== "tool_use")
+				continue;
 			const callId = jsonString(part.id);
 			const name = jsonString(part.name);
 			if (!callId || !name) continue;

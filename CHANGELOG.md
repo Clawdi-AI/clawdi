@@ -15,6 +15,13 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
+### CLI 0.14.109
+
+- Hermes rewound, superseded, and duplicate compaction rows no longer appear in Cloud transcripts.
+- OpenClaw delivery mirrors and other bookkeeping messages no longer appear as session models, and hidden OpenClaw messages stay hidden.
+- Pi and OpenClaw preserve redacted thinking and gateway tool calls. Hermes session metadata records all models used in chronological order.
+- Sessions are re-projected once after upgrading; only sessions whose projected content changes are re-uploaded.
+
 ### CLI 0.14.108
 
 - Hermes and OpenClaw sessions are re-projected once after upgrading. Unchanged session content is not re-uploaded.
