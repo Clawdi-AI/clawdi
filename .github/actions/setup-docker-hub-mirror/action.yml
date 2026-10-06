@@ -2,6 +2,14 @@ name: Setup Docker Hub mirror
 description: Use mirror.gcr.io for CI Docker Hub pulls, with Docker Hub fallback on cache misses
 
 inputs:
+  dockerhub-username:
+    description: Optional Docker Hub username for authenticated pulls (avoids anonymous rate limits).
+    required: false
+    default: ""
+  dockerhub-token:
+    description: Optional Docker Hub read-only access token paired with dockerhub-username.
+    required: false
+    default: ""
   prefetch-images:
     description: Optional newline-separated Docker Hub images to prefetch for daemon pulls
     required: false
@@ -15,6 +23,18 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Log in to Docker Hub
+      if: inputs.dockerhub-username != '' && inputs.dockerhub-token != ''
+      shell: bash
+      env:
+        DOCKERHUB_USERNAME: ${{ inputs.dockerhub-username }}
+        DOCKERHUB_TOKEN: ${{ inputs.dockerhub-token }}
+      run: |
+        # Authenticated pulls are not subject to anonymous Docker Hub rate limits.
+        # A failed login must not fail the job: the mirror and anonymous pulls remain.
+        if ! printf '%s' "$DOCKERHUB_TOKEN" | docker login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin >/dev/null; then
+          echo "::notice::Docker Hub login failed; continuing with mirror.gcr.io and anonymous pulls."
+        fi
     - name: Configure local Docker daemon mirror when available
       shell: bash
       run: |
