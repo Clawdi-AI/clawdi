@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
-import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
+import {
+	assertProjectionGolden,
+	assertSessionGolden,
+} from "../../src/adapters/session-golden.test-support";
+import { SESSION_RECORD_MAX_BYTES } from "../../src/adapters/session-source";
 import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
 import {
@@ -76,6 +80,130 @@ describe("ClaudeCodeAdapter.detect", () => {
 });
 
 describe("ClaudeCodeAdapter.collectSessions", () => {
+	it("reports an oversized record after existing Claude history", async () => {
+		const file = join(
+			tmpHome,
+			".claude",
+			"projects",
+			"-Users-fixture-project",
+			"11111111-2222-3333-4444-555555555555.jsonl",
+		);
+		writeFileSync(
+			file,
+			`${readFileSync(file, "utf8")}\n{"text":"${"x".repeat(SESSION_RECORD_MAX_BYTES)}"}`,
+		);
+		const result = await new ClaudeCodeAdapter().sessions.collect({ kind: "complete" });
+		expect(result.sessions).toHaveLength(0);
+		expect(result.scanIssues).toEqual([
+			expect.objectContaining({
+				path: file,
+				reason: expect.stringContaining("source record exceeds"),
+			}),
+		]);
+	});
+
+	it.each([
+		{ titleType: "all", expected: "Final custom title" },
+		{ titleType: "ai-title", expected: "Final AI title" },
+		{ titleType: "none", expected: "Actual user prompt" },
+	])(
+		"uses the last custom title, then last AI title, then real prompt ($titleType)",
+		async ({ titleType, expected }) => {
+			const file = join(
+				tmpHome,
+				".claude",
+				"projects",
+				"-Users-fixture-project",
+				"title-fixture.jsonl",
+			);
+			const promptRecords = readFileSync(
+				resolve(import.meta.dir, "../fixtures/claude-meta-summary.jsonl"),
+				"utf8",
+			);
+			const titleRecords = readFileSync(
+				resolve(import.meta.dir, "../fixtures/claude-titles.jsonl"),
+				"utf8",
+			)
+				.trim()
+				.split("\n")
+				.filter((line) => titleType === "all" || JSON.parse(line).type === titleType);
+			writeFileSync(file, promptRecords);
+			const adapter = new ClaudeCodeAdapter();
+			const original = await adapter.sessions.resolve("title-fixture");
+			if (!original) throw new Error("expected Claude title fixture");
+			const originalHash = (await prepareSessionUpload(original, "events-v1")).localHash;
+			writeFileSync(file, `${promptRecords}${titleRecords.join("\n")}\n`);
+			for (const streaming of [false, true]) {
+				const session = await adapter.sessions.resolve("title-fixture", {
+					streaming,
+					signal: new AbortController().signal,
+				});
+				if (!session) throw new Error("expected titled Claude fixture");
+				expect(session.summary).toBe(expected);
+				const localHash = (await prepareSessionUpload(session, "events-v1")).localHash;
+				if (titleType === "none") expect(localHash).toBe(originalHash);
+				else expect(localHash).not.toBe(originalHash);
+			}
+		},
+	);
+	it("hides meta injections and excludes compact summaries from the title", async () => {
+		const file = join(
+			tmpHome,
+			".claude",
+			"projects",
+			"-Users-fixture-project",
+			"meta-summary.jsonl",
+		);
+		cpSync(resolve(import.meta.dir, "../fixtures/claude-meta-summary.jsonl"), file);
+		for (const streaming of [false, true]) {
+			const session = await new ClaudeCodeAdapter().sessions.resolve("meta-summary", {
+				streaming,
+				signal: new AbortController().signal,
+			});
+			if (!session) throw new Error("expected Claude meta summary fixture");
+			expect(session.summary).toBe("Actual user prompt");
+			expect(session.messageCount).toBe(3);
+			const upload = await prepareSessionUpload(session, "events-v1");
+			const events = [];
+			for await (const event of upload.readEvents?.() ?? upload.events ?? []) events.push(event);
+			expect(
+				events
+					.filter((event) => event.semantics?.display === "hidden")
+					.map((event) => event.source.record_id),
+			).toEqual(["skill-injection", "command-caveat"]);
+			expect(
+				events.find((event) => event.source.record_id === "compact-summary")?.semantics,
+			).toEqual({ lifecycle: "active", display: "event", compressed_summary: true });
+			expect(events.filter((event) => event.semantics?.display_kind === "meta")).toHaveLength(2);
+			assertProjectionGolden("claude-meta-summary", events);
+		}
+		const session = await new ClaudeCodeAdapter().sessions.resolve("meta-summary");
+		expect(session?.messages.map((message) => message.content)).toEqual([
+			"Compressed conversation summary",
+			"Actual user prompt",
+			"Actual assistant answer",
+		]);
+	});
+
+	it("does not invent a first prompt from meta or compact-only records", async () => {
+		const file = join(
+			tmpHome,
+			".claude",
+			"projects",
+			"-Users-fixture-project",
+			"compact-only.jsonl",
+		);
+		writeFileSync(
+			file,
+			`${readFileSync(resolve(import.meta.dir, "../fixtures/claude-meta-summary.jsonl"), "utf8")
+				.split("\n")
+				.slice(0, 3)
+				.join("\n")}\n`,
+		);
+		const session = await new ClaudeCodeAdapter().sessions.resolve("compact-only");
+		expect(session?.summary).toBeNull();
+		expect(session?.messageCount).toBe(1);
+	});
 	it("ignores invalid metadata timestamps without changing uploaded content", async () => {
 		const adapter = new ClaudeCodeAdapter();
 		const original = (await adapter.sessions.collect({ kind: "complete" })).sessions[0];

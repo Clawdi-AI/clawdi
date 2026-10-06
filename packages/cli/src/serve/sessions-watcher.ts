@@ -396,9 +396,8 @@ function diffSnapshotEntries(
 // statting Codex transcript files; container-mode poll signatures
 // stayed identical across appends and the stable timer never armed.
 // Hermes (single SQLite at root) and Claude Code
-// (`~/.claude/projects/<project>/*.jsonl`, depth 1) both still
-// fit comfortably; the budget just needs to be wide enough for
-// the deepest supported adapter.
+// (`projects/<project>/*.jsonl`, depth 1, and documented
+// `<session-id>/subagents/agent-*.jsonl`, depth 3) also fit this budget.
 const SIG_MAX_DEPTH = 3;
 export const SESSION_PATH_TRACKED_ENTRY_LIMIT = 4_096;
 

@@ -15,6 +15,14 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
+### CLI 0.15.1
+
+- **Session history:** Codex tool names follow upstream namespace rules. Claude meta messages stay hidden and compact summaries appear as events. OpenCode synthetic text stays hidden.
+- **Claude Code:** Custom and AI session titles sync, including renames, and tool results no longer become fallback titles. Subagent transcripts sync as independent sessions.
+- **OpenClaw:** Official session entries sync reliably even when the SDK logs output, preserving entry IDs and the agent user's environment.
+- **Sync reliability:** Oversized transcript files report a sync error while other sessions continue. Incremental scans retain unresolved file errors without exposing absolute local paths.
+- **Upgrade:** Sessions are re-projected once after upgrading; only sessions whose projected content changes are re-uploaded.
+
 ### CLI 0.15.0
 
 - **Sign-in:** `clawdi auth login` uses device authorization everywhere: it prints a link and a short code (and opens the browser in a terminal), then finishes on its own after you approve. Agents can run it end to end; `clawdi auth complete` resumes waiting. The local callback and paste-back flows are removed; `--manual` remains for existing API keys.

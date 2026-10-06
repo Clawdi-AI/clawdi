@@ -24,11 +24,23 @@ export interface JsonlRecord {
 	length: number;
 }
 
+const SESSION_SOURCE_BLOCK_REASON = `session source record exceeds ${SESSION_RECORD_MAX_BYTES} bytes`;
+
+export class SessionSourceBlockedError extends Error {
+	readonly reason = SESSION_SOURCE_BLOCK_REASON;
+
+	constructor(readonly path: string) {
+		super(`${path}: ${SESSION_SOURCE_BLOCK_REASON}`);
+		this.name = "SessionSourceBlockedError";
+	}
+}
+
 /** Pin a file prefix; appends belong to the next scan, rewrites invalidate this reader. */
 export class JsonlSessionSource {
 	private digest: string | undefined;
 	complete = true;
 	validRecords = 0;
+	blockedReason: string | undefined;
 
 	private constructor(
 		readonly path: string,
@@ -92,6 +104,7 @@ export class JsonlSessionSource {
 
 	async *records(): AsyncGenerator<JsonlRecord> {
 		this.context?.signal.throwIfAborted();
+		if (this.blockedReason) return;
 		const file = await open(this.path, "r");
 		try {
 			const before = await this.verifyIdentity(file);
@@ -106,8 +119,7 @@ export class JsonlSessionSource {
 			let validRecords = 0;
 			const append = (part: Buffer) => {
 				lineBytes += part.length;
-				if (lineBytes > SESSION_RECORD_MAX_BYTES)
-					throw new Error(`session source record exceeds ${SESSION_RECORD_MAX_BYTES} bytes`);
+				if (lineBytes > SESSION_RECORD_MAX_BYTES) throw new SessionSourceBlockedError(this.path);
 				if (part.length) parts.push(Buffer.from(part));
 			};
 			const record = (): JsonlRecord | null => {
@@ -125,48 +137,55 @@ export class JsonlSessionSource {
 				complete = false;
 				return null;
 			};
-			while (position < Number(this.stat.size)) {
-				this.context?.signal.throwIfAborted();
-				const { bytesRead } = await file.read(
-					buffer,
-					0,
-					Math.min(buffer.length, Number(this.stat.size) - position),
-					position,
-				);
-				if (!bytesRead) throw new Error("session source changed while reading");
-				const bytes = buffer.subarray(0, bytesRead);
-				digest.update(bytes);
-				let start = 0;
-				for (let end = bytes.indexOf(10); end >= 0; end = bytes.indexOf(10, start)) {
+			try {
+				while (position < Number(this.stat.size)) {
 					this.context?.signal.throwIfAborted();
-					append(bytes.subarray(start, end));
+					const { bytesRead } = await file.read(
+						buffer,
+						0,
+						Math.min(buffer.length, Number(this.stat.size) - position),
+						position,
+					);
+					if (!bytesRead) throw new Error("session source changed while reading");
+					const bytes = buffer.subarray(0, bytesRead);
+					digest.update(bytes);
+					let start = 0;
+					for (let end = bytes.indexOf(10); end >= 0; end = bytes.indexOf(10, start)) {
+						this.context?.signal.throwIfAborted();
+						append(bytes.subarray(start, end));
+						const value = record();
+						if (value) yield value;
+						parts = [];
+						lineBytes = 0;
+						lineOffset = position + end + 1;
+						start = end + 1;
+						if (++recordSeq % 128 === 0)
+							await setImmediate(undefined, this.context ? { signal: this.context.signal } : {});
+					}
+					append(bytes.subarray(start));
+					position += bytesRead;
+				}
+				if (lineBytes) {
+					this.context?.signal.throwIfAborted();
 					const value = record();
 					if (value) yield value;
-					parts = [];
-					lineBytes = 0;
-					lineOffset = position + end + 1;
-					start = end + 1;
-					if (++recordSeq % 128 === 0)
-						await setImmediate(undefined, this.context ? { signal: this.context.signal } : {});
 				}
-				append(bytes.subarray(start));
-				position += bytesRead;
-			}
-			if (lineBytes) {
 				this.context?.signal.throwIfAborted();
-				const value = record();
-				if (value) yield value;
+				const after = await this.verifyIdentity(file);
+				if (before.size === after.size && before.mtimeNs !== after.mtimeNs)
+					throw new Error("session source changed while reading; retry with a fresh scan");
+				const hash = digest.digest("hex");
+				if (this.digest !== undefined && hash !== this.digest)
+					throw new Error("session source was rewritten; retry with a fresh scan");
+				this.digest = hash;
+				this.complete = complete;
+				this.validRecords = validRecords;
+			} catch (error) {
+				if (!(error instanceof SessionSourceBlockedError)) throw error;
+				this.blockedReason = error.reason;
+				this.complete = false;
+				return;
 			}
-			this.context?.signal.throwIfAborted();
-			const after = await this.verifyIdentity(file);
-			if (before.size === after.size && before.mtimeNs !== after.mtimeNs)
-				throw new Error("session source changed while reading; retry with a fresh scan");
-			const hash = digest.digest("hex");
-			if (this.digest !== undefined && hash !== this.digest)
-				throw new Error("session source was rewritten; retry with a fresh scan");
-			this.digest = hash;
-			this.complete = complete;
-			this.validRecords = validRecords;
 		} finally {
 			await file.close();
 		}

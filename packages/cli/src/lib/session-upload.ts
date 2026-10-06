@@ -66,6 +66,15 @@ const LEGACY_SESSION_MAX_BYTES = 50 * 1024 * 1024;
 const CLIENT_EVENT_CHUNK_MAX_BYTES = 8 * 1024 * 1024;
 const EVENT_RETRY_LIMIT = 3;
 
+function localEventHash(eventHead: string, metadata: string | undefined): string {
+	if (metadata === undefined) return eventHead;
+	return createHash("sha256")
+		.update("clawdi-events-v1-local\n", "ascii")
+		.update(eventHead, "ascii")
+		.update(canonicalJson(metadata), "ascii")
+		.digest("hex");
+}
+
 class SnapshotAccumulator {
 	private readonly hash = createHash("sha256").update("[");
 	private readonly parts: Buffer[] = [];
@@ -158,7 +167,7 @@ export function planSessionUpload(
 	const finalEventHead = advanceEventHead(EMPTY_EVENT_HEAD, events);
 	return {
 		protocol,
-		localHash: finalEventHead,
+		localHash: localEventHash(finalEventHead, session.localHashMetadata),
 		events,
 		eventCount: events.length,
 		finalEventHead,
@@ -180,9 +189,10 @@ export async function prepareSessionUpload(
 			assertEventIdentity(event, count++);
 			head = advanceEventHead(head, [event]);
 		}
+		const localHash = localEventHash(head, session.localHashMetadata);
 		return {
 			protocol,
-			localHash: head,
+			localHash,
 			finalEventHead: head,
 			eventCount: count,
 			readEvents: session.readEvents,

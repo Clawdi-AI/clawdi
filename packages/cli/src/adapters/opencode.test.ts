@@ -3,9 +3,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import syntheticTextFixture from "../../tests/fixtures/opencode-synthetic-text.json";
 import { projectEventsToMessages } from "../lib/session-events";
+import { prepareSessionUpload } from "../lib/session-upload";
 import { OpenCodeAdapter } from "./opencode";
-import { assertSessionGolden } from "./session-golden.test-support";
+import { assertProjectionGolden, assertSessionGolden } from "./session-golden.test-support";
 
 const originalDb = process.env.OPENCODE_DB;
 const originalXdgData = process.env.XDG_DATA_HOME;
@@ -256,6 +258,50 @@ function fixtureDatabase(): { adapter: OpenCodeAdapter; databasePath: string } {
 }
 
 describe("OpenCode session adapter", () => {
+	test("hides synthetic reminders while retaining real user input", async () => {
+		const { adapter, databasePath } = fixtureDatabase();
+		const db = new Database(databasePath);
+		const created = Date.parse("2026-08-27T10:00:00.500Z");
+		try {
+			insertJson(db, "message", [
+				"msg_synthetic",
+				"ses_fixture",
+				created,
+				created,
+				JSON.stringify({ role: "user" }),
+			]);
+			insertJson(db, "part", [
+				"prt_synthetic",
+				"msg_synthetic",
+				"ses_fixture",
+				created,
+				created,
+				JSON.stringify(syntheticTextFixture),
+			]);
+		} finally {
+			db.close();
+		}
+		for (const streaming of [false, true]) {
+			const session = await adapter.sessions.resolve("opencode.ses_fixture", {
+				streaming,
+				signal: new AbortController().signal,
+			});
+			if (!session) throw new Error("expected OpenCode synthetic fixture");
+			expect(session.messageCount).toBe(2);
+			expect(session.summary).toBe("Inspect this workspace");
+			const upload = await prepareSessionUpload(session, "events-v1");
+			const events = [];
+			for await (const event of upload.readEvents?.() ?? upload.events ?? []) events.push(event);
+			expect(events.find((event) => event.source.record_id === "prt_synthetic")).toMatchObject({
+				semantics: { display: "hidden", display_kind: "synthetic_text", compressed_summary: false },
+			});
+			expect(projectEventsToMessages(events).map((message) => message.content)).toEqual([
+				"Inspect this workspace",
+				"Visible OpenCode answer",
+			]);
+			assertProjectionGolden("opencode-synthetic-text", events);
+		}
+	});
 	test.each([
 		["/repo/subdirectory", 1],
 		["/repo2", 0],
