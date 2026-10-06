@@ -287,7 +287,7 @@ export function deploySubmissionErrorPresentation(
 		if (isDefinitiveBillingRejection(error)) {
 			return {
 				title: "Subscription assignment didn’t start",
-				description: `${knownRecovery ?? "The request was rejected before it was accepted."} Review your choices and retry.`,
+				description: `${knownRecovery ?? "The request was rejected."} Review your choices and retry.`,
 			};
 		}
 		const reason = isNetworkError(error)
@@ -305,7 +305,7 @@ export function deploySubmissionErrorPresentation(
 		if (isDefinitiveBillingRejection(error)) {
 			return {
 				title: "Payment and creation didn’t start",
-				description: `${knownRecovery ?? "The request was rejected before it was accepted."} No Wallet payment was made. Review your choices and retry.`,
+				description: `${knownRecovery ?? "The request was rejected."} No Wallet payment was made. Review your choices and retry.`,
 			};
 		}
 		const reason = isNetworkError(error)
@@ -322,7 +322,7 @@ export function deploySubmissionErrorPresentation(
 	if (isDefinitiveBillingRejection(error)) {
 		return {
 			title: "Agent creation didn’t start",
-			description: `${knownRecovery ?? "The request was rejected before it was accepted."} Your choices are unchanged; review them and retry.`,
+			description: `${knownRecovery ?? "The request was rejected."} Your choices are unchanged. Review them and retry.`,
 		};
 	}
 	const reason = isNetworkError(error)
