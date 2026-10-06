@@ -10,7 +10,6 @@ import { loadMobileRuntimeConfig, RuntimeConfigProvider } from "@/lib/config/run
 import { I18nProvider } from "@/lib/i18n";
 import { AppearanceProvider } from "@/platform/appearance-provider";
 import { isDevAuthBypass } from "@/platform/auth/auth-client";
-import { useAppFonts } from "@/platform/fonts";
 import { MobileProviders } from "@/platform/mobile-providers";
 import { useNativeStackOptions } from "@/platform/navigation/native-header";
 import { formSheetOptions } from "@/platform/navigation/sheet-options";
@@ -40,10 +39,6 @@ function Navigation() {
 }
 
 export default function RootLayout() {
-	// Font loading is best effort; the hook registers Geist when available while
-	// the system-font fallback keeps navigation usable if Metro cannot serve an
-	// asset. Do not gate the entire app on this optional resource.
-	useAppFonts();
 	const runtime = loadMobileRuntimeConfig();
 	const app = runtime.ok ? (
 		<MobileProviders config={runtime.value}>

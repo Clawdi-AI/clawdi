@@ -5,6 +5,36 @@ function publicValue(name) {
 	return value || undefined;
 }
 
+/**
+ * Geist is embedded in the native binaries so text renders in the Web font from
+ * the first frame. Family names match the `--font-*` tokens in global.css: iOS
+ * uses each file's PostScript name (already `Geist-Regular`, ...); Android gets
+ * the same names through XML font families.
+ */
+const FONTS = [
+	["Geist-Regular", "geist/400Regular/Geist_400Regular.ttf"],
+	["Geist-Medium", "geist/500Medium/Geist_500Medium.ttf"],
+	["Geist-SemiBold", "geist/600SemiBold/Geist_600SemiBold.ttf"],
+	["Geist-Bold", "geist/700Bold/Geist_700Bold.ttf"],
+	["GeistMono-Regular", "geist-mono/400Regular/GeistMono_400Regular.ttf"],
+	["GeistMono-Medium", "geist-mono/500Medium/GeistMono_500Medium.ttf"],
+].map(([fontFamily, file]) => ({
+	fontFamily,
+	path: `./node_modules/@expo-google-fonts/${file}`,
+}));
+
+function fontPluginOptions() {
+	return {
+		ios: { fonts: FONTS.map((font) => font.path) },
+		android: {
+			fonts: FONTS.map(({ fontFamily, path }) => ({
+				fontFamily,
+				fontDefinitions: [{ path, weight: 400 }],
+			})),
+		},
+	};
+}
+
 module.exports = ({ config }) => {
 	const linkHosts = readLinkHosts(publicValue("EXPO_PUBLIC_CLAWDI_LINK_HOSTS"));
 	// Build-time identifiers are owner-selected; never infer a production app identity.
@@ -31,7 +61,7 @@ module.exports = ({ config }) => {
 		experiments: {
 			typedRoutes: true,
 		},
-		plugins: ["expo-router", "expo-secure-store"],
+		plugins: ["expo-router", "expo-secure-store", ["expo-font", fontPluginOptions()]],
 		...(Object.keys(ios).length ? { ios } : {}),
 		...(Object.keys(android).length ? { android } : {}),
 		...(linkHosts.length
