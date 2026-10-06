@@ -293,11 +293,10 @@ describe("backend image release workflow contract", () => {
 
 		const releaseGate = "steps.release-plan.outputs.release_required == 'true'";
 		expect(
-			imageRelease.jobs.build?.steps?.find((step) => step.uses === "docker/setup-buildx-action@v4")
-				?.with,
-		).toEqual({
-			"buildkitd-config-inline": '[registry."docker.io"]\n  mirrors = ["mirror.gcr.io"]\n',
-		});
+			imageRelease.jobs.build?.steps?.some(
+				(step) => step.uses === "./.github/actions/setup-docker-hub-mirror",
+			),
+		).toBe(true);
 		for (const name of [
 			"Build and push backend image",
 			"Build and push WhatsApp sidecar image",
