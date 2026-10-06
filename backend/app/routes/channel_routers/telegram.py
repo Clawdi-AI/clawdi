@@ -816,7 +816,9 @@ async def telegram_webhook(
             return TelegramWebhookResponse(ok=True, binding_id=existing.binding_id)
     message = messages[0][0] if messages else None
     offline_bindings = (
-        await consume_inbound_messages_for_offline_agents(db, account=account, messages=messages)
+        await consume_inbound_messages_for_offline_agents(
+            db, account=account, messages=messages, claim_reply=True
+        )
         if not binding_result.command_handled
         else ()
     )
