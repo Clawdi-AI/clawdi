@@ -412,6 +412,11 @@ async def test_admin_workload_scopes_revision_grant_and_immediate_revoke(
     )
     assert auth.client_id == credential.client_id
     token = await _access_token(workload_harness, "platform:keys:mint")
+    # This token keeps carrying the soon-to-be-revoked mint scope even when used
+    # for another still-authorized action.
+    combined_token = await _access_token(
+        workload_harness, "platform:keys:mint platform:runtime-state:write"
+    )
     from tests.conftest import create_env_with_project
 
     environment = await create_env_with_project(
@@ -442,12 +447,21 @@ async def test_admin_workload_scopes_revision_grant_and_immediate_revoke(
         headers={"X-Admin-Key": _ADMIN_KEY},
     )
     assert revoked.status_code == 200
+    await db_session.refresh(credential)
     denied = await client.post(
         "/v2/runtime/auth/keys",
         json=runtime_body,
         headers=_workload_headers(token, str(uuid.uuid4())),
     )
     assert denied.status_code == 403
+    with pytest.raises(PlatformWorkloadAccessError) as exc_info:
+        await authenticate_platform_workload_access_token(
+            db_session,
+            workload_harness.resolver,
+            combined_token,
+            required_scope="platform:runtime-state:write",
+        )
+    assert exc_info.value.status_code == 403
     stale = await client.put(
         path,
         json={**body, "expected_revision": granted.json()["revision"]},
@@ -468,6 +482,108 @@ async def test_admin_workload_scopes_revision_grant_and_immediate_revoke(
     assert all(event.actor_type == "admin" for event in audits)
     assert audits[0].details["before_revision"] == revision
     assert audits[0].details["after_revision"] == granted.json()["revision"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_repair_scope", [False, True])
+async def test_generic_scope_changes_preserve_dedicated_repair_authority(
+    workload_harness,
+    db_session,
+    has_repair_scope,
+):
+    credential = workload_harness.credential
+    credential_id = credential.id
+    current = ["platform:runtime-state:write"]
+    repair_scope = "platform:provider-environment:repair"
+    if has_repair_scope:
+        current.append(repair_scope)
+    credential.allowed_scopes = current
+    await db_session.commit()
+    base = f"/v1/admin/platform/workload-clients/{credential.client_id}"
+    inspected = await workload_harness.client.get(
+        f"{base}/provider-environment-verifier",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+    )
+    revision = inspected.json()["revision"]
+    requested = [scope for scope in current if scope != repair_scope]
+    if not has_repair_scope:
+        requested.append(repair_scope)
+    denied = await workload_harness.client.put(
+        f"{base}/scopes",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json={
+            "expected_revision": revision,
+            "scopes": requested,
+            "reason": "Change repair grant",
+        },
+    )
+    assert denied.status_code == 409, denied.text
+    assert "provider-environment-verifier" in denied.json()["detail"]
+    await db_session.refresh(credential)
+    assert credential.allowed_scopes == current
+    audits = await db_session.scalar(
+        select(func.count())
+        .select_from(ControlPlaneAuditEvent)
+        .where(
+            ControlPlaneAuditEvent.action == "platform.workload_client.scopes",
+            ControlPlaneAuditEvent.resource_id == str(credential_id),
+        )
+    )
+    assert audits == 0
+    changed = await workload_harness.client.put(
+        f"{base}/scopes",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json={
+            "expected_revision": revision,
+            "scopes": [*current, "platform:keys:mint"],
+            "reason": "Change unrelated grant",
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    assert (repair_scope in changed.json()["scopes"]) is has_repair_scope
+
+
+@pytest.mark.asyncio
+async def test_scopes_put_same_set_succeeds_with_stale_revision(workload_harness, db_session):
+    credential = workload_harness.credential
+    credential_id = credential.id
+    current = list(credential.allowed_scopes)
+    path = f"/v1/admin/platform/workload-clients/{credential.client_id}/scopes"
+    inspected = await workload_harness.client.get(
+        path.removesuffix("/scopes") + "/provider-environment-verifier",
+        headers={"X-Admin-Key": _ADMIN_KEY},
+    )
+    response = await workload_harness.client.put(
+        path,
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json={
+            "expected_revision": "0" * 64,
+            "scopes": list(reversed(current)),
+            "reason": "Retry scope grant",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["scopes"] == current
+    assert response.json()["revision"] == inspected.json()["revision"]
+    audits = await db_session.scalar(
+        select(func.count())
+        .select_from(ControlPlaneAuditEvent)
+        .where(
+            ControlPlaneAuditEvent.action == "platform.workload_client.scopes",
+            ControlPlaneAuditEvent.resource_id == str(credential_id),
+        )
+    )
+    assert audits == 0
+    changed = await workload_harness.client.put(
+        path,
+        headers={"X-Admin-Key": _ADMIN_KEY},
+        json={
+            "expected_revision": "0" * 64,
+            "scopes": [scope for scope in current if scope != "platform:keys:mint"],
+            "reason": "Change scope grant",
+        },
+    )
+    assert changed.status_code == 409, changed.text
 
 
 @pytest.mark.asyncio

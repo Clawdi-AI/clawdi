@@ -165,6 +165,25 @@ async def update_workload_client_scopes(
         if client is None:
             raise HTTPException(404, "Workload client not found")
         before = _access(client)
+        current_scopes = set(client.allowed_scopes)
+        requested_scopes = set(body.scopes)
+        response = AdminWorkloadClientScopesResponse(
+            client_id=client.client_id,
+            credential_id=client.id,
+            status=client.status,
+            scopes=client.allowed_scopes,
+            revision=before.revision,
+        )
+        if requested_scopes == current_scopes:
+            await db.rollback()
+            return response
+        if (PROVIDER_ENVIRONMENT_REPAIR_SCOPE in requested_scopes) != (
+            PROVIDER_ENVIRONMENT_REPAIR_SCOPE in current_scopes
+        ):
+            raise HTTPException(
+                409,
+                "Repair scope changes require the dedicated provider-environment-verifier flow",
+            )
         if body.expected_revision != before.revision:
             raise HTTPException(409, "Workload credential authority changed")
         if client.status != "active":
@@ -173,13 +192,8 @@ async def update_workload_client_scopes(
         client.allowed_scopes = list(body.scopes)
         # Authentication checks the current grant on every request. Keep unrelated
         # in-flight tokens valid on additive grants, as the verifier grant does.
-        response = AdminWorkloadClientScopesResponse(
-            client_id=client.client_id,
-            credential_id=client.id,
-            status=client.status,
-            scopes=client.allowed_scopes,
-            revision=_access(client).revision,
-        )
+        response.scopes = client.allowed_scopes
+        response.revision = _access(client).revision
         record_control_plane_audit(
             db,
             actor_type="admin",
