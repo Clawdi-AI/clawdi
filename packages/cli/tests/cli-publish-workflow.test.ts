@@ -119,6 +119,23 @@ describe("CLI publish workflow contract", () => {
 		expect(release.match(/release\/clawdi-cli-manifest-v2\.txt/g)).toHaveLength(2);
 	});
 
+	test("ships both platform installers as verified release assets", () => {
+		const build = workflowDocument.jobs["build-immutable-artifact"];
+		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
+		expect(build.steps?.find((step) => step.id === "pack_release")?.run).toContain(
+			'cp ../../install.ps1 "$release_dir/"',
+		);
+		expect(build.steps?.find((step) => step.id === "pack_release")?.run).toContain(
+			"[ScriptBlock]::Create((Get-Content -Raw ../../install.ps1))",
+		);
+		expect(publish.steps?.find((step) => step.id === "verify_release")?.run).toContain(
+			"test -s install.ps1",
+		);
+		const release = publish.steps?.find((step) => step.id === "release")?.run;
+		if (typeof release !== "string") throw new Error("release step is missing");
+		expect(release.match(/release\/install\.ps1/g)).toHaveLength(2);
+	});
+
 	test("attests native archives and both manifests after verification and before release", () => {
 		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
 		const steps = publish.steps ?? [];

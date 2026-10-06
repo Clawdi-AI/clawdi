@@ -1,0 +1,56 @@
+name: Windows native CLI
+
+on:
+  pull_request:
+    paths:
+      - "packages/cli/**"
+      - "packages/shared/**"
+      - "install.ps1"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/windows-native.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/cli/**"
+      - "packages/shared/**"
+      - "install.ps1"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/windows-native.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-native:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      BIOME_THREADS: "2"
+      CLAWDI_NO_AUTO_UPDATE: "1"
+      CLAWDI_NO_UPDATE_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Install dependencies without hooks
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Parse Windows installer and CI harness
+        shell: powershell
+        run: |
+          [ScriptBlock]::Create((Get-Content -Raw install.ps1)) | Out-Null
+          [ScriptBlock]::Create((Get-Content -Raw packages/cli/scripts/test-windows-native.ps1)) | Out-Null
+      - name: Build win32-x64 natively
+        env:
+          CLAWDI_NATIVE_TARGET: win32-x64
+        run: bun run --cwd packages/cli build:native
+      - name: Verify installer, activation, setup and daemon as an ordinary user
+        shell: powershell
+        run: |
+          & ./packages/cli/scripts/test-windows-native.ps1 -Repository $env:GITHUB_WORKSPACE -Bun (Get-Command bun).Source

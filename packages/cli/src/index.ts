@@ -1408,13 +1408,13 @@ program
 		}
 		if (opts.nativeActivate) {
 			const { activateStagedNativeRelease } = await import("./lib/native-activation.js");
-			const { isNativeTarget } = await import("./lib/native-release-manifest.js");
+			const { isNativeBuildTarget } = await import("./lib/native-release-manifest.js");
 			if (
 				!opts.nativeStage ||
 				!opts.nativePrefix ||
 				!opts.nativeVersion ||
 				!opts.nativeTarget ||
-				!isNativeTarget(opts.nativeTarget)
+				!isNativeBuildTarget(opts.nativeTarget)
 			) {
 				throw new Error("native activation requires a valid stage, prefix, version, and target");
 			}
