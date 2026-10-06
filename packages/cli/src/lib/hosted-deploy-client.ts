@@ -113,6 +113,8 @@ export class HostedDeployClient {
 	private readonly client: Client<DeployPaths>;
 	private readonly paidCheckoutSupported: boolean;
 	private readonly sleep: (delayMs: number) => Promise<void>;
+	private readonly auth: HostedDeployAuthProvider;
+	private readonly now: () => number;
 
 	constructor(options: HostedDeployClientOptions = {}) {
 		const config = getConfig();
@@ -129,6 +131,8 @@ export class HostedDeployClient {
 				cloudApiUrl: cloudBaseUrl,
 				hostedApiUrl: this.baseUrl,
 			});
+		this.auth = auth;
+		this.now = now;
 		const requestFetch = options.fetch ?? fetchWithTimeout;
 		this.client = createClient<DeployPaths>({
 			baseUrl: this.baseUrl,
@@ -156,6 +160,10 @@ export class HostedDeployClient {
 		});
 		this.client.use(authMiddleware(canonicalApiOrigin(this.baseUrl)));
 		this.cloudClient.use(authMiddleware(canonicalApiOrigin(cloudBaseUrl)));
+	}
+
+	async checkAuthorization(): Promise<void> {
+		assertHostedDeployAccessToken(await this.auth.getAccessToken(), this.now());
 	}
 
 	/**

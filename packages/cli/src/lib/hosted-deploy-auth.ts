@@ -61,20 +61,20 @@ export function assertHostedDeployAccessToken(
 	) {
 		throw new HostedDeployAuthorizationError(
 			"invalid_hosted_token",
-			"Deploying Cloud Agents requires a Clerk OAuth access token.",
+			"Deploying a Cloud Agent needs a browser sign-in. Run `clawdi auth login` (not --manual).",
 		);
 	}
 	const expiresAt = Date.parse(credential.expiresAt);
 	if (!Number.isFinite(expiresAt)) {
 		throw new HostedDeployAuthorizationError(
 			"invalid_hosted_token_expiry",
-			"Clerk OAuth returned an invalid token expiry.",
+			"Your sign-in has an invalid expiry. Run `clawdi auth login` again.",
 		);
 	}
 	if (expiresAt <= now + ACCESS_TOKEN_EXPIRY_SKEW_MS) {
 		throw new HostedDeployAuthorizationError(
 			"hosted_token_expired",
-			"Clerk OAuth access token expired. Run `clawdi auth login` again.",
+			"Your sign-in expired. Run `clawdi auth login` again.",
 		);
 	}
 	return token;
@@ -95,7 +95,7 @@ export function createHostedDeployAuthProvider(
 			if (!isClerkOAuthAuth(beforeRefresh)) {
 				throw new HostedDeployAuthorizationError(
 					"hosted_oauth_login_required",
-					"Deploying Cloud Agents requires a Clerk OAuth sign-in. Run `clawdi auth login` without --manual.",
+					"Deploying a Cloud Agent needs a browser sign-in. Run `clawdi auth login` (not --manual).",
 				);
 			}
 			try {
@@ -111,7 +111,7 @@ export function createHostedDeployAuthProvider(
 			if (!isClerkOAuthAuth(refreshed)) {
 				throw new HostedDeployAuthorizationError(
 					"hosted_oauth_login_required",
-					"Clerk OAuth sign-in is unavailable. Run `clawdi auth login` again.",
+					"Your sign-in is unavailable. Run `clawdi auth login` again.",
 				);
 			}
 			try {

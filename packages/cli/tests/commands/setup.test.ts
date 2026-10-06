@@ -183,6 +183,28 @@ describe("setup daemon install", () => {
 		expect(consoleOutput.some((line) => line.includes("Could not auto-register"))).toBe(false);
 	});
 
+	it("finishes setup after a hung MCP registration with a manual hint", async () => {
+		installEnvironmentMock("env-codex-timeout");
+		writeExecutable(
+			join(home, "bin", "codex"),
+			`#!/bin/sh
+case "$*" in
+  'mcp add clawdi -- '*) exec '${process.execPath}' -e 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)' ;;
+esac
+exit 0
+`,
+		);
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		expect(consoleOutput.join("\n")).toContain("MCP registration in Codex timed out.");
+		expect(consoleOutput.join("\n")).toMatch(/Run manually: codex mcp add clawdi -- \/.+ mcp/);
+		expect(
+			JSON.parse(readFileSync(join(home, ".clawdi", "environments", "codex.json"), "utf8")),
+		).toMatchObject({ id: "env-codex-timeout" });
+		expect(process.exitCode ?? 0).toBe(0);
+	}, 20_000);
+
 	it("keeps a manual MCP hint for Pi before 0.99.0", async () => {
 		const { captured } = installEnvironmentMock("env-pi");
 		process.env.PI_CODING_AGENT_DIR = join(home, "pi-agent");

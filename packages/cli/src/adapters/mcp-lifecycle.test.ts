@@ -6,19 +6,24 @@ import { piMcpLifecycle } from "./mcp-lifecycle";
 
 const originalPath = process.env.PATH;
 const originalLog = console.log;
+const originalError = console.error;
 let root = "";
 let output: string[] = [];
+let errors: string[] = [];
 
 beforeEach(() => {
 	root = mkdtempSync(join(tmpdir(), "clawdi-pi-mcp-"));
 	mkdirSync(join(root, "bin"));
 	process.env.PATH = `${join(root, "bin")}:${originalPath ?? ""}`;
 	output = [];
+	errors = [];
 	console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+	console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
 });
 
 afterEach(() => {
 	console.log = originalLog;
+	console.error = originalError;
 	if (originalPath === undefined) delete process.env.PATH;
 	else process.env.PATH = originalPath;
 	rmSync(root, { recursive: true, force: true });
@@ -102,6 +107,36 @@ describe("Pi MCP lifecycle", () => {
 		expect(output.join("\n")).toContain("Could not auto-register MCP server in Pi");
 		expect(output.join("\n")).toMatch(/Run manually: pi mcp add clawdi -- \/.+ mcp/);
 	});
+
+	test.each(["list", "add"])(
+		"returns with a manual command when the %s CLI hangs",
+		async (stage) => {
+			writeFileSync(
+				join(root, "bin", "pi"),
+				`#!/bin/sh
+printf '%s\\n' "$*" >> '${root}/calls'
+case "$*" in
+  --version) printf '1.0.4\\n'; exit 0 ;;
+  'mcp remove clawdi') exit 0 ;;
+  'mcp list --json') ${stage === "list" ? "" : "printf '{\"servers\":[]}'; exit 0"} ;;
+esac
+exec '${process.execPath}' -e 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'
+`,
+				{ mode: 0o755 },
+			);
+
+			await piMcpLifecycle.register();
+			// Subsequent setup work must remain reachable after a timed-out CLI.
+			await piMcpLifecycle.unregister();
+
+			expect(errors.join("\n")).toContain("MCP registration in Pi timed out.");
+			expect(errors.join("\n")).toMatch(/Run manually: pi mcp add clawdi -- \/.+ mcp/);
+			expect(output.join("\n")).not.toContain("MCP server registered");
+			expect(calls().at(-1)).toBe("mcp remove clawdi");
+			if (stage === "list") expect(calls().some((call) => call.startsWith("mcp add"))).toBe(false);
+		},
+		20_000,
+	);
 
 	test.each([0, 1])("unregisters through the official CLI with exit %s", async (exit) => {
 		stubPi("1.0.4", { servers: [] }, 0, exit);
