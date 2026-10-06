@@ -1322,11 +1322,25 @@ async def platform_get_api_key_usage(
             raise
         # An unknown owner still mismatches an existing key. Do not create a
         # principal during this read; reserve 404 for a missing key.
-        if await db.scalar(select(ApiKey.id).where(ApiKey.id == key_id)) is not None:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN, "API key is not owned by requested owner"
-            ) from None
-        raise
+        exists = await db.scalar(select(ApiKey.id).where(ApiKey.id == key_id))
+        await _reject(
+            db,
+            status_code=status.HTTP_403_FORBIDDEN
+            if exists is not None
+            else status.HTTP_404_NOT_FOUND,
+            detail="API key is not owned by requested owner"
+            if exists is not None
+            else "API key not found",
+            result="owner_mismatch" if exists is not None else "resource_not_found",
+            owner=owner,
+            owner_user_id=None,
+            resource_type="api_key",
+            resource_id=str(key_id),
+            action="api_key.usage",
+            request=request,
+            idempotency_key="",
+        )
+        raise AssertionError("unreachable")
     api_key = await _load_owned_key(
         db,
         key_id=key_id,

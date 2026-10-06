@@ -667,6 +667,27 @@ async def test_runtime_expiry_replay_usage_and_expired_ingestion(
         headers={"Authorization": f"Bearer {revoke_token}"},
     )
     assert unknown_missing.status_code == 404, unknown_missing.text
+    usage_rejections = list(
+        (
+            await db_session.scalars(
+                select(ControlPlaneAuditEvent).where(
+                    ControlPlaneAuditEvent.action == "api_key.usage",
+                    ControlPlaneAuditEvent.resource_id == minted.json()["id"],
+                )
+            )
+        ).all()
+    )
+    assert len(usage_rejections) == 2
+    assert {event.details["owner"]["ref"] for event in usage_rejections} == {
+        foreign.clerk_id,
+        unknown_owner["ref"],
+    }
+    assert {event.target_user_id for event in usage_rejections} == {foreign.id, None}
+    assert all(event.details["result"] == "owner_mismatch" for event in usage_rejections)
+    assert all(
+        event.details["workload_sub"] == workload_harness.client_id for event in usage_rejections
+    )
+    assert all(event.details["request_id"] for event in usage_rejections)
 
     ingestion_path = f"/v2/runtime/environments/{environment_id}/observations"
     observation_body = _payload().model_dump(mode="json", by_alias=True)
