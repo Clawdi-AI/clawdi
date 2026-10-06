@@ -140,7 +140,7 @@ authCmd
 	.command("login")
 	.description("Sign in through your browser")
 	.option("--manual", "Skip the browser flow and paste an API key instead")
-	.option("--no-open", "Print the authorization URL and securely paste the callback")
+	.option("--no-open", "Print the sign-in link and code without opening a browser")
 	.addOption(new Option("--desktop").hideHelp())
 	.addOption(new Option("--force").hideHelp())
 	.addHelpText(
@@ -164,7 +164,7 @@ authCmd
 
 authCmd
 	.command("complete")
-	.description("Finish a sign-in started in non-interactive mode (after browser approval)")
+	.description("Resume waiting for a pending sign-in")
 	.action(async () => {
 		const { authComplete } = await import("./commands/auth.js");
 		await authComplete();

@@ -94,7 +94,7 @@ describe("onboarding skill CLI contract", () => {
 
 	test("extracts flags from inline commands, multiline code, and piped stdin", () => {
 		const commands = skillCommands(
-			"`clawdi --version`\n`clawdi\npush --all`\n`printf '%s\\n' '<callback URL>' | clawdi auth complete`\n```bash\nclawdi session extract <id> --json\n```",
+			"`clawdi --version`\n`clawdi\npush --all`\n`clawdi auth complete`\n`printf x | clawdi session extract <id> --json`\n```bash\nclawdi session extract <id> --json\n```",
 		);
 		expect([...commands.entries()].map(([path, flags]) => [path, [...flags]])).toEqual([
 			["session extract", ["--json"]],

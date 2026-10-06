@@ -9,27 +9,20 @@ import {
 	captureStoredCredentialIdentity,
 	clearPendingClerkOAuthLogin,
 	commitClawdiCredential,
-	createClerkOAuthAuthorization,
 	createCredentialEndpointBinding,
 	describeCredentialEndpointBinding,
-	exchangeClerkOAuthCode,
 	fetchClerkOAuthClientConfig,
 	fetchClerkOAuthDiscovery,
 	isClerkOAuthAuth,
 	logoutClawdiCredentials,
+	persistClerkDeviceSlowDown,
 	persistPendingClerkOAuthLogin,
+	pollClerkDeviceToken,
 	type StoredCredentialIdentity,
+	startClerkDeviceAuthorization,
 	verifyAndPersistClerkOAuthLogin,
 } from "../lib/clerk-oauth";
-import { startClerkOAuthLoopback } from "../lib/clerk-oauth-loopback";
-import {
-	type ClerkOAuthAuth,
-	getAuth,
-	getConfig,
-	getPendingAuth,
-	isLoggedIn,
-	type PendingAuth,
-} from "../lib/config";
+import { getAuth, getConfig, getPendingAuth, isLoggedIn, type PendingAuth } from "../lib/config";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 
 export { browserOpenCommand } from "../lib/browser";
@@ -40,12 +33,6 @@ interface MeResponse {
 	name: string;
 }
 
-/**
- * Open a URL in the default browser. Best-effort: on headless machines or
- * when no opener is installed, the spawn silently no-ops and the user just
- * copies the URL out of the terminal. We don't want to crash the login flow
- * over a missing `xdg-open`.
- */
 async function verifyAndSaveLegacy(
 	apiKey: string,
 	apiUrl: string,
@@ -64,11 +51,21 @@ async function verifyAndSaveLegacy(
 	return me;
 }
 
+function loginMessage(message: string): void {
+	if (process.stdout.isTTY && process.stdin.isTTY) {
+		p.log.message(message, { output: process.stderr });
+	} else {
+		console.log(message);
+	}
+}
+
 function postLoginHint() {
-	p.log.message(
-		chalk.gray("Next: ") + chalk.bold("clawdi setup") + chalk.gray(" to register this machine."),
-	);
-	p.outro(chalk.gray("Credentials saved to ~/.clawdi/auth.json"));
+	loginMessage("Next: clawdi setup to register this machine.");
+	if (process.stdout.isTTY && process.stdin.isTTY) {
+		p.outro(chalk.gray("Credentials saved to ~/.clawdi/auth.json"), { output: process.stderr });
+	} else {
+		console.log("Credentials saved to ~/.clawdi/auth.json");
+	}
 }
 
 async function authLoginManual(apiUrl: string, expectedCredential: StoredCredentialIdentity) {
@@ -122,11 +119,6 @@ function isSshSession(): boolean {
 	return Boolean(process.env.SSH_CONNECTION || process.env.SSH_CLIENT || process.env.SSH_TTY);
 }
 
-function pendingAuthExpired(pending: PendingAuth): boolean {
-	const expiresAt = Date.parse(pending.expiresAt);
-	return !Number.isFinite(expiresAt) || expiresAt <= Date.now();
-}
-
 async function startOAuthLogin(
 	apiUrl: string,
 	hostedApiUrl: string,
@@ -141,7 +133,7 @@ async function startOAuthLogin(
 	}
 	const clientConfig = await fetchClerkOAuthClientConfig(endpointBinding.cloudApiOrigin);
 	const discovery = await fetchClerkOAuthDiscovery(clientConfig);
-	const pending = createClerkOAuthAuthorization({
+	const pending = await startClerkDeviceAuthorization({
 		config: clientConfig,
 		discovery,
 		apiUrl: endpointBinding.cloudApiOrigin,
@@ -151,119 +143,80 @@ async function startOAuthLogin(
 	return pending;
 }
 
-async function readCallbackFromStdin(): Promise<string> {
-	let input = "";
-	for await (const chunk of process.stdin) {
-		input += String(chunk);
-		if (input.length > 16_384) {
-			throw new ClerkOAuthError("invalid_oauth_callback", "OAuth callback input was too long.");
-		}
-	}
-	return input.trim();
+function printDeviceInstructions(pending: PendingAuth): void {
+	const seconds = Math.max(0, Math.ceil((Date.parse(pending.expiresAt) - Date.now()) / 1_000));
+	const lifetime = seconds >= 60 ? `${Math.ceil(seconds / 60)} minutes` : `${seconds} seconds`;
+	loginMessage(
+		"Sign in to Clawdi\n" +
+			`Open:  ${pending.verificationUriComplete ?? pending.verificationUri}\n` +
+			`Code:  ${pending.userCode}   (check that the page shows the same code)\n` +
+			`Approve only if you started this sign-in on this machine just now. It expires in ${lifetime}.\n` +
+			"Waiting for approval…",
+	);
 }
 
-async function promptForCallbackUrl(): Promise<string | null> {
-	if (!process.stdin.isTTY) {
-		const callback = await readCallbackFromStdin();
-		return callback || null;
-	}
-	const callback = await p.password({
-		message: "Paste the complete loopback callback URL from your browser",
-		validate: (value) => (value?.trim() ? undefined : "Callback URL cannot be empty"),
-	});
-	if (p.isCancel(callback)) return null;
-	return callback.trim();
-}
-
-export async function finishOAuthLogin(
+async function runDeviceLogin(
 	pending: PendingAuth,
-	callbackUrl: string,
-	expectedCredential: StoredCredentialIdentity,
-	opts: { quiet?: boolean } = {},
-): Promise<boolean> {
-	const spinner = opts.quiet ? null : p.spinner();
-	spinner?.start("Exchanging the authorization code...");
-	let auth: ClerkOAuthAuth;
+	expected: StoredCredentialIdentity,
+	ui: { open: boolean; quiet: boolean; progress?: (pending: PendingAuth) => void },
+): Promise<void> {
+	if (!ui.quiet) printDeviceInstructions(pending);
+	ui.progress?.(pending);
+	if (ui.open) openInBrowser(pending.verificationUriComplete ?? pending.verificationUri);
+	let auth: Awaited<ReturnType<typeof pollClerkDeviceToken>>;
 	try {
-		auth = await exchangeClerkOAuthCode(pending, callbackUrl);
+		auth = await pollClerkDeviceToken(pending, { onSlowDown: persistClerkDeviceSlowDown });
 	} catch (error) {
-		spinner?.stop(chalk.red("Authorization failed."));
-		if (
-			error instanceof ClerkOAuthError &&
-			!["invalid_oauth_callback", "oauth_network_error"].includes(error.code)
-		) {
-			await clearPendingClerkOAuthLogin(pending);
-		}
+		await clearPendingClerkOAuthLogin(pending);
 		throw error;
 	}
 
 	let verification: Awaited<ReturnType<typeof verifyAndPersistClerkOAuthLogin>>;
 	try {
 		verification = await verifyAndPersistClerkOAuthLogin(pending.apiUrl, auth, {
-			expectedCredential,
+			expectedCredential: expected,
 			pending,
 		});
 	} catch (error) {
-		spinner?.stop(chalk.red("Clawdi rejected the OAuth session."));
+		const current = getAuth();
+		if (
+			error instanceof ClerkOAuthError &&
+			error.code === "credential_state_changed" &&
+			isClerkOAuthAuth(current) &&
+			current.subject === auth.subject
+		) {
+			if (!ui.quiet) {
+				loginMessage(`Signed in as ${current.email || current.userId}`);
+				postLoginHint();
+			}
+			return;
+		}
 		throw error;
 	}
+	if (ui.quiet) return;
 	if (verification.kind === "cloud_unverified") {
-		spinner?.stop(chalk.yellow("Signed in; Clawdi couldn't verify your profile right now."));
-		if (!opts.quiet) {
-			p.log.message(
-				chalk.gray(
-					"The Clerk grant is saved, but Clawdi hasn't verified it. Run `clawdi auth status` and retry a command when the service recovers.",
-				),
-			);
-			postLoginHint();
-		}
-		return true;
+		loginMessage("Signed in; Clawdi couldn't verify your profile right now.");
+		loginMessage(
+			"The Clerk grant is saved, but Clawdi hasn't verified it. Run `clawdi auth status` and retry a command when the service recovers.",
+		);
+	} else {
+		const me = verification.user;
+		loginMessage(`Signed in as ${me.email || me.name || me.id}`);
 	}
-
-	const me = verification.user;
-	spinner?.stop(chalk.green(`Signed in as ${me.email || me.name || me.id}`));
-	if (!opts.quiet) postLoginHint();
-	return true;
+	postLoginHint();
 }
 
 function reportOAuthError(error: unknown): void {
-	if (error instanceof ClerkOAuthError) {
-		p.log.error(error.message);
+	const message =
+		error instanceof ClerkOAuthError
+			? error.message
+			: "Clawdi sign-in could not be completed. Run `clawdi auth login` again.";
+	if (process.stdout.isTTY && process.stdin.isTTY) {
+		p.log.error(message, { output: process.stderr });
 	} else {
-		p.log.error("Could not complete Clawdi OAuth sign-in. Check your connection and retry.");
+		console.error(message);
 	}
-	p.log.message(
-		chalk.gray("Legacy compatibility remains available with: ") +
-			chalk.bold("clawdi auth login --manual"),
-	);
 	process.exitCode = 1;
-}
-
-async function waitForLoopbackCallback(
-	pending: PendingAuth,
-	callbackUrl: Promise<string>,
-): Promise<string> {
-	const remainingMs = Math.max(1, Date.parse(pending.expiresAt) - Date.now());
-	let timeout: ReturnType<typeof setTimeout> | undefined;
-	try {
-		return await Promise.race([
-			callbackUrl,
-			new Promise<string>((_resolve, reject) => {
-				timeout = setTimeout(
-					() =>
-						reject(
-							new ClerkOAuthError(
-								"oauth_login_expired",
-								"OAuth sign-in expired. Run `clawdi auth login` again.",
-							),
-						),
-					remainingMs,
-				);
-			}),
-		]);
-	} finally {
-		if (timeout) clearTimeout(timeout);
-	}
 }
 
 export async function authLogin(opts: { manual?: boolean; open?: boolean } = {}) {
@@ -273,128 +226,65 @@ export async function authLogin(opts: { manual?: boolean; open?: boolean } = {})
 		p.log.info("Run `clawdi auth logout` first to switch accounts.");
 		return;
 	}
-
-	if (opts.manual && (!process.stdout.isTTY || !process.stdin.isTTY)) {
+	const interactive = Boolean(process.stdout.isTTY && process.stdin.isTTY);
+	if (opts.manual && !interactive) {
 		p.log.error("`clawdi auth login --manual` needs an interactive terminal.");
 		p.log.message(
-			chalk.gray("Run the command in a TTY, or use the default PKCE flow without --manual."),
+			chalk.gray("Run the command in a TTY, or use the default device flow without --manual."),
 		);
 		process.exitCode = 1;
 		return;
 	}
-
 	const config = getConfig();
-	const expectedCredential = captureStoredCredentialIdentity();
-
-	p.intro(chalk.bold("clawdi auth login"));
-
+	const expected = captureStoredCredentialIdentity();
 	if (opts.manual) {
-		await authLoginManual(config.apiUrl, expectedCredential);
+		p.intro(chalk.bold("clawdi auth login"));
+		await authLoginManual(config.apiUrl, expected);
 		return;
-	}
-
-	let pending: PendingAuth;
-	try {
-		pending = await startOAuthLogin(config.apiUrl, config.deployApiUrl, expectedCredential);
-	} catch (error) {
-		reportOAuthError(error);
-		return;
-	}
-	p.log.message(
-		"Authorize Clawdi in your browser:\n" +
-			chalk.gray("URL: ") +
-			chalk.underline(pending.authorizationUrl),
-	);
-
-	const interactive = Boolean(process.stdout.isTTY && process.stdin.isTTY);
-	const useLoopback = interactive && opts.open !== false && !isSshSession();
-	if (useLoopback) {
-		let loopback: Awaited<ReturnType<typeof startClerkOAuthLoopback>> | null = null;
-		try {
-			loopback = await startClerkOAuthLoopback(pending.redirectUri, pending.state);
-			openInBrowser(pending.authorizationUrl);
-			const callbackUrl = await waitForLoopbackCallback(pending, loopback.callbackUrl);
-			await finishOAuthLogin(pending, callbackUrl, expectedCredential);
-			return;
-		} catch (error) {
-			if (error instanceof ClerkOAuthError) {
-				if (error.code === "oauth_login_expired") {
-					await clearPendingClerkOAuthLogin(pending);
-				}
-				reportOAuthError(error);
-				return;
-			}
-			p.log.warn(
-				"Could not bind the registered loopback callback. Paste the browser callback instead.",
-			);
-			openInBrowser(pending.authorizationUrl);
-		} finally {
-			await loopback?.close();
-		}
-	}
-
-	if (!interactive) {
-		p.log.message(
-			chalk.gray(
-				"After browser authorization, run `clawdi auth complete` and provide the complete failed loopback callback URL on stdin, never as an argument.",
-			),
-		);
-		p.outro(chalk.gray("PKCE authorization state saved securely."));
-		return;
-	}
-
-	if (isSshSession()) {
-		p.log.message(
-			chalk.gray(
-				"SSH mode: open the URL on your local computer. The remote CLI cannot receive a local browser loopback callback.",
-			),
-		);
 	}
 	try {
-		const callbackUrl = await promptForCallbackUrl();
-		if (!callbackUrl) {
-			p.cancel("Authorization remains pending; run `clawdi auth complete` to resume.");
-			return;
-		}
-		await finishOAuthLogin(pending, callbackUrl, expectedCredential);
+		const pending = await startOAuthLogin(config.apiUrl, config.deployApiUrl, expected);
+		await runDeviceLogin(pending, expected, {
+			open: interactive && opts.open !== false && !isSshSession(),
+			quiet: false,
+		});
 	} catch (error) {
 		reportOAuthError(error);
 	}
 }
 
 export async function authComplete() {
-	if (isLoggedIn()) {
-		const existing = getAuth();
-		p.log.info(`Already signed in as ${existing?.email || existing?.userId || "unknown"}.`);
+	const existing = getAuth();
+	if (existing) {
+		loginMessage(`Already signed in as ${existing.email || existing.userId || "unknown"}.`);
 		return;
 	}
-
 	const pending = getPendingAuth();
 	if (!pending) {
-		p.log.error("No pending authorization. Run `clawdi auth login` first.");
-		process.exitCode = 1;
+		reportOAuthError(
+			new ClerkOAuthError("no_pending_auth", "No pending sign-in. Run `clawdi auth login`."),
+		);
 		return;
 	}
-
-	if (pending.authType !== "clerk_oauth_pkce" || pendingAuthExpired(pending)) {
-		p.log.error("Pending authorization has expired.");
-		p.log.message(chalk.gray("Run `clawdi auth login` again to start a new one."));
-		await clearPendingClerkOAuthLogin(pending);
-		process.exitCode = 1;
-		return;
-	}
-
-	p.intro(chalk.bold("clawdi auth complete"));
-	p.log.message(
-		chalk.gray("The callback contains a short-lived authorization code and will not be echoed."),
-	);
 	try {
-		const callbackUrl = await promptForCallbackUrl();
-		if (!callbackUrl) {
-			p.cancel("Cancelled.");
-			return;
+		if (pending.authType === "clerk_oauth_pkce") {
+			await clearPendingClerkOAuthLogin(pending);
+			throw new ClerkOAuthError(
+				"legacy_pending_auth",
+				"This sign-in was started by an older Clawdi CLI. Run `clawdi auth login` again.",
+			);
 		}
-		await finishOAuthLogin(pending, callbackUrl, { kind: "none" });
+		if (
+			!Number.isFinite(Date.parse(pending.expiresAt)) ||
+			Date.parse(pending.expiresAt) <= Date.now()
+		) {
+			await clearPendingClerkOAuthLogin(pending);
+			throw new ClerkOAuthError(
+				"oauth_login_expired",
+				"The code expired. Run `clawdi auth login` again.",
+			);
+		}
+		await runDeviceLogin(pending, { kind: "none" }, { open: false, quiet: false });
 	} catch (error) {
 		reportOAuthError(error);
 	}
@@ -402,37 +292,24 @@ export async function authComplete() {
 
 export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<void> {
 	const existing = getAuth();
-	if (isClerkOAuthAuth(existing) && !opts.force) {
-		console.log(
-			JSON.stringify({
-				schemaVersion: "clawdi.desktopLogin.v1",
-				status: "authenticated",
-				user: { id: existing.userId, ...(existing.email ? { email: existing.email } : {}) },
-			}),
-		);
-		return;
-	}
-
-	const config = getConfig();
-	const expectedCredential = captureStoredCredentialIdentity();
-	const pending = await startOAuthLogin(config.apiUrl, config.deployApiUrl, expectedCredential);
-	let loopback: Awaited<ReturnType<typeof startClerkOAuthLoopback>> | null = null;
-	try {
-		loopback = await startClerkOAuthLoopback(pending.redirectUri, pending.state, {
-			returnTarget: "desktop",
+	if (!isClerkOAuthAuth(existing) || opts.force) {
+		const config = getConfig();
+		const expected = captureStoredCredentialIdentity();
+		const pending = await startOAuthLogin(config.apiUrl, config.deployApiUrl, expected);
+		await runDeviceLogin(pending, expected, {
+			open: true,
+			quiet: true,
+			progress: (pending) =>
+				console.error(
+					JSON.stringify({
+						schemaVersion: "clawdi.desktopLogin.progress.v1",
+						verificationUri: pending.verificationUriComplete ?? pending.verificationUri,
+						userCode: pending.userCode,
+						expiresAt: pending.expiresAt,
+					}),
+				),
 		});
-		openInBrowser(pending.authorizationUrl);
-		const callbackUrl = await waitForLoopbackCallback(pending, loopback.callbackUrl);
-		await finishOAuthLogin(pending, callbackUrl, expectedCredential, { quiet: true });
-	} catch (error) {
-		if (error instanceof ClerkOAuthError && error.code === "oauth_login_expired") {
-			await clearPendingClerkOAuthLogin(pending);
-		}
-		throw error;
-	} finally {
-		await loopback?.close();
 	}
-
 	const auth = getAuth();
 	if (!isClerkOAuthAuth(auth)) throw new Error("Desktop sign-in did not save an OAuth session.");
 	console.log(

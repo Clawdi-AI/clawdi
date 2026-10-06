@@ -79,17 +79,15 @@ export interface ClerkOAuthAuth {
 
 export type ClawdiAuth = LegacyClawdiAuth | ClerkOAuthAuth;
 
-/**
- * Short-lived PKCE transaction state persisted between `clawdi auth login`
- * and `clawdi auth complete` for SSH and non-interactive callers. It contains
- * no access or refresh credential.
- */
-export interface PendingAuth {
-	authType: "clerk_oauth_pkce";
+/** Private device authorization state used by login and complete. */
+export interface PendingDeviceAuth {
+	authType: "clerk_oauth_device";
 	state: string;
-	codeVerifier: string;
-	authorizationUrl: string;
-	redirectUri: string;
+	deviceCode: string;
+	userCode: string;
+	verificationUri: string;
+	verificationUriComplete?: string;
+	interval: number;
 	issuer: string;
 	clientId: string;
 	audience: string;
@@ -97,8 +95,17 @@ export interface PendingAuth {
 	tokenEndpoint: string;
 	expiresAt: string;
 	apiUrl: string;
-	endpointBinding?: CredentialEndpointBinding;
+	endpointBinding: CredentialEndpointBinding;
 	scopes: string[];
+}
+
+export type PendingAuth = PendingDeviceAuth;
+
+/** Read only so transactions left by released CLIs can be cleared. */
+export interface LegacyPendingAuth {
+	authType: "clerk_oauth_pkce";
+	state: string;
+	expiresAt: string;
 }
 
 function readJson<T>(path: string): T | null {
@@ -226,8 +233,8 @@ export function isLoggedIn(): boolean {
 	return getAuth() !== null;
 }
 
-export function getPendingAuth(): PendingAuth | null {
-	return readRecoverablePrivateJson<PendingAuth>(pendingAuthFile());
+export function getPendingAuth(): PendingAuth | LegacyPendingAuth | null {
+	return readRecoverablePrivateJson<PendingAuth | LegacyPendingAuth>(pendingAuthFile());
 }
 
 export function setPendingAuth(pending: PendingAuth) {

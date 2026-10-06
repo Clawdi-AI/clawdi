@@ -278,6 +278,22 @@ curl -s http://127.0.0.1:17654/rpc \
   -d '{"jsonrpc":"2.0","id":1,"method":"operation.status","params":{"id":"<operation-id>"}}'
 ```
 
+`auth.login` without an API key starts device authorization and returns
+`status: "pending"`, `verification_uri`, optional `verification_uri_complete`,
+`user_code`, `expires_at`, `interval`, and `api_url`. Relay only the printed link
+and user code; verify the same code on Clerk's page and approve only a sign-in
+just started on this machine. `auth.status.pending_auth` contains
+`verification_uri`, `user_code`, `expires_at`, and `api_url` (or `null` for an old
+PKCE transaction). `auth.complete` accepts no parameters and makes one token
+poll, returning `pending`, `logged_in`, `denied`, `expired`, or `no_pending_auth`.
+Poll no faster than `interval` seconds; `slow_down` increases it by five seconds.
+A `logged_in` result includes `cloud_verified: false` when the grant is saved
+but Cloud verification is temporarily unavailable. The private device code is
+never returned. API-key imports retain their secret-access confirmation.
+
+Done: use `auth.login`, approve the link after checking the user code, then call
+`auth.complete` until `logged_in`; `auth.status` reports `clerk-oauth`.
+
 Vault operations are intentionally absent from the daemon control RPC.
 Agents use the authenticated Clawdi MCP endpoint; human operators use the
 foreground CLI commands directly.
