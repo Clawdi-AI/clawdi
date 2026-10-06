@@ -12,6 +12,11 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+### CLI 0.14.107
+
+- `clawdi push --project` includes Pi and OpenCode sessions in subdirectories while excluding similarly named sibling directories.
+- Shared Skill writes respect managed reservations across Claude Code, Codex, Hermes, and OpenClaw, preserving managed targets.
+
 ### CLI 0.14.106
 
 - Rejected sessions retry after CLI upgrades or within a day, and concurrent pushes preserve newer session history while allowing confirmed local truncation.
