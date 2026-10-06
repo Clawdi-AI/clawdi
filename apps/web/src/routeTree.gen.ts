@@ -10,7 +10,6 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ProtectedRouteImport } from './routes/_protected'
-import { Route as AgentSetupPromptDottxtRouteImport } from './routes/agent-setup-prompt[.]txt'
 import { Route as DesktopAuthRouteImport } from './routes/desktop-auth'
 import { Route as GetStartedDotmdRouteImport } from './routes/get-started[.]md'
 import { Route as LlmsDottxtRouteImport } from './routes/llms[.]txt'
@@ -70,11 +69,6 @@ import { Route as ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRouteImp
 
 const ProtectedRoute = ProtectedRouteImport.update({
   id: '/_protected',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AgentSetupPromptDottxtRoute = AgentSetupPromptDottxtRouteImport.update({
-  id: '/agent-setup-prompt.txt',
-  path: '/agent-setup-prompt.txt',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DesktopAuthRoute = DesktopAuthRouteImport.update({
@@ -397,7 +391,6 @@ const ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ProtectedDashboardIndexRoute
-  '/agent-setup-prompt.txt': typeof AgentSetupPromptDottxtRoute
   '/desktop-auth': typeof DesktopAuthRoute
   '/get-started.md': typeof GetStartedDotmdRoute
   '/llms.txt': typeof LlmsDottxtRoute
@@ -455,7 +448,6 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof ProtectedDashboardIndexRoute
-  '/agent-setup-prompt.txt': typeof AgentSetupPromptDottxtRoute
   '/desktop-auth': typeof DesktopAuthRoute
   '/get-started.md': typeof GetStartedDotmdRoute
   '/llms.txt': typeof LlmsDottxtRoute
@@ -512,7 +504,6 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_protected': typeof ProtectedRouteWithChildren
-  '/agent-setup-prompt.txt': typeof AgentSetupPromptDottxtRoute
   '/desktop-auth': typeof DesktopAuthRoute
   '/get-started.md': typeof GetStartedDotmdRoute
   '/llms.txt': typeof LlmsDottxtRoute
@@ -574,7 +565,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/agent-setup-prompt.txt'
     | '/desktop-auth'
     | '/get-started.md'
     | '/llms.txt'
@@ -632,7 +622,6 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/agent-setup-prompt.txt'
     | '/desktop-auth'
     | '/get-started.md'
     | '/llms.txt'
@@ -688,7 +677,6 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_protected'
-    | '/agent-setup-prompt.txt'
     | '/desktop-auth'
     | '/get-started.md'
     | '/llms.txt'
@@ -749,7 +737,6 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   ProtectedRoute: typeof ProtectedRouteWithChildren
-  AgentSetupPromptDottxtRoute: typeof AgentSetupPromptDottxtRoute
   DesktopAuthRoute: typeof DesktopAuthRoute
   GetStartedDotmdRoute: typeof GetStartedDotmdRoute
   LlmsDottxtRoute: typeof LlmsDottxtRoute
@@ -772,13 +759,6 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof ProtectedRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/agent-setup-prompt.txt': {
-      id: '/agent-setup-prompt.txt'
-      path: '/agent-setup-prompt.txt'
-      fullPath: '/agent-setup-prompt.txt'
-      preLoaderRoute: typeof AgentSetupPromptDottxtRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/desktop-auth': {
@@ -1338,7 +1318,6 @@ const SignUpRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   ProtectedRoute: ProtectedRouteWithChildren,
-  AgentSetupPromptDottxtRoute: AgentSetupPromptDottxtRoute,
   DesktopAuthRoute: DesktopAuthRoute,
   GetStartedDotmdRoute: GetStartedDotmdRoute,
   LlmsDottxtRoute: LlmsDottxtRoute,

@@ -14,7 +14,6 @@ export const AGENT_FILES = {
 		noindex: true,
 		cors: true,
 	},
-	setupPrompt: { path: "/agent-setup-prompt.txt", contentType: "text/plain", noindex: true },
 	llms: { path: "/llms.txt", contentType: "text/plain" },
 } as const;
 

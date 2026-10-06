@@ -4,7 +4,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { AGENT_FILES } from "@/lib/agent-files";
-import { agentSetupPrompt } from "@/lib/agent-setup-prompt";
 import { parseFrontmatter } from "../../../../packages/cli/src/lib/frontmatter";
 
 const instanceOrigin = "https://self-hosted.example";
@@ -28,7 +27,6 @@ import { GET as guide } from "./src/routes/get-started[.]md.ts";
 import { GET as skill } from "./src/routes/skills/clawdi/SKILL[.]md.ts";
 import { GET as index } from "./src/routes/[.]well-known/agent-skills/index[.]json.ts";
 import { GET as redirect } from "./src/routes/skill[.]md.ts";
-import { GET as prompt } from "./src/routes/agent-setup-prompt[.]txt.ts";
 import { GET as llms } from "./src/routes/llms[.]txt.ts";
 const responses = {};
 for (const [path, handler] of Object.entries({
@@ -36,7 +34,6 @@ for (const [path, handler] of Object.entries({
   "/skills/clawdi/SKILL.md": skill,
   "/.well-known/agent-skills/index.json": index,
   "/skill.md": redirect,
-  "/agent-setup-prompt.txt": prompt,
   "/llms.txt": llms,
 })) {
   const response = handler({ request: new Request(${JSON.stringify(instanceOrigin)} + path) });
@@ -108,12 +105,7 @@ for (const hosted of [false, true]) {
 			expect(existsSync(new URL("../../public/skill.md", import.meta.url))).toBe(false);
 		});
 
-		test("publishes the same prompt used by the dashboard and consistent llms links", () => {
-			const prompt = responses["/agent-setup-prompt.txt"];
-			expect(prompt.status).toBe(200);
-			expect(prompt.body).toBe(agentSetupPrompt(publicOrigin));
-			expect(prompt.body).toContain(`${publicOrigin}/get-started.md`);
-			expect(prompt.body).not.toContain("/skill.md");
+		test("serves consistent llms links for users and agents", () => {
 			const llms = responses["/llms.txt"];
 			expect(llms.status).toBe(200);
 			for (const path of [
@@ -126,7 +118,6 @@ for (const hosted of [false, true]) {
 			expect(llms.body).toContain("https://docs.clawdi.ai/llms.txt");
 			expect(llms.body).toContain("https://clawdi.ai/install.sh");
 			expect(llms.body).toContain(`[Dashboard](${instanceOrigin}/)`);
-			expect(llms.body).not.toContain("/agent-setup-prompt.txt");
 			expect(llms.body).not.toContain("/skill.md");
 		});
 
@@ -152,7 +143,6 @@ for (const hosted of [false, true]) {
 				const machineFile = [
 					"/skills/clawdi/SKILL.md",
 					"/.well-known/agent-skills/index.json",
-					"/agent-setup-prompt.txt",
 				].includes(path);
 				if (machineFile) {
 					expect(response.headers["x-robots-tag"], path).toBe("noindex");
@@ -179,9 +169,6 @@ for (const hosted of [false, true]) {
 test("hosted public files reuse the configured marketing origin without its path", async () => {
 	const responses = await routeResponses(true, "https://public.example/home");
 	expect(responses["/skill.md"].headers.location).toBe("https://public.example/get-started.md");
-	expect(responses["/agent-setup-prompt.txt"].body).toBe(
-		agentSetupPrompt("https://public.example"),
-	);
 	expect(responses["/llms.txt"].body).toContain("https://public.example/get-started.md");
 });
 
