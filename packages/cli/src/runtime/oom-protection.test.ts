@@ -186,9 +186,9 @@ esac
 	}
 });
 
-test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1")(
-	"native reload preserves PID; a higher-score smaller child OOM leaves the gateway alive",
-	async () => {
+test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1").each([0, 9])(
+	"native reload preserves PID and the gateway after child OOM (startup %is)",
+	async (startupDelay) => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-oom-native-"));
 		roots.push(root);
 		const unit = `clawdi-oom-proof-${crypto.randomUUID()}.service`;
@@ -198,14 +198,19 @@ test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1")(
 		const fixture = join(root, "gateway.py");
 		writeFileSync(
 			fixture,
-			`import pathlib, subprocess, sys, time
+			`import os, pathlib, socket, subprocess, sys, time
 if len(sys.argv) > 1:
     chunks = []
     for _ in range(192):
         chunks.append(bytearray(1024 * 1024))
         time.sleep(0.005)
     sys.exit(10)
+time.sleep(${startupDelay})
 resident = bytearray(80 * 1024 * 1024)
+notify = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+notify.connect(os.environ['NOTIFY_SOCKET'].replace('@', '\\0', 1))
+notify.send(b'READY=1')
+notify.close()
 while not pathlib.Path('${trigger}').exists():
     time.sleep(0.025)
 child = subprocess.Popen(['/bin/sh', '-c', 'echo 1000 > /proc/self/oom_score_adj; exec "$0" "$@"', sys.executable, __file__, 'child'])
@@ -216,7 +221,7 @@ while True:
     time.sleep(1)
 `,
 		);
-		const definition = `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\nExecStart=/usr/bin/python3 ${fixture}\nMemoryMax=144M\nMemorySwapMax=0\nOOMPolicy=stop\n[Install]\nWantedBy=multi-user.target\n`;
+		const definition = `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\nType=notify\nNotifyAccess=main\nTimeoutStartSec=12\nExecStart=/usr/bin/python3 ${fixture}\nMemoryMax=144M\nMemorySwapMax=0\nOOMPolicy=stop\n[Install]\nWantedBy=multi-user.target\n`;
 		writeFileSync(unitPath, definition);
 		const paths = {
 			...getRuntimePaths({ mode: "local" }),
@@ -251,7 +256,11 @@ while True:
 			expect(show("OOMPolicy")).toBe("continue");
 			const cg = join("/sys/fs/cgroup", show("ControlGroup"));
 			expect(readFileSync(join(cg, "memory.oom.group"), "utf8").trim()).toBe("0");
-			const eventsBefore = readFileSync(join(cg, "memory.events"), "utf8");
+			// Type=simple reports started before Python imports/resident allocation.
+			// Notify readiness keeps that startup time outside the child OOM deadline.
+			const oomKills = () =>
+				Number(readFileSync(join(cg, "memory.events"), "utf8").match(/^oom_kill (\d+)$/m)?.[1]);
+			const killsBefore = oomKills();
 			writeFileSync(trigger, "start");
 			const deadline = Date.now() + 8_000;
 			while (!existsSync(state) && Date.now() < deadline) await Bun.sleep(50);
@@ -266,7 +275,7 @@ while True:
 			expect(readFileSync(state, "utf8")).toBe("-9");
 			expect(show("ActiveState")).toBe("active");
 			expect(show("MainPID")).toBe(pid);
-			expect(readFileSync(join(cg, "memory.events"), "utf8")).not.toBe(eventsBefore);
+			expect(oomKills()).toBe(killsBefore + 1);
 			console.log(
 				"native OOM proof: daemon-reload kept PID; child SIGKILL; gateway active; memory.oom.group=0",
 			);
