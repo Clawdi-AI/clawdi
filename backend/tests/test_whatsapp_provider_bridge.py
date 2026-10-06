@@ -15,16 +15,19 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import app.services.channels as channel_service
 import app.services.whatsapp_delivery_transport as delivery_transport_module
 import app.services.whatsapp_provider_bridge as bridge_module
 from app.models.channel import (
     BINDING_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_WHATSAPP,
+    CHANNEL_RUNTIME_MARKER_AGENT_OFFLINE_REPLY,
     CHANNEL_VISIBILITY_PRIVATE,
     CHANNEL_VISIBILITY_PUBLIC,
     MESSAGE_DIRECTION_INBOUND,
     MESSAGE_DIRECTION_OUTBOUND,
     ChannelAccount,
+    ChannelAccountRuntimeMarker,
     ChannelBinding,
     ChannelBindingAlias,
     ChannelBotAgentLink,
@@ -1317,6 +1320,7 @@ async def test_whatsapp_provider_ingress_preserves_proto_aliases_and_account_ded
         )
     ).scalar_one()
     assert len(messages) == 1
+    assert messages[0].delivered_at is None
     assert messages[0].direction == MESSAGE_DIRECTION_INBOUND
     assert messages[0].binding_id == binding.id
     assert messages[0].external_chat_id == binding.external_chat_id
@@ -2281,3 +2285,43 @@ async def test_outbox_identity_is_durable_scoped_and_conflicts_without_overwriti
         )
         == 4
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing_claim", [False, True])
+async def test_concurrent_offline_reply_claims_have_one_winner(
+    client,
+    db_session,
+    channel_agent,
+    existing_claim,
+):
+    account, _link, binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name="wa-offline-concurrent-claim"
+    )
+    now = datetime.now(UTC)
+    if existing_claim:
+        db_session.add(
+            ChannelAccountRuntimeMarker(
+                account_id=account.id,
+                kind=CHANNEL_RUNTIME_MARKER_AGENT_OFFLINE_REPLY,
+                scope=str(binding.id),
+                outcome="sent",
+                updated_at=now - channel_service.AGENT_OFFLINE_REPLY_COOLDOWN,
+            )
+        )
+        await db_session.commit()
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    async def claim():
+        async with sessionmaker() as db:
+            won = await channel_service._claim_agent_offline_reply(
+                db,
+                account_id=account.id,
+                binding_id=binding.id,
+                last_seen=now - timedelta(hours=1),
+                now=now,
+            )
+            await db.commit()
+            return won
+
+    assert sorted(await asyncio.gather(claim(), claim())) == [False, True]
