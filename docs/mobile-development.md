@@ -883,18 +883,24 @@ plaintext or sensitive visibility so both Build and Update can resolve it.
 When unset, local config/prebuild omits the project id and update URL.
 Keep Sentry upload settings env-only: `SENTRY_ORG`, `SENTRY_PROJECT` and secret
 `SENTRY_AUTH_TOKEN`. Supply the token separately to the local OTA map uploader;
-EAS secret values are unavailable during Update. For builds without Sentry upload
-credentials, set the documented `SENTRY_DISABLE_AUTO_UPLOAD=true`.
+EAS secret values are unavailable during Update.
 
 `EXPO_PUBLIC_CLAWDI_ENV` is the sole environment source for validation and
 Sentry, including when updates are disabled and their channel is empty.
-Non-development builds require HTTPS Cloud/compute APIs and real Clerk auth;
+Non-development builds require `EXPO_PUBLIC_CLAWDI_ENV=preview` or `production`,
+HTTPS Cloud/compute APIs and real Clerk auth;
 `production` additionally requires a `pk_live_` key. Invalid values show
 `ConfigurationErrorScreen`. CI exports both platforms with bypass requested and
 rejects complete fixture identity/token literals; Clerk itself also ships
 `/dev_browser` and `dev_browser_unauthenticated`.
 
-After the owner supplies Expo/signing credentials, from `apps/mobile`:
+Owner's first-build checklist:
+
+1. **Without Sentry credentials, set `SENTRY_DISABLE_AUTO_UPLOAD=true` in the
+   selected EAS environment before the first build.** The plugin always installs
+   native upload hooks; omitting the DSN disables reporting, not those hooks.
+2. Configure the public values above and `EAS_PROJECT_ID` in that same environment.
+3. Supply Expo/signing credentials, then run from `apps/mobile`:
 
 ```bash
 eas build --profile preview --platform android

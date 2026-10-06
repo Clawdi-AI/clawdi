@@ -52,7 +52,11 @@ export function parseMobileRuntimeConfig(
 	const computeApiUrl = requiredString(values.computeApiUrl);
 	const revenueCatAppleKey = requiredString(values.revenueCatAppleKey);
 	const revenueCatGoogleKey = requiredString(values.revenueCatGoogleKey);
-	if (!isDevelopment && !requireClerk) return { ok: false, reason: "invalid" };
+	if (
+		!isDevelopment &&
+		(!requireClerk || (environment !== "preview" && environment !== "production"))
+	)
+		return { ok: false, reason: "invalid" };
 	if (
 		!cloudApiUrl ||
 		(requireClerk && !clerkPublishableKey) ||

@@ -165,7 +165,12 @@ describe("release configuration", () => {
 				],
 				{
 					cwd: fileURLToPath(new URL("../../../", import.meta.url)),
-					env: { ...process.env, EXPO_PUBLIC_CLAWDI_ENV: "production", TEST_SENTRY_DSN: dsn },
+					env: {
+						...process.env,
+						EXPO_PUBLIC_CLAWDI_ENV: "production",
+						TEST_SENTRY_DSN: dsn,
+						TEST_IS_DEVELOPMENT: "0",
+					},
 					timeout: 10_000,
 				},
 			);
@@ -173,9 +178,44 @@ describe("release configuration", () => {
 			expect(result.exitCode).toBe(0);
 		}
 	});
+	test("Sentry uses its SDK default environment when a development build has no value", () => {
+		for (const environment of [undefined, ""]) {
+			const result = Bun.spawnSync(
+				[
+					process.execPath,
+					fileURLToPath(new URL("../../../scripts/tests/runtime-environment.ts", import.meta.url)),
+				],
+				{
+					cwd: fileURLToPath(new URL("../../../", import.meta.url)),
+					env: {
+						...process.env,
+						EXPO_PUBLIC_CLAWDI_ENV: environment,
+						TEST_SENTRY_DSN: "https://public@example.test/1",
+						TEST_IS_DEVELOPMENT: "1",
+					},
+					timeout: 10_000,
+				},
+			);
+			expect(result.stderr.toString()).toBe("");
+			expect(result.exitCode).toBe(0);
+		}
+	});
+	test("requires an explicit preview or production environment outside development", () => {
+		for (const environment of [undefined, "", " ", "development", "staging", "Production"]) {
+			expect(parseMobileRuntimeConfig(values, { environment })).toEqual({
+				ok: false,
+				reason: "invalid",
+			});
+		}
+		for (const environment of ["preview", "production"]) {
+			expect(parseMobileRuntimeConfig(values, { environment }).ok).toBe(true);
+		}
+	});
 	test("requires compute for account deletion in every non-development build", () => {
 		for (const computeApiUrl of [undefined, "", "   "]) {
-			expect(parseMobileRuntimeConfig({ ...values, computeApiUrl })).toEqual({
+			expect(
+				parseMobileRuntimeConfig({ ...values, computeApiUrl }, { environment: "preview" }),
+			).toEqual({
 				ok: false,
 				reason: "missing",
 			});
@@ -212,7 +252,9 @@ describe("release configuration", () => {
 		});
 	});
 	test("cannot relax authentication outside development", () => {
-		expect(parseMobileRuntimeConfig(values, { requireClerk: false })).toEqual({
+		expect(
+			parseMobileRuntimeConfig(values, { requireClerk: false, environment: "preview" }),
+		).toEqual({
 			ok: false,
 			reason: "invalid",
 		});

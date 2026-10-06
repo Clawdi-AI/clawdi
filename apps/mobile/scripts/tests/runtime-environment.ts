@@ -1,7 +1,8 @@
 import { expect, mock } from "bun:test";
 
 // Run in a child process so native module mocks cannot leak into other suites.
-Object.defineProperty(globalThis, "__DEV__", { value: false });
+const isDevelopment = process.env.TEST_IS_DEVELOPMENT === "1";
+Object.defineProperty(globalThis, "__DEV__", { value: isDevelopment });
 const clawdi = {
 	cloudApiUrl: "https://cloud.example.test",
 	computeApiUrl: "https://compute.example.test",
@@ -17,7 +18,8 @@ const wrap = mock((component: unknown) => component);
 mock.module("@sentry/react-native", () => ({ init, captureException, wrap }));
 
 const { loadMobileRuntimeConfig } = await import("../../src/lib/config/runtime");
-expect(loadMobileRuntimeConfig()).toEqual({ ok: false, reason: "invalid" });
+if (isDevelopment) expect(loadMobileRuntimeConfig().ok).toBe(true);
+else expect(loadMobileRuntimeConfig()).toEqual({ ok: false, reason: "invalid" });
 clawdi.clerkPublishableKey = "pk_live_example";
 expect(loadMobileRuntimeConfig().ok).toBe(true);
 
@@ -27,7 +29,11 @@ reportRootError(new Error("Test root error"), "/settings");
 expect(wrapRootLayout(root)).toBe(root);
 if (clawdi.sentryDsn) {
 	expect(init).toHaveBeenCalledTimes(1);
-	expect(init.mock.calls[0]?.[0].environment).toBe("production");
+	if (process.env.EXPO_PUBLIC_CLAWDI_ENV) {
+		expect(init.mock.calls[0]?.[0].environment).toBe(process.env.EXPO_PUBLIC_CLAWDI_ENV);
+	} else {
+		expect(init.mock.calls[0]?.[0]).not.toHaveProperty("environment");
+	}
 	expect(init.mock.calls[0]?.[0]).not.toHaveProperty("release");
 	expect(init.mock.calls[0]?.[0]).not.toHaveProperty("dist");
 	expect(captureException).toHaveBeenCalledTimes(1);

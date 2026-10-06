@@ -4,12 +4,13 @@ import { scrubMobileBreadcrumb, scrubMobileEvent } from "./observability-scrubbe
 
 const configuredDsn: unknown = Constants.expoConfig?.extra?.clawdi?.sentryDsn;
 const dsn = typeof configuredDsn === "string" ? configuredDsn.trim() : "";
+const environment = process.env.EXPO_PUBLIC_CLAWDI_ENV;
 let pathname = "";
 
 if (dsn) {
 	Sentry.init({
 		dsn,
-		environment: process.env.EXPO_PUBLIC_CLAWDI_ENV,
+		...(environment ? { environment } : {}),
 		sendDefaultPii: false,
 		tracesSampleRate: 0.1,
 		beforeSend: (event) => scrubMobileEvent(event, pathname),
