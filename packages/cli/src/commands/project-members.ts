@@ -2,6 +2,8 @@ import chalk from "chalk";
 
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
+import { confirmOrRequireYes } from "../lib/prompts";
+import { isInteractive } from "../lib/tty";
 
 interface MemberRow {
 	id: string;
@@ -24,7 +26,7 @@ async function fetchMembers(
 
 export async function projectMembersCommand(
 	projectArg: string,
-	opts: { json?: boolean; remove?: string },
+	opts: { json?: boolean; remove?: string; yes?: boolean },
 ): Promise<void> {
 	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
@@ -48,6 +50,18 @@ export async function projectMembersCommand(
 			console.error(chalk.red(`'${opts.remove}' matches ${matches.length} members; pass user_id.`));
 			process.exitCode = 1;
 			return;
+		}
+		if (!opts.yes) {
+			if (!isInteractive()) {
+				console.error("--yes will be required in a non-interactive shell starting in 0.16");
+			} else if (
+				!(await confirmOrRequireYes(
+					`Remove ${matches[0].user_email ?? matches[0].user_id} from ${projectArg}?`,
+					{ action: "remove this project member" },
+				))
+			) {
+				return;
+			}
 		}
 		const removed = await authedJson<{ status: string }>(
 			ctx.apiUrl,
@@ -130,12 +144,24 @@ export async function projectLeaveCommand(
 
 export async function projectUnshareCommand(
 	projectArg: string,
-	opts: { json?: boolean },
+	opts: { json?: boolean; yes?: boolean },
 ): Promise<void> {
 	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
 
 	const projectId = await resolveProjectId(ctx.apiUrl, ctx.apiKey, projectArg);
+	if (!opts.yes) {
+		if (!isInteractive()) {
+			console.error("--yes will be required in a non-interactive shell starting in 0.16");
+		} else if (
+			!(await confirmOrRequireYes(
+				`Revoke all links, cancel all invites, and remove all viewers from ${projectArg}?`,
+				{ action: "stop sharing this project" },
+			))
+		) {
+			return;
+		}
+	}
 	const result = await authedJson<{
 		links_revoked: number;
 		members_removed: number;
