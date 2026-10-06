@@ -1,6 +1,6 @@
 import chalk from "chalk";
 
-import { ApiError, readJson } from "../lib/api-client";
+import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 
@@ -42,14 +42,16 @@ export async function projectInviteCommand(
 	}
 
 	const projectId = await resolveProjectId(apiUrl, apiKey, projectArg);
-	const r = await fetch(`${apiUrl}/v1/projects/${projectId}/invitations`, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${apiKey}`,
-			"Content-Type": "application/json",
+	const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
+		`/v1/projects/${projectId}/invitations`,
+		{
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ email: opts.email }),
 		},
-		body: JSON.stringify({ email: opts.email }),
-	});
+	);
 
 	if (r.status === 400 || r.status === 404 || r.status === 409) {
 		const body = (await r.json().catch(() => ({}))) as {

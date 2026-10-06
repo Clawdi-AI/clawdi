@@ -19,11 +19,13 @@ This remains additive for existing released CLI clients. New first-party CLI
 login uses Clerk's Public OAuth App Authorization Code + PKCE flow instead.
 """
 
+# The module-level httpx name remains a patch seam for transport tests.
+# pyright: reportUnusedImport=false
 import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
-import httpx
+import httpx  # noqa: F401 - retained as a patch seam for Clerk transport tests
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import delete, func, select
@@ -51,7 +53,13 @@ from app.schemas.cli_auth import (
 from app.services.api_key import mint_api_key
 from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
 from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
-from app.services.clerk_backend import clerk_backend_headers, clerk_backend_url
+from app.services.clerk_backend import (
+    ClerkBackendTimeoutError,
+    ClerkBackendTransportError,
+    clerk_backend_headers,
+    clerk_backend_url,
+    get_clerk_backend_client,
+)
 from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
 from app.services.distributed_state import SharedRateLimitExceeded, consume_shared_rate_limit
 
@@ -166,18 +174,17 @@ async def revoke_oauth_refresh_grant(
     url = clerk_backend_url(f"oauth_applications/{escaped_application_id}/revoke_token")
     headers = clerk_backend_headers()
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(
-                url,
-                headers=headers,
-                json={"token": body.refresh_token.get_secret_value()},
-            )
-    except httpx.TimeoutException:
+        response = await get_clerk_backend_client().post(
+            url,
+            headers=headers,
+            json={"token": body.refresh_token.get_secret_value()},
+        )
+    except ClerkBackendTimeoutError:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "OAuth CLI revocation is temporarily unavailable",
         ) from None
-    except httpx.HTTPError:
+    except ClerkBackendTransportError:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             "OAuth CLI revocation failed",
@@ -207,21 +214,20 @@ async def create_desktop_session_ticket(
         )
 
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            upstream = await client.post(
-                clerk_backend_url("sign_in_tokens"),
-                headers=clerk_backend_headers(),
-                json={
-                    "user_id": clerk_id,
-                    "expires_in_seconds": _DESKTOP_SESSION_TTL_SEC,
-                },
-            )
-    except httpx.TimeoutException:
+        upstream = await get_clerk_backend_client().post(
+            clerk_backend_url("sign_in_tokens"),
+            headers=clerk_backend_headers(),
+            json={
+                "user_id": clerk_id,
+                "expires_in_seconds": _DESKTOP_SESSION_TTL_SEC,
+            },
+        )
+    except ClerkBackendTimeoutError:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Desktop sign-in is temporarily unavailable",
         ) from None
-    except httpx.HTTPError:
+    except ClerkBackendTransportError:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             "Desktop sign-in failed",

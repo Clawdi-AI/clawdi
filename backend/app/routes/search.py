@@ -14,7 +14,7 @@ from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import and_, case, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -83,6 +83,7 @@ class SearchHit(BaseModel):
 class SearchResponse(BaseModel):
     query: str
     results: list[SearchHit]
+    failed_sources: list[str] = Field(default_factory=list)
 
 
 TYPE_LIMIT = 5
@@ -491,17 +492,14 @@ async def global_search(
         idx = next((i + 1 for i, (label, _fn) in enumerate(jobs) if label == "memories"), len(jobs))
         jobs.insert(idx, ("projects", _search_projects))
     hits: list[SearchHit] = []
+    failed_sources: list[str] = []
     for source, searcher in jobs:
         try:
-            r = await searcher(db, auth, query)
-        except Exception as exc:
-            log.warning(
-                "search source %s failed for user %s: %s",
-                source,
-                auth.user_id,
-                exc,
-                exc_info=exc,
-            )
+            async with db.begin_nested():
+                r = await searcher(db, auth, query)
+        except Exception:
+            log.exception("search source %s failed", source)
+            failed_sources.append(source)
             continue
         hits.extend(r)
-    return SearchResponse(query=query, results=hits)
+    return SearchResponse(query=query, results=hits, failed_sources=failed_sources)

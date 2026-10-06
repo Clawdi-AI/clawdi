@@ -103,11 +103,8 @@ async function downloadDesiredArchive(
 	agentId: string,
 	desired: DesiredSkill,
 ): Promise<Buffer> {
-	const response = await fetch(assertArchiveUrl(api, agentId, desired), {
-		headers: {
-			Authorization: `Bearer ${await api.getAccessToken()}`,
-			Accept: "application/gzip",
-		},
+	const response = await api.request(assertArchiveUrl(api, agentId, desired).toString(), {
+		headers: { Accept: "application/gzip" },
 		redirect: "error",
 	});
 	if (!response.ok) {

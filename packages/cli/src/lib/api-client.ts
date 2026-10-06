@@ -279,6 +279,7 @@ export class ApiClient {
 	private readonly abortSignal: AbortSignal | undefined;
 	private readonly requireAuth: boolean;
 	private readonly machineId: string | undefined;
+	private readonly authToken: string | undefined;
 
 	/**
 	 * @param opts.requireAuth — Default true. Set false for public bootstrap
@@ -295,6 +296,8 @@ export class ApiClient {
 			requireAuth?: boolean;
 			abortSignal?: AbortSignal;
 			machineId?: string;
+			authToken?: string;
+			baseUrl?: string;
 		} = {},
 	) {
 		const requireAuth = opts.requireAuth ?? true;
@@ -307,9 +310,10 @@ export class ApiClient {
 				hint: "Not logged in. Run `clawdi auth login` first.",
 			});
 		}
-		const baseUrl = normalizeCloudApiBaseUrl(config.apiUrl);
+		const baseUrl = normalizeCloudApiBaseUrl(opts.baseUrl ?? config.apiUrl);
 		this.baseUrl = baseUrl;
 		this.requireAuth = requireAuth;
+		this.authToken = opts.authToken;
 		this.abortSignal = opts.abortSignal;
 		this.machineId = normalizedMachineId(
 			opts.machineId ?? (requireAuth ? (readMachineId() ?? undefined) : undefined),
@@ -358,7 +362,30 @@ export class ApiClient {
 	}
 
 	async getAccessToken(): Promise<string> {
-		return this.requireAuth ? getClawdiAccessToken(this.baseUrl) : "";
+		return this.requireAuth ? (this.authToken ?? (await getClawdiAccessToken(this.baseUrl))) : "";
+	}
+
+	/** Send an untyped API request through the same auth and timeout pipeline. */
+	async request(path: string, init: RequestInit = {}): Promise<Response> {
+		const url = new URL(path, this.baseUrl);
+		if (url.origin !== new URL(this.baseUrl).origin) {
+			throw new ApiError({
+				status: 0,
+				body: "",
+				hint: "Cloud request origin changed before authorization. No credential was sent.",
+			});
+		}
+		const headers = new Headers(init.headers);
+		if (this.requireAuth) headers.set("Authorization", `Bearer ${await this.getAccessToken()}`);
+		headers.set("User-Agent", USER_AGENT);
+		if (this.machineId) headers.set(MACHINE_ID_HEADER, this.machineId);
+		headers.set(SKILL_SYNC_PROTOCOL_HEADER, SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1);
+		if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", randomUUID());
+		return retryingFetch(
+			new Request(url, { ...init, headers }),
+			DEFAULT_TIMEOUT_MS,
+			this.abortSignal,
+		);
 	}
 
 	get GET(): Client<paths>["GET"] {

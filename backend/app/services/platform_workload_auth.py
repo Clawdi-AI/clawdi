@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal, Protocol
 from urllib.parse import urlsplit
 
@@ -14,7 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ec import (
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
 from fastapi import Depends, Header, HTTPException, Request, status
 from pydantic import JsonValue, TypeAdapter, ValidationError
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -412,6 +412,44 @@ async def store_platform_workload_assertion_replay(
         .returning(PlatformWorkloadAssertionReplay.id)
     )
     return (await db.execute(statement)).scalar_one_or_none() is not None
+
+
+async def prune_platform_workload_assertion_replays(
+    db: AsyncSession,
+    *,
+    now: datetime,
+    limit: int,
+) -> int:
+    """Delete replay receipts that can no longer authorize a replay.
+
+    Assertions remain valid during the configured clock-skew allowance, so the
+    retention cutoff deliberately stays behind the current time by that same
+    allowance. The caller owns the transaction and commits the bounded batch.
+    """
+    if limit <= 0:
+        raise ValueError("replay retention limit must be positive")
+    cutoff = now - timedelta(seconds=PLATFORM_WORKLOAD_CLOCK_SKEW_SECONDS)
+    replay_ids = list(
+        (
+            await db.execute(
+                select(PlatformWorkloadAssertionReplay.id)
+                .where(PlatformWorkloadAssertionReplay.assertion_expires_at < cutoff)
+                .order_by(
+                    PlatformWorkloadAssertionReplay.assertion_expires_at,
+                    PlatformWorkloadAssertionReplay.id,
+                )
+                .limit(limit)
+            )
+        ).scalars()
+    )
+    if not replay_ids:
+        return 0
+    await db.execute(
+        delete(PlatformWorkloadAssertionReplay).where(
+            PlatformWorkloadAssertionReplay.id.in_(replay_ids)
+        )
+    )
+    return len(replay_ids)
 
 
 async def _safe_rollback(db: AsyncSession) -> None:

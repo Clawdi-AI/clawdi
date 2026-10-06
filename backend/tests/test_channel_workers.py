@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -404,6 +405,14 @@ async def test_channel_message_retention_worker_stops_between_batches(monkeypatc
         "app.services.channel_message_retention_worker.prune_channel_retention_batch",
         fake_prune,
     )
+    for platform_prune in (
+        "prune_platform_workload_assertion_replays",
+        "prune_platform_mutation_idempotency",
+    ):
+        monkeypatch.setattr(
+            f"app.services.channel_message_retention_worker.{platform_prune}",
+            AsyncMock(return_value=0),
+        )
     worker = ChannelMessageRetentionWorker(
         lambda: _FakeRetentionSession(),
         batch_size=3,
