@@ -20,6 +20,7 @@ from app.services.channel_wakeups import (
 )
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
 from app.services.channels import ChannelRetentionBatch
+from app.services.control_plane_audit_retention_worker import ControlPlaneAuditRetentionWorker
 from app.services.discord_command_reconciliation_worker import (
     DiscordCommandReconciliationWorker,
 )
@@ -50,6 +51,7 @@ def test_channel_worker_stack_runs_revoke_delivery_webhook_gateway_and_retention
         ChannelMessageRetentionWorker,
         RuntimeObservationRetentionWorker,
         SessionEventRetentionWorker,
+        ControlPlaneAuditRetentionWorker,
     )
 
 

@@ -649,6 +649,7 @@ def _record_deployment_managed_provider_audit(
     provider_id: str,
     outcome: str,
     provider_uuid: UUID | None = None,
+    extra_details: Mapping[str, JsonValue] | None = None,
 ) -> None:
     details: dict[str, Any] = {
         "auth_method": "x_admin_key",
@@ -659,6 +660,8 @@ def _record_deployment_managed_provider_audit(
     }
     if provider_uuid is not None:
         details["provider_uuid"] = str(provider_uuid)
+    if extra_details is not None:
+        details.update(extra_details)
     record_control_plane_audit(
         db,
         actor_type="admin",
@@ -668,6 +671,21 @@ def _record_deployment_managed_provider_audit(
         target_user_id=owner_user_id,
         source="api.admin",
         details=details,
+    )
+
+
+def _managed_provider_runtime_metadata_fingerprint(provider: AiProvider) -> str:
+    """Return a secret-free digest of the persisted runtime metadata."""
+
+    return platform_request_hash(
+        {
+            "type": provider.type,
+            "api_mode": provider.api_mode,
+            "managed_by": provider.managed_by,
+            "runtime_env_name": provider.runtime_env_name,
+            "base_url": provider.base_url,
+            "models": cast(JsonValue, provider.models),
+        }
     )
 
 
@@ -1097,15 +1115,9 @@ async def admin_get_clawdi_managed_ai_provider(
         )
         await db.commit()
         raise
-    _record_deployment_managed_provider_audit(
-        db,
-        action=action,
-        owner=owner,
-        owner_user_id=target.id,
-        provider_id=provider_id,
-        provider_uuid=provider.id,
-        outcome="success",
-    )
+    # Successful reads return no secret material and are not control-plane
+    # mutations; Hosted polls this on every reconcile pass. Only denied or
+    # failed reads are audited.
     await db.commit()
     return response
 
@@ -1325,6 +1337,7 @@ async def admin_replace_deployment_managed_ai_provider_metadata(
             owner_user_id=target.id,
             provider_id=provider_id,
         )
+    metadata_before = _managed_provider_runtime_metadata_fingerprint(provider)
     try:
         _require_managed_provider_contract(provider)
         changed = replace_managed_provider_runtime_metadata(
@@ -1350,18 +1363,24 @@ async def admin_replace_deployment_managed_ai_provider_metadata(
         if isinstance(exc, HTTPException):
             raise
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    # Hosted replays unchanged metadata on every reconcile pass; only a real
+    # change is persisted, invalidates runtimes, and is audited.
     if changed:
         await db.flush()
         await queue_provider_runtime_manifest_changed(db, target.id, provider_id)
-    _record_deployment_managed_provider_audit(
-        db,
-        action=action,
-        owner=owner,
-        owner_user_id=target.id,
-        provider_id=provider_id,
-        provider_uuid=provider.id,
-        outcome="success",
-    )
+        _record_deployment_managed_provider_audit(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            provider_uuid=provider.id,
+            outcome="success",
+            extra_details={
+                "metadata_before": metadata_before,
+                "metadata_after": _managed_provider_runtime_metadata_fingerprint(provider),
+            },
+        )
     await db.commit()
     await db.refresh(provider)
     return await _admin_deployment_managed_provider_response(

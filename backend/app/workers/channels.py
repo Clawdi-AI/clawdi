@@ -14,6 +14,7 @@ from app.services.ai_provider_oauth_revoke_worker import AiProviderOAuthRevokeWo
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
+from app.services.control_plane_audit_retention_worker import ControlPlaneAuditRetentionWorker
 from app.services.discord_command_reconciliation_worker import (
     DiscordCommandReconciliationWorker,
 )
@@ -150,6 +151,7 @@ def build_channel_workers() -> tuple[
     ChannelMessageRetentionWorker,
     RuntimeObservationRetentionWorker,
     SessionEventRetentionWorker,
+    ControlPlaneAuditRetentionWorker,
 ]:
     """Build the Clawdi-owned channel worker stack.
 
@@ -166,6 +168,7 @@ def build_channel_workers() -> tuple[
         ChannelMessageRetentionWorker(async_session_factory),
         RuntimeObservationRetentionWorker(async_session_factory),
         SessionEventRetentionWorker(async_session_factory),
+        ControlPlaneAuditRetentionWorker(async_session_factory),
     )
 
 
