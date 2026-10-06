@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { ApiClient, readJson, unwrap } from "../lib/api-client";
+import { ApiClient, ApiError, readJson, unwrap } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { openInBrowser } from "../lib/browser";
 import {
@@ -42,6 +42,13 @@ async function verifyAndSaveLegacy(
 	const res = await fetch(`${endpointBinding.cloudApiOrigin}/v1/auth/me`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
+	if (res.status === 401) {
+		throw new ApiError({
+			status: res.status,
+			body: await res.text(),
+			hint: "Double-check the key from Settings → API Keys in the dashboard.",
+		});
+	}
 	if (!res.ok) return null;
 	const me = await readJson<MeResponse>(res, "/v1/auth/me");
 	await commitClawdiCredential(
@@ -70,10 +77,11 @@ function postLoginHint() {
 
 async function authLoginManual(apiUrl: string, expectedCredential: StoredCredentialIdentity) {
 	p.log.message(
-		"To get an API key:\n" +
+		"For servers and automation, create a scoped, expiring API key:\n" +
 			chalk.gray("  1. Sign in at the Clawdi dashboard\n") +
 			chalk.gray("  2. Open Settings → API Keys\n") +
-			chalk.gray("  3. Create a new key and copy it"),
+			chalk.gray("  3. Select the required scopes and expiry, then create and copy the key\n") +
+			chalk.gray("On your own computer, use `clawdi auth login` instead."),
 		{ output: process.stderr },
 	);
 
@@ -94,6 +102,13 @@ async function authLoginManual(apiUrl: string, expectedCredential: StoredCredent
 	try {
 		me = await verifyAndSaveLegacy(trimmed, apiUrl, expectedCredential);
 	} catch (e) {
+		if (e instanceof ApiError) {
+			verifySpinner.stop(chalk.red("Invalid API key"));
+			p.log.message(chalk.gray(e.hint), { output: process.stderr });
+			p.outro(chalk.red("Aborted."), { output: process.stderr });
+			process.exitCode = 1;
+			return;
+		}
 		const msg = e instanceof Error ? e.message : String(e);
 		verifySpinner.stop(chalk.red("Could not reach the API"));
 		p.log.error(`Network error: ${msg}`, { output: process.stderr });

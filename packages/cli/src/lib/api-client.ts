@@ -30,6 +30,16 @@ const USER_AGENT = `clawdi-cli/${getCliVersion()}`;
 const MACHINE_ID_HEADER = "X-Clawdi-Machine-Id";
 const MACHINE_ID_MAX_LENGTH = 200;
 
+function isExpiredApiKeyResponse(body: string): boolean {
+	if (body === "API key has expired") return true;
+	try {
+		const payload: unknown = JSON.parse(body);
+		return extractApiDetail(payload) === "API key has expired";
+	} catch {
+		return false;
+	}
+}
+
 function normalizedMachineId(value: string | undefined): string | undefined {
 	if (value === undefined) return undefined;
 	const machineId = value.trim();
@@ -58,11 +68,15 @@ export class ApiError extends Error {
 		isNetwork?: boolean;
 		isTimeout?: boolean;
 	}) {
-		super(`API error ${opts.status}: ${opts.body || opts.hint}`);
+		const hint =
+			opts.status === 401 && isExpiredApiKeyResponse(opts.body)
+				? "Your API key has expired. Create a new scoped, expiring key in Settings → API Keys, or run `clawdi auth login`."
+				: opts.hint;
+		super(`API error ${opts.status}: ${opts.body || hint}`);
 		this.name = "ApiError";
 		this.status = opts.status;
 		this.body = opts.body;
-		this.hint = opts.hint;
+		this.hint = hint;
 		this.isNetwork = opts.isNetwork ?? false;
 		this.isTimeout = opts.isTimeout ?? false;
 	}

@@ -135,6 +135,36 @@ describe("ApiClient error classification", () => {
 		}
 	});
 
+	it("gives expired-key recovery guidance for typed and raw API requests", async () => {
+		fakeLogin("http://127.0.0.1:0");
+		const origFetch = globalThis.fetch;
+		globalThis.fetch = async () =>
+			Response.json({ detail: "API key has expired" }, { status: 401 });
+		try {
+			const { ApiClient, unwrap } = await import("../src/lib/api-client");
+			const api = new ApiClient();
+			for (const request of [
+				async () => unwrap(await api.GET("/v1/auth/me")),
+				async () => api.getBytes("/v1/auth/me"),
+			]) {
+				let caught: unknown;
+				try {
+					await request();
+				} catch (error) {
+					caught = error;
+				}
+				expect(caught).toBeInstanceOf(ApiError);
+				if (!(caught instanceof ApiError)) throw new Error("Expected API error");
+				expect(caught.status).toBe(401);
+				expect(caught.hint).toContain("API key has expired");
+				expect(caught.hint).toContain("Settings → API Keys");
+				expect(caught.hint).toContain("clawdi auth login");
+			}
+		} finally {
+			globalThis.fetch = origFetch;
+		}
+	});
+
 	it("retries 5xx on GET up to the configured max", async () => {
 		fakeLogin("http://127.0.0.1:0");
 		const origFetch = globalThis.fetch;

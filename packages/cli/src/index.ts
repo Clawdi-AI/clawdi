@@ -139,7 +139,7 @@ const authCmd = program.command("auth").description("Sign in to Clawdi");
 authCmd
 	.command("login")
 	.description("Sign in through your browser")
-	.option("--manual", "Skip the browser flow and paste an API key instead")
+	.option("--manual", "Paste a scoped, expiring API key (for servers and automation)")
 	.option("--no-open", "Print the sign-in link and code without opening a browser")
 	.addOption(new Option("--desktop").hideHelp())
 	.addOption(new Option("--force").hideHelp())
