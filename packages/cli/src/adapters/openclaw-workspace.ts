@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { isAbsolute } from "node:path";
-import { runOpenClawCommand } from "./openclaw-command";
+import { resolveOpenClawCommandPath, runOpenClawCommand } from "./openclaw-command";
 
 const WORKSPACE_RESOLUTION_ERROR =
 	"OpenClaw workspace resolution requires `openclaw agents list --json`";
@@ -29,7 +29,13 @@ export function parseOpenClawAgentWorkspaces(output: string): OpenClawAgentWorks
 }
 
 export function listOpenClawAgentWorkspaces(): OpenClawAgentWorkspace[] {
-	const result = spawnSync("openclaw", ["agents", "list", "--json"], {
+	let command: string;
+	try {
+		command = resolveOpenClawCommandPath();
+	} catch {
+		throw new Error(WORKSPACE_RESOLUTION_ERROR);
+	}
+	const result = spawnSync(command, ["agents", "list", "--json"], {
 		encoding: "utf8",
 		env: process.env,
 		maxBuffer: 1024 * 1024,

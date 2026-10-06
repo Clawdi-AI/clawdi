@@ -44,6 +44,9 @@ const saved = {
 	HERMES_PROFILE: process.env.HERMES_PROFILE,
 	OPENCLAW_STATE_DIR: process.env.OPENCLAW_STATE_DIR,
 	OPENCLAW_AGENT_ID: process.env.OPENCLAW_AGENT_ID,
+	CLAWDI_RUNTIME_USER: process.env.CLAWDI_RUNTIME_USER,
+	CLAWDI_RUNTIME_UID: process.env.CLAWDI_RUNTIME_UID,
+	CLAWDI_RUNTIME_GID: process.env.CLAWDI_RUNTIME_GID,
 };
 let home = "";
 let fixture = "";
@@ -481,6 +484,54 @@ test("multiple removed names rename only the most recent match without blocking 
 		warn.mockRestore();
 	}
 });
+
+test.each([".local", ".openclaw"])(
+	"OpenClaw discovers the absolute %s installation and falls back to legacy sessions when absent",
+	async (installation) => {
+		const stateRoot = join(home, ".openclaw");
+		const legacySessions = join(stateRoot, "agents", "main", "sessions");
+		mkdirSync(legacySessions, { recursive: true });
+		writeFileSync(
+			join(legacySessions, "sessions.json"),
+			JSON.stringify({ fixture: { sessionId: "legacy", updatedAt: 1776247200000 } }),
+		);
+		writeFileSync(
+			join(legacySessions, "legacy.jsonl"),
+			JSON.stringify({
+				type: "message",
+				timestamp: 1776247200000,
+				message: { role: "user", content: "legacy fixture" },
+			}),
+		);
+		const command = join(home, installation, "bin", "openclaw");
+		executable(
+			command,
+			`test "$*" = "agents list --json" || exit 1
+printf '[{"id":"main","workspace":"%s/workspace"},{"id":"sales","workspace":"%s/workspace-sales"}]' "$HOME" "$HOME"`,
+		);
+		// A PATH command must never substitute for a missing runtime-user installation.
+		executable(
+			join(home, "bin", "openclaw"),
+			`printf '[{"id":"main","workspace":"%s/wrong-workspace"}]' "$HOME"`,
+		);
+		process.env.PATH = `${join(home, "bin")}:/usr/local/bin:/usr/bin:/bin`;
+		process.env.OPENCLAW_STATE_DIR = stateRoot;
+		delete process.env.OPENCLAW_AGENT_ID;
+		process.env.CLAWDI_RUNTIME_USER = "fixture-agent";
+		process.env.CLAWDI_RUNTIME_UID = String(process.getuid?.());
+		process.env.CLAWDI_RUNTIME_GID = String(process.getgid?.());
+		const adapter = new OpenClawAdapter();
+		const discovery = await discoverAgentProfiles(adapter);
+		expect(discovery.complete).toBeTrue();
+		expect(discovery.profiles.map((profile) => profile.profileKey)).toEqual(["", "sales"]);
+		rmSync(command);
+		const incomplete = await discoverAgentProfiles(adapter);
+		expect(incomplete.complete).toBeFalse();
+		expect(incomplete.profiles.map((profile) => profile.profileKey)).toEqual([""]);
+		const sessions = await incomplete.profiles[0]?.reader?.collect({ kind: "complete" });
+		expect(sessions?.sessions.map((session) => session.localSessionId)).toEqual(["legacy"]);
+	},
+);
 
 test("OpenClaw official roster honors the configured default and attributes receipts before sync", async () => {
 	const stateRoot = join(home, ".openclaw");

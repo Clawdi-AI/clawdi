@@ -39,6 +39,7 @@ import {
 } from "./base";
 import {
 	OpenClawSdkExitError,
+	resolveOpenClawCommandPath,
 	runOpenClawCommand,
 	runOpenClawSdkCommand,
 } from "./openclaw-command";
@@ -987,7 +988,11 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	}
 
 	async getVersion(): Promise<string | null> {
-		return readCommandVersion("openclaw", ["--version"]);
+		try {
+			return readCommandVersion(resolveOpenClawCommandPath(), ["--version"]);
+		} catch {
+			return null;
+		}
 	}
 
 	private async scanSessions(
@@ -1377,7 +1382,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					target: targetDir,
 					operation: () => {
 						const result = spawnSync(
-							"openclaw",
+							resolveOpenClawCommandPath(),
 							[
 								"skills",
 								"install",

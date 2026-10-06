@@ -24,12 +24,14 @@ function sdkFixture(source: string): string {
 const params = { agentId: "main", sessionId: "fixture", sessionKey: "agent:main:main" };
 
 describe("OpenClaw transcript SDK command", () => {
-	test("uses setpriv and preserves inherited OpenClaw state plus fd 3", async () => {
+	test("uses absolute installed paths with setpriv and preserves OpenClaw state plus fd 3", async () => {
 		const root = mkdtempSync(join(tmpdir(), "projection-rev7-runtime-user-"));
 		roots.push(root);
 		chmodSync(root, 0o755);
 		const bin = join(root, "bin");
 		mkdirSync(bin);
+		const tenantBin = join(root, ".local", "bin");
+		mkdirSync(tenantBin, { recursive: true });
 		chmodSync(bin, 0o755);
 		const commandOutput = join(root, "command-env.txt");
 		writeFileSync(commandOutput, "", { mode: 0o666 });
@@ -49,8 +51,9 @@ exec "$@"
 `,
 			{ mode: 0o755 },
 		);
+		writeFileSync(join(bin, "node"), "#!/bin/sh\nexit 99\n", { mode: 0o755 });
 		writeFileSync(
-			join(bin, "openclaw"),
+			join(tenantBin, "openclaw"),
 			`#!/bin/sh
 printf '%s|%s|%s|%s|%s\\n' "$CLAWDI_TEST_SETUID" "$OPENCLAW_STATE_DIR" "$OPENCLAW_CONFIG_PATH" "$HOME" "$USER" > "$CLAWDI_TEST_OUTPUT"
 printf '{"ok":true}\\n'
@@ -109,6 +112,8 @@ export function readVisibleSessionTranscriptMessageEntries() {
 			]);
 			const commandDropArgs = readFileSync(setprivArgs, "utf8");
 			expect(commandDropArgs).toContain("--reuid=65534");
+			expect(commandDropArgs).toContain(join(tenantBin, "openclaw"));
+			expect(commandDropArgs).not.toContain(`PATH=${tenantBin}`);
 
 			const entries = JSON.parse(
 				await runOpenClawSdkCommand(
@@ -124,6 +129,9 @@ export function readVisibleSessionTranscriptMessageEntries() {
 				config: inheritedConfig,
 			});
 			expect(readFileSync(setprivArgs, "utf8")).toContain("--reuid=65534");
+			expect(readFileSync(setprivArgs, "utf8")).toContain(
+				`${process.execPath} --max-old-space-size=256`,
+			);
 
 			delete process.env.OPENCLAW_STATE_DIR;
 			delete process.env.OPENCLAW_CONFIG_PATH;
