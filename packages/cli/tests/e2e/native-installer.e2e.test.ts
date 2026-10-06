@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
 	chmodSync,
@@ -37,11 +37,167 @@ const nativeBinary = configuredNativeBinary();
 const enabled = nativeBinary && process.platform === "linux" && process.arch === "x64";
 const roots: string[] = [];
 
-afterAll(() => {
+afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 (enabled ? describe : describe.skip)("native installer lifecycle", () => {
+	it("adds the zsh PATH block once and preserves it on a second install", () => {
+		const input = pathInstallerFixture("prefix with spaces and $cash");
+		const profile = join(input.home, ".zshrc");
+		const existing = "# Existing shell settings\n";
+		writeFileSync(profile, existing);
+		const options = { ...input, env: { SHELL: "/bin/zsh" } };
+		const first = runNativeInstaller(options);
+		expect(first.code, first.stderr).toBe(0);
+		expect(first.stdout).toContain(`Added ${input.prefix}/bin to PATH in ${profile}.`);
+		expect(first.stdout).toContain("Open a new terminal, or run:");
+		const configured = readFileSync(profile, "utf8");
+		expect(configured.startsWith(existing)).toBeTrue();
+		expect(configured.split("# Added by the Clawdi installer")).toHaveLength(2);
+		const shell = command("sh", ["-c", '. "$1"; . "$1"; printf "%s\\n" "$PATH"', "sh", profile], {
+			...process.env,
+			PATH: "/usr/bin:/bin",
+		});
+		expect(shell.code, shell.stderr).toBe(0);
+		expect(shell.stdout.trim()).toBe(`${input.prefix}/bin:/usr/bin:/bin`);
+		const alreadyConfigured = command(
+			"sh",
+			["-c", '. "$1"; printf "%s\\n" "$PATH"', "sh", profile],
+			{ ...process.env, PATH: `/usr/bin:${input.prefix}/bin:/bin` },
+		);
+		expect(alreadyConfigured.stdout.trim()).toBe(`/usr/bin:${input.prefix}/bin:/bin`);
+		const second = runNativeInstaller(options);
+		expect(second.code, second.stderr).toBe(0);
+		expect(readFileSync(profile, "utf8")).toBe(configured);
+	}, 120_000);
+
+	it("leaves shell profiles untouched when PATH modification is disabled", () => {
+		const input = pathInstallerFixture();
+		const profile = join(input.home, ".zshrc");
+		const existing = "# Keep my shell profile unchanged\n";
+		writeFileSync(profile, existing);
+		const result = runNativeInstaller({
+			...input,
+			env: { SHELL: "/bin/zsh", CLAWDI_NO_MODIFY_PATH: "1" },
+		});
+		expect(result.code, result.stderr).toBe(0);
+		expect(result.stdout).toContain(
+			`Add ${input.prefix}/bin to PATH to run clawdi. (CLAWDI_NO_MODIFY_PATH is set.)`,
+		);
+		expect(readFileSync(profile, "utf8")).toBe(existing);
+		expect(readdirSync(input.home)).toEqual([".zshrc"]);
+	}, 120_000);
+
+	it("leaves shell profiles untouched when the install directory is already on PATH", () => {
+		const input = pathInstallerFixture();
+		const profile = join(input.home, ".zshrc");
+		const existing = "# PATH is already configured\n";
+		writeFileSync(profile, existing);
+		const result = runNativeInstaller({
+			...input,
+			includePrefixInPath: true,
+			env: { SHELL: "/bin/zsh" },
+		});
+		expect(result.code, result.stderr).toBe(0);
+		expect(result.stdout).not.toContain("Added ");
+		expect(result.stdout).not.toContain("Add ");
+		expect(readFileSync(profile, "utf8")).toBe(existing);
+		expect(readdirSync(input.home)).toEqual([".zshrc"]);
+	}, 120_000);
+
+	for (const scenario of [
+		{ shell: "/bin/bash", profile: ".bashrc" },
+		{ shell: "/bin/sh", profile: ".profile" },
+		{
+			shell: "/bin/zsh",
+			profile: "zsh-config/.zshrc",
+			variable: "ZDOTDIR",
+			configDirectory: "zsh-config",
+		},
+		{
+			shell: "/bin/fish",
+			profile: "shell-config/fish/conf.d/clawdi.fish",
+			variable: "XDG_CONFIG_HOME",
+			configDirectory: "shell-config",
+		},
+	]) {
+		it(`creates ${scenario.profile} for ${scenario.shell}`, () => {
+			const input = pathInstallerFixture();
+			const profile = join(input.home, scenario.profile);
+			const configHome = scenario.configDirectory
+				? join(input.home, scenario.configDirectory)
+				: input.home;
+			const result = runNativeInstaller({
+				...input,
+				env: {
+					SHELL: scenario.shell,
+					...(scenario.variable ? { [scenario.variable]: configHome } : {}),
+				},
+			});
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stdout).toContain(`Added ${input.prefix}/bin to PATH in ${profile}.`);
+			expect(mode(profile)).toBe(0o644);
+			if (scenario.shell === "/bin/fish") {
+				expect(readFileSync(profile, "utf8")).toContain(`fish_add_path -g "${input.prefix}/bin"`);
+			} else {
+				const shell = command("sh", ["-c", '. "$1"; printf "%s\\n" "$PATH"', "sh", profile], {
+					...process.env,
+					PATH: "/usr/bin:/bin",
+				});
+				expect(shell.code, shell.stderr).toBe(0);
+				expect(shell.stdout.trim()).toBe(`${input.prefix}/bin:/usr/bin:/bin`);
+			}
+		}, 120_000);
+	}
+
+	for (const permissions of [0o444, 0o200]) {
+		it(`uses manual PATH instructions for a profile with mode ${permissions.toString(8)}`, () => {
+			const input = pathInstallerFixture();
+			const profile = join(input.home, ".zshrc");
+			const existing = "# Keep my shell profile unchanged\n";
+			writeFileSync(profile, existing);
+			chmodSync(profile, permissions);
+			const result = runNativeInstaller({ ...input, env: { SHELL: "/bin/zsh" } });
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stdout).toContain(`Add ${input.prefix}/bin to PATH to run clawdi.`);
+			chmodSync(profile, 0o644);
+			expect(readFileSync(profile, "utf8")).toBe(existing);
+			expect(command(join(input.prefix, "bin", "clawdi"), ["--version"]).code).toBe(0);
+		}, 120_000);
+	}
+
+	it("preserves owned profile symlinks and skips targets belonging to another user", () => {
+		const input = pathInstallerFixture();
+		const profile = join(input.home, ".zshrc");
+		const ownedTarget = join(input.home, "shell-rc");
+		writeFileSync(ownedTarget, "# Existing shell settings\n");
+		symlinkSync(ownedTarget, profile);
+		const owned = runNativeInstaller({ ...input, env: { SHELL: "/bin/zsh" } });
+		expect(owned.code, owned.stderr).toBe(0);
+		expect(owned.stdout).toContain(`Added ${input.prefix}/bin to PATH in ${profile}.`);
+		expect(readlinkSync(profile)).toBe(ownedTarget);
+		expect(readFileSync(ownedTarget, "utf8")).toContain("# Added by the Clawdi installer");
+		rmSync(profile);
+		const target = "/etc/profile";
+		const before = readFileSync(target, "utf8");
+		expect(statSync(target).uid).not.toBe(statSync(input.home).uid);
+		symlinkSync(target, profile);
+		const result = runNativeInstaller({ ...input, env: { SHELL: "/bin/zsh" } });
+		expect(result.code, result.stderr).toBe(0);
+		expect(result.stdout).toContain(`Add ${input.prefix}/bin to PATH to run clawdi.`);
+		expect(readlinkSync(profile)).toBe(target);
+		expect(readFileSync(target, "utf8")).toBe(before);
+	}, 120_000);
+
+	it("uses manual PATH instructions when HOME is missing", () => {
+		const input = pathInstallerFixture();
+		const result = runNativeInstaller({ ...input, env: { HOME: "", SHELL: "/bin/zsh" } });
+		expect(result.code, result.stderr).toBe(0);
+		expect(result.stdout).toContain(`Add ${input.prefix}/bin to PATH to run clawdi.`);
+		expect(readdirSync(input.home)).toEqual([]);
+	}, 120_000);
+
 	it("installs, switches exact versions, prunes conservatively, and resolves packaged resources", async () => {
 		if (!nativeBinary) throw new Error("native binary is required");
 		const root = fixtureRoot();
@@ -320,6 +476,27 @@ afterAll(() => {
 		}
 	}, 120_000);
 });
+
+function pathInstallerFixture(prefixName = "prefix") {
+	if (!nativeBinary) throw new Error("native binary is required");
+	const root = fixtureRoot();
+	const home = join(root, "home");
+	const clawdiHome = join(root, "clawdi-home");
+	mkdirSync(home);
+	mkdirSync(clawdiHome);
+	return {
+		home,
+		clawdiHome,
+		prefix: join(root, prefixName),
+		testRoot: root,
+		includePrefixInPath: false,
+		fixture: createNativeReleaseFixture({
+			root,
+			binary: nativeBinary,
+			resourceRoot: dirname(nativeBinary),
+		}),
+	};
+}
 
 function fixtureRoot(): string {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-native-installer-"));
