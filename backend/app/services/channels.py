@@ -4908,22 +4908,38 @@ async def claim_next_channel_delivery(
     return delivery
 
 
-async def reap_expired_channel_delivery_leases(db: AsyncSession) -> int:
+async def reap_expired_channel_delivery_leases(db: AsyncSession, *, limit: int = 100) -> int:
     """Return in-progress deliveries whose attempt lease expired to the queue.
 
     A lease outlives the bounded provider send, so only a worker that died or
     lost its database connection before finalizing leaves one behind.
     """
     now = datetime.now(UTC)
+    if limit <= 0:
+        raise ValueError("delivery lease reap limit must be positive")
+    delivery_ids = list(
+        (
+            await db.execute(
+                select(ChannelDelivery.id)
+                .where(
+                    ChannelDelivery.status == DELIVERY_STATUS_IN_PROGRESS,
+                    or_(
+                        ChannelDelivery.locked_at.is_(None),
+                        ChannelDelivery.locked_at
+                        <= now - timedelta(seconds=DELIVERY_LEASE_SECONDS),
+                    ),
+                )
+                .order_by(ChannelDelivery.id)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            )
+        ).scalars()
+    )
+    if not delivery_ids:
+        return 0
     result = await db.execute(
         update(ChannelDelivery)
-        .where(
-            ChannelDelivery.status == DELIVERY_STATUS_IN_PROGRESS,
-            or_(
-                ChannelDelivery.locked_at.is_(None),
-                ChannelDelivery.locked_at <= now - timedelta(seconds=DELIVERY_LEASE_SECONDS),
-            ),
-        )
+        .where(ChannelDelivery.id.in_(delivery_ids))
         .values(
             status=case(
                 (
