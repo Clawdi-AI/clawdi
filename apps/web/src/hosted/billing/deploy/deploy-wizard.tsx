@@ -218,26 +218,24 @@ const aiProviderErrorNormalizer: ApiErrorNormalizer = {
 
 function computeCheckoutSummary({
 	offer,
-	plan,
 	termMonths,
 	tierLabel,
 	trialDays,
 }: {
 	offer: BillingOffer;
-	plan: Plan;
 	termMonths: number;
 	tierLabel: "Basic" | "Performance";
 	trialDays: number | null;
 }): StripeCheckoutSummary {
 	const effectiveMonthly = formatCents(offer.effective_monthly_price_cents);
 	const agentLabel =
-		tierLabel === "Basic" ? "additional hosted Basic agent" : "hosted Performance agent";
+		tierLabel === "Basic" ? "additional Cloud Agent on Basic" : "Cloud Agent on Performance";
 	return {
 		detail:
 			termMonths === 1
 				? `Per ${agentLabel}, billed monthly.`
 				: `${effectiveMonthly}/mo effective per ${agentLabel}.`,
-		planName: plan.name,
+		planName: `${tierLabel} plan`,
 		priceLabel: `${formatCents(offer.price_cents)}${billingTermSuffix(termMonths)}`,
 		termLabel: billingTermLabel(termMonths),
 		trialDays,
@@ -417,7 +415,7 @@ export function DeployWizard() {
 		[acceptDeployment],
 	);
 	useCheckoutReturnHandler({
-		onCancelCopy: "You were not charged. Your Agent was not deployed.",
+		onCancelCopy: "You were not charged. Your agent was not deployed.",
 		onNavigate: navigateCheckoutReturn,
 	});
 	const plans = usePlans();
@@ -664,13 +662,13 @@ export function DeployWizard() {
 		if (subscriptionSource.mode === "new" && paidSelection && paymentMethod === "wallet") {
 			if (!wallet.data) {
 				return wallet.error
-					? "Retry loading your Wallet balance above."
-					: "Loading your Wallet balance.";
+					? "Retry loading your wallet balance above."
+					: "Loading your wallet balance.";
 			}
-			if (visibleSubscriptionQuoteError) return "Retry the Wallet quote above.";
-			if (visibleSubscriptionQuoteFetching && !walletDebit) return "Refreshing your Wallet quote.";
-			if (!walletDebit) return "Waiting for your Wallet quote.";
-			if (walletInsufficient) return "Top up your Wallet to continue.";
+			if (visibleSubscriptionQuoteError) return "Retry the wallet quote above.";
+			if (visibleSubscriptionQuoteFetching && !walletDebit) return "Refreshing your wallet quote.";
+			if (!walletDebit) return "Waiting for your wallet quote.";
+			if (walletInsufficient) return "Top up your wallet to continue.";
 		}
 		return null;
 	})();
@@ -731,7 +729,7 @@ export function DeployWizard() {
 			const quoteResult = await subscriptionCreateQuote.refetch();
 			if (quoteResult.error) throw quoteResult.error;
 		} catch (error) {
-			toast.error("Couldn’t refresh Wallet quote", {
+			toast.error("Couldn't refresh wallet quote", {
 				description: normalizeBillingError(error),
 			});
 		}
@@ -928,7 +926,7 @@ export function DeployWizard() {
 						});
 					if (outcome.flowType !== "subscription_activation") {
 						throw new Error(
-							"Wallet payment could not be confirmed. Review the payment method and try again.",
+							"Wallet payment couldn't be confirmed. Review the payment method and try again.",
 						);
 					}
 					forgetIdempotencyAttempt("subscription-wallet-deploy", fingerprint);
@@ -987,7 +985,6 @@ export function DeployWizard() {
 						requestKey: checkoutAttemptRef.current.key,
 						summary: computeCheckoutSummary({
 							offer: paidSelection.offer,
-							plan: paidSelection.plan,
 							termMonths: paidSelection.billingTermMonths,
 							tierLabel: paidSelection.tierLabel,
 							trialDays: result.trial_period_days ?? null,
@@ -998,7 +995,7 @@ export function DeployWizard() {
 				}
 				if (redirectTo(checkoutRedirectUrl(result))) return;
 				throw new Error(
-					"Secure checkout could not be opened. Review the payment method and try again.",
+					"Secure checkout couldn't be opened. Review the payment method and try again.",
 				);
 			}
 			if (subscriptionSource.mode !== "included") return;
@@ -1041,7 +1038,7 @@ export function DeployWizard() {
 			: paidSelection
 				? paymentMethod === "wallet"
 					? walletInsufficient
-						? "Top up Wallet"
+						? "Top up wallet"
 						: "Pay & deploy"
 					: "Continue"
 				: "Deploy";
@@ -1105,7 +1102,7 @@ export function DeployWizard() {
 			: compute === "performance"
 				? "Performance"
 				: "Basic";
-	const summaryLine = [runtimeSummary, aiSummary, `${selectedComputeLabel} compute`]
+	const summaryLine = [runtimeSummary, aiSummary, `${selectedComputeLabel} plan`]
 		.filter(Boolean)
 		.join(" · ");
 
@@ -1226,7 +1223,7 @@ export function DeployWizard() {
 								onClick={() => selectAiProviderChoice(MANAGED_AI_CHOICE)}
 								icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
 								title={MANAGED_PROVIDER_LABEL}
-								description="No setup required. Usage draws from your Wallet."
+								description="No setup required. Usage draws from your wallet."
 								badge={<Badge variant="secondary">Recommended</Badge>}
 							/>
 							<EntityChoiceCard
@@ -1238,7 +1235,7 @@ export function DeployWizard() {
 									</IconChip>
 								}
 								title={authCardLabel("unmanaged")}
-								description="Deploy first, then configure model access inside the Agent."
+								description="Deploy first, then configure model access inside the agent."
 							/>
 							{aiProviders.isLoading ? (
 								<Skeleton className="h-[74px] w-full rounded-lg" />
@@ -1458,7 +1455,7 @@ export function DeployWizard() {
 												title="Wallet balance"
 												description={
 													walletDisabledReason ??
-													"Paid upfront from your Wallet balance. Renews from Wallet."
+													"Paid upfront from your wallet balance. Renews from wallet."
 												}
 												disabled={walletDisabledReason !== null}
 											/>
@@ -1580,8 +1577,8 @@ export function DeployWizard() {
 							<AlertTitle>Agent couldn’t be opened</AlertTitle>
 							<AlertDescription>
 								{acceptedDeploymentRecovery?.target.kind === "deploy_request"
-									? "Retrying resumes this deployment and opens the Agent. It won’t create or charge for another one."
-									: "Retrying loads the deployed Agent without creating another one."}
+									? "Retrying resumes this setup and opens the agent. It won't create or charge for another one."
+									: "Retrying loads the deployed agent without creating another one."}
 							</AlertDescription>
 						</Alert>
 					) : null}

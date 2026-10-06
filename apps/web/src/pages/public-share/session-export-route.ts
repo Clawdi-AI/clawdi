@@ -45,7 +45,7 @@ export function publicSessionExportErrorMessage(status: number): string {
 			return "This shared session link has expired.";
 		default:
 			if (status >= 500) {
-				return "The service is having trouble right now. Please try again in a moment.";
+				return "The service is having trouble right now. Try again in a moment.";
 			}
 			return "Unable to export this shared session.";
 	}

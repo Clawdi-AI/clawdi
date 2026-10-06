@@ -176,9 +176,9 @@ export function daemonStatusVisual(
 	const compactLabel = isHosted && kind === "set-up" ? "Pending" : COMPACT_LABEL[kind];
 	const tooltip = isHosted
 		? kind === "set-up"
-			? "Sync will start with the Agent’s next update."
+			? "Sync will start with the agent's next update."
 			: kind === "paused"
-				? "Sync status is unavailable. Manage this Agent in Agent settings."
+				? "Sync status is unavailable. Manage this agent in agent settings."
 				: STATUS_TOOLTIP[kind]
 		: STATUS_TOOLTIP[kind];
 
@@ -350,7 +350,7 @@ function SyncHelpDialog({
 			: status === "set-up"
 				? isHosted
 					? "Live sync is activating"
-					: "Turn on live sync for this Agent"
+					: "Turn on live sync for this agent"
 				: status === "errored"
 					? "Sync hit an error"
 					: isHosted
@@ -374,7 +374,7 @@ function SyncHelpDialog({
 							// a dead-end.
 							<div className="space-y-3">
 								<p className="text-sm text-muted-foreground">
-									Live sync activates automatically with this Agent&apos;s next update.
+									Live sync activates automatically with this agent&apos;s next update.
 								</p>
 								<p className="text-xs text-muted-foreground">
 									No action needed. This should change to{" "}
@@ -384,7 +384,7 @@ function SyncHelpDialog({
 						) : (
 							<>
 								<p className="text-sm text-muted-foreground">
-									A background service keeps this Agent in sync.
+									A background service keeps this agent in sync.
 								</p>
 								<SyncSetupSnippet env={env} />
 							</>
@@ -413,7 +413,7 @@ function SyncHelpDialog({
 										isHosted ? (
 											<>
 												<p className="text-xs text-muted-foreground">
-													Sync stopped after this error. Restart the Agent from Agent settings.
+													Sync stopped after this error. Restart the agent from agent settings.
 												</p>
 												<ManageOnClawdiLink manageHref={manageHref} />
 											</>
@@ -435,8 +435,8 @@ function SyncHelpDialog({
 										<>
 											<p className="text-xs text-muted-foreground">
 												{isHosted
-													? "This change could not be synced. Confirm that each Skill is under 25 MB, then save again."
-													: "This change could not be synced. Correct the source, then save again to retry."}
+													? "This change couldn't be synced. Confirm that each skill is under 25 MB, then save again."
+													: "This change couldn't be synced. Correct the source, then save again to retry."}
 											</p>
 											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>
@@ -451,8 +451,8 @@ function SyncHelpDialog({
 									) : isHosted ? (
 										<>
 											<p className="text-xs text-muted-foreground">
-												Clawdi will continue retrying. If the error persists, restart the Agent from
-												Agent settings.
+												Clawdi will continue retrying. If the error persists, restart the agent from
+												agent settings.
 											</p>
 											<ManageOnClawdiLink manageHref={manageHref} />
 										</>
@@ -472,7 +472,7 @@ function SyncHelpDialog({
 								isHosted ? (
 									<div className="space-y-2">
 										<p className="text-sm text-muted-foreground">
-											Sync status is unavailable. The Agent may be starting, stopped, or temporarily
+											Sync status is unavailable. The agent may be starting, stopped, or temporarily
 											unavailable.
 										</p>
 										<ManageOnClawdiLink manageHref={manageHref} />
@@ -513,7 +513,7 @@ function SyncHelpDialog({
 										value={queuePeak.toString()}
 									/>
 									<TechRow
-										label="Latest Skills revision received"
+										label="Latest skills revision received"
 										value={env.last_revision_seen?.toString() ?? "—"}
 									/>
 									<TechRow
@@ -564,7 +564,7 @@ function useSyncAgentPrompt(env: Env): string {
 	const typeLabel = agentTypeLabel(env.agent_type);
 	return [
 		`Turn on Clawdi live sync for ${typeLabel} on this machine.`,
-		"Run `clawdi daemon install`; one per-user daemon syncs every Clawdi-registered Agent here.",
+		"Run `clawdi daemon install`; one per-user daemon syncs every Clawdi-registered agent here.",
 		"Then run `clawdi daemon status` and report whether the daemon is live.",
 	].join(" ");
 }
@@ -587,7 +587,7 @@ function SyncSetupCliTab(_props: { env: Env }) {
 		<div className="space-y-3">
 			<p className="text-sm text-muted-foreground">In a terminal on this machine, run:</p>
 			<div className="space-y-1.5">
-				<CommandLine command={installCmd} hint="one sync service for every Agent on this machine" />
+				<CommandLine command={installCmd} hint="one sync service for every agent on this machine" />
 			</div>
 			<p className="text-xs text-muted-foreground">
 				Installs a launchd (macOS) or systemd (Linux) unit so sync continues after a reboot.
@@ -648,7 +648,7 @@ function ManageOnClawdiLink({ manageHref }: { manageHref?: string }) {
 	if (!manageHref) {
 		return (
 			<p className="text-xs text-muted-foreground">
-				Open agent settings to restart or check the hosted runtime.
+				Open agent settings to restart or check this Cloud Agent.
 			</p>
 		);
 	}

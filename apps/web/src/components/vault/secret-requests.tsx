@@ -41,7 +41,7 @@ export function VaultSecretRequests({
 	if (requests.isError)
 		return (
 			<p role="alert" className="text-sm">
-				Could not load secret requests.{" "}
+				Couldn't load secret requests.{" "}
 				<Button variant="link" onClick={() => void requests.refetch()}>
 					Retry
 				</Button>

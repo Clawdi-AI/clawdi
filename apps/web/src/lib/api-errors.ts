@@ -110,19 +110,19 @@ export function normalizeApiError(error: unknown): string {
 			return "Your account has been deactivated and can no longer access Clawdi.";
 		}
 		if (error.status === 401) {
-			return "Your session has expired. Please sign in again to continue.";
+			return "Your session expired. Sign in again to continue.";
 		}
 		if (error.status >= 500 || error.status === 429) {
-			return "The service is having trouble right now. Please try again in a moment.";
+			return "The service is having trouble right now. Try again in a moment.";
 		}
 		const message = formatApiError(error.detail);
 		// A bare snake_case token is an internal code, not product copy.
 		if (/^[a-z0-9_]+$/.test(message)) {
-			return "The request could not be completed. Review the details and try again.";
+			return "The request couldn't be completed. Review the details and try again.";
 		}
 		return message;
 	}
-	return "Something went wrong. Please try again.";
+	return "Couldn't complete the request. Try again.";
 }
 
 /**

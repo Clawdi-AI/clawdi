@@ -198,7 +198,7 @@ describe("Agent Plugin model", () => {
 		).toEqual({
 			installable: false,
 			label: "Unavailable",
-			reason: "This plugin is not compatible with this Agent.",
+			reason: "This plugin is not compatible with this agent.",
 		});
 		expect(
 			agentPluginInstallability(

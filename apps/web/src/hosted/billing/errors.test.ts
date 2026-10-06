@@ -100,7 +100,7 @@ describe("normalizeBillingError", () => {
 
 	test("401 → session expired prompt", () => {
 		expect(normalizeBillingError(new BillingApiError(401, "jwt expired"))).toMatch(
-			/session has expired/i,
+			/session expired/i,
 		);
 	});
 
@@ -150,7 +150,7 @@ describe("normalizeBillingError", () => {
 		);
 		expect(
 			normalizeBillingError(new BillingApiError(400, "That code has already been used.")),
-		).toBe("The billing request could not be completed. Review the details and try again.");
+		).toBe("The billing request couldn't be completed. Review the details and try again.");
 	});
 
 	test("structured wallet errors never expose raw JSON or internal codes", () => {
@@ -162,7 +162,7 @@ describe("normalizeBillingError", () => {
 		});
 		expect(normalizeBillingError(known)).toContain("outstanding balance");
 		expect(normalizeBillingError(unknown)).toBe(
-			"The billing request could not be completed. Refresh and try again.",
+			"The billing request couldn't be completed. Refresh and try again.",
 		);
 	});
 
@@ -181,7 +181,7 @@ describe("normalizeBillingError", () => {
 	});
 
 	test("unknown shapes get a safe message", () => {
-		expect(normalizeBillingError(null)).toMatch(/something went wrong/i);
+		expect(normalizeBillingError(null)).toBe("Couldn't complete the request. Try again.");
 	});
 });
 
@@ -230,7 +230,7 @@ describe("deploySubmissionErrorPresentation", () => {
 		expect(assignment.description).not.toMatch(/payment|wallet/i);
 		expect(wallet.title).toBe("We couldn’t confirm this attempt");
 		expect(wallet.description).toContain("safely resume the same attempt");
-		expect(wallet.description).not.toContain("No Wallet payment was made");
+		expect(wallet.description).not.toContain("No wallet payment was made");
 		expect(included.title).toBe("We couldn’t confirm agent creation");
 		expect(included.description).toContain("safely resume the same attempt");
 		expect(included.description).not.toContain("raw deployment driver failure");
@@ -243,7 +243,7 @@ describe("deploySubmissionErrorPresentation", () => {
 		);
 
 		expect(presentation.title).toBe("Payment and creation didn’t start");
-		expect(presentation.description).toContain("No Wallet payment was made");
+		expect(presentation.description).toContain("No wallet payment was made");
 		expect(presentation.description).not.toContain("internal validation trace");
 	});
 });

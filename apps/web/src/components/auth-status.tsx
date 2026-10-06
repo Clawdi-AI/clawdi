@@ -21,7 +21,7 @@ export function AuthStatus({
 				<LoaderCircle className="size-5 animate-spin" role="status" aria-label="Loading session" />
 			) : (
 				<p className="text-sm text-muted-foreground">
-					{status === "signed-out" ? "Please sign in to continue." : "Session unavailable."}
+					{status === "signed-out" ? "Sign in to continue." : "Session unavailable."}
 				</p>
 			)}
 			{onSignIn ? (

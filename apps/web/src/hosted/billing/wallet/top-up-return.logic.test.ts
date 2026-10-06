@@ -285,7 +285,7 @@ describe("Wallet Stripe returns", () => {
 			}, finalizeSetup);
 			expect(mismatched).toMatchObject({ status: null, setupIntentId: null });
 			expect(mismatched?.setupIdentity).toBe(expectedIdentity);
-			expect(mismatched?.errorMessage).toContain("could not be verified");
+			expect(mismatched?.errorMessage).toContain("couldn't be verified");
 		}
 		expect(setupRetrievals).toBe(4);
 		expect(setupFinalizations).toBe(2);

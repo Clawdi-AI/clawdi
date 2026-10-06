@@ -223,7 +223,7 @@ test("Hosted Skills keep errors actionable and allow retry without losing the fo
 	await dialog.getByRole("button", { name: "Install skill", exact: true }).click();
 	await expect(
 		dialog.getByText(
-			"Couldn't find a valid Skill at this GitHub path. Check the repository and try again.",
+			"Couldn't find a valid skill at this GitHub path. Check the repository and try again.",
 		),
 	).toBeVisible();
 	await expect(dialog.getByLabel("GitHub Skill repository")).toHaveValue(

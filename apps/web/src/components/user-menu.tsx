@@ -90,7 +90,7 @@ export function UserMenuItems() {
 					onClick={() =>
 						void signOut({ redirectUrl: "/sign-in" }).catch(() =>
 							toast.error("Couldn't sign out", {
-								description: "Clawdi could not finish signing out safely. Try again.",
+								description: "Clawdi couldn't finish signing out safely. Try again.",
 							}),
 						)
 					}

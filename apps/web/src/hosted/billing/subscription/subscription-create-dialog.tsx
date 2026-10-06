@@ -192,7 +192,7 @@ export function SubscriptionCreateDialog({
 		: source?.mode === "existing"
 			? "Use subscription"
 			: fundingSource === "wallet" && walletDebit
-				? `Pay ${formatUsdExact(walletDebit.debitAmountUsd)} from Wallet`
+				? `Pay ${formatUsdExact(walletDebit.debitAmountUsd)} from wallet`
 				: fundingSource === "wallet"
 					? "Review wallet quote"
 					: "Continue to card checkout";
@@ -302,10 +302,10 @@ export function SubscriptionCreateDialog({
 					{
 						description:
 							source.mode === "existing"
-								? "Compute updates after the existing subscription is assigned."
+								? "The agent's plan updates after the existing subscription is assigned."
 								: fundingSource === "wallet"
-									? `${walletDebit ? formatUsdExact(walletDebit.debitAmountUsd) : formatCents(selectedOffer?.price_cents ?? 0)} was paid from Wallet. Compute updates after payment is projected.`
-									: "Card payment was confirmed. Compute updates after payment is projected.",
+									? `${walletDebit ? formatUsdExact(walletDebit.debitAmountUsd) : formatCents(selectedOffer?.price_cents ?? 0)} was paid from your wallet. The agent's plan updates after payment is projected.`
+									: "Card payment was confirmed. The agent's plan updates after payment is projected.",
 					},
 				);
 				onOpenChange(false);
@@ -321,7 +321,7 @@ export function SubscriptionCreateDialog({
 				return;
 			}
 			toast.error("Couldn’t start checkout", {
-				description: "No checkout URL was returned. Please try again.",
+				description: "No checkout URL was returned. Try again.",
 			});
 		} catch (error) {
 			if (isReusableSubscriptionUnavailableError(error)) {
@@ -513,7 +513,7 @@ export function SubscriptionCreateDialog({
 											{walletInsufficient ? (
 												<Alert variant="destructive">
 													<TriangleAlert aria-hidden />
-													<AlertTitle>Not enough Wallet balance</AlertTitle>
+													<AlertTitle>Not enough wallet balance</AlertTitle>
 													<AlertDescription className="flex flex-col items-start gap-3">
 														<span>Top up the shortfall, then review a fresh wallet quote.</span>
 														<Button
@@ -523,7 +523,7 @@ export function SubscriptionCreateDialog({
 															disabled={!wallet.data}
 															onClick={() => walletTopUp.show(walletShortfallUsd)}
 														>
-															<WalletCards data-icon="inline-start" /> Top up Wallet
+															<WalletCards data-icon="inline-start" /> Top up wallet
 														</Button>
 													</AlertDescription>
 												</Alert>

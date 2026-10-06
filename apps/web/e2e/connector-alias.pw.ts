@@ -92,7 +92,7 @@ test("credentials connect includes alias without leaking failed response details
 	await dialog.getByLabel("API key").fill("test-key");
 	await dialog.getByLabel("Name (optional)").fill("work-gmail");
 	await dialog.getByRole("button", { name: "Connect", exact: true }).click();
-	await expect(dialog.getByRole("alert")).toContainText("The account couldn’t be connected");
+	await expect(dialog.getByRole("alert")).toContainText("The account couldn't be connected");
 	await expect(page.getByText("secret-upstream-error")).toHaveCount(0);
 	await dialog.getByLabel("Name (optional)").fill("");
 	await dialog.getByLabel("Name (optional)").press("Enter");
@@ -170,7 +170,9 @@ test("Agent account rename, retry and clear retain identity", async ({ page }) =
 	} finally {
 		release();
 	}
-	await expect(dialog.getByRole("alert")).toContainText("Couldn't rename account");
+	await expect(dialog.getByRole("alert")).toContainText(
+		"Couldn't rename account. Try again, or refresh the page if this continues.",
+	);
 	await expect(page.getByText("secret-upstream-error")).toHaveCount(0);
 	await dialog.getByRole("button", { name: "Rename", exact: true }).click();
 	await expect(dialog).toBeHidden();

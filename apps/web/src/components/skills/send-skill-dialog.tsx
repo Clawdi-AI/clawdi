@@ -95,10 +95,10 @@ export function SendSkillDialog({
 	const send = useMutation({
 		mutationFn: async (action: "copy" | "move") => {
 			if (!target) throw new Error("Choose a destination first");
-			if (!skill.project_id) throw new Error("Open this Skill from its Project and try again");
+			if (!skill.project_id) throw new Error("Open this skill from its project and try again");
 			const projectsById = new Map((projects ?? []).map((project) => [project.id, project]));
 			if (!skillCapabilities(skill, projectsById.get(skill.project_id)).canSend) {
-				throw new Error("This Skill is read-only");
+				throw new Error("This skill is read-only");
 			}
 			const blob = ensureBlob(
 				unwrap(
@@ -140,7 +140,7 @@ export function SendSkillDialog({
 					description:
 						`${skill.name} is now available in ${targetLabel}.` +
 						(sourceRemoved === false
-							? " It could not be removed from the source; remove it after checking the new copy."
+							? " It couldn't be removed from the source; remove it after checking the new copy."
 							: ""),
 				},
 			);
@@ -188,8 +188,8 @@ export function SendSkillDialog({
 					    copy will NOT follow future changes to the source. */}
 					<DialogDescription>
 						The destination gets an independent copy — later changes to the source won&apos;t sync.
-						To give people the <em className="not-italic font-medium">same</em> Skill, share the
-						Project instead.
+						To give people the <em className="not-italic font-medium">same</em> skill, share the
+						project instead.
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-4">
@@ -203,7 +203,7 @@ export function SendSkillDialog({
 							}}
 						>
 							<SelectTrigger id="send-skill-target" className="w-full">
-								<SelectValue placeholder="Choose a Project…" />
+								<SelectValue placeholder="Choose a project…" />
 							</SelectTrigger>
 							<SelectContent className="max-h-80">
 								{projectTargets.map((t) => (

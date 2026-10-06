@@ -354,13 +354,13 @@ function registerIpc(): void {
 		safeConnectAction(event, "check the app location", async () => installationState()),
 	);
 	ipcMain.handle(DESKTOP_IPC.detectAgents, (event) =>
-		safeConnectAction(event, "inspect local Agents", () => {
+		safeConnectAction(event, "inspect local agents", () => {
 			assertRuntimeLocation();
 			return cli.detectAgents();
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.listReconnectableAgents, (event) =>
-		safeConnectAction(event, "find reconnectable Agents", () => {
+		safeConnectAction(event, "find reconnectable agents", () => {
 			assertRuntimeLocation();
 			return cli.listReconnectableAgents();
 		}),
@@ -383,7 +383,7 @@ function registerIpc(): void {
 		})),
 	);
 	ipcMain.handle(DESKTOP_IPC.connectAgents, (event, rawConnections: unknown) =>
-		safeConnectAction(event, "connect the selected Agents", async () => {
+		safeConnectAction(event, "connect the selected agents", async () => {
 			assertSafeDaemonMutation();
 			const result = await withCriticalOperation(() =>
 				cli.connectAgents(readAgentConnections(rawConnections)),
@@ -560,7 +560,7 @@ async function safeConnectAction<T>(
 	} catch (error) {
 		console.error(`Could not ${label}`, error);
 		if (error instanceof DesktopCliError || error instanceof DesktopConnectError) throw error;
-		throw new Error(`Could not ${label}. Try again.`);
+		throw new Error(`Couldn't ${label}. Try again.`);
 	}
 }
 
@@ -574,7 +574,7 @@ async function safeDashboardAction<T>(
 		return await action();
 	} catch (error) {
 		console.error(`Could not ${label}`, error);
-		throw new Error(`Could not ${label}. Try again.`);
+		throw new Error(`Couldn't ${label}. Try again.`);
 	}
 }
 
@@ -605,13 +605,13 @@ function assertConnectSender(event: IpcMainInvokeEvent): void {
 
 function readAgentConnections(value: unknown): DesktopAgentConnection[] {
 	if (!Array.isArray(value) || value.length === 0) {
-		throw new Error("Choose at least one supported Agent.");
+		throw new Error("Choose at least one supported agent.");
 	}
 	const connections: DesktopAgentConnection[] = [];
 	const types = new Set<DesktopAgentType>();
 	for (const item of value) {
 		if (!isRecord(item) || !isDesktopAgentType(item.type) || types.has(item.type)) {
-			throw new Error("Choose each supported Agent once.");
+			throw new Error("Choose each supported agent once.");
 		}
 		const reconnectAgentId = item.reconnectAgentId;
 		const confirmTakeover = item.confirmTakeover;
@@ -621,10 +621,10 @@ function readAgentConnections(value: unknown): DesktopAgentConnection[] {
 				!reconnectAgentId.trim() ||
 				reconnectAgentId.length > 256)
 		) {
-			throw new Error("Choose a valid Agent to reconnect.");
+			throw new Error("Choose a valid agent to reconnect.");
 		}
 		if (confirmTakeover !== undefined && typeof confirmTakeover !== "boolean") {
-			throw new Error("Choose a valid Agent takeover confirmation.");
+			throw new Error("Choose a valid agent takeover confirmation.");
 		}
 		if (confirmTakeover === true && typeof reconnectAgentId !== "string") {
 			throw new Error("Agent takeover confirmation requires a reconnect target.");
@@ -937,7 +937,7 @@ function hardenLocalWindow(
 			showMessageBox(
 				{
 					type: "warning",
-					message: `${label} could not recover`,
+					message: `${label} couldn't recover`,
 					detail: "Close this window and open it again from Clawdi.",
 				},
 				window,
@@ -1133,7 +1133,7 @@ async function setSyncEnabled(enabled: boolean): Promise<void> {
 		console.error("Could not enable sync", error);
 		await showMessageBox({
 			type: "warning",
-			message: "Sync could not be enabled",
+			message: "Sync couldn't be enabled",
 			detail: "Open Connect an Agent to check the local setup.",
 		});
 	} finally {
@@ -1152,7 +1152,7 @@ async function turnOffBackgroundSync(): Promise<void> {
 		await refreshTrayState();
 		await showMessageBox({
 			type: "warning",
-			message: "Sync could not be turned off",
+			message: "Sync couldn't be turned off",
 			detail: "Try again, or open Connect an Agent to inspect the local setup.",
 		});
 	}
@@ -1198,7 +1198,7 @@ function wasOpenedAtLogin(): boolean {
 async function showLoginItemError(): Promise<void> {
 	await showMessageBox({
 		type: "warning",
-		message: "The login item could not be changed",
+		message: "The login item couldn't be changed",
 		detail: "Review Clawdi in System Settings > General > Login Items and try again.",
 	});
 }
@@ -1217,7 +1217,7 @@ function assertRuntimeLocation(): void {
 function assertSafeDaemonMutation(): void {
 	if (!installationState().requiresMove) return;
 	throw new DesktopConnectError(
-		"Move Clawdi to Applications before connecting Agents or repairing sync.",
+		"Move Clawdi to Applications before connecting agents or repairing sync.",
 	);
 }
 
@@ -1263,7 +1263,7 @@ async function promptToMove(detail: string): Promise<void> {
 		console.error("Could not move Clawdi to Applications", error);
 		await showMessageBox({
 			type: "warning",
-			message: "Clawdi could not be moved",
+			message: "Clawdi couldn't be moved",
 			detail: "Move Clawdi to Applications in Finder, reopen it, and try again.",
 		});
 	}

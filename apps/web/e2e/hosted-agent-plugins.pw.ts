@@ -193,7 +193,7 @@ test("Agent Plugin cards keep every status and action readable", async ({ page }
 	}
 	await expect(cardFor("Failed Plugin").getByRole("button", { name: "Retry" })).toHaveAttribute(
 		"title",
-		"The agent could not apply this plugin.",
+		"The agent couldn't apply this plugin.",
 	);
 	const updateFooter = cardFor("Update Available Plugin").locator('[data-slot="entity-meta"]');
 	await expect(updateFooter).toContainText("Mysten Labs");
