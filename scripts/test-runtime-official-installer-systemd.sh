@@ -30,7 +30,12 @@ for name in OPENCLAW_VERSION OPENCLAW_COMMIT OPENCLAW_INTEGRITY; do
 	fi
 done
 
-docker build --quiet "${build_args[@]}" --file "$fixture" --tag "$image" \
+# CI selects a docker-container builder; load images before docker run.
+load_args=()
+if [[ "${DOCKER_BUILD_LOAD:-0}" == "1" ]]; then
+	load_args+=(--load)
+fi
+docker build --quiet "${load_args[@]}" "${build_args[@]}" --file "$fixture" --tag "$image" \
 	"$(dirname -- "$fixture")" >/dev/null
 docker run --detach --privileged \
 	--name "$container" \

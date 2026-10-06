@@ -381,6 +381,7 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
         app.dependency_overrides.clear()
 
     assert canonical_init.status_code == 200, canonical_init.text
+    assert canonical_init.json()["result"]["serverInfo"]["title"] == "Clawdi"
     assert canonical_init.json()["result"]["capabilities"]["tools"]["listChanged"] is False
     assert pinged.json() == {"jsonrpc": "2.0", "id": 2, "result": {}}
 

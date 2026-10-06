@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
 	agentDisplayName,
 	agentIdentity,
+	agentSourceDescription,
+	agentSourceKindLabel,
 	agentTypeLabel,
 	cleanMachineName,
 	compareAgentEnvironments,
@@ -135,5 +137,15 @@ describe("compareAgentEnvironments", () => {
 		];
 
 		expect(agents.sort(compareAgentEnvironments).map((agent) => agent.id)).toEqual(["a", "b", "c"]);
+	});
+});
+
+describe("agent source branding", () => {
+	test("uses Cloud and Connected Agent labels without reviving the old product name", () => {
+		expect(agentSourceKindLabel("hosted")).toBe("Cloud Agent");
+		expect(agentSourceKindLabel("connected")).toBe("Connected Agent");
+		expect(agentSourceDescription("hosted")).toBe("Runs on Clawdi");
+		expect(agentSourceKindLabel("hosted")).not.toContain("Clawdi Cloud");
+		expect(agentSourceDescription("hosted")).not.toContain("Clawdi Cloud");
 	});
 });

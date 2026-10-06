@@ -12,6 +12,9 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+- Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
+  name while keeping Cloud and Connected Agent distinctions intact.
+
 ### CLI 0.14.107
 
 - `clawdi push --project` includes Pi and OpenCode sessions in subdirectories while excluding similarly named sibling directories.

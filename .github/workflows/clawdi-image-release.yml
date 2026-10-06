@@ -171,14 +171,15 @@ jobs:
           echo "release_required=$release_required" >> "$GITHUB_OUTPUT"
           echo "sidecar_revision=$sidecar_revision" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v4
-        if: steps.release-plan.outputs.release_required == 'true'
+      # Docker Hub rate-limits anonymous CI pulls; the shared action configures a
+      # BuildKit builder that pulls through mirror.gcr.io with Docker Hub fallback.
+      - name: Set up Docker Hub mirror
+        id: docker-hub-mirror
+        uses: ./.github/actions/setup-docker-hub-mirror
         with:
-          # Docker Hub rate-limits anonymous CI pulls; mirror.gcr.io serves cached
-          # Docker Hub images and BuildKit falls back to Docker Hub on a miss.
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
+          prefetch-images: |
+            moby/buildkit:buildx-stable-1
+        if: steps.release-plan.outputs.release_required == 'true'
 
       - uses: docker/login-action@v4
         if: steps.release-plan.outputs.release_required == 'true'

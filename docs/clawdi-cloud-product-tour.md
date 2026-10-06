@@ -1,4 +1,4 @@
-# Clawdi Cloud product tour
+# Clawdi product tour
 
 Screens use a fictional Acme Market Intelligence workspace. All names, data, decisions, and activity are synthetic.
 

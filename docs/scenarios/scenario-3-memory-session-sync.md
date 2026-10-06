@@ -190,7 +190,7 @@ Day 3: Cursor session (different agent, same Clawdi account)
 
 | | Claude Code Memory (`~/.claude/.../memory/`) | Clawdi Memory |
 |---|---|---|
-| Storage | Local markdown files | Clawdi cloud (pgvector) |
+| Storage | Local markdown files | Clawdi (pgvector) |
 | Cross-device | No | Yes, via Clawdi account |
 | Cross-agent | Claude Code only | Any agent with Clawdi MCP |
 | Search | File name matching | Semantic vector search |

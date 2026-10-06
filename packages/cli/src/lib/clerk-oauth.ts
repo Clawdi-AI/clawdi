@@ -1131,7 +1131,7 @@ export async function verifyAndPersistClerkOAuthLogin(
 			auth,
 			fetcher,
 			"oauth_cloud_rejected",
-			`Clawdi Cloud rejected the OAuth session (HTTP ${response.status}). Run \`clawdi auth login\` again.`,
+			`Clawdi rejected the OAuth session (HTTP ${response.status}). Run \`clawdi auth login\` again.`,
 			options.pending,
 			options.refreshLock,
 		);
@@ -1149,7 +1149,7 @@ export async function verifyAndPersistClerkOAuthLogin(
 			auth,
 			fetcher,
 			"invalid_cloud_auth_response",
-			"Clawdi Cloud returned an invalid account response. Run `clawdi auth login` again.",
+			"Clawdi returned an invalid account response. Run `clawdi auth login` again.",
 			options.pending,
 			options.refreshLock,
 		);

@@ -1,6 +1,6 @@
 # Architecture
 
-This is the current system map for Clawdi Cloud. Verify changes against code
+This is the current system map for Clawdi. Verify changes against code
 before editing this file. For user setup, start in [`README.md`](../README.md).
 For contributor commands, start in [`AGENTS.md`](../AGENTS.md).
 
@@ -57,7 +57,7 @@ Cross-platform client behavior and current decision owners are tracked in the
 
 ## Overview
 
-Clawdi Cloud is a cross-agent sync and recall layer. The CLI reads supported
+Clawdi is a cross-agent sync and recall layer. The CLI reads supported
 agent state from local homes, syncs sessions and skills to the backend, installs
 a local MCP bridge, resolves vault references for runtime commands, and exposes
 shared memory to agents. The web dashboard uses the same backend for sessions,
