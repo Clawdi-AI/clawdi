@@ -1028,6 +1028,7 @@ export function installAnonymousOpenClawGatewayService(
 		name: descriptor.programName,
 		env,
 		unsetEnvironment: ["CLAWDI_AUTH_TOKEN"],
+		oomProtectionLines: gatewayOomProtectionLines("openclaw", runtimeMemoryBudget()),
 	});
 	return systemdUnitFileName(descriptor.programName);
 }
