@@ -50,9 +50,29 @@ function readFlag(name: string, fallback: string): string {
 
 const port = Number(readFlag("port", "8787"));
 const hostname = readFlag("host", "0.0.0.0");
+const shareOrigin = new URL(readFlag("share-origin", "https://fixture.clawdi.test")).origin;
+if (!shareOrigin.startsWith("https://")) {
+	console.error("Invalid --share-origin; public fixture links require HTTPS");
+	process.exit(1);
+}
 if (!Number.isInteger(port) || port <= 0 || port > 65535) {
 	console.error(`Invalid --port value: ${readFlag("port", "")}`);
 	process.exit(1);
+}
+
+for (const [name, allowed, fallback] of [
+	["memory-provider", ["builtin", "mem0"], "builtin"],
+	["mem0-configured", ["true", "false"], "false"],
+	[
+		"whatsapp-state",
+		["generating", "ready", "scanned", "connected", "expired", "canceled", "error"],
+		"ready",
+	],
+] satisfies [string, string[], string][]) {
+	if (!allowed.includes(readFlag(name, fallback))) {
+		console.error(`Invalid --${name}; expected ${allowed.join("|")}`);
+		process.exit(1);
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1016,7 +1036,7 @@ const vaults = [
 		project_id: PROJECT.webapp,
 		project_ids: [PROJECT.webapp],
 		is_owner: true,
-		item_count: 6,
+		item_count: 10,
 		created_at: ago(60 * DAY),
 	},
 	{
@@ -1048,7 +1068,14 @@ const vaultSections: Record<string, GetOk<"/v1/vault/{slug}/items">> = {
 		npm: ["NPM_TOKEN"],
 	},
 	"acme-prod": {
-		"(default)": ["DATABASE_URL", "REDIS_URL"],
+		"(default)": [
+			"DATABASE_URL",
+			"REDIS_URL",
+			"stripe/FIXTURE_KEY",
+			"stripe/FIXTURE_WEBHOOK",
+			"sentry/FIXTURE_DSN",
+			"sentry/FIXTURE_AUTH",
+		],
 		stripe: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
 		sentry: ["SENTRY_DSN", "SENTRY_AUTH_TOKEN"],
 	},
@@ -1256,19 +1283,21 @@ const channelAccounts = [
 	},
 ] satisfies GetOk<"/v1/channels">;
 
-const channelAgentLinks = channelAccounts.map((account, index) => ({
-	id: `11c00000-000${index}-4000-8000-00000000000${index}`,
-	account_id: account.id,
-	agent_id: index === 0 ? AGENT.openclaw : AGENT.hermes,
-	status: "active",
-	runtime_status: "connected",
-	created_at: account.created_at,
-	agent_token: null,
-	account,
-	binding_count: 2 - index,
-})) satisfies GetOk<"/v1/channels/agent-links">;
+const channelAgentLinks: Schemas["ChannelAgentLinkWithAccountResponse"][] = channelAccounts.map(
+	(account, index) => ({
+		id: `11c00000-000${index}-4000-8000-00000000000${index}`,
+		account_id: account.id,
+		agent_id: index === 0 ? AGENT.openclaw : AGENT.hermes,
+		status: "active",
+		runtime_status: "connected",
+		created_at: account.created_at,
+		agent_token: null,
+		account,
+		binding_count: 2 - index,
+	}),
+) satisfies GetOk<"/v1/channels/agent-links">;
 
-const apiKeys = [
+const apiKeys: Schemas["ApiKeyResponse"][] = [
 	{
 		id: "a9100000-0001-4000-8000-000000000001",
 		label: "MacBook Pro CLI",
@@ -1311,6 +1340,303 @@ const members = [
 		resolved_owner_handle: "avery",
 	},
 ] satisfies GetOk<"/v1/projects/{project_id}/members">;
+
+// Stateful visual flows. These values are synthetic and never contact providers.
+const settings: Schemas["SettingsResponse"] = {
+	memory_provider: readFlag("memory-provider", "builtin"),
+	mem0_api_key_configured: readFlag("mem0-configured", "false") === "true",
+	mem0_api_key: readFlag("mem0-configured", "false") === "true" ? "fixture-mem0-configured" : null,
+} satisfies Schemas["SettingsResponse"];
+
+const invitedProjects = [
+	{
+		...projects[2],
+		kind: "workspace",
+		is_owner: false,
+		origin_environment_id: null,
+		id: "a0f1c2d3-0006-4a00-8000-000000000006",
+		name: "Partner Research",
+		slug: "partner-research",
+		description: "Shared partner research notes.",
+		skill_count: 0,
+		vault_count: 0,
+		agent_count: 0,
+		member_count: 2,
+	},
+	{
+		...projects[2],
+		kind: "workspace",
+		is_owner: false,
+		origin_environment_id: null,
+		id: "a0f1c2d3-0007-4a00-8000-000000000007",
+		name: "Platform Operations",
+		slug: "platform-operations",
+		description: "Shared platform operations notes.",
+		owner_display: "Morgan Park",
+		owner_handle: "morgan",
+		skill_count: 0,
+		vault_count: 0,
+		agent_count: 0,
+		member_count: 2,
+	},
+] satisfies Schemas["ProjectResponse"][];
+
+const invitationSeeds = [
+	{
+		id: "1a710000-0001-4000-8000-000000000001",
+		project_id: PROJECT.webapp,
+		project_name: "Acme Web App",
+		project_kind: "workspace",
+		owner_display: currentUser.name,
+		owner_handle: "avery",
+		invitee_email: "sam@acme.dev",
+		invited_by_user_id: USER_ID,
+		invited_by_display: currentUser.name,
+		created_at: ago(DAY),
+	},
+	{
+		id: "1a710000-0002-4000-8000-000000000002",
+		project_id: invitedProjects[0].id,
+		project_name: invitedProjects[0].name,
+		project_kind: "workspace",
+		owner_display: "Jordan Lee",
+		owner_handle: "jordan",
+		invitee_email: currentUser.email,
+		invited_by_user_id: members[1].user_id,
+		invited_by_display: "Jordan Lee",
+		created_at: ago(2 * HOUR),
+	},
+	{
+		id: "1a710000-0003-4000-8000-000000000003",
+		project_id: invitedProjects[1].id,
+		project_name: invitedProjects[1].name,
+		project_kind: "workspace",
+		owner_display: "Morgan Park",
+		owner_handle: "morgan",
+		invitee_email: currentUser.email,
+		invited_by_user_id: "8a1b2c3d-0000-4000-8000-000000000003",
+		invited_by_display: "Morgan Park",
+		created_at: ago(HOUR),
+	},
+] satisfies Schemas["InvitationResponse"][];
+let invitations: Schemas["InvitationResponse"][] = invitationSeeds;
+
+const PROJECT_TOKEN = "fixture_project_acme_".padEnd(43, "0");
+function projectTokenForId(id: string) {
+	return `fixture_${id.replaceAll("-", "")}`.padEnd(43, "0");
+}
+const shareLinks: Record<string, Schemas["ShareLinkResponse"][]> = {
+	[PROJECT.webapp]: [
+		{
+			id: "51aee000-0001-4000-8000-000000000001",
+			prefix: PROJECT_TOKEN.slice(0, 12),
+			label: "Design review",
+			created_at: ago(2 * DAY),
+			expires_at: ago(-7 * DAY),
+			revoked_at: null,
+			redeem_count: 2,
+			last_redeemed_at: ago(HOUR),
+		} satisfies Schemas["ShareLinkResponse"],
+	],
+};
+const projectTokens = new Map([[PROJECT_TOKEN, PROJECT.webapp]]);
+
+const VAULT_TOKEN = `v2_${"fixture_acme_".padEnd(43, "0")}`;
+const vaultRequests: Schemas["VaultSecretRequestStatus"][] = [
+	{
+		id: "5ecae000-0001-4000-8000-000000000001",
+		vault_id: vaults[1].id,
+		project_id: PROJECT.webapp,
+		vault_name: "Acme Production",
+		project_name: "Acme Web App",
+		slug: "acme-prod",
+		section: "(default)",
+		fields: ["DEPLOY_TOKEN", "DATABASE_URL"],
+		extra_fields: [],
+		update_fields: ["DATABASE_URL"],
+		content_version: 1,
+		status: "pending",
+		expires_at: ago(-7 * DAY),
+		supplied_at: null,
+		references: {
+			DEPLOY_TOKEN: "vault://acme-prod/DEPLOY_TOKEN",
+			DATABASE_URL: "vault://acme-prod/DATABASE_URL",
+		},
+	} satisfies Schemas["VaultSecretRequestStatus"],
+];
+const vaultTokens = new Map([[VAULT_TOKEN, vaultRequests[0].id]]);
+
+const pluginCatalog = {
+	revision: "fixture-1",
+	synced_at: ago(DAY),
+	plugins: [
+		{
+			name: "fixture-notes",
+			version: "1.0.0",
+			display_name: "Project Notes",
+			description: "Reusable project notes and recall tools.",
+			publisher: "Clawdi Fixtures",
+			category: "productivity",
+			keywords: ["notes", "memory"],
+			languages: ["en"],
+			runtimes: ["openclaw", "hermes"],
+			components: { skills: ["project-notes"], mcpServers: {} },
+			installable: true,
+		},
+		{
+			name: "fixture-review",
+			version: "1.0.0",
+			display_name: "Code Review",
+			description: "Review changes against the project's conventions.",
+			publisher: "Clawdi Fixtures",
+			category: "development",
+			keywords: ["review"],
+			languages: ["en"],
+			runtimes: ["openclaw", "hermes"],
+			components: { skills: ["code-review"], mcpServers: {} },
+			installable: true,
+		},
+	],
+} satisfies GetOk<"/v1/plugin-catalog">;
+const installedPlugins: Schemas["AgentPluginDesiredStateResponse"][] = [
+	{
+		installation_id: "91061000-0001-4000-8000-000000000001",
+		agent_id: AGENT.openclaw,
+		plugin_name: "fixture-notes",
+		version: "1.0.0",
+		catalog_revision: pluginCatalog.revision,
+		desired_state: "present",
+		convergence: "installed",
+		observed_at: ago(MINUTE),
+		created_at: ago(3 * DAY),
+		updated_at: ago(MINUTE),
+	} satisfies Schemas["AgentPluginDesiredStateResponse"],
+];
+
+const channelBindings: Schemas["ChannelBindingResponse"][] = channelAgentLinks.flatMap(
+	(link, index) =>
+		Array.from(
+			{ length: link.binding_count },
+			(_, chat) =>
+				({
+					id: `b1ad0000-000${index + 1}-4000-8000-00000000000${chat + 1}`,
+					account_id: link.account_id,
+					agent_link_id: link.id,
+					external_chat_id: `fixture-chat-${index + 1}-${chat + 1}`,
+					external_chat_type: chat === 0 ? "private" : "group",
+					external_chat_name: chat === 0 ? "Avery Chen" : "Acme Ops",
+					status: "active",
+					created_at: ago(3 * DAY),
+					last_message_at: ago(3 * MINUTE),
+				}) satisfies Schemas["ChannelBindingResponse"],
+		),
+);
+
+const WHATSAPP_ACCOUNT = "c4a00000-0003-4000-8000-000000000003";
+const whatsappAccount: Schemas["ChannelAccountResponse"] = {
+	id: WHATSAPP_ACCOUNT,
+	provider: "whatsapp",
+	name: "Acme WhatsApp",
+	status: "disconnected",
+	visibility: "private",
+	has_provider_token: false,
+	webhook_url: "",
+	created_at: ago(7 * DAY),
+} satisfies Schemas["ChannelAccountResponse"];
+
+const replacementChannel = {
+	...channelAccounts[0],
+	id: "c4a00000-0004-4000-8000-000000000004",
+	name: "@acme_review_bot",
+	created_at: ago(DAY),
+} satisfies Schemas["ChannelAccountResponse"];
+function allChannelAccounts(): Schemas["ChannelAccountResponse"][] {
+	return [...channelAccounts, whatsappAccount, replacementChannel];
+}
+
+function whatsappState(
+	value: string | null,
+): Schemas["ChannelWhatsAppOnboardingSessionResponse"]["state"] {
+	switch (value) {
+		case "generating":
+		case "ready":
+		case "scanned":
+		case "connected":
+		case "expired":
+		case "canceled":
+		case "error":
+			return value;
+		default:
+			return "ready";
+	}
+}
+function whatsappSession(
+	id: string,
+	name: string,
+	state = whatsappState(readFlag("whatsapp-state", "ready")),
+) {
+	return {
+		id,
+		channel_account_id: WHATSAPP_ACCOUNT,
+		name,
+		state,
+		method: "qr",
+		qr: state === "ready" ? "fixture-only,never-scan,this-is-not-a-whatsapp-login" : null,
+		qr_expires_at: ago(-5 * MINUTE),
+		pairing_code: null,
+		manual_pairing_code_supported: true,
+		started_at: ago(MINUTE),
+		expires_at: state === "expired" ? ago(MINUTE) : ago(-15 * MINUTE),
+		completed_at: state === "connected" ? ago(0) : null,
+	} satisfies Schemas["ChannelWhatsAppOnboardingSessionResponse"];
+}
+const whatsappSessions = new Map<string, Schemas["ChannelWhatsAppOnboardingSessionResponse"]>(
+	["ready", "generating", "scanned", "connected", "expired", "canceled", "error"].map(
+		(state, index) => [
+			`fa000000-000${index + 1}-4000-8000-00000000000${index + 1}`,
+			whatsappSession(
+				`fa000000-000${index + 1}-4000-8000-00000000000${index + 1}`,
+				"Fixture WhatsApp",
+				whatsappState(state),
+			),
+		],
+	),
+);
+const whatsappRequests = new Map<string, string>();
+
+const FIXTURE_SESSION = "5e550000-0001-4000-8000-000000000001";
+const sessionShares: Schemas["SessionShareResponse"][] = [
+	{
+		id: "5a4e0000-0001-4000-8000-000000000001",
+		session_id: FIXTURE_SESSION,
+		scope: "session",
+		start_position: null,
+		end_position: 3,
+		message_count: 4,
+		share_url: `${shareOrigin}/s/5a4e0000-0001-4000-8000-000000000001`,
+		created_at: ago(DAY),
+	} satisfies Schemas["SessionShareResponse"],
+];
+const sessionPermissions: (Schemas["SessionPermissionResponse"] & { session_id: string })[] = [
+	{
+		id: "9ea10000-0001-4000-8000-000000000001",
+		session_id: FIXTURE_SESSION,
+		kind: "link",
+		role: "viewer",
+		created_at: ago(DAY),
+		expires_at: null,
+	} satisfies Schemas["SessionPermissionResponse"] & { session_id: string },
+];
+
+// Add an eligible connected identity without changing the four original agents.
+const disconnectAgent = {
+	...agents[0],
+	id: "c1a0de00-0005-4c00-8000-000000000005",
+	name: "fixture-connected-claude",
+	display_name: "Disconnect Demo",
+	explicit_identity: false,
+	sort_order: 4,
+} satisfies Schemas["AgentResponse"];
 
 function agentSkills(agentId: string): GetOk<"/v1/agents/{agent_id}/skills"> {
 	const projectIds = new Set((projectBindingsByAgent[agentId] ?? []).map((b) => b.project_id));
@@ -1439,7 +1765,7 @@ function withResourceCounts(project: Schemas["ProjectResponse"]): Schemas["Proje
 }
 
 function findAgent(id: string | undefined) {
-	return agents.find((agent) => agent.id === id);
+	return [...agents, disconnectAgent, ...hostedStateAgents].find((agent) => agent.id === id);
 }
 
 // ---------------------------------------------------------------------------
@@ -1512,7 +1838,7 @@ function hostedDeployment(
 	runtime: "openclaw" | "hermes",
 	name: string,
 	included: boolean,
-) {
+): DeploySchemas["V2HostedDeploymentReadResponse"] {
 	return {
 		agent_id: agentId,
 		resource: {
@@ -1592,9 +1918,81 @@ function hostedDeployment(
 	} satisfies DeploySchemas["V2HostedDeploymentReadResponse"];
 }
 
-const deployments = [
+const hostedStateSeeds = [
+	{ id: "hdep_ParityStopped", name: "Stopped Hermes", state: "stopped", payment: "ok" },
+	{ id: "hdep_ParityFailed", name: "Failed OpenClaw", state: "failed", payment: "ok" },
+	{ id: "hdep_ParityStarting", name: "Starting Hermes", state: "starting", payment: "ok" },
+	{ id: "hdep_ParityDunning", name: "Payment overdue", state: "stopped", payment: "past_due" },
+] satisfies {
+	id: string;
+	name: string;
+	state: DeploySchemas["HostedDeploymentStatus"]["summary_state"];
+	payment: DeploySchemas["V2HostedComputeSubscriptionInfo"]["payment_state"];
+}[];
+const hostedStateAgents = hostedStateSeeds.map(
+	(seed, index) =>
+		({
+			...agents[2],
+			id: `4e2e5000-000${index + 5}-4c00-8000-00000000000${index + 5}`,
+			name: seed.name,
+			display_name: seed.name,
+			agent_type: index === 1 ? "openclaw" : "hermes",
+			machine_id: `machine-fixture-${seed.id}`,
+			machine_name: "Clawdi Cloud",
+			sort_order: index + 5,
+			last_seen_at: null,
+			last_sync_at: null,
+			explicit_identity: true,
+		}) satisfies Schemas["AgentResponse"],
+);
+const deployments: DeploySchemas["V2HostedDeploymentReadResponse"][] = [
 	hostedDeployment("hdep_ParityOpenClaw", AGENT.openclaw, "openclaw", "OpenClaw", true),
 	hostedDeployment("hdep_ParityHermes", AGENT.hermes, "hermes", "Research Hermes", false),
+	...hostedStateSeeds.map((seed, index) => {
+		const deployment = hostedDeployment(
+			seed.id,
+			hostedStateAgents[index].id,
+			index === 1 ? "openclaw" : "hermes",
+			seed.name,
+			false,
+		);
+		if (!deployment.resource.status) throw new Error("Missing fixture deployment status");
+		deployment.resource.spec.desired_lifecycle = seed.state === "stopped" ? "stopped" : "running";
+		deployment.resource.status.summary_state = seed.state;
+		deployment.resource.status.conditions = [
+			{
+				type: "Ready",
+				status: "False",
+				observedGeneration: 1,
+				reason:
+					seed.state === "failed"
+						? "RuntimeStartFailed"
+						: seed.state === "starting"
+							? "RuntimeStarting"
+							: "RuntimeStopped",
+				message:
+					seed.state === "failed"
+						? "Fixture runtime could not start. Retry the deployment."
+						: "Fixture runtime observation",
+				lastTransitionTime: ago(MINUTE),
+			},
+		];
+		deployment.commercial_display = {
+			compute_subscription: {
+				status: seed.payment === "past_due" ? "past_due" : "active",
+				funding_source: "wallet",
+				payment_state: seed.payment,
+				billing_term_months: 1,
+				price_cents: 2500,
+				currency: "usd",
+				cancel_at_period_end: false,
+				current_period_end: ago(seed.payment === "past_due" ? DAY : -20 * DAY),
+				next_payment_attempt_at: seed.payment === "past_due" ? ago(-DAY) : null,
+				recovery_action: seed.payment === "past_due" ? "top_up" : null,
+			},
+		};
+		return deployment;
+	}),
 ] satisfies DeploySchemas["V2HostedDeploymentReadResponse"][];
 
 const deploymentOperations = deployments.map(
@@ -1610,11 +2008,17 @@ const deploymentOperations = deployments.map(
 				createTime: ago(30 * DAY),
 				updateTime: ago(30 * DAY),
 			},
-			done: true,
-			response: {
-				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
-				deployment: deployment.resource,
-			},
+			done: deployment.resource.status?.summary_state !== "starting",
+			...(deployment.resource.status?.summary_state === "starting"
+				? {}
+				: deployment.resource.status?.summary_state === "failed"
+					? { error: { code: 13, message: "Fixture runtime could not start", details: [] } }
+					: {
+							response: {
+								"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+								deployment: deployment.resource,
+							},
+						}),
 		}) satisfies DeploySchemas["LongRunningOperation"],
 );
 
@@ -1622,11 +2026,16 @@ const computeSubscriptions = {
 	items: deployments.map(
 		(deployment, index) =>
 			({
-				subscription_id: index === 0 ? "csub_ParityIncluded" : "csub_ParityPerformance",
+				subscription_id:
+					index === 0
+						? "csub_ParityIncluded"
+						: index === 1
+							? "csub_ParityPerformance"
+							: `csub_${deployment.resource.id.slice(5)}`,
 				subscription_kind: index === 0 ? "included_basic" : "paid",
 				plan_slug: deployment.current_plan_slug,
 				funding_source: index === 0 ? null : "wallet",
-				status: "active",
+				status: deployment.resource.id === "hdep_ParityDunning" ? "past_due" : "active",
 				price_cents: index === 0 ? 0 : 2500,
 				currency: "usd",
 				billing_term_months: 1,
@@ -1635,10 +2044,12 @@ const computeSubscriptions = {
 				deployment_id: deployment.resource.id,
 				agent_name: deployment.resource.name,
 				is_orphan: false,
-				payment_state: "ok",
+				payment_state: deployment.commercial_display?.compute_subscription?.payment_state ?? "ok",
 				latest_failed_invoice_hosted_url: null,
-				next_payment_attempt_at: null,
-				recovery_action: null,
+				next_payment_attempt_at:
+					deployment.commercial_display?.compute_subscription?.next_payment_attempt_at ?? null,
+				recovery_action:
+					deployment.commercial_display?.compute_subscription?.recovery_action ?? null,
 				pending_plan_slug: null,
 			}) satisfies DeploySchemas["V2ComputeSubscriptionListItem"],
 	),
@@ -1753,13 +2164,23 @@ const computeGetRoutes = {
 		if (!deployment) return notFound("Deploy request not found");
 		return {
 			deploy_request_id: params.deploy_request_id ?? "",
-			request_status: "succeeded",
+			request_status:
+				deployment.resource.status?.summary_state === "starting"
+					? "processing"
+					: deployment.resource.status?.summary_state === "failed"
+						? "failed"
+						: "succeeded",
 			lineage_tail: {
 				deployment_id: deployment.resource.id,
 				agent_id: deployment.agent_id,
 				deployment_status: deployment.resource.status,
 				lineage_version: 1,
-				lineage_state: "succeeded",
+				lineage_state:
+					deployment.resource.status?.summary_state === "starting"
+						? "processing"
+						: deployment.resource.status?.summary_state === "failed"
+							? "failed"
+							: "succeeded",
 				accepted_generation: 1,
 				operation_name: `operations/op-${deployment.resource.id}`,
 			},
@@ -1850,16 +2271,17 @@ const getRoutes: { [P in GetPath]?: (ctx: Ctx) => GetOk<P> | Reply } = {
 	"/ready": () => ({ status: "ok" }),
 	"/v1/auth/me": () => currentUser,
 	"/v1/auth/keys": () => apiKeys,
-	"/v1/settings": () => ({ memory_provider: "builtin", mem0_api_key: null }),
+	"/v1/settings": () => settings,
 	"/v1/capabilities": () => ({ memory_providers: ["builtin", "mem0"] }),
-	"/v1/me/invitations": () => [],
+	"/v1/me/invitations": () =>
+		invitations.filter((item) => item.invitee_email === currentUser.email),
 
 	// Agents ---------------------------------------------------------------------
 
 	"/v1/agents": ({ url }) => {
 		const projectId = url.searchParams.get("project_id");
-		if (!projectId) return agents;
-		return agents.filter((agent) =>
+		if (!projectId) return [...agents, disconnectAgent, ...hostedStateAgents];
+		return [...agents, disconnectAgent, ...hostedStateAgents].filter((agent) =>
 			(projectBindingsByAgent[agent.id] ?? []).some((b) => b.project_id === projectId),
 		);
 	},
@@ -1875,13 +2297,19 @@ const getRoutes: { [P in GetPath]?: (ctx: Ctx) => GetOk<P> | Reply } = {
 		const skill = skills.find((s) => s.id === params.skill_id || s.skill_key === params.skill_id);
 		return skill ? skillDetail(skill) : notFound("Skill not found");
 	},
-	"/v1/agents/{agent_id}/agent-plugins": () => ({ plugins: [] }),
+	"/v1/agents/{agent_id}/agent-plugins": ({ params }) => ({
+		plugins: installedPlugins.filter((item) => item.agent_id === params.agent_id),
+	}),
+	"/v1/agents/{agent_id}/agent-plugins/{plugin_name}": ({ params }) =>
+		installedPlugins.find(
+			(item) => item.agent_id === params.agent_id && item.plugin_name === params.plugin_name,
+		) ?? notFound("Plugin not installed"),
 	"/v1/agents/{agent_id}/mcp": ({ params }) => ({
 		agent_id: params.agent_id ?? "",
 		availability: "unavailable",
 		servers: [],
 	}),
-	"/v1/plugin-catalog": () => ({ revision: "fixture-1", synced_at: ago(DAY), plugins: [] }),
+	"/v1/plugin-catalog": () => pluginCatalog,
 
 	// Sessions -------------------------------------------------------------------
 
@@ -1929,9 +2357,102 @@ const getRoutes: { [P in GetPath]?: (ctx: Ctx) => GetOk<P> | Reply } = {
 			limit,
 		};
 	},
-	"/v1/sessions/{session_id}/shares": () => ({ shares: [] }),
-	"/v1/sessions/{session_id}/permissions": () => ({ permissions: [] }),
-	"/v1/session-shares": ({ url }) => paginate([], url),
+	"/v1/sessions/{session_id}/shares": ({ params }) => ({
+		shares: sessionShares.filter((item) => item.session_id === params.session_id),
+	}),
+	"/v1/public/session-shares/{share_id}": ({ params }) => {
+		const share = sessionShares.find((item) => item.id === params.share_id);
+		const session = sessions.find((item) => item.id === share?.session_id);
+		if (!share || !session) return notFound("Snapshot not found");
+		return {
+			id: share.id,
+			title: session.summary ?? "Fixture session",
+			agent_type: session.agent_type,
+			model: session.model,
+			started_at: session.started_at,
+			created_at: share.created_at,
+			message_count: share.message_count,
+			scope: share.scope,
+		} satisfies Schemas["PublicSessionShareResponse"];
+	},
+	"/v1/public/session-shares/{share_id}/messages": ({ params }) => {
+		const share = sessionShares.find((item) => item.id === params.share_id);
+		const session = sessions.find((item) => item.id === share?.session_id);
+		if (!share || !session) return notFound("Snapshot not found");
+		return {
+			items: sessionTimeline(session)
+				.filter((item) => item.kind === "message")
+				.slice(share.start_position ?? 0, share.end_position + 1),
+			total: share.message_count,
+			offset: 0,
+			limit: 50,
+		};
+	},
+	"/v1/public/sessions/{session_id}": ({ params }) => {
+		const session = sessions.find((item) => item.id === params.session_id);
+		if (
+			!session ||
+			!sessionPermissions.some((item) => item.session_id === session.id && item.kind === "link")
+		)
+			return notFound("Live link not found");
+		return {
+			...session,
+			owner_name: currentUser.name,
+			owner_avatar_url: null,
+		} satisfies Schemas["PublicSessionResponse"];
+	},
+	"/v1/public/sessions/{session_id}/messages": ({ params }) => {
+		const session = sessions.find((item) => item.id === params.session_id);
+		if (
+			!session ||
+			!sessionPermissions.some((item) => item.session_id === session.id && item.kind === "link")
+		)
+			return notFound("Live link not found");
+		return {
+			items: sessionTimeline(session).filter((item) => item.kind === "message"),
+			total: session.message_count,
+			offset: 0,
+			limit: 50,
+		};
+	},
+	"/v1/sessions/{session_id}/permissions": ({ params }) => ({
+		permissions: sessionPermissions
+			.filter((item) => item.session_id === params.session_id)
+			.map(({ session_id: _session, ...permission }) => permission),
+	}),
+	"/v1/session-shares": ({ url }) =>
+		paginate(
+			[
+				...sessionShares.map(
+					(share) =>
+						({
+							...share,
+							kind: "snapshot",
+							session_title:
+								sessions.find((session) => session.id === share.session_id)?.summary ??
+								"Fixture session",
+						}) satisfies Schemas["SessionShareListItemResponse"],
+				),
+				...sessionPermissions
+					.filter((permission) => permission.kind === "link")
+					.map(
+						(permission) =>
+							({
+								id: permission.id,
+								session_id: permission.session_id,
+								kind: "live",
+								scope: "session",
+								session_title:
+									sessions.find((session) => session.id === permission.session_id)?.summary ??
+									"Fixture session",
+								message_count: 4,
+								share_url: `${shareOrigin}/s/${permission.session_id}`,
+								created_at: permission.created_at,
+							}) satisfies Schemas["SessionShareListItemResponse"],
+					),
+			],
+			url,
+		),
 
 	// Dashboard ------------------------------------------------------------------
 
@@ -1949,9 +2470,33 @@ const getRoutes: { [P in GetPath]?: (ctx: Ctx) => GetOk<P> | Reply } = {
 		const project = projectById.get(params.project_id ?? "");
 		return project ? withResourceCounts(project) : notFound("Project not found");
 	},
-	"/v1/projects/{project_id}/members": () => members,
-	"/v1/projects/{project_id}/invitations": () => [],
-	"/v1/projects/{project_id}/share-links": () => [],
+	"/v1/projects/{project_id}/members": ({ params }) => {
+		const project = invitedProjects.find((item) => item.id === params.project_id);
+		if (!project) return members;
+		return [
+			{
+				...members[0],
+				role: "member",
+				joined_via: "invitation",
+				joined_at: ago(0),
+				resolved_owner_handle: project.owner_handle,
+			},
+			{
+				...members[1],
+				role: "owner",
+				joined_via: "owner",
+				user_display: project.owner_display,
+				user_email: `${project.owner_handle}@example.invalid`,
+				resolved_owner_handle: project.owner_handle,
+			},
+		] satisfies Schemas["MemberResponse"][];
+	},
+	"/v1/projects/{project_id}/invitations": ({ params }) =>
+		invitations.filter((item) => item.project_id === params.project_id),
+	"/v1/projects/{project_id}/share-links": ({ params }) =>
+		shareLinks[params.project_id ?? ""] ?? [],
+	"/v1/share/{token}/preview": ({ params }) => projectPreview(params.token),
+
 	"/v1/projects/{project_id}/skills/{skill_key}": ({ params }) => {
 		const skill = skills.find(
 			(s) =>
@@ -2017,7 +2562,15 @@ const getRoutes: { [P in GetPath]?: (ctx: Ctx) => GetOk<P> | Reply } = {
 		);
 		return vault ?? notFound("Vault not found");
 	},
-	"/v1/vault/requests": () => [],
+	"/v1/vault/requests": ({ url }) =>
+		vaultRequests.filter(
+			(item) =>
+				(!url.searchParams.has("vault_id") || item.vault_id === url.searchParams.get("vault_id")) &&
+				(!url.searchParams.has("project_id") ||
+					item.project_id === url.searchParams.get("project_id")),
+		),
+	"/v1/vault/requests/{request_id}": ({ params }) =>
+		vaultRequests.find((item) => item.id === params.request_id) ?? notFound("Request not found"),
 	"/v1/vault/{slug}/items": ({ params }) =>
 		vaultSections[params.slug ?? ""] ?? notFound("Vault not found"),
 
@@ -2035,9 +2588,24 @@ const getRoutes: { [P in GetPath]?: (ctx: Ctx) => GetOk<P> | Reply } = {
 	"/v1/connectors/available/{app_name}": ({ params }) =>
 		connectorCatalog.find((app) => app.name === params.app_name) ?? notFound("App not found"),
 	"/v1/connectors/{app_name}/tools": () => connectorTools,
-	"/v1/connectors/{app_name}/auth-fields": () => ({
-		auth_scheme: "OAUTH2",
-		expected_input_fields: [],
+	"/v1/connectors/{app_name}/auth-fields": ({ params }) => ({
+		auth_scheme:
+			params.app_name === "stripe" || params.app_name === "airtable" ? "API_KEY" : "OAUTH2",
+		expected_input_fields:
+			params.app_name === "stripe" || params.app_name === "airtable"
+				? [
+						{
+							name: "api_key",
+							display_name: "API key",
+							description:
+								"Use a synthetic value for this fixture. No provider authentication is performed.",
+							type: "string",
+							required: true,
+							is_secret: true,
+							expected_from_customer: true,
+						} satisfies Schemas["ConnectorAuthFieldResponse"],
+					]
+				: [],
 	}),
 
 	// AI providers + channels -----------------------------------------------------
@@ -2047,19 +2615,24 @@ const getRoutes: { [P in GetPath]?: (ctx: Ctx) => GetOk<P> | Reply } = {
 		aiProviders.providers.find(
 			(p) => p.provider_id === params.provider_id || p.id === params.provider_id,
 		) ?? notFound("Provider not found"),
-	"/v1/channels": () => channelAccounts,
-	"/v1/channels/agent-links": () => channelAgentLinks,
+	"/v1/channels": () => allChannelAccounts(),
+	"/v1/channels/agent-links": ({ url }) =>
+		channelAgentLinks.filter(
+			(link) =>
+				!url.searchParams.has("agent_id") || link.agent_id === url.searchParams.get("agent_id"),
+		),
 	"/v1/channels/{account_id}": ({ params }) =>
-		channelAccounts.find((account) => account.id === params.account_id) ??
+		allChannelAccounts().find((account) => account.id === params.account_id) ??
 		notFound("Channel not found"),
 	"/v1/channels/{account_id}/agent-links": ({ params }) =>
 		channelAgentLinks
 			.filter((link) => link.account_id === params.account_id)
 			.map(({ account: _account, binding_count: _count, ...link }) => link),
-	"/v1/channels/{account_id}/bindings": () => [],
+	"/v1/channels/{account_id}/bindings": ({ params }) =>
+		channelBindings.filter((item) => item.account_id === params.account_id),
 	"/v1/channels/{account_id}/activity": () => ({ items: [] }),
 	"/v1/channels/health": () => ({
-		items: channelAccounts.map((account) => ({
+		items: allChannelAccounts().map((account) => ({
 			account_id: account.id,
 			provider: account.provider,
 			name: account.name,
@@ -2073,7 +2646,41 @@ const getRoutes: { [P in GetPath]?: (ctx: Ctx) => GetOk<P> | Reply } = {
 			last_message_at: ago(3 * HOUR),
 		})),
 	}),
-	"/v1/channels/bot-pool": () => ({ providers: {} }),
+	"/v1/channels/bot-pool": () => {
+		const providers: Schemas["ChannelBotPoolResponse"]["providers"] = {};
+		for (const account of allChannelAccounts()) {
+			providers[account.provider] ??= [];
+			providers[account.provider].push({
+				...account,
+				access: "owner",
+				available: true,
+				max_links: null,
+				link_count: channelAgentLinks.filter(
+					(link) => link.account_id === account.id && link.status === "active",
+				).length,
+				capabilities: {
+					link_agent: true,
+					pair_chat: true,
+					send_message: true,
+					manage_account: true,
+					sync_commands: account.provider !== "whatsapp",
+				},
+			} satisfies Schemas["ChannelBotPoolItem"]);
+		}
+		return { providers } satisfies Schemas["ChannelBotPoolResponse"];
+	},
+	"/v1/channels/whatsapp/onboarding/readiness": ({ url }) => ({
+		available: url.searchParams.get("available") !== "false",
+		manual_pairing_code_supported: true,
+		reason: url.searchParams.get("available") === "false" ? "temporarily_unavailable" : null,
+	}),
+	"/v1/channels/whatsapp/onboarding/sessions/{session_id}": ({ params, url }) => {
+		const session = whatsappSessions.get(params.session_id ?? "");
+		if (!session) return notFound("Onboarding session not found");
+		return url.searchParams.has("state")
+			? whatsappSession(session.id, session.name, whatsappState(url.searchParams.get("state")))
+			: session;
+	},
 };
 
 for (const [template, handler] of Object.entries(getRoutes)) {
@@ -2096,6 +2703,585 @@ on(
 	"/v1/sessions/{session_id}/content-events",
 	() => new Reply(404, { detail: "Not streamed" }),
 );
+
+// Read-after-write state is held only by this server process.
+let mutationSequence = 0;
+function fixtureId() {
+	mutationSequence++;
+	return `f1700000-0000-4000-8000-${String(mutationSequence).padStart(12, "0")}`;
+}
+async function bodyObject(request: Request): Promise<Record<string, unknown>> {
+	let body: unknown;
+	try {
+		body = await request.json();
+	} catch {
+		throw new Reply(400, { detail: "Invalid JSON body" });
+	}
+	if (typeof body !== "object" || body === null || Array.isArray(body)) {
+		throw new Reply(400, { detail: "Expected a JSON object" });
+	}
+	return Object.fromEntries(Object.entries(body));
+}
+function requiredString(body: Record<string, unknown>, field: string) {
+	const value = body[field];
+	if (typeof value !== "string" || !value.trim() || value.length > 4096) {
+		throw new Reply(400, { detail: `Invalid ${field}` });
+	}
+	return value.trim();
+}
+function strings(value: unknown): string[] {
+	if (
+		!Array.isArray(value) ||
+		value.some((item: unknown) => typeof item !== "string" || !item.trim())
+	) {
+		throw new Reply(400, { detail: "Expected a list of field names" });
+	}
+	return value.filter((item): item is string => typeof item === "string");
+}
+function removeWhere<T>(items: T[], predicate: (item: T) => boolean) {
+	for (let index = items.length - 1; index >= 0; index--) {
+		if (predicate(items[index])) items.splice(index, 1);
+	}
+}
+function projectPreview(token: string | undefined): Schemas["ShareRedeemResponse"] | Reply {
+	const project = projects.find((item) => item.id === projectTokens.get(token ?? ""));
+	if (!project) return notFound("Invite token not found");
+	return {
+		project_id: project.id,
+		project_name: project.name,
+		owner_display: project.owner_display,
+		owner_handle: project.owner_handle,
+		skill_count: project.skill_count,
+		vault_count: project.vault_count,
+		vault_locked: true,
+	} satisfies Schemas["ShareRedeemResponse"];
+}
+function requestByToken(token: string) {
+	const item = vaultRequests.find((row) => row.id === vaultTokens.get(token));
+	if (!item) throw notFound("Supply token not found");
+	return item;
+}
+
+on("PATCH", "/v1/settings", async ({ request }) => {
+	const body = await bodyObject(request);
+	const patch = body.settings;
+	if (typeof patch !== "object" || patch === null || Array.isArray(patch)) {
+		return new Reply(400, { detail: "Invalid settings" });
+	}
+	const provider: unknown = Reflect.get(patch, "memory_provider");
+	const key: unknown = Reflect.get(patch, "mem0_api_key");
+	if (provider !== undefined && provider !== "builtin" && provider !== "mem0") {
+		return new Reply(400, { detail: "Invalid memory provider" });
+	}
+	if (key !== undefined && key !== null && typeof key !== "string") {
+		return new Reply(400, { detail: "Invalid Mem0 key" });
+	}
+	if (provider !== undefined) settings.memory_provider = provider;
+	if (key !== undefined) {
+		settings.mem0_api_key_configured = typeof key === "string" && key.trim().length > 0;
+		settings.mem0_api_key = settings.mem0_api_key_configured ? "fixture-mem0-configured" : null;
+	}
+	return { status: "updated" } satisfies Schemas["SettingsUpdateResponse"];
+});
+on("POST", "/v1/auth/keys", async ({ request }) => {
+	const body = await bodyObject(request);
+	const label = requiredString(body, "label");
+	if (label.length > 200) return new Reply(400, { detail: "Key label is too long" });
+	const id = fixtureId();
+	const key = {
+		id,
+		label,
+		key_prefix: "clawdi_fixture",
+		created_at: ago(0),
+		last_used_at: null,
+		expires_at: null,
+		revoked_at: null,
+	} satisfies Schemas["ApiKeyResponse"];
+	apiKeys.push(key);
+	return {
+		...key,
+		raw_key: `clawdi_fixture_only_${id.replaceAll("-", "")}`,
+	} satisfies Schemas["ApiKeyCreated"];
+});
+on("DELETE", "/v1/auth/keys/{key_id}", ({ params }) => {
+	removeWhere(apiKeys, (item) => item.id === params.key_id);
+	return { status: "revoked" } satisfies Schemas["ApiKeyRevokeResponse"];
+});
+on("POST", "/v1/projects/{project_id}/invitations", async ({ params, request }) => {
+	const project = projects.find((item) => item.id === params.project_id);
+	if (!project) return notFound("Project not found");
+	const email = requiredString(await bodyObject(request), "email");
+	if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return new Reply(400, { detail: "Invalid email" });
+	const invitation = {
+		...invitationSeeds[0],
+		id: fixtureId(),
+		project_id: project.id,
+		project_name: project.name,
+		invitee_email: email,
+		created_at: ago(0),
+	} satisfies Schemas["InvitationResponse"];
+	invitations.push(invitation);
+	return invitation;
+});
+on("DELETE", "/v1/projects/{project_id}/invitations/{invitation_id}", ({ params }) => {
+	invitations = invitations.filter(
+		(item) => !(item.id === params.invitation_id && item.project_id === params.project_id),
+	);
+	return { status: "cancelled" } satisfies Schemas["InvitationCancelResponse"];
+});
+for (const action of ["accept", "decline"]) {
+	on("POST", `/v1/me/invitations/{invitation_id}/${action}`, ({ params }) => {
+		const invitation = invitations.find(
+			(item) => item.id === params.invitation_id && item.invitee_email === currentUser.email,
+		);
+		if (!invitation) return notFound("Invitation not found");
+		invitations = invitations.filter((item) => item.id !== invitation.id);
+		if (action === "decline")
+			return { status: "declined" } satisfies Schemas["InvitationDeclineResponse"];
+		const project = invitedProjects.find((item) => item.id === invitation.project_id);
+		if (project && !projects.some((item) => item.id === project.id)) {
+			projects.push(project);
+			projectById.set(project.id, project);
+		}
+		return {
+			id: fixtureId(),
+			project_id: invitation.project_id,
+			role: "member",
+			joined_via: "invitation",
+			joined_at: ago(0),
+			resolved_owner_handle: invitation.owner_handle,
+			bound_agent_ids: [],
+		} satisfies Schemas["InvitationAcceptResponse"];
+	});
+}
+on("POST", "/v1/projects/{project_id}/share-links", async ({ params, request }) => {
+	const project = projects.find((item) => item.id === params.project_id);
+	if (!project) return notFound("Project not found");
+	const body = await bodyObject(request);
+	const id = fixtureId();
+	const token = projectTokenForId(id);
+	const label = typeof body.label === "string" ? body.label : null;
+	const created = {
+		id,
+		raw_token: token,
+		url: `${shareOrigin}/share/${token}`,
+		prefix: token.slice(0, 12),
+		owner_handle: project.owner_handle,
+		label,
+		created_at: ago(0),
+		expires_at: ago(-7 * DAY),
+	} satisfies Schemas["ShareLinkCreated"];
+	shareLinks[project.id] ??= [];
+	shareLinks[project.id].push({
+		id,
+		prefix: created.prefix,
+		label,
+		created_at: created.created_at,
+		expires_at: created.expires_at,
+		revoked_at: null,
+		redeem_count: 0,
+		last_redeemed_at: null,
+	} satisfies Schemas["ShareLinkResponse"]);
+	projectTokens.set(token, project.id);
+	return created;
+});
+on("DELETE", "/v1/projects/{project_id}/share-links/{link_id}", ({ params }) => {
+	const links = shareLinks[params.project_id ?? ""] ?? [];
+	const link = links.find((item) => item.id === params.link_id);
+	if (!link) return notFound("Share link not found");
+	link.revoked_at = ago(0);
+	for (const [token, projectId] of projectTokens) {
+		if (projectId === params.project_id && token === projectTokenForId(link.id))
+			projectTokens.delete(token);
+	}
+	if (link.id === "51aee000-0001-4000-8000-000000000001") projectTokens.delete(PROJECT_TOKEN);
+	return { status: "revoked" } satisfies Schemas["ShareLinkRevokeResponse"];
+});
+on("POST", "/v1/share/{token}/redeem", ({ params }) => projectPreview(params.token));
+on("POST", "/v1/share/{token}/upgrade", ({ params }) => {
+	const preview = projectPreview(params.token);
+	if (preview instanceof Reply) return preview;
+	return {
+		membership_id: fixtureId(),
+		project_id: preview.project_id,
+		role: "member",
+		joined_via: "link",
+		joined_at: ago(0),
+		resolved_owner_handle: preview.owner_handle,
+		bound_agent_ids: [],
+	} satisfies Schemas["ShareUpgradeResponse"];
+});
+on("POST", "/v1/vault/requests", async ({ request }) => {
+	const body = await bodyObject(request);
+	const vaultId = requiredString(body, "vault_id");
+	const projectId = requiredString(body, "project_id");
+	const vault = vaults.find((item) => item.id === vaultId && item.project_ids.includes(projectId));
+	const project = projects.find((item) => item.id === projectId);
+	if (!vault || !project) return notFound("Vault project attachment not found");
+	const fields = strings(body.fields);
+	if (!fields.length) return new Reply(400, { detail: "At least one field is required" });
+	const section = requiredString(body, "section");
+	const id = fixtureId();
+	const token = `v2_${id.replaceAll("-", "").padEnd(43, "0")}`;
+	const item = {
+		...vaultRequests[0],
+		id,
+		vault_id: vault.id,
+		project_id: project.id,
+		vault_name: vault.name,
+		project_name: project.name,
+		slug: vault.slug,
+		section,
+		fields,
+		extra_fields: [],
+		update_fields: [],
+		status: "pending",
+		supplied_at: null,
+		references: Object.fromEntries(
+			fields.map((field) => [field, `vault://${vault.slug}/${field}`]),
+		),
+	} satisfies Schemas["VaultSecretRequestStatus"];
+	vaultRequests.push(item);
+	vaultTokens.set(token, id);
+	return {
+		...item,
+		url: `${shareOrigin}/vault-request#${token}`,
+	} satisfies Schemas["VaultSecretRequestCreated"];
+});
+on("POST", "/v1/vault/requests/inspect", async ({ request }) => {
+	const body = await bodyObject(request);
+	const item = requestByToken(requiredString(body, "token"));
+	const requested = body.fields === undefined ? item.fields : strings(body.fields);
+	return {
+		...item,
+		extra_fields: requested.filter((field) => !item.fields.includes(field)),
+		update_fields: requested.filter((field) =>
+			Object.values(vaultSections[item.slug] ?? {}).some((keys) => keys.includes(field)),
+		),
+	} satisfies Schemas["VaultSecretRequestStatus"];
+});
+on("POST", "/v1/vault/requests/supply", async ({ request }) => {
+	const body = await bodyObject(request);
+	const item = requestByToken(requiredString(body, "token"));
+	const values = body.fields;
+	if (typeof values !== "object" || values === null || Array.isArray(values)) {
+		return new Reply(400, { detail: "Invalid fields" });
+	}
+	const entries = Object.entries(values);
+	if (
+		entries.some(([name, value]) => !name.trim() || typeof value !== "string" || !value.trim()) ||
+		item.fields.some((field) => !entries.some(([name]) => name === field))
+	) {
+		return new Reply(400, { detail: "Missing requested field values" });
+	}
+	item.extra_fields = entries.map(([name]) => name).filter((name) => !item.fields.includes(name));
+	item.update_fields = entries
+		.map(([name]) => name)
+		.filter((name) =>
+			Object.values(vaultSections[item.slug] ?? {}).some((keys) => keys.includes(name)),
+		);
+	// Values are intentionally discarded: only receipt metadata survives.
+	item.status = "supplied";
+	item.supplied_at = ago(0);
+	item.content_version++;
+	return item;
+});
+
+on("POST", "/v1/channels/whatsapp/onboarding/sessions", async ({ request }) => {
+	const body = await bodyObject(request);
+	const requestId = requiredString(body, "request_id");
+	const previous = whatsappRequests.get(requestId);
+	if (previous) return whatsappSessions.get(previous);
+	const session = whatsappSession(fixtureId(), requiredString(body, "name"));
+	whatsappSessions.set(session.id, session);
+	if (session.state === "connected") {
+		whatsappAccount.status = "active";
+		whatsappAccount.has_provider_token = true;
+	}
+	whatsappRequests.set(requestId, session.id);
+	return session;
+});
+for (const action of ["cancel", "retry", "pairing-code"]) {
+	on(
+		"POST",
+		`/v1/channels/whatsapp/onboarding/sessions/{session_id}/${action}`,
+		async ({ params, request }) => {
+			const session = whatsappSessions.get(params.session_id ?? "");
+			if (!session) return notFound("Onboarding session not found");
+			if (action === "pairing-code") {
+				const phone = requiredString(await bodyObject(request), "phone_number");
+				if (!/^\+?\d{7,15}$/.test(phone)) return new Reply(400, { detail: "Invalid phone number" });
+				session.state = "ready";
+				session.method = "code";
+				session.pairing_code = "1234-5678";
+				session.qr = null;
+			} else if (action === "cancel") {
+				session.state = "canceled";
+				session.qr = null;
+				session.pairing_code = null;
+			} else {
+				Object.assign(session, whatsappSession(session.id, session.name));
+			}
+			return session;
+		},
+	);
+}
+on("POST", "/v1/channels/whatsapp/onboarding/accounts/{account_id}/repair", ({ params }) => {
+	if (params.account_id !== WHATSAPP_ACCOUNT) return notFound("WhatsApp account not found");
+	const session = whatsappSession(fixtureId(), whatsappAccount.name);
+	whatsappSessions.set(session.id, session);
+	if (session.state === "connected") {
+		whatsappAccount.status = "active";
+		whatsappAccount.has_provider_token = true;
+	}
+	return session;
+});
+on("POST", "/v1/channels/{account_id}/pair-codes", async ({ params, request }) => {
+	const account = allChannelAccounts().find((item) => item.id === params.account_id);
+	if (!account) return notFound("Channel not found");
+	const body = await bodyObject(request);
+	const link = channelAgentLinks.find(
+		(item) =>
+			item.account_id === account.id &&
+			(body.agent_link_id
+				? item.id === body.agent_link_id
+				: !body.agent_id || item.agent_id === body.agent_id),
+	);
+	if (!link) return notFound("Agent link not found");
+	return {
+		id: fixtureId(),
+		agent_link_id: link.id,
+		agent_id: link.agent_id,
+		code: "FIXTURE42",
+		expires_at: ago(-5 * MINUTE),
+		pairing_command: "/pair FIXTURE42",
+		bot_username: account.provider === "telegram" ? "acme_ops_bot" : null,
+		deep_link: account.provider === "telegram" ? "https://t.me/acme_ops_bot?start=FIXTURE42" : null,
+		qr_payload:
+			account.provider === "telegram"
+				? "https://t.me/acme_ops_bot?start=FIXTURE42"
+				: "fixture-only-pair-FIXTURE42",
+		discord_install_url:
+			account.provider === "discord" ? "https://example.invalid/fixture-discord" : null,
+	} satisfies Schemas["ChannelPairCodeResponse"];
+});
+on("POST", "/v1/channels/{account_id}/agent-links", async ({ params, request }) => {
+	const account = allChannelAccounts().find((item) => item.id === params.account_id);
+	if (!account) return notFound("Channel not found");
+	const body = await bodyObject(request);
+	const agentId = requiredString(body, "agent_id");
+	if (!findAgent(agentId)) return notFound("Agent not found");
+	if (account.provider === "whatsapp" && account.status !== "active") {
+		return new Reply(409, { detail: "whatsapp_repair_required" });
+	}
+	const link = {
+		id: fixtureId(),
+		account_id: account.id,
+		agent_id: agentId,
+		status: "active",
+		runtime_status: "connected",
+		created_at: ago(0),
+		agent_token: null,
+	} satisfies Schemas["ChannelAgentLinkResponse"];
+	const previous = channelAgentLinks.filter(
+		(item) => item.agent_id === agentId && item.account.provider === account.provider,
+	);
+	if (previous.length && body.replace_existing_provider_link !== true) {
+		return new Reply(409, { detail: "Provider link replacement requires explicit consent" });
+	}
+	removeWhere(channelBindings, (binding) =>
+		previous.some((item) => item.id === binding.agent_link_id),
+	);
+	// Replacement is confined to the same agent/provider, as in the API contract.
+	removeWhere(
+		channelAgentLinks,
+		(item) => item.agent_id === agentId && item.account.provider === account.provider,
+	);
+	channelAgentLinks.push({ ...link, account, binding_count: 0 });
+	return link;
+});
+on("DELETE", "/v1/channels/{account_id}/agent-links/{link_id}", ({ params }) => {
+	removeWhere(
+		channelAgentLinks,
+		(item) => item.account_id === params.account_id && item.id === params.link_id,
+	);
+	removeWhere(channelBindings, (item) => item.agent_link_id === params.link_id);
+	return new Reply(204, null);
+});
+on("DELETE", "/v1/channels/{account_id}/bindings/{binding_id}", ({ params }) => {
+	const item = channelBindings.find(
+		(binding) => binding.id === params.binding_id && binding.account_id === params.account_id,
+	);
+	if (!item) return notFound("Paired chat not found");
+	removeWhere(channelBindings, (binding) => binding.id === item.id);
+	const link = channelAgentLinks.find((candidate) => candidate.id === item.agent_link_id);
+	if (link)
+		link.binding_count = channelBindings.filter(
+			(binding) => binding.agent_link_id === link.id,
+		).length;
+	return {
+		binding_id: item.id,
+		unpaired: true,
+		notification_status: "sent",
+		provider_cleanup_status: "succeeded",
+		warning: null,
+	} satisfies Schemas["ChannelBindingDeleteResponse"];
+});
+on("POST", "/v1/channels/{account_id}/commands/sync", ({ params }) => {
+	const account = allChannelAccounts().find((item) => item.id === params.account_id);
+	if (!account) return notFound("Channel not found");
+	return {
+		provider: account.provider,
+		commands: [
+			{ name: "ask", description: "Ask the linked Agent" },
+			{ name: "new", description: "Start a new conversation" },
+		],
+	} satisfies Schemas["ChannelCommandSyncResponse"];
+});
+on("PUT", "/v1/agents/{agent_id}/agent-plugins/{plugin_name}", ({ params }) => {
+	const plugin = pluginCatalog.plugins.find((item) => item.name === params.plugin_name);
+	const agent = findAgent(params.agent_id);
+	if (!agent || !plugin) return notFound("Agent or plugin not found");
+	const item = {
+		...installedPlugins[0],
+		installation_id: fixtureId(),
+		agent_id: agent.id,
+		plugin_name: plugin.name,
+		version: plugin.version,
+		catalog_revision: pluginCatalog.revision,
+		desired_state: "present",
+		convergence: "installed",
+		created_at: ago(0),
+		updated_at: ago(0),
+	} satisfies Schemas["AgentPluginDesiredStateResponse"];
+	removeWhere(
+		installedPlugins,
+		(row) => row.agent_id === item.agent_id && row.plugin_name === item.plugin_name,
+	);
+	installedPlugins.push(item);
+	return item;
+});
+on("DELETE", "/v1/agents/{agent_id}/agent-plugins/{plugin_name}", ({ params }) => {
+	removeWhere(
+		installedPlugins,
+		(item) => item.agent_id === params.agent_id && item.plugin_name === params.plugin_name,
+	);
+	return {
+		agent_id: params.agent_id ?? "",
+		plugin_name: params.plugin_name ?? "",
+		desired_state: "absent",
+		convergence: "not_observed",
+	} satisfies Schemas["AgentPluginDesiredStateDeleteResponse"];
+});
+on("POST", "/v1/sessions/{session_id}/shares", async ({ params, request }) => {
+	const session = sessions.find((item) => item.id === params.session_id);
+	if (!session) return notFound("Session not found");
+	const body = await bodyObject(request);
+	const scope = body.scope;
+	if (scope !== "session" && scope !== "through" && scope !== "response")
+		return new Reply(400, { detail: "Invalid scope" });
+	const position =
+		typeof body.position === "number" && Number.isInteger(body.position) ? body.position : 3;
+	const id = fixtureId();
+	const share = {
+		id,
+		session_id: session.id,
+		scope,
+		start_position: scope === "response" ? position : null,
+		end_position: position,
+		message_count: scope === "response" ? 1 : position + 1,
+		share_url: `${shareOrigin}/s/${id}`,
+		created_at: ago(0),
+	} satisfies Schemas["SessionShareResponse"];
+	sessionShares.push(share);
+	return share;
+});
+on("DELETE", "/v1/session-shares/{share_id}", ({ params }) => {
+	removeWhere(sessionShares, (item) => item.id === params.share_id);
+	removeWhere(sessionPermissions, (item) => item.id === params.share_id);
+	return new Reply(204, null);
+});
+on("DELETE", "/v1/sessions/{session_id}/permissions", ({ params }) => {
+	removeWhere(sessionPermissions, (item) => item.session_id === params.session_id);
+	return new Reply(204, null);
+});
+on("POST", "/v1/sessions/{session_id}/permissions", async ({ params, request }) => {
+	const kind = (await bodyObject(request)).kind;
+	if (kind !== "link" && kind !== "email" && kind !== "user")
+		return new Reply(400, { detail: "Invalid permission kind" });
+	const permission = {
+		id: fixtureId(),
+		kind,
+		role: "viewer",
+		created_at: ago(0),
+		expires_at: null,
+	} satisfies Schemas["SessionPermissionResponse"];
+	sessionPermissions.push({ ...permission, session_id: params.session_id ?? "" });
+	return permission;
+});
+
+on("POST", "/v1/connectors/{app_name}/connect-credentials", async ({ params, request }) => {
+	if (params.app_name !== "stripe" && params.app_name !== "airtable")
+		return notFound("Credential connector not found");
+	await bodyObject(request); // Never retain submitted credential values.
+	const id = fixtureId();
+	connectorConnections.push({
+		id,
+		app_name: params.app_name,
+		status: "ACTIVE",
+		created_at: ago(0),
+		is_disabled: false,
+		alias: null,
+		account_display: "Fixture account",
+	});
+	return {
+		id,
+		status: "ACTIVE",
+		ok: true,
+	} satisfies Schemas["ConnectorCredentialsConnectResponse"];
+});
+
+function oauthAuthorization(providerId: string) {
+	return {
+		flow: "device_code",
+		provider_id: providerId,
+		oauth_provider: "openai-codex",
+		profile: "default",
+		// Native validates this exact upstream URL; the fixture never opens it.
+		verification_url: "https://auth.openai.com/codex/device",
+		user_code: "FIXT-URE1",
+		state: "fixture-oauth-ready",
+		expires_at: ago(-15 * MINUTE),
+		poll_interval_seconds: 2,
+	} satisfies Schemas["AiProviderOAuthDeviceStartResponse"];
+}
+on("POST", "/v1/ai-providers/{provider_id}/auth/oauth/device/start", ({ params }) =>
+	oauthAuthorization(params.provider_id ?? "openai"),
+);
+on("POST", "/v1/ai-providers/{provider_id}/auth/oauth/device/poll", async ({ params, request }) => {
+	const body = await bodyObject(request);
+	if (body.state !== "fixture-oauth-ready")
+		return new Reply(400, { detail: "Invalid fixture OAuth state" });
+	const provider = aiProviders.providers.find(
+		(item) => item.provider_id === params.provider_id || item.id === params.provider_id,
+	);
+	if (!provider) return notFound("Provider not found");
+	return { status: "ready", provider } satisfies Schemas["AiProviderOAuthDeviceReadyResponse"];
+});
+on("POST", "/v1/ai-providers/accept", async ({ request }) => {
+	const body = await bodyObject(request);
+	if (typeof body.credential !== "object" || body.credential === null)
+		return new Reply(400, { detail: "Invalid credential" });
+	const type: unknown = Reflect.get(body.credential, "type");
+	const provider = aiProviders.providers[1];
+	if (type === "oauth")
+		return {
+			status: "pending",
+			provider,
+			authorization: oauthAuthorization(provider.provider_id),
+		} satisfies Schemas["AiProviderOAuthPendingAcceptResponse"];
+	return { status: "ready", provider } satisfies Schemas["AiProviderReadyAcceptResponse"];
+});
 
 // Generic mutation fallbacks: plausible success, nothing persisted.
 for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
@@ -2159,7 +3345,10 @@ function resolve(method: string, pathname: string) {
 
 // Static collection subpaths must precede parameterized detail routes.
 // Otherwise /channels/health and /channels/bot-pool resolve as account IDs.
-routes.sort((a, b) => a.keys.length - b.keys.length);
+routes.sort((a, b) => {
+	const fallbackOrder = Number(a.template === "/v1/{rest}") - Number(b.template === "/v1/{rest}");
+	return fallbackOrder || a.keys.length - b.keys.length;
+});
 
 const server = Bun.serve({
 	port,
@@ -2170,7 +3359,13 @@ const server = Bun.serve({
 			return new Response(null, { status: 204, headers: corsHeaders(request) });
 		}
 		const authorization = request.headers.get("authorization") ?? "";
-		if (!PUBLIC_PATHS.has(url.pathname) && !/^Bearer\s+\S+/i.test(authorization)) {
+		if (
+			!PUBLIC_PATHS.has(url.pathname) &&
+			!url.pathname.startsWith("/v1/public/") &&
+			!/^\/v1\/share\/[^/]+\/preview$/.test(url.pathname) &&
+			!["/v1/vault/requests/inspect", "/v1/vault/requests/supply"].includes(url.pathname) &&
+			!/^Bearer\s+\S+/i.test(authorization)
+		) {
 			return json(request, 401, { detail: "Missing bearer token" });
 		}
 		const resolved = resolve(request.method, url.pathname);
@@ -2190,6 +3385,7 @@ const server = Bun.serve({
 			}
 			return json(request, 200, result);
 		} catch (error) {
+			if (error instanceof Reply) return json(request, error.httpStatus, error.payload);
 			console.error(`[fixture-api] 500 ${request.method} ${url.pathname}`, error);
 			return json(request, 500, { detail: "Fixture handler failed" });
 		}
@@ -2198,5 +3394,5 @@ const server = Bun.serve({
 
 console.log(`[fixture-api] listening on http://${hostname}:${server.port}`);
 console.log(
-	`[fixture-api] ${agents.length} agents, ${sessions.length} sessions, ${projects.length} projects, ${skills.length} skills`,
+	`[fixture-api] ${agents.length + hostedStateAgents.length + 1} agents, ${sessions.length} sessions, ${projects.length} projects, ${skills.length} skills`,
 );
