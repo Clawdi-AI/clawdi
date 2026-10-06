@@ -53,6 +53,8 @@ jobs:
         id: docker-hub-mirror
         uses: ./.github/actions/setup-docker-hub-mirror
         with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
           prefetch-images: |
             moby/buildkit:buildx-stable-1
       - name: Check Docker availability
