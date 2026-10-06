@@ -18,7 +18,7 @@ import type {
 	SessionScanResult,
 	SyncReadContext,
 } from "./base";
-import { getPiHome, getPiSessionsDir, isPathWithinRoots } from "./paths";
+import { getPiHome, getPiSessionsDir, isPathWithinRoots, matchesProjectFilter } from "./paths";
 import {
 	type JsonObject,
 	jsonObject,
@@ -562,7 +562,7 @@ async function parseSession(
 		const id = jsonString(record.data.id);
 		const cwd = jsonString(record.data.cwd);
 		if (sourceId !== undefined && id !== sourceId) return null;
-		if (projectFilter && (!cwd || resolve(cwd) !== resolve(projectFilter))) return null;
+		if (!matchesProjectFilter(cwd, projectFilter ? resolve(projectFilter) : null)) return null;
 		break;
 	}
 	const metadata: PiReadMetadata = { header: null, usage: emptyUsage() };
@@ -573,7 +573,7 @@ async function parseSession(
 	const sessionKey = jsonString(header.id);
 	if (!sessionKey || (sourceId !== undefined && sessionKey !== sourceId)) return null;
 	const cwd = jsonString(header.cwd);
-	if (projectFilter && (!cwd || resolve(cwd) !== resolve(projectFilter))) return null;
+	if (!matchesProjectFilter(cwd, projectFilter ? resolve(projectFilter) : null)) return null;
 	const headerTimestamp =
 		numberValue(header.createdAt) ?? jsonString(header.timestamp) ?? undefined;
 	const parsedHeaderTimestamp = headerTimestamp === undefined ? null : new Date(headerTimestamp);

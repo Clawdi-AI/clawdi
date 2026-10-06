@@ -40,7 +40,7 @@ import {
 	resolveOpenClawAgentWorkspace,
 	resolveOpenClawAgentWorkspaceAsync,
 } from "./openclaw-workspace";
-import { getOpenClawHome, isPathWithinRoots } from "./paths";
+import { getOpenClawHome, isPathWithinRoots, matchesProjectFilter } from "./paths";
 import {
 	canonicalStructuredString,
 	type JsonObject,
@@ -1183,10 +1183,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				if (!updatedAt) continue;
 
 				const projectPath = entry.acp?.cwd ?? null;
-				if (absFilter) {
-					if (!projectPath) continue;
-					if (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)) continue;
-				}
+				if (!matchesProjectFilter(projectPath, absFilter)) continue;
 
 				const transcriptPath = entry.sessionFile
 					? isAbsolute(entry.sessionFile)
@@ -1259,11 +1256,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				continue;
 			}
 			const projectPath = entry.spawnedCwd ?? entry.spawnedWorkspaceDir ?? entry.acp?.cwd ?? null;
-			if (
-				absFilter &&
-				(!projectPath || (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)))
-			)
-				continue;
+			if (!matchesProjectFilter(projectPath, absFilter)) continue;
 			if (sessionId) observedLocalSessionIds.push(sessionId);
 			const sourceRevision = sessionId ? `${sessionId}:${updatedAt}` : null;
 			if (sessionId && knownSourceRevisions.get(sessionId) === sourceRevision) continue;

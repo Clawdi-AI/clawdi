@@ -11,7 +11,7 @@ import type {
 	SessionScanResult,
 	SyncReadContext,
 } from "./base";
-import { getCodexHome, isPathWithinRoots } from "./paths";
+import { getCodexHome, isPathWithinRoots, matchesProjectFilter } from "./paths";
 import {
 	canonicalStructuredString,
 	type JsonObject,
@@ -379,10 +379,7 @@ async function parseSessionFile(
 		}
 	}
 	if (!sessionId) return null;
-	if (absFilter) {
-		if (typeof projectPath !== "string") return null;
-		if (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)) return null;
-	}
+	if (!matchesProjectFilter(projectPath, absFilter)) return null;
 	const sessionKey = sessionId;
 	const readEvents = async function* () {
 		let model: string | null = null;

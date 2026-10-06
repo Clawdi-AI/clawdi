@@ -11,7 +11,7 @@ import type {
 	SessionScanResult,
 	SyncReadContext,
 } from "./base";
-import { getClaudeHome, isPathWithinRoots } from "./paths";
+import { getClaudeHome, isPathWithinRoots, matchesProjectFilter } from "./paths";
 import {
 	canonicalStructuredString,
 	type JsonObject,
@@ -290,7 +290,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 						);
 						if (!session) continue;
 						const cwd = session.projectPath;
-						if (absFilter && (!cwd || (cwd !== absFilter && !cwd.startsWith(`${absFilter}/`)))) {
+						if (!matchesProjectFilter(cwd, absFilter)) {
 							continue;
 						}
 						insertSource.run(key, cwd, key);

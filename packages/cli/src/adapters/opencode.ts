@@ -19,7 +19,7 @@ import type {
 	SessionScanResult,
 	SyncReadContext,
 } from "./base";
-import { getOpenCodeDataDir, getOpenCodeDbPath } from "./paths";
+import { getOpenCodeDataDir, getOpenCodeDbPath, matchesProjectFilter } from "./paths";
 import {
 	canonicalStructuredString,
 	type JsonObject,
@@ -649,7 +649,7 @@ export class OpenCodeAdapter implements AgentAdapterCore {
 			for (const value of rows) {
 				const row = value as OpenCodeSessionRow;
 				if (context) await setImmediate(undefined, { signal: context.signal });
-				if (normalizedFilter !== null && resolve(row.directory) !== normalizedFilter) continue;
+				if (!matchesProjectFilter(row.directory, normalizedFilter)) continue;
 				const session = await parseSession(db, row, context);
 				if (session) sessions.push(session);
 			}
