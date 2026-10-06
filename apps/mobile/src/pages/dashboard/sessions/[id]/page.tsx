@@ -8,8 +8,8 @@ import {
 	sessionHasLaterActivity,
 	sessionTitle,
 } from "@clawdi/shared/view";
-import { router, useLocalSearchParams } from "expo-router";
-import { ArrowLeft, Clock, Hash, MessageSquare, Zap } from "lucide-react-native";
+import { useLocalSearchParams } from "expo-router";
+import { Clock, Hash, MessageSquare, Zap } from "lucide-react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
@@ -17,9 +17,6 @@ import { AgentInline, DetailMeta, ModelBadge, Stat } from "@/components/sessions
 import { SessionShareActions } from "@/components/sessions/share-controls";
 import { MessagesSkeleton } from "@/components/sessions/skeleton";
 import { Transcript } from "@/components/sessions/virtualized-message-list";
-import { Button } from "@/components/ui/button";
-import { Icon } from "@/components/ui/icon";
-import { Text } from "@/components/ui/text";
 import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { isNotFound, useCloudSession } from "@/hooks/cloud-inventory";
@@ -33,23 +30,11 @@ export default function SessionDetailRoute() {
 	const sessionId = routeParam(params.sessionId ?? params.id);
 	const query = useCloudSession(sessionId);
 	const session = !query.isError ? query.data : undefined;
-	const back = (
-		<Button
-			variant="ghost"
-			className="self-start"
-			size="sm"
-			onPress={() => (router.canGoBack() ? router.back() : router.replace("/sessions"))}
-		>
-			<Icon as={ArrowLeft} />
-			<Text>{t("sessionDetail.back")}</Text>
-		</Button>
-	);
 	if (!session)
 		return (
 			<SafeAreaScreen>
 				<AppScrollView contentContainerStyle={{ padding: 16 }}>
 					<WebView recipe={styles.page} className="px-0">
-						{back}
 						{query.isPending && sessionId ? (
 							<>
 								<PageHeaderSkeleton actions description={false} />
@@ -69,7 +54,6 @@ export default function SessionDetailRoute() {
 		);
 	const header = (
 		<WebView recipe={styles.header}>
-			{back}
 			<PageHeader
 				title={sessionTitle(session)}
 				className={webView(styles.header)}

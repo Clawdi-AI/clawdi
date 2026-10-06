@@ -12,6 +12,7 @@ import { AppearanceProvider } from "@/platform/appearance-provider";
 import { isDevAuthBypass } from "@/platform/auth/auth-client";
 import { useAppFonts } from "@/platform/fonts";
 import { MobileProviders } from "@/platform/mobile-providers";
+import { useNativeStackOptions } from "@/platform/navigation/native-header";
 import { formSheetOptions } from "@/platform/navigation/sheet-options";
 
 export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
@@ -25,8 +26,12 @@ export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
 }
 
 function Navigation() {
+	const options = useNativeStackOptions();
 	return (
 		<Stack screenOptions={{ headerShown: false }}>
+			<Stack.Screen name="s/[id]" options={{ ...options, headerShown: true }} />
+			<Stack.Screen name="share/[token]" options={{ ...options, headerShown: true }} />
+			<Stack.Screen name="vault-request" options={{ ...options, headerShown: true }} />
 			<Stack.Screen name="(auth)" />
 			<Stack.Screen name="(tabs)" />
 			<Stack.Screen name="(sheets)" options={formSheetOptions} />
