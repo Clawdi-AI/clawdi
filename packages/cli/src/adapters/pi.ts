@@ -6,7 +6,6 @@ import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import {
 	canonicalJson,
-	canonicalPayloadJson,
 	type SessionEventDraft,
 	sequenceSessionEvents,
 } from "../lib/session-events";
@@ -19,14 +18,8 @@ import type {
 	SyncReadContext,
 } from "./base";
 import { getPiHome, getPiSessionsDir, matchesProjectFilter } from "./paths";
-import {
-	type JsonObject,
-	jsonObject,
-	jsonString,
-	reasoningContent,
-	toolResultContent,
-	visibleContentParts,
-} from "./rich-event-mapping";
+import { piMessageDrafts } from "./pi-message-drafts";
+import { type JsonObject, jsonObject, jsonString, visibleContentParts } from "./rich-event-mapping";
 import { jsonlPathsWithin, listJsonlFiles } from "./session-files";
 import { describeSessionContent, JsonlSessionSource } from "./session-source";
 import { openSessionIndex } from "./sqlite";
@@ -380,154 +373,11 @@ function entryEvents(sessionKey: string, entry: ParsedPiEntry): SessionEventDraf
 	if (type !== "message") return [];
 	const message = jsonObject(entry.data.message);
 	if (!message) return [];
-	const role = jsonString(message.role);
-	const messageTimestamp = timestampIso(entry.data, message) ?? timestamp;
-	if (role === "user") {
-		const parts = visibleContentParts(message.content);
-		return parts.length > 0
-			? [
-					{
-						type: "message",
-						role: "user",
-						parts,
-						source: source(sessionKey, entry),
-						...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-					},
-				]
-			: [];
-	}
-	if (role === "assistant") {
-		if (message.stopReason === "deferred") return [];
-		const content = Array.isArray(message.content) ? message.content : [];
-		const model = jsonString(message.model) ?? undefined;
-		const drafts: SessionEventDraft[] = [];
-		const parts = visibleContentParts(content);
-		if (parts.length > 0) {
-			drafts.push({
-				type: "message",
-				role: "assistant",
-				parts,
-				source: source(sessionKey, entry, 0),
-				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-				...(model ? { model } : {}),
-			});
-		}
-		for (let index = 0; index < content.length; index++) {
-			const part = jsonObject(content[index]);
-			if (!part) continue;
-			const reasoning = reasoningContent(part);
-			if (reasoning) {
-				drafts.push({
-					type: "reasoning",
-					...reasoning,
-					source: source(sessionKey, entry, index + 1),
-					...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-					...(model ? { model } : {}),
-				});
-			}
-			if (part.type !== "toolCall") continue;
-			const callId = jsonString(part.id);
-			const name = jsonString(part.name);
-			if (!callId || !name) continue;
-			drafts.push({
-				type: "tool_call",
-				call_id: callId,
-				name,
-				arguments_json: canonicalPayloadJson(part.arguments),
-				source: source(sessionKey, entry, index + 1),
-				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-				...(model ? { model } : {}),
-			});
-			const toolThought = reasoningContent({
-				type: "redacted_thinking",
-				signature: part.thoughtSignature,
-			});
-			if (toolThought) {
-				drafts.push({
-					type: "reasoning",
-					...toolThought,
-					source: source(sessionKey, entry, index + 1),
-					...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-					...(model ? { model } : {}),
-				});
-			}
-		}
-		return drafts;
-	}
-	if (role === "toolResult") {
-		const callId = jsonString(message.toolCallId);
-		if (!callId) return [];
-		const result = toolResultContent(message.content, message.details);
-		const toolName = jsonString(message.toolName);
-		const drafts: SessionEventDraft[] = [
-			{
-				type: "tool_result",
-				call_id: callId,
-				...(toolName ? { name: toolName } : {}),
-				status: message.isError === true ? "error" : "completed",
-				...result,
-				source: source(sessionKey, entry),
-				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-			},
-		];
-		const details = jsonObject(message.details);
-		const privateState = reasoningContent({
-			type: "redacted_thinking",
-			signature: details?.thinkingSignature ?? details?.thoughtSignature,
-		});
-		if (privateState) {
-			drafts.push({
-				type: "reasoning",
-				...privateState,
-				source: source(sessionKey, entry, 1),
-				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-			});
-		}
-		return drafts;
-	}
-	if (role === "bashExecution") {
-		const command = jsonString(message.command);
-		if (!command) return [];
-		const callId = `pi-shell-${entry.id}`;
-		const output = typeof message.output === "string" ? message.output : "";
-		return [
-			{
-				type: "tool_call",
-				call_id: callId,
-				name: "shell",
-				arguments_json: canonicalPayloadJson({ command }),
-				source: source(sessionKey, entry, 0),
-				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-			},
-			{
-				type: "tool_result",
-				call_id: callId,
-				name: "shell",
-				status:
-					message.cancelled === true || (numberValue(message.exitCode) ?? 0) !== 0
-						? "error"
-						: "completed",
-				parts: output ? [{ type: "text", text: output }] : [],
-				source: source(sessionKey, entry, 1),
-				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-			},
-		];
-	}
-	if (role === "custom" && message.display === true) {
-		const parts = visibleContentParts(message.content);
-		return parts.length > 0
-			? [
-					{
-						type: "message",
-						role: "system",
-						parts,
-						source: source(sessionKey, entry),
-						...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-					},
-				]
-			: [];
-	}
-	return [];
+	return piMessageDrafts(message, {
+		source: (partIndex) => source(sessionKey, entry, partIndex),
+		recordId: entry.id,
+		timestamp,
+	});
 }
 
 async function parseSession(

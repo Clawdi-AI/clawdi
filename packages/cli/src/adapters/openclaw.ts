@@ -42,16 +42,13 @@ import {
 	resolveOpenClawAgentWorkspaceAsync,
 } from "./openclaw-workspace";
 import { getOpenClawHome, isPathWithinRoots, matchesProjectFilter } from "./paths";
+import { piMessageDrafts } from "./pi-message-drafts";
 import {
-	canonicalStructuredString,
 	type JsonObject,
 	jsonObject,
 	jsonString,
-	reasoningContent,
 	SESSION_PROJECTION_REVISION,
 	stableRecordId,
-	toolResultContent,
-	visibleContentParts,
 } from "./rich-event-mapping";
 import { jsonlPathsWithin } from "./session-files";
 import {
@@ -730,77 +727,12 @@ function openClawEventDrafts(
 	if (raw.type !== "message") return [];
 	const message = jsonObject(raw.message);
 	if (!message) return [];
-	const role = jsonString(message.role);
-	const model = jsonString(message.model) ?? currentModel ?? undefined;
-	const drafts: SessionEventDraft[] = [];
-	if (role === "user" || role === "assistant" || role === "system" || role === "developer") {
-		const parts = visibleContentParts(message.content);
-		if (parts.length > 0) {
-			drafts.push({
-				type: "message",
-				role,
-				parts,
-				source: eventSource(0),
-				...(timestamp ? { timestamp } : {}),
-				...(role === "assistant" && model ? { model } : {}),
-			});
-		}
-	}
-	const blocks = Array.isArray(message.content) ? message.content : [];
-	for (let index = 0; index < blocks.length; index++) {
-		const block = jsonObject(blocks[index]);
-		if (!block) continue;
-		const reasoning = role === "assistant" ? reasoningContent(block) : null;
-		if (reasoning) {
-			drafts.push({
-				type: "reasoning",
-				...reasoning,
-				source: eventSource(index + 1),
-				...(timestamp ? { timestamp } : {}),
-				...(model ? { model } : {}),
-			});
-		}
-		if (role === "assistant" && (block.type === "toolCall" || block.type === "tool_use")) {
-			const callId = jsonString(block.id);
-			const name = jsonString(block.name);
-			if (!callId || !name) continue;
-			drafts.push({
-				type: "tool_call",
-				call_id: callId,
-				name,
-				arguments_json: canonicalStructuredString(block.arguments ?? block.input),
-				source: eventSource(index + 1),
-				...(timestamp ? { timestamp } : {}),
-				...(model ? { model } : {}),
-			});
-		}
-		if (role === "user" && block.type === "tool_result") {
-			const callId = jsonString(block.tool_use_id);
-			if (!callId) continue;
-			drafts.push({
-				type: "tool_result",
-				call_id: callId,
-				status: block.is_error === true ? "error" : "completed",
-				...toolResultContent(block.content, block.details),
-				source: eventSource(index + 1),
-				...(timestamp ? { timestamp } : {}),
-			});
-		}
-	}
-	if (role === "toolResult") {
-		const callId = jsonString(message.toolCallId);
-		if (callId)
-			drafts.push({
-				type: "tool_result",
-				call_id: callId,
-				...(jsonString(message.toolName) ? { name: jsonString(message.toolName) as string } : {}),
-				status: message.isError === true ? "error" : "completed",
-				...toolResultContent(message.content, message.details),
-				source: eventSource(),
-				...(timestamp ? { timestamp } : {}),
-			});
-	}
-	return drafts;
+	return piMessageDrafts(message, {
+		source: eventSource,
+		recordId,
+		timestamp,
+		model: currentModel,
+	});
 }
 
 interface SessionCollection {
