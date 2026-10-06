@@ -22,6 +22,23 @@ function validTimestamp(value: string | number): string | undefined {
 	return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
 }
 
+// OpenClaw-authored transcript bookkeeping is content, not provider model output.
+const OPENCLAW_BOOKKEEPING_MODELS = new Set([
+	"delivery-mirror",
+	"gateway-injected",
+	"acp-runtime",
+	"automation-result",
+]);
+
+export function isOpenClawBookkeepingMessage(message: JsonObject): boolean {
+	return (
+		message.role === "assistant" &&
+		message.provider === "openclaw" &&
+		typeof message.model === "string" &&
+		OPENCLAW_BOOKKEEPING_MODELS.has(message.model)
+	);
+}
+
 /** Shared Pi-format message projection, with adapter-owned source identities. */
 export function piMessageDrafts(
 	message: JsonObject,
@@ -70,7 +87,9 @@ export function piMessageDrafts(
 	if (role === "assistant") {
 		if (message.stopReason === "deferred") return [];
 		const content = Array.isArray(message.content) ? message.content : [];
-		const model = jsonString(message.model) ?? fallbackModel ?? undefined;
+		const model = isOpenClawBookkeepingMessage(message)
+			? undefined
+			: (jsonString(message.model) ?? fallbackModel ?? undefined);
 		const drafts: SessionEventDraft[] = [];
 		const parts = visibleContentParts(message.content);
 		if (parts.length > 0) {
@@ -86,7 +105,11 @@ export function piMessageDrafts(
 		for (let index = 0; index < content.length; index++) {
 			const part = jsonObject(content[index]);
 			if (!part) continue;
-			const reasoning = reasoningContent(part);
+			const reasoning = reasoningContent(
+				part.type === "thinking" && part.redacted === true
+					? { type: "redacted_thinking", signature: part.thinkingSignature }
+					: part,
+			);
 			if (reasoning) {
 				drafts.push({
 					type: "reasoning",
@@ -96,7 +119,8 @@ export function piMessageDrafts(
 					...(model ? { model } : {}),
 				});
 			}
-			if (part.type !== "toolCall" && part.type !== "tool_use") continue;
+			if (part.type !== "toolCall" && part.type !== "toolcall" && part.type !== "tool_use")
+				continue;
 			const callId = jsonString(part.id);
 			const name = jsonString(part.name);
 			if (!callId || !name) continue;

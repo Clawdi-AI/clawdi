@@ -42,7 +42,7 @@ import {
 	resolveOpenClawAgentWorkspaceAsync,
 } from "./openclaw-workspace";
 import { getOpenClawHome, isPathWithinRoots, matchesProjectFilter } from "./paths";
-import { piMessageDrafts } from "./pi-message-drafts";
+import { isOpenClawBookkeepingMessage, piMessageDrafts } from "./pi-message-drafts";
 import {
 	type JsonObject,
 	jsonObject,
@@ -652,7 +652,7 @@ function officialTranscriptReader(entry: OfficialSessionEntry, context?: SyncRea
 			seq += events.length;
 			yield* events;
 			const model = jsonString(message.model);
-			if (model) {
+			if (model && !isOpenClawBookkeepingMessage(message)) {
 				addSessionModel(state.modelsUsed, model);
 				state.model = model;
 			}
@@ -727,12 +727,18 @@ function openClawEventDrafts(
 	if (raw.type !== "message") return [];
 	const message = jsonObject(raw.message);
 	if (!message) return [];
-	return piMessageDrafts(message, {
+	const drafts = piMessageDrafts(message, {
 		source: eventSource,
 		recordId,
 		timestamp,
 		model: currentModel,
 	});
+	return message.display === false
+		? drafts.map((draft) => ({
+				...draft,
+				semantics: { lifecycle: "active", display: "hidden", compressed_summary: false },
+			}))
+		: drafts;
 }
 
 interface SessionCollection {
