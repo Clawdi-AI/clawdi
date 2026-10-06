@@ -272,6 +272,7 @@ function printSetupNotice(
 			: "  • Background sync: off. Run `clawdi push` to upload manually.",
 		"To opt out later:",
 		"  • Stop all background sync:   clawdi daemon uninstall",
+		"  • Skip a project:   clawdi config set excludeProjects <path>[,<path>]",
 	);
 	if (dashboardUrl) lines.push(`Open your dashboard: ${dashboardUrl}`);
 	console.log();

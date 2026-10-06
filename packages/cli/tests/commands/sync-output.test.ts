@@ -133,6 +133,88 @@ function seedMirror(id: string, hash: string): void {
 }
 
 describe("push/pull output contracts", () => {
+	it.each([false, true])(
+		"omits persisted project exclusions from push JSON counts (dryRun=%s)",
+		async (dryRun) => {
+			const config = await runCli(["config", "set", "excludeProjects", "/Users/fixture/project/."]);
+			expect(config.exitCode).toBe(0);
+			const result = await runCli([
+				"push",
+				"--agent",
+				"claude_code",
+				"--all",
+				"--modules",
+				"sessions",
+				"--json",
+				"--no-color",
+				...(dryRun ? ["--dry-run"] : []),
+			]);
+			expect(result.exitCode).toBe(0);
+			const sessions = { new: 0, updated: 0, unchanged: 0, failed: 0 };
+			expect(JSON.parse(result.stdout)).toEqual({
+				schemaVersion: "clawdi.push.v1",
+				dryRun,
+				agents: [{ agent: "claude_code", sessions }],
+				totals: { sessions, skills: { uploaded: 0, unchanged: 0, failed: 0 } },
+				errors: [],
+			});
+			expect(requests.some((request) => request.path === "/v1/sessions/batch")).toBe(false);
+			expect(existsSync(join(testHome, ".clawdi", "sessions-lock.json"))).toBe(false);
+			expect(result.stderr).toContain("Excluded 1 session from 1 project.");
+			expectPlain(result.stderr);
+			if (dryRun) expect(requests).toHaveLength(0);
+		},
+	);
+
+	it.each([false, true])(
+		"unions persisted and flag exclusions before push JSON counts with exact paths (dryRun=%s)",
+		async (dryRun) => {
+			const fixture = readFileSync(
+				join(testHome, ".claude", "projects", "-Users-fixture-project", `${localSessionId}.jsonl`),
+				"utf8",
+			);
+			for (const [project, id] of [
+				["/scratch", "22222222-2222-3333-4444-555555555555"],
+				["/Users/fixture/project/child", "33333333-2222-3333-4444-555555555555"],
+			]) {
+				const directory = join(testHome, ".claude", "projects", project.replaceAll("/", "-"));
+				mkdirSync(directory, { recursive: true });
+				writeFileSync(
+					join(directory, `${id}.jsonl`),
+					fixture.replaceAll(localSessionId, id).replaceAll("/Users/fixture/project", project),
+				);
+			}
+			expect(
+				(await runCli(["config", "set", "excludeProjects", "/Users/fixture/project"])).exitCode,
+			).toBe(0);
+			const result = await runCli([
+				"push",
+				"--agent",
+				"claude_code",
+				"--all",
+				"--modules",
+				"sessions",
+				"--exclude-project",
+				"/scratch/.",
+				"--json",
+				"--no-color",
+				...(dryRun ? ["--dry-run"] : []),
+			]);
+			expect(result.exitCode).toBe(0);
+			const sessions = { new: 1, updated: 0, unchanged: 0, failed: 0 };
+			expect(JSON.parse(result.stdout)).toEqual({
+				schemaVersion: "clawdi.push.v1",
+				dryRun,
+				agents: [{ agent: "claude_code", sessions }],
+				totals: { sessions, skills: { uploaded: 0, unchanged: 0, failed: 0 } },
+				errors: [],
+			});
+			expect(result.stderr).toContain("Excluded 2 sessions from 2 projects.");
+			expectPlain(result.stderr);
+			if (dryRun) expect(requests).toHaveLength(0);
+		},
+	);
+
 	it.each(["push", "pull"])("prints plain non-TTY %s progress only to stderr", async (command) => {
 		const result = await runCli([
 			command,
