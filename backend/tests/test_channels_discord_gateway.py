@@ -6,7 +6,7 @@ import socket
 import threading
 import zlib
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
@@ -80,10 +80,12 @@ from tests.channel_helpers import (
     _discord_ready_config,
     _FakeDiscordGatewayConnect,
     _FakeDiscordGatewaySocket,
+    _FakeProviderClient,
     _install_discord_gateway_protocol_fakes,
     _install_discord_gateway_test_session_factory,
     _reset_discord_gateway_sessions,
     _reset_fake_provider_client,
+    _seed_created_channel_link,
 )
 from tests.db_lock_helpers import wait_for_lock_wait
 
@@ -2560,3 +2562,105 @@ async def test_discord_gateway_wakeup_owns_reader_and_cleanup(monkeypatch, engin
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         await consumer_locks.close()
+
+
+@pytest.mark.asyncio
+async def test_discord_gateway_offline_reply_targets_channel_and_preserves_online_guild_binding(
+    client,
+    db_session,
+    channel_agent,
+    second_channel_agent,
+    channel_runtime_head,
+    monkeypatch,
+):
+    guild_id = "offline-shared-guild"
+    channel_id = "offline-guild-channel"
+    offline = await _create_paired_discord_channel(
+        client,
+        name="discord-offline-gateway",
+        agent_id=channel_agent.id,
+        guild_id=guild_id,
+        channel_id=channel_id,
+    )
+    online_response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": "discord",
+            "name": "discord-online-gateway",
+            "agent_id": None,
+            "provider_token": "discord-provider-token-2",
+            "config": _discord_ready_config(),
+        },
+    )
+    assert online_response.status_code == 201, online_response.text
+    online = online_response.json()
+    online_link = await _seed_created_channel_link(
+        db_session,
+        created=online,
+        agent=second_channel_agent,
+    )
+    db_session.add(
+        ChannelBinding(
+            account_id=UUID(online["id"]),
+            bot_agent_link_id=online_link.id,
+            user_id=online_link.user_id,
+            external_chat_id=guild_id,
+            external_chat_type="guild",
+        )
+    )
+    await db_session.commit()
+    now = datetime.now(UTC)
+    await channel_runtime_head(
+        channel_agent,
+        received_at=now - timedelta(hours=1),
+        freshness_deadline=now - timedelta(minutes=11),
+    )
+    await channel_runtime_head(
+        second_channel_agent,
+        received_at=now,
+        freshness_deadline=now + timedelta(minutes=1),
+    )
+    _reset_fake_provider_client({"id": "offline-reply", "channel_id": channel_id})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    frame = {
+        "op": 0,
+        "t": "MESSAGE_CREATE",
+        "s": 80,
+        "d": {
+            "id": "offline-gateway-message",
+            "channel_id": channel_id,
+            "guild_id": guild_id,
+            "content": "hello",
+            "author": {"id": "discord-sender"},
+        },
+    }
+    for created in (offline, online):
+        assert await record_discord_gateway_dispatch(sessionmaker, UUID(created["id"]), frame)
+    calls = [call for call in _FakeProviderClient.calls if call["url"].endswith("/messages")]
+    assert len(calls) == 1
+    assert calls[0]["url"].endswith(f"/channels/{channel_id}/messages")
+    assert calls[0]["json"]["content"] == channel_service.AGENT_OFFLINE_REPLY
+    messages = list(
+        (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.provider_message_id == "offline-gateway-message",
+                    ChannelMessage.account_id.in_([UUID(offline["id"]), UUID(online["id"])]),
+                )
+            )
+        ).scalars()
+    )
+    assert len(messages) == 2
+    by_account = {str(message.account_id): message for message in messages}
+    assert by_account[offline["id"]].delivered_at is not None
+    assert by_account[online["id"]].delivered_at is None
+    assert all(message.binding_id is not None for message in messages)
+    assert (
+        await db_session.scalar(
+            select(func.count(ChannelDelivery.id)).where(
+                ChannelDelivery.account_id == UUID(offline["id"]),
+            )
+        )
+        == 0
+    )

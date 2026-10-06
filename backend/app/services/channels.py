@@ -23,6 +23,7 @@ from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.selectable import Subquery
 
 from app.core.cleanup import finish_cleanup
 from app.core.config import settings
@@ -34,6 +35,7 @@ from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_WHATSAPP,
+    CHANNEL_RUNTIME_MARKER_AGENT_OFFLINE_REPLY,
     CHANNEL_STATUS_ACTIVE,
     CHANNEL_STATUS_DISABLED,
     CHANNEL_VISIBILITY_PRIVATE,
@@ -66,6 +68,7 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.models.runtime_observation import (
     RUNTIME_ENVIRONMENT_ACTIVE,
     V2RuntimeEnvironmentFence,
+    V2RuntimeObservationHead,
 )
 from app.models.session import AgentEnvironment
 from app.schemas.runtime import validate_hosted_runtime_desired_state
@@ -392,6 +395,13 @@ class ChannelAgentContext:
     account: ChannelAccount
     link: ChannelBotAgentLink
 
+
+AGENT_OFFLINE_GRACE = timedelta(minutes=10)
+AGENT_OFFLINE_REPLY_COOLDOWN = timedelta(hours=24)
+AGENT_OFFLINE_REPLY = (
+    "This agent is offline right now, so it didn't receive your message. "
+    "Please try again after it's back online."
+)
 
 PAIRING_REPLY_PAIRED = "Paired! This chat is now connected to your agent."
 PAIRING_REPLY_UNPAIRED = "Unpaired. This chat is no longer connected to an agent."
@@ -2807,6 +2817,46 @@ async def send_control_command_reply(
     return None
 
 
+async def send_agent_offline_reply(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    binding: ChannelBinding,
+    external_chat_id: str,
+    send_external_chat_id: str | None = None,
+    telegram_message_thread_id: int | None = None,
+    telegram_direct_messages_topic_id: int | None = None,
+) -> ChannelMessage | None:
+    try:
+        return await send_channel_outbound_message(
+            db,
+            account=account,
+            external_chat_id=send_external_chat_id or external_chat_id,
+            text=AGENT_OFFLINE_REPLY,
+            bot_agent_link_id=binding.bot_agent_link_id,
+            telegram_message_thread_id=telegram_message_thread_id,
+            telegram_direct_messages_topic_id=telegram_direct_messages_topic_id,
+        )
+    except HTTPException as exc:
+        log.warning(
+            "channel_agent_offline_reply_failed provider=%s account_id=%s chat_id=%s "
+            "status=%s detail=%s",
+            account.provider,
+            account.id,
+            external_chat_id,
+            exc.status_code,
+            exc.detail,
+        )
+    except Exception:
+        log.exception(
+            "channel_agent_offline_reply_failed provider=%s account_id=%s chat_id=%s",
+            account.provider,
+            account.id,
+            external_chat_id,
+        )
+    return None
+
+
 async def send_platform_unbound_channel_message(
     *,
     account: ChannelAccount,
@@ -3304,6 +3354,105 @@ async def consume_pending_inbound_messages_for_bindings(
         message.delivered_at = delivered_at
     await db.flush()
     return len(messages)
+
+
+def _offline_agent_observations(*, now: datetime) -> Subquery:
+    """Only Agents with observed boot sessions can be classified as offline."""
+    freshness_deadline = func.max(V2RuntimeObservationHead.freshness_deadline).filter(
+        V2RuntimeObservationHead.tombstoned_at.is_(None)
+    )
+    return (
+        select(
+            V2RuntimeObservationHead.environment_id,
+            func.max(V2RuntimeObservationHead.last_seen_received_at).label("last_seen"),
+        )
+        .group_by(V2RuntimeObservationHead.environment_id)
+        .having(
+            or_(
+                freshness_deadline.is_(None),
+                freshness_deadline < now - AGENT_OFFLINE_GRACE,
+            )
+        )
+        .subquery()
+    )
+
+
+async def _claim_agent_offline_reply(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    binding_id: UUID,
+    last_seen: datetime,
+    now: datetime,
+) -> bool:
+    statement = postgresql_insert(ChannelAccountRuntimeMarker).values(
+        account_id=account_id,
+        kind=CHANNEL_RUNTIME_MARKER_AGENT_OFFLINE_REPLY,
+        scope=str(binding_id),
+        outcome="sent",
+        updated_at=now,
+    )
+    statement = statement.on_conflict_do_update(
+        index_elements=[
+            ChannelAccountRuntimeMarker.account_id,
+            ChannelAccountRuntimeMarker.kind,
+            ChannelAccountRuntimeMarker.scope,
+        ],
+        set_={"outcome": "sent", "updated_at": statement.excluded.updated_at},
+        where=or_(
+            ChannelAccountRuntimeMarker.updated_at < last_seen,
+            ChannelAccountRuntimeMarker.updated_at <= now - AGENT_OFFLINE_REPLY_COOLDOWN,
+        ),
+    ).returning(ChannelAccountRuntimeMarker.id)
+    return (await db.execute(statement)).scalar_one_or_none() is not None
+
+
+async def consume_inbound_messages_for_offline_agents(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    messages: list[tuple[ChannelMessage, ChannelBinding | None]],
+) -> tuple[ChannelBinding, ...]:
+    pending: list[tuple[ChannelMessage, ChannelBinding]] = []
+    for message, binding in messages:
+        if binding is not None and message.delivered_at is None:
+            pending.append((message, binding))
+    if not pending:
+        return ()
+    now = datetime.now(UTC)
+    offline = _offline_agent_observations(now=now)
+    rows = (
+        await db.execute(
+            select(ChannelBinding, offline.c.last_seen)
+            .join(ChannelBotAgentLink, ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id)
+            .join(offline, offline.c.environment_id == ChannelBotAgentLink.agent_id)
+            .join(ChannelMessage, ChannelMessage.binding_id == ChannelBinding.id)
+            .where(
+                ChannelBinding.account_id == account.id,
+                ChannelMessage.id.in_([message.id for message, _binding in pending]),
+                ChannelMessage.delivered_at.is_(None),
+            )
+            .distinct()
+            .order_by(ChannelBinding.id)
+        )
+    ).all()
+    offline_binding_ids = {binding.id for binding, _last_seen in rows}
+    _mark_inbound_messages_delivered(
+        [(message, binding) for message, binding in pending if binding.id in offline_binding_ids],
+        delivered_at=now,
+    )
+    claimed: list[ChannelBinding] = []
+    for binding, last_seen in rows:
+        if await _claim_agent_offline_reply(
+            db,
+            account_id=account.id,
+            binding_id=binding.id,
+            last_seen=last_seen,
+            now=now,
+        ):
+            claimed.append(binding)
+    await db.flush()
+    return tuple(claimed)
 
 
 async def record_inbound_messages_for_bindings(
@@ -4530,6 +4679,7 @@ async def channel_queue_snapshots(
         if stuck_after is not None
         else timedelta(hours=settings.channel_message_stuck_pending_hours)
     )
+    offline = _offline_agent_observations(now=current_time)
     snapshots: list[ChannelQueueSnapshot] = []
     for provider in CHANNEL_RETENTION_PROVIDERS:
         inbox_row = (
@@ -4558,6 +4708,7 @@ async def channel_queue_snapshots(
                     ),
                 )
                 .join(ChannelAccount, ChannelAccount.id == ChannelMessage.account_id)
+                .outerjoin(offline, offline.c.environment_id == ChannelBotAgentLink.agent_id)
                 .where(
                     ChannelAccount.provider == provider,
                     ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
@@ -4568,6 +4719,7 @@ async def channel_queue_snapshots(
                     ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
                     ChannelMessage.binding_id.is_not(None),
                     ChannelMessage.delivered_at.is_(None),
+                    offline.c.environment_id.is_(None),
                 )
             )
         ).one()
@@ -7030,6 +7182,11 @@ async def record_discord_dispatch(
         text=_read_optional_str(data.get("content")) if isinstance(data, dict) else None,
         payload=payload,
     )
+    offline_bindings = (
+        await consume_inbound_messages_for_offline_agents(db, account=account, messages=messages)
+        if not binding_result.command_handled
+        else ()
+    )
     for message, binding in messages:
         if (
             binding is not None
@@ -7053,6 +7210,17 @@ async def record_discord_dispatch(
             payload=payload,
         )
         await record_inactive_bot_agent_link_event(db, account=account, binding=binding)
+    if offline_bindings:
+        await db.commit()
+        # Every binding in this dispatch shares the same provider send target.
+        await send_agent_offline_reply(
+            db,
+            account=account,
+            binding=offline_bindings[0],
+            external_chat_id=external_chat_id,
+            send_external_chat_id=key.channel_id if key is not None else None,
+        )
+        await db.commit()
     if binding_result.command_handled:
         reply = discord_control_reply_for_command(command, binding_result, guild_id=guild_id)
         await send_control_command_reply(

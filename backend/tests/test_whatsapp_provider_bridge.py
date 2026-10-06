@@ -15,16 +15,20 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+import app.services.channels as channel_service
 import app.services.whatsapp_delivery_transport as delivery_transport_module
 import app.services.whatsapp_provider_bridge as bridge_module
 from app.models.channel import (
+    BINDING_STATUS_ACTIVE,
     BINDING_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_WHATSAPP,
+    CHANNEL_RUNTIME_MARKER_AGENT_OFFLINE_REPLY,
     CHANNEL_VISIBILITY_PRIVATE,
     CHANNEL_VISIBILITY_PUBLIC,
     MESSAGE_DIRECTION_INBOUND,
     MESSAGE_DIRECTION_OUTBOUND,
     ChannelAccount,
+    ChannelAccountRuntimeMarker,
     ChannelBinding,
     ChannelBindingAlias,
     ChannelBotAgentLink,
@@ -1317,6 +1321,7 @@ async def test_whatsapp_provider_ingress_preserves_proto_aliases_and_account_ded
         )
     ).scalar_one()
     assert len(messages) == 1
+    assert messages[0].delivered_at is None
     assert messages[0].direction == MESSAGE_DIRECTION_INBOUND
     assert messages[0].binding_id == binding.id
     assert messages[0].external_chat_id == binding.external_chat_id
@@ -2281,3 +2286,333 @@ async def test_outbox_identity_is_durable_scoped_and_conflicts_without_overwriti
         )
         == 4
     )
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_offline_consumes_once_and_replies_in_new_periods(
+    client,
+    db_session,
+    channel_agent,
+    channel_runtime_head,
+    monkeypatch,
+):
+    account, _link, binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name="wa-offline-periods"
+    )
+    current_time = datetime.now(UTC)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return current_time
+
+    monkeypatch.setattr(channel_service, "datetime", Clock)
+    await channel_runtime_head(
+        channel_agent,
+        received_at=current_time - timedelta(hours=1),
+        freshness_deadline=current_time - timedelta(minutes=11),
+    )
+    # The legacy Agent timestamp must not override runtime observation authority.
+    channel_agent.last_seen_at = current_time
+    await db_session.commit()
+    transport = _FakeProviderTransport()
+    _use_delivery_transport(monkeypatch, transport)
+    register_whatsapp_provider_transport(account.id, transport)
+
+    async def inbound(sequence):
+        event = WhatsAppProviderMessageEvent(
+            sequence=sequence,
+            message_id=f"offline-{sequence}",
+            remote_jid=binding.external_chat_id,
+            remote_jid_alt=None,
+            participant=None,
+            participant_alt=None,
+            push_name=None,
+            message_timestamp=None,
+            message_proto=whatsapp_text_message_proto("hello"),
+        )
+        await persist_whatsapp_provider_event(db_session, account_id=account.id, event=event)
+        return (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.account_id == account.id,
+                    ChannelMessage.provider_message_id == event.message_id,
+                )
+            )
+        ).scalar_one()
+
+    try:
+        assert (await inbound(1)).delivered_at == current_time
+        assert binding.status == BINDING_STATUS_ACTIVE
+        assert len(transport.outbound_messages) == 1
+        assert transport.outbound_messages[0].conversation == channel_service.AGENT_OFFLINE_REPLY
+        assert transport.outbound_messages[0].to_jid == binding.external_chat_id
+        assert (await inbound(2)).delivered_at is not None
+        assert len(transport.outbound_messages) == 1
+
+        current_time += timedelta(minutes=1)
+        await channel_runtime_head(
+            channel_agent,
+            received_at=current_time,
+            freshness_deadline=current_time + timedelta(minutes=1),
+        )
+        assert (await inbound(3)).delivered_at is None
+        assert len(transport.outbound_messages) == 1
+
+        current_time += timedelta(minutes=12)
+        assert (await inbound(4)).delivered_at is not None
+        assert len(transport.outbound_messages) == 2
+        assert (await inbound(5)).delivered_at is not None
+        assert len(transport.outbound_messages) == 2
+
+        current_time += channel_service.AGENT_OFFLINE_REPLY_COOLDOWN
+        assert (await inbound(6)).delivered_at is not None
+        assert len(transport.outbound_messages) == 3
+        assert (
+            await db_session.scalar(
+                select(func.count(ChannelDelivery.id)).where(
+                    ChannelDelivery.account_id == account.id
+                )
+            )
+            == 0
+        )
+        assert binding.status == BINDING_STATUS_ACTIVE
+    finally:
+        unregister_whatsapp_provider_transport(account.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("head_state", ["none", "grace", "tombstoned"])
+async def test_whatsapp_offline_observation_boundaries(
+    client,
+    db_session,
+    channel_agent,
+    channel_runtime_head,
+    monkeypatch,
+    head_state,
+):
+    account, _link, binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name="wa-offline-boundaries"
+    )
+    now = datetime.now(UTC)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    monkeypatch.setattr(channel_service, "datetime", Clock)
+    if head_state != "none":
+        await channel_runtime_head(
+            channel_agent,
+            received_at=now - timedelta(minutes=5),
+            freshness_deadline=now - channel_service.AGENT_OFFLINE_GRACE,
+            tombstoned=head_state == "tombstoned",
+        )
+    transport = _FakeProviderTransport()
+    _use_delivery_transport(monkeypatch, transport)
+    register_whatsapp_provider_transport(account.id, transport)
+    try:
+        await persist_whatsapp_provider_event(
+            db_session,
+            account_id=account.id,
+            event=WhatsAppProviderMessageEvent(
+                sequence=1,
+                message_id="offline-boundary",
+                remote_jid=binding.external_chat_id,
+                remote_jid_alt=None,
+                participant=None,
+                participant_alt=None,
+                push_name=None,
+                message_timestamp=None,
+                message_proto=whatsapp_text_message_proto("hello"),
+            ),
+        )
+        message = (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.account_id == account.id,
+                    ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+                )
+            )
+        ).scalar_one()
+        assert (message.delivered_at is not None) == (head_state == "tombstoned")
+        assert len(transport.outbound_messages) == (1 if head_state == "tombstoned" else 0)
+    finally:
+        unregister_whatsapp_provider_transport(account.id)
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_pair_help_and_unpair_work_while_offline(
+    client,
+    db_session,
+    channel_agent,
+    channel_runtime_head,
+    monkeypatch,
+):
+    account, link, binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name="wa-offline-controls"
+    )
+    binding.status = BINDING_STATUS_ARCHIVED
+    now = datetime.now(UTC)
+    await channel_runtime_head(
+        channel_agent,
+        received_at=now - timedelta(hours=1),
+        freshness_deadline=now - timedelta(minutes=11),
+    )
+    pair_response = await client.post(
+        f"/v1/channels/{account.id}/pair-codes",
+        json={"agent_link_id": str(link.id), "ttl_seconds": 900},
+    )
+    assert pair_response.status_code == 201, pair_response.text
+    transport = _FakeProviderTransport()
+    _use_delivery_transport(monkeypatch, transport)
+    register_whatsapp_provider_transport(account.id, transport)
+    try:
+        for sequence, text in enumerate(
+            [f"/clawdi_pair {pair_response.json()['code']}", "/clawdi_help", "/clawdi_unpair"],
+            start=1,
+        ):
+            await persist_whatsapp_provider_event(
+                db_session,
+                account_id=account.id,
+                event=WhatsAppProviderMessageEvent(
+                    sequence=sequence,
+                    message_id=f"offline-control-{sequence}",
+                    remote_jid=binding.external_chat_id,
+                    remote_jid_alt=None,
+                    participant=None,
+                    participant_alt=None,
+                    push_name=None,
+                    message_timestamp=None,
+                    message_proto=whatsapp_text_message_proto(text),
+                ),
+            )
+        assert [message.conversation for message in transport.outbound_messages] == [
+            channel_service.PAIRING_REPLY_PAIRED,
+            channel_control_help_reply(),
+            channel_service.PAIRING_REPLY_UNPAIRED,
+        ]
+        assert (
+            await db_session.scalar(
+                select(func.count(ChannelBinding.id)).where(
+                    ChannelBinding.account_id == account.id,
+                    ChannelBinding.status == BINDING_STATUS_ACTIVE,
+                )
+            )
+            == 0
+        )
+        assert (
+            await db_session.scalar(
+                select(func.count(ChannelAccountRuntimeMarker.id)).where(
+                    ChannelAccountRuntimeMarker.account_id == account.id,
+                    ChannelAccountRuntimeMarker.kind == CHANNEL_RUNTIME_MARKER_AGENT_OFFLINE_REPLY,
+                )
+            )
+            == 0
+        )
+    finally:
+        unregister_whatsapp_provider_transport(account.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("existing_claim", [False, True])
+async def test_concurrent_offline_reply_claims_have_one_winner(
+    client,
+    db_session,
+    channel_agent,
+    existing_claim,
+):
+    account, _link, binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name="wa-offline-concurrent-claim"
+    )
+    now = datetime.now(UTC)
+    if existing_claim:
+        db_session.add(
+            ChannelAccountRuntimeMarker(
+                account_id=account.id,
+                kind=CHANNEL_RUNTIME_MARKER_AGENT_OFFLINE_REPLY,
+                scope=str(binding.id),
+                outcome="sent",
+                updated_at=now - channel_service.AGENT_OFFLINE_REPLY_COOLDOWN,
+            )
+        )
+        await db_session.commit()
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    async def claim():
+        async with sessionmaker() as db:
+            won = await channel_service._claim_agent_offline_reply(
+                db,
+                account_id=account.id,
+                binding_id=binding.id,
+                last_seen=now - timedelta(hours=1),
+                now=now,
+            )
+            await db.commit()
+            return won
+
+    assert sorted(await asyncio.gather(claim(), claim())) == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_failed_offline_reply_is_consumed_and_not_retried(
+    client,
+    db_session,
+    channel_agent,
+    channel_runtime_head,
+    monkeypatch,
+    caplog,
+):
+    account, _link, binding = await _seed_whatsapp_link_and_binding(
+        client, db_session, channel_agent, name="wa-offline-send-failure"
+    )
+    now = datetime.now(UTC)
+    await channel_runtime_head(
+        channel_agent,
+        received_at=now - timedelta(hours=1),
+        freshness_deadline=now - timedelta(minutes=11),
+    )
+
+    class FailingTransport(_FakeProviderTransport):
+        async def relay_outbound_message(self, message):
+            self.outbound_messages.append(message)
+            raise HTTPException(status_code=502, detail="test provider unavailable")
+
+    transport = FailingTransport()
+    _use_delivery_transport(monkeypatch, transport)
+    register_whatsapp_provider_transport(account.id, transport)
+    try:
+        for sequence in (1, 2):
+            await persist_whatsapp_provider_event(
+                db_session,
+                account_id=account.id,
+                event=WhatsAppProviderMessageEvent(
+                    sequence=sequence,
+                    message_id=f"offline-failure-{sequence}",
+                    remote_jid=binding.external_chat_id,
+                    remote_jid_alt=None,
+                    participant=None,
+                    participant_alt=None,
+                    push_name=None,
+                    message_timestamp=None,
+                    message_proto=whatsapp_text_message_proto("hello"),
+                ),
+            )
+        assert len(transport.outbound_messages) == 1
+        assert "channel_agent_offline_reply_failed" in caplog.text
+        messages = list(
+            (
+                await db_session.execute(
+                    select(ChannelMessage).where(
+                        ChannelMessage.account_id == account.id,
+                        ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+                    )
+                )
+            ).scalars()
+        )
+        assert len(messages) == 2
+        assert all(message.delivered_at is not None for message in messages)
+        assert binding.status == BINDING_STATUS_ACTIVE
+    finally:
+        unregister_whatsapp_provider_transport(account.id)

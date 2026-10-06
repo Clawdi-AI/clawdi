@@ -7072,3 +7072,101 @@ async def test_telegram_pair_code_converges_reserved_default_once_before_issuanc
     )
     assert second.status_code == 201
     assert _FakeProviderClient.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("topic", ["thread", "direct_messages"])
+async def test_telegram_offline_reply_preserves_topic_and_skips_agent_delivery(
+    client,
+    db_session,
+    channel_agent,
+    channel_runtime_head,
+    monkeypatch,
+    topic,
+):
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-offline-topic",
+        provider_token=None,
+        agent_id=channel_agent.id,
+    )
+    response = await client.post(
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
+        json={"url": "https://agent.example/agent-hook"},
+    )
+    assert response.status_code == 200
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    account.encrypted_provider_token, account.provider_token_nonce = encrypt_optional_token(
+        "123456:telegram-secret"
+    )
+    await db_session.commit()
+    agent_webhook = AsyncMock(return_value=True)
+    monkeypatch.setattr(
+        telegram_router, "_deliver_telegram_agent_webhook_for_binding", agent_webhook
+    )
+    now = datetime.now(UTC)
+    await channel_runtime_head(
+        channel_agent,
+        received_at=now - timedelta(hours=1),
+        freshness_deadline=now - timedelta(minutes=11),
+    )
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 700, "chat": {"id": 42}}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    topic_payload = (
+        {"message_thread_id": 321, "is_topic_message": True}
+        if topic == "thread"
+        else {
+            "chat": {"id": 42, "type": "supergroup", "is_direct_messages": True},
+            "direct_messages_topic": {"topic_id": 4242},
+        }
+    )
+    for update_id in (701, 702):
+        inbound = await client.post(
+            f"/v1/channels/telegram/{created['id']}/webhook",
+            headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+            json={
+                "update_id": update_id,
+                "message": {
+                    "message_id": update_id,
+                    "text": "hello",
+                    "chat": {"id": 42, "type": "private"},
+                    **topic_payload,
+                },
+            },
+        )
+        assert inbound.status_code == 200
+    calls = [call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")]
+    assert len(calls) == 1
+    assert calls[0]["json"] == {
+        "chat_id": "42",
+        "text": channel_service.AGENT_OFFLINE_REPLY,
+        **({"message_thread_id": 321} if topic == "thread" else {"direct_messages_topic_id": 4242}),
+    }
+    agent_webhook.assert_not_awaited()
+    messages = list(
+        (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.account_id == UUID(created["id"]),
+                    ChannelMessage.provider_message_id.in_(["701", "702"]),
+                )
+            )
+        ).scalars()
+    )
+    assert len(messages) == 2
+    assert all(message.delivered_at is not None for message in messages)
+    deleted = await client.post(
+        _telegram_bot_path(created, "deleteWebhook"),
+        headers=_telegram_agent_headers(created),
+        json={},
+    )
+    assert deleted.status_code == 200
+    updates = await client.post(
+        _telegram_bot_path(created, "getUpdates"),
+        headers=_telegram_agent_headers(created),
+        json={"timeout": 0},
+    )
+    assert updates.status_code == 200
+    assert updates.json()["result"] == []

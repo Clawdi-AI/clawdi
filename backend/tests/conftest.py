@@ -517,6 +517,69 @@ async def second_channel_agent(db_session: AsyncSession, seed_user: User):
     return agent
 
 
+@pytest.fixture
+def channel_runtime_head(db_session: AsyncSession):
+    """Seed permanent strict-v2 boot evidence in the disposable test database."""
+    from app.models.runtime_observation import (
+        V2RuntimeEnvironmentFence,
+        V2RuntimeObservationHead,
+        V2RuntimeObservationInbox,
+    )
+
+    async def create(agent, *, received_at, freshness_deadline, tombstoned=False):
+        fence = await db_session.get(V2RuntimeEnvironmentFence, agent.id)
+        assert fence is not None
+        boot_id = uuid.uuid4().hex
+        event_id = uuid.uuid4().hex
+        inbox = V2RuntimeObservationInbox(
+            environment_id=agent.id,
+            deployment_id=fence.deployment_id,
+            generation=1,
+            manifest_etag='"test-ready"',
+            apply_receipt_id="test-receipt",
+            boot_nonce=boot_id,
+            boot_session_id=boot_id,
+            sequence=1,
+            event_id=event_id,
+            reported_at=received_at,
+            captured_at=received_at,
+            received_at=received_at,
+            freshness_deadline=freshness_deadline,
+            payload_hash="a" * 64,
+            health="ok",
+            diagnostics={},
+        )
+        db_session.add(inbox)
+        await db_session.flush()
+        head = V2RuntimeObservationHead(
+            environment_id=agent.id,
+            boot_session_id=boot_id,
+            deployment_id=fence.deployment_id,
+            generation=1,
+            manifest_etag='"test-ready"',
+            apply_receipt_id="test-receipt",
+            boot_nonce=boot_id,
+            highest_sequence=1,
+            latest_inbox_id=None if tombstoned else inbox.id,
+            latest_stream_position=inbox.id,
+            latest_event_id=event_id,
+            latest_payload_hash="a" * 64,
+            last_seen_event_id=event_id,
+            last_seen_payload_hash="a" * 64,
+            last_seen_received_at=received_at,
+            captured_at=None if tombstoned else received_at,
+            freshness_deadline=None if tombstoned else freshness_deadline,
+            health=None if tombstoned else "ok",
+            state="retired" if tombstoned else "active",
+            tombstoned_at=received_at if tombstoned else None,
+        )
+        db_session.add(head)
+        await db_session.commit()
+        return head
+
+    return create
+
+
 @pytest_asyncio.fixture
 async def client(db_session: AsyncSession, seed_user: User) -> AsyncIterator[httpx.AsyncClient]:
     async def _override_get_session() -> AsyncIterator[AsyncSession]:

@@ -974,6 +974,8 @@ async def test_queue_snapshots_report_provider_specific_stuck_pending(
     db_session: AsyncSession,
     seed_user: User,
     channel_agent: AgentEnvironment,
+    second_channel_agent: AgentEnvironment,
+    channel_runtime_head,
     caplog: pytest.LogCaptureFixture,
 ):
     telegram, _telegram_link, telegram_binding = await _create_account_and_binding(
@@ -1006,6 +1008,23 @@ async def test_queue_snapshots_report_provider_specific_stuck_pending(
     old_outbox_message.created_at = old
     old_outbox.created_at = old
     await db_session.flush()
+
+    offline_account, _offline_link, offline_binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=second_channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="telegram-offline-stuck",
+    )
+    offline_inbox = await _add_message(
+        db_session, account=offline_account, binding=offline_binding, text="offline inbox"
+    )
+    offline_inbox.created_at = old
+    await channel_runtime_head(
+        second_channel_agent,
+        received_at=now - timedelta(hours=1),
+        freshness_deadline=now - timedelta(minutes=11),
+    )
 
     snapshots = await channel_queue_snapshots(
         db_session,
