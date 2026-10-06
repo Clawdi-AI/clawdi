@@ -183,7 +183,7 @@ async function buildAcceptRequestBody(opts: AcceptOpts): Promise<Record<string, 
 	const agentIds = normalizeAgentIds(opts.agent);
 	if (agentIds.length === 0) {
 		if (opts.useAs) {
-			throw new Error("Pass --agent before choosing how to link the Project.");
+			throw new Error("Pass --agent before choosing how to link the project.");
 		}
 		return reqBody;
 	}
@@ -317,7 +317,7 @@ export async function inboxAcceptCommand(
 		if (normalizeAgentIds(opts.agent).length > 0 || opts.useAs) {
 			console.error(
 				chalk.red(
-					"Sign in before linking an accepted Project to an Agent. " +
+					"Sign in before linking an accepted project to an agent. " +
 						"Run `clawdi auth login`, then re-run with --agent.",
 				),
 			);
@@ -382,7 +382,7 @@ export async function inboxAcceptCommand(
 		console.error(
 			chalk.red(
 				`Can't tell whether '${normalized.slice(0, 60)}…' is an invitation ID or a URL.\n` +
-					"  Invitation ID shape:  1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\n" +
+					"  invitation ID shape:  1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\n" +
 					"  Share URL shape:      https://.../share/<43-char-token>\n" +
 					"  Use --invite <id> or --url <link> to be explicit.",
 			),
@@ -618,7 +618,7 @@ export async function inboxForgetCommand(projectId: string): Promise<void> {
 	}
 	console.log(
 		chalk.gray(
-			"  This only affects this device. To leave the Project on the server, run `clawdi project leave <project>`.",
+			"  This only affects this device. To leave the project on the server, run `clawdi project leave <project>`.",
 		),
 	);
 }
@@ -762,7 +762,7 @@ function renderJoinedSuccess(
 		console.log(chalk.gray(`  Linked to ${bound.length} Agent${bound.length === 1 ? "" : "s"}.`));
 	} else {
 		console.log(
-			chalk.gray(`  Link to Agent: clawdi agent projects link <agent-id> --project ${projectRef}`),
+			chalk.gray(`  Link to agent: clawdi agent projects link <agent-id> --project ${projectRef}`),
 		);
 	}
 	console.log(chalk.gray(`  Next (optional): clawdi pull --project ${projectRef}`));

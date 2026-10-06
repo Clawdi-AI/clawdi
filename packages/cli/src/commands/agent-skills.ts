@@ -22,7 +22,7 @@ async function inventory(agentId: string) {
 	} catch (error) {
 		if (error instanceof ApiError && error.body.includes("hosted_skill_runtime_required")) {
 			throw new Error(
-				"Remote Skills require a Hosted Hermes or OpenClaw Agent. Use `skill --agent <type>` for local Skills.",
+				"Remote skills require a Hosted Hermes or OpenClaw agent. Use `skill --agent <type>` for local skills.",
 			);
 		}
 		throw error;
@@ -70,7 +70,7 @@ export async function agentSkillsList(agentId: string, opts: { json?: boolean } 
 		);
 	}
 	if (!workspace.capability.available)
-		console.log(`GitHub Skills unavailable: ${workspace.capability.reason}`);
+		console.log(`GitHub skills unavailable: ${workspace.capability.reason}`);
 	console.log(
 		"Only installed convergence confirms runtime application; requested/managed state does not.",
 	);
@@ -94,7 +94,7 @@ export async function agentSkillsRead(
 		return;
 	}
 	if (skill?.source === "bundled") {
-		throw new Error("Bundled Skill content is not exposed by the remote Skill API.");
+		throw new Error("Bundled skill content is not exposed by the remote skill API.");
 	}
 	const { client, deploymentId } = await hostedWorkspace(agentId);
 	const detail = await client.getWorkspaceSkill(deploymentId, skillKey);
@@ -129,7 +129,7 @@ export async function agentSkillsInstall(agentId: string, opts: InstallOptions) 
 		if (opts.json || !process.stdout.isTTY) print({ status: "accepted", ...result });
 		else
 			console.log(
-				`Library Skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
+				`library skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
 			);
 		return;
 	}
@@ -152,7 +152,7 @@ export async function agentSkillsRemove(
 	const skill = desired.skills.find((item) => item.skill_key === skillKey);
 	if (skill?.read_only)
 		throw new Error(
-			"This Skill is managed by its linked Project or runtime and cannot be removed here.",
+			"This skill is managed by its linked project or runtime and cannot be removed here.",
 		);
 	if (skill?.authority === "cloud" && skill.skill_id) {
 		if (opts.requestId || opts.resourceVersion)
@@ -165,7 +165,7 @@ export async function agentSkillsRemove(
 		if (opts.json || !process.stdout.isTTY) print({ status: "accepted", ...result });
 		else
 			console.log(
-				`Library Skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
+				`library skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
 			);
 		return;
 	}
@@ -206,7 +206,7 @@ async function mutateGithubSkill(
 	const resourceVersion = requestedVersion ?? workspace.deployment_resource_version;
 	if (!workspace.capability.available) {
 		throw new Error(
-			`Remote GitHub Skills are unavailable: ${workspace.capability.reason}. Upgrade the Agent and wait for capability observation.`,
+			`Remote GitHub skills are unavailable: ${workspace.capability.reason}. Upgrade the agent and wait for capability observation.`,
 		);
 	}
 	if (
@@ -215,7 +215,7 @@ async function mutateGithubSkill(
 		!workspace.items?.some((item) => item.skill_key === skillKey)
 	) {
 		throw new Error(
-			"GitHub Skill not found in the Hosted desired inventory; no change was requested.",
+			"GitHub skill not found in the Hosted desired inventory; no change was requested.",
 		);
 	}
 	try {
@@ -239,9 +239,9 @@ async function mutateGithubSkill(
 		}
 		if (result.status === "failed") process.exitCode = 1;
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "Remote Skill request failed.";
+		const message = error instanceof Error ? error.message : "Remote skill request failed.";
 		throw new Error(
-			`${message}\nRequest ID: ${requestId}\nResource version: ${resourceVersion}\nAn accepted request may not be applied yet. Check \`clawdi agent skills list ${agentId}\` before retrying, and reuse the same --request-id and --resource-version.`,
+			`${message}\nrequest ID: ${requestId}\nresource version: ${resourceVersion}\nAn accepted request may not be applied yet. Check \`clawdi agent skills list ${agentId}\` before retrying, and reuse the same --request-id and --resource-version.`,
 		);
 	}
 }

@@ -728,7 +728,7 @@ export async function runDeployFlow(
 	if (aiMode === "saved" && !selectedSavedProvider) {
 		throw new DeployInputError(
 			"provider_missing",
-			`Saved AI provider ${providerId ?? ""} was not found. Pass its exact provider ID from Cloud AI Providers.`,
+			`Saved AI provider ${providerId ?? ""} was not found. Pass its exact provider ID from cloud AI providers.`,
 		);
 	}
 	const selectedProviderIssue = selectedSavedProvider
@@ -749,7 +749,7 @@ export async function runDeployFlow(
 		selectedSavedProvider?.configuration_mode === "custom";
 	if (nativeProvider && parsed.model) {
 		console.error(
-			"Warning: --model is ignored for agent-owned providers; choose models inside the Agent. Existing model choices are preserved.",
+			"Warning: --model is ignored for agent-owned providers; choose models inside the agent. Existing model choices are preserved.",
 		);
 	}
 	let model = nativeProvider
@@ -929,7 +929,7 @@ export async function runDeployFlow(
 			const selected = await prompts.select(
 				"Payment",
 				[
-					{ value: "wallet", label: "Clawdi Wallet", hint: "Exact quote and confirmation next" },
+					{ value: "wallet", label: "Clawdi wallet", hint: "Exact quote and confirmation next" },
 					{
 						value: "card",
 						label: "Card",
@@ -1023,7 +1023,7 @@ export async function runDeployFlow(
 		if (!isHostedDeployBillingTerm(billingTermMonths)) {
 			throw new Error("Wallet subscriptions support 1- or 12-month billing terms only.");
 		}
-		onEvent({ stage: "quote", message: "Getting an exact Wallet quote…" });
+		onEvent({ stage: "quote", message: "Getting an exact wallet quote…" });
 		walletQuote = await dependencies.client.quoteSubscription(
 			buildHostedDeploySubscriptionQuoteRequest({
 				planSlug: computePlanSlug,
@@ -1063,7 +1063,7 @@ export async function runDeployFlow(
 			aiMode === "managed"
 				? `Clawdi AI · ${model}`
 				: aiMode === "saved"
-					? `${selectedSavedProvider ? savedProviderLabel(selectedSavedProvider) : providerId}${model ? ` · ${model}` : " · choose models inside Agent"}`
+					? `${selectedSavedProvider ? savedProviderLabel(selectedSavedProvider) : providerId}${model ? ` · ${model}` : " · choose models inside agent"}`
 					: "Configure inside agent"
 		}`,
 		`Compute: ${planLabel(computePlanSlug)}${includedBasic ? " · included" : ` · ${paidSelection?.billingTermMonths} month term`}`,
@@ -1085,7 +1085,7 @@ export async function runDeployFlow(
 		const confirmationMessage = includedBasic
 			? "Deploy this agent?"
 			: payment === "wallet"
-				? "Debit this exact Wallet quote and deploy?"
+				? "Debit this exact wallet quote and deploy?"
 				: "Open secure card checkout for this agent?";
 		const confirmed = parsed.yes || (await prompts.confirm(confirmationMessage));
 		if (!confirmed) throw new DeployCancelledError();
@@ -1107,7 +1107,7 @@ export async function runDeployFlow(
 		const immediateFailure = operationFailure(operation);
 		if (immediateFailure) throw immediateFailure;
 		deploymentId = operation.metadata.deploymentId.trim() || null;
-		if (!deploymentId) throw new Error("The deploy API accepted creation without an Agent ID.");
+		if (!deploymentId) throw new Error("The deploy API accepted creation without an agent ID.");
 		onEvent({ stage: "accepted", message: `Accepted ${deploymentId} (${operation.name}).` });
 		completed = operation.done;
 		if (parsed.wait) {
@@ -1190,7 +1190,7 @@ export async function runDeployFlow(
 			if (!deploymentId) {
 				throw new PublicDeployFailure(
 					"invalid_deployment_result",
-					"Hosted accepted payment without returning the agent identifier. Do not start another payment; check Agents in the dashboard.",
+					"Hosted accepted payment without returning the agent identifier. Do not start another payment; check agents in the dashboard.",
 				);
 			}
 			onEvent({

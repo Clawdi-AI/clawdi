@@ -455,7 +455,7 @@ content
 		try {
 			await expect(
 				pull({ agent: "hermes", modules: "skills", project: TEST_PROJECT_ID }),
-			).rejects.toThrow(/Agent Workspaces are filesystem-authoritative/);
+			).rejects.toThrow(/agent workspaces are filesystem-authoritative/);
 		} finally {
 			restore();
 		}

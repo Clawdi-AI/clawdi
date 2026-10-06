@@ -270,7 +270,7 @@ describe("Hosted shared OAuth profile binding", () => {
 			},
 		});
 		await expect(mismatched.getPlans()).rejects.toThrow(
-			"doesn't match the current API and deploy API endpoints",
+			"doesn't match the current CLAWDI_API_URL and CLAWDI_DEPLOY_API_URL",
 		);
 		expect(requests).toBe(0);
 
@@ -290,7 +290,7 @@ describe("Hosted shared OAuth profile binding", () => {
 			}),
 		);
 		await expect(snapshot.getPlans()).rejects.toThrow(
-			"doesn't match the current API and deploy API endpoints",
+			"doesn't match the current CLAWDI_API_URL and CLAWDI_DEPLOY_API_URL",
 		);
 		expect(requests).toBe(0);
 	});

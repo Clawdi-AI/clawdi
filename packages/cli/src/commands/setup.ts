@@ -72,7 +72,7 @@ export async function setup(opts: SetupOpts) {
 		machineId = getOrCreateMachineId();
 		machineName = hostname();
 	} catch (error) {
-		console.log(chalk.red(`Could not prepare local Agent identity: ${errMessage(error)}`));
+		console.log(chalk.red(`Could not prepare local agent identity: ${errMessage(error)}`));
 		process.exitCode = 1;
 		return;
 	}
@@ -206,7 +206,7 @@ async function registerEnv(
 		const vaultWorkspace = await selectVaultWorkspace(agentType, opts);
 		if (vaultWorkspace && !userId)
 			throw new Error(
-				"Vault workspace needs a signed-in CLI account. Run `clawdi auth login` first; environment-variable credentials aren't enough.",
+				"A vault workspace needs a signed-in CLI account. Run `clawdi auth login` first; environment-variable credentials aren't enough.",
 			);
 		const env = unwrap(
 			await api.POST("/v1/agents", {
@@ -353,7 +353,7 @@ async function installBuiltinSkill(agentType: AgentType) {
 			reservationState !== "reserved" &&
 			managedSkillDirectoryDigest(targetDir) !== sourceDigest
 		) {
-			throw new Error(`refusing to replace unmanaged Skill at ${targetDir}`);
+			throw new Error(`refusing to replace unmanaged skill at ${targetDir}`);
 		}
 		installReservedManagedSkill(
 			{
@@ -390,9 +390,9 @@ async function selectVaultWorkspace(
 		const entries = listOpenClawAgentWorkspaces().filter((item) => item.id === nativeAgentId);
 		const entry = entries.length === 1 ? entries[0] : undefined;
 		if (!entry)
-			throw new Error("Selected native Agent is absent from the official OpenClaw roster.");
+			throw new Error("Selected native agent is absent from the official OpenClaw roster.");
 		if (path && realpathSync(resolve(path)) !== realpathSync(entry.workspace))
-			throw new Error("Vault workspace differs from the selected native Agent workspace.");
+			throw new Error("Vault workspace differs from the selected native agent workspace.");
 		path = entry.workspace;
 	}
 	if (
@@ -425,7 +425,7 @@ async function selectVaultWorkspace(
 		}
 		if (candidates.length) {
 			const selected = await p.select({
-				message: "Deliver this Agent's Vault files to a native workspace?",
+				message: "Deliver this agent's vault files to a native workspace?",
 				options: [
 					{ value: -1, label: "Not now" },
 					...candidates.map((candidate, index) => ({
