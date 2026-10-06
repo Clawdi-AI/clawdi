@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { join } from "node:path";
 import { type SessionScanBatch, scanSessionModule } from "../../src/adapters/base";
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
+import { SESSION_PROJECTION_REVISION } from "../../src/adapters/rich-event-mapping";
 import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
 import { tarSkillDir } from "../../src/lib/tar";
 import { cleanupTmp, copyFixtureToTmp } from "./helpers";
@@ -154,6 +155,25 @@ function addFinancialAgent(stateRoot: string, sessionId = "oc-financial-001") {
 }
 
 describe("OpenClawAdapter.detect", () => {
+	it.each(["version", "empty", "failed"])("reads only --version (%s)", async (mode) => {
+		const log = join(tmpHome, "version-arguments.log");
+		writeFileSync(
+			join(tmpHome, "bin", "openclaw"),
+			`#!/bin/sh
+printf '%s\\n' "$1" >> "${log}"
+if [ "$1" = "--version" ]; then
+  ${mode === "failed" ? "exit 1" : mode === "empty" ? "exit 0" : "printf '%s\\n' 'OpenClaw 2026.9.8 (fixture)'"}
+else
+  printf '%s\\n' 'Usage: OpenClaw help banner'
+fi
+`,
+		);
+		expect(await new OpenClawAdapter().getVersion()).toBe(
+			mode === "version" ? "OpenClaw 2026.9.8 (fixture)" : null,
+		);
+		expect(readFileSync(log, "utf8")).toBe("--version\n");
+	});
+
 	it("returns true when $HOME/.openclaw exists", async () => {
 		const a = new OpenClawAdapter();
 		expect(await a.detect()).toBe(true);
@@ -512,6 +532,23 @@ describe("OpenClawAdapter.collectSessions", () => {
 		});
 	});
 
+	it.each([false, true])("reprojects pre-versioned revisions (legacy=%s)", async (legacy) => {
+		if (legacy) writeFileSync(join(tmpHome, ".openclaw", "legacy-inventory-test"), "enabled");
+		const scan = await scanSessionModule(
+			new OpenClawAdapter().sessions,
+			{ kind: "complete" },
+			new Map([
+				["oc-session-001", `p${SESSION_PROJECTION_REVISION - 1}:oc-session-001:1776247205000`],
+			]),
+		);
+		const sessions = [];
+		for await (const batch of scan.batches) sessions.push(...batch.sessions);
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]?.sourceRevision).toBe(
+			`p${SESSION_PROJECTION_REVISION}:oc-session-001:1776247205000`,
+		);
+	});
+
 	it("reads legacy inventory JSONL without requiring a live Gateway", async () => {
 		writeFileSync(join(tmpHome, ".openclaw", "legacy-inventory-test"), "enabled");
 		const sessionsDir = join(tmpHome, ".openclaw", "agents", "main", "sessions");
@@ -529,7 +566,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 			localSessionId: "oc-session-001",
 			projectPath: "/Users/fixture/project",
 			messageCount: 2,
-			sourceRevision: "oc-session-001:1776247205000",
+			sourceRevision: `p${SESSION_PROJECTION_REVISION}:oc-session-001:1776247205000`,
 		});
 		expect(scan.userActivity).toEqual({
 			lastUserInputAt: "2026-08-19T00:00:00.000Z",
@@ -581,7 +618,7 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		const firstBatches: SessionScanBatch[] = [];
 		for await (const batch of first.batches) firstBatches.push(batch);
 		const revision = firstBatches[0]?.sessions[0]?.sourceRevision;
-		expect(revision).toBe("sqlite-session-001:1776247205000");
+		expect(revision).toBe(`p${SESSION_PROJECTION_REVISION}:sqlite-session-001:1776247205000`);
 		expect(first.userActivity).toEqual({
 			lastUserInputAt: "2026-08-16T10:00:00.000Z",
 			complete: true,
@@ -616,7 +653,9 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		);
 		const changedBatches: SessionScanBatch[] = [];
 		for await (const batch of changed.batches) changedBatches.push(batch);
-		expect(changedBatches[0]?.sessions[0]?.sourceRevision).toBe("sqlite-session-001:1776247206000");
+		expect(changedBatches[0]?.sessions[0]?.sourceRevision).toBe(
+			`p${SESSION_PROJECTION_REVISION}:sqlite-session-001:1776247206000`,
+		);
 		expect(changed.userActivity).toEqual({
 			lastUserInputAt: "2026-04-15T10:00:00.000Z",
 			complete: true,

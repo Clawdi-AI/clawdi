@@ -4,6 +4,9 @@ import { basename } from "node:path";
 import { canonicalJson } from "../lib/session-events";
 import type { SessionContentPart, SessionReasoningEvent } from "./base";
 
+// Bump once per release when any adapter changes persisted Session/Event bytes.
+export const SESSION_PROJECTION_REVISION = 5;
+
 export type JsonObject = Record<string, unknown>;
 
 export function jsonObject(value: unknown): JsonObject | null {

@@ -66,7 +66,7 @@ export function projectEventsToMessages(events: readonly SessionEvent[]): Sessio
 		const content = event.parts
 			.filter(
 				(part): part is Extract<(typeof event.parts)[number], { type: "text" }> =>
-					part.type === "text",
+					part.type === "text" && part.text.length > 0,
 			)
 			.map((part) => part.text)
 			.join("\n");

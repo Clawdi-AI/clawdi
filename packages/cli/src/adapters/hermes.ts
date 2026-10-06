@@ -31,6 +31,7 @@ import {
 	jsonObject,
 	jsonString,
 	reasoningContent,
+	SESSION_PROJECTION_REVISION,
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
@@ -110,8 +111,6 @@ const MODERN_MESSAGE_OPTIONAL_COLUMNS = [
 
 const HERMES_CONTENT_JSON_PREFIX = "\0json:";
 const HERMES_SESSION_SCAN_BATCH_SIZE = 32;
-// Bump when persisted Hermes rows map to different Session/Event bytes.
-const HERMES_SESSION_PROJECTION_REVISION = 4;
 const HERMES_EAGER_MAX_ROWS = 512;
 
 function messagePayloadSizeSql(columns: readonly TableInfoRow[]): string {
@@ -169,7 +168,7 @@ async function sessionSourceRevision(
 ): Promise<string> {
 	const hash = createHash("sha256").update(
 		JSON.stringify([
-			HERMES_SESSION_PROJECTION_REVISION,
+			SESSION_PROJECTION_REVISION,
 			row.id,
 			row.source,
 			row.model,
@@ -241,6 +240,9 @@ function decodeHermesContent(content: string | null): unknown {
 	}
 }
 
+// Legacy rows predate Hermes v2026.4.23 storage-time stripping. Keep the tag
+// set aligned with upstream THINK_TAG_NAMES in agent/think_scrubber.py:
+// https://github.com/NousResearch/hermes-agent/blob/main/agent/think_scrubber.py
 const CLOSED_REASONING_BLOCK =
 	/<(think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>[\s\S]*?<\/\1>/gi;
 const OPEN_REASONING_TAG = /<(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>/gi;
@@ -511,7 +513,7 @@ function parseModelField(raw: string | null): string | null {
 			const obj = JSON.parse(raw);
 			return obj.default || obj.model || null;
 		} catch {
-			return /['"](?:default|model)['"]\s*:\s*['"]([^'"]+)['"]/.exec(raw)?.[1] ?? null;
+			return null;
 		}
 	}
 	return raw;
@@ -801,7 +803,7 @@ export class HermesAdapter implements AgentAdapterCore {
 			projectPath: null,
 			startedAt,
 			endedAt,
-			messageCount: row.message_count ?? (stream ? streamedMessageCount : messages.length),
+			messageCount: stream ? streamedMessageCount : messages.length,
 			inputTokens: row.input_tokens ?? 0,
 			outputTokens: row.output_tokens ?? 0,
 			cacheReadTokens: row.cache_read_tokens ?? 0,

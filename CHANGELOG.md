@@ -15,6 +15,14 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
+### CLI 0.14.108
+
+- Hermes and OpenClaw sessions are re-projected once after upgrading. Unchanged session content is not re-uploaded.
+- Pi and OpenClaw consistently sync reasoning and tool messages, and omit hidden signature fields from tool arguments.
+- Hermes and OpenCode message counts reflect projected messages, and Claude Code token totals count shared message IDs once. Already synced message counts and token metadata refresh only when a session's content changes.
+- Short Claude Code conversations sync correctly, and duplicate predecessors are omitted even for short forks.
+- Session previews handle empty text parts consistently, and Claude Code summaries include the full first projected user message.
+
 ### CLI 0.14.107
 
 - `clawdi push --project` includes Pi and OpenCode sessions in subdirectories while excluding similarly named sibling directories.

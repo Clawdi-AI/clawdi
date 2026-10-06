@@ -1,7 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
-import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-events";
 import type {
@@ -38,6 +37,7 @@ function projectsDir() {
 interface SessionJsonlEntry {
 	type?: string;
 	message?: {
+		id?: string;
 		role?: string;
 		model?: string;
 		content?: string | Array<{ type: string; text?: string }>;
@@ -301,7 +301,6 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			const subset = index.prepare(`
 				SELECT 1 FROM inventory b
 				WHERE b.project IS ? AND b.uuid_count > (SELECT uuid_count FROM inventory WHERE source_key=?)
-				AND (SELECT uuid_count FROM inventory WHERE source_key=?) >= 10
 				AND NOT EXISTS (
 					SELECT 1 FROM uuids a WHERE a.source_key=? AND NOT EXISTS (
 						SELECT 1 FROM uuids bu WHERE bu.source_key=b.source_key AND bu.uuid=a.uuid
@@ -311,7 +310,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			const dedupedIds = new Set<string>();
 			for (const { session, sourceKey: key } of sources) {
 				context?.signal.throwIfAborted();
-				if (subset.get(session.projectPath, key, key, key)) dedupedIds.add(session.localSessionId);
+				if (subset.get(session.projectPath, key, key)) dedupedIds.add(session.localSessionId);
 			}
 			return {
 				sessions: sources
@@ -347,12 +346,12 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		let inputTokens = 0;
 		let outputTokens = 0;
 		let cacheReadTokens = 0;
+		const countedUsageIds = new Set<string>();
 		let startedAt: Date | null = null;
 		let endedAt: Date | null = null;
 		let model: string | null = null;
 		const modelsUsed = new Set<string>();
 		let projectPath: string | null = null;
-		let firstUserMessage: string | null = null;
 
 		for await (const { data: raw } of source.records()) {
 			const entry = raw as SessionJsonlEntry;
@@ -374,30 +373,22 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 				projectPath = entry.cwd;
 			}
 
-			if (role === "user" && !firstUserMessage) {
-				const c = msg?.content;
-				if (typeof c === "string") {
-					firstUserMessage = safeTruncate(c, 200);
-				} else if (Array.isArray(c)) {
-					const textBlock = c.find((b) => b.type === "text" && b.text);
-					if (textBlock?.text) {
-						firstUserMessage = safeTruncate(textBlock.text, 200);
-					}
-				}
-			}
-
 			if (role === "assistant" && msg?.model) {
 				addSessionModel(modelsUsed, msg.model);
 				model = msg.model;
 			}
 
 			if (msg?.usage) {
+				// Multi-block turns share an id and usage: https://code.claude.com/docs/en/agent-sdk/cost-tracking
+				if (typeof msg.id === "string") {
+					if (countedUsageIds.has(msg.id)) continue;
+					countedUsageIds.add(msg.id);
+				}
 				inputTokens += msg.usage.input_tokens ?? 0;
 				outputTokens += msg.usage.output_tokens ?? 0;
 				cacheReadTokens += msg.usage.cache_read_input_tokens ?? 0;
 			}
 		}
-		if (source.validRecords < 3) return null;
 		const sourceSessionKey = basename(filePath, ".jsonl");
 		const readEvents = async function* () {
 			let seq = 0;
@@ -426,7 +417,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			cacheReadTokens,
 			model,
 			modelsUsed: [...modelsUsed],
-			summary: firstUserMessage,
+			summary: description.firstUser?.content ?? null,
 			...description.content,
 			sourceRevision: source.revision,
 			durationSeconds,

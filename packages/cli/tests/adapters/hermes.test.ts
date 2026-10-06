@@ -6,6 +6,7 @@ import { scanSessionModule } from "../../src/adapters/base";
 import { HermesAdapter } from "../../src/adapters/hermes";
 import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
 import { computeLastActivityIso } from "../../src/lib/session-activity";
+import { projectEventsToMessages } from "../../src/lib/session-events";
 import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
 import { reserveManagedSkill } from "../../src/runtime/managed-skill-reservation";
@@ -86,6 +87,18 @@ describe("HermesAdapter.collectSessions", () => {
 			expect(JSON.stringify(result)).not.toContain("base64");
 		},
 	);
+	it.each([false, true])("counts projected visible messages (streaming=%s)", async (streaming) => {
+		const session = await new HermesAdapter().sessions.resolve("s-modern", {
+			streaming,
+			signal: new AbortController().signal,
+		});
+		if (!session) throw new Error("Expected Hermes session fixture");
+		const events = [];
+		for await (const event of session.readEvents?.() ?? session.events ?? []) events.push(event);
+		expect(session.messageCount).toBe(projectEventsToMessages(events).length);
+		expect(session.messageCount).toBe(8);
+	});
+
 	it("selects events-v1 and maps every safe modern row in stable source order", async () => {
 		const a = new HermesAdapter();
 		expect(await a.sessions.contentProtocol()).toBe("events-v1");
@@ -97,7 +110,7 @@ describe("HermesAdapter.collectSessions", () => {
 			projectPath: null,
 			model: "gpt-5.3-codex",
 			modelsUsed: ["gpt-5.3-codex"],
-			messageCount: 12,
+			messageCount: 8,
 			inputTokens: 120,
 			outputTokens: 45,
 			cacheReadTokens: 8,
@@ -243,6 +256,29 @@ describe("HermesAdapter.collectSessions", () => {
 		}
 	});
 
+	it.each([
+		["plain-model", "plain-model"],
+		['{"default":"json-model","api_key":"sk-json-secret"}', "json-model"],
+		["{'default': 'repr-model', 'headers': {'Authorization': 'Bearer sk-repr-secret'}}", null],
+		['{"default":"broken-model","api_key":"sk-broken-secret"', null],
+	])("accepts only strict JSON model objects (%s)", async (stored, expected) => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		try {
+			db.run(
+				"INSERT INTO sessions (id, source, model, started_at) VALUES ('model-fixture', 'cli', ?, 1776247200)",
+				stored,
+			);
+			db.run(
+				"INSERT INTO messages (session_id, role, content, timestamp) VALUES ('model-fixture', 'assistant', 'Safe answer', 1776247201)",
+			);
+		} finally {
+			db.close();
+		}
+		const session = await new HermesAdapter().sessions.resolve("model-fixture");
+		expect(session?.model).toBe(expected);
+		expect(JSON.stringify(session)).not.toContain("sk-");
+	});
+
 	it("keeps prior identities as an append-only prefix when a row is added", async () => {
 		const adapter = new HermesAdapter();
 		const before = (await adapter.sessions.resolve("s-modern"))?.events ?? [];
@@ -265,6 +301,20 @@ describe("HermesAdapter.collectSessions", () => {
 			type: "message",
 			source: { adapter: "hermes", record_id: "13", record_seq: 13 },
 		});
+	});
+
+	it("reprojects unchanged source rows after the shared projection revision changes", async () => {
+		// Captured with projection revision 4; only the mapper version changed.
+		const previous = "6ce040ade9bbc99c25a517446b1789db7036860f01f801da3299b58927e82453";
+		const scan = await scanSessionModule(
+			new HermesAdapter().sessions,
+			{ kind: "complete" },
+			new Map([["s-modern", previous]]),
+		);
+		const sessions = [];
+		for await (const batch of scan.batches) sessions.push(...batch.sessions);
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]?.sourceRevision).not.toBe(previous);
 	});
 
 	it("scans large stores in bounded batches and expands only revised sessions", async () => {
