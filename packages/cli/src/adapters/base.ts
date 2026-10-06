@@ -193,6 +193,25 @@ export interface SessionModule {
 	watchPaths(): string[];
 }
 
+/** Adapt a batch scanner to collection without changing eager/streaming context. */
+export function collectFromScan(
+	scan: NonNullable<SessionModule["scan"]>,
+): SessionModule["collect"] {
+	return async (request, context) => {
+		context?.signal.throwIfAborted();
+		const result = await scan(request, new Map(), context);
+		const sessions: RawSession[] = [];
+		let dedupedCount = 0;
+		for await (const batch of result.batches) {
+			context?.signal.throwIfAborted();
+			sessions.push(...batch.sessions);
+			dedupedCount += batch.dedupedCount;
+		}
+		context?.signal.throwIfAborted();
+		return { sessions, dedupedCount, coverage: result.coverage };
+	};
+}
+
 export async function scanSessionModule(
 	module: SessionModule,
 	request: SessionScanRequest,

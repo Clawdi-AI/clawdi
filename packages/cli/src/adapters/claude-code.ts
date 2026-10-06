@@ -1,25 +1,17 @@
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-events";
-import { replaceSkillArchiveTarGz } from "../lib/tar";
-import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
-import {
-	migrateLegacyLocalSetupSkill,
-	mutateUserSkillTarget,
-	shouldIgnoreUserSkill,
-} from "../runtime/managed-skill-reservation";
 import type {
 	AgentAdapterCore,
 	RawSession,
-	RawSkill,
 	SessionScanRequest,
 	SessionScanResult,
 	SyncReadContext,
 } from "./base";
-import { getClaudeHome, isPathWithinRoots, SKIP_DIRS, safeSkillDirectoryPath } from "./paths";
+import { getClaudeHome, matchesProjectFilter } from "./paths";
 import {
 	canonicalStructuredString,
 	type JsonObject,
@@ -30,7 +22,9 @@ import {
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
-import { describeSessionContent, JsonlSessionSource } from "./session-source";
+import { jsonlPathsWithin } from "./session-files";
+import { addSessionModel, describeSessionContent, JsonlSessionSource } from "./session-source";
+import { flatSkillModule } from "./skill-dir";
 import { withSessionIndex } from "./sqlite";
 import { readCommandVersion } from "./version";
 
@@ -152,18 +146,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			this.resolveSession(localSessionId, context),
 		watchPaths: () => this.getSessionsWatchPaths(),
 	};
-	readonly skills = {
-		collect: (context?: SyncReadContext) => this.collectSkills(context),
-		listKeys: (context?: SyncReadContext) => this.listSkillKeys(context),
-		path: (key: string) => this.getSkillPath(key),
-		rootDir: () => this.getSkillsRootDir(),
-		sharedPath: (skillKey: string, ownerHandle: string) =>
-			this.getSharedSkillPath(skillKey, ownerHandle),
-		writeArchive: (key: string, tarGzBytes: Buffer) => this.writeSkillArchive(key, tarGzBytes),
-		writeSharedArchive: (key: string, ownerHandle: string, tarGzBytes: Buffer) =>
-			this.writeSharedSkillArchive(key, ownerHandle, tarGzBytes),
-		remove: (key: string) => this.removeLocalSkill(key),
-	};
+	readonly skills = flatSkillModule({ root: () => join(claudeDir(), "skills") });
 
 	async detect(): Promise<boolean> {
 		// Bare `~/.claude/` may exist from gstack/other tools or be a stale
@@ -209,22 +192,16 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		const absFilter = projectFilter ? resolve(projectFilter) : null;
 		if (request.kind === "paths") {
 			const root = resolve(projectsDir());
+			const paths = jsonlPathsWithin(request, [root]);
+			if (!paths) return this.collectSessions({ kind: "complete", projectFilter }, context);
 			const projectDirNames = new Set<string>();
-			for (const candidate of request.paths) {
-				const path = resolve(candidate);
+			for (const path of paths) {
 				const parts = relative(root, path).split(/[\\/]/);
-				if (
-					!isPathWithinRoots(path, [root]) ||
-					parts.length !== 2 ||
-					!parts[1].endsWith(".jsonl")
-				) {
+				if (parts.length !== 2)
 					return this.collectSessions({ kind: "complete", projectFilter }, context);
-				}
 				projectDirNames.add(parts[0]);
 			}
-			if (projectDirNames.size > 0) {
-				return this.collectProjectSessions([...projectDirNames], absFilter, "partial", context);
-			}
+			return this.collectProjectSessions([...projectDirNames], absFilter, "partial", context);
 		}
 
 		let projectDirs = readdirSync(projectsDir(), { withFileTypes: true }).filter((d) =>
@@ -308,7 +285,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 						);
 						if (!session) continue;
 						const cwd = session.projectPath;
-						if (absFilter && (!cwd || (cwd !== absFilter && !cwd.startsWith(`${absFilter}/`)))) {
+						if (!matchesProjectFilter(cwd, absFilter)) {
 							continue;
 						}
 						insertSource.run(key, cwd, key);
@@ -387,8 +364,10 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 
 			if (entry.timestamp) {
 				const ts = new Date(entry.timestamp);
-				if (!startedAt) startedAt = ts;
-				endedAt = ts;
+				if (!Number.isNaN(ts.getTime())) {
+					startedAt ??= ts;
+					endedAt = ts;
+				}
 			}
 
 			if (entry.cwd && !projectPath) {
@@ -408,7 +387,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			}
 
 			if (role === "assistant" && msg?.model) {
-				modelsUsed.add(msg.model);
+				addSessionModel(modelsUsed, msg.model);
 				model = msg.model;
 			}
 
@@ -454,118 +433,11 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		};
 	}
 
-	private async collectSkills(context?: SyncReadContext): Promise<RawSkill[]> {
-		context?.signal.throwIfAborted();
-		const skillsDir = join(claudeDir(), "skills");
-		migrateLegacyLocalSetupSkill({
-			targetDir: join(skillsDir, "clawdi"),
-			id: "clawdi",
-			version: 1,
-			digest: managedSkillDirectoryDigest,
-		});
-		if (!existsSync(skillsDir)) return [];
-
-		const skills: RawSkill[] = [];
-
-		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
-			if (entry.name.startsWith(".")) continue;
-			if (SKIP_DIRS.has(entry.name)) continue;
-			const dirPath = safeSkillDirectoryPath(skillsDir, entry);
-			if (!dirPath) continue;
-			try {
-				if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
-				const skillMd = join(dirPath, "SKILL.md");
-				if (!existsSync(skillMd)) continue;
-				const content = readFileSync(skillMd, "utf-8");
-				const fileCount = readdirSync(dirPath, { recursive: true }).length;
-				skills.push({
-					skillKey: entry.name,
-					name: entry.name,
-					content,
-					filePath: skillMd,
-					directoryPath: dirPath,
-					isDirectory: fileCount > 1,
-				});
-			} catch {}
-		}
-
-		return skills;
-	}
-
-	private getSkillPath(key: string): string {
-		return join(claudeDir(), "skills", key, "SKILL.md");
-	}
-
-	private getSkillsRootDir(): string {
-		return join(claudeDir(), "skills");
-	}
-
-	private getSharedSkillPath(skillKey: string, ownerHandle: string): string {
-		return join(claudeDir(), "skills", `${skillKey}__${ownerHandle}`);
-	}
-
-	private async listSkillKeys(context?: SyncReadContext): Promise<string[]> {
-		context?.signal.throwIfAborted();
-		// Flat layout: top-level dirs under skills/. Mirrors the
-		// filtering of `collectSkills` so the daemon's hot-path
-		// rescan returns the same set the bulk push would consider
-		// — otherwise nested or skip-listed dirs would diverge.
-		const skillsDir = join(claudeDir(), "skills");
-		migrateLegacyLocalSetupSkill({
-			targetDir: join(skillsDir, "clawdi"),
-			id: "clawdi",
-			version: 1,
-			digest: managedSkillDirectoryDigest,
-		});
-		if (!existsSync(skillsDir)) return [];
-		const out: string[] = [];
-		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
-			if (entry.name.startsWith(".")) continue;
-			if (SKIP_DIRS.has(entry.name)) continue;
-			const dirPath = safeSkillDirectoryPath(skillsDir, entry);
-			if (!dirPath) continue;
-			try {
-				if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
-				if (!existsSync(join(dirPath, "SKILL.md"))) continue;
-				out.push(entry.name);
-			} catch {}
-		}
-		return out;
-	}
-
 	private getSessionsWatchPaths(): string[] {
 		// Claude Code dumps each conversation as a JSONL file under
 		// `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`. New
 		// projects appear as new subdirs; the watcher attaches
 		// recursively from the projects root.
 		return [projectsDir()];
-	}
-
-	private async removeLocalSkill(key: string): Promise<void> {
-		const dir = join(claudeDir(), "skills", key);
-		mutateUserSkillTarget(dir, key, () => {
-			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
-		});
-	}
-
-	private async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
-		const skillsDir = join(claudeDir(), "skills");
-		const targetDir = join(skillsDir, key);
-		await replaceSkillArchiveTarGz(key, skillsDir, targetDir, tarGzBytes, undefined, (mutation) =>
-			mutateUserSkillTarget(targetDir, key, mutation),
-		);
-	}
-
-	private async writeSharedSkillArchive(
-		key: string,
-		ownerHandle: string,
-		tarGzBytes: Buffer,
-	): Promise<void> {
-		await replaceSkillArchiveTarGz(
-			key,
-			this.getSkillsRootDir(),
-			this.getSharedSkillPath(key, ownerHandle),
-			tarGzBytes,
-		);
 	}
 }
