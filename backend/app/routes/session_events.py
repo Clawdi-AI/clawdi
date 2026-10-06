@@ -494,14 +494,6 @@ async def commit_session_event_generation(
     ).scalar_one_or_none()
     if (
         session is not None
-        and body.profile_key is None
-        and session.origin_environment_id is not None
-    ):
-        await resolve_session_profile(
-            db, auth.user_id, session.origin_environment_id, local_session_id, None
-        )
-    if (
-        session is not None
         and body.profile_key is not None
         and session.origin_profile_key != body.profile_key
     ):

@@ -38,9 +38,14 @@ def _unique_index(name: str, table: str, columns: list[str], where: str | None =
         )
 
 
+def _ddl(statement: str) -> None:
+    op.execute("SET LOCAL lock_timeout = '3s'")
+    op.execute(statement)
+
+
 def upgrade() -> None:
     # These DDL steps survive the autocommit boundary and are retryable.
-    op.execute("""CREATE TABLE IF NOT EXISTS agent_profiles (
+    _ddl("""CREATE TABLE IF NOT EXISTS agent_profiles (
         id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         environment_id uuid NOT NULL REFERENCES agent_environments(id) ON DELETE CASCADE,
         profile_key varchar(64) NOT NULL,
@@ -56,7 +61,7 @@ def upgrade() -> None:
         CONSTRAINT ck_agent_profiles_state CHECK (state IN ('active', 'removed')),
         CONSTRAINT ck_agent_profiles_default_key CHECK (is_default = (profile_key = ''))
     )""")
-    op.execute(
+    _ddl(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_profiles_default "
         "ON agent_profiles (environment_id) WHERE is_default"
     )
@@ -64,7 +69,7 @@ def upgrade() -> None:
         SELECT id, '', '', true FROM agent_environments
         ON CONFLICT (environment_id, profile_key) DO NOTHING""")
     for table in ("sessions", "session_sync_suppressions"):
-        op.execute(
+        _ddl(
             f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS "
             "origin_profile_key varchar(64) NOT NULL DEFAULT ''"
         )
@@ -79,39 +84,17 @@ def upgrade() -> None:
         ["user_id", "origin_environment_id", "origin_profile_key", "local_session_id"],
         "origin_environment_id IS NOT NULL",
     )
-    op.execute("""DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'sessions'::regclass
-            AND conname = 'uq_sessions_user_origin_profile_local') THEN
-            ALTER TABLE sessions ADD CONSTRAINT uq_sessions_user_origin_profile_local
-                UNIQUE USING INDEX uq_sessions_user_origin_profile_local;
-        END IF;
-    END $$""")
-    op.execute("ALTER TABLE sessions DROP CONSTRAINT IF EXISTS uq_sessions_user_origin_local")
-    with op.get_context().autocommit_block():
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS uq_session_sync_suppressions_origin")
+    # Expand only. Old API binaries still target uq_sessions_user_origin_local.
+    # Attaching the new index and removing the old constraint belongs to contract.
 
 
 def downgrade() -> None:
-    # Fail on cross-profile collisions instead of deleting or merging data.
-    _unique_index(
-        "uq_sessions_user_origin_local",
-        "sessions",
-        ["user_id", "origin_environment_id", "local_session_id"],
-    )
-    _unique_index(
-        "uq_session_sync_suppressions_origin",
-        "session_sync_suppressions",
-        ["user_id", "origin_environment_id", "local_session_id"],
-        "origin_environment_id IS NOT NULL",
-    )
-    op.execute(
-        "ALTER TABLE sessions ADD CONSTRAINT uq_sessions_user_origin_local "
-        "UNIQUE USING INDEX uq_sessions_user_origin_local"
-    )
-    op.drop_constraint("uq_sessions_user_origin_profile_local", "sessions", type_="unique")
-    op.drop_index(
-        "uq_session_sync_suppressions_origin_profile", table_name="session_sync_suppressions"
-    )
+    with op.get_context().autocommit_block():
+        for name, table in (
+            ("uq_sessions_user_origin_profile_local", "sessions"),
+            ("uq_session_sync_suppressions_origin_profile", "session_sync_suppressions"),
+        ):
+            op.drop_index(name, table_name=table, if_exists=True, postgresql_concurrently=True)
     for table in ("sessions", "session_sync_suppressions"):
-        op.drop_column(table, "origin_profile_key")
-    op.drop_table("agent_profiles")
+        _ddl(f"ALTER TABLE {table} DROP COLUMN IF EXISTS origin_profile_key")
+    _ddl("DROP TABLE IF EXISTS agent_profiles")

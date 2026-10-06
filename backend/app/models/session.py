@@ -197,6 +197,14 @@ class SessionSyncSuppression(Base):
             postgresql_where=text("origin_environment_id IS NULL"),
         ),
         Index(
+            "uq_session_sync_suppressions_origin",
+            "user_id",
+            "origin_environment_id",
+            "local_session_id",
+            unique=True,
+            postgresql_where=text("origin_environment_id IS NOT NULL"),
+        ),
+        Index(
             "uq_session_sync_suppressions_origin_profile",
             "user_id",
             "origin_environment_id",
@@ -226,9 +234,16 @@ class Session(Base, TimestampMixin):
         UniqueConstraint(
             "user_id",
             "origin_environment_id",
+            "local_session_id",
+            name="uq_sessions_user_origin_local",
+        ),
+        Index(
+            "uq_sessions_user_origin_profile_local",
+            "user_id",
+            "origin_environment_id",
             "origin_profile_key",
             "local_session_id",
-            name="uq_sessions_user_origin_profile_local",
+            unique=True,
         ),
     )
 

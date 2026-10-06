@@ -3,10 +3,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy import CursorResult, delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, require_any_scope
+from app.core.auth import AuthContext, require_any_scope, require_scope
 from app.core.database import get_session
 from app.models.session import AgentEnvironment, AgentProfile, Session, SessionSyncSuppression
 from app.schemas.agent_profile import (
@@ -108,7 +109,14 @@ async def list_agent_profiles(
     ),
     db: AsyncSession = Depends(get_session),
 ) -> list[AgentProfileResponse]:
-    return await _responses(db, await _agent(db, auth, agent_id))
+    agent = await _agent(db, auth, agent_id)
+    await db.execute(
+        insert(AgentProfile)
+        .values(environment_id=agent_id, profile_key="", upstream_key="", is_default=True)
+        .on_conflict_do_nothing(constraint="uq_agent_profiles_environment_key")
+    )
+    await db.commit()
+    return await _responses(db, agent)
 
 
 @router.put("/agents/{agent_id}/profiles")
@@ -197,7 +205,7 @@ async def attribute_sessions(
     agent_id: UUID,
     body: AttributeSessionsRequest,
     profile_key: str = Path(pattern=_KEY_PATTERN),
-    auth: AuthContext = Depends(require_any_scope("sessions:write", "skills:write")),
+    auth: AuthContext = Depends(require_scope("sessions:write")),
     headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> ProfileSessionMoveResponse:
@@ -224,7 +232,7 @@ async def rename_profile(
     agent_id: UUID,
     body: ProfileRenameRequest,
     profile_key: str = Path(pattern=_KEY_PATTERN),
-    auth: AuthContext = Depends(require_any_scope("sessions:write", "skills:write")),
+    auth: AuthContext = Depends(require_scope("sessions:write")),
     headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
 ) -> ProfileSessionMoveResponse:

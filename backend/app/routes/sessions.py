@@ -1533,11 +1533,12 @@ async def _delete_managed_avatar_key_best_effort(key: str | None) -> None:
 
 
 def _session_content_key(session: Session) -> str:
+    if session.file_key:
+        return session.file_key
     if session.origin_environment_id is None:
         return f"sessions/{session.user_id}/{session.local_session_id}.json"
-    profile_path = f"profiles/{session.origin_profile_key}/" if session.origin_profile_key else ""
     return (
-        f"sessions/{session.user_id}/{session.origin_environment_id}/{profile_path}"
+        f"sessions/{session.user_id}/{session.origin_environment_id}/"
         f"{session.local_session_id}.json"
     )
 
@@ -2388,6 +2389,8 @@ async def batch_create_sessions(
             )
         )
     ).all()
+    profile_rejected: list[str] = []
+    rejected_pairs: set[tuple[UUID | None, str]] = set()
     for item in body.sessions:
         if body.profile_key is not None:
             if item.profile_key is not None and item.profile_key != body.profile_key:
@@ -2408,8 +2411,20 @@ async def batch_create_sessions(
                     and row.local_session_id == item.local_session_id
                 }
             if len(keys) > 1:
-                raise profile_required()
+                profile_rejected.append(item.local_session_id)
+                rejected_pairs.add((item.environment_id, item.local_session_id))
+                continue
             item.profile_key = next(iter(keys), "")
+        # During expand the old unique constraint still owns upserts. Never
+        # update a different profile through its user/Agent/local-id conflict.
+        if any(
+            row.origin_environment_id == item.environment_id
+            and row.local_session_id == item.local_session_id
+            and row.origin_profile_key != item.profile_key
+            for row in existing_rows
+        ):
+            profile_rejected.append(item.local_session_id)
+            rejected_pairs.add((item.environment_id, item.local_session_id))
     legacy_suppressed_ids = {
         row.local_session_id for row in suppression_rows if row.origin_environment_id is None
     }
@@ -2437,7 +2452,8 @@ async def batch_create_sessions(
     active_sessions = [
         s
         for s in body.sessions
-        if not is_suppressed(s.environment_id, s.profile_key, s.local_session_id)
+        if (s.environment_id, s.local_session_id) not in rejected_pairs
+        and not is_suppressed(s.environment_id, s.profile_key, s.local_session_id)
     ]
     active_existing_rows = [
         row
@@ -2462,7 +2478,7 @@ async def batch_create_sessions(
             updated=0,
             unchanged=0,
             needs_content=[],
-            rejected=[],
+            rejected=profile_rejected,
             suppressed=suppressed,
         )
 
@@ -2550,7 +2566,7 @@ async def batch_create_sessions(
         & Session.content_hash.is_distinct_from(insert_stmt.excluded.content_hash)
     )
     upsert_stmt = insert_stmt.on_conflict_do_update(
-        constraint="uq_sessions_user_origin_profile_local",
+        constraint="uq_sessions_user_origin_local",
         set_={
             "environment_id": insert_stmt.excluded.environment_id,
             "project_path": insert_stmt.excluded.project_path,
@@ -2605,6 +2621,7 @@ async def batch_create_sessions(
             # behave correctly: they get a real bump on first proper push.
             "updated_at": case((hash_changed, func.now()), else_=Session.updated_at),
         },
+        where=Session.origin_profile_key == insert_stmt.excluded.origin_profile_key,
     )
     # Concurrent `DELETE /v1/environments/{id}` between the pre-flight
     # SELECT and this UPSERT can still race the FK. PG sqlstate 23503 means
@@ -2645,7 +2662,7 @@ async def batch_create_sessions(
     updated = 0
     unchanged = 0
     needs_content: list[str] = []
-    rejected: list[str] = []
+    rejected: list[str] = list(profile_rejected)
     upserted_pairs = {(row[0], row[1], row[2]) for row in upserted_id_rows}
     for s in active_sessions:
         pair = (s.environment_id, s.profile_key, s.local_session_id)

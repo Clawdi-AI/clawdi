@@ -55,21 +55,9 @@ async def test_old_cli_zero_one_many_profiles(client, db_session, seed_user):
     assert res.status_code == 200
     res = await client.post("/v1/sessions/batch", json={"profile_key": "other", "sessions": [body]})
     assert res.status_code == 200, res.text
-    for method, path, kwargs in [
-        (client.post, "/v1/sessions/batch", {"json": {"sessions": [body]}}),
-        (client.get, "/v1/sessions/same/events/head", {"params": {"environment_id": str(env.id)}}),
-        (
-            client.post,
-            "/v1/sessions/same/upload",
-            {
-                "data": {"environment_id": str(env.id)},
-                "files": {"file": ("same.json", b"[]", "application/json")},
-            },
-        ),
-    ]:
-        res = await method(path, **kwargs)
-        assert res.status_code == 409, res.text
-        assert res.json()["detail"]["code"] == "profile_required"
+    assert res.json()["rejected"] == ["same"]
+    await db_session.refresh(row)
+    assert row.origin_profile_key == "work" and row.summary == "updated"
     res = await client.get(
         "/v1/sessions/same/events/head",
         params={"environment_id": str(env.id), "profile_key": "work"},
@@ -276,7 +264,7 @@ async def test_profile_writes_enforce_bound_key_and_machine_fence(
 
 
 @pytest.mark.asyncio
-async def test_named_snapshot_content_does_not_overwrite_default(client, db_session, seed_user):
+async def test_named_snapshot_content_keeps_existing_storage_paths(client, db_session, seed_user):
     import hashlib
     import json
 
@@ -297,13 +285,16 @@ async def test_named_snapshot_content_does_not_overwrite_default(client, db_sess
         digest = hashlib.sha256(content).hexdigest()
         res = await client.post(
             "/v1/sessions/batch",
-            json={"profile_key": profile, "sessions": [{**metadata(env), "content_hash": digest}]},
+            json={
+                "profile_key": profile,
+                "sessions": [{**metadata(env, profile or "default"), "content_hash": digest}],
+            },
         )
         assert res.status_code == 200, res.text
         contents[profile] = (content, digest)
     for profile, (content, digest) in contents.items():
         res = await client.post(
-            "/v1/sessions/same/upload",
+            f"/v1/sessions/{profile or 'default'}/upload",
             data={
                 "environment_id": str(env.id),
                 "profile_key": profile,
@@ -321,7 +312,10 @@ async def test_named_snapshot_content_does_not_overwrite_default(client, db_sess
         ).scalar_one()
         keys.append(row.file_key)
     assert len(set(keys)) == 2
-    assert keys[0] == f"sessions/{seed_user.id}/{env.id}/same.json"
+    assert keys == [
+        f"sessions/{seed_user.id}/{env.id}/default.json",
+        f"sessions/{seed_user.id}/{env.id}/work.json",
+    ]
 
 
 @pytest.mark.asyncio
@@ -338,7 +332,7 @@ async def test_rename_rejects_occupied_target_without_partial_updates(
     await inventory(client, env, ["default", "work", "job"])
     for key in ("work", "job"):
         await client.post(
-            "/v1/sessions/batch", json={"profile_key": key, "sessions": [metadata(env)]}
+            "/v1/sessions/batch", json={"profile_key": key, "sessions": [metadata(env, key)]}
         )
     res = await client.post(
         f"/v1/agents/{env.id}/profiles/work/rename", json={"new_upstream_key": "job"}
@@ -357,9 +351,7 @@ async def test_rename_rejects_occupied_target_without_partial_updates(
 
 
 @pytest.mark.asyncio
-async def test_default_event_append_and_commit_remain_exact_with_duplicate_profile_id(
-    client, db_session, seed_user
-):
+async def test_default_event_append_and_commit_remain_compatible(client, db_session, seed_user):
     from app.services.session_events import EMPTY_EVENT_HEAD, advance_event_head
     from tests.test_session_events import _chunk, _commit_generation, _event
 
@@ -381,7 +373,10 @@ async def test_default_event_append_and_commit_remain_exact_with_duplicate_profi
         client, environment_id=str(env.id), local_session_id="same", events=[first]
     )
     assert (
-        await client.post("/v1/sessions/batch", json={"profile_key": "work", "sessions": [body]})
+        await client.post(
+            "/v1/sessions/batch",
+            json={"profile_key": "work", "sessions": [{**body, "local_session_id": "named"}]},
+        )
     ).status_code == 200
     commit = {
         "append_id": append_id,
@@ -394,8 +389,7 @@ async def test_default_event_append_and_commit_remain_exact_with_duplicate_profi
     }
     path = f"/v1/sessions/same/events/generations/{generation}/commit"
     ambiguous = await client.post(path, json=commit)
-    assert ambiguous.status_code == 409, ambiguous.text
-    assert ambiguous.json()["detail"]["code"] == "profile_required"
+    assert ambiguous.status_code == 200, ambiguous.text
     exact = await client.post(path, json={**commit, "profile_key": ""})
     assert exact.status_code == 200, exact.text
     second = _event(
@@ -419,9 +413,140 @@ async def test_default_event_append_and_commit_remain_exact_with_duplicate_profi
         files={"file": ("1.ndjson", data, "application/x-ndjson")},
     )
     assert appended.status_code == 200, appended.text
-    for profile, count in [("", 2), ("work", 0)]:
+    for profile, lid, count in [("", "same", 2), ("work", "named", 0)]:
         res = await client.get(
-            "/v1/sessions/same/events/head",
+            f"/v1/sessions/{lid}/events/head",
             params={"environment_id": str(env.id), "profile_key": profile},
         )
         assert res.json()["count"] == count
+
+
+@pytest.mark.asyncio
+async def test_get_profiles_lazily_creates_default_during_deploy_window(
+    client, db_session, seed_user
+):
+    from sqlalchemy import delete
+
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=uuid.uuid4().hex,
+        machine_name="test",
+        agent_type="hermes",
+    )
+    await db_session.execute(delete(AgentProfile).where(AgentProfile.environment_id == env.id))
+    for _ in range(2):
+        res = await client.get(f"/v1/agents/{env.id}/profiles")
+        assert res.status_code == 200, res.text
+        assert [(p["profile_key"], p["is_default"]) for p in res.json()] == [("", True)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path,body",
+    [
+        ("work/rename", {"new_upstream_key": "job"}),
+        ("work/attribute-sessions", {"local_session_ids": ["same"]}),
+    ],
+)
+async def test_profile_metadata_moves_require_sessions_write(
+    cli_client, db_session, seed_user, path, body
+):
+    from app.core.auth import AuthContext, get_auth
+    from app.main import app
+    from app.models.api_key import ApiKey
+
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=uuid.uuid4().hex,
+        machine_name="test",
+        agent_type="hermes",
+    )
+
+    async def skills_auth():
+        return AuthContext(
+            user=seed_user, api_key=ApiKey(user_id=seed_user.id, scopes=["skills:write"])
+        )
+
+    app.dependency_overrides[get_auth] = skills_auth
+    response = await cli_client.post(f"/v1/agents/{env.id}/profiles/{path}", json=body)
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_old_cli_ambiguous_session_resolution_requires_profile():
+    from unittest.mock import AsyncMock, Mock
+
+    from fastapi import HTTPException
+
+    from app.services.session_profile import resolve_session_profile
+
+    # A later contract schema may contain duplicate local IDs. Released callers
+    # must continue receiving the established compatibility error there.
+    result = Mock()
+    result.scalars.return_value = ["work", "other"]
+    db = AsyncMock()
+    db.execute.return_value = result
+    with pytest.raises(HTTPException) as error:
+        await resolve_session_profile(db, uuid.uuid4(), uuid.uuid4(), "same", None)
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "profile_required"
+
+
+@pytest.mark.asyncio
+async def test_batch_ambiguity_rejects_only_the_ambiguous_item(
+    client, db_session, seed_user, monkeypatch
+):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from sqlalchemy.sql import Select
+
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=uuid.uuid4().hex,
+        machine_name="test",
+        agent_type="hermes",
+    )
+    assert (
+        await client.post("/v1/sessions/batch", json={"sessions": [metadata(env)]})
+    ).status_code == 200
+    execute = db_session.execute
+    injected = False
+
+    async def contract_rows(statement, *args, **kwargs):
+        nonlocal injected
+        result = await execute(statement, *args, **kwargs)
+        if (
+            not injected
+            and isinstance(statement, Select)
+            and set(statement.selected_columns.keys())
+            == {
+                "local_session_id",
+                "environment_id",
+                "origin_environment_id",
+                "origin_profile_key",
+                "content_hash",
+                "file_key",
+                "content_protocol",
+            }
+        ):
+            injected = True
+            rows = result.all()
+            # Model the duplicate identity that becomes possible after contract,
+            # while retaining the expand constraint for the unaffected upsert.
+            duplicate = SimpleNamespace(**{**dict(rows[0]._mapping), "origin_profile_key": "work"})
+            result = Mock()
+            result.all.return_value = [*rows, duplicate]
+        return result
+
+    monkeypatch.setattr(db_session, "execute", contract_rows)
+    res = await client.post(
+        "/v1/sessions/batch", json={"sessions": [metadata(env), metadata(env, "good")]}
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["rejected"] == ["same"]
+    assert res.json()["created"] == 1
+    assert res.json()["needs_content"] == ["good"]
