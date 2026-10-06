@@ -19,7 +19,7 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_admin_api_key
+from app.core.auth import verify_admin_api_key
 from app.core.config import settings
 from app.core.database import get_control_session
 from app.models.platform_workload_auth import (
@@ -30,6 +30,7 @@ from app.models.platform_workload_auth import (
     PlatformWorkloadClient,
     PlatformWorkloadSigningKey,
 )
+from app.services.metrics import authenticated_requests
 
 PLATFORM_WORKLOAD_ACCESS_TOKEN_AUDIENCE = "clawdi-cloud-platform-admin"
 PLATFORM_WORKLOAD_ACCESS_TOKEN_TTL_SECONDS = 300
@@ -765,6 +766,7 @@ def _require_platform_auth(required_scope: str, *, allow_legacy_admin: bool):
         db: AsyncSession = Depends(get_control_session),
         resolver: PlatformWorkloadKeyResolver = Depends(get_platform_workload_key_resolver),
     ) -> PlatformMutationAuth:
+        surface = "v2_runtime" if request.url.path.startswith("/v2/runtime/") else "platform"
         admin_values = _credential_values(request, "x-admin-key")
         authorization_values = _credential_values(request, "authorization")
         if len(admin_values) > 1 or len(authorization_values) > 1:
@@ -809,6 +811,7 @@ def _require_platform_auth(required_scope: str, *, allow_legacy_admin: bool):
                     "workload auth storage or signing service is unavailable",
                 ) from None
             request.state.platform_mutation_auth = auth
+            authenticated_requests.labels(kind="platform_workload", surface=surface).inc()
             return auth
 
         if admin_values:
@@ -827,13 +830,14 @@ def _require_platform_auth(required_scope: str, *, allow_legacy_admin: bool):
                     status.HTTP_401_UNAUTHORIZED,
                     "legacy platform admin auth is disabled",
                 )
-            await require_admin_api_key(x_admin_key=admin_values[0])
+            verify_admin_api_key(admin_values[0])
             auth = PlatformMutationAuth(kind="admin")
             request.state.platform_mutation_auth = auth
+            authenticated_requests.labels(kind="admin_key", surface=surface).inc()
             return auth
 
         if allow_legacy_admin and settings.platform_legacy_admin_auth_enabled:
-            await require_admin_api_key(x_admin_key=x_admin_key)
+            verify_admin_api_key(x_admin_key)
         detail = (
             "platform credentials are required"
             if allow_legacy_admin

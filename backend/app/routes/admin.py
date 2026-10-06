@@ -941,11 +941,8 @@ async def admin_mint_api_key(
                 status.HTTP_400_BAD_REQUEST, "environment_id is not a valid UUID"
             ) from e
 
-    # `scopes=None` is full API permission access — same default as
-    # user-self-mint via `POST /v1/auth/keys`. Callers may pass a
-    # narrower permission list to lock the minted key down (e.g. ops
-    # tooling that only needs to push sessions); the route doesn't
-    # impose a ceiling.
+    # Admin issuance retains full access and no expiry when omitted.
+    # Callers can explicitly narrow permissions and set a bounded lifetime.
     try:
         minted = await mint_api_key(
             db,
@@ -1013,6 +1010,7 @@ async def admin_mint_api_key(
         last_used_at=api_key.last_used_at,
         expires_at=api_key.expires_at,
         revoked_at=api_key.revoked_at,
+        scopes=api_key.scopes,
         raw_key=minted.raw_key,
     )
 

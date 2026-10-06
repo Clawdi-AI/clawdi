@@ -1,35 +1,20 @@
 """CLI authentication routes.
 
-The published device-named endpoints below are a legacy browser-approved
-API-key bootstrap, not an RFC 8628 device grant. The CLI doesn't have any
-credentials yet, so it asks the browser-authenticated dashboard to approve
-one API key:
-
-  1. CLI calls /device with no auth — backend returns a long secret
-     `device_code` (kept on the CLI) and a short `user_code` (printed in
-     terminal + put in the browser URL).
-  2. The user opens the dashboard, signs in with Clerk, and approves the
-     authorization. That endpoint mints an API key and stashes the raw
-     value on the device_authorizations row.
-  3. The CLI polls /poll with the device_code; on the first successful
-     read it gets the api_key, the row is consumed, and the raw key is
-     wiped from the DB.
-
-This remains additive for existing released CLI clients. New first-party CLI
-login uses Clerk's Public OAuth App Authorization Code + PKCE flow instead.
+Interactive login uses Clerk OAuth Authorization Code + PKCE. The legacy
+browser-approved API-key bootstrap is retired: /device and /approve return
+410 with upgrade guidance. /poll, /lookup and /deny remain available for
+existing authorizations to expire or be consumed without issuing new keys.
 """
 
 # The module-level httpx name remains a patch seam for transport tests.
 # pyright: reportUnusedImport=false
-import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
 import httpx  # noqa: F401 - retained as a patch seam for Clerk transport tests
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import delete, func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_oauth_cli_auth, require_web_auth
@@ -40,6 +25,7 @@ from app.schemas.cli_auth import (
     DesktopSessionTicketResponse,
     DeviceApproveRequest,
     DeviceDenyRequest,
+    DeviceFlowRetiredResponse,
     DeviceLookupResponse,
     DevicePollRequest,
     DevicePollResponse,
@@ -50,7 +36,6 @@ from app.schemas.cli_auth import (
     OAuthRevokeRequest,
     OAuthRevokeResponse,
 )
-from app.services.api_key import mint_api_key
 from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
 from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
 from app.services.clerk_backend import (
@@ -65,13 +50,9 @@ from app.services.distributed_state import SharedRateLimitExceeded, consume_shar
 
 router = APIRouter(prefix="/cli/auth", tags=["cli-auth"])
 
-# Crockford-ish alphabet, no 0/O/1/I/L — read aloud over Zoom without "is that
-# an oh or a zero" detours. 32 chars → log2(32) = 5 bits/char × 8 chars = 40
-# bits of user_code entropy, gated by short TTL and Clerk auth on approve.
-_USER_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-_USER_CODE_LEN = 8
-_DEVICE_TTL = timedelta(minutes=10)
-_POLL_INTERVAL_SEC = 2
+_RETIRED_DEVICE_FLOW_DETAIL = (
+    "This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`."
+)
 _DESKTOP_SESSION_TTL_SEC = 60
 
 
@@ -79,38 +60,10 @@ class _ClerkSignInToken(BaseModel):
     token: str = Field(min_length=1, max_length=8192)
 
 
-# Hard cap on rows in `device_authorizations` at any moment. The endpoint is
-# unauthenticated by design (CLI has no key yet), so without a ceiling a bot
-# loop can inflate the table indefinitely. 10 000 covers ~1 666 concurrent
-# users mid-flow given the 10-min TTL — orders of magnitude above plausible
-# real load. Above the cap we 429 instead of inserting; legitimate users
-# retry in ≤ 10 min once expired rows clear.
-_MAX_ACTIVE_DEVICES = 10_000
-
-# Shared rolling-window throttle for the unauthenticated legacy bootstrap
-# endpoints. Protects against a single client hammering /device or
-# /poll faster than legitimate user-driven retries — without it, a
-# bot loop fits inside the global table cap but still chews DB
-# round-trips. PostgreSQL keeps the limit authoritative across API workers.
+# Keep the shared rolling-window throttle for unauthenticated legacy polls.
 _DEVICE_RATE_WINDOW_S = 60.0
-# 90/min: a normal legacy browser-approved bootstrap is 1× POST /device + N× POST /poll
-# (poll cadence is ~2s). A user who takes the full 60s before approving
-# in-browser hits 1 + 30 = 31 calls inside one window. The previous 30
-# cap reliably 429'd that legitimate path; the CLI surfaces 429 as a
-# fatal "polling failed" and the user has to retry the whole flow.
-# 90 keeps the bot-loop ceiling tight (an attacker still can't fit
-# multiple full flows / second per IP) while leaving headroom for
-# clock skew, network jitter, and a leisurely tab-switch.
 _DEVICE_PER_IP_MAX = 90
-# Hard cap on distinct buckets the limiter tracks at once. The
-# /poll route buckets on `body.device_code`, which an
-# unauthenticated client controls — without this cap an attacker
-# could spam unique random codes and inflate shared state indefinitely.
-# Cap × per-bucket cost
-# (~90 timestamps each) keeps the limiter bounded regardless of
-# request rate. Each active flow can occupy three buckets: the
-# /device IP, /poll IP, and device code. The 32 000 cap covers all
-# `_MAX_ACTIVE_DEVICES` (10 000) flows plus modest headroom.
+# Bound shared limiter state even when callers submit random device codes.
 _DEVICE_RATE_MAX_BUCKETS = 32_000
 _DEVICE_RATE_NAMESPACE = "cli-device-flow"
 
@@ -302,14 +255,6 @@ async def _check_device_rate_limit(bucket_key: str) -> None:
         ) from error
 
 
-def _generate_user_code() -> str:
-    return "".join(secrets.choice(_USER_CODE_ALPHABET) for _ in range(_USER_CODE_LEN))
-
-
-def _generate_device_code() -> str:
-    return secrets.token_urlsafe(32)  # 43 chars
-
-
 def _expire_if_due(da: DeviceAuthorization) -> bool:
     """Return True if `da` is past its TTL. Mutates `status` to 'expired' so
     callers don't have to remember to do it."""
@@ -320,62 +265,19 @@ def _expire_if_due(da: DeviceAuthorization) -> bool:
     return False
 
 
-@router.post("/device", response_model=DeviceStartResponse)
-async def start_device_flow(
-    body: DeviceStartRequest,
-    request: Request,
-    db: AsyncSession = Depends(get_session),
-):
-    # Bucket on the real client IP (proxy-aware) so concurrent
-    # CLI logins behind the same reverse proxy don't share a single
-    # 90/min bucket.
-    await _check_device_rate_limit(_real_client_ip(request))
-    # Bound the (unauthenticated) write surface: prune anything past TTL and
-    # refuse new inserts above a hard ceiling. Cheap — both queries hit the
-    # same indexed column. Worst-case growth between calls is bounded by
-    # `_MAX_ACTIVE_DEVICES`, ensuring a spam loop can't fill the table or
-    # exhaust the user_code namespace.
-    await db.execute(
-        delete(DeviceAuthorization).where(DeviceAuthorization.expires_at < datetime.now(UTC))
-    )
-    active = (await db.execute(select(func.count()).select_from(DeviceAuthorization))).scalar_one()
-    if active >= _MAX_ACTIVE_DEVICES:
-        await db.commit()
-        raise HTTPException(
-            status.HTTP_429_TOO_MANY_REQUESTS,
-            "Too many active authorizations — try again in a few minutes.",
-        )
-
-    # Retry on the rare user_code collision — 8 chars from a 32-char alphabet
-    # makes ~1 in a trillion at typical concurrency, but the unique-index will
-    # raise IntegrityError anyway and we'd rather handle it cleanly here.
-    # Catch only the integrity error so a real DB failure (connection, schema
-    # drift) surfaces as a 500 instead of being masked as "user_code collision".
-    for _ in range(5):
-        device_code = _generate_device_code()
-        user_code = _generate_user_code()
-        da = DeviceAuthorization(
-            device_code=device_code,
-            user_code=user_code,
-            client_label=body.client_label,
-            expires_at=datetime.now(UTC) + _DEVICE_TTL,
-        )
-        db.add(da)
-        try:
-            await db.commit()
-            break
-        except IntegrityError:
-            await db.rollback()
-    else:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Could not allocate user_code")
-
-    return DeviceStartResponse(
-        device_code=device_code,
-        user_code=user_code,
-        verification_uri=f"{settings.web_origin.rstrip('/')}/cli-authorize?code={user_code}",
-        expires_in=int(_DEVICE_TTL.total_seconds()),
-        interval=_POLL_INTERVAL_SEC,
-    )
+@router.post(
+    "/device",
+    response_model=DeviceStartResponse,
+    deprecated=True,
+    responses={
+        status.HTTP_410_GONE: {
+            "model": DeviceFlowRetiredResponse,
+            "description": _RETIRED_DEVICE_FLOW_DETAIL,
+        }
+    },
+)
+async def start_device_flow(body: DeviceStartRequest):
+    raise HTTPException(status.HTTP_410_GONE, _RETIRED_DEVICE_FLOW_DETAIL)
 
 
 @router.post("/poll", response_model=DevicePollResponse)
@@ -481,44 +383,22 @@ async def lookup_device_flow(
     )
 
 
-@router.post("/approve", response_model=DeviceTerminalResponse)
+@router.post(
+    "/approve",
+    response_model=DeviceTerminalResponse,
+    deprecated=True,
+    responses={
+        status.HTTP_410_GONE: {
+            "model": DeviceFlowRetiredResponse,
+            "description": _RETIRED_DEVICE_FLOW_DETAIL,
+        }
+    },
+)
 async def approve_device_flow(
     body: DeviceApproveRequest,
     auth: AuthContext = Depends(require_web_auth),
-    db: AsyncSession = Depends(get_session),
 ):
-    # Lock the row for the duration of the approve transaction. Without it a
-    # double-click in the browser can drive two concurrent /approve calls,
-    # both see `pending`, both mint API keys — and the user ends up with two
-    # active keys mapped to the same device_code (the second one wins for
-    # one-shot delivery, the first dangles forever).
-    da = await _load_device_or_404(body.user_code, db, lock=True)
-
-    if _expire_if_due(da):
-        await db.commit()
-        raise HTTPException(status.HTTP_410_GONE, "Authorization request expired")
-
-    if da.status != "pending":
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Authorization is already {da.status}",
-        )
-
-    label = (da.client_label or "CLI device flow")[:200]
-    minted = await mint_api_key(
-        db,
-        user_id=auth.user_id,
-        label=label,
-        commit=False,
-    )
-
-    da.status = "approved"
-    da.user_id = auth.user_id
-    da.api_key_id = minted.api_key.id
-    da.api_key_raw = minted.raw_key
-    await db.commit()
-
-    return DeviceTerminalResponse(status="approved")
+    raise HTTPException(status.HTTP_410_GONE, _RETIRED_DEVICE_FLOW_DETAIL)
 
 
 @router.post("/deny", response_model=DeviceTerminalResponse)

@@ -1279,6 +1279,7 @@ async def platform_mint_api_key(
         last_used_at=api_key.last_used_at,
         expires_at=api_key.expires_at,
         revoked_at=api_key.revoked_at,
+        scopes=api_key.scopes,
         raw_key=minted.raw_key,
     )
     await _complete_mutation(

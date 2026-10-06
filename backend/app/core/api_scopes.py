@@ -14,6 +14,8 @@ RUNTIME_MCP_SCOPES = (
     "vault:write",
 )
 
+PERSONAL_KEY_SCOPES = RUNTIME_MCP_SCOPES
+
 RUNTIME_DEPLOYMENT_KEY_SCOPES = (
     *RUNTIME_MCP_SCOPES,
     "runtime-observations:write",

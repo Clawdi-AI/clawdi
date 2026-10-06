@@ -1,4 +1,4 @@
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -25,27 +25,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 @router.post("/keys", response_model=ApiKeyCreated)
 async def create_api_key(
     body: ApiKeyCreate,
-    # Dashboard-only: a leaked deploy-key must not be able to mint a
-    # broader-permission or unbounded key for itself. Minting flows live
-    # behind a human-in-browser action (settings → API Keys, or the
-    # device-flow approval). Headless callers should use the
-    # device-flow / OAuth path, not call this endpoint directly.
-    #
-    # When `body.environment_id` is set, this also serves as the
-    # "mint a deploy key for a hosted-agent pod" path — the
-    # dashboard hands the resulting key to the external control
-    # plane, which bakes it into the pod's
-    # CLAWDI_AUTH_TOKEN env. No backend-to-backend call required;
-    # the user's browser is the only conduit and `mint_api_key`
-    # service-layer validates env ownership against `auth.user_id`.
-    #
-    # Permission policy: deploy keys default to FULL account access —
-    # same as a key the user mints for their own laptop. The hosted
-    # agent should be able to do whatever the user can do (vault,
-    # memories, settings — not just push sessions/skills). The
-    # `scopes` body field is still honoured if the caller wants to
-    # narrow API permissions on purpose; passing `null`/omitting it
-    # = no permission narrowing.
+    # Dashboard-only: API keys cannot mint more keys. Scripts and servers
+    # select explicit scopes and a bounded lifetime; interactive CLI users
+    # sign in with OAuth. Optional Agent bindings retain ownership checks.
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ):
@@ -64,12 +46,15 @@ async def create_api_key(
             label=body.label,
             scopes=body.scopes,
             environment_id=env_uuid,
+            expires_at=datetime.now(UTC) + timedelta(days=body.expires_in_days),
         )
     except ValueError as e:
         # `mint_api_key` raises ValueError for cross-tenant
         # environment_id — surface as 403 so the dashboard's UI
         # doesn't accidentally dump the user_id mismatch detail.
-        raise HTTPException(status.HTTP_403_FORBIDDEN, str(e)) from e
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "environment_id is not owned by the current user"
+        ) from e
     api_key = minted.api_key
     return ApiKeyCreated(
         id=str(api_key.id),
@@ -79,6 +64,7 @@ async def create_api_key(
         last_used_at=api_key.last_used_at,
         expires_at=api_key.expires_at,
         revoked_at=api_key.revoked_at,
+        scopes=api_key.scopes,
         raw_key=minted.raw_key,
     )
 
@@ -111,6 +97,7 @@ async def list_api_keys(
             last_used_at=k.last_used_at,
             expires_at=k.expires_at,
             revoked_at=k.revoked_at,
+            scopes=k.scopes,
         )
         for k in keys
     ]
@@ -125,8 +112,6 @@ async def revoke_api_key(
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> ApiKeyRevokeResponse:
-    from datetime import datetime
-
     result = await db.execute(
         select(ApiKey).where(ApiKey.id == key_id, ApiKey.user_id == auth.user_id)
     )

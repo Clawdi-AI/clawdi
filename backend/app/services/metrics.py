@@ -17,6 +17,13 @@ from prometheus_client.exposition import generate_latest
 
 registry = CollectorRegistry()
 
+authenticated_requests = Counter(
+    "clawdi_backend_authenticated_requests_total",
+    "Authenticated requests by credential kind",
+    ["kind", "surface"],
+    registry=registry,
+)
+
 inbound_messages = Counter(
     "msg_router_inbound_total",
     "Total inbound messages routed to tenant inboxes",

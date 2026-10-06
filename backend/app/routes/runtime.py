@@ -53,6 +53,7 @@ from app.services.connected_agent_fence import (
 )
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains
+from app.services.metrics import authenticated_requests
 from app.services.project_runtime_skills import (
     MAX_AGENT_PROJECT_SKILLS,
     agent_project_skill_sources,
@@ -162,6 +163,9 @@ async def _get_runtime_manifest_auth(
     auth = await auth_via_verified_clerk_jwt(credential, sessions.auth)
     if auth is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials")
+    authenticated_requests.labels(
+        kind="clerk_oauth_cli" if auth.oauth_cli else "clerk_session", surface="user"
+    ).inc()
     return auth
 
 

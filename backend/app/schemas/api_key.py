@@ -1,26 +1,25 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
+
+from app.core.api_scopes import PERSONAL_KEY_SCOPES
 
 
 class ApiKeyCreate(BaseModel):
     label: str
-    # Optional binding for "deploy key" minting via the same
-    # endpoint. When the dashboard hosts an agent through a hosted
-    # agent service (or any external control plane the user trusts), it mints
-    # a key here pinned to that env. `environment_id` must be
-    # owned by the calling user — enforced at the service layer
-    # in `mint_api_key`.
-    #
-    # `scopes` defaults to None — i.e. full API permission access, same as
-    # a key the user mints for their own laptop. The hosted agent
-    # behaves identically to a self-installed clawdi: vault, memory,
-    # settings, sessions, skills are all reachable. Pass an explicit
-    # list only if the dashboard wants a narrower key for a specific
-    # use-case.
+    # Optional Agent binding; mint_api_key enforces ownership. Bound and
+    # unbound personal keys both require explicit permissions and expiry.
     environment_id: str | None = None
-    scopes: list[str] | None = None
+    scopes: list[str] = Field(min_length=1)
+    expires_in_days: Literal[7, 30, 90]
+
+    @field_validator("scopes")
+    @classmethod
+    def validate_scopes(cls, scopes: list[str]) -> list[str]:
+        if any(scope not in PERSONAL_KEY_SCOPES for scope in scopes):
+            raise ValueError("scopes must be a subset of personal key permissions")
+        return list(dict.fromkeys(scopes))
 
 
 class ApiKeyResponse(BaseModel):
@@ -31,6 +30,7 @@ class ApiKeyResponse(BaseModel):
     last_used_at: datetime | None
     expires_at: datetime | None
     revoked_at: datetime | None
+    scopes: list[str] | None
 
     model_config = {"from_attributes": True}
 

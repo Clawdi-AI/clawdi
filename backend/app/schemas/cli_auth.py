@@ -59,6 +59,10 @@ class DeviceTerminalResponse(BaseModel):
     status: Literal["approved", "denied"]
 
 
+class DeviceFlowRetiredResponse(BaseModel):
+    detail: str
+
+
 class OAuthConfigResponse(BaseModel):
     """Public configuration for the first-party Clerk OAuth CLI client."""
 

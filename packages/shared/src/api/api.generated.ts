@@ -773,7 +773,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Start Device Flow */
+        /**
+         * Start Device Flow
+         * @deprecated
+         */
         post: operations["start_device_flow_v1_cli_auth_device_post"];
         delete?: never;
         options?: never;
@@ -827,7 +830,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Approve Device Flow */
+        /**
+         * Approve Device Flow
+         * @deprecated
+         */
         post: operations["approve_device_flow_v1_cli_auth_approve_post"];
         delete?: never;
         options?: never;
@@ -4994,7 +5000,12 @@ export interface components {
             /** Environment Id */
             environment_id?: string | null;
             /** Scopes */
-            scopes?: string[] | null;
+            scopes: string[];
+            /**
+             * Expires In Days
+             * @enum {integer}
+             */
+            expires_in_days: 7 | 30 | 90;
         };
         /**
          * ApiKeyCreated
@@ -5018,6 +5029,8 @@ export interface components {
             expires_at: string | null;
             /** Revoked At */
             revoked_at: string | null;
+            /** Scopes */
+            scopes: string[] | null;
             /** Raw Key */
             raw_key: string;
         };
@@ -5040,6 +5053,8 @@ export interface components {
             expires_at: string | null;
             /** Revoked At */
             revoked_at: string | null;
+            /** Scopes */
+            scopes: string[] | null;
         };
         /** ApiKeyRevokeResponse */
         ApiKeyRevokeResponse: {
@@ -6185,6 +6200,11 @@ export interface components {
         DeviceDenyRequest: {
             /** User Code */
             user_code: string;
+        };
+        /** DeviceFlowRetiredResponse */
+        DeviceFlowRetiredResponse: {
+            /** Detail */
+            detail: string;
         };
         /** DeviceLookupResponse */
         DeviceLookupResponse: {
@@ -12385,6 +12405,15 @@ export interface operations {
                     "application/json": components["schemas"]["DeviceStartResponse"];
                 };
             };
+            /** @description This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -12480,6 +12509,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeviceTerminalResponse"];
+                };
+            };
+            /** @description This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
                 };
             };
             /** @description Validation Error */

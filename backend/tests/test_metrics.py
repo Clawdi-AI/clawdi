@@ -13,7 +13,7 @@ from sqlalchemy import text
 
 from app.core.config import settings
 from app.core.database import engine
-from app.services.metrics import render_metrics
+from app.services.metrics import authenticated_requests, render_metrics
 
 
 def _metrics_text() -> str:
@@ -39,6 +39,7 @@ def _unlabeled_metric_value(name: str) -> float:
 
 def test_metrics_exports_all_expected_metrics() -> None:
     text = _metrics_text()
+    assert "clawdi_backend_authenticated_requests_total" in text
     assert "msg_router_inbound_total" in text
     assert "msg_router_outbound_total" in text
     assert "msg_router_outbound_errors_total" in text
@@ -94,8 +95,9 @@ def test_metrics_aggregate_counters_across_processes(tmp_path: Path) -> None:
     env["PROMETHEUS_MULTIPROC_DIR"] = str(tmp_path)
     backend_root = Path(__file__).parents[1]
     increment = (
-        "from app.services.metrics import inbound_messages; "
-        'inbound_messages.labels(channel="multiprocess-test").inc()'
+        "from app.services.metrics import authenticated_requests, inbound_messages; "
+        'inbound_messages.labels(channel="multiprocess-test").inc(); '
+        'authenticated_requests.labels(kind="runtime_key", surface="user").inc()'
     )
     for _ in range(2):
         subprocess.run([sys.executable, "-c", increment], cwd=backend_root, env=env, check=True)
@@ -103,7 +105,7 @@ def test_metrics_aggregate_counters_across_processes(tmp_path: Path) -> None:
         [
             sys.executable,
             "-c",
-            "from app.services.metrics import render_metrics; "
+            "from app.services.metrics import authenticated_requests, render_metrics; "
             "print(render_metrics().decode(), end='')",
         ],
         cwd=backend_root,
@@ -114,6 +116,10 @@ def test_metrics_aggregate_counters_across_processes(tmp_path: Path) -> None:
     ).stdout
 
     assert 'msg_router_inbound_total{channel="multiprocess-test"} 2.0' in rendered
+    assert (
+        'clawdi_backend_authenticated_requests_total{kind="runtime_key",surface="user"} 2.0'
+        in rendered
+    )
 
 
 async def test_metrics_route_allows_when_no_auth_is_configured(
@@ -136,10 +142,12 @@ async def test_metrics_route_supports_bearer_auth(
     monkeypatch.setattr(settings, "metrics_bearer_token", "secret-token")
     monkeypatch.setattr(settings, "metrics_basic_auth_password", "")
 
+    missing = await client.get("/metrics")
     unauthorized = await client.get("/metrics", headers={"Authorization": "Bearer wrong"})
     authorized = await client.get("/metrics", headers={"Authorization": "Bearer secret-token"})
 
     assert unauthorized.status_code == 401
+    assert missing.status_code == 401
     assert unauthorized.headers["www-authenticate"] == "Bearer"
     assert authorized.status_code == 200
 
@@ -198,3 +206,30 @@ async def test_telegram_webhook_increments_inbound_metric(
 
     assert response.status_code == 200
     assert _metric_value("msg_router_inbound_total", {"channel": "telegram"}) == before + 1.0
+
+
+def test_authenticated_request_labels_are_fixed_and_have_no_identity_data():
+    authenticated_requests.labels(kind="personal_api_key", surface="user").inc()
+    rendered = _metrics_text()
+    assert (
+        'clawdi_backend_authenticated_requests_total{kind="personal_api_key",surface="user"}'
+        in rendered
+    )
+    kinds = {
+        "personal_api_key",
+        "env_api_key",
+        "managed_legacy_key",
+        "runtime_key",
+        "clerk_oauth_cli",
+        "clerk_session",
+        "dev_bypass",
+        "mcp_bridge_token",
+        "platform_workload",
+        "admin_key",
+    }
+    surfaces = {"user", "mcp_bridge", "admin", "platform", "v2_runtime"}
+    for metric in authenticated_requests.collect():
+        for sample in metric.samples:
+            assert set(sample.labels) == {"kind", "surface"}
+            assert sample.labels["kind"] in kinds
+            assert sample.labels["surface"] in surfaces

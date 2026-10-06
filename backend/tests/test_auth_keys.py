@@ -10,15 +10,17 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 from fastapi import HTTPException
 from httpx import ASGITransport
 
-from app.core.auth import AuthContext, require_auth_scopes
+from app.core.auth import AuthContext, get_auth, require_auth_scopes
 from app.main import app
 from app.models.api_key import ApiKey
+from app.services.metrics import registry
 
 
 @pytest.mark.asyncio
@@ -69,7 +71,10 @@ def test_scope_enforcement_preserves_legacy_access_and_fails_closed_for_strict_r
 async def test_api_key_create_returns_raw_once_and_stores_hash(
     client: httpx.AsyncClient, db_session
 ):
-    r = await client.post("/v1/auth/keys", json={"label": "laptop"})
+    r = await client.post(
+        "/v1/auth/keys",
+        json={"label": "laptop", "scopes": ["sessions:write"], "expires_in_days": 30},
+    )
     assert r.status_code == 200, r.text
     body = r.json()
     raw = body["raw_key"]
@@ -331,7 +336,12 @@ async def test_revoke_api_key_hides_row_but_preserves_audit_record(
 
     from app.models.api_key import ApiKey
 
-    created = (await client.post("/v1/auth/keys", json={"label": "to-revoke"})).json()
+    created = (
+        await client.post(
+            "/v1/auth/keys",
+            json={"label": "to-revoke", "scopes": ["sessions:write"], "expires_in_days": 30},
+        )
+    ).json()
     r = await client.delete(f"/v1/auth/keys/{created['id']}")
     assert r.status_code == 200, r.text
     assert r.json() == {"status": "revoked"}
@@ -354,7 +364,12 @@ async def test_managed_api_key_is_hidden_from_user_list(
 
     from app.models.api_key import ApiKey
 
-    visible = (await client.post("/v1/auth/keys", json={"label": "visible"})).json()
+    visible = (
+        await client.post(
+            "/v1/auth/keys",
+            json={"label": "visible", "scopes": ["sessions:write"], "expires_in_days": 30},
+        )
+    ).json()
     raw = "clawdi_managed_hidden"
     hidden = ApiKey(
         user_id=seed_user.id,
@@ -405,57 +420,10 @@ async def test_user_revoke_rejects_managed_api_key(
 
 
 @pytest.mark.asyncio
-async def test_deploy_key_minted_with_full_access_by_default(
-    client: httpx.AsyncClient, db_session, seed_user
-):
-    """An Agent API key defaults to FULL account access — same
-    as a key the user mints for their own laptop. The hosted agent
-    pod must be able to do everything the user can.
-
-    Without this property the daemon ends up narrowed to a 3-token API permission list
-    and silently can't touch vault / memories / settings, which breaks
-    Clawdi's shared context and tools promise."""
-    from tests.conftest import create_env_with_project
-
-    env = await create_env_with_project(
-        db_session,
-        user_id=seed_user.id,
-        machine_id="m-deploy",
-        machine_name="hosted-pod",
-    )
-
-    r = await client.post(
-        "/v1/auth/keys",
-        json={"label": "hosted-pod", "environment_id": str(env.id)},
-    )
-    assert r.status_code == 200, r.text
-
-    # Verify the persisted scopes column is NULL (full API permission access),
-    # not the legacy daemon set.
-    from sqlalchemy import select
-
-    from app.models.api_key import ApiKey
-
-    rows = (
-        (await db_session.execute(select(ApiKey).where(ApiKey.user_id == seed_user.id)))
-        .scalars()
-        .all()
-    )
-    assert rows, "minting succeeded but no row found"
-    deploy_key = next(k for k in rows if k.environment_id == env.id)
-    assert deploy_key.scopes is None, (
-        f"deploy keys must default to full API permission access (scopes=None), "
-        f"got {deploy_key.scopes!r}"
-    )
-
-
-@pytest.mark.asyncio
 async def test_deploy_key_honours_explicit_narrow_scopes(
     client: httpx.AsyncClient, db_session, seed_user
 ):
-    """The default is full access, but a caller that explicitly passes
-    a narrower API permission list still gets a narrowed key — the
-    dashboard should be able to opt into narrower keys per use-case."""
+    """Agent-bound personal keys follow the same scope and expiry policy."""
     from tests.conftest import create_env_with_project
 
     env = await create_env_with_project(
@@ -471,6 +439,7 @@ async def test_deploy_key_honours_explicit_narrow_scopes(
             "label": "narrow-pod",
             "environment_id": str(env.id),
             "scopes": ["sessions:write"],
+            "expires_in_days": 30,
         },
     )
     assert r.status_code == 200, r.text
@@ -485,6 +454,7 @@ async def test_deploy_key_honours_explicit_narrow_scopes(
         )
     ).scalar_one()
     assert deploy_key.scopes == ["sessions:write"]
+    assert deploy_key.expires_at is not None
 
 
 @pytest.mark.asyncio
@@ -513,7 +483,12 @@ async def test_deploy_key_rejects_cross_tenant_environment_id(
     try:
         r = await client.post(
             "/v1/auth/keys",
-            json={"label": "steal", "environment_id": str(other_env.id)},
+            json={
+                "label": "steal",
+                "environment_id": str(other_env.id),
+                "scopes": ["sessions:write"],
+                "expires_in_days": 30,
+            },
         )
         assert r.status_code == 403, r.text
     finally:
@@ -527,7 +502,12 @@ async def test_deploy_key_rejects_malformed_environment_id(client: httpx.AsyncCl
     parse path."""
     r = await client.post(
         "/v1/auth/keys",
-        json={"label": "bad", "environment_id": "not-a-uuid"},
+        json={
+            "label": "bad",
+            "environment_id": "not-a-uuid",
+            "scopes": ["sessions:write"],
+            "expires_in_days": 30,
+        },
     )
     assert r.status_code == 400, r.text
 
@@ -565,3 +545,163 @@ async def test_revoke_other_users_key_is_404(client: httpx.AsyncClient, db_sessi
         await db_session.delete(key)
         await db_session.delete(victim)
         await db_session.commit()
+
+
+@pytest.mark.parametrize("prefix", ["/v1", "/api"])
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {},
+        {"expires_in_days": 30},
+        {"scopes": None, "expires_in_days": 30},
+        {"scopes": [], "expires_in_days": 30},
+        {"scopes": ["runtime-observations:write"], "expires_in_days": 30},
+        {"scopes": ["platform:agents:create"], "expires_in_days": 30},
+        {"scopes": ["sessions:*"], "expires_in_days": 30},
+        {"scopes": ["sessions:read"]},
+        *[{"scopes": ["sessions:read"], "expires_in_days": days} for days in (None, 0, 1, 365)],
+    ],
+)
+async def test_personal_key_requires_allowed_scopes_and_lifetime(
+    client, db_session, fields, prefix
+):
+    from sqlalchemy import func, select
+
+    before = await db_session.scalar(select(func.count()).select_from(ApiKey))
+    response = await client.post(f"{prefix}/auth/keys", json={"label": "invalid", **fields})
+    assert response.status_code == 422, response.text
+    assert await db_session.scalar(select(func.count()).select_from(ApiKey)) == before
+
+
+@pytest.mark.parametrize("days", [7, 30, 90])
+async def test_personal_key_persists_deduplicated_scopes_and_server_expiry(
+    client, db_session, days
+):
+    from sqlalchemy import select
+
+    before = datetime.now(UTC)
+    response = await client.post(
+        "/v1/auth/keys",
+        json={
+            "label": "automation",
+            "scopes": ["skills:read", "sessions:write", "skills:read"],
+            "expires_in_days": days,
+        },
+    )
+    after = datetime.now(UTC)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["scopes"] == ["skills:read", "sessions:write"]
+    expiry = datetime.fromisoformat(body["expires_at"])
+    assert before + timedelta(days=days) <= expiry <= after + timedelta(days=days)
+    stored = await db_session.scalar(select(ApiKey).where(ApiKey.id == body["id"]))
+    assert stored.scopes == body["scopes"]
+    assert stored.expires_at == expiry
+    listed = (await client.get("/v1/auth/keys")).json()
+    assert next(key for key in listed if key["id"] == body["id"])["scopes"] == body["scopes"]
+
+
+async def test_personal_key_all_scopes_allow_sync_but_reject_account_management(client):
+    from app.core.api_scopes import PERSONAL_KEY_SCOPES
+
+    created = await client.post(
+        "/v1/auth/keys",
+        json={"label": "automation", "scopes": list(PERSONAL_KEY_SCOPES), "expires_in_days": 30},
+    )
+    assert created.status_code == 200, created.text
+    app.dependency_overrides.pop(get_auth)
+    headers = {"Authorization": f"Bearer {created.json()['raw_key']}"}
+    denied = await client.get("/v1/settings", headers=headers)
+    assert denied.status_code == 403, denied.text
+    vault_list = await client.get("/v1/vault", headers=headers)
+    assert vault_list.status_code == 403, vault_list.text
+    registered = await client.post(
+        "/v1/agents",
+        headers=headers,
+        json={
+            "machine_id": "scoped-sync",
+            "machine_name": "Scoped sync",
+            "os": "linux",
+            "agent_type": "claude_code",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    synced = await client.post("/v1/sessions/batch", headers=headers, json={"sessions": []})
+    assert synced.status_code == 200, synced.text
+
+
+@pytest.mark.parametrize(
+    "kind", ["personal_api_key", "env_api_key", "managed_legacy_key", "runtime_key"]
+)
+async def test_authenticated_api_key_requests_count_once_and_expired_keys_do_not(
+    db_session, seed_user, kind
+):
+    from app.core.database import get_session
+    from app.services.api_key import mint_api_key
+    from app.services.runtime_observation import provision_runtime_environment_fence
+    from tests.conftest import create_env_with_project
+
+    environment_id = None
+    deployment_id = None
+    if kind in ("env_api_key", "runtime_key"):
+        env = await create_env_with_project(
+            db_session, user_id=seed_user.id, machine_id=f"metric-{kind}", machine_name="Metrics"
+        )
+        environment_id = env.id
+    if kind == "runtime_key":
+        deployment_id = "metric-runtime-deployment"
+        await provision_runtime_environment_fence(
+            db_session,
+            environment_id=environment_id,
+            owner_id=seed_user.id,
+            deployment_id=deployment_id,
+        )
+    minted = await mint_api_key(
+        db_session,
+        user_id=seed_user.id,
+        label="metrics",
+        environment_id=environment_id,
+        runtime_deployment_id=deployment_id,
+        managed=kind in ("managed_legacy_key", "runtime_key"),
+    )
+
+    async def override_session():
+        yield db_session
+
+    app.dependency_overrides[get_session] = override_session
+    labels = {"kind": kind, "surface": "user"}
+    before = registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels) or 0
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get(
+            "/v1/auth/me", headers={"Authorization": f"Bearer {minted.raw_key}"}
+        )
+        assert response.status_code == 200, response.text
+        assert (
+            registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+            == before + 1
+        )
+        minted.api_key.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await db_session.commit()
+        expired = await ac.get("/v1/auth/me", headers={"Authorization": f"Bearer {minted.raw_key}"})
+        assert expired.status_code == 401, expired.text
+        assert (
+            registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+            == before + 1
+        )
+
+
+async def test_legacy_full_access_non_expiring_key_is_still_listed_and_usable(
+    client, db_session, seed_user
+):
+    from app.services.api_key import mint_api_key
+
+    minted = await mint_api_key(db_session, user_id=seed_user.id, label="legacy")
+    listed = (await client.get("/v1/auth/keys")).json()
+    legacy = next(key for key in listed if key["id"] == str(minted.api_key.id))
+    assert legacy["scopes"] is None
+    assert legacy["expires_at"] is None
+    app.dependency_overrides.pop(get_auth)
+    response = await client.get(
+        "/v1/settings", headers={"Authorization": f"Bearer {minted.raw_key}"}
+    )
+    assert response.status_code == 200, response.text
