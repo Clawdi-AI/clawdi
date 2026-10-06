@@ -63,7 +63,7 @@ export function channelHealthSummary(health: ChannelHealthItem): ChannelHealthSu
 		if (health.reasons?.includes("runtime_observation_error")) {
 			return {
 				label: "Channel unavailable",
-				detail: "The Agent reported a problem with this channel. Open Health for details.",
+				detail: "The agent reported a problem with this channel. Open Health for details.",
 			};
 		}
 		return {
@@ -87,7 +87,7 @@ export function channelHealthSummary(health: ChannelHealthItem): ChannelHealthSu
 	if (health.reasons?.includes("agent_not_linked")) {
 		return {
 			label: "Not linked",
-			detail: "This channel is not linked to an Agent.",
+			detail: "This channel is not linked to an agent.",
 		};
 	}
 
@@ -104,19 +104,19 @@ export function channelHealthSummary(health: ChannelHealthItem): ChannelHealthSu
 	if (health.reasons?.includes("runtime_observation_missing")) {
 		return {
 			label: "Setting up",
-			detail: "The channel is waiting for the Agent to finish setup.",
+			detail: "The channel is waiting for the agent to finish setup.",
 		};
 	}
 	if (health.reasons?.includes("runtime_observation_stale")) {
 		return {
 			label: "Agent offline",
-			detail: "The linked Agent is not currently online.",
+			detail: "The linked agent is not currently online.",
 		};
 	}
 	if (health.reasons?.includes("runtime_not_converged")) {
 		return {
 			label: "Setting up",
-			detail: "The Agent is still applying this channel's settings.",
+			detail: "The agent is still applying this channel's settings.",
 		};
 	}
 	if (health.reasons?.includes("runtime_observation_unknown")) {

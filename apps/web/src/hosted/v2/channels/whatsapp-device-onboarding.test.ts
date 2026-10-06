@@ -67,8 +67,8 @@ describe("WhatsApp linked-device onboarding", () => {
 			}),
 		);
 		expect(connected).toContain("WhatsApp connected");
-		expect(connected).toContain("under Custom bots");
-		expect(connected).toContain("Link it to an Agent, then pair an authorized chat");
+		expect(connected).toContain("under custom bots");
+		expect(connected).toContain("Link it to an agent, then pair an authorized chat");
 	});
 
 	test("renders a directly copyable manual code and terminal recovery states", () => {

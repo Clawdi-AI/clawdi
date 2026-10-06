@@ -176,7 +176,7 @@ describe("computeDunningState", () => {
 				currentPlanSlug: "compute_performance",
 			}),
 		);
-		expect(state?.description).toContain("keep Basic compute active");
+		expect(state?.description).toContain("keep your Basic plan active");
 		expect(state?.recoveryPlanSlug).toBe("compute_basic");
 	});
 
@@ -216,7 +216,7 @@ describe("computeDunningState", () => {
 			fundingSource: "wallet",
 			recoveryTarget: { kind: "start_new", action: "start_new" },
 			fallbackOccurredAt: "2026-07-18T12:00:00Z",
-			fallbackPlanLabel: "Performance compute",
+			fallbackPlanLabel: "Performance plan",
 			fallbackReason: "payment_failure",
 			recoveryPlanSlug: "compute_performance",
 		});
@@ -303,19 +303,19 @@ describe("computeDunningState", () => {
 	});
 
 	test("writes factual, reason-specific fallback sentences", () => {
-		expect(fallbackReasonSentence("payment_failure", "Performance compute", "Jul 18")).toBe(
-			"This agent fell back from Performance compute because payment failed on Jul 18.",
+		expect(fallbackReasonSentence("payment_failure", "Performance plan", "Jul 18")).toBe(
+			"This agent fell back from the Performance plan because payment failed on Jul 18.",
 		);
-		expect(fallbackReasonSentence("canceled", "Performance compute", "Jul 18")).toContain(
+		expect(fallbackReasonSentence("canceled", "Performance plan", "Jul 18")).toContain(
 			"you canceled the subscription",
 		);
-		expect(fallbackReasonSentence("refunded", "Performance compute", "Jul 18")).toContain(
+		expect(fallbackReasonSentence("refunded", "Performance plan", "Jul 18")).toContain(
 			"Review Transactions",
 		);
-		expect(fallbackReasonSentence("disputed", "Performance compute", "Jul 18")).toContain(
+		expect(fallbackReasonSentence("disputed", "Performance plan", "Jul 18")).toContain(
 			"contact support",
 		);
-		expect(fallbackReasonSentence("admin_forced", "Performance compute", "Jul 18")).toContain(
+		expect(fallbackReasonSentence("admin_forced", "Performance plan", "Jul 18")).toContain(
 			"an administrator changed its funding",
 		);
 	});

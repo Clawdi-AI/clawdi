@@ -159,10 +159,10 @@ export function FundingSourceSwitchSummary({
 			</div>
 			<Alert>
 				{fundingSource === "wallet" ? <WalletCards aria-hidden /> : <CreditCard aria-hidden />}
-				<AlertTitle>Future renewals use {paymentSourceLabel}</AlertTitle>
+				<AlertTitle>Future renewals use {paymentSourceLabel.toLowerCase()}</AlertTitle>
 				<AlertDescription>
 					Your plan, billing term, price, and renewal date stay the same. This change does not{" "}
-					{fundingSource === "wallet" ? "debit your Wallet" : "charge your card"} today.
+					{fundingSource === "wallet" ? "debit your wallet" : "charge your card"} today.
 				</AlertDescription>
 			</Alert>
 		</>
@@ -404,9 +404,9 @@ export function PlanChangeDialog({
 								? "Add or choose a card in secure billing settings, then return and request a new quote."
 								: step === "quote" && displayedQuote
 									? fundingSourceSwitch
-										? `No payment is due now. Future renewals will use ${quoteFundingSource === "wallet" ? "Wallet" : "Card"}.`
+										? `No payment is due now. Future renewals will use ${quoteFundingSource === "wallet" ? "wallet" : "card"}.`
 										: displayedQuote.change_kind === "immediate_upgrade"
-											? "The quoted proration is charged now. Compute changes after payment is confirmed."
+											? "The quoted proration is charged now. The new plan applies after payment is confirmed."
 											: `The current plan remains active until ${formatShortDate(displayedQuote.effective_at)}.`
 									: paymentSourceMode
 										? "Choose a new payment source. Your plan and billing term stay the same; eligibility is verified before the change is applied."
@@ -511,12 +511,12 @@ export function PlanChangeDialog({
 						{walletInsufficient ? (
 							<Alert variant="destructive">
 								<TriangleAlert aria-hidden />
-								<AlertTitle>Not enough Wallet balance</AlertTitle>
+								<AlertTitle>Not enough wallet balance</AlertTitle>
 								<AlertDescription className="flex flex-col items-start gap-3">
 									<span>Top up the shortfall, then request a fresh price.</span>
 									{onTopUp ? (
 										<Button type="button" size="sm" variant="outline" onClick={onTopUp}>
-											<WalletCards data-icon="inline-start" /> Top up Wallet
+											<WalletCards data-icon="inline-start" /> Top up wallet
 										</Button>
 									) : null}
 								</AlertDescription>
@@ -685,7 +685,7 @@ export function PlanChangeDialog({
 						) : null}
 						{selection.funding_source === "wallet" && !walletReady ? (
 							<p className="text-sm text-muted-foreground" role="status">
-								Loading Wallet balance…
+								Loading wallet balance…
 							</p>
 						) : null}
 						{selectedOffer && !paymentSourceMode ? (

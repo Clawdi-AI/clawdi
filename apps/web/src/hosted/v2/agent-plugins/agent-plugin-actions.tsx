@@ -69,7 +69,7 @@ export function AgentPluginActions({
 			{item.desired ? (
 				<ConfirmAction
 					title={`Remove ${title}?`}
-					description={<p>This removes its Skills and MCP servers from the agent.</p>}
+					description={<p>This removes its skills and MCP servers from the agent.</p>}
 					confirmLabel="Remove plugin"
 					destructive
 					onConfirm={() => onRemove(item)}

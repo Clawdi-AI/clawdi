@@ -448,7 +448,7 @@ describe("performanceUpgradeUnavailableReason", () => {
 
 	test("distinguishes each upgrade block from a pending upgrade", () => {
 		expect(performanceUpgradeUnavailableReason({ ...available, isIncludedBasic: false })).toBe(
-			"Only Basic Agents without a separate subscription can upgrade here. Use this Agent's subscription controls instead.",
+			"Only Basic agents without a separate subscription can upgrade here. Use this agent's subscription controls instead.",
 		);
 		expect(
 			performanceUpgradeUnavailableReason({ ...available, performancePlanAvailable: false }),
@@ -469,31 +469,31 @@ describe("performanceUpgradeUnavailableReason", () => {
 
 	test("gives every server ineligibility reason its matching next step", () => {
 		const cases = [
-			["deployment_deleted", "This Agent was deleted. Create a new Agent to use Performance."],
-			["compute_basic_required", "Only Agents on the Basic plan can upgrade to Performance."],
+			["deployment_deleted", "This agent was deleted. Create a new agent to use Performance."],
+			["compute_basic_required", "Only agents on the Basic plan can upgrade to Performance."],
 			[
 				"compute_subscription_unavailable",
-				"Couldn't load this Agent's subscription details. Check again in a moment.",
+				"Couldn't load this agent's subscription details. Check again in a moment.",
 			],
 			[
 				"included_basic_required",
-				"This Agent's subscription is managed separately. Change its plan from the subscription controls.",
+				"This agent's subscription is managed separately. Change its plan from the subscription controls.",
 			],
 			[
 				"compute_subscription_not_active",
-				"This Agent's no-cost subscription isn't active yet, so it can't upgrade. You weren't charged and don't need to do anything. Check again later.",
+				"This agent's no-cost subscription isn't active yet, so it can't upgrade. You weren't charged and don't need to do anything. Check again later.",
 			],
 			[
 				"compute_subscription_canceling",
-				"This Agent's subscription is set to cancel. Resume it, then try again.",
+				"This agent's subscription is set to cancel. Resume it, then try again.",
 			],
 			[
 				"deployment_state_unknown",
-				"Couldn't load this Agent's current state. Check again before upgrading.",
+				"Couldn't load this agent's current state. Check again before upgrading.",
 			],
 			[
 				"deployment_must_be_running_or_stopped",
-				"Wait until this Agent is running or stopped, then try again.",
+				"Wait until this agent is running or stopped, then try again.",
 			],
 			[
 				"upgrade_already_in_progress",
@@ -514,7 +514,7 @@ describe("performanceUpgradeUnavailableReason", () => {
 
 	test("renders an honest fallback for an absent or unrecognised reason", () => {
 		const expected =
-			"This Agent can't be upgraded right now. Check again later, or contact support if this continues.";
+			"This agent can't be upgraded right now. Check again later, or contact support if this continues.";
 		for (const upgradeEligibilityReason of [null, "new_server_reason"]) {
 			expect(
 				performanceUpgradeUnavailableReason({

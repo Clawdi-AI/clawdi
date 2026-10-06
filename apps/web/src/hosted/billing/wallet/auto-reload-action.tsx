@@ -120,7 +120,7 @@ export function AutoReloadActionConfirm({
 			if (!secret) {
 				setSecretUnavailable(true);
 				toast.error("Payment confirmation unavailable", {
-					description: "Top up manually or refresh the Wallet and try again.",
+					description: "Top up manually or refresh the wallet and try again.",
 				});
 				return;
 			}

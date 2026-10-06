@@ -55,7 +55,7 @@ dashboard should not grow public v1/v2 product concepts.
    `HostedProductRoute` composition shell, which loads the access gate first;
    denied users never load the product page chunk.
 
-4. **The pre-telemetry Wallet return bootstrap is the narrow non-UI
+4. **The pre-telemetry wallet return bootstrap is the narrow non-UI
    exception.** It uses the same compile-time ternary with a dynamic importer,
    and only imports the hosted lifecycle when return parameters are present.
    Shared code owns synchronous URL scrubbing and server response security

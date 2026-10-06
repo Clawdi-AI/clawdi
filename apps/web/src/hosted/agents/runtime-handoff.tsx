@@ -58,7 +58,7 @@ export function RuntimeHandoffPage() {
 					<>
 						<h1 className="text-lg font-semibold">Hermes couldn&apos;t be opened</h1>
 						<p className="text-sm text-muted-foreground">
-							Your sign-in is valid, but this deployment is not ready for OIDC login.
+							Your sign-in is valid, but this agent isn't ready for sign-in yet.
 						</p>
 					</>
 				) : (

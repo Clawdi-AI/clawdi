@@ -6,7 +6,7 @@ import { SettingsPanelHeader } from "@/components/settings/settings-panel-header
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { SubscriptionsSection } from "@/hosted/billing/subscription/subscriptions-section";
 
-const DESCRIPTION = "Subscriptions, plans, and account billing for hosted agents.";
+const DESCRIPTION = "Subscriptions, plans, and account billing for Cloud Agents.";
 const SUBSCRIPTION_PAGE_CLASS = "flex flex-col gap-8 px-5 sm:px-6 lg:px-8";
 
 export function SubscriptionPage({ agentTiles }: { agentTiles: readonly AgentTile[] }) {

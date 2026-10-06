@@ -268,14 +268,14 @@ function PlanChangeControllerState({
 	function showResult(result: ComputePlanChangeResult) {
 		if (result.kind === "scheduled") {
 			toast.success("Downgrade scheduled", {
-				description: `Your current compute remains active until ${formatShortDate(result.effectiveAt)}.`,
+				description: `Your current plan remains active until ${formatShortDate(result.effectiveAt)}.`,
 			});
 		} else if (result.changeKind === "funding_source_switch") {
 			toast.success("Payment method updated", {
 				description:
 					result.fundingSource === "wallet"
-						? "Future renewals will use Wallet."
-						: "Future renewals will use Card.",
+						? "Future renewals will use wallet."
+						: "Future renewals will use card.",
 			});
 		} else {
 			toast.success("Plan changed", {

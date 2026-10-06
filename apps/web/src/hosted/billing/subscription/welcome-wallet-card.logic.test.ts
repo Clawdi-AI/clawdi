@@ -10,7 +10,7 @@ describe("welcomeWalletDescription", () => {
 				grantCheckTimedOut: false,
 				grantAmount: "$5.00",
 			}),
-		).toBe("Your $5.00 welcome balance is available in your Wallet.");
+		).toBe("Your $5.00 welcome balance is available in your wallet.");
 	});
 
 	test("preserves unavailable, pending, and delayed grant feedback", () => {
@@ -33,7 +33,7 @@ describe("welcomeWalletDescription", () => {
 			grantAmount: "$5.00",
 		});
 
-		expect(unavailable).toBe("Your Wallet is ready.");
+		expect(unavailable).toBe("Your wallet is ready.");
 		expect(pending).toBe("Your $5.00 welcome balance is on the way.");
 		expect(delayed).toBe("It hasn’t appeared yet. Refresh to check again.");
 	});

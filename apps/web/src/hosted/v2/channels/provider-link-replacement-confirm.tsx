@@ -24,11 +24,11 @@ export function ProviderLinkReplacementConfirm({
 				title={
 					onAddWithoutLinking
 						? `How should this ${providerLabel} bot be added?`
-						: `Replace this Agent’s ${providerLabel} link?`
+						: `Replace this agent's ${providerLabel} link?`
 				}
 				description={
 					<>
-						This Agent can link only one {providerLabel} bot.{" "}
+						This agent can link only one {providerLabel} bot.{" "}
 						{onAddWithoutLinking ? (
 							<>
 								Add{" "}

@@ -479,7 +479,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	const orphanPastDueCard = currentCards.nth(4);
 	const cancelingCard = currentCards.nth(5);
 	await expect(activeCard.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
-	await expect(activeCard.locator("h4")).toHaveText("Performance compute");
+	await expect(activeCard.locator("h4")).toHaveText("Performance plan");
 	await expect(activeCard.getByText("Used by", { exact: true })).toBeVisible();
 	await expect(activeCard.locator('[data-slot="compute-subscription-identity"] a')).toBeVisible();
 	await expect(activeCard.locator("span[title]")).toHaveAttribute("title", longAgentName);
@@ -489,7 +489,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	);
 	await expect(activeCard.getByText("Card", { exact: true })).toBeVisible();
 	await expect(activeCard.getByText("$190.00/yr", { exact: true })).toBeVisible();
-	await expect(includedCard.locator("h4")).toHaveText("Basic compute");
+	await expect(includedCard.locator("h4")).toHaveText("Basic plan");
 	await expect(includedCard.getByText("Free", { exact: true })).toBeVisible();
 	await expect(includedCard.getByText("Included agent", { exact: true })).toBeVisible();
 	const includedUpgrade = includedCard.getByRole("button", { name: "Upgrade", exact: true });
@@ -588,7 +588,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(endedCards.getByRole("button", { name: "Manage", exact: true })).toHaveCount(0);
 	await expect(endedCards.getByText("Schedule", { exact: true })).toHaveCount(0);
 	await expect(endedCards.getByText(/(Aug 12, 2025|Sep 11, 2099)/)).toHaveCount(0);
-	await expect(dialog.getByText("Start a new subscription from Agent settings.")).toHaveCount(1);
+	await expect(dialog.getByText("Start a new subscription from agent settings.")).toHaveCount(1);
 	await expectCardsFit(dialog);
 
 	const accountSettingsUrl = page.url();
@@ -635,7 +635,7 @@ test("subscription cards preserve pagination and reveal loaded history", async (
 	await expect(dialog).toBeVisible();
 
 	await pastDueCard.getByRole("button", { name: "Top up", exact: true }).click();
-	const topUpDialog = page.getByRole("dialog", { name: "Top up Wallet", exact: true });
+	const topUpDialog = page.getByRole("dialog", { name: "Top up wallet", exact: true });
 	await expect(topUpDialog).toBeVisible();
 	await page.keyboard.press("Escape");
 	await expect(topUpDialog).toBeHidden();
@@ -770,13 +770,13 @@ test("agent settings uses compact canonical subscription management", async ({ p
 	await expect.poll(() => new URL(page.url()).searchParams.has("subscription_action")).toBe(false);
 	const activeCard = page
 		.locator('[data-slot="compute-subscription-card"]')
-		.filter({ hasText: "Basic compute" });
+		.filter({ hasText: "Basic plan" });
 	await expect(activeCard).toBeVisible();
 	await expect(activeCard.getByText("Active", { exact: true })).toHaveAttribute(
 		"data-status",
 		"success",
 	);
-	await expect(activeCard.locator("h3")).toHaveText("Basic compute");
+	await expect(activeCard.locator("h3")).toHaveText("Basic plan");
 	await expect(activeCard.getByText("Paid research agent", { exact: true })).toHaveCount(0);
 	const agentManage = activeCard.getByRole("button", { name: "Manage", exact: true });
 	await expect(agentManage).toBeVisible();
@@ -794,7 +794,7 @@ test("agent settings uses compact canonical subscription management", async ({ p
 	await gotoHostedAgentSettings(page, fixtureAgentId(cancelPendingBasicDeployment), "Basic");
 	const cancelingCard = page
 		.locator('[data-slot="compute-subscription-card"]')
-		.filter({ hasText: "Basic compute" });
+		.filter({ hasText: "Basic plan" });
 	await expect(cancelingCard.getByText("Canceling", { exact: true })).toHaveAttribute(
 		"data-status",
 		"warning",
@@ -806,7 +806,7 @@ test("agent settings uses compact canonical subscription management", async ({ p
 	await gotoHostedAgentSettings(page, fixtureAgentId(cardPastDueDeployment), "Basic");
 	const pastDueCard = page
 		.locator('[data-slot="compute-subscription-card"]')
-		.filter({ hasText: "Basic compute" });
+		.filter({ hasText: "Basic plan" });
 	await expect(pastDueCard.getByText("Past due", { exact: true })).toHaveAttribute(
 		"data-status",
 		"destructive",
@@ -835,7 +835,7 @@ test("agent settings uses compact canonical subscription management", async ({ p
 	);
 	const scheduledDowngradeCard = page
 		.locator('[data-slot="compute-subscription-card"]')
-		.filter({ hasText: "Performance compute" });
+		.filter({ hasText: "Performance plan" });
 	const cancelScheduledAgent = scheduledDowngradeCard.getByRole("button", {
 		name: "Cancel scheduled change",
 	});
@@ -856,7 +856,7 @@ test("agent settings uses compact canonical subscription management", async ({ p
 	);
 	const actionRequiredCard = page
 		.locator('[data-slot="compute-subscription-card"]')
-		.filter({ hasText: "Basic compute" });
+		.filter({ hasText: "Basic plan" });
 	await expect(
 		actionRequiredCard.getByText("Payment action required", { exact: true }),
 	).toHaveAttribute("data-status", "warning");
@@ -892,7 +892,7 @@ test("agent settings uses compact canonical subscription management", async ({ p
 	);
 	const pendingChangeCard = page
 		.locator('[data-slot="compute-subscription-card"]')
-		.filter({ hasText: "Basic compute" });
+		.filter({ hasText: "Basic plan" });
 	const cardCheckChange = pendingChangeCard.getByRole("button", {
 		name: "Check subscription change status",
 	});
@@ -914,7 +914,7 @@ test("agent settings uses compact canonical subscription management", async ({ p
 	await expect(routedCreateDialog).toBeHidden();
 	const fallbackCard = page
 		.locator('[data-slot="compute-subscription-card"]')
-		.filter({ hasText: "Basic compute" });
+		.filter({ hasText: "Basic plan" });
 	await expect(fallbackCard.getByText("Active", { exact: true })).toHaveAttribute(
 		"data-status",
 		"success",
@@ -926,7 +926,7 @@ test("agent settings uses compact canonical subscription management", async ({ p
 	await gotoHostedAgentSettings(page, fixtureAgentId(includedBasicDeployment), "Basic");
 	const includedCard = page
 		.locator('[data-slot="compute-subscription-card"]')
-		.filter({ hasText: "Basic compute" });
+		.filter({ hasText: "Basic plan" });
 	await expect(includedCard.getByText("Active", { exact: true })).toHaveAttribute(
 		"data-status",
 		"success",
@@ -951,7 +951,7 @@ test("agent settings uses compact canonical subscription management", async ({ p
 	await gotoHostedAgentSettings(page, fixtureAgentId(ineligibleIncludedDeployment), "Basic");
 	const unavailableCard = page
 		.locator('[data-slot="compute-subscription-card"]')
-		.filter({ hasText: "Basic compute" });
+		.filter({ hasText: "Basic plan" });
 	const unavailableUpgrade = unavailableCard.getByRole("button", {
 		name: "Upgrade",
 		exact: true,
@@ -959,7 +959,7 @@ test("agent settings uses compact canonical subscription management", async ({ p
 	await expect(unavailableUpgrade).toBeDisabled();
 	await expect(unavailableCard.getByRole("button")).toHaveCount(1);
 	await expect(
-		unavailableCard.getByText("Wait until this Agent is running or stopped, then try again.", {
+		unavailableCard.getByText("Wait until this agent is running or stopped, then try again.", {
 			exact: true,
 		}),
 	).toBeVisible();

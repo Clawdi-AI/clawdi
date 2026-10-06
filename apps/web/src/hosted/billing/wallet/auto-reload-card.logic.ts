@@ -233,7 +233,7 @@ export function autoReloadSaveError(error: unknown): AutoReloadSaveError {
 	if (signal.includes("payment method") || signal.includes("payment_method")) {
 		return {
 			title: "Add a card before enabling auto-reload",
-			description: "Authorize a card for automatic Wallet reloads, then save these changes again.",
+			description: "Authorize a card for automatic wallet reloads, then save these changes again.",
 			field: null,
 			requiresPaymentMethod: true,
 		};

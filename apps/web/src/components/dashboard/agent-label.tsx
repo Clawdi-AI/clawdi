@@ -141,10 +141,6 @@ function cleanAgentName(value: string | null | undefined): string {
 	return value?.trim() ?? "";
 }
 
-export function agentSourceLabel(source: AgentSourceKind): string {
-	return source === "hosted" ? "Cloud" : "Connected";
-}
-
 export function agentSourceKindLabel(source: AgentSourceKind): string {
 	return source === "hosted" ? "Cloud Agent" : "Connected Agent";
 }
@@ -165,7 +161,7 @@ export function AgentSourceBadge({
 	className?: string;
 }) {
 	const Icon = source === "hosted" ? Cloud : Laptop;
-	const label = agentSourceLabel(source);
+	const label = agentSourceKindLabel(source);
 	const title = agentSourceDescription(source);
 	const iconClass = source === "hosted" ? "text-info-muted-foreground" : "text-muted-foreground";
 	// Solid silhouette at badge sizes: the outline cloud dissolves under ~16px.
@@ -205,7 +201,7 @@ export function LegacyAgentBadge({
 	return (
 		<StatusBadge
 			status="neutral"
-			title="Managed in the legacy hosted dashboard"
+			title="Managed in the legacy dashboard"
 			className={cn(
 				"shrink-0 whitespace-nowrap border border-warning-muted bg-warning-muted font-medium leading-none text-warning-muted-foreground shadow-sm",
 				iconOnly
@@ -244,7 +240,7 @@ export function AgentSourceBadgeForEnvironment({
 	const ownership = useAgentOwnership();
 	const kind = ownershipKind ?? agentOwnershipKindFromId(env.id, ownership);
 	if (kind === "unresolved") {
-		return <Skeleton aria-label="Agent source loading" className="h-5 w-14 rounded-full" />;
+		return <Skeleton aria-label="Agent source loading" className="h-5 w-24 rounded-full" />;
 	}
 	if (kind === "legacy") {
 		if (iconOnly) return null;

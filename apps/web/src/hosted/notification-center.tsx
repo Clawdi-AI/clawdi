@@ -27,7 +27,7 @@ const accountNotificationKeys = {
 };
 
 function responseError(response: Response): ApiError {
-	return new ApiError(response.status, response.statusText || "Hosted notification request failed");
+	return new ApiError(response.status, response.statusText || "Notification request failed");
 }
 
 function toAccountNotification(item: ApiNotification): AccountNotification {

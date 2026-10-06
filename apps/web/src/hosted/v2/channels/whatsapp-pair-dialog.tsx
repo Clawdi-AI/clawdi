@@ -194,7 +194,7 @@ export function WhatsAppPairDialog({
 						) : (
 							<div className="space-y-4">
 								<PairingNotice title="WhatsApp needs repair before pairing">
-									Reconnect this Custom WhatsApp account first. The bot, Agent Links, paired chats,
+									Reconnect this custom WhatsApp account first. The bot, agent links, paired chats,
 									and history stay unchanged.
 								</PairingNotice>
 								<PairingDialogActions>

@@ -2650,7 +2650,7 @@ async function gotoHostedAgentSettings(
 	for (let attempt = 0; attempt < 2; attempt += 1) {
 		await page.goto(`/agents/${agentId}/settings${search}`);
 		try {
-			await expect(page.getByText(`${tier} compute`, { exact: true })).toBeVisible();
+			await expect(page.getByText(`${tier} plan`, { exact: true })).toBeVisible();
 			// Do not open a modal while React is still hydrating the sidebar; Base UI's
 			// focus isolation mutates aria-hidden and can create a false mismatch.
 			await page.waitForLoadState("networkidle");
@@ -2869,7 +2869,7 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }) => {
 
 	const overview = page.locator("main");
 	const overviewTitleRow = page.locator('[data-slot="page-header"]');
-	await expect(overviewTitleRow.getByText("Cloud", { exact: true })).toHaveCount(1);
+	await expect(overviewTitleRow.getByText("Cloud Agent", { exact: true })).toHaveCount(1);
 	await expect(overviewTitleRow.getByText("Legacy", { exact: true })).toHaveCount(0);
 	await expect(overview.getByRole("heading", { name: "Workspace", exact: true })).toBeVisible({
 		timeout: 12_000,
@@ -2981,7 +2981,9 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }) => {
 	await page.goto(`/agents/${railHostedEnvironmentId}/sessions`);
 	const sessionsHeading = page.getByRole("heading", { name: "Sessions", exact: true });
 	await expect(sessionsHeading).toBeVisible();
-	await expect(sessionsHeading.locator("..").getByText("Cloud", { exact: true })).toHaveCount(0);
+	await expect(sessionsHeading.locator("..").getByText("Cloud Agent", { exact: true })).toHaveCount(
+		0,
+	);
 	await expect(page.getByRole("button", { name: "Chat on the web", exact: true })).toHaveCount(0);
 });
 
@@ -4814,7 +4816,7 @@ test("paid card subscription switches future renewals to Wallet", async ({ page 
 		funding_source: "wallet",
 	});
 	await expect(changeDialog.getByText("$0.00", { exact: true })).toBeVisible();
-	await expect(changeDialog.getByText("Future renewals use Wallet", { exact: true })).toBeVisible();
+	await expect(changeDialog.getByText("Future renewals use wallet", { exact: true })).toBeVisible();
 	await changeDialog.getByRole("button", { name: "Update payment source" }).click();
 
 	await expect.poll(() => planChangeRequests.length).toBe(1);
@@ -4822,7 +4824,7 @@ test("paid card subscription switches future renewals to Wallet", async ({ page 
 		operation_id: "op_card_to_wallet",
 	});
 	await expect(page.getByText("Payment method updated", { exact: true })).toBeVisible();
-	await expect(page.getByText("Future renewals will use Wallet.", { exact: true })).toBeVisible();
+	await expect(page.getByText("Future renewals will use wallet.", { exact: true })).toBeVisible();
 	expect(errors, `card to Wallet switch: ${errors.join(" | ")}`).toEqual([]);
 });
 
@@ -5004,7 +5006,7 @@ for (const firstTimeViewport of [
 		await expect(connectDialog).toBeVisible();
 		await expect(page.getByRole("dialog")).toHaveCount(1);
 		await expect(connectDialog).toContainText(
-			"Add a Custom bot you manage. When possible, it will be linked to this Agent automatically.",
+			"Add a custom bot you manage. When possible, it will be linked to this agent automatically.",
 		);
 		const agentInterfaceHint = connectDialog.locator("[data-other-provider-hint]");
 		await expect(agentInterfaceHint).toContainText(
@@ -5016,7 +5018,7 @@ for (const firstTimeViewport of [
 		await expect(agentInterfaceHint.locator('[data-slot="alert"]')).toHaveCount(0);
 		await expect(connectDialog.locator("[data-agent-link-warning]")).toHaveCount(0);
 		await expect(connectDialog.getByRole("status")).toContainText(
-			"The new Custom bot will be linked to this Agent automatically.",
+			"The new custom bot will be linked to this agent automatically.",
 		);
 		await connectDialog.getByRole("button", { name: "WhatsApp", exact: true }).click();
 		await expect(connectDialog.getByRole("heading", { name: "Configure WhatsApp" })).toBeVisible();
@@ -5291,11 +5293,11 @@ test("channel detail links, pairs, and unlinks an Agent in place", async ({ page
 
 	await page.goto("/channels");
 	const sharedBotCard = page.locator(`[data-shared-channel-account-id="${sharedChannelId}"]`);
-	await sharedBotCard.getByRole("button", { name: "Link Agent", exact: true }).click();
-	const sharedBotLinkDialog = page.getByRole("dialog", { name: "Link Agent" });
+	await sharedBotCard.getByRole("button", { name: "Link agent", exact: true }).click();
+	const sharedBotLinkDialog = page.getByRole("dialog", { name: "Link agent" });
 	await sharedBotLinkDialog.getByRole("combobox", { name: "Agent" }).click();
 	await page.getByRole("option", { name: "Shared Bot Agent" }).click();
-	await sharedBotLinkDialog.getByRole("button", { name: "Link Agent", exact: true }).click();
+	await sharedBotLinkDialog.getByRole("button", { name: "Link agent", exact: true }).click();
 	await expect
 		.poll(() => linkAgentRequests)
 		.toEqual([{ accountId: sharedChannelId, body: JSON.stringify({ agent_id: sharedAgentId }) }]);
@@ -5314,11 +5316,11 @@ test("channel detail links, pairs, and unlinks an Agent in place", async ({ page
 
 	await page.goto(`/channels/${channelId}`);
 	await expect(page.getByRole("heading", { name: "Channel Detail Telegram" })).toBeVisible();
-	await page.getByRole("button", { name: "Link Agent", exact: true }).click();
-	const linkDialog = page.getByRole("dialog", { name: "Link Agent" });
+	await page.getByRole("button", { name: "Link agent", exact: true }).click();
+	const linkDialog = page.getByRole("dialog", { name: "Link agent" });
 	await linkDialog.getByRole("combobox", { name: "Agent" }).click();
 	await page.getByRole("option", { name: "Channel Agent" }).click();
-	await linkDialog.getByRole("button", { name: "Link Agent", exact: true }).click();
+	await linkDialog.getByRole("button", { name: "Link agent", exact: true }).click();
 
 	await expect
 		.poll(() => linkAgentRequests)
@@ -5341,13 +5343,13 @@ test("channel detail links, pairs, and unlinks an Agent in place", async ({ page
 
 	const linkedAgent = page.locator(`[data-channel-agent-link-id="${linkId}"]`);
 	await expect(linkedAgent.getByText("Channel Agent", { exact: true })).toBeVisible();
-	await linkedAgent.getByRole("button", { name: "Unlink Agent" }).click();
-	const unlinkDialog = page.getByRole("alertdialog", { name: "Unlink Agent?" });
-	await unlinkDialog.getByRole("button", { name: "Unlink Agent", exact: true }).click();
+	await linkedAgent.getByRole("button", { name: "Unlink agent" }).click();
+	const unlinkDialog = page.getByRole("alertdialog", { name: "Unlink agent?" });
+	await unlinkDialog.getByRole("button", { name: "Unlink agent", exact: true }).click();
 	await expect
 		.poll(() => unlinkAgentRequests)
 		.toEqual([`/v1/channels/${channelId}/agent-links/${linkId}`]);
-	await expect(page.getByText("No Agents linked", { exact: true })).toBeVisible();
+	await expect(page.getByText("No agents linked", { exact: true })).toBeVisible();
 	await expect(page).toHaveURL(`/channels/${channelId}`);
 	expect(errors, `channel detail relationship flow: ${errors.join(" | ")}`).toEqual([]);
 });

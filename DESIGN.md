@@ -20,9 +20,14 @@ use them. When a PR and this document disagree, fix one of them.
    marketing whitespace. Tables and lists earn their vertical space.
 4. **Shadows are near-nonexistent.** `shadow-xs`/`shadow-sm` only (≤0.05
    tinted opacity). `shadow-md` and up are banned in app UI.
-5. **Clear casing rules.** Page titles use Title Case. Dialog titles use
-   sentence case. ALL-CAPS is reserved for tiny `text-2xs tracking-wider`
-   meta labels.
+5. **Clear casing rules.** Page titles and navigation items use Title Case.
+   Everything else — dialog titles, buttons, menus, toasts, labels, and body
+   copy — uses sentence case. Common object nouns (agent, project, vault,
+   skill, workspace, wallet, library, session, memory, key, channel, connector)
+   are lowercase inside sentences. Capitalize only product names and defined
+   terms: Clawdi, Clawdi AI, Cloud Agent, Connected Agent, the plan names Basic
+   and Performance, and third-party names. ALL-CAPS is reserved for tiny
+   `text-2xs tracking-wider` meta labels.
 6. **No pills on containers.** Radius band is 6–14px (`rounded-sm` … `rounded-xl`).
    `rounded-full` is allowed only for avatars, status dots, and tiny count badges.
 7. **Never break the data.** Numbers, IDs, hashes, paths: `font-mono` or
@@ -207,14 +212,22 @@ multi-hue colors; never use them for controls or status.
   server-side `POST /api/vault/{slug}/items/copy` (decrypt + re-encrypt on
   the server) — the one deliberate backend addition of the redesign.
 - 2026-06-05 — Copy-vs-reference vocabulary (Kingsley's review): the domain
-  mixes reference semantics (vault→Project attach, Project sharing — one
-  object, live everywhere) with true-copy semantics (skill→Project send,
+  mixes reference semantics (vault→project attach, project sharing — one
+  object, live everywhere) with true-copy semantics (skill→project send,
   key→vault copy — independent duplicates that diverge). The UI must say
   which world an action lives in AT the action: reference verbs are
   Add/Share and state "changes apply everywhere"; duplication verbs are
   Copy/Move and state "won't sync after this". Every copy dialog also
   offers the reference alternative when that's likely the real goal
-  ("Add this vault to the Project instead").
+  ("Add this vault to the project instead").
+
+- 2026-10-06 — Copy casing R1 (owner: "follow best practice, decide from the user's
+  perspective"). Object nouns are lowercase in sentences and controls. Title Case is only for
+  page titles and navigation. The defined terms Cloud Agent and Connected Agent label an
+  agent's source: chips never show a bare "Cloud" or "Connected", group headings are "Cloud
+  Agents" / "Connected Agents", and an agent's online state never says "Connected". User-facing
+  plan names are Basic and Performance; plan ids and Stripe ids are unchanged. Supersedes the
+  2026-10-05 object-noun capitalization rule (D1).
 
 ## Banned (CI-greppable)
 

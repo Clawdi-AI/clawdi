@@ -203,7 +203,7 @@ function HostedWorkspaceSkillsPanelContent({
 				() => {},
 			);
 		} catch {
-			setInstallError("Couldn't add this Skill. Check the GitHub repository and try again.");
+			setInstallError("Couldn't add this skill. Check the GitHub repository and try again.");
 		}
 	};
 	const renderPageState = (content: ReactNode, actions?: ReactNode) =>
@@ -231,7 +231,7 @@ function HostedWorkspaceSkillsPanelContent({
 					onRetry={() => {
 						void connectedAgent.refetch();
 					}}
-					title="Couldn't load the Agent identity"
+					title="Couldn't load the agent identity"
 				/>,
 			);
 		}
@@ -265,7 +265,7 @@ function HostedWorkspaceSkillsPanelContent({
 				onRetry={() => {
 					void deploymentResolution.refetch();
 				}}
-				title="Couldn't load this Agent"
+				title="Couldn't load this agent"
 			/>,
 		);
 	}
@@ -300,21 +300,21 @@ function HostedWorkspaceSkillsPanelContent({
 					<AlertTitle>GitHub installation is unavailable</AlertTitle>
 					<AlertDescription>
 						{status.data.capability?.reason === "upgrade_not_observed"
-							? "Installation will be available when your Agent is ready."
-							: "This Agent needs a compatible update before you can install Skills."}
+							? "Installation will be available when your agent is ready."
+							: "This agent needs a compatible update before you can install skills."}
 					</AlertDescription>
 				</Alert>
 			) : null}
 			{status.data?.items?.some((skill) => skill.status === "failed") ||
 			managedSkills.data?.skills.some((skill) => skill.convergence === "failed") ? (
 				<Alert variant="destructive">
-					<AlertTitle>Couldn't update Skills</AlertTitle>
+					<AlertTitle>Couldn't update skills</AlertTitle>
 					<AlertDescription>We'll retry automatically.</AlertDescription>
 				</Alert>
 			) : null}
 			{managedSkills.data?.removal_failures?.length ? (
 				<Alert variant="destructive">
-					<AlertTitle>Couldn't remove Skills</AlertTitle>
+					<AlertTitle>Couldn't remove skills</AlertTitle>
 					<AlertDescription>
 						We'll retry automatically.{" "}
 						{managedSkills.data.removal_failures?.map((skill) => skill.skill_key).join(", ")}
@@ -325,7 +325,7 @@ function HostedWorkspaceSkillsPanelContent({
 				<ApiErrorPanel
 					error={managedSkills.error}
 					onRetry={() => void managedSkills.refetch()}
-					title="Couldn't load installed Skills"
+					title="Couldn't load installed skills"
 				/>
 			) : null}
 			{workspaceSkills.error ? (
@@ -334,7 +334,7 @@ function HostedWorkspaceSkillsPanelContent({
 					onRetry={() => {
 						void workspaceSkills.refetch();
 					}}
-					title="Couldn't load Skill details"
+					title="Couldn't load skill details"
 				/>
 			) : null}
 			{status.error ? (
@@ -355,7 +355,7 @@ function HostedWorkspaceSkillsPanelContent({
 				!managedSkills.error ? (
 				<EmptyState
 					variant="inset"
-					description="No Skills are available in this Agent's Workspace."
+					description="No skills are available in this agent's workspace."
 				/>
 			) : (
 				<div className={HERO_GRID_CLASS}>
@@ -390,7 +390,7 @@ function HostedWorkspaceSkillsPanelContent({
 					<DialogHeader>
 						<DialogTitle>Install skill</DialogTitle>
 						<DialogDescription>
-							Choose a Skill from your Library or a public GitHub repository.
+							Choose a skill from your library or a public GitHub repository.
 						</DialogDescription>
 					</DialogHeader>
 					<Tabs
@@ -420,7 +420,7 @@ function HostedWorkspaceSkillsPanelContent({
 						<TabsContent value="github">
 							<div className="space-y-2">
 								<Label htmlFor={`hosted-workspace-skill-repo-${agentId}`}>
-									GitHub Skill repository
+									GitHub skill repository
 								</Label>
 								<Input
 									id={`hosted-workspace-skill-repo-${agentId}`}
@@ -513,11 +513,11 @@ function WorkspaceSkillCard({
 		managed?.source === "library"
 			? "Library"
 			: managed?.source === "project"
-				? "Linked Project"
+				? "Linked project"
 				: managed?.source === "bundled"
 					? "Built in"
 					: item.projectionOnly
-						? "Synced from Agent"
+						? "Synced from agent"
 						: null;
 	return (
 		<SkillCard
@@ -531,10 +531,10 @@ function WorkspaceSkillCard({
 			actions={
 				removable ? (
 					<ConfirmAction
-						title={`Uninstall ${item.entity.name} from Agent?`}
+						title={`Uninstall ${item.entity.name} from agent?`}
 						description={
 							<p>
-								This removes the Skill from this Agent. Your Library and other Agents keep their
+								This removes the skill from this agent. Your library and other agents keep their
 								copies.
 							</p>
 						}
@@ -553,7 +553,7 @@ function WorkspaceSkillCard({
 							size="icon-sm"
 							disabled={pending}
 							className="text-muted-foreground hover:text-destructive"
-							aria-label={`Uninstall ${item.entity.name} from Agent`}
+							aria-label={`Uninstall ${item.entity.name} from agent`}
 						>
 							<Trash2 className="size-3.5" />
 						</Button>

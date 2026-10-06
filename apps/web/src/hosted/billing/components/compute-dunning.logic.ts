@@ -43,15 +43,15 @@ export function fallbackReasonSentence(
 ): string {
 	switch (reason) {
 		case "payment_failure":
-			return `This agent fell back from ${planLabel} because payment failed on ${dateLabel}.`;
+			return `This agent fell back from the ${planLabel} because payment failed on ${dateLabel}.`;
 		case "canceled":
-			return `This agent fell back from ${planLabel} after you canceled the subscription on ${dateLabel}.`;
+			return `This agent fell back from the ${planLabel} after you canceled the subscription on ${dateLabel}.`;
 		case "refunded":
-			return `This agent fell back from ${planLabel} after its payment was refunded on ${dateLabel}. Review Transactions for details.`;
+			return `This agent fell back from the ${planLabel} after its payment was refunded on ${dateLabel}. Review Transactions for details.`;
 		case "disputed":
-			return `This agent fell back from ${planLabel} after its payment was disputed on ${dateLabel}. Review Transactions or contact support.`;
+			return `This agent fell back from the ${planLabel} after its payment was disputed on ${dateLabel}. Review Transactions or contact support.`;
 		case "admin_forced":
-			return `This Agent fell back from ${planLabel} after an administrator changed its funding on ${dateLabel}. Contact support if this was unexpected.`;
+			return `This agent fell back from the ${planLabel} after an administrator changed its funding on ${dateLabel}. Contact support if this was unexpected.`;
 	}
 }
 
@@ -73,7 +73,7 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 	const recoveryPlanSlug = recoveryPlanSlugFor(deployment);
 	if (!recoveryPlanSlug) return null;
 
-	const fallbackPlanLabel = `${computeTierLabel(recoveryPlanSlug)} compute`;
+	const fallbackPlanLabel = `${computeTierLabel(recoveryPlanSlug)} plan`;
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const stopped = deploymentStatus.kind === "stopped";
 	const statusUnavailable = !deploymentStatus.known;
@@ -151,8 +151,8 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 
 	const recoveryPlanSlug = recoveryPlanSlugFor(deployment, subscription);
 	const computeName = recoveryPlanSlug
-		? `${computeTierLabel(recoveryPlanSlug)} compute`
-		: "paid compute";
+		? `your ${computeTierLabel(recoveryPlanSlug)} plan`
+		: "your paid plan";
 	const fundingSource = subscription.funding_source ?? "stripe";
 	const common = {
 		fundingSource,
@@ -213,7 +213,7 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			tone: "warning",
 			title: "Wallet payment past due",
 			description:
-				"Top up your Wallet. Stripe will keep the invoice open while funds are short, and billing will update automatically after payment completes.",
+				"Top up your wallet. Stripe will keep the invoice open while funds are short, and billing will update automatically after payment completes.",
 		};
 	}
 

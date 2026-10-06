@@ -60,7 +60,7 @@ export default function LibrarySkillInstallAction({
 			toast.success("Skill installed");
 			setOpen(false);
 		} catch (error) {
-			toast.error("Couldn't install Skill", { description: normalizeApiError(error) });
+			toast.error("Couldn't install skill", { description: normalizeApiError(error) });
 		} finally {
 			locked.current = false;
 		}
@@ -70,7 +70,7 @@ export default function LibrarySkillInstallAction({
 			<Button
 				variant="ghost"
 				size="icon-sm"
-				aria-label={`Install ${skill.name} on an Agent`}
+				aria-label={`Install ${skill.name} on an agent`}
 				onClick={() => setOpen(true)}
 			>
 				<Download className="size-3.5" />
@@ -91,7 +91,7 @@ export default function LibrarySkillInstallAction({
 					<DialogHeader>
 						<DialogTitle>Install skill</DialogTitle>
 						<DialogDescription>
-							Choose an Agent to use {skill.name}. Changes in your Library will update it
+							Choose an agent to use {skill.name}. Changes in your library will update it
 							automatically.
 						</DialogDescription>
 					</DialogHeader>
@@ -106,8 +106,8 @@ export default function LibrarySkillInstallAction({
 							}}
 							disabled={install.isPending || agentsLoading}
 						>
-							<SelectTrigger className="w-full" aria-label="Target Agent">
-								<SelectValue placeholder="Choose an Agent" />
+							<SelectTrigger className="w-full" aria-label="Target agent">
+								<SelectValue placeholder="Choose an agent" />
 							</SelectTrigger>
 							<SelectContent>
 								{agents.map((agent) => (
@@ -118,7 +118,7 @@ export default function LibrarySkillInstallAction({
 							</SelectContent>
 						</Select>
 						{!agentsLoading && !inventory.error && agents.length === 0 ? (
-							<p className="text-sm text-muted-foreground">No Hosted Agents are available yet.</p>
+							<p className="text-sm text-muted-foreground">No Cloud Agents are available yet.</p>
 						) : null}
 					</div>
 					{inventory.error ? (
@@ -126,14 +126,14 @@ export default function LibrarySkillInstallAction({
 							error={inventory.error}
 							normalizer={billingErrorNormalizer}
 							onRetry={() => void inventory.refetch()}
-							title="Couldn't load Agents"
+							title="Couldn't load agents"
 						/>
 					) : null}
 					{cloudAgents.error ? (
 						<ApiErrorPanel
 							error={cloudAgents.error}
 							onRetry={() => void cloudAgents.refetch()}
-							title="Couldn't load Agents"
+							title="Couldn't load agents"
 						/>
 					) : null}
 					{install.error ? (

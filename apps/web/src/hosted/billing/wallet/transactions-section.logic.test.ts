@@ -59,7 +59,7 @@ describe("transaction presentation", () => {
 			),
 		).toEqual(["Performance · Deleted agent", PERIOD]);
 		expect(transactionComputeDetails(transaction({ kind: "compute_charge" }))).toEqual([
-			"Compute · Deleted agent",
+			"Plan · Deleted agent",
 			"—",
 		]);
 	});
