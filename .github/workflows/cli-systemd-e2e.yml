@@ -29,6 +29,9 @@ jobs:
       - name: Set up Docker Hub mirror
         id: docker-hub-mirror
         uses: ./.github/actions/setup-docker-hub-mirror
+        with:
+          prefetch-images: |
+            moby/buildkit:buildx-stable-1
       - name: Test systemd command failure boundaries
         run: bash scripts/test.sh runtime-systemd
       - name: Test CLI against systemd as PID 1

@@ -52,6 +52,9 @@ jobs:
       - name: Set up Docker Hub mirror
         id: docker-hub-mirror
         uses: ./.github/actions/setup-docker-hub-mirror
+        with:
+          prefetch-images: |
+            moby/buildkit:buildx-stable-1
       - name: Check Docker availability
         run: docker version
       - name: Run adapter contract against the latest official Hermes install

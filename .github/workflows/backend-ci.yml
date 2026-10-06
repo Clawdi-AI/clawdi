@@ -261,6 +261,9 @@ jobs:
       - name: Set up Docker Hub mirror
         id: docker-hub-mirror
         uses: ./.github/actions/setup-docker-hub-mirror
+        with:
+          prefetch-images: |
+            moby/buildkit:buildx-stable-1
       - uses: ./.github/actions/setup-bun-ci
       - name: Sidecar typecheck and tests
         run: |
@@ -276,7 +279,7 @@ jobs:
           contract_image="clawdi-kamal-contract:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           cleanup() { docker image rm "$contract_image" >/dev/null 2>&1 || true; }
           trap cleanup EXIT
-          docker build --tag "$contract_image" --file - . <<'DOCKERFILE'
+          docker build --load --tag "$contract_image" --file - . <<'DOCKERFILE'
           FROM ruby:3.4.10-bookworm@sha256:8ff02c55f0467a3d03bc6c41b7500f9f0b30086a1861c601cd4e9dc5b8536a66
           WORKDIR /repo
           COPY config/deploy.yml config/deploy.yml
@@ -288,10 +291,6 @@ jobs:
           RUN gem install kamal -v '2.12.0' --no-document
           RUN scripts/test-kamal-whatsapp-sidecar-render.sh && scripts/test-deploy-backend.sh && scripts/test-deploy-whatsapp-sidecar.sh
           DOCKERFILE
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-        with:
-          buildkitd-config-inline: ${{ steps.docker-hub-mirror.outputs.buildkitd-config-inline }}
       - name: Build production sidecar image
         uses: docker/build-push-action@v7
         with:
