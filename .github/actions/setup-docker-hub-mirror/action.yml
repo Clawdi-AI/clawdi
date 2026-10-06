@@ -31,19 +31,26 @@ runs:
         path.write_text(json.dumps(config, indent=2) + "\n")
         PY
 
-        timeout 60s sudo systemctl restart docker
-        for attempt in {1..30}; do
+        # registry-mirrors is reloadable on SIGHUP (dockerd "Configuration reload
+        # behavior"), so never restart the daemon: Blacksmith runners have no
+        # systemd, and a restart would stop any job service containers.
+        if ! dockerd_pids="$(pgrep -x dockerd)"; then
+          echo "::warning::No local dockerd process; pulls use Docker Hub directly."
+          exit 0
+        fi
+        # shellcheck disable=SC2086 # one or more PIDs
+        sudo kill -HUP $dockerd_pids
+        for attempt in {1..15}; do
           if mirrors=$(timeout 5s docker info --format '{{json .RegistryConfig.Mirrors}}' 2>/dev/null) &&
             python3 -c 'import json, sys; sys.exit(0 if "https://mirror.gcr.io" in [item.rstrip("/") for item in json.loads(sys.argv[1])] else 1)' "$mirrors"; then
             echo "Docker Hub mirror is active"
-            break
+            exit 0
           fi
-          if [[ "$attempt" == 30 ]]; then
-            echo "Docker did not report https://mirror.gcr.io after restart" >&2
-            exit 1
-          fi
-          sleep 2
+          sleep 1
         done
+        # Mirrors are an availability optimization with Docker Hub fallback;
+        # never fail the job because the reload did not take effect.
+        echo "::warning::Docker did not report https://mirror.gcr.io after reload; pulls fall back to Docker Hub."
 
     - name: Export BuildKit mirror configuration
       id: buildkit
