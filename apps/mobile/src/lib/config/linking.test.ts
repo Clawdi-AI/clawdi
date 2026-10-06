@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { readLinkHosts, webLinkPaths } from "@clawdi/shared/linking";
 import type { ExpoConfig } from "expo/config";
 import { parseMobileRuntimeConfig } from "@/lib/config/runtime-config";
-import { readLinkHosts, webLinkPaths } from "../../../config/linking.cjs";
 
 const configure: (value: { config: ExpoConfig }) => ExpoConfig = require("../../../app.config.js");
 test("native associations and runtime routing share the same explicit hostname configuration", () => {

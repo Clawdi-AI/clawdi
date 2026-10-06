@@ -1,4 +1,4 @@
-const { readLinkHosts, webLinkPaths } = require("./config/linking.cjs");
+const { readLinkHosts, webLinkPaths } = require("@clawdi/shared/linking");
 
 function publicValue(name) {
 	const value = process.env[name]?.trim();

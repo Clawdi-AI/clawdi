@@ -767,7 +767,7 @@ API; it never fetches a pasted hostname.
 Optional `EXPO_PUBLIC_CLAWDI_LINK_HOSTS` is a comma-separated list of owned DNS
 hostnames, without schemes, ports, wildcards or paths. Build and runtime use the
 same validator. Expo config adds iOS `applinks` associations and Android verified
-HTTPS filters for the paths in `apps/mobile/config/linking.cjs`, preserving
+HTTPS filters for the paths in `@clawdi/shared/linking`, preserving
 existing associations. No configured hosts means no new HTTPS associations.
 For an isolated config check:
 

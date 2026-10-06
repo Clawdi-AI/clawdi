@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { webLinkPaths } from "@clawdi/shared/linking";
 import { z } from "zod";
-import { webLinkPaths } from "../../../mobile/config/linking.cjs";
 import { GET as apple } from "./[.]well-known/apple-app-site-association";
 import { GET as android } from "./[.]well-known/assetlinks[.]json";
 

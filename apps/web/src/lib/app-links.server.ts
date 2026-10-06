@@ -1,4 +1,4 @@
-import { webLinkPaths } from "../../../mobile/config/linking.cjs";
+import { webLinkPaths } from "@clawdi/shared/linking";
 
 const appId = "ai.clawdi.app";
 

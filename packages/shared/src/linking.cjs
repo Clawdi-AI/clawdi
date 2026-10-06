@@ -1,4 +1,4 @@
-/** Shared by Expo's build config and native runtime validation. */
+/** Shared by Expo's CommonJS build config and native runtime validation. */
 function readLinkHosts(value) {
 	if (value == null || value === "") return [];
 	if (typeof value !== "string" || value.length > 4096) throw new Error("Invalid link hosts");

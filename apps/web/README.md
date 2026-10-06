@@ -28,7 +28,7 @@ Set these public signing identities in the Web server's deployment environment
 `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json`
 serve public JSON without authentication or redirects. Each returns 404 when
 its signing identity is missing or malformed. AASA paths come directly from
-[`../mobile/config/linking.cjs`](../mobile/config/linking.cjs); `webcredentials`
+[`@clawdi/shared/linking`](../../packages/shared/src/linking.cjs); `webcredentials`
 uses the same Apple application identifier. Password autofill additionally
 requires the app's `webcredentials` associated-domain entitlement. See
 [Apple's association format](https://developer.apple.com/documentation/xcode/supporting-associated-domains)

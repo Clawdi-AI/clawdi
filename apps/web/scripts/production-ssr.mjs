@@ -206,6 +206,30 @@ for (const path of [
 	});
 }
 
+test("public discovery bypasses Clerk while consecutive dashboard requests retain authentication", async () => {
+	for (const path of [
+		"/.well-known/agent-skills/index.json",
+		"/dashboard",
+		"/.well-known/agent-skills/index.json",
+		"/dashboard",
+	]) {
+		const response = await server.fetch(authenticatedRequest(path));
+		if (path === "/dashboard") {
+			// Only Clerk's authenticated context can admit the protected alias.
+			assert.equal(response.status, 307);
+			assert.equal(response.headers.get("location"), "/");
+			assert.equal(await response.text(), "");
+		} else {
+			assert.equal(response.status, 200);
+			assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+			assert.equal(response.headers.get("location"), null);
+			assert.equal(response.headers.get("set-cookie"), null);
+			assert.equal(response.headers.get("x-clerk-auth-status"), null);
+			assert.ok((await response.json()).skills.length > 0);
+		}
+	}
+});
+
 for (const search of ["", "?deploy_profile=sui&settings=billing-wallet"]) {
 	test(`production SSR admits dashboard alias ${search} before redirecting to overview`, async () => {
 		const response = await server.fetch(authenticatedRequest(`/dashboard${search}`));
