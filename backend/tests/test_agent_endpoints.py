@@ -9,12 +9,14 @@ import pytest
 from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.agent_types import AGENT_TYPE_LABELS
 from app.core.auth import AuthContext, get_auth, get_auth_short_session
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.user import User
 from app.services.runtime_source import expected_runtime_bundle_v2_etag
+from tests.conftest import create_env_with_project
 
 _DEPRECATED_HOSTED_FIELDS = {"hosted_managed", "hosted_deployment_id"}
 _TEST_LOCALE = {"language": "en", "timezone": "UTC"}
@@ -96,6 +98,57 @@ def _assert_agent_list_response_matches_environment(
         for item in environment_response.json()
     ] == agent_response.json()
     assert all(not _DEPRECATED_HOSTED_FIELDS.intersection(item) for item in agent_response.json())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/v1/agents", "/v1/environments", "/api/environments"])
+@pytest.mark.parametrize(
+    ("agent_type", "status_code"),
+    [(agent_type, 200) for agent_type in AGENT_TYPE_LABELS]
+    + [
+        (agent_type, 422)
+        for agent_type in ("privileged", "admin", "k8s-debug", "x" * 51, "claude-code")
+    ],
+)
+async def test_registration_validates_agent_type(
+    client: httpx.AsyncClient,
+    path: str,
+    agent_type: str,
+    status_code: int,
+):
+    body = {**_agent_body(uuid.uuid4().hex), "agent_type": agent_type}
+    response = await client.post(path, json=body)
+
+    assert response.status_code == status_code, response.text
+    if status_code == 200:
+        agent = await client.get(f"/v1/agents/{response.json()['id']}")
+        assert agent.status_code == 200, agent.text
+        assert agent.json()["agent_type"] == agent_type
+    else:
+        assert response.json()["detail"][0]["loc"] == ["body", "agent_type"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_type", ["privileged", "claude-code"])
+async def test_existing_noncanonical_agent_types_remain_readable(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    agent_type: str,
+):
+    agent = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=uuid.uuid4().hex,
+        machine_name="Legacy Laptop",
+        agent_type=agent_type,
+    )
+    canonical = await client.get(f"/v1/agents/{agent.id}")
+    legacy = await client.get(f"/v1/environments/{agent.id}")
+
+    _assert_agent_response_matches_environment(canonical, legacy)
+    assert canonical.status_code == 200, canonical.text
+    assert canonical.json()["agent_type"] == agent_type
 
 
 @pytest.mark.asyncio

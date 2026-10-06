@@ -122,6 +122,7 @@ include = [
 strict = [
     "app/__init__.py",
     "app/core/__init__.py",
+    "app/core/agent_types.py",
     "app/core/api_scopes.py",
     "app/core/asyncpg_dialect.py",
     "app/core/auth.py",
