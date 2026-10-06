@@ -1,9 +1,9 @@
 import { canCancelDeploymentOperation, type HostedDeployOperation } from "@clawdi/shared/api";
 import { CryptoDigestAlgorithm, digestStringAsync } from "expo-crypto";
 import { useRef, useState } from "react";
-import { Alert } from "react-native";
 import { ActionButton } from "@/components/dashboard/controls";
 import { Text as AppText } from "@/components/ui/text";
+import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppView } from "@/components/ui/view";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
@@ -28,6 +28,7 @@ export function CancelOperation({
 	const { deploymentMutations } = useMobileApi();
 	const t = useI18n();
 	const confirmation = useRef(0);
+	const nativeConfirmation = useConfirmation();
 	const [requested, setRequested] = useState(false);
 	if (!canCancelDeploymentOperation(operation)) return null;
 	const confirm = () => {
@@ -35,7 +36,7 @@ export function CancelOperation({
 		const visible = capture();
 		const ticket = ++confirmation.current;
 		const name = operation.name;
-		Alert.alert(t("deployments.cancelChange"), t("deployments.cancelWarning"), [
+		nativeConfirmation.show(t("deployments.cancelChange"), t("deployments.cancelWarning"), [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: t("deployments.cancelChange"),
@@ -48,8 +49,7 @@ export function CancelOperation({
 						scope.signal.aborted
 					)
 						return;
-					confirmation.current++;
-					void action.run(async (current) => {
+					return action.runOrThrow(async (current) => {
 						const key = `mobile-cancel-v1-${await digestStringAsync(CryptoDigestAlgorithm.SHA256, JSON.stringify([scope.accountKey, name]))}`;
 						if (!current() || !visible()) return;
 						await read((signal) => deploymentMutations.cancel(name, key, signal));
@@ -63,6 +63,7 @@ export function CancelOperation({
 	};
 	return (
 		<AppView className="gap-3">
+			{nativeConfirmation.dialog}
 			<ActionButton
 				label={t("deployments.cancelChange")}
 				disabled={action.busy || requested || !scope.isReady || !deploymentMutations}

@@ -5,13 +5,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, KeyboardAvoidingView, Platform } from "react-native";
 import { useUniwind } from "uniwind";
 import { ActionButton } from "@/components/dashboard/controls";
-import { BackButton } from "@/components/detail/back-link";
 import { Text as AppText } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
 import TerminalDom from "@/hosted/agents/terminal-dom";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
@@ -101,13 +101,12 @@ function Terminal({ deploymentId }: { deploymentId: string | undefined }) {
 	};
 	return (
 		<SafeAreaScreen>
+			<NativeHeader title={t("terminal.title")} />
 			<KeyboardAvoidingView
 				style={{ flex: 1 }}
 				behavior={Platform.OS === "ios" ? "padding" : "height"}
 			>
 				<AppView className="gap-2 p-3">
-					<BackButton />
-					<AppText accessibilityRole="header">{t("terminal.title")}</AppText>
 					<AppText>{t(`terminal.${status}`)}</AppText>
 					{!connection ? (
 						<>

@@ -134,8 +134,7 @@ function Settings({ id }: { id: string | undefined }) {
 					scope.signal.aborted
 				)
 					return;
-				confirmation.current++;
-				void action.run(async (current) => {
+				return action.runOrThrow(async (current) => {
 					const latest = await ownership.refetch();
 					if (latest.isError || !latest.data || !current() || !visible())
 						throw new Error("Ownership unresolved");

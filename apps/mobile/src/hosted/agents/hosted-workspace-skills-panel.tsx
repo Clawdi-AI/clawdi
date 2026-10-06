@@ -8,7 +8,7 @@ import { HERO_GRID_CLASS } from "@clawdi/shared/ui";
 import { agentSurfaceCopy, identityFor } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
-import { useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -18,8 +18,8 @@ import { ActionButton } from "@/components/dashboard/controls";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCard, HeroCardSkeleton } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input as AppTextInput } from "@/components/ui/input";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Text as AppText } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
 import { WebView } from "@/components/ui/web-layout";
@@ -130,8 +130,8 @@ function WorkspaceSkills({ id }: { id: string }) {
 	const refresh = async () => {
 		await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
 	};
-	const submit = (attempt: SkillAttempt, fresh = false) =>
-		void action.run(async (current) => {
+	const submit = (attempt: SkillAttempt, fresh = false, guarded = false) =>
+		(guarded ? action.runOrThrow : action.run)(async (current) => {
 			if (!client || !storageKey || storageError || attempt.status === "rejected") return;
 			const visible = capture();
 			const owns = () => current() && scope.isCurrent() && !scope.signal.aborted;
@@ -165,7 +165,7 @@ function WorkspaceSkills({ id }: { id: string }) {
 				throw error;
 			}
 		});
-	const confirm = (label: string, message: string, run: () => void) => {
+	const confirm = (label: string, message: string, run: () => unknown) => {
 		const ticket = ++confirmation.current;
 		const visible = capture();
 		confirmationDialog.request({
@@ -180,8 +180,7 @@ function WorkspaceSkills({ id }: { id: string }) {
 					!visible()
 				)
 					return;
-				confirmation.current++;
-				run();
+				return run();
 			},
 		});
 	};
@@ -196,7 +195,7 @@ function WorkspaceSkills({ id }: { id: string }) {
 			status: "prepared",
 		};
 		confirm(t("workspaceSkills.confirm"), t("workspaceSkills.warning"), () =>
-			submit(attempt, true),
+			submit(attempt, true, true),
 		);
 	};
 	let install: WorkspaceSkillMutation | null = null;
@@ -206,7 +205,30 @@ function WorkspaceSkills({ id }: { id: string }) {
 		/* Invalid drafts stay local. */
 	}
 	return (
-		<AgentCollection title="Skills" description="Skills available in this Agent's Workspace.">
+		<AgentCollection
+			title="Skills"
+			description="Skills available in this Agent's Workspace."
+			data={
+				inventory.isError || deployment.isError || inventory.isPending
+					? []
+					: (inventory.data?.items ?? [])
+			}
+			keyExtractor={(item) => item.skill_key}
+			refreshing={inventory.isRefetching}
+			onRefresh={() => {
+				setStartedAt(Date.now());
+				void inventory.refetch();
+				void deployment.refetch();
+			}}
+			renderItem={({ item }) => (
+				<WorkspaceSkillItem
+					agentId={deployment.data?.agent_id ?? ""}
+					item={item}
+					disabled={!enabled}
+					onRemove={() => prepare({ action: "uninstall", skillKey: item.skill_key })}
+				/>
+			)}
+		>
 			<AppView className="gap-3">
 				{!enabled && !saved ? <AppText>{t("workspaceSkills.unavailable")}</AppText> : null}
 				<AppTextInput
@@ -237,29 +259,26 @@ function WorkspaceSkills({ id }: { id: string }) {
 							disabled={
 								action.busy || storageError || !storageKey || !client || saved.status === "rejected"
 							}
-							onPress={() => submit(saved)}
+							onPress={() => void submit(saved)}
 						/>
 						{saved.status !== "uncertain" ? (
 							<ActionButton
 								label={t("workspaceSkills.discard")}
 								disabled={action.busy || storageError}
 								onPress={() =>
-									confirm(
-										t("workspaceSkills.discard"),
-										t("workspaceSkills.discardWarning"),
-										() =>
-											void action.run(async (current) => {
-												if (!storageKey) return;
-												await skillAttempts.clearAttempt(
-													storageKey,
-													saved,
-													() => current() && scope.isCurrent(),
-												);
-												if (current()) {
-													setSaved(null);
-													await refresh();
-												}
-											}),
+									confirm(t("workspaceSkills.discard"), t("workspaceSkills.discardWarning"), () =>
+										action.runOrThrow(async (current) => {
+											if (!storageKey) return;
+											await skillAttempts.clearAttempt(
+												storageKey,
+												saved,
+												() => current() && scope.isCurrent(),
+											);
+											if (current()) {
+												setSaved(null);
+												await refresh();
+											}
+										}),
 									)
 								}
 							/>
@@ -299,56 +318,79 @@ function WorkspaceSkills({ id }: { id: string }) {
 				</WebView>
 			) : !inventory.data?.items?.length ? (
 				<EmptyState variant="inset" description="No Skills have synced from this Agent yet." />
-			) : (
-				<WebView recipe={HERO_GRID_CLASS}>
-					{(inventory.data.items ?? []).map((item) => (
-						<WorkspaceSkillItem
-							key={item.skill_key}
-							deploymentId={id}
-							item={item}
-							disabled={!enabled}
-							onRemove={() => prepare({ action: "uninstall", skillKey: item.skill_key })}
-						/>
-					))}
-				</WebView>
-			)}
+			) : null}
 			{confirmationDialog.dialog}
 		</AgentCollection>
 	);
 }
 
 function WorkspaceSkillItem({
-	deploymentId,
+	agentId,
 	item,
 	disabled,
 	onRemove,
 }: {
-	deploymentId: string;
+	agentId: string;
 	item: DeployComponents["schemas"]["V2WorkspaceSkillDesiredItem"];
 	disabled: boolean;
 	onRemove: () => void;
 }) {
-	const t = useI18n();
-	const scope = useAccountScope();
-	const read = useAccountRead();
-	const { workspaceSkills: client } = useMobileApi();
-	const [open, setOpen] = useState(false);
+	const t = useI18n(),
+		identity = identityFor(item.skill_key);
+	return (
+		<HeroCard
+			icon={
+				<IconChip tint={identity.colorClasses}>
+					<AppText>{identity.emoji}</AppText>
+				</IconChip>
+			}
+			title={item.skill_key}
+			footer={[t(`workspaceSkills.${item.status}`), item.source.url]}
+			actions={
+				<>
+					<ActionButton
+						label={t("workspaceSkills.open")}
+						disabled={!agentId}
+						onPress={() =>
+							router.push({
+								pathname: "/agents/[id]/skills/workspace-detail",
+								params: { id: agentId, key: item.skill_key },
+							})
+						}
+					/>
+					<ActionButton
+						label="Uninstall"
+						disabled={disabled || item.skill_key === "clawdi"}
+						onPress={onRemove}
+					/>
+				</>
+			}
+		/>
+	);
+}
+export function WorkspaceSkillDetailScreen() {
+	const params = useLocalSearchParams<{ id?: string | string[]; key?: string | string[] }>();
+	const id = routeParam(params.id),
+		key = routeParam(params.key);
+	const scope = useAccountScope(),
+		read = useAccountRead(),
+		{ hosted, workspaceSkills: client } = useMobileApi();
 	const detail = useQuery({
-		queryKey: accountQueryKey(
-			scope,
-			"workspace-skill-detail",
-			deploymentId,
-			item.skill_key,
-			item.source.url,
-			item.source.path,
-			item.source.commit,
-		),
-		enabled: Boolean(open && client && scope.isReady),
+		queryKey: accountQueryKey(scope, "workspace-skill-sheet", id, key),
+		enabled: Boolean(scope.isReady && id && key && hosted && client),
 		retry: false,
 		queryFn: ({ signal }) =>
 			read(async (lease) => {
-				if (!client) throw new Error(agentSurfaceCopy.unavailable);
-				const result = await client.get(deploymentId, item.skill_key, lease);
+				if (!hosted || !client || !id || !key) throw new Error("Skill unavailable");
+				const matches = (await hosted.listDeployments(lease)).filter(
+					(item) => item.agent_id === id,
+				);
+				if (matches.length !== 1 || !matches[0]) throw new Error("Agent unavailable");
+				const deploymentId = matches[0].resource.id;
+				const inventory = await client.list(deploymentId, lease);
+				const item = inventory.items?.find((item) => item.skill_key === key);
+				if (!item) throw new Error("Skill unavailable");
+				const result = await client.get(deploymentId, key, lease);
 				if (
 					result.source.commit !== item.source.commit ||
 					result.source.url !== item.source.url ||
@@ -358,49 +400,18 @@ function WorkspaceSkillItem({
 				return result;
 			}, signal),
 	});
-	const identity = identityFor(item.skill_key);
 	return (
-		<>
-			<HeroCard
-				icon={
-					<IconChip tint={identity.colorClasses}>
-						<AppText>{identity.emoji}</AppText>
-					</IconChip>
-				}
-				title={item.skill_key}
-				footer={[t(`workspaceSkills.${item.status}`), item.source.url]}
-				actions={
-					<>
-						<ActionButton
-							label={t("workspaceSkills.open")}
-							onPress={() => {
-								setOpen(true);
-								if (open) void detail.refetch();
-							}}
-						/>
-						<ActionButton
-							label="Uninstall"
-							disabled={disabled || item.skill_key === "clawdi"}
-							onPress={onRemove}
-						/>
-					</>
-				}
-			/>
-			<Dialog open={open} onOpenChange={setOpen}>
-				<DialogContent>
-					<DialogHeader>
-						<DialogTitle>{item.skill_key}</DialogTitle>
-					</DialogHeader>
-					{detail.isError ? (
-						<ApiErrorPanel error={detail.error} onRetry={() => void detail.refetch()} />
-					) : detail.data ? (
-						<AppText selectable>{detail.data.content}</AppText>
-					) : (
-						<HeroCardSkeleton />
-					)}
-					<ActionButton label="Done" onPress={() => setOpen(false)} />
-				</DialogContent>
-			</Dialog>
-		</>
+		<SheetPage
+			title={key ?? "Skill"}
+			fallback={id ? `/agents/${id}/skills?tab=workspace` : "/agents"}
+		>
+			{detail.isError ? (
+				<ApiErrorPanel error={detail.error} onRetry={() => void detail.refetch()} />
+			) : detail.data ? (
+				<AppText selectable>{detail.data.content}</AppText>
+			) : (
+				<HeroCardSkeleton />
+			)}
+		</SheetPage>
 	);
 }

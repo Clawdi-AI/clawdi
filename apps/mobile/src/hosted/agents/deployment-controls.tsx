@@ -23,11 +23,11 @@ import { useQuery } from "@tanstack/react-query";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
-import { Alert } from "react-native";
 import { ActionButton, ChoiceSelect as NativePicker } from "@/components/dashboard/controls";
 import { EntityAddCard } from "@/components/entity-card";
 import { Input as AppTextInput } from "@/components/ui/input";
 import { Text as AppText } from "@/components/ui/text";
+import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppView } from "@/components/ui/view";
 import { ProviderCreate } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { AiBindingChoices } from "@/hosted/v2/ai-providers/ai-binding-choices";
@@ -95,6 +95,7 @@ export function DeploymentControls({
 		};
 	}, [scope, deploymentId, restoreEpoch]);
 	const confirmation = useRef(0);
+	const nativeConfirmation = useConfirmation();
 	const state = deployment?.resource.status?.summary_state;
 	const writeBlocked =
 		action.busy ||
@@ -110,8 +111,8 @@ export function DeploymentControls({
 		writeBlocked ||
 		transitioning ||
 		Boolean(deployment?.accepted_operation && !deployment.accepted_operation.done);
-	const submit = (saved: RuntimeAttempt, fresh = false) =>
-		action.run(async (current) => {
+	const submit = (saved: RuntimeAttempt, fresh = false, guarded = false) =>
+		(guarded ? action.runOrThrow : action.run)(async (current) => {
 			const visible = capture();
 			const owns = () => current() && scope.isCurrent() && !scope.signal.aborted;
 			if (!deploymentMutations || !storageKey || !visible() || saved.status === "rejected") return;
@@ -172,7 +173,7 @@ export function DeploymentControls({
 			status: "prepared",
 		};
 		const ticket = ++confirmation.current;
-		Alert.alert(
+		nativeConfirmation.show(
 			t(mutation.action === "delete" ? "runtime.deleteAgent" : "runtime.confirm"),
 			mutation.action === "delete"
 				? `${deployment.resource.name}\n\n${t("runtime.deleteWarning")}`
@@ -189,8 +190,7 @@ export function DeploymentControls({
 							!scope.signal.aborted &&
 							visible()
 						) {
-							confirmation.current++;
-							void submit(saved, true);
+							return submit(saved, true, true);
 						}
 					},
 				},
@@ -200,6 +200,7 @@ export function DeploymentControls({
 	const stable = state === "running" || state === "stopped" || state === "failed";
 	return (
 		<AppView className="gap-3">
+			{nativeConfirmation.dialog}
 			{section !== "ai" ? (
 				<>
 					<AppText accessibilityRole="header" className="text-xl font-semibold text-foreground">

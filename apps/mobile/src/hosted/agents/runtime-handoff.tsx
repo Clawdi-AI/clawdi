@@ -13,10 +13,10 @@ import {
 import * as WebBrowser from "expo-web-browser";
 import { PanelsTopLeft } from "lucide-react-native";
 import { useRef } from "react";
-import { Alert } from "react-native";
 import { OverviewNavigationCard } from "@/components/dashboard/agent-overview-layout";
 import { ActionButton } from "@/components/dashboard/controls";
 import { Text as AppText } from "@/components/ui/text";
+import { useConfirmation } from "@/components/ui/use-confirmation";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -37,6 +37,7 @@ export function RuntimeBrowser({
 	const action = useAuthAction(`${scope.identity}:${deployment.resource.id}`);
 	const { hosted, deploymentMutations } = useMobileApi();
 	const confirmation = useRef(0);
+	const nativeConfirmation = useConfirmation();
 	const endpoint = deployment.runtime_ui_endpoint;
 	const available =
 		deploymentRuntimeUiIsReady(deployment) &&
@@ -49,7 +50,7 @@ export function RuntimeBrowser({
 		const signal = scope.signal;
 		const visible = capture();
 		const ticket = ++confirmation.current;
-		Alert.alert(
+		nativeConfirmation.show(
 			t("deployments.openDashboard"),
 			`${reviewedUrl}\n\n${t("deployments.browserWarning")}`,
 			[
@@ -64,8 +65,7 @@ export function RuntimeBrowser({
 							!visible()
 						)
 							return;
-						confirmation.current++;
-						void action.run(async (active) => {
+						return action.runOrThrow(async (active) => {
 							const current = () => active() && visible() && !signal.aborted && scope.isCurrent();
 							if (!current()) return;
 							const fresh = await read((s) => hosted.getDeployment(id, s), signal);
@@ -110,6 +110,7 @@ export function RuntimeBrowser({
 	if (overview)
 		return (
 			<>
+				{nativeConfirmation.dialog}
 				<OverviewNavigationCard
 					title={agentOverviewCopy.chatOnWeb}
 					description={
@@ -129,6 +130,7 @@ export function RuntimeBrowser({
 		);
 	return (
 		<>
+			{nativeConfirmation.dialog}
 			<ActionButton
 				label={t("deployments.openDashboard")}
 				disabled={!available || action.busy}
