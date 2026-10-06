@@ -381,7 +381,14 @@ function rowSemantics(row: ModernMessageRow): SessionEventSemantics {
 	const metadata = displayMetadata(row.display_metadata);
 	return {
 		lifecycle: row.active ? "active" : row.compacted ? "compacted" : "inactive",
-		display: displayKind === "hidden" ? "hidden" : displayKind ? "event" : "message",
+		display:
+			(!row.active && !row.compacted) ||
+			jsonObject(decodeOptionalJson(row.display_metadata))?.model_only ||
+			displayKind === "hidden"
+				? "hidden"
+				: displayKind
+					? "event"
+					: "message",
 		compressed_summary: Boolean(row._compressed_summary),
 		...(displayKind ? { display_kind: displayKind } : {}),
 		...(metadata ? { display_metadata: metadata } : {}),

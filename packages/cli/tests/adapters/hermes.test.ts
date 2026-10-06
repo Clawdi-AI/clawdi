@@ -54,6 +54,41 @@ describe("HermesAdapter.collectSessions", () => {
 	it("preserves origin/main session bytes and localHash", async () => {
 		await assertSessionGolden("hermes", new HermesAdapter().sessions);
 	});
+	it.each([false, true])("retains rewind and superseded rows as hidden audit events (streaming=%s)", async (streaming) => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		try {
+			db.run("DELETE FROM messages");
+			const insert = db.prepare("INSERT INTO messages (session_id, role, content, timestamp, active, compacted, display_metadata) VALUES ('s-modern', ?, ?, ?, ?, ?, ?)");
+			insert.run("user", "Rewound prompt", 1776247201, 0, 0, null);
+			insert.run("assistant", "Rewound answer", 1776247202, 0, 0, null);
+			insert.run("user", "Superseded original prompt", 1776247203, 0, 0, null);
+			insert.run("assistant", "Superseded original answer", 1776247204, 0, 0, null);
+			insert.run("user", "Model-only prompt", 1776247205, 1, 0, '{"model_only":true}');
+			insert.run("assistant", "Model-only answer", 1776247206, 1, 0, '{"model_only":1}');
+			insert.run("user", "Archived prompt", 1776247207, 0, 1, null);
+			insert.run("assistant", "Current answer", 1776247208, 1, 0, null);
+		} finally {
+			db.close();
+		}
+		const session = await new HermesAdapter().sessions.resolve("s-modern", {
+			streaming,
+			signal: new AbortController().signal,
+		});
+		if (!session) throw new Error("Expected Hermes rewind fixture");
+		const events = [];
+		for await (const event of session.readEvents?.() ?? session.events ?? []) events.push(event);
+		expect(events).toHaveLength(8);
+		expect(events.slice(0, 4).map((event) => event.semantics)).toEqual(
+			Array(4).fill({ lifecycle: "inactive", display: "hidden", compressed_summary: false }),
+		);
+		expect(events.slice(4, 6).map((event) => event.semantics)).toEqual(
+			Array(2).fill({ lifecycle: "active", display: "hidden", compressed_summary: false }),
+		);
+		expect(projectEventsToMessages(events).map((message) => message.content)).toEqual([
+			"Archived prompt", "Current answer",
+		]);
+		expect(session.messageCount).toBe(2);
+	});
 	it.each(["user", "tool"])(
 		"re-maps persisted %s inline images without invalid attachment metadata",
 		async (role) => {
@@ -96,7 +131,7 @@ describe("HermesAdapter.collectSessions", () => {
 		const events = [];
 		for await (const event of session.readEvents?.() ?? session.events ?? []) events.push(event);
 		expect(session.messageCount).toBe(projectEventsToMessages(events).length);
-		expect(session.messageCount).toBe(8);
+		expect(session.messageCount).toBe(7);
 	});
 
 	it("selects events-v1 and maps every safe modern row in stable source order", async () => {
@@ -110,7 +145,7 @@ describe("HermesAdapter.collectSessions", () => {
 			projectPath: null,
 			model: "gpt-5.3-codex",
 			modelsUsed: ["gpt-5.3-codex"],
-			messageCount: 8,
+			messageCount: 7,
 			inputTokens: 120,
 			outputTokens: 45,
 			cacheReadTokens: 8,
@@ -192,7 +227,7 @@ describe("HermesAdapter.collectSessions", () => {
 			role: "user",
 			semantics: {
 				lifecycle: "inactive",
-				display: "event",
+				display: "hidden",
 				display_kind: "auto_continue",
 				display_metadata: { attempt: 2 },
 			},
