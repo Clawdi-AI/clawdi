@@ -76,6 +76,63 @@ describe("ClaudeCodeAdapter.detect", () => {
 });
 
 describe("ClaudeCodeAdapter.collectSessions", () => {
+	it("hides meta injections and excludes compact summaries from the title", async () => {
+		const file = join(
+			tmpHome,
+			".claude",
+			"projects",
+			"-Users-fixture-project",
+			"meta-summary.jsonl",
+		);
+		cpSync(resolve(import.meta.dir, "../fixtures/claude-meta-summary.jsonl"), file);
+		for (const streaming of [false, true]) {
+			const session = await new ClaudeCodeAdapter().sessions.resolve("meta-summary", {
+				streaming,
+				signal: new AbortController().signal,
+			});
+			if (!session) throw new Error("expected Claude meta summary fixture");
+			expect(session.summary).toBe("Actual user prompt");
+			expect(session.messageCount).toBe(3);
+			const upload = await prepareSessionUpload(session, "events-v1");
+			const events = [];
+			for await (const event of upload.readEvents?.() ?? upload.events ?? []) events.push(event);
+			expect(
+				events
+					.filter((event) => event.semantics?.display === "hidden")
+					.map((event) => event.source.record_id),
+			).toEqual(["skill-injection", "command-caveat"]);
+			expect(
+				events.find((event) => event.source.record_id === "compact-summary")?.semantics,
+			).toEqual({ lifecycle: "active", display: "event", compressed_summary: true });
+			expect(events.filter((event) => event.semantics?.display_kind === "meta")).toHaveLength(2);
+		}
+		const session = await new ClaudeCodeAdapter().sessions.resolve("meta-summary");
+		expect(session?.messages.map((message) => message.content)).toEqual([
+			"Compressed conversation summary",
+			"Actual user prompt",
+			"Actual assistant answer",
+		]);
+	});
+
+	it("does not invent a first prompt from meta or compact-only records", async () => {
+		const file = join(
+			tmpHome,
+			".claude",
+			"projects",
+			"-Users-fixture-project",
+			"compact-only.jsonl",
+		);
+		writeFileSync(
+			file,
+			`${readFileSync(resolve(import.meta.dir, "../fixtures/claude-meta-summary.jsonl"), "utf8")
+				.split("\n")
+				.slice(0, 3)
+				.join("\n")}\n`,
+		);
+		const session = await new ClaudeCodeAdapter().sessions.resolve("compact-only");
+		expect(session?.summary).toBeNull();
+		expect(session?.messageCount).toBe(1);
+	});
 	it("ignores invalid metadata timestamps without changing uploaded content", async () => {
 		const adapter = new ClaudeCodeAdapter();
 		const original = (await adapter.sessions.collect({ kind: "complete" })).sessions[0];

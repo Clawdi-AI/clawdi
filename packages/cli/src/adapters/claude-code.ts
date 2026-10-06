@@ -1,11 +1,13 @@
 import { existsSync, readdirSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
+import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-events";
 import type {
 	AgentAdapterCore,
 	RawSession,
+	SessionEventSemantics,
 	SessionScanRequest,
 	SessionScanResult,
 	SyncReadContext,
@@ -73,6 +75,19 @@ function claudeEventDrafts(
 		...(partIndex === undefined ? {} : { part_index: partIndex }),
 	});
 	const drafts: SessionEventDraft[] = [];
+	const semantics: SessionEventSemantics | undefined =
+		role !== "user"
+			? undefined
+			: raw.isMeta === true
+				? {
+						lifecycle: "active",
+						display: "hidden",
+						display_kind: "meta",
+						compressed_summary: false,
+					}
+				: raw.isCompactSummary === true
+					? { lifecycle: "active", display: "event", compressed_summary: true }
+					: undefined;
 	if (role === "user" || role === "assistant" || role === "system" || role === "developer") {
 		const parts = visibleContentParts(message.content);
 		if (parts.length > 0) {
@@ -128,7 +143,7 @@ function claudeEventDrafts(
 			});
 		}
 	}
-	return drafts;
+	return semantics ? drafts.map((draft) => ({ ...draft, semantics })) : drafts;
 }
 
 type ParsedSession = Omit<RawSession, "localSessionId" | "rawFilePath">;
@@ -352,11 +367,24 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		let model: string | null = null;
 		const modelsUsed = new Set<string>();
 		let projectPath: string | null = null;
+		let firstUserPrompt: string | null = null;
 
 		for await (const { data: raw } of source.records()) {
 			const entry = raw as SessionJsonlEntry;
 			const msg = entry.message;
 			const role = msg?.role;
+			if (
+				firstUserPrompt === null &&
+				role === "user" &&
+				raw.isMeta !== true &&
+				raw.isCompactSummary !== true
+			) {
+				const text = visibleContentParts(msg?.content)
+					.filter((part) => part.type === "text")
+					.map((part) => part.text)
+					.join("\n");
+				if (text) firstUserPrompt = safeTruncate(text, 200);
+			}
 
 			const uuid = jsonString(raw.uuid);
 			if (uuid) observeUuid(uuid);
@@ -417,7 +445,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			cacheReadTokens,
 			model,
 			modelsUsed: [...modelsUsed],
-			summary: description.firstUser?.content ?? null,
+			summary: firstUserPrompt,
 			...description.content,
 			sourceRevision: source.revision,
 			durationSeconds,
