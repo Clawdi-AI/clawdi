@@ -8,6 +8,7 @@ import logging
 import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from time import monotonic
 from types import TracebackType
 from typing import Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -54,6 +55,8 @@ log = logging.getLogger(__name__)
 DISCORD_GATEWAY_VERSION = "10"
 DISCORD_GATEWAY_ENCODING = "json"
 DISCORD_DEFAULT_INTENTS = 46593
+
+DISCORD_TERMINAL_CLOSE_RETRY_SECONDS = 30 * 60
 
 _NON_RETRYABLE_CLOSE_CODES = {4004, 4010, 4011, 4012, 4013, 4014}
 _SESSION_RESET_CLOSE_CODES = {4007, 4009}
@@ -154,6 +157,7 @@ class DiscordGatewayWorker:
         self._connect_factory = connect_factory
         self._tasks: dict[UUID, asyncio.Task[None]] = {}
         self._terminal_account_revisions: dict[UUID, str] = {}
+        self._terminal_account_retry_at: dict[UUID, float] = {}
         self._states: dict[UUID, _GatewayState] = {}
         self._lifecycle_serial = asyncio.Lock()
 
@@ -184,6 +188,7 @@ class DiscordGatewayWorker:
         async with self._lifecycle_serial:
             await finish_cleanup(self._close_lock_session)
             self._terminal_account_revisions.clear()
+            self._terminal_account_retry_at.clear()
             self._states.clear()
 
     async def _close_lock_session(self) -> None:
@@ -210,14 +215,19 @@ class DiscordGatewayWorker:
                 task.cancel()
         for account_id in set(self._terminal_account_revisions) - active:
             self._terminal_account_revisions.pop(account_id, None)
+            self._terminal_account_retry_at.pop(account_id, None)
         for account_id, revision in active_accounts.items():
             if account_id in self._tasks:
                 continue
             terminal_revision = self._terminal_account_revisions.get(account_id)
             if terminal_revision == revision:
-                continue
-            if terminal_revision is not None:
+                retry_at = self._terminal_account_retry_at.get(account_id)
+                # Authentication failures require a new credential revision.
+                if retry_at is None or monotonic() < retry_at:
+                    continue
+            elif terminal_revision is not None:
                 self._terminal_account_revisions.pop(account_id, None)
+                self._terminal_account_retry_at.pop(account_id, None)
             state = self._states.get(account_id)
             if state is not None and state.account_revision != revision:
                 self._states.pop(account_id, None)
@@ -256,6 +266,12 @@ class DiscordGatewayWorker:
                     )
                     if state.account_revision is not None:
                         self._terminal_account_revisions[account_id] = state.account_revision
+                        if close_code == 4004:
+                            self._terminal_account_retry_at.pop(account_id, None)
+                        else:
+                            self._terminal_account_retry_at[account_id] = (
+                                monotonic() + DISCORD_TERMINAL_CLOSE_RETRY_SECONDS
+                            )
                         try:
                             await self._persist_terminal_close_marker(
                                 account_id=account_id,
@@ -467,6 +483,8 @@ class DiscordGatewayWorker:
                 kind=CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
             )
             await db.commit()
+        self._terminal_account_revisions.pop(account_id, None)
+        self._terminal_account_retry_at.pop(account_id, None)
 
     def _observe_done_task(self, account_id: UUID, task: asyncio.Task[None]) -> None:
         with contextlib.suppress(asyncio.CancelledError):
