@@ -188,6 +188,73 @@ describe("auth persistence", () => {
 });
 
 describe("config keys", () => {
+	it("sets, gets and unsets comma-separated project exclusions with tilde expansion", async () => {
+		const { getConfig, getEffectiveConfig, getStoredConfig } = await import("../src/lib/config");
+		const run = (...args: string[]) =>
+			Bun.spawnSync(["bun", join(import.meta.dir, "../src/index.ts"), "config", ...args], {
+				env: { ...process.env, HOME: fakeHome, CLAWDI_HOME: join(fakeHome, ".clawdi") },
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+		expect(getConfig().excludeProjects).toEqual([]);
+		expect(getEffectiveConfig().excludeProjects).toEqual({ value: [], source: "default" });
+		const set = run("set", "excludeProjects", "~/work/acme, ~/scratch/../scratch,relative-project");
+		expect(set.exitCode).toBe(0);
+		expect(set.stderr.toString()).toBe("");
+		const expected = [
+			join(fakeHome, "work/acme"),
+			join(fakeHome, "scratch"),
+			join(process.cwd(), "relative-project"),
+		];
+		expect(getStoredConfig().excludeProjects).toEqual(expected);
+		expect(getConfig().excludeProjects).toEqual(expected);
+		const get = run("get", "excludeProjects");
+		expect(get.exitCode).toBe(0);
+		expect(get.stdout.toString().trim()).toBe(expected.join(","));
+		expect(get.stderr.toString()).toBe("");
+		const list = run("list");
+		expect(list.exitCode).toBe(0);
+		expect(list.stdout.toString()).toContain(
+			`excludeProjects = ${expected.join(",")} (config.json)`,
+		);
+		expect(list.stderr.toString()).toBe("");
+		const json = run("list", "--json");
+		expect(json.exitCode).toBe(0);
+		expect(json.stderr.toString()).toBe("");
+		const payload = JSON.parse(json.stdout.toString());
+		expect(payload.schemaVersion).toBe("clawdi.config.v1");
+		expect(payload.values.excludeProjects).toEqual({ value: expected, source: "config.json" });
+		expect(run("set", "excludeProjects", "").exitCode).toBe(0);
+		expect(getConfig().excludeProjects).toEqual([]);
+		expect(getEffectiveConfig().excludeProjects).toEqual({ value: [], source: "config.json" });
+		expect(run("unset", "excludeProjects").exitCode).toBe(0);
+		expect(getStoredConfig().excludeProjects).toBeUndefined();
+		expect(getConfig().excludeProjects).toEqual([]);
+		expect(getEffectiveConfig().excludeProjects).toEqual({ value: [], source: "default" });
+		const unsetGet = run("get", "excludeProjects");
+		expect(unsetGet.exitCode).toBe(0);
+		expect(unsetGet.stdout.toString()).toBe("\n");
+		expect(unsetGet.stderr.toString()).toBe("");
+		const unsetList = run("list", "--json");
+		expect(unsetList.exitCode).toBe(0);
+		expect(unsetList.stderr.toString()).toBe("");
+		expect(JSON.parse(unsetList.stdout.toString()).values.excludeProjects).toEqual({
+			value: [],
+			source: "default",
+		});
+	});
+
+	it("ignores malformed exclusion lists at the config read boundary", async () => {
+		const { getConfig, getEffectiveConfig } = await import("../src/lib/config");
+		const path = join(fakeHome, ".clawdi", "config.json");
+		mkdirSync(join(fakeHome, ".clawdi"), { recursive: true });
+		for (const excludeProjects of ["/project", [1], [""], null, {}]) {
+			writeFileSync(path, JSON.stringify({ excludeProjects }));
+			expect(getConfig().excludeProjects).toEqual([]);
+			expect(getEffectiveConfig().excludeProjects).toEqual({ value: [], source: "default" });
+		}
+	});
+
 	it("setConfigKey / unsetConfigKey round-trip", async () => {
 		const { getStoredConfig, setConfigKey, unsetConfigKey } = await import("../src/lib/config");
 		setConfigKey("apiUrl", "https://cloud.example.test");

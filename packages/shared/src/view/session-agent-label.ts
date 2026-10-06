@@ -5,6 +5,8 @@ export type SessionAgentIdentity = {
 	agent_default_name?: string | null;
 	machine_name?: string | null;
 	agent_type?: string | null;
+	profile_key?: string | null;
+	profile_display_name?: string | null;
 };
 
 export function sessionAgentIdentityInput(session: SessionAgentIdentity): AgentIdentityInput {

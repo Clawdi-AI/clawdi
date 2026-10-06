@@ -355,6 +355,7 @@ export function EntityHeader({
 	title,
 	titleAdornment,
 	meta,
+	metaWrap = false,
 	align = "center",
 	className,
 	titleClassName,
@@ -364,6 +365,8 @@ export function EntityHeader({
 	title: ReactNode;
 	titleAdornment?: ReactNode;
 	meta?: ReactNode | ReactNode[];
+	/** Wrap meta items onto more lines instead of truncating them. */
+	metaWrap?: boolean;
 	/** `start` aligns the icon to the top for multi-line bodies. */
 	align?: "center" | "start";
 	className?: string;
@@ -395,7 +398,7 @@ export function EntityHeader({
 						<span className={entityCardClasses.shrink}>{titleAdornment}</span>
 					) : null}
 				</div>
-				{meta !== undefined ? <EntityMeta items={meta} /> : null}
+				{meta !== undefined ? <EntityMeta items={meta} wrap={metaWrap} /> : null}
 			</div>
 		</div>
 	);
@@ -508,6 +511,8 @@ interface EntityRowProps {
 	title: ReactNode;
 	titleAdornment?: ReactNode;
 	meta?: ReactNode | ReactNode[];
+	/** Wrap meta items onto more lines instead of truncating them. */
+	metaWrap?: boolean;
 	/** Right-aligned status chip (StatusBadge). Non-interactive. */
 	status?: ReactNode;
 	/** Right-aligned interactive controls; suppresses the chevron. */
@@ -534,6 +539,7 @@ export function EntityRow({
 	title,
 	titleAdornment,
 	meta,
+	metaWrap,
 	status,
 	actions,
 	trailing,
@@ -546,7 +552,16 @@ export function EntityRow({
 	const label = ariaLabel ?? (typeof title === "string" ? title : "Open");
 	const body = (
 		<>
-			<EntityHeader icon={icon} title={title} titleAdornment={titleAdornment} meta={meta} />
+			<EntityHeader
+				icon={icon}
+				title={title}
+				titleAdornment={titleAdornment}
+				meta={meta}
+				metaWrap={metaWrap}
+				className="flex-1"
+				// The header fills the row; keep the title adornment beside the title.
+				titleClassName="flex-initial"
+			/>
 			{status ? <div className={entityCardClasses.shrink}>{status}</div> : null}
 			{trailing ? <div className={entityCardClasses.trailing}>{trailing}</div> : null}
 			{actions ? <EntityCardActions visibility="always">{actions}</EntityCardActions> : null}

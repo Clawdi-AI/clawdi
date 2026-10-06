@@ -150,7 +150,9 @@ describe("setup notice", () => {
 		expect(output).toContain("  • Skill and MCP tools installed for supported agents");
 		expect(output).toContain("To opt out later:\n");
 		expect(output).toContain("  • Stop all background sync:   clawdi daemon uninstall");
-		expect(output).not.toContain("clawdi config set excludeProjects");
+		expect(output).toContain(
+			"  • Skip a project:   clawdi config set excludeProjects <path>[,<path>]",
+		);
 		expect(output).toContain("Open your dashboard: https://dashboard.example.test/sessions");
 		expect(output.match(/Clawdi is on for this machine:/g)).toHaveLength(1);
 		expect(output).not.toContain("Detecting installed agents...");

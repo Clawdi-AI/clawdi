@@ -37,6 +37,10 @@ export function normalizeSessionListQuery(
 	if (agent) normalized.agent = agent;
 	const environmentId = cleanString(query.environment_id);
 	if (environmentId) normalized.environment_id = environmentId;
+	// The default profile's key is "", so only null/undefined means "all profiles".
+	if (query.profile_key !== null && query.profile_key !== undefined) {
+		normalized.profile_key = query.profile_key;
+	}
 	const model = cleanArray(query.model);
 	if (model) normalized.model = model;
 	const tag = cleanArray(query.tag);

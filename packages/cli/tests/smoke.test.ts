@@ -74,6 +74,51 @@ describe("CLI smoke — src entry", () => {
 	it("--help lists ordinary commands and hides Hosted operator surfaces", async () => {
 		const { stdout, code } = await runCli(["--help"]);
 		expect(code).toBe(0);
+		const groupHeadings = [
+			"Get started",
+			"Sync",
+			"Context",
+			"Secrets",
+			"Cloud Agents",
+			"Maintenance",
+		];
+		let previousHeadingOffset = -1;
+		for (const heading of groupHeadings) {
+			expect(stdout).toContain(`${heading}\n`);
+			const headingOffset = stdout.indexOf(`${heading}\n`);
+			expect(headingOffset).toBeGreaterThan(previousHeadingOffset);
+			previousHeadingOffset = headingOffset;
+		}
+		for (const command of [
+			"auth",
+			"status",
+			"wallet",
+			"config",
+			"setup",
+			"teardown",
+			"push",
+			"pull",
+			"daemon",
+			"ai-provider",
+			"channel",
+			"vault",
+			"read",
+			"inject",
+			"skill",
+			"session",
+			"memory",
+			"doctor",
+			"update",
+			"mcp",
+			"run",
+			"project",
+			"agent",
+			"inbox",
+			"help",
+		]) {
+			const commandRows = stdout.match(new RegExp(`^  ${command}(?:\\||\\s)`, "gm")) ?? [];
+			expect(commandRows).toHaveLength(1);
+		}
 		for (const cmd of [
 			"auth",
 			"status",
