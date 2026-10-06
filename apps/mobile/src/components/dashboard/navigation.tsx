@@ -1,6 +1,7 @@
 import { resolveAgentWorkspaceProjectId } from "@clawdi/shared/api";
 import {
 	AGENT_NAVIGATION_GROUPS,
+	agentDisplayName,
 	agentSectionCopy,
 	type MobileAgentSection,
 	runtimeBrowserUiLabel,
@@ -39,8 +40,11 @@ export function AgentSectionNavigation({
 	const sections = AGENT_NAVIGATION_GROUPS.flatMap((group) =>
 		group.id === "workspace" ? [...group.itemIds, "skills", "vaults"] : group.itemIds,
 	).filter((id): id is MobileAgentSection => id in agentSectionCopy);
+	// Web's top bar names the Agent on every section; the section picker sits in the menu.
+	const title = deployment?.resource.name ?? (agent.data ? agentDisplayName(agent.data) : "");
 	return (
 		<NativeHeader
+			title={title}
 			actions={
 				section === "projects"
 					? [

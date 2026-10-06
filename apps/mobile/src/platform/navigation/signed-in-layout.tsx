@@ -25,7 +25,8 @@ export function SignedInLayout() {
 		<Stack
 			screenOptions={({ route }) => ({
 				...options,
-				title: roots[route.name],
+				// Unknown titles stay empty until the page sets its own; never show route names.
+				title: roots[route.name] ?? "",
 				headerLargeTitleEnabled: route.name in roots,
 			})}
 		/>
