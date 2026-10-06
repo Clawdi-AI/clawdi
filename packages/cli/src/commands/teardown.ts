@@ -1,6 +1,5 @@
 import { existsSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import * as p from "@clack/prompts";
 import chalk from "chalk";
 import {
 	AGENT_TYPES,
@@ -10,6 +9,7 @@ import {
 } from "../adapters/registry";
 import { getClawdiDir } from "../lib/config";
 import { errMessage } from "../lib/errors";
+import { progress as p } from "../lib/progress";
 import { askMulti, askYesNo } from "../lib/prompts";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";

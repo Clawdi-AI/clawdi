@@ -345,6 +345,7 @@ program
 	.option("--agent <type>", `Narrow to one agent (${AGENT_TYPE_HELP_LABEL})`)
 	.option("--all-agents", "Push from every registered agent on this machine (implied by --all)")
 	.option("--dry-run", "Preview without uploading")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		`
@@ -353,6 +354,7 @@ Examples:
   $ clawdi push                            Push cwd project for the registered agent (or all of them if multiple)
   $ clawdi push --modules skills           Push only skills (cwd project, registered agent(s))
   $ clawdi push --agent claude_code --dry-run
+  $ clawdi push --all --json              Output clawdi.push.v1 with per-agent counts, totals, and errors
   $ clawdi push --all --project ~/foo      Push every module / every agent for one specific project
   $ clawdi push --all --exclude-project ~/scratch`,
 	)
@@ -381,6 +383,7 @@ program
 	)
 	.option("--all-agents", "Pull for every registered agent on this machine (implied by --all)")
 	.option("--dry-run", "Preview session mirrors or explicit skill imports without writing locally")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		`
@@ -389,6 +392,7 @@ Examples:
   $ clawdi pull                          Mirror sessions for the registered agent(s)
   $ clawdi pull --modules sessions
   $ clawdi pull --agent claude_code --dry-run
+  $ clawdi pull --all --json              Output clawdi.pull.v1 with per-agent counts, totals, and errors
   $ clawdi pull --modules skills --project @alice/engineering --agent codex`,
 	)
 	.action(async (opts) => {

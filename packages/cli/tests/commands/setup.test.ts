@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import {
 	chmodSync,
 	cpSync,
@@ -105,7 +105,12 @@ beforeEach(() => {
 	console.error = (...args: unknown[]) => {
 		consoleOutput.push(args.map(String).join(" "));
 	};
+	const stderr = spyOn(process.stderr, "write").mockImplementation((chunk) => {
+		consoleOutput.push(String(chunk));
+		return true;
+	});
 	restoreConsole = () => {
+		stderr.mockRestore();
 		console.log = originalLog;
 		console.error = originalError;
 	};

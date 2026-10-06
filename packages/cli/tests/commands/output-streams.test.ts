@@ -43,7 +43,9 @@ describe("CLI output streams", () => {
 		["vault", "list", "--json"],
 		["project", "list", "--json"],
 		["push"],
+		["push", "--json"],
 		["pull"],
+		["pull", "--json"],
 		["setup"],
 	])("keeps stdout empty when signed out: %j", (...args) => {
 		const result = runCli(args);
@@ -76,9 +78,9 @@ describe("CLI output streams", () => {
 		expect(result.stderr).toContain("Known keys:");
 	});
 
-	it("preserves the module validation exit code and sends errors to stderr", () => {
+	it("exits nonzero on module validation errors and sends errors to stderr", () => {
 		const result = runCli(["push", "--dry-run", "--agent", "claude_code", "--modules", "nope"]);
-		expect(result.status).toBe(0);
+		expect(result.status).toBe(1);
 		expect(result.stdout).toBe("");
 		expect(result.stderr).toContain("Unknown module(s): nope");
 		expect(result.stderr).toContain("Valid: sessions, skills");

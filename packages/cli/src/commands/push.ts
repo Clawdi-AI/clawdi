@@ -1,6 +1,5 @@
 import { homedir } from "node:os";
 import { resolve as resolvePath } from "node:path";
-import * as p from "@clack/prompts";
 import chalk from "chalk";
 import {
 	type AgentAdapter,
@@ -11,6 +10,7 @@ import {
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { errMessage } from "../lib/errors";
+import { progress as p } from "../lib/progress";
 import { parseModules } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import {
@@ -39,6 +39,7 @@ import {
 	recordSkillProjectionClaim,
 } from "../lib/skills-lock";
 import { type ModuleState, readModuleState, writeModuleState } from "../lib/state";
+import { emptySessionCounts, type SyncError } from "../lib/sync-result";
 import { snapshotSkillArchive } from "../lib/tar";
 
 const RESETUP_HINT =
@@ -54,6 +55,7 @@ interface PushOpts {
 	allAgents?: boolean;
 	dryRun?: boolean;
 	agent?: string;
+	json?: boolean;
 }
 
 /** What `uploadOneAgent` actually pushed for a single agent. */
@@ -64,6 +66,8 @@ interface AgentUploadResult {
 	sessionsSuppressed: number;
 	contentUploaded: number;
 	skillsPushed: number;
+	sessionsFailed: number;
+	skillsFailed: number;
 }
 
 /**
@@ -83,7 +87,10 @@ interface AgentScanResult {
 	skills: RawSkill[];
 	sessionsCacheSkipped: number;
 	sessionsBlocked: number;
+	sessionsNew: number;
+	sessionsUpdated: number;
 	skillsCacheSkipped: number;
+	sessionErrors: SyncError[];
 	/** Per-agent advisories (hermes filter notice, first-run hint,
 	 * exclusion summary) — collected during the scan and rendered
 	 * under the agent in the unified summary instead of being printed
@@ -138,7 +145,10 @@ export async function push(opts: PushOpts) {
 	// `parseModules(undefined, …)` already returns the full list — no
 	// multi-select prompt to block an agent harness on.
 	const modules = parseModules(opts.modules, UP_MODULES);
-	if (!modules) return;
+	if (!modules) {
+		process.exitCode = 1;
+		return;
+	}
 	const explicitlySelectedModules = opts.modules !== undefined;
 	const strictModuleSelection = explicitlySelectedModules && targetTypes.length === 1;
 
@@ -155,7 +165,7 @@ export async function push(opts: PushOpts) {
 	// Scan every agent first — one spinner, one combined summary — so a
 	// multi-agent push reads as a single scan, not a per-agent block
 	// sequence that looks like only the first agent was picked.
-	const scanSpinner = p.spinner({ output: process.stderr });
+	const scanSpinner = p.spinner();
 	scanSpinner.start(
 		`Scanning ${targetTypes.length} agent${targetTypes.length === 1 ? "" : "s"}...`,
 	);
@@ -232,6 +242,14 @@ export async function push(opts: PushOpts) {
 	const toUpload = scans.filter(scanHasWork);
 
 	if (opts.dryRun) {
+		if (opts.json) {
+			printPushResult(
+				scans.map((scan) => ({ scan, result: emptyUploadResult(scan) })),
+				true,
+				[],
+			);
+			return;
+		}
 		p.outro(
 			chalk.gray(
 				toUpload.length > 0
@@ -252,32 +270,56 @@ export async function push(opts: PushOpts) {
 		skillsCacheSkipped: 0,
 		skills: 0,
 	};
+	const outcomes = scans.map((scan) => ({
+		scan,
+		result: { ...emptyUploadResult(), sessionsFailed: scan.sessionErrors.length },
+	}));
+	const errors = scans.flatMap((scan) => scan.sessionErrors);
+	let activeAgent: AgentType | null = null;
+	let previousErrorCount = 0;
 	let aborted = false;
-	for (const scan of scans) {
-		// Cache-skip counts are scan facts — fold them in regardless of
-		// whether this agent goes on to upload anything.
-		totals.cacheSkipped += scan.sessionsCacheSkipped;
-		totals.skillsCacheSkipped += scan.skillsCacheSkipped;
-		if (!scanHasWork(scan)) continue;
-		// Header only when more than one agent actually uploads — a
-		// lone upload block needs no disambiguating label.
-		if (toUpload.length > 1) {
-			p.log.step(chalk.bold(`▶ ${adapterRegistry[scan.agentType].displayName}`));
+	try {
+		for (const { scan, result } of outcomes) {
+			// Cache-skip counts are scan facts — fold them in regardless of
+			// whether this agent goes on to upload anything.
+			totals.cacheSkipped += scan.sessionsCacheSkipped;
+			totals.skillsCacheSkipped += scan.skillsCacheSkipped;
+			if (!scanHasWork(scan)) continue;
+			activeAgent = scan.agentType;
+			previousErrorCount = errors.length;
+			// Header only when more than one agent actually uploads — a
+			// lone upload block needs no disambiguating label.
+			if (toUpload.length > 1) {
+				p.log.step(chalk.bold(`▶ ${adapterRegistry[scan.agentType].displayName}`));
+			}
+			const status = await uploadOneAgent(scan, moduleState, result, errors);
+			if (status === "aborted") {
+				aborted = true;
+				break;
+			}
+			totals.created += result.sessionsCreated;
+			totals.updated += result.sessionsUpdated;
+			totals.unchanged += result.sessionsUnchanged;
+			totals.suppressed += result.sessionsSuppressed;
+			totals.content += result.contentUploaded;
+			totals.skills += result.skillsPushed;
 		}
-		const result = await uploadOneAgent(scan, moduleState);
-		if (result === "aborted") {
-			aborted = true;
-			break;
-		}
-		totals.created += result.sessionsCreated;
-		totals.updated += result.sessionsUpdated;
-		totals.unchanged += result.sessionsUnchanged;
-		totals.suppressed += result.sessionsSuppressed;
-		totals.content += result.contentUploaded;
-		totals.skills += result.skillsPushed;
-	}
 
-	writeModuleState(moduleState);
+		activeAgent = null;
+		previousErrorCount = errors.length;
+		writeModuleState(moduleState);
+	} catch (error) {
+		process.exitCode = 1;
+		if (!opts.json) throw error;
+		if (errors.length === previousErrorCount) {
+			errors.push({ agent: activeAgent, module: null, key: null, message: errMessage(error) });
+		}
+		p.log.error(errMessage(error));
+		return;
+	} finally {
+		if (opts.json) printPushResult(outcomes, false, errors);
+	}
+	if (errors.length > 0) process.exitCode = 1;
 	if (aborted) {
 		p.outro(chalk.red("Aborted."), { output: process.stderr });
 		process.exitCode = 1;
@@ -307,7 +349,62 @@ export async function push(opts: PushOpts) {
 		parts.push(skillsLabel);
 	}
 	parts.push(`across ${targetTypes.length} agent${targetTypes.length === 1 ? "" : "s"}`);
-	p.outro(chalk.green(`✓ Push complete — ${parts.join(", ")}`));
+	if (!opts.json) {
+		p.outro(
+			errors.length > 0
+				? chalk.red(`Push completed with errors — ${parts.join(", ")}`)
+				: chalk.green(`✓ Push complete — ${parts.join(", ")}`),
+		);
+	}
+}
+
+function emptyUploadResult(scan?: AgentScanResult): AgentUploadResult {
+	return {
+		sessionsCreated: scan?.sessionsNew ?? 0,
+		sessionsUpdated: scan?.sessionsUpdated ?? 0,
+		sessionsUnchanged: 0,
+		sessionsSuppressed: 0,
+		contentUploaded: 0,
+		skillsPushed: scan?.skills.length ?? 0,
+		sessionsFailed: 0,
+		skillsFailed: 0,
+	};
+}
+
+function printPushResult(
+	outcomes: { scan: AgentScanResult; result: AgentUploadResult }[],
+	dryRun: boolean,
+	errors: SyncError[],
+): void {
+	const totals = {
+		sessions: emptySessionCounts(),
+		skills: { uploaded: 0, unchanged: 0, failed: 0 },
+	};
+	const agents = outcomes.map(({ scan, result }) => {
+		const sessions = {
+			new: result.sessionsCreated,
+			updated: result.sessionsUpdated,
+			unchanged: scan.sessionsCacheSkipped + result.sessionsUnchanged,
+			failed: result.sessionsFailed,
+		};
+		const skills = {
+			uploaded: result.skillsPushed,
+			unchanged: scan.skillsCacheSkipped,
+			failed: result.skillsFailed,
+		};
+		for (const key of ["new", "updated", "unchanged", "failed"] as const) {
+			totals.sessions[key] += sessions[key];
+		}
+		for (const key of ["uploaded", "unchanged", "failed"] as const) {
+			totals.skills[key] += skills[key];
+		}
+		return {
+			agent: scan.agentType,
+			...(scan.modules.includes("sessions") ? { sessions } : {}),
+			...(scan.modules.includes("skills") ? { skills } : {}),
+		};
+	});
+	console.log(JSON.stringify({ schemaVersion: "clawdi.push.v1", dryRun, agents, totals, errors }));
 }
 
 /**
@@ -466,6 +563,9 @@ async function scanOneAgent(
 	// filters can't pollute it because each session has its own entry.
 	let sessionsCacheSkipped = 0;
 	let sessionsBlocked = 0;
+	let sessionsNew = 0;
+	let sessionsUpdated = 0;
+	const sessionErrors: SyncError[] = [];
 	// This snapshot belongs only to the eligibility pass after collection.
 	const sessionsLock = modules.includes("sessions") ? readSessionsLock() : null;
 	if (sessionsModule && sessionProtocol && sessionsLock) {
@@ -475,6 +575,7 @@ async function scanOneAgent(
 			const plan = await prepareSessionUpload(s, sessionProtocol);
 			sessionPlans.set(s.localSessionId, plan);
 			if (!envId) {
+				sessionsNew++;
 				retained.push(s);
 				continue;
 			}
@@ -487,6 +588,12 @@ async function scanOneAgent(
 			if (blocked) {
 				sessionsBlocked += 1;
 				notes.push(blocked);
+				sessionErrors.push({
+					agent: agentType,
+					module: "sessions",
+					key: s.localSessionId,
+					message: blocked,
+				});
 				continue;
 			}
 			const cached = readFencedSessionEntry(sessionsLock, fence);
@@ -497,8 +604,11 @@ async function scanOneAgent(
 					cached.pending === undefined &&
 					cached.blocked === undefined
 				)
-			)
+			) {
 				retained.push(s);
+				if (cached) sessionsUpdated++;
+				else sessionsNew++;
+			}
 		}
 		sessions = retained;
 		sessionsCacheSkipped = before - sessions.length - sessionsBlocked;
@@ -541,7 +651,10 @@ async function scanOneAgent(
 		skills,
 		sessionsCacheSkipped,
 		sessionsBlocked,
+		sessionsNew,
+		sessionsUpdated,
 		skillsCacheSkipped,
+		sessionErrors,
 		notes,
 	};
 }
@@ -563,25 +676,32 @@ function requireSessionPlan(
 async function uploadOneAgent(
 	scan: AgentScanResult,
 	moduleState: ModuleState,
-): Promise<AgentUploadResult | "aborted"> {
+	result: AgentUploadResult,
+	errors: SyncError[],
+): Promise<"complete" | "aborted"> {
 	const { agentType, envId, sessions, sessionPlans, skills } = scan;
 	const sessionsModule = adapterForType(agentType)?.sessions;
 
 	if (!envId) {
-		p.log.error("Environment id missing — rerun `clawdi setup`.", { output: process.stderr });
+		const message = "Environment id missing — rerun `clawdi setup`.";
+		errors.push({ agent: agentType, module: null, key: null, message });
+		p.log.error(message);
 		return "aborted";
 	}
 
 	const api = new ApiClient();
-	let sessionsCreated = 0;
-	let sessionsUpdated = 0;
-	let sessionsUnchanged = 0;
-	let sessionsSuppressed = 0;
-	let contentUploaded = 0;
-	let skillsPushed = 0;
+	const failedSessions = new Set<string>();
+	function fail(module: "sessions" | "skills", key: string, message: string): void {
+		errors.push({ agent: agentType, module, key, message });
+		if (module === "skills") result.skillsFailed++;
+		else if (!failedSessions.has(key)) {
+			failedSessions.add(key);
+			result.sessionsFailed++;
+		}
+	}
 
 	if (sessions.length > 0) {
-		const sessionSpinner = p.spinner({ output: process.stderr });
+		const sessionSpinner = p.spinner();
 		sessionSpinner.start(
 			`Uploading metadata for ${sessions.length} session${sessions.length === 1 ? "" : "s"}...`,
 		);
@@ -598,10 +718,12 @@ async function uploadOneAgent(
 		// Schema-side cap (max_length=500 on SessionBatchRequest)
 		// gives the same protection as defense-in-depth.
 		const SESSION_BATCH_CHUNK = 500;
+		let currentChunk: RawSession[] = [];
 		try {
 			for (let offset = 0; offset < sessions.length; offset += SESSION_BATCH_CHUNK) {
 				const chunk = sessions.slice(offset, offset + SESSION_BATCH_CHUNK);
-				const result = unwrap(
+				currentChunk = chunk;
+				const batchResult = unwrap(
 					await api.POST("/v1/sessions/batch", {
 						body: {
 							sessions: chunk.map((s) => {
@@ -629,19 +751,22 @@ async function uploadOneAgent(
 						},
 					}),
 				);
-				for (const id of result.needs_content) needsContent.add(id);
-				for (const id of result.suppressed ?? []) suppressedIds.add(id);
-				sessionsCreated += result.created;
-				sessionsUpdated += result.updated;
-				sessionsUnchanged += result.unchanged;
-				sessionsSuppressed += result.suppressed?.length ?? 0;
+				for (const id of batchResult.needs_content) needsContent.add(id);
+				for (const id of batchResult.suppressed ?? []) suppressedIds.add(id);
+				result.sessionsCreated += batchResult.created;
+				result.sessionsUpdated += batchResult.updated;
+				result.sessionsUnchanged += batchResult.unchanged;
+				result.sessionsSuppressed += batchResult.suppressed?.length ?? 0;
 				// Server flagged these ids as cross-env race casualties
 				// (see SessionBatchResponse.rejected). They are NOT
 				// synced; the caller must skip the lock-write step
 				// below so the next push retries. Pre-fix the absence
 				// from `needs_content` looked like success and we
 				// wrote a stale lock.
-				for (const id of result.rejected ?? []) rejectedIds.add(id);
+				for (const id of batchResult.rejected ?? []) {
+					rejectedIds.add(id);
+					fail("sessions", id, "Session rejected by server (cross-env race); retry on next push.");
+				}
 			}
 			for (const id of suppressedIds) needsContent.delete(id);
 			if (rejectedIds.size > 0) {
@@ -651,9 +776,9 @@ async function uploadOneAgent(
 				);
 			}
 			const suppressedSummary =
-				sessionsSuppressed > 0 ? `, ${sessionsSuppressed} kept deleted` : "";
+				result.sessionsSuppressed > 0 ? `, ${result.sessionsSuppressed} kept deleted` : "";
 			sessionSpinner.stop(
-				`Metadata: ${sessionsCreated} new, ${sessionsUpdated} updated, ${sessionsUnchanged} unchanged${suppressedSummary}`,
+				`Metadata: ${result.sessionsCreated} new, ${result.sessionsUpdated} updated, ${result.sessionsUnchanged} unchanged${suppressedSummary}`,
 			);
 		} catch (e) {
 			sessionSpinner.stop("Session metadata upload failed.");
@@ -662,32 +787,34 @@ async function uploadOneAgent(
 			// common case; this catches a race where the env was deleted
 			// between probe and batch.
 			if (e instanceof ApiError && e.status === 400 && e.body.includes("unknown_environment")) {
+				for (const session of currentChunk) fail("sessions", session.localSessionId, RESETUP_HINT);
 				p.log.error(RESETUP_HINT, { output: process.stderr });
 				return "aborted";
 			}
+			for (const session of currentChunk) fail("sessions", session.localSessionId, errMessage(e));
 			throw e;
 		}
 
 		if (sessions.some((session) => !rejectedIds.has(session.localSessionId))) {
-			const contentSpinner = p.spinner({ output: process.stderr });
+			const contentSpinner = p.spinner();
 			contentSpinner.start(
 				`Syncing content for ${sessions.length} session${sessions.length === 1 ? "" : "s"}...`,
 			);
 			for (const s of sessions) {
 				const id = s.localSessionId;
 				if (rejectedIds.has(id)) continue;
-				const plan = requireSessionPlan(sessionPlans, id);
-				const fence = sessionFence(api, {
-					environmentId: envId,
-					adapter: agentType,
-					sourceSessionKey: id,
-				});
-				if (suppressedIds.has(id)) {
-					persistSuppressedSession(fence, s, plan);
-					continue;
-				}
 				try {
-					const result = await syncSessionContent({
+					const plan = requireSessionPlan(sessionPlans, id);
+					const fence = sessionFence(api, {
+						environmentId: envId,
+						adapter: agentType,
+						sourceSessionKey: id,
+					});
+					if (suppressedIds.has(id)) {
+						persistSuppressedSession(fence, s, plan);
+						continue;
+					}
+					const syncResult = await syncSessionContent({
 						api,
 						fence,
 						session: s,
@@ -701,22 +828,24 @@ async function uploadOneAgent(
 							);
 						},
 					});
-					if (result.status === "blocked") {
-						p.log.warn(result.message, { output: process.stderr });
-					} else if (result.uploaded) {
-						contentUploaded += 1;
+					if (syncResult.status === "blocked") {
+						fail("sessions", id, syncResult.message);
+						p.log.warn(syncResult.message, { output: process.stderr });
+					} else if (syncResult.uploaded) {
+						result.contentUploaded += 1;
 						contentSpinner.message(
-							`Synced content for ${contentUploaded} session${contentUploaded === 1 ? "" : "s"}...`,
+							`Synced content for ${result.contentUploaded} session${result.contentUploaded === 1 ? "" : "s"}...`,
 						);
 					}
 				} catch (e) {
+					fail("sessions", id, errMessage(e));
 					p.log.warn(`Content sync failed for ${s.localSessionId}: ${errMessage(e)}`, {
 						output: process.stderr,
 					});
 				}
 			}
 			contentSpinner.stop(
-				`Synced ${contentUploaded} changed content session${contentUploaded === 1 ? "" : "s"}`,
+				`Synced ${result.contentUploaded} changed content session${result.contentUploaded === 1 ? "" : "s"}`,
 			);
 		}
 		moduleState[`sessions:${agentType}`] = { lastActivityAt: new Date().toISOString() };
@@ -741,12 +870,14 @@ async function uploadOneAgent(
 
 		// `skills` is already the to-upload set — the scan phase hashed
 		// every skill and dropped the ones already in sync.
-		const skillSpinner = p.spinner({ output: process.stderr });
+		const skillSpinner = p.spinner();
 		skillSpinner.start(`Uploading ${skills.length} skill${skills.length === 1 ? "" : "s"}...`);
 		let pushed = 0;
 		const skipped: { key: string; reason: string }[] = [];
+		let currentSkill: string | null = null;
 		try {
 			for (const skill of skills) {
+				currentSkill = skill.skillKey;
 				// Pass skill_key so nested Hermes layouts archive
 				// entries under `category/foo/...` (matching the
 				// cloud key), not just `foo/...` which would violate the
@@ -762,6 +893,7 @@ async function uploadOneAgent(
 						snapshot.hash,
 					);
 					pushed++;
+					result.skillsPushed = pushed;
 					// Cache key is partitioned by `(agentType, skillKey)`: in
 					// multi-agent push, agent A and agent B can have the same
 					// `foo` content under different projects; a flat skill_key
@@ -792,6 +924,7 @@ async function uploadOneAgent(
 								/(?:^|[^0-9])413(?:[^0-9]|$)|payload too large/i.test(e.body)));
 					if (!is413) throw e;
 					const mb = (snapshot.archive.length / 1024 / 1024).toFixed(1);
+					fail("skills", skill.skillKey, `${mb} MB exceeds upload limit`);
 					skipped.push({ key: skill.skillKey, reason: `${mb} MB exceeds upload limit` });
 				}
 				skillSpinner.message(`Uploading skills (${pushed + skipped.length}/${skills.length})...`);
@@ -804,22 +937,15 @@ async function uploadOneAgent(
 			for (const s of skipped) {
 				p.log.warn(`Skipped ${s.key} — ${s.reason}`, { output: process.stderr });
 			}
-			skillsPushed = pushed;
+			result.skillsPushed = pushed;
 		} catch (e) {
+			if (currentSkill) fail("skills", currentSkill, errMessage(e));
 			skillSpinner.stop(`Failed after ${pushed} skill${pushed === 1 ? "" : "s"}.`);
 			throw e;
 		}
 		moduleState.skills = { lastActivityAt: new Date().toISOString() };
 	}
-
-	return {
-		sessionsCreated,
-		sessionsUpdated,
-		sessionsUnchanged,
-		sessionsSuppressed,
-		contentUploaded,
-		skillsPushed,
-	};
+	return "complete";
 }
 
 function normalizeProject(input: string): string {
