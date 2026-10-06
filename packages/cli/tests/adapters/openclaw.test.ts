@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type SessionScanBatch, scanSessionModule } from "../../src/adapters/base";
@@ -7,6 +7,7 @@ import { SESSION_PROJECTION_REVISION } from "../../src/adapters/rich-event-mappi
 import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
 import { projectEventsToMessages } from "../../src/lib/session-events";
 import { tarSkillDir } from "../../src/lib/tar";
+import { log } from "../../src/serve/log";
 import { cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
@@ -657,6 +658,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 		writeFileSync(
 			join(packageRoot, "session-transcript-runtime.js"),
 			`export async function readVisibleSessionTranscriptMessageEntries() {
+  console.log("[state/agent-db] agent database integrity gate");
   return [
     { entryId: "sdk-user", createdAt: "2026-04-15T10:00:00.000Z", message: { role: "user", content: "SDK question" } },
     { entryId: "sdk-assistant", parentId: "sdk-user", createdAt: "2026-04-15T10:00:05.000Z", message: { role: "assistant", content: "SDK answer", model: "gpt-5.6-sol" } },
@@ -665,6 +667,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 `,
 		);
 		rmSync(join(stateRoot, "agents", "main", "sessions", "sessions.json"));
+		writeFileSync(join(stateRoot, "command-log"), "");
 
 		const sessions = (await new OpenClawAdapter("main").sessions.collect({ kind: "complete" }))
 			.sessions;
@@ -675,6 +678,52 @@ describe("OpenClawAdapter.collectSessions", () => {
 			"SDK answer",
 		]);
 		expect(sessions[0]?.realUserInputAt).toBe("2026-04-15T10:00:00.000Z");
+		expect(sessions[0]?.events?.map((event) => event.source.record_id)).toEqual([
+			"sdk-user",
+			"sdk-assistant",
+		]);
+		expect(readFileSync(join(stateRoot, "command-log"), "utf8")).not.toContain("start:gateway");
+	});
+
+	it.each([
+		{ source: "export const unsupported = true;", failure: "missing_export", exitCode: 2 },
+		{ source: "process.exit(9);", failure: "exit_code", exitCode: 9 },
+		{
+			source: "export const readVisibleSessionTranscriptMessageEntries = () => ({});",
+			failure: "parse_failure",
+			exitCode: undefined,
+		},
+	])("warns before SDK fallback ($failure)", async ({ source, failure, exitCode }) => {
+		installOfficialTranscriptFixture(
+			[
+				{
+					id: "gateway-user",
+					role: "user",
+					content: "Gateway question",
+					timestamp: "2026-04-15T10:00:00.000Z",
+				},
+			],
+			"sdk",
+		);
+		writeFileSync(
+			join(tmpHome, ".local", "lib", "node_modules", "openclaw", "session-transcript-runtime.js"),
+			source,
+		);
+		const warning = spyOn(log, "warn").mockImplementation(() => {});
+		try {
+			const { sessions } = await new OpenClawAdapter().sessions.collect({ kind: "complete" });
+			expect(sessions[0]?.messages[0]?.content).toBe("Gateway question");
+			expect(warning).toHaveBeenCalledWith(
+				"openclaw.transcript_sdk_fallback",
+				expect.objectContaining({
+					failure,
+					fallback: "gateway",
+					...(exitCode === undefined ? {} : { exit_code: exitCode }),
+				}),
+			);
+		} finally {
+			warning.mockRestore();
+		}
 	});
 
 	it("falls back to OpenClaw's public Gateway transcript projection", async () => {

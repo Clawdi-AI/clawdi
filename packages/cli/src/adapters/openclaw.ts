@@ -22,6 +22,7 @@ import {
 	withManagedTargetRollback,
 } from "../runtime/managed-skill-delivery";
 import { mutateUserSkillTarget } from "../runtime/managed-skill-reservation";
+import { log } from "../serve/log";
 import {
 	type AgentAdapterCore,
 	collectFromScan,
@@ -35,7 +36,11 @@ import {
 	type SessionUserActivity,
 	type SyncReadContext,
 } from "./base";
-import { runOpenClawCommand, runOpenClawSdkCommand } from "./openclaw-command";
+import {
+	OpenClawSdkExitError,
+	runOpenClawCommand,
+	runOpenClawSdkCommand,
+} from "./openclaw-command";
 import {
 	openClawAgentId,
 	resolveOpenClawAgentWorkspace,
@@ -477,7 +482,13 @@ async function readOfficialSessionMessagesFromSdk(
 		[],
 		OPENCLAW_SDK_EXPORT_PATHS.sessionTranscript,
 	);
-	if (!sdkPath) return null;
+	if (!sdkPath) {
+		log.warn("openclaw.transcript_sdk_fallback", {
+			failure: "missing_export",
+			fallback: "gateway",
+		});
+		return null;
+	}
 	try {
 		context?.signal.throwIfAborted();
 		const result: unknown = JSON.parse(
@@ -496,7 +507,8 @@ async function readOfficialSessionMessagesFromSdk(
 			),
 		);
 		context?.signal.throwIfAborted();
-		if (!Array.isArray(result)) return null;
+		if (!Array.isArray(result))
+			throw new SyntaxError("OpenClaw transcript SDK result is not an array");
 		return result.flatMap((value): JsonObject[] => {
 			const item = jsonObject(value);
 			const message = jsonObject(item?.message);
@@ -510,8 +522,22 @@ async function readOfficialSessionMessagesFromSdk(
 				},
 			];
 		});
-	} catch {
+	} catch (error) {
 		context?.signal.throwIfAborted();
+		log.warn("openclaw.transcript_sdk_fallback", {
+			failure:
+				error instanceof OpenClawSdkExitError
+					? error.code === 2
+						? "missing_export"
+						: "exit_code"
+					: error instanceof SyntaxError
+						? "parse_failure"
+						: "subprocess_failure",
+			...(error instanceof OpenClawSdkExitError
+				? { exit_code: error.code, signal: error.signal }
+				: {}),
+			fallback: "gateway",
+		});
 		return null;
 	}
 }
