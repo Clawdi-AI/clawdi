@@ -98,6 +98,9 @@ export type SessionEvent =
 	| SessionReasoningEvent;
 
 export interface RawSession {
+	/** Ingest metadata only; never part of projected event bytes. */
+	profileKey?: string;
+	contentProtocol?: "snapshot-v1" | "events-v1";
 	localSessionId: string;
 	projectPath: string | null;
 	startedAt: Date;

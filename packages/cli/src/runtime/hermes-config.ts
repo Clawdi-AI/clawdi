@@ -8,6 +8,7 @@ import { RuntimeUserCommandTimeoutError, spawnRuntimeUserCommand } from "./runti
 const HERMES_CONFIG_COMMAND_TIMEOUT_MS = 30_000;
 
 export interface HermesConfigCommandContext {
+	profile?: string;
 	command: string;
 	home: string;
 	cwd: string;
@@ -49,10 +50,16 @@ function runHermesConfigCommand(
 	context: HermesConfigCommandContext,
 	args: string[],
 ): ReturnType<typeof spawnRuntimeUserCommand> {
-	return spawnRuntimeUserCommand(context.command, ["config", ...args], context.home, context.cwd, {
-		environment: context.environment,
-		timeoutMs: HERMES_CONFIG_COMMAND_TIMEOUT_MS,
-	});
+	return spawnRuntimeUserCommand(
+		context.command,
+		[...(context.profile ? ["-p", context.profile] : []), "config", ...args],
+		context.home,
+		context.cwd,
+		{
+			environment: context.environment,
+			timeoutMs: HERMES_CONFIG_COMMAND_TIMEOUT_MS,
+		},
+	);
 }
 
 export function getHermesResolvedConfigValue(

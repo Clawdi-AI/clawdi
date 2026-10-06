@@ -14,6 +14,17 @@ const DEFAULT_CONFIG: Record<string, unknown> = {
 	},
 };
 
+const commandArgs = process.argv.slice(2);
+if (commandArgs[0] === "-p") {
+	const profile = commandArgs[1];
+	commandArgs.splice(0, 2);
+	if (profile && profile !== "default")
+		process.env.HERMES_HOME = join(
+			process.env.HERMES_HOME || join(process.env.HOME ?? "", ".hermes"),
+			"profiles",
+			profile,
+		);
+}
 const configPath = join(
 	process.env.HERMES_HOME?.trim() || join(process.env.HOME ?? "", ".hermes"),
 	"config.yaml",
@@ -124,7 +135,7 @@ function parseValue(raw: string): unknown {
 	return raw;
 }
 
-const [, action, ...args] = process.argv.slice(2);
+const [, action, ...args] = commandArgs;
 
 try {
 	if (action === "path") {

@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import chalk from "chalk";
-import { reconcileLocalHermesMcp } from "../commands/hermes-mcp";
+import { reconcileAllLocalHermesMcp } from "../commands/hermes-mcp";
 import {
 	type CurrentCliInvocation,
 	resolveCurrentCliInvocation,
@@ -261,9 +261,8 @@ export const openClawMcpLifecycle: McpLifecycle = commandLifecycle({
 
 export const hermesMcpLifecycle: McpLifecycle = {
 	async register() {
-		const invocation = resolveCurrentCliInvocation(["mcp"]);
 		try {
-			if (!reconcileLocalHermesMcp(true, invocation.command, invocation.args)) {
+			if (!reconcileAllLocalHermesMcp(true)) {
 				console.log(chalk.gray("✓ MCP server already registered in Hermes"));
 				return;
 			}
@@ -274,9 +273,8 @@ export const hermesMcpLifecycle: McpLifecycle = {
 		}
 	},
 	async unregister() {
-		const invocation = resolveCurrentCliInvocation(["mcp"]);
 		try {
-			if (reconcileLocalHermesMcp(false, invocation.command, invocation.args)) {
+			if (reconcileAllLocalHermesMcp(false)) {
 				console.log(chalk.green("Hermes: removed MCP server registration"));
 			} else {
 				console.log(chalk.gray("Hermes: MCP server already absent"));
