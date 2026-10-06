@@ -858,6 +858,11 @@ export interface components {
             /** Next Cursor */
             next_cursor?: string | null;
         };
+        /** AccountNotificationReadAllRequest */
+        AccountNotificationReadAllRequest: {
+            /** Up To Id */
+            up_to_id?: string | null;
+        };
         /** AccountNotificationReadAllResponse */
         AccountNotificationReadAllResponse: {
             /** Updated Count */
@@ -3480,7 +3485,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["AccountNotificationReadAllRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3489,6 +3498,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountNotificationReadAllResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

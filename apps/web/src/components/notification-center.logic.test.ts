@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-	type AccountNotification,
-	filterAccountNotifications,
 	getAcceptedProjectInvitationToastCopy,
 	getNotificationCenterEmptyCopy,
 	getNotificationCenterTriggerLabel,
@@ -10,18 +8,6 @@ import {
 	type ProjectInvitationNotification,
 	resolveNotificationUrl,
 } from "./notification-center.logic";
-
-const walletNotification = {
-	id: "wallet-low-balance",
-	title: "Your wallet balance is down to $1.25",
-	description: "Top up before paid requests begin to fail.",
-	category: "Wallet",
-	createdAt: new Date("2026-05-15T08:00:00Z"),
-	read: false,
-	actionLabel: "Top up",
-	actionUrl: "https://cloud.clawdi.ai/?settings=billing-wallet#billing",
-	severity: "warning",
-} satisfies AccountNotification;
 
 const invitation = {
 	id: "inv_1",
@@ -49,19 +35,8 @@ describe("notification center logic", () => {
 		expect(getNotificationCenterTriggerLabel(2)).toBe("Notifications, 2 new items");
 	});
 
-	test("filters history into all and unread views", () => {
-		const readNotification = { ...walletNotification, id: "read", read: true };
-		expect(filterAccountNotifications([walletNotification, readNotification], "all")).toHaveLength(
-			2,
-		);
-		expect(filterAccountNotifications([walletNotification, readNotification], "unread")).toEqual([
-			walletNotification,
-		]);
-
-		const allEmpty = getNotificationCenterEmptyCopy("all");
-		expect(allEmpty.title).toBe("No notifications yet");
-		const unreadEmpty = getNotificationCenterEmptyCopy("unread");
-		expect(unreadEmpty.title).toBe("You're all caught up");
+	test("uses the notification history empty copy", () => {
+		expect(getNotificationCenterEmptyCopy().title).toBe("No notifications yet");
 	});
 
 	test("accepts same-origin and HTTPS notification actions only", () => {
