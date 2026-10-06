@@ -57,7 +57,7 @@ export function configGet(key: string) {
 		// Exit code 1 matches `git config --get` behavior for unset keys.
 		process.exit(1);
 	}
-	console.log(value);
+	console.log(Array.isArray(value) ? value.join(",") : value);
 }
 
 export function configSet(key: string, value: string) {

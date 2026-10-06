@@ -282,6 +282,29 @@ the binding, preserving existing model choices. Custom saved providers require
 `--model` unless they have one unambiguous default. Provider IDs come from Cloud
 AI Providers, not the local `ai-provider list` catalog.
 
+## Project exclusions for session sync
+
+Session sync includes all projects by default. Persist an exact project exclusion with:
+
+```bash
+clawdi config set excludeProjects '~/work/acme,~/scratch'
+clawdi config get excludeProjects
+clawdi config unset excludeProjects
+```
+
+The comma-separated list is stored as absolute paths; `~` expands to the home directory
+and relative paths resolve from the command's working directory. Matching is exact:
+excluding `~/work/acme` does not exclude `~/work/acme/child`. The daemon reads the list
+on every session scan, so no restart is needed. Removing an exclusion lets the next
+scan upload previously skipped sessions. `clawdi push` combines the list with any
+`--exclude-project` flags, including when using `--all` or `--project`.
+
+Hermes ignores project filters because its sessions have no project path. Exclusions
+do not delete sessions already uploaded; delete those from the dashboard session page.
+
+Done: `scripts/test.sh cli tests/config.test.ts tests/commands/push.test.ts src/serve/sync-engine.test.ts`
+passes the config, push, and daemon exclusion cases in the isolated runner.
+
 ## Cloud context and remote Skills
 
 Pi session discovery uses `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` in

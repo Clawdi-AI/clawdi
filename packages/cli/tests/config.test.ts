@@ -188,6 +188,45 @@ describe("auth persistence", () => {
 });
 
 describe("config keys", () => {
+	it("sets, gets and unsets comma-separated project exclusions with tilde expansion", async () => {
+		const { getConfig, getStoredConfig } = await import("../src/lib/config");
+		const run = (...args: string[]) =>
+			Bun.spawnSync(["bun", join(import.meta.dir, "../src/index.ts"), "config", ...args], {
+				env: { ...process.env, HOME: fakeHome, CLAWDI_HOME: join(fakeHome, ".clawdi") },
+				stdout: "pipe",
+				stderr: "pipe",
+			});
+		expect(getConfig().excludeProjects).toEqual([]);
+		const set = run("set", "excludeProjects", "~/work/acme, ~/scratch/../scratch,relative-project");
+		expect(set.exitCode).toBe(0);
+		const expected = [
+			join(fakeHome, "work/acme"),
+			join(fakeHome, "scratch"),
+			join(process.cwd(), "relative-project"),
+		];
+		expect(getStoredConfig().excludeProjects).toEqual(expected);
+		expect(getConfig().excludeProjects).toEqual(expected);
+		const get = run("get", "excludeProjects");
+		expect(get.exitCode).toBe(0);
+		expect(get.stdout.toString().trim()).toBe(expected.join(","));
+		expect(run("set", "excludeProjects", "").exitCode).toBe(0);
+		expect(getConfig().excludeProjects).toEqual([]);
+		expect(run("unset", "excludeProjects").exitCode).toBe(0);
+		expect(getStoredConfig().excludeProjects).toBeUndefined();
+		expect(getConfig().excludeProjects).toEqual([]);
+		expect(run("get", "excludeProjects").exitCode).toBe(1);
+	});
+
+	it("ignores malformed exclusion lists at the config read boundary", async () => {
+		const { getConfig } = await import("../src/lib/config");
+		const path = join(fakeHome, ".clawdi", "config.json");
+		mkdirSync(join(fakeHome, ".clawdi"), { recursive: true });
+		for (const excludeProjects of ["/project", [1], [""], null, {}]) {
+			writeFileSync(path, JSON.stringify({ excludeProjects }));
+			expect(getConfig().excludeProjects).toEqual([]);
+		}
+	});
+
 	it("setConfigKey / unsetConfigKey round-trip", async () => {
 		const { getStoredConfig, setConfigKey, unsetConfigKey } = await import("../src/lib/config");
 		setConfigKey("apiUrl", "https://cloud.example.test");

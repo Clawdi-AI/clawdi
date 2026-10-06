@@ -6,6 +6,7 @@ import { CodexAdapter } from "../../src/adapters/codex";
 import { adapterRegistry } from "../../src/adapters/registry";
 import { push } from "../../src/commands/push";
 import { ApiClient } from "../../src/lib/api-client";
+import { setConfigKey } from "../../src/lib/config";
 import {
 	advanceEventHead,
 	EMPTY_EVENT_HEAD,
@@ -74,6 +75,66 @@ afterEach(() => {
 });
 
 describe("push — scan snapshot", () => {
+	it("honors persisted project exclusions without a flag and leaves the session lock unchanged", async () => {
+		setup("codex");
+		const fixture = (await new CodexAdapter().sessions.collect({ kind: "complete" })).sessions[0];
+		if (!fixture?.projectPath) throw new Error("expected Codex project fixture");
+		setConfigKey("excludeProjects", `${fixture.projectPath}/.`);
+		const lock = readSessionsLock();
+		const { captured, restore } = mockFetch([okEnvironmentProbe()]);
+		try {
+			await push({ agent: "codex", modules: "sessions", all: true });
+			expect(captured.some((request) => request.path === "/v1/sessions/batch")).toBe(false);
+			expect(readSessionsLock()).toEqual(lock);
+		} finally {
+			restore();
+		}
+	});
+
+	it("unions persisted exclusions with flags using exact paths and keeps sessions without a project", async () => {
+		setup("codex");
+		const fixture = (await new CodexAdapter().sessions.collect({ kind: "complete" })).sessions[0];
+		if (!fixture) throw new Error("expected Codex session");
+		const sessions = [
+			{ ...fixture, localSessionId: "persisted", projectPath: "/work/acme/../acme" },
+			{ ...fixture, localSessionId: "flag", projectPath: "/scratch" },
+			{ ...fixture, localSessionId: "child", projectPath: "/work/acme/child" },
+			{ ...fixture, localSessionId: "other", projectPath: "/other" },
+			{ ...fixture, localSessionId: "no-project", projectPath: null },
+		];
+		setConfigKey("excludeProjects", "/work/acme");
+		const originalCreate = adapterRegistry.codex.create;
+		adapterRegistry.codex.create = () => {
+			const adapter = new CodexAdapter();
+			adapter.sessions.collect = async () => ({ sessions, coverage: "complete", dedupedCount: 0 });
+			return adapter;
+		};
+		const { captured, restore } = mockFetch([
+			okEnvironmentProbe(),
+			{
+				method: "POST",
+				path: "/v1/sessions/batch",
+				response: () => jsonResponse({ created: 3, updated: 0, unchanged: 0, needs_content: [] }),
+			},
+		]);
+		try {
+			await push({
+				agent: "codex",
+				modules: "sessions",
+				all: true,
+				excludeProject: ["/scratch/.", "/work/acme"],
+			});
+			expect(
+				batchSessions(captured.find((request) => request.path === "/v1/sessions/batch")).map(
+					(session) => session.local_session_id,
+				),
+			).toEqual(["child", "other", "no-project"]);
+		} finally {
+			adapterRegistry.codex.create = originalCreate;
+			restore();
+		}
+	});
+
 	it("re-resolves a shortening plan and leaves the lock unchanged when stale", async () => {
 		setup("codex");
 		const fixture = (await new CodexAdapter().sessions.collect({ kind: "complete" })).sessions[0];

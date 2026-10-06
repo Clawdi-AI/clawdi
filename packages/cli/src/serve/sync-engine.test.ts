@@ -88,6 +88,83 @@ function sessionQueueFence(
 }
 
 describe("stable session enqueue abort fence", () => {
+	it("skips excluded projects without recording sync hashes and enqueues them after removing the exclusion", async () => {
+		const root = mkdtempSync(join(tmpdir(), "session-exclusion-"));
+		const originalHome = process.env.HOME;
+		try {
+			process.env.HOME = root;
+			const session: RawSession = {
+				localSessionId: "excluded",
+				projectPath: "/work/acme/../acme",
+				startedAt: new Date(0),
+				endedAt: null,
+				messageCount: 1,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				model: null,
+				modelsUsed: [],
+				durationSeconds: null,
+				summary: null,
+				messages: [{ role: "user", content: "sync after opt-in" }],
+				rawFilePath: "/sessions/excluded",
+				sourceRevision: "source-r1",
+			};
+			const excluded = new Set(["/work/acme"]);
+			const queued: string[] = [];
+			const lastPushedHash = new Map<string, string>();
+			const inFlightHash = new Map<string, string>();
+			const options = {
+				abort: new AbortController().signal,
+				sessions: [
+					session,
+					{
+						...session,
+						localSessionId: "child",
+						projectPath: "/work/acme/child",
+						sourceRevision: undefined,
+					},
+					{
+						...session,
+						localSessionId: "no-project",
+						projectPath: null,
+						sourceRevision: undefined,
+					},
+				],
+				excluded,
+				queue: {
+					enqueueWhenAvailable: async (item: Parameters<RetryQueue["enqueueWhenAvailable"]>[0]) => {
+						if (item.kind !== "session_push") throw new Error("expected session push");
+						queued.push(item.local_session_id);
+						return 1;
+					},
+				},
+				lastPushedHash,
+				inFlightHash,
+				protocol: "snapshot-v1" as const,
+				fenceFor: (item: RawSession) => ({
+					apiOrigin: "https://cloud.example.test",
+					environmentId: "agent-1",
+					adapter: "codex" as const,
+					sourceSessionKey: item.localSessionId,
+				}),
+			};
+			const result = await enqueueChangedSessionsAfterStability(options);
+			expect(result.enqueued).toBe(2);
+			expect(result.confirmedSourceRevisions).toEqual([]);
+			expect(queued).toEqual(["child", "no-project"]);
+			expect(lastPushedHash.size).toBe(0);
+			expect(inFlightHash.has(session.localSessionId)).toBe(false);
+			excluded.clear();
+			expect((await enqueueChangedSessionsAfterStability(options)).enqueued).toBe(1);
+			expect(queued).toEqual(["child", "no-project", "excluded"]);
+		} finally {
+			if (originalHome === undefined) delete process.env.HOME;
+			else process.env.HOME = originalHome;
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps a validation-blocked projection out of later scans while changed content is queued", async () => {
 		const root = mkdtempSync(join(tmpdir(), "session-schema-block-"));
 		const originalHome = process.env.HOME;
@@ -142,6 +219,7 @@ describe("stable session enqueue abort fence", () => {
 			const options = {
 				abort: new AbortController().signal,
 				sessions: [session],
+				excluded: new Set<string>(),
 				queue: {
 					enqueueWhenAvailable: async (item: unknown) => {
 						queued.push(item);
@@ -178,6 +256,7 @@ describe("stable session enqueue abort fence", () => {
 		abort.abort();
 		const result = await enqueueChangedSessionsAfterStability({
 			abort: abort.signal,
+			excluded: new Set(),
 			sessions: [
 				{
 					localSessionId: "session-1",
@@ -256,6 +335,7 @@ describe("stable session enqueue abort fence", () => {
 			const result = await enqueueChangedSessionsAfterStability({
 				abort: new AbortController().signal,
 				sessions: [session],
+				excluded: new Set(),
 				queue: {
 					enqueueWhenAvailable: async (item: unknown) => {
 						queued.push(item);

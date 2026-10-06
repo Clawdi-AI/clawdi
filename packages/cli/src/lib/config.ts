@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { normalizeCloudApiBaseUrl, normalizeHostedDeployApiBaseUrl } from "./api-origin";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "./private-file";
+import { normalizeProject } from "./project-path";
 
 // NOTE: these paths are computed lazily so tests can override HOME per-run
 // and module caching doesn't freeze the path at first import.
@@ -34,11 +35,12 @@ export interface ClawdiConfig {
 	// Default-on. Set to false to opt out of background auto-updates.
 	// `CLAWDI_NO_AUTO_UPDATE=1` env var has the same effect for ad-hoc opt-out.
 	autoUpdate?: boolean;
+	excludeProjects?: string[];
 }
 
 // Keys accepted by `clawdi config set/get/unset`. Add a new entry here
 // when introducing a new persistent setting.
-export const CONFIG_KEYS = ["apiUrl", "deployApiUrl", "autoUpdate"] as const;
+export const CONFIG_KEYS = ["apiUrl", "deployApiUrl", "autoUpdate", "excludeProjects"] as const;
 export type ConfigKey = (typeof CONFIG_KEYS)[number];
 
 export interface LegacyClawdiAuth {
@@ -119,6 +121,12 @@ function readStoredConfig(): StoredConfigRecord {
 	else if (typeof normalized.autoUpdate !== "boolean") delete normalized.autoUpdate;
 	if (typeof normalized.apiUrl !== "string") delete normalized.apiUrl;
 	if (typeof normalized.deployApiUrl !== "string") delete normalized.deployApiUrl;
+	if (
+		!Array.isArray(normalized.excludeProjects) ||
+		!normalized.excludeProjects.every((path) => typeof path === "string" && path.length > 0)
+	) {
+		delete normalized.excludeProjects;
+	}
 	return normalized;
 }
 
@@ -144,6 +152,7 @@ export function getConfig(): ClawdiConfig {
 		deployApiUrl:
 			process.env.CLAWDI_DEPLOY_API_URL || stored.deployApiUrl || DEFAULT_DEPLOY_API_URL,
 		autoUpdate: stored.autoUpdate,
+		excludeProjects: stored.excludeProjects ?? [],
 	};
 }
 
@@ -163,6 +172,15 @@ export function setConfig(config: Pick<ClawdiConfig, "apiUrl"> & Partial<ClawdiC
 	if (config.autoUpdate !== undefined && typeof config.autoUpdate !== "boolean") {
 		throw new Error("autoUpdate must be true or false.");
 	}
+	if (config.excludeProjects !== undefined) {
+		if (
+			!Array.isArray(config.excludeProjects) ||
+			!config.excludeProjects.every((path) => typeof path === "string" && path.length > 0)
+		) {
+			throw new Error("excludeProjects must be a list of project paths.");
+		}
+		normalized.excludeProjects = config.excludeProjects.map(normalizeProject);
+	}
 	writeJson(configFile(), normalized);
 }
 
@@ -172,11 +190,18 @@ export function setConfigKey(key: ConfigKey, value: string) {
 	writeJson(configFile(), { ...current, [key]: normalized });
 }
 
-function normalizeConfigValue(key: ConfigKey, value: string): string | boolean {
+function normalizeConfigValue(key: ConfigKey, value: string): string | boolean | string[] {
 	if (key === "autoUpdate") {
 		if (value === "true") return true;
 		if (value === "false") return false;
 		throw new Error("autoUpdate must be true or false.");
+	}
+	if (key === "excludeProjects") {
+		return value
+			.split(",")
+			.map((path) => path.trim())
+			.filter((path) => path.length > 0)
+			.map(normalizeProject);
 	}
 	return normalizeConfigUrl(key, value);
 }
