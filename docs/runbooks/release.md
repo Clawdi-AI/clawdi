@@ -358,6 +358,11 @@ GitHub Actions secrets; operators keep Kamal secrets in the gitignored
 `.kamal/secrets` file and export deployment parameters before running Kamal.
 Self-hosters set `DEPLOY_HOST` to their own server.
 
+`METRICS_BEARER_TOKEN` is required in the app's Kamal secrets. CI validates the
+dedicated GitHub Actions secret and replaces any older value in `KAMAL_SECRETS`;
+operator deploys must supply it in their local `.kamal/secrets`. Metrics readers
+send it in the `Authorization: Bearer` header, including inside containers.
+
 The GitHub Actions deploy step rewrites the two Cloudflare certificate entries
 in `.kamal/secrets` to literal `$CLOUDFLARE_ORIGIN_CERT` and
 `$CLOUDFLARE_ORIGIN_KEY` references. This keeps an operator-local `$(cat ...)`
