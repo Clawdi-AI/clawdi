@@ -20,6 +20,12 @@ const args = process.argv.slice(2);
 const separatorIndex = args.indexOf("--");
 const cliArgs = separatorIndex === -1 ? args : args.slice(0, separatorIndex);
 if (process.env.NO_COLOR || cliArgs.includes("--no-color")) disableColor();
+// Color is process configuration, not a command option. Keep it out of
+// optsWithGlobals() and preserve arguments forwarded after `--`.
+const commandArgs = [
+	...cliArgs.filter((arg) => arg !== "--no-color"),
+	...(separatorIndex === -1 ? [] : args.slice(separatorIndex)),
+];
 
 function commandPath(command: Command): string {
 	const names: string[] = [];
@@ -50,7 +56,10 @@ program
 		"The best home for all your AI agents. Run them in the cloud or connect your own—with their context and tools in one place.",
 	)
 	.version(getCliVersion())
-	.option("--no-color", "Disable color output")
+	.addHelpText(
+		"afterAll",
+		"\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)",
+	)
 	.addHelpText(
 		"after",
 		`
@@ -1955,5 +1964,5 @@ inboxCmd
 	} catch {
 		// auto-update is opportunistic; never let it kill the CLI invocation
 	}
-	await program.parseAsync().catch(handleError);
+	await program.parseAsync(commandArgs, { from: "user" }).catch(handleError);
 })();

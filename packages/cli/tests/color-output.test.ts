@@ -40,7 +40,7 @@ async function runCli(
 	runtime: "bun" | "node",
 	args: string[],
 	colorEnv: Record<string, string> = {},
-): Promise<{ output: string; code: number }> {
+): Promise<{ stdout: string; output: string; code: number }> {
 	const invocation =
 		runtime === "bun"
 			? [process.execPath, "--preload", preload, srcEntry]
@@ -66,7 +66,7 @@ async function runCli(
 			new Response(child.stderr).text(),
 			child.exited,
 		]);
-		return { output: stdout + stderr, code };
+		return { stdout, output: stdout + stderr, code };
 	} finally {
 		if (child.exitCode === null) {
 			child.kill();
@@ -124,6 +124,26 @@ for (const runtime of ["bun", "node"] as const) {
 			expect(result.output).toContain("no configuration set");
 			expect(result.output).not.toContain("unknown option");
 			expect(result.output).not.toContain(ansiEscape);
+		});
+
+		it("accepts daemon doctor --no-color without passing color to the handler", async () => {
+			const result = await runCli(runtime, ["daemon", "doctor", "--no-color"]);
+			expect(result.code).toBe(0);
+			expect(result.output).toContain("cli version:");
+			expect(result.output).not.toContain(ansiEscape);
+		});
+
+		it("preserves Desktop's exact daemon doctor --json invocation", async () => {
+			const result = await runCli(runtime, ["daemon", "doctor", "--json"]);
+			expect(result.code).toBe(0);
+			expect(JSON.parse(result.stdout).cli_version).toBe(getCliVersion());
+		});
+
+		it("documents --no-color in nested daemon help", async () => {
+			const result = await runCli(runtime, ["daemon", "doctor", "--no-color", "--help"]);
+			expect(result.code).toBe(0);
+			expect(result.output).toContain("--no-color");
+			expect(result.output).toContain("Disable color output");
 		});
 
 		it("accepts --no-color on a deeply nested command", async () => {
