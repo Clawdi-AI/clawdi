@@ -7,6 +7,7 @@ import {
 	useMutation,
 	useQueryClient,
 } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import createClient from "openapi-fetch";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -51,6 +52,7 @@ function toAccountNotification(item: ApiNotification): AccountNotification {
 }
 
 export function HostedNotificationCenter() {
+	const router = useRouter();
 	const { getToken, isSignedIn, userId } = useDashboardAuth();
 	const queryClient = useQueryClient();
 	const queryKey = accountNotificationKeys.all(userId ?? "signed-out");
@@ -237,7 +239,16 @@ export function HostedNotificationCenter() {
 			toast.error("This notification link is invalid");
 			return;
 		}
-		window.location.assign(target.url.href);
+		try {
+			if (target.kind === "same-origin") {
+				const { pathname, search, hash } = target.url;
+				await router.navigate({ href: `${pathname}${search}${hash}` });
+			} else {
+				window.location.assign(target.url.href);
+			}
+		} catch {
+			toast.error("Couldn't open notification link");
+		}
 	}
 
 	return (
