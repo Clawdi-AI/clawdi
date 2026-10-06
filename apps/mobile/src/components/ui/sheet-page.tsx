@@ -16,15 +16,19 @@ export function SheetPage({
 	children,
 	fallback,
 	busy = false,
+	sheet: suppliedSheet,
 }: {
 	title: string;
 	description?: ReactNode;
 	children: ReactNode;
 	fallback: Href;
 	busy?: boolean;
+	/** Pass the form's useSheet instance when it also closes with a mutation result. */
+	sheet?: { close: () => Promise<void> };
 }) {
 	const t = useI18n();
-	const sheet = useSheet({ fallback, busy });
+	const defaultSheet = useSheet({ fallback, busy: suppliedSheet ? false : busy });
+	const sheet = suppliedSheet ?? defaultSheet;
 	const [error, setError] = useState<unknown>();
 	return (
 		<SafeAreaScreen>

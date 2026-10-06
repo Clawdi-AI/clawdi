@@ -17,20 +17,31 @@ export function useSheet<Result = void>({
 	const navigation = useNavigation();
 	const mounted = useRef(true);
 	const closing = useRef(false);
+	const completed = useRef(false);
 	useEffect(() => {
 		mounted.current = true;
 		return () => {
 			mounted.current = false;
 		};
 	}, []);
-	usePreventRemove(busy, () => {});
+	usePreventRemove(busy, ({ data }) => {
+		// React Navigation permits redispatching the original, explicitly accepted action.
+		if (completed.current) navigation.dispatch(data.action);
+	});
 	return {
 		close: async (result?: Result) => {
-			if (busy || closing.current || !scope.isCurrent() || !navigation.isFocused()) return;
+			if (
+				(busy && result === undefined) ||
+				closing.current ||
+				!scope.isCurrent() ||
+				!navigation.isFocused()
+			)
+				return;
 			closing.current = true;
 			try {
 				if (result !== undefined) await onResult?.(result);
 				if (!mounted.current || !scope.isCurrent() || !navigation.isFocused()) return;
+				completed.current = true;
 				if (router.canDismiss()) router.dismiss();
 				else router.replace(fallback);
 			} finally {

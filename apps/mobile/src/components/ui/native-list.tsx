@@ -32,7 +32,7 @@ export function NativeList<T>({
 	empty?: ReactElement | null;
 	footer?: ReactElement | null;
 }) {
-	const tint = useCSSVariable("--color-foreground");
+	const [tint, background] = useCSSVariable(["--color-foreground", "--color-background"]);
 	const surface = useResolveClassNames("flex-1 bg-background");
 	const content = useResolveClassNames(`${webView(dashboardPageClasses.root)} gap-2 pb-6 pt-5`);
 	return (
@@ -48,6 +48,8 @@ export function NativeList<T>({
 						refreshing={refreshing}
 						onRefresh={onRefresh}
 						tintColor={typeof tint === "string" ? tint : undefined}
+						colors={typeof tint === "string" ? [tint] : undefined}
+						progressBackgroundColor={typeof background === "string" ? background : undefined}
 					/>
 				) : undefined
 			}

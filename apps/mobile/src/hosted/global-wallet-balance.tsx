@@ -1,5 +1,5 @@
 import { globalWalletBalanceClasses as styles } from "@clawdi/shared/ui";
-import { headerWalletBalancePresentation } from "@clawdi/shared/view";
+import { billingCopy, headerWalletBalancePresentation } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { WalletCards } from "lucide-react-native";
@@ -36,7 +36,8 @@ export function useHeaderWalletBalance() {
 	return compute
 		? {
 				id: "wallet",
-				label: displayedBalance ?? label,
+				label: displayedBalance ?? billingCopy.wallet,
+				accessibilityLabel: label,
 				onPress: () => {
 					if (scope.isCurrent() && !scope.signal.aborted) router.push("/settings/wallet");
 				},

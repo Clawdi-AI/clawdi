@@ -57,9 +57,9 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const capture = useForegroundLease();
-	const sheet = useSheet({ fallback: "/skills" });
 	const { skills, cloud } = useMobileApi();
 	const action = useAuthAction(scope.identity);
+	const sheet = useSheet<boolean>({ fallback: "/skills", busy: action.busy });
 	const cache = useQueryClient();
 	const projects = useCloudProjects();
 	const [sourceId, setSourceId] = useState(projectId ?? "");
@@ -179,7 +179,7 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 						: "copied",
 			);
 			await invalidate();
-			if (current() && visible()) await sheet.close();
+			if (current() && visible()) await sheet.close(true);
 		});
 	const download = () =>
 		action.run(async (current) => {
@@ -209,6 +209,7 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 					title={sendSkillTitle(detail.data?.name ?? skillKey ?? "")}
 					fallback="/skills"
 					busy={action.busy}
+					sheet={sheet}
 				>
 					<WebView recipe="gap-2">
 						<WebView recipe="text-sm text-muted-foreground">
@@ -309,7 +310,12 @@ function Archive({ projectId, skillKey }: { projectId?: string; skillKey?: strin
 					) : null}
 				</SheetPage>
 			) : (
-				<SheetPage title={t("skillArchive.title")} fallback="/skills" busy={action.busy}>
+				<SheetPage
+					title={t("skillArchive.title")}
+					fallback="/skills"
+					busy={action.busy}
+					sheet={sheet}
+				>
 					<ChoiceSelect
 						disabled={action.busy}
 						value={sourceId}

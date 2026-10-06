@@ -1,18 +1,20 @@
 import { SegmentedControl } from "@expo/ui/community/segmented-control";
 import { useCSSVariable, useUniwind } from "uniwind";
 
+export type NativeSegmentsProps = {
+	value: string;
+	options: { value: string; label: string }[];
+	onChange: (value: string) => void;
+	disabled?: boolean;
+};
+
 /** Native single-choice control; options retain the Web labels and ordering. */
 export function NativeSegments({
 	value,
 	options,
 	onChange,
 	disabled = false,
-}: {
-	value: string;
-	options: { value: string; label: string }[];
-	onChange: (value: string) => void;
-	disabled?: boolean;
-}) {
+}: NativeSegmentsProps) {
 	const { theme } = useUniwind();
 	const tint = useCSSVariable("--color-accent");
 	return (

@@ -37,6 +37,9 @@ export function HeaderActions({
 							key={action.id}
 							enabled={!action.disabled}
 							onClick={action.onPress}
+							modifiers={[
+								semantics({ contentDescription: action.accessibilityLabel ?? action.label }),
+							]}
 							colors={{ contentColor: color(action.destructive ? destructive : foreground) }}
 						>
 							<Text style={{ fontFamily: "Geist-Medium", fontSize: 14 }}>{action.label}</Text>

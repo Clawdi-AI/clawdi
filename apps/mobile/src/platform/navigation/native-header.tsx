@@ -60,6 +60,7 @@ export function useHeaderSearch({
 	maxLength?: number;
 }): NativeStackNavigationOptions["headerSearchBarOptions"] {
 	const ref = useRef<SearchBarCommands | null>(null);
+	const nativeValue = useRef("");
 	const [foreground, muted, background] = useCSSVariable([
 		"--color-foreground",
 		"--color-muted-foreground",
@@ -67,7 +68,11 @@ export function useHeaderSearch({
 	]);
 	const color = (v: string | number | undefined) => (typeof v === "string" ? v : undefined);
 	useEffect(() => {
-		ref.current?.setText(value);
+		// Echoing every native keystroke can overwrite newer edits before React commits.
+		if (value !== nativeValue.current) {
+			nativeValue.current = value;
+			ref.current?.setText(value);
+		}
 	}, [value]);
 	return {
 		ref,
@@ -79,8 +84,10 @@ export function useHeaderSearch({
 		headerIconColor: color(foreground),
 		hintTextColor: color(muted),
 		barTintColor: color(background),
-		onChangeText: ({ nativeEvent }) =>
-			onChange(maxLength ? nativeEvent.text.slice(0, maxLength) : nativeEvent.text),
+		onChangeText: ({ nativeEvent }) => {
+			nativeValue.current = nativeEvent.text;
+			onChange(maxLength ? nativeEvent.text.slice(0, maxLength) : nativeEvent.text);
+		},
 		onCancelButtonPress: () => onChange(""),
 	};
 }

@@ -13,6 +13,7 @@ export function HeaderActions({
 			{actions.map((action) => (
 				<Stack.Toolbar.Button
 					key={action.id}
+					accessibilityLabel={action.accessibilityLabel}
 					disabled={action.disabled}
 					onPress={action.onPress}
 					style={{ fontFamily: "Geist-Medium" }}

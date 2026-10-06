@@ -68,7 +68,11 @@ function NativeConfirmAction({
 			},
 		});
 		const listener = AppState.addEventListener("change", (state) => {
-			if (state !== "active") confirmation.close();
+			if (state !== "active") {
+				confirmation.close();
+				setInternalOpen(false);
+				latest.current.onOpenChange?.(false);
+			}
 		});
 		return () => {
 			listener.remove();

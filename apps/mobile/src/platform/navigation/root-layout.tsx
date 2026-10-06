@@ -12,6 +12,7 @@ import { AppearanceProvider } from "@/platform/appearance-provider";
 import { isDevAuthBypass } from "@/platform/auth/auth-client";
 import { useAppFonts } from "@/platform/fonts";
 import { MobileProviders } from "@/platform/mobile-providers";
+import { formSheetOptions } from "@/platform/navigation/sheet-options";
 
 export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
 	return (
@@ -28,6 +29,7 @@ function Navigation() {
 		<Stack screenOptions={{ headerShown: false }}>
 			<Stack.Screen name="(auth)" />
 			<Stack.Screen name="(tabs)" />
+			<Stack.Screen name="(sheets)" options={formSheetOptions} />
 		</Stack>
 	);
 }
