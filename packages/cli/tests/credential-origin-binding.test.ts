@@ -269,7 +269,9 @@ describe("Hosted shared OAuth profile binding", () => {
 				return Response.json([]);
 			},
 		});
-		await expect(mismatched.getPlans()).rejects.toThrow("not bound");
+		await expect(mismatched.getPlans()).rejects.toThrow(
+			"doesn't match the current CLAWDI_API_URL and CLAWDI_DEPLOY_API_URL",
+		);
 		expect(requests).toBe(0);
 
 		const snapshot = new HostedDeployClient({
@@ -287,7 +289,9 @@ describe("Hosted shared OAuth profile binding", () => {
 				hostedApiOrigin: "https://other-hosted.example.test",
 			}),
 		);
-		await expect(snapshot.getPlans()).rejects.toThrow("not bound");
+		await expect(snapshot.getPlans()).rejects.toThrow(
+			"doesn't match the current CLAWDI_API_URL and CLAWDI_DEPLOY_API_URL",
+		);
 		expect(requests).toBe(0);
 	});
 });

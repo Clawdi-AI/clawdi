@@ -46,7 +46,7 @@ export async function agentReconnect(
 			}),
 		);
 	} catch (error) {
-		console.log(chalk.red(`Could not list Agents: ${errMessage(error)}`));
+		console.log(chalk.red(`Could not list agents: ${errMessage(error)}`));
 		process.exitCode = 1;
 		return;
 	}
@@ -82,7 +82,7 @@ export async function agentReconnect(
 	const agentType = parseAgentType(candidate.agent_type);
 	if (!agentType) return;
 	if (requestedType && requestedType !== agentType) {
-		console.log(chalk.red("The selected Agent does not match --agent."));
+		console.log(chalk.red("The selected agent does not match --agent."));
 		process.exitCode = 1;
 		return;
 	}
@@ -103,7 +103,7 @@ export async function agentReconnect(
 		machineId = getOrCreateMachineId();
 		machineName = hostname();
 	} catch (error) {
-		console.log(chalk.red(`Could not prepare local Agent identity: ${errMessage(error)}`));
+		console.log(chalk.red(`Could not prepare local agent identity: ${errMessage(error)}`));
 		process.exitCode = 1;
 		return;
 	}
@@ -112,7 +112,7 @@ export async function agentReconnect(
 	if (recentOtherMachine && opts.yes && !opts.confirmTakeover) {
 		console.log(
 			chalk.red(
-				"This Agent recently synced from another machine. Repeat with --confirm-takeover to disconnect it explicitly.",
+				"This agent recently synced from another machine. Repeat with --confirm-takeover to disconnect it explicitly.",
 			),
 		);
 		process.exitCode = 1;
@@ -148,7 +148,7 @@ export async function agentReconnect(
 	if (!opts.yes && isInteractive()) {
 		const confirmed = await p.confirm({
 			message: recentOtherMachine
-				? `Take over “${candidate.name}” from the recently active machine “${candidate.machine_name}”? Its daemon will be fenced immediately.`
+				? `Take over “${candidate.name}” from “${candidate.machine_name}”? Its daemon on that machine stops syncing immediately.`
 				: `Reconnect ${adapterRegistry[agentType].displayName} to “${candidate.name}” and replace its previous installation binding?`,
 			initialValue: true,
 		});
@@ -246,24 +246,24 @@ async function selectCandidate(
 	if (agentId) {
 		const candidate = agents.find((agent) => agent.id === agentId);
 		if (candidate) return candidate;
-		console.log(chalk.red("The selected Agent is unavailable or cannot be locally reconnected."));
+		console.log(chalk.red("The selected agent is unavailable or cannot be locally reconnected."));
 		process.exitCode = 1;
 		return null;
 	}
 	const reconnectable = agents.filter((agent) => !agentType || agent.agent_type === agentType);
 	if (reconnectable.length === 0) {
-		console.log(chalk.red("No reconnectable Agents were found for this account."));
+		console.log(chalk.red("No reconnectable agents were found for this account."));
 		process.exitCode = 1;
 		return null;
 	}
 	if (reconnectable.length === 1) return reconnectable[0] ?? null;
 	if (!isInteractive()) {
-		console.log(chalk.red("Multiple Agents match. Pass an Agent id to choose one."));
+		console.log(chalk.red("Multiple agents match. Pass an agent ID to choose one."));
 		process.exitCode = 1;
 		return null;
 	}
 	const selected = await p.select<string>({
-		message: "Reconnect which Agent?",
+		message: "Reconnect which agent?",
 		options: reconnectable.map((agent) => {
 			const type = AGENT_TYPES.includes(agent.agent_type as AgentType)
 				? (agent.agent_type as AgentType)

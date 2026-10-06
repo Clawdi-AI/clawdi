@@ -890,8 +890,8 @@ function nativeStagingFailureReason(error: unknown): string {
 	const message = error instanceof Error ? error.message : "";
 	if (/timed out/i.test(message)) return "Native release download timed out.";
 	if (error instanceof DOMException && error.name === "AbortError")
-		return "Native update was cancelled.";
-	if (/abort|cancel/i.test(message)) return "Native update was cancelled.";
+		return "Native update was canceled.";
+	if (/abort|cancel/i.test(message)) return "Native update was canceled.";
 	const downloadFailure = /^native (manifest|artifact) download failed \(([0-9]{3})\)$/.exec(
 		message,
 	);

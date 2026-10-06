@@ -453,7 +453,7 @@ describe("update install", () => {
 		},
 		{
 			name: "cancellation",
-			expected: "Native update was cancelled.",
+			expected: "Native update was canceled.",
 			fetcher: testFetcher(async () => {
 				throw new DOMException("cancelled", "AbortError");
 			}),
