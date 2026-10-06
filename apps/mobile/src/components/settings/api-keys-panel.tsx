@@ -175,7 +175,6 @@ export function ApiKeyCreateScreen() {
 	return <ApiKeyCreateView key={`${scope.accountKey}:${scope.generation}`} />;
 }
 function ApiKeyCreateView() {
-	const t = useI18n();
 	const scope = useAccountScope();
 	const cache = useQueryClient();
 	const { account } = useMobileApi();
@@ -187,7 +186,7 @@ function ApiKeyCreateView() {
 	const [acknowledged, setAcknowledged] = useState(false);
 	const sheet = useSheet<boolean>({
 		fallback: "/settings/api-keys",
-		busy: action.busy || Boolean(rawKey && !acknowledged),
+		busy: action.busy || Boolean(rawKey),
 	});
 	const clear = useCallback(() => {
 		setRawKey(null);
@@ -200,6 +199,70 @@ function ApiKeyCreateView() {
 		});
 		return () => listener.remove();
 	}, [clear]);
+	const create = () =>
+		void action.run(async (current) => {
+			if (!label.trim() || label.trim().length > 200 || rawKey) return;
+			const visible = capture();
+			if (!visible()) return;
+			const created = await read((signal) => account.createApiKey({ label: label.trim() }, signal));
+			if (!current()) return;
+			if (visible()) {
+				setRawKey(created.raw_key);
+				setAcknowledged(false);
+			}
+			setLabel("");
+			await cache.invalidateQueries({
+				queryKey: accountQueryKey(scope, "account-api-keys"),
+			});
+		});
+	const finish = () =>
+		void action.run(async () => {
+			if (!acknowledged) return;
+			await sheet.close(true);
+			clear();
+		});
+	return (
+		<ApiKeyFormView
+			label={label}
+			setLabel={setLabel}
+			rawKey={rawKey}
+			acknowledged={acknowledged}
+			setAcknowledged={setAcknowledged}
+			busy={action.busy}
+			ready={scope.isReady}
+			error={action.error}
+			sheet={sheet}
+			create={create}
+			finish={finish}
+		/>
+	);
+}
+export function ApiKeyFormView({
+	label,
+	setLabel,
+	rawKey,
+	acknowledged,
+	setAcknowledged,
+	busy,
+	ready,
+	error,
+	sheet,
+	create,
+	finish,
+}: {
+	label: string;
+	setLabel: (value: string) => void;
+	rawKey: string | null;
+	acknowledged: boolean;
+	setAcknowledged: (value: boolean) => void;
+	busy: boolean;
+	ready: boolean;
+	error: unknown;
+	sheet?: { close: () => Promise<void> };
+	create: () => void;
+	finish: () => void;
+}) {
+	const t = useI18n();
 	return (
 		<SheetPage
 			title={t(rawKey ? "settingsParity.saveKey" : "settingsParity.createKey")}
@@ -207,7 +270,7 @@ function ApiKeyCreateView() {
 				rawKey ? "settingsParity.saveKeyDescription" : "settingsParity.createDescription",
 			)}
 			fallback="/settings/api-keys"
-			busy={action.busy || Boolean(rawKey && !acknowledged)}
+			busy={busy || Boolean(rawKey)}
 			sheet={sheet}
 		>
 			<WebView recipe={styles.form}>
@@ -229,16 +292,7 @@ function ApiKeyCreateView() {
 								{settingsCopy.acknowledgeKey}
 							</WebText>
 						</WebView>
-						<Button
-							disabled={!acknowledged || action.busy}
-							onPress={() =>
-								void action.run(async () => {
-									if (!acknowledged) return;
-									await sheet.close(true);
-									clear();
-								})
-							}
-						>
+						<Button disabled={!acknowledged || busy} onPress={finish}>
 							<Text>{settingsCopy.done}</Text>
 						</Button>
 					</>
@@ -252,38 +306,17 @@ function ApiKeyCreateView() {
 								placeholder={settingsCopy.keyPlaceholder}
 								value={label}
 								onChangeText={setLabel}
-								editable={!action.busy}
+								editable={!busy}
 							/>
 							<WebText recipe={styles.description}>{settingsCopy.keyNameHelp}</WebText>
 						</WebView>
-						<Button
-							disabled={action.busy || !scope.isReady || !label.trim()}
-							onPress={() =>
-								void action.run(async (current) => {
-									if (!label.trim() || label.trim().length > 200 || rawKey) return;
-									const visible = capture();
-									if (!visible()) return;
-									const created = await read((signal) =>
-										account.createApiKey({ label: label.trim() }, signal),
-									);
-									if (!current()) return;
-									if (visible()) {
-										setRawKey(created.raw_key);
-										setAcknowledged(false);
-									}
-									setLabel("");
-									await cache.invalidateQueries({
-										queryKey: accountQueryKey(scope, "account-api-keys"),
-									});
-								})
-							}
-						>
+						<Button disabled={busy || !ready || !label.trim()} onPress={create}>
 							<Icon as={Plus} />
 							<Text>{settingsCopy.createKey}</Text>
 						</Button>
 					</>
 				)}
-				{action.error ? <ApiErrorPanel error={t("account.actionFailed")} /> : null}
+				{error ? <ApiErrorPanel error={t("account.actionFailed")} /> : null}
 			</WebView>
 		</SheetPage>
 	);

@@ -16,6 +16,7 @@ import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export function SubscriptionDetailScreen({
 	subscriptionId,
@@ -59,15 +60,20 @@ export function SubscriptionDetailScreen({
 		);
 	return (
 		<SafeAreaScreen>
+			<NativeHeader
+				title={t("billing.details")}
+				actions={[
+					{
+						id: "refresh",
+						label: t("inventory.refresh"),
+						disabled: query.isFetching,
+						onPress: () => void query.refetch(),
+					},
+				]}
+			/>
 			<AppScrollView contentContainerClassName={webView(billingPageClass)}>
 				<SettingsPanelHeader title={t("billing.details")} />
-				<DetailAction
-					disabled={query.isFetching}
-					label={t("inventory.refresh")}
-					onPress={() => {
-						void query.refetch();
-					}}
-				/>
+
 				{query.isError ? (
 					<ApiErrorPanel
 						error={query.error}

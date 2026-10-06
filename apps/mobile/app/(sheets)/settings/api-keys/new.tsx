@@ -1,1 +1,1 @@
-export { ApiKeyCreateScreen as default } from "@/components/settings/api-keys-panel";
+export { default } from "@/pages/settings/api-keys/new/page";
