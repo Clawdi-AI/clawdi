@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import {
 	cpSync,
 	existsSync,
@@ -34,6 +34,7 @@ import {
 	readSessionsLock,
 	sessionFenceKey,
 } from "../src/lib/sessions-lock";
+import { log } from "../src/serve/log";
 import { cleanupTmp, copyFixtureToTmp } from "./adapters/helpers";
 
 const savedFetch = globalThis.fetch;
@@ -385,21 +386,81 @@ test("profile inventory and MCP refresh while session sync is disabled", async (
 	).toEqual({ command: "clawdi", args: ["mcp"] });
 });
 
-test("ambiguous upstream rename history stops without choosing a Cloud identity", async () => {
+test("multiple removed names rename only the most recent match without blocking profile scans", async () => {
 	writeFileSync(
 		join(home, ".hermes", "profiles", "work", "profile.yaml"),
-		'{"previous_names":["old","older"]}',
+		'{"previous_names":["old","recent","unknown"]}',
 	);
-	let writes = 0;
+	roster(["default", "work", "other"]);
+	const otherHome = join(home, ".hermes", "profiles", "other");
+	mkdirSync(otherHome, { recursive: true });
+	cpSync(join(fixture, ".hermes", "state.db"), join(otherHome, "state.db"));
+	let inventory = [row(""), row("old", "removed", 7), row("recent", "removed", 3), row("other")];
+	const renames: { path: string; body: unknown }[] = [];
 	const client = api(async (input) => {
 		const request = input instanceof Request ? input : new Request(input);
-		if (request.method !== "GET") writes++;
-		return response([row(""), row("old", "removed"), row("older", "removed")]);
+		if (request.method === "PUT") {
+			inventory.push(row("work"));
+			return response(inventory);
+		}
+		if (request.method === "POST") {
+			renames.push({ path: new URL(request.url).pathname, body: await request.json() });
+			inventory = inventory.filter((profile) => !["recent", "work"].includes(profile.profile_key));
+			inventory.push({ ...row("work", "active", 3), id: "id-recent" });
+			return response({ sessions_moved: 3, suppressions_moved: 0 });
+		}
+		return response(inventory);
 	});
-	await expect(createProfileSync(new HermesAdapter(), client, "env").refresh()).rejects.toThrow(
-		"multiple removed profiles",
-	);
-	expect(writes).toBe(0);
+	const fence = (profileKey: string) =>
+		sessionFence(client, {
+			environmentId: "env",
+			adapter: "hermes",
+			sourceSessionKey: profileSessionKey(profileKey, "s-modern"),
+			profileKey,
+		});
+	for (const key of ["old", "recent"])
+		persistFencedSessionEntry(fence(key), {
+			protocol: "events-v1",
+			local_hash: `unchanged-${key}`,
+			event_revision: 2,
+		});
+	const warn = spyOn(log, "warn");
+	try {
+		const result = await createProfileSync(new HermesAdapter(), client, "env").sessions?.collect({
+			kind: "complete",
+		});
+		expect(renames).toEqual([
+			{
+				path: "/v1/agents/env/profiles/recent/rename",
+				body: { new_upstream_key: "work" },
+			},
+		]);
+		expect(inventory.find((profile) => profile.profile_key === "old")).toEqual(
+			row("old", "removed", 7),
+		);
+		expect(inventory.find((profile) => profile.profile_key === "work")?.id).toBe("id-recent");
+		expect(
+			result?.sessions
+				.filter((session) => session.localSessionId === "s-modern")
+				.map((session) => session.profileKey),
+		).toEqual(["", "work", "other"]);
+		const lock = readSessionsLock();
+		expect(readFencedSessionEntry(lock, fence("recent"))).toBeUndefined();
+		expect(readFencedSessionEntry(lock, fence("work"))?.local_hash).toBe("unchanged-recent");
+		expect(readFencedSessionEntry(lock, fence("old"))?.local_hash).toBe("unchanged-old");
+		expect(warn.mock.calls).toEqual([
+			[
+				"profiles.rename_multiple_previous_names",
+				{
+					profile_key: "work",
+					selected_profile_key: "recent",
+					removed_profile_keys: ["old"],
+				},
+			],
+		]);
+	} finally {
+		warn.mockRestore();
+	}
 });
 
 test("OpenClaw official roster honors the configured default and attributes receipts before sync", async () => {

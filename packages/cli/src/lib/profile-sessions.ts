@@ -20,6 +20,7 @@ import {
 	profileSessionKey,
 } from "../adapters/profiles";
 import { reconcileLocalHermesMcp } from "../commands/hermes-mcp";
+import { log } from "../serve/log";
 import { type ApiClient, unwrap } from "./api-client";
 import { canonicalApiOrigin } from "./api-origin";
 import { getClawdiDir } from "./config";
@@ -126,17 +127,26 @@ export function createProfileSync(
 						!present.has(row.profile_key) &&
 						profile.previousNames.includes(row.profile_key),
 				);
-				if (removed.length > 1)
-					throw new Error(
-						"Hermes rename history matches multiple removed profiles; explicit attribution is required",
-					);
-				const source = removed[0];
-				if (source)
+				// Hermes appends old names, so the last matching name preserves the most recent identity.
+				const sourceKey = profile.previousNames.findLast((key) =>
+					removed.some((row) => row.profile_key === key),
+				);
+				const source = removed.find((row) => row.profile_key === sourceKey);
+				if (source) {
+					if (removed.length > 1)
+						log.warn("profiles.rename_multiple_previous_names", {
+							profile_key: profile.profileKey,
+							selected_profile_key: source.profile_key,
+							removed_profile_keys: removed
+								.filter((row) => row !== source)
+								.map((row) => row.profile_key),
+						});
 					pending.push({
 						sourceKey: source.profile_key,
 						targetKey: profile.profileKey,
 						sourceId: source.id,
 					});
+				}
 			}
 			// Record first-discovery identity before inventory/rename mutations. A retry
 			// never infers a rename from session counts or overlapping session IDs.

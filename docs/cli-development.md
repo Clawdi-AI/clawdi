@@ -51,8 +51,10 @@ default-only compatibility mode.
 Hermes rename attribution applies only when a newly discovered key records a
 known removed key in upstream rename history. A durable API/Agent-fenced journal
 retries interrupted inventory and rename operations and moves local receipts
-without changing their hashes or pending generations. Multiple removed matches
-stop the scan for explicit attribution. Without upstream history, the old
+without changing their hashes or pending generations. When multiple removed
+keys match, the last matching entry in upstream history wins. Only that profile
+is renamed; the others stay removed/offline, and one warning containing profile
+keys accompanies continued sync. Without upstream history, the old
 profile stays offline and the new profile syncs independently. OpenClaw moves
 existing Cloud session metadata to the discovered Agent before content sync.
 
