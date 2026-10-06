@@ -303,6 +303,40 @@ describe("OpenCode session adapter", () => {
 		},
 	);
 
+	test("ignores unread columns in schema validation and source revisions", async () => {
+		const { adapter, databasePath } = fixtureDatabase();
+		const original = await adapter.sessions.resolve("opencode.ses_fixture");
+		const db = new Database(databasePath);
+		try {
+			db.run(
+				"UPDATE session SET version='unused', tokens_reasoning=999, tokens_cache_write=999, time_archived=1, agent='unused'",
+			);
+			db.run("UPDATE part SET time_updated=1");
+		} finally {
+			db.close();
+		}
+		const updated = await adapter.sessions.resolve("opencode.ses_fixture");
+		expect(updated?.sourceRevision).toBe(original?.sourceRevision);
+		expect(updated?.events).toEqual(original?.events);
+		const schema = new Database(databasePath);
+		try {
+			for (const column of [
+				"version",
+				"tokens_reasoning",
+				"tokens_cache_write",
+				"time_archived",
+				"agent",
+			])
+				schema.exec(`ALTER TABLE session DROP COLUMN ${column}`);
+			schema.exec("ALTER TABLE part DROP COLUMN time_updated");
+		} finally {
+			schema.close();
+		}
+		const narrowed = await adapter.sessions.resolve("opencode.ses_fixture");
+		expect(narrowed?.sourceRevision).toBe(original?.sourceRevision);
+		expect(narrowed?.events).toEqual(original?.events);
+	});
+
 	test("invalidates the source revision for metadata changes and refuses rewritten content", async () => {
 		const { adapter, databasePath } = fixtureDatabase();
 		const context = { streaming: true, signal: new AbortController().signal };

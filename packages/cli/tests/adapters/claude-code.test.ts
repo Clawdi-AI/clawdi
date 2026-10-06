@@ -143,6 +143,36 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 		]);
 	});
 
+	it("describes the first projected user message for the summary", async () => {
+		const file = join(tmpHome, ".claude", "projects", "-Users-fixture-project", "summary.jsonl");
+		writeFileSync(
+			file,
+			[
+				{
+					uuid: "summary-user",
+					timestamp: "2026-10-06T01:00:00.000Z",
+					message: {
+						role: "user",
+						content: [
+							{ type: "text", text: "First paragraph" },
+							{ type: "text", text: "Second paragraph" },
+						],
+					},
+				},
+				{
+					uuid: "summary-assistant",
+					timestamp: "2026-10-06T01:00:01.000Z",
+					message: { role: "assistant", content: "Answer" },
+				},
+			]
+				.map((record) => JSON.stringify(record))
+				.join("\n") + "\n",
+		);
+		const session = await new ClaudeCodeAdapter().sessions.resolve("summary");
+		expect(session?.summary).toBe("First paragraph\nSecond paragraph");
+		expect(session?.summary).toBe(session?.messages[0]?.content);
+	});
+
 	it("counts shared multi-block message usage once and still counts records without an id", async () => {
 		const file = join(
 			tmpHome,

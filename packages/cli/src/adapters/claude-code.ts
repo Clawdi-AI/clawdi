@@ -1,7 +1,6 @@
 import { existsSync, readdirSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
-import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-events";
 import type {
@@ -353,7 +352,6 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		let model: string | null = null;
 		const modelsUsed = new Set<string>();
 		let projectPath: string | null = null;
-		let firstUserMessage: string | null = null;
 
 		for await (const { data: raw } of source.records()) {
 			const entry = raw as SessionJsonlEntry;
@@ -373,18 +371,6 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 
 			if (entry.cwd && !projectPath) {
 				projectPath = entry.cwd;
-			}
-
-			if (role === "user" && !firstUserMessage) {
-				const c = msg?.content;
-				if (typeof c === "string") {
-					firstUserMessage = safeTruncate(c, 200);
-				} else if (Array.isArray(c)) {
-					const textBlock = c.find((b) => b.type === "text" && b.text);
-					if (textBlock?.text) {
-						firstUserMessage = safeTruncate(textBlock.text, 200);
-					}
-				}
 			}
 
 			if (role === "assistant" && msg?.model) {
@@ -431,7 +417,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			cacheReadTokens,
 			model,
 			modelsUsed: [...modelsUsed],
-			summary: firstUserMessage,
+			summary: description.firstUser?.content ?? null,
 			...description.content,
 			sourceRevision: source.revision,
 			durationSeconds,
