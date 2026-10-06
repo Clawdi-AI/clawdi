@@ -255,6 +255,14 @@ while True:
 			writeFileSync(trigger, "start");
 			const deadline = Date.now() + 8_000;
 			while (!existsSync(state) && Date.now() < deadline) await Bun.sleep(50);
+			if (!existsSync(state)) {
+				const status = run(["show", unit, "--property=ActiveState,SubState,Result,MainPID"]);
+				const journal = runCommandResult("journalctl", ["-u", unit, "--no-pager", "-n", "20"]);
+				const events = join(cg, "memory.events");
+				throw new Error(
+					`OOM fixture did not report its child result: ${status}\n${existsSync(events) ? readFileSync(events, "utf8") : "cgroup removed"}\n${journal.stdout}${journal.stderr}`,
+				);
+			}
 			expect(readFileSync(state, "utf8")).toBe("-9");
 			expect(show("ActiveState")).toBe("active");
 			expect(show("MainPID")).toBe(pid);
