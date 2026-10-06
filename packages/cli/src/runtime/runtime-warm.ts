@@ -10,17 +10,12 @@ import { reconcilePendingRuntimeCliUpgrade } from "./cli-update";
 import { initializeAnonymousEgressSnapshot } from "./egress-snapshot";
 import { resolveHostedOpenClawWorkspace } from "./hosted-openclaw-context";
 import { runtimeCommandPath } from "./manifest-install";
-import { assertFirstWriterUnclaimed, warmFirstOpenClawWriter } from "./openclaw-first-writer";
 import {
 	anonymousOpenClawGatewayPatch,
 	seedAnonymousOpenClawAuthProbes,
 } from "./openclaw-preinstallation";
 import { applyOpenClawConfigMergePatch } from "./openclaw-provider-config";
-import {
-	openClawHotApplyEnabled,
-	recordWarmOpenClawGateway,
-	warmOpenClawGatewayEnvironment,
-} from "./openclaw-warm-gateway";
+import { recordWarmOpenClawGateway, warmOpenClawGatewayEnvironment } from "./openclaw-warm-gateway";
 import type { RuntimePaths } from "./paths";
 import {
 	flushPersistedStepRevisions,
@@ -47,7 +42,6 @@ export async function warmHostedOpenClawRuntime(
 		].some(existsSync)
 	)
 		throw new Error("runtime warm requires an unclaimed runtime with no applied tenant state");
-	assertFirstWriterUnclaimed(paths);
 	initializeAnonymousEgressSnapshot(paths);
 	// Refresh verification after the golden volume copy, before the claim shim.
 	reconcilePendingRuntimeCliUpgrade(paths);
@@ -89,7 +83,6 @@ export async function warmHostedOpenClawRuntime(
 	seedAnonymousOpenClawAuthProbes(paths, command);
 	flushPersistedStepRevisions(paths);
 	recordWarmOpenClawGateway(paths);
-	if (openClawHotApplyEnabled()) warmFirstOpenClawWriter(paths, sdk, identity.uid, identity.gid);
 }
 
 async function waitForGatewayHealth(): Promise<void> {

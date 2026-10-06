@@ -1157,9 +1157,6 @@ function applyRuntimeEntryProjections(
 				throw new Error(state.installErrors.join("; "));
 			}
 		}, context.hostedRuntimeContract.identity);
-		// Projection file IO drops filesystem privileges. The root-private
-		// first-writer socket/receipt must be dispatched after restoring them;
-		// both native writer paths still execute the SDK as the runtime UID.
 		if (name === "openclaw") commitOpenClawConfigTransaction(openClawContext, workspaceRoot);
 		const resolved = withRuntimeUserFileAccess(
 			() =>

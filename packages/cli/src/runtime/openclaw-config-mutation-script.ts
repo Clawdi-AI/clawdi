@@ -1,9 +1,9 @@
-/** Shared by normal native writes and the anonymous single-use writer. */
-export const OPENCLAW_MUTATION_IMPORTS = `import { readFileSync } from "node:fs";
+/** Official native mutation with locking, CAS, validation and reload policy. */
+export const OPENCLAW_CONFIG_MUTATION_HELPER = `import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
-let mutationProfileEnabled = process.env.CLAWDI_RUNTIME_PROFILE === "1";
+const mutationProfileEnabled = process.env.CLAWDI_RUNTIME_PROFILE === "1";
 const emitMutationSpan = (label, startedAt, started) => {
   if (mutationProfileEnabled) console.error("CLAWDI_RUNTIME_SPAN " + JSON.stringify({
     label, pid: process.pid, startedAt, durationMs: Math.round((performance.now()-started)*100)/100,
@@ -13,9 +13,7 @@ const profileMutation = async (label, run) => {
   const startedAt = Date.now(), started = performance.now();
   try { return await run(); } finally { emitMutationSpan(label, startedAt, started); }
 };
-`;
-
-export const OPENCLAW_MUTATION_FUNCTION = `
+const sdk = await profileMutation("writer.import-sdk", () => import(pathToFileURL(process.argv[1]).href));
 async function mutateOpenClawConfig(sdk, input, kind, hotApply) {
   if (typeof sdk.readConfigFileSnapshotForWrite !== "function" || typeof sdk.mutateConfigFile !== "function")
     throw new Error("required public config-mutation export is missing");
@@ -164,10 +162,5 @@ await profileMutation("writer.mutate", () => sdk.mutateConfigFile({
 }));
 
 }
-`;
-
-export const OPENCLAW_CONFIG_MUTATION_HELPER = `${OPENCLAW_MUTATION_IMPORTS}
-const sdk = await profileMutation("writer.import-sdk", () => import(pathToFileURL(process.argv[1]).href));
-${OPENCLAW_MUTATION_FUNCTION}
 await mutateOpenClawConfig(sdk, JSON.parse(readFileSync(0, "utf8")), process.argv[2], process.argv.includes("hot-apply"));
 `;

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { hermesWarmMarker, hermesWasWarmed } from "../src/runtime/hermes-warm-state";
 import { getRuntimePaths } from "../src/runtime/paths";
+import { warmHostedOpenClawRuntime } from "../src/runtime/runtime-warm";
 import { warmHostedHermesRuntime } from "../src/runtime/runtime-warm-hermes";
 
 let scratch = "";
@@ -18,16 +19,20 @@ test.each([
 	"appliedState",
 	"manifestLastGood",
 	"managedSecretCacheFile",
-] as const)("Hermes warm refuses %s before invoking services", async (marker) => {
+] as const)("Anonymous warm refuses %s before invoking services", async (marker) => {
 	scratch = mkdtempSync(join(tmpdir(), "hermes-warm-safety-"));
 	const paths = { ...getRuntimePaths({ mode: "hosted" }), [marker]: join(scratch, marker) };
 	mkdirSync(dirname(paths[marker]), { recursive: true });
 	writeFileSync(paths[marker], "{}");
 	await expect(warmHostedHermesRuntime(paths)).rejects.toThrow("unclaimed runtime");
+	await expect(warmHostedOpenClawRuntime(paths)).rejects.toThrow("unclaimed runtime");
 });
 
-test("Hermes warm refuses local mode before invoking services", async () => {
+test("Anonymous warm refuses local mode before invoking services", async () => {
 	await expect(warmHostedHermesRuntime(getRuntimePaths({ mode: "local" }))).rejects.toThrow(
+		"hosted runtime mode",
+	);
+	await expect(warmHostedOpenClawRuntime(getRuntimePaths({ mode: "local" }))).rejects.toThrow(
 		"hosted runtime mode",
 	);
 });

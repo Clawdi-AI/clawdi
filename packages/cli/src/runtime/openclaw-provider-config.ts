@@ -8,7 +8,6 @@ import {
 	openClawFileSecretEnvironmentKeys,
 	projectOpenClawProviderFileSecrets,
 } from "./openclaw-file-secrets";
-import { tryFirstOpenClawWrite } from "./openclaw-first-writer";
 import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import {
 	openClawStepIdentity,
@@ -68,14 +67,7 @@ export function commitOpenClawConfigTransaction(
 	const transaction = context.configMutationState.transaction;
 	if (!transaction) return;
 	try {
-		if (
-			transaction.operations.length > 0 &&
-			!tryFirstOpenClawWrite(
-				context.requireSdkExport("configMutation"),
-				context.home,
-				transaction.operations,
-			)
-		) {
+		if (transaction.operations.length > 0) {
 			runRuntimeUserCommand(
 				"node",
 				[
