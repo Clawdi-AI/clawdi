@@ -98,11 +98,15 @@ its design document. Production and real model/chat/channel traffic are unqualif
 
 Hosted qualification now fills blank volumes and installs software in place;
 TTL retirement/refill supplies freshness without cloned software volumes.
-Three samples per runtime gave claim-to-first-Cloud-`ok` medians of 13.76 s
-OpenClaw and 13.35 s Hermes, below the 16.95/14.23 s ceilings. Full fill medians
-were 202.40/279.67 s respectively. All six samples, one TTL retirement/refill
-cycle and cleanup passed. The paired Hosted pool design document retains the
-complete results and qualification limits.
+Three samples per runtime gave claim-to-first-Cloud-`ok` medians of 16.49 s
+OpenClaw and 15.67 s Hermes, within the owner-accepted approximately 17.5/16 s
+ceilings. Full fill medians were 189.04/364.99 s respectively; TTL retirement
+and replacement readiness took 204.74 s. All six functional samples completed.
+The fixture exited 1 solely because its original Hermes ceiling remained
+14.23 s; cleanup propagated the status while removing all disposable resources.
+An additional startup-order change was discarded after changed-file Biome
+failed, before native measurement. The paired Hosted pool design document
+retains the complete results and qualification limits.
 
 Done: Docker CLI typecheck/tests, real systemd and changed-file Biome pass;
 PostgreSQL regressions cover fallback/preservation. Paired native qualification
