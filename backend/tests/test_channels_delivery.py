@@ -874,13 +874,14 @@ async def test_channel_delivery_link_lock_contention_does_not_exhaust_attempts(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("replace_token", [False, True])
+@pytest.mark.parametrize("replace_token,max_attempts", [(False, 1), (False, 2), (True, 1)])
 async def test_cancelled_delivery_releases_only_its_attempt(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
     monkeypatch,
     replace_token: bool,
+    max_attempts: int,
 ):
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
@@ -905,6 +906,10 @@ async def test_cancelled_delivery_releases_only_its_attempt(
     )
     assert sent.status_code == 201, sent.text
     delivery_id = UUID(sent.json()["delivery_id"])
+    row = await db_session.get(ChannelDelivery, delivery_id)
+    assert row is not None
+    row.max_attempts = max_attempts
+    await db_session.commit()
     started = asyncio.Event()
 
     async def blocked_send(**_kwargs):
@@ -936,7 +941,11 @@ async def test_cancelled_delivery_releases_only_its_attempt(
         assert row.status == DELIVERY_STATUS_IN_PROGRESS
         assert row.locked_by == "another-attempt"
     else:
-        assert row.status == DELIVERY_STATUS_PENDING
+        assert row.status == (
+            DELIVERY_STATUS_FAILED if max_attempts == 1 else DELIVERY_STATUS_PENDING
+        )
+        if max_attempts == 1:
+            assert row.last_error == channel_service.DELIVERY_ERROR_FAILED
         assert row.locked_at is None
         assert row.locked_by is None
     assert channel_service.DELIVERY_LEASE_SECONDS == 150
