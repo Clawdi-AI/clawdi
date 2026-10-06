@@ -15,6 +15,10 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
+### CLI 0.15.2
+
+- **OpenClaw:** Profile discovery, session reads, and Skills workspace resolution find the installed CLI when running as the agent user with a restricted PATH. Transcript SDK reads also use an absolute runtime executable.
+
 ### CLI 0.15.1
 
 - **Session history:** Codex tool names follow upstream namespace rules. Claude meta messages stay hidden and compact summaries appear as events. OpenCode synthetic text stays hidden.

@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { type SessionScanBatch, scanSessionModule } from "../../src/adapters/base";
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
@@ -221,6 +229,29 @@ exit 1
 }
 
 describe("OpenClawAdapter.detect", () => {
+	it("reads the installed version under the runtime user with no tenant bins in PATH", async () => {
+		const tenantBin = join(tmpHome, ".local", "bin");
+		mkdirSync(tenantBin, { recursive: true });
+		writeFileSync(
+			join(tenantBin, "openclaw"),
+			"#!/bin/sh\nprintf 'OpenClaw fixture-version\\n'\n",
+			{
+				mode: 0o755,
+			},
+		);
+		const previous = process.env.CLAWDI_RUNTIME_USER;
+		try {
+			process.env.CLAWDI_RUNTIME_USER = "fixture-agent";
+			process.env.PATH = "/usr/local/bin:/usr/bin:/bin";
+			expect(await new OpenClawAdapter().getVersion()).toBe("OpenClaw fixture-version");
+			rmSync(join(tenantBin, "openclaw"));
+			expect(await new OpenClawAdapter().getVersion()).toBeNull();
+		} finally {
+			if (previous === undefined) delete process.env.CLAWDI_RUNTIME_USER;
+			else process.env.CLAWDI_RUNTIME_USER = previous;
+		}
+	});
+
 	it.each(["version", "empty", "failed"])("reads only --version (%s)", async (mode) => {
 		const log = join(tmpHome, "version-arguments.log");
 		writeFileSync(
@@ -268,6 +299,45 @@ fi
 });
 
 describe("OpenClawAdapter.collectSessions", () => {
+	it.each(["sdk", "gateway"] as const)(
+		"reads official sessions through %s as the runtime user without tenant bins in PATH",
+		async (surface) => {
+			installOfficialTranscriptFixture(
+				[
+					{
+						id: "runtime-user-message",
+						role: "user",
+						content: "runtime user prompt",
+						timestamp: "2026-04-15T10:00:00.000Z",
+					},
+				],
+				surface,
+			);
+			const tenantBin = join(tmpHome, ".local", "bin");
+			mkdirSync(tenantBin, { recursive: true });
+			renameSync(join(tmpHome, "bin", "openclaw"), join(tenantBin, "openclaw"));
+			const keys = ["CLAWDI_RUNTIME_USER", "CLAWDI_RUNTIME_UID", "CLAWDI_RUNTIME_GID"];
+			const previous = new Map(keys.map((key) => [key, process.env[key]]));
+			try {
+				process.env.PATH = "/usr/local/bin:/usr/bin:/bin";
+				process.env.CLAWDI_RUNTIME_USER = "fixture-agent";
+				process.env.CLAWDI_RUNTIME_UID = String(process.getuid?.());
+				process.env.CLAWDI_RUNTIME_GID = String(process.getgid?.());
+				const result = await new OpenClawAdapter().sessions.collect({ kind: "complete" });
+				expect(result.sessions).toHaveLength(1);
+				expect(result.sessions[0]?.localSessionId).toBe("official-fixture");
+				expect(result.sessions[0]?.messages.map((message) => message.content)).toEqual([
+					"runtime user prompt",
+				]);
+			} finally {
+				for (const [key, value] of previous) {
+					if (value === undefined) delete process.env[key];
+					else process.env[key] = value;
+				}
+			}
+		},
+	);
+
 	it("preserves origin/main Gateway session bytes and localHash", async () => {
 		const stateRoot = join(tmpHome, ".openclaw");
 		const agentRoot = join(stateRoot, "agents", "main", "agent");

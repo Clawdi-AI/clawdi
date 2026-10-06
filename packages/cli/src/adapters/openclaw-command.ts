@@ -2,6 +2,7 @@ import { type ExecFileOptions, execFile, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
+import { installedOpenClawCommandPath } from "../runtime/hosted-openclaw-context";
 import { resolveRuntimeUserCommand } from "../runtime/runtime-user-command";
 
 const execFileAsync = promisify(execFile);
@@ -27,7 +28,15 @@ export function runOpenClawCommand(
 	args: string[],
 	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal">,
 ): Promise<string> {
-	return runOpenClawSubprocess("openclaw", args, options);
+	return runOpenClawSubprocess(args, options);
+}
+
+export function resolveOpenClawCommandPath(home = process.env.HOME ?? homedir()): string {
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+	const executable =
+		runtimeUser && runtimeUser !== "root" ? installedOpenClawCommandPath(home) : "openclaw";
+	if (!executable) throw new Error("installed OpenClaw CLI is unavailable");
+	return executable;
 }
 
 export function runOpenClawSdkCommand(
@@ -49,8 +58,9 @@ export function runOpenClawSdkCommand(
 		() =>
 			new Promise<string>((resolve, reject) => {
 				options.signal?.throwIfAborted();
+				const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 				const child = resolveRuntimeUserCommand(
-					"node",
+					runtimeUser && runtimeUser !== "root" ? process.execPath : "node",
 					[
 						"--max-old-space-size=256",
 						"--input-type=module",
@@ -110,7 +120,6 @@ export function runOpenClawSdkCommand(
 }
 
 function runOpenClawSubprocess(
-	executable: string,
 	args: string[],
 	options: Pick<ExecFileOptions, "timeout" | "maxBuffer" | "signal">,
 ): Promise<string> {
@@ -118,7 +127,8 @@ function runOpenClawSubprocess(
 	return enqueueOpenClawCommand(async () => {
 		options.signal?.throwIfAborted();
 		const { signal, ...limits } = options;
-		const child = resolveRuntimeUserCommand(executable, args, process.env.HOME ?? homedir(), {
+		const home = process.env.HOME ?? homedir();
+		const child = resolveRuntimeUserCommand(resolveOpenClawCommandPath(home), args, home, {
 			environmentOverrides: inheritedOpenClawEnvironment(),
 		});
 		const running = execFileAsync(child.command, child.args, {
