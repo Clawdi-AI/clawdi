@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
+from app.core.database import finish_cleanup
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BINDING_STATUS_ARCHIVED,
@@ -223,9 +224,10 @@ DISCORD_DM_CHAT_TYPES = frozenset({"dm", "direct_messages", "group_dm", "private
 DELIVERY_LINK_LOCK_CONTENTION_ERROR = "channel agent link is being updated"
 DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS = 30
 # A delivery lease must outlive the bounded provider send so a live worker
-# always finalizes before another worker can reclaim the row.
+# has a short margin to finalize before another worker can reclaim the row.
 DELIVERY_SEND_TIMEOUT_SECONDS = 120
-DELIVERY_LEASE_SECONDS = 300
+DELIVERY_LEASE_SECONDS = DELIVERY_SEND_TIMEOUT_SECONDS + 30
+DELIVERY_CANCEL_CLEANUP_TIMEOUT_SECONDS = 5
 DELIVERY_ERROR_ACCOUNT_INACTIVE = "channel_account_inactive"
 DELIVERY_ERROR_BINDING_INACTIVE = "channel_binding_inactive"
 DELIVERY_ERROR_FAILED = "channel_delivery_failed"
@@ -4974,9 +4976,10 @@ async def deliver_channel_delivery(
 
     Delivery is at-least-once: if the worker dies or cannot commit the outcome
     after the provider accepted the message, the lease expires and the message
-    is sent again. Discord deduplicates the retry through the message nonce;
-    WhatsApp provider payloads reuse their message id; Telegram has no send
-    idempotency key, so a duplicate is possible there.
+    is sent again. Discord enforce_nonce only deduplicates within a few minutes;
+    later retries can duplicate messages. WhatsApp provider payloads reuse
+    their message id; Telegram has no send idempotency key. At-least-once
+    delivery can therefore produce duplicates even with a stable nonce.
     """
     delivery_id = delivery.id
     lease_token = delivery.locked_by
@@ -4998,6 +5001,13 @@ async def deliver_channel_delivery(
                 discord_nonce=send.discord_nonce,
             )
         outcome = _ChannelDeliverySent(provider_message_id, provider_response)
+    except asyncio.CancelledError:
+        await finish_cleanup(
+            lambda: _release_cancelled_channel_delivery(
+                db, delivery_id=delivery_id, lease_token=lease_token
+            )
+        )
+        raise
     except HTTPException as exc:
         outcome = exc
     except Exception:  # noqa: BLE001 - one failed send must still release its lease.
@@ -5016,6 +5026,35 @@ async def deliver_channel_delivery(
     )
     await db.commit()
     return finalized or delivery
+
+
+async def _release_cancelled_channel_delivery(
+    db: AsyncSession,
+    *,
+    delivery_id: UUID,
+    lease_token: str,
+) -> None:
+    """Best-effort short cleanup; a failed release remains recoverable by the reaper."""
+    try:
+        async with asyncio.timeout(DELIVERY_CANCEL_CLEANUP_TIMEOUT_SECONDS):
+            await db.execute(
+                update(ChannelDelivery)
+                .where(
+                    ChannelDelivery.id == delivery_id,
+                    ChannelDelivery.status == DELIVERY_STATUS_IN_PROGRESS,
+                    ChannelDelivery.locked_by == lease_token,
+                )
+                .values(
+                    status=DELIVERY_STATUS_PENDING,
+                    next_attempt_at=datetime.now(UTC),
+                    locked_at=None,
+                    locked_by=None,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            await db.commit()
+    except Exception:  # noqa: BLE001 - cancellation cleanup must preserve the original cancellation.
+        log.exception("channel delivery %s cancellation release failed", delivery_id)
 
 
 async def _owned_delivery_for_update(

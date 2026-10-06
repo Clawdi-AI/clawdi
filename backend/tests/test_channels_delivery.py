@@ -871,3 +871,72 @@ async def test_channel_delivery_link_lock_contention_does_not_exhaust_attempts(
     assert delivered.status == "succeeded"
     assert delivered.attempts == 2
     assert delivered.last_error is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replace_token", [False, True])
+async def test_cancelled_delivery_releases_only_its_attempt(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch,
+    replace_token: bool,
+):
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "telegram", "name": "cancelled-send", "provider_token": "123:secret"},
+        )
+    ).json()
+    binding = ChannelBinding(
+        account_id=UUID(created["id"]),
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        user_id=seed_user.id,
+        external_chat_id="111",
+        external_chat_type="private",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    db_session.add(binding)
+    await db_session.commit()
+    sent = await client.post(
+        f"/v1/channels/{created['id']}/messages",
+        json={"binding_id": str(binding.id), "text": "cancel during send"},
+    )
+    assert sent.status_code == 201, sent.text
+    delivery_id = UUID(sent.json()["delivery_id"])
+    started = asyncio.Event()
+
+    async def blocked_send(**_kwargs):
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(channel_service, "send_provider_outbound_payload", blocked_send)
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    worker = ChannelDeliveryWorker(sessionmaker)
+    task = asyncio.create_task(worker.run_once())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        if replace_token:
+            row = await db_session.get(ChannelDelivery, delivery_id, populate_existing=True)
+            assert row is not None
+            row.locked_by = "another-attempt"
+            await db_session.commit()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=10)
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    row = await db_session.get(ChannelDelivery, delivery_id, populate_existing=True)
+    assert row is not None
+    assert row.attempts == 1
+    if replace_token:
+        assert row.status == DELIVERY_STATUS_IN_PROGRESS
+        assert row.locked_by == "another-attempt"
+    else:
+        assert row.status == DELIVERY_STATUS_PENDING
+        assert row.locked_at is None
+        assert row.locked_by is None
+    assert channel_service.DELIVERY_LEASE_SECONDS == 150
