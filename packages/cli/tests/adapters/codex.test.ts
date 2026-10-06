@@ -11,6 +11,7 @@ import {
 import { join } from "node:path";
 import { CodexAdapter } from "../../src/adapters/codex";
 import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
+import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
 import attachmentNameFixtures from "../fixtures/codex-attachment-names.json";
 import { cleanupTmp, copyFixtureToTmp } from "./helpers";
@@ -50,6 +51,33 @@ describe("CodexAdapter.detect", () => {
 });
 
 describe("CodexAdapter.collectSessions", () => {
+	it("formats namespaced tool calls exactly like upstream ToolName Display", async () => {
+		const adapter = new CodexAdapter();
+		const original = (await adapter.sessions.collect({ kind: "complete" })).sessions[0];
+		if (!original) throw new Error("expected Codex fixture session");
+		appendFileSync(
+			original.rawFilePath,
+			readFileSync(join(import.meta.dir, "../fixtures/codex-namespace.jsonl"), "utf8"),
+		);
+		for (const streaming of [false, true]) {
+			const session = await adapter.sessions.resolve(original.localSessionId, {
+				streaming,
+				signal: new AbortController().signal,
+			});
+			if (!session) throw new Error("expected namespaced Codex session");
+			const upload = await prepareSessionUpload(session, "events-v1");
+			const names: string[] = [];
+			for await (const event of upload.readEvents?.() ?? upload.events ?? []) {
+				if (event.type === "tool_call") names.push(event.name);
+			}
+			expect(names).toEqual([
+				"memory_search",
+				"memory_search",
+				"memory_search",
+				"mcp__clawdimemory_search",
+			]);
+		}
+	});
 	it("preserves origin/main session bytes and localHash", async () => {
 		await assertSessionGolden("codex", new CodexAdapter().sessions);
 	});

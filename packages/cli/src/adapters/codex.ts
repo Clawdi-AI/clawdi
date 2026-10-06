@@ -118,11 +118,12 @@ function codexEventDrafts(
 		const callId = jsonString(payload.call_id) ?? jsonString(payload.id);
 		const name = jsonString(payload.name);
 		if (!callId || !name) return [];
+		const namespace = jsonString(payload.namespace);
 		return [
 			{
 				type: "tool_call",
 				call_id: callId,
-				name,
+				name: namespace && namespace !== "functions" ? `${namespace}${name}` : name,
 				arguments_json: canonicalStructuredString(
 					payloadType === "function_call" ? payload.arguments : payload.input,
 				),
