@@ -631,9 +631,9 @@ describe("update install", () => {
 			}),
 		},
 	])("reports a sanitized native $name", async ({ expected, fetcher }) => {
-		const { stdout } = await runNativeForegroundFailure(fetcher);
-		expect(stdout).toContain(`${expected} Try manually:`);
-		expect(stdout).toContain("CLAWDI_VERSION=99.0.0 sh");
+		const { stderr } = await runNativeForegroundFailure(fetcher);
+		expect(stderr).toContain(`${expected} Try manually:`);
+		expect(stderr).toContain("CLAWDI_VERSION=99.0.0 sh");
 	});
 
 	it("reports a native download deadline without exposing an internal path", async () => {
@@ -645,9 +645,9 @@ describe("update install", () => {
 					});
 				}),
 		);
-		const { stdout } = await runNativeForegroundFailure(fetcher, 5);
-		expect(stdout).toContain("Native release download timed out. Try manually:");
-		expect(stdout).not.toContain(tmpHome);
+		const { stderr } = await runNativeForegroundFailure(fetcher, 5);
+		expect(stderr).toContain("Native release download timed out. Try manually:");
+		expect(stderr).not.toContain(tmpHome);
 	});
 
 	it.each([false, true])(
@@ -829,9 +829,9 @@ describe("update install", () => {
 	});
 
 	it("reports an exact manual command without installing when ownership is unknown", async () => {
-		const orig = console.log;
+		const orig = console.error;
 		let captured = "";
-		console.log = (...args: unknown[]) => {
+		console.error = (...args: unknown[]) => {
 			captured += `${args.map(String).join(" ")}\n`;
 		};
 		const { restore } = mockFetch([
@@ -854,7 +854,7 @@ describe("update install", () => {
 				),
 			);
 		} finally {
-			console.log = orig;
+			console.error = orig;
 			restore();
 		}
 		expect(captured).toContain("Automatic update is unsupported");

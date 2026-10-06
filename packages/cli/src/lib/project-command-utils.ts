@@ -3,6 +3,7 @@ import { ApiClient, ApiError, readJson } from "./api-client";
 import { ClerkOAuthError, getClawdiAccessToken } from "./clerk-oauth";
 import { getConfig } from "./config";
 import type { ProjectBrief } from "./project-resolver";
+import { requireAuth } from "./require-auth";
 
 export interface ProjectAuthContext {
 	apiUrl: string;
@@ -10,6 +11,7 @@ export interface ProjectAuthContext {
 }
 
 export async function requireProjectAuth(): Promise<ProjectAuthContext> {
+	requireAuth();
 	const { apiUrl } = getConfig();
 	return { apiUrl, apiKey: await getClawdiAccessToken(apiUrl) };
 }

@@ -255,23 +255,37 @@ class DeployCancelledError extends Error {
 
 function clackPromptAdapter(): DeployPromptAdapter {
 	return {
-		intro: (message) => p.intro(message),
+		intro: (message) => p.intro(message, { output: process.stderr }),
 		async select(message, options, initialValue) {
-			const result = await p.select({ message, options: [...options], initialValue });
+			const result = await p.select({
+				output: process.stderr,
+				message,
+				options: [...options],
+				initialValue,
+			});
 			if (p.isCancel(result)) throw new DeployCancelledError();
 			return String(result);
 		},
 		async text(message, initialValue, placeholder) {
-			const result = await p.text({ message, initialValue, placeholder });
+			const result = await p.text({
+				output: process.stderr,
+				message,
+				initialValue,
+				placeholder,
+			});
 			if (p.isCancel(result)) throw new DeployCancelledError();
 			return result;
 		},
 		async confirm(message, initialValue = true) {
-			const result = await p.confirm({ message, initialValue });
+			const result = await p.confirm({
+				output: process.stderr,
+				message,
+				initialValue,
+			});
 			if (p.isCancel(result)) throw new DeployCancelledError();
 			return result;
 		},
-		note: (message, title) => p.note(message, title),
+		note: (message, title) => p.note(message, title, { output: process.stderr }),
 		outro: (message) => p.outro(message),
 	};
 }

@@ -463,17 +463,18 @@ content
 		expect(captured.some((request) => request.path.endsWith("/download"))).toBe(false);
 	});
 
-	it("aborts with exitCode=1 when not logged in (no fetch)", async () => {
+	it("rejects when not logged in without fetching", async () => {
 		setup("hermes");
 		rmSync(join(tmpHome, ".clawdi", "auth.json"));
 		const { captured, restore } = mockFetch([]);
 		try {
-			await pull({ agent: "hermes", modules: "skills" });
+			await expect(pull({ agent: "hermes", modules: "skills" })).rejects.toThrow(
+				"Not signed in. Run `clawdi auth login` first.",
+			);
 		} finally {
 			restore();
 		}
 		expect(captured).toHaveLength(0);
-		expect(process.exitCode).toBe(1);
 	});
 });
 

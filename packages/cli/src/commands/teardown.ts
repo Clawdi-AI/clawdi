@@ -26,12 +26,12 @@ export async function teardown(opts: {
 	keepMcp?: boolean;
 	yes?: boolean;
 }) {
-	p.intro(chalk.bold("clawdi teardown"));
+	p.intro(chalk.bold("clawdi teardown"), { output: process.stderr });
 
 	const targets = await resolveTargets(opts);
 	if (targets === null) {
 		// resolveTargets already printed + set exitCode
-		p.outro(chalk.red("Aborted."));
+		p.outro(chalk.red("Aborted."), { output: process.stderr });
 		return;
 	}
 	if (targets.length === 0) {
@@ -41,7 +41,7 @@ export async function teardown(opts: {
 
 	if (!opts.yes) {
 		const labels = targets.map((t) => adapterRegistry[t].displayName).join(", ");
-		p.log.info(`Will tear down: ${labels}`);
+		p.log.info(`Will tear down: ${labels}`, { output: process.stderr });
 		const ok = await askYesNo("Proceed?");
 		if (!ok) {
 			p.outro(chalk.gray("Cancelled."));
@@ -71,13 +71,13 @@ async function resolveTargets(opts: {
 
 	if (opts.agent) {
 		if (opts.all) {
-			p.log.error("Pass either --agent or --all, not both.");
+			p.log.error("Pass either --agent or --all, not both.", { output: process.stderr });
 			process.exitCode = 1;
 			return null;
 		}
 		if (!AGENT_TYPES.includes(opts.agent as AgentType)) {
-			p.log.error(`Unknown agent type: ${opts.agent}`);
-			p.log.info(`Valid types: ${AGENT_TYPES.join(", ")}`);
+			p.log.error(`Unknown agent type: ${opts.agent}`, { output: process.stderr });
+			p.log.info(`Valid types: ${AGENT_TYPES.join(", ")}`, { output: process.stderr });
 			process.exitCode = 1;
 			return null;
 		}
@@ -85,6 +85,7 @@ async function resolveTargets(opts: {
 		if (!registered.includes(type)) {
 			p.log.error(
 				`${adapterRegistry[type].displayName} is not registered (no ~/.clawdi/environments/${type}.json).`,
+				{ output: process.stderr },
 			);
 			process.exitCode = 1;
 			return null;
@@ -101,7 +102,9 @@ async function resolveTargets(opts: {
 		return [];
 	}
 	if (!isInteractive()) {
-		p.log.error("Specify --agent <type> or --all when running non-interactively.");
+		p.log.error("Specify --agent <type> or --all when running non-interactively.", {
+			output: process.stderr,
+		});
 		process.exitCode = 1;
 		return null;
 	}
@@ -126,7 +129,9 @@ async function teardownOne(agentType: AgentType, opts: { keepSkill: boolean; kee
 			p.log.success(`${label}: removed environment registration`);
 		}
 	} catch (e) {
-		p.log.warn(`${label}: could not remove env file (${errMessage(e)})`);
+		p.log.warn(`${label}: could not remove env file (${errMessage(e)})`, {
+			output: process.stderr,
+		});
 	}
 
 	// 2. Backend env row — intentionally left as dangling metadata.
@@ -157,7 +162,7 @@ async function teardownOne(agentType: AgentType, opts: { keepSkill: boolean; kee
 				p.log.success(`${label}: removed bundled skill (${skillDir})`);
 			}
 		} catch (e) {
-			p.log.warn(`${label}: could not remove skill (${errMessage(e)})`);
+			p.log.warn(`${label}: could not remove skill (${errMessage(e)})`, { output: process.stderr });
 		}
 	}
 

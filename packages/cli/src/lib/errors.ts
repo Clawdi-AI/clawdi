@@ -11,13 +11,13 @@ export function errMessage(e: unknown): string {
 /** Top-level error handler wired into `program.parseAsync().catch(handleError)`. */
 export function handleError(err: unknown): never {
 	if (err instanceof ApiError) {
-		console.error();
+		process.stderr.write("\n");
 		console.error(chalk.red(`✗ ${err.message}`));
 		if (err.hint) console.error(chalk.gray(`  ${err.hint}`));
 		process.exit(1);
 	}
 	if (err instanceof Error) {
-		console.error();
+		process.stderr.write("\n");
 		console.error(chalk.red(`✗ ${err.message}`));
 		if (process.env.CLAWDI_DEBUG) console.error(chalk.gray(err.stack ?? ""));
 		process.exit(1);
