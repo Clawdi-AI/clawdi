@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 // swapped in post-mount.
 const DEFAULT_ORIGIN = "https://cloud.clawdi.ai";
 
-// Single source; marketing and docs deep-link to this dialog (?connect=agent).
+// Single source for the agent setup prompt and CLI install steps; tests keep README and skill.md in sync.
 export function agentSetupPrompt(origin: string): string {
 	return `Set up Clawdi on this machine. Read all of ${origin}/skill.md (for example, run \`curl -fsSL ${origin}/skill.md\`) and follow its steps in order.`;
 }
