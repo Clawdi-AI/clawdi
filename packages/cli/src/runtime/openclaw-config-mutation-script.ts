@@ -139,14 +139,20 @@ const mutators = operations.map(makeMutator);
 const configRead = await profileMutation("writer.read-preview", () => sdk.readConfigFileSnapshotForWrite({ skipPluginValidation: true }));
 const snapshot = configRead?.snapshot;
 const sourceConfig = snapshot?.sourceConfig;
-const sourceDefaults = sourceConfig?.agents?.defaults;
-const repairsUnsupportedMemorySearch = mutators.some(({ patch }) =>
-  (Object.hasOwn(sourceDefaults ?? {}, "memorySearch") && patch.agents?.defaults?.memorySearch === null) ||
-  (Object.hasOwn(sourceConfig?.memory ?? {}, "search") && patch.memory?.search === null &&
-    typeof patch.agents?.defaults?.memorySearch === "object"));
+const sourceAgents = isRootRecord(sourceConfig) ? sourceConfig.agents : undefined;
+const sourceDefaults = isRootRecord(sourceAgents) ? sourceAgents.defaults : undefined;
+const sourceMemory = isRootRecord(sourceConfig) ? sourceConfig.memory : undefined;
+const repairsUnsupportedMemorySearch = mutators.some(({ patch }) => {
+  const patchDefaults = isRootRecord(patch.agents) ? patch.agents.defaults : undefined;
+  return (isRootRecord(sourceDefaults) && Object.hasOwn(sourceDefaults, "memorySearch") &&
+    isRootRecord(patchDefaults) && patchDefaults.memorySearch === null) ||
+    (isRootRecord(sourceMemory) && Object.hasOwn(sourceMemory, "search") &&
+      isRootRecord(patch.memory) && patch.memory.search === null &&
+      isRootRecord(patchDefaults?.memorySearch));
+});
 if (!snapshot || !isRootRecord(sourceConfig) ||
     (snapshot.valid !== true && !repairsUnsupportedMemorySearch && !mutators.some((op) => op.channelMutation))) {
-  throw new Error("OpenClaw config snapshot is unavailable for projection");
+  throw new Error("OpenClaw config snapshot is unavailable for provider projection");
 }
 const mutate = (draft) => { for (const op of mutators) op.mutate(draft); };
 const projected = structuredClone(sourceConfig);

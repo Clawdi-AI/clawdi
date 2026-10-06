@@ -1338,9 +1338,13 @@ exit 64
 		}
 	});
 
-	it.each([304, 200])(
-		"runtime watch trusts exact committed input after manifest %s",
-		async (responseStatus) => {
+	it.each([
+		[304, false],
+		[200, true],
+		[200, false],
+	] as const)(
+		"runtime watch preserves conditional manifest %s behavior with hot apply %s",
+		async (responseStatus, hotApply) => {
 			installSuccessfulSystemctlFixture();
 			const home = join(root, "home", "clawdi");
 			const state = join(root, "var", "lib", "clawdi");
@@ -1536,6 +1540,7 @@ exit 64
 			expect(baselineMitmSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
 			expect(baselineMitmSecrets[channelSecretRef]).toBe("agent-token-watch");
 
+			if (hotApply) process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
 			const watchFetch = mockFetch([
 				{
 					method: "GET",
@@ -1562,14 +1567,16 @@ exit 64
 				]);
 				expect(watchFetch.captured[0].headers["if-none-match"]).toBe(stableBundleEtag);
 				const event = JSON.parse(logs[0]);
-				expect(event.status).toBe("not_modified");
+				expect(event.status).toBe(responseStatus === 200 && !hotApply ? "applied" : "not_modified");
 				expect(readFileSync(paths.manifestLastGood, "utf8")).toBe(
 					readFileSync(legacy.manifestLastGood, "utf8"),
 				);
 				expect(readFileSync(paths.managedSecretCacheFile, "utf8")).toBe(
 					readFileSync(legacy.managedSecretCacheFile, "utf8"),
 				);
-				expect(readFileSync(paths.appliedState, "utf8")).toBe(baselineAuthority);
+				if (responseStatus === 200 && !hotApply)
+					expect(readFileSync(paths.appliedState, "utf8")).not.toBe(baselineAuthority);
+				else expect(readFileSync(paths.appliedState, "utf8")).toBe(baselineAuthority);
 				expect(event.generation).toBe(22);
 				expect(event.etag).toBe(stableBundleEtag);
 				expect(readRuntimeAppliedState(paths)).toMatchObject({
@@ -1599,7 +1606,9 @@ exit 64
 				expect(JSON.stringify(failed)).toContain(
 					"could not persist verified committed runtime snapshot",
 				);
-				expect(readFileSync(paths.appliedState, "utf8")).toBe(baselineAuthority);
+				if (responseStatus === 200 && !hotApply)
+					expect(readFileSync(paths.appliedState, "utf8")).not.toBe(baselineAuthority);
+				else expect(readFileSync(paths.appliedState, "utf8")).toBe(baselineAuthority);
 			} finally {
 				watchFetch.restore();
 				console.log = previousLog;

@@ -491,7 +491,7 @@ export function runtimeCommandVersion(command: string, home: string, cwd: string
 	}
 	// Hermes --version synchronously checks updates: git fetch and the compare API
 	// each allow 10 seconds upstream. Leave room for both plus native startup.
-	const timeoutMs = command === runtimeCommandPath("hermes", home) ? 60_000 : 10_000;
+	const timeoutMs = command === runtimeCommandPath("hermes", home) ? 30_000 : 10_000;
 	try {
 		const versionResult = spawnRuntimeUserCommand(command, ["--version"], home, cwd, {
 			timeoutMs,

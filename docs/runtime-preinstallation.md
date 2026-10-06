@@ -63,17 +63,17 @@ New private receipts are additive and optional.
 | Change | Default / upgrade behavior | Compatibility evidence |
 | --- | --- | --- |
 | Persisted step memos | Gated to hot apply or warm snapshot selection. Schema v2 ignores v1; keys bind CLI version captured before UID drops, helper/probe sources, OpenClaw package and SDK files. Includes never authorize skips; cleanup records equal before/after state only. | New-process CLI upgrade, real UID switch, package/layout upgrades in `persisted-step-revisions.test.ts`; cleanup/include races in `manifest-reconciliation.test.ts` |
-| Provider/channel writer extraction | Ordinary applies keep official single-step locking/validation; batch and file migration require hot apply. JSON5 local reuse rejects includes and falls back to native probes. | Existing provider drift, ownership, channel replacement/unlink and legacy/current layout fixtures |
 | File SecretRef retention | Applies only when the managed credential directory exists, including after hot apply is disabled. Successful commit retains current/include and native rollback references plus two successful generations; failures retain all files. | Rotation, revocation, includes, rollback and unsafe-link tests in `openclaw-file-secrets.test.ts`; failed authority commit in `manifest-reconciliation.test.ts` |
 | Native/connection ownership readers | Accept existing env refs and the additive managed file-ref form, including rollback after flag removal. No existing env ref changes meaning. | Native/connection transfer and failed-commit fixtures in `manifest-reconciliation.test.ts` |
 | Observation cadence / immediate recapture | Default remains 5 s for the existing 90 s convergence window and 60 s when ready. Only warm/hot apply uses 1 s or bounded immediate recapture; retry backoff is unchanged. | Default/opt-in schedules and tuple-rotation tests in `observation-producer.test.ts` |
-| Successful watch-parent comparison | Applied/not-modified events compare as successful only with exact current generation, ETag, source/apply authority, no self-reexec/error and explicitly healthy metadata. Parent/config/invocation fences remain. | Healthy-equivalence and unhealthy-parent tests in `observed-v2.test.ts` |
-| Unchanged conditional HTTP 200 | A fully validated response reuses only exact committed source/content/apply identity and verified snapshot. Forced repair still reconciles drift; old/missing state uses ordinary apply. | Conditional response, stale snapshot/authority and forced-repair tests in `tests/runtime-watch.test.ts` |
-| Initial bootstrap watch event | Writes the successful bootstrap event only when no watch status exists; existing failures remain authoritative. | Bootstrap/watch parent fixtures in `tests/runtime-channels.test.ts` and `observed-v2.test.ts` |
-| Systemd manager batching | Explicit unit IDs, enablement and per-unit fallback preserve old manager output, pending-job admission and final proof. | Real `runtime-systemd` suite plus released receipt reconciliation fixtures |
+| Successful watch-parent comparison | Pool snapshot or hot-apply paths only; defaults retain the original comparison. Applied/not-modified events compare as successful only with exact current generation, ETag, source/apply authority, no self-reexec/error and explicitly healthy metadata. Parent/config/invocation fences remain. | Healthy-equivalence and unhealthy-parent tests in `observed-v2.test.ts` |
+| Unchanged conditional HTTP 200 | Pool snapshot or hot-apply paths only; defaults reapply HTTP 200 as before. A fully validated response reuses only exact committed source/content/apply identity and verified snapshot. Forced repair still reconciles drift; old/missing state uses ordinary apply. | Conditional response, stale snapshot/authority and forced-repair tests in `tests/runtime-watch.test.ts` |
+| Initial bootstrap watch event | Pool snapshot or hot-apply paths only; defaults retain the original bootstrap behavior. Writes the successful bootstrap event only when no watch status exists; existing failures remain authoritative. | Bootstrap/watch parent fixtures in `tests/runtime-channels.test.ts` and `observed-v2.test.ts` |
+| Systemd manager batching | Pool snapshot or hot-apply paths only; defaults retain per-unit observation/final proof and system-before-user activation. Explicit unit IDs, enablement and per-unit fallback preserve old manager output, pending-job admission and final proof. | Real `runtime-systemd` suite plus released receipt reconciliation fixtures |
 | Early sidecar start / startup ordering | Early start is gated to the private warm marker; existing first applies retain their order. Hermes overlap additionally requires acknowledged warm egress. | Default marker absence and real systemd ordering regressions |
+| Provider/channel writer extraction | With hot apply disabled, the shared official writer retains standalone mutations, CAS/validation, merge/delete semantics and ordinary reload behavior. Batch writes and file-secret projection require hot apply. | Existing provider/channel, ownership transfer and rollback cases in `manifest-reconciliation.test.ts`, `tests/runtime-channels.test.ts` and `tests/runtime-watch.test.ts` |
 | Hermes dashboard helper | Extracts the existing build/cache procedure with the same revision marker, install/build timeouts and commands. | Existing service prerequisite/build fixtures |
-| Version/config-path reuse | Only a matching anonymous receipt avoids native probes. Existing tenants without it retain probes; Hermes version timeout is bounded at 60 s for upstream first-use maintenance. | `preinstalled-probes.test.ts`, official upstream Hermes contract |
+| Version/config-path reuse | Only a matching anonymous receipt avoids native probes. Existing tenants without it retain probes and the original Hermes 30 s/OpenClaw 10 s version timeout. | `preinstalled-probes.test.ts`, official upstream Hermes contract |
 | CLI, Files, egress and Skill helpers | Shared helpers accept anonymous inputs; ordinary integrity, permissions, installer options and reservation semantics remain. | Existing managed CLI/Files/egress/Skill suites plus preinstallation tests |
 | Profiling | Default off; `CLAWDI_RUNTIME_PROFILE=1` emits static labels, PID and duration without argv, secrets or payloads. | `profile.test.ts` |
 
@@ -87,14 +87,14 @@ No tenant or production enablement was performed.
 ```bash
 bash scripts/test.sh cli
 bash scripts/test.sh runtime-systemd
+bash scripts/test.sh ci
 BIOME_THREADS=2 bash scripts/test.sh cli-lint <changed-files>
 bash scripts/test.sh hermes-upstream-contract
 ```
 
 Pack fixtures with `preinstallation-artifact` into an empty checkout-local
-directory. Paired Hosted qualification runs `backend-pool-native` under
-`/tmp/clawdi-golden-native.lock`, three pool samples per runtime; results live in
-its design document. Production and real model/chat/channel traffic are unqualified.
+directory. Paired Hosted qualification runs `backend-pool-native` with disposable
+Incus/ZFS fixtures; results live in its design document. Production and real model/chat/channel traffic are unqualified.
 
 Hosted qualification now fills blank volumes and installs software in place;
 TTL retirement/refill supplies freshness without cloned software volumes.

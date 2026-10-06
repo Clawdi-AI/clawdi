@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { OpenClawHostedContext } from "./hosted-openclaw-context";
 import type { RuntimeManifest } from "./manifest-contract";
 import { runtimeFileCurrentRevision } from "./manifest-install";
@@ -505,7 +506,9 @@ export function openClawConfigPatchIsApplied(
 	exactProviderIds: readonly string[] = [],
 ): boolean {
 	try {
-		const current = readPlainOpenClawConfig(context.configPath);
+		const current = openClawHotApplyEnabled()
+			? readPlainOpenClawConfig(context.configPath)
+			: (JSON.parse(readFileSync(context.configPath, "utf-8")) as unknown);
 		if (!current) return false;
 		if (!jsonMergePatchIsApplied(current, patch)) return false;
 		const currentProviders = recordValue(recordValue(recordValue(current)?.models)?.providers);

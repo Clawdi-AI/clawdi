@@ -25,12 +25,14 @@ import {
 	componentConfigurationRevision,
 	observeComponents,
 } from "./component-observation";
+import { egressSnapshotEnabled } from "./egress-snapshot";
 import { configuredHermesPlatforms, hermesChannelsAreReady } from "./hermes-channel-health";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import { installedOpenClawCommandPath } from "./hosted-openclaw-context";
 import { readHostedSkillsObservation } from "./hosted-skill-observation";
 import { providerHealthReasons } from "./manifest-providers";
 import { hostedRuntimeBundleV2Schema, loadCommittedRuntimeManifest } from "./manifest-source";
+import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { profileRuntimeStep, profileRuntimeStepAsync } from "./profile";
 import { execRuntimeUserCommand, spawnRuntimeUserCommand } from "./runtime-user-command";
@@ -210,8 +212,8 @@ export async function readHostedRuntimeObserved(
 	if (runtimeContentSha256(readRuntimeBootStatus(paths)) !== runtimeContentSha256(boot))
 		return profileRuntimeStep("observation.discard.boot-parent", () => null);
 	if (
-		watchStatusRevision(readJsonRecord(paths.runtimeWatchStatus), appliedState) !==
-		watchStatusRevision(watchStatus, appliedState)
+		watchStatusRevision(readJsonRecord(paths.runtimeWatchStatus), appliedState, paths) !==
+		watchStatusRevision(watchStatus, appliedState, paths)
 	)
 		return profileRuntimeStep("observation.discard.watch-parent", () => null);
 	for (const [unit, label] of [
@@ -234,9 +236,12 @@ export async function readHostedRuntimeObserved(
 function watchStatusRevision(
 	value: JsonRecord | null,
 	applied: RuntimeAppliedState | null,
+	paths: RuntimePaths,
 ): string {
 	if (value === null) return runtimeContentSha256(null);
 	const { timestamp: _timestamp, ...semantic } = value;
+	if (!egressSnapshotEnabled(paths) && !openClawHotApplyEnabled())
+		return runtimeContentSha256(semantic);
 	const event = recordValue(semantic.event);
 	// Success metadata differs between apply and an unchanged poll. Only remove
 	// that metadata after exact authority and explicit successful health checks.
@@ -675,7 +680,8 @@ function systemdUnitStatuses(
 	units: string[],
 	paths: RuntimePaths,
 ): HostedRuntimeObservedSystemdUnit[] {
-	if (units.length < 2) return units.map((unit) => systemdUnitStatus(scope, unit, paths));
+	if ((!egressSnapshotEnabled(paths) && !openClawHotApplyEnabled()) || units.length < 2)
+		return units.map((unit) => systemdUnitStatus(scope, unit, paths));
 	const args = [
 		"show",
 		"--all",

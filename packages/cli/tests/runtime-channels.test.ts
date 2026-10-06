@@ -255,8 +255,8 @@ describe("runtime manifest datasource", () => {
 		]);
 	});
 
-	it.each(["missing", "unhealthy"])(
-		"runtime init publishes initial health without replacing %s watcher authority",
+	it.each(["missing", "unhealthy", "default"])(
+		"runtime init publishes gated initial health without replacing %s watcher authority",
 		async (watchState) => {
 			installSuccessfulSystemctlFixture();
 			setRuntimeApplyGeneration(7, CANONICAL_TEST_CONTEXT);
@@ -443,9 +443,11 @@ exit 64
 					event: { status: "error", stage: "final", errors: ["previous failure"] },
 				});
 				if (watchState === "unhealthy") writeFileSync(paths.runtimeWatchStatus, existingWatch);
+				if (watchState !== "default") process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
 				await runtimeInit({ nonInteractive: true, json: true });
 				if (watchState === "unhealthy")
 					expect(readFileSync(paths.runtimeWatchStatus, "utf8")).toBe(existingWatch);
+				else if (watchState === "default") expect(existsSync(paths.runtimeWatchStatus)).toBe(false);
 				else {
 					const applied = readRuntimeAppliedState(paths);
 					expect(JSON.parse(readFileSync(paths.runtimeWatchStatus, "utf8")).event).toMatchObject({

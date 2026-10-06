@@ -83,6 +83,7 @@ import { readComponentServiceState } from "../runtime/observed";
 import {
 	adoptableWarmOpenClawGatewayUnits,
 	consumeWarmOpenClawGateway,
+	openClawHotApplyEnabled,
 } from "../runtime/openclaw-warm-gateway";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
 import { profileRuntimeStepAsync } from "../runtime/profile";
@@ -991,6 +992,7 @@ async function runtimeInitLocked(
 		const runtimeReady = runtimeErrors.length === 0;
 		const applied = runtimeAppliedStatus(paths);
 		if (
+			(egressSnapshotEnabled(paths) || openClawHotApplyEnabled()) &&
 			runtimeReady &&
 			outcome.resourceProjectionErrors.length === 0 &&
 			!outcome.selfReexec &&
@@ -1243,6 +1245,7 @@ async function loadRuntimeManifestForWatch(
 	// validation and the same snapshot checks as 304. Periodic forced repair still
 	// reconverges native drift even when its manifest is unchanged.
 	const unchangedContent =
+		(egressSnapshotEnabled(paths) || openClawHotApplyEnabled()) &&
 		!opts.forceRefresh &&
 		!("notModified" in conditional) &&
 		active !== null &&

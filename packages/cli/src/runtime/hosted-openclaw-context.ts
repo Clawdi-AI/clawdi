@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
 	CLAWDI_MANAGED_PROVIDER_ID,
@@ -17,6 +18,7 @@ import type { RuntimeManifest } from "./manifest-contract";
 import { runtimeFileCurrentRevision } from "./manifest-install";
 import { readPlainOpenClawConfig } from "./openclaw-config";
 import type { OpenClawConfigTransaction } from "./openclaw-provider-config";
+import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import {
 	openClawStepIdentity,
 	persistedStepRevision,
@@ -88,7 +90,35 @@ function parseOfficialWorkspaceRoster(stdout: string): string {
 	return resolve(main[0].workspace);
 }
 
+function defaultOpenClawRosterConfigRevision(home: string): string {
+	try {
+		const config = JSON.parse(
+			readFileSync(join(home, ".openclaw", "openclaw.json"), "utf8"),
+		) as unknown;
+		const root =
+			config && typeof config === "object" && !Array.isArray(config)
+				? (config as Record<string, unknown>)
+				: {};
+		const agents =
+			root.agents && typeof root.agents === "object" && !Array.isArray(root.agents)
+				? (root.agents as Record<string, unknown>)
+				: {};
+		const defaults =
+			agents.defaults && typeof agents.defaults === "object" && !Array.isArray(agents.defaults)
+				? (agents.defaults as Record<string, unknown>)
+				: {};
+		return runtimeImpactRevision({
+			defaultWorkspace: defaults.workspace ?? null,
+			entries: agents.entries ?? null,
+			list: agents.list ?? null,
+		});
+	} catch {
+		return "unavailable";
+	}
+}
+
 export function openClawRosterConfigRevision(home: string): string | null {
+	if (!openClawHotApplyEnabled()) return defaultOpenClawRosterConfigRevision(home);
 	const root = readPlainOpenClawConfig(join(home, ".openclaw", "openclaw.json"));
 	if (!root) return null;
 	const agents = recordValue(root.agents);
@@ -128,11 +158,13 @@ export function resolveHostedOpenClawWorkspace(home: string): string {
 	const command = commandPath(home);
 	const rosterRevision = openClawRosterConfigRevision(home);
 	const stateRevision = () =>
-		[
-			openClawStepIdentity(home, ["agents list --json"]),
-			runtimeFileCurrentRevision(command),
-			openClawRosterConfigRevision(home),
-		].join("\0");
+		openClawHotApplyEnabled()
+			? [
+					openClawStepIdentity(home, ["agents list --json"]),
+					runtimeFileCurrentRevision(command),
+					openClawRosterConfigRevision(home),
+				].join("\0")
+			: [runtimeFileCurrentRevision(command), openClawRosterConfigRevision(home)].join("\0");
 	const revision = stateRevision();
 	const cached = openClawWorkspaces.get(home);
 	if (rosterRevision !== null && cached?.revision === revision) return cached.workspace;
@@ -163,7 +195,7 @@ export function resolveHostedOpenClawWorkspace(home: string): string {
 	if (openClawDoctorRepairRequired(result)) throw new OpenClawWorkspaceRosterError(true);
 	if (result.status !== 0) throw new OpenClawWorkspaceRosterError(false);
 	const workspace = parseOfficialWorkspaceRoster(String(result.stdout));
-	if (rosterRevision !== null && stateRevision() === revision) {
+	if (!openClawHotApplyEnabled() || (rosterRevision !== null && stateRevision() === revision)) {
 		openClawWorkspaces.set(home, { revision, workspace });
 		recordPersistedStepRevision(persistedKey, `${revision}\n${workspace}`);
 	}

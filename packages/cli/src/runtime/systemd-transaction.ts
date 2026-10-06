@@ -7,6 +7,7 @@ import { readRuntimeAppliedState } from "./applied-state";
 import { egressSnapshotEnabled } from "./egress-snapshot";
 import { hermesWasWarmed } from "./hermes-warm-state";
 import { withoutOomProtection } from "./oom-protection";
+import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import type { getRuntimePaths } from "./paths";
 import { profileRuntimeStep } from "./profile";
 import { buildRuntimeUserCommand, runtimeUserUid } from "./runtime-user-command";
@@ -432,6 +433,21 @@ export function applySystemdRuntimeUpdate(
 	if (resetFailedSystemUnits.length > 0) {
 		systemctl(["reset-failed", ...resetFailedSystemUnits]);
 	}
+	const activateSystemUnits = () => {
+		if (startSystemUnits.length > 0) systemctl(["start", ...startSystemUnits]);
+		if (restartSystemUnits.length > 0) {
+			for (const unit of restartSystemUnits) {
+				log.info("runtime.systemd_restart", {
+					scope: "system",
+					unit,
+					changed: system.changed.includes(unit),
+					pendingActivation: pendingSystemActivation.has(unit),
+				});
+			}
+			systemctl(["restart", ...restartSystemUnits]);
+		}
+	};
+	if (!egressSnapshotEnabled(paths) && !openClawHotApplyEnabled()) activateSystemUnits();
 	const enableUserUnits: string[] = [];
 	const resetFailedUserUnits: string[] = [];
 	const startUserUnits: string[] = [];
@@ -485,18 +501,7 @@ export function applySystemdRuntimeUpdate(
 			throw new SystemdReobservationRequiredError("early dashboard candidate changed");
 		runtimeUserSystemctl(paths, ["start", dashboard]);
 	}
-	if (startSystemUnits.length > 0) systemctl(["start", ...startSystemUnits]);
-	if (restartSystemUnits.length > 0) {
-		for (const unit of restartSystemUnits) {
-			log.info("runtime.systemd_restart", {
-				scope: "system",
-				unit,
-				changed: system.changed.includes(unit),
-				pendingActivation: pendingSystemActivation.has(unit),
-			});
-		}
-		systemctl(["restart", ...restartSystemUnits]);
-	}
+	if (egressSnapshotEnabled(paths) || openClawHotApplyEnabled()) activateSystemUnits();
 	if (startUserUnits.length > 0) {
 		if (
 			hermesWasWarmed(paths) &&
@@ -565,18 +570,23 @@ export function applySystemdRuntimeUpdate(
 		};
 	}
 
-	// Final proof needs a fresh manager read, batched once per scope. Reading
-	// every unit separately serializes the same systemctl startup and D-Bus work.
-	const finalSystemStates = readSystemdRuntimeUnits(paths, "system", [
-		...system.present,
-		...system.removed,
-	]);
-	const finalUserStates = readSystemdRuntimeUnits(paths, "user", [
-		...user.present,
-		...user.removed,
-	]);
+	const poolPath = egressSnapshotEnabled(paths) || openClawHotApplyEnabled();
+	const finalSystemStates = poolPath
+		? readSystemdRuntimeUnits(paths, "system", [...system.present, ...system.removed])
+		: null;
+	const finalUserStates = poolPath
+		? readSystemdRuntimeUnits(paths, "user", [...user.present, ...user.removed])
+		: null;
+	const finalState = (scope: SystemdRuntimeScope, unit: string) => {
+		const states = scope === "system" ? finalSystemStates : finalUserStates;
+		return requiredSystemdUnitState(
+			states ?? readSystemdRuntimeUnits(paths, scope, [unit]),
+			scope,
+			unit,
+		);
+	};
 	const systemConverged = system.present.every((unit) => {
-		const state = requiredSystemdUnitState(finalSystemStates, "system", unit);
+		const state = finalState("system", unit);
 		return (
 			state.loadState !== "not-found" &&
 			state.activeState === "active" &&
@@ -585,7 +595,7 @@ export function applySystemdRuntimeUpdate(
 		);
 	});
 	const userConverged = user.present.every((unit) => {
-		const state = requiredSystemdUnitState(finalUserStates, "user", unit);
+		const state = finalState("user", unit);
 		return !(
 			state.loadState === "not-found" ||
 			state.activeState !== "active" ||
@@ -594,11 +604,11 @@ export function applySystemdRuntimeUpdate(
 		);
 	});
 	const removedSystemConverged = system.removed.every((unit) => {
-		const state = requiredSystemdUnitState(finalSystemStates, "system", unit);
+		const state = finalState("system", unit);
 		return systemdUnitAbsentOrInactive(state) && systemdUnitAbsentOrDisabled(state);
 	});
 	const removedUserConverged = user.removed.every((unit) => {
-		const state = requiredSystemdUnitState(finalUserStates, "user", unit);
+		const state = finalState("user", unit);
 		return systemdUnitAbsentOrInactive(state) && systemdUnitAbsentOrDisabled(state);
 	});
 	const applied =

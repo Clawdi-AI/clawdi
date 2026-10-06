@@ -3141,7 +3141,8 @@ fi
 		expect(planOfficialRuntimeServices([program], paths, true).pending).toEqual([]);
 	});
 
-	test("roster reuse validates JSON5 inputs and leaves included dependencies to the native probe", () => {
+	test("hot roster reuse validates JSON5 inputs and leaves included dependencies to the native probe", () => {
+		process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
 		const paths = tempRuntimePaths();
 		const configPath = writeFakeOpenClawConfigMutationSdk(paths.userHome);
 		const commandLog = join(paths.userHome, "commands.log");
