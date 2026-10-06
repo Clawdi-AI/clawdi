@@ -8,9 +8,10 @@ import chalk from "chalk";
 import { getClaudeHome, getCodexHome, getGhConfigHome } from "../adapters/paths";
 import { ApiClient } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
-import { getConfig, isLoggedIn } from "../lib/config";
+import { getConfig } from "../lib/config";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { resolveProjectId } from "../lib/project-resolver";
+import { requireAuth } from "../lib/require-auth";
 
 const MAX_PROFILE_FILE_BYTES = 1024 * 1024;
 const CREDENTIAL_FILE_MODE = 0o600;
@@ -129,13 +130,6 @@ interface FilePlan {
 	keychainAccount?: string;
 	mode: number;
 	size?: number;
-}
-
-function requireAuth() {
-	if (!isLoggedIn()) {
-		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exit(1);
-	}
 }
 
 function expandHome(input: string): string {
@@ -525,7 +519,7 @@ export async function collectAgentCredentialProfilePayload(
 			),
 		);
 	} else {
-		p.note(preview, `Credential profile ${tool}/${profile}`);
+		p.note(preview, `Credential profile ${tool}/${profile}`, { output: process.stderr });
 	}
 
 	if (opts.dryRun) return null;
@@ -542,15 +536,19 @@ export async function collectAgentCredentialProfilePayload(
 			p.note(
 				"macOS may show a system authorization prompt. Clawdi will read only the explicit Keychain service/account shown above.",
 				"Keychain source",
+				{ output: process.stderr },
 			);
 		}
 	}
 
 	if (!opts.yes) {
 		const destination = opts.destinationLabel ?? "Clawdi vault";
-		const ok = await p.confirm({ message: `Import this credential profile into ${destination}?` });
+		const ok = await p.confirm({
+			output: process.stderr,
+			message: `Import this credential profile into ${destination}?`,
+		});
 		if (p.isCancel(ok) || !ok) {
-			p.cancel("Cancelled.");
+			p.cancel("Cancelled.", { output: process.stderr });
 			return null;
 		}
 	}
@@ -653,15 +651,20 @@ export async function materializeAgentCredentialProfilePayload(
 			),
 		);
 	} else {
-		p.note(preview, `Materialize credential profile ${tool}/${profile}`);
+		p.note(preview, `Materialize credential profile ${tool}/${profile}`, {
+			output: process.stderr,
+		});
 	}
 
 	if (opts.dryRun) return null;
 
 	if (!opts.yes) {
-		const ok = await p.confirm({ message: "Write these local credential files?" });
+		const ok = await p.confirm({
+			output: process.stderr,
+			message: "Write these local credential files?",
+		});
 		if (p.isCancel(ok) || !ok) {
-			p.cancel("Cancelled.");
+			p.cancel("Cancelled.", { output: process.stderr });
 			return null;
 		}
 	}

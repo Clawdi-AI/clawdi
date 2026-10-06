@@ -16,9 +16,13 @@ function toClackOptions<T extends string>(options: SelectOption<T>[]): Option<T>
 
 export async function askYesNo(message: string, def = true): Promise<boolean> {
 	if (!isInteractive()) return def;
-	const result = await p.confirm({ message, initialValue: def });
+	const result = await p.confirm({
+		output: process.stderr,
+		message,
+		initialValue: def,
+	});
 	if (p.isCancel(result)) {
-		p.cancel("Cancelled.");
+		p.cancel("Cancelled.", { output: process.stderr });
 		process.exit(0);
 	}
 	return result as boolean;
@@ -34,6 +38,7 @@ export async function askMulti<T extends string>(
 	}
 	const initial = defaultSelected ?? options.map((o) => o.value);
 	const result = await p.multiselect<T>({
+		output: process.stderr,
 		message,
 		options: toClackOptions(options),
 		initialValues: initial,
@@ -61,8 +66,8 @@ export function parseModules(
 	const valid = new Set(available);
 	const invalid = chosen.filter((c) => !valid.has(c));
 	if (invalid.length > 0) {
-		console.log(chalk.red(`Unknown module(s): ${invalid.join(", ")}`));
-		console.log(chalk.gray(`  Valid: ${available.join(", ")}`));
+		console.error(chalk.red(`Unknown module(s): ${invalid.join(", ")}`));
+		console.error(chalk.gray(`  Valid: ${available.join(", ")}`));
 		return null;
 	}
 	if (chosen.length === 0) return null;

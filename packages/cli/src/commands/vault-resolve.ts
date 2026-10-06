@@ -1,8 +1,9 @@
 import chalk from "chalk";
 import { ApiClient, readJson } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
-import { getAuth, getConfig } from "../lib/config";
+import { getConfig } from "../lib/config";
 import { resolveProjectId } from "../lib/project-resolver";
+import { requireAuth } from "../lib/require-auth";
 import { getEnvIdByAgent } from "../lib/select-adapter";
 import {
 	isVaultProjectNotFoundBody,
@@ -48,12 +49,7 @@ export async function vaultResolveCommand(
 	} = {},
 ): Promise<void> {
 	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exitCode = 1;
-		return;
-	}
+	requireAuth();
 	const accessToken = await getClawdiAccessToken(apiUrl);
 	if (opts.project && opts.agent) {
 		console.error(chalk.red("Pass either --project or --agent, not both."));

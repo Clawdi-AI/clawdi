@@ -100,6 +100,14 @@ export async function downloadAndStageNativeRelease(input: {
 		const manifestResponse = await fetcher(manifestUrl, {
 			signal: downloadAbort.signal,
 			redirect: "follow",
+		}).catch((error: unknown) => {
+			if (
+				downloadAbort.signal.aborted ||
+				(error instanceof DOMException && error.name === "AbortError")
+			) {
+				throw error;
+			}
+			throw new Error("native manifest unreachable", { cause: error });
 		});
 		if (!manifestResponse.ok) {
 			throw new Error(`native manifest download failed (${manifestResponse.status})`);

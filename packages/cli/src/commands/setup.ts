@@ -15,7 +15,7 @@ import {
 	builtinSkillTargetDir,
 } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
-import { getAuth, getConfig } from "../lib/config";
+import { getConfig } from "../lib/config";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import {
 	assertUniqueVaultWorkspace,
@@ -25,6 +25,7 @@ import {
 } from "../lib/environment-registration";
 import { errMessage } from "../lib/errors";
 import { getOrCreateMachineId } from "../lib/machine-identity";
+import { requireAuth } from "../lib/require-auth";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
@@ -59,12 +60,7 @@ export async function setup(opts: SetupOpts) {
 			"Vault workspace options require --agent; a target is never shared across detected agents.",
 		);
 	}
-	const auth = getAuth();
-	if (!auth) {
-		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exitCode = 1;
-		return;
-	}
+	const auth = requireAuth();
 
 	let machineId: string;
 	let machineName: string;
@@ -72,7 +68,7 @@ export async function setup(opts: SetupOpts) {
 		machineId = getOrCreateMachineId();
 		machineName = hostname();
 	} catch (error) {
-		console.log(chalk.red(`Could not prepare local agent identity: ${errMessage(error)}`));
+		console.error(chalk.red(`Could not prepare local agent identity: ${errMessage(error)}`));
 		process.exitCode = 1;
 		return;
 	}
@@ -84,8 +80,8 @@ export async function setup(opts: SetupOpts) {
 
 	if (opts.agent) {
 		if (!AGENT_TYPES.includes(opts.agent as AgentType)) {
-			console.log(chalk.red(`Unknown agent type: ${opts.agent}`));
-			console.log(chalk.gray(`Valid types: ${AGENT_TYPES.join(", ")}`));
+			console.error(chalk.red(`Unknown agent type: ${opts.agent}`));
+			console.error(chalk.gray(`Valid types: ${AGENT_TYPES.join(", ")}`));
 			process.exitCode = 1;
 			return;
 		}
@@ -124,8 +120,8 @@ export async function setup(opts: SetupOpts) {
 	}
 
 	if (detected.length === 0) {
-		console.log(chalk.yellow("  No supported agents detected."));
-		console.log(chalk.gray("  Use --agent to specify manually."));
+		console.error(chalk.yellow("  No supported agents detected."));
+		console.error(chalk.gray("  Use --agent to specify manually."));
 		return;
 	}
 
@@ -137,6 +133,7 @@ export async function setup(opts: SetupOpts) {
 	} else {
 		console.log();
 		const result = await p.multiselect<string>({
+			output: process.stderr,
 			message: "Register which agents?",
 			options: detected.map((d) => ({
 				value: d.adapter.agentType as string,
@@ -153,7 +150,7 @@ export async function setup(opts: SetupOpts) {
 			required: false,
 		});
 		if (p.isCancel(result)) {
-			p.cancel("Cancelled.");
+			p.cancel("Cancelled.", { output: process.stderr });
 			return;
 		}
 		const picked = new Set(result as string[]);
@@ -242,7 +239,7 @@ async function registerEnv(
 		);
 		return true;
 	} catch (e) {
-		console.log(
+		console.error(
 			chalk.red(`  Failed to register ${adapterRegistry[agentType].displayName}: ${errMessage(e)}`),
 		);
 		return false;
@@ -259,8 +256,8 @@ function installDaemonForAllRegisteredAgents(restartExisting: boolean) {
 		const failed = cleanupLegacyDaemonUnits();
 		if (failed > 0) process.exitCode = 1;
 	} catch (e) {
-		console.log(chalk.yellow(`⚠ Could not install daemon: ${errMessage(e)}`));
-		console.log(chalk.gray("  Run manually: clawdi daemon install"));
+		console.error(chalk.yellow(`⚠ Could not install daemon: ${errMessage(e)}`));
+		console.error(chalk.gray("  Run manually: clawdi daemon install"));
 		process.exitCode = 1;
 	}
 }
@@ -274,7 +271,7 @@ function cleanupLegacyDaemonUnits(): number {
 				console.log(chalk.green(`✓ Removed legacy per-agent daemon unit for ${agentType}`));
 			}
 		} catch (e) {
-			console.log(
+			console.error(
 				chalk.yellow(
 					`⚠ Could not remove legacy per-agent daemon unit for ${agentType}: ${errMessage(e)}`,
 				),
@@ -293,6 +290,7 @@ async function shouldInstallDaemons(opts: SetupOpts): Promise<boolean> {
 	if (opts.yes || !isInteractive()) return true;
 
 	const result = await p.confirm({
+		output: process.stderr,
 		message: "Install and start background sync daemons for all registered agents?",
 		initialValue: true,
 	});
@@ -335,7 +333,7 @@ async function installBuiltinSkill(agentType: AgentType) {
 
 	const sourceDir = join(resolveCurrentCliResourceRoot(), "skills", "clawdi");
 	if (!existsSync(sourceDir)) {
-		console.log(chalk.yellow("⚠ Built-in skill not found, skipping."));
+		console.error(chalk.yellow("⚠ Built-in skill not found, skipping."));
 		return;
 	}
 
@@ -376,7 +374,7 @@ async function installBuiltinSkill(agentType: AgentType) {
 			chalk.green(`✓ Clawdi skill ${alreadyInstalled ? "updated" : "installed"} in ${label}`),
 		);
 	} catch (error) {
-		console.log(chalk.yellow(`⚠ Could not install Clawdi skill (${errMessage(error)}).`));
+		console.error(chalk.yellow(`⚠ Could not install Clawdi skill (${errMessage(error)}).`));
 	}
 }
 
@@ -427,6 +425,7 @@ async function selectVaultWorkspace(
 		}
 		if (candidates.length) {
 			const selected = await p.select({
+				output: process.stderr,
 				message: "Deliver this agent's vault files to a native workspace?",
 				options: [
 					{ value: -1, label: "Not now" },
