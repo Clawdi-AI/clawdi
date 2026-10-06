@@ -7,7 +7,7 @@ import {
 } from "@clawdi/shared/view";
 import { cn } from "cn";
 import { router } from "expo-router";
-import { Cloud, History } from "lucide-react-native";
+import { Cloud } from "lucide-react-native";
 import { ApiErrorPanel } from "../api-error-panel";
 import { EmptyState } from "../empty-state";
 import {
@@ -93,12 +93,7 @@ export function AgentTileView({ tile }: { tile: AgentTile }) {
 				}
 				meta={meta}
 				titleAdornment={
-					tile.source === "self-managed" ? undefined : (
-						<AgentSourceBadge
-							icon={tile.source === "on-clawdi" ? Cloud : History}
-							legacy={tile.source === "legacy-hosted"}
-						/>
-					)
+					tile.source === "self-managed" ? undefined : <AgentSourceBadge icon={Cloud} />
 				}
 			/>
 		</AppPressable>

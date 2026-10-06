@@ -3,20 +3,20 @@ import type { LucideIcon } from "lucide-react-native";
 import { Icon } from "../icon";
 import { StatusBadge } from "../status-badge";
 import { webBoth } from "../web-layout";
-export function AgentSourceBadge({ icon, legacy = false }: { icon: LucideIcon; legacy?: boolean }) {
+
+/** Icon-only hosted badge from the Web agent tile (mobile shows no legacy v1 agents). */
+export function AgentSourceBadge({ icon }: { icon: LucideIcon }) {
 	return (
 		<StatusBadge
 			status="neutral"
 			className={webBoth(
-				`${legacy ? agentSourceBadgeClasses.legacyRoot : agentSourceBadgeClasses.root} ${agentSourceBadgeClasses.iconOnly} ${legacy ? "" : agentSourceBadgeClasses.hosted}`,
+				`${agentSourceBadgeClasses.root} ${agentSourceBadgeClasses.iconOnly} ${agentSourceBadgeClasses.hosted}`,
 			)}
 		>
 			<Icon
 				as={icon}
-				fill={legacy ? "none" : "currentColor"}
-				className={webBoth(
-					`${agentSourceBadgeClasses.icon} ${legacy ? agentSourceBadgeClasses.legacyIcon : agentSourceBadgeClasses.hostedIcon}`,
-				)}
+				fill="currentColor"
+				className={webBoth(`${agentSourceBadgeClasses.icon} ${agentSourceBadgeClasses.hostedIcon}`)}
 			/>
 		</StatusBadge>
 	);

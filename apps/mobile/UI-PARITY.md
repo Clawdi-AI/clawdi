@@ -4,6 +4,12 @@ The mobile app is a native replica of the Web dashboard (`apps/web`), not a
 separate design. When a mobile screen and its Web page disagree, the Web page
 wins unless the difference is a deliberate platform adaptation listed below.
 
+## Scope
+
+The app covers Clawdi v2 only. Do not port Web's v1 legacy hosted surfaces
+(legacy agent tiles, "Legacy" badges, legacy dashboard links). Legacy agent
+ids may be read solely to keep those agents out of v2 lists.
+
 ## Sources of truth
 
 - **Tokens**: `packages/shared/src/style/theme.css` → `theme.generated.css`
