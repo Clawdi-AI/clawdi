@@ -25,7 +25,7 @@ const HERMES_PROFILE_DISCOVERY = `
 import json, sys
 sys.path.insert(0, sys.argv[1])
 from hermes_cli import profiles
-list_profile_names = profiles.list_profile_names
+list_profile_names = getattr(profiles, "list_profile_names", None) or (lambda: [p.name for p in profiles.list_profiles()])
 get_profile_dir = profiles.get_profile_dir
 read_profile_meta = getattr(profiles, "read_profile_meta", lambda path: {})
 rows = []
@@ -54,15 +54,34 @@ export interface ProfileDiscovery {
 	watchPaths?: string[];
 }
 
+type ProfileDiscoveryFailureReason =
+	| "app_root_unavailable"
+	| "runtime_python_unavailable"
+	| "upstream_discovery_failed"
+	| "upstream_output_invalid"
+	| "default_profile_missing"
+	| "command_failed"
+	| "roster_incomplete";
+
+class ProfileDiscoveryError extends Error {
+	constructor(readonly reason: ProfileDiscoveryFailureReason) {
+		super(reason);
+	}
+}
+
 async function discoverHermesInventory(signal?: AbortSignal): Promise<{
 	profiles: LocalAgentProfile[];
 	root: string;
 }> {
 	const userHome = process.env.HOME || homedir();
 	const appRoot = runtimeAppRoot("hermes", userHome);
-	if (!appRoot || !existsSync(appRoot)) throw new Error("Hermes application path is unavailable");
+	if (!appRoot || !existsSync(appRoot)) throw new ProfileDiscoveryError("app_root_unavailable");
+	const python = await hermesManagedPythonAsync(userHome, appRoot, signal).catch(() => {
+		signal?.throwIfAborted();
+		throw new ProfileDiscoveryError("runtime_python_unavailable");
+	});
 	const result = await execRuntimeUserCommand(
-		await hermesManagedPythonAsync(userHome, appRoot, signal),
+		python,
 		["-c", HERMES_PROFILE_DISCOVERY, appRoot],
 		userHome,
 		process.cwd(),
@@ -76,21 +95,27 @@ async function discoverHermesInventory(signal?: AbortSignal): Promise<{
 			maxBufferBytes: 1024 * 1024,
 			signal,
 		},
-	);
-	const entries = z
-		.array(z.unknown())
-		.parse(JSON.parse(result.stdout))
-		.flatMap((value) => {
-			const parsed = hermesProfileSchema.safeParse(value);
-			if (parsed.success) return [parsed.data];
-			const identity = hermesProfileIdentity.safeParse(value);
-			if (identity.success) return [{ ...identity.data, previous_names: [], failed: true }];
-			const key = z.object({ name: upstreamKey }).safeParse(value);
-			log.warn("profiles.read_failed", key.success ? { profile_key: key.data.name } : undefined);
-			return [];
-		});
+	).catch(() => {
+		signal?.throwIfAborted();
+		throw new ProfileDiscoveryError("upstream_discovery_failed");
+	});
+	let values: unknown[];
+	try {
+		values = z.array(z.unknown()).parse(JSON.parse(result.stdout));
+	} catch {
+		throw new ProfileDiscoveryError("upstream_output_invalid");
+	}
+	const entries = values.flatMap((value) => {
+		const parsed = hermesProfileSchema.safeParse(value);
+		if (parsed.success) return [parsed.data];
+		const identity = hermesProfileIdentity.safeParse(value);
+		if (identity.success) return [{ ...identity.data, previous_names: [], failed: true }];
+		const key = z.object({ name: upstreamKey }).safeParse(value);
+		log.warn("profiles.read_failed", key.success ? { profile_key: key.data.name } : undefined);
+		return [];
+	});
 	const upstreamDefault = entries.find((entry) => entry.name === "default");
-	if (!upstreamDefault) throw new Error("Hermes default profile is missing");
+	if (!upstreamDefault) throw new ProfileDiscoveryError("default_profile_missing");
 	const legacyHome = resolve(getHermesHome());
 	const selected = entries.find((entry) => resolve(entry.home) === legacyHome);
 	const defaultName = selected?.name ?? "default";
@@ -150,15 +175,24 @@ export async function discoverAgentProfiles(
 				signal,
 				timeout: 15_000,
 				maxBuffer: 1024 * 1024,
+			}).catch(() => {
+				signal?.throwIfAborted();
+				throw new ProfileDiscoveryError("command_failed");
 			});
-			const entries = parseOpenClawAgentWorkspaces(output);
-			const raw: unknown = JSON.parse(output);
+			let entries: ReturnType<typeof parseOpenClawAgentWorkspaces>;
+			let raw: unknown;
+			try {
+				entries = parseOpenClawAgentWorkspaces(output);
+				raw = JSON.parse(output);
+			} catch {
+				throw new ProfileDiscoveryError("upstream_output_invalid");
+			}
 			if (
 				!Array.isArray(raw) ||
 				!entries.some((entry) => entry.id === openClawAgentId()) ||
 				new Set(entries.map((entry) => entry.id)).size !== entries.length
 			)
-				throw new Error("OpenClaw official profile roster is incomplete");
+				throw new ProfileDiscoveryError("roster_incomplete");
 			const usable = entries.filter((entry) => {
 				if (upstreamKey.safeParse(entry.id).success) return true;
 				log.warn("profiles.read_failed");
@@ -184,9 +218,12 @@ export async function discoverAgentProfiles(
 				})),
 			};
 		}
-	} catch {
+	} catch (error) {
 		signal?.throwIfAborted();
-		log.warn("profiles.discovery_incomplete", { agent_type: adapter.agentType });
+		log.warn("profiles.discovery_incomplete", {
+			agent_type: adapter.agentType,
+			reason: error instanceof ProfileDiscoveryError ? error.reason : "unknown",
+		});
 	}
 	return {
 		...legacyProfileDiscovery(adapter),
