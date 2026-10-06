@@ -41,8 +41,7 @@ export async function warmHostedHermesRuntime(
 	)
 		throw new Error("runtime warm requires an unclaimed runtime with no applied tenant state");
 	initializeAnonymousEgressSnapshot(paths);
-	// A volume copy changes the inode/device identity of the prepared CLI.
-	// Refresh its normal verification before the first tenant init needs it.
+	// Verify the instance's managed CLI before the first tenant init needs it.
 	reconcilePendingRuntimeCliUpgrade(paths);
 	const identity = { uid: runtimeUserUid(runtimeUser), gid: runtimeUserGid(runtimeUser) };
 	const manager = spawnSync("systemctl", ["start", `user@${identity.uid}.service`], {

@@ -40,7 +40,7 @@ export function recordOpenClawPreinstalledService(
 	});
 }
 
-/** Only a still-unmodified anonymous unit may be replaced for builder capacity drift.
+/** Only a still-unmodified prepared unit may be replaced for capacity changes.
  * Native updates and user edits retain their own service authority. */
 export function openClawPreinstalledServiceNeedsRefresh(
 	paths: RuntimePaths,

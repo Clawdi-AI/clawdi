@@ -108,7 +108,7 @@ test("anonymous preparation installs without identity and seals actual health/co
 	);
 	expect(() => prepareRuntimePreinstallation(f.spec, f.installer, f)).toThrow("empty anonymous");
 });
-test("verified archive stays readable after root builder umask 077", () => {
+test("verified archive stays readable after root fill umask 077", () => {
 	const f = fixture();
 	const previous = process.umask(0o077);
 	try {
