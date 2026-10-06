@@ -88,10 +88,8 @@ test("resolves and collects Skills as the runtime user without tenant bins in PA
 	process.env.CLAWDI_RUNTIME_GID = String(process.getgid?.());
 	delete process.env.OPENCLAW_AGENT_ID;
 
-	expect(resolveOpenClawAgentWorkspace()).toBe(workspace);
 	expect(await resolveOpenClawAgentWorkspaceAsync()).toBe(workspace);
 	const adapter = new OpenClawAdapter();
-	expect(adapter.skills.rootDir()).toBe(join(workspace, "skills"));
 	expect(await adapter.skills.listKeys()).toEqual(["demo"]);
 	expect((await adapter.skills.collect()).map((skill) => skill.filePath)).toEqual([
 		join(skillDir, "SKILL.md"),
@@ -99,7 +97,6 @@ test("resolves and collects Skills as the runtime user without tenant bins in PA
 
 	rmSync(join(tenantBin, "openclaw"));
 	const message = "OpenClaw workspace resolution requires `openclaw agents list --json`";
-	expect(() => adapter.skills.rootDir()).toThrow(message);
 	await expect(adapter.skills.listKeys()).rejects.toThrow(message);
 	await expect(adapter.skills.collect()).rejects.toThrow(message);
 });

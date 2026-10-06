@@ -58,8 +58,9 @@ export function runOpenClawSdkCommand(
 		() =>
 			new Promise<string>((resolve, reject) => {
 				options.signal?.throwIfAborted();
+				const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 				const child = resolveRuntimeUserCommand(
-					process.execPath,
+					runtimeUser && runtimeUser !== "root" ? process.execPath : "node",
 					[
 						"--max-old-space-size=256",
 						"--input-type=module",

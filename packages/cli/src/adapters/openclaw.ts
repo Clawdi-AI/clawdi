@@ -1382,7 +1382,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					target: targetDir,
 					operation: () => {
 						const result = spawnSync(
-							resolveOpenClawCommandPath(),
+							"openclaw",
 							[
 								"skills",
 								"install",
