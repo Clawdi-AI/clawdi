@@ -1,9 +1,49 @@
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import * as tar from "tar";
 import { validateNativeArchive } from "../src/lib/native-activation.ts";
+import {
+	isNativeTarget,
+	NATIVE_PUBLISH_TARGET_CATALOG,
+	NATIVE_RELEASE_MANIFEST_NAME,
+	NATIVE_RELEASE_MANIFEST_SCHEMA,
+	NATIVE_RELEASE_MANIFEST_V2_NAME,
+	NATIVE_RELEASE_MANIFEST_V2_SCHEMA,
+	nativeAssetName,
+	parseNativeReleaseManifest,
+	parseNativeReleaseManifestV2,
+} from "../src/lib/native-release-manifest.ts";
+
+export function writeNativeReleaseManifests(releaseDir, version) {
+	const artifacts = NATIVE_PUBLISH_TARGET_CATALOG.map(({ target }) => {
+		const asset = nativeAssetName(target);
+		const sha256 = createHash("sha256")
+			.update(readFileSync(resolve(releaseDir, asset)))
+			.digest("hex");
+		return { target, row: `artifact\t${target}\t${asset}\t${sha256}` };
+	});
+	const v1 = [
+		NATIVE_RELEASE_MANIFEST_SCHEMA,
+		`version\t${version}`,
+		...artifacts.filter(({ target }) => isNativeTarget(target)).map(({ row }) => row),
+		"",
+	].join("\n");
+	const v2 = [
+		NATIVE_RELEASE_MANIFEST_V2_SCHEMA,
+		`version\t${version}`,
+		...artifacts.map(({ row }) => row),
+		"",
+	].join("\n");
+	parseNativeReleaseManifest(v1);
+	parseNativeReleaseManifestV2(v2);
+	writeFileSync(resolve(releaseDir, NATIVE_RELEASE_MANIFEST_NAME), v1);
+	writeFileSync(resolve(releaseDir, NATIVE_RELEASE_MANIFEST_V2_NAME), v2);
+}
 
 // Publication policy is stricter than installation of existing releases.
-export async function validateNativePublicationArchive(archive) {
-	await validateNativeArchive(archive);
+export async function validateNativePublicationArchive(archive, executableName = "clawdi") {
+	await validateNativeArchive(archive, executableName);
 	let forbiddenPath;
 	await new Promise((resolve, reject) => {
 		const stream = tar.list({
