@@ -197,7 +197,7 @@ Examples:
 	serveCmd
 		.command("doctor")
 		.description("Snapshot every registered agent's daemon state — for support handoff")
-		.option("--json", "Emit machine-readable JSON instead of human-readable lines")
+		.option("--json", "Output as JSON")
 		.action(async (_opts, cmd) => {
 			const h = await get();
 			await h.serveDoctor(cmd.optsWithGlobals());

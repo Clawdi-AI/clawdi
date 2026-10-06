@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Console } from "node:console";
 import chalk from "chalk";
-import { Command, Option } from "commander";
+import { Command, Help, Option } from "commander";
 import { AGENT_TYPE_HELP_LABEL, SKILL_AGENT_TYPE_HELP_LABEL } from "./adapters/registry.js";
 import { registerServeCommand } from "./commands/serve-cli.js";
 import { loadAuthTokenFile } from "./lib/auth-token-file.js";
@@ -139,7 +139,7 @@ program
 	.option("-y, --yes", "Confirm the Cloud Agent and any exact wallet debit")
 	.option("--no-wait", "Return after the server accepts the request")
 	.option("--no-open", "Print secure card checkout without opening a browser")
-	.option("--json", "Emit one machine-readable result object")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		`
@@ -207,7 +207,7 @@ authCmd
 authCmd
 	.command("desktop-session", { hidden: true })
 	.description("Create a short-lived desktop dashboard session")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async () => {
 		const { authDesktopSessionMachine } = await import("./commands/auth.js");
 		await authDesktopSessionMachine();
@@ -251,7 +251,7 @@ const walletCmd = program.command("wallet").description("Inspect Clawdi wallet")
 walletCmd
 	.command("status")
 	.description("Show authenticated wallet balance, binding, and USDC funding readiness")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (opts: { json?: boolean }) => {
 		const { runWalletStatusCommand } = await import("./commands/wallet.js");
 		await runWalletStatusCommand(opts);
@@ -453,7 +453,7 @@ const aiProviderCmd = program.command("ai-provider").description("Manage AI prov
 aiProviderCmd
 	.command("list")
 	.description("List configured AI providers")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (opts) => {
 		const { aiProviderListCommand } = await import("./commands/ai-provider.js");
 		await aiProviderListCommand(opts);
@@ -477,7 +477,7 @@ aiProviderCmd
 	)
 	.option("--set-default", "Set as the default chat provider")
 	.option("--replace", "Replace an existing provider with the same id")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		`
@@ -507,7 +507,7 @@ aiProviderCmd
 		[],
 	)
 	.option("--set-default", "Set as the default chat provider")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (providerId: string, opts) => {
 		const { aiProviderEditCommand } = await import("./commands/ai-provider.js");
 		await aiProviderEditCommand(providerId, opts);
@@ -519,7 +519,7 @@ aiProviderCmd
 	.description("Remove an AI provider")
 	.option("--force", "Remove even if defaults reference it")
 	.option("-y, --yes", "Skip the interactive confirmation prompt")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText("after", "\nExample:\n  $ clawdi ai-provider remove <provider-id> --yes")
 	.action(async (providerId: string, opts) => {
 		const { aiProviderRemoveCommand } = await import("./commands/ai-provider.js");
@@ -530,7 +530,7 @@ aiProviderCmd
 	.command("validate [provider-id]")
 	.description("Validate the AI provider catalog")
 	.option("--allow-no-auth-public", "Allow no-auth providers on public URLs")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (providerId: string | undefined, opts) => {
 		const { aiProviderValidateCommand } = await import("./commands/ai-provider.js");
 		await aiProviderValidateCommand(providerId, opts);
@@ -544,7 +544,7 @@ aiProviderCmd
 	.option("--live", "Also run a direct provider metadata probe")
 	.option("--probe", "Deprecated alias for --live")
 	.option("--no-probe", "Compatibility flag; live probes are disabled unless --live is passed")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (providerId: string, opts) => {
 		const { aiProviderTestCommand } = await import("./commands/ai-provider.js");
 		await aiProviderTestCommand(providerId, opts);
@@ -560,7 +560,7 @@ aiProviderCmd
 	.option("--timeout <seconds>", "Seconds to wait for loopback callback", parsePositiveInteger, 600)
 	.option("--no-open", "Do not open the browser automatically")
 	.option("--dry-run", "Show the OAuth start request without running it")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (providerId: string, opts) => {
 		const { aiProviderConnectCommand } = await import("./commands/ai-provider.js");
 		await aiProviderConnectCommand(providerId, opts);
@@ -573,7 +573,7 @@ aiProviderCmd
 	.option("--code <code>", "OAuth authorization code")
 	.option("--state <state>", "OAuth state returned by connect")
 	.option("--redirect-uri <uri>", "Redirect URI used for the OAuth start request")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (providerId: string, opts) => {
 		const { aiProviderCompleteOAuthCommand } = await import("./commands/ai-provider.js");
 		await aiProviderCompleteOAuthCommand(providerId, opts);
@@ -591,7 +591,7 @@ aiProviderCmd
 	.option("--keychain-account <account>", "macOS Keychain account name for --source keychain")
 	.option("-y, --yes", "Skip confirmation (required in a non-interactive shell)")
 	.option("--dry-run", "Show what would be imported without storing anything")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		"\nExample:\n  $ clawdi ai-provider import-auth openai-codex --tool codex --yes",
@@ -630,7 +630,7 @@ aiProviderCmd
 		"CLAWDI_SECRET_EXPORT_PASSPHRASE",
 	)
 	.option("--replace", "Replace existing providers with matching ids")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (file: string | undefined, opts) => {
 		const { aiProviderImportCommand } = await import("./commands/ai-provider.js");
 		await aiProviderImportCommand(file, opts);
@@ -647,7 +647,7 @@ const channelCmd = program
 channelCmd
 	.command("list")
 	.description("List your private channel bots")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (opts: { json?: boolean }) => {
 		const { channelListCommand } = await import("./commands/channel.js");
 		await channelListCommand(opts);
@@ -656,7 +656,7 @@ channelCmd
 channelCmd
 	.command("available")
 	.description("List available channel bots")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (opts: { json?: boolean }) => {
 		const { channelAvailableCommand } = await import("./commands/channel.js");
 		await channelAvailableCommand(opts);
@@ -665,7 +665,7 @@ channelCmd
 channelCmd
 	.command("get <channel-id>")
 	.description("Show channel bot details")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (channelId: string, opts: { json?: boolean }) => {
 		const { channelGetCommand } = await import("./commands/channel.js");
 		await channelGetCommand(channelId, opts);
@@ -684,7 +684,7 @@ channelCmd
 		"Encrypted provider secret read from an env var; repeatable",
 		collectValues,
 	)
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		"\nExample:\n  $ TELEGRAM_BOT_TOKEN=123:abc clawdi channel create telegram ops-bot --agent <agent-id> --provider-token-env TELEGRAM_BOT_TOKEN",
@@ -697,7 +697,7 @@ channelCmd
 channelCmd
 	.command("links <channel-id>")
 	.description("List your bot-agent links for a channel")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (channelId: string, opts: { json?: boolean }) => {
 		const { channelLinksCommand } = await import("./commands/channel.js");
 		await channelLinksCommand(channelId, opts);
@@ -707,7 +707,7 @@ channelCmd
 	.command("link <channel-id>")
 	.description("Link an accessible bot to one of your agents")
 	.requiredOption("--agent <agent-id>", "Target agent id")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText("after", "\nExample:\n  $ clawdi channel link <channel-id> --agent <agent-id>")
 	.action(async (channelId: string, opts) => {
 		const { channelLinkCommand } = await import("./commands/channel.js");
@@ -718,7 +718,7 @@ channelCmd
 	.command("rotate-token <channel-id>")
 	.description("Rotate the agent SDK token for one of your bot-agent links")
 	.requiredOption("--link <link-id>", "Bot-agent link id")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText("after", "\nExample:\n  $ clawdi channel rotate-token <channel-id> --link <link-id>")
 	.action(async (channelId: string, opts) => {
 		const { channelRotateTokenCommand } = await import("./commands/channel.js");
@@ -731,7 +731,7 @@ channelCmd
 	.option("--agent <agent-id>", "Create or reuse a link for this agent")
 	.option("--link <link-id>", "Use an existing bot-agent link")
 	.option("--ttl <seconds>", "Pair code TTL in seconds", parsePositiveInteger, 300)
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		"\nExample:\n  $ clawdi channel pair-code <channel-id> --agent <agent-id>\n  $ clawdi channel pair-code <channel-id> --link <link-id>",
@@ -747,7 +747,7 @@ channelCmd
 	.option("--binding <binding-id>", "Paired chat binding id")
 	.option("--chat <external-chat-id>", "External provider chat id")
 	.requiredOption("--text <text>", "Message text")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		'\nExample:\n  $ clawdi channel send <channel-id> --binding <binding-id> --text "deploy done"',
@@ -760,7 +760,7 @@ channelCmd
 channelCmd
 	.command("bindings <channel-id>")
 	.description("List your paired external chats for a channel")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (channelId: string, opts: { json?: boolean }) => {
 		const { channelBindingsCommand } = await import("./commands/channel.js");
 		await channelBindingsCommand(channelId, opts);
@@ -771,7 +771,7 @@ channelCmd
 	.description("Sync provider slash commands for one of your private bots")
 	.option("--guild <guild-id>", "Discord guild id for guild-scoped command sync")
 	.option("--commands <json>", "Command spec JSON array; defaults to clawdi_pair and clawdi_unpair")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		"\nExample:\n  $ clawdi channel sync-commands <channel-id>\n  $ clawdi channel sync-commands <channel-id> --guild <discord-guild-id>",
@@ -785,7 +785,7 @@ channelCmd
 	.command("delete <channel-id>")
 	.description("Archive one of your private channel bots")
 	.option("-y, --yes", "Confirm deletion without prompting")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText("after", "\nExample:\n  $ clawdi channel delete <channel-id> --yes")
 	.action(async (channelId: string, opts: { yes?: boolean; json?: boolean }) => {
 		const { channelDeleteCommand } = await import("./commands/channel.js");
@@ -815,7 +815,7 @@ runtimeCmd
 	.option("--interval-ms <ms>", "Polling interval in milliseconds")
 	.option("--self-heal-ms <ms>", "Maximum interval before forcing a full manifest fetch")
 	.option("--once", "Run one watch iteration and exit")
-	.option("--json", "Emit machine-readable JSON events")
+	.option("--json", "Output as JSON")
 	.action(
 		async (opts: { intervalMs?: string; selfHealMs?: string; once?: boolean; json?: boolean }) => {
 			const { runtimeWatch } = await import("./commands/runtime.js");
@@ -835,7 +835,7 @@ runtimeCmd
 runtimeCmd
 	.command("verify", { hidden: true })
 	.description("Validate hosted runtime CLI modules and cached manifest")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (opts: { json?: boolean }) => {
 		const { runtimeVerify } = await import("./commands/runtime-doctor.js");
 		await runtimeVerify(opts);
@@ -852,7 +852,7 @@ runtimeCmd
 runtimeCmd
 	.command("status", { hidden: true })
 	.description("Show managed Hosted runtime boot status")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (opts: { json?: boolean }) => {
 		const { runtimeStatus } = await import("./commands/runtime-doctor.js");
 		await runtimeStatus(opts);
@@ -1026,7 +1026,7 @@ vaultCmd
 	)
 	.option("--debug", "Show project precedence and skipped matches")
 	.option("--dry-run", "Check where the key resolves without printing the plaintext value")
-	.option("--json", "Output the full resolve response as JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		"\nExamples:\n" +
@@ -1052,7 +1052,7 @@ program
 	)
 	.option("--debug", "Show project precedence without printing secrets in diagnostics")
 	.option("--dry-run", "Check the reference without printing the plaintext value")
-	.option("--json", "Output the full resolve response as JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		"\nExamples:\n" +
@@ -1221,7 +1221,7 @@ sessionCmd
 sessionCmd
 	.command("read <session-id>")
 	.description("Read one uploaded session and its message content")
-	.option("--json", "Output metadata and messages as JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText("after", "\nUse the cloud session UUID printed by `clawdi session search`.")
 	.action(async (sessionId, opts) => {
 		const { sessionRead } = await import("./commands/session.js");
@@ -1231,7 +1231,7 @@ sessionCmd
 sessionCmd
 	.command("export <session-id>")
 	.description("Export an uploaded session as Markdown to stdout")
-	.option("--json", "Export owner metadata and messages as JSON instead")
+	.option("--json", "Output as JSON")
 	.action(async (id, opts) => {
 		const { sessionExport } = await import("./commands/session.js");
 		await sessionExport(id, opts);
@@ -1243,7 +1243,7 @@ sessionCmd
 	.option("-y, --yes", "Confirm public publication without prompting")
 	.option("--through <position>", "Include messages through this zero-based position")
 	.option("--response <position>", "Share only the assistant response at this zero-based position")
-	.option("--json", "Output link metadata as JSON")
+	.option("--json", "Output as JSON")
 	.action(async (id, opts) => {
 		const { sessionShareCreate } = await import("./commands/session.js");
 		await sessionShareCreate(id, opts);
@@ -1272,7 +1272,7 @@ sessionCmd
 sessionCmd
 	.command("extract <session-id>")
 	.description("Extract memories from a session via the cloud's configured LLM")
-	.option("--json", "Output result as JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		`
@@ -1547,7 +1547,7 @@ projectCmd
 	.command("create <name>")
 	.description("Create a project")
 	.option("--slug <slug>", "Optional stable slug (lowercase letters, numbers, hyphens)")
-	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		"\nExamples:\n" +
@@ -1562,7 +1562,7 @@ projectCmd
 projectCmd
 	.command("list")
 	.description("List owned projects and projects shared with you")
-	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.option("--json", "Output as JSON")
 	.option("--shared-with-me", "Show only projects shared with you")
 	.option("--owned", "Show only projects you own")
 	.option("--include-workspaces", "Include agent workspaces")
@@ -1590,7 +1590,7 @@ projectCmd
 projectCmd
 	.command("show <project>")
 	.description("Show project content, role, owner, and next actions")
-	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.option("--json", "Output as JSON")
 	.action(async (project: string, opts: { json?: boolean }) => {
 		const { projectShowCommand } = await import("./commands/project-show.js");
 		await projectShowCommand(project, opts);
@@ -1692,7 +1692,7 @@ projectCmd
 	.description("List or remove people with project access")
 	.option("--remove <email-or-user-id>", "Remove one accepted member")
 	.option("-y, --yes", "Confirm member removal without prompting")
-	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		"\nExample:\n  $ clawdi project members engineering --remove bob@example.com --yes\n\nNon-interactive removal without --yes is deprecated; --yes will be required starting in 0.16.",
@@ -1705,7 +1705,7 @@ projectCmd
 projectCmd
 	.command("leave <project>")
 	.description("Leave a project shared with you")
-	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.option("--json", "Output as JSON")
 	.addHelpText("after", "\nExample:\n  $ clawdi project leave @alice-cdbf/engineering")
 	.action(async (project: string, opts: { json?: boolean }) => {
 		const { projectLeaveCommand } = await import("./commands/project-members.js");
@@ -1716,7 +1716,7 @@ projectCmd
 	.command("unshare <project>")
 	.description("Owner: revoke links, cancel invites, and remove accepted viewers")
 	.option("-y, --yes", "Confirm revoking all project sharing without prompting")
-	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		"\nExample:\n  $ clawdi project unshare engineering --yes\n\nNon-interactive sharing revocation without --yes is deprecated; --yes will be required starting in 0.16.",
@@ -1780,7 +1780,7 @@ agentSkillsCmd
 agentCmd
 	.command("detect")
 	.description("Detect supported local agents without changing them")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.action(async (opts: { json?: boolean }) => {
 		const { agentDetectCommand } = await import("./commands/agent-detect.js");
 		await agentDetectCommand(opts);
@@ -1819,7 +1819,7 @@ agentCredentialsCmd
 	.option("--keychain-account <account>", "macOS Keychain account name for --source keychain")
 	.option("-y, --yes", "Skip confirmation (required in a non-interactive shell)")
 	.option("--dry-run", "Show what would be imported without storing anything")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		`
@@ -1846,7 +1846,7 @@ agentCredentialsCmd
 	.option("-y, --yes", "Skip confirmation (required in a non-interactive shell)")
 	.option("--no-backup", "Overwrite existing files without creating .bak-* copies")
 	.option("--dry-run", "Show what would be written without changing files")
-	.option("--json", "Emit machine-readable JSON")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		`
@@ -1867,7 +1867,7 @@ const agentProjectsCmd = agentCmd
 agentProjectsCmd
 	.command("list <agent-id>")
 	.description("Show workspace and linked-project vault priority")
-	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.option("--json", "Output as JSON")
 	.action(async (agentId, opts) => {
 		const { agentProjectsListCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsListCommand(agentId, opts);
@@ -1923,7 +1923,7 @@ agentProjectsCmd
 const inboxCmd = program
 	.command("inbox")
 	.description("Incoming project invites and share links")
-	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.option("--json", "Output as JSON")
 	.action(async (opts) => {
 		// `clawdi inbox` (no subcommand) → list pending invitations
 		const { inboxListCommand } = await import("./commands/inbox.js");
@@ -1942,7 +1942,7 @@ inboxCmd
 		[] as string[],
 	)
 	.option("--use-as <attached>", "Link to --agent (compatibility value: attached)")
-	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		`
@@ -1970,7 +1970,7 @@ inboxCmd
 		[] as string[],
 	)
 	.option("--use-as <attached>", "Link to --agent (compatibility value: attached)")
-	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		`
@@ -2001,6 +2001,45 @@ inboxCmd
 		const { inboxForgetCommand } = await import("./commands/inbox.js");
 		await inboxForgetCommand(projectId);
 	});
+
+// Keep the top-level help scannable without changing the command registry or
+// exposing any of the hidden hosted-runtime commands. Commander 15 renders
+// each heading in the order its first grouped command appears.
+const TOP_LEVEL_HELP_GROUPS: Readonly<Record<string, readonly string[]>> = {
+	"Get started": ["auth", "setup", "status", "doctor"],
+	Sync: ["push", "pull", "session", "daemon"],
+	Context: ["skill", "memory", "vault", "project", "inbox"],
+	Secrets: ["run", "read", "inject"],
+	"Cloud Agents": ["deploy", "agent", "ai-provider", "channel", "wallet"],
+	Maintenance: ["config", "update", "teardown", "mcp"],
+};
+
+class TopLevelHelp extends Help {
+	override groupItems<T extends Command | Option>(
+		unsortedItems: T[],
+		visibleItems: T[],
+		getGroup: (item: T) => string,
+	): Map<string, T[]> {
+		const groups = super.groupItems(unsortedItems, visibleItems, getGroup);
+		const ordered = new Map<string, T[]>();
+		for (const heading of [...Object.keys(TOP_LEVEL_HELP_GROUPS), "Commands:"]) {
+			const items = groups.get(heading);
+			if (items) ordered.set(heading, items);
+		}
+		for (const [heading, items] of groups) {
+			if (!ordered.has(heading)) ordered.set(heading, items);
+		}
+		return ordered;
+	}
+}
+
+program.createHelp = () => new TopLevelHelp();
+
+for (const [heading, commandNames] of Object.entries(TOP_LEVEL_HELP_GROUPS)) {
+	for (const commandName of commandNames) {
+		program.commands.find((command) => command.name() === commandName)?.helpGroup(heading);
+	}
+}
 
 // Auto-update tick: prints any "✓ Updated to v…" notice from a previous
 // run's background install, and (when due) kicks off another detached
