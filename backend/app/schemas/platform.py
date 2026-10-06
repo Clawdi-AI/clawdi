@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.core.agent_types import SupportedAgentType
 from app.core.api_scopes import RUNTIME_MCP_SCOPES
 from app.schemas.runtime import (
     HostedEgressEngine,
@@ -64,7 +65,7 @@ class PlatformAgentCreate(PlatformMutationBody):
         max_length=200,
         description="Canonical Agent name supplied by the owning control plane.",
     )
-    agent_type: str = Field(min_length=1, max_length=50)
+    agent_type: SupportedAgentType = Field(min_length=1, max_length=50)
     agent_version: str | None = Field(default=None, max_length=50)
     os_name: str = Field(default="linux", min_length=1, max_length=50)
 

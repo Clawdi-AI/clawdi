@@ -13,6 +13,7 @@ import pytest_asyncio
 from httpx import ASGITransport
 from sqlalchemy import func, select
 
+from app.core.agent_types import AGENT_TYPE_LABELS
 from app.core.config import settings
 from app.core.database import get_control_session, get_session
 from app.main import app
@@ -208,6 +209,40 @@ async def _create_platform_agent(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_type", "status_code"),
+    [(agent_type, 200) for agent_type in AGENT_TYPE_LABELS]
+    + [
+        (agent_type, 422)
+        for agent_type in ("privileged", "admin", "k8s-debug", "x" * 51, "claude-code")
+    ],
+)
+async def test_platform_registration_validates_agent_type(
+    platform_client,
+    db_session,
+    seed_user,
+    agent_type: str,
+    status_code: int,
+):
+    agent_id = uuid.uuid4()
+    body = {**_agent_body(_clerk_owner(seed_user), agent_id), "agent_type": agent_type}
+    response = await platform_client.post(
+        "/v1/platform/agents",
+        headers=_headers("agent-type-validation"),
+        json=body,
+    )
+
+    assert response.status_code == status_code, response.text
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    if status_code == 200:
+        assert agent is not None
+        assert agent.agent_type == agent_type
+    else:
+        assert agent is None
+        assert response.json()["detail"][0]["loc"] == ["body", "agent_type"]
+
+
+@pytest.mark.asyncio
 async def test_platform_routes_require_admin_key(platform_client, seed_user):
     response = await platform_client.post(
         "/v1/platform/agents",
@@ -354,7 +389,7 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
         json={**_agent_body(owner, agent_id), "default_name": "e2e-2"},
     )
     assert created.status_code == 200, created.text
-    assert created.json() == {"id": str(agent_id)}
+    assert created.json() == {"id": str(agent_id), "dashboard_url": None}
     agent = await db_session.get(AgentEnvironment, agent_id)
     assert agent is not None
     assert agent.default_name == "e2e-2"

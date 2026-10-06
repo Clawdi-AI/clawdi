@@ -494,16 +494,6 @@ function hermesEventDrafts(
 	return drafts;
 }
 
-function hermesDir() {
-	return getHermesHome();
-}
-function stateDbPath() {
-	return join(hermesDir(), "state.db");
-}
-function skillsDir() {
-	return join(hermesDir(), "skills");
-}
-
 function acceptHermesSkillKey(skillKey: string): boolean {
 	if (isValidSkillKey(skillKey)) return true;
 	log.warn("adapter.invalid_skill_key_skipped", {
@@ -532,6 +522,13 @@ function parseModelField(raw: string | null): string | null {
 }
 
 export class HermesAdapter implements AgentAdapterCore {
+	constructor(private readonly home: string = getHermesHome()) {}
+	private stateDbPath(): string {
+		return join(this.home, "state.db");
+	}
+	private skillsDir(): string {
+		return join(this.home, "skills");
+	}
 	readonly agentType = "hermes" as const;
 	readonly sessions = {
 		contentProtocol: (context?: SyncReadContext) => this.getContentProtocol(context),
@@ -548,16 +545,16 @@ export class HermesAdapter implements AgentAdapterCore {
 		watchPaths: () => this.getSessionsWatchPaths(),
 	};
 	readonly skills = flatSkillModule({
-		root: skillsDir,
+		root: () => this.skillsDir(),
 		nested: true,
 		acceptKey: acceptHermesSkillKey,
-		sharedPath: (key, owner) => join(skillsDir(), "shared", `${key}__${owner}`),
+		sharedPath: (key, owner) => join(this.skillsDir(), "shared", `${key}__${owner}`),
 	});
 
 	async detect(): Promise<boolean> {
 		// Hermes stores state in a SQLite db. The dir alone may exist as a
 		// leftover; the db is the only file every Hermes install creates.
-		return existsSync(stateDbPath());
+		return existsSync(this.stateDbPath());
 	}
 
 	async getVersion(): Promise<string | null> {
@@ -568,8 +565,8 @@ export class HermesAdapter implements AgentAdapterCore {
 		context?: SyncReadContext,
 	): Promise<"events-v1" | "snapshot-v1"> {
 		context?.signal.throwIfAborted();
-		if (!existsSync(stateDbPath())) return "snapshot-v1";
-		const db = await openReadonlySqlite(stateDbPath());
+		if (!existsSync(this.stateDbPath())) return "snapshot-v1";
+		const db = await openReadonlySqlite(this.stateDbPath());
 		try {
 			context?.signal.throwIfAborted();
 			return hasStableModernMessageIds(messageTableInfo(db)) ? "events-v1" : "snapshot-v1";
@@ -583,14 +580,14 @@ export class HermesAdapter implements AgentAdapterCore {
 		knownSourceRevisions: ReadonlyMap<string, string>,
 		context?: SyncReadContext,
 	): Promise<SessionBatchScan> {
-		if (!existsSync(stateDbPath())) {
+		if (!existsSync(this.stateDbPath())) {
 			return {
 				coverage: "complete",
 				userActivity: { lastUserInputAt: null, complete: false },
 				batches: (async function* () {})(),
 			};
 		}
-		const db = await openReadonlySqlite(stateDbPath());
+		const db = await openReadonlySqlite(this.stateDbPath());
 		try {
 			context?.signal.throwIfAborted();
 			const activity = hermesUserActivity(db);
@@ -673,8 +670,8 @@ export class HermesAdapter implements AgentAdapterCore {
 		context?: SyncReadContext,
 	): Promise<RawSession | null> {
 		context?.signal.throwIfAborted();
-		if (!existsSync(stateDbPath())) return null;
-		const db = await openReadonlySqlite(stateDbPath());
+		if (!existsSync(this.stateDbPath())) return null;
+		const db = await openReadonlySqlite(this.stateDbPath());
 		try {
 			context?.signal.throwIfAborted();
 			const row = db
@@ -855,7 +852,7 @@ export class HermesAdapter implements AgentAdapterCore {
 			context?.streaming ||
 			size.size_bytes > EAGER_SESSION_MAX_BYTES ||
 			size.row_count > HERMES_EAGER_MAX_ROWS;
-		const path = stateDbPath();
+		const path = this.stateDbPath();
 		const readEvents =
 			stream && modern
 				? () => this.readSessionEvents(path, row, sourceRevision, size.last_id, context)
@@ -942,7 +939,7 @@ export class HermesAdapter implements AgentAdapterCore {
 			summary,
 			messages,
 			...(stream ? { readEvents, readMessages, lastMessageTimestamp } : events ? { events } : {}),
-			rawFilePath: `${stateDbPath()}#${row.id}`,
+			rawFilePath: `${this.stateDbPath()}#${row.id}`,
 			...(sourceRevision ? { sourceRevision } : {}),
 		};
 	}
@@ -1047,7 +1044,7 @@ export class HermesAdapter implements AgentAdapterCore {
 		// sidecars while state.db itself remains unchanged. All three paths
 		// therefore belong to one global quiescence window; missing sidecars
 		// have an empty poll signature and become observable when created.
-		const database = stateDbPath();
+		const database = this.stateDbPath();
 		return [database, `${database}-wal`, `${database}-journal`];
 	}
 }

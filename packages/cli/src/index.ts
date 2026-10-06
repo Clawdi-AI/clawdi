@@ -140,7 +140,7 @@ authCmd
 	.command("login")
 	.description("Sign in through your browser")
 	.option("--manual", "Skip the browser flow and paste an API key instead")
-	.option("--no-open", "Print the authorization URL and securely paste the callback")
+	.option("--no-open", "Print the sign-in link and code without opening a browser")
 	.addOption(new Option("--desktop").hideHelp())
 	.addOption(new Option("--force").hideHelp())
 	.addHelpText(
@@ -164,7 +164,7 @@ authCmd
 
 authCmd
 	.command("complete")
-	.description("Finish a sign-in started in non-interactive mode (after browser approval)")
+	.description("Resume waiting for a pending sign-in")
 	.action(async () => {
 		const { authComplete } = await import("./commands/auth.js");
 		await authComplete();
@@ -311,7 +311,9 @@ program
 Examples:
   $ clawdi teardown --agent claude_code
   $ clawdi teardown --all --yes
-  $ clawdi teardown --agent hermes --keep-skill`,
+  $ clawdi teardown --agent hermes --keep-skill
+
+Non-interactive teardown without --yes is deprecated; --yes will be required starting in 0.16.`,
 	)
 	.action(async (opts) => {
 		const { teardown } = await import("./commands/teardown.js");
@@ -477,7 +479,9 @@ aiProviderCmd
 	.alias("rm")
 	.description("Remove an AI provider")
 	.option("--force", "Remove even if defaults reference it")
+	.option("-y, --yes", "Skip the interactive confirmation prompt")
 	.option("--json", "Emit machine-readable JSON")
+	.addHelpText("after", "\nExample:\n  $ clawdi ai-provider remove <provider-id> --yes")
 	.action(async (providerId: string, opts) => {
 		const { aiProviderRemoveCommand } = await import("./commands/ai-provider.js");
 		await aiProviderRemoveCommand(providerId, opts);
@@ -546,9 +550,13 @@ aiProviderCmd
 	.option("--to <path>", "Materialization target path to store with the profile")
 	.option("--keychain-service <service>", "macOS Keychain service name for --source keychain")
 	.option("--keychain-account <account>", "macOS Keychain account name for --source keychain")
-	.option("-y, --yes", "Skip confirmation prompt")
+	.option("-y, --yes", "Skip confirmation (required in a non-interactive shell)")
 	.option("--dry-run", "Show what would be imported without storing anything")
 	.option("--json", "Emit machine-readable JSON")
+	.addHelpText(
+		"after",
+		"\nExample:\n  $ clawdi ai-provider import-auth openai-codex --tool codex --yes",
+	)
 	.action(async (providerId: string, opts) => {
 		const { aiProviderImportAuthCommand } = await import("./commands/ai-provider.js");
 		await aiProviderImportAuthCommand(providerId, opts);
@@ -737,7 +745,7 @@ channelCmd
 channelCmd
 	.command("delete <channel-id>")
 	.description("Archive one of your private channel bots")
-	.option("--yes", "Confirm deletion without prompting")
+	.option("-y, --yes", "Confirm deletion without prompting")
 	.option("--json", "Emit machine-readable JSON")
 	.addHelpText("after", "\nExample:\n  $ clawdi channel delete <channel-id> --yes")
 	.action(async (channelId: string, opts: { yes?: boolean; json?: boolean }) => {
@@ -895,7 +903,7 @@ vaultCmd
 vaultCmd
 	.command("import <file>")
 	.description("Import from .env file")
-	.option("-y, --yes", "Skip the confirmation prompt (for CI / scripted imports)")
+	.option("-y, --yes", "Skip confirmation (required in a non-interactive shell)")
 	.option("--vault <slug>", "Target vault slug", "default")
 	.option("--section <name>", "Target vault section")
 	.option(
@@ -1104,11 +1112,13 @@ Examples:
 skillCmd
 	.command("rm <key>")
 	.description("Remove a skill from the cloud")
+	.option("-y, --yes", "Skip the interactive confirmation prompt")
 	.option("-a, --agent <type>", `Remove from an agent workspace (${SKILL_AGENT_TYPE_HELP_LABEL})`)
 	.option(
 		"-p, --project <id-or-slug>",
 		"Remove from an explicit owned project (UUID, slug, or name); can't be combined with --agent",
 	)
+	.addHelpText("after", "\nExample:\n  $ clawdi skill rm my-skill --yes")
 	.action(async (key, opts) => {
 		const { skillRm } = await import("./commands/skill.js");
 		await skillRm(key, opts);
@@ -1295,9 +1305,11 @@ memoryCmd
 memoryCmd
 	.command("rm <id>")
 	.description("Delete a memory")
-	.action(async (id) => {
+	.option("-y, --yes", "Skip the interactive confirmation prompt")
+	.addHelpText("after", "\nExample:\n  $ clawdi memory rm <id> --yes")
+	.action(async (id, opts) => {
 		const { memoryRm } = await import("./commands/memory.js");
-		await memoryRm(id);
+		await memoryRm(id, opts);
 	});
 
 // ─────────────────────────────────────────────────────────────
@@ -1329,6 +1341,10 @@ program
 	.command("update")
 	.description("Install the latest CLI through the current installation owner")
 	.option("--check", "Only check for updates, don't install")
+	.option(
+		"-y, --yes",
+		"Install without prompting (required to install from a non-interactive shell)",
+	)
 	.option("--json", "Output as JSON")
 	.addOption(new Option("--background-worker").hideHelp())
 	.addOption(new Option("--current-version <version>").hideHelp())
@@ -1341,6 +1357,10 @@ program
 	.addOption(new Option("--native-version <version>").hideHelp())
 	.addOption(new Option("--native-target <target>").hideHelp())
 	.addOption(new Option("--native-lock-timeout-ms <milliseconds>").hideHelp())
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi update\n  $ clawdi update --yes\n  $ clawdi update --yes --json\n  $ clawdi update --check --json",
+	)
 	.action(async (opts) => {
 		if (opts.nativeIdentity) {
 			const { nativeIdentityOutput } = await import("./lib/native-activation.js");
@@ -1632,12 +1652,13 @@ projectCmd
 	.command("members <project>")
 	.description("List or remove people with project access")
 	.option("--remove <email-or-user-id>", "Remove one accepted member")
+	.option("-y, --yes", "Confirm member removal without prompting")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.addHelpText(
 		"after",
-		"\nExample:\n  $ clawdi project members engineering --remove bob@example.com",
+		"\nExample:\n  $ clawdi project members engineering --remove bob@example.com --yes\n\nNon-interactive removal without --yes is deprecated; --yes will be required starting in 0.16.",
 	)
-	.action(async (project: string, opts: { remove?: string; json?: boolean }) => {
+	.action(async (project: string, opts: { remove?: string; json?: boolean; yes?: boolean }) => {
 		const { projectMembersCommand } = await import("./commands/project-members.js");
 		await projectMembersCommand(project, opts);
 	});
@@ -1655,9 +1676,13 @@ projectCmd
 projectCmd
 	.command("unshare <project>")
 	.description("Owner: revoke links, cancel invites, and remove accepted viewers")
+	.option("-y, --yes", "Confirm revoking all project sharing without prompting")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
-	.addHelpText("after", "\nExample:\n  $ clawdi project unshare engineering")
-	.action(async (project: string, opts: { json?: boolean }) => {
+	.addHelpText(
+		"after",
+		"\nExample:\n  $ clawdi project unshare engineering --yes\n\nNon-interactive sharing revocation without --yes is deprecated; --yes will be required starting in 0.16.",
+	)
+	.action(async (project: string, opts: { json?: boolean; yes?: boolean }) => {
 		const { projectUnshareCommand } = await import("./commands/project-members.js");
 		await projectUnshareCommand(project, opts);
 	});
@@ -1753,7 +1778,7 @@ agentCredentialsCmd
 	.option("--to <path>", "Materialization target path to store with the profile")
 	.option("--keychain-service <service>", "macOS Keychain service name for --source keychain")
 	.option("--keychain-account <account>", "macOS Keychain account name for --source keychain")
-	.option("-y, --yes", "Skip confirmation prompt")
+	.option("-y, --yes", "Skip confirmation (required in a non-interactive shell)")
 	.option("--dry-run", "Show what would be imported without storing anything")
 	.option("--json", "Emit machine-readable JSON")
 	.addHelpText(
@@ -1763,10 +1788,10 @@ Examples:
   $ clawdi agent credentials import claude-code
   $ clawdi agent credentials import claude-code --source keychain --keychain-service <service> --keychain-account <account>
   $ clawdi agent credentials import gh
-  $ clawdi agent credentials import aws --from ~/.aws/credentials --to ~/.aws/credentials
+  $ clawdi agent credentials import aws --from ~/.aws/credentials --to ~/.aws/credentials --yes
 
 Codex model-provider auth:
-  $ clawdi ai-provider import-auth openai-codex --tool codex`,
+  $ clawdi ai-provider import-auth openai-codex --tool codex --yes`,
 	)
 	.action(async (tool: string, opts) => {
 		const { agentCredentialsImportCommand } = await import("./commands/agent-credentials.js");
@@ -1779,7 +1804,7 @@ agentCredentialsCmd
 	.option("-p, --project <id-or-slug>", "Read from a specific project")
 	.option("--profile <name>", "Profile name", "default")
 	.option("--to <path>", "Override destination path (only for single-file profiles)")
-	.option("-y, --yes", "Skip confirmation prompt")
+	.option("-y, --yes", "Skip confirmation (required in a non-interactive shell)")
 	.option("--no-backup", "Overwrite existing files without creating .bak-* copies")
 	.option("--dry-run", "Show what would be written without changing files")
 	.option("--json", "Emit machine-readable JSON")
@@ -1789,7 +1814,7 @@ agentCredentialsCmd
 Examples:
   $ clawdi agent credentials materialize claude-code
   $ clawdi agent credentials materialize gh
-  $ clawdi agent credentials materialize aws --profile work --to ~/.aws/credentials`,
+  $ clawdi agent credentials materialize aws --profile work --to ~/.aws/credentials --yes`,
 	)
 	.action(async (tool: string, opts) => {
 		const { agentCredentialsMaterializeCommand } = await import("./commands/agent-credentials.js");
@@ -1825,6 +1850,11 @@ agentProjectsCmd
 	.alias("detach")
 	.description("Unlink a project from vault resolution")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
+	.option("-y, --yes", "Skip the interactive confirmation prompt")
+	.addHelpText(
+		"after",
+		"\nExample:\n  $ clawdi agent projects unlink <agent-id> --project engineering --yes",
+	)
 	.action(async (agentId, opts) => {
 		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsRemoveContextCommand(agentId, opts);
@@ -1918,9 +1948,11 @@ Example:
 inboxCmd
 	.command("decline <id>")
 	.description("Decline a pending invitation")
-	.action(async (id) => {
+	.option("-y, --yes", "Skip the interactive confirmation prompt")
+	.addHelpText("after", "\nExample:\n  $ clawdi inbox decline <id> --yes")
+	.action(async (id, opts) => {
 		const { inboxDeclineCommand } = await import("./commands/inbox.js");
-		await inboxDeclineCommand(id);
+		await inboxDeclineCommand(id, opts);
 	});
 
 inboxCmd

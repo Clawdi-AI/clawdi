@@ -37,6 +37,58 @@ unauthenticated) work without a backend. Anything that hits the API
 the baked-in production URL for release builds and `http://localhost:8000`
 for dev builds (`bun run dev` / `build:dev`).
 
+## Profile discovery and sync
+
+One sync engine registers all discovered profiles and reads their sessions
+separately. Hermes uses its managed Python and upstream `list_profile_names()`,
+`get_profile_dir()`, and `profile.yaml.previous_names`. OpenClaw uses
+`agents list --json`; `OPENCLAW_AGENT_ID`, or `main` when unset, remains the
+default Agent regardless of upstream `isDefault`. Readers take explicit homes
+and select their own profile. The Hermes home used before upgrading retains the
+Cloud default key, even when it names an upstream profile; the upstream root
+then uses the named key `default`, unless that conflicts. Enumeration failures
+send `complete: false`: Hermes retains complete default coverage and OpenClaw
+reads the configured `OPENCLAW_AGENT_ID` when set, or all legacy agents when
+unset. Profile endpoint 404/5xx responses
+select the same legacy behavior for that cycle. Legacy fallback omits profile
+keys from uploads so the backend can preserve an existing session's attribution.
+
+Hermes rename attribution applies only when a newly discovered key records a
+known removed key in upstream rename history. A durable API/Agent-fenced journal
+retries interrupted inventory and rename operations and moves local receipts
+without changing their hashes or pending generations. When multiple removed
+keys match, the last matching entry in upstream history wins. Only that profile
+is renamed; the others stay removed/offline, and one warning containing profile
+keys accompanies continued sync. Without upstream history, the old
+profile stays offline and the new profile syncs independently. OpenClaw moves
+existing Cloud session metadata to the discovered Agent before content sync.
+
+Default session state keys and projection bytes remain unchanged. Named keys
+include the profile dimension. Sessions remain one-way and read-only. Skill
+collection, reconciliation, and linked Project installation use only the default
+profile, including OpenClaw's default Agent workspace. Hermes MCP uses the
+official `hermes -p <profile> config` mechanism for every profile; OpenClaw MCP
+remains gateway-wide. Profile inventory refresh also runs with session sync
+disabled. Discovery runs asynchronously at startup, five-minute reconciliation,
+and profile inventory changes observed through the existing watcher/stat path.
+Session-file changes do not rediscover profiles. Hermes MCP is reconciled at
+setup and once for each newly seen profile. Named profile failures skip that
+reader and report incomplete inventory while the default continues; only a
+complete discovery can mark a missing profile removed. OpenClaw shares one
+official all-agents session inventory per scan and attributes only newly
+observed IDs.
+
+The CLI release must wait for the web profile list and filter PR. The backend
+expand release retains the legacy Session unique constraint; repeated local IDs
+across profiles require the later contract release and are rejected meanwhile.
+
+```bash
+scripts/test.sh cli tests/profiles.test.ts tests/adapters/openclaw.test.ts
+```
+
+Done: discovery, rename retries, default state-key stability, per-profile MCP,
+and OpenClaw reader/skill isolation tests pass.
+
 ## MCP forwarding deadlines
 
 The stdio proxy gives `tools/call` a 390-second HTTP deadline, including response
@@ -213,7 +265,7 @@ backend, dashboard, local key minting, and cleanup.
 Once it's up, a canonical smoke loop:
 
 ```bash
-clawdi auth login     # Clerk OAuth Authorization Code + PKCE
+clawdi auth login     # Clerk OAuth Device Authorization Grant
 clawdi setup          # register this agent + install the built-in skill
 clawdi doctor         # all ✓ means the full pipe is wired up
 clawdi push --dry-run # preview what push would upload
@@ -241,11 +293,25 @@ Cloud reads its public-client identifiers from the strictly registered global
 `clerk_cli_oauth` App Setting. Cloud and Hosted are configured independently;
 there is no automatic synchronization or shared secret reference between them.
 
-On SSH, run `clawdi auth login --no-open`, open the printed URL locally, then
-paste the complete failed loopback callback URL into the masked terminal
-prompt. Clerk does not advertise RFC 8628 device authorization. A non-TTY flow
-can save the pending PKCE transaction and later run `clawdi auth complete` with
-the callback URL on stdin; the authorization code is never accepted as a flag.
+`clawdi auth login` discovers Clerk's device authorization endpoint from the
+issuer metadata, prints a short-lived sign-in link and code, and waits for
+approval. Check that the browser page shows the same code and approve only a
+sign-in you just started on this machine. Local interactive terminals open the
+browser automatically; SSH and non-TTY commands print the link and keep polling.
+`--no-open` suppresses opening the browser. `clawdi auth complete` resumes a
+pending device sign-in without reading stdin; transactions from older CLIs are
+cleared with instructions to start again.
+
+Self-hosted Clerk OAuth applications must enable **Device authorization grant**
+under Configure → OAuth applications in the Clerk Dashboard. The Backend API
+equivalent is `PATCH /v1/oauth_applications/<application_id>` with
+`{"device_authorization_grant_enabled": true}`. Keep the registered loopback
+redirect URI for older CLIs. Instances without Clerk OAuth can use
+`clawdi auth login --manual` with an API key from Settings → API Keys.
+
+Done: `clawdi auth login` prints the link and code, then reports `Signed in as`
+after browser approval. Run `clawdi auth status --json` to check the saved
+`clerk-oauth` credential. Local development without Clerk uses `--manual`.
 
 The Hosted deploy wizard shares its defaults, validation, request builder,
 compute/payment selection, and deployment-request projection with the Web

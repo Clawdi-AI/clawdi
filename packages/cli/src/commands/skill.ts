@@ -18,11 +18,13 @@ import { adapterRegistry } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { SkillSummary } from "../lib/api-schemas";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
-import { getConfig, isLoggedIn } from "../lib/config";
+import { getConfig } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
 import { fetchGithubSkillArchive, readBoundedResponseBytes } from "../lib/github-skill-archive";
 import { resolveProjectId } from "../lib/project-resolver";
+import { confirmOrRequireYes } from "../lib/prompts";
+import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
 import {
 	fetchDefaultProjectId,
@@ -40,13 +42,6 @@ import {
 import { type ParsedSource, parseSource } from "../lib/source-parser";
 import { snapshotSkillArchive, tarSingleFile } from "../lib/tar";
 import { isInteractive } from "../lib/tty";
-
-function requireAuth() {
-	if (!isLoggedIn()) {
-		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exit(1);
-	}
-}
 
 async function fetchAllSkills(api: ApiClient, projectId?: string): Promise<SkillSummary[]> {
 	const items: SkillSummary[] = [];
@@ -203,7 +198,7 @@ async function installGithubSkillForAgent(
 			committedSnapshot.hash,
 		);
 	} catch (error) {
-		console.log(
+		console.error(
 			chalk.yellow(
 				`Installed ${sanitizeMetadata(downloaded.skillKey)} locally; the dashboard will retry the update the next time the daemon syncs.`,
 			),
@@ -282,7 +277,7 @@ export async function skillAdd(
 	if (stat.isDirectory()) {
 		const skillMdPath = join(resolved, "SKILL.md");
 		if (!existsSync(skillMdPath)) {
-			console.log(chalk.red("Directory must contain a SKILL.md"));
+			console.error(chalk.red("Directory must contain a SKILL.md"));
 			process.exit(1);
 		}
 		skillMdSource = readFileSync(skillMdPath, "utf-8");
@@ -346,7 +341,7 @@ export async function skillAdd(
 	// uploading skills that agents can't meaningfully surface.
 	const { data } = parseFrontmatter(skillMdSource);
 	if (!data.name || !data.description) {
-		console.log(chalk.red("SKILL.md must declare both `name` and `description` in frontmatter."));
+		console.error(chalk.red("SKILL.md must declare both `name` and `description` in frontmatter."));
 		console.log(
 			chalk.gray("  Example:\n    ---\n    name: my-skill\n    description: what it does\n    ---"),
 		);
@@ -363,10 +358,15 @@ export async function skillAdd(
 				`skill_key:   ${skillKey}\n` +
 				`files:       ${fileCount}`,
 			"Skill to upload",
+			{ output: process.stderr },
 		);
-		const ok = await p.confirm({ message: "Upload this skill?", initialValue: true });
+		const ok = await p.confirm({
+			output: process.stderr,
+			message: "Upload this skill?",
+			initialValue: true,
+		});
 		if (p.isCancel(ok) || !ok) {
-			p.cancel("Cancelled.");
+			p.cancel("Cancelled.", { output: process.stderr });
 			return;
 		}
 	}
@@ -394,7 +394,7 @@ export async function skillAdd(
 				committedSnapshot.hash,
 			);
 		} catch (error) {
-			console.log(
+			console.error(
 				chalk.yellow(
 					`Saved ${sanitizeMetadata(skillKey)} in the agent filesystem; the dashboard will retry the update the next time the daemon syncs.`,
 				),
@@ -435,18 +435,18 @@ export async function skillInstall(
 	try {
 		parsed = parseSource(repoInput);
 	} catch (e) {
-		console.log(chalk.red(errMessage(e)));
+		console.error(chalk.red(errMessage(e)));
 		process.exit(1);
 	}
 
 	if (parsed.type !== "github") {
-		console.log(
+		console.error(
 			chalk.red(`Only GitHub sources are supported by the backend for now (got ${parsed.type}).`),
 		);
 		process.exit(1);
 	}
 	if (opts.agent && opts.project) {
-		console.log(chalk.red("Pass either --project or --agent, not both."));
+		console.error(chalk.red("Pass either --project or --agent, not both."));
 		process.exit(1);
 	}
 
@@ -485,10 +485,22 @@ export async function skillInstall(
 	);
 }
 
-export async function skillRm(key: string, opts: { agent?: string; project?: string } = {}) {
+export async function skillRm(
+	key: string,
+	opts: { agent?: string; project?: string; yes?: boolean } = {},
+) {
 	requireAuth();
 	const api = new ApiClient();
 	const target = await resolveSkillMutationTarget(api, opts);
+	if (
+		isInteractive() &&
+		!(await confirmOrRequireYes(`Remove skill ${sanitizeMetadata(key)}?`, {
+			yes: opts.yes,
+			action: "remove this skill",
+		}))
+	) {
+		return;
+	}
 	if (target.agentId && target.adapter) {
 		const materialization = readProjectSkillMaterialization({
 			agentType: target.adapter.agentType,
@@ -516,7 +528,7 @@ export async function skillRm(key: string, opts: { agent?: string; project?: str
 		try {
 			await api.deleteAgentSkill(target.agentId, key, target.projectId);
 		} catch (error) {
-			console.log(
+			console.error(
 				chalk.yellow(
 					`Removed ${sanitizeMetadata(key)} locally; the dashboard will retry the update the next time the daemon syncs.`,
 				),
@@ -548,7 +560,7 @@ export function skillInit(nameArg?: string) {
 	const displayPath = hasName ? `${name}/SKILL.md` : "SKILL.md";
 
 	if (existsSync(skillMd)) {
-		console.log(chalk.yellow(`A skill already exists at ${displayPath}`));
+		console.error(chalk.yellow(`A skill already exists at ${displayPath}`));
 		return;
 	}
 

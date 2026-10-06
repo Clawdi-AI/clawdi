@@ -119,13 +119,13 @@ async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | null> {
 	// 1. Explicit --agent wins.
 	if (agentOpt) {
 		if (!AGENT_TYPES.includes(agentOpt as AgentType)) {
-			console.log(chalk.red(`Unknown agent type: ${agentOpt}`));
-			console.log(chalk.gray(`Valid types: ${AGENT_TYPES.join(", ")}`));
+			console.error(chalk.red(`Unknown agent type: ${agentOpt}`));
+			console.error(chalk.gray(`Valid types: ${AGENT_TYPES.join(", ")}`));
 			return null;
 		}
 		const adapter = adapterForType(agentOpt as AgentType);
 		if (!adapter) {
-			console.log(chalk.red(`Agent ${agentOpt} has no adapter implementation.`));
+			console.error(chalk.red(`Agent ${agentOpt} has no adapter implementation.`));
 			return null;
 		}
 		return adapter;
@@ -140,8 +140,8 @@ async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | null> {
 		// via this path have no good "pick all" semantics, so keep the
 		// abort here — but match TTY and non-TTY so agent harnesses get
 		// the same message regardless of how they're run.
-		console.log(chalk.red("Multiple agents are registered on this machine."));
-		console.log(
+		console.error(chalk.red("Multiple agents are registered on this machine."));
+		console.error(
 			chalk.gray(`Pass --agent <type> to choose one. Registered: ${registered.join(", ")}`),
 		);
 		return null;
@@ -153,8 +153,8 @@ async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | null> {
 		await Promise.all(allAdapters.map(async (a) => ((await a.detect()) ? a : null)))
 	).filter((a): a is AgentAdapter => a !== null);
 	if (detected.length === 0) {
-		console.log(chalk.red("No supported agent detected on this machine."));
-		console.log(
+		console.error(chalk.red("No supported agent detected on this machine."));
+		console.error(
 			chalk.gray(`Install one or pass --agent <type>. Available types: ${AGENT_TYPES.join(", ")}`),
 		);
 		return null;
@@ -166,8 +166,8 @@ async function selectAdapter(agentOpt?: string): Promise<AgentAdapter | null> {
 	// at push/pull time. Same abort message in TTY and non-TTY so
 	// agent harnesses see the path forward instead of a stalled prompt.
 	const types = detected.map((a) => a.agentType);
-	console.log(chalk.red("Multiple agents detected on this machine."));
-	console.log(
+	console.error(chalk.red("Multiple agents detected on this machine."));
+	console.error(
 		chalk.gray(
 			`Run \`clawdi setup\` to register one, or pass --agent <type>. Detected: ${types.join(", ")}`,
 		),
@@ -194,15 +194,15 @@ export async function resolveTargetAgentTypes(
 	allAgents: boolean,
 ): Promise<AgentType[]> {
 	if (agentOpt && allAgents) {
-		console.log(chalk.red("Pass either --agent or --all-agents, not both."));
+		console.error(chalk.red("Pass either --agent or --all-agents, not both."));
 		return [];
 	}
 
 	if (allAgents) {
 		const registered = listRegisteredAgentTypes();
 		if (registered.length === 0) {
-			console.log(chalk.red("No agents are registered on this machine."));
-			console.log(chalk.gray("Run `clawdi setup` first."));
+			console.error(chalk.red("No agents are registered on this machine."));
+			console.error(chalk.gray("Run `clawdi setup` first."));
 			return [];
 		}
 		return registered;

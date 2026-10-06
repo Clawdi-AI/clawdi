@@ -5,7 +5,7 @@ import type { RawSession } from "../adapters/base";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import type { SessionDetail, SessionListItem, SessionMessage } from "../lib/api-schemas";
-import { isLoggedIn } from "../lib/config";
+import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata, stripTerminalEscapes } from "../lib/sanitize";
 import { requireSearchQuery } from "../lib/search-query";
 import {
@@ -193,13 +193,6 @@ interface CloudSessionOpts {
 	json?: boolean;
 }
 
-function requireCloudSessionAuth(): boolean {
-	if (isLoggedIn()) return true;
-	console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-	process.exitCode = 1;
-	return false;
-}
-
 function cloudSessionLimit(value?: string): number {
 	const limit = value === undefined ? 25 : Number(value);
 	if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
@@ -233,7 +226,7 @@ function printCloudSessionRows(sessions: SessionListItem[], total: number): void
 }
 
 export async function sessionSearch(query: string, opts: CloudSessionOpts = {}): Promise<void> {
-	if (!requireCloudSessionAuth()) return;
+	requireAuth();
 	const trimmedQuery = requireSearchQuery(query, "Session");
 
 	const api = new ApiClient();
@@ -264,7 +257,7 @@ export async function sessionSearch(query: string, opts: CloudSessionOpts = {}):
 }
 
 export async function sessionRead(sessionId: string, opts: { json?: boolean } = {}): Promise<void> {
-	if (!requireCloudSessionAuth()) return;
+	requireAuth();
 	const api = new ApiClient();
 	const detail: SessionDetail = unwrap(
 		await api.GET("/v1/sessions/{session_id}", {
@@ -310,10 +303,7 @@ interface SessionExtractOpts {
  * signal the onboarding skill watches for to skip the step cleanly.
  */
 export async function sessionExtract(sessionId: string, opts: SessionExtractOpts = {}) {
-	if (!isLoggedIn()) {
-		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exit(1);
-	}
+	requireAuth();
 	const api = new ApiClient();
 	try {
 		const result = unwrap(
@@ -342,7 +332,7 @@ export async function sessionExtract(sessionId: string, opts: SessionExtractOpts
 					}),
 				);
 			} else {
-				console.log(chalk.yellow(`Memory extraction is not configured on this deployment.`));
+				console.error(chalk.yellow(`Memory extraction is not configured on this deployment.`));
 			}
 			process.exit(2);
 		}
@@ -352,7 +342,7 @@ export async function sessionExtract(sessionId: string, opts: SessionExtractOpts
 
 export async function sessionExport(sessionId: string, opts: { json?: boolean } = {}) {
 	if (opts.json) return sessionRead(sessionId, { json: true });
-	if (!requireCloudSessionAuth()) return;
+	requireAuth();
 	const markdown = unwrap(
 		await new ApiClient().GET("/v1/sessions/{session_id}/export.md", {
 			params: { path: { session_id: sessionId } },
@@ -366,7 +356,7 @@ export async function sessionShareCreate(
 	sessionId: string,
 	opts: { through?: string; response?: string; json?: boolean; yes?: boolean } = {},
 ) {
-	if (!requireCloudSessionAuth()) return;
+	requireAuth();
 	if (opts.through !== undefined && opts.response !== undefined) {
 		throw new Error("Use only one of --through or --response.");
 	}
@@ -402,7 +392,7 @@ export async function sessionShareList(
 	sessionId: string | undefined,
 	opts: { page?: string; limit?: string; json?: boolean } = {},
 ) {
-	if (!requireCloudSessionAuth()) return;
+	requireAuth();
 	const page = opts.page === undefined ? 1 : Number(opts.page);
 	const limit = opts.limit === undefined ? 25 : Number(opts.limit);
 	if (
@@ -436,7 +426,7 @@ export async function sessionShareRevoke(
 	shareId: string,
 	opts: { yes?: boolean; legacy?: boolean; json?: boolean } = {},
 ) {
-	if (!requireCloudSessionAuth()) return;
+	requireAuth();
 	if (
 		!(await confirmSessionLink(
 			`Revoke ${opts.legacy ? "legacy live" : "snapshot"} link ${sanitizeMetadata(shareId)}?`,
@@ -460,7 +450,11 @@ async function confirmSessionLink(message: string, yes?: boolean): Promise<boole
 	if (yes) return true;
 	if (!isInteractive())
 		throw new Error("Pass --yes to confirm this session link change in non-interactive mode.");
-	const confirmed = await p.confirm({ message, initialValue: false });
+	const confirmed = await p.confirm({
+		output: process.stderr,
+		message,
+		initialValue: false,
+	});
 	if (p.isCancel(confirmed) || !confirmed) {
 		process.exitCode = 1;
 		return false;

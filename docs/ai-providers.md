@@ -586,6 +586,11 @@ projection client. This changes neither its keys nor its other scopes, and does 
 invalidate unrelated tokens. Configure only the reviewed hosting verifier; a worker
 that accepts caller-supplied native proof must never hold this scope.
 
+Removing the repair scope immediately rejects already-issued tokens carrying it
+at their next authentication, even for a runtime-state call that remains granted.
+Generic scope updates cannot add or remove repair authority; see
+[workload scope operations](backend-development.md#workload-scope-operations).
+
 `POST /v1/admin/platform/workload-clients` registers a public assertion JWK with
 only `platform:runtime-state:write`. It requires admin authentication,
 `Idempotency-Key`, and a body containing `client_id`, `assertion_kid`,

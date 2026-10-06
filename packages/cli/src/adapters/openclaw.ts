@@ -29,6 +29,7 @@ import {
 	type RawSkill,
 	type SessionBatchScan,
 	type SessionEvent,
+	type SessionModule,
 	type SessionScanRequest,
 	type SessionScanResult,
 	type SessionUserActivity,
@@ -36,7 +37,6 @@ import {
 } from "./base";
 import { runOpenClawCommand, runOpenClawSdkCommand } from "./openclaw-command";
 import {
-	listOpenClawAgentWorkspaces,
 	openClawAgentId,
 	resolveOpenClawAgentWorkspace,
 	resolveOpenClawAgentWorkspaceAsync,
@@ -62,25 +62,11 @@ import { collectSkillsFromDir, enumerateSkillDirs, flatSkillModule } from "./ski
 import { openSessionIndex } from "./sqlite";
 import { readCommandVersion } from "./version";
 
-function openclawDir() {
-	return getOpenClawHome();
-}
-function agentsRoot() {
-	return join(openclawDir(), "agents");
+function agentsRoot(home: string) {
+	return join(home, "agents");
 }
 function agentId() {
 	return openClawAgentId();
-}
-function agentDir() {
-	// Single-agent path used for *write* operations (skill install, MCP
-	// command building). Reads enumerate every agent dir via `listAgentDirs`.
-	return join(agentsRoot(), agentId());
-}
-function sessionsDir() {
-	return join(agentDir(), "sessions");
-}
-function sessionsIndexPath() {
-	return join(sessionsDir(), "sessions.json");
 }
 function activeAgentWorkspace() {
 	return resolveOpenClawAgentWorkspace(agentId());
@@ -102,10 +88,13 @@ interface AgentDirectoryListing {
 	complete: boolean;
 }
 
-function listAgentDirsWithCompleteness(): AgentDirectoryListing {
-	const root = agentsRoot();
+function listAgentDirsWithCompleteness(
+	home: string,
+	selectedAgentId?: string,
+): AgentDirectoryListing {
+	const root = agentsRoot(home);
 	if (!existsSync(root)) return { dirs: [], complete: true };
-	const override = process.env.OPENCLAW_AGENT_ID?.trim();
+	const override = selectedAgentId;
 	try {
 		const dirs = readdirSync(root, { withFileTypes: true })
 			.filter((d) => d.isDirectory() && !d.name.startsWith("."))
@@ -122,10 +111,6 @@ function listAgentDirsWithCompleteness(): AgentDirectoryListing {
 		);
 		return { dirs: [], complete: false };
 	}
-}
-
-function listAgentDirs(): string[] {
-	return listAgentDirsWithCompleteness().dirs;
 }
 
 interface SessionEntry {
@@ -245,9 +230,9 @@ function transcriptReferenceName(
 async function collectCanonicalOpenClawActivity(
 	officialInventory: OfficialSessionInventory | null,
 	classifiedPaths: ReadonlySet<string>,
+	listing: AgentDirectoryListing,
 	context?: SyncReadContext,
 ): Promise<SessionUserActivity> {
-	const listing = listAgentDirsWithCompleteness();
 	let activity: SessionUserActivity = {
 		lastUserInputAt: null,
 		complete: listing.complete,
@@ -384,6 +369,7 @@ const OPENCLAW_COMMAND_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 
 async function runOpenClawJson(
 	args: string[],
+	_home: string,
 	context?: SyncReadContext,
 ): Promise<JsonObject | null> {
 	try {
@@ -400,9 +386,11 @@ async function runOpenClawJson(
 }
 
 async function readOfficialSessionInventory(
+	home: string,
 	context?: SyncReadContext,
+	profileAgentId?: string,
 ): Promise<OfficialSessionInventory | null> {
-	const override = process.env.OPENCLAW_AGENT_ID?.trim();
+	const override = profileAgentId;
 	const payload = await runOpenClawJson(
 		[
 			"sessions",
@@ -411,6 +399,7 @@ async function readOfficialSessionInventory(
 			"--limit",
 			"all",
 		],
+		home,
 		context,
 	);
 	if (!payload || !Array.isArray(payload.sessions)) return null;
@@ -479,6 +468,7 @@ async function readOfficialSessionInventory(
 
 async function readOfficialSessionMessagesFromSdk(
 	entry: OfficialSessionEntry,
+	_home: string,
 	context?: SyncReadContext,
 ): Promise<JsonObject[] | null> {
 	if (!entry.sessionId) return null;
@@ -498,7 +488,11 @@ async function readOfficialSessionMessagesFromSdk(
 					sessionId: entry.sessionId,
 					sessionKey: entry.key,
 				},
-				{ signal: context?.signal, maxBuffer: OPENCLAW_COMMAND_MAX_BUFFER_BYTES, timeout: 120_000 },
+				{
+					signal: context?.signal,
+					maxBuffer: OPENCLAW_COMMAND_MAX_BUFFER_BYTES,
+					timeout: 120_000,
+				},
 			),
 		);
 		context?.signal.throwIfAborted();
@@ -534,6 +528,7 @@ interface OfficialReadState {
 async function* readOfficialSessionMessagesFromGateway(
 	entry: OfficialSessionEntry,
 	state: OfficialReadState,
+	home: string,
 	context?: SyncReadContext,
 ): AsyncGenerator<JsonObject> {
 	const index = await openSessionIndex();
@@ -560,6 +555,7 @@ async function* readOfficialSessionMessagesFromGateway(
 					}),
 					"--json",
 				],
+				home,
 				context,
 			);
 			if (!payload || !Array.isArray(payload.messages)) return;
@@ -614,15 +610,19 @@ function officialReadState(entry: OfficialSessionEntry): OfficialReadState {
 	};
 }
 
-function officialTranscriptReader(entry: OfficialSessionEntry, context?: SyncReadContext) {
+function officialTranscriptReader(
+	entry: OfficialSessionEntry,
+	home: string,
+	context?: SyncReadContext,
+) {
 	const initial = officialReadState(entry);
 	let pinnedCount: number | undefined;
 	let pinnedHash: string | undefined;
 	const readEvents = async function* (): AsyncGenerator<SessionEvent> {
 		const state = officialReadState(entry);
-		const sdk = await readOfficialSessionMessagesFromSdk(entry, context);
+		const sdk = await readOfficialSessionMessagesFromSdk(entry, home, context);
 		const transcript =
-			sdk === null ? readOfficialSessionMessagesFromGateway(entry, state, context) : sdk;
+			sdk === null ? readOfficialSessionMessagesFromGateway(entry, state, home, context) : sdk;
 		if (sdk !== null) state.available = true;
 		const digest = createHash("sha256");
 		let count = 0;
@@ -867,6 +867,25 @@ async function materializeOpenClawJsonlSession(input: {
 }
 
 export class OpenClawAdapter implements AgentAdapterCore {
+	private readonly profileAgentId: string | undefined;
+	constructor(
+		profileAgentId?: string | null,
+		private readonly home = getOpenClawHome(),
+		private readonly inventoryReader?: (
+			context?: SyncReadContext,
+		) => Promise<OfficialSessionInventory | null>,
+	) {
+		this.profileAgentId =
+			profileAgentId === null
+				? undefined
+				: (profileAgentId ?? process.env.OPENCLAW_AGENT_ID?.trim());
+	}
+	private profileAgentDirectoryListing(): AgentDirectoryListing {
+		return listAgentDirsWithCompleteness(this.home, this.profileAgentId);
+	}
+	private profileAgentDirs(): string[] {
+		return this.profileAgentDirectoryListing().dirs;
+	}
 	readonly agentType = "openclaw" as const;
 	readonly sessions = {
 		contentProtocol: async (context?: SyncReadContext) => {
@@ -897,7 +916,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		collect: (context?: SyncReadContext) => this.collectSkills(context),
 		listKeys: async (context?: SyncReadContext) => {
 			context?.signal.throwIfAborted();
-			// Collection spans all workspaces; the daemon hashes only the active agent's root.
+			// Collection and reconciliation use the same default agent workspace.
 			const root = join(
 				await resolveOpenClawAgentWorkspaceAsync(agentId(), context?.signal),
 				"skills",
@@ -912,9 +931,8 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		// session index exists. Accepting any agent dir is what makes deployments
 		// like `/data/openclaw/agents/{main,financial,sales,...}` work without
 		// the user setting `OPENCLAW_AGENT_ID` per agent (issue #28).
-		if (!existsSync(openclawDir())) return false;
-		if (existsSync(sessionsIndexPath())) return true;
-		return listAgentDirs().length > 0;
+		if (!existsSync(this.home)) return false;
+		return this.profileAgentDirs().length > 0;
 	}
 
 	async getVersion(): Promise<string | null> {
@@ -928,7 +946,9 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	): Promise<SessionBatchScan> {
 		const materializeCanonicalActivity =
 			request.kind === "complete" && knownSourceRevisions.size === 0;
-		const officialInventory = await readOfficialSessionInventory(context);
+		const officialInventory = this.inventoryReader
+			? await this.inventoryReader(context)
+			: await readOfficialSessionInventory(this.home, context, this.profileAgentId);
 		if (officialInventory) {
 			const collection = await this.collectOfficialSessionsMatching(
 				officialInventory,
@@ -943,6 +963,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					await collectCanonicalOpenClawActivity(
 						officialInventory,
 						collection.classifiedTranscriptPaths,
+						this.profileAgentDirectoryListing(),
 						context,
 					),
 				);
@@ -954,7 +975,12 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		if (collection.coverage === "complete" && materializeCanonicalActivity) {
 			collection.userActivity = mergeUserActivity(
 				collection.userActivity,
-				await collectCanonicalOpenClawActivity(null, collection.classifiedTranscriptPaths, context),
+				await collectCanonicalOpenClawActivity(
+					null,
+					collection.classifiedTranscriptPaths,
+					this.profileAgentDirectoryListing(),
+					context,
+				),
 			);
 		}
 		return singleSessionBatch(collection.coverage, collection);
@@ -977,7 +1003,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				coverage: "complete",
 			};
 		}
-		const sessionRoots = listAgentDirs().map((dir) => resolve(dir, "sessions"));
+		const sessionRoots = this.profileAgentDirs().map((dir) => resolve(dir, "sessions"));
 		const paths = jsonlPathsWithin(request, sessionRoots);
 		if (!paths) {
 			return this.collectLegacySessions(
@@ -1012,7 +1038,9 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		context?: SyncReadContext,
 	): Promise<RawSession | null> {
 		context?.signal.throwIfAborted();
-		const officialInventory = await readOfficialSessionInventory(context);
+		const officialInventory = this.inventoryReader
+			? await this.inventoryReader(context)
+			: await readOfficialSessionInventory(this.home, context, this.profileAgentId);
 		if (officialInventory) {
 			return (
 				(
@@ -1040,7 +1068,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		context?: SyncReadContext,
 	): Promise<SessionCollection> {
 		context?.signal.throwIfAborted();
-		const agentDirectoryListing = listAgentDirsWithCompleteness();
+		const agentDirectoryListing = this.profileAgentDirectoryListing();
 		const agentDirs = agentDirectoryListing.dirs;
 		if (agentDirs.length === 0) {
 			return {
@@ -1153,6 +1181,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			complete: inventory.complete,
 		};
 		for (const entry of inventory.entries) {
+			if (this.profileAgentId && entry.agentId !== this.profileAgentId) continue;
 			if (context) await setImmediate(undefined, { signal: context.signal });
 			const sessionId = entry.sessionId;
 			if (localSessionId !== undefined && sessionId !== localSessionId) continue;
@@ -1170,11 +1199,11 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				: null;
 			if (sessionId && knownSourceRevisions.get(sessionId) === sourceRevision) continue;
 
-			const reader = officialTranscriptReader(entry, context);
+			const reader = officialTranscriptReader(entry, this.home, context);
 			const description = await describeSessionContent(reader.readEvents, !context?.streaming);
 			const transcript = reader.initial.available;
 			if (!transcript && entry.sessionFile && sessionId && sourceRevision) {
-				const sessionsDirForAgent = join(agentsRoot(), entry.agentId, "sessions");
+				const sessionsDirForAgent = join(agentsRoot(this.home), entry.agentId, "sessions");
 				const transcriptPath = isAbsolute(entry.sessionFile)
 					? entry.sessionFile
 					: join(sessionsDirForAgent, entry.sessionFile);
@@ -1208,7 +1237,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			const sessionUserActivity = reader.initial.userActivity;
 			userActivity = mergeUserActivity(userActivity, sessionUserActivity);
 			if (entry.sessionFile && !isInternalOpenClawSession(entry.key, entry)) {
-				const sessionsDirForAgent = join(agentsRoot(), entry.agentId, "sessions");
+				const sessionsDirForAgent = join(agentsRoot(this.home), entry.agentId, "sessions");
 				const transcriptPath = isAbsolute(entry.sessionFile)
 					? entry.sessionFile
 					: join(sessionsDirForAgent, entry.sessionFile);
@@ -1221,7 +1250,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			const endedAt = reader.initial.endedAt ?? new Date(updatedAt);
 			const storePath =
 				inventory.storePaths.get(entry.agentId) ??
-				join(agentsRoot(), entry.agentId, "agent", "openclaw-agent.sqlite");
+				join(agentsRoot(this.home), entry.agentId, "agent", "openclaw-agent.sqlite");
 			sessions.push({
 				localSessionId: sessionId,
 				projectPath,
@@ -1254,27 +1283,12 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	}
 	private async collectSkills(context?: SyncReadContext): Promise<RawSkill[]> {
 		context?.signal.throwIfAborted();
-		const skills: RawSkill[] = [];
-		const seen = new Map<string, string>();
-		for (const agent of listOpenClawAgentWorkspaces()) {
-			for (const skill of collectSkillsFromDir(join(agent.workspace, "skills"))) {
-				const existing = seen.get(skill.skillKey);
-				if (existing) {
-					console.warn(
-						`[openclaw] skipping duplicate skill "${skill.skillKey}" at ${skill.directoryPath} ` +
-							`(already collected from ${existing}). Set OPENCLAW_AGENT_ID to project explicitly.`,
-					);
-					continue;
-				}
-				seen.set(skill.skillKey, skill.directoryPath);
-				skills.push(skill);
-			}
-		}
-		return skills;
+		const workspace = await resolveOpenClawAgentWorkspaceAsync(agentId(), context?.signal);
+		return collectSkillsFromDir(join(workspace, "skills"));
 	}
 
 	private getSessionsWatchPaths(): string[] {
-		const paths = listAgentDirs().flatMap((dir) => {
+		const paths = this.profileAgentDirs().flatMap((dir) => {
 			const sessionRoot = join(dir, "sessions");
 			const database = join(dir, "agent", "openclaw-agent.sqlite");
 			return [
@@ -1282,7 +1296,9 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				...(existsSync(database) ? [database, `${database}-wal`, `${database}-journal`] : []),
 			];
 		});
-		return paths.length > 0 ? paths : [sessionsDir()];
+		return paths.length > 0
+			? paths
+			: [join(agentsRoot(this.home), this.profileAgentId ?? agentId(), "sessions")];
 	}
 
 	private async installOfficialSkillArchive(
@@ -1349,4 +1365,23 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			rmSync(stagingRoot, { recursive: true, force: true });
 		}
 	}
+}
+
+/** The official all-agents inventory is shared by the readers in each scan. */
+export function createOpenClawProfileReaders(
+	agentIds: readonly string[],
+	home: string,
+): Map<string, SessionModule> {
+	const inventories = new WeakMap<object, Promise<OfficialSessionInventory | null>>();
+	const read = (context?: SyncReadContext) => {
+		const token = context?.profileScanToken ?? context;
+		if (!token) return readOfficialSessionInventory(home, context);
+		let inventory = inventories.get(token);
+		if (!inventory) {
+			inventory = readOfficialSessionInventory(home, context);
+			inventories.set(token, inventory);
+		}
+		return inventory;
+	};
+	return new Map(agentIds.map((id) => [id, new OpenClawAdapter(id, home, read).sessions]));
 }

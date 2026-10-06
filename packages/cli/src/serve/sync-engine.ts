@@ -48,7 +48,8 @@ import type {
 	SessionScanRequest,
 	SkillModule,
 } from "../adapters/base";
-import { scanSessionModule } from "../adapters/base";
+import { type SyncReadContext, scanSessionModule } from "../adapters/base";
+import { profileSessionKey } from "../adapters/profiles";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { canonicalApiOrigin } from "../lib/api-origin";
 import { getAuth, getConfig } from "../lib/config";
@@ -56,6 +57,7 @@ import {
 	bindEnvironmentRegistrationUser,
 	readEnvironmentRegistration,
 } from "../lib/environment-registration";
+import { createProfileSync } from "../lib/profile-sessions";
 import { normalizeProject } from "../lib/project-path";
 import { computeLastActivityIso } from "../lib/session-activity";
 import {
@@ -322,16 +324,17 @@ export async function enqueueChangedSessionsAfterStability(
 			opts.onBlocked?.(session, blocked, hash);
 			continue;
 		}
-		if (opts.lastPushedHash.get(session.localSessionId) === hash) {
+		if (opts.lastPushedHash.get(fence.sourceSessionKey) === hash) {
 			if (sourceRevisionUpdate) confirmedSourceRevisions.push(sourceRevisionUpdate);
 			continue;
 		}
-		if (opts.inFlightHash.get(session.localSessionId) === hash) continue;
+		if (opts.inFlightHash.get(fence.sourceSessionKey) === hash) continue;
 		if (opts.abort.aborted) return { enqueued, confirmedSourceRevisions };
 		const version = await opts.queue.enqueueWhenAvailable(
 			{
 				kind: "session_push",
 				local_session_id: session.localSessionId,
+				...(fence.profileKey !== undefined ? { profile_key: fence.profileKey } : {}),
 				content_hash: hash,
 				api_origin: fence.apiOrigin,
 				environment_id: fence.environmentId,
@@ -343,7 +346,7 @@ export async function enqueueChangedSessionsAfterStability(
 			opts.abort,
 		);
 		if (version === null) return { enqueued, confirmedSourceRevisions };
-		opts.inFlightHash.set(session.localSessionId, hash);
+		opts.inFlightHash.set(fence.sourceSessionKey, hash);
 		enqueued += 1;
 	}
 	return { enqueued, confirmedSourceRevisions };
@@ -377,7 +380,7 @@ export function stopForDisconnectedAgent(opts: EngineOpts, hint: string): void {
 
 export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	const skills = opts.adapter.skills;
-	const sessions = opts.adapter.sessions;
+	let sessions = opts.adapter.sessions;
 	if (!sessions && !skills) throw new Error(`${opts.adapter.agentType} has no sync modules`);
 
 	if (
@@ -398,14 +401,19 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	}
 	const api = new ApiClient({ abortSignal: opts.abort });
 	const shutdownApi = new ApiClient();
+	const profileSync = createProfileSync(opts.adapter, api, opts.environmentId);
+	sessions = profileSync.sessions;
 	const health = new SyncHealth();
 	const inFlightSessionHash = new Map<string, string>();
 	const queue = new RetryQueue({
 		agentType: opts.adapter.agentType,
 		onEvict: (item) => {
 			if (item.kind !== "session_push") return;
-			if (inFlightSessionHash.get(item.local_session_id) === item.content_hash) {
-				inFlightSessionHash.delete(item.local_session_id);
+			if (
+				inFlightSessionHash.get(item.source_session_key ?? item.local_session_id) ===
+				item.content_hash
+			) {
+				inFlightSessionHash.delete(item.source_session_key ?? item.local_session_id);
 			}
 		},
 	});
@@ -524,6 +532,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			}
 		}
 		if (opts.abort.aborted) return;
+		await profileSync.refresh({ signal: opts.abort });
 
 		const common: Omit<CommonSyncRuntime, "scope"> = {
 			api,
@@ -561,7 +570,12 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			...moduleOptions("sessions"),
 			prepare: sessions
 				? (scope) =>
-						prepareSessionSync({ ...opts, abort: scope.signal }, sessions, attemptCommon(scope))
+						prepareSessionSync(
+							{ ...opts, abort: scope.signal },
+							sessions,
+							attemptCommon(scope),
+							profileSync.refresh,
+						)
 				: null,
 		});
 		const skillSlot = new SyncModule<PreparedSkillSync>({
@@ -575,6 +589,22 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 
 		const tasks = [
 			...moduleTasks,
+			...(!sessions
+				? [
+						watchSessions({
+							paths: profileSync.watchPaths(),
+							abort: opts.abort,
+							forcePoll: opts.forcePollWatcher,
+							onPathStable: () => profileSync.refreshIfChanged({ signal: opts.abort }),
+						}),
+						(async () => {
+							while (!opts.abort.aborted) {
+								await sleep(RECONCILE_INTERVAL_MS, opts.abort);
+								if (!opts.abort.aborted) await profileSync.refresh({ signal: opts.abort });
+							}
+						})(),
+					]
+				: []),
 			...(skills || vaultSync.enabled
 				? [
 						consumeSse({
@@ -638,7 +668,9 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 					last_sync_error: health.project(),
 				}),
 				stopDisconnectedAgent,
-				reconcileVaultFiles,
+				async () => {
+					await reconcileVaultFiles();
+				},
 				triggerAuthFailureAbort,
 			),
 		];
@@ -1078,6 +1110,7 @@ async function prepareSessionSync(
 	opts: EngineOpts,
 	sessions: SessionModule,
 	common: CommonSyncRuntime,
+	refreshProfiles: (context?: SyncReadContext) => Promise<void>,
 ): Promise<PreparedSessionSync> {
 	const { api, queue, health, inFlightSessionHash } = common;
 	const protocol = await negotiateSessionProtocol(api, sessions, { signal: opts.abort });
@@ -1115,6 +1148,10 @@ async function prepareSessionSync(
 			const confirmedSourceRevisions: FencedSessionSourceRevisionUpdate[] = [];
 			let enqueued = 0;
 			for await (const batch of scan.batches) {
+				// Profile rename/attribution may have moved receipts during this scan.
+				lastPushedSessionHash.clear();
+				for (const [key, hash] of loadFencedSessionHashes(api, opts))
+					lastPushedSessionHash.set(key, hash);
 				for (const localSessionId of batch.observedLocalSessionIds) {
 					observedResources.add(`session:${localSessionId}`);
 				}
@@ -1130,10 +1167,15 @@ async function prepareSessionSync(
 						sessionFence(api, {
 							environmentId: opts.environmentId,
 							adapter: opts.adapter.agentType,
-							sourceSessionKey: session.localSessionId,
+							sourceSessionKey: profileSessionKey(session.profileKey, session.localSessionId),
+							profileKey: session.profileKey,
 						}),
 					onBlocked: (session, message) => {
-						health.set("push", `session:${session.localSessionId}`, `permanent: ${message}`);
+						health.set(
+							"push",
+							`session:${profileSessionKey(session.profileKey, session.localSessionId)}`,
+							`permanent: ${message}`,
+						);
 					},
 				});
 				enqueued += result.enqueued;
@@ -1203,7 +1245,10 @@ async function prepareSessionSync(
 				(async () => {
 					while (!opts.abort.aborted) {
 						await sleep(RECONCILE_INTERVAL_MS, opts.abort);
-						if (!opts.abort.aborted) await requestScan();
+						if (!opts.abort.aborted) {
+							await refreshProfiles({ signal: opts.abort });
+							await requestScan();
+						}
 					}
 				})(),
 			]);
@@ -1473,7 +1518,9 @@ async function drainQueueLoop(
 	onAuthFailure: (origin: string) => void,
 ): Promise<void> {
 	const healthResource = (item: QueueItem): string =>
-		item.kind === "session_push" ? `session:${item.local_session_id}` : `skill:${item.skill_key}`;
+		item.kind === "session_push"
+			? `session:${item.source_session_key ?? item.local_session_id}`
+			: `skill:${item.skill_key}`;
 	// Clear the in-flight stamp for a session_push item so the
 	// next watcher tick will re-enqueue if the local content
 	// hasn't already been confirmed shipped. Skill_push items have
@@ -1482,9 +1529,9 @@ async function drainQueueLoop(
 	// after a 200, no separate in-flight map.
 	const clearInFlight = (item: QueueItem) => {
 		if (item.kind === "session_push") {
-			const cur = inFlightSessionHash.get(item.local_session_id);
+			const cur = inFlightSessionHash.get(item.source_session_key ?? item.local_session_id);
 			if (cur === item.content_hash) {
-				inFlightSessionHash.delete(item.local_session_id);
+				inFlightSessionHash.delete(item.source_session_key ?? item.local_session_id);
 			}
 		}
 	};
@@ -1873,6 +1920,7 @@ export async function processQueueItem(
 			environmentId: opts.environmentId,
 			adapter: opts.adapter.agentType,
 			sourceSessionKey: item.source_session_key ?? item.local_session_id,
+			profileKey: item.profile_key,
 		});
 		if (
 			!hasSessionFence(item) ||
@@ -1916,11 +1964,14 @@ export async function processQueueItem(
 		// tick can decide.
 		opts.abort.throwIfAborted();
 		if (result.outcome === "applied") {
-			lastPushedSessionHash.set(item.local_session_id, result.actualHash);
+			lastPushedSessionHash.set(
+				item.source_session_key ?? item.local_session_id,
+				result.actualHash,
+			);
 		}
-		const cur = inFlightSessionHash.get(item.local_session_id);
+		const cur = inFlightSessionHash.get(item.source_session_key ?? item.local_session_id);
 		if (cur === item.content_hash) {
-			inFlightSessionHash.delete(item.local_session_id);
+			inFlightSessionHash.delete(item.source_session_key ?? item.local_session_id);
 		}
 		opts.abort.throwIfAborted();
 		const removed = queue.markDoneIfVersion(item);
@@ -1985,6 +2036,7 @@ async function uploadSessionFromQueue(
 	const result = unwrap(
 		await api.POST("/v1/sessions/batch", {
 			body: {
+				...(fence.profileKey !== undefined ? { profile_key: fence.profileKey } : {}),
 				sessions: [
 					{
 						environment_id: opts.environmentId,

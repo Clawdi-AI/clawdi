@@ -469,6 +469,10 @@ checks remain mandatory; a URL prefix or client-supplied header never selects
 the pool for an ordinary route. Platform credentials must be read from this
 pool to authenticate even while ordinary traffic is saturated.
 
+Successful workload authentication rolls back its SELECT-only transaction before
+returning. This releases the single control connection before drift-summary or
+observation reads open their separate RR session on that same pool.
+
 Each API process reserves one control transaction connection and one separate
 control runtime-source snapshot connection, both without overflow. A source
 read holds its authorization transaction while opening a consistent snapshot;
@@ -575,6 +579,38 @@ curl -sS -X POST http://localhost:8000/v1/admin/agents \
 Use `/v1/admin/agents` for new local debugging. `/v1/admin/environments`
 remains a compatibility alias, but admin routes are hidden from the public
 OpenAPI schema.
+
+### Workload scope operations
+
+Inspect `GET /v1/admin/platform/workload-clients/{client_id}/provider-environment-verifier`
+with `X-Admin-Key` to obtain the current authority revision. Generic scope updates
+use `PUT /v1/admin/platform/workload-clients/{client_id}/scopes` with the same
+header and `{expected_revision, scopes, reason}`. Send the complete nonempty,
+unique approved scope set. A real change requires the current revision and an
+active client; a stale revision returns 409. A retry with the current scope set
+returns 200 and its current revision even if the supplied revision is stale,
+without creating another scope-change audit event.
+
+Generic updates must preserve `platform:provider-environment:repair` exactly.
+Adding or removing it returns 409; use the dedicated verifier grant/revoke flow
+described in [AI Providers](ai-providers.md#restoring-a-corrupted-credential-environment).
+
+Revocation takes effect at the next request authentication, without waiting for
+the token's 300-second expiry. **Every already-issued token carrying a removed
+scope is rejected**, including when it requests a route that only requires
+another scope still granted to the client. Issue tokens with the remaining scopes
+for subsequent calls. Additive grants preserve existing tokens whose scopes
+remain authorized. This behavior comes from the per-request grant check in
+[`platform_workload_auth.py`](../backend/app/services/platform_workload_auth.py).
+
+With the Docker test runner available, verify these contracts:
+
+```bash
+scripts/test.sh backend tests/test_platform_workload_oauth.py -k 'scopes or scope_changes or single_control_slot'
+```
+
+Done: scope protection, retry, revocation, and real single-connection-pool reads
+pass, and the command exits 0.
 
 Global runtime configuration uses the registered `app_settings` surface. The
 first setting, `clerk_cli_oauth`, is one atomic JSON value; there are no

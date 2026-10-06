@@ -199,6 +199,7 @@ describe("config keys", () => {
 		expect(getConfig().excludeProjects).toEqual([]);
 		const set = run("set", "excludeProjects", "~/work/acme, ~/scratch/../scratch,relative-project");
 		expect(set.exitCode).toBe(0);
+		expect(set.stderr.toString()).toBe("");
 		const expected = [
 			join(fakeHome, "work/acme"),
 			join(fakeHome, "scratch"),
@@ -209,6 +210,7 @@ describe("config keys", () => {
 		const get = run("get", "excludeProjects");
 		expect(get.exitCode).toBe(0);
 		expect(get.stdout.toString().trim()).toBe(expected.join(","));
+		expect(get.stderr.toString()).toBe("");
 		expect(run("set", "excludeProjects", "").exitCode).toBe(0);
 		expect(getConfig().excludeProjects).toEqual([]);
 		expect(run("unset", "excludeProjects").exitCode).toBe(0);

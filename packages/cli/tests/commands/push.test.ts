@@ -689,19 +689,20 @@ describe("push — env_id probe (Codex plan A)", () => {
 });
 
 describe("push — preflight checks", () => {
-	it("aborts with exitCode=1 when not logged in (no fetch)", async () => {
+	it("rejects when not logged in without fetching", async () => {
 		setup("hermes");
 		const { rmSync } = await import("node:fs");
 		rmSync(join(tmpHome, ".clawdi", "auth.json"));
 
 		const { captured, restore } = mockFetch([]);
 		try {
-			await push({ agent: "hermes", modules: "sessions", all: true });
+			await expect(push({ agent: "hermes", modules: "sessions", all: true })).rejects.toThrow(
+				"Not signed in. Run `clawdi auth login` first.",
+			);
 		} finally {
 			restore();
 		}
 		expect(captured).toHaveLength(0);
-		expect(process.exitCode).toBe(1);
 	});
 
 	it("aborts with exitCode=1 when no environment registered (no fetch)", async () => {

@@ -5,10 +5,11 @@ import chalk from "chalk";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { SessionListItem, SkillSummary } from "../lib/api-schemas";
-import { getClawdiDir, isLoggedIn } from "../lib/config";
+import { getClawdiDir } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import { parseModules } from "../lib/prompts";
+import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { adapterForType, getEnvIdByAgent, resolveTargetAgentTypes } from "../lib/select-adapter";
 import {
@@ -75,14 +76,8 @@ function scanHasWork(scan: AgentPullScan): boolean {
 }
 
 export async function pull(opts: PullOpts) {
-	p.intro(chalk.bold("clawdi pull"));
-
-	if (!isLoggedIn()) {
-		p.log.error("Not signed in. Run `clawdi auth login` first.");
-		p.outro(chalk.red("Aborted."));
-		process.exitCode = 1;
-		return;
-	}
+	requireAuth();
+	p.intro(chalk.bold("clawdi pull"), { output: process.stderr });
 
 	// `--all` widens every axis it can. Project selection only applies
 	// to skill pulls; explicit narrowing via --agent or --modules wins.
@@ -92,7 +87,7 @@ export async function pull(opts: PullOpts) {
 
 	const targetTypes = await resolveTargetAgentTypes(opts.agent, !!opts.allAgents);
 	if (targetTypes.length === 0) {
-		p.outro(chalk.red("Aborted."));
+		p.outro(chalk.red("Aborted."), { output: process.stderr });
 		process.exitCode = 1;
 		return;
 	}
@@ -108,8 +103,9 @@ export async function pull(opts: PullOpts) {
 		if (modules.length === 1) {
 			p.log.error(
 				"Skill import requires --project naming a Custom or personal project. Agent workspaces are filesystem-authoritative.",
+				{ output: process.stderr },
 			);
-			p.outro(chalk.red("Aborted."));
+			p.outro(chalk.red("Aborted."), { output: process.stderr });
 			process.exitCode = 1;
 			return;
 		}
@@ -117,8 +113,10 @@ export async function pull(opts: PullOpts) {
 	}
 
 	if (opts.project && modules.includes("sessions")) {
-		p.log.error("--project is supported for skill pulls only. Use --modules skills.");
-		p.outro(chalk.red("Aborted."));
+		p.log.error("--project is supported for skill pulls only. Use --modules skills.", {
+			output: process.stderr,
+		});
+		p.outro(chalk.red("Aborted."), { output: process.stderr });
 		process.exitCode = 1;
 		return;
 	}
@@ -126,8 +124,10 @@ export async function pull(opts: PullOpts) {
 		for (const agentType of targetTypes) {
 			const adapter = adapterForType(agentType);
 			if (!adapter?.skills) {
-				p.log.error(`${adapterRegistry[agentType].displayName} does not support skills.`);
-				p.outro(chalk.red("Aborted."));
+				p.log.error(`${adapterRegistry[agentType].displayName} does not support skills.`, {
+					output: process.stderr,
+				});
+				p.outro(chalk.red("Aborted."), { output: process.stderr });
 				process.exitCode = 1;
 				return;
 			}
@@ -142,7 +142,7 @@ export async function pull(opts: PullOpts) {
 
 	// Scan every agent first — one spinner, one combined summary — so a
 	// multi-agent pull reads as a single scan, matching `clawdi push`.
-	const scanSpinner = p.spinner();
+	const scanSpinner = p.spinner({ output: process.stderr });
 	scanSpinner.start(
 		`Scanning ${targetTypes.length} agent${targetTypes.length === 1 ? "" : "s"}...`,
 	);
@@ -169,6 +169,7 @@ export async function pull(opts: PullOpts) {
 	for (const skip of moduleSkips) {
 		p.log.warn(
 			`${adapterRegistry[skip.agentType].displayName} skipped unsupported ${skip.modules.join(", ")}.`,
+			{ output: process.stderr },
 		);
 	}
 
@@ -249,6 +250,7 @@ export async function pull(opts: PullOpts) {
 	if (opts.project && totals.skillImports > 0) {
 		p.log.info(
 			"Imported skills stay owned by their project and aren't pushed back as agent skills. To make one an agent skill, run `clawdi skill install <repo> --agent <type>` or `clawdi skill add <path> --agent <type>`.",
+			{ output: process.stderr },
 		);
 	}
 	p.outro(chalk.green(`✓ Pull complete — ${parts.join(", ")}`));
@@ -429,7 +431,7 @@ async function applyOneAgentPull(
 					p.log.success(`${safeKey} → ${skillDir}/ (${tarBytes.length} bytes)`);
 					skillsImported++;
 				} catch (e) {
-					p.log.warn(`${safeKey} failed: ${errMessage(e)}`);
+					p.log.warn(`${safeKey} failed: ${errMessage(e)}`, { output: process.stderr });
 				}
 			}
 		}
@@ -440,7 +442,7 @@ async function applyOneAgentPull(
 	if (scan.sessions.length > 0) {
 		const mirrorDir = sessionMirrorDir(scan.agentType);
 		mkdirSync(mirrorDir, { recursive: true });
-		const dlSpinner = p.spinner();
+		const dlSpinner = p.spinner({ output: process.stderr });
 		dlSpinner.start(`Downloading content (0/${scan.sessions.length})...`);
 		let failed = 0;
 		for (const { remote, reason } of scan.sessions) {
@@ -454,7 +456,9 @@ async function applyOneAgentPull(
 				);
 			} catch (e) {
 				failed++;
-				p.log.warn(`${remote.local_session_id} failed: ${errMessage(e)}`);
+				p.log.warn(`${remote.local_session_id} failed: ${errMessage(e)}`, {
+					output: process.stderr,
+				});
 			}
 		}
 		const done = sessionsNew + sessionsUpdated;

@@ -15,8 +15,8 @@ function isKnownKey(k: string): k is ConfigKey {
 }
 
 function unknownKey(k: string) {
-	console.log(chalk.red(`Unknown config key: ${k}`));
-	console.log(chalk.gray(`  Known keys: ${CONFIG_KEYS.join(", ")}`));
+	console.error(chalk.red(`Unknown config key: ${k}`));
+	console.error(chalk.gray(`  Known keys: ${CONFIG_KEYS.join(", ")}`));
 }
 
 export function configList() {

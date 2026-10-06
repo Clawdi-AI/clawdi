@@ -21,6 +21,9 @@ import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getAuth, getConfig } from "../lib/config";
+import { confirmOrRequireYes } from "../lib/prompts";
+import { requireAuth } from "../lib/require-auth";
+import { isInteractive } from "../lib/tty";
 import { addToken, findToken, listTokens, removeToken, type ShareToken } from "../share/tokens";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -556,12 +559,19 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 // inbox decline
 // ────────────────────────────────────────────────────────────────
 
-export async function inboxDeclineCommand(invitationId: string): Promise<void> {
+export async function inboxDeclineCommand(
+	invitationId: string,
+	opts: { yes?: boolean } = {},
+): Promise<void> {
 	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exitCode = 1;
+	requireAuth();
+	if (
+		isInteractive() &&
+		!(await confirmOrRequireYes(`Decline invitation ${invitationId}?`, {
+			yes: opts.yes,
+			action: "decline this invitation",
+		}))
+	) {
 		return;
 	}
 	const accessToken = await getClawdiAccessToken(apiUrl);

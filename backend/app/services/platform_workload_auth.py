@@ -793,6 +793,9 @@ def _require_platform_auth(required_scope: str, *, allow_legacy_admin: bool):
                     token.strip(),
                     required_scope=required_scope,
                 )
+                # Authentication is SELECT-only. Release the single control slot
+                # before a route opens its separate observation session.
+                await db.rollback()
             except PlatformWorkloadAccessError as exc:
                 headers = (
                     {"WWW-Authenticate": 'Bearer error="invalid_token"'}
@@ -800,6 +803,11 @@ def _require_platform_auth(required_scope: str, *, allow_legacy_admin: bool):
                     else None
                 )
                 raise HTTPException(exc.status_code, exc.detail, headers=headers) from exc
+            except SQLAlchemyError:
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "workload auth storage or signing service is unavailable",
+                ) from None
             request.state.platform_mutation_auth = auth
             return auth
 

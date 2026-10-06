@@ -81,7 +81,7 @@ export const okEnvironmentProbe = (
 	defaultProjectId = "00000000-0000-0000-0000-000000000099",
 ) => ({
 	method: "GET",
-	path: `/v1/agents/${envId}`,
+	path: new RegExp(`^/v1/agents/${envId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
 	response: () =>
 		jsonResponse({
 			id: envId,

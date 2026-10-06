@@ -29,6 +29,7 @@ from app.models.channel import (
     CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
     CHANNEL_STATUS_ACTIVE,
     ChannelAccount,
+    ChannelAccountRuntimeMarker,
     ChannelBinding,
 )
 from app.services.channels import (
@@ -68,6 +69,7 @@ _DISCORD_GATEWAY_TERMINAL_CLOSE_OUTCOMES = {
     4013: "invalid_intents",
     4014: "disallowed_intents",
 }
+_DISCORD_GATEWAY_AUTHENTICATION_FAILED_OUTCOME = _DISCORD_GATEWAY_TERMINAL_CLOSE_OUTCOMES[4004]
 
 type GatewayFrame = dict[str, JsonValue]
 
@@ -164,6 +166,34 @@ class DiscordGatewayWorker:
     async def run_once(self, stop: asyncio.Event | None = None) -> int:
         async with self._lifecycle_serial:
             accounts = await list_active_discord_gateway_accounts(self._sessionmaker)
+            marker_candidates = {
+                account_id: revision
+                for account_id, revision in accounts.items()
+                if (
+                    account_id not in self._terminal_account_revisions
+                    and (account_id not in self._tasks or self._tasks[account_id].done())
+                )
+            }
+            if marker_candidates:
+                try:
+                    markers = await load_discord_gateway_terminal_close_markers(
+                        self._sessionmaker,
+                        marker_candidates,
+                    )
+                except Exception:
+                    log.exception("discord gateway terminal close marker scan failed")
+                else:
+                    now = datetime.now(UTC)
+                    for account_id, marker in markers.items():
+                        self._terminal_account_revisions[account_id] = marker.scope
+                        if marker.outcome == _DISCORD_GATEWAY_AUTHENTICATION_FAILED_OUTCOME:
+                            self._terminal_account_retry_at.pop(account_id, None)
+                        else:
+                            seconds_since = (now - marker.updated_at).total_seconds()
+                            self._terminal_account_retry_at[account_id] = monotonic() + max(
+                                0,
+                                DISCORD_TERMINAL_CLOSE_RETRY_SECONDS - seconds_since,
+                            )
             self._sync_tasks(accounts, stop or asyncio.Event())
             return len(accounts)
 
@@ -514,6 +544,29 @@ async def list_active_discord_gateway_accounts(
             for account in accounts
             if discord_gateway_enabled(account)
         }
+
+
+async def load_discord_gateway_terminal_close_markers(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    active_accounts: dict[UUID, str],
+) -> dict[UUID, ChannelAccountRuntimeMarker]:
+    if not active_accounts:
+        return {}
+    account_ids = tuple(active_accounts)
+    async with sessionmaker() as db:
+        result = await db.execute(
+            select(ChannelAccountRuntimeMarker).where(
+                ChannelAccountRuntimeMarker.account_id.in_(account_ids),
+                ChannelAccountRuntimeMarker.kind
+                == CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+            )
+        )
+        markers = result.scalars().all()
+    return {
+        marker.account_id: marker
+        for marker in markers
+        if active_accounts.get(marker.account_id) == marker.scope
+    }
 
 
 async def load_discord_gateway_account(

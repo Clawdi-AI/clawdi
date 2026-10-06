@@ -218,7 +218,7 @@ describe("CLI smoke — src entry", () => {
 			});
 			expect(parsed.code).toBe(1);
 			expect(parsed.stderr).not.toContain("unknown option");
-			expect(parsed.stdout).toContain("No hosted run config for hermes");
+			expect(parsed.stderr).toContain("No hosted run config for hermes");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

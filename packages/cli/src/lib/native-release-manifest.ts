@@ -2,6 +2,8 @@ import { isValidSemver } from "./semver";
 
 export const NATIVE_RELEASE_MANIFEST_SCHEMA = "clawdi.nativeRelease.v1";
 export const NATIVE_RELEASE_MANIFEST_NAME = "clawdi-cli-manifest.txt";
+export const NATIVE_RELEASE_MANIFEST_V2_SCHEMA = "clawdi.nativeRelease.v2";
+export const NATIVE_RELEASE_MANIFEST_V2_NAME = "clawdi-cli-manifest-v2.txt";
 export const MAX_NATIVE_MANIFEST_BYTES = 64 * 1024;
 export const NATIVE_RELEASE_REPOSITORY = "Clawdi-AI/clawdi";
 
@@ -17,14 +19,14 @@ export const NATIVE_TARGET_CATALOG = [
 export type NativeTarget = (typeof NATIVE_TARGET_CATALOG)[number]["target"];
 export const NATIVE_TARGETS = NATIVE_TARGET_CATALOG.map((entry) => entry.target);
 
-// Desktop can compile Windows binaries without extending the standalone v1
-// archive/manifest/update protocol. That publication catalog stays unchanged.
+// The standalone v1 archive/manifest/update protocol retains its Unix catalog.
 export const NATIVE_BUILD_TARGET_CATALOG = [
 	...NATIVE_TARGET_CATALOG,
 	{ target: "win32-x64", bunTarget: "bun-windows-x64" },
 	{ target: "win32-arm64", bunTarget: "bun-windows-arm64" },
 ] as const;
 export type NativeBuildTarget = (typeof NATIVE_BUILD_TARGET_CATALOG)[number]["target"];
+export const NATIVE_PUBLISH_TARGET_CATALOG = NATIVE_BUILD_TARGET_CATALOG;
 
 export function isNativeBuildTarget(value: string): value is NativeBuildTarget {
 	return NATIVE_BUILD_TARGET_CATALOG.some((entry) => entry.target === value);
@@ -51,11 +53,23 @@ export interface NativeReleaseManifest {
 	artifacts: NativeReleaseArtifact[];
 }
 
+export interface NativeReleaseArtifactV2 {
+	target: NativeBuildTarget;
+	asset: string;
+	sha256: string;
+}
+
+export interface NativeReleaseManifestV2 {
+	schemaVersion: typeof NATIVE_RELEASE_MANIFEST_V2_SCHEMA;
+	version: string;
+	artifacts: NativeReleaseArtifactV2[];
+}
+
 export function isNativeTarget(value: string): value is NativeTarget {
 	return (NATIVE_TARGETS as readonly string[]).includes(value);
 }
 
-export function nativeAssetName(target: NativeTarget): string {
+export function nativeAssetName(target: NativeBuildTarget): string {
 	return `clawdi-cli-${target}.tar.gz`;
 }
 
@@ -119,6 +133,54 @@ export function parseNativeReleaseManifest(content: string): NativeReleaseManife
 	return { schemaVersion: NATIVE_RELEASE_MANIFEST_SCHEMA, version, artifacts };
 }
 
+export function parseNativeReleaseManifestV2(content: string): NativeReleaseManifestV2 {
+	const lines = content.split("\n").filter((line) => line.length > 0);
+	if (lines[0] !== NATIVE_RELEASE_MANIFEST_V2_SCHEMA) {
+		throw new Error("unsupported native release manifest schema");
+	}
+	const versionFields = lines[1]?.split("\t") ?? [];
+	if (
+		versionFields.length !== 2 ||
+		versionFields[0] !== "version" ||
+		!isValidSemver(versionFields[1] ?? "")
+	) {
+		throw new Error("native release manifest has an invalid version");
+	}
+	const version = versionFields[1];
+	if (!version) throw new Error("native release manifest has an invalid version");
+	const artifacts = lines.slice(2).map((line): NativeReleaseArtifactV2 => {
+		const fields = line.split("\t");
+		const [recordType, target, asset, sha256] = fields;
+		if (
+			fields.length !== 4 ||
+			recordType !== "artifact" ||
+			!target ||
+			!isNativeBuildTarget(target) ||
+			asset === undefined ||
+			sha256 === undefined ||
+			!/^[0-9a-f]{64}$/.test(sha256)
+		) {
+			throw new Error("native release manifest has an invalid artifact entry");
+		}
+		if (asset !== nativeAssetName(target)) {
+			throw new Error("native release manifest target and asset do not match");
+		}
+		return { target, asset, sha256 };
+	});
+	if (artifacts.length !== NATIVE_PUBLISH_TARGET_CATALOG.length) {
+		throw new Error("native release manifest does not contain the supported target matrix");
+	}
+	if (new Set(artifacts.map((artifact) => artifact.target)).size !== artifacts.length) {
+		throw new Error("native release manifest contains duplicate targets");
+	}
+	for (const { target } of NATIVE_PUBLISH_TARGET_CATALOG) {
+		if (!artifacts.some((artifact) => artifact.target === target)) {
+			throw new Error(`native release manifest is missing ${target}`);
+		}
+	}
+	return { schemaVersion: NATIVE_RELEASE_MANIFEST_V2_SCHEMA, version, artifacts };
+}
+
 export function nativeReleaseBaseUrl(
 	version: string,
 	repository = NATIVE_RELEASE_REPOSITORY,
@@ -130,6 +192,6 @@ export function nativeReleaseBaseUrl(
 	return `https://github.com/${repository}/releases/download/clawdi-cli-v${version}`;
 }
 
-export function nativeExecutableName(target: NativeBuildTarget): string {
+export function nativeExecutableName(target: NativeBuildTarget): "clawdi" | "clawdi.exe" {
 	return target.startsWith("win32-") ? "clawdi.exe" : "clawdi";
 }

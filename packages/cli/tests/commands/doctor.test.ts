@@ -10,6 +10,7 @@ beforeEach(() => {
 	origHome = process.env.HOME;
 	tmpHome = copyFixtureToTmp("hermes");
 	process.env.HOME = tmpHome;
+	process.exitCode = 0;
 });
 
 afterEach(() => {
@@ -89,7 +90,12 @@ describe("doctor --json", () => {
 			restore();
 		}
 
-		const checks = JSON.parse(captured) as Array<{ name: string; ok: boolean; detail?: string }>;
+		const checks = JSON.parse(captured) as Array<{
+			name: string;
+			ok: boolean;
+			skipped?: boolean;
+			detail?: string;
+		}>;
 		expect(checks.find((c) => c.name === "Auth")?.ok).toBe(true);
 		expect(checks.find((c) => c.name === "API reachability")?.ok).toBe(true);
 		expect(checks.find((c) => c.name === "Environments")?.ok).toBe(true);
@@ -105,9 +111,18 @@ describe("doctor --json", () => {
 			params: {},
 		});
 
-		// Hermes fixture present → that agent shows ✓, others show ✗ (not installed)
+		// Hermes fixture present → that agent passes; absent agents are skipped.
 		const hermesCheck = checks.find((c) => c.name === "Agent: Hermes");
 		expect(hermesCheck?.ok).toBe(true);
+		expect(hermesCheck?.skipped).toBeUndefined();
+		expect(checks.find((c) => c.name === "Agent: Codex")).toEqual({
+			name: "Agent: Codex",
+			ok: true,
+			skipped: true,
+			detail: "not installed",
+		});
+		expect(checks.every((c) => c.ok)).toBe(true);
+		expect(process.exitCode).toBe(0);
 	});
 
 	it("reports API unreachable when /v1/auth/me fails", async () => {

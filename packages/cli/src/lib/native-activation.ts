@@ -44,7 +44,6 @@ import {
 import { isValidSemver } from "./semver";
 
 const REQUIRED_NATIVE_FILES = [
-	"clawdi",
 	"egress-addon/clawdi_egress_addon.py",
 	"skills/clawdi/SKILL.md",
 	"skills/hosted-versions/1/clawdi/SKILL.md",
@@ -101,6 +100,14 @@ export async function downloadAndStageNativeRelease(input: {
 		const manifestResponse = await fetcher(manifestUrl, {
 			signal: downloadAbort.signal,
 			redirect: "follow",
+		}).catch((error: unknown) => {
+			if (
+				downloadAbort.signal.aborted ||
+				(error instanceof DOMException && error.name === "AbortError")
+			) {
+				throw error;
+			}
+			throw new Error("native manifest unreachable", { cause: error });
 		});
 		if (!manifestResponse.ok) {
 			throw new Error(`native manifest download failed (${manifestResponse.status})`);
@@ -379,12 +386,15 @@ function verifyNativeArchiveChecksum(archive: Buffer, artifact: NativeReleaseArt
 	if (actual !== artifact.sha256) throw new Error("native artifact checksum mismatch");
 }
 
-export async function validateNativeArchive(archive: Buffer): Promise<void> {
+export async function validateNativeArchive(
+	archive: Buffer,
+	executableName: "clawdi" | "clawdi.exe" = "clawdi",
+): Promise<void> {
 	const files = new Set<string>();
 	const entries = new Set<string>();
 	let unpackedBytes = 0;
 	await streamTar(archive, "list", (path, type, size) => {
-		assertAllowedNativeArchiveEntry(path, type, size);
+		assertAllowedNativeArchiveEntry(path, type, size, executableName);
 		const normalized = normalizeArchivePath(path);
 		if (entries.has(normalized))
 			throw new Error(`native archive contains duplicate entry: ${path}`);
@@ -398,7 +408,7 @@ export async function validateNativeArchive(archive: Buffer): Promise<void> {
 		}
 		if (type === "File") files.add(normalized);
 	});
-	for (const required of REQUIRED_NATIVE_FILES) {
+	for (const required of [executableName, ...REQUIRED_NATIVE_FILES]) {
 		if (!files.has(required)) throw new Error(`native archive is missing ${required}`);
 	}
 }
@@ -443,14 +453,19 @@ function streamTar(
 	});
 }
 
-function assertAllowedNativeArchiveEntry(path: string, type: string, size: number): void {
+function assertAllowedNativeArchiveEntry(
+	path: string,
+	type: string,
+	size: number,
+	executableName: "clawdi" | "clawdi.exe" = "clawdi",
+): void {
 	const normalized = normalizeArchivePath(path);
 	const segments = normalized.split("/");
 	if (
 		!normalized ||
 		path.startsWith("/") ||
 		segments.some((segment) => segment === "" || segment === ".." || segment === ".") ||
-		!(["clawdi", "egress-addon", "skills"] as string[]).includes(segments[0] ?? "") ||
+		!([executableName, "egress-addon", "skills"] as string[]).includes(segments[0] ?? "") ||
 		(type !== "File" && type !== "Directory")
 	) {
 		throw new Error(`native archive contains unsafe entry: ${path}`);
@@ -458,7 +473,7 @@ function assertAllowedNativeArchiveEntry(path: string, type: string, size: numbe
 	if (!Number.isSafeInteger(size) || size < 0 || size > MAX_NATIVE_ENTRY_BYTES) {
 		throw new Error(`native archive entry exceeds the size limit: ${path}`);
 	}
-	if (segments[0] === "clawdi" && (segments.length !== 1 || type !== "File")) {
+	if (segments[0] === executableName && (segments.length !== 1 || type !== "File")) {
 		throw new Error(`native archive contains unexpected executable entry: ${path}`);
 	}
 }
