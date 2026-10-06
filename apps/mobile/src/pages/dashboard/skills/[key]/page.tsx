@@ -35,16 +35,12 @@ import { usePreventRemove } from "expo-router/react-navigation";
 import {
 	BookOpen,
 	Bot,
-	Copy,
 	FileText,
 	FolderKanban,
-	Pencil,
 	Plus,
 	Save,
 	Sparkles,
 	Tag,
-	Trash2,
-	X,
 } from "lucide-react-native";
 import { useRef, useState } from "react";
 import { ChoiceSelect } from "@/components/detail/choice-select";
@@ -62,7 +58,7 @@ import { Input, Label } from "@/components/ui/input";
 import { Text as AppText, Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppScrollView, AppView } from "@/components/ui/view";
-import { WebText, WebView, webBoth, webText, webView } from "@/components/ui/web-layout";
+import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
@@ -321,18 +317,16 @@ function SkillEditor({
 			))}
 		</WebView>
 	) : null;
+	const saveDisabled =
+		disabled ||
+		conflict ||
+		!draft ||
+		(!create && Boolean(baseline && skillDraftUnchanged(draft, baseline))) ||
+		!draft.name.trim() ||
+		!draft.description.trim() ||
+		!draft.instructions.trim();
 	const saveButton = draft ? (
-		<Button
-			disabled={
-				disabled ||
-				conflict ||
-				(!create && Boolean(baseline && skillDraftUnchanged(draft, baseline))) ||
-				!draft.name.trim() ||
-				!draft.description.trim() ||
-				!draft.instructions.trim()
-			}
-			onPress={() => void save()}
-		>
+		<Button disabled={saveDisabled} onPress={() => void save()}>
 			<Icon as={create ? Plus : Save} />
 			<Text>
 				{action.busy ? (create ? copy.adding : copy.saving) : create ? copy.title : copy.save}
@@ -413,7 +407,7 @@ function SkillEditor({
 						}}
 					/>
 				) : null}
-				{!create && skillKey && detail.isPending ? <PageHeaderSkeleton icon actions /> : null}
+				{!create && skillKey && detail.isPending ? <PageHeaderSkeleton icon /> : null}
 				{!canWrite && !projects.isPending && (create || detail.data) ? (
 					<AppText className="text-muted-foreground">
 						{t(!create && !projectId ? "skills.chooseProject" : "skills.readOnly")}
@@ -499,38 +493,39 @@ function SkillEditor({
 									<Text>{`Project Skill · in ${project?.name ?? detail.data?.project_name} · added ${detail.data ? relativeTime(detail.data.created_at) : ""}`}</Text>
 								</DetailMeta>
 							}
-							actions={
-								<>
-									<Button
-										variant="outline"
-										disabled={action.busy}
-										onPress={() => {
-											const visible = capture();
-											const ticket = ++confirmation.current;
-											confirmationDialog.show(t("skills.discard"), t("skills.discardWarning"), [
-												{ text: copy.cancel, style: "cancel" },
-												{
-													text: t("skills.discard"),
-													style: "destructive",
-													onPress: () => {
-														if (ticket !== confirmation.current || !visible() || !scope.isCurrent())
-															return;
-														confirmation.current++;
-														setDraft(null);
-														setConflict(false);
-														action.clearError();
-														void detail.refetch();
-													},
+							headerActions={[
+								{
+									id: "cancel",
+									label: copy.cancel,
+									disabled: action.busy,
+									onPress: () => {
+										const visible = capture();
+										const ticket = ++confirmation.current;
+										confirmationDialog.show(t("skills.discard"), t("skills.discardWarning"), [
+											{ text: copy.cancel, style: "cancel" },
+											{
+												text: t("skills.discard"),
+												style: "destructive",
+												onPress: () => {
+													if (ticket !== confirmation.current || !visible() || !scope.isCurrent())
+														return;
+													confirmation.current++;
+													setDraft(null);
+													setConflict(false);
+													action.clearError();
+													void detail.refetch();
 												},
-											]);
-										}}
-									>
-										<Icon as={X} />
-										<Text>{copy.cancel}</Text>
-									</Button>
-									{saveButton}
-								</>
-							}
+											},
+										]);
+									},
+								},
+								{
+									id: "save",
+									label: action.busy ? copy.saving : copy.save,
+									disabled: saveDisabled,
+									onPress: () => void save(),
+								},
+							]}
 						/>
 						<DetailMeta>
 							<Icon as={Tag} />
@@ -567,46 +562,47 @@ function SkillEditor({
 									</Text>
 								</DetailMeta>
 							}
-							actions={
-								canWrite ? (
-									<>
-										{projectId ? (
-											<Button
-												variant="outline"
-												size="sm"
-												disabled={action.busy || detail.isError}
-												onPress={() =>
-													router.push({
-														pathname: "/skills/[key]/archive",
-														params: { projectId, key: skillKey ?? "" },
-													})
-												}
-											>
-												<Icon as={Copy} />
-												<Text>{t("libraryPort.copyOrMove")}</Text>
-											</Button>
-										) : null}
-										<Button
-											variant="outline"
-											size="sm"
-											disabled={disabled || detail.data.content === null}
-											onPress={startEdit}
-										>
-											<Icon as={Pencil} />
-											<Text>{t("libraryPort.edit")}</Text>
-										</Button>
-										<Button
-											variant="outline"
-											size="sm"
-											disabled={disabled}
-											textClassName={webText(skillDetailClasses.removeAction)}
-											onPress={remove}
-										>
-											<Icon as={Trash2} />
-											<Text>{t("libraryPort.removeFromProject")}</Text>
-										</Button>
-									</>
-								) : undefined
+							headerActions={
+								canWrite
+									? [
+											{
+												id: "edit",
+												label: t("libraryPort.edit"),
+												disabled: disabled || detail.data.content === null,
+												onPress: startEdit,
+											},
+										]
+									: undefined
+							}
+							headerMenu={
+								canWrite
+									? {
+											label: t("sessionDetail.more"),
+											items: [
+												...(projectId
+													? [
+															{
+																id: "transfer",
+																label: t("libraryPort.copyOrMove"),
+																disabled: action.busy || detail.isError,
+																onPress: () =>
+																	router.push({
+																		pathname: "/skills/[key]/archive",
+																		params: { projectId, key: skillKey ?? "" },
+																	}),
+															},
+														]
+													: []),
+												{
+													id: "remove",
+													label: t("libraryPort.removeFromProject"),
+													disabled,
+													destructive: true,
+													onPress: remove,
+												},
+											],
+										}
+									: undefined
 							}
 						/>
 						<DetailMeta>
