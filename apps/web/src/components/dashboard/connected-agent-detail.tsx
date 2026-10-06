@@ -30,6 +30,11 @@ import {
 	useOverviewVaultsModule,
 	useOverviewWorkspaceSkillsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
+import {
+	AgentProfilesOverview,
+	useAgentProfiles,
+	useAgentSessionProfileFilter,
+} from "@/components/dashboard/agent-profiles";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import {
 	effectiveAgentProjectIds,
@@ -41,6 +46,7 @@ import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel"
 import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { OverviewComputeBody } from "@/components/dashboard/overview-compute-body";
 import { DetailNotFound } from "@/components/detail/layout";
+import { ListToolbar } from "@/components/list-toolbar";
 import { MemoriesPageActions, MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -114,14 +120,32 @@ export function ConnectedAgentDetail({
 		enabled: overviewEnabled && supportsSessions,
 	});
 
+	const agentTitle = agent ? agentDisplayName(agent) : null;
+	const profiles = useAgentProfiles(id, {
+		enabled: Boolean(agent) && (activeTab === "overview" || activeTab === "sessions"),
+	});
+	const sessionProfileFilter = useAgentSessionProfileFilter({
+		agentName: agentTitle ?? "",
+		profiles: profiles.data,
+		profilesLoading: profiles.isLoading,
+	});
+
 	const {
 		data: sessionsPage,
 		isLoading: sessionsLoading,
 		error: sessionsError,
 		refetch: refetchSessions,
 	} = useQuery({
-		...sessionListQueryOptions($api, { environment_id: id, page_size: 50 }),
-		enabled: activeTab === "sessions" && Boolean(agent) && supportsSessions,
+		...sessionListQueryOptions($api, {
+			environment_id: id,
+			profile_key: sessionProfileFilter.profileKey,
+			page_size: 50,
+		}),
+		enabled:
+			activeTab === "sessions" &&
+			Boolean(agent) &&
+			supportsSessions &&
+			!sessionProfileFilter.pending,
 	});
 
 	const blockingAgentError =
@@ -151,7 +175,6 @@ export function ConnectedAgentDetail({
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeTabMeta.icon;
 	const ownershipKind = agent ? agentOwnershipKindFromId(agent.id, ownership) : "connected";
-	const agentTitle = agent ? agentDisplayName(agent) : null;
 	useSetBreadcrumbTitle(activeTab === "overview" ? agentTitle : agentSectionLabel(activeTab));
 	const headerStatus =
 		activeTab === "overview" && agent && showSourceBadge ? (
@@ -299,6 +322,13 @@ export function ConnectedAgentDetail({
 									</div>
 								</AgentOverviewStatusCard>
 							</AgentOverviewActivity>
+							<AgentProfilesOverview
+								agentId={id}
+								agentName={agentTitle ?? activeTabLabel}
+								agentType={agent.agent_type}
+								profiles={profiles.data}
+								linkSessions={supportsSessions}
+							/>
 							<AgentOverviewCapabilities
 								agentId={id}
 								variant="connected"
@@ -341,13 +371,22 @@ export function ConnectedAgentDetail({
 								title="Couldn't load agent sessions"
 							/>
 						) : (
-							<SessionFeed
-								sessions={sessionsPage?.items ?? []}
-								isLoading={sessionsLoading}
-								emptyMessage="No sessions synced from this agent yet."
-								showAgent={false}
-								sessionLink={(session) => scopedSessionLink(session.id)}
-							/>
+							<div className="space-y-4">
+								{sessionProfileFilter.filter ? (
+									<ListToolbar filters={sessionProfileFilter.filter} />
+								) : null}
+								<SessionFeed
+									sessions={sessionsPage?.items ?? []}
+									isLoading={sessionsLoading || sessionProfileFilter.pending}
+									emptyMessage={
+										sessionProfileFilter.profileKey === undefined
+											? "No sessions synced from this agent yet."
+											: "No sessions synced from this profile yet."
+									}
+									showAgent={false}
+									sessionLink={(session) => scopedSessionLink(session.id)}
+								/>
+							</div>
 						)
 					) : null}
 

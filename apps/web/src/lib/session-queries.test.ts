@@ -40,6 +40,11 @@ describe("session query cache keys", () => {
 		});
 	});
 
+	it("keeps the default profile key as an explicit filter", () => {
+		expect(normalizeSessionListQuery({ profile_key: "" })).toMatchObject({ profile_key: "" });
+		expect(normalizeSessionListQuery({ profile_key: null })).not.toHaveProperty("profile_key");
+	});
+
 	it("sorts unordered array filters for stable keys", () => {
 		expect(normalizeSessionListQuery({ tag: ["beta", "alpha"], model: ["z", "a"] })).toMatchObject({
 			model: ["a", "z"],

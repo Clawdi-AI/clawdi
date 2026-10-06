@@ -553,7 +553,13 @@ export function EntityRow({
 	const label = ariaLabel ?? (typeof title === "string" ? title : "Open");
 	const body = (
 		<>
-			<EntityHeader icon={icon} title={title} titleAdornment={titleAdornment} meta={meta} />
+			<EntityHeader
+				icon={icon}
+				title={title}
+				titleAdornment={titleAdornment}
+				meta={meta}
+				className="flex-1"
+			/>
 			{status ? <div className="shrink-0">{status}</div> : null}
 			{trailing ? (
 				<div className="pointer-events-auto relative z-10 shrink-0">{trailing}</div>

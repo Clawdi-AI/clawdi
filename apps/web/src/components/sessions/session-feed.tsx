@@ -10,6 +10,7 @@ import { SectionLabel } from "@/components/section-label";
 import { SessionSearchMatchExcerpt } from "@/components/sessions/search-match-excerpt";
 import { sessionAgentIdentityInput } from "@/components/sessions/session-agent-label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { sessionProfileLabel } from "@/lib/agent-profiles";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { sessionDetailLink } from "@/lib/session-search-anchor";
 import {
@@ -233,11 +234,17 @@ export function SessionCard({
 	const projectFolder = session.project_path?.split("/").pop();
 	const totalTokens = session.input_tokens + session.output_tokens;
 	const agent = agentIdentity(sessionAgentIdentityInput(session)).primaryLabel;
+	const profile = sessionProfileLabel(session);
 	// Cron jobs and bracketed heartbeats are routine noise — keep them in the
 	// timeline but visually quieter than human work (taste audit round 2).
 	const isAutomated = quietAutomated && /^(Cron:|\[)/.test(title);
 	const metadata: SessionMetadataItem[] = [
-		showAgent ? { key: "agent", value: agent } : null,
+		// Default-profile sessions carry no profile label.
+		showAgent
+			? { key: "agent", value: profile ? `${agent} · ${profile}` : agent }
+			: profile
+				? { key: "profile", value: profile, title: `Profile: ${profile}` }
+				: null,
 		projectFolder
 			? {
 					key: "project",
