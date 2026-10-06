@@ -772,7 +772,7 @@ export default function VaultDetailPage({
 						<p className="mt-0.5 text-xs text-muted-foreground">
 							{isAgentScope
 								? `Available through this ${requestedAttachmentLabel}. Open the source below to configure its Vaults.`
-								: "Same Vault everywhere — key changes apply to every linked Project. Key values stay protected, and linked Projects and Agents can use them."}
+								: "Key changes apply to every linked Project. Values stay protected; linked Projects and Agents can use them."}
 						</p>
 					</div>
 					{canManageVault && !isAgentScope && !blockingProjectsError ? (

@@ -117,7 +117,7 @@ export function ConnectBotDialog({
 		? {
 				title: "Agent link status unavailable",
 				description:
-					"Clawdi can’t confirm this Agent’s existing links right now. The new Custom bot will be added to Custom bots without being linked to this Agent.",
+					"Couldn't check this Agent's existing links. The new Custom bot will be added without a link to this Agent.",
 			}
 		: null;
 

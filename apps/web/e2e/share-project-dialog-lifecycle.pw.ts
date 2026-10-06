@@ -205,7 +205,10 @@ for (const viewport of [
 			dialog.getByRole("button", { name: "Stop all sharing for this Project" }),
 		).toBeHidden();
 		await expect(
-			dialog.getByText(/People can view this Project and let their Agents use its keys/),
+			dialog.getByText(
+				"People can view this Project and let their Agents use its keys. Only you can edit, and secret values stay hidden in the dashboard.",
+				{ exact: true },
+			),
 		).toHaveCount(1);
 		const dimensions = await dialog.evaluate((element) => ({
 			width: element.clientWidth,

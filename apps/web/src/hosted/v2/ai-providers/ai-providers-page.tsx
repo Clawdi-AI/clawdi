@@ -295,7 +295,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 						{impact.isFetching ? (
 							<p className="flex items-center gap-2 text-muted-foreground">
 								<Spinner />
-								Checking affected agents...
+								Checking affected Agents…
 							</p>
 						) : impactError ? (
 							<ApiErrorPanel
@@ -306,9 +306,8 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 						) : affectedAgents.length > 0 ? (
 							<>
 								<p>
-									These agents will be set to Provider unset with no primary model. They will keep
-									running, but model features will remain unavailable until reconfigured. There is
-									no automatic fallback to Clawdi AI.
+									These Agents will keep running with Provider unset, but model features stop until
+									you choose a new provider. There's no fallback to Clawdi AI.
 								</p>
 								<ul className="space-y-1 text-foreground">
 									{affectedAgents.map((agent) => (

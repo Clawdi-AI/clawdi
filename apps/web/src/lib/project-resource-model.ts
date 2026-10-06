@@ -66,7 +66,7 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		navLabel: "Skills",
 		description: "Reusable instructions that belong to a Project.",
 		managementDescription:
-			"Skills belong to Projects. Choose a Project before adding, editing, removing, copying, or moving a Skill. Linked Agents use the whole Project bundle.",
+			"Skills belong to Projects. Choose a Project to add or change its Skills; linked Agents use the whole Project.",
 		href: PROJECT_RESOURCE_LIST_PATHS.skills,
 		emptyCta: "Add skill",
 		routeGroup: "library",

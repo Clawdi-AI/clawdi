@@ -11,7 +11,7 @@ import { env } from "@/lib/env";
 import "@/styles/globals.css";
 
 const DESCRIPTION =
-	"Cloud control plane for AI agents - manage sessions, skills, memories, and secrets across the machines you connect.";
+	"Cloud control plane for AI agents — manage sessions, Skills, memories, and secrets across the machines you connect.";
 
 export const Route = createRootRoute({
 	head: () => ({

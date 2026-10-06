@@ -61,7 +61,7 @@ export default function SharedSessionLinksPage() {
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			<PageHeader
-				title="Shared Session links"
+				title="Shared Session Links"
 				description="Review and turn off every active Session link from one place."
 				actions={
 					<Button render={<Link to="/sessions" />} nativeButton={false} variant="outline" size="sm">

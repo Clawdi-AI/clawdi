@@ -31,7 +31,7 @@ const CLI_STEPS = [
 		description: "Install the latest Clawdi CLI globally.",
 	},
 	{
-		title: "Log in",
+		title: "Sign in",
 		code: "clawdi auth login",
 		description: "Complete browser authorization before continuing to the next step.",
 	},
@@ -88,7 +88,7 @@ function CopyButton({
 export function AddAgentSetup() {
 	const api = useOpenApi();
 	const origin = useOrigin();
-	const prompt = `Set up Clawdi on this machine. Fetch ${origin}/skill.md, and follow the skills to set it up. Finally, confirm the installation with \`clawdi doctor\`.`;
+	const prompt = `Set up Clawdi on this machine: fetch ${origin}/skill.md and follow its instructions, then confirm the installation with \`clawdi doctor\`.`;
 	const baseline = useRef<Set<string> | null>(null);
 
 	// Live success detection: snapshot the env ids on first load, then poll

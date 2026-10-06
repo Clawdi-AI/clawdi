@@ -226,7 +226,7 @@ test("manages active Session links from one page", async ({ page }) => {
 	});
 
 	await page.goto("/sessions/shared");
-	await expect(page.getByRole("heading", { name: "Shared Session links" })).toBeVisible();
+	await expect(page.getByRole("heading", { name: "Shared Session Links" })).toBeVisible();
 	await expect(page.getByText("Share a response", { exact: true })).toBeVisible();
 	await expect(page.getByText(/Single Agent response · 1 message/)).toBeVisible();
 	await page.getByRole("button", { name: "Turn off share link for Share a response" }).click();
