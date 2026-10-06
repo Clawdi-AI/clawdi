@@ -1,9 +1,12 @@
+import type { ChannelAccount } from "@clawdi/shared/api";
 import { ENTITY_CARD_BASE, channelCardClasses as styles } from "@clawdi/shared/ui";
-import { providerMeta } from "@clawdi/shared/view";
+import { DISCORD_CONNECTION_ISSUE_COPY, providerMeta } from "@clawdi/shared/view";
+import { TriangleAlert } from "lucide-react-native";
 import type { ReactNode } from "react";
 import { EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
-import { WebView } from "@/components/ui/web-layout";
+import { Alert } from "@/components/ui/alert";
+import { WebView, webView } from "@/components/ui/web-layout";
 export function ChannelCard({
 	provider,
 	title,
@@ -31,5 +34,20 @@ export function ChannelCard({
 				) : null}
 			</WebView>
 		</WebView>
+	);
+}
+
+/** Web's terminal Discord gateway notice for bot owners. */
+export function DiscordConnectionIssueAlert({
+	issue,
+}: {
+	issue: ChannelAccount["connection_issue"] | undefined;
+}) {
+	if (!issue) return null;
+	const copy = DISCORD_CONNECTION_ISSUE_COPY[issue];
+	return (
+		<Alert icon={TriangleAlert} title={copy.title} className={webView(styles.connectionIssue)}>
+			{copy.message}
+		</Alert>
 	);
 }

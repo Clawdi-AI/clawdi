@@ -1,3 +1,5 @@
+import type { ChannelAccount } from "../api";
+
 /**
  * Native channel providers that can be created from the v2 channels UI. Each
  * takes different real connect inputs:
@@ -84,3 +86,29 @@ export function orderedProviderIds(providers: Iterable<string>): string[] {
 
 	return ordered;
 }
+
+/** Owner-facing copy for a Discord gateway that closed with a terminal code. */
+export const DISCORD_CONNECTION_ISSUE_COPY: Record<
+	Exclude<ChannelAccount["connection_issue"], null | undefined>,
+	{ title: string; message: string }
+> = {
+	authentication_failed: {
+		title: "Discord bot token rejected",
+		message: "Discord rejected this bot's token. Update the bot token to reconnect.",
+	},
+	disallowed_intents: {
+		title: "Discord intents are disallowed",
+		message:
+			"Discord is blocking one or more gateway intents. Enable the required intents in the Discord Developer Portal and reconnect.",
+	},
+	invalid_intents: {
+		title: "Discord intents are invalid",
+		message:
+			"This bot requested invalid gateway intents. Update the channel configuration and reconnect.",
+	},
+	invalid_configuration: {
+		title: "Discord configuration rejected",
+		message:
+			"Discord rejected this bot's gateway configuration. Check the channel settings and reconnect.",
+	},
+};

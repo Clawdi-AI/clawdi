@@ -14,6 +14,7 @@ const session: components["schemas"]["SessionListItemResponse"] = {
 	local_session_id: "local-a",
 	project_path: null,
 	agent_type: "hermes",
+	profile_key: "",
 	started_at: "2026-10-01T00:00:00Z",
 	ended_at: null,
 	updated_at: "2026-10-01T00:00:00Z",

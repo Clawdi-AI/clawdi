@@ -37,7 +37,7 @@ import { Text } from "@/components/ui/text";
 import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
-import { ChannelCard } from "@/hosted/v2/channels/channel-card";
+import { ChannelCard, DiscordConnectionIssueAlert } from "@/hosted/v2/channels/channel-card";
 import { useChannelQuery } from "@/hosted/v2/channels/channels-hooks";
 import { ChannelCreate } from "@/hosted/v2/channels/connect-bot-dialog";
 import { routeParam } from "@/lib/route-params";
@@ -128,58 +128,62 @@ function ChannelsView() {
 														? null
 														: "Unavailable";
 											return (
-												<ChannelCard
-													key={bot.id}
-													provider={bot.provider}
-													title={bot.name}
-													state={[
-														bot.link ? (
-															<Button
-																variant="link"
-																size="xs"
-																className={webView(scopedStyles.pairedChatsTrigger)}
-																onPress={open}
-															>
-																<Text>
-																	{agentChannelPairedChatsLabel(bot.link.binding_count ?? 0)}
-																</Text>
-															</Button>
-														) : (
-															(issue ?? "Available")
-														),
-													]}
-													actions={
-														bot.link ? (
-															<>
-																<Button variant="outline" size="sm" onPress={open}>
-																	<Icon as={QrCode} />
-																	<Text>Pair</Text>
-																</Button>
-																<Button variant="ghost" size="sm" onPress={open}>
-																	<Icon as={Link2Off} />
-																	<Text>Unlink</Text>
-																</Button>
-															</>
-														) : (
-															<>
-																{bot.visibility === "private" ? (
-																	<Button variant="ghost" size="sm" onPress={open}>
-																		<Icon as={Trash2} />
-																		<Text>Delete</Text>
-																	</Button>
-																) : null}
+												<WebView key={bot.id} recipe="flex h-full min-w-0 flex-col gap-2">
+													{bot.provider === "discord" ? (
+														<DiscordConnectionIssueAlert issue={bot.connection_issue} />
+													) : null}
+													<ChannelCard
+														provider={bot.provider}
+														title={bot.name}
+														state={[
+															bot.link ? (
 																<Button
-																	size="sm"
-																	disabled={Boolean(issue) || linked.isError || linked.isPending}
+																	variant="link"
+																	size="xs"
+																	className={webView(scopedStyles.pairedChatsTrigger)}
 																	onPress={open}
 																>
-																	<Icon as={Link2} />
-																	<Text>Link</Text>
+																	<Text>
+																		{agentChannelPairedChatsLabel(bot.link.binding_count ?? 0)}
+																	</Text>
 																</Button>
-															</>
-														)
-													}
-												/>
+															) : (
+																(issue ?? "Available")
+															),
+														]}
+														actions={
+															bot.link ? (
+																<>
+																	<Button variant="outline" size="sm" onPress={open}>
+																		<Icon as={QrCode} />
+																		<Text>Pair</Text>
+																	</Button>
+																	<Button variant="ghost" size="sm" onPress={open}>
+																		<Icon as={Link2Off} />
+																		<Text>Unlink</Text>
+																	</Button>
+																</>
+															) : (
+																<>
+																	{bot.visibility === "private" ? (
+																		<Button variant="ghost" size="sm" onPress={open}>
+																			<Icon as={Trash2} />
+																			<Text>Delete</Text>
+																		</Button>
+																	) : null}
+																	<Button
+																		size="sm"
+																		disabled={Boolean(issue) || linked.isError || linked.isPending}
+																		onPress={open}
+																	>
+																		<Icon as={Link2} />
+																		<Text>Link</Text>
+																	</Button>
+																</>
+															)
+														}
+													/>
+												</WebView>
 											);
 										})}
 									</WebView>
@@ -345,6 +349,9 @@ function ChannelsView() {
 								</>
 							}
 						/>
+						{item.kind === "custom" && item.bot.provider === "discord" ? (
+							<DiscordConnectionIssueAlert issue={item.bot.connection_issue} />
+						) : null}
 					</WebView>
 				)}
 			/>

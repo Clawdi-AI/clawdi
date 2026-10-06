@@ -1,6 +1,7 @@
 "use client";
 
-import { channelHealthTone } from "@clawdi/shared/view";
+import { channelCardClasses } from "@clawdi/shared/ui";
+import { channelHealthTone, DISCORD_CONNECTION_ISSUE_COPY } from "@clawdi/shared/view";
 import { Check, CircleAlert, CircleCheck, Copy, TriangleAlert } from "lucide-react";
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -100,31 +101,6 @@ export function isNormalChannelStatus(status: string | null | undefined): boolea
 	return ["active", "connected", "paired"].includes(status?.toLowerCase() ?? "");
 }
 
-const DISCORD_CONNECTION_ISSUE_COPY: Record<
-	Exclude<ChannelAccount["connection_issue"], null | undefined>,
-	{ title: string; message: string }
-> = {
-	authentication_failed: {
-		title: "Discord bot token rejected",
-		message: "Discord rejected this bot's token. Update the bot token to reconnect.",
-	},
-	disallowed_intents: {
-		title: "Discord intents are disallowed",
-		message:
-			"Discord is blocking one or more gateway intents. Enable the required intents in the Discord Developer Portal and reconnect.",
-	},
-	invalid_intents: {
-		title: "Discord intents are invalid",
-		message:
-			"This bot requested invalid gateway intents. Update the channel configuration and reconnect.",
-	},
-	invalid_configuration: {
-		title: "Discord configuration rejected",
-		message:
-			"Discord rejected this bot's gateway configuration. Check the channel settings and reconnect.",
-	},
-};
-
 export function DiscordConnectionIssueAlert({
 	issue,
 }: {
@@ -133,7 +109,7 @@ export function DiscordConnectionIssueAlert({
 	if (!issue) return null;
 	const copy = DISCORD_CONNECTION_ISSUE_COPY[issue];
 	return (
-		<Alert className="border-warning/30 bg-warning-muted">
+		<Alert className={channelCardClasses.connectionIssue}>
 			<TriangleAlert aria-hidden="true" />
 			<AlertTitle>{copy.title}</AlertTitle>
 			<AlertDescription>{copy.message}</AlertDescription>

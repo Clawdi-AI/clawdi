@@ -39,20 +39,18 @@ export function AgentsCard({
 		<WebView recipe={styles.section}>
 			{error ? (
 				<ApiErrorPanel error={error} onRetry={onRetry} title={OVERVIEW_COPY.agentsError} />
-			) : isLoading ? (
+			) : isLoading || hostedStatus?.isLoading ? (
+				// One skeleton until every source resolves, matching Web.
 				<WebView recipe={ENTITY_GRID_CLASS}>
 					{Array.from({ length: 4 }, (_, i) => (
 						<EntityCardSkeleton key={i} iconSize="sm" statusDot titleBadge />
 					))}
 				</WebView>
-			) : agents.length || hostedStatus?.isLoading ? (
+			) : agents.length ? (
 				<WebView recipe={ENTITY_GRID_CLASS}>
 					{[...agents].sort(compareAgentTiles).map((tile) => (
 						<AgentTileView key={`${tile.source}:${tile.id}`} tile={tile} />
 					))}
-					{hostedStatus?.isLoading ? (
-						<EntityCardSkeleton iconSize="sm" statusDot titleBadge />
-					) : null}
 				</WebView>
 			) : hostedStatus?.error ? null : (
 				<EmptyState

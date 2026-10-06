@@ -56,6 +56,7 @@ import { AppView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useCloudAgents } from "@/hooks/cloud-inventory";
 import { useAgentOwnership } from "@/hooks/use-agent-ownership";
+import { DiscordConnectionIssueAlert } from "@/hosted/v2/channels/channel-card";
 import { ChannelHealthTab } from "@/hosted/v2/channels/channel-health-tab";
 import { ChannelInfoCard } from "@/hosted/v2/channels/channel-info-card";
 import { useChannelQuery } from "@/hosted/v2/channels/channels-hooks";
@@ -644,6 +645,11 @@ function ChannelDetail({
 							description={providerMeta(provider).label}
 							icon={<EntityIcon kind="channel" id={provider} label="Channel" size="lg" />}
 						/>
+						{provider === "discord" ? (
+							<DiscordConnectionIssueAlert
+								issue={ownedBot?.connection_issue ?? bot?.connection_issue}
+							/>
+						) : null}
 						{action.error ||
 						links.isError ||
 						activity.isError ||

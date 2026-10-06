@@ -604,6 +604,7 @@ const sessions = sessionSeeds.map((seed, index) => {
 		agent_display_name: seed.agent.display_name,
 		agent_default_name: seed.agent.default_name,
 		agent_type: seed.agent.agent_type,
+		profile_key: "",
 		machine_name: seed.agent.machine_name,
 		started_at: ago(startedMs),
 		ended_at: isActive ? null : ago(seed.ageMs),
