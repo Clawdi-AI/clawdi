@@ -21,6 +21,8 @@ const STORE_SCHEMA = z
 	})
 	.strict();
 const MAX_ENTRIES = 256;
+// Capture the running CLI before runtime-user filesystem privilege drops.
+const CLI_VERSION = getCliVersion();
 
 let entries: Map<string, string> | null = null;
 let dirty = false;
@@ -149,7 +151,7 @@ export function openClawStepIdentity(home: string, sources: readonly string[]): 
 	return createHash("sha256")
 		.update(
 			JSON.stringify({
-				cli: getCliVersion(),
+				cli: CLI_VERSION,
 				packages: runtimeFilesContentRevision(packages),
 				sources,
 			}),

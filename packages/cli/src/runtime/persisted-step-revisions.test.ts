@@ -1,7 +1,9 @@
 import { afterEach, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { withEffectiveFilesystemIdentity } from "./effective-identity";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import {
 	flushPersistedStepRevisions,
@@ -104,11 +106,39 @@ test("CLI, helper and package upgrades invalidate a memo with identical launcher
 	const before = openClawStepIdentity(home, ["probe-v1"]);
 	try {
 		writeFileSync(cliPackage, JSON.stringify({ ...JSON.parse(original), version: "upgrade-test" }));
-		expect(openClawStepIdentity(home, ["probe-v1"])).not.toBe(before);
+		const upgraded = spawnSync(
+			process.execPath,
+			[
+				"--eval",
+				`import { openClawStepIdentity } from ${JSON.stringify(join(import.meta.dir, "persisted-step-revisions.ts"))}; console.log(openClawStepIdentity(${JSON.stringify(home)}, ["probe-v1"]));`,
+			],
+			{ encoding: "utf8" },
+		);
+		expect(upgraded.status).toBe(0);
+		expect(upgraded.stdout.trim()).not.toBe(before);
 	} finally {
 		writeFileSync(cliPackage, original);
 	}
 });
+
+test.skipIf(process.geteuid?.() !== 0)(
+	"CLI memo identity survives a runtime UID without CLI package access",
+	() => {
+		const paths = hostedPaths();
+		const cliPackage = join(import.meta.dir, "../../package.json");
+		const mode = statSync(cliPackage).mode & 0o777;
+		const before = openClawStepIdentity(paths.userHome, ["probe"]);
+		try {
+			chmodSync(cliPackage, 0o600);
+			withEffectiveFilesystemIdentity({ uid: 10001, gid: 10001 }, () => {
+				expect(() => readFileSync(cliPackage)).toThrow();
+				expect(openClawStepIdentity(paths.userHome, ["probe"])).toBe(before);
+			});
+		} finally {
+			chmodSync(cliPackage, mode);
+		}
+	},
+);
 
 test("legacy OpenClaw package layout upgrades invalidate memos", () => {
 	const paths = hostedPaths();
