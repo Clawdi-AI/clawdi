@@ -13,6 +13,7 @@ import type {
 	AgentAdapterCore,
 	RawSession,
 	SessionEvent,
+	SessionScanIssue,
 	SessionScanRequest,
 	SessionScanResult,
 	SyncReadContext,
@@ -21,7 +22,11 @@ import { getPiHome, getPiSessionsDir, matchesProjectFilter } from "./paths";
 import { piMessageDrafts } from "./pi-message-drafts";
 import { type JsonObject, jsonObject, jsonString, visibleContentParts } from "./rich-event-mapping";
 import { jsonlPathsWithin, listJsonlFiles } from "./session-files";
-import { describeSessionContent, JsonlSessionSource } from "./session-source";
+import {
+	describeSessionContent,
+	JsonlSessionSource,
+	SessionSourceBlockedError,
+} from "./session-source";
 import { flatSkillModule } from "./skill-dir";
 import { openSessionIndex } from "./sqlite";
 import { readCommandVersion } from "./version";
@@ -398,13 +403,23 @@ async function parseSession(
 		if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
 		throw error;
 	}
+	let firstRecordFound = false;
 	for await (const record of sourceFile.records()) {
+		firstRecordFound = true;
 		const id = jsonString(record.data.id);
 		const cwd = jsonString(record.data.cwd);
 		if (sourceId !== undefined && id !== sourceId) return null;
 		if (!matchesProjectFilter(cwd, projectFilter ? resolve(projectFilter) : null)) return null;
 		break;
 	}
+	if (!firstRecordFound) {
+		if (sourceFile.blockedReason) throw new SessionSourceBlockedError(sourceFile.path);
+		return null;
+	}
+	for await (const _record of sourceFile.records()) {
+		// Consume the matching source completely so blockedReason reflects later rows.
+	}
+	if (sourceFile.blockedReason) throw new SessionSourceBlockedError(sourceFile.path);
 	const metadata: PiReadMetadata = { header: null, usage: emptyUsage() };
 	const readEvents = () => readPiEvents(sourceFile, metadata);
 	const description = await describeSessionContent(readEvents, sourceFile.eager);
@@ -483,19 +498,35 @@ export class PiAdapter implements AgentAdapterCore {
 					context,
 				);
 			const sessions: RawSession[] = [];
+			const scanIssues: SessionScanIssue[] = [];
 			for (const path of paths) {
-				const session = await parseSession(path, request.projectFilter, undefined, context);
+				let session: RawSession | null;
+				try {
+					session = await parseSession(path, request.projectFilter, undefined, context);
+				} catch (error) {
+					if (!(error instanceof SessionSourceBlockedError)) throw error;
+					scanIssues.push({ path: error.path, reason: error.reason });
+					continue;
+				}
 				if (session) sessions.push(session);
 			}
-			return { sessions, dedupedCount: 0, coverage: "partial" };
+			return { sessions, dedupedCount: 0, coverage: "partial", scanIssues };
 		}
 		const sessions: RawSession[] = [];
+		const scanIssues: SessionScanIssue[] = [];
 		for (const path of listJsonlFiles(root).sort()) {
 			if (context) await setImmediate(undefined, { signal: context.signal });
-			const session = await parseSession(path, request.projectFilter, undefined, context);
+			let session: RawSession | null;
+			try {
+				session = await parseSession(path, request.projectFilter, undefined, context);
+			} catch (error) {
+				if (!(error instanceof SessionSourceBlockedError)) throw error;
+				scanIssues.push({ path: error.path, reason: error.reason });
+				continue;
+			}
 			if (session) sessions.push(session);
 		}
-		return { sessions, dedupedCount: 0, coverage: "complete" };
+		return { sessions, dedupedCount: 0, coverage: "complete", scanIssues };
 	}
 
 	private async resolveSession(
@@ -506,7 +537,13 @@ export class PiAdapter implements AgentAdapterCore {
 		const sourceId = localSessionId.startsWith("pi.") ? localSessionId.slice(3) : localSessionId;
 		for (const path of listJsonlFiles(getPiSessionsDir())) {
 			if (context) await setImmediate(undefined, { signal: context.signal });
-			const session = await parseSession(path, undefined, sourceId, context);
+			let session: RawSession | null;
+			try {
+				session = await parseSession(path, undefined, sourceId, context);
+			} catch (error) {
+				if (error instanceof SessionSourceBlockedError) continue;
+				throw error;
+			}
 			if (session?.localSessionId === `pi.${sourceId}`) return session;
 		}
 		return null;

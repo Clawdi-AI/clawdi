@@ -7,6 +7,7 @@ import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-ev
 import type {
 	AgentAdapterCore,
 	RawSession,
+	SessionScanIssue,
 	SessionScanRequest,
 	SessionScanResult,
 	SyncReadContext,
@@ -23,7 +24,12 @@ import {
 	visibleContentParts,
 } from "./rich-event-mapping";
 import { jsonlPathsWithin, listJsonlFiles } from "./session-files";
-import { addSessionModel, describeSessionContent, JsonlSessionSource } from "./session-source";
+import {
+	addSessionModel,
+	describeSessionContent,
+	JsonlSessionSource,
+	SessionSourceBlockedError,
+} from "./session-source";
 import { flatSkillModule } from "./skill-dir";
 import { readCommandVersion } from "./version";
 
@@ -118,11 +124,12 @@ function codexEventDrafts(
 		const callId = jsonString(payload.call_id) ?? jsonString(payload.id);
 		const name = jsonString(payload.name);
 		if (!callId || !name) return [];
+		const namespace = jsonString(payload.namespace);
 		return [
 			{
 				type: "tool_call",
 				call_id: callId,
-				name,
+				name: namespace && namespace !== "functions" ? `${namespace}${name}` : name,
 				arguments_json: canonicalStructuredString(
 					payloadType === "function_call" ? payload.arguments : payload.input,
 				),
@@ -349,6 +356,7 @@ async function parseSessionFile(
 			}
 		}
 	}
+	if (source.blockedReason) throw new SessionSourceBlockedError(source.path);
 	if (!sessionId) return null;
 	if (!matchesProjectFilter(projectPath, absFilter)) return null;
 	const sessionKey = sessionId;
@@ -439,6 +447,18 @@ export class CodexAdapter implements AgentAdapterCore {
 	): Promise<SessionScanResult> {
 		context?.signal.throwIfAborted();
 		const absFilter = resolveProjectFilter(request.projectFilter);
+		const scanIssues: SessionScanIssue[] = [];
+		const parse = async (filePath: string): Promise<RawSession | null> => {
+			try {
+				return await parseSessionFile(filePath, absFilter, context);
+			} catch (error) {
+				if (error instanceof SessionSourceBlockedError) {
+					scanIssues.push({ path: error.path, reason: error.reason });
+					return null;
+				}
+				throw error;
+			}
+		};
 		if (request.kind === "paths") {
 			const paths = jsonlPathsWithin(request, sessionRoots());
 			if (!paths)
@@ -456,13 +476,18 @@ export class CodexAdapter implements AgentAdapterCore {
 			const sessionsById = new Map<string, RawSession>();
 			for (const filePath of files) {
 				if (context) await setImmediate(undefined, { signal: context.signal });
-				const session = await parseSessionFile(filePath, absFilter, context);
+				const session = await parse(filePath);
 				if (session) {
 					sessionsById.set(session.localSessionId, session);
 					this.sessionPaths.set(session.localSessionId, filePath);
 				}
 			}
-			return { sessions: [...sessionsById.values()], dedupedCount: 0, coverage: "partial" };
+			return {
+				sessions: [...sessionsById.values()],
+				dedupedCount: 0,
+				coverage: "partial",
+				scanIssues,
+			};
 		}
 
 		const sessionsById = new Map<string, RawSession>();
@@ -470,7 +495,7 @@ export class CodexAdapter implements AgentAdapterCore {
 		for (const root of sessionRoots()) {
 			for (const filePath of listJsonlFiles(root, { skipHidden: true })) {
 				if (context) await setImmediate(undefined, { signal: context.signal });
-				const session = await parseSessionFile(filePath, absFilter, context);
+				const session = await parse(filePath);
 				if (session && !sessionsById.has(session.localSessionId)) {
 					sessionsById.set(session.localSessionId, session);
 					pathsById.set(session.localSessionId, filePath);
@@ -486,7 +511,12 @@ export class CodexAdapter implements AgentAdapterCore {
 		// Codex stores long-conversation history via in-file `compacted`
 		// entries rather than spawning new sessionId files, so it cannot
 		// produce the resume-chain duplication that ClaudeCodeAdapter dedupes.
-		return { sessions: [...sessionsById.values()], dedupedCount: 0, coverage: "complete" };
+		return {
+			sessions: [...sessionsById.values()],
+			dedupedCount: 0,
+			coverage: "complete",
+			scanIssues,
+		};
 	}
 
 	private async resolveSession(
@@ -496,7 +526,13 @@ export class CodexAdapter implements AgentAdapterCore {
 		context?.signal.throwIfAborted();
 		const knownPath = this.sessionPaths.get(localSessionId);
 		if (knownPath) {
-			const current = await parseSessionFile(knownPath, null, context);
+			let current: RawSession | null;
+			try {
+				current = await parseSessionFile(knownPath, null, context);
+			} catch (error) {
+				if (error instanceof SessionSourceBlockedError) return null;
+				throw error;
+			}
 			if (current?.localSessionId === localSessionId) return current;
 			this.sessionPaths.delete(localSessionId);
 		}

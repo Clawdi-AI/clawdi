@@ -22,6 +22,7 @@ import {
 	withManagedTargetRollback,
 } from "../runtime/managed-skill-delivery";
 import { mutateUserSkillTarget } from "../runtime/managed-skill-reservation";
+import { log } from "../serve/log";
 import {
 	type AgentAdapterCore,
 	collectFromScan,
@@ -30,12 +31,17 @@ import {
 	type SessionBatchScan,
 	type SessionEvent,
 	type SessionModule,
+	type SessionScanIssue,
 	type SessionScanRequest,
 	type SessionScanResult,
 	type SessionUserActivity,
 	type SyncReadContext,
 } from "./base";
-import { runOpenClawCommand, runOpenClawSdkCommand } from "./openclaw-command";
+import {
+	OpenClawSdkExitError,
+	runOpenClawCommand,
+	runOpenClawSdkCommand,
+} from "./openclaw-command";
 import {
 	openClawAgentId,
 	resolveOpenClawAgentWorkspace,
@@ -366,6 +372,20 @@ function mergeUserActivity(
 }
 
 const OPENCLAW_COMMAND_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+const warnedMissingOpenClawSdk = new Set<string>();
+
+function warnMissingOpenClawSdkOnce(
+	versionKey: string,
+	details?: { exit_code?: number | null; signal?: NodeJS.Signals | null },
+): void {
+	if (warnedMissingOpenClawSdk.has(versionKey)) return;
+	warnedMissingOpenClawSdk.add(versionKey);
+	log.warn("openclaw.transcript_sdk_fallback", {
+		failure: "missing_export",
+		...(details ?? {}),
+		fallback: "gateway",
+	});
+}
 
 async function runOpenClawJson(
 	args: string[],
@@ -477,7 +497,10 @@ async function readOfficialSessionMessagesFromSdk(
 		[],
 		OPENCLAW_SDK_EXPORT_PATHS.sessionTranscript,
 	);
-	if (!sdkPath) return null;
+	if (!sdkPath) {
+		warnMissingOpenClawSdkOnce("unresolved");
+		return null;
+	}
 	try {
 		context?.signal.throwIfAborted();
 		const result: unknown = JSON.parse(
@@ -496,7 +519,8 @@ async function readOfficialSessionMessagesFromSdk(
 			),
 		);
 		context?.signal.throwIfAborted();
-		if (!Array.isArray(result)) return null;
+		if (!Array.isArray(result))
+			throw new SyntaxError("OpenClaw transcript SDK result is not an array");
 		return result.flatMap((value): JsonObject[] => {
 			const item = jsonObject(value);
 			const message = jsonObject(item?.message);
@@ -510,8 +534,25 @@ async function readOfficialSessionMessagesFromSdk(
 				},
 			];
 		});
-	} catch {
+	} catch (error) {
 		context?.signal.throwIfAborted();
+		const missingExport = error instanceof OpenClawSdkExitError && error.code === 2;
+		if (missingExport) {
+			warnMissingOpenClawSdkOnce(sdkPath, { exit_code: error.code, signal: error.signal });
+		} else {
+			log.warn("openclaw.transcript_sdk_fallback", {
+				failure:
+					error instanceof OpenClawSdkExitError
+						? "exit_code"
+						: error instanceof SyntaxError
+							? "parse_failure"
+							: "subprocess_failure",
+				...(error instanceof OpenClawSdkExitError
+					? { exit_code: error.code, signal: error.signal }
+					: {}),
+				fallback: "gateway",
+			});
+		}
 		return null;
 	}
 }
@@ -748,6 +789,7 @@ interface SessionCollection {
 	matchedTranscriptPaths: Set<string>;
 	classifiedTranscriptPaths: Set<string>;
 	userActivity: SessionUserActivity;
+	scanIssues: SessionScanIssue[];
 }
 
 function singleSessionBatch(
@@ -762,6 +804,7 @@ function singleSessionBatch(
 				sessions: collection.sessions,
 				observedLocalSessionIds: collection.observedLocalSessionIds,
 				dedupedCount: collection.dedupedCount,
+				scanIssues: collection.scanIssues,
 			};
 		})(),
 	};
@@ -770,6 +813,7 @@ function singleSessionBatch(
 interface MaterializedOpenClawSession {
 	session: RawSession | null;
 	userActivity: SessionUserActivity;
+	scanIssue?: SessionScanIssue;
 }
 
 async function materializeOpenClawJsonlSession(input: {
@@ -821,6 +865,13 @@ async function materializeOpenClawJsonlSession(input: {
 		}
 	}
 	if (!internalSession) userActivity.complete &&= source.complete && (await source.unchanged());
+	if (source.blockedReason) {
+		return {
+			session: null,
+			userActivity,
+			scanIssue: { path: source.path, reason: source.blockedReason },
+		};
+	}
 	const readEvents = async function* () {
 		let model = entry.model ?? null;
 		let seq = 0;
@@ -968,7 +1019,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					),
 				);
 			}
-			return singleSessionBatch("complete", collection);
+			return singleSessionBatch(request.kind === "paths" ? "partial" : "complete", collection);
 		}
 
 		const collection = await this.collectLegacySessions(request, knownSourceRevisions, context);
@@ -1078,6 +1129,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				matchedTranscriptPaths: new Set(),
 				classifiedTranscriptPaths: new Set(),
 				userActivity: { lastUserInputAt: null, complete: agentDirectoryListing.complete },
+				scanIssues: [],
 			};
 		}
 
@@ -1088,6 +1140,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		const observedLocalSessionIds: string[] = [];
 		const matchedTranscriptPaths = new Set<string>();
 		const classifiedTranscriptPaths = new Set<string>();
+		const scanIssues: SessionScanIssue[] = [];
 		let userActivity: SessionUserActivity = { lastUserInputAt: null, complete: true };
 
 		for (const agentRoot of agentDirs) {
@@ -1150,6 +1203,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					userActivity = mergeUserActivity(userActivity, materialized.userActivity);
 				}
 				if (materialized.session) sessions.push(materialized.session);
+				if (materialized.scanIssue) scanIssues.push(materialized.scanIssue);
 			}
 		}
 
@@ -1162,6 +1216,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			matchedTranscriptPaths,
 			classifiedTranscriptPaths,
 			userActivity,
+			scanIssues,
 		};
 	}
 
@@ -1176,6 +1231,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		const sessions: RawSession[] = [];
 		const observedLocalSessionIds: string[] = [];
 		const classifiedTranscriptPaths = new Set<string>();
+		const scanIssues: SessionScanIssue[] = [];
 		let userActivity: SessionUserActivity = {
 			lastUserInputAt: null,
 			complete: inventory.complete,
@@ -1225,6 +1281,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					userActivity = mergeUserActivity(userActivity, legacy.userActivity);
 				}
 				if (legacy.session) sessions.push(legacy.session);
+				if (legacy.scanIssue) scanIssues.push(legacy.scanIssue);
 				continue;
 			}
 			if (!transcript) {
@@ -1279,6 +1336,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			matchedTranscriptPaths: new Set(),
 			classifiedTranscriptPaths,
 			userActivity,
+			scanIssues,
 		};
 	}
 	private async collectSkills(context?: SyncReadContext): Promise<RawSkill[]> {

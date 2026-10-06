@@ -1,0 +1,4 @@
+{"type":"ai-title","sessionId":"title-fixture","aiTitle":"Initial AI title"}
+{"type":"custom-title","sessionId":"title-fixture","customTitle":"Initial custom title"}
+{"type":"custom-title","sessionId":"title-fixture","customTitle":"Final custom title"}
+{"type":"ai-title","sessionId":"title-fixture","aiTitle":"Final AI title"}

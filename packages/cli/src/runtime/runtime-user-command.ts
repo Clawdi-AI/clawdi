@@ -127,6 +127,12 @@ interface RuntimeUserCommandDescriptor {
 	env: Record<string, string>;
 }
 
+interface ResolvedRuntimeUserCommandDescriptor {
+	command: string;
+	args: string[];
+	env: NodeJS.ProcessEnv;
+}
+
 export function buildRuntimeUserCommand(
 	runtimeUser: string,
 	home: string,
@@ -413,7 +419,7 @@ export function withRuntimeUserFileAccess<T>(
 	return withEffectiveFilesystemIdentity({ uid, gid }, operation);
 }
 
-interface RuntimeUserCommandOptions {
+export interface RuntimeUserCommandOptions {
 	egressSystemCaFile?: string;
 	environmentOverrides?: Readonly<Record<string, string | undefined>>;
 	environment?: Record<string, string>;
@@ -448,6 +454,16 @@ function runtimeUserCommand(
 	};
 	clearPlatformCredentialEnv(env);
 	return { command: child.command, args: child.args, env };
+}
+
+/** Resolve a command using the same runtime-user identity and environment as supervised calls. */
+export function resolveRuntimeUserCommand(
+	command: string,
+	args: string[],
+	home: string,
+	options: RuntimeUserCommandOptions = {},
+): ResolvedRuntimeUserCommandDescriptor {
+	return runtimeUserCommand(command, args, home, options);
 }
 
 export function spawnRuntimeUserCommand(
