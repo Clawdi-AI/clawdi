@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { Console } from "node:console";
+import chalk from "chalk";
 import { Command, Option } from "commander";
 import { AGENT_TYPE_HELP_LABEL, SKILL_AGENT_TYPE_HELP_LABEL } from "./adapters/registry.js";
 import { registerServeCommand } from "./commands/serve-cli.js";
@@ -8,6 +10,29 @@ import { getCliVersion } from "./lib/version.js";
 import { evaluateHostPolicyForCommand } from "./runtime/host-policy.js";
 
 const program = new Command();
+
+function disableColor(): void {
+	chalk.level = 0;
+	// Clack uses node:util styleText, which honors FORCE_COLOR=0.
+	process.env.FORCE_COLOR = "0";
+	// Bun's built-in console caches color support before startup. Use standard
+	// Console methods so errors, warnings, and inspected values stay plain.
+	Object.assign(
+		globalThis.console,
+		new Console({ stdout: process.stdout, stderr: process.stderr, colorMode: false }),
+	);
+}
+
+const args = process.argv.slice(2);
+const separatorIndex = args.indexOf("--");
+const cliArgs = separatorIndex === -1 ? args : args.slice(0, separatorIndex);
+if (process.env.NO_COLOR || cliArgs.includes("--no-color")) disableColor();
+// Color is process configuration, not a command option. Keep it out of
+// optsWithGlobals() and preserve arguments forwarded after `--`.
+const commandArgs = [
+	...cliArgs.filter((arg) => arg !== "--no-color"),
+	...(separatorIndex === -1 ? [] : args.slice(separatorIndex)),
+];
 
 function commandPath(command: Command): string {
 	const names: string[] = [];
@@ -39,6 +64,10 @@ program
 	)
 	.version(getCliVersion())
 	.addHelpText(
+		"afterAll",
+		"\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)",
+	)
+	.addHelpText(
 		"after",
 		`
 Examples:
@@ -63,6 +92,7 @@ Environment:
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
   CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via \`config set autoUpdate false\`)
   CLAWDI_AUTH_TOKEN        Authenticate non-interactive Cloud API requests
+  NO_COLOR                Disable color output when non-empty
   CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)
   CODEX_HOME               Custom Codex home (else ~/.codex)
   HERMES_HOME              Custom Hermes home (else ~/.hermes)
@@ -1976,5 +2006,5 @@ inboxCmd
 	} catch {
 		// auto-update is opportunistic; never let it kill the CLI invocation
 	}
-	await program.parseAsync().catch(handleError);
+	await program.parseAsync(commandArgs, { from: "user" }).catch(handleError);
 })();

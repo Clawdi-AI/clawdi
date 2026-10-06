@@ -140,6 +140,17 @@ nativeDescribe("native daemon invocation smoke", () => {
 		let daemonStdout = "";
 		let daemonStderr = "";
 		try {
+			const signedOut = await runBinary(
+				stableLauncher,
+				["push", "--no-color"],
+				{ ...env, CLAWDI_AUTH_TOKEN: "", NO_COLOR: "", FORCE_COLOR: "1" },
+				root,
+			);
+			expect(signedOut.code).toBe(1);
+			expect(signedOut.stdout).toBe("");
+			expect(signedOut.stderr).toContain("Not signed in");
+			expect(signedOut.stderr).not.toContain(String.fromCharCode(27));
+
 			const installed = await runBinary(
 				stableLauncher,
 				["daemon", "install", "--host", "127.0.0.1", "--port", "0"],
@@ -160,6 +171,16 @@ nativeDescribe("native daemon invocation smoke", () => {
 			expect(existsSync(unitPath)).toBe(true);
 			const execStart = readFileSync(unitPath, "utf-8").match(/^ExecStart=(.+)$/m)?.[1];
 			expect(execStart).toBe(`${stableLauncher} daemon run`);
+			// Desktop uses the first argv verbatim. The second also checks that
+			// process-wide color configuration never reaches daemon option validation.
+			for (const args of [
+				["daemon", "doctor", "--json"],
+				["daemon", "doctor", "--no-color", "--json"],
+			]) {
+				const doctor = await runBinary(stableLauncher, args, env, root);
+				expect(doctor.code, doctor.stderr).toBe(0);
+				expect(JSON.parse(doctor.stdout).cli_version).toBe(oldVersion);
+			}
 			const currentRelease = createNativeReleaseFixture({
 				root,
 				binary: nativeBinary,
