@@ -253,14 +253,14 @@ export async function update(
 
 	const ownership = detectUpdateOwnership(runtime);
 	if (!ownership) {
-		print();
-		printUnsupportedInstall(latest, print);
+		(json ? process.stderr : process.stdout).write("\n");
+		printUnsupportedInstall(latest);
 		report(false);
 		return;
 	}
 
 	const owner = ownership.kind === "native" ? "native distribution" : ownership.installer;
-	print();
+	(json ? process.stderr : process.stdout).write("\n");
 	print(chalk.cyan(`Installing v${latest} via ${owner}…`));
 	const result = await runUpdateInstallWorker({
 		current,
@@ -278,22 +278,22 @@ export async function update(
 		nativeDownloadTimeoutMs: runtime.nativeDownloadTimeoutMs,
 	});
 	if (result.status === "locked") {
-		print();
-		print(chalk.yellow("Another clawdi update is already running."));
+		process.stderr.write("\n");
+		console.error(chalk.yellow("Another clawdi update is already running."));
 		report(false);
 		process.exitCode = 1;
 		return;
 	}
 	if (result.status === "disabled") {
-		print();
-		print(chalk.yellow("CLI updates are managed by this Cloud Agent's runtime."));
+		process.stderr.write("\n");
+		console.error(chalk.yellow("CLI updates are managed by this Cloud Agent's runtime."));
 		report(false);
 		process.exitCode = 1;
 		return;
 	}
 	if (result.status === "failed") {
-		print();
-		print(
+		process.stderr.write("\n");
+		console.error(
 			chalk.red(
 				`${
 					result.reason ??
@@ -313,13 +313,13 @@ export async function update(
 		process.exitCode = result.exitCode ?? 1;
 		return;
 	}
-	print();
+	(json ? process.stderr : process.stdout).write("\n");
 	print(chalk.green(`✓ clawdi v${latest} installed.`));
 	report(true);
 }
 
-function printUnsupportedInstall(version: string, print = console.log): void {
-	print(
+function printUnsupportedInstall(version: string): void {
+	console.error(
 		chalk.yellow("Automatic update is unsupported for this invocation.") +
 			"\n" +
 			chalk.gray("Update the installation that launched clawdi, or install the exact release:") +

@@ -10,9 +10,9 @@ import {
 } from "../adapters/base";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
-import { isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseModules } from "../lib/prompts";
+import { requireAuth } from "../lib/require-auth";
 import {
 	adapterForType,
 	fetchProjectIdForEnv,
@@ -106,20 +106,15 @@ function supportsPushModule(
 }
 
 export async function push(opts: PushOpts) {
-	p.intro(chalk.bold("clawdi push"));
-
-	if (!opts.dryRun && !isLoggedIn()) {
-		p.log.error("Not signed in. Run `clawdi auth login` first.");
-		p.outro(chalk.red("Aborted."));
-		process.exitCode = 1;
-		return;
-	}
+	if (!opts.dryRun) requireAuth();
+	p.intro(chalk.bold("clawdi push"), { output: process.stderr });
 
 	if (opts.project && opts.excludeProject && opts.excludeProject.length > 0) {
 		p.log.error(
 			"--project and --exclude-project cannot be combined (--project is positive selection, --exclude-project is subtractive).",
+			{ output: process.stderr },
 		);
-		p.outro(chalk.red("Aborted."));
+		p.outro(chalk.red("Aborted."), { output: process.stderr });
 		process.exitCode = 1;
 		return;
 	}
@@ -134,7 +129,7 @@ export async function push(opts: PushOpts) {
 
 	const targetTypes = await resolveTargetAgentTypes(opts.agent, !!opts.allAgents);
 	if (targetTypes.length === 0) {
-		p.outro(chalk.red("Aborted."));
+		p.outro(chalk.red("Aborted."), { output: process.stderr });
 		process.exitCode = 1;
 		return;
 	}
@@ -154,13 +149,13 @@ export async function push(opts: PushOpts) {
 	const projectFilter = opts.project ?? (opts.all ? undefined : process.cwd());
 	if (modules.includes("sessions")) {
 		const target = projectFilter ? `project ${projectFilter}` : "all projects";
-		p.log.info(chalk.gray(`Scanning ${target}`));
+		p.log.info(chalk.gray(`Scanning ${target}`), { output: process.stderr });
 	}
 
 	// Scan every agent first — one spinner, one combined summary — so a
 	// multi-agent push reads as a single scan, not a per-agent block
 	// sequence that looks like only the first agent was picked.
-	const scanSpinner = p.spinner();
+	const scanSpinner = p.spinner({ output: process.stderr });
 	scanSpinner.start(
 		`Scanning ${targetTypes.length} agent${targetTypes.length === 1 ? "" : "s"}...`,
 	);
@@ -198,14 +193,15 @@ export async function push(opts: PushOpts) {
 
 	if (scanError) {
 		// Scan phase mutates no caches — nothing to persist.
-		p.log.error(scanError);
-		p.outro(chalk.red("Aborted."));
+		p.log.error(scanError, { output: process.stderr });
+		p.outro(chalk.red("Aborted."), { output: process.stderr });
 		process.exitCode = 1;
 		return;
 	}
 	for (const skip of moduleSkips) {
 		p.log.warn(
 			`${adapterRegistry[skip.agentType].displayName} skipped unsupported ${skip.modules.join(", ")}.`,
+			{ output: process.stderr },
 		);
 	}
 
@@ -283,7 +279,7 @@ export async function push(opts: PushOpts) {
 
 	writeModuleState(moduleState);
 	if (aborted) {
-		p.outro(chalk.red("Aborted."));
+		p.outro(chalk.red("Aborted."), { output: process.stderr });
 		process.exitCode = 1;
 		return;
 	}
@@ -572,7 +568,7 @@ async function uploadOneAgent(
 	const sessionsModule = adapterForType(agentType)?.sessions;
 
 	if (!envId) {
-		p.log.error("Environment id missing — rerun `clawdi setup`.");
+		p.log.error("Environment id missing — rerun `clawdi setup`.", { output: process.stderr });
 		return "aborted";
 	}
 
@@ -585,7 +581,7 @@ async function uploadOneAgent(
 	let skillsPushed = 0;
 
 	if (sessions.length > 0) {
-		const sessionSpinner = p.spinner();
+		const sessionSpinner = p.spinner({ output: process.stderr });
 		sessionSpinner.start(
 			`Uploading metadata for ${sessions.length} session${sessions.length === 1 ? "" : "s"}...`,
 		);
@@ -651,6 +647,7 @@ async function uploadOneAgent(
 			if (rejectedIds.size > 0) {
 				p.log.warn(
 					`${rejectedIds.size} session${rejectedIds.size === 1 ? "" : "s"} rejected by server (cross-env race) — will retry on next push`,
+					{ output: process.stderr },
 				);
 			}
 			const suppressedSummary =
@@ -665,14 +662,14 @@ async function uploadOneAgent(
 			// common case; this catches a race where the env was deleted
 			// between probe and batch.
 			if (e instanceof ApiError && e.status === 400 && e.body.includes("unknown_environment")) {
-				p.log.error(RESETUP_HINT);
+				p.log.error(RESETUP_HINT, { output: process.stderr });
 				return "aborted";
 			}
 			throw e;
 		}
 
 		if (sessions.some((session) => !rejectedIds.has(session.localSessionId))) {
-			const contentSpinner = p.spinner();
+			const contentSpinner = p.spinner({ output: process.stderr });
 			contentSpinner.start(
 				`Syncing content for ${sessions.length} session${sessions.length === 1 ? "" : "s"}...`,
 			);
@@ -705,7 +702,7 @@ async function uploadOneAgent(
 						},
 					});
 					if (result.status === "blocked") {
-						p.log.warn(result.message);
+						p.log.warn(result.message, { output: process.stderr });
 					} else if (result.uploaded) {
 						contentUploaded += 1;
 						contentSpinner.message(
@@ -713,7 +710,9 @@ async function uploadOneAgent(
 						);
 					}
 				} catch (e) {
-					p.log.warn(`Content sync failed for ${s.localSessionId}: ${errMessage(e)}`);
+					p.log.warn(`Content sync failed for ${s.localSessionId}: ${errMessage(e)}`, {
+						output: process.stderr,
+					});
 				}
 			}
 			contentSpinner.stop(
@@ -742,7 +741,7 @@ async function uploadOneAgent(
 
 		// `skills` is already the to-upload set — the scan phase hashed
 		// every skill and dropped the ones already in sync.
-		const skillSpinner = p.spinner();
+		const skillSpinner = p.spinner({ output: process.stderr });
 		skillSpinner.start(`Uploading ${skills.length} skill${skills.length === 1 ? "" : "s"}...`);
 		let pushed = 0;
 		const skipped: { key: string; reason: string }[] = [];
@@ -803,7 +802,7 @@ async function uploadOneAgent(
 			}
 			skillSpinner.stop(summary.join(", "));
 			for (const s of skipped) {
-				p.log.warn(`Skipped ${s.key} — ${s.reason}`);
+				p.log.warn(`Skipped ${s.key} — ${s.reason}`, { output: process.stderr });
 			}
 			skillsPushed = pushed;
 		} catch (e) {

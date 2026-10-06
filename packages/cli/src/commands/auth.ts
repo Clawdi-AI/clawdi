@@ -74,18 +74,20 @@ async function authLoginManual(apiUrl: string, expectedCredential: StoredCredent
 			chalk.gray("  1. Sign in at the Clawdi dashboard\n") +
 			chalk.gray("  2. Open Settings → API Keys\n") +
 			chalk.gray("  3. Create a new key and copy it"),
+		{ output: process.stderr },
 	);
 
 	const apiKey = await p.password({
+		output: process.stderr,
 		message: "Paste your API key",
 		validate: (v) => (v?.trim() ? undefined : "API key cannot be empty"),
 	});
 	if (p.isCancel(apiKey)) {
-		p.cancel("Cancelled.");
+		p.cancel("Cancelled.", { output: process.stderr });
 		return;
 	}
 
-	const verifySpinner = p.spinner();
+	const verifySpinner = p.spinner({ output: process.stderr });
 	verifySpinner.start("Verifying...");
 	const trimmed = apiKey.trim();
 	let me: MeResponse | null = null;
@@ -94,19 +96,23 @@ async function authLoginManual(apiUrl: string, expectedCredential: StoredCredent
 	} catch (e) {
 		const msg = e instanceof Error ? e.message : String(e);
 		verifySpinner.stop(chalk.red("Could not reach the API"));
-		p.log.error(`Network error: ${msg}`);
-		p.log.message(chalk.gray(`Current API URL: ${apiUrl}`));
-		p.log.message(chalk.gray("If this is wrong, run `clawdi config unset apiUrl` and try again."));
-		p.outro(chalk.red("Aborted."));
+		p.log.error(`Network error: ${msg}`, { output: process.stderr });
+		p.log.message(chalk.gray(`Current API URL: ${apiUrl}`), { output: process.stderr });
+		p.log.message(chalk.gray("If this is wrong, run `clawdi config unset apiUrl` and try again."), {
+			output: process.stderr,
+		});
+		p.outro(chalk.red("Aborted."), { output: process.stderr });
 		process.exitCode = 1;
 		return;
 	}
 
 	if (!me) {
 		verifySpinner.stop(chalk.red("Invalid API key"));
-		p.log.message(chalk.gray("Double-check the key from Settings → API Keys in the dashboard."));
-		p.log.message(chalk.gray(`Current API URL: ${apiUrl}`));
-		p.outro(chalk.red("Aborted."));
+		p.log.message(chalk.gray("Double-check the key from Settings → API Keys in the dashboard."), {
+			output: process.stderr,
+		});
+		p.log.message(chalk.gray(`Current API URL: ${apiUrl}`), { output: process.stderr });
+		p.outro(chalk.red("Aborted."), { output: process.stderr });
 		process.exitCode = 1;
 		return;
 	}
@@ -222,15 +228,20 @@ function reportOAuthError(error: unknown): void {
 export async function authLogin(opts: { manual?: boolean; open?: boolean } = {}) {
 	const existing = getAuth();
 	if (existing) {
-		p.log.warn(`Already signed in as ${existing.email || existing.userId || "unknown"}`);
-		p.log.info("Run `clawdi auth logout` first to switch accounts.");
+		p.log.warn(`Already signed in as ${existing.email || existing.userId || "unknown"}`, {
+			output: process.stderr,
+		});
+		p.log.info("Run `clawdi auth logout` first to switch accounts.", { output: process.stderr });
 		return;
 	}
 	const interactive = Boolean(process.stdout.isTTY && process.stdin.isTTY);
 	if (opts.manual && !interactive) {
-		p.log.error("`clawdi auth login --manual` needs an interactive terminal.");
+		p.log.error("`clawdi auth login --manual` needs an interactive terminal.", {
+			output: process.stderr,
+		});
 		p.log.message(
 			chalk.gray("Run the command in a TTY, or use the default device flow without --manual."),
+			{ output: process.stderr },
 		);
 		process.exitCode = 1;
 		return;
@@ -238,7 +249,7 @@ export async function authLogin(opts: { manual?: boolean; open?: boolean } = {})
 	const config = getConfig();
 	const expected = captureStoredCredentialIdentity();
 	if (opts.manual) {
-		p.intro(chalk.bold("clawdi auth login"));
+		p.intro(chalk.bold("clawdi auth login"), { output: process.stderr });
 		await authLoginManual(config.apiUrl, expected);
 		return;
 	}
@@ -340,7 +351,7 @@ export async function authDesktopSessionMachine(): Promise<void> {
 
 export async function authLogout() {
 	if (!isLoggedIn()) {
-		p.log.info("Not signed in.");
+		p.log.info("Not signed in.", { output: process.stderr });
 		return;
 	}
 
@@ -364,6 +375,7 @@ export async function authLogout() {
 			`${installedAgents.length} daemon(s) still installed (${installedAgents.join(", ")}). ` +
 				`They keep running after sign-out and will fail to authenticate. ` +
 				`Run \`clawdi daemon uninstall\` to stop them.`,
+			{ output: process.stderr },
 		);
 	}
 
@@ -371,6 +383,7 @@ export async function authLogout() {
 	if (result.environmentCredential) {
 		p.log.warn(
 			"CLAWDI_AUTH_TOKEN controls this process. Unset it in the environment to sign out; persisted credentials were not changed.",
+			{ output: process.stderr },
 		);
 		return;
 	}
@@ -378,6 +391,7 @@ export async function authLogout() {
 	else if (result.loggedOut) {
 		p.log.warn(
 			"Couldn't revoke the remote OAuth grant. The local credential was removed; revoke the Clawdi app in your Clerk account if needed.",
+			{ output: process.stderr },
 		);
 	}
 	p.log.success("Signed out. Credentials removed; this account's agent registrations were kept.");

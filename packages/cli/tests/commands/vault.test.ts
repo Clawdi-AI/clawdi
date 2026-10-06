@@ -371,6 +371,11 @@ describe("vaultImport", () => {
 		writeFileSync(envFile, ["my-section/OPENAI_API_KEY=secret", "api.key=value", ""].join("\n"));
 		const { captured, restore } = mockFetch([]);
 		const origLog = console.log;
+		const origError = console.error;
+		let err = "";
+		console.error = (...args: unknown[]) => {
+			err += `${args.map(String).join(" ")}\n`;
+		};
 		let out = "";
 		console.log = (...args: unknown[]) => {
 			out += `${args.map(String).join(" ")}\n`;
@@ -380,11 +385,13 @@ describe("vaultImport", () => {
 			await vaultImport(envFile, { yes: true });
 		} finally {
 			console.log = origLog;
+			console.error = origError;
 			restore();
 		}
 
+		expect(out).not.toContain("Skipped");
 		expect(captured).toHaveLength(0);
-		expect(out).toContain(
+		expect(err).toContain(
 			"Skipped 2 keys with invalid identifiers: my-section/OPENAI_API_KEY, api.key",
 		);
 		expect(out).toContain("No valid keys found in file.");
@@ -398,6 +405,11 @@ describe("vaultImport", () => {
 		);
 		const { captured, restore } = mockFetch([]);
 		const origLog = console.log;
+		const origError = console.error;
+		let err = "";
+		console.error = (...args: unknown[]) => {
+			err += `${args.map(String).join(" ")}\n`;
+		};
 		let out = "";
 		console.log = (...args: unknown[]) => {
 			out += `${args.map(String).join(" ")}\n`;
@@ -407,11 +419,13 @@ describe("vaultImport", () => {
 			await vaultImport(envFile, { yes: true });
 		} finally {
 			console.log = origLog;
+			console.error = origError;
 			restore();
 		}
 
+		expect(out).not.toContain("Skipped");
 		expect(captured).toHaveLength(0);
-		expect(out).toContain(
+		expect(err).toContain(
 			"Skipped 12 keys with invalid identifiers: bad-key-0, bad-key-1, bad-key-2, bad-key-3, bad-key-4, bad-key-5, bad-key-6, bad-key-7, bad-key-8, bad-key-9, +2 more",
 		);
 	});
@@ -445,6 +459,11 @@ describe("vaultImport", () => {
 			},
 		]);
 		const origLog = console.log;
+		const origError = console.error;
+		let err = "";
+		console.error = (...args: unknown[]) => {
+			err += `${args.map(String).join(" ")}\n`;
+		};
 		let out = "";
 		console.log = (...args: unknown[]) => {
 			out += `${args.map(String).join(" ")}\n`;
@@ -454,6 +473,7 @@ describe("vaultImport", () => {
 			await vaultImport(envFile, { yes: true, vault: "prod", section: "stripe" });
 		} finally {
 			console.log = origLog;
+			console.error = origError;
 			restore();
 		}
 
@@ -465,7 +485,8 @@ describe("vaultImport", () => {
 			section: "stripe",
 			fields: { STRIPE_SECRET_KEY: "stripe-secret-placeholder" },
 		});
-		expect(out).toContain("Skipped 1 key with invalid identifiers: bad-key");
+		expect(out).not.toContain("Skipped");
+		expect(err).toContain("Skipped 1 key with invalid identifiers: bad-key");
 		expect(out).toContain(
 			`Imported 1 keys to vault "prod" section "stripe" in default-write project "personal" (${PROJECT_ID})`,
 		);
@@ -1061,6 +1082,11 @@ describe("vaultSet", () => {
 			},
 		]);
 		const origLog = console.log;
+		const origError = console.error;
+		let err = "";
+		console.error = (...args: unknown[]) => {
+			err += `${args.map(String).join(" ")}\n`;
+		};
 		let out = "";
 		console.log = (...args: unknown[]) => {
 			out += `${args.map(String).join(" ")}\n`;
@@ -1070,10 +1096,12 @@ describe("vaultSet", () => {
 			await vaultSet("prod/stripe/SECRET_KEY", { value: "test-secret-value" });
 		} finally {
 			console.log = origLog;
+			console.error = origError;
 			restore();
 		}
 
-		expect(out).toContain(
+		expect(out).not.toContain("Hint:");
+		expect(err).toContain(
 			'Hint: consider using a service-specific vault slug instead of "prod" for shared project secrets.',
 		);
 		expect(out).toContain("Stored prod/stripe/SECRET_KEY");

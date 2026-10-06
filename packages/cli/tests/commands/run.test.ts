@@ -353,18 +353,18 @@ describe("run command project folder selection", () => {
 		process.env.CLAWDI_RUN_DIR = runRoot;
 
 		const originalExit = process.exit;
-		const originalLog = console.log;
+		const originalError = console.error;
 		const logs: string[] = [];
 		process.exit = ((code?: string | number | null) => {
 			throw new Error(`process.exit:${code ?? 0}`);
 		}) as typeof process.exit;
-		console.log = (message?: unknown) => {
+		console.error = (message?: unknown) => {
 			logs.push(String(message ?? ""));
 		};
 		try {
 			await expect(run(["hermes"], {}, spawnImpl)).rejects.toThrow("process.exit:1");
 		} finally {
-			console.log = originalLog;
+			console.error = originalError;
 			process.exit = originalExit;
 		}
 
@@ -885,16 +885,16 @@ describe("run command project folder selection", () => {
 					}),
 			},
 		]);
-		const origLog = console.log;
+		const origError = console.error;
 		const lines: string[] = [];
-		console.log = (...args: unknown[]) => {
+		console.error = (...args: unknown[]) => {
 			lines.push(args.map(String).join(" "));
 		};
 
 		try {
 			await run(["node", "server.js"], { projectFolder: false, allVaultEnv: true }, spawnImpl);
 		} finally {
-			console.log = origLog;
+			console.error = origError;
 			restore();
 		}
 
@@ -913,16 +913,16 @@ describe("run command project folder selection", () => {
 				response: () => jsonResponse({ detail: "project not found" }, 404),
 			},
 		]);
-		const origLog = console.log;
+		const origError = console.error;
 		const lines: string[] = [];
-		console.log = (...args: unknown[]) => {
+		console.error = (...args: unknown[]) => {
 			lines.push(args.map(String).join(" "));
 		};
 
 		try {
 			await run(["node", "server.js"], { projectFolder: false, allVaultEnv: true }, spawnImpl);
 		} finally {
-			console.log = origLog;
+			console.error = origError;
 			restore();
 		}
 
