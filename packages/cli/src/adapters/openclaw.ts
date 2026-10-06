@@ -727,12 +727,18 @@ function openClawEventDrafts(
 	if (raw.type !== "message") return [];
 	const message = jsonObject(raw.message);
 	if (!message) return [];
-	return piMessageDrafts(message, {
+	const drafts = piMessageDrafts(message, {
 		source: eventSource,
 		recordId,
 		timestamp,
 		model: currentModel,
 	});
+	return message.display === false
+		? drafts.map((draft) => ({
+				...draft,
+				semantics: { lifecycle: "active", display: "hidden", compressed_summary: false },
+			}))
+		: drafts;
 }
 
 interface SessionCollection {

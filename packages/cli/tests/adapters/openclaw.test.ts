@@ -5,6 +5,7 @@ import { type SessionScanBatch, scanSessionModule } from "../../src/adapters/bas
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
 import { SESSION_PROJECTION_REVISION } from "../../src/adapters/rich-event-mapping";
 import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
+import { projectEventsToMessages } from "../../src/lib/session-events";
 import { tarSkillDir } from "../../src/lib/tar";
 import { cleanupTmp, copyFixtureToTmp } from "./helpers";
 
@@ -495,6 +496,39 @@ describe("OpenClawAdapter.collectSessions", () => {
 			expect(session?.events?.[0]).not.toHaveProperty("model");
 		});
 	}
+
+	it.each(["sdk", "gateway"] as const)("preserves visible history for display:false messages through %s", async (surface) => {
+		const messages = [
+			{ id: "visible-user", role: "user", content: "Visible question", timestamp: "2026-04-15T10:00:00.000Z" },
+			{ id: "hidden-user", role: "user", display: false, content: [
+				{ type: "text", text: "Internal coordination" },
+				{ type: "tool_result", tool_use_id: "internal-call", content: "Internal result" },
+			], timestamp: "2026-04-15T10:00:01.000Z" },
+			{ id: "hidden-assistant", role: "assistant", display: false, content: [
+				{ type: "text", text: "Internal report" },
+				{ type: "thinking", thinking: "Internal reasoning" },
+				{ type: "toolCall", id: "internal-call", name: "read", arguments: {} },
+			], timestamp: "2026-04-15T10:00:02.000Z" },
+			{ id: "visible-assistant", role: "assistant", content: "Visible answer", model: "gpt-5.5", timestamp: "2026-04-15T10:00:05.000Z" },
+		];
+		// The public Gateway display projection already filters display:false rows.
+		installOfficialTranscriptFixture(surface === "sdk" ? messages : messages.filter((message) => message.display !== false), surface);
+		for (const streaming of [false, true]) {
+			const session = await new OpenClawAdapter().sessions.resolve("official-fixture", {
+				streaming, signal: new AbortController().signal,
+			});
+			if (!session) throw new Error("Expected hidden OpenClaw fixture");
+			const events = [];
+			for await (const event of session.readEvents?.() ?? session.events ?? []) events.push(event);
+			expect(projectEventsToMessages(events).map((message) => message.content)).toEqual(["Visible question", "Visible answer"]);
+			expect(session.messageCount).toBe(2);
+			const hiddenEvents = events.filter((event) => event.source.record_id.startsWith("hidden-"));
+			if (surface === "sdk") {
+				expect(hiddenEvents.map((event) => event.type)).toEqual(["message", "tool_result", "message", "reasoning", "tool_call"]);
+				for (const event of hiddenEvents) expect(event.semantics).toEqual({ lifecycle: "active", display: "hidden", compressed_summary: false });
+			} else expect(hiddenEvents).toHaveLength(0);
+		}
+	});
 
 	it("reads SQLite sessions through OpenClaw's public transcript SDK", async () => {
 		const stateRoot = join(tmpHome, ".openclaw");
