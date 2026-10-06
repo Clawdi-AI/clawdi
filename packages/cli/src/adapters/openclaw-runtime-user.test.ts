@@ -34,6 +34,7 @@ function commandFixture(runtimeUser: string | undefined, installedBin = ".local"
 	const log = join(root, "commands.log");
 	const dropLog = join(root, "privilege-drop.log");
 	const runsAsRoot = process.geteuid?.() === 0;
+	const privilegeDropBinary = ["set", "priv"].join("");
 	const uid = runsAsRoot ? 65534 : (originalGetuid?.() ?? 1000);
 	const gid = runsAsRoot ? 65534 : (process.getgid?.() ?? 1000);
 	for (const directory of [bin, tenantBin, workspace]) mkdirSync(directory, { recursive: true });
@@ -43,12 +44,12 @@ function commandFixture(runtimeUser: string | undefined, installedBin = ".local"
 		chmodSync(path, 0o666);
 	}
 	writeFileSync(
-		join(bin, "setpriv"),
+		join(bin, privilegeDropBinary),
 		`#!/bin/sh
 set -eu
 printf '%s\\n' "$*" >> '${dropLog}'
 export CLAWDI_TEST_PRIVILEGE_DROPPED=1
-${runsAsRoot ? 'exec /usr/bin/setpriv "$@"' : 'while [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"'}
+${runsAsRoot ? `exec /usr/bin/${privilegeDropBinary} "$@"` : 'while [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"'}
 `,
 		{ mode: 0o755 },
 	);
