@@ -1,20 +1,13 @@
+import type { ApiKey } from "@clawdi/shared/api";
 import { expect, type Page, type Route, test } from "@playwright/test";
-
-type ApiKeyFixture = {
-	id: string;
-	label: string;
-	key_prefix: string;
-	created_at: string;
-	last_used_at: string | null;
-	expires_at: string | null;
-	revoked_at: string | null;
-};
 
 const longLabel =
 	"Production automation key with a deliberately long descriptive name that must truncate";
 const now = "2026-07-28T12:00:00.000Z";
+const retiredNote =
+	"API keys can no longer be created. To connect Clawdi on your computer or a server, run clawdi auth login (use --no-open on a server). Existing keys keep working until you revoke them.";
 
-function apiKey(id: string, label: string, overrides: Partial<ApiKeyFixture> = {}): ApiKeyFixture {
+function apiKey(id: string, label: string, overrides: Partial<ApiKey> = {}): ApiKey {
 	return {
 		id,
 		label,
@@ -23,6 +16,7 @@ function apiKey(id: string, label: string, overrides: Partial<ApiKeyFixture> = {
 		last_used_at: null,
 		expires_at: null,
 		revoked_at: null,
+		scopes: null,
 		...overrides,
 	};
 }
@@ -58,11 +52,15 @@ async function openApiKeySettings(page: Page) {
 
 async function stubApiKeys(
 	page: Page,
-	options: { initialKeys?: ApiKeyFixture[]; failFirstList?: boolean } = {},
+	options: { initialKeys?: ApiKey[]; failFirstList?: boolean } = {},
 ) {
 	let keys = options.initialKeys ?? [
 		apiKey("active-long", longLabel, { last_used_at: "2026-07-27T08:00:00.000Z" }),
-		apiKey("active-short", "CI runner", { expires_at: "2026-12-31T00:00:00.000Z" }),
+		apiKey("active-short", "CI runner", {
+			expires_at: "2026-12-31T12:00:00.000Z",
+			scopes: ["sessions:read", "sessions:write", "skills:write"],
+		}),
+		apiKey("active-backup", "Backup container", { created_at: "2026-07-27T12:00:00.000Z" }),
 		apiKey("revoked", "Revoked key from an older backend", {
 			revoked_at: "2026-07-27T10:00:00.000Z",
 		}),
@@ -75,6 +73,7 @@ async function stubApiKeys(
 		  }
 		| undefined;
 	const deleteRequests: string[] = [];
+	const createRequests: string[] = [];
 
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
@@ -89,10 +88,8 @@ async function stubApiKeys(
 			return;
 		}
 		if (url.pathname === "/v1/auth/keys" && method === "POST") {
-			const body = route.request().postDataJSON() as { label: string };
-			const created = apiKey("created", body.label);
-			keys = [created, ...keys];
-			await fulfillJson(route, { ...created, raw_key: "clawdi_created_one_time_secret" });
+			createRequests.push(method);
+			await fulfillJson(route, { detail: "API keys can no longer be created" }, 410);
 			return;
 		}
 		if (url.pathname.startsWith("/v1/auth/keys/") && method === "DELETE") {
@@ -153,6 +150,7 @@ async function stubApiKeys(
 	});
 
 	return {
+		createRequests,
 		deleteRequests,
 		setNextDelete(fail: boolean) {
 			const gate = deferred();
@@ -162,57 +160,25 @@ async function stubApiKeys(
 	};
 }
 
-test("API key settings protects secrets and reconciles optimistic revokes", async ({ page }) => {
+test("API key settings lists existing keys read-only and reconciles optimistic revokes", async ({
+	page,
+}) => {
 	await page.setViewportSize({ width: 1280, height: 900 });
-	await page.addInitScript(() => {
-		Object.defineProperty(navigator, "clipboard", {
-			configurable: true,
-			value: {
-				writeText: () => Promise.reject(new DOMException("Clipboard blocked")),
-			},
-		});
-		const execCommand = document.execCommand.bind(document);
-		document.execCommand = (command, ...args) =>
-			command === "copy" ? false : execCommand(command, ...args);
-	});
 	const api = await stubApiKeys(page);
 
 	await openApiKeySettings(page);
 	await expect(page.getByText("Revoked key from an older backend", { exact: true })).toHaveCount(0);
 	const desktopTable = page.getByRole("table");
 	await expect(desktopTable.getByText(longLabel, { exact: true })).toBeVisible();
-
-	await page.getByRole("button", { name: "Create API key", exact: true }).first().click();
-	let createDialog = page.getByRole("dialog", { name: "Create API key" });
-	await createDialog.getByLabel("Key name").fill("Retained through exit");
-	await page.keyboard.press("Escape");
-	await expect(createDialog.getByLabel("Key name")).toHaveValue("Retained through exit");
-	await expect(createDialog).toHaveCount(0);
-
-	await page.getByRole("button", { name: "Create API key", exact: true }).first().click();
-	createDialog = page.getByRole("dialog", { name: "Create API key" });
-	await expect(createDialog.getByLabel("Key name")).toHaveValue("");
-	await createDialog.getByLabel("Key name").fill("Backup container");
-	await createDialog.getByRole("button", { name: "Create API key", exact: true }).click();
-
-	const secretDialog = page.getByRole("dialog", { name: "Save your API key" });
+	await expect(page.getByText(retiredNote, { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: /Create API key/ })).toHaveCount(0);
+	const legacyRow = desktopTable.getByRole("row").filter({ hasText: longLabel });
+	await expect(legacyRow.getByText("Full access (legacy)", { exact: true })).toBeVisible();
+	const scopedRow = desktopTable.getByRole("row").filter({ hasText: "CI runner" });
 	await expect(
-		secretDialog.getByText("clawdi_created_one_time_secret", { exact: true }),
+		scopedRow.getByText("Sessions (read, write), Skills (write)", { exact: true }),
 	).toBeVisible();
-	await expect(secretDialog.getByRole("button", { name: "Done" })).toBeDisabled();
-	await expect(secretDialog.getByRole("button", { name: "Close" })).toHaveCount(0);
-	await page.keyboard.press("Escape");
-	await expect(secretDialog).toBeVisible();
-	await secretDialog.getByRole("button", { name: "Copy" }).click();
-	await expect(
-		page.getByText("Couldn’t copy the API key — select and copy it manually.", { exact: true }),
-	).toBeVisible();
-	await secretDialog
-		.getByRole("checkbox", { name: "I have copied and stored this API key safely." })
-		.click();
-	await secretDialog.getByRole("button", { name: "Done" }).click();
-	await expect(secretDialog).toHaveCount(0);
-	await expect(desktopTable.getByText("Backup container", { exact: true })).toBeVisible();
+	await expect(scopedRow.getByText("Dec 31, 2026", { exact: true })).toBeVisible();
 
 	const successfulDelete = api.setNextDelete(false);
 	await page.getByRole("button", { name: "Revoke CI runner" }).click();
@@ -248,17 +214,20 @@ test("API key settings protects secrets and reconciles optimistic revokes", asyn
 	expect(cardBox?.x ?? -1).toBeGreaterThanOrEqual(0);
 	expect((cardBox?.x ?? 0) + (cardBox?.width ?? 0)).toBeLessThanOrEqual(390);
 	await expect(mobileCard.getByRole("button", { name: `Revoke ${longLabel}` })).toBeVisible();
+	await expect(mobileCard.getByText("Full access (legacy)", { exact: true })).toBeVisible();
+	expect(api.createRequests).toEqual([]);
 });
 
-test("API key list error is retryable and the active-only empty state can create a key", async ({
+test("API key list error is retryable and the empty state explains how to sign in", async ({
 	page,
 }) => {
-	await stubApiKeys(page, { initialKeys: [], failFirstList: true });
+	const api = await stubApiKeys(page, { initialKeys: [], failFirstList: true });
 
 	await openApiKeySettings(page);
 	await expect(page.getByText("Couldn’t load API keys", { exact: true })).toBeVisible();
 	await page.getByRole("button", { name: "Retry" }).click();
 	await expect(page.getByText("No active API keys", { exact: true })).toBeVisible();
-	await page.getByRole("button", { name: "Create API key", exact: true }).last().click();
-	await expect(page.getByRole("dialog", { name: "Create API key" })).toBeVisible();
+	await expect(page.getByText(retiredNote, { exact: true })).toHaveCount(1);
+	await expect(page.getByRole("button", { name: /Create API key/ })).toHaveCount(0);
+	expect(api.createRequests).toEqual([]);
 });
