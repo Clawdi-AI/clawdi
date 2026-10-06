@@ -8,7 +8,7 @@ import { resolveRuntimeUserCommand } from "../runtime/runtime-user-command";
 const execFileAsync = promisify(execFile);
 let commandTail: Promise<void> = Promise.resolve();
 
-function inheritedOpenClawEnvironment(): Readonly<Record<string, string | undefined>> {
+export function inheritedOpenClawEnvironment(): Readonly<Record<string, string | undefined>> {
 	return {
 		OPENCLAW_STATE_DIR: process.env.OPENCLAW_STATE_DIR,
 		OPENCLAW_CONFIG_PATH: process.env.OPENCLAW_CONFIG_PATH,

@@ -1,6 +1,12 @@
 import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
 import { isAbsolute } from "node:path";
-import { runOpenClawCommand } from "./openclaw-command";
+import { spawnRuntimeUserCommand } from "../runtime/runtime-user-command";
+import {
+	inheritedOpenClawEnvironment,
+	resolveOpenClawCommandPath,
+	runOpenClawCommand,
+} from "./openclaw-command";
 
 const WORKSPACE_RESOLUTION_ERROR =
 	"OpenClaw workspace resolution requires `openclaw agents list --json`";
@@ -29,14 +35,28 @@ export function parseOpenClawAgentWorkspaces(output: string): OpenClawAgentWorks
 }
 
 export function listOpenClawAgentWorkspaces(): OpenClawAgentWorkspace[] {
-	const result = spawnSync("openclaw", ["agents", "list", "--json"], {
-		encoding: "utf8",
-		env: process.env,
-		maxBuffer: 1024 * 1024,
-		timeout: 15_000,
-	});
-	if (result.status !== 0) throw new Error(WORKSPACE_RESOLUTION_ERROR);
-	return requireOpenClawAgentWorkspaces(result.stdout);
+	try {
+		const home = process.env.HOME ?? homedir();
+		const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+		const args = ["agents", "list", "--json"];
+		const result =
+			runtimeUser && runtimeUser !== "root"
+				? spawnRuntimeUserCommand(resolveOpenClawCommandPath(home), args, home, process.cwd(), {
+						environmentOverrides: inheritedOpenClawEnvironment(),
+						maxBufferBytes: 1024 * 1024,
+						timeoutMs: 15_000,
+					})
+				: spawnSync("openclaw", args, {
+						encoding: "utf8",
+						env: process.env,
+						maxBuffer: 1024 * 1024,
+						timeout: 15_000,
+					});
+		if (result.status !== 0) throw new Error(WORKSPACE_RESOLUTION_ERROR);
+		return requireOpenClawAgentWorkspaces(String(result.stdout));
+	} catch {
+		throw new Error(WORKSPACE_RESOLUTION_ERROR);
+	}
 }
 
 export function resolveOpenClawAgentWorkspace(agentId = openClawAgentId()): string {
