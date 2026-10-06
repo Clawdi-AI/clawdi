@@ -163,6 +163,13 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 		id && (ownedBot || (bot && !pool.isError)) && scope.isReady && scope.isCurrent(),
 	);
 	const disabled = !ready || action.busy;
+	const linkDisabled =
+		disabled ||
+		ownership.isFetching ||
+		ownership.isError ||
+		!selected ||
+		unknown ||
+		(replacement && !replace);
 	const clearPairing = useCallback(() => setPairing(null), []);
 	useFocusEffect(useCallback(() => clearPairing, [clearPairing]));
 	useEffect(() => {
@@ -396,8 +403,9 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 									/>
 									<NativeButton
 										label={t("channels.link")}
-										disabled={disabled || !selected || unknown || (replacement && !replace)}
-										onPress={() =>
+										disabled={linkDisabled}
+										onPress={() => {
+											if (linkDisabled) return;
 											perform(
 												(signal) =>
 													channels.link(id ?? "", agentId, replacement && replace, signal),
@@ -405,8 +413,8 @@ function ChannelDetail({ id, initialAgentId }: { id?: string; initialAgentId?: s
 													setReplace(false);
 													setLinkOpen(false);
 												},
-											)
-										}
+											);
+										}}
 									/>
 								</DialogFooter>
 								{ownership.isError ? (
