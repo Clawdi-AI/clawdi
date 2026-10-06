@@ -1,5 +1,6 @@
 import type { AiProvider } from "@clawdi/shared";
 import { ApiClient } from "./api-client";
+import { parsePositiveInteger } from "./cli-options";
 import { resolveClawdiReference } from "./secret-references";
 
 export interface AiProviderAuthStatus {
@@ -131,12 +132,13 @@ export async function probeAiProvider(
 	}
 }
 
-export function parseAiProviderTestTimeout(input: string | undefined): number {
-	const value = Number(input ?? 10);
-	if (!Number.isFinite(value) || value <= 0) {
+export function parseAiProviderTestTimeout(input: string | number | undefined): number {
+	if (input === undefined) return 10;
+	try {
+		return parsePositiveInteger(input);
+	} catch {
 		throw new Error("--timeout must be a positive number of seconds.");
 	}
-	return value;
 }
 
 function providerProbeEndpoint(provider: AiProvider, key: string | undefined): string {

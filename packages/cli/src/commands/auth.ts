@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { ApiClient, readJson, unwrap } from "../lib/api-client";
+import { ApiClient, ApiError, readJson, unwrap } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { openInBrowser } from "../lib/browser";
 import {
@@ -42,6 +42,13 @@ async function verifyAndSaveLegacy(
 	const res = await fetch(`${endpointBinding.cloudApiOrigin}/v1/auth/me`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
+	if (res.status === 401 || res.status === 410) {
+		throw new ApiError({
+			status: res.status,
+			body: await res.text(),
+			hint: "Verify your existing key, or run `clawdi auth login` (use `--no-open` on a server).",
+		});
+	}
 	if (!res.ok) return null;
 	const me = await readJson<MeResponse>(res, "/v1/auth/me");
 	await commitClawdiCredential(
@@ -70,16 +77,14 @@ function postLoginHint() {
 
 async function authLoginManual(apiUrl: string, expectedCredential: StoredCredentialIdentity) {
 	p.log.message(
-		"To get an API key:\n" +
-			chalk.gray("  1. Sign in at the Clawdi dashboard\n") +
-			chalk.gray("  2. Open Settings → API Keys\n") +
-			chalk.gray("  3. Create a new key and copy it"),
+		"API keys can no longer be created. Run `clawdi auth login` " +
+			"(use `--no-open` on a server). Existing keys keep working until revoked.",
 		{ output: process.stderr },
 	);
 
 	const apiKey = await p.password({
 		output: process.stderr,
-		message: "Paste your API key",
+		message: "Paste an existing API key",
 		validate: (v) => (v?.trim() ? undefined : "API key cannot be empty"),
 	});
 	if (p.isCancel(apiKey)) {
@@ -94,6 +99,13 @@ async function authLoginManual(apiUrl: string, expectedCredential: StoredCredent
 	try {
 		me = await verifyAndSaveLegacy(trimmed, apiUrl, expectedCredential);
 	} catch (e) {
+		if (e instanceof ApiError) {
+			verifySpinner.stop(chalk.red(e.status === 410 ? "Sign-in unavailable" : "Invalid API key"));
+			p.log.message(chalk.gray(e.hint), { output: process.stderr });
+			p.outro(chalk.red("Aborted."), { output: process.stderr });
+			process.exitCode = 1;
+			return;
+		}
 		const msg = e instanceof Error ? e.message : String(e);
 		verifySpinner.stop(chalk.red("Could not reach the API"));
 		p.log.error(`Network error: ${msg}`, { output: process.stderr });
@@ -108,9 +120,12 @@ async function authLoginManual(apiUrl: string, expectedCredential: StoredCredent
 
 	if (!me) {
 		verifySpinner.stop(chalk.red("Invalid API key"));
-		p.log.message(chalk.gray("Double-check the key from Settings → API Keys in the dashboard."), {
-			output: process.stderr,
-		});
+		p.log.message(
+			chalk.gray(
+				"Verify your existing key, or run `clawdi auth login` (use `--no-open` on a server).",
+			),
+			{ output: process.stderr },
+		);
 		p.log.message(chalk.gray(`Current API URL: ${apiUrl}`), { output: process.stderr });
 		p.outro(chalk.red("Aborted."), { output: process.stderr });
 		process.exitCode = 1;

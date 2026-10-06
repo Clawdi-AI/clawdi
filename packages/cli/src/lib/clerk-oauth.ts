@@ -457,7 +457,7 @@ export async function fetchClerkOAuthClientConfig(
 	if (!response.ok) {
 		throw new ClerkOAuthError(
 			"oauth_not_configured",
-			"Clawdi OAuth sign-in is not configured. Use `clawdi auth login --manual` with an API key from Settings → API Keys.",
+			"Clawdi OAuth sign-in is not configured. Ask your instance administrator to enable OAuth. API keys can no longer be created; `clawdi auth login --manual` only accepts an existing key.",
 		);
 	}
 	const body = await readJson(response);
@@ -542,7 +542,7 @@ export async function fetchClerkOAuthDiscovery(
 function deviceGrantUnavailable(): ClerkOAuthError {
 	return new ClerkOAuthError(
 		"oauth_device_grant_unavailable",
-		"This Clawdi server's sign-in app doesn't allow device sign-in yet. An administrator must enable \"Device authorization grant\" on its Clerk OAuth application (https://docs.clawdi.ai/account/authentication#self-hosted). Until then, use `clawdi auth login --manual` with an API key.",
+		"This Clawdi server's sign-in app doesn't allow device sign-in yet. An administrator must enable \"Device authorization grant\" on its Clerk OAuth application (https://docs.clawdi.ai/account/authentication#self-hosted). API keys can no longer be created; `clawdi auth login --manual` only accepts an existing key.",
 	);
 }
 

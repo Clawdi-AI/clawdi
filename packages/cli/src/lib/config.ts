@@ -41,6 +41,19 @@ export interface ClawdiConfig {
 export const CONFIG_KEYS = ["apiUrl", "deployApiUrl", "autoUpdate"] as const;
 export type ConfigKey = (typeof CONFIG_KEYS)[number];
 
+export type ConfigValue = string | boolean | string[];
+export type ConfigValueSource =
+	| "CLAWDI_API_URL"
+	| "CLAWDI_DEPLOY_API_URL"
+	| "CLAWDI_NO_AUTO_UPDATE"
+	| "config.json"
+	| "default";
+
+export interface EffectiveConfigValue {
+	value: ConfigValue;
+	source: ConfigValueSource;
+}
+
 export interface LegacyClawdiAuth {
 	authType?: "api_key";
 	apiKey: string;
@@ -154,9 +167,40 @@ export function getConfig(): ClawdiConfig {
 	};
 }
 
-/** Raw config on disk, without env overrides. Used by `config list / get`. */
+/** Raw config on disk, without env overrides. */
 export function getStoredConfig(): Partial<ClawdiConfig> {
 	return readStoredConfig();
+}
+
+/** Resolve every user-facing config value using the same precedence as runtime code. */
+export function getEffectiveConfig(): Record<ConfigKey, EffectiveConfigValue> {
+	const stored = getStoredConfig();
+	return {
+		apiUrl: {
+			value: process.env.CLAWDI_API_URL || stored.apiUrl || DEFAULT_API_URL,
+			source: process.env.CLAWDI_API_URL
+				? "CLAWDI_API_URL"
+				: stored.apiUrl
+					? "config.json"
+					: "default",
+		},
+		deployApiUrl: {
+			value: process.env.CLAWDI_DEPLOY_API_URL || stored.deployApiUrl || DEFAULT_DEPLOY_API_URL,
+			source: process.env.CLAWDI_DEPLOY_API_URL
+				? "CLAWDI_DEPLOY_API_URL"
+				: stored.deployApiUrl
+					? "config.json"
+					: "default",
+		},
+		autoUpdate: {
+			value: process.env.CLAWDI_NO_AUTO_UPDATE ? false : (stored.autoUpdate ?? true),
+			source: process.env.CLAWDI_NO_AUTO_UPDATE
+				? "CLAWDI_NO_AUTO_UPDATE"
+				: stored.autoUpdate !== undefined
+					? "config.json"
+					: "default",
+		},
+	};
 }
 
 export function setConfig(config: Pick<ClawdiConfig, "apiUrl"> & Partial<ClawdiConfig>) {

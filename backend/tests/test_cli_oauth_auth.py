@@ -14,12 +14,13 @@ import pytest_asyncio
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
 from httpx import ASGITransport
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.routes.cli_auth as cli_auth_module
-from app.core.auth import _auth_via_clerk_jwt, require_cli_auth, require_user_cli
+from app.core.auth import _auth_via_clerk_jwt, get_auth, require_cli_auth, require_user_cli
 from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
@@ -30,6 +31,7 @@ from app.services.clerk_cli_oauth_settings import (
     CLERK_CLI_OAUTH_SETTING_ADAPTER,
     CLERK_CLI_OAUTH_SETTING_KEY,
 )
+from app.services.metrics import registry
 from app.services.principal_lifecycle import set_clerk_principal_suspension
 
 _ISSUER = "https://clerk.example.test"
@@ -160,19 +162,34 @@ def _oauth_access_token(
 async def test_oauth_access_and_session_tokens_are_classified_separately(
     db_session: AsyncSession, clerk_oauth_signing_key: str, token_type: str
 ):
-    session = await _auth_via_clerk_jwt(
-        _session_token(
-            clerk_oauth_signing_key,
-            f"user_session_{uuid.uuid4().hex}",
-            {"iss": _ISSUER, "aud": _AUDIENCE},
+    session_labels = {"kind": "clerk_session", "surface": "user"}
+    oauth_labels = {"kind": "clerk_oauth_cli", "surface": "user"}
+    session_before = (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", session_labels)
+        or 0
+    )
+    oauth_before = (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", oauth_labels) or 0
+    )
+    session = await get_auth(
+        HTTPAuthorizationCredentials(
+            scheme="Bearer",
+            credentials=_session_token(
+                clerk_oauth_signing_key,
+                f"user_session_{uuid.uuid4().hex}",
+                {"iss": _ISSUER, "aud": _AUDIENCE},
+            ),
         ),
         db_session,
     )
-    oauth = await _auth_via_clerk_jwt(
-        _oauth_access_token(
-            clerk_oauth_signing_key,
-            f"user_oauth_{uuid.uuid4().hex}",
-            token_type=token_type,
+    oauth = await get_auth(
+        HTTPAuthorizationCredentials(
+            scheme="Bearer",
+            credentials=_oauth_access_token(
+                clerk_oauth_signing_key,
+                f"user_oauth_{uuid.uuid4().hex}",
+                token_type=token_type,
+            ),
         ),
         db_session,
     )
@@ -183,6 +200,15 @@ async def test_oauth_access_and_session_tokens_are_classified_separately(
     assert oauth is not None
     assert oauth.oauth_cli is True
     assert oauth.is_cli is False
+
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", session_labels)
+        == session_before + 1
+    )
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", oauth_labels)
+        == oauth_before + 1
+    )
 
 
 @pytest.mark.asyncio

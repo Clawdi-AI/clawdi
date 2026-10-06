@@ -43,6 +43,7 @@ from app.routes import sync as sync_route
 from app.routes.channel_routers.discord import _discord_gateway_consumer_lease
 from app.services import platform_workload_auth, runtime_source_authority
 from app.services.discord_advisory_session import DiscordAdvisorySession
+from app.services.metrics import registry
 from app.services.platform_workload_auth import (
     PLATFORM_WORKLOAD_ACCESS_TOKEN_AUDIENCE,
     PLATFORM_WORKLOAD_ACCESS_TOKEN_TTL_SECONDS,
@@ -1247,6 +1248,11 @@ async def test_companion_routes_accept_admin_and_scoped_workload(
 
     request_body = {"owner": _owner(seed_user), **payload} if operation == "provision" else payload
     idempotency_key = f"admin-auth-{uuid.uuid4()}"
+    labels = {
+        "kind": "admin_key" if credential_kind == "admin" else "platform_workload",
+        "surface": "v2_runtime",
+    }
+    before = registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels) or 0
     missing = await workload_harness.client.post(
         path,
         headers={"Idempotency-Key": idempotency_key},
@@ -1282,6 +1288,9 @@ async def test_companion_routes_accept_admin_and_scoped_workload(
     )
     assert ambiguous.status_code == 400, ambiguous.text
 
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels) or 0
+    ) == before
     settings.platform_legacy_admin_auth_enabled = False
     disabled = await workload_harness.client.post(
         path,
@@ -1340,9 +1349,16 @@ async def test_companion_routes_accept_admin_and_scoped_workload(
     )
     if credential_kind == "workload":
         settings.platform_legacy_admin_auth_enabled = False
+    before_success = (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels) or 0
+    )
     response = await workload_harness.client.post(path, headers=headers, json=valid_body)
 
     assert response.status_code == 200, response.text
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+        == before_success + 1
+    )
 
     if operation in {"provision", "retire"}:
         action = (
@@ -2175,6 +2191,8 @@ async def test_platform_credential_selection_legacy_flag_ambiguity_and_no_fallba
     workload_harness,
     seed_user,
 ):
+    labels = {"kind": "admin_key", "surface": "platform"}
+    before = registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels) or 0
     owner = _owner(seed_user)
     admin_success = await workload_harness.client.post(
         "/v1/platform/agents",
@@ -2182,6 +2200,10 @@ async def test_platform_credential_selection_legacy_flag_ambiguity_and_no_fallba
         json=_agent_body(owner, uuid.uuid4()),
     )
     assert admin_success.status_code == 200, admin_success.text
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+        == before + 1
+    )
 
     settings.platform_legacy_admin_auth_enabled = False
     disabled = await workload_harness.client.post(
@@ -2190,9 +2212,28 @@ async def test_platform_credential_selection_legacy_flag_ambiguity_and_no_fallba
         json=_agent_body(owner, uuid.uuid4()),
     )
     assert disabled.status_code == 401, disabled.text
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+        == before + 1
+    )
     settings.platform_legacy_admin_auth_enabled = True
 
+    workload_labels = {"kind": "platform_workload", "surface": "platform"}
+    workload_before = (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", workload_labels)
+        or 0
+    )
     token = await _access_token(workload_harness, "platform:agents:create")
+    workload_success = await workload_harness.client.post(
+        "/v1/platform/agents",
+        headers=_workload_headers(token, "metric-workload-success"),
+        json=_agent_body(owner, uuid.uuid4()),
+    )
+    assert workload_success.status_code == 200, workload_success.text
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", workload_labels)
+        == workload_before + 1
+    )
     ambiguous = await workload_harness.client.post(
         "/v1/platform/agents",
         headers={
@@ -2234,6 +2275,15 @@ async def test_platform_credential_selection_legacy_flag_ambiguity_and_no_fallba
         json=_agent_body(owner, uuid.uuid4()),
     )
     assert repeated.status_code == 400, repeated.text
+
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+        == before + 1
+    )
+    assert (
+        registry.get_sample_value("clawdi_backend_authenticated_requests_total", workload_labels)
+        == workload_before + 1
+    )
 
 
 @pytest.mark.asyncio

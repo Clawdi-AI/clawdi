@@ -25,6 +25,7 @@ import {
 } from "../lib/environment-registration";
 import { errMessage } from "../lib/errors";
 import { getOrCreateMachineId } from "../lib/machine-identity";
+import { progressLine } from "../lib/progress";
 import { requireAuth } from "../lib/require-auth";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
@@ -113,7 +114,7 @@ export async function setup(opts: SetupOpts) {
 	}
 
 	// Auto-detect
-	console.log(chalk.cyan("Detecting installed agents..."));
+	progressLine(chalk.cyan("Detecting installed agents..."));
 	const detected: { adapter: AgentAdapter; version: string | null }[] = [];
 
 	for (const entry of allAdapterEntries()) {
@@ -136,7 +137,7 @@ export async function setup(opts: SetupOpts) {
 	if (opts.yes || !isInteractive()) {
 		toRegister = detected;
 	} else {
-		console.log();
+		progressLine();
 		const result = await p.multiselect<string>({
 			output: process.stderr,
 			message: "Register which agents?",
@@ -163,11 +164,11 @@ export async function setup(opts: SetupOpts) {
 	}
 
 	if (toRegister.length === 0) {
-		console.log(chalk.gray("No agents selected."));
+		progressLine(chalk.gray("No agents selected."));
 		return;
 	}
 
-	console.log();
+	progressLine();
 	const registeredNames: string[] = [];
 	let dashboardUrl: string | undefined;
 	let integrationsInstalled = false;
@@ -239,9 +240,9 @@ async function registerEnv(
 		});
 
 		if (changed) onVaultBindingChange?.();
-		console.log(chalk.green(`✓ ${adapterRegistry[agentType].displayName} registered`));
+		progressLine(chalk.green(`✓ ${adapterRegistry[agentType].displayName} registered`));
 		const binding = readEnvironmentRegistration(agentType)?.vaultWorkspace;
-		console.log(
+		progressLine(
 			chalk.gray(
 				binding
 					? `Vault directory: ${join(binding.path, ".clawdi", "vaults")}${process.platform === "linux" || process.platform === "darwin" ? "" : " (automatic file sync requires macOS or Linux/WSL)"}`
@@ -282,8 +283,8 @@ function installDaemonForAllRegisteredAgents(restartExisting: boolean): boolean 
 		const result = installDaemonService();
 		if (restartExisting && result.replaced) restartDaemonService();
 		const verb = result.replaced ? "updated" : "installed";
-		console.log(chalk.green(`✓ Singleton daemon ${verb}`));
-		console.log(chalk.gray(`  ${result.instructions}`));
+		progressLine(chalk.green(`✓ Singleton daemon ${verb}`));
+		progressLine(chalk.gray(`  ${result.instructions}`));
 		const failed = cleanupLegacyDaemonUnits();
 		if (failed > 0) process.exitCode = 1;
 		return true;
@@ -301,7 +302,7 @@ function cleanupLegacyDaemonUnits(): number {
 		try {
 			const result = uninstallDaemonService({ agent: agentType });
 			if (result.removed) {
-				console.log(chalk.green(`✓ Removed legacy per-agent daemon unit for ${agentType}`));
+				progressLine(chalk.green(`✓ Removed legacy per-agent daemon unit for ${agentType}`));
 			}
 		} catch (e) {
 			console.error(
@@ -317,7 +318,7 @@ function cleanupLegacyDaemonUnits(): number {
 
 async function shouldInstallDaemons(opts: SetupOpts): Promise<boolean> {
 	if (opts.daemon === false) {
-		console.log(chalk.gray("Daemon install skipped (--no-daemon)."));
+		progressLine(chalk.gray("Daemon install skipped (--no-daemon)."));
 		return false;
 	}
 	if (opts.yes || !isInteractive()) return true;
@@ -328,7 +329,7 @@ async function shouldInstallDaemons(opts: SetupOpts): Promise<boolean> {
 		initialValue: true,
 	});
 	if (p.isCancel(result)) {
-		console.log(chalk.gray("Daemon install skipped."));
+		progressLine(chalk.gray("Daemon install skipped."));
 		return false;
 	}
 	return result === true;
@@ -337,7 +338,7 @@ async function shouldInstallDaemons(opts: SetupOpts): Promise<boolean> {
 export async function reconcileAgentIntegrations(adapter: AgentAdapter): Promise<boolean> {
 	const entry = adapterRegistry[adapter.agentType];
 	const mcpInstalled = (await entry.mcpLifecycle?.register()) ?? false;
-	if (!entry.mcpLifecycle && entry.manualMcpHint) console.log(chalk.gray(entry.manualMcpHint));
+	if (!entry.mcpLifecycle && entry.manualMcpHint) progressLine(chalk.gray(entry.manualMcpHint));
 	const skillInstalled = adapter.skills ? await installBuiltinSkill(adapter.agentType) : false;
 	return mcpInstalled && skillInstalled;
 }
@@ -353,11 +354,11 @@ export async function maybeInstallDaemons(
 function installDaemonsForRegisteredAgents(restartExisting: boolean): boolean {
 	const registered = listRegisteredAgentTypes();
 	if (registered.length === 0) {
-		console.log(chalk.gray("No registered agents available for daemon install."));
+		progressLine(chalk.gray("No registered agents available for daemon install."));
 		return false;
 	}
-	console.log();
-	console.log(chalk.cyan("Installing background sync daemon..."));
+	progressLine();
+	progressLine(chalk.cyan("Installing background sync daemon..."));
 	return installDaemonForAllRegisteredAgents(restartExisting);
 }
 
@@ -405,7 +406,7 @@ async function installBuiltinSkill(agentType: AgentType): Promise<boolean> {
 				discard: () => rmSync(targetDir, { recursive: true, force: true }),
 			},
 		);
-		console.log(
+		progressLine(
 			chalk.green(`✓ Clawdi skill ${alreadyInstalled ? "updated" : "installed"} in ${label}`),
 		);
 		return true;

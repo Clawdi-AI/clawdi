@@ -461,6 +461,7 @@ async def create_runtime_deployment_key(
             last_used_at=minted.api_key.last_used_at,
             expires_at=minted.api_key.expires_at,
             revoked_at=minted.api_key.revoked_at,
+            scopes=minted.api_key.scopes,
             raw_key=minted.raw_key,
         )
         response_body = _canonical_response_body(response)

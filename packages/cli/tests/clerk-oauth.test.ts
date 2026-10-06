@@ -304,7 +304,10 @@ describe("Clerk public OAuth device authorization", () => {
 			fetchClerkOAuthDiscovery(CONFIG, {
 				fetch: async () => Response.json(discoveryBody(overrides)),
 			}),
-		).rejects.toMatchObject({ code: "oauth_device_grant_unavailable" });
+		).rejects.toMatchObject({
+			code: "oauth_device_grant_unavailable",
+			message: expect.stringContaining("API keys can no longer be created"),
+		});
 	});
 
 	test.each(["device_authorization_endpoint", "token_endpoint"])(

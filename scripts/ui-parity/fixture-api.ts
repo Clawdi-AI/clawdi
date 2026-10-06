@@ -1307,6 +1307,7 @@ const apiKeys: Schemas["ApiKeyResponse"][] = [
 		last_used_at: ago(3 * MINUTE),
 		expires_at: null,
 		revoked_at: null,
+		scopes: null,
 	},
 	{
 		id: "a9100000-0002-4000-8000-000000000002",
@@ -1316,6 +1317,7 @@ const apiKeys: Schemas["ApiKeyResponse"][] = [
 		last_used_at: ago(47 * MINUTE),
 		expires_at: null,
 		revoked_at: null,
+		scopes: null,
 	},
 ] satisfies GetOk<"/v1/auth/keys">;
 
@@ -2797,6 +2799,7 @@ on("POST", "/v1/auth/keys", async ({ request }) => {
 		last_used_at: null,
 		expires_at: null,
 		revoked_at: null,
+		scopes: null,
 	} satisfies Schemas["ApiKeyResponse"];
 	apiKeys.push(key);
 	return {
