@@ -89,6 +89,61 @@ describe("HermesAdapter.collectSessions", () => {
 		]);
 		expect(session.messageCount).toBe(2);
 	});
+	it.each([false, true])("hides later compaction generations (display_identity=%s)", async (withIdentity) => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		try {
+			db.run("DELETE FROM messages");
+			if (withIdentity) db.run("ALTER TABLE messages ADD COLUMN display_identity BLOB");
+			const insert = db.prepare("INSERT INTO messages (id, session_id, role, content, timestamp, active, compacted, _compressed_summary, tool_calls, tool_call_id, tool_name) VALUES (?, 's-modern', ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+			const calls = (argumentsValue: string) => JSON.stringify([
+				{ id: "call-tail", type: "function", function: { name: "read", arguments: argumentsValue } },
+			]);
+			insert.run(1, "user", "Tail prompt", 1776247201, 0, 0, 0, null, null, null);
+			insert.run(2, "user", "Tail prompt", 1776247201, 0, 1, 0, null, null, null);
+			insert.run(3, "assistant", "Tail answer", 1776247202, 0, 1, 0, null, null, null);
+			insert.run(4, "assistant", null, 1776247203, 0, 1, 0, calls('{"path":"README.md","context":"full"}'), null, null);
+			insert.run(5, "tool", "Full output", 1776247204, 0, 1, 0, null, "call-tail", "read");
+			insert.run(6, "assistant", "Summary", 1776247210, 1, 0, 1, null, null, null);
+			insert.run(7, "user", "Tail prompt", 1776247201, 1, 0, 0, null, null, null);
+			insert.run(8, "assistant", "Tail answer", 1776247202, 1, 0, 0, null, null, null);
+			insert.run(9, "assistant", null, 1776247203, 1, 0, 0, JSON.stringify([{ id: "response-item", call_id: "call-tail|response-item", function: { name: "read", arguments: '{"path":"README.md"}' } }]), null, null);
+			insert.run(10, "tool", "Full output", 1776247204, 1, 0, 0, null, "call-tail", "read");
+			insert.run(11, "user", "Tail prompt", 1776247211, 1, 0, 0, null, null, null);
+			// Pruned tool results keep their payload in the key, unlike assistant calls.
+			insert.run(12, "tool", "Pruned output", 1776247204, 1, 0, 0, null, "call-tail", "read");
+			if (withIdentity) {
+				db.run("UPDATE messages SET display_identity = X'01' WHERE id IN (1, 2, 7)");
+				db.run("UPDATE messages SET display_identity = X'02' WHERE id IN (3, 8)");
+				// Durable identities take precedence over the fallback content key.
+				db.run("UPDATE messages SET content = 'Tail answer copy' WHERE id = 8");
+			}
+		} finally {
+			db.close();
+		}
+		let eagerEvents;
+		for (const streaming of [false, true]) {
+			const session = await new HermesAdapter().sessions.resolve("s-modern", {
+				streaming, signal: new AbortController().signal,
+			});
+			if (!session) throw new Error("Expected Hermes generation fixture");
+			const events = [];
+			for await (const event of session.readEvents?.() ?? session.events ?? []) events.push(event);
+			expect(events).toHaveLength(12);
+			expect(events.filter((event) => event.semantics?.display === "hidden").map((event) => event.source.record_id)).toEqual(["1", "7", "8", "9", "10"]);
+			expect(projectEventsToMessages(events).map((message) => message.content)).toEqual([
+				"Tail prompt", "Tail answer", "Summary", "Tail prompt",
+			]);
+			expect(events.find((event) => event.source.record_id === "4")).toMatchObject({
+				type: "tool_call", arguments_json: '{"context":"full","path":"README.md"}',
+				semantics: { lifecycle: "compacted", display: "message" },
+			});
+			expect(events.find((event) => event.source.record_id === "9")).toMatchObject({
+				type: "tool_call", semantics: { lifecycle: "active", display: "hidden" },
+			});
+			if (streaming) expect(events).toEqual(eagerEvents);
+			else eagerEvents = events;
+		}
+	});
 	it.each(["user", "tool"])(
 		"re-maps persisted %s inline images without invalid attachment metadata",
 		async (role) => {
@@ -131,7 +186,7 @@ describe("HermesAdapter.collectSessions", () => {
 		const events = [];
 		for await (const event of session.readEvents?.() ?? session.events ?? []) events.push(event);
 		expect(session.messageCount).toBe(projectEventsToMessages(events).length);
-		expect(session.messageCount).toBe(7);
+		expect(session.messageCount).toBe(6);
 	});
 
 	it("selects events-v1 and maps every safe modern row in stable source order", async () => {
@@ -145,7 +200,7 @@ describe("HermesAdapter.collectSessions", () => {
 			projectPath: null,
 			model: "gpt-5.3-codex",
 			modelsUsed: ["gpt-5.3-codex"],
-			messageCount: 7,
+			messageCount: 6,
 			inputTokens: 120,
 			outputTokens: 45,
 			cacheReadTokens: 8,
@@ -259,11 +314,11 @@ describe("HermesAdapter.collectSessions", () => {
 		});
 		// Assistant rows with visible content + tool_calls produce one message and one call.
 		expect(events.slice(12, 14).map((event) => event.type)).toEqual(["message", "tool_call"]);
-		// Raw audit rows are retained: the compaction copy remains distinct and marked compacted.
+		// Raw audit rows are retained, with later compaction copies hidden.
 		expect(events[6]).toMatchObject({ source: { record_id: "5" } });
 		expect(events[15]).toMatchObject({
 			source: { record_id: "12" },
-			semantics: { lifecycle: "compacted" },
+			semantics: { lifecycle: "compacted", display: "hidden" },
 		});
 		expect(events[14]).toMatchObject({
 			type: "tool_result",
