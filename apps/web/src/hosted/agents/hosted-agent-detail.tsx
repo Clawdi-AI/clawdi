@@ -905,12 +905,13 @@ function HostedAgentSessionsTab({
 		agentName,
 		profiles: profiles.data,
 		profilesLoading: profiles.isLoading,
+		onProfileChange: () => setPage(1),
 	});
 	const profileKey = profileFilter.profileKey;
 
 	useEffect(() => {
 		setPage(1);
-	}, [environmentId, profileKey]);
+	}, [environmentId]);
 
 	const sessions = useQuery({
 		...sessionListQueryOptions($api, {

@@ -79,8 +79,9 @@ describe("AgentProfilesOverview", () => {
 		expect(markup).toContain(">Hermes<");
 		expect(markup).toContain("Hermes · work");
 		expect(markup).toContain("1 session<");
-		expect(markup).toContain("View sessions for Hermes · old, offline");
-		expect(markup).toContain("Removed ");
+		expect(markup).toContain("View sessions for Hermes · old, removed");
+		expect(markup).toContain(">Removed<");
+		expect(markup).not.toContain("Removed ");
 		expect(markup).toContain(
 			"/agents/agent-1/sessions?profile=00000000-0000-4000-8000-000000000002",
 		);

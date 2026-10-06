@@ -164,7 +164,8 @@ test("multi-profile Agents list profiles and filter sessions by profile", async 
 	await expect(rows.nth(1)).toContainText("Ops Hermes · work");
 	await expect(rows.nth(1)).toContainText("2 sessions");
 	await expect(rows.nth(2)).toContainText("Ops Hermes · research");
-	await expect(rows.nth(2)).toContainText("Offline");
+	await expect(rows.nth(2)).toContainText("Removed");
+	await expect(rows.nth(2)).not.toContainText("Offline");
 
 	await page.getByRole("link", { name: "View sessions for Ops Hermes · work, online" }).click();
 	await expect(page).toHaveURL(/\/sessions\?profile=/);
@@ -173,11 +174,22 @@ test("multi-profile Agents list profiles and filter sessions by profile", async 
 	expect(requests.at(-1)).toEqual({ environment_id: MULTI_ID, profile_key: "work" });
 
 	await page.getByRole("button", { name: /Profile/ }).click();
+	await expect(page.getByRole("option", { name: "research (removed)", exact: true })).toBeVisible();
 	await page.getByRole("option", { name: "Ops Hermes", exact: true }).click();
 	await expect(page.getByTestId("session-card")).toHaveCount(1);
 	await expect(page.getByTestId("session-card")).toContainText("Daily standup notes");
 	await expect(page.getByTestId("session-card-meta")).not.toContainText("work");
 	expect(requests.at(-1)).toEqual({ environment_id: MULTI_ID, profile_key: "" });
+});
+
+test("an unknown profile id is dropped from the URL", async ({ page }) => {
+	const requests: SessionRequest[] = [];
+	await stubApi(page, requests);
+
+	await page.goto(`/agents/${MULTI_ID}/sessions?profile=00000000-0000-4000-8000-000000000000`);
+	await expect(page).not.toHaveURL(/profile=/);
+	await expect(page.getByTestId("session-card")).toHaveCount(3);
+	expect(requests.every((request) => request.profile_key === null)).toBe(true);
 });
 
 test("the all-sessions list names non-default profiles as 'Agent · profile'", async ({ page }) => {
