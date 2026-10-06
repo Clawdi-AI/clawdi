@@ -196,7 +196,7 @@ export async function discoverAgentProfiles(
 
 export function legacyProfileDiscovery(adapter: AgentAdapter): ProfileDiscovery {
 	const reader =
-		adapter.agentType === "openclaw" ? new OpenClawAdapter(null).sessions : adapter.sessions;
+		adapter.agentType === "openclaw" ? new OpenClawAdapter().sessions : adapter.sessions;
 	return {
 		complete: true,
 		profiles: [

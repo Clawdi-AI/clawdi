@@ -758,10 +758,15 @@ else exit 1; fi`,
 	expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
 });
 
-test.each(["failed", "incomplete"])(
-	"OpenClaw %s discovery preserves legacy identity without an explicit default profile",
-	async (discovery) => {
-		delete process.env.OPENCLAW_AGENT_ID;
+test.each([
+	{ discovery: "failed", agentId: undefined },
+	{ discovery: "incomplete", agentId: undefined },
+	{ discovery: "failed", agentId: "work" },
+])(
+	"OpenClaw discovery fallback %j preserves the legacy Agent scope and identity",
+	async ({ discovery, agentId }) => {
+		if (agentId === undefined) delete process.env.OPENCLAW_AGENT_ID;
+		else process.env.OPENCLAW_AGENT_ID = agentId;
 		delete process.env.OPENCLAW_STATE_DIR;
 		const state = join(home, ".openclaw");
 		for (const name of ["main", "work"]) {
@@ -800,13 +805,17 @@ else exit 1; fi`,
 		expect(result?.coverage).toBe("complete");
 		expect(
 			result?.sessions.map((session) => [session.profileKey, session.localSessionId]).sort(),
-		).toEqual([
-			[undefined, "main"],
-			[undefined, "work"],
-		]);
+		).toEqual(
+			agentId
+				? [[undefined, agentId]]
+				: [
+						[undefined, "main"],
+						[undefined, "work"],
+					],
+		);
 		for (const session of result?.sessions ?? []) expect(session).not.toHaveProperty("profileKey");
 		expect(inventories).toEqual([
-			{ complete: false, profiles: [{ upstream_key: "main", is_default: true }] },
+			{ complete: false, profiles: [{ upstream_key: agentId ?? "main", is_default: true }] },
 		]);
 	},
 );

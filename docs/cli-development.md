@@ -48,7 +48,8 @@ and select their own profile. The Hermes home used before upgrading retains the
 Cloud default key, even when it names an upstream profile; the upstream root
 then uses the named key `default`, unless that conflicts. Enumeration failures
 send `complete: false`: Hermes retains complete default coverage and OpenClaw
-reads all legacy agents into the default. Profile endpoint 404/5xx responses
+reads the configured `OPENCLAW_AGENT_ID` when set, or all legacy agents when
+unset. Profile endpoint 404/5xx responses
 select the same legacy behavior for that cycle. Legacy fallback omits profile
 keys from uploads so the backend can preserve an existing session's attribution.
 
