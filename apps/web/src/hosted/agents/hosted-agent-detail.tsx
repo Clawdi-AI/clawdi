@@ -1833,7 +1833,7 @@ function FilesFrame({ deploymentId, url }: { deploymentId: string; url: string }
 				<EmptyState
 					icon={FolderOpen}
 					title="Files couldn't be opened"
-					description="We couldn't authenticate your files session. Refresh the page and try again."
+					description="We couldn't authenticate your Files session. Refresh the page and try again."
 				/>
 			) : bootstrap === "pending" ? (
 				<EmptyState

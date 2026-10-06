@@ -170,7 +170,9 @@ test("Agent account rename, retry and clear retain identity", async ({ page }) =
 	} finally {
 		release();
 	}
-	await expect(dialog.getByRole("alert")).toContainText("Couldn't rename account");
+	await expect(dialog.getByRole("alert")).toContainText(
+		"Couldn't rename account. Try again, or refresh the page if this continues.",
+	);
 	await expect(page.getByText("secret-upstream-error")).toHaveCount(0);
 	await dialog.getByRole("button", { name: "Rename", exact: true }).click();
 	await expect(dialog).toBeHidden();

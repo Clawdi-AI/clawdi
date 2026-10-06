@@ -60,7 +60,7 @@ export type WalletSetupReturnFinalizer = (confirmed: {
 const SETUP_INTENT_MISMATCH_ERROR =
 	"The returned card setup couldn't be verified. Start a new card authorization.";
 const PAYMENT_INTENT_MISMATCH_ERROR =
-	"The returned payment couldn't be verified. Open wallet and check your balance before trying again.";
+	"The returned payment couldn't be verified. Open Wallet and check your balance before trying again.";
 
 type ResolutionSlot<TResult> = {
 	fingerprint: string;

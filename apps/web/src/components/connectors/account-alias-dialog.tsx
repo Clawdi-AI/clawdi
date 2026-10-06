@@ -46,7 +46,7 @@ export function AccountAliasDialog({
 			if (mountedRef.current) onClose();
 		} catch {
 			if (mountedRef.current) {
-				setError("Couldn't rename account. Try again, or contact support if this continues.");
+				setError("Couldn't rename account. Try again, or refresh the page if this continues.");
 			}
 		} finally {
 			inflightRef.current = false;

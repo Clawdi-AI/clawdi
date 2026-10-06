@@ -279,8 +279,8 @@ function ErrorView({ error }: { error: unknown }) {
 			<Shell>
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Couldn't complete the request. Try again.</AlertTitle>
-					<AlertDescription>Couldn't load this invitation. Try again.</AlertDescription>
+					<AlertTitle>Couldn't load invitation</AlertTitle>
+					<AlertDescription>Try again.</AlertDescription>
 				</Alert>
 			</Shell>
 		);

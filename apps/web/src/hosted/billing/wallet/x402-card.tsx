@@ -483,7 +483,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 							<AlertCircle aria-hidden />
 							<AlertTitle>USDC funding unavailable</AlertTitle>
 							<AlertDescription>
-								Wallet authorization couldn't be verified. Refresh wallet before trying again.
+								Wallet authorization couldn't be verified. Refresh Wallet before trying again.
 							</AlertDescription>
 						</Alert>
 					) : null}

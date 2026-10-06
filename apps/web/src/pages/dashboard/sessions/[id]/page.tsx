@@ -334,7 +334,7 @@ export function SessionDetailContent({
 			) {
 				throw new ApiError(
 					409,
-					"Session content changed. Retry.",
+					"Session content changed. Try again.",
 					"session_content_revision_changed",
 				);
 			}
