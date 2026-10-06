@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -59,6 +60,7 @@ async def mint_api_key(
     environment_id: UUID | None = None,
     runtime_deployment_id: str | None = None,
     managed: bool = False,
+    expires_at: datetime | None = None,
     commit: bool = True,
 ) -> MintedKey:
     """Create a new ApiKey row.
@@ -80,6 +82,11 @@ async def mint_api_key(
     accepted only for a managed environment-bound key whose pre-provisioned
     fence matches the same owner and deployment in this transaction.
     """
+    if expires_at is not None:
+        if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+            raise ValueError("expires_at must be timezone-aware")
+        if expires_at <= datetime.now(UTC):
+            raise ValueError("expires_at must be in the future")
     await assert_user_authority_active(db, user_id)
 
     # Defense-in-depth: every route caller already checks env
@@ -128,6 +135,7 @@ async def mint_api_key(
         environment_id=environment_id,
         runtime_deployment_id=runtime_deployment_id,
         managed=managed,
+        expires_at=expires_at,
     )
     db.add(api_key)
     if commit:

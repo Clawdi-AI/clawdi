@@ -28,7 +28,7 @@ can land in this file under the same auth dep.
 
 import logging
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, Never, cast
 from uuid import UUID
 
@@ -101,6 +101,8 @@ from app.schemas.admin import (
     AdminRuntimeStateResponse,
     AdminRuntimeStateUpsert,
     AdminWorkloadClientBootstrap,
+    AdminWorkloadClientScopesResponse,
+    AdminWorkloadClientScopesUpdate,
     AdminWorkloadSignerBootstrap,
     AdminWorkloadSignerReceipt,
 )
@@ -231,6 +233,7 @@ from app.services.provider_environment_verifier_access import (
     inspect_verifier_access,
     register_workload_signer,
     update_verifier_access,
+    update_workload_client_scopes,
 )
 from app.services.runtime_generation import (
     RuntimeApplyGenerationUpdateError,
@@ -951,6 +954,11 @@ async def admin_mint_api_key(
             scopes=body.scopes,
             environment_id=env_uuid,
             managed=body.managed,
+            expires_at=(
+                datetime.now(UTC) + timedelta(days=body.expires_in_days)
+                if body.expires_in_days is not None
+                else None
+            ),
             # Key row and its audit event must land in one transaction:
             # a key that exists without the caller learning its id is an
             # untrackable, unrevokable credential.
@@ -993,6 +1001,7 @@ async def admin_mint_api_key(
             "managed": api_key.managed,
             "has_environment_binding": api_key.environment_id is not None,
             "scope_count": None if api_key.scopes is None else len(api_key.scopes),
+            "has_expiry": api_key.expires_at is not None,
         },
     )
     await db.commit()
@@ -2986,6 +2995,22 @@ async def register_workload_client(
         body=body,
         idempotency_key=idempotency_key,
         request_id=str(request.state.request_id),
+    )
+
+
+@router.put(
+    "/platform/workload-clients/{client_id}/scopes",
+    response_model=AdminWorkloadClientScopesResponse,
+)
+async def configure_workload_client_scopes(
+    client_id: str,
+    body: AdminWorkloadClientScopesUpdate,
+    request: Request,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_control_session),
+) -> AdminWorkloadClientScopesResponse:
+    return await update_workload_client_scopes(
+        db, client_id=client_id, body=body, request_id=str(request.state.request_id)
     )
 
 
