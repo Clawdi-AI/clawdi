@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BINDING_STATUS_ARCHIVED,
+    BOT_AGENT_LINK_STATUS_ACTIVE,
+    BOT_AGENT_LINK_STATUS_ARCHIVED,
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_RUNTIME_MARKER_AGENT_OFFLINE_REPLY,
@@ -508,6 +510,22 @@ async def test_discord_offline_interactions_reply_ephemerally_without_dedup(
     assert len(messages) == 2
     assert all(message.delivered_at is not None for message in messages)
 
+    autocomplete = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 4,
+            "id": "offline-autocomplete",
+            "token": "autocomplete-token",
+            "application_id": DISCORD_TEST_APPLICATION_ID,
+            "channel_id": "discord-chan-1",
+            "guild_id": "discord-guild-1",
+            "data": {"name": "agent_command"},
+        },
+    )
+    assert autocomplete.status_code == 200
+    assert autocomplete.json() == {"type": 8, "data": {"choices": []}}
+
 
 @pytest.mark.asyncio
 async def test_discord_gateway_offline_reply_targets_channel_and_preserves_online_guild_binding(
@@ -580,6 +598,41 @@ async def test_discord_gateway_offline_reply_targets_channel_and_preserves_onlin
             "author": {"id": "discord-sender"},
         },
     }
+    interaction = await _record_discord_interaction(
+        client,
+        created=offline,
+        interaction_id="offline-http-before-gateway",
+        token="offline-http-token",
+        application_id=DISCORD_TEST_APPLICATION_ID,
+        channel_id=channel_id,
+        guild_id=guild_id,
+    )
+    assert interaction.status_code == 200
+    assert interaction.json()["data"]["content"] == channel_service.AGENT_OFFLINE_REPLY
+    for event_type, data in (
+        ("MESSAGE_REACTION_ADD", {"message_id": "offline-reaction", "user_id": "discord-sender"}),
+        ("MESSAGE_CREATE", {"id": "offline-bot", "author": {"id": "discord-bot", "bot": True}}),
+    ):
+        assert await record_discord_gateway_dispatch(
+            sessionmaker,
+            UUID(offline["id"]),
+            {
+                "op": 0,
+                "t": event_type,
+                "s": 79,
+                "d": {"channel_id": channel_id, "guild_id": guild_id, **data},
+            },
+        )
+    assert _FakeProviderClient.calls == []
+    assert (
+        await db_session.scalar(
+            select(func.count(ChannelAccountRuntimeMarker.id)).where(
+                ChannelAccountRuntimeMarker.account_id == UUID(offline["id"]),
+                ChannelAccountRuntimeMarker.kind == CHANNEL_RUNTIME_MARKER_AGENT_OFFLINE_REPLY,
+            )
+        )
+        == 0
+    )
     for created in (offline, online):
         assert await record_discord_gateway_dispatch(sessionmaker, UUID(created["id"]), frame)
     calls = [call for call in _FakeProviderClient.calls if call["url"].endswith("/messages")]
@@ -605,6 +658,48 @@ async def test_discord_gateway_offline_reply_targets_channel_and_preserves_onlin
         await db_session.scalar(
             select(func.count(ChannelDelivery.id)).where(
                 ChannelDelivery.account_id == UUID(offline["id"]),
+            )
+        )
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_inactive_link_is_not_offline_replyable(
+    db_session, seed_user, channel_agent, channel_runtime_head
+):
+    account, link, binding = await _create_account_and_binding(
+        db_session,
+        user=seed_user,
+        agent=channel_agent,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        chat_id="inactive-link",
+    )
+    now = datetime.now(UTC)
+    await channel_runtime_head(
+        channel_agent,
+        received_at=now - timedelta(hours=1),
+        freshness_deadline=now - timedelta(minutes=11),
+    )
+    message = await _add_message(db_session, account=account, binding=binding, text="hello")
+    for link_status, archived_at in (
+        (BOT_AGENT_LINK_STATUS_ARCHIVED, None),
+        (BOT_AGENT_LINK_STATUS_ACTIVE, now),
+    ):
+        link.status = link_status
+        link.archived_at = archived_at
+        assert (
+            await channel_service.consume_inbound_messages_for_offline_agents(
+                db_session, account=account, messages=[(message, binding)], claim_reply=True
+            )
+            == ()
+        )
+        assert message.delivered_at is None
+    assert (
+        await db_session.scalar(
+            select(func.count(ChannelAccountRuntimeMarker.id)).where(
+                ChannelAccountRuntimeMarker.account_id == account.id,
+                ChannelAccountRuntimeMarker.kind == CHANNEL_RUNTIME_MARKER_AGENT_OFFLINE_REPLY,
             )
         )
         == 0
