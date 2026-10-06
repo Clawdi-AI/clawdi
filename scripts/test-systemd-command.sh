@@ -48,8 +48,8 @@ timeout --kill-after=15s 930s docker exec "$container" timeout 900 bash -euo pip
 	bun install --frozen-lockfile --ignore-scripts
 	package_root=/work/packages/cli
 	# Match the clean runner: subprocess-heavy files need separate Bun processes.
-	for test_file in packages/cli/src/runtime/systemd.test.ts packages/cli/src/runtime/oom-protection.test.ts; do
-		CLAWDI_TEST_SYSTEMD_COMMAND=1 timeout 60 bun test --isolate --max-concurrency=1 \
+	for test_file in packages/cli/src/runtime/systemd.test.ts packages/cli/src/runtime/oom-protection.test.ts packages/cli/src/adapters/openclaw-runtime-user.test.ts; do
+		CLAWDI_TEST_SYSTEMD_COMMAND=1 CLAWDI_TEST_OPENCLAW_REQUIRE_ROOT=1 timeout 60 bun test --isolate --max-concurrency=1 \
 			--timeout=15000 "$test_file"
 	done
 '

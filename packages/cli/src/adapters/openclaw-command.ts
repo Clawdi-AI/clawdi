@@ -59,6 +59,7 @@ export function runOpenClawSdkCommand(
 			new Promise<string>((resolve, reject) => {
 				options.signal?.throwIfAborted();
 				const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+				const home = process.env.HOME ?? homedir();
 				const child = resolveRuntimeUserCommand(
 					runtimeUser && runtimeUser !== "root" ? process.execPath : "node",
 					[
@@ -69,12 +70,13 @@ export function runOpenClawSdkCommand(
 						sdkPath,
 						JSON.stringify(params),
 					],
-					process.env.HOME ?? homedir(),
+					home,
 					{ environmentOverrides: inheritedOpenClawEnvironment() },
 				);
 				const running = spawn(child.command, child.args, {
 					stdio: ["ignore", "ignore", "ignore", "pipe"],
 					env: child.env,
+					cwd: runtimeUser && runtimeUser !== "root" ? home : undefined,
 				});
 				const result = running.stdio[3];
 				const chunks: Buffer[] = [];
@@ -128,6 +130,7 @@ function runOpenClawSubprocess(
 		options.signal?.throwIfAborted();
 		const { signal, ...limits } = options;
 		const home = process.env.HOME ?? homedir();
+		const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 		const child = resolveRuntimeUserCommand(resolveOpenClawCommandPath(home), args, home, {
 			environmentOverrides: inheritedOpenClawEnvironment(),
 		});
@@ -136,6 +139,7 @@ function runOpenClawSubprocess(
 			killSignal: "SIGKILL",
 			encoding: "utf8",
 			env: child.env,
+			cwd: runtimeUser && runtimeUser !== "root" ? home : undefined,
 		});
 		const closed = new Promise<void>((resolve) => running.child.once("close", () => resolve()));
 		const abort = () => {

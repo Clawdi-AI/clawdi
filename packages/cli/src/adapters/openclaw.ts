@@ -16,13 +16,15 @@ import {
 import { durationSecondsBetween } from "../lib/session-duration";
 import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-events";
 import { extractTarGz } from "../lib/tar";
+import { commandFailureDetail } from "../runtime/hosted-openclaw-skill";
 import {
 	collectManagedSkillTree,
+	makeSkillStagingReadable,
 	managedSkillTreesEqual,
 	withManagedTargetRollback,
 } from "../runtime/managed-skill-delivery";
 import { mutateUserSkillTarget } from "../runtime/managed-skill-reservation";
-import { makeRuntimeUserOwned, spawnRuntimeUserCommand } from "../runtime/runtime-user-command";
+import { spawnRuntimeUserCommand } from "../runtime/runtime-user-command";
 import { log } from "../serve/log";
 import {
 	type AgentAdapterCore,
@@ -1382,16 +1384,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				throw new Error("Skill archive is missing SKILL.md");
 			const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 			if (runtimeUser && runtimeUser !== "root") {
-				// Keep the private staging root inaccessible until its contents are agent-owned.
-				const makeStagingOwned = (directory: string): void => {
-					for (const entry of readdirSync(directory, { withFileTypes: true })) {
-						const path = join(directory, entry.name);
-						if (entry.isDirectory()) makeStagingOwned(path);
-						else makeRuntimeUserOwned(path);
-					}
-					makeRuntimeUserOwned(directory);
-				};
-				makeStagingOwned(stagingRoot);
+				makeSkillStagingReadable(stagingRoot);
 			}
 			mutateUserSkillTarget(targetDir, installedSlug, () =>
 				withManagedTargetRollback({
@@ -1409,17 +1402,11 @@ export class OpenClawAdapter implements AgentAdapterCore {
 						];
 						const result =
 							runtimeUser && runtimeUser !== "root"
-								? spawnRuntimeUserCommand(
-										resolveOpenClawCommandPath(home),
-										args,
-										home,
-										process.cwd(),
-										{
-											environmentOverrides: inheritedOpenClawEnvironment(),
-											maxBufferBytes: 1024 * 1024,
-											timeoutMs: 120_000,
-										},
-									)
+								? spawnRuntimeUserCommand(resolveOpenClawCommandPath(home), args, home, home, {
+										environmentOverrides: inheritedOpenClawEnvironment(),
+										maxBufferBytes: 1024 * 1024,
+										timeoutMs: 120_000,
+									})
 								: spawnSync("openclaw", args, {
 										encoding: "utf8",
 										env: process.env,
@@ -1428,7 +1415,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 									});
 						if (result.status !== 0) {
 							throw new Error(
-								`OpenClaw official Skill install failed: ${String(result.stderr || result.stdout || "").trim() || "unknown error"}`,
+								`OpenClaw official Skill install failed: ${commandFailureDetail(result)}`,
 							);
 						}
 						if (activeAgentWorkspace() !== workspace) {

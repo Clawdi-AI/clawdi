@@ -41,7 +41,7 @@ export function listOpenClawAgentWorkspaces(): OpenClawAgentWorkspace[] {
 		const args = ["agents", "list", "--json"];
 		const result =
 			runtimeUser && runtimeUser !== "root"
-				? spawnRuntimeUserCommand(resolveOpenClawCommandPath(home), args, home, process.cwd(), {
+				? spawnRuntimeUserCommand(resolveOpenClawCommandPath(home), args, home, home, {
 						environmentOverrides: inheritedOpenClawEnvironment(),
 						maxBufferBytes: 1024 * 1024,
 						timeoutMs: 15_000,
