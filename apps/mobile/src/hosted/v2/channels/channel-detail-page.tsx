@@ -5,12 +5,9 @@ import {
 	type components,
 	pairCodeExpired,
 	telegramPairDeepLink,
-	verifiedDiscordInstallUrl,
-	verifiedDiscordPairingCommand,
 	verifiedWhatsAppPairLink,
 } from "@clawdi/shared/api";
 import { agentOwnershipKindFromId } from "@clawdi/shared/client";
-import { pairingQr } from "@clawdi/shared/qr";
 import {
 	channelFormClasses,
 	ENTITY_CARD_BASE,
@@ -50,7 +47,6 @@ import { SectionLabel } from "@/components/section-label";
 import { Icon } from "@/components/ui/icon";
 import { Label } from "@/components/ui/input";
 import { NativeList } from "@/components/ui/native-list";
-import { QrImage } from "@/components/ui/qr-image";
 import { SheetPage } from "@/components/ui/sheet-page";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -63,6 +59,7 @@ import { useAgentOwnership } from "@/hooks/use-agent-ownership";
 import { ChannelHealthTab } from "@/hosted/v2/channels/channel-health-tab";
 import { ChannelInfoCard } from "@/hosted/v2/channels/channel-info-card";
 import { useChannelQuery } from "@/hosted/v2/channels/channels-hooks";
+import { ChannelPairingView } from "@/hosted/v2/channels/pairing-dialog-ui";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
@@ -89,6 +86,7 @@ export function ChannelDetailScreen({ mode }: { mode?: "link" | "pair" } = {}) {
 			initialAgentId={routeParam(params.agentId)}
 			linkId={params.linkId}
 			mode={mode}
+			initialAction={params.action}
 		/>
 	);
 }
@@ -98,11 +96,13 @@ function ChannelDetail({
 	initialAgentId,
 	linkId,
 	mode,
+	initialAction,
 }: {
 	id?: string;
 	initialAgentId?: string;
 	linkId?: string;
 	mode?: "link" | "pair";
+	initialAction?: string;
 }) {
 	const t = useI18n();
 	const confirmationDialog = useConfirmation();
@@ -243,6 +243,37 @@ function ChannelDetail({
 			},
 		]);
 	};
+	const removeChannel = () =>
+		confirm(
+			channelRemovalTitle(
+				ownedBot?.name ?? bot?.name ?? "Channel",
+				ownedBot?.provider === "whatsapp",
+			),
+			ownedBot?.provider === "whatsapp"
+				? channelRemovalCopy.whatsappDescription
+				: channelRemovalCopy.description,
+			() =>
+				perform(
+					(signal) => channels.remove(id ?? "", signal),
+					() => router.replace("/channels"),
+				),
+			ownedBot?.provider === "whatsapp" ? channelRemovalCopy.disconnect : channelRemovalCopy.remove,
+		);
+	const deleteRequested = useRef(false);
+	useEffect(() => {
+		if (
+			initialAction !== "delete" ||
+			deleteRequested.current ||
+			!ready ||
+			disabled ||
+			!ownedBot ||
+			mode
+		)
+			return;
+		deleteRequested.current = true;
+		router.setParams({ action: undefined });
+		removeChannel();
+	});
 	const pairingLink =
 		!pairing || !bot
 			? null
@@ -375,7 +406,6 @@ function ChannelDetail({
 			</SheetPage>
 		);
 	if (mode === "pair") {
-		const qr = pairingLink ? pairingQr(pairingLink) : null;
 		return (
 			<SheetPage
 				title={`Pair ${providerMeta(provider).label}`}
@@ -384,51 +414,16 @@ function ChannelDetail({
 				sheet={sheet}
 			>
 				<WebView recipe={channelFormClasses.field}>
-					<WebText recipe={styles.noticeTitle}>{bot?.name}</WebText>
-					<WebText recipe={styles.noticeDescription}>{t("channels.pairInstructions")}</WebText>
 					{action.busy ? <Skeleton className={webView(styles.activitySkeleton)} /> : null}
 					{pairing ? (
-						<>
-							{qr ? (
-								<QrImage matrix={qr} label={`${providerMeta(provider).label} pairing QR code`} />
-							) : null}
-							{pairingLink ? (
-								<>
-									<ActionButton
-										label={t("channels.openPair")}
-										onPress={() => open(pairingLink)}
-										disabled={action.busy}
-									/>
-									<AppText selectable>{pairingLink}</AppText>
-								</>
-							) : null}
-							{provider === "telegram" ||
-							verifiedDiscordPairingCommand(pairing.pairing_command, pairing.code) ? (
-								<AppText selectable>{pairing.pairing_command}</AppText>
-							) : null}
-							<AppText>{pairing.expires_at}</AppText>
-							{provider === "discord"
-								? [
-										{
-											value: verifiedDiscordInstallUrl(pairing.discord_install_url),
-											label: t("channels.install"),
-										},
-										{
-											value: verifiedDiscordInstallUrl(pairing.discord_user_install_url),
-											label: t("channels.installUser"),
-										},
-									].map(({ value, label }) =>
-										value ? (
-											<ActionButton
-												key={label}
-												label={label}
-												onPress={() => open(value)}
-												disabled={action.busy}
-											/>
-										) : null,
-									)
-								: null}
-						</>
+						<ChannelPairingView
+							provider={provider}
+							identity={bot?.name ?? ownedBot?.name ?? "Channel"}
+							pairing={pairing}
+							link={pairingLink}
+							busy={action.busy}
+							open={open}
+						/>
 					) : null}
 					<ActionButton
 						label={t("channels.pair")}
@@ -554,7 +549,6 @@ function ChannelDetail({
 				]
 			: []),
 		<AppView key="tab-selector">
-			{" "}
 			<Tabs value={tab} onValueChange={setTab}>
 				<TabsList variant="default">
 					<TabsTrigger value="activity">{agentSurfaceCopy.activity}</TabsTrigger>
@@ -565,22 +559,7 @@ function ChannelDetail({
 		</AppView>,
 		...eventCards,
 	];
-	const removeChannel = () =>
-		confirm(
-			channelRemovalTitle(
-				ownedBot?.name ?? bot?.name ?? "Channel",
-				ownedBot?.provider === "whatsapp",
-			),
-			ownedBot?.provider === "whatsapp"
-				? channelRemovalCopy.whatsappDescription
-				: channelRemovalCopy.description,
-			() =>
-				perform(
-					(signal) => channels.remove(id ?? "", signal),
-					() => router.replace("/channels"),
-				),
-			ownedBot?.provider === "whatsapp" ? channelRemovalCopy.disconnect : channelRemovalCopy.remove,
-		);
+
 	return (
 		<SafeAreaScreen>
 			<NativeHeader

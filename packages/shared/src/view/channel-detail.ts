@@ -1,4 +1,17 @@
 export const channelDetailCopy = {
+	pairDescription: "Use the link or pairing command to connect a chat.",
+	pairManually: "Pair manually",
+	server: "Server",
+	directMessage: "Direct message",
+	addToApps: "Add to my apps",
+	addToServer: "Add to server",
+	openProvider: "Open",
+	sendTo: "Send this to",
+	sendWhatsApp: "Send this in the WhatsApp chat you want to connect:",
+	discordServer:
+		"1. Add the bot to the server. You need Manage Server or Administrator. 2. In that server, run the pairing command and paste this into the required code option:",
+	discordDm:
+		"1. Install the app and choose Add to my apps in Discord. 2. Open the app from Discord Direct Messages. 3. Run the pairing command and paste this into the required code option:",
 	unlinkTitle: "Unlink Agent?",
 	unlinkDescription: "Its paired chats will stop using this channel.",
 	unlink: "Unlink Agent",
@@ -25,4 +38,14 @@ export function pairingCommandsDescription(label: string, supported: boolean) {
 }
 export function publishedCommandsLabel(count: number) {
 	return `Published ${count} command${count === 1 ? "" : "s"}`;
+}
+
+export function pairCodeExpiryLabel(expiresAt: string, nowMs: number): string {
+	const expiresAtMs = Date.parse(expiresAt);
+	if (!Number.isFinite(expiresAtMs)) return "Expired — generate a new link";
+	const remainingSeconds = Math.max(0, Math.ceil((expiresAtMs - nowMs) / 1_000));
+	if (remainingSeconds <= 0) return "Expired — generate a new link";
+	const minutes = Math.floor(remainingSeconds / 60);
+	const seconds = remainingSeconds % 60;
+	return `Expires in ${minutes > 0 ? `${minutes}m ` : ""}${seconds}s`;
 }
