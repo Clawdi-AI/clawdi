@@ -189,8 +189,8 @@ export function SplitVaultDialog({
 					</div>
 					{removeOriginals && (vault.project_ids?.length ?? 0) > 1 ? (
 						<p className={splitVaultDialogClasses.warning}>
-							{vault.name} is used by {vault.project_ids?.length} Projects — moved keys leave all of
-							them. Link the new Vaults to those Projects afterwards.
+							{vault.name} is used by {vault.project_ids?.length} projects — moved keys leave all of
+							them. Link the new vaults to those projects afterwards.
 						</p>
 					) : null}
 					{!valid && !run.data ? <p role="alert">{copy.invalid}</p> : null}

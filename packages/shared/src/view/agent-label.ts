@@ -6,6 +6,7 @@ const TYPE_LABEL: Record<string, string> = {
 	openclaw: "OpenClaw",
 	opencode: "OpenCode",
 	pi: "Pi",
+	dsh: "DeepSeek Harness",
 };
 
 export function agentTypeLabel(type: string | null | undefined): string {
@@ -52,18 +53,12 @@ export function cleanAgentName(value: string | null | undefined): string {
 	return value?.trim() ?? "";
 }
 
-export function agentSourceLabel(source: AgentSourceKind): string {
-	return source === "hosted" ? "Cloud" : "Your machine";
-}
-
 export function agentSourceKindLabel(source: AgentSourceKind): string {
-	return source === "hosted" ? "Clawdi Cloud agent" : "Your machine agent";
+	return source === "hosted" ? "Cloud Agent" : "Connected Agent";
 }
 
 export function agentSourceDescription(source: AgentSourceKind): string {
-	return source === "hosted"
-		? "Hosted and managed by Clawdi Cloud"
-		: "Runs from your machine or server";
+	return source === "hosted" ? "Runs on Clawdi" : "Runs from your machine or server";
 }
 
 export function compareAgentEnvironments(

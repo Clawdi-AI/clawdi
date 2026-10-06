@@ -454,7 +454,7 @@ describe("Agent-authoritative manual Skill mutations", () => {
 		]);
 		try {
 			await expect(skillInstall("owner/demo", { project: projectId })).rejects.toThrow(
-				/no longer has a live Agent identity/,
+				/no longer has a live agent identity/,
 			);
 		} finally {
 			restore();

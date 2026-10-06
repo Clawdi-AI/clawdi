@@ -68,7 +68,7 @@ export function sessionDateLabel(timestamp: string): string {
 }
 
 export function shareLabel(share: Pick<SessionShareItem, "scope" | "message_count">): string {
-	if (share.scope === "session") return "Full Session snapshot";
+	if (share.scope === "session") return "Full session snapshot";
 	if (share.scope === "response") return "Single response snapshot";
 	return `Conversation through message ${share.message_count}`;
 }
@@ -86,7 +86,7 @@ export function sessionShareDialogCopy(target: SessionShareTarget) {
 				: "Share session";
 	const description =
 		target.scope === "response"
-			? "Anyone with the link can view this Agent response."
+			? "Anyone with the link can view this agent response."
 			: target.scope === "through"
 				? "Anyone with the link can view the conversation through this message."
 				: "Anyone with the link can view this conversation. Future messages won’t be added.";
@@ -95,10 +95,10 @@ export function sessionShareDialogCopy(target: SessionShareTarget) {
 
 export function shareScopeLabel(share: SessionShare): string {
 	const scope = sessionShareScope(share);
-	if (scope === "live") return "Full Session, live";
-	if (scope === "response") return "Single Agent response";
+	if (scope === "live") return "Full session, live";
+	if (scope === "response") return "Single agent response";
 	if (scope === "through") return "Conversation excerpt";
-	return "Full Session snapshot";
+	return "Full session snapshot";
 }
 
 export const sessionTimelineFilters = [
@@ -141,7 +141,7 @@ export const sessionDetailCopy = {
 	beginning: "Jump to beginning",
 	latest: "Jump to latest",
 	match: "Jump to match",
-	skill: "Skill Setup Text",
+	skill: "Skill setup text",
 	tool: "Tool",
 	done: "Done",
 	called: "Called",
@@ -152,11 +152,11 @@ export const sessionDetailCopy = {
 	shareResponse: "Share response",
 	shareThrough: "Share conversation to here",
 	shareMessage: "Share message",
-	sharedTitle: "Shared Session links",
-	sharedDescription: "Review and turn off every active Session link from one place.",
-	noLinks: "No active Session links",
-	noLinksDescription: "Links you create from a Session will appear here.",
-	browse: "Browse Sessions",
+	sharedTitle: "Shared Session Links",
+	sharedDescription: "Review and turn off every active session link from one place.",
+	noLinks: "No active session links",
+	noLinksDescription: "Links you create from a session will appear here.",
+	browse: "Browse sessions",
 	open: "Open",
 	more: "More options",
 	create: "Create link",
@@ -164,10 +164,10 @@ export const sessionDetailCopy = {
 	revoke: "Turn off link",
 	revokeTitle: "Turn off this share link?",
 	revokeDescription:
-		"Anyone using this link will immediately lose access. The original Session stays unchanged.",
+		"Anyone using this link will immediately lose access. The original session stays unchanged.",
 	live: "Live",
 	snapshot: "Snapshot",
-	liveDescription: "Updates when the Session is uploaded again.",
+	liveDescription: "Updates when the session is uploaded again.",
 	sharedError: "Couldn't load shared links",
 	linksError: "Couldn't load share links",
 	activityError: "Couldn't load activity",
@@ -194,16 +194,16 @@ export const sessionDetailCopy = {
 	gateForbidden: "No access",
 	gateForbiddenTitle: "You don't have access to this session",
 	gateForbiddenBody:
-		"The owner hasn't granted your account permission to view this Clawdi session. Ask them to share the link with you, or to invite you directly.",
+		"You don't have access to this session. Ask the owner to share the link or invite you.",
 	gateExpired: "Link turned off",
-	gateExpiredTitle: "This Session share is no longer available",
+	gateExpiredTitle: "This session share is no longer available",
 	gateExpiredBody:
 		"The owner revoked this link. Ask them to create a new share if you still need access.",
 	goHome: "Go to Clawdi",
 	retry: "Retry",
 	refresh: "Refresh",
 	delete: "Delete",
-	deleteTitle: "Permanently delete this cloud Session?",
+	deleteTitle: "Permanently delete this cloud session?",
 	deleteDescription:
 		"This permanently deletes the cloud Session, its history, and all sharing access.\n\nLocal agent files remain untouched, but this Session will never sync again.\n\nExtracted account-level Memories remain, with this Session's provenance removed.",
 	deleteConfirm: "Permanently delete",

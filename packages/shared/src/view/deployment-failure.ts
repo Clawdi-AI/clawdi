@@ -7,17 +7,17 @@ type DeploymentOperationVerb =
 	| "runtime_switch";
 const DEFAULT_FAILURE_REASON_MAX_LENGTH = 96;
 const PLAN_CHANGE_FAILURE_REASON =
-	"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.";
-const DEFAULT_SERVICE_FAILURE_REASON = "The Clawdi service could not complete this request.";
+	"The Clawdi service couldn't confirm the plan change. Your plan was not changed and you were not charged.";
+const DEFAULT_SERVICE_FAILURE_REASON = "The Clawdi service couldn't complete this request.";
 const RUNTIME_UNAVAILABLE_REASON =
-	"Clawdi is checking this Agent. Open Agent settings for details.";
+	"Clawdi is checking this agent. Open agent settings for details.";
 export const DEPLOYMENT_SUBSCRIPTION_REQUIRED_REASON =
-	"This agent needs an active subscription to start. Open Agent settings and choose a subscription. Your saved data is kept.";
+	"This agent needs an active subscription to start. Open agent settings and choose a subscription. Your saved data is kept.";
 const RUNTIME_CONFIGURATION_FAILURE_CODE = "runtime_configuration_failed";
 const RUNTIME_CONFIGURATION_FAILURE_REASON =
-	"One of this agent’s channels, AI providers, or tools could not be set up. Review recent changes, then restart the agent.";
+	"One of this agent's channels, AI providers, or tools couldn't be set up. Review recent changes, then restart the agent.";
 const RUNTIME_CONFIGURATION_FAILURE_DESCRIPTION =
-	"Clawdi could not apply part of this agent’s configuration. Fix or disable the item named above, then restart the agent.";
+	"Clawdi couldn't apply part of this agent's configuration. Fix or disable the item named above, then restart the agent.";
 
 export type DeploymentFailureProjection = {
 	reason: string;
@@ -165,7 +165,7 @@ export function deploymentFailurePresentation(
 			return {
 				...failure,
 				title: `${operationLabel} failed`,
-				description: `The Clawdi service could not finish ${operationName}. Restart the agent to try again.`,
+				description: `The Clawdi service couldn't finish ${operationName}. Restart the agent to try again.`,
 				status: FAILED_STATUS,
 				remediation: {
 					kind: "restart",
@@ -177,7 +177,7 @@ export function deploymentFailurePresentation(
 				...failure,
 				title: `${operationLabel} failed`,
 				description:
-					"The Clawdi service could not restart the agent. Review the reason below, then try again.",
+					"The Clawdi service couldn't restart the agent. Review the reason below, then try again.",
 				status: FAILED_STATUS,
 				remediation: {
 					kind: "restart",
@@ -220,7 +220,7 @@ export function deploymentFailurePresentation(
 				...failure,
 				title: `${operationLabel} failed`,
 				description:
-					"Clawdi could not complete this action. Check the current Agent status. Contact support if the issue persists.",
+					"Couldn't complete this action. Check the agent's status, and contact support if this continues.",
 				status: FAILED_STATUS,
 				remediation: { kind: "none", label: null },
 			};

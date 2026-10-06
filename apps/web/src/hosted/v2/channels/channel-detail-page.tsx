@@ -58,6 +58,7 @@ import {
 	ChannelStatusBadge,
 	CopyInline,
 	DeliveryBadge,
+	DiscordConnectionIssueAlert,
 	HealthBadge,
 	isNormalChannelHealth,
 	isNormalChannelStatus,
@@ -300,11 +301,14 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 					</ConfirmAction>
 				}
 			/>
+			{ch.provider === "discord" ? (
+				<DiscordConnectionIssueAlert issue={ch.connection_issue} />
+			) : null}
 
 			{providerUnavailable ? (
 				<InfoCard icon={TriangleAlert} title={agentSurfaceCopy.providerUnavailable}>
 					This provider is no longer available for new native channels. Existing channel data
-					remains visible, and you can delete the Custom bot.
+					remains visible, and you can delete the custom bot.
 				</InfoCard>
 			) : null}
 			{ch.provider === "discord" && !providerUnavailable ? (
@@ -373,7 +377,7 @@ function AgentsTab({
 			<ApiErrorPanel
 				error={links.error}
 				onRetry={() => links.refetch()}
-				title="Couldn't load linked Agents"
+				title="Couldn't load linked agents"
 			/>
 		);
 	}
@@ -382,7 +386,7 @@ function AgentsTab({
 			<ApiErrorPanel
 				error={envs.error}
 				onRetry={() => envs.refetch()}
-				title="Couldn't load Agent names"
+				title="Couldn't load agent names"
 			/>
 		);
 	}
@@ -448,7 +452,7 @@ function AgentsTab({
 									nativeButton={false}
 									variant="ghost"
 									size="icon-sm"
-									aria-label="Open Agent Channels"
+									aria-label="Open agent Channels"
 								>
 									<ArrowUpRight className={channelDetailPageClasses.agentActionIcon} />
 								</Button>
@@ -466,7 +470,7 @@ function AgentsTab({
 											variant="ghost"
 											size="icon-sm"
 											className={channelDetailPageClasses.removeAction}
-											aria-label="Unlink Agent"
+											aria-label="Unlink agent"
 										>
 											<Unplug className={channelDetailPageClasses.agentActionIcon} />
 										</Button>

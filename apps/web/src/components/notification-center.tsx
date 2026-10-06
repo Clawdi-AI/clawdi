@@ -5,7 +5,6 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
 	Bell,
-	Check,
 	CheckCircle2,
 	CircleAlert,
 	ExternalLink,
@@ -25,7 +24,6 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
-	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -36,9 +34,7 @@ import {
 	PopoverTitle,
 	PopoverTrigger,
 } from "@/components/ui/popover";
-import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import { shouldBlockQueryError } from "@/lib/query-state";
@@ -46,7 +42,6 @@ import { cn } from "@/lib/utils";
 import {
 	type AcceptInvitationResponse,
 	type AccountNotification,
-	filterAccountNotifications,
 	getAcceptedProjectInvitationToastCopy,
 	getNotificationCenterDescription,
 	getNotificationCenterEmptyCopy,
@@ -54,7 +49,6 @@ import {
 	getPendingNotificationCount,
 	getProjectInvitationAccessCopy,
 	NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS,
-	type NotificationCenterView,
 	type ProjectInvitationNotification,
 } from "./notification-center.logic";
 
@@ -65,16 +59,14 @@ export type AccountNotificationSource = {
 	loading: boolean;
 	loadingMore: boolean;
 	error: Error | null;
-	busyId?: string;
-	actionsDisabled: boolean;
-	markingAllRead: boolean;
+	removingIds: ReadonlySet<string>;
 	onRetry: () => void;
 	onLoadMore: () => void;
-	onMarkAllRead: () => void;
-	onMarkRead: (notification: AccountNotification) => void;
-	onMarkUnread: (notification: AccountNotification) => void;
+	onOpen: () => void;
+	onClose: () => void;
 	onDelete: (notification: AccountNotification) => void;
 	onOpenAction: (notification: AccountNotification) => void;
+	freshIds: ReadonlySet<string>;
 };
 
 export function NotificationCenter({ account }: { account?: AccountNotificationSource }) {
@@ -83,7 +75,6 @@ export function NotificationCenter({ account }: { account?: AccountNotificationS
 	const api = useApi();
 	const $api = useOpenApi();
 	const [open, setOpen] = useState(false);
-	const [view, setView] = useState<NotificationCenterView>("all");
 
 	function refetchMembershipDerived() {
 		for (const queryKey of NOTIFICATION_CENTER_MEMBERSHIP_QUERY_KEYS) {
@@ -117,7 +108,7 @@ export function NotificationCenter({ account }: { account?: AccountNotificationS
 			toast.success(copy.title, {
 				description: copy.description,
 				action: {
-					label: "Open Project",
+					label: "Open project",
 					onClick: () => void router.navigate({ href: projectDetailHref(result.project_id) }),
 				},
 			});
@@ -154,8 +145,14 @@ export function NotificationCenter({ account }: { account?: AccountNotificationS
 	const attentionCount = getPendingNotificationCount(invitationItems, account?.unreadCount);
 	const triggerLabel = getNotificationCenterTriggerLabel(attentionCount);
 
+	function handleOpenChange(nextOpen: boolean) {
+		setOpen(nextOpen);
+		if (nextOpen) account?.onOpen();
+		else account?.onClose();
+	}
+
 	return (
-		<Popover open={open} onOpenChange={setOpen}>
+		<Popover open={open} onOpenChange={handleOpenChange}>
 			<PopoverTrigger
 				render={
 					<Button
@@ -191,79 +188,30 @@ export function NotificationCenter({ account }: { account?: AccountNotificationS
 								{getNotificationCenterDescription()}
 							</PopoverDescription>
 						</div>
-						{account && account.unreadCount > 0 ? (
-							<Button
-								type="button"
-								variant="ghost"
-								size="xs"
-								disabled={account.actionsDisabled}
-								onClick={account.onMarkAllRead}
-							>
-								{account.markingAllRead ? <Spinner /> : <Check />}
-								Mark all read
-							</Button>
-						) : null}
 					</div>
 				</PopoverHeader>
-
-				<Tabs
-					value={view}
-					onValueChange={(value) => {
-						if (value === "all" || value === "unread") setView(value);
-					}}
-					className="gap-0"
-				>
-					<div className="px-4">
-						<TabsList variant="line" aria-label="Notification filters" className="h-9 w-full">
-							<TabsTrigger value="all" className="justify-start">
-								All
-							</TabsTrigger>
-							<TabsTrigger value="unread" className="justify-start">
-								Unread <TabCount>{attentionCount}</TabCount>
-							</TabsTrigger>
-						</TabsList>
-					</div>
-					<Separator />
-
-					{(["all", "unread"] as const).map((tab) => (
-						<TabsContent key={tab} value={tab} className="min-h-0">
-							<NotificationCenterContent
-								view={tab}
-								invitations={invitationItems}
-								account={account}
-								invitationsLoading={invitations.isLoading}
-								invitationsError={
-									shouldBlockQueryError(invitations.error, invitations.data)
-										? invitations.error
-										: null
-								}
-								onRetryInvitations={() => invitations.refetch()}
-								acceptInvitation={(invitation) =>
-									accept.mutate({ id: invitation.id, projectName: invitation.project_name })
-								}
-								declineInvitation={(invitation) => decline.mutate(invitation.id)}
-								acceptingId={accept.isPending ? accept.variables?.id : undefined}
-								decliningId={decline.isPending ? decline.variables : undefined}
-								onOpenAccountAction={() => setOpen(false)}
-							/>
-						</TabsContent>
-					))}
-				</Tabs>
+				<NotificationCenterContent
+					invitations={invitationItems}
+					account={account}
+					invitationsLoading={invitations.isLoading}
+					invitationsError={
+						shouldBlockQueryError(invitations.error, invitations.data) ? invitations.error : null
+					}
+					onRetryInvitations={() => invitations.refetch()}
+					acceptInvitation={(invitation) =>
+						accept.mutate({ id: invitation.id, projectName: invitation.project_name })
+					}
+					declineInvitation={(invitation) => decline.mutate(invitation.id)}
+					acceptingId={accept.isPending ? accept.variables?.id : undefined}
+					decliningId={decline.isPending ? decline.variables : undefined}
+					onOpenAccountAction={() => handleOpenChange(false)}
+				/>
 			</PopoverContent>
 		</Popover>
 	);
 }
 
-function TabCount({ children }: { children: number }) {
-	return (
-		<span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground leading-none">
-			{children > 99 ? "99+" : children}
-		</span>
-	);
-}
-
 type NotificationCenterContentProps = {
-	view: NotificationCenterView;
 	invitations: ProjectInvitationNotification[];
 	account?: AccountNotificationSource;
 	invitationsLoading: boolean;
@@ -277,7 +225,6 @@ type NotificationCenterContentProps = {
 };
 
 function NotificationCenterContent({
-	view,
 	invitations,
 	account,
 	invitationsLoading,
@@ -289,7 +236,7 @@ function NotificationCenterContent({
 	decliningId,
 	onOpenAccountAction,
 }: NotificationCenterContentProps) {
-	const accountNotifications = filterAccountNotifications(account?.items ?? [], view);
+	const accountNotifications = account?.items ?? [];
 	const hasVisibleNotifications = accountNotifications.length > 0 || invitations.length > 0;
 	const hasSourceStatus =
 		Boolean(account?.loading) || invitationsLoading || Boolean(account?.error || invitationsError);
@@ -303,10 +250,8 @@ function NotificationCenterContent({
 						<AccountNotificationRow
 							key={notification.id}
 							notification={notification}
-							busy={account?.busyId === notification.id}
-							disabled={Boolean(account?.actionsDisabled)}
-							onMarkRead={account?.onMarkRead}
-							onMarkUnread={account?.onMarkUnread}
+							busy={account?.removingIds.has(notification.id) ?? false}
+							fresh={account?.freshIds.has(notification.id) ?? false}
 							onDelete={account?.onDelete}
 							onOpenAction={(item) => {
 								onOpenAccountAction();
@@ -354,9 +299,7 @@ function NotificationCenterContent({
 				/>
 			) : null}
 
-			{!hasVisibleNotifications && !hasSourceStatus && !canLoadMoreAccount ? (
-				<EmptyState view={view} />
-			) : null}
+			{!hasVisibleNotifications && !hasSourceStatus && !canLoadMoreAccount ? <EmptyState /> : null}
 
 			{canLoadMoreAccount ? (
 				<div className="border-t px-4 py-3 text-center">
@@ -390,30 +333,22 @@ function NotificationSection({ title, children }: { title: string; children: Rea
 type AccountNotificationRowProps = {
 	notification: AccountNotification;
 	busy: boolean;
-	disabled: boolean;
-	onMarkRead?: (notification: AccountNotification) => void;
-	onMarkUnread?: (notification: AccountNotification) => void;
 	onDelete?: (notification: AccountNotification) => void;
 	onOpenAction: (notification: AccountNotification) => void;
+	fresh: boolean;
 };
 
 function AccountNotificationRow({
 	notification,
 	busy,
-	disabled,
-	onMarkRead,
-	onMarkUnread,
 	onDelete,
 	onOpenAction,
+	fresh,
 }: AccountNotificationRowProps) {
+	const isNew = fresh || !notification.read;
 	return (
-		<li
-			className={cn(
-				"group relative px-4 py-3.5 transition-colors",
-				!notification.read && "bg-muted/35",
-			)}
-		>
-			{!notification.read ? (
+		<li className={cn("group relative px-4 py-3.5 transition-colors", isNew && "bg-muted/35")}>
+			{isNew ? (
 				<span
 					aria-hidden="true"
 					className="absolute top-5 left-1.5 size-1.5 rounded-full bg-primary"
@@ -426,9 +361,9 @@ function AccountNotificationRow({
 				<div className="min-w-0 flex-1">
 					<div className="flex min-w-0 items-start justify-between gap-3">
 						<div className="min-w-0">
-							<div className={cn("text-sm", notification.read ? "font-medium" : "font-semibold")}>
+							<div className={cn("text-sm", isNew ? "font-semibold" : "font-medium")}>
 								{notification.title}
-								{!notification.read ? <span className="sr-only"> (unread)</span> : null}
+								{isNew ? <span className="sr-only"> (new)</span> : null}
 							</div>
 							<time
 								dateTime={notification.createdAt.toISOString()}
@@ -447,7 +382,7 @@ function AccountNotificationRow({
 											type="button"
 											variant="ghost"
 											size="icon-xs"
-											disabled={disabled}
+											disabled={busy}
 											aria-label={`More actions for ${notification.title}`}
 										/>
 									}
@@ -455,18 +390,6 @@ function AccountNotificationRow({
 									{busy ? <Spinner /> : <MoreHorizontal />}
 								</DropdownMenuTrigger>
 								<DropdownMenuContent align="end" className="w-44">
-									{notification.read ? (
-										<DropdownMenuItem onClick={() => onMarkUnread?.(notification)}>
-											<RefreshCw />
-											Mark as unread
-										</DropdownMenuItem>
-									) : (
-										<DropdownMenuItem onClick={() => onMarkRead?.(notification)}>
-											<Check />
-											Mark as read
-										</DropdownMenuItem>
-									)}
-									<DropdownMenuSeparator />
 									<DropdownMenuItem variant="destructive" onClick={() => onDelete?.(notification)}>
 										<Trash2 />
 										Remove
@@ -484,7 +407,7 @@ function AccountNotificationRow({
 								type="button"
 								variant="outline"
 								size="xs"
-								disabled={disabled}
+								disabled={busy}
 								onClick={() => onOpenAction(notification)}
 							>
 								<ExternalLink />
@@ -596,8 +519,8 @@ function SourceError({
 	);
 }
 
-function EmptyState({ view }: { view: NotificationCenterView }) {
-	const empty = getNotificationCenterEmptyCopy(view);
+function EmptyState() {
+	const empty = getNotificationCenterEmptyCopy();
 	return (
 		<div className="flex min-h-48 flex-col items-center justify-center px-8 py-10 text-center">
 			<div className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">

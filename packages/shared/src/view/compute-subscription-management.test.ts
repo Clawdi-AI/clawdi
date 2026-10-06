@@ -37,7 +37,7 @@ describe("computeSubscriptionManagement", () => {
 			action: "disabled",
 			target: null,
 			unavailableReason:
-				"Upgrade availability will appear after this agent’s compute details finish syncing.",
+				"Upgrade availability will appear after this agent's plan details finish syncing.",
 		});
 		expect(
 			computeSubscriptionManagement({

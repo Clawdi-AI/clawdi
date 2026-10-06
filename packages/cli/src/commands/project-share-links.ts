@@ -1,6 +1,6 @@
 import chalk from "chalk";
 
-import { ApiError } from "../lib/api-client";
+import { ApiClient, ApiError } from "../lib/api-client";
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 
@@ -81,10 +81,12 @@ export async function projectShareLinksCommand(
 			}
 			linkId = matches[0].id;
 		}
-		const r = await fetch(`${apiUrl}/v1/projects/${projectId}/share-links/${linkId}`, {
-			method: "DELETE",
-			headers: { Authorization: `Bearer ${apiKey}` },
-		});
+		const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
+			`/v1/projects/${projectId}/share-links/${linkId}`,
+			{
+				method: "DELETE",
+			},
+		);
 		if (r.status === 404) {
 			console.error(chalk.red("Link not found on that project."));
 			process.exitCode = 1;
@@ -106,7 +108,7 @@ export async function projectShareLinksCommand(
 	console.log(chalk.bold(`Project share links (${links.length})`));
 	console.log(
 		chalk.gray(
-			"  Links grant viewer read access after accept, including CLI Vault runtime reads. Agent use stays separate.",
+			"  Links grant viewer read access after accept, including CLI vault runtime reads. Agent use stays separate.",
 		),
 	);
 	for (const link of links) {

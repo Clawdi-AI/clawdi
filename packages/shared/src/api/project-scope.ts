@@ -106,14 +106,14 @@ export function resolveAgentProjectScope(
 ): { bindings: AgentProjectBinding[]; projectIds: string[] } {
 	const primaryBindings = bindings.filter((binding) => binding.binding_type === "primary");
 	if (primaryBindings.length !== 1) {
-		throw new Error("The Workspace is not available yet. Refresh and try again.");
+		throw new Error("The workspace is not available yet. Refresh and try again.");
 	}
 	const primary = primaryBindings[0];
 	if (!primary) {
-		throw new Error("The Workspace is not available yet. Refresh and try again.");
+		throw new Error("The workspace is not available yet. Refresh and try again.");
 	}
 	if (expectedPrimaryProjectId && primary.project_id !== expectedPrimaryProjectId) {
-		throw new Error("The Workspace is still syncing. Refresh and try again.");
+		throw new Error("The workspace is still syncing. Refresh and try again.");
 	}
 
 	const orderedBindings = orderedAgentProjectBindings(bindings);

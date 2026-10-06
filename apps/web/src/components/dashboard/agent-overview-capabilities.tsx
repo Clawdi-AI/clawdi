@@ -14,6 +14,7 @@ import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
 	type AgentNavigationVariant,
 } from "@/lib/navigation-model";
+import { cn } from "@/lib/utils";
 
 export type AgentOverviewModuleContent = {
 	description: ReactNode;
@@ -126,6 +127,7 @@ function OverviewCardHeading({
 	tint,
 	loading,
 	arrow = true,
+	prominent = false,
 }: {
 	title: string;
 	description: ReactNode;
@@ -133,10 +135,11 @@ function OverviewCardHeading({
 	tint: string;
 	loading: boolean;
 	arrow?: boolean;
+	prominent?: boolean;
 }) {
 	return (
 		<>
-			<IconChip size="sm" tint={loading ? "bg-muted animate-pulse" : tint}>
+			<IconChip size={prominent ? "md" : "sm"} tint={loading ? "bg-muted animate-pulse" : tint}>
 				{loading ? null : <Icon />}
 			</IconChip>
 			<div className={agentOverviewCapabilitiesClasses.headingBody}>
@@ -160,7 +163,15 @@ function OverviewCardHeading({
 			{arrow && loading ? (
 				<Skeleton className={agentOverviewCapabilitiesClasses.arrowSkeleton} />
 			) : arrow ? (
-				<ArrowRight aria-hidden="true" className={agentOverviewCapabilitiesClasses.arrow} />
+				<ArrowRight
+					aria-hidden="true"
+					className={cn(
+						agentOverviewCapabilitiesClasses.arrow,
+						prominent
+							? agentOverviewCapabilitiesClasses.arrowProminent
+							: agentOverviewCapabilitiesClasses.arrowDefault,
+					)}
+				/>
 			) : null}
 		</>
 	);
@@ -264,6 +275,7 @@ export function OverviewNavigationCard({
 	link,
 	disabled = false,
 	loading = false,
+	prominent = false,
 }: {
 	id: string;
 	title: string;
@@ -273,6 +285,8 @@ export function OverviewNavigationCard({
 	link: OverviewLinkOptions | null;
 	disabled?: boolean;
 	loading?: boolean;
+	/** Visually emphasizes the card as a primary entry point. */
+	prominent?: boolean;
 }) {
 	const content = (
 		<OverviewCardHeading
@@ -282,6 +296,7 @@ export function OverviewNavigationCard({
 			tint={tint}
 			loading={loading}
 			arrow={Boolean(link || disabled || loading)}
+			prominent={prominent}
 		/>
 	);
 	return (
@@ -291,7 +306,13 @@ export function OverviewNavigationCard({
 			data-overview-module={id}
 			data-overview-module-skeleton={loading ? id : undefined}
 			aria-busy={loading || undefined}
-			className={agentOverviewCapabilitiesClasses.statusCard}
+			data-overview-prominent={prominent || undefined}
+			className={cn(
+				agentOverviewCapabilitiesClasses.statusCard,
+				prominent
+					? agentOverviewCapabilitiesClasses.statusCardProminent
+					: agentOverviewCapabilitiesClasses.statusCardDefault,
+			)}
 		>
 			<CardHeader className={agentOverviewCapabilitiesClasses.statusHeader}>
 				{loading ? (

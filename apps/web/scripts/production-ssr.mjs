@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { after, mock, test } from "node:test";
+import { AGENT_FILES } from "../src/lib/agent-files.ts";
 
 // Exercise the deployed bundle graph with real Clerk middleware and providers.
 // These syntactically valid fixture keys do not belong to a Clerk tenant.
@@ -45,6 +46,25 @@ function request(path) {
 	});
 }
 
+function authenticatedRequest(path) {
+	const now = Math.floor(Date.now() / 1000);
+	const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+	const payload = `${encode({ alg: "RS256", typ: "JWT", kid: "ssr-fixture" })}.${encode({
+		iss: "https://ssr.clerk.accounts.dev",
+		sub: "user_ssr_fixture",
+		sid: "sess_ssr_fixture",
+		iat: now,
+		nbf: now - 5,
+		exp: now + 60,
+		v: 2,
+		sts: "active",
+	})}`;
+	const token = `${payload}.${sign("RSA-SHA256", Buffer.from(payload), privateKey).toString("base64url")}`;
+	const authenticated = request(path);
+	authenticated.headers.set("authorization", `Bearer ${token}`);
+	return authenticated;
+}
+
 test("production documents use fresh CSP nonces on every executable script", async () => {
 	const nonces = new Set();
 	for (let i = 0; i < 2; i++) {
@@ -56,6 +76,8 @@ test("production documents use fresh CSP nonces on every executable script", asy
 		assert.match(csp, /'strict-dynamic'/);
 		assert.doesNotMatch(csp, /script-src[^;]*(?:'unsafe-inline'|'unsafe-eval')/);
 		assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+		assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+		assert.equal(response.headers.get("referrer-policy"), "strict-origin-when-cross-origin");
 		nonces.add(nonce);
 		const html = await response.text();
 		for (const [tag] of html.matchAll(/<script\b[^>]*>/g)) {
@@ -66,6 +88,26 @@ test("production documents use fresh CSP nonces on every executable script", asy
 	}
 	assert.equal(nonces.size, 2);
 });
+
+for (const file of Object.values(AGENT_FILES)) {
+	for (const method of ["GET", "HEAD"]) {
+		test(`production ${method} ${file.path} stays publicly cacheable without a document nonce`, async () => {
+			const response = await server.fetch(new Request(request(file.path), { method }));
+			assert.equal(response.status, file.path === AGENT_FILES.legacyGuide.path ? 301 : 200);
+			assert.equal(
+				response.headers.get("cache-control"),
+				"public, max-age=300, s-maxage=300, stale-while-revalidate=86400",
+			);
+			assert.equal(response.headers.get("content-security-policy"), null);
+			assert.equal(response.headers.get("content-type"), `${file.contentType}; charset=utf-8`);
+			assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+			assert.equal(response.headers.get("referrer-policy"), "strict-origin-when-cross-origin");
+			if (file.path === AGENT_FILES.legacyGuide.path) {
+				assert.equal(response.headers.get("location"), "https://clawdi.ai/get-started.md");
+			}
+		});
+	}
+}
 
 for (const [path, title] of [
 	["/sign-in", "Sign in"],
@@ -90,28 +132,30 @@ for (const path of ["/", "/agents"]) {
 		// Disabled dashboard queries still schedule cache GC; keep those timers
 		// scoped to this SSR request instead of retaining them in the test worker.
 		t.mock.timers.enable({ apis: ["setTimeout"] });
-		const now = Math.floor(Date.now() / 1000);
-		const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
-		const payload = `${encode({ alg: "RS256", typ: "JWT", kid: "ssr-fixture" })}.${encode({
-			iss: "https://ssr.clerk.accounts.dev",
-			sub: "user_ssr_fixture",
-			sid: "sess_ssr_fixture",
-			iat: now,
-			nbf: now - 5,
-			exp: now + 60,
-			v: 2,
-			sts: "active",
-		})}`;
-		const token = `${payload}.${sign("RSA-SHA256", Buffer.from(payload), privateKey).toString("base64url")}`;
-		const authenticated = request(path);
-		authenticated.headers.set("authorization", `Bearer ${token}`);
-		const response = await server.fetch(authenticated);
+		const response = await server.fetch(authenticatedRequest(path));
 		const html = await response.text();
 		assert.equal(response.status, 200, html);
 		assert.match(html, /data-testid="dashboard-page-content"/);
 		assert.doesNotMatch(html, /Loading session/);
 	});
+}
 
+test("production SSR redirects the signed-out hosted homepage to the marketing root", async () => {
+	const response = await server.fetch(request("/"));
+	assert.equal(response.status, 307);
+	assert.equal(response.headers.get("location"), "https://clawdi.ai/");
+	assert.equal(response.headers.get("cache-control"), "private, no-store");
+	assert.equal(await response.text(), "");
+});
+
+for (const path of [
+	"/dashboard",
+	"/dashboard?deploy_profile=sui&settings=billing-wallet",
+	"/agents",
+	"/?settings=billing-wallet",
+	"/cli-authorize?user_code=ABCD",
+	"/oauth/codex/callback?code=opaque&state=state",
+]) {
 	test(`production SSR protects ${path} without auth bypass`, async () => {
 		const response = await server.fetch(request(path));
 		assert.equal(response.status, 307);
@@ -119,6 +163,17 @@ for (const path of ["/", "/agents"]) {
 			response.headers.get("location"),
 			`/sign-in?redirect_url=${encodeURIComponent(path)}`,
 		);
+		assert.equal(response.headers.get("cache-control"), "private, no-store");
+		assert.equal(await response.text(), "");
+	});
+}
+
+for (const search of ["", "?deploy_profile=sui&settings=billing-wallet"]) {
+	test(`production SSR admits dashboard alias ${search} before redirecting to overview`, async () => {
+		const response = await server.fetch(authenticatedRequest(`/dashboard${search}`));
+		assert.equal(response.status, 307);
+		assert.equal(response.headers.get("location"), `/${search}`);
+		assert.equal(response.headers.get("cache-control"), "private, no-store");
 		assert.equal(await response.text(), "");
 	});
 }

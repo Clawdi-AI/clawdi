@@ -158,9 +158,9 @@ export function daemonStatusVisual(
 	const compactLabel = isHosted && kind === "set-up" ? "Pending" : COMPACT_LABEL[kind];
 	const tooltip = isHosted
 		? kind === "set-up"
-			? "Sync will start with the Agent’s next update."
+			? "Sync will start with the agent's next update."
 			: kind === "paused"
-				? "Sync status is unavailable. Manage this Agent in Agent settings."
+				? "Sync status is unavailable. Manage this agent in agent settings."
 				: STATUS_TOOLTIP[kind]
 		: STATUS_TOOLTIP[kind];
 

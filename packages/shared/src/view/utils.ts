@@ -112,7 +112,7 @@ export function formatNumber(n: number): string {
 export function errorMessage(e: unknown): string {
 	if (e instanceof Error) return e.message;
 	if (typeof e === "string") return e;
-	return "Something went wrong.";
+	return "Couldn't complete the request. Try again.";
 }
 
 const COMMAND_TAG_RE = /<command-(?:message|name|args)>[\s\S]*?<\/command-(?:message|name|args)>/g;

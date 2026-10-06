@@ -1,20 +1,22 @@
 "use client";
+
 import { addAgentSetupClasses } from "@clawdi/shared/ui";
 import {
 	agentRegistrationDescription,
-	agentSetupPrompt,
 	agentSurfaceCopy,
 	CLI_STEPS,
-	errorMessage,
+	INSTALLATION_DOCS_URL,
 } from "@clawdi/shared/view";
 import { Link } from "@tanstack/react-router";
 import { Bot, Check, Copy, Terminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 import { AgentLabel, AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { agentSetupPrompt } from "@/lib/agent-setup-prompt";
 import { useOpenApi } from "@/lib/api";
+import { publicSiteOrigin } from "@/lib/public-site";
 import { cn } from "@/lib/utils";
 
 // Fallback origin used during SSR and on the first client render before the
@@ -30,21 +32,10 @@ function useOrigin() {
 	return origin;
 }
 
-function useCopy(duration = 2000) {
-	const [copied, setCopied] = useState(false);
-	const copy = (text: string) => {
-		navigator.clipboard
-			.writeText(text)
-			.then(() => {
-				setCopied(true);
-				setTimeout(() => setCopied(false), duration);
-			})
-			.catch((e) => toast.error("Copy failed", { description: errorMessage(e) }));
-	};
-	return { copied, copy };
-}
+// The CLI onboarding contract test reads the install steps from this module.
+export { CLI_STEPS };
 
-function CopyButton({
+export function CopyButton({
 	text,
 	label,
 	className,
@@ -53,21 +44,32 @@ function CopyButton({
 	label: string;
 	className?: string;
 }) {
-	const { copied, copy } = useCopy();
+	const { copied, copy } = useCopyToClipboard(
+		{
+			success: false,
+			error: "Couldn't copy. Select the prompt and copy it manually.",
+		},
+		2000,
+	);
 	return (
-		<Button
-			variant="ghost"
-			size="icon-xs"
-			onClick={() => copy(text)}
-			className={cn("text-muted-foreground hover:text-foreground", className)}
-			aria-label={label}
-		>
-			{copied ? (
-				<Check className={addAgentSetupClasses.actionIcon} />
-			) : (
-				<Copy className={addAgentSetupClasses.actionIcon} />
-			)}
-		</Button>
+		<>
+			<span aria-live="polite" className="sr-only">
+				{copied ? "Copied" : ""}
+			</span>
+			<Button
+				variant="ghost"
+				size="icon-xs"
+				onClick={() => copy(text)}
+				className={cn("text-muted-foreground hover:text-foreground", className)}
+				aria-label={label}
+			>
+				{copied ? (
+					<Check className={addAgentSetupClasses.actionIcon} />
+				) : (
+					<Copy className={addAgentSetupClasses.actionIcon} />
+				)}
+			</Button>
+		</>
 	);
 }
 
@@ -79,7 +81,7 @@ function CopyButton({
 export function AddAgentSetup() {
 	const api = useOpenApi();
 	const origin = useOrigin();
-	const prompt = agentSetupPrompt(origin);
+	const prompt = agentSetupPrompt(publicSiteOrigin(origin));
 	const baseline = useRef<Set<string> | null>(null);
 
 	// Live success detection: snapshot the env ids on first load, then poll
@@ -109,7 +111,7 @@ export function AddAgentSetup() {
 
 	return (
 		<div className={addAgentSetupClasses.root}>
-			<Tabs defaultValue="commands">
+			<Tabs defaultValue="prompt">
 				<TabsList className={addAgentSetupClasses.tabsList}>
 					<TabsTrigger value="commands">
 						<Terminal data-icon="inline-start" /> Run commands
@@ -124,10 +126,11 @@ export function AddAgentSetup() {
 							{agentSurfaceCopy.runTheseCommandsInOrderOnTheMachine}
 						</p>
 						<p className={addAgentSetupClasses.requirementHint}>
-							{agentSurfaceCopy.nodeJs24IsRequired}
-						</p>
-						<p className={addAgentSetupClasses.packageManagerHint}>
-							{agentSurfaceCopy.preferBunUseBunAddGClawdiLatest}
+							{agentSurfaceCopy.installationHint}{" "}
+							<a href={INSTALLATION_DOCS_URL} className={addAgentSetupClasses.installationLink}>
+								{agentSurfaceCopy.installationLink}
+							</a>
+							.
 						</p>
 					</div>
 					<CommandSteps steps={CLI_STEPS} numbered />
@@ -146,7 +149,7 @@ export function AddAgentSetup() {
 							<span className={addAgentSetupClasses.promptLabel}>
 								{agentSurfaceCopy.setupPrompt}
 							</span>
-							<CopyButton text={prompt} label="Copy prompt" />
+							<CopyButton text={prompt} label="Copy setup prompt" />
 						</div>
 						<pre className={addAgentSetupClasses.prompt}>{prompt}</pre>
 					</div>

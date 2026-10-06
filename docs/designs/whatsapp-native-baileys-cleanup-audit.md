@@ -108,7 +108,7 @@ they are not product transport implementations.
 **A — Web discovery and activation**
 
 ```text
-apps/web/e2e/hosted-smoke.pw.ts
+apps/web/e2e/hosted-{smoke,billing,openclaw,channels,rail-nav}.pw.ts
 apps/web/src/components/entity-icon.tsx
 apps/web/src/components/entity-icon.test.tsx
 apps/web/src/hosted/v2/README.md
@@ -162,12 +162,10 @@ are the preserved A boundary or the narrow C naming described above.
 **A/C — backend verification**
 
 ```text
-backend/tests/e2e/test_channels_blackbox.py
 backend/tests/test_channel_debug_events.py
 backend/tests/test_channel_inbox.py
-backend/tests/test_channels.py
+backend/tests/test_channels_*.py
 backend/tests/test_whatsapp_baileys.py
-backend/tests/test_whatsapp_baileys_smoke.py
 backend/tests/test_whatsapp_native_transport.py
 backend/tests/test_whatsapp_noise.py
 backend/tests/test_whatsapp_provider_bridge.py
@@ -194,7 +192,7 @@ packages/cli/tests/commands/runtime.test.ts
 packages/cli/tests/egress_addon/clawdi_egress_addon_test.py
 packages/cli/tests/runtime-egress-profiles.test.ts
 packages/cli/tests/runtime-whatsapp-egress.test.ts
-packages/cli/tests/runtime.test.ts
+packages/cli/tests/runtime-*.test.ts
 ```
 
 The command/manifest files retain only stock native-plugin auth

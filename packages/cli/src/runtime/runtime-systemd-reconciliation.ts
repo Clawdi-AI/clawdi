@@ -11,6 +11,7 @@ import {
 	rmSync,
 } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
+import { parseEnv } from "node:util";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
@@ -23,6 +24,11 @@ import {
 } from "./manifest-install";
 import { runtimeRecoverableSecretValues } from "./manifest-secrets";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
+import {
+	gatewayOomProtectionLines,
+	platformOomProtectionLines,
+	runtimeMemoryBudget,
+} from "./oom-protection";
 import {
 	DEFAULT_RUN_ROOT,
 	DEFAULT_SERVICE_STATE_ROOT,
@@ -651,6 +657,7 @@ function writeSystemdSystemUnit(
 ): string {
 	return writeSystemdUnit({
 		...input,
+		extraServiceLines: [...(input.extraServiceLines ?? []), ...platformOomProtectionLines()],
 		root: input.paths.systemdSystemRoot,
 		owner: "root",
 		wantedBy: "multi-user.target",
@@ -673,6 +680,7 @@ function writeSystemdUserEnvironmentDropIn(input: {
 	name: string;
 	env: Record<string, string>;
 	unsetEnvironment?: readonly string[];
+	oomProtectionLines?: readonly string[];
 }): string {
 	const unitName = systemdUnitFileName(input.name);
 	const envFile = writeSystemdProgramEnvironment({
@@ -691,6 +699,7 @@ function writeSystemdUserEnvironmentDropIn(input: {
 		`ConditionPathExists=${systemdPath(envFile)}`,
 		"",
 		"[Service]",
+		...(input.oomProtectionLines ?? []),
 		...(input.unsetEnvironment?.length
 			? [`UnsetEnvironment=${input.unsetEnvironment.join(" ")}`]
 			: []),
@@ -1067,16 +1076,35 @@ export function publishRetainedOpenClawEnvironment(
 		return;
 	const name = runtimeSystemdProgramName(program);
 	if (!isGeneratedRuntimeSystemdPath(systemdDropInFilePath(paths, name))) return;
-	// Warm updates keep their environment publication in the final apply phase.
-	if (existsSync(systemdEnvironmentFilePath(paths, name))) return;
 	// New/legacy installs retain the normal installer and drop-in publication order.
 	if (planOfficialRuntimeServices([program], paths, true).pending.length !== 0) return;
 	runtimeRecoverableSecretValues(manifest, input.secretValues);
+	const environmentPath = systemdEnvironmentFilePath(paths, name);
+	const desiredEnvironment = runtimeSystemdUserProgramEnvironment(input);
+	if (existsSync(environmentPath)) {
+		const current = parseEnv(readFileSync(environmentPath, "utf8"));
+		const managedCredentialEnvironment = Object.entries(desiredEnvironment).filter(
+			([key]) => key === "CLAWDI_AI_API_KEY" || key.startsWith("CLAWDI_CHANNEL_"),
+		);
+		const desiredManagedEnvironment = Object.fromEntries(managedCredentialEnvironment);
+		const currentManagedEnvironment = Object.fromEntries(
+			Object.entries(current).filter(
+				([key]) => key === "CLAWDI_AI_API_KEY" || key.startsWith("CLAWDI_CHANNEL_"),
+			),
+		);
+		const managedEnvironmentIsConsistent =
+			Object.keys(desiredManagedEnvironment).length ===
+				Object.keys(currentManagedEnvironment).length &&
+			Object.entries(desiredManagedEnvironment).every(
+				([key, value]) => currentManagedEnvironment[key] === value,
+			);
+		if (managedEnvironmentIsConsistent) return;
+	}
 	writeSystemdProgramEnvironment({
 		paths,
 		name,
 		owner: "runtime-user",
-		env: runtimeSystemdUserProgramEnvironment(input),
+		env: desiredEnvironment,
 	});
 }
 
@@ -1091,6 +1119,10 @@ function writeRuntimeSystemdUserProgram(input: RuntimeSystemdUserProgramEnvironm
 			name,
 			env,
 			unsetEnvironment: ["CLAWDI_AUTH_TOKEN"],
+			oomProtectionLines:
+				program.runtime === "hermes" || program.runtime === "openclaw"
+					? gatewayOomProtectionLines(program.runtime, runtimeMemoryBudget())
+					: [],
 		});
 	}
 	return writeSystemdUserUnit({

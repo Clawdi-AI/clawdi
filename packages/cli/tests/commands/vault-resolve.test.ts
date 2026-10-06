@@ -188,7 +188,7 @@ describe("vaultResolveCommand", () => {
 		expect(out).not.toContain("sk-test");
 	});
 
-	it("explains shared Project backend drift when plaintext resolve returns project not found", async () => {
+	it("explains shared project backend drift when plaintext resolve returns project not found", async () => {
 		const { restore } = mockFetch([
 			{
 				method: "POST",
@@ -209,8 +209,8 @@ describe("vaultResolveCommand", () => {
 		}
 
 		expect(process.exitCode).toBe(1);
-		expect(err).toContain("Vault resolve could not access the selected Project.");
-		expect(err).toContain("shared Project");
+		expect(err).toContain("Vault resolve could not access the selected project.");
+		expect(err).toContain("shared project");
 		expect(err).toContain("update the Clawdi backend");
 		expect(err).not.toContain("No vault value found");
 	});

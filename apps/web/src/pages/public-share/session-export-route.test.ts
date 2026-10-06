@@ -29,7 +29,7 @@ describe("public session export errors", () => {
 
 	test("uses generic copy for internal and unknown errors", () => {
 		expect(publicSessionExportErrorMessage(500)).toBe(
-			"The service is having trouble right now. Please try again in a moment.",
+			"The service is having trouble right now. Try again in a moment.",
 		);
 		expect(publicSessionExportErrorMessage(418)).toBe("Unable to export this shared session.");
 	});
@@ -59,7 +59,7 @@ describe("public session export response headers", () => {
 				expect(response.headers.get("cache-control")).toBe("no-store");
 				expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
 				expect(await response.text()).toBe(
-					"The service is having trouble right now. Please try again in a moment.",
+					"The service is having trouble right now. Try again in a moment.",
 				);
 			},
 		);

@@ -1,10 +1,7 @@
-import { agentSurfaceCopy } from "@clawdi/shared/view";
-
-("use client");
+"use client";
 
 import { agentPluginCardClasses } from "@clawdi/shared/ui";
-
-import { identityFor } from "@clawdi/shared/view";
+import { agentSurfaceCopy, identityFor } from "@clawdi/shared/view";
 import { Blocks } from "lucide-react";
 import { HeroCard } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";

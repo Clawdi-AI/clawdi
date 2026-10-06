@@ -46,7 +46,7 @@ export function WhatsAppRepairDialog({
 					<DialogTitle>Repair WhatsApp before linking</DialogTitle>
 					<DialogDescription>
 						<span className="font-medium text-foreground">{channelName}</span> needs a fresh
-						linked-device connection. The Custom bot, existing Agent Links, paired chats, and
+						linked-device connection. The custom bot, existing agent links, paired chats, and
 						history stay unchanged.
 					</DialogDescription>
 				</DialogHeader>
@@ -59,7 +59,7 @@ export function WhatsAppRepairDialog({
 							<AlertTitle>Reconnect WhatsApp</AlertTitle>
 							<AlertDescription>
 								Repair clears only the invalid linked-device login, then asks you to scan a fresh
-								QR. It does not replace this Custom bot.
+								QR. It does not replace this custom bot.
 							</AlertDescription>
 						</Alert>
 						<DialogFooter>

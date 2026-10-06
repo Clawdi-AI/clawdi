@@ -31,7 +31,6 @@ from app.services.agent_bindings import (
 from app.services.project_runtime_skills import (
     assert_project_link_compatible,
     lock_project_binding_change,
-    lock_project_binding_set_change,
 )
 from app.services.sync_events import queue_environment_runtime_manifest_changed
 
@@ -82,12 +81,19 @@ async def list_project_bindings(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> list[AgentProjectBindingResponse]:
-    agent = await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
+    await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=agent_id)
+    # Read-only: agent registration owns the primary binding, and membership
+    # removal, unsharing and archiving own context cleanup. Links whose Project
+    # is no longer readable are hidden rather than repaired on read.
+    visible_project_ids = await project_ids_visible_to(db, auth)
     rows = (
         (
             await db.execute(
                 select(AgentProjectBinding)
-                .where(AgentProjectBinding.agent_id == agent_id)
+                .where(
+                    AgentProjectBinding.agent_id == agent_id,
+                    AgentProjectBinding.project_id.in_(visible_project_ids),
+                )
                 .order_by(
                     case((AgentProjectBinding.binding_type == "primary", 0), else_=1),
                     AgentProjectBinding.priority.asc(),
@@ -98,53 +104,6 @@ async def list_project_bindings(
         .scalars()
         .all()
     )
-    visible_project_ids = set(await project_ids_visible_to(db, auth))
-    changed = False
-    stale = [row for row in rows if row.project_id not in visible_project_ids]
-    if stale:
-        await lock_project_binding_set_change(
-            db,
-            project_ids=(row.project_id for row in stale),
-            agent_id=agent_id,
-        )
-        # Access may have changed while the cleanup waited for Link/Unlink or a
-        # Project Skill write. Only remove links that are still inaccessible at
-        # the serialized write boundary.
-        visible_project_ids = set(await project_ids_visible_to(db, auth))
-        stale = [row for row in rows if row.project_id not in visible_project_ids]
-        removed_context_binding = any(row.binding_type == "context" for row in stale)
-        for row in stale:
-            await db.delete(row)
-        if removed_context_binding:
-            await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
-        changed = True
-        rows = [row for row in rows if row.project_id in visible_project_ids]
-
-    if agent.default_project_id in visible_project_ids:
-        await ensure_agent_primary_binding(
-            db,
-            agent=agent,
-            created_by_user_id=auth.user_id,
-        )
-        changed = True
-
-    if changed:
-        await db.commit()
-        rows = (
-            (
-                await db.execute(
-                    select(AgentProjectBinding)
-                    .where(AgentProjectBinding.agent_id == agent_id)
-                    .order_by(
-                        case((AgentProjectBinding.binding_type == "primary", 0), else_=1),
-                        AgentProjectBinding.priority.asc(),
-                        AgentProjectBinding.created_at.asc(),
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
     return [_to_response(row) for row in rows]
 
 

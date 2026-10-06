@@ -67,8 +67,8 @@ export function VaultCard({
 				usedBy.length
 					? `used by ${usedBy.slice(0, 2).join(", ")}${usedBy.length > 2 ? ` +${usedBy.length - 2}` : ""}`
 					: vault.project_ids.length
-						? "Linked to Projects"
-						: "not in any Project yet",
+						? "Linked to projects"
+						: "not in any project yet",
 			]}
 			footerWrap
 			actionsVisibility="always"

@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-	type AccountNotification,
-	filterAccountNotifications,
 	getAcceptedProjectInvitationToastCopy,
 	getNotificationCenterEmptyCopy,
 	getNotificationCenterTriggerLabel,
@@ -10,18 +8,6 @@ import {
 	type ProjectInvitationNotification,
 	resolveNotificationUrl,
 } from "./notification-center.logic";
-
-const walletNotification = {
-	id: "wallet-low-balance",
-	title: "Your wallet balance is down to $1.25",
-	description: "Top up before paid requests begin to fail.",
-	category: "Wallet",
-	createdAt: new Date("2026-05-15T08:00:00Z"),
-	read: false,
-	actionLabel: "Top up",
-	actionUrl: "https://cloud.clawdi.ai/?settings=billing-wallet#billing",
-	severity: "warning",
-} satisfies AccountNotification;
 
 const invitation = {
 	id: "inv_1",
@@ -49,19 +35,8 @@ describe("notification center logic", () => {
 		expect(getNotificationCenterTriggerLabel(2)).toBe("Notifications, 2 new items");
 	});
 
-	test("filters history into all and unread views", () => {
-		const readNotification = { ...walletNotification, id: "read", read: true };
-		expect(filterAccountNotifications([walletNotification, readNotification], "all")).toHaveLength(
-			2,
-		);
-		expect(filterAccountNotifications([walletNotification, readNotification], "unread")).toEqual([
-			walletNotification,
-		]);
-
-		const allEmpty = getNotificationCenterEmptyCopy("all");
-		expect(allEmpty.title).toBe("No notifications yet");
-		const unreadEmpty = getNotificationCenterEmptyCopy("unread");
-		expect(unreadEmpty.title).toBe("You're all caught up");
+	test("uses the notification history empty copy", () => {
+		expect(getNotificationCenterEmptyCopy().title).toBe("No notifications yet");
 	});
 
 	test("accepts same-origin and HTTPS notification actions only", () => {
@@ -71,9 +46,37 @@ describe("notification center logic", () => {
 		expect(
 			resolveNotificationUrl("https://www.clawdi.ai/dashboard", "https://cloud.clawdi.ai")?.kind,
 		).toBe("external");
+		const apex = resolveNotificationUrl(
+			"https://clawdi.ai/dashboard?settings=billing",
+			"https://cloud.clawdi.ai",
+		);
+		expect(apex?.kind).toBe("external");
+		expect(apex?.url.href).toBe("https://clawdi.ai/dashboard?settings=billing");
+		for (const url of [
+			"https://clawdi.ai.evil.test/dashboard",
+			"https://clawdi.ai@evil.test/dashboard",
+			"https://evil.clawdi.ai/dashboard",
+			"http://clawdi.ai/dashboard",
+			"https://clawdi.ai:444/dashboard",
+		]) {
+			expect(resolveNotificationUrl(url, "https://cloud.clawdi.ai")).toBeNull();
+		}
 		expect(resolveNotificationUrl("https://example.com", "https://cloud.clawdi.ai")).toBeNull();
 		expect(resolveNotificationUrl("http://example.com", "https://cloud.clawdi.ai")).toBeNull();
 		expect(resolveNotificationUrl("javascript:alert(1)", "https://cloud.clawdi.ai")).toBeNull();
+	});
+
+	test("preserves the path, search, and hash of same-origin notification actions", () => {
+		const origin = "https://cloud.clawdi.ai";
+		const path = "/agents/11111111-1111-4111-8111-111111111111";
+		const href = `${path}?settings=billing-wallet#billing`;
+		for (const value of [href, `${origin}${href}`]) {
+			const target = resolveNotificationUrl(value, origin);
+			expect(target?.kind).toBe("same-origin");
+			expect(target?.url.pathname).toBe(path);
+			expect(target?.url.search).toBe("?settings=billing-wallet");
+			expect(target?.url.hash).toBe("#billing");
+		}
 	});
 
 	test("includes the accepted Project name with a fallback", () => {

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -11,14 +9,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-
-def _load_migration(filename: str, module_name: str):
-    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / filename
-    spec = importlib.util.spec_from_file_location(module_name, migration_path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
+from tests.migration_harness import load_migration
 
 
 @pytest.mark.asyncio
@@ -28,7 +19,7 @@ async def test_agent_default_name_migration_backfills_long_machine_name(engine: 
     operations so the column DDL and backfill SQL are both exercised.
     """
 
-    migration = _load_migration(
+    migration = load_migration(
         "e9c3a17d5b42_agent_default_name.py",
         "agent_default_name_migration",
     )
@@ -79,7 +70,7 @@ async def test_agent_default_name_migration_backfills_long_machine_name(engine: 
 async def test_agent_default_name_cleanup_migration_reassigns_explicit_and_clears_self_managed(
     engine: AsyncEngine,
 ):
-    migration = _load_migration(
+    migration = load_migration(
         "74d1b8e2c9a3_reassign_agent_default_names.py",
         "reassign_agent_default_names_migration",
     )

@@ -6,5 +6,6 @@ export const AGENT_TYPES = [
 	"hermes",
 	"pi",
 	"opencode",
+	"dsh",
 ] as const;
 export type AgentType = (typeof AGENT_TYPES)[number];

@@ -44,7 +44,10 @@ on:
       - "packages/cli/src/commands/setup.ts"
       - "packages/cli/src/commands/agent-reconnect.ts"
       - "packages/cli/skills/**"
-      - "packages/cli/tests/runtime.test.ts"
+      - "packages/cli/tests/runtime-*.test.ts"
+      - "packages/cli/src/test-support/runtime-harness.ts"
+      - "packages/cli/src/test-support/mock-fetch.ts"
+      - "packages/cli/tests/commands/helpers.ts"
       - "packages/cli/tests/commands/setup.test.ts"
       - "packages/shared/src/types/**"
       - "packages/shared/src/api/api.generated.ts"
@@ -80,6 +83,7 @@ on:
       - "backend/tests/test_smoke.py"
       - "backend/scripts/check_postgres_runtime.py"
       - ".github/workflows/clean-test-runner-ci.yml"
+      - ".github/actions/setup-docker-hub-mirror/**"
   push:
     branches: [main]
     paths:
@@ -114,7 +118,10 @@ on:
       - "packages/cli/src/commands/setup.ts"
       - "packages/cli/src/commands/agent-reconnect.ts"
       - "packages/cli/skills/**"
-      - "packages/cli/tests/runtime.test.ts"
+      - "packages/cli/tests/runtime-*.test.ts"
+      - "packages/cli/src/test-support/runtime-harness.ts"
+      - "packages/cli/src/test-support/mock-fetch.ts"
+      - "packages/cli/tests/commands/helpers.ts"
       - "packages/cli/tests/commands/setup.test.ts"
       - "packages/shared/src/types/**"
       - "packages/shared/src/api/api.generated.ts"
@@ -150,6 +157,7 @@ on:
       - "backend/tests/test_smoke.py"
       - "backend/scripts/check_postgres_runtime.py"
       - ".github/workflows/clean-test-runner-ci.yml"
+      - ".github/actions/setup-docker-hub-mirror/**"
 
 permissions:
   contents: read
@@ -171,20 +179,20 @@ jobs:
       CLAWDI_TEST_RUNNER_SKIP_BUILD: "1"
     steps:
       - uses: actions/checkout@v7
+      - name: Set up Docker Hub mirror
+        id: docker-hub-mirror
+        uses: ./.github/actions/setup-docker-hub-mirror
+        with:
+          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+          prefetch-images: |
+            moby/buildkit:buildx-stable-1
       - name: Check Docker availability
         run: |
           docker version
           docker compose version
       - name: Validate Compose config
         run: docker compose -f docker-compose.test.yml config >/dev/null
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-        with:
-          # Docker Hub rate-limits anonymous CI pulls; mirror.gcr.io serves cached
-          # Docker Hub images and BuildKit falls back to Docker Hub on a miss.
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["mirror.gcr.io"]
       - name: Build cached test runner image
         uses: docker/build-push-action@v7
         with:

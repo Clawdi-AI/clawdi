@@ -91,12 +91,12 @@ export function ShareProjectDialog({
 			<DialogContent className={shareProjectClasses.content}>
 				<DialogHeader>
 					<DialogTitle className={shareProjectClasses.title}>
-						{isShareableProject ? `Share ${projectName}` : "Only Projects you create can be shared"}
+						{isShareableProject ? `Share ${projectName}` : "Only projects you create can be shared"}
 					</DialogTitle>
 					<DialogDescription>
 						{isShareableProject
 							? SHARING_COPY.permissions
-							: "Sharing is available for Projects you create. An Agent's private Workspace cannot be shared."}
+							: "Sharing is available for projects you create. An agent's private workspace cannot be shared."}
 					</DialogDescription>
 				</DialogHeader>
 				{isShareableProject ? (
@@ -113,7 +113,7 @@ export function ShareProjectDialog({
 						<AlertCircle />
 						<AlertTitle>This resource cannot be shared</AlertTitle>
 						<AlertDescription>
-							Only Projects you create can have members, invitations, and share links.
+							Only projects you create can have members, invitations, and share links.
 						</AlertDescription>
 					</Alert>
 				)}
@@ -348,7 +348,7 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 					</Button>
 				</div>
 				<details className="mt-2 text-sm">
-					<summary className="cursor-pointer">Send to an Agent</summary>
+					<summary className="cursor-pointer">Send to an agent</summary>
 					<Button
 						variant="ghost"
 						size="sm"
@@ -529,7 +529,7 @@ function InvitationsPanel({ projectId }: { projectId: string }) {
 					variant="destructive"
 					message={
 						invites.error instanceof ApiError && invites.error.status === 404
-							? "Email invitations are unavailable for this Project."
+							? "Email invitations are unavailable for this project."
 							: normalizeApiError(invites.error)
 					}
 				/>
@@ -804,7 +804,7 @@ function StopSharingPanel({ projectId }: { projectId: string }) {
 							className={shareProjectClasses.manageAction}
 							size="sm"
 							disabled={unshare.isPending}
-							aria-label="Stop all sharing for this Project"
+							aria-label="Stop all sharing for this project"
 						/>
 					}
 				>

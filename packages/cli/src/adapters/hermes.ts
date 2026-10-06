@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { type Dirent, existsSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
@@ -9,38 +9,34 @@ import {
 	type SessionEventDraft,
 	sequenceSessionEvents,
 } from "../lib/session-events";
-import { isValidSkillKey } from "../lib/skill-key";
-import { replaceSkillArchiveTarGz } from "../lib/tar";
-import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
+import { describeSkillKey, isValidSkillKey } from "../lib/skill-key";
+import { log } from "../serve/log";
 import {
-	migrateLegacyLocalSetupSkill,
-	mutateUserSkillTarget,
-	shouldIgnoreUserSkill,
-} from "../runtime/managed-skill-reservation";
-import type {
-	AgentAdapterCore,
-	RawSession,
-	RawSkill,
-	SessionBatchScan,
-	SessionContentPart,
-	SessionEvent,
-	SessionEventDisplayMetadata,
-	SessionEventSemantics,
-	SessionMessage,
-	SessionScanRequest,
-	SessionScanResult,
-	SessionUserActivity,
-	SyncReadContext,
+	type AgentAdapterCore,
+	collectFromScan,
+	type RawSession,
+	type SessionBatchScan,
+	type SessionContentPart,
+	type SessionEvent,
+	type SessionEventDisplayMetadata,
+	type SessionEventSemantics,
+	type SessionMessage,
+	type SessionScanRequest,
+	type SessionUserActivity,
+	type SyncReadContext,
 } from "./base";
-import { getHermesHome, SKIP_DIRS, safeSkillDirectoryPath } from "./paths";
+import { getHermesHome } from "./paths";
 import {
 	canonicalStructuredString,
 	jsonObject,
 	jsonString,
 	reasoningContent,
+	SESSION_PROJECTION_REVISION,
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
+import { EAGER_SESSION_MAX_BYTES, SESSION_RECORD_MAX_BYTES } from "./session-source";
+import { flatSkillModule } from "./skill-dir";
 import { openReadonlySqlite, type ReadonlySqliteDatabase } from "./sqlite";
 import { readCommandVersion } from "./version";
 
@@ -107,6 +103,7 @@ const MODERN_MESSAGE_OPTIONAL_COLUMNS = [
 	["compacted", "0"],
 	["display_kind", "NULL"],
 	["display_metadata", "NULL"],
+	["display_identity", "NULL"],
 	["reasoning", "NULL"],
 	["reasoning_content", "NULL"],
 	["reasoning_details", "NULL"],
@@ -115,11 +112,7 @@ const MODERN_MESSAGE_OPTIONAL_COLUMNS = [
 
 const HERMES_CONTENT_JSON_PREFIX = "\0json:";
 const HERMES_SESSION_SCAN_BATCH_SIZE = 32;
-// Bump when persisted Hermes rows map to different Session/Event bytes.
-const HERMES_SESSION_PROJECTION_REVISION = 3;
-const HERMES_EAGER_MAX_BYTES = 256 * 1024;
 const HERMES_EAGER_MAX_ROWS = 512;
-const HERMES_MESSAGE_MAX_BYTES = 8 * 1024 * 1024;
 
 function messagePayloadSizeSql(columns: readonly TableInfoRow[]): string {
 	const names = new Set(columns.map((column) => column.name));
@@ -146,7 +139,7 @@ function modernMessageSelectColumns(columns: readonly TableInfoRow[]): string {
 	const names = new Set(columns.map((column) => column.name));
 	const size = messagePayloadSizeSql(columns);
 	const bounded = (name: string) =>
-		`CASE WHEN (${size}) <= ${HERMES_MESSAGE_MAX_BYTES} THEN ${name} ELSE NULL END AS ${name}`;
+		`CASE WHEN (${size}) <= ${SESSION_RECORD_MAX_BYTES} THEN ${name} ELSE NULL END AS ${name}`;
 	return [
 		"id",
 		"role",
@@ -171,12 +164,13 @@ function messageRevisionQuery(columns: readonly TableInfoRow[]): string {
 async function sessionSourceRevision(
 	row: SessionRow,
 	statement: ReturnType<ReadonlySqliteDatabase["prepare"]>,
+	modelsUsed: readonly string[],
 	context?: SyncReadContext,
 	lastId = Number.MAX_SAFE_INTEGER,
 ): Promise<string> {
 	const hash = createHash("sha256").update(
 		JSON.stringify([
-			HERMES_SESSION_PROJECTION_REVISION,
+			SESSION_PROJECTION_REVISION,
 			row.id,
 			row.source,
 			row.model,
@@ -187,6 +181,7 @@ async function sessionSourceRevision(
 			row.input_tokens,
 			row.output_tokens,
 			row.cache_read_tokens,
+			modelsUsed,
 		]),
 	);
 	let count = 0;
@@ -248,6 +243,9 @@ function decodeHermesContent(content: string | null): unknown {
 	}
 }
 
+// Legacy rows predate Hermes v2026.4.23 storage-time stripping. Keep the tag
+// set aligned with upstream THINK_TAG_NAMES in agent/think_scrubber.py:
+// https://github.com/NousResearch/hermes-agent/blob/main/agent/think_scrubber.py
 const CLOSED_REASONING_BLOCK =
 	/<(think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>[\s\S]*?<\/\1>/gi;
 const OPEN_REASONING_TAG = /<(?:think|thinking|reasoning|thought|REASONING_SCRATCHPAD)>/gi;
@@ -386,7 +384,14 @@ function rowSemantics(row: ModernMessageRow): SessionEventSemantics {
 	const metadata = displayMetadata(row.display_metadata);
 	return {
 		lifecycle: row.active ? "active" : row.compacted ? "compacted" : "inactive",
-		display: displayKind === "hidden" ? "hidden" : displayKind ? "event" : "message",
+		display:
+			(!row.active && !row.compacted) ||
+			jsonObject(decodeOptionalJson(row.display_metadata))?.model_only ||
+			displayKind === "hidden"
+				? "hidden"
+				: displayKind
+					? "event"
+					: "message",
 		compressed_summary: Boolean(row._compressed_summary),
 		...(displayKind ? { display_kind: displayKind } : {}),
 		...(metadata ? { display_metadata: metadata } : {}),
@@ -409,8 +414,10 @@ function hermesEventDrafts(
 	row: ModernMessageRow,
 	sessionKey: string,
 	model: string | null,
+	hiddenDuplicate = false,
 ): SessionEventDraft[] {
 	const semantics = rowSemantics(row);
+	if (hiddenDuplicate) semantics.display = "hidden";
 	const timestamp = timestampIso(row.timestamp);
 	const source = (partIndex: number) => ({
 		adapter: "hermes" as const,
@@ -497,13 +504,13 @@ function skillsDir() {
 	return join(hermesDir(), "skills");
 }
 
-function shouldSkipHermesSkillDir(entryName: string): boolean {
-	return entryName.startsWith(".") || SKIP_DIRS.has(entryName);
-}
-
-function hermesSkillKeyFromPath(fullPath: string): string | null {
-	const skillKey = relative(skillsDir(), fullPath).replaceAll("\\", "/");
-	return isValidSkillKey(skillKey) ? skillKey : null;
+function acceptHermesSkillKey(skillKey: string): boolean {
+	if (isValidSkillKey(skillKey)) return true;
+	log.warn("adapter.invalid_skill_key_skipped", {
+		adapter: "hermes",
+		key_shape: describeSkillKey(skillKey),
+	});
+	return false;
 }
 
 /**
@@ -518,7 +525,7 @@ function parseModelField(raw: string | null): string | null {
 			const obj = JSON.parse(raw);
 			return obj.default || obj.model || null;
 		} catch {
-			return /['"](?:default|model)['"]\s*:\s*['"]([^'"]+)['"]/.exec(raw)?.[1] ?? null;
+			return null;
 		}
 	}
 	return raw;
@@ -528,8 +535,9 @@ export class HermesAdapter implements AgentAdapterCore {
 	readonly agentType = "hermes" as const;
 	readonly sessions = {
 		contentProtocol: (context?: SyncReadContext) => this.getContentProtocol(context),
-		collect: (request: SessionScanRequest, context?: SyncReadContext) =>
-			this.collectSessions(request, context),
+		collect: collectFromScan((request, revisions, context) =>
+			this.scanSessions(request, revisions, context),
+		),
 		scan: (
 			request: SessionScanRequest,
 			knownSourceRevisions: ReadonlyMap<string, string>,
@@ -539,18 +547,12 @@ export class HermesAdapter implements AgentAdapterCore {
 			this.resolveSession(localSessionId, context),
 		watchPaths: () => this.getSessionsWatchPaths(),
 	};
-	readonly skills = {
-		collect: (context?: SyncReadContext) => this.collectSkills(context),
-		listKeys: (context?: SyncReadContext) => this.listSkillKeys(context),
-		path: (key: string) => this.getSkillPath(key),
-		rootDir: () => this.getSkillsRootDir(),
-		sharedPath: (skillKey: string, ownerHandle: string) =>
-			this.getSharedSkillPath(skillKey, ownerHandle),
-		writeArchive: (key: string, tarGzBytes: Buffer) => this.writeSkillArchive(key, tarGzBytes),
-		writeSharedArchive: (key: string, ownerHandle: string, tarGzBytes: Buffer) =>
-			this.writeSharedSkillArchive(key, ownerHandle, tarGzBytes),
-		remove: (key: string) => this.removeLocalSkill(key),
-	};
+	readonly skills = flatSkillModule({
+		root: skillsDir,
+		nested: true,
+		acceptKey: acceptHermesSkillKey,
+		sharedPath: (key, owner) => join(skillsDir(), "shared", `${key}__${owner}`),
+	});
 
 	async detect(): Promise<boolean> {
 		// Hermes stores state in a SQLite db. The dir alone may exist as a
@@ -574,21 +576,6 @@ export class HermesAdapter implements AgentAdapterCore {
 		} finally {
 			db.close();
 		}
-	}
-
-	private async collectSessions(
-		request: SessionScanRequest,
-		context?: SyncReadContext,
-	): Promise<SessionScanResult> {
-		context?.signal.throwIfAborted();
-		const scan = await this.scanSessions(request, new Map(), context);
-		const sessions: RawSession[] = [];
-		let dedupedCount = 0;
-		for await (const batch of scan.batches) {
-			sessions.push(...batch.sessions);
-			dedupedCount += batch.dedupedCount;
-		}
-		return { sessions, dedupedCount, coverage: scan.coverage };
 	}
 
 	private async scanSessions(
@@ -653,14 +640,19 @@ export class HermesAdapter implements AgentAdapterCore {
 				for (const row of rows) {
 					const size = readers.size.get(row.id) as SessionSizeRow;
 					const sourceRevision = readers.revision
-						? await sessionSourceRevision(row, readers.revision, context, size.last_id)
+						? await sessionSourceRevision(
+								row,
+								readers.revision,
+								this.sessionModelsUsed(readers, row),
+								context,
+								size.last_id,
+							)
 						: undefined;
 					if (sourceRevision && knownSourceRevisions.get(row.id) === sourceRevision) continue;
 					const session = await this.materializeSession(
 						row,
 						sourceRevision,
-						readers.modern,
-						readers.messages,
+						readers,
 						size,
 						context,
 					);
@@ -699,10 +691,15 @@ export class HermesAdapter implements AgentAdapterCore {
 			return await this.materializeSession(
 				row,
 				readers.revision
-					? await sessionSourceRevision(row, readers.revision, context, size.last_id)
+					? await sessionSourceRevision(
+							row,
+							readers.revision,
+							this.sessionModelsUsed(readers, row),
+							context,
+							size.last_id,
+						)
 					: undefined,
-				readers.modern,
-				readers.messages,
+				readers,
 				size,
 				context,
 			);
@@ -714,8 +711,41 @@ export class HermesAdapter implements AgentAdapterCore {
 	private sessionReaders(db: ReadonlySqliteDatabase) {
 		const messageColumns = messageTableInfo(db);
 		const modern = hasStableModernMessageIds(messageColumns);
+		const names = new Set(messageColumns.map((column) => column.name));
+		const displayScope = `(${names.has("active") ? "active" : "1"} = 1 OR ${names.has("compacted") ? "compacted" : "0"} = 1)`;
+		const hasIdentity = names.has("display_identity");
+		const hasModelUsage = Boolean(
+			db
+				.prepare(
+					"SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_model_usage'",
+				)
+				.get(),
+		);
 		return {
 			modern,
+			models: hasModelUsage
+				? db.prepare(
+						"SELECT model FROM session_model_usage WHERE session_id = ? GROUP BY model ORDER BY min(first_seen), model",
+					)
+				: null,
+			displayDuplicates:
+				modern && hasIdentity
+					? db.prepare(`
+				SELECT id FROM (
+					SELECT id, row_number() OVER (PARTITION BY display_identity ORDER BY id) AS generation
+					FROM messages WHERE session_id = ? AND id <= ? AND ${displayScope}
+					AND display_identity IS NOT NULL
+				) WHERE generation > 1
+			`)
+					: null,
+			displayFallback: modern
+				? db.prepare(`
+				SELECT ${modernMessageSelectColumns(messageColumns)} FROM messages
+				WHERE session_id = ? AND id <= ? AND ${displayScope}
+				${hasIdentity ? "AND display_identity IS NULL" : ""}
+				ORDER BY id
+			`)
+				: null,
 			size: db.prepare(
 				`SELECT count(*) AS row_count, coalesce(sum(${messagePayloadSizeSql(messageColumns)}), 0) AS size_bytes, ${modern ? "coalesce(max(id), 0)" : "0"} AS last_id FROM messages WHERE session_id = ?`,
 			),
@@ -738,21 +768,92 @@ export class HermesAdapter implements AgentAdapterCore {
 		};
 	}
 
+	private sessionModelsUsed(
+		readers: ReturnType<HermesAdapter["sessionReaders"]>,
+		row: SessionRow,
+	): string[] {
+		if (!readers.models) {
+			const model = parseModelField(row.model);
+			return model ? [model] : [];
+		}
+		return (readers.models.all(row.id) as Array<{ model: string }>).flatMap((row) => {
+			const model = jsonString(row.model);
+			return model ? [model] : [];
+		});
+	}
+
+	private async hiddenDisplayRowIds(
+		readers: ReturnType<HermesAdapter["sessionReaders"]>,
+		sessionId: string,
+		lastId: number,
+		context?: SyncReadContext,
+	): Promise<ReadonlySet<number>> {
+		const hidden = new Set<number>();
+		let count = 0;
+		for (const value of readers.displayDuplicates?.iterate(sessionId, lastId) ?? []) {
+			context?.signal.throwIfAborted();
+			hidden.add((value as { id: number }).id);
+			if (++count % 128 === 0)
+				await setImmediate(undefined, context ? { signal: context.signal } : {});
+		}
+		const seen = new Set<string>();
+		// Match upstream _display_dedupe_key, with two deliberate differences:
+		// keep the lowest id instead of the newest active representative at the first
+		// position (only pruned tool arguments differ); do not normalize user handoff
+		// content through split_user_originated_turn.
+		for (const value of readers.displayFallback?.iterate(sessionId, lastId) ?? []) {
+			context?.signal.throwIfAborted();
+			const row = value as ModernMessageRow;
+			if (row.source_bytes > SESSION_RECORD_MAX_BYTES)
+				throw new Error(
+					`Hermes message ${row.id} exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`,
+				);
+			const decodedCalls = decodeOptionalJson(row.tool_calls);
+			const calls = Array.isArray(decodedCalls) ? decodedCalls : [];
+			const callIds = calls.map((value) => {
+				const call = jsonObject(value);
+				for (const raw of [call?.call_id, call?.id]) {
+					const id = jsonString(raw)?.trim();
+					if (id) return id.split("|", 1)[0]?.trim() || id;
+				}
+				return null;
+			});
+			const stableCalls = row.role === "assistant" && callIds.length > 0 && callIds.every(Boolean);
+			const key = createHash("sha256")
+				.update(
+					JSON.stringify([
+						row.role,
+						stableCalls ? null : row.content,
+						row.timestamp,
+						row.tool_call_id,
+						stableCalls ? callIds : row.tool_calls,
+						row.tool_name,
+					]),
+				)
+				.digest("hex");
+			if (seen.has(key)) hidden.add(row.id);
+			else seen.add(key);
+			if (++count % 128 === 0)
+				await setImmediate(undefined, context ? { signal: context.signal } : {});
+		}
+		return hidden;
+	}
+
 	private async materializeSession(
 		row: SessionRow,
 		sourceRevision: string | undefined,
-		modern: boolean,
-		messagesStatement: ReturnType<ReadonlySqliteDatabase["prepare"]>,
+		readers: ReturnType<HermesAdapter["sessionReaders"]>,
 		size: SessionSizeRow,
 		context?: SyncReadContext,
 	): Promise<RawSession | null> {
+		const { modern, messages: messagesStatement } = readers;
 		const model = parseModelField(row.model);
 		const startedAt = new Date(row.started_at * 1000);
 		const endedAt = row.ended_at ? new Date(row.ended_at * 1000) : null;
 		const durationSeconds = durationSecondsBetween(startedAt, endedAt);
 		const stream =
 			context?.streaming ||
-			size.size_bytes > HERMES_EAGER_MAX_BYTES ||
+			size.size_bytes > EAGER_SESSION_MAX_BYTES ||
 			size.row_count > HERMES_EAGER_MAX_ROWS;
 		const path = stateDbPath();
 		const readEvents =
@@ -767,13 +868,16 @@ export class HermesAdapter implements AgentAdapterCore {
 					MessageRow | ModernMessageRow
 				>);
 		for (const message of messageRows) {
-			if ("source_bytes" in message && message.source_bytes > HERMES_MESSAGE_MAX_BYTES)
-				throw new Error(`Hermes message exceeds ${HERMES_MESSAGE_MAX_BYTES} source bytes`);
+			if ("source_bytes" in message && message.source_bytes > SESSION_RECORD_MAX_BYTES)
+				throw new Error(`Hermes message exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`);
 		}
+		const hiddenRows = stream
+			? new Set<number>()
+			: await this.hiddenDisplayRowIds(readers, row.id, size.last_id, context);
 		const events = modern
 			? sequenceSessionEvents(
 					(messageRows as ModernMessageRow[]).flatMap((message) =>
-						hermesEventDrafts(message, row.id, model),
+						hermesEventDrafts(message, row.id, model, hiddenRows.has(message.id)),
 					),
 				)
 			: undefined;
@@ -828,12 +932,12 @@ export class HermesAdapter implements AgentAdapterCore {
 			projectPath: null,
 			startedAt,
 			endedAt,
-			messageCount: row.message_count ?? (stream ? streamedMessageCount : messages.length),
+			messageCount: stream ? streamedMessageCount : messages.length,
 			inputTokens: row.input_tokens ?? 0,
 			outputTokens: row.output_tokens ?? 0,
 			cacheReadTokens: row.cache_read_tokens ?? 0,
 			model,
-			modelsUsed: model ? [model] : [],
+			modelsUsed: this.sessionModelsUsed(readers, row),
 			durationSeconds,
 			summary,
 			messages,
@@ -852,13 +956,13 @@ export class HermesAdapter implements AgentAdapterCore {
 		try {
 			let count = 0;
 			const statement = db.prepare(
-				`SELECT role, CASE WHEN octet_length(content) <= ${HERMES_MESSAGE_MAX_BYTES} THEN content ELSE NULL END AS content, octet_length(content) AS source_bytes, timestamp FROM messages WHERE session_id = ? AND role IN ('user', 'assistant') AND content IS NOT NULL ORDER BY timestamp ASC`,
+				`SELECT role, CASE WHEN octet_length(content) <= ${SESSION_RECORD_MAX_BYTES} THEN content ELSE NULL END AS content, octet_length(content) AS source_bytes, timestamp FROM messages WHERE session_id = ? AND role IN ('user', 'assistant') AND content IS NOT NULL ORDER BY timestamp ASC`,
 			);
 			for (const value of statement.iterate(row.id)) {
 				context?.signal.throwIfAborted();
 				const message = value as MessageRow & { source_bytes: number };
-				if (message.source_bytes > HERMES_MESSAGE_MAX_BYTES)
-					throw new Error(`Hermes legacy message exceeds ${HERMES_MESSAGE_MAX_BYTES} source bytes`);
+				if (message.source_bytes > SESSION_RECORD_MAX_BYTES)
+					throw new Error(`Hermes legacy message exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`);
 				yield {
 					role: message.role as "user" | "assistant",
 					content: message.content ?? "",
@@ -897,22 +1001,34 @@ export class HermesAdapter implements AgentAdapterCore {
 					!current ||
 					!readers.revision ||
 					current.model !== row.model ||
-					(await sessionSourceRevision(row, readers.revision, context, lastId)) !== revision
+					(await sessionSourceRevision(
+						row,
+						readers.revision,
+						this.sessionModelsUsed(readers, row),
+						context,
+						lastId,
+					)) !== revision
 				)
 					throw new Error(`Hermes session ${row.id} changed during sync; retry with a fresh scan`);
 			};
 			await verifyRevision();
+			const hiddenRows = await this.hiddenDisplayRowIds(readers, row.id, lastId, context);
 			let seq = 0;
 			let count = 0;
 			for (const value of readers.messages.iterate(row.id, lastId)) {
 				context?.signal.throwIfAborted();
 				const message = value as ModernMessageRow;
-				if (message.source_bytes > HERMES_MESSAGE_MAX_BYTES)
+				if (message.source_bytes > SESSION_RECORD_MAX_BYTES)
 					throw new Error(
-						`Hermes message ${message.id} exceeds ${HERMES_MESSAGE_MAX_BYTES} source bytes`,
+						`Hermes message ${message.id} exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`,
 					);
 				const events = sequenceSessionEvents(
-					hermesEventDrafts(message, row.id, parseModelField(row.model)),
+					hermesEventDrafts(
+						message,
+						row.id,
+						parseModelField(row.model),
+						hiddenRows.has(message.id),
+					),
 					seq,
 				);
 				seq += events.length;
@@ -926,134 +1042,6 @@ export class HermesAdapter implements AgentAdapterCore {
 		}
 	}
 
-	private async collectSkills(context?: SyncReadContext): Promise<RawSkill[]> {
-		context?.signal.throwIfAborted();
-		migrateLegacyLocalSetupSkill({
-			targetDir: join(skillsDir(), "clawdi"),
-			id: "clawdi",
-			version: 1,
-			digest: managedSkillDirectoryDigest,
-		});
-		if (!existsSync(skillsDir())) return [];
-
-		const skills: RawSkill[] = [];
-		this._scanSkillsDir(skillsDir(), skills, new Set());
-		return skills;
-	}
-
-	/**
-	 * Recursively scan for directories containing SKILL.md.
-	 * Hermes skills can be nested: skills/category/skill-name/SKILL.md
-	 */
-	private _scanSkillsDir(dir: string, results: RawSkill[], visited: Set<string>): void {
-		let canonicalDir: string;
-		try {
-			canonicalDir = realpathSync(dir);
-		} catch {
-			return;
-		}
-		if (visited.has(canonicalDir)) return;
-		visited.add(canonicalDir);
-		let entries: Dirent[];
-		try {
-			entries = readdirSync(dir, { withFileTypes: true });
-		} catch {
-			return;
-		}
-		for (const entry of entries) {
-			if (shouldSkipHermesSkillDir(entry.name)) continue;
-			const fullPath = safeSkillDirectoryPath(skillsDir(), entry, dir);
-			if (!fullPath) continue;
-			try {
-				const skillMd = join(fullPath, "SKILL.md");
-				if (existsSync(skillMd)) {
-					const skillKey = hermesSkillKeyFromPath(fullPath);
-					if (!skillKey || shouldIgnoreUserSkill(fullPath, skillKey)) continue;
-					const content = readFileSync(skillMd, "utf-8");
-					const fileCount = readdirSync(fullPath, { recursive: true }).length;
-					results.push({
-						skillKey,
-						name: entry.name,
-						content,
-						filePath: skillMd,
-						directoryPath: fullPath,
-						isDirectory: fileCount > 1,
-					});
-				} else {
-					this._scanSkillsDir(fullPath, results, visited);
-				}
-			} catch {}
-		}
-	}
-
-	private getSkillPath(key: string): string {
-		return join(skillsDir(), key, "SKILL.md");
-	}
-
-	private getSkillsRootDir(): string {
-		return skillsDir();
-	}
-
-	private getSharedSkillPath(skillKey: string, ownerHandle: string): string {
-		// Hermes nests skills under category dirs; route shared
-		// project content into a dedicated `shared/` category so it
-		// doesn't intermix with user-authored categories.
-		return join(skillsDir(), "shared", `${skillKey}__${ownerHandle}`);
-	}
-
-	private async listSkillKeys(context?: SyncReadContext): Promise<string[]> {
-		context?.signal.throwIfAborted();
-		// Hermes nests skills under category dirs:
-		//   `~/.hermes/skills/category/foo/SKILL.md`
-		// Recurse — same logic `_scanSkillsDir` uses for the
-		// fully-loaded `collectSkills`, just without reading
-		// SKILL.md content. Returns relative paths so the
-		// daemon's hash + watch + push paths land at the right
-		// place under `getSkillsRootDir()`. Without this method,
-		// the generic flat-walk used to silently drop nested
-		// Hermes skills from sync.
-		migrateLegacyLocalSetupSkill({
-			targetDir: join(skillsDir(), "clawdi"),
-			id: "clawdi",
-			version: 1,
-			digest: managedSkillDirectoryDigest,
-		});
-		if (!existsSync(skillsDir())) return [];
-		const out: string[] = [];
-		const visited = new Set<string>();
-		const walk = (dir: string): void => {
-			let canonicalDir: string;
-			try {
-				canonicalDir = realpathSync(dir);
-			} catch {
-				return;
-			}
-			if (visited.has(canonicalDir)) return;
-			visited.add(canonicalDir);
-			let entries: Dirent[];
-			try {
-				entries = readdirSync(dir, { withFileTypes: true });
-			} catch {
-				return;
-			}
-			for (const entry of entries) {
-				if (shouldSkipHermesSkillDir(entry.name)) continue;
-				const fullPath = safeSkillDirectoryPath(skillsDir(), entry, dir);
-				if (!fullPath) continue;
-				try {
-					if (existsSync(join(fullPath, "SKILL.md"))) {
-						const skillKey = hermesSkillKeyFromPath(fullPath);
-						if (skillKey && !shouldIgnoreUserSkill(fullPath, skillKey)) out.push(skillKey);
-					} else {
-						walk(fullPath);
-					}
-				} catch {}
-			}
-		};
-		walk(skillsDir());
-		return out;
-	}
-
 	private getSessionsWatchPaths(): string[] {
 		// SQLite may keep committed session rows in WAL or rollback-journal
 		// sidecars while state.db itself remains unchanged. All three paths
@@ -1061,37 +1049,5 @@ export class HermesAdapter implements AgentAdapterCore {
 		// have an empty poll signature and become observable when created.
 		const database = stateDbPath();
 		return [database, `${database}-wal`, `${database}-journal`];
-	}
-
-	private async removeLocalSkill(key: string): Promise<void> {
-		const dir = join(skillsDir(), key);
-		mutateUserSkillTarget(dir, key, () => {
-			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
-		});
-	}
-
-	private async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
-		const root = skillsDir();
-		const targetDir = join(root, key);
-		await replaceSkillArchiveTarGz(key, root, targetDir, tarGzBytes, undefined, (mutation) =>
-			mutateUserSkillTarget(targetDir, key, mutation),
-		);
-	}
-
-	private async writeSharedSkillArchive(
-		key: string,
-		ownerHandle: string,
-		tarGzBytes: Buffer,
-	): Promise<void> {
-		const root = this.getSkillsRootDir();
-		const sharedRoot = join(root, "shared");
-		await replaceSkillArchiveTarGz(
-			key,
-			root,
-			this.getSharedSkillPath(key, ownerHandle),
-			tarGzBytes,
-			undefined,
-			(mutation) => mutateUserSkillTarget(sharedRoot, "shared", mutation),
-		);
 	}
 }

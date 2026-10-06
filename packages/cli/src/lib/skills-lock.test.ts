@@ -220,7 +220,7 @@ describe("skills-lock projection authority", () => {
 		);
 		expect(canonicalMaterializedSkillKey(".\\category\\review-pr")).toBe("category/review-pr");
 		expect(() => canonicalMaterializedSkillKey("..\\outside")).toThrow(
-			"Invalid materialized Skill path",
+			"Invalid materialized skill path",
 		);
 	});
 
@@ -254,7 +254,7 @@ describe("skills-lock projection authority", () => {
 			commitProjectSkillMaterialization({ ...input, localSkillKey: "..\\invalid" }, async () => {
 				invalidActivationRan = true;
 			}),
-		).rejects.toThrow("Invalid materialized Skill key");
+		).rejects.toThrow("Invalid materialized skill key");
 		expect(invalidActivationRan).toBe(false);
 	});
 

@@ -31,6 +31,7 @@ export function OverviewNavigationCard({
 	onPress,
 	children,
 	disabled = false,
+	prominent = false,
 }: {
 	title: string;
 	description: ReactNode;
@@ -38,12 +39,19 @@ export function OverviewNavigationCard({
 	tint: string;
 	onPress?: () => void;
 	disabled?: boolean;
+	/** Visually emphasizes the card as a primary entry point. */
+	prominent?: boolean;
 	children?: ReactNode;
 }) {
 	return (
 		<Card
 			size="sm"
-			className={webView((children ? styles.module : styles.statusCard).replace(/\bh-full\b/g, ""))}
+			className={webView(
+				(children
+					? styles.module
+					: `${styles.statusCard} ${prominent ? styles.statusCardProminent : styles.statusCardDefault}`
+				).replace(/\bh-full\b/g, ""),
+			)}
 		>
 			<CardHeader
 				className={webView(
@@ -57,14 +65,19 @@ export function OverviewNavigationCard({
 					disabled={!onPress}
 					className={`${webView(disabled ? styles.disabledStatus : children ? styles.headingLink : styles.statusLink)} flex-row`}
 				>
-					<IconChip size="sm" tint={tint}>
+					<IconChip size={prominent ? "md" : "sm"} tint={tint}>
 						<WebIcon as={icon} recipe={styles.arrowSkeleton} />
 					</IconChip>
 					<WebView recipe={styles.headingBody}>
 						<CardTitle>{title}</CardTitle>
 						<CardDescription>{description}</CardDescription>
 					</WebView>
-					{onPress || disabled ? <WebIcon as={ArrowRight} recipe={styles.arrow} /> : null}
+					{onPress || disabled ? (
+						<WebIcon
+							as={ArrowRight}
+							recipe={`${styles.arrow} ${prominent ? styles.arrowProminent : styles.arrowDefault}`}
+						/>
+					) : null}
 				</AppPressable>
 			</CardHeader>
 			{children ? <CardContent className={webView(styles.content)}>{children}</CardContent> : null}

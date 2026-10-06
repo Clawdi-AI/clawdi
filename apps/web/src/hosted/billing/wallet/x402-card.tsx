@@ -259,7 +259,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 			queryClient.setQueryData(billingKeys.walletBinding, verified);
 			setConnection(signer);
 			toast.success("Browser wallet verified", {
-				description: "This address can now fund your Clawdi Wallet.",
+				description: "This address can now fund your Clawdi wallet.",
 			});
 		} catch (error) {
 			toast.error("Couldn’t verify wallet", { description: paymentErrorMessage(error) });
@@ -341,7 +341,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 		setPendingAction("refresh");
 		try {
 			if (!(await refreshAfterUnknownOutcome())) {
-				toast.error("Couldn’t refresh Wallet status", {
+				toast.error("Couldn't refresh wallet status", {
 					description: "Check your connection and try again. Do not create a new payment yet.",
 				});
 			}
@@ -362,7 +362,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 			setConfirmOpen(false);
 			invalidateWalletData(queryClient);
 			toast.success("USDC payment confirmed", {
-				description: "Your Wallet balance is refreshing.",
+				description: "Your wallet balance is refreshing.",
 			});
 		} catch (error) {
 			setConfirmOpen(false);
@@ -446,7 +446,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 						<Badge variant="outline">Base</Badge>
 					</span>
 				}
-				description="Add USDC to Wallet from a verified browser wallet."
+				description="Add USDC to wallet from a verified browser wallet."
 			>
 				<div className="space-y-4">
 					{binding.isPending ? (
@@ -484,7 +484,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 							<AlertCircle aria-hidden />
 							<AlertTitle>USDC funding unavailable</AlertTitle>
 							<AlertDescription>
-								Wallet authorization could not be verified. Refresh Wallet before trying again.
+								Wallet authorization couldn't be verified. Refresh Wallet before trying again.
 							</AlertDescription>
 						</Alert>
 					) : null}
@@ -505,7 +505,7 @@ export function X402Card({ wallet }: { wallet: WalletCacheSnapshot }) {
 							<AlertCircle aria-hidden />
 							<AlertTitle>Wallet payment needs review</AlertTitle>
 							<AlertDescription>
-								Do not authorize another payment. Contact support to review the Wallet credit.
+								Do not authorize another payment. Contact support to review the wallet credit.
 							</AlertDescription>
 						</Alert>
 					) : null}

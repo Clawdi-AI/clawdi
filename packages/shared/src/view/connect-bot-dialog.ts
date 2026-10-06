@@ -2,10 +2,10 @@ export const connectBotDialogCopy = {
 	title: "Add channel",
 	unsupported: "Need a provider that Clawdi Channels doesn't support? ",
 	unsupportedInventory:
-		"Open the relevant Agent's OpenClaw Control UI or Hermes Dashboard to configure it.",
+		"Open the relevant agent's OpenClaw Control UI or Hermes Dashboard to configure it.",
 	telegramSetupPrefix: "Need a bot token? ",
 	discordSetupPrefix: "Need app credentials? ",
-	description: "Add a Custom bot you manage to your inventory.",
+	description: "Add a custom bot you manage to your inventory.",
 	chooseProvider: "Choose provider",
 	name: "Name",
 	namePlaceholder: "Support Bot",
@@ -19,19 +19,19 @@ export const connectBotDialogCopy = {
 } as const;
 
 export const channelFormCopy = {
-	linkTitle: "Link Agent",
-	linkDescription: "Choose an Agent, then pair one of its chats without leaving this channel.",
+	linkTitle: "Link agent",
+	linkDescription: "Choose an agent, then pair one of its chats without leaving this channel.",
 	agent: "Agent",
-	chooseAgent: "Choose an Agent…",
+	chooseAgent: "Choose an agent…",
 	whatsappTitle: "Connect WhatsApp",
 	repairTitle: "Repair WhatsApp before linking",
 };
 
 export const channelRemovalCopy = {
 	description:
-		"This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone.",
+		"This deletes the custom bot, its agent links, and its paired chats. This can't be undone.",
 	whatsappDescription:
-		"This logs out Clawdi as a linked device and removes the Custom bot. Linked Agents will stop sending and receiving.",
+		"This logs out Clawdi as a linked device and removes the custom bot. Linked agents will stop sending and receiving.",
 	remove: "Delete custom bot",
 	disconnect: "Disconnect and remove",
 };

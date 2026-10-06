@@ -1,6 +1,7 @@
 import type { DesktopAgentType } from "@clawdi/shared/desktop";
 import ClaudeCode from "@lobehub/icons/es/ClaudeCode/components/Color.js";
 import Codex from "@lobehub/icons/es/Codex/components/Inner.js";
+import DeepSeek from "@lobehub/icons/es/DeepSeek/components/Color.js";
 import HermesAgent from "@lobehub/icons/es/HermesAgent/components/Mono.js";
 import OpenClaw from "@lobehub/icons/es/OpenClaw/components/Color.js";
 import OpenCode from "@lobehub/icons/es/OpenCode/components/Mono.js";
@@ -18,6 +19,7 @@ const AGENT_ICONS: Readonly<
 	hermes: { icon: HermesAgent, scale: 0.75, tone: "white" },
 	pi: { icon: Pi, scale: 0.65, tone: "black" },
 	opencode: { icon: OpenCode, scale: 0.75, tone: "black" },
+	dsh: { icon: DeepSeek, scale: 0.75 },
 };
 
 export function AgentBrandIcon({ type }: { type: DesktopAgentType }) {

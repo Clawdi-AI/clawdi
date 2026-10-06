@@ -83,7 +83,9 @@ export function ResourcesCard({
 						LIBRARY_ROW_IDS.map((id) => (
 							<WebView key={id} recipe={styles.skeletonRow} className="flex-row">
 								<Skeleton className={webView(styles.iconSkeleton)} />
-								<Skeleton className={webView(styles.nameSkeleton)} />
+								<WebView recipe={styles.body}>
+									<Skeleton className={webView(styles.nameSkeleton)} />
+								</WebView>
 								<Skeleton className={webView(styles.countSkeleton)} />
 							</WebView>
 						))

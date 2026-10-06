@@ -1,6 +1,4 @@
-import { leaveProjectTitle, projectSharingFormCopy } from "@clawdi/shared/view";
-
-("use client");
+"use client";
 
 import {
 	detailLayoutClasses,
@@ -14,6 +12,7 @@ import {
 	identityFor,
 	isCustomProject,
 	LIBRARY_COPY,
+	leaveProjectTitle,
 	PROJECT_LOCAL_TABS,
 	PROJECT_VAULT_COPY,
 	type ProjectAgentMetadata,
@@ -21,6 +20,7 @@ import {
 	projectAgentSyncLabel,
 	projectDetailDescription,
 	projectResourceHref,
+	projectSharingFormCopy,
 	projectVaultCreateDescription,
 } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -330,7 +330,7 @@ export default function ProjectDetailPage({
 							params: { query: { project_id: projectId, page, page_size: pageSize } },
 						}),
 					),
-				{ pageSize: 200, resourceName: "Project Vaults" },
+				{ pageSize: 200, resourceName: "Project vaults" },
 			),
 		enabled:
 			showVaults &&
@@ -389,10 +389,10 @@ export default function ProjectDetailPage({
 			),
 		onSuccess: () => {
 			refresh();
-			toast.success("Skill removed from Project");
+			toast.success("Skill removed from project");
 		},
 		onError: (error) =>
-			toast.error("Couldn't remove Skill from Project", {
+			toast.error("Couldn't remove skill from project", {
 				description: normalizeApiError(error),
 			}),
 	});
@@ -436,19 +436,18 @@ export default function ProjectDetailPage({
 
 	if (projectQuery.isLoading || (isWorkspaceView && scopedBindings.isLoading)) {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.page)}>
 				<DetailBackLink
 					href={catalogReturnTarget?.href ?? projectsTarget.href}
 					label={catalogReturnTarget?.label ?? projectsTarget.label}
 					mobileOnly={false}
 				/>
 				<PageHeaderSkeleton icon actions />
-				<div className={projectDetailClasses.statGrid}>
-					{Array.from({ length: 4 }).map((_, i) => (
-						<Skeleton key={i} className={projectDetailClasses.statSkeleton} />
-					))}
-				</div>
-				<Skeleton className={projectDetailClasses.panelSkeleton} />
+				{isWorkspaceView ? (
+					<Skeleton className="h-40 w-full rounded-lg" />
+				) : (
+					<ProjectOverviewSkeleton showPanel={localTab === "overview"} />
+				)}
 			</div>
 		);
 	}
@@ -474,7 +473,7 @@ export default function ProjectDetailPage({
 				{isApiNotFoundError(blockingError) ? (
 					<DetailNotFound
 						title="Project not found"
-						message="This Project may have been removed, or your account no longer has access."
+						message="This project may have been removed, or your account no longer has access."
 					/>
 				) : (
 					<ApiErrorPanel
@@ -485,7 +484,7 @@ export default function ProjectDetailPage({
 						}}
 						title={
 							blockingScopeError
-								? "Couldn't load Workspace or Project access"
+								? "Couldn't load workspace or project access"
 								: "Couldn't load project"
 						}
 					/>
@@ -504,7 +503,7 @@ export default function ProjectDetailPage({
 				/>
 				<DetailNotFound
 					title="Project not found"
-					message="This Project may have been removed, or your account no longer has access."
+					message="This project may have been removed, or your account no longer has access."
 				/>
 			</div>
 		);
@@ -520,7 +519,7 @@ export default function ProjectDetailPage({
 				/>
 				<DetailNotFound
 					title="Project not found"
-					message="This page is for user-created Projects. Open an Agent to manage its private Workspace."
+					message="This page is for user-created projects. Open an agent to manage its private workspace."
 				/>
 			</div>
 		);
@@ -589,7 +588,7 @@ export default function ProjectDetailPage({
 			? {
 					title: "Skills",
 					description:
-						"Skills available in this Agent's Workspace. Skills synced from the Agent are read-only.",
+						"Skills available in this agent's workspace. Skills synced from the agent are read-only.",
 					icon:
 						focusedResourceIdentity && FocusedResourceIcon ? (
 							<IconChip tint={focusedResourceIdentity.tint}>
@@ -615,7 +614,7 @@ export default function ProjectDetailPage({
 			onRetry={() => {
 				void workspaceAgent.refetch();
 			}}
-			title="Couldn't load the Agent identity"
+			title="Couldn't load the agent identity"
 		/>
 	) : null;
 
@@ -650,8 +649,8 @@ export default function ProjectDetailPage({
 					description={
 						isWorkspace
 							? focus === "vaults"
-								? "Vaults available through this Agent’s Workspace."
-								: "This Agent's fixed Workspace for installed Skills and Vaults."
+								? "Vaults available through this agent's workspace."
+								: "This agent's fixed workspace for installed skills and vaults."
 							: projectDetailDescription(project, isOwner)
 					}
 					actions={
@@ -683,7 +682,7 @@ export default function ProjectDetailPage({
 					<CheckCircle2 className={projectDetailClasses.icon} />
 					<AlertTitle>Project added</AlertTitle>
 					<AlertDescription className={projectDetailClasses.alertDescription}>
-						<span>Linking lets an Agent use this Project&apos;s Skills and Vaults together.</span>
+						<span>Linking lets an agent use this project&apos;s skills and vaults together.</span>
 						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
 							<Bot className={projectDetailClasses.inlineActionIcon} />
 							{LIBRARY_COPY.manageAgents}
@@ -743,10 +742,10 @@ export default function ProjectDetailPage({
 				description={
 					isWorkspaceView
 						? isWorkspace
-							? "Installed Skills in this Agent's fixed Workspace."
-							: "Skills included in this Project."
+							? "Installed skills in this agent's fixed workspace."
+							: "Skills included in this project."
 						: project.kind === "environment"
-							? "Skills synced from this Agent. Manage them on the Agent."
+							? "Skills synced from this agent. Manage them on the agent."
 							: isOwner
 								? LIBRARY_COPY.projectSkillsDescription
 								: "Readable instructions shared by the owner."
@@ -812,7 +811,7 @@ export default function ProjectDetailPage({
 						onRetry={() => {
 							void skills.refetch();
 						}}
-						title="Couldn't load Project Skills"
+						title="Couldn't load project skills"
 					/>
 				) : (
 					<SkillCardGrid
@@ -853,11 +852,11 @@ export default function ProjectDetailPage({
 				description={
 					isWorkspaceView
 						? isWorkspace
-							? "Vaults available through this Agent’s Workspace."
+							? "Vaults available through this agent's workspace."
 							: LIBRARY_COPY.projectVaultsDescription
 						: isOwner
 							? LIBRARY_COPY.projectVaultsDescription
-							: "Read-only vaults shared through this Project."
+							: "Read-only vaults shared through this project."
 				}
 				action={
 					(!focus || !isWorkspaceView) && (isWorkspaceView || isOwner) ? (
@@ -919,10 +918,10 @@ export default function ProjectDetailPage({
 							onRetry={() => {
 								void members.refetch();
 							}}
-							title="Couldn't load Project members"
+							title="Couldn't load project members"
 						/>
 					) : (members.data?.length ?? 0) === 0 ? (
-						<EmptyLine message="Only you so far. Share this Project to give a teammate viewer access." />
+						<EmptyLine message="Only you so far. Share this project to give a teammate viewer access." />
 					) : (
 						<div className={projectDetailClasses.rowList}>
 							{(members.data ?? []).map((member) => (
@@ -942,7 +941,7 @@ export default function ProjectDetailPage({
 				<HubSection
 					id="people"
 					title="Your access"
-					description="You have viewer access. Linked Agents use this Project's Skills and Vaults together."
+					description="You have viewer access. Linked agents use this project's skills and vaults together."
 				>
 					<SharedAccessPanel
 						project={project}
@@ -961,9 +960,9 @@ export default function ProjectDetailPage({
 					count={agentCount}
 					description={
 						project.kind === "environment"
-							? "Agent that owns this Workspace."
+							? "Agent that owns this workspace."
 							: project.kind === "personal"
-								? "Private library items are not linked to individual Agents."
+								? "Private library items are not linked to individual agents."
 								: LIBRARY_COPY.projectAgentsDescription
 					}
 				>
@@ -975,15 +974,15 @@ export default function ProjectDetailPage({
 							onRetry={() => {
 								void boundAgents.refetch();
 							}}
-							title="Couldn't load Project agent bindings"
+							title="Couldn't load project agent bindings"
 						/>
 					) : (boundAgents.data?.length ?? 0) === 0 ? (
 						<EmptyLine
 							message={
 								project.kind === "environment"
-									? "The home Agent for this Workspace is unavailable."
+									? "The home agent for this workspace is unavailable."
 									: project.kind === "personal"
-										? "Private library items have no Agent links."
+										? "Private library items have no agent links."
 										: LIBRARY_COPY.emptyProjectAgents
 							}
 						/>
@@ -1021,6 +1020,46 @@ export default function ProjectDetailPage({
 				</HubSection>
 			) : null}
 		</div>
+	);
+}
+
+/** Mirrors the loaded tab bar and Overview panel while the Project loads. */
+function ProjectOverviewSkeleton({ showPanel }: { showPanel: boolean }) {
+	return (
+		<>
+			<div
+				aria-hidden="true"
+				className="grid w-full grid-cols-5 gap-1 rounded-xl border bg-muted/30 p-1"
+			>
+				{PROJECT_LOCAL_TABS.map((tab) => (
+					<div key={tab.id} className="px-1 py-2 text-xs sm:px-2 sm:text-sm">
+						<Skeleton className="mx-auto h-lh w-12 max-w-full" />
+					</div>
+				))}
+			</div>
+			{showPanel ? (
+				<DetailPanel className="space-y-5">
+					<div className="space-y-1">
+						<h2 className="text-sm font-semibold">Project bundle</h2>
+						<div className="text-sm">
+							<Skeleton className="h-lh w-full max-w-md" />
+						</div>
+					</div>
+					<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+						{Object.entries(PROJECT_STAT_TILE_TINTS).map(([label, tint]) => (
+							<div key={label} className={cn("rounded-xl border border-transparent p-4", tint)}>
+								<div className="text-2xl font-semibold">
+									<Skeleton className="h-8 w-8" />
+								</div>
+								<div className="mt-0.5 text-xs text-muted-foreground">{label}</div>
+							</div>
+						))}
+					</div>
+				</DetailPanel>
+			) : (
+				<Skeleton className="h-40 w-full rounded-lg" />
+			)}
+		</>
 	);
 }
 
@@ -1172,8 +1211,8 @@ function SharedAccessPanel({
 					<h2 className={projectDetailClasses.heading}>You have viewer access</h2>
 				</div>
 				<p className={projectDetailClasses.meta}>
-					You can read this Project and link it to an Agent. The Agent then uses the Project&apos;s
-					Skills and Vaults together.
+					You can read this project and link it to an agent. The agent then uses the project&apos;s
+					skills and vaults together.
 				</p>
 			</div>
 			<div className={projectDetailClasses.inset}>
@@ -1307,7 +1346,7 @@ function ManageProjectAgentsDialog({
 			onOpenChange(false);
 		},
 		onError: (error) => {
-			toast.error("Couldn't update Agent access", {
+			toast.error("Couldn't update agent access", {
 				description: normalizeApiError(error),
 			});
 		},
@@ -1434,7 +1473,7 @@ function CreateProjectVaultDialog({
 		mutationFn: async (nextName: string) => {
 			const normalizedName = nextName.trim();
 			const slug = slugFromVaultName(normalizedName);
-			if (!slug) throw new Error("Use a Vault name containing letters or numbers");
+			if (!slug) throw new Error("Use a vault name containing letters or numbers");
 			return unwrap(
 				await api.POST("/v1/vault", {
 					params: { query: { project_id: projectId, create_only: true } },
@@ -1447,7 +1486,7 @@ function CreateProjectVaultDialog({
 			setCreateOpen(false);
 			onChanged();
 			toast.success(`Vault created for this ${contextLabel}`, {
-				description: "Its key values stay protected, and this Project or Workspace can use them.",
+				description: "Its key values stay protected, and this project or workspace can use them.",
 			});
 		},
 		onError: (error) =>

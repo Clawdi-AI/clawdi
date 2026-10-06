@@ -14,7 +14,7 @@ import {
 	skillsPageDescription,
 } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import { FolderKanban, Import as ImportIcon, Plus } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
@@ -23,7 +23,7 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
-import { PageHeader } from "@/components/page-header";
+import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog";
 import { ProjectActions } from "@/components/projects/project-actions";
@@ -48,6 +48,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchInput } from "@/components/ui/search-input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
@@ -76,15 +77,41 @@ export default function SkillsPage() {
 }
 
 function SkillsPageSkeleton() {
+	// Suspense fallback can't use nuqs; read the raw param to pick the shape.
+	const hasProject = useRouterState({
+		select: (state) => Boolean(new URLSearchParams(state.location.searchStr).get("project")),
+	});
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.page)}>
-			<PageHeader title="Skills" description={SKILLS_RESOURCE.managementDescription} />
-			<div className={HERO_GRID_CLASS}>
-				{Array.from({ length: 3 }).map((_, index) => (
-					<ProjectResourceCardSkeleton key={index} />
-				))}
-			</div>
+			{hasProject ? (
+				<>
+					<PageHeaderSkeleton actions />
+					<ProjectSkillsSkeleton />
+				</>
+			) : (
+				<>
+					<PageHeader title="Skills" description={SKILLS_RESOURCE.managementDescription} />
+					<div className={HERO_GRID_CLASS}>
+						{Array.from({ length: 3 }).map((_, index) => (
+							<ProjectResourceCardSkeleton key={index} />
+						))}
+					</div>
+				</>
+			)}
 		</div>
+	);
+}
+
+/** Toolbar + Skill grid placeholder for a selected Project. */
+function ProjectSkillsSkeleton() {
+	return (
+		<>
+			<ListToolbar
+				search={<Skeleton className="h-9 w-full" />}
+				filters={<Skeleton className="h-9 w-full sm:w-72" />}
+			/>
+			<SkillCardGrid skills={[]} isLoading emptyMessage="" />
+		</>
 	);
 }
 
@@ -131,6 +158,9 @@ function SkillsPageInner() {
 	);
 	const projectResolved = projectsQuery.data !== undefined;
 	const staleProject = Boolean(projectParam && projectResolved && !selectedProject);
+	// A Project is requested but the list hasn't resolved; show the Project's
+	// Skills shape rather than the Project picker.
+	const projectPending = Boolean(projectParam && !projectResolved && !projectsQuery.error);
 	const projectError = shouldBlockQueryError(projectsQuery.error, projectsQuery.data)
 		? projectsQuery.error
 		: null;
@@ -187,7 +217,7 @@ function SkillsPageInner() {
 
 	const removeSkill = useMutation({
 		mutationFn: async (skillKey: string) => {
-			if (!selectedProject || !writable) throw new Error("This Project is read-only");
+			if (!selectedProject || !writable) throw new Error("This project is read-only");
 			return unwrap(
 				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
 					params: {
@@ -206,51 +236,55 @@ function SkillsPageInner() {
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.page)}>
-			<PageHeader
-				title="Skills"
-				description={skillsPageDescription(selectedProject ?? undefined)}
-				actions={
-					selectedProject ? (
-						<>
-							{isProjectOwner(selectedProject) ? (
-								<ShareProjectDialog
-									projectId={selectedProject.id}
-									projectName={displayProjectName(selectedProject)}
-									projectKind={selectedProject.kind}
-								/>
-							) : null}
-							{writable ? (
-								<>
-									<Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
-										<ImportIcon />
-										Import from GitHub
-									</Button>
-									<Button size="sm" onClick={() => setCreateOpen(true)}>
-										<Plus />
-										Add skill
-									</Button>
-								</>
-							) : null}
-						</>
-					) : undefined
-				}
-			/>
+			{projectPending ? (
+				<PageHeaderSkeleton actions />
+			) : (
+				<PageHeader
+					title="Skills"
+					description={skillsPageDescription(selectedProject ?? undefined)}
+					actions={
+						selectedProject ? (
+							<>
+								{isProjectOwner(selectedProject) ? (
+									<ShareProjectDialog
+										projectId={selectedProject.id}
+										projectName={displayProjectName(selectedProject)}
+										projectKind={selectedProject.kind}
+									/>
+								) : null}
+								{writable ? (
+									<>
+										<Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+											<ImportIcon />
+											Import from GitHub
+										</Button>
+										<Button size="sm" onClick={() => setCreateOpen(true)}>
+											<Plus />
+											Add skill
+										</Button>
+									</>
+								) : null}
+							</>
+						) : undefined
+					}
+				/>
+			)}
 
 			{projectError ? (
 				<ApiErrorPanel
 					error={projectError}
 					onRetry={() => void projectsQuery.refetch()}
-					title="Couldn't load Projects"
+					title="Couldn't load projects"
 				/>
 			) : null}
 
 			{legacyTarget && !projectParam ? (
 				<Alert>
-					<AlertTitle>Agent Workspace Skills moved to the Agent</AlertTitle>
+					<AlertTitle>Agent workspace skills moved to the agent</AlertTitle>
 					<AlertDescription className="space-y-2">
 						<p>
-							A Workspace contains one Agent&apos;s private resources. Open that Agent to view its
-							Workspace Skills, or choose a Project here.
+							A workspace contains one agent&apos;s private resources. Open that agent to view its
+							workspace skills, or choose a project here.
 						</p>
 						<Button
 							variant="outline"
@@ -268,12 +302,14 @@ function SkillsPageInner() {
 				<Alert>
 					<AlertTitle>Project unavailable</AlertTitle>
 					<AlertDescription>
-						Choose another Project. It may have been archived or your access may have changed.
+						Choose another project. It may have been archived or your access may have changed.
 					</AlertDescription>
 				</Alert>
 			) : null}
 
-			{!selectedProject ? (
+			{projectPending ? (
+				<ProjectSkillsSkeleton />
+			) : !selectedProject ? (
 				<ProjectSelection
 					projects={projects}
 					loading={!projectResolved && !projectError}
@@ -281,7 +317,7 @@ function SkillsPageInner() {
 						await queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
 						selectProject(project.id);
 						toast.success("Project created", {
-							description: "Add the first Skill without leaving this page.",
+							description: "Add the first skill without leaving this page.",
 						});
 					}}
 				/>
@@ -295,7 +331,7 @@ function SkillsPageInner() {
 									void setSearch(v);
 									void setPage(1);
 								}}
-								placeholder="Search this Project…"
+								placeholder="Search this project…"
 							/>
 						}
 						filters={
@@ -304,7 +340,7 @@ function SkillsPageInner() {
 								value={selectedProject.id}
 								onValueChange={selectProject}
 								placeholder={LIBRARY_COPY.chooseProject}
-								ariaLabel="Choose Project"
+								ariaLabel="Choose project"
 								className="w-full sm:w-72"
 							/>
 						}
@@ -312,9 +348,9 @@ function SkillsPageInner() {
 
 					{!writable ? (
 						<Alert>
-							<AlertTitle>Read-only Project</AlertTitle>
+							<AlertTitle>Read-only project</AlertTitle>
 							<AlertDescription>
-								You can view these Skills. Only the Project owner can add, edit, copy, move, or
+								You can view these skills. Only the project owner can add, edit, copy, move, or
 								remove them.
 							</AlertDescription>
 						</Alert>
@@ -333,10 +369,10 @@ function SkillsPageInner() {
 						isLoading={skillsQuery.isLoading}
 						emptyMessage={
 							search.trim()
-								? "No Skills in this Project match that search."
+								? "No skills in this project match that search."
 								: writable
-									? "No Skills yet. Add one with instructions or import one from GitHub."
-									: "No Skills are in this Project yet."
+									? "No skills yet. Add one with instructions or import one from GitHub."
+									: "No skills are in this project yet."
 						}
 						capabilitiesFor={(skill) => skillCapabilities(skill, selectedProject)}
 						actionsFor={(skill) =>
@@ -419,7 +455,7 @@ function ProjectSelection({
 		return (
 			<EmptyState
 				icon={FolderKanban}
-				description="Create a Project to bundle Skills and Vault access for Agents."
+				description="Create a project to bundle skills and vault access for agents."
 				action={
 					<CreateProjectDialog onCreated={onProjectCreated}>
 						<Button>
@@ -433,7 +469,7 @@ function ProjectSelection({
 	}
 	return (
 		<section className={skillsPageClasses.projectChooser}>
-			<h2 className={skillsPageClasses.projectChooserHeading}>Choose a Project</h2>
+			<h2 className={skillsPageClasses.projectChooserHeading}>Choose a project</h2>
 			<div className={HERO_GRID_CLASS}>
 				{projects.map((project) => (
 					<ProjectResourceCard
@@ -500,7 +536,7 @@ function ImportSkillDialog({
 				<DialogHeader>
 					<DialogTitle>Import from GitHub</DialogTitle>
 					<DialogDescription>
-						Copy a GitHub Skill into {displayProjectName(project)}. This Project owns the imported
+						Copy a GitHub skill into {displayProjectName(project)}. This project owns the imported
 						copy.
 					</DialogDescription>
 				</DialogHeader>
@@ -512,7 +548,7 @@ function ImportSkillDialog({
 					}}
 				>
 					<div className="space-y-1.5">
-						<Label htmlFor="github-skill-source">Repository or Skill path</Label>
+						<Label htmlFor="github-skill-source">Repository or skill path</Label>
 						<Input
 							id="github-skill-source"
 							value={source}

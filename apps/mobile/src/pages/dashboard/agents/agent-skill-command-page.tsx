@@ -33,7 +33,7 @@ export default function AgentSkillCommandPage() {
 			description={
 				remove
 					? agentSurfaceCopy.runThisCommandOnTheAgentMachineTheSkill
-					: "Enter a GitHub Skill path, then run the generated command on the Agent machine."
+					: "Enter a GitHub skill path, then run the generated command on the agent machine."
 			}
 			fallback={id ? `/agents/${id}/skills` : "/agents"}
 		>

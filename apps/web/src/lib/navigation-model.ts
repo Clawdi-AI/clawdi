@@ -176,8 +176,8 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		label: "Files",
 		icon: FolderOpen,
 		tint: "bg-identity-3-bg text-identity-3-fg",
-		description: "Browse and edit files in this agent's Workspace.",
-		tooltip: "Browse this agent's Workspace",
+		description: "Browse and edit files in this agent's workspace.",
+		tooltip: "Browse this agent's workspace",
 		variants: ["hosted"],
 	},
 	terminal: {
@@ -210,7 +210,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		...CANONICAL_NAVIGATION_IDENTITIES.skills,
 		tint: RESOURCE_TINT_CLASSES.skills,
 		description: agentSectionCopy.skills.description,
-		tooltip: "Skills installed in this Agent's Workspace",
+		tooltip: "Skills installed in this agent's workspace",
 		variants: ["connected", "hosted"],
 	},
 	projects: {
@@ -218,7 +218,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		...CANONICAL_NAVIGATION_IDENTITIES.projects,
 		tint: RESOURCE_TINT_CLASSES.projects,
 		description: agentSectionCopy.projects.description,
-		tooltip: "Projects linked to this Agent",
+		tooltip: "Projects linked to this agent",
 		variants: ["connected", "hosted"],
 	},
 	vaults: {
@@ -226,7 +226,7 @@ export const AGENT_SECTION_NAVIGATION_ITEMS: Record<AgentSectionId, AgentNavigat
 		...CANONICAL_NAVIGATION_IDENTITIES.vaults,
 		tint: RESOURCE_TINT_CLASSES.vaults,
 		description: agentSectionCopy.vaults.description,
-		tooltip: "Vaults attached to this Agent's Workspace",
+		tooltip: "Vaults attached to this agent's workspace",
 		variants: ["connected", "hosted"],
 	},
 	connectors: {

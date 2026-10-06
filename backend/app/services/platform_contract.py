@@ -3,11 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi.encoders import jsonable_encoder
 from pydantic import JsonValue, TypeAdapter
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.platform_idempotency import PlatformMutationIdempotency
@@ -21,6 +22,7 @@ class PlatformReplay:
 
 
 _JSON_OBJECT_ADAPTER = TypeAdapter(dict[str, JsonValue])
+PLATFORM_IDEMPOTENCY_RETENTION = timedelta(days=7)
 
 
 def platform_request_hash(payload: dict[str, JsonValue]) -> str:
@@ -40,7 +42,7 @@ async def lock_platform_idempotency(
 ) -> PlatformMutationIdempotency | None:
     lock_name = f"platform-idempotency:{operation}:{idempotency_key}"
     await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_name, 0))))
-    return (
+    row = (
         await db.execute(
             select(PlatformMutationIdempotency).where(
                 PlatformMutationIdempotency.operation == operation,
@@ -48,6 +50,11 @@ async def lock_platform_idempotency(
             )
         )
     ).scalar_one_or_none()
+    if row is not None and row.expires_at <= datetime.now(UTC):
+        await db.delete(row)
+        await db.flush()
+        return None
+    return row
 
 
 def read_platform_replay(row: PlatformMutationIdempotency) -> PlatformReplay:
@@ -83,6 +90,36 @@ def store_platform_response(
         response_status=response_status,
         encrypted_response=ciphertext,
         response_nonce=nonce,
+        expires_at=datetime.now(UTC) + PLATFORM_IDEMPOTENCY_RETENTION,
     )
     db.add(row)
     return row
+
+
+async def prune_platform_mutation_idempotency(
+    db: AsyncSession,
+    *,
+    now: datetime,
+    limit: int,
+) -> int:
+    if limit <= 0:
+        raise ValueError("idempotency retention limit must be positive")
+    row_ids = list(
+        (
+            await db.execute(
+                select(PlatformMutationIdempotency.id)
+                .where(PlatformMutationIdempotency.expires_at < now)
+                .order_by(
+                    PlatformMutationIdempotency.expires_at,
+                    PlatformMutationIdempotency.id,
+                )
+                .limit(limit)
+            )
+        ).scalars()
+    )
+    if not row_ids:
+        return 0
+    await db.execute(
+        delete(PlatformMutationIdempotency).where(PlatformMutationIdempotency.id.in_(row_ids))
+    )
+    return len(row_ids)

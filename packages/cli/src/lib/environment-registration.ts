@@ -93,7 +93,7 @@ export function bindEnvironmentRegistrationUser(
 	userId: string,
 ): boolean {
 	const normalizedUserId = userId.trim();
-	if (!normalizedUserId) throw new Error("Cannot bind an Agent registration without a user id.");
+	if (!normalizedUserId) throw new Error("Cannot bind an agent registration without a user id.");
 	const clawdiDir = getClawdiDir();
 	return withPrivateDirectoryLockSync(join(clawdiDir, "environments.lock"), (lease) => {
 		const path = environmentRegistrationPath(agentType);
@@ -179,7 +179,7 @@ export function assertUniqueVaultWorkspace(agentType: string, workspace: string)
 			(path === canonical ||
 				(otherIdentity?.dev === identity.dev && otherIdentity.ino === identity.ino))
 		) {
-			throw new Error("Vault workspace is already bound to another registered Agent.");
+			throw new Error("Vault workspace is already bound to another registered agent.");
 		}
 	}
 }

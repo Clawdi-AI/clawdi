@@ -23,7 +23,7 @@ type SessionEventChunkResponse = components["schemas"]["SessionEventChunkRespons
 type SessionEventCommitRequest = components["schemas"]["SessionEventCommitRequest"];
 type SessionEventAppendResponse = components["schemas"]["SessionEventAppendResponse"];
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+export const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [100, 400, 1600] as const;
 const USER_AGENT = `clawdi-cli/${getCliVersion()}`;
@@ -129,6 +129,7 @@ export async function retryingFetch(
 	req: Request,
 	timeoutMs: number,
 	externalSignal: AbortSignal | undefined,
+	stream = false,
 ): Promise<Response> {
 	const retry = IDEMPOTENT_METHODS.has(req.method);
 	const maxAttempts = retry ? MAX_RETRIES : 1;
@@ -182,11 +183,6 @@ export async function retryingFetch(
 		// Combine per-request timeout with the external (daemon)
 		// abort signal. Either firing cancels the in-flight fetch.
 		const controller = new AbortController();
-		const onExternalAbort = () => controller.abort();
-		if (externalSignal) {
-			if (externalSignal.aborted) controller.abort();
-			else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
-		}
 		let timedOut = false;
 		const timer = setTimeout(() => {
 			timedOut = true;
@@ -195,20 +191,25 @@ export async function retryingFetch(
 
 		let buffered: Response;
 		try {
-			const res = await fetch(base.clone(), { signal: controller.signal });
-			// Own the complete REST response lifecycle here. Returning the
-			// network-backed Response would detach the timeout and caller abort
-			// before openapi-fetch (or a hand-written caller) consumes the body.
-			// Buffering keeps cancellation effective through JSON, text, and
-			// binary bodies, including error responses that are retried below.
-			const body = await res.arrayBuffer();
-			const hasNullBody =
-				base.method === "HEAD" || res.status === 204 || res.status === 205 || res.status === 304;
-			buffered = new Response(hasNullBody ? null : body, {
-				status: res.status,
-				statusText: res.statusText,
-				headers: res.headers,
-			});
+			const signal = externalSignal
+				? AbortSignal.any([controller.signal, externalSignal])
+				: controller.signal;
+			const res = await fetch(base.clone(), { signal });
+			// Ordinary REST calls keep their deadline through body consumption.
+			// Streaming callers own body bounds and deadlines; the combined
+			// signal keeps caller cancellation attached after headers arrive.
+			if (stream) {
+				buffered = res;
+			} else {
+				const body = await res.arrayBuffer();
+				const hasNullBody =
+					base.method === "HEAD" || res.status === 204 || res.status === 205 || res.status === 304;
+				buffered = new Response(hasNullBody ? null : body, {
+					status: res.status,
+					statusText: res.statusText,
+					headers: res.headers,
+				});
+			}
 		} catch (e: unknown) {
 			if (externalSignal?.aborted) {
 				throw new ApiError({
@@ -231,12 +232,12 @@ export async function retryingFetch(
 			throw lastErr;
 		} finally {
 			clearTimeout(timer);
-			if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
 		}
 
 		if (buffered.ok) return buffered;
 
 		if (buffered.status === 429 && retry && attempt < maxAttempts - 1) {
+			if (stream) await buffered.body?.cancel();
 			const retryAfterMs = parseRetryAfter(buffered.headers.get("retry-after"), {
 				maxMs: MAX_SAFE_RETRY_AFTER_MS,
 			});
@@ -255,7 +256,10 @@ export async function retryingFetch(
 			continue;
 		}
 
-		if (buffered.status >= 500 && retry && attempt < maxAttempts - 1) continue;
+		if (buffered.status >= 500 && retry && attempt < maxAttempts - 1) {
+			if (stream) await buffered.body?.cancel();
+			continue;
+		}
 
 		return buffered;
 	}
@@ -279,6 +283,7 @@ export class ApiClient {
 	private readonly abortSignal: AbortSignal | undefined;
 	private readonly requireAuth: boolean;
 	private readonly machineId: string | undefined;
+	private readonly authToken: string | undefined;
 
 	/**
 	 * @param opts.requireAuth — Default true. Set false for public bootstrap
@@ -295,6 +300,8 @@ export class ApiClient {
 			requireAuth?: boolean;
 			abortSignal?: AbortSignal;
 			machineId?: string;
+			authToken?: string;
+			baseUrl?: string;
 		} = {},
 	) {
 		const requireAuth = opts.requireAuth ?? true;
@@ -304,12 +311,13 @@ export class ApiClient {
 			throw new ApiError({
 				status: 401,
 				body: "",
-				hint: "Not logged in. Run `clawdi auth login` first.",
+				hint: "Not signed in. Run `clawdi auth login` first.",
 			});
 		}
-		const baseUrl = normalizeCloudApiBaseUrl(config.apiUrl);
+		const baseUrl = normalizeCloudApiBaseUrl(opts.baseUrl ?? config.apiUrl);
 		this.baseUrl = baseUrl;
 		this.requireAuth = requireAuth;
+		this.authToken = opts.authToken;
 		this.abortSignal = opts.abortSignal;
 		this.machineId = normalizedMachineId(
 			opts.machineId ?? (requireAuth ? (readMachineId() ?? undefined) : undefined),
@@ -326,7 +334,7 @@ export class ApiClient {
 						throw new ApiError({
 							status: 0,
 							body: "",
-							hint: "Cloud request origin changed before authorization. No credential was sent.",
+							hint: "API request origin changed before authorization. No credential was sent.",
 						});
 					}
 					request.headers.set("Authorization", `Bearer ${await getClawdiAccessToken(baseUrl)}`);
@@ -358,7 +366,44 @@ export class ApiClient {
 	}
 
 	async getAccessToken(): Promise<string> {
-		return this.requireAuth ? getClawdiAccessToken(this.baseUrl) : "";
+		return this.requireAuth ? (this.authToken ?? (await getClawdiAccessToken(this.baseUrl))) : "";
+	}
+
+	/** Send an untyped API request through the same auth and timeout pipeline. */
+	private async buildRequest(path: string, init: RequestInit): Promise<Request> {
+		const url = new URL(path, this.baseUrl);
+		if (url.origin !== new URL(this.baseUrl).origin) {
+			throw new ApiError({
+				status: 0,
+				body: "",
+				hint: "API request origin changed before authorization. No credential was sent.",
+			});
+		}
+		const headers = new Headers(init.headers);
+		if (this.requireAuth) headers.set("Authorization", `Bearer ${await this.getAccessToken()}`);
+		headers.set("User-Agent", USER_AGENT);
+		if (this.machineId) headers.set(MACHINE_ID_HEADER, this.machineId);
+		headers.set(SKILL_SYNC_PROTOCOL_HEADER, SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1);
+		if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", randomUUID());
+		return new Request(url, { ...init, headers });
+	}
+
+	async request(path: string, init: RequestInit = {}): Promise<Response> {
+		return retryingFetch(await this.buildRequest(path, init), DEFAULT_TIMEOUT_MS, this.abortSignal);
+	}
+
+	/** Return an unbuffered response. Retries and the default timeout cover
+	 * connection/headers only; callers must bound and cancel body consumption. */
+	async requestStream(path: string, init: RequestInit = {}): Promise<Response> {
+		const signals = [this.abortSignal, init.signal].filter(
+			(signal): signal is AbortSignal => signal != null,
+		);
+		return retryingFetch(
+			await this.buildRequest(path, init),
+			DEFAULT_TIMEOUT_MS,
+			signals.length ? AbortSignal.any(signals) : undefined,
+			true,
+		);
 	}
 
 	get GET(): Client<paths>["GET"] {
@@ -466,21 +511,19 @@ export class ApiClient {
 		}
 	}
 
-	/** Upload per-session content JSON to `/v1/sessions/{id}/upload`. */
+	/** Upload content with its immutable Agent origin, even for unbound credentials. */
 	async uploadSessionContent(
 		localSessionId: string,
 		file: Buffer,
 		filename: string,
-		fence?: { environmentId: string; expectedContentHash: string },
+		fence: { environmentId: string; expectedContentHash: string },
 	): Promise<SessionUploadResponse> {
 		return this.multipartPost<SessionUploadResponse>(
 			`/v1/sessions/${encodeURIComponent(localSessionId)}/upload`,
-			fence
-				? {
-						environment_id: fence.environmentId,
-						expected_content_hash: fence.expectedContentHash,
-					}
-				: {},
+			{
+				environment_id: fence.environmentId,
+				expected_content_hash: fence.expectedContentHash,
+			},
 			file,
 			filename,
 		);
@@ -614,10 +657,11 @@ export class ApiClient {
 		// Wrapping narrows it without a cast.
 		formData.append("file", new Blob([new Uint8Array(file)]), filename);
 
+		const timeoutMs = DEFAULT_TIMEOUT_MS + (file.length / (128 * 1024)) * 1000;
 		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+		const timer = setTimeout(() => controller.abort(), timeoutMs);
 		// Mirror engine-wide abort onto this upload's controller so
-		// `clawdi daemon` shutdown doesn't wait the full 30s timeout
+		// `clawdi daemon` shutdown doesn't wait the full upload timeout
 		// for an in-flight upload to give up. Pre-fix the runtime
 		// would hang on the active multipart fetch even after the
 		// engine signalled abort, delaying SIGTERM cleanup and
@@ -640,7 +684,7 @@ export class ApiClient {
 				body: formData,
 				signal: controller.signal,
 			});
-			const res = await retryingFetch(request, DEFAULT_TIMEOUT_MS, controller.signal);
+			const res = await retryingFetch(request, timeoutMs, controller.signal);
 			if (!res.ok) {
 				const body = await res.text();
 				throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });

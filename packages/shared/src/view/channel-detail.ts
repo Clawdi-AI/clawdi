@@ -12,18 +12,18 @@ export const channelDetailCopy = {
 		"1. Add the bot to the server. You need Manage Server or Administrator. 2. In that server, run the pairing command and paste this into the required code option:",
 	discordDm:
 		"1. Install the app and choose Add to my apps in Discord. 2. Open the app from Discord Direct Messages. 3. Run the pairing command and paste this into the required code option:",
-	unlinkTitle: "Unlink Agent?",
+	unlinkTitle: "Unlink agent?",
 	unlinkDescription: "Its paired chats will stop using this channel.",
-	unlink: "Unlink Agent",
+	unlink: "Unlink agent",
 	pairingCommands: "Pairing commands",
 	publishCommands: "Publish commands",
 	publishing: "Publishing…",
 	noCommands: "No pairing commands are available to publish.",
 	discordTitle: "Verify Discord credentials",
 	discordDescription:
-		"Clawdi stores Discord credentials during setup but does not verify them with Discord. Send a test message and confirm its activity and status before relying on this channel. To replace credentials, remove the channel and reconnect it.",
-	noLinkedAgents: "No Agents linked",
-	noLinkedAgentsDescription: "Link an Agent here, then pair a chat for it.",
+		"Clawdi doesn't verify these credentials with Discord. Send a test message before relying on this channel. To replace them, remove and reconnect it.",
+	noLinkedAgents: "No agents linked",
+	noLinkedAgentsDescription: "Link an agent here, then pair a chat for it.",
 	noActivity: "No activity yet",
 	noActivityDescription: "Messages and delivery events will show up here.",
 } as const;

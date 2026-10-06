@@ -3,7 +3,7 @@ import {
 	type AgentSourceKind,
 	agentIdentity,
 	agentSourceDescription,
-	agentSourceLabel,
+	agentSourceKindLabel,
 	agentTypeLabel,
 	cleanAgentName,
 	cleanMachineName,
@@ -109,7 +109,7 @@ export function AgentSourceBadge({
 	className?: string;
 }) {
 	const Icon = source === "hosted" ? Cloud : Laptop;
-	const label = agentSourceLabel(source);
+	const label = agentSourceKindLabel(source);
 	const title = agentSourceDescription(source);
 	const iconClass =
 		source === "hosted"
@@ -156,7 +156,7 @@ export function LegacyAgentBadge({
 	return (
 		<StatusBadge
 			status="neutral"
-			title="Managed in the legacy hosted dashboard"
+			title="Managed in the legacy dashboard"
 			className={cn(
 				agentSourceBadgeClasses.legacyRoot,
 				iconOnly

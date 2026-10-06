@@ -1,6 +1,6 @@
 import { type AgentOwnership, agentOwnershipKindFromId } from "@clawdi/shared/client";
 import { agentSourceBadgeClasses as styles } from "@clawdi/shared/ui";
-import { agentSourceLabel } from "@clawdi/shared/view";
+import { agentSourceKindLabel } from "@clawdi/shared/view";
 import { Cloud, Laptop } from "lucide-react-native";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,7 +33,7 @@ export function AgentSourceBadge({
 				fill={source === "hosted" ? "currentColor" : "none"}
 				className={webBoth(styles.icon)}
 			/>
-			<Text>{agentSourceLabel(source)}</Text>
+			<Text>{agentSourceKindLabel(source)}</Text>
 		</StatusBadge>
 	);
 }

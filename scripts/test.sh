@@ -98,7 +98,15 @@ run_on_host() {
 	fi
 
 	if [[ "${CLAWDI_TEST_RUNNER_SKIP_BUILD:-0}" != "1" ]]; then
-		compose build test-runner
+		if [[ "${DOCKER_BUILD_LOAD:-0}" == "1" ]]; then
+			# Bake accepts the Compose graph and explicitly exports to the daemon.
+			(
+				cd "$repo_root"
+				docker buildx bake --file docker-compose.test.yml --load test-runner
+			)
+		else
+			compose build test-runner
+		fi
 	fi
 
 	local run_args=(run --rm)

@@ -82,13 +82,13 @@ const channelsEn = {
 	details: "Manage channel",
 	shared: "Shared bot",
 	custom: "Custom bot",
-	links: "Linked Agents",
+	links: "Linked agents",
 	link: "Link selected Agent",
 	replace: "Replace this Agent's existing channel for this provider",
 	replaceWarning:
 		"Replacement disconnects the previous bot for this provider. Paired chats may lose access.",
 	selectAgent: "Select an Agent",
-	unlink: "Unlink Agent",
+	unlink: "Unlink agent",
 	pair: "Generate chat pairing code",
 	pairInstructions:
 		"Use this command in the intended chat. Codes expire after five minutes. Refresh paired chats to confirm; opening a link is not proof of pairing.",
@@ -145,7 +145,7 @@ const whatsappEn = {
 	check: "Check connection status",
 	retry: "Retry this session",
 	cancel: "Cancel connection",
-	review: "Review Custom bots",
+	review: "Review custom bots",
 	failed:
 		"Connection status or the last action was not confirmed. Check status before retrying. Sensitive details are not included in this error.",
 };
@@ -401,7 +401,7 @@ const vaultEn = {
 	deleteKey: "Delete key",
 	detach: "Detach Project",
 	attach: "Attach to Project",
-	attachTarget: "Choose a Project",
+	attachTarget: "Choose a project",
 	attachWarning:
 		"Give this Project and its Agents access to this Vault? Existing secrets remain in the selected Vault.",
 	detachWarning:
@@ -437,13 +437,13 @@ export const en = {
 		expiredTitle: "Your session expired",
 		signInAgain: "Sign in again",
 		retry: "Retry",
-		expired: "Your session has expired. Please sign in again to continue.",
+		expired: "Your session expired. Sign in again to continue.",
 		suspended: "Your account has been deactivated and can no longer access Clawdi.",
 		timeout: "This is taking longer than usual. Check your connection and try again.",
 		offline: "We couldn't reach the service. Check your connection and try again.",
-		serviceError: "The service is having trouble right now. Please try again in a moment.",
-		requestError: "The request could not be completed. Review the details and try again.",
-		genericError: "Something went wrong. Please try again.",
+		serviceError: "The service is having trouble right now. Try again in a moment.",
+		requestError: "The request couldn't be completed. Review the details and try again.",
+		genericError: "Couldn't complete the request. Try again.",
 		codeText: "text",
 	},
 	terminal: {
@@ -888,11 +888,11 @@ export const en = {
 			"Remove this project's context and key access from this Agent? The project itself will not be deleted.",
 	},
 	projects: {
-		open: "Open Project",
+		open: "Open project",
 		filter: "Project scope",
 		agentsScope: "Your Agents linked to this Project. Other members' Agents are not listed.",
-		all: "All Projects",
-		choose: "Choose a Project",
+		all: "All projects",
+		choose: "Choose a project",
 		sharing: "Manage sharing",
 		leave: "Leave project",
 		create: "New project",

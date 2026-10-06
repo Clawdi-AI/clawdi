@@ -82,7 +82,11 @@ function SecondaryStat({
 		<div className={thisWeekCardClasses.stat}>
 			<dt className={thisWeekCardClasses.statLabel}>{label}</dt>
 			{value === null ? (
-				<Skeleton className={thisWeekCardClasses.valueSkeleton} />
+				<Skeleton
+					className={
+						small ? thisWeekCardClasses.textValueSkeleton : thisWeekCardClasses.numericValueSkeleton
+					}
+				/>
 			) : (
 				<dd className={small ? thisWeekCardClasses.textValue : thisWeekCardClasses.numericValue}>
 					{value}

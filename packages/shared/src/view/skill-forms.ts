@@ -5,14 +5,14 @@ export const skillFormCopy = {
 	title: "Add skill",
 	editTitle: "Edit skill",
 	editDescription:
-		"Saving updates this Project Skill. Linked Agents receive the new version automatically, and imported support files stay attached.",
+		"Saving updates this project skill. Linked agents receive the new version automatically, and imported support files stay attached.",
 	name: "Skill name",
 	namePlaceholder: "review-pull-requests",
 	nameHelp: "Use lowercase letters, numbers, and single hyphens, such as review-pull-requests.",
 	description: "Description",
-	descriptionPlaceholder: "When and why an Agent should use this Skill",
+	descriptionPlaceholder: "When and why an agent should use this skill",
 	instructions: "Instructions",
-	instructionsPlaceholder: "Explain what the Agent should do, including constraints and examples.",
+	instructionsPlaceholder: "Explain what the agent should do, including constraints and examples.",
 	cancel: "Cancel",
 	adding: "Adding…",
 	save: "Save",
@@ -21,15 +21,15 @@ export const skillFormCopy = {
 		"The destination gets an independent copy — later changes to the source won't sync.",
 	transferAlternativeBefore: "To give people the ",
 	transferAlternativeEmphasis: "same",
-	transferAlternativeAfter: " Skill, share the Project instead.",
+	transferAlternativeAfter: " skill, share the project instead.",
 	destination: "Destination",
-	chooseProject: "Choose a Project…",
+	chooseProject: "Choose a project…",
 	copy: "Copy skill",
 	move: "Move skill",
 } as const;
 
 export function createSkillDescription(project: ProjectMetadata) {
-	return `Add instructions to ${displayProjectName(project)}. Linked Agents receive the Skill automatically.`;
+	return `Add instructions to ${displayProjectName(project)}. Linked agents receive the skill automatically.`;
 }
 
 export function sendSkillTitle(name: string) {

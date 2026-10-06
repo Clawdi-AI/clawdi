@@ -151,7 +151,7 @@ export function AgentHome({
 						onRetry={() => {
 							void refetch();
 						}}
-						title="Clawdi Cloud inventory unavailable"
+						title="Cloud Agents aren't available here"
 					/>
 				</div>
 			);

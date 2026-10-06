@@ -432,8 +432,8 @@ content
 	it("multi-agent pull skips unsupported modules without aborting supported agents", async () => {
 		setup("claude_code");
 		writeFileSync(
-			join(tmpHome, ".clawdi", "environments", "pi.json"),
-			JSON.stringify({ id: "env-pi", agentType: "pi" }),
+			join(tmpHome, ".clawdi", "environments", "opencode.json"),
+			JSON.stringify({ id: "env-opencode", agentType: "opencode" }),
 		);
 		const { captured, restore } = mockFetch([
 			cloudProjectList(),
@@ -455,7 +455,7 @@ content
 		try {
 			await expect(
 				pull({ agent: "hermes", modules: "skills", project: TEST_PROJECT_ID }),
-			).rejects.toThrow(/Agent Workspaces are filesystem-authoritative/);
+			).rejects.toThrow(/agent workspaces are filesystem-authoritative/);
 		} finally {
 			restore();
 		}

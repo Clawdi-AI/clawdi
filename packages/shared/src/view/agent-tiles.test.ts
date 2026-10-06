@@ -72,7 +72,7 @@ describe("agentTileCardProjection", () => {
 			href: `/agents/${projected.id}`,
 			env: projected,
 			cardStatus: {
-				visual: { label: "Running", tooltip: "Compute status: Running.", dotClass: "dot" },
+				visual: { label: "Running", tooltip: "Agent status: Running.", dotClass: "dot" },
 				labels: ["Running", "Restart required"],
 			},
 		};
@@ -81,7 +81,7 @@ describe("agentTileCardProjection", () => {
 
 		expect(projection.statusVisual).toMatchObject({
 			label: "Running",
-			tooltip: "Compute status: Running.",
+			tooltip: "Agent status: Running.",
 		});
 		expect(projection.meta).toEqual(["Running"]);
 	});

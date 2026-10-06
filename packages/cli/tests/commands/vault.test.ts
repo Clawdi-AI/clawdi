@@ -245,7 +245,7 @@ describe("vaultList", () => {
 			restore();
 		}
 
-		expect(out).toContain("Vault shared (2 attached Projects)");
+		expect(out).toContain("Vault shared (2 attached projects)");
 	});
 
 	it("hides empty vaults in human output", async () => {
@@ -574,8 +574,8 @@ describe("vault attach/detach", () => {
 		const post = captured.find((request) => request.method === "POST");
 		expect(post?.path).toContain(`/v1/vault?project_id=${OTHER_PROJECT_ID}`);
 		expect(out).toContain("Attached vault");
-		expect(out).toContain("1 Project");
-		expect(out).not.toContain("1 Projects");
+		expect(out).toContain("1 project");
+		expect(out).not.toContain("1 projects");
 	});
 
 	it("detaches a vault from one project without deleting keys", async () => {
@@ -636,7 +636,7 @@ describe("vault attach/detach", () => {
 
 		try {
 			await expect(vaultAttach("missing", { project: PROJECT_ID })).rejects.toThrow(
-				'No Vault named "missing" was found',
+				'No vault named "missing" was found',
 			);
 		} finally {
 			restore();
@@ -981,7 +981,7 @@ describe("vaultSet", () => {
 		const del = captured.find((request) => request.method === "DELETE");
 		expect(del?.path).toContain("global_delete=true");
 		expect(out).toContain("globally from shared vault");
-		expect(out).toContain("2 Projects attached");
+		expect(out).toContain("2 projects attached");
 	});
 
 	it("rejects interactive deletion prompts outside a TTY", async () => {

@@ -158,8 +158,8 @@ export function WelcomeWalletCard() {
 						<p className="font-medium">
 							{grantApplied
 								? grantAmount
-									? `You’re all set — ${grantAmount} added to your Wallet`
-									: "You’re all set — your welcome balance was added to your Wallet"
+									? `You're all set — ${grantAmount} added to your wallet`
+									: "You're all set — your welcome balance was added to your wallet"
 								: grantPending
 									? grantCheckTimedOut
 										? "Your welcome balance is taking longer than expected"

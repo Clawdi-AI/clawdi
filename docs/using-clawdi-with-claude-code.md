@@ -1,6 +1,6 @@
 # Using Clawdi with Claude Code
 
-End-to-end guide for connecting Claude Code to Clawdi Cloud and using it day-to-day. Assumes you've already set up the project (backend + web) per the root `README.md`, and that Claude Code is installed on your machine.
+End-to-end guide for connecting Claude Code to Clawdi and using it day-to-day. Assumes you've already set up the project (backend + web) per the root `README.md`, and that Claude Code is installed on your machine.
 
 ---
 
@@ -11,7 +11,7 @@ End-to-end guide for connecting Claude Code to Clawdi Cloud and using it day-to-
 ```bash
 $ clawdi auth login
 To get an API key:
-  1. Go to the Clawdi Cloud dashboard
+  1. Go to the Clawdi dashboard
   2. Open user menu → API Keys
   3. Create a new key and copy it
 
@@ -25,7 +25,7 @@ Verify:
 
 ```bash
 $ clawdi status
-Clawdi Cloud Status
+Clawdi Status
 
   Auth:    ✓ logged in
   User:    you@example.com
@@ -72,7 +72,7 @@ In a Claude Code session, ask Claude to remember something:
 You: remember that we use pnpm, not npm, in this monorepo
 ```
 
-Claude will invoke the `memory_create` tool (you'll see the call in the transcript) and store the memory in your Clawdi Cloud account. It's now readable from any other agent you connect.
+Claude will invoke the `memory_create` tool (you'll see the call in the transcript) and store the memory in your Clawdi account. It's now readable from any other agent you connect.
 
 Open a **new** Claude Code session a week later — no shared conversation state — and ask:
 

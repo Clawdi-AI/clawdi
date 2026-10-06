@@ -3,8 +3,11 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { join } from "node:path";
 import { type SessionScanBatch, scanSessionModule } from "../../src/adapters/base";
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
+import { SESSION_PROJECTION_REVISION } from "../../src/adapters/rich-event-mapping";
+import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
+import { projectEventsToMessages } from "../../src/lib/session-events";
 import { tarSkillDir } from "../../src/lib/tar";
-import { addSkillDirectorySymlinkCases, cleanupTmp, copyFixtureToTmp } from "./helpers";
+import { cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
 let origHome: string | undefined;
@@ -152,7 +155,83 @@ function addFinancialAgent(stateRoot: string, sessionId = "oc-financial-001") {
 	);
 }
 
+function installOfficialTranscriptFixture(
+	messages: Array<Record<string, unknown>>,
+	surface: "sdk" | "gateway",
+	model = "gpt-5.5",
+) {
+	const stateRoot = join(tmpHome, ".openclaw");
+	const sqlitePath = join(stateRoot, "agents", "main", "agent", "openclaw-agent.sqlite");
+	mkdirSync(join(stateRoot, "agents", "main", "agent"), { recursive: true });
+	writeFileSync(sqlitePath, "fixture");
+	rmSync(join(stateRoot, "agents", "main", "sessions", "sessions.json"));
+	writeFileSync(
+		join(stateRoot, "official-inventory.json"),
+		JSON.stringify({
+			stores: [{ agentId: "main", path: sqlitePath }],
+			sessions: [
+				{
+					agentId: "main",
+					key: "agent:main:main",
+					sessionId: "official-fixture",
+					updatedAt: 1776247205000,
+					model,
+					acp: { cwd: "/workspace" },
+				},
+			],
+		}),
+	);
+	writeFileSync(
+		join(stateRoot, "official-history.json"),
+		JSON.stringify({ messages, hasMore: false }),
+	);
+	writeFileSync(
+		join(tmpHome, "bin", "openclaw"),
+		`#!/bin/sh
+if [ "$1" = "sessions" ]; then cat "$HOME/.openclaw/official-inventory.json"; exit 0; fi
+if [ "$1 $2 $3" = "gateway call chat.history" ]; then cat "$HOME/.openclaw/official-history.json"; exit 0; fi
+if [ "$1 $2" = "agents list" ]; then printf '[{"id":"main","workspace":"%s/.openclaw/agents/main"}]' "$HOME"; exit 0; fi
+exit 1
+`,
+	);
+	if (surface === "sdk") {
+		const packageRoot = join(tmpHome, ".local", "lib", "node_modules", "openclaw");
+		mkdirSync(packageRoot, { recursive: true });
+		writeFileSync(
+			join(packageRoot, "package.json"),
+			JSON.stringify({
+				name: "openclaw",
+				type: "module",
+				exports: { "./plugin-sdk/session-transcript-runtime": "./session-transcript-runtime.js" },
+			}),
+		);
+		writeFileSync(
+			join(packageRoot, "session-transcript-runtime.js"),
+			`export async function readVisibleSessionTranscriptMessageEntries() { return ${JSON.stringify(messages.map((message) => ({ entryId: message.id, createdAt: message.timestamp, message })))}; }`,
+		);
+	}
+}
+
 describe("OpenClawAdapter.detect", () => {
+	it.each(["version", "empty", "failed"])("reads only --version (%s)", async (mode) => {
+		const log = join(tmpHome, "version-arguments.log");
+		writeFileSync(
+			join(tmpHome, "bin", "openclaw"),
+			`#!/bin/sh
+printf '%s\\n' "$1" >> "${log}"
+if [ "$1" = "--version" ]; then
+  ${mode === "failed" ? "exit 1" : mode === "empty" ? "exit 0" : "printf '%s\\n' 'OpenClaw 2026.9.8 (fixture)'"}
+else
+  printf '%s\\n' 'Usage: OpenClaw help banner'
+fi
+`,
+		);
+		expect(await new OpenClawAdapter().getVersion()).toBe(
+			mode === "version" ? "OpenClaw 2026.9.8 (fixture)" : null,
+		);
+		expect(readFileSync(log, "utf8")).toBe("--version\n");
+	});
+
 	it("returns true when $HOME/.openclaw exists", async () => {
 		const a = new OpenClawAdapter();
 		expect(await a.detect()).toBe(true);
@@ -181,6 +260,24 @@ describe("OpenClawAdapter.detect", () => {
 });
 
 describe("OpenClawAdapter.collectSessions", () => {
+	it("preserves origin/main Gateway session bytes and localHash", async () => {
+		const stateRoot = join(tmpHome, ".openclaw");
+		const agentRoot = join(stateRoot, "agents", "main", "agent");
+		mkdirSync(agentRoot, { recursive: true });
+		writeFileSync(join(agentRoot, "openclaw-agent.sqlite"), "fixture");
+		writeFileSync(join(stateRoot, "sqlite-session-test"), "enabled");
+		rmSync(join(stateRoot, "agents", "main", "sessions", "sessions.json"));
+		await assertSessionGolden("openclaw-gateway", new OpenClawAdapter().sessions);
+	});
+
+	it("preserves origin/main legacy session bytes and localHash", async () => {
+		rmSync(join(tmpHome, "bin", "openclaw"));
+		process.env.PATH = join(tmpHome, "bin");
+		await assertSessionGolden("openclaw-legacy", new OpenClawAdapter().sessions);
+	});
+	it("preserves origin/main session bytes and localHash", async () => {
+		await assertSessionGolden("openclaw", new OpenClawAdapter().sessions);
+	});
 	it.each(["none", "sessions", "gateway", "agents"])(
 		"serializes scan/resolve/roster subprocesses (injected failure: %s)",
 		async (failingCommand) => {
@@ -388,6 +485,154 @@ describe("OpenClawAdapter.collectSessions", () => {
 		expect((await a.sessions.collect({ kind: "complete" })).sessions).toEqual([]);
 	});
 
+	for (const surface of ["sdk", "gateway"] as const) {
+		it.each(["delivery-mirror", "gateway-injected", "acp-runtime", "automation-result"])(
+			`keeps %s content without model attribution through ${surface}`,
+			async (model) => {
+				installOfficialTranscriptFixture(
+					[
+						{
+							id: "real",
+							role: "assistant",
+							provider: "openai",
+							model: "gpt-5.5",
+							content: "Real answer",
+							timestamp: "2026-04-15T10:00:00.000Z",
+						},
+						{
+							id: "bookkeeping",
+							role: "assistant",
+							provider: "openclaw",
+							model,
+							content: "Delivered answer",
+							openclawDeliveryMirror: { kind: "cron-direct-delivery-context" },
+							timestamp: "2026-04-15T10:00:05.000Z",
+						},
+					],
+					surface,
+				);
+				for (const streaming of [false, true]) {
+					const session = await new OpenClawAdapter().sessions.resolve("official-fixture", {
+						streaming,
+						signal: new AbortController().signal,
+					});
+					if (!session) throw new Error("Expected bookkeeping fixture");
+					expect(session.model).toBe("gpt-5.5");
+					expect(session.modelsUsed).toEqual(["gpt-5.5"]);
+					const events = [];
+					for await (const event of session.readEvents?.() ?? session.events ?? [])
+						events.push(event);
+					expect(events).toHaveLength(2);
+					expect(events[0]).toMatchObject({ model: "gpt-5.5" });
+					expect(events[1]).toMatchObject({
+						type: "message",
+						parts: [{ type: "text", text: "Delivered answer" }],
+					});
+					expect(events[1]).not.toHaveProperty("model");
+				}
+			},
+		);
+		it(`uses inventory model for ACP transcripts through ${surface}`, async () => {
+			installOfficialTranscriptFixture(
+				[
+					{
+						id: "acp",
+						role: "assistant",
+						provider: "openclaw",
+						model: "acp-runtime",
+						content: "ACP answer",
+						timestamp: "2026-04-15T10:00:05.000Z",
+					},
+				],
+				surface,
+				"claude-opus-4-7",
+			);
+			const session = await new OpenClawAdapter().sessions.resolve("official-fixture");
+			expect(session?.model).toBe("claude-opus-4-7");
+			expect(session?.modelsUsed).toEqual(["claude-opus-4-7"]);
+			expect(session?.messages.map((message) => message.content)).toEqual(["ACP answer"]);
+			expect(session?.events?.[0]).not.toHaveProperty("model");
+		});
+	}
+
+	it.each(["sdk", "gateway"] as const)(
+		"preserves visible history for display:false messages through %s",
+		async (surface) => {
+			const messages = [
+				{
+					id: "visible-user",
+					role: "user",
+					content: "Visible question",
+					timestamp: "2026-04-15T10:00:00.000Z",
+				},
+				{
+					id: "hidden-user",
+					role: "user",
+					display: false,
+					content: [
+						{ type: "text", text: "Internal coordination" },
+						{ type: "tool_result", tool_use_id: "internal-call", content: "Internal result" },
+					],
+					timestamp: "2026-04-15T10:00:01.000Z",
+				},
+				{
+					id: "hidden-assistant",
+					role: "assistant",
+					display: false,
+					content: [
+						{ type: "text", text: "Internal report" },
+						{ type: "thinking", thinking: "Internal reasoning" },
+						{ type: "toolCall", id: "internal-call", name: "read", arguments: {} },
+					],
+					timestamp: "2026-04-15T10:00:02.000Z",
+				},
+				{
+					id: "visible-assistant",
+					role: "assistant",
+					content: "Visible answer",
+					model: "gpt-5.5",
+					timestamp: "2026-04-15T10:00:05.000Z",
+				},
+			];
+			// The public Gateway display projection already filters display:false rows.
+			installOfficialTranscriptFixture(
+				surface === "sdk" ? messages : messages.filter((message) => message.display !== false),
+				surface,
+			);
+			for (const streaming of [false, true]) {
+				const session = await new OpenClawAdapter().sessions.resolve("official-fixture", {
+					streaming,
+					signal: new AbortController().signal,
+				});
+				if (!session) throw new Error("Expected hidden OpenClaw fixture");
+				const events = [];
+				for await (const event of session.readEvents?.() ?? session.events ?? [])
+					events.push(event);
+				expect(projectEventsToMessages(events).map((message) => message.content)).toEqual([
+					"Visible question",
+					"Visible answer",
+				]);
+				expect(session.messageCount).toBe(2);
+				const hiddenEvents = events.filter((event) => event.source.record_id.startsWith("hidden-"));
+				if (surface === "sdk") {
+					expect(hiddenEvents.map((event) => event.type)).toEqual([
+						"message",
+						"tool_result",
+						"message",
+						"reasoning",
+						"tool_call",
+					]);
+					for (const event of hiddenEvents)
+						expect(event.semantics).toEqual({
+							lifecycle: "active",
+							display: "hidden",
+							compressed_summary: false,
+						});
+				} else expect(hiddenEvents).toHaveLength(0);
+			}
+		},
+	);
+
 	it("reads SQLite sessions through OpenClaw's public transcript SDK", async () => {
 		const stateRoot = join(tmpHome, ".openclaw");
 		const sqlitePath = join(stateRoot, "agents", "main", "agent", "openclaw-agent.sqlite");
@@ -493,6 +738,23 @@ describe("OpenClawAdapter.collectSessions", () => {
 		});
 	});
 
+	it.each([false, true])("reprojects pre-versioned revisions (legacy=%s)", async (legacy) => {
+		if (legacy) writeFileSync(join(tmpHome, ".openclaw", "legacy-inventory-test"), "enabled");
+		const scan = await scanSessionModule(
+			new OpenClawAdapter().sessions,
+			{ kind: "complete" },
+			new Map([
+				["oc-session-001", `p${SESSION_PROJECTION_REVISION - 1}:oc-session-001:1776247205000`],
+			]),
+		);
+		const sessions = [];
+		for await (const batch of scan.batches) sessions.push(...batch.sessions);
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]?.sourceRevision).toBe(
+			`p${SESSION_PROJECTION_REVISION}:oc-session-001:1776247205000`,
+		);
+	});
+
 	it("reads legacy inventory JSONL without requiring a live Gateway", async () => {
 		writeFileSync(join(tmpHome, ".openclaw", "legacy-inventory-test"), "enabled");
 		const sessionsDir = join(tmpHome, ".openclaw", "agents", "main", "sessions");
@@ -510,7 +772,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 			localSessionId: "oc-session-001",
 			projectPath: "/Users/fixture/project",
 			messageCount: 2,
-			sourceRevision: "oc-session-001:1776247205000",
+			sourceRevision: `p${SESSION_PROJECTION_REVISION}:oc-session-001:1776247205000`,
 		});
 		expect(scan.userActivity).toEqual({
 			lastUserInputAt: "2026-08-19T00:00:00.000Z",
@@ -562,7 +824,7 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		const firstBatches: SessionScanBatch[] = [];
 		for await (const batch of first.batches) firstBatches.push(batch);
 		const revision = firstBatches[0]?.sessions[0]?.sourceRevision;
-		expect(revision).toBe("sqlite-session-001:1776247205000");
+		expect(revision).toBe(`p${SESSION_PROJECTION_REVISION}:sqlite-session-001:1776247205000`);
 		expect(first.userActivity).toEqual({
 			lastUserInputAt: "2026-08-16T10:00:00.000Z",
 			complete: true,
@@ -597,7 +859,9 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		);
 		const changedBatches: SessionScanBatch[] = [];
 		for await (const batch of changed.batches) changedBatches.push(batch);
-		expect(changedBatches[0]?.sessions[0]?.sourceRevision).toBe("sqlite-session-001:1776247206000");
+		expect(changedBatches[0]?.sessions[0]?.sourceRevision).toBe(
+			`p${SESSION_PROJECTION_REVISION}:sqlite-session-001:1776247206000`,
+		);
 		expect(changed.userActivity).toEqual({
 			lastUserInputAt: "2026-04-15T10:00:00.000Z",
 			complete: true,
@@ -770,35 +1034,6 @@ describe("OpenClawAdapter.collectSkills", () => {
 		const skills = await a.skills.collect();
 		// Fixture has demo/ (real) and node_modules/ (SKIP_DIRS sentinel).
 		expect(skills.map((s) => s.skillKey)).toEqual(["demo"]);
-	});
-
-	it("discovers safe top-level directory symlinks and isolates unsafe ones", async () => {
-		const root = join(tmpHome, ".openclaw", "agents", "main", "skills");
-		const linked = addSkillDirectorySymlinkCases(root, join(tmpHome, "outside-openclaw-skill"));
-		const adapter = new OpenClawAdapter();
-		const skills = await adapter.skills.collect();
-		expect(skills.map((skill) => skill.skillKey).sort()).toEqual(["demo", "linked"]);
-		expect(skills.find((skill) => skill.skillKey === "linked")?.directoryPath).toBe(linked);
-		expect((await adapter.skills.listKeys()).sort()).toEqual(["demo", "linked"]);
-	});
-
-	it("does not scan a hidden managed Skill recovery directory", async () => {
-		const recovery = join(
-			tmpHome,
-			".openclaw",
-			"agents",
-			"main",
-			"skills",
-			".clawdi-previous-test",
-		);
-		mkdirSync(recovery, { recursive: true });
-		writeFileSync(join(recovery, "SKILL.md"), "# Managed recovery artifact\n");
-
-		const adapter = new OpenClawAdapter();
-		expect((await adapter.skills.collect()).map((skill) => skill.skillKey)).not.toContain(
-			".clawdi-previous-test",
-		);
-		expect(await adapter.skills.listKeys()).not.toContain(".clawdi-previous-test");
 	});
 
 	it("unions skills across agents/<id>/skills/ dirs (issue #28)", async () => {

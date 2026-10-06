@@ -1,8 +1,7 @@
-import { whatsappOnboardingCopy as copy } from "@clawdi/shared/view";
-
-("use client");
+"use client";
 
 import { whatsappDeviceOnboardingClasses } from "@clawdi/shared/ui";
+import { whatsappOnboardingCopy as copy } from "@clawdi/shared/view";
 
 import {
 	Bot,
@@ -393,7 +392,7 @@ function YourWhatsAppFlow({
 					onClick={onDone}
 				>
 					<Bot className={whatsappDeviceOnboardingClasses.connectIcon} />
-					{repairAccountId ? "Done" : "Review Custom bots"}
+					{repairAccountId ? "Done" : "Review custom bots"}
 				</Button>
 			) : session.state === "expired" || session.state === "error" ? (
 				<PairingDialogActions>
@@ -475,8 +474,8 @@ export function WhatsAppSessionState({
 				title={copy.connected}
 				description={
 					repairing
-						? "WhatsApp reconnected. Existing Custom bot settings, Agent Links, paired chats, and history remain unchanged."
-						: "The account now appears under Custom bots. Link it to an Agent, then pair an authorized chat."
+						? "WhatsApp reconnected. Existing custom bot settings, agent links, paired chats, and history remain unchanged."
+						: "The account now appears under custom bots. Link it to an agent, then pair an authorized chat."
 				}
 			/>
 		);

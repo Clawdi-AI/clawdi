@@ -487,6 +487,7 @@ function AgentDetailContentSkeleton({
 									tint={item.tint}
 									link={null}
 									loading
+									prominent={section !== "ai"}
 								/>
 							);
 						})}

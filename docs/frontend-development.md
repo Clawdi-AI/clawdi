@@ -73,6 +73,36 @@ a server round trip to protected navigation. Clerk's default SPA navigation is
 unchanged: its session cookie is updated before navigation, while its client
 session resource is published after navigation completes.
 
+In hosted browser builds, signed-out visits to the bare `/` entry redirect to
+the root of `VITE_CLAWDI_MARKETING_URL` (`https://clawdi.ai/` by default). The
+shell's public website links use the full configured URL (default
+`https://clawdi.ai/home`) so marketing stays reachable while signed in.
+Signed-in visitors keep the dashboard.
+Query/hash destinations and protected paths retain the
+sign-in redirect with their original return URL, including CLI authorization
+and OAuth callbacks. OSS and desktop admission stay unchanged.
+
+Marketing `/` redirects signed-in visitors through its same-origin
+`/api/cloud-handoff?target=dashboard`, so newly captured channel/trial cookies
+are available to the handoff request. Cloud `/dashboard` uses the protected
+parent's admission before redirecting to overview `/`, retaining query and hash.
+If Cloud does not recognize the marketing session, it sends the visitor to native
+sign-in with `/dashboard` as the return destination; the flow cannot bounce between
+public roots. Marketing `/home` stays public in both auth states. The paired Docker
+browser harness exercises independent site session states and cookie transfer with
+isolated SDK fixtures; live Clerk configuration still needs deployment verification.
+
+Interactive web sign-in actions use
+[`AuthActionLink`](../apps/web/src/components/auth-action-link.tsx): guests get
+Clerk's `openSignIn` modal with `forceRedirectUrl` and `signUpForceRedirectUrl`
+set to the same sanitized same-origin path, query and hash. Signed-in, modified
+and no-JS clicks follow the link, and protected admission still applies. API
+reauthentication (`AccountAccessDeniedState`, `ApiErrorPanel`) keeps the dedicated
+sign-in route via `signInActionHref`.
+
+Done: `bun run --cwd apps/web test src/lib/route-auth.test.ts` passes the
+admission tests and production SSR checks in the Docker clean runner.
+
 `ProtectedAuthBoundary` supplies account-data readiness without replacing the
 layout. The actual dashboard frame and navigation remain visible; private page
 content, account actions, notifications, prefetches, and hosted sensors wait for

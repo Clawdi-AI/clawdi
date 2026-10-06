@@ -1376,7 +1376,7 @@ describe("ai-provider commands", () => {
 				out: join(tmpHome, "providers.env"),
 				json: true,
 			}),
-		).rejects.toThrow("--import-secrets requires an AI Provider export file");
+		).rejects.toThrow("--import-secrets requires an AI provider export file");
 	});
 });
 

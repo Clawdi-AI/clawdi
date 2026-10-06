@@ -38,12 +38,12 @@ export function mergeWorkspaceRuntimeSkills(
 			return {
 				entity:
 					projection && desired
-						? { ...projection, source: "Agent Workspace", source_repo: desiredSource }
+						? { ...projection, source: "Agent workspace", source_repo: desiredSource }
 						: (projection ??
 							workspaceRuntimeSkillEntity(skillKey, {
 								name: skillKey,
 								description: null,
-								source: "Agent Workspace",
+								source: "Agent workspace",
 								sourceRepo: desiredSource,
 							})),
 				cloudProjection: projection ?? null,
@@ -87,7 +87,7 @@ function shellArgument(value: string): string {
 
 export const workspaceSkillInstallCopy = {
 	title: "Install skill",
-	description: "Choose a Skill from your Library or a public GitHub repository.",
+	description: "Choose a skill from your library or a public GitHub repository.",
 	library: "Library",
 	github: "GitHub",
 } as const;

@@ -20,8 +20,8 @@ from app.models.channel import ChannelAccount, ChannelBinding, ChannelBindingAli
 from app.routes.channel_routers import discord, shared
 from app.services.discord_advisory_session import DiscordAdvisorySession
 from app.services.discord_rate_limiter import DiscordRateLimiter
-from tests.test_channels import _create_paired_discord_channel, _reset_discord_gateway_sessions
-from tests.test_channels import (
+from tests.channel_helpers import _create_paired_discord_channel, _reset_discord_gateway_sessions
+from tests.test_channels_delivery import (
     _verified_discord_guild_membership as _verified_discord_guild_membership,
 )
 

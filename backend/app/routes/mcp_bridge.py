@@ -854,7 +854,7 @@ async def mcp_clawdi_post(
     auth: AuthContext = Depends(get_auth_short_session),
     db: AsyncSession = Depends(get_session),
 ) -> JsonObject | list[JsonObject] | Response:
-    """Agent-facing stateless MCP endpoint backed directly by Clawdi Cloud."""
+    """Agent-facing stateless MCP endpoint backed directly by Clawdi."""
     record_pre_handler(request.scope)
     with request_stage(request.scope, "mcp_body_read_ms"):
         body = await _read_request_json(request)
@@ -946,7 +946,7 @@ async def _handle_clawdi_mcp_request(
                     "capabilities": {"tools": {"listChanged": False}},
                     "serverInfo": {
                         "name": "clawdi",
-                        "title": "Clawdi Cloud",
+                        "title": "Clawdi",
                         "version": "1.0.0",
                     },
                 },

@@ -4,16 +4,16 @@ export function onboardingCardModel(
 ) {
 	const isAdditionalAgent = variant === "additional-agent";
 	const title = isAdditionalAgent
-		? "Add another Agent"
+		? "Add another agent"
 		: canDeployOnClawdi
-			? "Get your first Agent running"
-			: "Let's connect your first Agent";
+			? "Get your first agent running"
+			: "Let's connect your first agent";
 	const description = isAdditionalAgent
 		? canDeployOnClawdi
-			? "Deploy another Agent on Clawdi, or connect one from your machine."
-			: "Connect another Agent on your machine and manage it from this dashboard."
+			? "Deploy a Cloud Agent, or connect an agent you already run."
+			: "Connect another agent you run and manage it from this dashboard."
 		: canDeployOnClawdi
-			? "Deploy an Agent on Clawdi, or connect one from your machine."
-			: "Connect an Agent on your machine and manage it from this dashboard.";
+			? "Deploy a Cloud Agent, or connect an agent you already run."
+			: "Connect an agent you run and manage it from this dashboard.";
 	return { isAdditionalAgent, title, description };
 }

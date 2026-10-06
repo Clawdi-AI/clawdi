@@ -18,19 +18,19 @@ export const agentSectionCopy = {
 	},
 	projects: {
 		label: getProjectResourceDefinition("projects").navLabel,
-		description: "Projects linked to this Agent.",
+		description: "Projects linked to this agent.",
 	},
 	skills: {
 		label: getProjectResourceDefinition("skills").navLabel,
-		description: "Skills installed in this Agent's Workspace.",
+		description: "Skills installed in this agent's workspace.",
 	},
 	vaults: {
 		label: getProjectResourceDefinition("vaults").navLabel,
-		description: "Vaults attached to this Agent's Workspace.",
+		description: "Vaults attached to this agent's workspace.",
 	},
 	ai: { label: "AI Providers", description: "AI provider and primary model used by this agent." },
 	channels: { label: "Channels", description: "Channels linked to this agent." },
-	plugins: { label: "Plugins", description: "Install Skills and MCP servers for this agent." },
+	plugins: { label: "Plugins", description: "Install skills and MCP servers for this agent." },
 	settings: { label: "Settings", description: "Name, preferences, and agent controls." },
 } as const;
 export type MobileAgentSection = keyof typeof agentSectionCopy;

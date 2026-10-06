@@ -99,7 +99,7 @@ describe("Agent effective Project Skill inventory", () => {
 				page,
 				page_size: pageSize,
 			})),
-		).rejects.toThrow("did not match the requested Project");
+		).rejects.toThrow("did not match the requested project");
 
 		await expect(
 			fetchAgentProjectSkills(["project_primary"], async (projectId, page, pageSize) => ({
@@ -116,7 +116,7 @@ describe("Agent effective Project Skill inventory", () => {
 				page,
 				page_size: pageSize,
 			})),
-		).rejects.toThrow("ended before every Project row was loaded");
+		).rejects.toThrow("ended before every project row was loaded");
 
 		await expect(
 			fetchAgentProjectSkills(
@@ -129,6 +129,6 @@ describe("Agent effective Project Skill inventory", () => {
 				}),
 				{ pageSize: 1, maxPages: 1 },
 			),
-		).rejects.toThrow("Too many agent Skill pages");
+		).rejects.toThrow("Too many agent skill pages");
 	});
 });

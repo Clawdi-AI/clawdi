@@ -41,7 +41,7 @@ export type ComputeSubscriptionManagementResult =
 	| { action: "enabled"; target: PlanChangeTarget; unavailableReason: null };
 
 const UPGRADE_DETAILS_UNAVAILABLE_REASON =
-	"Upgrade availability will appear after this agent’s compute details finish syncing.";
+	"Upgrade availability will appear after this agent's plan details finish syncing.";
 
 function isComputePlanSlug(value: string | null | undefined): value is ComputePlanSlug {
 	return value === COMPUTE_BASIC_SLUG || value === COMPUTE_PERFORMANCE_SLUG;

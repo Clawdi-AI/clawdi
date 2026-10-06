@@ -105,17 +105,17 @@ describe("effective Agent Project scope", () => {
 			"project_context",
 		]);
 		expect(() => resolveAgentProjectScope(bindings, "project_stale")).toThrow(
-			"Workspace is still syncing",
+			"workspace is still syncing",
 		);
 		expect(() => resolveAgentProjectScope([], "project_primary")).toThrow(
-			"Workspace is not available",
+			"workspace is not available",
 		);
 		expect(() =>
 			resolveAgentProjectScope(
 				[binding("context", "project_primary", "context", 1)],
 				"project_primary",
 			),
-		).toThrow("Workspace is not available");
+		).toThrow("workspace is not available");
 		expect(() =>
 			resolveAgentProjectScope(
 				[
@@ -124,6 +124,6 @@ describe("effective Agent Project scope", () => {
 				],
 				"project_primary",
 			),
-		).toThrow("Workspace is not available");
+		).toThrow("workspace is not available");
 	});
 });

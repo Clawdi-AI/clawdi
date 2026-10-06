@@ -172,7 +172,7 @@ export function HostedSecondaryCTA({
 }
 
 /**
- * The /agents index list. Hosted deployments render as one Clawdi Cloud agent
+ * The /agents index list. Hosted deployments render as one Clawdi hosted agent
  * each; self-managed and legacy hosted agents get their own section.
  */
 export function HostedAgentsByCompute({
@@ -233,11 +233,9 @@ export function HostedAgentsByCompute({
 		);
 	}
 
-	if (
-		(envsLoading || unified.isLoading) &&
-		hostedTiles.length === 0 &&
-		connectedTiles.length === 0
-	) {
+	// Hold the skeleton until hosted tiles resolve too; otherwise the
+	// connected section renders first and Clawdi Cloud pushes in above it.
+	if (unified.isLoading) {
 		return (
 			<div data-hosted="true" className={hostedAgentGroupsClasses.root}>
 				<AgentsCard agents={[]} isLoading />
@@ -272,7 +270,7 @@ export function HostedAgentsByCompute({
 					<ApiErrorPanel
 						error={selfManagedError}
 						onRetry={onRetrySelfManaged}
-						title="Couldn't load agents"
+						title="Couldn't load Connected Agents"
 					/>
 				</section>
 			) : null}

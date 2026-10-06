@@ -7,6 +7,8 @@ import json
 import logging
 import random
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from time import monotonic
 from types import TracebackType
 from typing import Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -19,19 +21,23 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
+from app.core.cleanup import finish_cleanup
 from app.core.config import settings
-from app.core.database import finish_cleanup
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
+    CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
     CHANNEL_STATUS_ACTIVE,
     ChannelAccount,
+    ChannelAccountRuntimeMarker,
     ChannelBinding,
 )
 from app.services.channels import (
     decrypt_provider_token,
+    delete_channel_account_runtime_markers,
     record_discord_dispatch,
     update_discord_binding_display_name_from_trusted_event,
+    upsert_channel_account_runtime_marker,
 )
 from app.services.discord_advisory_session import (
     DiscordAdvisorySession,
@@ -51,8 +57,19 @@ DISCORD_GATEWAY_VERSION = "10"
 DISCORD_GATEWAY_ENCODING = "json"
 DISCORD_DEFAULT_INTENTS = 46593
 
+DISCORD_TERMINAL_CLOSE_RETRY_SECONDS = 30 * 60
+
 _NON_RETRYABLE_CLOSE_CODES = {4004, 4010, 4011, 4012, 4013, 4014}
 _SESSION_RESET_CLOSE_CODES = {4007, 4009}
+_DISCORD_GATEWAY_TERMINAL_CLOSE_OUTCOMES = {
+    4004: "authentication_failed",
+    4010: "invalid_configuration",
+    4011: "invalid_configuration",
+    4012: "invalid_configuration",
+    4013: "invalid_intents",
+    4014: "disallowed_intents",
+}
+_DISCORD_GATEWAY_AUTHENTICATION_FAILED_OUTCOME = _DISCORD_GATEWAY_TERMINAL_CLOSE_OUTCOMES[4004]
 
 type GatewayFrame = dict[str, JsonValue]
 
@@ -142,12 +159,41 @@ class DiscordGatewayWorker:
         self._connect_factory = connect_factory
         self._tasks: dict[UUID, asyncio.Task[None]] = {}
         self._terminal_account_revisions: dict[UUID, str] = {}
+        self._terminal_account_retry_at: dict[UUID, float] = {}
         self._states: dict[UUID, _GatewayState] = {}
         self._lifecycle_serial = asyncio.Lock()
 
     async def run_once(self, stop: asyncio.Event | None = None) -> int:
         async with self._lifecycle_serial:
             accounts = await list_active_discord_gateway_accounts(self._sessionmaker)
+            marker_candidates = {
+                account_id: revision
+                for account_id, revision in accounts.items()
+                if (
+                    account_id not in self._terminal_account_revisions
+                    and (account_id not in self._tasks or self._tasks[account_id].done())
+                )
+            }
+            if marker_candidates:
+                try:
+                    markers = await load_discord_gateway_terminal_close_markers(
+                        self._sessionmaker,
+                        marker_candidates,
+                    )
+                except Exception:
+                    log.exception("discord gateway terminal close marker scan failed")
+                else:
+                    now = datetime.now(UTC)
+                    for account_id, marker in markers.items():
+                        self._terminal_account_revisions[account_id] = marker.scope
+                        if marker.outcome == _DISCORD_GATEWAY_AUTHENTICATION_FAILED_OUTCOME:
+                            self._terminal_account_retry_at.pop(account_id, None)
+                        else:
+                            seconds_since = (now - marker.updated_at).total_seconds()
+                            self._terminal_account_retry_at[account_id] = monotonic() + max(
+                                0,
+                                DISCORD_TERMINAL_CLOSE_RETRY_SECONDS - seconds_since,
+                            )
             self._sync_tasks(accounts, stop or asyncio.Event())
             return len(accounts)
 
@@ -172,6 +218,7 @@ class DiscordGatewayWorker:
         async with self._lifecycle_serial:
             await finish_cleanup(self._close_lock_session)
             self._terminal_account_revisions.clear()
+            self._terminal_account_retry_at.clear()
             self._states.clear()
 
     async def _close_lock_session(self) -> None:
@@ -198,14 +245,19 @@ class DiscordGatewayWorker:
                 task.cancel()
         for account_id in set(self._terminal_account_revisions) - active:
             self._terminal_account_revisions.pop(account_id, None)
+            self._terminal_account_retry_at.pop(account_id, None)
         for account_id, revision in active_accounts.items():
             if account_id in self._tasks:
                 continue
             terminal_revision = self._terminal_account_revisions.get(account_id)
             if terminal_revision == revision:
-                continue
-            if terminal_revision is not None:
+                retry_at = self._terminal_account_retry_at.get(account_id)
+                # Authentication failures require a new credential revision.
+                if retry_at is None or monotonic() < retry_at:
+                    continue
+            elif terminal_revision is not None:
                 self._terminal_account_revisions.pop(account_id, None)
+                self._terminal_account_retry_at.pop(account_id, None)
             state = self._states.get(account_id)
             if state is not None and state.account_revision != revision:
                 self._states.pop(account_id, None)
@@ -244,6 +296,24 @@ class DiscordGatewayWorker:
                     )
                     if state.account_revision is not None:
                         self._terminal_account_revisions[account_id] = state.account_revision
+                        if close_code == 4004:
+                            self._terminal_account_retry_at.pop(account_id, None)
+                        else:
+                            self._terminal_account_retry_at[account_id] = (
+                                monotonic() + DISCORD_TERMINAL_CLOSE_RETRY_SECONDS
+                            )
+                        try:
+                            await self._persist_terminal_close_marker(
+                                account_id=account_id,
+                                account_revision=state.account_revision,
+                                close_code=close_code,
+                            )
+                        except Exception:
+                            log.exception(
+                                "discord gateway account %s failed to persist "
+                                "terminal close marker",
+                                account_id,
+                            )
                     return
                 log.warning("discord gateway account %s disconnected: %s", account_id, exc)
             except Exception as exc:
@@ -382,7 +452,15 @@ class DiscordGatewayWorker:
         if op == 0:
             _update_gateway_session_state(state, frame)
             if frame.get("t") in {"READY", "RESUMED"}:
-                state.session_established = True
+                if not state.session_established:
+                    state.session_established = True
+                    try:
+                        await self._clear_terminal_close_markers(account_id)
+                    except Exception:
+                        log.exception(
+                            "discord gateway account %s failed to clear terminal close marker",
+                            account_id,
+                        )
             await record_discord_gateway_dispatch(
                 self._sessionmaker,
                 account_id,
@@ -404,6 +482,39 @@ class DiscordGatewayWorker:
             raise RuntimeError("discord invalidated gateway session")
         elif op == 11:
             state.heartbeat_acknowledged = True
+
+    async def _persist_terminal_close_marker(
+        self,
+        *,
+        account_id: UUID,
+        account_revision: str,
+        close_code: int,
+    ) -> None:
+        outcome = _DISCORD_GATEWAY_TERMINAL_CLOSE_OUTCOMES.get(close_code)
+        if outcome is None:
+            return
+        occurred_at = datetime.now(UTC)
+        async with self._sessionmaker() as db:
+            await upsert_channel_account_runtime_marker(
+                db,
+                account_id=account_id,
+                kind=CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+                scope=account_revision,
+                outcome=outcome,
+                occurred_at=occurred_at,
+            )
+            await db.commit()
+
+    async def _clear_terminal_close_markers(self, account_id: UUID) -> None:
+        async with self._sessionmaker() as db:
+            await delete_channel_account_runtime_markers(
+                db,
+                account_id=account_id,
+                kind=CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+            )
+            await db.commit()
+        self._terminal_account_revisions.pop(account_id, None)
+        self._terminal_account_retry_at.pop(account_id, None)
 
     def _observe_done_task(self, account_id: UUID, task: asyncio.Task[None]) -> None:
         with contextlib.suppress(asyncio.CancelledError):
@@ -433,6 +544,29 @@ async def list_active_discord_gateway_accounts(
             for account in accounts
             if discord_gateway_enabled(account)
         }
+
+
+async def load_discord_gateway_terminal_close_markers(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    active_accounts: dict[UUID, str],
+) -> dict[UUID, ChannelAccountRuntimeMarker]:
+    if not active_accounts:
+        return {}
+    account_ids = tuple(active_accounts)
+    async with sessionmaker() as db:
+        result = await db.execute(
+            select(ChannelAccountRuntimeMarker).where(
+                ChannelAccountRuntimeMarker.account_id.in_(account_ids),
+                ChannelAccountRuntimeMarker.kind
+                == CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+            )
+        )
+        markers = result.scalars().all()
+    return {
+        marker.account_id: marker
+        for marker in markers
+        if active_accounts.get(marker.account_id) == marker.scope
+    }
 
 
 async def load_discord_gateway_account(

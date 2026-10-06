@@ -7,10 +7,11 @@ import {
 	projectInvitationCopy,
 	projectInvitationCounts,
 } from "@clawdi/shared/view";
-import { Link, useRouter } from "@tanstack/react-router";
+import { useRouter, useRouterState } from "@tanstack/react-router";
 import { AlertCircle, CheckCircle2, KeyRound, LogIn, ShieldCheck, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AuthActionLink } from "@/components/auth-action-link";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -71,6 +72,7 @@ function hasStructuredDetailError(error: unknown, code: string): boolean {
 export default function SharePage({ token }: { token: string }) {
 	const api = useApi();
 	const router = useRouter();
+	const href = useRouterState({ select: (state) => state.location.href });
 	const { isSignedIn, getToken } = useDashboardAuth();
 	const { user } = useCurrentUser();
 	const sessionIdentity = useSessionIdentity();
@@ -138,7 +140,7 @@ export default function SharePage({ token }: { token: string }) {
 		(user?.publicMetadata?.project_owner_handle as string | undefined) ??
 		(user?.publicMetadata?.owner_handle as string | undefined);
 	const isOwner =
-		profileOwnerHandle === data.owner_handle ||
+		(Boolean(profileOwnerHandle) && profileOwnerHandle === data.owner_handle) ||
 		(upgrade.error instanceof ShareError && upgrade.error.code === "already_owner");
 
 	return (
@@ -169,12 +171,12 @@ export default function SharePage({ token }: { token: string }) {
 						<Alert>
 							<CheckCircle2 />
 							<AlertTitle>Invitation accepted</AlertTitle>
-							<AlertDescription>Opening Project…</AlertDescription>
+							<AlertDescription>Opening project…</AlertDescription>
 						</Alert>
 					) : isOwner ? (
 						<Alert>
 							<ShieldCheck />
-							<AlertTitle>This is your Project</AlertTitle>
+							<AlertTitle>This is your project</AlertTitle>
 							<AlertDescription>You already have access.</AlertDescription>
 						</Alert>
 					) : isSignedIn ? (
@@ -192,7 +194,7 @@ export default function SharePage({ token }: { token: string }) {
 								<Alert>
 									<CheckCircle2 />
 									<AlertDescription>
-										You already have access. Open this Project from your dashboard.
+										You already have access. Open this project from your dashboard.
 									</AlertDescription>
 								</Alert>
 							) : upgrade.error ? (
@@ -207,7 +209,7 @@ export default function SharePage({ token }: { token: string }) {
 					) : (
 						<div className="space-y-4">
 							<Button
-								render={<Link to="/sign-in" search={{ redirect_url: `/share/${token}` }} />}
+								render={<AuthActionLink href={href} />}
 								nativeButton={false}
 								className={shareStyles.action}
 								size="lg"
@@ -276,8 +278,8 @@ function ErrorView({ error }: { error: unknown }) {
 			<Shell>
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Something went wrong</AlertTitle>
-					<AlertDescription>Couldn't load this invitation. Please try again.</AlertDescription>
+					<AlertTitle>Couldn't load invitation</AlertTitle>
+					<AlertDescription>Try again.</AlertDescription>
 				</Alert>
 			</Shell>
 		);
@@ -302,7 +304,7 @@ function titleForError(code: ShareErrorCode): string {
 		case "already_member":
 			return "Already joined";
 		case "already_owner":
-			return "This is your Project";
+			return "This is your project";
 		default:
 			return "Couldn't load invitation";
 	}
@@ -315,9 +317,9 @@ function describeError(code: ShareErrorCode): string {
 		case "revoked":
 			return "This invite link is no longer active. Ask the owner for a new one.";
 		case "already_member":
-			return "You already have access. Open this Project from your dashboard.";
+			return "You already have access. Open this project from your dashboard.";
 		case "already_owner":
-			return "You own this Project. There is nothing to accept.";
+			return "You own this project. There is nothing to accept.";
 		default:
 			return "Try again. If the problem continues, contact the owner.";
 	}

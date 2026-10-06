@@ -97,7 +97,7 @@ describe("Workspace Skill runtime authority", () => {
 			skill_key: "manifest-owned",
 			name: "manifest-owned",
 			description: "Cloud projection",
-			source: "Agent Workspace",
+			source: "Agent workspace",
 			source_repo: "example/skills/skills/manifest-owned",
 		});
 		expect(inventory.find((item) => item.entity.skill_key === "failed")?.desired).toMatchObject({

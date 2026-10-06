@@ -1,24 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import {
-	completeJsonlRecords,
-	reasoningContent,
-	toolResultContent,
-	visibleContentParts,
-} from "./rich-event-mapping";
+import inlineImage from "../../tests/fixtures/hermes-inline-image.json";
+import { reasoningContent, toolResultContent, visibleContentParts } from "./rich-event-mapping";
 
 describe("rich event mapping", () => {
-	test("keeps complete JSONL records without a trailing newline and ignores a partial tail", () => {
-		const records = completeJsonlRecords('{"id":"first"}\n{"partial":\n{"id":"last"}');
-		expect(records).toEqual([
-			{ data: { id: "first" }, recordSeq: 0 },
-			{ data: { id: "last" }, recordSeq: 2 },
-		]);
-		expect(completeJsonlRecords('{"id":"first"}\n{"partial":')).toEqual([
-			{ data: { id: "first" }, recordSeq: 0 },
-		]);
-	});
-
 	test("keeps safe attachment references and degrades inline/local content to metadata", () => {
 		const inlineBytes = Buffer.from("inline image bytes");
 		const inlineData = inlineBytes.toString("base64");
@@ -78,6 +63,31 @@ describe("rich event mapping", () => {
 		);
 		expect(JSON.stringify(mapped)).not.toContain("hidden reasoning");
 		expect(JSON.stringify(mapped)).not.toContain("opaque continuation");
+	});
+
+	test("maps inline image URLs without treating their payload as an attachment name", () => {
+		const result = toolResultContent(inlineImage.content);
+		expect(result.parts).toEqual([
+			{ type: "text", text: "Synthetic image input" },
+			{
+				type: "attachment",
+				attachment_id: `sha256:${createHash("sha256")
+					.update(inlineImage.content[1]?.image_url?.url ?? "")
+					.digest("hex")}`,
+				availability: "metadata_only",
+			},
+		]);
+		expect(JSON.stringify(result)).not.toContain("base64");
+		const attachments = [...result.parts, ...visibleContentParts(inlineImage.content)].filter(
+			(part) => part.type === "attachment",
+		);
+		expect(attachments).toHaveLength(2);
+		for (const attachment of attachments) {
+			expect(attachment.name ?? null).toBeNull();
+		}
+		expect(
+			visibleContentParts({ type: "file", url: "https://cdn.example.com/report%20one.pdf" })[0],
+		).toMatchObject({ name: "report one.pdf" });
 	});
 
 	test("maps reasoning text and provider continuation without retaining its source envelope", () => {

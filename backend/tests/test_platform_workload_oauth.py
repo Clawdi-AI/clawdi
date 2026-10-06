@@ -53,6 +53,7 @@ from app.services.platform_workload_auth import (
     authenticate_platform_workload_access_token,
     canonical_platform_workload_token_endpoint,
     get_platform_workload_key_resolver,
+    prune_platform_workload_assertion_replays,
 )
 from app.services.runtime_observation import retire_runtime_environment
 from app.services.vault_crypto import encrypt
@@ -1717,3 +1718,37 @@ async def test_oauth_rejects_admin_or_authorization_header_auth(workload_harness
     assert with_bearer.status_code == 400, with_bearer.text
     assert with_admin.json()["error"] == "invalid_request"
     assert with_bearer.json()["error"] == "invalid_request"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("leeway", [30, 600])
+async def test_replay_retention_preserves_clock_skew_window(
+    db_session, workload_harness, monkeypatch, leeway
+):
+    monkeypatch.setattr(platform_workload_auth, "PLATFORM_WORKLOAD_CLOCK_SKEW_SECONDS", leeway)
+    now = datetime.now(UTC)
+    margin = max(2 * leeway, 600)
+    expired = PlatformWorkloadAssertionReplay(
+        client_id=workload_harness.client_id,
+        jti=f"expired-{uuid.uuid4().hex}",
+        assertion_expires_at=now - timedelta(seconds=margin + 1),
+    )
+    boundary = PlatformWorkloadAssertionReplay(
+        client_id=workload_harness.client_id,
+        jti=f"boundary-{uuid.uuid4().hex}",
+        assertion_expires_at=now - timedelta(seconds=margin),
+    )
+    within_skew = PlatformWorkloadAssertionReplay(
+        client_id=workload_harness.client_id,
+        jti=f"within-skew-{uuid.uuid4().hex}",
+        assertion_expires_at=now - timedelta(seconds=leeway + 1),
+    )
+    db_session.add_all([expired, boundary, within_skew])
+    await db_session.flush()
+
+    deleted = await prune_platform_workload_assertion_replays(db_session, now=now, limit=10)
+
+    assert deleted == 1
+    assert await db_session.get(PlatformWorkloadAssertionReplay, expired.id) is None
+    assert await db_session.get(PlatformWorkloadAssertionReplay, boundary.id) is not None
+    assert await db_session.get(PlatformWorkloadAssertionReplay, within_skew.id) is not None

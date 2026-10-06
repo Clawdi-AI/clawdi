@@ -5,7 +5,7 @@ export const addAgentSetupClasses = {
 	commands: "mt-2 space-y-4",
 	title: "text-sm font-medium",
 	requirementHint: "mt-1 text-xs text-muted-foreground",
-	packageManagerHint: "mt-0.5 text-xs text-muted-foreground",
+	installationLink: "underline underline-offset-4",
 	promptContent: "mt-2 space-y-3",
 	promptPanel: "rounded-lg border bg-muted/30",
 	promptHeader: "flex items-center justify-between border-b border-border/40 px-3 py-1.5",

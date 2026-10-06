@@ -137,6 +137,6 @@ describe("agent Vault scope", () => {
 				}),
 				{ pageSize: 1, maxPages: 1 },
 			),
-		).rejects.toThrow("Too many agent Vault pages");
+		).rejects.toThrow("Too many agent vault pages");
 	});
 });

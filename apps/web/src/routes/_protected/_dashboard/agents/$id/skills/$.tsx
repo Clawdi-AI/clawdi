@@ -107,7 +107,7 @@ function LegacyAgentSkillProjectCanonicalizer({
 					onRetry={() => {
 						void bindings.refetch();
 					}}
-					title="Couldn't load Workspace access"
+					title="Couldn't load workspace access"
 				/>
 			) : (
 				<>

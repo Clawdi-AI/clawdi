@@ -3129,7 +3129,8 @@ async def upload_session_content(
                     "code": "session_origin_required",
                     "message": (
                         "More than one Agent owns this local_session_id; "
-                        "use an environment-bound credential."
+                        "send environment_id in the upload form or use an "
+                        "environment-bound credential."
                     ),
                 },
             )
@@ -3152,7 +3153,8 @@ async def upload_session_content(
                     "code": "session_origin_required",
                     "message": (
                         "More than one Agent owns this local_session_id; "
-                        "use an environment-bound credential."
+                        "send environment_id in the upload form or use an "
+                        "environment-bound credential."
                     ),
                 },
             )

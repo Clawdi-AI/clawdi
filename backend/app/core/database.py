@@ -1,11 +1,10 @@
 import asyncio
 import logging
 import time
-from collections.abc import AsyncGenerator, Callable, Coroutine
+from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 
-import anyio
 from sqlalchemy import event
 from sqlalchemy.dialects import registry
 from sqlalchemy.engine import Connection, ExceptionContext, make_url
@@ -21,6 +20,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import ConnectionPoolEntry, PoolProxiedConnection
 
+from app.core.cleanup import finish_cleanup
 from app.core.config import settings
 from app.services.metrics import (
     db_connection_hold_duration,
@@ -136,37 +136,6 @@ for observed_engine in (engine, control_engine, control_snapshot_engine):
     event.listen(observed_engine.sync_engine, "handle_error", _handle_error)
     event.listen(observed_engine.sync_engine.pool, "checkout", _connection_checkout)
     event.listen(observed_engine.sync_engine.pool, "checkin", _connection_checkin)
-
-
-async def finish_cleanup(cleanup: Callable[[], Coroutine[object, object, None]]) -> None:
-    """Finish owned cleanup before propagating request cancellation."""
-    cleanup_task = asyncio.create_task(cleanup())
-    cancellation: asyncio.CancelledError | None = None
-
-    with anyio.CancelScope(shield=True):
-        while not cleanup_task.done():
-            try:
-                await asyncio.shield(cleanup_task)
-            except asyncio.CancelledError as exc:
-                cancellation = exc
-            except Exception as exc:
-                if cancellation is None:
-                    raise
-
-                log.exception("Cleanup failed during request cancellation")
-                raise cancellation from exc
-
-    try:
-        cleanup_task.result()
-    except Exception as exc:
-        if cancellation is None:
-            raise
-
-        log.exception("Cleanup failed during request cancellation")
-        raise cancellation from exc
-
-    if cancellation is not None:
-        raise cancellation
 
 
 class _CancellationSafeAsyncSession(AsyncSession):

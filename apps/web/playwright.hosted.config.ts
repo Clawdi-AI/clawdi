@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
+// HOSTED (Clawdi hosted deployment) smoke against the vite dev server with dev-auth-bypass
 // (no Clerk key needed) + deploy-api enabled so /deploy renders.
 const hostedPort = Number(process.env.E2E_HOSTED_PORT ?? 3100);
 if (!Number.isInteger(hostedPort) || hostedPort < 1 || hostedPort > 65_535) {

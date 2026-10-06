@@ -3,6 +3,7 @@ import { AGENT_TYPES, type AgentType } from "./agent-types";
 import type { AgentAdapter } from "./base";
 import { ClaudeCodeAdapter } from "./claude-code";
 import { CodexAdapter } from "./codex";
+import { DshAdapter } from "./dsh";
 import { HermesAdapter } from "./hermes";
 import {
 	claudeMcpLifecycle,
@@ -10,6 +11,7 @@ import {
 	hermesMcpLifecycle,
 	type McpLifecycle,
 	openClawMcpLifecycle,
+	piMcpLifecycle,
 } from "./mcp-lifecycle";
 import { OpenClawAdapter } from "./openclaw";
 import { resolveOpenClawAgentWorkspace } from "./openclaw-workspace";
@@ -17,6 +19,7 @@ import { OpenCodeAdapter } from "./opencode";
 import {
 	getClaudeHome,
 	getCodexHome,
+	getDshHome,
 	getHermesHome,
 	getOpenClawHome,
 	getOpenCodeDataDir,
@@ -36,6 +39,8 @@ export interface AdapterRegistryEntry {
 	create: () => AgentAdapter;
 	/** Optional local MCP lifecycle. Both actions are one indivisible contract. */
 	mcpLifecycle?: McpLifecycle;
+	/** Guidance for agents whose native MCP configuration must be managed manually. */
+	manualMcpHint?: string;
 }
 
 // Registry: every `AgentType` must have exactly one entry — `Record<AgentType, …>`
@@ -74,12 +79,21 @@ export const adapterRegistry: Record<AgentType, AdapterRegistryEntry> = {
 		envFileName: "pi.json",
 		home: getPiHome,
 		create: () => new PiAdapter(),
+		mcpLifecycle: piMcpLifecycle,
 	},
 	opencode: {
 		displayName: "OpenCode",
 		envFileName: "opencode.json",
 		home: getOpenCodeDataDir,
 		create: () => new OpenCodeAdapter(),
+	},
+	dsh: {
+		displayName: "DeepSeek Harness",
+		envFileName: "dsh.json",
+		home: getDshHome,
+		create: () => new DshAdapter(),
+		manualMcpHint:
+			"DeepSeek Harness: configure Clawdi MCP manually in your Cordis patch. Setup does not edit MCP configuration.",
 	},
 };
 
@@ -123,7 +137,13 @@ export function agentSkillTargetDir(
 	if (agentType === "openclaw") {
 		return join(resolveOpenClawAgentWorkspace(), "skills", skillName);
 	}
-	if (agentType === "claude_code" || agentType === "codex" || agentType === "hermes") {
+	if (
+		agentType === "claude_code" ||
+		agentType === "codex" ||
+		agentType === "hermes" ||
+		agentType === "pi" ||
+		agentType === "dsh"
+	) {
 		return join(home, "skills", skillName);
 	}
 	return null;

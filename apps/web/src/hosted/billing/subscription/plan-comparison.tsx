@@ -61,7 +61,7 @@ export function PlanComparison({
 
 	if (plansQuery.isLoading) {
 		return (
-			<SettingsSection headingLevel={3} title="Plans" description="Compare hosted compute plans.">
+			<SettingsSection headingLevel={3} title="Plans" description="Compare Cloud Agent plans.">
 				<div className={planComparisonClasses.grid}>
 					<Skeleton className={planComparisonClasses.skeletonCard} />
 					<Skeleton className={planComparisonClasses.skeletonCard} />
@@ -72,7 +72,7 @@ export function PlanComparison({
 
 	if (shouldBlockQueryError(plansQuery.error, plansQuery.data)) {
 		return (
-			<SettingsSection headingLevel={3} title="Plans" description="Compare hosted compute plans.">
+			<SettingsSection headingLevel={3} title="Plans" description="Compare Cloud Agent plans.">
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={plansQuery.error}
@@ -116,7 +116,7 @@ export function PlanComparison({
 			description={
 				sharedPricingUnavailable
 					? billingCopy.sharedPricingUnavailable
-					: "Compare hosted compute plans."
+					: "Compare Cloud Agent plans."
 			}
 		>
 			<div>
@@ -125,7 +125,7 @@ export function PlanComparison({
 					<Card size="sm">
 						<CardHeader className={planComparisonClasses.header}>
 							<CardTitle className={planComparisonClasses.title}>
-								<Cpu className={planComparisonClasses.icon} aria-hidden /> Compute Basic
+								<Cpu className={planComparisonClasses.icon} aria-hidden /> Basic
 							</CardTitle>
 							<CardDescription>Balanced capacity for everyday workloads.</CardDescription>
 							<div className={planComparisonClasses.priceBlock}>
@@ -154,8 +154,7 @@ export function PlanComparison({
 					<Card size="sm" className={planComparisonClasses.featuredCard}>
 						<CardHeader className={planComparisonClasses.header}>
 							<CardTitle className={planComparisonClasses.title}>
-								<Zap className={planComparisonClasses.featuredIcon} aria-hidden /> Compute
-								Performance
+								<Zap className={planComparisonClasses.featuredIcon} aria-hidden /> Performance
 							</CardTitle>
 							<CardDescription>Higher capacity for production workloads.</CardDescription>
 							<div className={planComparisonClasses.priceBlock}>

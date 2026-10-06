@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
@@ -16,27 +16,23 @@ import {
 import { durationSecondsBetween } from "../lib/session-duration";
 import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-events";
 import { extractTarGz } from "../lib/tar";
-import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
 	collectManagedSkillTree,
 	managedSkillTreesEqual,
 	withManagedTargetRollback,
 } from "../runtime/managed-skill-delivery";
+import { mutateUserSkillTarget } from "../runtime/managed-skill-reservation";
 import {
-	migrateLegacyLocalSetupSkill,
-	mutateUserSkillTarget,
-	shouldIgnoreUserSkill,
-} from "../runtime/managed-skill-reservation";
-import type {
-	AgentAdapterCore,
-	RawSession,
-	RawSkill,
-	SessionBatchScan,
-	SessionEvent,
-	SessionScanRequest,
-	SessionScanResult,
-	SessionUserActivity,
-	SyncReadContext,
+	type AgentAdapterCore,
+	collectFromScan,
+	type RawSession,
+	type RawSkill,
+	type SessionBatchScan,
+	type SessionEvent,
+	type SessionScanRequest,
+	type SessionScanResult,
+	type SessionUserActivity,
+	type SyncReadContext,
 } from "./base";
 import { runOpenClawCommand, runOpenClawSdkCommand } from "./openclaw-command";
 import {
@@ -45,17 +41,16 @@ import {
 	resolveOpenClawAgentWorkspace,
 	resolveOpenClawAgentWorkspaceAsync,
 } from "./openclaw-workspace";
-import { getOpenClawHome, isPathWithinRoots, SKIP_DIRS, safeSkillDirectoryPath } from "./paths";
+import { getOpenClawHome, isPathWithinRoots, matchesProjectFilter } from "./paths";
+import { isOpenClawBookkeepingMessage, piMessageDrafts } from "./pi-message-drafts";
 import {
-	canonicalStructuredString,
 	type JsonObject,
 	jsonObject,
 	jsonString,
-	reasoningContent,
+	SESSION_PROJECTION_REVISION,
 	stableRecordId,
-	toolResultContent,
-	visibleContentParts,
 } from "./rich-event-mapping";
+import { jsonlPathsWithin } from "./session-files";
 import {
 	addSessionModel,
 	describeSessionContent,
@@ -63,6 +58,7 @@ import {
 	readBoundedJsonFile,
 	SESSION_RECORD_MAX_BYTES,
 } from "./session-source";
+import { collectSkillsFromDir, enumerateSkillDirs, flatSkillModule } from "./skill-dir";
 import { openSessionIndex } from "./sqlite";
 import { readCommandVersion } from "./version";
 
@@ -637,7 +633,7 @@ function officialTranscriptReader(entry: OfficialSessionEntry, context?: SyncRea
 			const encoded = JSON.stringify(message);
 			if (Buffer.byteLength(encoded) > SESSION_RECORD_MAX_BYTES)
 				throw new Error("OpenClaw transcript record exceeds supported source size");
-			digest.update(encoded).update("\\n");
+			digest.update(encoded).update("\n");
 			state.userActivity = mergeUserActivity(
 				state.userActivity,
 				computeOpenClawRealUserActivity([message], entry.key, entry),
@@ -656,7 +652,7 @@ function officialTranscriptReader(entry: OfficialSessionEntry, context?: SyncRea
 			seq += events.length;
 			yield* events;
 			const model = jsonString(message.model);
-			if (model) {
+			if (model && !isOpenClawBookkeepingMessage(message)) {
 				addSessionModel(state.modelsUsed, model);
 				state.model = model;
 			}
@@ -731,77 +727,18 @@ function openClawEventDrafts(
 	if (raw.type !== "message") return [];
 	const message = jsonObject(raw.message);
 	if (!message) return [];
-	const role = jsonString(message.role);
-	const model = jsonString(message.model) ?? currentModel ?? undefined;
-	const drafts: SessionEventDraft[] = [];
-	if (role === "user" || role === "assistant" || role === "system" || role === "developer") {
-		const parts = visibleContentParts(message.content);
-		if (parts.length > 0) {
-			drafts.push({
-				type: "message",
-				role,
-				parts,
-				source: eventSource(0),
-				...(timestamp ? { timestamp } : {}),
-				...(role === "assistant" && model ? { model } : {}),
-			});
-		}
-	}
-	const blocks = Array.isArray(message.content) ? message.content : [];
-	for (let index = 0; index < blocks.length; index++) {
-		const block = jsonObject(blocks[index]);
-		if (!block) continue;
-		const reasoning = role === "assistant" ? reasoningContent(block) : null;
-		if (reasoning) {
-			drafts.push({
-				type: "reasoning",
-				...reasoning,
-				source: eventSource(index + 1),
-				...(timestamp ? { timestamp } : {}),
-				...(model ? { model } : {}),
-			});
-		}
-		if (role === "assistant" && (block.type === "toolCall" || block.type === "tool_use")) {
-			const callId = jsonString(block.id);
-			const name = jsonString(block.name);
-			if (!callId || !name) continue;
-			drafts.push({
-				type: "tool_call",
-				call_id: callId,
-				name,
-				arguments_json: canonicalStructuredString(block.arguments ?? block.input),
-				source: eventSource(index + 1),
-				...(timestamp ? { timestamp } : {}),
-				...(model ? { model } : {}),
-			});
-		}
-		if (role === "user" && block.type === "tool_result") {
-			const callId = jsonString(block.tool_use_id);
-			if (!callId) continue;
-			drafts.push({
-				type: "tool_result",
-				call_id: callId,
-				status: block.is_error === true ? "error" : "completed",
-				...toolResultContent(block.content, block.details),
-				source: eventSource(index + 1),
-				...(timestamp ? { timestamp } : {}),
-			});
-		}
-	}
-	if (role === "toolResult") {
-		const callId = jsonString(message.toolCallId);
-		if (callId)
-			drafts.push({
-				type: "tool_result",
-				call_id: callId,
-				...(jsonString(message.toolName) ? { name: jsonString(message.toolName) as string } : {}),
-				status: message.isError === true ? "error" : "completed",
-				...toolResultContent(message.content, message.details),
-				source: eventSource(),
-				...(timestamp ? { timestamp } : {}),
-			});
-	}
-	return drafts;
+	const drafts = piMessageDrafts(message, {
+		source: eventSource,
+		recordId,
+		timestamp,
+		model: currentModel,
+	});
+	return message.display === false
+		? drafts.map((draft) => ({
+				...draft,
+				semantics: { lifecycle: "active", display: "hidden", compressed_summary: false },
+			}))
+		: drafts;
 }
 
 interface SessionCollection {
@@ -936,8 +873,9 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			context?.signal.throwIfAborted();
 			return "events-v1" as const;
 		},
-		collect: (request: SessionScanRequest, context?: SyncReadContext) =>
-			this.collectSessions(request, context),
+		collect: collectFromScan((request, revisions, context) =>
+			this.scanSessions(request, revisions, context),
+		),
 		scan: (
 			request: SessionScanRequest,
 			knownSourceRevisions: ReadonlyMap<string, string>,
@@ -948,16 +886,24 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		watchPaths: () => this.getSessionsWatchPaths(),
 	};
 	readonly skills = {
+		...flatSkillModule({
+			root: skillsDir,
+			write: {
+				writeArchive: (key, bytes) => this.installOfficialSkillArchive(key, key, bytes),
+				writeSharedArchive: (key, owner, bytes) =>
+					this.installOfficialSkillArchive(key, `${key}__${owner}`, bytes),
+			},
+		}),
 		collect: (context?: SyncReadContext) => this.collectSkills(context),
-		listKeys: (context?: SyncReadContext) => this.listSkillKeys(context),
-		path: (key: string) => this.getSkillPath(key),
-		rootDir: () => this.getSkillsRootDir(),
-		sharedPath: (skillKey: string, ownerHandle: string) =>
-			this.getSharedSkillPath(skillKey, ownerHandle),
-		writeArchive: (key: string, tarGzBytes: Buffer) => this.writeSkillArchive(key, tarGzBytes),
-		writeSharedArchive: (key: string, ownerHandle: string, tarGzBytes: Buffer) =>
-			this.writeSharedSkillArchive(key, ownerHandle, tarGzBytes),
-		remove: (key: string) => this.removeLocalSkill(key),
+		listKeys: async (context?: SyncReadContext) => {
+			context?.signal.throwIfAborted();
+			// Collection spans all workspaces; the daemon hashes only the active agent's root.
+			const root = join(
+				await resolveOpenClawAgentWorkspaceAsync(agentId(), context?.signal),
+				"skills",
+			);
+			return enumerateSkillDirs(root).map(({ key }) => key);
+		},
 	};
 
 	async detect(): Promise<boolean> {
@@ -972,24 +918,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	}
 
 	async getVersion(): Promise<string | null> {
-		return (
-			readCommandVersion("openclaw", ["--version"]) ?? readCommandVersion("openclaw", ["--help"])
-		);
-	}
-
-	private async collectSessions(
-		request: SessionScanRequest,
-		context?: SyncReadContext,
-	): Promise<SessionScanResult> {
-		context?.signal.throwIfAborted();
-		const scan = await this.scanSessions(request, new Map(), context);
-		const sessions: RawSession[] = [];
-		let dedupedCount = 0;
-		for await (const batch of scan.batches) {
-			sessions.push(...batch.sessions);
-			dedupedCount += batch.dedupedCount;
-		}
-		return { sessions, dedupedCount, coverage: scan.coverage };
+		return readCommandVersion("openclaw", ["--version"]);
 	}
 
 	private async scanSessions(
@@ -1048,30 +977,16 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				coverage: "complete",
 			};
 		}
-		if (request.paths.length === 0) {
+		const sessionRoots = listAgentDirs().map((dir) => resolve(dir, "sessions"));
+		const paths = jsonlPathsWithin(request, sessionRoots);
+		if (!paths) {
 			return this.collectLegacySessions(
 				{ kind: "complete", projectFilter: request.projectFilter },
 				knownSourceRevisions,
 				context,
 			);
 		}
-		const sessionRoots = listAgentDirs().map((dir) => resolve(dir, "sessions"));
-		const transcriptPaths = new Set<string>();
-		for (const path of request.paths) {
-			const normalized = resolve(path);
-			if (
-				!isPathWithinRoots(normalized, sessionRoots) ||
-				basename(normalized) === "sessions.json" ||
-				!normalized.endsWith(".jsonl")
-			) {
-				return this.collectLegacySessions(
-					{ kind: "complete", projectFilter: request.projectFilter },
-					knownSourceRevisions,
-					context,
-				);
-			}
-			transcriptPaths.add(normalized);
-		}
+		const transcriptPaths = new Set(paths);
 
 		const collection = await this.collectLegacySessionsMatching(
 			request,
@@ -1139,11 +1054,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		}
 
 		const { projectFilter } = opts;
-		let absFilter: string | null = null;
-		if (projectFilter) {
-			const { resolve } = await import("node:path");
-			absFilter = resolve(projectFilter);
-		}
+		const absFilter = projectFilter ? resolve(projectFilter) : null;
 
 		const sessions: RawSession[] = [];
 		const observedLocalSessionIds: string[] = [];
@@ -1179,10 +1090,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				if (!updatedAt) continue;
 
 				const projectPath = entry.acp?.cwd ?? null;
-				if (absFilter) {
-					if (!projectPath) continue;
-					if (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)) continue;
-				}
+				if (!matchesProjectFilter(projectPath, absFilter)) continue;
 
 				const transcriptPath = entry.sessionFile
 					? isAbsolute(entry.sessionFile)
@@ -1193,7 +1101,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				if (transcriptPaths && !transcriptPaths.has(normalizedTranscriptPath)) continue;
 				matchedTranscriptPaths.add(normalizedTranscriptPath);
 				observedLocalSessionIds.push(sessionId);
-				const sourceRevision = `${sessionId}:${updatedAt}`;
+				const sourceRevision = `p${SESSION_PROJECTION_REVISION}:${sessionId}:${updatedAt}`;
 				const externalSession = !isInternalOpenClawSession(indexKey, entry);
 				if (externalSession && existsSync(transcriptPath)) {
 					classifiedTranscriptPaths.add(normalizedTranscriptPath);
@@ -1255,13 +1163,11 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				continue;
 			}
 			const projectPath = entry.spawnedCwd ?? entry.spawnedWorkspaceDir ?? entry.acp?.cwd ?? null;
-			if (
-				absFilter &&
-				(!projectPath || (projectPath !== absFilter && !projectPath.startsWith(`${absFilter}/`)))
-			)
-				continue;
+			if (!matchesProjectFilter(projectPath, absFilter)) continue;
 			if (sessionId) observedLocalSessionIds.push(sessionId);
-			const sourceRevision = sessionId ? `${sessionId}:${updatedAt}` : null;
+			const sourceRevision = sessionId
+				? `p${SESSION_PROJECTION_REVISION}:${sessionId}:${updatedAt}`
+				: null;
 			if (sessionId && knownSourceRevisions.get(sessionId) === sourceRevision) continue;
 
 			const reader = officialTranscriptReader(entry, context);
@@ -1346,117 +1252,25 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			userActivity,
 		};
 	}
-
 	private async collectSkills(context?: SyncReadContext): Promise<RawSkill[]> {
 		context?.signal.throwIfAborted();
 		const skills: RawSkill[] = [];
-		const seen = new Map<string, string>(); // skillKey → first-winning agentDir
-		migrateLegacyLocalSetupSkill({
-			targetDir: join(skillsDir(), "clawdi"),
-			id: "clawdi",
-			version: 1,
-			digest: managedSkillDirectoryDigest,
-		});
-
-		// Skills live in each official agent workspace — iterate every
-		// configured workspace so a deployment with multiple
-		// personalities (issue #28) doesn't lose six of seven skill sets.
-		// Dedup by `skillKey`: identical names across agents collapse to
-		// the first occurrence (server-side `skill_key` is per-user, so
-		// we'd 409 on the second push anyway). Warn on collision so the
-		// user can rename or pick an explicit OPENCLAW_AGENT_ID.
+		const seen = new Map<string, string>();
 		for (const agent of listOpenClawAgentWorkspaces()) {
-			const dir = join(agent.workspace, "skills");
-			migrateLegacyLocalSetupSkill({
-				targetDir: join(dir, "clawdi"),
-				id: "clawdi",
-				version: 1,
-				digest: managedSkillDirectoryDigest,
-			});
-			if (!existsSync(dir)) continue;
-
-			for (const entry of readdirSync(dir, { withFileTypes: true })) {
-				if (entry.name.startsWith(".")) continue;
-				if (SKIP_DIRS.has(entry.name)) continue;
-				const dirPath = safeSkillDirectoryPath(dir, entry);
-				if (!dirPath) continue;
-				try {
-					if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
-					const skillMd = join(dirPath, "SKILL.md");
-					if (!existsSync(skillMd)) continue;
-					const existing = seen.get(entry.name);
-					if (existing) {
-						console.warn(
-							`[openclaw] skipping duplicate skill "${entry.name}" at ${dirPath} ` +
-								`(already collected from ${existing}). Set OPENCLAW_AGENT_ID to project explicitly.`,
-						);
-						continue;
-					}
-					const content = readFileSync(skillMd, "utf-8");
-					const fileCount = readdirSync(dirPath, { recursive: true }).length;
-					seen.set(entry.name, dirPath);
-					skills.push({
-						skillKey: entry.name,
-						name: entry.name,
-						content,
-						filePath: skillMd,
-						directoryPath: dirPath,
-						isDirectory: fileCount > 1,
-					});
-				} catch {}
+			for (const skill of collectSkillsFromDir(join(agent.workspace, "skills"))) {
+				const existing = seen.get(skill.skillKey);
+				if (existing) {
+					console.warn(
+						`[openclaw] skipping duplicate skill "${skill.skillKey}" at ${skill.directoryPath} ` +
+							`(already collected from ${existing}). Set OPENCLAW_AGENT_ID to project explicitly.`,
+					);
+					continue;
+				}
+				seen.set(skill.skillKey, skill.directoryPath);
+				skills.push(skill);
 			}
 		}
 		return skills;
-	}
-
-	private getSkillPath(key: string): string {
-		return join(skillsDir(), key, "SKILL.md");
-	}
-
-	private getSkillsRootDir(): string {
-		return skillsDir();
-	}
-
-	private getSharedSkillPath(skillKey: string, ownerHandle: string): string {
-		return join(skillsDir(), `${skillKey}__${ownerHandle}`);
-	}
-
-	private async listSkillKeys(context?: SyncReadContext): Promise<string[]> {
-		context?.signal.throwIfAborted();
-		// Restricted to the CURRENT agent's `skillsDir()` —
-		// `collectSkills` walks every agent dir for `clawdi push`
-		// (one-shot, batch view), but the daemon's hot path is
-		// strictly single-agent: it hashes/tars
-		// `join(getSkillsRootDir(), key)` where rootDir is JUST
-		// the current agent. Returning skills from sibling agent
-		// dirs would point the daemon at paths it can't resolve,
-		// silently dropping those skills. Pre-fix the cross-agent
-		// enumerator silently lost OpenClaw skills under any
-		// agent other than the active one.
-		const root = join(
-			await resolveOpenClawAgentWorkspaceAsync(agentId(), context?.signal),
-			"skills",
-		);
-		migrateLegacyLocalSetupSkill({
-			targetDir: join(root, "clawdi"),
-			id: "clawdi",
-			version: 1,
-			digest: managedSkillDirectoryDigest,
-		});
-		if (!existsSync(root)) return [];
-		const out: string[] = [];
-		for (const entry of readdirSync(root, { withFileTypes: true })) {
-			if (entry.name.startsWith(".")) continue;
-			if (SKIP_DIRS.has(entry.name)) continue;
-			const dirPath = safeSkillDirectoryPath(root, entry);
-			if (!dirPath) continue;
-			try {
-				if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
-				if (!existsSync(join(dirPath, "SKILL.md"))) continue;
-				out.push(entry.name);
-			} catch {}
-		}
-		return out;
 	}
 
 	private getSessionsWatchPaths(): string[] {
@@ -1469,17 +1283,6 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			];
 		});
 		return paths.length > 0 ? paths : [sessionsDir()];
-	}
-
-	private async removeLocalSkill(key: string): Promise<void> {
-		const dir = join(skillsDir(), key);
-		mutateUserSkillTarget(dir, key, () => {
-			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
-		});
-	}
-
-	private async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
-		await this.installOfficialSkillArchive(key, key, tarGzBytes);
 	}
 
 	private async installOfficialSkillArchive(
@@ -1545,13 +1348,5 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		} finally {
 			rmSync(stagingRoot, { recursive: true, force: true });
 		}
-	}
-
-	private async writeSharedSkillArchive(
-		key: string,
-		ownerHandle: string,
-		tarGzBytes: Buffer,
-	): Promise<void> {
-		await this.installOfficialSkillArchive(key, `${key}__${ownerHandle}`, tarGzBytes);
 	}
 }

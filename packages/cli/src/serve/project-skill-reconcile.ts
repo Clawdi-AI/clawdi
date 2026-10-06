@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import type { SkillModule } from "../adapters/base";
-import { type ApiClient, unwrap } from "../lib/api-client";
+import { type ApiClient, DEFAULT_TIMEOUT_MS, unwrap } from "../lib/api-client";
 import { readBoundedResponseBytes } from "../lib/github-skill-archive";
 import {
 	commitProjectSkillMaterialization,
@@ -67,6 +67,8 @@ function priorInput(
 	};
 }
 
+class LocallyModifiedProjectSkillError extends Error {}
+
 async function snapshotOwnedTarget(
 	adapter: SkillModule,
 	input: MaterializationInput,
@@ -77,7 +79,7 @@ async function snapshotOwnedTarget(
 	}
 	const snapshot = await snapshotSkillArchive(directory, undefined, input.localSkillKey);
 	if (snapshot.hash !== input.contentHash) {
-		throw new Error(
+		throw new LocallyModifiedProjectSkillError(
 			`Project Skill ${input.localSkillKey} was changed locally. Move or rename it, then try again.`,
 		);
 	}
@@ -101,19 +103,21 @@ async function downloadDesiredArchive(
 	agentId: string,
 	desired: DesiredSkill,
 ): Promise<Buffer> {
-	const response = await fetch(assertArchiveUrl(api, agentId, desired), {
-		headers: {
-			Authorization: `Bearer ${await api.getAccessToken()}`,
-			Accept: "application/gzip",
-		},
+	const signal = AbortSignal.timeout(5 * 60_000);
+	const response = await api.requestStream(assertArchiveUrl(api, agentId, desired).toString(), {
+		headers: { Accept: "application/gzip" },
 		redirect: "error",
+		signal,
 	});
 	if (!response.ok) {
+		await response.body?.cancel();
 		throw new Error(`Project Skill ${desired.skill_key} download failed (${response.status})`);
 	}
 	const bytes = await readBoundedResponseBytes(response, MAX_PROJECT_SKILL_ARCHIVE_BYTES, {
 		resourceLabel: "Project Skill archive",
 		limitLabel: "25 MB",
+		signal,
+		idleTimeoutMs: DEFAULT_TIMEOUT_MS,
 	});
 	const stage = await mkdtemp(join(tmpdir(), "clawdi-project-reconcile-"));
 	try {
@@ -151,10 +155,12 @@ export async function reconcileConnectedProjectSkills(input: {
 	) as DesiredInventory;
 	if (response.agent_id !== input.agentId)
 		throw new Error("Project Skill inventory Agent mismatch");
+	const skippedKeys = new Set<string>();
 	const desiredByKey = new Map<string, DesiredSkill>();
 	for (const desired of response.skills ?? []) {
 		if (desiredByKey.has(desired.skill_key)) {
-			throw new Error(`Skill ${desired.skill_key} comes from more than one linked Project`);
+			skippedKeys.add(desired.skill_key);
+			continue;
 		}
 		desiredByKey.set(desired.skill_key, desired);
 	}
@@ -172,30 +178,34 @@ export async function reconcileConnectedProjectSkills(input: {
 			missingOwnedKeys.add(receipt.local_skill_key);
 			continue;
 		}
-		priorByKey.set(receipt.local_skill_key, {
-			input: receiptInput,
-			archive: await snapshotOwnedTarget(input.skills, receiptInput),
-		});
+		if (skippedKeys.has(receipt.local_skill_key)) continue;
+		try {
+			priorByKey.set(receipt.local_skill_key, {
+				input: receiptInput,
+				archive: await snapshotOwnedTarget(input.skills, receiptInput),
+			});
+		} catch (error) {
+			if (!(error instanceof LocallyModifiedProjectSkillError)) throw error;
+			skippedKeys.add(receipt.local_skill_key);
+		}
 	}
 
 	const downloads = new Map<string, Buffer>();
 	for (const desired of [...desiredByKey.values()].sort((a, b) =>
 		a.skill_key.localeCompare(b.skill_key),
 	)) {
+		if (skippedKeys.has(desired.skill_key)) continue;
 		const next = desiredInput(input.agentType, input.agentId, desired);
 		const receipt = readProjectSkillMaterialization({
 			agentType: input.agentType,
 			localSkillKey: desired.skill_key,
 		});
-		if (!receipt && localKeys.has(desired.skill_key)) {
-			throw new Error(
-				`Skill ${desired.skill_key} already exists in this Agent's Workspace. Move or rename it, then try again.`,
-			);
-		}
-		if (receipt && receipt.reconcile_agent_id !== input.agentId) {
-			throw new Error(
-				`Skill ${desired.skill_key} already exists in this Agent's Workspace. Move or rename it, then try again.`,
-			);
+		if (
+			(!receipt && localKeys.has(desired.skill_key)) ||
+			(receipt && receipt.reconcile_agent_id !== input.agentId)
+		) {
+			skippedKeys.add(desired.skill_key);
+			continue;
 		}
 		if (!missingOwnedKeys.has(desired.skill_key) && hasExactProjectSkillMaterialization(next)) {
 			continue;
@@ -206,7 +216,8 @@ export async function reconcileConnectedProjectSkills(input: {
 		);
 	}
 	for (const receipt of ownedReceipts) {
-		if (!missingOwnedKeys.has(receipt.local_skill_key)) continue;
+		if (skippedKeys.has(receipt.local_skill_key) || !missingOwnedKeys.has(receipt.local_skill_key))
+			continue;
 		removeExactProjectSkillMaterialization(priorInput(input.agentType, input.agentId, receipt));
 	}
 
@@ -238,7 +249,8 @@ export async function reconcileConnectedProjectSkills(input: {
 		for (const prior of [...priorByKey.values()].sort((a, b) =>
 			a.input.localSkillKey.localeCompare(b.input.localSkillKey),
 		)) {
-			if (desiredByKey.has(prior.input.localSkillKey)) continue;
+			if (skippedKeys.has(prior.input.localSkillKey) || desiredByKey.has(prior.input.localSkillKey))
+				continue;
 			await input.skills.remove(prior.input.localSkillKey);
 			applied.push({ kind: "removed", prior });
 			if (!removeExactProjectSkillMaterialization(prior.input)) {
@@ -280,5 +292,10 @@ export async function reconcileConnectedProjectSkills(input: {
 			);
 		}
 		throw error;
+	}
+	if (skippedKeys.size > 0) {
+		throw new Error(
+			`Project Skills skipped due to local conflicts: ${[...skippedKeys].sort().join(", ")}`,
+		);
 	}
 }

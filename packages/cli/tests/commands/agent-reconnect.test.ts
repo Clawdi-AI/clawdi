@@ -163,7 +163,7 @@ describe("agent reconnect", () => {
 		expect(rebindRequest?.body).toMatchObject({
 			machine_id: machine.id,
 			agent_type: "pi",
-			adapter_modules: ["sessions"],
+			adapter_modules: ["sessions", "skills"],
 		});
 		expect(registration).toMatchObject({
 			id: agentId,

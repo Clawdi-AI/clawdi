@@ -109,7 +109,6 @@ def test_config_mismatch_fails_closed(tmp_path: Path, monkeypatch: pytest.Monkey
 
 
 def test_typing_exception_sets_accept_live_disjoint_paths() -> None:
-    assert type_governance.STANDARD_ONLY == frozenset({"app/services/memory_provider_mem0.py"})
     assert type_governance.RUNTIME_OBSERVATION_COMPATIBILITY_ONLY == frozenset(
         {"app/routes/sessions.py"}
     )

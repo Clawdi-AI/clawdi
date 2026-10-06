@@ -60,7 +60,7 @@ export function parseProjectSkillGitHubInput(
 		!/^[A-Za-z0-9._-]{1,100}$/.test(owner) ||
 		!/^[A-Za-z0-9._-]{1,100}$/.test(repo)
 	)
-		throw new Error("Enter owner/repository or a GitHub Skill path");
+		throw new Error("Enter owner/repository or a GitHub skill path");
 	const path = parts.join("/");
 	if (
 		path.length > 200 ||

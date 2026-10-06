@@ -14,7 +14,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { Copy as CopyIcon, FolderInput, ListChecks, Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -328,11 +328,11 @@ export default function VaultDetailPage({
 		},
 		onSuccess: () => {
 			refresh();
-			toast.success("Vault added to Project", {
-				description: "Key values stay protected, and linked Projects and Agents can use them.",
+			toast.success("Vault added to project", {
+				description: "Key values stay protected, and linked projects and agents can use them.",
 			});
 		},
-		onError: (e) => toast.error("Couldn't add vault to Project", { description: errorMessage(e) }),
+		onError: (e) => toast.error("Couldn't add vault to project", { description: errorMessage(e) }),
 	});
 
 	const detachProject = useMutation({
@@ -387,11 +387,15 @@ export default function VaultDetailPage({
 
 	if (vaultDetail.isLoading || (isAgentScope && browseAccess.isLoading)) {
 		return (
-			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
+			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.page)}>
 				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				<PageHeaderSkeleton icon actions />
-				<Skeleton className={vaultDetailClasses.keysSkeleton} />
-				<Skeleton className={vaultDetailClasses.projectsSkeleton} />
+				<VaultSectionSkeleton>
+					<VaultKeysSkeleton />
+				</VaultSectionSkeleton>
+				<VaultSectionSkeleton>
+					<VaultProjectsSkeleton />
+				</VaultSectionSkeleton>
 			</div>
 		);
 	}
@@ -413,7 +417,7 @@ export default function VaultDetailPage({
 							if (blockingVaultDetailError) void vaultDetail.refetch();
 							if (blockingScopeError) void browseAccess.refetch();
 						}}
-						title={blockingScopeError ? "Couldn't load Agent Vault access" : "Couldn't load vault"}
+						title={blockingScopeError ? "Couldn't load agent vault access" : "Couldn't load vault"}
 					/>
 				)}
 			</div>
@@ -425,11 +429,11 @@ export default function VaultDetailPage({
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
 				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				<DetailNotFound
-					title="Project not available to this Agent"
+					title="Project not available to this agent"
 					message={
 						requestedProjectId
-							? "The requested Project is not available through this Agent. Choose an available Project first."
-							: "Choose the Workspace or a linked Project before opening its Vaults."
+							? "The requested project is not available through this agent. Choose an available project first."
+							: "Choose the workspace or a linked project before opening its vaults."
 					}
 				/>
 			</div>
@@ -455,8 +459,8 @@ export default function VaultDetailPage({
 			<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
 				<DetailBackLink href={backTarget.href} label={backTarget.label} mobileOnly={false} />
 				<DetailNotFound
-					title="Vault not available to this Agent"
-					message="This Vault is no longer in the selected Project. Return to Vaults to choose another."
+					title="Vault not available to this agent"
+					message="This vault is no longer in the selected project. Return to Vaults to choose another."
 				/>
 			</div>
 		);
@@ -488,10 +492,10 @@ export default function VaultDetailPage({
 				description={
 					isAgentScope
 						? isOwner
-							? `Keys live here once and are available to this Agent through the ${requestedAttachmentLabel}.`
-							: "This shared Vault is read-only here. Only its owner can edit its keys."
+							? `Keys live here once and are available to this agent through the ${requestedAttachmentLabel}.`
+							: "This shared vault is read-only here. Only its owner can edit its keys."
 						: isOwner
-							? "Keys live here once and work in every Project this Vault is linked to."
+							? "Keys live here once and work in every project this vault is linked to."
 							: "Shared with you — your agents can use these keys; only the owner edits them."
 				}
 				actions={
@@ -500,7 +504,7 @@ export default function VaultDetailPage({
 							title={`Delete ${vault.name}?`}
 							description={
 								<p>
-									Every key in this vault is removed for every Project using it. Agents lose access
+									Every key in this vault is removed for every project using it. Agents lose access
 									immediately.
 								</p>
 							}
@@ -542,8 +546,8 @@ export default function VaultDetailPage({
 						</div>
 						<p className={vaultDetailClasses.subtitle}>
 							{canManageVault
-								? "Values are write-only here. Changes apply everywhere this Vault is linked."
-								: "Key names are read-only. Key values stay protected, and this Agent can use them through the link."}
+								? "Values are write-only here. Changes apply everywhere this vault is linked."
+								: "Key names are read-only. Key values stay protected, and this agent can use them through the link."}
 						</p>
 					</div>
 					<div className={vaultDetailClasses.actions}>
@@ -620,7 +624,7 @@ export default function VaultDetailPage({
 				) : null}
 
 				{keys.isLoading ? (
-					<Skeleton className={vaultDetailClasses.keyGridSkeleton} />
+					<VaultKeysSkeleton />
 				) : blockingKeysError ? (
 					<ApiErrorPanel
 						error={blockingKeysError}
@@ -636,7 +640,7 @@ export default function VaultDetailPage({
 						description={
 							canManageVault
 								? "Add one above or paste several at once with Import."
-								: "Only the Vault owner can add or edit keys."
+								: "Only the vault owner can add or edit keys."
 						}
 					/>
 				) : filteredKeyNames.length === 0 ? (
@@ -738,7 +742,7 @@ export default function VaultDetailPage({
 					</CopyKeysDialog>
 					<ConfirmAction
 						title={`Delete ${selectedKeys.size} ${selectedKeys.size === 1 ? "key" : "keys"}?`}
-						description={<p>They are removed for every Project using this vault.</p>}
+						description={<p>They are removed for every project using this vault.</p>}
 						confirmLabel="Delete"
 						destructive
 						onConfirm={() => bulkDeleteKeys.mutate(selectedList)}
@@ -772,8 +776,8 @@ export default function VaultDetailPage({
 						</div>
 						<p className={vaultDetailClasses.subtitle}>
 							{isAgentScope
-								? `Available through this ${requestedAttachmentLabel}. Open the source below to configure its Vaults.`
-								: "Same Vault everywhere — key changes apply to every linked Project. Key values stay protected, and linked Projects and Agents can use them."}
+								? `Available through this ${requestedAttachmentLabel}. Open the source below to configure its vaults.`
+								: "Key changes apply to every linked project. Values stay protected; linked projects and agents can use them."}
 						</p>
 					</div>
 					{canManageVault && !isAgentScope && !blockingProjectsError ? (
@@ -790,20 +794,20 @@ export default function VaultDetailPage({
 					) : null}
 				</div>
 				{projects.isLoading ? (
-					<Skeleton className={vaultDetailClasses.projectSkeleton} />
+					<VaultProjectsSkeleton />
 				) : blockingProjectsError ? (
 					<ApiErrorPanel
 						error={blockingProjectsError}
 						onRetry={() => {
 							void projects.refetch();
 						}}
-						title="Couldn't load linked Projects"
+						title="Couldn't load linked projects"
 					/>
 				) : attachedProjects.length === 0 ? (
 					<EmptyState
 						variant="inset"
-						title="Not in any Project yet"
-						description="Add this Vault to a Project so its Agents can use the key values."
+						title="Not in any project yet"
+						description="Add this vault to a project so its agents can use the key values."
 					/>
 				) : (
 					<div className={vaultDetailClasses.projectList}>
@@ -835,7 +839,7 @@ export default function VaultDetailPage({
 											title={`Remove from ${attachmentLabel}?`}
 											description={
 												<p>
-													This {attachmentLabel} and its Agents will stop using these key values.
+													This {attachmentLabel} and its agents will stop using these key values.
 												</p>
 											}
 											confirmLabel="Remove vault"
@@ -889,9 +893,9 @@ function AttachProjectPicker({
 				<SelectTrigger
 					size="sm"
 					className={vaultDetailClasses.projectSelect}
-					aria-label="Project to add this Vault to"
+					aria-label="Project to add this vault to"
 				>
-					<SelectValue placeholder="Choose a Project…" />
+					<SelectValue placeholder="Choose a project…" />
 				</SelectTrigger>
 				<SelectContent>
 					{projects.map((p) => (
@@ -912,8 +916,54 @@ function AttachProjectPicker({
 				}}
 			>
 				{isPending ? <Spinner /> : <Plus className={vaultDetailClasses.actionIcon} />}
-				Add to Project
+				Add to project
 			</Button>
+		</div>
+	);
+}
+
+/** Section heading + description placeholder matching the Keys/Projects headers. */
+function VaultSectionSkeleton({ children }: { children: ReactNode }) {
+	return (
+		<section className="space-y-3" aria-hidden="true">
+			<div>
+				<div className="text-sm">
+					<Skeleton className="h-lh w-20" />
+				</div>
+				<div className="mt-0.5 text-xs">
+					<Skeleton className="h-lh w-80 max-w-full" />
+				</div>
+			</div>
+			{children}
+		</section>
+	);
+}
+
+function VaultKeysSkeleton() {
+	return (
+		<div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+			{Array.from({ length: 6 }).map((_, index) => (
+				<div key={index} className="rounded-lg border bg-card px-3 py-2.5 text-xs">
+					<Skeleton className="h-lh w-32 max-w-full" />
+				</div>
+			))}
+		</div>
+	);
+}
+
+function VaultProjectsSkeleton() {
+	return (
+		<div className="divide-y overflow-hidden rounded-lg border bg-card">
+			{Array.from({ length: 2 }).map((_, index) => (
+				<div key={index} className="px-4 py-2.5">
+					<div className="text-sm">
+						<Skeleton className="h-lh w-40" />
+					</div>
+					<div className="text-xs">
+						<Skeleton className="h-lh w-56 max-w-full" />
+					</div>
+				</div>
+			))}
 		</div>
 	);
 }

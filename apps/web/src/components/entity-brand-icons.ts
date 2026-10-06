@@ -72,6 +72,7 @@ const FRAMEWORK_BRAND_ICON_DEFINITIONS = {
 		label: "OpenCode",
 		tileClassName: entityBrandIconClasses.blackTile,
 	},
+	dsh: { icon: DeepSeek, iconScale: 0.75, label: "DeepSeek Harness" },
 } satisfies Readonly<Record<FrameworkBrandIconId, BrandIconMetadata>>;
 
 const FRAMEWORK_BRAND_ICONS: Readonly<Record<string, BrandIconMetadata>> = {

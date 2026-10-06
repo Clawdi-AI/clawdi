@@ -369,7 +369,7 @@ export function useLinkChannelAgent(accountId: string) {
 						if (existing) {
 							await invalidateLinkQueries();
 							toast.info("Channel already linked", {
-								description: "Using the existing link for this Agent.",
+								description: "Using the existing link for this agent.",
 							});
 							return existing;
 						}

@@ -112,6 +112,7 @@ import {
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import {
+	billingErrorDetail,
 	billingErrorNormalizer,
 	deploymentRequestTerminalOutcome,
 	deploySubmissionErrorPresentation,
@@ -127,6 +128,7 @@ import {
 	usePlans,
 	useResolveDeploymentRequest,
 	useSubscriptionCreateQuote,
+	useTrialOffer,
 } from "@/hosted/billing/hooks";
 import {
 	forgetIdempotencyAttempt,
@@ -223,26 +225,24 @@ const aiProviderErrorNormalizer: ApiErrorNormalizer = {
 
 function computeCheckoutSummary({
 	offer,
-	plan,
 	termMonths,
 	tierLabel,
 	trialDays,
 }: {
 	offer: BillingOffer;
-	plan: Plan;
 	termMonths: number;
 	tierLabel: "Basic" | "Performance";
 	trialDays: number | null;
 }): StripeCheckoutSummary {
 	const effectiveMonthly = formatCents(offer.effective_monthly_price_cents);
 	const agentLabel =
-		tierLabel === "Basic" ? "additional hosted Basic agent" : "hosted Performance agent";
+		tierLabel === "Basic" ? "additional Cloud Agent on Basic" : "Cloud Agent on Performance";
 	return {
 		detail:
 			termMonths === 1
 				? `Per ${agentLabel}, billed monthly.`
 				: `${effectiveMonthly}/mo effective per ${agentLabel}.`,
-		planName: plan.name,
+		planName: `${tierLabel} plan`,
 		priceLabel: `${formatCents(offer.price_cents)}${billingTermSuffix(termMonths)}`,
 		termLabel: billingTermLabel(termMonths),
 		trialDays,
@@ -305,6 +305,7 @@ export function DeployWizard() {
 	const search = useRouterState({ select: (state) => state.location.searchStr });
 	const channel = resolveDeployChannel(search);
 	const [preinstallBundle, setPreinstallBundle] = useState(true);
+	const pluginBundle = channel && preinstallBundle ? channel : null;
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const billingClient = useBillingClient();
@@ -420,10 +421,11 @@ export function DeployWizard() {
 		[acceptDeployment],
 	);
 	useCheckoutReturnHandler({
-		onCancelCopy: "You were not charged. Your Agent was not deployed.",
+		onCancelCopy: "You were not charged. Your agent was not deployed.",
 		onNavigate: navigateCheckoutReturn,
 	});
 	const plans = usePlans();
+	const trialOffer = useTrialOffer(pluginBundle);
 	const includedBasic = useIncludedBasicAvailability();
 	const reusableSubscriptions = useReusableSubscriptions(billingClient);
 	const managedModelCatalog = useManagedModelCatalog();
@@ -541,6 +543,8 @@ export function DeployWizard() {
 				paidSelection.offer.card_trial_period_days,
 			)
 		: null;
+	// The backend applies the same channel policy at checkout; this only sets copy.
+	const cardlessTrial = selectedCardTrial !== null && trialOffer.data?.cardless_trial === true;
 	const walletBillingTerm = supportedBillingTerm(paidSelection?.billingTermMonths ?? 1);
 	const walletDisabledReason = walletBillingTerm
 		? null
@@ -664,13 +668,13 @@ export function DeployWizard() {
 		if (subscriptionSource.mode === "new" && paidSelection && paymentMethod === "wallet") {
 			if (!wallet.data) {
 				return wallet.error
-					? "Retry loading your Wallet balance above."
-					: "Loading your Wallet balance.";
+					? "Retry loading your wallet balance above."
+					: "Loading your wallet balance.";
 			}
-			if (visibleSubscriptionQuoteError) return "Retry the Wallet quote above.";
-			if (visibleSubscriptionQuoteFetching && !walletDebit) return "Refreshing your Wallet quote.";
-			if (!walletDebit) return "Waiting for your Wallet quote.";
-			if (walletInsufficient) return "Top up your Wallet to continue.";
+			if (visibleSubscriptionQuoteError) return "Retry the wallet quote above.";
+			if (visibleSubscriptionQuoteFetching && !walletDebit) return "Refreshing your wallet quote.";
+			if (!walletDebit) return "Waiting for your wallet quote.";
+			if (walletInsufficient) return "Top up your wallet to continue.";
 		}
 		return null;
 	})();
@@ -731,7 +735,7 @@ export function DeployWizard() {
 			const quoteResult = await subscriptionCreateQuote.refetch();
 			if (quoteResult.error) throw quoteResult.error;
 		} catch (error) {
-			toast.error("Couldn’t refresh Wallet quote", {
+			toast.error("Couldn't refresh wallet quote", {
 				description: normalizeBillingError(error),
 			});
 		}
@@ -789,7 +793,7 @@ export function DeployWizard() {
 				},
 				aiFields,
 			}),
-			...(channel && preinstallBundle ? { plugin_bundle: "sui" as const } : {}),
+			...(pluginBundle ? { plugin_bundle: pluginBundle } : {}),
 		};
 	}
 
@@ -928,7 +932,7 @@ export function DeployWizard() {
 						});
 					if (outcome.flowType !== "subscription_activation") {
 						throw new Error(
-							"Wallet payment could not be confirmed. Review the payment method and try again.",
+							"Wallet payment couldn't be confirmed. Review the payment method and try again.",
 						);
 					}
 					forgetIdempotencyAttempt("subscription-wallet-deploy", fingerprint);
@@ -947,22 +951,32 @@ export function DeployWizard() {
 					checkoutFingerprint,
 					newIdempotencyKey,
 				);
-				const outcome = await createSubscription
-					.execute({
+				const execute = (attempt: IdempotencyAttempt) =>
+					createSubscription.execute({
 						selection,
 						subscriptionSelection,
 						target,
 						uiMode: cardCheckoutUiMode,
-						idempotencyKey: checkoutAttemptRef.current.key,
+						idempotencyKey: attempt.key,
 						quote: lastSuccessfulSubscriptionQuote,
-					})
-					.catch((error: unknown) => {
-						if (isIdempotencyKeyReusedError(error)) {
-							forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
-							checkoutAttemptRef.current = null;
-						}
-						throw error;
 					});
+				const outcome = await execute(checkoutAttemptRef.current).catch((error: unknown) => {
+					if (isIdempotencyKeyReusedError(error)) {
+						forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
+						checkoutAttemptRef.current = null;
+						throw error;
+					}
+					if (billingErrorDetail(error)?.code !== "checkout_attempt_expired") throw error;
+					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
+					checkoutAttemptRef.current = idempotencyAttemptFor(
+						null,
+						"subscription-checkout",
+						checkoutFingerprint,
+						newIdempotencyKey,
+					);
+					// Only this first failure is retried; a second failure reaches the outer handler.
+					return execute(checkoutAttemptRef.current);
+				});
 				if (outcome.flowType === "subscription_activation") {
 					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
 					checkoutAttemptRef.current = null;
@@ -977,7 +991,6 @@ export function DeployWizard() {
 						requestKey: checkoutAttemptRef.current.key,
 						summary: computeCheckoutSummary({
 							offer: paidSelection.offer,
-							plan: paidSelection.plan,
 							termMonths: paidSelection.billingTermMonths,
 							tierLabel: paidSelection.tierLabel,
 							trialDays: result.trial_period_days ?? null,
@@ -988,7 +1001,7 @@ export function DeployWizard() {
 				}
 				if (redirectTo(checkoutRedirectUrl(result))) return;
 				throw new Error(
-					"Secure checkout could not be opened. Review the payment method and try again.",
+					"Secure checkout couldn't be opened. Review the payment method and try again.",
 				);
 			}
 			if (subscriptionSource.mode !== "included") return;
@@ -1031,7 +1044,7 @@ export function DeployWizard() {
 			: paidSelection
 				? paymentMethod === "wallet"
 					? walletInsufficient
-						? "Top up Wallet"
+						? "Top up wallet"
 						: "Pay & deploy"
 					: "Continue"
 				: "Deploy";
@@ -1069,7 +1082,9 @@ export function DeployWizard() {
 								state: walletQuoteState,
 								walletDebit,
 							})
-						: cardDeployAmountPresentation(paidSelection.offer)
+						: cardlessTrial && selectedCardTrial
+							? { amount: selectedCardTrial.label, caption: "No card required", detail: null }
+							: cardDeployAmountPresentation(paidSelection.offer)
 					: null;
 	const walletTopUpAction =
 		paidSelection !== null && paymentMethod === "wallet" && walletInsufficient;
@@ -1427,8 +1442,12 @@ export function DeployWizard() {
 														<CreditCard />
 													</IconChip>
 												}
-												title={deployFormCopy.cardTitle}
-												description={deployFormCopy.cardDescription}
+												title={cardlessTrial ? deployFormCopy.trialTitle : deployFormCopy.cardTitle}
+												description={
+													cardlessTrial
+														? deployFormCopy.trialDescription
+														: deployFormCopy.cardDescription
+												}
 												badge={
 													selectedCardTrial ? (
 														<Badge variant="secondary">{selectedCardTrial.label}</Badge>
@@ -1517,43 +1536,41 @@ export function DeployWizard() {
 									</span>
 								) : null}
 							</div>
-							<div className={deployWizardClasses.localeFields}>
-								<div className={deployWizardClasses.languageField}>
-									<Label htmlFor="agent-language">Language</Label>
-									<Select
-										items={LANGUAGE_SELECT_ITEMS}
-										value={language || "default"}
-										onValueChange={(v) => {
-											setLanguage(v === null || v === "default" ? "" : v);
-										}}
-									>
-										<SelectTrigger id="agent-language" type="button">
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectGroup>
-												<SelectItem value="default">{agentSurfaceCopy.default}</SelectItem>
-												{LANGUAGE_OPTIONS.map((l) => (
-													<SelectItem key={l.code} value={l.code}>
-														{l.label}
-													</SelectItem>
-												))}
-											</SelectGroup>
-										</SelectContent>
-									</Select>
-								</div>
-								{tzOptions.length > 0 ? (
-									<div className={deployWizardClasses.timezoneField}>
-										<Label htmlFor="agent-timezone">Timezone</Label>
-										<TimezoneCombobox
-											id="agent-timezone"
-											value={timezone}
-											onValueChange={setTimezone}
-											options={tzOptions}
-										/>
-									</div>
-								) : null}
+							<div className={deployWizardClasses.languageField}>
+								<Label htmlFor="agent-language">Language</Label>
+								<Select
+									items={LANGUAGE_SELECT_ITEMS}
+									value={language || "default"}
+									onValueChange={(v) => {
+										setLanguage(v === null || v === "default" ? "" : v);
+									}}
+								>
+									<SelectTrigger id="agent-language" type="button">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectGroup>
+											<SelectItem value="default">{agentSurfaceCopy.default}</SelectItem>
+											{LANGUAGE_OPTIONS.map((l) => (
+												<SelectItem key={l.code} value={l.code}>
+													{l.label}
+												</SelectItem>
+											))}
+										</SelectGroup>
+									</SelectContent>
+								</Select>
 							</div>
+							{tzOptions.length > 0 ? (
+								<div className={deployWizardClasses.timezoneField}>
+									<Label htmlFor="agent-timezone">Timezone</Label>
+									<TimezoneCombobox
+										id="agent-timezone"
+										value={timezone}
+										onValueChange={setTimezone}
+										options={tzOptions}
+									/>
+								</div>
+							) : null}
 						</div>
 					</SettingsSection>
 				</div>
@@ -1570,8 +1587,8 @@ export function DeployWizard() {
 							<AlertTitle>Agent couldn’t be opened</AlertTitle>
 							<AlertDescription>
 								{acceptedDeploymentRecovery?.target.kind === "deploy_request"
-									? "Retrying resumes this deployment and opens the Agent. It won’t create or charge for another one."
-									: "Retrying loads the deployed Agent without creating another one."}
+									? "Retrying resumes this setup and opens the agent. It won't create or charge for another one."
+									: "Retrying loads the deployed agent without creating another one."}
 							</AlertDescription>
 						</Alert>
 					) : null}
@@ -1692,7 +1709,11 @@ export function DeployWizard() {
 				}}
 				clientSecret={checkoutSession?.clientSecret ?? null}
 				title={`Complete ${checkoutSession?.tierLabel ?? "compute"} checkout`}
-				description="Enter payment details without leaving this page. Redirect-based payment methods return here after confirmation."
+				description={
+					cardlessTrial
+						? "Review your free trial. No card required."
+						: "Enter payment details without leaving this page. Redirect-based payment methods return here after confirmation."
+				}
 				summary={checkoutSession?.summary ?? null}
 				onComplete={() => {
 					if (checkoutSession) {

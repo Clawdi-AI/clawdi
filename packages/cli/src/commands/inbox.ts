@@ -17,7 +17,7 @@ import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
 
 import { allAdapterEntries } from "../adapters/registry";
-import { ApiError, readJson } from "../lib/api-client";
+import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getAuth, getConfig } from "../lib/config";
@@ -183,7 +183,7 @@ async function buildAcceptRequestBody(opts: AcceptOpts): Promise<Record<string, 
 	const agentIds = normalizeAgentIds(opts.agent);
 	if (agentIds.length === 0) {
 		if (opts.useAs) {
-			throw new Error("Pass --agent before choosing how to link the Project.");
+			throw new Error("Pass --agent before choosing how to link the project.");
 		}
 		return reqBody;
 	}
@@ -256,9 +256,9 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 	}
 	const accessToken = await getClawdiAccessToken(apiUrl);
 
-	const r = await fetch(`${apiUrl}/v1/me/invitations`, {
-		headers: { Authorization: `Bearer ${accessToken}` },
-	});
+	const r = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).request(
+		"/v1/me/invitations",
+	);
 	if (!r.ok) {
 		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	}
@@ -317,7 +317,7 @@ export async function inboxAcceptCommand(
 		if (normalizeAgentIds(opts.agent).length > 0 || opts.useAs) {
 			console.error(
 				chalk.red(
-					"Sign in before linking an accepted Project to an Agent. " +
+					"Sign in before linking an accepted project to an agent. " +
 						"Run `clawdi auth login`, then re-run with --agent.",
 				),
 			);
@@ -338,7 +338,7 @@ export async function inboxAcceptCommand(
 		if (detectAcceptArgShape(normalized) === "uuid" && !opts.url) {
 			console.error(
 				chalk.red(
-					"That looks like an invitation id. Invitations require an account — " +
+					"That looks like an invitation ID. Invitations require an account — " +
 						"run `clawdi auth login` first, then re-run.",
 				),
 			);
@@ -361,7 +361,7 @@ export async function inboxAcceptCommand(
 	if (!posArg) {
 		console.error(
 			chalk.red(
-				"Pass an invitation id or share URL.\n" +
+				"Pass an invitation ID or share URL.\n" +
 					"  clawdi inbox accept <invitation-uuid>\n" +
 					"  clawdi inbox accept <https://.../share/...>\n" +
 					"  clawdi inbox accept --invite <uuid>   # explicit\n" +
@@ -381,8 +381,8 @@ export async function inboxAcceptCommand(
 	} else {
 		console.error(
 			chalk.red(
-				`Can't tell whether '${normalized.slice(0, 60)}…' is an invitation id or a URL.\n` +
-					"  Invitation id shape:  1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\n" +
+				`Can't tell whether '${normalized.slice(0, 60)}…' is an invitation ID or a URL.\n` +
+					"  Invitation ID shape:  1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d\n" +
 					"  Share URL shape:      https://.../share/<43-char-token>\n" +
 					"  Use --invite <id> or --url <link> to be explicit.",
 			),
@@ -440,15 +440,17 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 
 	let response: Response;
 	try {
-		response = await fetch(`${apiOrigin}/v1/share/${encodeURIComponent(ticket.token)}/upgrade`, {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${bearer}`,
-				"Content-Type": "application/json",
-				"Idempotency-Key": upgradeIdempotencyKey(ticket.token),
+		response = await new ApiClient({ baseUrl: apiOrigin, authToken: bearer }).request(
+			`/v1/share/${encodeURIComponent(ticket.token)}/upgrade`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"Idempotency-Key": upgradeIdempotencyKey(ticket.token),
+				},
+				body: JSON.stringify(reqBody),
 			},
-			body: JSON.stringify(reqBody),
-		});
+		);
 	} catch {
 		throw new Error(
 			"Could not reach Clawdi to join this project. The local share was kept; check your connection and retry.",
@@ -563,10 +565,12 @@ export async function inboxDeclineCommand(invitationId: string): Promise<void> {
 		return;
 	}
 	const accessToken = await getClawdiAccessToken(apiUrl);
-	const r = await fetch(`${apiUrl}/v1/me/invitations/${invitationId}/decline`, {
-		method: "POST",
-		headers: { Authorization: `Bearer ${accessToken}` },
-	});
+	const r = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).request(
+		`/v1/me/invitations/${invitationId}/decline`,
+		{
+			method: "POST",
+		},
+	);
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	console.log(`${chalk.green("✓")} Invitation declined.`);
 }
@@ -618,8 +622,7 @@ export async function inboxForgetCommand(projectId: string): Promise<void> {
 	}
 	console.log(
 		chalk.gray(
-			"  This is a LOCAL operation only. Server-side membership (if any) " +
-				"is unchanged — `clawdi project leave <project>` drops that.",
+			"  This only affects this device. To leave the project on the server, run `clawdi project leave <project>`.",
 		),
 	);
 }
@@ -696,10 +699,13 @@ async function acceptAnonymousUrl(
 		return;
 	}
 
-	const r = await fetch(`${apiOrigin}/v1/share/${token}/redeem`, {
-		method: "POST",
-		headers: { "Idempotency-Key": redeemIdempotencyKey(token) },
-	});
+	const r = await new ApiClient({ baseUrl: apiOrigin, requireAuth: false }).request(
+		`/v1/share/${token}/redeem`,
+		{
+			method: "POST",
+			headers: { "Idempotency-Key": redeemIdempotencyKey(token) },
+		},
+	);
 	if (r.status === 404) {
 		throw new Error("Share link not found. Ask the owner for a fresh one.");
 	}
@@ -760,10 +766,10 @@ function renderJoinedSuccess(
 	console.log(chalk.gray("  Role: viewer (read access)."));
 	const bound = body.bound_agent_ids ?? [];
 	if (bound.length > 0) {
-		console.log(chalk.gray(`  Linked to ${bound.length} Agent${bound.length === 1 ? "" : "s"}.`));
+		console.log(chalk.gray(`  Linked to ${bound.length} agent${bound.length === 1 ? "" : "s"}.`));
 	} else {
 		console.log(
-			chalk.gray(`  Link to Agent: clawdi agent projects link <agent-id> --project ${projectRef}`),
+			chalk.gray(`  Link to agent: clawdi agent projects link <agent-id> --project ${projectRef}`),
 		);
 	}
 	console.log(chalk.gray(`  Next (optional): clawdi pull --project ${projectRef}`));
@@ -785,15 +791,17 @@ async function acceptUrl(
 	}
 	const reqBody = await buildAcceptRequestBody(opts);
 
-	const r = await fetch(`${apiOrigin}/v1/share/${token}/upgrade`, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${bearer}`,
-			"Content-Type": "application/json",
-			"Idempotency-Key": upgradeIdempotencyKey(token),
+	const r = await new ApiClient({ baseUrl: apiOrigin, authToken: bearer }).request(
+		`/v1/share/${token}/upgrade`,
+		{
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"Idempotency-Key": upgradeIdempotencyKey(token),
+			},
+			body: JSON.stringify(reqBody),
 		},
-		body: JSON.stringify(reqBody),
-	});
+	);
 
 	if (r.status === 409) {
 		const detail = (await r.json().catch(() => ({})))?.detail ?? {};
@@ -864,11 +872,14 @@ async function acceptInvitation(
 ): Promise<void> {
 	const reqBody = await buildAcceptRequestBody(opts);
 
-	const r = await fetch(`${apiUrl}/v1/me/invitations/${invitationId}/accept`, {
-		method: "POST",
-		headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
-		body: JSON.stringify(reqBody),
-	});
+	const r = await new ApiClient({ baseUrl: apiUrl, authToken: bearer }).request(
+		`/v1/me/invitations/${invitationId}/accept`,
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(reqBody),
+		},
+	);
 
 	if (r.status === 410) {
 		console.error(chalk.red("This invitation was revoked or already accepted."));

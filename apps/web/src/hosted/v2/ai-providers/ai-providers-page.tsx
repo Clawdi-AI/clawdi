@@ -104,7 +104,7 @@ export function AiProvidersPage() {
 				) : providers.isLoading ? (
 					<div className={PROVIDER_GRID_CLASS}>
 						{[0, 1, 2].map((i) => (
-							<EntityCardSkeleton key={i} metaLines={2} actions />
+							<EntityCardSkeleton key={i} align="start" actions />
 						))}
 					</div>
 				) : list.length === 0 ? (
@@ -174,7 +174,7 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 						: deployable
 							? null
 							: provider.usable
-								? "This setup isn't available for hosted agents. Review the provider settings."
+								? "This setup isn't available for Cloud Agents. Review the provider settings."
 								: agentSurfaceCopy.finishSetupBeforeAssigningThisProviderToAnAgent,
 				]}
 			/>
@@ -295,7 +295,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 						{impact.isFetching ? (
 							<p className={aiProvidersPageClasses.impactLoading}>
 								<Spinner />
-								Checking affected agents...
+								Checking affected agents…
 							</p>
 						) : impactError ? (
 							<ApiErrorPanel

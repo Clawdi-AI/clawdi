@@ -189,7 +189,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 	const emptyMessage =
 		searchQuery || apiCategory
 			? "No matches — try a different search or category."
-			: "No memories yet. Create one above, or your Agents will create them automatically as they work.";
+			: "No memories yet. Create one above, or your agents will create them automatically as they work.";
 	const paginationFooter = (
 		<DataTablePagination
 			page={page}
@@ -465,12 +465,12 @@ export function MemoryCard({
 function MemoryCardSkeleton({ lineCount }: { lineCount: number }) {
 	return (
 		<EntityCardChassis variant="resource">
+			{/* Same type scale as MemoryCard's body, one bar per line box. */}
 			<div className={memoriesSurfaceClasses.skeletonContent}>
 				{Array.from({ length: lineCount }).map((_, lineIndex) => (
-					<Skeleton
-						key={lineIndex}
-						className={cn("h-4", lineIndex === lineCount - 1 ? "w-2/3" : "w-full")}
-					/>
+					<div key={lineIndex} className="flex h-lh items-center">
+						<Skeleton className={cn("h-4", lineIndex === lineCount - 1 ? "w-2/3" : "w-full")} />
+					</div>
 				))}
 			</div>
 			<div className={memoriesSurfaceClasses.skeletonFooter}>
@@ -485,10 +485,14 @@ function MemoryCardSkeleton({ lineCount }: { lineCount: number }) {
 function MemoriesGridSkeleton() {
 	return (
 		<div className={memoriesSurfaceClasses.page} data-testid="memories-surface">
-			<div className={memoriesSurfaceClasses.pagination}>
-				<Skeleton className={memoriesSurfaceClasses.pageSizeSkeleton} />
-				<Skeleton className={memoriesSurfaceClasses.paginationSkeleton} />
-			</div>
+			<ListToolbar
+				search={<Skeleton className="h-9 w-full" />}
+				filters={CATEGORIES.map((c) => (
+					<Skeleton key={c.value} className="flex h-8 items-center px-2.5 text-sm text-transparent">
+						{c.label}
+					</Skeleton>
+				))}
+			/>
 			<div className={ENTITY_CARD_MASONRY_CLASS}>
 				{[4, 7, 3, 5, 6, 4].map((lineCount, index) => (
 					<MemoryCardSkeleton key={index} lineCount={lineCount} />
@@ -571,7 +575,7 @@ function AddMemoryForm({ scope }: { scope: ResourceNavigationScope }) {
 			setOpen(false);
 			queryClient.invalidateQueries({ queryKey: ["get", "/v1/memories"] });
 			toast.success("Memory created", {
-				description: "It is available to every Agent on this account.",
+				description: "It is available to every agent on this account.",
 				action: {
 					label: "Open memory",
 					onClick: () => void router.navigate({ href: memoryDetailHrefForScope(scope, memory.id) }),

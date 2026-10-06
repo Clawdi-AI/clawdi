@@ -66,7 +66,9 @@ function ResourceRowSkeleton() {
 	return (
 		<div className={resourcesCardClasses.skeletonRow}>
 			<Skeleton className={resourcesCardClasses.iconSkeleton} />
-			<Skeleton className={resourcesCardClasses.nameSkeleton} />
+			<div className={resourcesCardClasses.body}>
+				<Skeleton className={resourcesCardClasses.nameSkeleton} />
+			</div>
 			<Skeleton className={resourcesCardClasses.countSkeleton} />
 		</div>
 	);

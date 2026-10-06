@@ -17,14 +17,8 @@ import type { PublicShareResult } from "./session-page.functions";
 
 type PublicSharePageResult = Exclude<PublicShareResult, { kind: "not-found" }>;
 
-export default function PublicSharePage({
-	id,
-	result,
-}: {
-	id: string;
-	result: PublicSharePageResult;
-}) {
-	if (result.kind === "unauthorized") return <SignInToView shareUrl={`/s/${id}`} />;
+export default function PublicSharePage({ result }: { result: PublicSharePageResult }) {
+	if (result.kind === "unauthorized") return <SignInToView />;
 	if (result.kind === "forbidden") return <NoAccess />;
 	if (result.kind === "expired") {
 		return (
@@ -92,7 +86,7 @@ function ExpiredShare() {
 	return (
 		<div className={publicSessionClasses.gate}>
 			<div className={publicSessionClasses.gateLabel}>Link turned off</div>
-			<h1 className={publicSessionClasses.gateTitle}>This Session share is no longer available</h1>
+			<h1 className={publicSessionClasses.gateTitle}>This session share is no longer available</h1>
 			<p className={publicSessionClasses.gateBody}>
 				The owner revoked this link. Ask them to create a new share if you still need access.
 			</p>

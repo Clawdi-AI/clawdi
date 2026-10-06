@@ -105,7 +105,7 @@ export function buildAgentTargetProjection(
 		throw new Error("Native credentials must use a native runtime adapter");
 	const validation = validateAiProviderCatalog(catalog);
 	if (!validation.valid) {
-		throw new Error(`AI Provider catalog is invalid:\n${validation.errors.join("\n")}`);
+		throw new Error(`AI provider catalog is invalid:\n${validation.errors.join("\n")}`);
 	}
 	const selection = selectProjectionProviders(target, catalog, primaryModel);
 	const providers = selection.providers;
@@ -169,7 +169,7 @@ function selectProjectionProviders(
 	}
 	if (providers.length === 0) {
 		throw new Error(
-			`No AI Providers can be applied to ${target}:\n${warnings.map((warning) => `- ${warning}`).join("\n")}`,
+			`No AI providers can be applied to ${target}:\n${warnings.map((warning) => `- ${warning}`).join("\n")}`,
 		);
 	}
 	if (
@@ -225,7 +225,7 @@ function normalizeProjectionProvider(
 		return `Provider ${providerId} skipped for ${target}: uses oauth_profile auth, which does not have a verified agent config apply path yet.`;
 	}
 	if (provider.auth.type === "agent_profile" && !usesCodexNativeAuth(provider)) {
-		return `Provider ${providerId} skipped for ${target}: uses agent_profile auth for ${provider.auth.tool}; AI Provider apply only supports agent:codex/<profile> profiles.`;
+		return `Provider ${providerId} skipped for ${target}: uses agent_profile auth for ${provider.auth.tool}; AI provider apply only supports agent:codex/<profile> profiles.`;
 	}
 	const envName = authEnvName(provider);
 	if (provider.auth.type !== "none" && !envName && !usesCodexNativeAuth(provider)) {

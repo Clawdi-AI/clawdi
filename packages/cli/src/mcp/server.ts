@@ -30,7 +30,7 @@ function requireMcpResult(method: string, result: unknown): Record<string, unkno
 
 function requireMcpLogin(): void {
 	if (!isLoggedIn()) {
-		throw new Error("Not logged in. Run `clawdi auth login` first.");
+		throw new Error("Not signed in. Run `clawdi auth login` first.");
 	}
 }
 

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
-from pathlib import Path
 
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
@@ -10,16 +8,9 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from tests.migration_harness import load_migration
+
 MIGRATION_FILENAME = "c2f8a4d6e9b1_platform_shared_channel_ownership.py"
-
-
-def _load_migration():
-    path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location("platform_shared_channel_ownership", path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 def _create_previous_schema(connection: sa.Connection) -> None:
@@ -115,7 +106,7 @@ def _create_previous_schema(connection: sa.Connection) -> None:
 
 
 def test_migration_preserves_public_credentials_and_tenant_children(engine: AsyncEngine) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "platform_shared_channel_ownership")
     schema = f"platform_shared_channel_{uuid.uuid4().hex}"
     ids = {name: uuid.uuid4() for name in _ID_NAMES}
     sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))

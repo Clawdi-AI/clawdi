@@ -128,7 +128,7 @@ export function LinkChannelAgentAction({
 			onClick={replacementRequired ? undefined : () => void submitLink(selectedAgentId, false)}
 		>
 			{linkAgent.isPending ? <Spinner className="size-3.5" /> : <Link2 />}
-			{linkAgent.isPending ? "Linking…" : "Link Agent"}
+			{linkAgent.isPending ? "Linking…" : "Link agent"}
 		</Button>
 	);
 	const linksError = shouldBlockQueryError(links.error, links.data) ? links.error : null;
@@ -149,7 +149,7 @@ export function LinkChannelAgentAction({
 				}}
 			>
 				<Link2 className="size-3.5" />
-				Link Agent
+				Link agent
 			</Button>
 			{disabledDescriptionId ? (
 				<span id={disabledDescriptionId} className="sr-only">
@@ -173,13 +173,13 @@ export function LinkChannelAgentAction({
 						<ApiErrorPanel
 							error={linksError}
 							onRetry={() => links.refetch()}
-							title="Couldn't load linked Agents"
+							title="Couldn't load linked agents"
 						/>
 					) : envsError ? (
 						<ApiErrorPanel
 							error={envsError}
 							onRetry={() => envs.refetch()}
-							title="Couldn't load Agents"
+							title="Couldn't load agents"
 						/>
 					) : links.isLoading || envs.isLoading ? (
 						<Skeleton className="h-9 w-full rounded-md" />
@@ -210,14 +210,14 @@ export function LinkChannelAgentAction({
 							</Select>
 						</div>
 					) : (
-						<p className="text-sm text-muted-foreground">Every available Agent is linked.</p>
+						<p className="text-sm text-muted-foreground">Every available agent is linked.</p>
 					)}
 					{selectedAgentId &&
 					shouldBlockQueryError(selectedAgentLinks.error, selectedAgentLinks.data) ? (
 						<ApiErrorPanel
 							error={selectedAgentLinks.error}
 							onRetry={() => selectedAgentLinks.refetch()}
-							title="Couldn't check this Agent's existing links"
+							title="Couldn't check this agent's existing links"
 						/>
 					) : null}
 					<DialogFooter>

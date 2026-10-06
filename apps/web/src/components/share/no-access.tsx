@@ -16,8 +16,7 @@ export function NoAccess() {
 				You don't have access to this session
 			</h1>
 			<p className="mt-3 text-sm text-muted-foreground">
-				The owner hasn't granted your account permission to view this Clawdi session. Ask them to
-				share the link with you, or to invite you directly.
+				You don't have access to this session. Ask the owner to share the link or invite you.
 			</p>
 			<Link to="/" className="mt-6 text-sm font-medium underline-offset-4 hover:underline">
 				Go to Clawdi

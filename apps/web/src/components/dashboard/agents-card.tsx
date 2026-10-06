@@ -63,20 +63,19 @@ export function AgentsCard({
 			<div className={agentsCardClasses.section}>
 				{error ? (
 					<ApiErrorPanel error={error} onRetry={onRetry} title={OVERVIEW_COPY.agentsError} />
-				) : isLoading ? (
+				) : isLoading || hostedStatus?.isLoading ? (
+					// One skeleton until every source resolves, so the grid doesn't
+					// step from placeholders to partial tiles plus a placeholder.
 					<div className={ENTITY_GRID_CLASS}>
 						{Array.from({ length: 4 }).map((_, i) => (
-							<EntityCardSkeleton key={i} iconSize="sm" statusDot titleBadge />
+							<EntityCardSkeleton key={i} iconSize="sm" statusDot titleBadge className="p-3" />
 						))}
 					</div>
-				) : agents.length || hostedStatus?.isLoading ? (
+				) : agents.length ? (
 					<div className={ENTITY_GRID_CLASS}>
 						{ordered.map((tile) => (
 							<AgentTileView key={`${tile.source}:${tile.id}`} tile={tile} />
 						))}
-						{hostedStatus?.isLoading ? (
-							<EntityCardSkeleton iconSize="sm" statusDot titleBadge />
-						) : null}
 					</div>
 				) : hostedStatus?.error ? null : (
 					// When the hosted fetch failed, the error banner below carries

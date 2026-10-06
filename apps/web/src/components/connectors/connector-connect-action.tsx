@@ -135,7 +135,7 @@ export function ConnectorConnectAction({
 				popup.close();
 				if (mountedRef.current)
 					setConnectError(
-						"Couldn't start connection. Try again. If the problem persists, contact support.",
+						"Couldn't start connection. Try again, or contact support if this continues.",
 					);
 			})
 			.finally(() => {

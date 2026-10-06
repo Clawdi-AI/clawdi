@@ -59,7 +59,7 @@ export function useWalletTopUpDialog(errorCopy: WalletFundingErrorCopy) {
 			if (fundingError.kind === "other") return false;
 			show(fundingError.shortfallUsd);
 			if (fundingError.kind === "insufficient_balance") {
-				toast.error("Not enough Wallet balance", {
+				toast.error("Not enough wallet balance", {
 					description: errorCopy.insufficientBalance,
 				});
 			} else {

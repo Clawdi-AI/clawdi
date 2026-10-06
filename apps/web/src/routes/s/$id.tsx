@@ -20,7 +20,5 @@ export const Route = createFileRoute("/s/$id")({
 });
 
 function PublicShareRoute() {
-	const { id } = Route.useParams();
-	const result = Route.useLoaderData();
-	return <PublicSharePage id={id} result={result} />;
+	return <PublicSharePage result={Route.useLoaderData()} />;
 }

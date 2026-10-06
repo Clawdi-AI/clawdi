@@ -1,9 +1,9 @@
 export const projectSharingFormCopy = {
 	leave: "Leave project",
 	leaveDescription:
-		"This removes your access and unlinks the Project from your Agents. Those Agents will stop using its Skills and Vaults.",
+		"This removes your access and unlinks the project from your agents. Those agents will stop using its skills and vaults.",
 	archiveDescription:
-		"Agents will stop using this Project's Skills and Vaults. The Project will disappear from your library.",
+		"Agents will stop using this project's skills and vaults. The project will disappear from your library.",
 	archive: "Archive project",
 	revokeTitle: "Turn off this invite link?",
 	revokeDescription:
@@ -16,7 +16,7 @@ export const projectSharingFormCopy = {
 	removeMember: "Remove member",
 	stopTitle: "Stop all sharing?",
 	stopDescription:
-		"All invite links and pending invitations will stop working. Members will lose access. Your Project content stays unchanged.",
+		"All invite links and pending invitations will stop working. Members will lose access. Your project content stays unchanged.",
 	keepSharing: "Keep sharing",
 	cancel: "Cancel",
 } as const;
@@ -26,7 +26,7 @@ export function canceledInvitationDescription(email: string) {
 }
 
 export function removedMemberDescription(label: string) {
-	return `${label} will lose access to this Project.`;
+	return `${label} will lose access to this project.`;
 }
 
 export function formatMembershipToken(value: string) {
@@ -56,9 +56,9 @@ export function projectInvitationCounts(skills: number, vaults: number) {
 }
 export function projectInvitationAccess(hasVaults: boolean) {
 	return (
-		"You can view this Project and link it to your Agents. Only the owner can edit." +
+		"You can view this project and link it to your agents. Only the owner can edit." +
 		(hasVaults
-			? " Your Agents and the Clawdi CLI can use its keys; secret values stay hidden in the dashboard."
+			? " Your agents and the Clawdi CLI can use its keys; secret values stay hidden in the dashboard."
 			: "")
 	);
 }

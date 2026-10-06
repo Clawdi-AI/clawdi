@@ -237,14 +237,14 @@ function PlanChangeControllerState({
 	function showResult(result: ComputePlanChangeResult) {
 		if (result.kind === "scheduled") {
 			toast.success("Downgrade scheduled", {
-				description: `Your current compute remains active until ${formatShortDate(result.effectiveAt)}.`,
+				description: `Your current plan remains active until ${formatShortDate(result.effectiveAt)}.`,
 			});
 		} else if (result.changeKind === "funding_source_switch") {
 			toast.success("Payment method updated", {
 				description:
 					result.fundingSource === "wallet"
-						? "Future renewals will use Wallet."
-						: "Future renewals will use Card.",
+						? "Future renewals will use wallet."
+						: "Future renewals will use card.",
 			});
 		} else {
 			toast.success("Plan changed", {
@@ -263,7 +263,7 @@ function PlanChangeControllerState({
 			setAcceptedOperationName(error.operationName);
 			toast.info("Still waiting for confirmation", {
 				description:
-					"We don’t have a final result yet. Don’t submit another subscription change. Check again in a few minutes; if it still hasn’t finished, contact support. Checking only reads the status and does not submit another request or charge.",
+					"Don't submit another change. Check again in a few minutes — checking won't resubmit or charge. Contact support if it doesn't finish.",
 			});
 			return;
 		}

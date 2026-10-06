@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
-from pathlib import Path
 
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
@@ -10,23 +8,16 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from tests.migration_harness import load_migration
+
 REVISION = "c4a7e2d9f1b6"
 MIGRATION_FILENAME = f"{REVISION}_scope_channel_events_to_account.py"
-
-
-def _load_migration():
-    path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location("channel_event_account_scope", path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 def test_channel_event_account_scope_migration_dedupes_cross_link_rows(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "channel_event_account_scope")
     schema = f"channel_event_account_{uuid.uuid4().hex}"
     account_id = uuid.uuid4()
     first_id = uuid.uuid4()

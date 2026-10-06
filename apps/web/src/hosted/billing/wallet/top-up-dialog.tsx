@@ -59,7 +59,7 @@ export async function confirmWalletTopup(
 	}
 	toast.info("Wallet credit not confirmed yet", {
 		description:
-			"The Wallet has not linked this payment to the displayed balance and Transactions yet.",
+			"The wallet has not linked this payment to the displayed balance and Transactions yet.",
 		action: {
 			label: "Check again",
 			onClick: () => void confirmWalletTopup(queryClient, paymentReference),
@@ -208,7 +208,7 @@ export function TopUpDialog({
 			<StripeCheckoutDialog
 				open={open}
 				clientSecret={checkoutSecret}
-				title="Top up Wallet"
+				title="Top up wallet"
 				description={`Choose a payment method to pay ${formatCents(amountCents)}.`}
 				summary={null}
 				submitLabel={`Pay ${formatCents(amountCents)}`}
@@ -236,9 +236,9 @@ export function TopUpDialog({
 				showCloseButton={!topUp.isPending && !paymentSubmitting}
 			>
 				<DialogHeader>
-					<DialogTitle>Top up Wallet</DialogTitle>
+					<DialogTitle>Top up wallet</DialogTitle>
 					<DialogDescription>
-						Add a whole-dollar amount from {TOPUP_AMOUNT_RANGE_LABEL} to your Wallet.
+						Add a whole-dollar amount from {TOPUP_AMOUNT_RANGE_LABEL} to your wallet.
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-4">
@@ -287,7 +287,7 @@ export function TopUpDialog({
 							aria-live="polite"
 						>
 							{valid
-								? `You’ll add ${formatCents(amountCents)} to your Wallet. Whole-dollar amounts only.`
+								? `You'll add ${formatCents(amountCents)} to your wallet. Whole-dollar amounts only.`
 								: `Enter a whole-dollar amount from ${TOPUP_AMOUNT_RANGE_LABEL}.`}
 						</p>
 					</div>

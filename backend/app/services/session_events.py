@@ -5,7 +5,7 @@ import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
@@ -18,10 +18,18 @@ from app.schemas.session_events import (
     SessionToolResultEvent,
 )
 
+SESSION_EVENT_STAGING_MAX_AGE = timedelta(days=2)
+
 EMPTY_EVENT_HEAD = hashlib.sha256(b"clawdi-events-v1\n").hexdigest()
 EVENT_ADAPTER: TypeAdapter[SessionEvent] = TypeAdapter(SessionEvent)
 type RawSessionEvent = dict[str, JsonValue]
 RAW_EVENT_ADAPTER: TypeAdapter[RawSessionEvent] = TypeAdapter(RawSessionEvent)
+# Only schema-owned names may appear in diagnostics; extra-field names are input.
+_EVENT_VALIDATION_PATH_NAMES = {
+    name
+    for definition in EVENT_ADAPTER.json_schema().get("$defs", {}).values()
+    for name in definition.get("properties", {})
+} | {"message", "tool_call", "tool_result", "reasoning", "text", "attachment"}
 
 
 class SessionEventChunkInvalid(ValueError):
@@ -94,7 +102,19 @@ def validate_event_chunk(
             # while rejecting Python-side coercions and unknown fields.
             event = EVENT_ADAPTER.validate_json(line, strict=True)
         except ValidationError as exc:
-            raise SessionEventChunkInvalid("event does not match events-v1") from exc
+            errors = exc.errors(include_input=False, include_context=False, include_url=False)
+            issues: list[str] = []
+            for error in errors[:5]:
+                path = ".".join(
+                    str(part)
+                    if isinstance(part, int) or part in _EVENT_VALIDATION_PATH_NAMES
+                    else "<field>"
+                    for part in error["loc"]
+                )
+                issues.append(f"{path} ({error['type']})")
+            raise SessionEventChunkInvalid(
+                f"event does not match events-v1 at seq {start_seq + index}: " + "; ".join(issues)
+            ) from exc
         if event.seq != start_seq + index:
             raise SessionEventChunkInvalid("event seq must be continuous")
         expected_id = hashlib.sha256(

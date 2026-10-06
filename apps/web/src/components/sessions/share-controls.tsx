@@ -239,7 +239,7 @@ function SessionShareDialogContent({
 									<p className="mb-2 text-xs font-medium text-muted-foreground">Older link</p>
 									<ShareLinkRow
 										url={legacyUrl}
-										label="Live Session link"
+										label="Live session link"
 										detail={`Reflects future uploads · created ${relativeTime(legacyLink.created_at)}`}
 										onRevoke={revokeLegacyLink}
 										onRevoked={refreshShares}
@@ -345,7 +345,7 @@ function ShareLinkRow({
 					<AlertDialogHeader>
 						<AlertDialogTitle>Turn off this share link?</AlertDialogTitle>
 						<AlertDialogDescription>
-							Anyone using this link will immediately lose access. The original Session stays
+							Anyone using this link will immediately lose access. The original session stays
 							unchanged.
 						</AlertDialogDescription>
 					</AlertDialogHeader>

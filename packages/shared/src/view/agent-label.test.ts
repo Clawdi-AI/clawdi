@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
 	agentDisplayName,
 	agentIdentity,
+	agentSourceDescription,
+	agentSourceKindLabel,
 	agentTypeLabel,
 	cleanMachineName,
 	compareAgentEnvironments,
@@ -19,9 +21,14 @@ describe("cleanMachineName", () => {
 });
 
 describe("agentDisplayName", () => {
-	test("uses canonical labels for session-only adapters", () => {
+	test("uses canonical labels for self-managed adapters", () => {
 		expect(agentTypeLabel("pi")).toBe("Pi");
 		expect(agentTypeLabel("opencode")).toBe("OpenCode");
+		expect(agentTypeLabel("dsh")).toBe("DeepSeek Harness");
+		expect(agentIdentity({ agent_type: "dsh" })).toEqual({
+			primaryLabel: "DeepSeek Harness",
+			secondaryLabel: null,
+		});
 	});
 
 	test("uses a direct canonical name without appending the runtime", () => {
@@ -135,5 +142,15 @@ describe("compareAgentEnvironments", () => {
 		];
 
 		expect(agents.sort(compareAgentEnvironments).map((agent) => agent.id)).toEqual(["a", "b", "c"]);
+	});
+});
+
+describe("agent source branding", () => {
+	test("uses Cloud and Connected Agent labels without reviving the old product name", () => {
+		expect(agentSourceKindLabel("hosted")).toBe("Cloud Agent");
+		expect(agentSourceKindLabel("connected")).toBe("Connected Agent");
+		expect(agentSourceDescription("hosted")).toBe("Runs on Clawdi");
+		expect(agentSourceKindLabel("hosted")).not.toContain("Clawdi Cloud");
+		expect(agentSourceDescription("hosted")).not.toContain("Clawdi Cloud");
 	});
 });

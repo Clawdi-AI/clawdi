@@ -82,7 +82,7 @@ export function ProjectVaultCatalog({
 	const locked = useRef(false);
 	const canAttach = isCustomProject(project) && project.is_owner !== false;
 	const catalog = useVaultCatalog({ enabled: canAttach });
-	const context = project.kind === "environment" ? "Workspace" : "Project";
+	const context = project.kind === "environment" ? "workspace" : "project";
 	const attachedIds = new Set(attachedVaults?.map((vault) => vault.id));
 	const attachmentsKnown = attachedVaults !== undefined;
 	const rows = projectVaultCatalogRows({
@@ -108,7 +108,7 @@ export function ProjectVaultCatalog({
 				vault.is_owner === false ||
 				(!attached && (catalog.data === undefined || catalog.error))
 			)
-				throw new Error("Refresh Vault links and try again.");
+				throw new Error("Refresh vault links and try again.");
 			return attached
 				? unwrap(
 						await api.DELETE("/v1/vault/{slug}", {
@@ -132,7 +132,7 @@ export function ProjectVaultCatalog({
 			toast.success(`Vault ${attached ? "removed from" : "added to"} ${context}`);
 		},
 		onError: (error) =>
-			toast.error("Couldn't update Project Vaults", { description: normalizeApiError(error) }),
+			toast.error("Couldn't update project vaults", { description: normalizeApiError(error) }),
 		onSettled: () => {
 			locked.current = false;
 		},
@@ -159,14 +159,14 @@ export function ProjectVaultCatalog({
 				<ApiErrorPanel
 					error={error}
 					onRetry={onRetry}
-					title={`Couldn't load ${context} Vault links`}
+					title={`Couldn't load ${context} vault links`}
 				/>
 			) : null}
 			{canAttach && catalog.error ? (
 				<ApiErrorPanel
 					error={catalog.error}
 					onRetry={() => void catalog.refetch()}
-					title="Couldn't load Vault catalog"
+					title="Couldn't load vault catalog"
 				/>
 			) : null}
 			{rows.length ? (
@@ -177,7 +177,7 @@ export function ProjectVaultCatalog({
 							className={projectVaultCatalogClasses.section}
 							aria-label={
 								group.label
-									? `${group.label}${group.label === "Available" ? ` ${context}` : ""} Vaults`
+									? `${group.label}${group.label === "Available" ? ` ${context}` : ""} vaults`
 									: undefined
 							}
 						>

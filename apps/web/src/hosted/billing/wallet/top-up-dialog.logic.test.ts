@@ -57,7 +57,7 @@ describe("completeTopup", () => {
 		expect(setup.resetAttempt).toHaveBeenCalledTimes(1);
 		expect(setup.closeDialog).toHaveBeenCalledTimes(1);
 		expect(setup.toastInfo).toHaveBeenCalledWith("Payment accepted", {
-			description: "We're confirming your Wallet credit now.",
+			description: "We're confirming your wallet credit now.",
 		});
 		expect(setup.onComplete).toHaveBeenCalledWith("succeeded");
 	});

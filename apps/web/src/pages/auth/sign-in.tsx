@@ -49,8 +49,8 @@ function DesktopSignIn({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
 				<div className="space-y-1.5">
 					<h1 className="text-lg font-semibold">Reconnect Clawdi</h1>
 					<p className="text-sm text-muted-foreground">
-						Clawdi will first restore the Dashboard from your local sign-in. If it has expired, you
-						can sign in again securely in your browser.
+						Clawdi restores the dashboard from your local sign-in. If it expired, sign in again in
+						your browser.
 					</p>
 					{failed ? <p className="text-sm text-destructive">Clawdi couldn't reconnect.</p> : null}
 				</div>

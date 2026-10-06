@@ -19,7 +19,7 @@ import type {
 	SessionScanResult,
 	SyncReadContext,
 } from "./base";
-import { getOpenCodeDataDir, getOpenCodeDbPath } from "./paths";
+import { getOpenCodeDataDir, getOpenCodeDbPath, matchesProjectFilter } from "./paths";
 import {
 	canonicalStructuredString,
 	type JsonObject,
@@ -29,7 +29,11 @@ import {
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
-import { describeSessionContent, SESSION_RECORD_MAX_BYTES } from "./session-source";
+import {
+	describeSessionContent,
+	EAGER_SESSION_MAX_BYTES,
+	SESSION_RECORD_MAX_BYTES,
+} from "./session-source";
 import { openReadonlySqlite, type ReadonlySqliteDatabase } from "./sqlite";
 import { readCommandVersion } from "./version";
 
@@ -42,17 +46,12 @@ interface OpenCodeSessionRow {
 	id: string;
 	directory: string;
 	title: string;
-	version: string;
 	tokens_input: number;
 	tokens_output: number;
-	tokens_reasoning: number;
 	tokens_cache_read: number;
-	tokens_cache_write: number;
 	time_created: number;
 	time_updated: number;
-	time_archived: number | null;
 	model: string | null;
-	agent: string | null;
 }
 
 interface OpenCodeMessageRow {
@@ -64,9 +63,7 @@ interface OpenCodeMessageRow {
 
 interface OpenCodePartRow {
 	id: string;
-	message_id: string;
 	time_created: number;
-	time_updated: number;
 	data: string;
 }
 
@@ -75,20 +72,15 @@ const REQUIRED_COLUMNS = {
 		"id",
 		"directory",
 		"title",
-		"version",
 		"tokens_input",
 		"tokens_output",
-		"tokens_reasoning",
 		"tokens_cache_read",
-		"tokens_cache_write",
 		"time_created",
 		"time_updated",
-		"time_archived",
 		"model",
-		"agent",
 	],
 	message: ["id", "session_id", "time_created", "time_updated", "data"],
-	part: ["id", "message_id", "session_id", "time_created", "time_updated", "data"],
+	part: ["id", "message_id", "session_id", "time_created", "data"],
 } as const;
 
 const EVENT_SEMANTICS: SessionEventSemantics = {
@@ -463,7 +455,6 @@ async function parseSession(
 	`)
 		.get(row.id, row.id) as { bytes: number };
 	let revision: string | undefined;
-	let messageCount = 0;
 	const databasePath = getOpenCodeDbPath();
 	const readEvents = async function* (): AsyncGenerator<SessionEvent> {
 		const reader = await openReadonlySqlite(databasePath);
@@ -476,7 +467,7 @@ async function parseSession(
 			let count = 0;
 			const select = `CASE WHEN octet_length(data) <= ${SESSION_RECORD_MAX_BYTES} THEN data END AS data, octet_length(data) AS source_bytes`;
 			const parts = reader.prepare(`
-				SELECT id, message_id, time_created, time_updated, ${select} FROM part
+				SELECT id, time_created, ${select} FROM part
 				WHERE session_id=? AND message_id=? AND (time_created < ? OR (time_created=? AND id<=?)) ORDER BY id ASC
 			`);
 			const messages = reader.prepare(`
@@ -535,7 +526,6 @@ async function parseSession(
 			if (revision !== undefined && hash !== revision)
 				throw new Error("OpenCode source changed during sync; retry with a fresh scan");
 			revision = hash;
-			messageCount = count;
 		} finally {
 			try {
 				if (transaction) reader.exec("ROLLBACK");
@@ -546,7 +536,7 @@ async function parseSession(
 	};
 	const description = await describeSessionContent(
 		readEvents,
-		!context?.streaming && size.bytes <= 256 * 1024,
+		!context?.streaming && size.bytes <= EAGER_SESSION_MAX_BYTES,
 	);
 	if (description.eventCount === 0) return null;
 	const eventModels = description.modelsUsed;
@@ -561,7 +551,7 @@ async function parseSession(
 		projectPath: row.directory,
 		startedAt,
 		endedAt,
-		messageCount,
+		messageCount: description.messageCount,
 		inputTokens: nonNegativeNumber(row.tokens_input),
 		outputTokens: nonNegativeNumber(row.tokens_output),
 		cacheReadTokens: nonNegativeNumber(row.tokens_cache_read),
@@ -635,10 +625,8 @@ export class OpenCodeAdapter implements AgentAdapterCore {
 			assertSupportedSchema(db);
 			const rows = db
 				.prepare(
-					`SELECT id, directory, title, version,
-					        tokens_input, tokens_output, tokens_reasoning,
-					        tokens_cache_read, tokens_cache_write,
-					        time_created, time_updated, time_archived, model, agent
+					`SELECT id, directory, title, tokens_input, tokens_output,
+					        tokens_cache_read, time_created, time_updated, model
 					 FROM session
 					 ${sourceId === undefined ? "" : "WHERE id = ?"}
 					 ORDER BY time_created DESC, id ASC`,
@@ -649,7 +637,7 @@ export class OpenCodeAdapter implements AgentAdapterCore {
 			for (const value of rows) {
 				const row = value as OpenCodeSessionRow;
 				if (context) await setImmediate(undefined, { signal: context.signal });
-				if (normalizedFilter !== null && resolve(row.directory) !== normalizedFilter) continue;
+				if (!matchesProjectFilter(row.directory, normalizedFilter)) continue;
 				const session = await parseSession(db, row, context);
 				if (session) sessions.push(session);
 			}

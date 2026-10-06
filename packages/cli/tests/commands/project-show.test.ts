@@ -88,7 +88,7 @@ describe("projectShowCommand", () => {
 		expect(out).toContain("Owner: Alice (@alice-a3b4)");
 		expect(out).toContain("Access: viewer read access");
 		expect(out).toContain("Resources");
-		expect(out).toContain("Link to Agent:");
+		expect(out).toContain("Link to agent:");
 		expect(out).toContain(
 			"clawdi agent projects link <agent-id> --project @alice-a3b4/shared-toolkit",
 		);

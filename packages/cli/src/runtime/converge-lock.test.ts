@@ -27,17 +27,18 @@ describe("runtime async converge lock", () => {
 		const firstGate = new Promise<void>((resolve) => {
 			releaseFirst = resolve;
 		});
+		const { promise: acquired, resolve: markAcquired } = Promise.withResolvers<void>();
 		const first = withRuntimeConvergeLockAsync(paths, async () => {
 			events.push("A:fetch");
+			markAcquired();
 			await firstGate;
 			events.push("A:commit");
 		});
-		await new Promise((resolve) => setTimeout(resolve, 10));
+		await acquired;
 		const second = withRuntimeConvergeLockAsync(paths, async () => {
 			events.push("B:fetch");
 			events.push("B:commit");
 		});
-		await new Promise((resolve) => setTimeout(resolve, 10));
 		expect(events).toEqual(["A:fetch"]);
 		releaseFirst?.();
 		await Promise.all([first, second]);

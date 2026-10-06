@@ -40,7 +40,7 @@ export function projectSupportingText(project: ProjectMetadata) {
 	const description = project.description?.trim();
 	if (description) return description;
 	if (!isProjectOwner(project)) return `Shared by ${projectOwnerLabel(project)}`;
-	if (project.kind === "environment") return "Private Agent Workspace";
+	if (project.kind === "environment") return "Private agent workspace";
 	return "Project you own";
 }
 
@@ -166,12 +166,12 @@ export function projectPickerGroups(projects: ProjectMetadata[]) {
 		},
 		{
 			id: "workspaces",
-			label: "Agent Workspaces",
+			label: "Agent workspaces",
 			projects: owned.filter((project) => project.kind === "environment"),
 		},
 		{
 			id: "other",
-			label: "Other Projects",
+			label: "Other projects",
 			projects: owned.filter(
 				(project) =>
 					!!project.kind &&

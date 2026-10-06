@@ -59,7 +59,7 @@ describe("deploymentFailureReason", () => {
 					conditionMessage: "The runtime did not become ready.",
 				},
 			}),
-		).toBe("The Clawdi service could not complete this request.");
+		).toBe("The Clawdi service couldn't complete this request.");
 	});
 
 	test("does not expose internal exceptions, identifiers, or implementation vocabulary", () => {
@@ -76,7 +76,7 @@ describe("deploymentFailureReason", () => {
 				},
 			}),
 		).toBe(
-			"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.",
+			"The Clawdi service couldn't confirm the plan change. Your plan was not changed and you were not charged.",
 		);
 	});
 
@@ -118,14 +118,14 @@ describe("deploymentFailureReason", () => {
 
 		expect(deploymentFailureProjection(deployment)).toEqual({
 			reason:
-				"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.",
+				"The Clawdi service couldn't confirm the plan change. Your plan was not changed and you were not charged.",
 			failedVerb: null,
 			retryable: false,
 			code: "operation_aborted",
 		});
 		expect(deploymentFailurePresentation(deployment)).toEqual({
 			reason:
-				"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.",
+				"The Clawdi service couldn't confirm the plan change. Your plan was not changed and you were not charged.",
 			failedVerb: null,
 			retryable: false,
 			code: "operation_aborted",
@@ -201,7 +201,7 @@ describe("deploymentFailureReason", () => {
 		});
 
 		expect(deploymentFailureProjection(deployment)).toEqual({
-			reason: "Clawdi is checking this Agent. Open Agent settings for details.",
+			reason: "Clawdi is checking this agent. Open agent settings for details.",
 			failedVerb: null,
 			retryable: true,
 			code: "runtime_unreachable",
@@ -209,7 +209,7 @@ describe("deploymentFailureReason", () => {
 		expect(deploymentFailurePresentation(deployment)).toMatchObject({
 			title: "Temporarily unavailable",
 			failedVerb: null,
-			description: "Clawdi is checking this Agent. Open Agent settings for details.",
+			description: "Clawdi is checking this agent. Open agent settings for details.",
 			status: {
 				kind: "runtime_unavailable",
 				label: "Temporarily unavailable",
@@ -239,12 +239,12 @@ describe("deploymentFailureReason", () => {
 			{
 				code: "runtime_unreachable",
 				title: "Temporarily unavailable",
-				reason: "Clawdi is checking this Agent. Open Agent settings for details.",
+				reason: "Clawdi is checking this agent. Open agent settings for details.",
 			},
 			{
 				code: "operation_aborted",
 				title: "Agent action failed",
-				reason: "The Clawdi service could not complete this request.",
+				reason: "The Clawdi service couldn't complete this request.",
 			},
 		] as const;
 
@@ -293,7 +293,7 @@ describe("deploymentFailureReason", () => {
 		const projection = deploymentFailureProjection(deployment);
 
 		expect(projection?.code).toBe("provider_not_found");
-		expect(projection?.reason).toBe("The Clawdi service could not complete this request.");
+		expect(projection?.reason).toBe("The Clawdi service couldn't complete this request.");
 		expect(presentation?.title).not.toContain("Provider configuration failed");
 		expect(presentation?.remediation.kind).not.toBe("review_provider");
 		expect(presentation?.description).not.toContain("Wallet");
@@ -385,7 +385,7 @@ describe("deploymentMutationErrorMessage", () => {
 		};
 		const error = new BillingApiError(409, "Internal funding fence", problem);
 		const message = deploymentMutationErrorMessage(error);
-		expect(message).toContain("Open Agent settings and choose a subscription");
+		expect(message).toContain("Open agent settings and choose a subscription");
 		expect(message).not.toMatch(/internal|retry|container|volume|disk/i);
 		expect(deploymentMutationErrorMessage(new DeploymentConflictError({ cause: error }))).toBe(
 			message,
@@ -598,7 +598,7 @@ describe("runtime configuration failures", () => {
 		});
 
 		expect(deploymentFailureProjection(deployment)?.reason).toBe(
-			"One of this agent’s channels, AI providers, or tools could not be set up. Review recent changes, then restart the agent.",
+			"One of this agent's channels, AI providers, or tools couldn't be set up. Review recent changes, then restart the agent.",
 		);
 	});
 });

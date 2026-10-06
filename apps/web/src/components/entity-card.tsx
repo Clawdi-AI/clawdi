@@ -181,9 +181,12 @@ export function entityChoiceCardClass({
 	);
 }
 
-/** Shared loading shape for entity cards and selectable entity options. */
+/** Shared loading shape for entity cards and selectable entity options.
+ * Text placeholders use `h-lh` inside the same type scale as `EntityHeader`,
+ * so the loaded card keeps the skeleton's height. */
 export function EntityCardSkeleton({
 	iconSize = "md",
+	align = "center",
 	metaLines = 1,
 	statusDot = false,
 	titleBadge = false,
@@ -192,6 +195,7 @@ export function EntityCardSkeleton({
 	className,
 }: {
 	iconSize?: "sm" | "md";
+	align?: "center" | "start";
 	metaLines?: 0 | 1 | 2;
 	statusDot?: boolean;
 	titleBadge?: boolean;
@@ -200,8 +204,19 @@ export function EntityCardSkeleton({
 	className?: string;
 }) {
 	return (
-		<div className={entityCardChassisClass({ variant: "compact", className })}>
-			<div className={entityCardClasses.skeletonRow}>
+		<div
+			className={entityCardChassisClass({ variant: "compact", className })}
+			aria-hidden="true"
+			data-slot="entity-card-skeleton"
+		>
+			<div
+				className={cn(
+					entityCardClasses.skeletonLayout,
+					align === "start"
+						? entityCardClasses.skeletonAlignStart
+						: entityCardClasses.skeletonAlignCenter,
+				)}
+			>
 				<Skeleton
 					className={cn(
 						entityCardClasses.shrink,
@@ -211,13 +226,17 @@ export function EntityCardSkeleton({
 					)}
 				/>
 				<div className={entityCardClasses.body}>
-					<div className={entityCardClasses.titleRow}>
+					<div className={entityCardClasses.skeletonTitleRow}>
 						{statusDot ? <Skeleton className={entityCardClasses.skeletonDot} /> : null}
 						<Skeleton className={entityCardClasses.skeletonTitle} />
 						{titleBadge ? <Skeleton className={entityCardClasses.skeletonBadge} /> : null}
 					</div>
-					{metaLines > 0 ? <Skeleton className={entityCardClasses.skeletonMeta} /> : null}
-					{metaLines > 1 ? <Skeleton className={entityCardClasses.skeletonSecondMeta} /> : null}
+					{metaLines > 0 ? (
+						<div className={entityCardClasses.skeletonMetaLines}>
+							<Skeleton className={entityCardClasses.skeletonMeta} />
+							{metaLines > 1 ? <Skeleton className={entityCardClasses.skeletonSecondMeta} /> : null}
+						</div>
+					) : null}
 				</div>
 				{trailingBadge ? <Skeleton className={entityCardClasses.skeletonBadge} /> : null}
 			</div>
@@ -232,13 +251,16 @@ export function EntityCardSkeleton({
 	);
 }
 
-/** Loading shape for top-level resource cards. */
+/** Loading shape for `HeroCard`: same chassis, gaps, and text line heights. */
 export function HeroCardSkeleton({
 	compact = false,
+	iconSize = compact ? "sm" : "md",
 	footerItems = 2,
 	className,
 }: {
+	/** Matches `HeroCard className="min-h-28 gap-2"` (Skills). */
 	compact?: boolean;
+	iconSize?: "sm" | "md";
 	footerItems?: 0 | 1 | 2;
 	className?: string;
 }) {
@@ -257,12 +279,18 @@ export function HeroCardSkeleton({
 		>
 			<Skeleton
 				className={
-					compact ? entityCardClasses.compactHeroSkeletonIcon : entityCardClasses.skeletonIcon
+					iconSize === "sm"
+						? entityCardClasses.compactHeroSkeletonIcon
+						: entityCardClasses.skeletonIcon
 				}
 			/>
 			<div className={entityCardClasses.heroSkeletonBody}>
-				<Skeleton className={entityCardClasses.heroSkeletonTitle} />
-				<Skeleton className={entityCardClasses.heroSkeletonDescription} />
+				<div className={entityCardClasses.heroSkeletonTitleLine}>
+					<Skeleton className={entityCardClasses.heroSkeletonTitle} />
+				</div>
+				<div className={entityCardClasses.heroSkeletonDescriptionLine}>
+					<Skeleton className={entityCardClasses.heroSkeletonDescription} />
+				</div>
 			</div>
 			{footerItems > 0 ? (
 				<div className={entityCardClasses.heroSkeletonFooter}>

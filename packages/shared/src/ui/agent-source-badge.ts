@@ -13,5 +13,5 @@ export const agentSourceBadgeClasses = {
 	legacyIcon: "text-warning-muted-foreground",
 	iconOnlyIcon: "!size-3.5",
 	screenReaderOnly: "sr-only",
-	skeleton: "h-5 w-14 rounded-full",
+	skeleton: "h-5 w-24 rounded-full",
 } as const;

@@ -1,6 +1,6 @@
 import chalk from "chalk";
 
-import { ApiError, readJson } from "../lib/api-client";
+import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 
@@ -42,14 +42,16 @@ export async function projectInviteCommand(
 	}
 
 	const projectId = await resolveProjectId(apiUrl, apiKey, projectArg);
-	const r = await fetch(`${apiUrl}/v1/projects/${projectId}/invitations`, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${apiKey}`,
-			"Content-Type": "application/json",
+	const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
+		`/v1/projects/${projectId}/invitations`,
+		{
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ email: opts.email }),
 		},
-		body: JSON.stringify({ email: opts.email }),
-	});
+	);
 
 	if (r.status === 400 || r.status === 404 || r.status === 409) {
 		const body = (await r.json().catch(() => ({}))) as {
@@ -81,9 +83,9 @@ export async function projectInviteCommand(
 	const body = await readJson<InvitationResponse>(r, "create project invitation");
 	console.log(`${chalk.green("✓")} Invitation sent to ${body.invitee_email}`);
 	console.log(
-		chalk.gray("  They will join as a viewer with read access, including CLI Vault runtime reads."),
+		chalk.gray("  They will join as a viewer with read access, including CLI vault runtime reads."),
 	);
-	console.log(chalk.gray("  Linking it to an Agent is separate; after accept they can run:"));
+	console.log(chalk.gray("  Linking it to an agent is separate; after accept they can run:"));
 	console.log(`  ${chalk.cyan("clawdi project list --shared-with-me")}`);
 	console.log(`  ${chalk.cyan("clawdi agent projects link <agent-id> --project <project>")}`);
 }

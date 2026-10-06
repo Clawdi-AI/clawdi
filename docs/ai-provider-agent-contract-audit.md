@@ -204,4 +204,4 @@ does not advance an existing deployment generation.
 Maintained tests live in `backend/tests/test_ai_providers.py`,
 `backend/tests/test_ai_provider_oauth_revoke_worker.py`,
 `packages/cli/src/lib/codex-oauth-native-store.test.ts`, and
-`packages/cli/tests/runtime.test.ts`.
+`packages/cli/tests/runtime-*.test.ts`.

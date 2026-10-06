@@ -32,7 +32,7 @@ import { DetailMeta, DetailNotFound, DetailPanel } from "@/components/detail/lay
 import { EmptyState } from "@/components/empty-state";
 import { ModelBadge } from "@/components/meta/model-badge";
 import { Stat } from "@/components/meta/stat";
-import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
+import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SessionSearchNavigation } from "@/components/sessions/session-search-navigation";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
@@ -47,7 +47,6 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import { useSidebar } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
@@ -151,8 +150,8 @@ export function SessionDetailContent({
 	const sessionsHref = agentId ? agentSectionHref(agentId, "sessions") : (returnTo ?? "/sessions");
 	const deleteSession = $api.useMutation("delete", "/v1/sessions/{session_id}", {
 		onSuccess: () => {
-			toast.success("Cloud Session permanently deleted", {
-				description: "Local data and extracted Memories remain. This Session will not sync again.",
+			toast.success("Cloud session permanently deleted", {
+				description: "Local data and extracted memories remain. This session will not sync again.",
 			});
 			void queryClient.invalidateQueries({
 				queryKey: ["get", "/v1/memories"],
@@ -337,7 +336,7 @@ export function SessionDetailContent({
 			) {
 				throw new ApiError(
 					409,
-					"Session content changed. Please retry.",
+					"Session content changed. Try again.",
 					"session_content_revision_changed",
 				);
 			}
@@ -485,7 +484,7 @@ export function SessionDetailContent({
 		if (notifiedStaleAnchorRef.current !== anchorIdentity) {
 			notifiedStaleAnchorRef.current = anchorIdentity;
 			toast.info("Search result changed", {
-				description: "This Session has newer content, so the conversation opened normally.",
+				description: "This session has newer content, so the conversation opened normally.",
 			});
 		}
 	}, [anchorIdentity, highlightedMessageKey, isContentPlaceholderData, pagesData]);
@@ -659,18 +658,18 @@ export function SessionDetailContent({
 						<div className={sessionDetailClasses.actions}>
 							<SessionShareButton onClick={() => openShare({ scope: "session" })} />
 							<ConfirmAction
-								title="Permanently delete this cloud Session?"
+								title="Permanently delete this cloud session?"
 								description={
 									<>
 										<p>
-											This permanently deletes the cloud Session, its history, and all sharing
+											This permanently deletes the cloud session, its history, and all sharing
 											access.
 										</p>
 										<p>
-											Local agent files remain untouched, but this Session will never sync again.
+											Local agent files remain untouched, but this session will never sync again.
 										</p>
 										<p>
-											Extracted account-level Memories remain, with this Session&apos;s provenance
+											Extracted account-level memories remain, with this session&apos;s provenance
 											removed.
 										</p>
 									</>
@@ -903,18 +902,31 @@ function LoadMoreControl({
 	);
 }
 
+/** Mirrors the loaded context header (title, meta row, actions, filters). */
 function DetailSkeleton() {
 	return (
-		<div className="space-y-5">
-			<PageHeaderSkeleton actions description={false} />
-			<div className={sessionDetailClasses.skeletonRow}>
-				<Skeleton className="h-6 w-20 rounded-full" />
-				<Skeleton className="h-4 w-24" />
-				<Skeleton className="h-4 w-20" />
+		<>
+			<div className="-mx-4 border-b px-4 py-2 lg:-mx-6 lg:px-6">
+				<PageHeader
+					aria-hidden
+					className="gap-2"
+					title={<Skeleton className="h-lh w-72 max-w-full" />}
+					status={
+						<DetailMeta>
+							<Skeleton className="h-5 w-24" />
+							<Skeleton className="h-5 w-28" />
+							<Skeleton className="h-5 w-20 rounded-full" />
+							<Skeleton className="h-5 w-24" />
+						</DetailMeta>
+					}
+					actions={<Skeleton className="h-11 w-40 sm:h-8" />}
+				/>
+				<div className="mt-2 flex min-h-9 items-center md:justify-end">
+					<Skeleton className="h-4 w-56" />
+				</div>
 			</div>
-			<Separator />
 			<MessagesSkeleton />
-		</div>
+		</>
 	);
 }
 

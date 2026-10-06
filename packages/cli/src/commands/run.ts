@@ -132,7 +132,7 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 			console.log(chalk.red(hostedRuntimeRunError(hostedRuntimeRun)));
 			process.exit(1);
 		}
-		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
+		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
 		process.exit(1);
 	}
 
@@ -152,7 +152,7 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 		try {
 			if (selectedProject) {
 				console.log(
-					chalk.green(`✓ Using Project ${selectedProject.label} for vault env injection.`),
+					chalk.green(`✓ Using project ${selectedProject.label} for vault env injection.`),
 				);
 			}
 			const resolved = await api.postJson<unknown>(

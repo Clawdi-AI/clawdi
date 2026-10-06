@@ -5,11 +5,14 @@ import {
 	agentSetupPrompt,
 	agentSurfaceCopy,
 	CLI_STEPS,
+	HOSTED_PUBLIC_SITE_ORIGIN,
+	INSTALLATION_DOCS_URL,
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { Bot, Terminal } from "lucide-react-native";
 import { useEffect, useRef } from "react";
+import { Linking } from "react-native";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -42,7 +45,7 @@ export function AddAgentSetup() {
 	);
 	return (
 		<WebView recipe={styles.root}>
-			<Tabs defaultValue="commands">
+			<Tabs defaultValue="prompt">
 				<TabsList variant="default">
 					<TabsTrigger value="commands">
 						<WebView recipe={styles.registrationHeading} className="flex-row">
@@ -62,9 +65,19 @@ export function AddAgentSetup() {
 						<WebText recipe={styles.title}>
 							{agentSurfaceCopy.runTheseCommandsInOrderOnTheMachine}
 						</WebText>
-						<WebText recipe={styles.requirementHint}>{agentSurfaceCopy.nodeJs24IsRequired}</WebText>
-						<WebText recipe={styles.packageManagerHint}>
-							{agentSurfaceCopy.preferBunUseBunAddGClawdiLatest}
+						<WebText recipe={styles.requirementHint}>
+							{agentSurfaceCopy.installationHint}{" "}
+							<WebText
+								recipe={styles.installationLink}
+								accessibilityRole="link"
+								onPress={() => {
+									// A failed hand-off leaves the setup steps on screen; nothing to recover.
+									Linking.openURL(INSTALLATION_DOCS_URL).catch(() => undefined);
+								}}
+							>
+								{agentSurfaceCopy.installationLink}
+							</WebText>
+							.
 						</WebText>
 					</WebView>
 					<WebView recipe={styles.steps}>
@@ -96,7 +109,7 @@ export function AddAgentSetup() {
 							<WebText recipe={styles.promptLabel}>{agentSurfaceCopy.setupPrompt}</WebText>
 						</WebView>
 						<WebText selectable recipe={styles.prompt}>
-							{agentSetupPrompt("https://cloud.clawdi.ai")}
+							{agentSetupPrompt(HOSTED_PUBLIC_SITE_ORIGIN)}
 						</WebText>
 					</WebView>
 				</TabsContent>

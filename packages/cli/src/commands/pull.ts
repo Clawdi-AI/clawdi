@@ -78,7 +78,7 @@ export async function pull(opts: PullOpts) {
 	p.intro(chalk.bold("clawdi pull"));
 
 	if (!isLoggedIn()) {
-		p.log.error("Not logged in. Run `clawdi auth login` first.");
+		p.log.error("Not signed in. Run `clawdi auth login` first.");
 		p.outro(chalk.red("Aborted."));
 		process.exitCode = 1;
 		return;
@@ -107,7 +107,7 @@ export async function pull(opts: PullOpts) {
 	if (!opts.project && modules.includes("skills")) {
 		if (modules.length === 1) {
 			p.log.error(
-				"Skill import requires --project naming a Custom or personal Project. Agent Workspaces are filesystem-authoritative.",
+				"Skill import requires --project naming a Custom or personal project. Agent workspaces are filesystem-authoritative.",
 			);
 			p.outro(chalk.red("Aborted."));
 			process.exitCode = 1;
@@ -248,7 +248,7 @@ export async function pull(opts: PullOpts) {
 	}
 	if (opts.project && totals.skillImports > 0) {
 		p.log.info(
-			"Imported Skills remain Project-owned references and are not pushed back as Agent Skills. Explicit `clawdi skill install <repo> --agent <type>` or `clawdi skill add <path> --agent <type>` transfers that local key to Agent authority.",
+			"Imported skills stay owned by their project and aren't pushed back as agent skills. To make one an agent skill, run `clawdi skill install <repo> --agent <type>` or `clawdi skill add <path> --agent <type>`.",
 		);
 	}
 	p.outro(chalk.green(`✓ Pull complete — ${parts.join(", ")}`));
@@ -286,11 +286,11 @@ async function scanOneAgent(
 				(p) => p.id === skillProjectId,
 			);
 			if (!project) {
-				throw new Error("The selected Project is no longer visible.");
+				throw new Error("The selected project is no longer visible.");
 			}
 			if (project.kind !== "workspace" && project.kind !== "personal") {
 				throw new Error(
-					"Skill import only accepts Custom or personal Projects; Agent Workspaces are filesystem-authoritative.",
+					"Skill import only accepts Custom or personal projects; agent workspaces are filesystem-authoritative.",
 				);
 			}
 			if (project.is_owner === false) {

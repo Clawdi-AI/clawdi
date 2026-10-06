@@ -101,6 +101,39 @@ describe("CLI pack inventory", () => {
 });
 
 describe("CLI publish workflow contract", () => {
+	test("publishes both manifests and verifies all eight native archives", () => {
+		const build = workflowDocument.jobs["build-immutable-artifact"];
+		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
+		expect(build.steps?.find((step) => step.id === "pack_release")?.run).toContain(
+			'cp dist-release/clawdi-cli-manifest-v2.txt "$release_dir/"',
+		);
+		const verification = publish.steps?.find((step) => step.id === "verify_release")?.run;
+		expect(verification).toContain("test -s clawdi-cli-manifest.txt");
+		expect(verification).toContain("test -s clawdi-cli-manifest-v2.txt");
+		expect(verification).toContain(
+			"for target in linux-x64 linux-arm64 linux-x64-musl linux-arm64-musl darwin-x64 darwin-arm64 win32-x64 win32-arm64; do",
+		);
+		const release = publish.steps?.find((step) => step.id === "release")?.run;
+		expect(typeof release).toBe("string");
+		if (typeof release !== "string") throw new Error("release step is missing");
+		expect(release.match(/release\/clawdi-cli-manifest-v2\.txt/g)).toHaveLength(2);
+	});
+
+	test("attests native archives and both manifests after verification and before release", () => {
+		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
+		const steps = publish.steps ?? [];
+		const attestIndex = steps.findIndex((step) => step.uses === "actions/attest@v4");
+		expect(attestIndex).toBeGreaterThan(steps.findIndex((step) => step.id === "verify_release"));
+		expect(attestIndex).toBeLessThan(steps.findIndex((step) => step.id === "release"));
+		expect(steps[attestIndex]?.with).toEqual({
+			"subject-path":
+				"release/clawdi-cli-*.tar.gz\nrelease/clawdi-cli-manifest.txt\nrelease/clawdi-cli-manifest-v2.txt\n",
+		});
+		for (const permission of ["id-token", "attestations", "artifact-metadata"]) {
+			expect(publish.permissions?.[permission]).toBe("write");
+		}
+	});
+
 	test("keeps current-run release decisions inside the protected publish topology", () => {
 		const build = workflowDocument.jobs["build-immutable-artifact"];
 		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
@@ -111,7 +144,12 @@ describe("CLI publish workflow contract", () => {
 		]);
 		expect(build.permissions).toEqual({ contents: "read" });
 		expect(publish.needs).toBe("build-immutable-artifact");
-		expect(publish.permissions).toEqual({ contents: "write", "id-token": "write" });
+		expect(publish.permissions).toEqual({
+			contents: "write",
+			"id-token": "write",
+			attestations: "write",
+			"artifact-metadata": "write",
+		});
 		expect(build.steps?.find((step) => step.id === "check")?.["working-directory"]).toBe(
 			"packages/cli",
 		);

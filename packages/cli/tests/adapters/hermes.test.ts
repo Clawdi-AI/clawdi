@@ -2,9 +2,11 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { scanSessionModule } from "../../src/adapters/base";
+import { type SessionEvent, scanSessionModule } from "../../src/adapters/base";
 import { HermesAdapter } from "../../src/adapters/hermes";
+import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
 import { computeLastActivityIso } from "../../src/lib/session-activity";
+import { projectEventsToMessages } from "../../src/lib/session-events";
 import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
 import { reserveManagedSkill } from "../../src/runtime/managed-skill-reservation";
@@ -13,7 +15,8 @@ import {
 	restoreAgentHomeOverrides,
 	snapshotAndClearAgentHomeOverrides,
 } from "../commands/helpers";
-import { addSkillDirectorySymlinkCases, cleanupTmp, copyFixtureToTmp } from "./helpers";
+import inlineImage from "../fixtures/hermes-inline-image.json";
+import { cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
 let origHome: string | undefined;
@@ -48,6 +51,240 @@ describe("HermesAdapter.detect", () => {
 });
 
 describe("HermesAdapter.collectSessions", () => {
+	it("preserves origin/main session bytes and localHash", async () => {
+		await assertSessionGolden("hermes", new HermesAdapter().sessions);
+	});
+	it.each([false, true])(
+		"retains rewind and superseded rows as hidden audit events (streaming=%s)",
+		async (streaming) => {
+			const db = new Database(join(tmpHome, ".hermes", "state.db"));
+			try {
+				db.run("DELETE FROM messages");
+				const insert = db.prepare(
+					"INSERT INTO messages (session_id, role, content, timestamp, active, compacted, display_metadata) VALUES ('s-modern', ?, ?, ?, ?, ?, ?)",
+				);
+				insert.run("user", "Rewound prompt", 1776247201, 0, 0, null);
+				insert.run("assistant", "Rewound answer", 1776247202, 0, 0, null);
+				insert.run("user", "Superseded original prompt", 1776247203, 0, 0, null);
+				insert.run("assistant", "Superseded original answer", 1776247204, 0, 0, null);
+				insert.run("user", "Model-only prompt", 1776247205, 1, 0, '{"model_only":true}');
+				insert.run("assistant", "Model-only answer", 1776247206, 1, 0, '{"model_only":1}');
+				insert.run("user", "Archived prompt", 1776247207, 0, 1, null);
+				insert.run("assistant", "Current answer", 1776247208, 1, 0, null);
+			} finally {
+				db.close();
+			}
+			const session = await new HermesAdapter().sessions.resolve("s-modern", {
+				streaming,
+				signal: new AbortController().signal,
+			});
+			if (!session) throw new Error("Expected Hermes rewind fixture");
+			const events = [];
+			for await (const event of session.readEvents?.() ?? session.events ?? []) events.push(event);
+			expect(events).toHaveLength(8);
+			expect(events.slice(0, 4).map((event) => event.semantics)).toEqual(
+				Array(4).fill({ lifecycle: "inactive", display: "hidden", compressed_summary: false }),
+			);
+			expect(events.slice(4, 6).map((event) => event.semantics)).toEqual(
+				Array(2).fill({ lifecycle: "active", display: "hidden", compressed_summary: false }),
+			);
+			expect(projectEventsToMessages(events).map((message) => message.content)).toEqual([
+				"Archived prompt",
+				"Current answer",
+			]);
+			expect(session.messageCount).toBe(2);
+		},
+	);
+	it.each([false, true])(
+		"hides later compaction generations (display_identity=%s)",
+		async (withIdentity) => {
+			const db = new Database(join(tmpHome, ".hermes", "state.db"));
+			try {
+				db.run("DELETE FROM messages");
+				if (withIdentity) db.run("ALTER TABLE messages ADD COLUMN display_identity BLOB");
+				const insert = db.prepare(
+					"INSERT INTO messages (id, session_id, role, content, timestamp, active, compacted, _compressed_summary, tool_calls, tool_call_id, tool_name) VALUES (?, 's-modern', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				);
+				const calls = (argumentsValue: string) =>
+					JSON.stringify([
+						{
+							id: "call-tail",
+							type: "function",
+							function: { name: "read", arguments: argumentsValue },
+						},
+					]);
+				insert.run(1, "user", "Tail prompt", 1776247201, 0, 0, 0, null, null, null);
+				insert.run(2, "user", "Tail prompt", 1776247201, 0, 1, 0, null, null, null);
+				insert.run(3, "assistant", "Tail answer", 1776247202, 0, 1, 0, null, null, null);
+				insert.run(
+					4,
+					"assistant",
+					null,
+					1776247203,
+					0,
+					1,
+					0,
+					calls('{"path":"README.md","context":"full"}'),
+					null,
+					null,
+				);
+				insert.run(5, "tool", "Full output", 1776247204, 0, 1, 0, null, "call-tail", "read");
+				insert.run(6, "assistant", "Summary", 1776247210, 1, 0, 1, null, null, null);
+				insert.run(7, "user", "Tail prompt", 1776247201, 1, 0, 0, null, null, null);
+				insert.run(8, "assistant", "Tail answer", 1776247202, 1, 0, 0, null, null, null);
+				insert.run(
+					9,
+					"assistant",
+					null,
+					1776247203,
+					1,
+					0,
+					0,
+					JSON.stringify([
+						{
+							id: "response-item",
+							call_id: "call-tail|response-item",
+							function: { name: "read", arguments: '{"path":"README.md"}' },
+						},
+					]),
+					null,
+					null,
+				);
+				insert.run(10, "tool", "Full output", 1776247204, 1, 0, 0, null, "call-tail", "read");
+				insert.run(11, "user", "Tail prompt", 1776247211, 1, 0, 0, null, null, null);
+				// Pruned tool results keep their payload in the key, unlike assistant calls.
+				insert.run(12, "tool", "Pruned output", 1776247204, 1, 0, 0, null, "call-tail", "read");
+				if (withIdentity) {
+					db.run("UPDATE messages SET display_identity = X'01' WHERE id IN (1, 2, 7)");
+					db.run("UPDATE messages SET display_identity = X'02' WHERE id IN (3, 8)");
+					// Durable identities take precedence over the fallback content key.
+					db.run("UPDATE messages SET content = 'Tail answer copy' WHERE id = 8");
+				}
+			} finally {
+				db.close();
+			}
+			let eagerEvents: SessionEvent[] | undefined;
+			for (const streaming of [false, true]) {
+				const session = await new HermesAdapter().sessions.resolve("s-modern", {
+					streaming,
+					signal: new AbortController().signal,
+				});
+				if (!session) throw new Error("Expected Hermes generation fixture");
+				const events = [];
+				for await (const event of session.readEvents?.() ?? session.events ?? [])
+					events.push(event);
+				expect(events).toHaveLength(12);
+				expect(
+					events
+						.filter((event) => event.semantics?.display === "hidden")
+						.map((event) => event.source.record_id),
+				).toEqual(["1", "7", "8", "9", "10"]);
+				expect(projectEventsToMessages(events).map((message) => message.content)).toEqual([
+					"Tail prompt",
+					"Tail answer",
+					"Summary",
+					"Tail prompt",
+				]);
+				expect(events.find((event) => event.source.record_id === "4")).toMatchObject({
+					type: "tool_call",
+					arguments_json: '{"context":"full","path":"README.md"}',
+					semantics: { lifecycle: "compacted", display: "message" },
+				});
+				expect(events.find((event) => event.source.record_id === "9")).toMatchObject({
+					type: "tool_call",
+					semantics: { lifecycle: "active", display: "hidden" },
+				});
+				if (streaming) expect(events).toEqual(eagerEvents);
+				else eagerEvents = events;
+			}
+		},
+	);
+	it("reads modelsUsed in first_seen order without changing projected event bytes", async () => {
+		const adapter = new HermesAdapter();
+		const before = await adapter.sessions.resolve("s-modern");
+		if (!before) throw new Error("Expected Hermes model-usage fixture");
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		try {
+			db.exec(`CREATE TABLE session_model_usage (
+				session_id TEXT NOT NULL, model TEXT NOT NULL, billing_provider TEXT NOT NULL,
+				first_seen REAL, PRIMARY KEY (session_id, model, billing_provider)
+			)`);
+			const insert = db.prepare("INSERT INTO session_model_usage VALUES ('s-modern', ?, ?, ?)");
+			insert.run("gpt-5.5", "openai", 30);
+			insert.run("claude-opus-4-7", "anthropic", 20);
+			insert.run("gpt-5.5", "custom", 10);
+		} finally {
+			db.close();
+		}
+		for (const streaming of [false, true]) {
+			const after = await adapter.sessions.resolve("s-modern", {
+				streaming,
+				signal: new AbortController().signal,
+			});
+			if (!after) throw new Error("Expected Hermes model-usage fixture");
+			expect(after.model).toBe(before.model);
+			expect(after.modelsUsed).toEqual(["gpt-5.5", "claude-opus-4-7"]);
+			const events = [];
+			for await (const event of after.readEvents?.() ?? after.events ?? []) events.push(event);
+			expect(events).toEqual(before.events);
+			expect((await prepareSessionUpload(after, "events-v1")).localHash).toBe(
+				(await prepareSessionUpload(before, "events-v1")).localHash,
+			);
+			expect(after.sourceRevision).not.toBe(before.sourceRevision);
+		}
+		const cleanup = new Database(join(tmpHome, ".hermes", "state.db"));
+		try {
+			cleanup.exec("DROP TABLE session_model_usage");
+		} finally {
+			cleanup.close();
+		}
+		expect((await adapter.sessions.resolve("s-modern"))?.modelsUsed).toEqual(["gpt-5.3-codex"]);
+	});
+	it.each(["user", "tool"])(
+		"re-maps persisted %s inline images without invalid attachment metadata",
+		async (role) => {
+			const db = new Database(join(tmpHome, ".hermes", "state.db"));
+			db.run("UPDATE messages SET role = ?, content = ? WHERE id = 4", [
+				role,
+				`\0json:${JSON.stringify(inlineImage.content)}`,
+			]);
+			db.close();
+			const adapter = new HermesAdapter();
+			const eager = await adapter.sessions.resolve("s-modern");
+			const streamed = await adapter.sessions.resolve("s-modern", {
+				signal: new AbortController().signal,
+				streaming: true,
+			});
+			if (!eager || !streamed?.readEvents) throw new Error("expected Hermes event readers");
+			const streamEvents = [];
+			for await (const event of streamed.readEvents()) streamEvents.push(event);
+			expect(streamEvents).toEqual(eager.events);
+			const result = streamEvents.find((event) => event.source.record_id === "4");
+			expect(result).toMatchObject({
+				type: role === "user" ? "message" : "tool_result",
+				parts: [
+					{ type: "text", text: "Synthetic image input" },
+					{ type: "attachment", availability: "metadata_only" },
+				],
+			});
+			if (result?.type !== "tool_result" && result?.type !== "message")
+				throw new Error("expected image event");
+			expect(result.parts[1]).not.toHaveProperty("name");
+			expect(JSON.stringify(result)).not.toContain("base64");
+		},
+	);
+	it.each([false, true])("counts projected visible messages (streaming=%s)", async (streaming) => {
+		const session = await new HermesAdapter().sessions.resolve("s-modern", {
+			streaming,
+			signal: new AbortController().signal,
+		});
+		if (!session) throw new Error("Expected Hermes session fixture");
+		const events = [];
+		for await (const event of session.readEvents?.() ?? session.events ?? []) events.push(event);
+		expect(session.messageCount).toBe(projectEventsToMessages(events).length);
+		expect(session.messageCount).toBe(6);
+	});
+
 	it("selects events-v1 and maps every safe modern row in stable source order", async () => {
 		const a = new HermesAdapter();
 		expect(await a.sessions.contentProtocol()).toBe("events-v1");
@@ -59,7 +296,7 @@ describe("HermesAdapter.collectSessions", () => {
 			projectPath: null,
 			model: "gpt-5.3-codex",
 			modelsUsed: ["gpt-5.3-codex"],
-			messageCount: 12,
+			messageCount: 6,
 			inputTokens: 120,
 			outputTokens: 45,
 			cacheReadTokens: 8,
@@ -141,7 +378,7 @@ describe("HermesAdapter.collectSessions", () => {
 			role: "user",
 			semantics: {
 				lifecycle: "inactive",
-				display: "event",
+				display: "hidden",
 				display_kind: "auto_continue",
 				display_metadata: { attempt: 2 },
 			},
@@ -173,11 +410,11 @@ describe("HermesAdapter.collectSessions", () => {
 		});
 		// Assistant rows with visible content + tool_calls produce one message and one call.
 		expect(events.slice(12, 14).map((event) => event.type)).toEqual(["message", "tool_call"]);
-		// Raw audit rows are retained: the compaction copy remains distinct and marked compacted.
+		// Raw audit rows are retained, with later compaction copies hidden.
 		expect(events[6]).toMatchObject({ source: { record_id: "5" } });
 		expect(events[15]).toMatchObject({
 			source: { record_id: "12" },
-			semantics: { lifecycle: "compacted" },
+			semantics: { lifecycle: "compacted", display: "hidden" },
 		});
 		expect(events[14]).toMatchObject({
 			type: "tool_result",
@@ -205,6 +442,29 @@ describe("HermesAdapter.collectSessions", () => {
 		}
 	});
 
+	it.each([
+		["plain-model", "plain-model"],
+		['{"default":"json-model","api_key":"sk-json-secret"}', "json-model"],
+		["{'default': 'repr-model', 'headers': {'Authorization': 'Bearer sk-repr-secret'}}", null],
+		['{"default":"broken-model","api_key":"sk-broken-secret"', null],
+	])("accepts only strict JSON model objects (%s)", async (stored, expected) => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		try {
+			db.run(
+				"INSERT INTO sessions (id, source, model, started_at) VALUES ('model-fixture', 'cli', ?, 1776247200)",
+				stored,
+			);
+			db.run(
+				"INSERT INTO messages (session_id, role, content, timestamp) VALUES ('model-fixture', 'assistant', 'Safe answer', 1776247201)",
+			);
+		} finally {
+			db.close();
+		}
+		const session = await new HermesAdapter().sessions.resolve("model-fixture");
+		expect(session?.model).toBe(expected);
+		expect(JSON.stringify(session)).not.toContain("sk-");
+	});
+
 	it("keeps prior identities as an append-only prefix when a row is added", async () => {
 		const adapter = new HermesAdapter();
 		const before = (await adapter.sessions.resolve("s-modern"))?.events ?? [];
@@ -227,6 +487,20 @@ describe("HermesAdapter.collectSessions", () => {
 			type: "message",
 			source: { adapter: "hermes", record_id: "13", record_seq: 13 },
 		});
+	});
+
+	it("reprojects unchanged source rows after the shared projection revision changes", async () => {
+		// Captured with projection revision 4; only the mapper version changed.
+		const previous = "6ce040ade9bbc99c25a517446b1789db7036860f01f801da3299b58927e82453";
+		const scan = await scanSessionModule(
+			new HermesAdapter().sessions,
+			{ kind: "complete" },
+			new Map([["s-modern", previous]]),
+		);
+		const sessions = [];
+		for await (const batch of scan.batches) sessions.push(...batch.sessions);
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]?.sourceRevision).not.toBe(previous);
 	});
 
 	it("scans large stores in bounded batches and expands only revised sessions", async () => {
@@ -617,17 +891,6 @@ describe("HermesAdapter.collectSkills", () => {
 		expect(skills[0]?.content).toContain("description: A nested demo skill");
 	});
 
-	it("discovers safe top-level directory symlinks and isolates unsafe ones", async () => {
-		const root = join(tmpHome, ".hermes", "skills");
-		const linked = addSkillDirectorySymlinkCases(root, join(tmpHome, "outside-hermes-skill"));
-		const adapter = new HermesAdapter();
-		const skills = await adapter.skills.collect();
-		const keys = skills.map((skill) => skill.skillKey).sort();
-		expect(keys).toEqual(["core/demo", "linked", "source/linked-source"]);
-		expect(skills.find((skill) => skill.skillKey === "linked")?.directoryPath).toBe(linked);
-		expect((await adapter.skills.listKeys()).sort()).toEqual(keys);
-	});
-
 	it("skips archived dot-directories and invalid skill keys at every depth", async () => {
 		const skillsRoot = join(tmpHome, ".hermes", "skills");
 		mkdirSync(join(skillsRoot, ".archive", "old-skill"), { recursive: true });
@@ -637,17 +900,29 @@ describe("HermesAdapter.collectSkills", () => {
 			join(skillsRoot, "apple", ".archive", "old-reminders", "SKILL.md"),
 			"---\nname: old reminders\n---\n",
 		);
-		mkdirSync(join(skillsRoot, "bad key"), { recursive: true });
-		writeFileSync(join(skillsRoot, "bad key", "SKILL.md"), "---\nname: bad key\n---\n");
-		mkdirSync(join(skillsRoot, "apple", "_private"), { recursive: true });
-		writeFileSync(join(skillsRoot, "apple", "_private", "SKILL.md"), "---\nname: private\n---\n");
+		for (const key of [
+			"bad key",
+			"apple/_private",
+			"中文",
+			"a/b/c/d/e",
+			"a".repeat(201),
+			"team/download",
+			"demo\n",
+		]) {
+			mkdirSync(join(skillsRoot, key), { recursive: true });
+			writeFileSync(join(skillsRoot, key, "SKILL.md"), "# Invalid key fixture\n");
+		}
+		for (const key of ["Team.tools/Demo_v1", "valid/nested/at/limit"]) {
+			mkdirSync(join(skillsRoot, key), { recursive: true });
+			writeFileSync(join(skillsRoot, key, "SKILL.md"), "# Valid key fixture\n");
+		}
 
 		const a = new HermesAdapter();
 		const skills = await a.skills.collect();
 		const keys = skills.map((s) => s.skillKey).sort();
 
-		expect(keys).toEqual(["core/demo"]);
-		expect(await a.skills.listKeys()).toEqual(["core/demo"]);
+		expect(keys).toEqual(["Team.tools/Demo_v1", "core/demo", "valid/nested/at/limit"]);
+		expect((await a.skills.listKeys()).sort()).toEqual(keys);
 	});
 
 	it("returns empty when skills dir is missing", async () => {
@@ -675,14 +950,14 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 		expect(readFileSync(extracted, "utf-8")).toContain("description: A nested demo skill");
 	});
 
-	it("refuses to write shared content through a managed shared namespace", async () => {
+	it("refuses to write shared content over the reserved shared target", async () => {
 		const skillsRoot = join(tmpHome, ".hermes", "skills");
-		const sharedRoot = join(skillsRoot, "shared");
+		const sharedRoot = join(skillsRoot, "shared", "demo__owner");
 		mkdirSync(sharedRoot, { recursive: true });
 		writeFileSync(join(sharedRoot, "SKILL.md"), "# Managed shared namespace\n");
 		reserveManagedSkill({
 			targetDir: sharedRoot,
-			id: "shared",
+			id: "demo__owner",
 			version: 1,
 			digest: "a".repeat(64),
 			manager: "local-setup",
@@ -691,10 +966,9 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 
 		const adapter = new HermesAdapter();
 		await expect(adapter.skills.writeSharedArchive("demo", "owner", tarBytes)).rejects.toThrow(
-			"Skill shared is reserved by a managed Skill owner",
+			"Skill demo__owner is reserved by a managed Skill owner",
 		);
 		expect(readFileSync(join(sharedRoot, "SKILL.md"), "utf8")).toBe("# Managed shared namespace\n");
-		expect(existsSync(join(sharedRoot, "demo__owner"))).toBe(false);
 	});
 
 	it("getSkillPath returns the canonical SKILL.md anchor under skills/", () => {

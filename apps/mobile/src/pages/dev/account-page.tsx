@@ -487,7 +487,7 @@ function AccountStories() {
 								plans={[
 									{
 										slug: "compute_basic",
-										name: "Compute Basic",
+										name: "Basic",
 										price_cents: 900,
 										signup_grant_usd: "0",
 										vcpu: 1,
@@ -504,7 +504,7 @@ function AccountStories() {
 									},
 									{
 										slug: "compute_performance",
-										name: "Compute Performance",
+										name: "Performance",
 										price_cents: 1900,
 										signup_grant_usd: "0",
 										vcpu: 2,

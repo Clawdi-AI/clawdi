@@ -1,0 +1,157 @@
+name: Setup Docker Hub mirror
+description: Use mirror.gcr.io for CI Docker Hub pulls, with Docker Hub fallback on cache misses
+
+inputs:
+  dockerhub-username:
+    description: Optional Docker Hub username for authenticated pulls (avoids anonymous rate limits).
+    required: false
+    default: ""
+  dockerhub-token:
+    description: Optional Docker Hub read-only access token paired with dockerhub-username.
+    required: false
+    default: ""
+  prefetch-images:
+    description: Optional newline-separated Docker Hub images to prefetch for daemon pulls
+    required: false
+    default: ""
+
+outputs:
+  prefetched-images:
+    description: JSON map of input refs to usable refs; digest refs use the mirror on success and the original on failure
+    value: ${{ steps.prefetch.outputs.images }}
+
+runs:
+  using: composite
+  steps:
+    - name: Log in to Docker Hub
+      if: inputs.dockerhub-username != '' && inputs.dockerhub-token != ''
+      shell: bash
+      env:
+        DOCKERHUB_USERNAME: ${{ inputs.dockerhub-username }}
+        DOCKERHUB_TOKEN: ${{ inputs.dockerhub-token }}
+      run: |
+        # Authenticated pulls are not subject to anonymous Docker Hub rate limits.
+        # A failed login must not fail the job: the mirror and anonymous pulls remain.
+        if ! printf '%s' "$DOCKERHUB_TOKEN" | docker login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin >/dev/null; then
+          echo "::notice::Docker Hub login failed; continuing with mirror.gcr.io and anonymous pulls."
+        fi
+    - name: Configure local Docker daemon mirror when available
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ "${RUNNER_OS}" != Linux ]] || ! command -v sudo >/dev/null ||
+          ! dockerd_pids="$(pgrep -x dockerd)" || ! sudo -n true 2>/dev/null; then
+          echo "::notice::Local dockerd with sudo is unavailable; using the mirrored builder and best-effort prefetch."
+          exit 0
+        fi
+
+        # SIGHUP reloads registry-mirrors without stopping job service containers.
+        if sudo -n install -d /etc/docker && sudo -n python3 - <<'PY'
+        import json
+        from pathlib import Path
+
+        path = Path("/etc/docker/daemon.json")
+        config = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(config, dict):
+            raise SystemExit("Docker daemon configuration must be a JSON object")
+        mirrors = config.get("registry-mirrors", [])
+        if not isinstance(mirrors, list) or any(not isinstance(item, str) for item in mirrors):
+            raise SystemExit("Docker registry-mirrors must be an array of strings")
+        mirror = "https://mirror.gcr.io"
+        config["registry-mirrors"] = [mirror, *(item for item in mirrors if item != mirror)]
+        path.write_text(json.dumps(config, indent=2) + "\n")
+        PY
+        then
+          # shellcheck disable=SC2086 # one or more PIDs
+          if ! sudo -n kill -HUP $dockerd_pids; then
+            echo "::notice::Docker mirror reload failed; using the mirrored builder and best-effort prefetch."
+            exit 0
+          fi
+        else
+          echo "::notice::Docker mirror configuration failed; using the mirrored builder and best-effort prefetch."
+          exit 0
+        fi
+        for _attempt in {1..15}; do
+          if mirrors=$(timeout 5s docker info --format '{{json .RegistryConfig.Mirrors}}' 2>/dev/null) &&
+            python3 -c 'import json, sys; sys.exit(0 if "https://mirror.gcr.io" in [item.rstrip("/") for item in json.loads(sys.argv[1])] else 1)' "$mirrors"; then
+            echo "Docker Hub mirror is active"
+            exit 0
+          fi
+          sleep 1
+        done
+        # Mirrors are an availability optimization with Docker Hub fallback;
+        # never fail the job because the reload did not take effect.
+        echo "::notice::Docker did not report the mirror after reload; using the mirrored builder and best-effort prefetch."
+
+    - name: Prefetch Docker Hub runtime images
+      id: prefetch
+      shell: bash
+      env:
+        PREFETCH_IMAGES: ${{ inputs.prefetch-images }}
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import json
+        import os
+        import re
+        import subprocess
+
+        images = {}
+        for line in os.environ["PREFETCH_IMAGES"].splitlines():
+            original = line.strip()
+            if not original:
+                continue
+            ref = original
+            for prefix in ("docker.io/", "index.docker.io/"):
+                if ref.startswith(prefix):
+                    ref = ref[len(prefix):]
+                    break
+            # Only Docker Hub refs are accepted; never pass user input to a shell.
+            first_component = ref.split("/")[0]
+            external_registry = "/" in ref and (
+                "." in first_component or ":" in first_component or first_component == "localhost"
+            )
+            component = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+            pattern = rf"{component}(?:/{component})*(?::[\w][\w.-]{{0,127}})?(?:@sha256:[a-f0-9]{{64}})?"
+            if external_registry or not re.fullmatch(pattern, ref, flags=re.ASCII):
+                print("::notice::Skipping an invalid Docker Hub prefetch ref.")
+                continue
+            if "/" not in ref:
+                ref = "library/" + ref
+            mirror = "mirror.gcr.io/" + ref
+            images[original] = original
+            try:
+                subprocess.run(["docker", "pull", mirror], check=True, timeout=120,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if "@" in ref:
+                    # Docker cannot tag a digest ref. CI consumers use this mapping
+                    # without changing the pinned ref in local/deploy configuration.
+                    images[original] = mirror
+                else:
+                    subprocess.run(["docker", "tag", mirror, original], check=True, timeout=30,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                print(f"Prefetched {original} via mirror.gcr.io")
+            except (OSError, subprocess.SubprocessError):
+                print(f"::notice::Could not prefetch {original}; subsequent pulls retain the original ref as fallback.")
+        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+            output.write("images=" + json.dumps(images) + "\n")
+        PY
+
+    - name: Set up mirrored Docker Buildx builder
+      id: buildx
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      with:
+        use: true
+        buildkitd-config-inline: |
+          [registry."docker.io"]
+            mirrors = ["mirror.gcr.io"]
+
+    - name: Select mirrored builder for CI build commands
+      shell: bash
+      env:
+        MIRROR_BUILDER: ${{ steps.buildx.outputs.name }}
+      run: |
+        set -euo pipefail
+        # docker build ignores buildx's current builder unless explicitly selected:
+        # https://docs.docker.com/build/builders/#difference-between-docker-build-and-docker-buildx-build
+        printf 'BUILDX_BUILDER=%s\nDOCKER_BUILD_LOAD=1\n' "$MIRROR_BUILDER" >> "$GITHUB_ENV"

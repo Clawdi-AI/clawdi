@@ -174,7 +174,7 @@ test("uses direct message actions and keeps older live links revocable", async (
 	await sessionDialog.getByText("Other active links (2)", { exact: true }).click();
 	await expect(sessionDialog.getByText("Older link")).toBeVisible();
 	const legacyRow = sessionDialog
-		.getByText("Live Session link", { exact: true })
+		.getByText("Live session link", { exact: true })
 		.locator("xpath=ancestor::div[contains(@class,'rounded-lg')][1]");
 	await expect(legacyRow).toContainText("Reflects future uploads");
 	await legacyRow.getByRole("button", { name: "Turn off share link" }).click();
@@ -182,7 +182,7 @@ test("uses direct message actions and keeps older live links revocable", async (
 		name: "Turn off this share link?",
 	});
 	await confirmation.getByRole("button", { name: "Turn off link" }).click();
-	await expect(sessionDialog.getByText("Live Session link", { exact: true })).not.toBeVisible();
+	await expect(sessionDialog.getByText("Live session link", { exact: true })).not.toBeVisible();
 });
 
 test("manages active Session links from one page", async ({ page }) => {
@@ -226,13 +226,13 @@ test("manages active Session links from one page", async ({ page }) => {
 	});
 
 	await page.goto("/sessions/shared");
-	await expect(page.getByRole("heading", { name: "Shared Session links" })).toBeVisible();
+	await expect(page.getByRole("heading", { name: "Shared Session Links" })).toBeVisible();
 	await expect(page.getByText("Share a response", { exact: true })).toBeVisible();
-	await expect(page.getByText(/Single Agent response · 1 message/)).toBeVisible();
+	await expect(page.getByText(/Single agent response · 1 message/)).toBeVisible();
 	await page.getByRole("button", { name: "Turn off share link for Share a response" }).click();
 	await page
 		.getByRole("alertdialog", { name: "Turn off this share link?" })
 		.getByRole("button", { name: "Turn off link" })
 		.click();
-	await expect(page.getByText("No active Session links", { exact: true })).toBeVisible();
+	await expect(page.getByText("No active session links", { exact: true })).toBeVisible();
 });

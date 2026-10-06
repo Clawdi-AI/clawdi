@@ -283,7 +283,7 @@ export function CopyKeysDialog({
 					) : null}
 					{mode === "copy" ? (
 						<p className={copyKeysDialogClasses.hint}>
-							Just want these keys available in another Project? Use{" "}
+							Just want these keys available in another project? Use{" "}
 							<span className={copyKeysDialogClasses.emphasis}>Link vault</span> on this vault
 							instead — one source of truth, changes apply everywhere.
 						</p>

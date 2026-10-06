@@ -6,6 +6,7 @@ import { AlertCircle, LogIn, type LucideIcon, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
+import { signInActionHref } from "@/lib/auth-redirect";
 import { env } from "@/lib/env";
 
 export interface ApiErrorNormalizer {
@@ -27,8 +28,9 @@ function reauthenticate() {
 		});
 		return;
 	}
-	const redirect = encodeURIComponent(window.location.pathname + window.location.search);
-	window.location.href = `/sign-in?redirect_url=${redirect}`;
+	window.location.href = signInActionHref(
+		window.location.pathname + window.location.search + window.location.hash,
+	);
 }
 
 /** Shared API error chrome with an optional domain-specific normalizer. */

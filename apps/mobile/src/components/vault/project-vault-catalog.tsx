@@ -121,7 +121,7 @@ export function ProjectVaultCatalog({
 			selected.is_owner === false ||
 			(!remove && (!catalog.data || catalog.error))
 		)
-			throw new Error("Refresh Vault links and try again.");
+			throw new Error("Refresh vault links and try again.");
 		await checkProject();
 		const currentVault = await read((s) => vault.get(selected, s));
 		if (!visible() || !scope.isCurrent() || currentVault.is_owner === false)
@@ -258,14 +258,14 @@ export function ProjectVaultCatalog({
 								<ApiErrorPanel
 									error={attached.error}
 									onRetry={() => void attached.refetch()}
-									title={`Couldn't load ${context} Vault links`}
+									title={`Couldn't load ${context} vault links`}
 								/>
 							) : null}
 							{canAttach && catalog.error ? (
 								<ApiErrorPanel
 									error={catalog.error}
 									onRetry={() => void catalog.refetch()}
-									title="Couldn't load Vault catalog"
+									title="Couldn't load vault catalog"
 								/>
 							) : null}
 							{action.error ? <ApiErrorPanel error={action.error} /> : null}

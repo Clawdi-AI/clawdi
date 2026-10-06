@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import uuid
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -12,31 +10,21 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from tests.migration_harness import load_migration
+
 REVISION = "a6d2f4c8b1e7"
 MIGRATION_FILENAME = f"{REVISION}_harden_v2_runtime_observation_boundary.py"
 COALESCING_MIGRATION_FILENAME = "c8a4e1d7f2b6_coalesce_runtime_heartbeats.py"
 
 
-def _load_migration(filename: str, module_name: str):
-    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / filename
-    spec = importlib.util.spec_from_file_location(
-        module_name,
-        migration_path,
-    )
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
-
-
 def test_runtime_observation_hardening_migration_rejects_invalid_credentials_and_round_trips(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration(
+    migration = load_migration(
         MIGRATION_FILENAME,
         "runtime_observation_hardening_migration",
     )
-    coalescing_migration = _load_migration(
+    coalescing_migration = load_migration(
         COALESCING_MIGRATION_FILENAME,
         "runtime_observation_coalescing_migration",
     )

@@ -4,6 +4,9 @@ import { basename } from "node:path";
 import { canonicalJson } from "../lib/session-events";
 import type { SessionContentPart, SessionReasoningEvent } from "./base";
 
+// Bump once per release when any adapter changes persisted Session/Event bytes.
+export const SESSION_PROJECTION_REVISION = 6;
+
 export type JsonObject = Record<string, unknown>;
 
 export function jsonObject(value: unknown): JsonObject | null {
@@ -14,24 +17,6 @@ export function jsonObject(value: unknown): JsonObject | null {
 
 export function jsonString(value: unknown): string | null {
 	return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-export function completeJsonlRecords(
-	content: string,
-): Array<{ data: JsonObject; recordSeq: number }> {
-	const records: Array<{ data: JsonObject; recordSeq: number }> = [];
-	const physicalLines = content.split("\n");
-	for (let recordSeq = 0; recordSeq < physicalLines.length; recordSeq++) {
-		const line = physicalLines[recordSeq]?.trim();
-		if (!line) continue;
-		try {
-			const data = jsonObject(JSON.parse(line));
-			if (data) records.push({ data, recordSeq });
-		} catch {
-			// A partially written tail or isolated malformed record is not publishable.
-		}
-	}
-	return records;
 }
 
 export function canonicalStructuredString(value: unknown): string | undefined {
@@ -61,6 +46,7 @@ const CONTENT_BLOCK_TYPES = new Set([
 	"input_text",
 	"output_text",
 	"image",
+	"image_url",
 	"input_image",
 	"file",
 	"document",
@@ -109,16 +95,28 @@ function safeExternalUri(value: string | null): string | null {
 function localReferenceName(value: string | null): string | null {
 	if (!value) return null;
 	const normalized = value.replaceAll("\\", "/");
+	// URI payloads are never local filenames; preserve Windows drive paths.
+	if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(normalized) && !/^[a-zA-Z]:\//.test(normalized)) return null;
 	const name = basename(normalized);
-	return name && name !== "." && name !== "/" ? name : null;
+	return name &&
+		name !== "." &&
+		name !== ".." &&
+		name !== "/" &&
+		name.length <= 512 &&
+		!/[\p{Cc}]/u.test(name)
+		? name
+		: null;
 }
 
 function uriReferenceName(value: string | null): string | null {
 	if (!value) return null;
 	try {
-		return localReferenceName(decodeURIComponent(new URL(value, "https://invalid.local").pathname));
+		const parsed = new URL(value, "https://invalid.local");
+		// Opaque URI paths (notably data: image payloads) are not filenames.
+		if (!["http:", "https:", "file:"].includes(parsed.protocol)) return null;
+		return localReferenceName(decodeURIComponent(parsed.pathname));
 	} catch {
-		return localReferenceName(value);
+		return null;
 	}
 }
 
@@ -159,8 +157,8 @@ function attachmentPart(block: JsonObject): Extract<SessionContentPart, { type: 
 		jsonString(block.mimeType) ??
 		jsonString(source?.media_type);
 	const name =
-		jsonString(block.name) ??
-		jsonString(block.filename) ??
+		localReferenceName(jsonString(block.name)) ??
+		localReferenceName(jsonString(block.filename)) ??
 		localReferenceName(localPath) ??
 		uriReferenceName(rawUri);
 	const sizeBytes = nonNegativeInteger(block.size_bytes, block.size, bytes?.length);

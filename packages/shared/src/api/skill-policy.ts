@@ -47,17 +47,17 @@ export function skillCapabilities(
 	project: Pick<Project, "kind" | "is_owner"> | null | undefined,
 ): SkillCapabilities {
 	if (skill.authority === "agent_sync") {
-		return readOnlyCapabilities("agent-sync", "Synced from Agent");
+		return readOnlyCapabilities("agent-sync", "Synced from agent");
 	}
 	const projectKind = skill.project_kind ?? project?.kind;
 	if (projectKind === "environment") {
-		return readOnlyCapabilities("agent-project", "Agent Workspace");
+		return readOnlyCapabilities("agent-project", "Agent workspace");
 	}
 	if (!skill.project_id || project === undefined || project === null) {
 		return readOnlyCapabilities("unknown", null);
 	}
 	if (project.is_owner === false) {
-		return readOnlyCapabilities("shared", "Shared Project");
+		return readOnlyCapabilities("shared", "Shared project");
 	}
 	return WRITABLE_SKILL_CAPABILITIES;
 }

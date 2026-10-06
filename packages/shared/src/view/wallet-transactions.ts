@@ -64,11 +64,11 @@ export function transactionSignedAmount(transaction: WalletTransaction): string 
 export function transactionComputeDetails(transaction: WalletTransaction): string[] {
 	if (!transaction.kind.startsWith("compute_")) return [];
 	const context = transaction.context;
-	if (!context) return ["Compute · Deleted agent", "—"];
+	if (!context) return ["Plan · Deleted agent", "—"];
 	const plan =
 		context.plan === "compute_basic" || context.plan === "compute_performance"
 			? computeTierLabel(context.plan)
-			: "Compute";
+			: "Plan";
 	const agent = context.deployment_id && context.agent_name ? context.agent_name : "Deleted agent";
 	const period =
 		context.period_start || context.period_end

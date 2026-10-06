@@ -3,11 +3,12 @@
 import { channelHealthTone } from "@clawdi/shared/view";
 import { Check, CircleAlert, CircleCheck, Copy, TriangleAlert } from "lucide-react";
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { channelHealthSummary } from "@/hosted/v2/channels/channel-health-summary";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
-import type { ChannelHealthItem } from "@/hosted/v2/channels/channel-types";
+import type { ChannelAccount, ChannelHealthItem } from "@/hosted/v2/channels/channel-types";
 import { cn } from "@/lib/utils";
 
 export const CHANNEL_DESTRUCTIVE_ACTION_CLASS =
@@ -97,6 +98,47 @@ export function ChannelStatusBadge({ status, className }: { status: string; clas
 
 export function isNormalChannelStatus(status: string | null | undefined): boolean {
 	return ["active", "connected", "paired"].includes(status?.toLowerCase() ?? "");
+}
+
+const DISCORD_CONNECTION_ISSUE_COPY: Record<
+	Exclude<ChannelAccount["connection_issue"], null | undefined>,
+	{ title: string; message: string }
+> = {
+	authentication_failed: {
+		title: "Discord bot token rejected",
+		message: "Discord rejected this bot's token. Update the bot token to reconnect.",
+	},
+	disallowed_intents: {
+		title: "Discord intents are disallowed",
+		message:
+			"Discord is blocking one or more gateway intents. Enable the required intents in the Discord Developer Portal and reconnect.",
+	},
+	invalid_intents: {
+		title: "Discord intents are invalid",
+		message:
+			"This bot requested invalid gateway intents. Update the channel configuration and reconnect.",
+	},
+	invalid_configuration: {
+		title: "Discord configuration rejected",
+		message:
+			"Discord rejected this bot's gateway configuration. Check the channel settings and reconnect.",
+	},
+};
+
+export function DiscordConnectionIssueAlert({
+	issue,
+}: {
+	issue: ChannelAccount["connection_issue"];
+}) {
+	if (!issue) return null;
+	const copy = DISCORD_CONNECTION_ISSUE_COPY[issue];
+	return (
+		<Alert className="border-warning/30 bg-warning-muted">
+			<TriangleAlert aria-hidden="true" />
+			<AlertTitle>{copy.title}</AlertTitle>
+			<AlertDescription>{copy.message}</AlertDescription>
+		</Alert>
+	);
 }
 
 const DELIVERY_TONE: Record<string, StatusTone> = {

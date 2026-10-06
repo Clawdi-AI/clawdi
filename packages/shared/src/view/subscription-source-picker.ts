@@ -1,5 +1,5 @@
 export const subscriptionSourceCopy = {
-	includedTitle: "Basic compute",
+	includedTitle: "Basic plan",
 	includedDescription: "Use your included Basic entitlement.",
 	included: "Included",
 	dueNow: "$0 due now",
@@ -16,12 +16,14 @@ export const deployFormCopy = {
 	paymentMethod: "Payment method",
 	cardTitle: "Card subscription",
 	cardDescription: "Recurring subscription via Stripe. Manage or cancel anytime.",
+	trialTitle: "Free trial",
+	trialDescription: "No card required. Add a payment method to continue after your trial.",
 	walletTitle: "Wallet balance",
-	walletDescription: "Paid upfront from your Wallet balance. Renews from Wallet.",
+	walletDescription: "Paid upfront from your wallet balance. Renews from wallet.",
 } as const;
 
 export function deployConfigurationSummary(runtime: string, ai: string, compute: string): string {
-	return [runtime, ai, `${compute} compute`].filter(Boolean).join(" · ");
+	return [runtime, ai, `${compute} plan`].filter(Boolean).join(" · ");
 }
 
 export function deployComputeResourceLabels(vcpu: number, ramGb: number, diskGb: number) {

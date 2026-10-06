@@ -162,9 +162,9 @@ describe("accepted deployment navigation", () => {
 		{
 			id: "hdep_other",
 			agentId: "11111111-1111-4111-8111-111111111111",
-			error: "different deployment",
+			error: "different agent",
 		},
-		{ id: "hdep_expected", agentId: "hdep_invalid_identity", error: "invalid Agent identity" },
+		{ id: "hdep_expected", agentId: "hdep_invalid_identity", error: "invalid agent identity" },
 	])("rejects an authoritative response with $error", async ({ id, agentId, error }) => {
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 		const authoritative = hostedDeploymentFixture({ id, agentId });

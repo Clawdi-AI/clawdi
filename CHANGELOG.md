@@ -12,6 +12,60 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+- Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
+  name while keeping Cloud and Connected Agent distinctions intact.
+
+### CLI 0.14.109
+
+- Hermes rewound, superseded, and duplicate compaction rows no longer appear in Cloud transcripts.
+- OpenClaw delivery mirrors and other bookkeeping messages no longer appear as session models, and hidden OpenClaw messages stay hidden.
+- Pi and OpenClaw preserve redacted thinking and gateway tool calls. Hermes session metadata records all models used in chronological order.
+- Sessions are re-projected once after upgrading; only sessions whose projected content changes are re-uploaded.
+
+### CLI 0.14.108
+
+- Hermes and OpenClaw sessions are re-projected once after upgrading. Unchanged session content is not re-uploaded.
+- Pi and OpenClaw consistently sync reasoning and tool messages, and omit hidden signature fields from tool arguments.
+- Hermes and OpenCode message counts reflect projected messages, and Claude Code token totals count shared message IDs once. Already synced message counts and token metadata refresh only when a session's content changes.
+- Short Claude Code conversations sync correctly, and duplicate predecessors are omitted even for short forks.
+- Session previews handle empty text parts consistently, and Claude Code summaries include the full first projected user message.
+
+### CLI 0.14.107
+
+- `clawdi push --project` includes Pi and OpenCode sessions in subdirectories while excluding similarly named sibling directories.
+- Shared Skill writes respect managed reservations across Claude Code, Codex, Hermes, and OpenClaw, preserving managed targets.
+
+### CLI 0.14.106
+
+- Rejected sessions retry after CLI upgrades or within a day, and concurrent pushes preserve newer session history while allowing confirmed local truncation.
+- Background sync reconnects promptly after stable connections drop, reports bounded errors and queue drops, and keeps session backlogs from displacing Skills.
+- Linked Project Skills continue reconciling around local conflicts, and large Skill and session uploads have enough time to transfer over slower connections.
+
+### CLI 0.14.105
+
+- Invalid local Skill keys report their shape without exposing names, and old queued invalid Skills no longer leave sync permanently errored while other Skills continue syncing.
+- Session snapshot uploads always include their Agent origin, keeping equal local session IDs isolated across Agents.
+
+### CLI 0.14.104
+
+- Codex sessions with oversized or invalid attachment names sync successfully, preserving available filenames and attachment metadata.
+
+### CLI 0.14.103
+
+- CLI-only updates from 0.14.101 and 0.14.102 keep unchanged gateways running, including updates that add OOM protection and subsequent runtime reconciliations.
+
+### CLI 0.14.102
+
+- OpenClaw gateways no longer restart during CLI-only handoffs when their managed runtime settings are unchanged, and required provider credentials are published before configuration reloads.
+- Gateway services now survive tool-child OOM kills, while Hermes bounds local tool memory to half of the instance's visible memory budget.
+
+### CLI 0.14.101
+
+- Hermes sessions with inline images sync successfully, including previously
+  stuck histories, after upgrading the CLI.
+- Sessions rejected for invalid events report the failure and stop retrying until
+  their content changes, while other sessions continue syncing.
+
 ### CLI 0.14.100
 
 - Large session histories sync without loading the entire history into memory,

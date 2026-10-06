@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, create_autospec
 from uuid import UUID
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
 from app.routes.channel_routers.whatsapp import _wait_whatsapp_websocket_inbox
@@ -19,6 +21,7 @@ from app.services.channel_wakeups import (
 )
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
 from app.services.channels import ChannelRetentionBatch
+from app.services.control_plane_audit_retention_worker import ControlPlaneAuditRetentionWorker
 from app.services.discord_command_reconciliation_worker import (
     DiscordCommandReconciliationWorker,
 )
@@ -49,6 +52,7 @@ def test_channel_worker_stack_runs_revoke_delivery_webhook_gateway_and_retention
         ChannelMessageRetentionWorker,
         RuntimeObservationRetentionWorker,
         SessionEventRetentionWorker,
+        ControlPlaneAuditRetentionWorker,
     )
 
 
@@ -261,11 +265,11 @@ async def test_whatsapp_websocket_inbox_wakes_on_inbound_signal(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_channel_message_retention_worker_delays_first_prune(monkeypatch):
+async def test_channel_message_retention_worker_runs_immediately(monkeypatch):
     worker = ChannelMessageRetentionWorker(None, poll_interval_seconds=0.2)
     calls: list[str] = []
 
-    async def fake_run_once() -> int:
+    async def fake_run_once(_stop) -> int:
         calls.append("run_once")
         return 0
 
@@ -276,7 +280,106 @@ async def test_channel_message_retention_worker_delays_first_prune(monkeypatch):
     stop.set()
     await asyncio.wait_for(task, timeout=1)
 
-    assert calls == []
+    assert calls == ["run_once"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_retention_worker_runs_immediately(monkeypatch):
+    worker = RuntimeObservationRetentionWorker(None, poll_interval_seconds=60)
+    stop = asyncio.Event()
+    calls = 0
+
+    async def fake_run_once() -> int:
+        nonlocal calls
+        calls += 1
+        stop.set()
+        return 0
+
+    monkeypatch.setattr(worker, "run_once", fake_run_once)
+
+    await asyncio.wait_for(worker.run_forever(stop), timeout=1)
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True], ids=["idle", "error"])
+async def test_runtime_observation_retention_worker_drains_then_waits(monkeypatch, caplog, fail):
+    worker = RuntimeObservationRetentionWorker(
+        None, poll_interval_seconds=60, drain_pause_seconds=0.001
+    )
+    stop = asyncio.Event()
+    drained = asyncio.Event()
+    retried = asyncio.Event()
+    calls = 0
+
+    async def fake_run_once() -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return 500
+        if calls == 2:
+            return 1
+        if calls == 3:
+            drained.set()
+            if fail:
+                raise RuntimeError("injected compaction failure")
+        else:
+            retried.set()
+        return 0
+
+    monkeypatch.setattr(worker, "run_once", fake_run_once)
+    task = asyncio.create_task(worker.run_forever(stop))
+    try:
+        await asyncio.wait_for(drained.wait(), timeout=1)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(retried.wait(), timeout=0.02)
+        assert calls == 3
+        assert not task.done()
+        if fail:
+            assert "runtime observation retention worker failed" in caplog.text
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_retention_worker_stops_during_drain_pause(monkeypatch):
+    worker = RuntimeObservationRetentionWorker(
+        None, poll_interval_seconds=60, drain_pause_seconds=60
+    )
+    stop = asyncio.Event()
+    compacted = asyncio.Event()
+    calls = 0
+
+    async def fake_run_once() -> int:
+        nonlocal calls
+        calls += 1
+        compacted.set()
+        return 1
+
+    monkeypatch.setattr(worker, "run_once", fake_run_once)
+    task = asyncio.create_task(worker.run_forever(stop))
+    try:
+        await asyncio.wait_for(compacted.wait(), timeout=1)
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, timeout=1)
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_retention_worker_propagates_cancellation(monkeypatch):
+    worker = RuntimeObservationRetentionWorker(None, poll_interval_seconds=60)
+
+    async def fake_run_once() -> int:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(worker, "run_once", fake_run_once)
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(worker.run_forever(), timeout=1)
 
 
 class _FakeRetentionSession:
@@ -305,6 +408,14 @@ async def test_channel_message_retention_worker_stops_between_batches(monkeypatc
         "app.services.channel_message_retention_worker.prune_channel_retention_batch",
         fake_prune,
     )
+    for platform_prune in (
+        "prune_platform_workload_assertion_replays",
+        "prune_platform_mutation_idempotency",
+    ):
+        monkeypatch.setattr(
+            f"app.services.channel_message_retention_worker.{platform_prune}",
+            AsyncMock(return_value=0),
+        )
     worker = ChannelMessageRetentionWorker(
         lambda: _FakeRetentionSession(),
         batch_size=3,
@@ -386,3 +497,55 @@ async def test_channel_worker_exports_process_local_metrics_without_changing_hea
     assert "msg_router_channel_queue_pending" in metrics
     assert "200 OK" in health_response
     assert '"status":"ok"' in health_response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_phase", ["replay", "idempotency", "channel", None])
+async def test_channel_retention_phases_fail_independently_and_drain(monkeypatch, failed_phase):
+    import app.services.channel_message_retention_worker as retention
+
+    replay = AsyncMock(side_effect=[2, 1])
+    idempotency = AsyncMock(side_effect=[2, 1])
+    channel = AsyncMock(
+        side_effect=[ChannelRetentionBatch(messages=2), ChannelRetentionBatch(messages=1)]
+    )
+    phases = {"replay": replay, "idempotency": idempotency, "channel": channel}
+    if failed_phase is not None:
+        phases[failed_phase].side_effect = RuntimeError("prune unavailable")
+    monkeypatch.setattr(retention, "prune_platform_workload_assertion_replays", replay)
+    monkeypatch.setattr(retention, "prune_platform_mutation_idempotency", idempotency)
+    monkeypatch.setattr(retention, "prune_channel_retention_batch", channel)
+    worker = ChannelMessageRetentionWorker(
+        create_autospec(async_sessionmaker, instance=True, return_value=_FakeRetentionSession()),
+        batch_size=2,
+        max_batches=3,
+    )
+    observe = AsyncMock()
+    monkeypatch.setattr(worker, "_observe_queues", observe)
+
+    assert await worker.run_once() == (9 if failed_phase is None else 6)
+    for phase, prune in phases.items():
+        assert prune.await_count == (1 if phase == failed_phase else 2)
+    observe.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_platform_retention_prunes_stop_at_batch_budget(monkeypatch):
+    import app.services.channel_message_retention_worker as retention
+
+    replay = AsyncMock(return_value=2)
+    idempotency = AsyncMock(return_value=2)
+    monkeypatch.setattr(retention, "prune_platform_workload_assertion_replays", replay)
+    monkeypatch.setattr(retention, "prune_platform_mutation_idempotency", idempotency)
+    monkeypatch.setattr(
+        retention, "prune_channel_retention_batch", AsyncMock(return_value=ChannelRetentionBatch())
+    )
+    worker = ChannelMessageRetentionWorker(
+        create_autospec(async_sessionmaker, instance=True, return_value=_FakeRetentionSession()),
+        batch_size=2,
+        max_batches=3,
+    )
+    monkeypatch.setattr(worker, "_observe_queues", AsyncMock())
+
+    assert await worker.run_once() == 12
+    assert replay.await_count == idempotency.await_count == 3

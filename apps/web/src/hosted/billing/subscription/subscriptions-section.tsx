@@ -214,12 +214,12 @@ function SubscriptionRow({
 	const recoveryNotice = (() => {
 		switch (recoveryTarget?.kind) {
 			case "top_up":
-				return "Top up Wallet to settle the outstanding balance. Payment source changes apply to future renewals.";
+				return "Top up wallet to settle the outstanding balance. Payment source changes apply to future renewals.";
 			case "invoice":
 			case "fix_payment":
 				return "Resolve the outstanding payment to restore this subscription. Payment source changes apply to future renewals.";
 			case "start_new":
-				return startNewHref ? "Start a new subscription from Agent settings." : null;
+				return startNewHref ? "Start a new subscription from agent settings." : null;
 			case undefined:
 				return null;
 		}
@@ -296,7 +296,7 @@ function SubscriptionRow({
 							onPlanChange={() => onPlanChange(subscription)}
 							onStartNew={
 								startNewHref
-									? { kind: "link", href: startNewHref, label: "Open Agent settings" }
+									? { kind: "link", href: startNewHref, label: "Open agent settings" }
 									: null
 							}
 							cancelCopy={{

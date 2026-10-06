@@ -292,7 +292,7 @@ function SharesView({
 						>
 							{compact
 								? share.kind === "live"
-									? "Live Session link"
+									? "Live session link"
 									: shareLabel(share)
 								: share.session_title}
 						</WebText>

@@ -56,7 +56,7 @@ export default function RootError({ error, reset }: { error: unknown; reset: () 
 					<p className="text-sm text-muted-foreground mt-1">
 						{needsDesktopUpdate
 							? "Install the latest Clawdi Desktop version to continue."
-							: "This page couldn't load. Try again. If it keeps happening, contact support."}
+							: "This page couldn't load. Try again, or contact support if this continues."}
 					</p>
 				</div>
 				{isDevelopment && (

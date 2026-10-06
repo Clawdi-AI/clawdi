@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
-from pathlib import Path
 
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+from tests.migration_harness import load_migration
 
 MIGRATION_FILENAME = "e1c7a4b9d2f6_add_vault_write_runtime_scope.py"
 PREVIOUS_RUNTIME_SCOPES = [
@@ -23,15 +23,6 @@ PREVIOUS_RUNTIME_SCOPES = [
     "skills:write",
     "vault:read",
 ]
-
-
-def _load_migration():
-    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location("vault_write_scope_migration", migration_path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 def _insert_key(
@@ -77,7 +68,7 @@ def _scopes(connection: sa.Connection, key_id: uuid.UUID) -> list[str] | None:
 def test_vault_write_scope_migration_reconciles_runtime_keys_without_widening_narrow_keys(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "vault_write_scope_migration")
     schema = f"vault_write_scope_{uuid.uuid4().hex}"
     environment_id = uuid.uuid4()
     sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))

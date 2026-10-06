@@ -40,15 +40,15 @@ export async function status(opts: { json?: boolean } = {}) {
 		return;
 	}
 
-	console.log(chalk.bold("Clawdi Cloud Status"));
+	console.log(chalk.bold("Clawdi Status"));
 	console.log();
 
 	if (s.loggedIn) {
-		console.log(chalk.green("  Auth:     ✓ logged in"));
+		console.log(chalk.green("  Auth:     ✓ signed in"));
 		console.log(chalk.gray(`  User:     ${s.user?.email || s.user?.id || "unknown"}`));
 		console.log(chalk.gray(`  API:      ${s.apiUrl}`));
 	} else {
-		console.log(chalk.red("  Auth:     ✗ not logged in"));
+		console.log(chalk.red("  Auth:     ✗ not signed in"));
 		console.log(chalk.gray("  Run `clawdi auth login` to authenticate."));
 	}
 

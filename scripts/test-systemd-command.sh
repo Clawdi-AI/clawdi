@@ -15,7 +15,12 @@ trap 'exit 143' TERM
 
 # Reuse only the systemd stage; no agent packages, models or runtime installs.
 # This stage needs no checkout build context.
-timeout --kill-after=15s 900s docker build --quiet --target systemd --tag "$image" - < "$fixture" >/dev/null
+# CI selects a docker-container builder; load images before docker run.
+load_args=()
+if [[ "${DOCKER_BUILD_LOAD:-0}" == "1" ]]; then
+	load_args+=(--load)
+fi
+timeout --kill-after=15s 900s docker build --quiet "${load_args[@]}" --target systemd --tag "$image" - < "$fixture" >/dev/null
 timeout --kill-after=15s 30s docker run --detach --privileged --cgroupns=private \
 	--cpus=2 --memory=2g --pids-limit=256 --name "$container" \
 	--tmpfs /run --tmpfs /run/lock --tmpfs /tmp:exec \
@@ -42,6 +47,9 @@ timeout --kill-after=15s 930s docker exec "$container" timeout 900 bash -euo pip
 	cd /work
 	bun install --frozen-lockfile --ignore-scripts
 	package_root=/work/packages/cli
-	CLAWDI_TEST_SYSTEMD_COMMAND=1 timeout 60 bun test --isolate --max-concurrency=1 \
-		--timeout=15000 packages/cli/src/runtime/systemd.test.ts
+	# Match the clean runner: subprocess-heavy files need separate Bun processes.
+	for test_file in packages/cli/src/runtime/systemd.test.ts packages/cli/src/runtime/oom-protection.test.ts; do
+		CLAWDI_TEST_SYSTEMD_COMMAND=1 timeout 60 bun test --isolate --max-concurrency=1 \
+			--timeout=15000 "$test_file"
+	done
 '

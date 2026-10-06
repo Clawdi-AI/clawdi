@@ -24,6 +24,7 @@ import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { cn } from "@/lib/utils";
 
 type Env = components["schemas"]["AgentResponse"];
@@ -184,7 +185,7 @@ function SyncHelpDialog({
 			: status === "set-up"
 				? isHosted
 					? "Live sync is activating"
-					: "Turn on live sync for this Agent"
+					: "Turn on live sync for this agent"
 				: status === "errored"
 					? "Sync hit an error"
 					: isHosted
@@ -208,17 +209,17 @@ function SyncHelpDialog({
 							// a dead-end.
 							<div className="space-y-3">
 								<p className="text-sm text-muted-foreground">
-									Live sync activates automatically with this Agent&apos;s next update.
+									Live sync activates automatically with this agent&apos;s next update.
 								</p>
 								<p className="text-xs text-muted-foreground">
-									No action is required. This status should change to{" "}
+									No action needed. This should change to{" "}
 									<span className="font-medium">Live sync</span> within a few minutes.
 								</p>
 							</div>
 						) : (
 							<>
 								<p className="text-sm text-muted-foreground">
-									A background service keeps this Agent in sync.
+									A background service keeps this agent in sync.
 								</p>
 								<SyncSetupSnippet env={env} />
 							</>
@@ -247,7 +248,7 @@ function SyncHelpDialog({
 										isHosted ? (
 											<>
 												<p className="text-xs text-muted-foreground">
-													Sync stopped after this error. Restart the Agent from Agent settings.
+													Sync stopped after this error. Restart the agent from agent settings.
 												</p>
 												<ManageOnClawdiLink manageHref={manageHref} />
 											</>
@@ -269,8 +270,8 @@ function SyncHelpDialog({
 										<>
 											<p className="text-xs text-muted-foreground">
 												{isHosted
-													? "This change could not be synced. Confirm that each Skill is under 25 MB, then save again."
-													: "This change could not be synced. Correct the source, then save again to retry."}
+													? "This change couldn't be synced. Confirm that each skill is under 25 MB, then save again."
+													: "This change couldn't be synced. Correct the source, then save again to retry."}
 											</p>
 											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>
@@ -285,8 +286,8 @@ function SyncHelpDialog({
 									) : isHosted ? (
 										<>
 											<p className="text-xs text-muted-foreground">
-												Clawdi will continue retrying. If the error persists, restart the Agent from
-												Agent settings.
+												Clawdi will continue retrying. If the error persists, restart the agent from
+												agent settings.
 											</p>
 											<ManageOnClawdiLink manageHref={manageHref} />
 										</>
@@ -306,7 +307,7 @@ function SyncHelpDialog({
 								isHosted ? (
 									<div className="space-y-2">
 										<p className="text-sm text-muted-foreground">
-											Sync status is unavailable. The Agent may be starting, stopped, or temporarily
+											Sync status is unavailable. The agent may be starting, stopped, or temporarily
 											unavailable.
 										</p>
 										<ManageOnClawdiLink manageHref={manageHref} />
@@ -347,7 +348,7 @@ function SyncHelpDialog({
 										value={queuePeak.toString()}
 									/>
 									<TechRow
-										label="Latest Skills revision received"
+										label="Latest skills revision received"
 										value={env.last_revision_seen?.toString() ?? "—"}
 									/>
 									<TechRow
@@ -397,9 +398,9 @@ function SyncSetupSnippet({ env }: { env: Env }) {
 function useSyncAgentPrompt(env: Env): string {
 	const typeLabel = agentTypeLabel(env.agent_type);
 	return [
-		`Turn on Clawdi live sync on this machine for ${typeLabel}.`,
-		"Run `clawdi daemon install` to install one per-user daemon that syncs every Clawdi-registered agent on this machine.",
-		"Then confirm with `clawdi daemon status` and report whether the daemon is live.",
+		`Turn on Clawdi live sync for ${typeLabel} on this machine.`,
+		"Run `clawdi daemon install`; one per-user daemon syncs every Clawdi-registered agent here.",
+		"Then run `clawdi daemon status` and report whether the daemon is live.",
 	].join(" ");
 }
 
@@ -421,7 +422,7 @@ function SyncSetupCliTab(_props: { env: Env }) {
 		<div className="space-y-3">
 			<p className="text-sm text-muted-foreground">In a terminal on this machine, run:</p>
 			<div className="space-y-1.5">
-				<CommandLine command={installCmd} hint="one sync service for every Agent on this machine" />
+				<CommandLine command={installCmd} hint="one sync service for every agent on this machine" />
 			</div>
 			<p className="text-xs text-muted-foreground">
 				Installs a launchd (macOS) or systemd (Linux) unit so sync continues after a reboot.
@@ -430,28 +431,25 @@ function SyncSetupCliTab(_props: { env: Env }) {
 	);
 }
 
-function PromptBlock({ text }: { text: string }) {
-	const [copied, setCopied] = useState(false);
+export function PromptBlock({ text }: { text: string }) {
+	const { copied, copy } = useCopyToClipboard({
+		success: false,
+		error: "Couldn't copy. Select the prompt and copy it manually.",
+	});
 	// Match the visual treatment of <AgentTab>'s prompt block in
 	// add-agent-setup.tsx — same Copy chip, same border + muted bg —
 	// so the dialog reads as a peer to the onboarding card, not a
 	// separate one-off design.
-	const onCopy = () => {
-		navigator.clipboard
-			.writeText(text)
-			.then(() => {
-				setCopied(true);
-				setTimeout(() => setCopied(false), 1500);
-			})
-			.catch(() => {});
-	};
 	return (
 		<div className="rounded-lg border bg-muted/30">
 			<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
 				<span className="text-xs uppercase tracking-wide text-muted-foreground">Prompt</span>
+				<span className="sr-only" aria-live="polite">
+					{copied ? "Copied" : ""}
+				</span>
 				<button
 					type="button"
-					onClick={onCopy}
+					onClick={() => copy(text)}
 					className="text-xs text-muted-foreground hover:text-foreground"
 				>
 					{copied ? "Copied" : "Copy"}
@@ -468,7 +466,7 @@ function PromptBlock({ text }: { text: string }) {
 function AuthLoginHint() {
 	return (
 		<p className="text-xs text-muted-foreground">
-			Token turned off or expired? Log in again with{" "}
+			Token turned off or expired? Sign in again with{" "}
 			<code className="rounded bg-muted px-1 py-0.5 text-2xs">clawdi auth login</code>.
 		</p>
 	);
@@ -482,7 +480,7 @@ function ManageOnClawdiLink({ manageHref }: { manageHref?: string }) {
 	if (!manageHref) {
 		return (
 			<p className="text-xs text-muted-foreground">
-				Open agent settings to restart or check the hosted runtime.
+				Open agent settings to restart or check this Cloud Agent.
 			</p>
 		);
 	}

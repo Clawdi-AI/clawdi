@@ -1,6 +1,5 @@
 "use client";
 
-import { skillTransferTargets, transferSkill } from "@clawdi/shared/api";
 import { sendSkillDialogClasses } from "@clawdi/shared/ui";
 import {
 	skillFormCopy as copy,
@@ -36,6 +35,7 @@ import { ensureBlob, unwrap, useApi, useOpenApi, useSkillArchiveUploader } from 
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { skillCapabilities } from "@/lib/skill-authority";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type SendableSkill = Pick<
@@ -79,11 +79,13 @@ export function SendSkillDialog({
 	// projections are excluded at both source and destination boundaries.
 	const projectTargets = useMemo(
 		() =>
-			skillTransferTargets(projects ?? [], skill.project_id ?? "").map((p) => ({
-				value: p.id,
-				label: displayProjectName(p),
-				emoji: identityFor(displayProjectName(p)).emoji,
-			})),
+			(projects ?? [])
+				.filter((p) => p.is_owner !== false && p.id !== skill.project_id && p.kind === "workspace")
+				.map((p) => ({
+					value: p.id,
+					label: displayProjectName(p),
+					emoji: identityFor(displayProjectName(p)).emoji,
+				})),
 		[projects, skill.project_id],
 	);
 	const targetItems = useMemo(
@@ -98,38 +100,36 @@ export function SendSkillDialog({
 	const send = useMutation({
 		mutationFn: async (action: "copy" | "move") => {
 			if (!target) throw new Error("Choose a destination first");
-			if (!skill.project_id) throw new Error("Open this Skill from its Project and try again");
+			if (!skill.project_id) throw new Error("Open this skill from its project and try again");
 			const projectsById = new Map((projects ?? []).map((project) => [project.id, project]));
-			const sourceProject = projectsById.get(skill.project_id);
-			const targetProject = projectsById.get(target);
-			if (!sourceProject || !targetProject) throw new Error("Project unavailable");
-			return transferSkill({
-				skill,
-				source: sourceProject,
-				target: targetProject,
-				move: action === "move",
-				download: async () =>
-					ensureBlob(
-						unwrap(
-							await api.GET("/v1/projects/{project_id}/skills/{skill_key}/download", {
-								params: {
-									path: { project_id: sourceProject.id, skill_key: skill.skill_key },
-								},
-								parseAs: "blob",
-							}),
-						),
-					),
-				upload: (blob) => uploadSkillArchive(target, skill.skill_key, blob, { createOnly: true }),
-				remove: async (contentHash) =>
-					unwrap(
-						await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
-							params: {
-								path: { project_id: sourceProject.id, skill_key: skill.skill_key },
-								query: { expected_content_hash: contentHash },
-							},
-						}),
-					),
-			});
+			if (!skillCapabilities(skill, projectsById.get(skill.project_id)).canSend) {
+				throw new Error("This skill is read-only");
+			}
+			const blob = ensureBlob(
+				unwrap(
+					await api.GET("/v1/projects/{project_id}/skills/{skill_key}/download", {
+						params: {
+							path: { project_id: skill.project_id, skill_key: skill.skill_key },
+						},
+						parseAs: "blob",
+					}),
+				),
+			);
+			await uploadSkillArchive(target, skill.skill_key, blob, { createOnly: true });
+			if (action === "copy") return { sourceRemoved: null };
+			try {
+				unwrap(
+					await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
+						params: {
+							path: { project_id: skill.project_id, skill_key: skill.skill_key },
+							query: { expected_content_hash: skill.content_hash },
+						},
+					}),
+				);
+				return { sourceRemoved: true };
+			} catch {
+				return { sourceRemoved: false };
+			}
 		},
 		onSuccess: ({ sourceRemoved }) => {
 			qc.invalidateQueries({ queryKey: ["skills"] });
@@ -145,7 +145,7 @@ export function SendSkillDialog({
 					description:
 						`${skill.name} is now available in ${targetLabel}.` +
 						(sourceRemoved === false
-							? " It could not be removed from the source; remove it after checking the new copy."
+							? " It couldn't be removed from the source; remove it after checking the new copy."
 							: ""),
 				},
 			);

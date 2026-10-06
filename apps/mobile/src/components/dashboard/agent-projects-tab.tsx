@@ -222,13 +222,13 @@ function BindingsView({ agentId }: { agentId?: string }) {
 			icon={FolderKanban}
 			navigation={agentId ? <AgentSectionNavigation agentId={agentId} section="projects" /> : null}
 			title="Projects"
-			description="Choose the Projects this Agent can use."
+			description="Choose the projects this agent can use."
 		>
 			<Stack.Screen options={{ headerSearchBarOptions: headerSearch }} />
 			{failed ? (
 				<ApiErrorPanel
 					error={bindings.error ?? agent.error ?? projects.error}
-					title="Couldn't load Projects"
+					title="Couldn't load projects"
 					onRetry={() => void refresh()}
 				/>
 			) : loading ? (
@@ -239,7 +239,7 @@ function BindingsView({ agentId }: { agentId?: string }) {
 				</WebView>
 			) : null}
 			{action.error ? (
-				<ApiErrorPanel error={action.error} title="Couldn't update Project link" />
+				<ApiErrorPanel error={action.error} title="Couldn't update project link" />
 			) : null}
 			{confirmationDialog.dialog}
 		</AgentCollection>

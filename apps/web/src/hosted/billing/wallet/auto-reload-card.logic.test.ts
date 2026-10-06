@@ -154,7 +154,7 @@ describe("autoReloadSaveError", () => {
 				new BillingApiError(400, "Auto reload requires a default payment method"),
 			),
 		).toMatchObject({
-			description: "Authorize a card for automatic Wallet reloads, then save these changes again.",
+			description: "Authorize a card for automatic wallet reloads, then save these changes again.",
 			requiresPaymentMethod: true,
 			field: null,
 		});

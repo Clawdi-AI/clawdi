@@ -286,7 +286,11 @@ import {
 	buildAgentChannelCardGroups,
 	canonicalAgentChannelLinks,
 } from "@/hosted/v2/channels/agent-channel-cards.logic";
-import { CHANNEL_CARD_GRID_CLASS, ChannelCard } from "@/hosted/v2/channels/channel-card";
+import {
+	CHANNEL_CARD_GRID_CLASS,
+	ChannelCard,
+	ChannelCardSkeleton,
+} from "@/hosted/v2/channels/channel-card";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client.logic";
 import { agentProviderLinkReplacementRequired } from "@/hosted/v2/channels/channel-linking.logic";
@@ -295,6 +299,7 @@ import {
 	CHANNEL_DESTRUCTIVE_ACTION_CLASS,
 	ChannelStatusBadge,
 	CopyInline,
+	DiscordConnectionIssueAlert,
 	isNormalChannelStatus,
 } from "@/hosted/v2/channels/channel-ui";
 import {
@@ -823,7 +828,7 @@ function HostedProjectionNotice({
 				<AlertTitle>Some agent details are not ready</AlertTitle>
 				<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<span>
-						Projects, Skills, Vaults, and Channels will appear when this agent is ready. Available
+						Projects, skills, vaults, and channels will appear when this agent is ready. Available
 						actions and tools still work.
 					</span>
 					<Button type="button" variant="outline" size="sm" disabled={isChecking} onClick={onRetry}>
@@ -1007,7 +1012,7 @@ export function ComputeStatusDetails({
 				</p>
 			) : status.kind === "stopped" ? (
 				<p className={computeStatusDetailsClasses.neutral} role="status">
-					Compute is stopped. Channels and {runtimeBrowserUiLabel(deployment.resource.spec.runtime)}{" "}
+					Agent is stopped. Channels and {runtimeBrowserUiLabel(deployment.resource.spec.runtime)}{" "}
 					are unavailable.
 				</p>
 			) : status.kind === "deleting" ? (
@@ -1398,6 +1403,7 @@ function OverviewTab({
 					icon={AGENT_SECTION_NAVIGATION_ITEMS.channels.icon}
 					tint={AGENT_SECTION_NAVIGATION_ITEMS.channels.tint}
 					link={agentSectionLink(agentId, "channels")}
+					prominent
 				/>
 				<OverviewNavigationCard
 					id="model-provider"
@@ -1698,7 +1704,7 @@ export function ConsoleTab({
 				credentialError !== null ? (
 					<EmptyState
 						icon={AlertCircle}
-						title={`${browserUiLabel} could not be opened`}
+						title={`${browserUiLabel} couldn't be opened`}
 						description="Clawdi couldn't establish this browser session."
 						action={
 							<Button
@@ -1765,8 +1771,8 @@ function FilesTab({ deployment, url }: { deployment: HostedDeployment; url: stri
 				title={isStarting ? startingTitle() : "Agent is not running"}
 				description={
 					isStarting
-						? "Files opens once your agent and its private Workspace service are ready. This page updates automatically."
-						: `Start the agent to browse its Workspace. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+						? "Files opens once your agent and its private workspace service are ready. This page updates automatically."
+						: `Start the agent to browse its workspace. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
 				}
 				action={canStartDeployment(status) ? <StartComputeAction deployment={deployment} /> : null}
 			/>
@@ -1789,14 +1795,14 @@ function FilesFrame({ deploymentId, url }: { deploymentId: string; url: string }
 			{bootstrap === "error" ? (
 				<EmptyState
 					icon={FolderOpen}
-					title="Files could not be opened"
-					description="We could not authenticate your Files session. Refresh the page and try again."
+					title="Files couldn't be opened"
+					description="We couldn't authenticate your Files session. Refresh the page and try again."
 				/>
 			) : bootstrap === "pending" ? (
 				<EmptyState
 					icon={FolderOpen}
 					title="Opening Files…"
-					description="Authenticating your private Workspace session."
+					description="Authenticating your private workspace session."
 				/>
 			) : (
 				<iframe
@@ -2217,7 +2223,7 @@ function AiProviderTab({
 					title={authCardLabel("unmanaged")}
 					description={aiBindingCopy.unmanagedDescription}
 				/>
-				{providers.isLoading ? <EntityCardSkeleton titleBadge trailingBadge /> : null}
+				{providers.isLoading ? <EntityCardSkeleton align="start" titleBadge trailingBadge /> : null}
 				{shouldBlockQueryError(providers.error, providers.data) ? (
 					<div className="@2xl/main:col-span-2">
 						<ApiErrorPanel
@@ -2577,7 +2583,7 @@ function ChannelsTab({
 					link.reset();
 					acceptLinkedChannel(existing);
 					toast.info("Bot already linked", {
-						description: "Using the existing link for this Agent.",
+						description: "Using the existing link for this agent.",
 					});
 					return;
 				}
@@ -2865,8 +2871,8 @@ function AgentChannelBotsSection({
 			{isLoading && bots.length === 0 ? (
 				<div role="status" className={CHANNEL_CARD_GRID_CLASS}>
 					<span className={agentChannelSectionClasses.loadingLabel}>Loading {title}</span>
-					<EntityCardSkeleton actions />
-					<EntityCardSkeleton actions />
+					<ChannelCardSkeleton headerClassName={AGENT_CHANNEL_CARD_HEADER_CLASS} />
+					<ChannelCardSkeleton headerClassName={AGENT_CHANNEL_CARD_HEADER_CLASS} />
 				</div>
 			) : bots.length > 0 ? (
 				<div className={CHANNEL_CARD_GRID_CLASS}>
@@ -2930,7 +2936,7 @@ function AgentChannelBotCard({
 		bot.visibility === "private" && !bot.link ? (
 			<ConfirmAction
 				title={`Delete ${bot.name}?`}
-				description="This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone."
+				description="This deletes the custom bot, its agent links, and its paired chats. This can't be undone."
 				confirmLabel="Delete custom bot"
 				destructive
 				onConfirm={onDelete}
@@ -2949,7 +2955,10 @@ function AgentChannelBotCard({
 			</ConfirmAction>
 		) : null;
 	return (
-		<div data-agent-channel-account-id={bot.id} className="h-full min-w-0">
+		<div data-agent-channel-account-id={bot.id} className="flex h-full min-w-0 flex-col gap-2">
+			{bot.provider === "discord" ? (
+				<DiscordConnectionIssueAlert issue={bot.connection_issue} />
+			) : null}
 			{bot.link ? (
 				<ConnectedChannelGroup
 					link={bot.link}
@@ -3374,7 +3383,7 @@ function ComputeSettingsSections({
 				} catch {
 					toast.error("Agent deployed, but details couldn’t load", {
 						id: `checkout-deployment-${checkoutDeploymentId}`,
-						description: "Retrying loads the deployed Agent without repeating checkout.",
+						description: "Retrying loads the deployed agent without repeating checkout.",
 						duration: Number.POSITIVE_INFINITY,
 						action: {
 							label: "Retry",
@@ -3615,7 +3624,7 @@ function ComputeSettingsSections({
 				/>
 			) : null}
 
-			<SettingsSection title="Compute plan" description="Compute resources for this hosted agent.">
+			<SettingsSection title="Compute plan" description="Compute resources for this Cloud Agent.">
 				<ComputeSubscriptionCard
 					headingLevel={3}
 					view={computeCardView}

@@ -862,7 +862,7 @@ test("nested account resources fail closed when the Agent does not exist", async
 		await page.goto(path);
 		await expect(main.getByText("Agent not found", { exact: true })).toBeVisible();
 		await expect(
-			main.getByText("This Agent does not exist or is no longer available."),
+			main.getByText("This agent does not exist or is no longer available."),
 		).toBeVisible();
 		await expect(page).toHaveURL(path);
 		await main.getByRole("button", { name: "Back to Agents" }).click();
@@ -1307,8 +1307,8 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	const projectGrid = projectStack.getByTestId("agent-project-grid");
 	const projectCards = projectGrid.getByTestId("agent-project-card");
 	await expect(projectCards).toHaveCount(4);
-	const linkedProjects = projectStack.getByRole("region", { name: "Linked Projects", exact: true });
-	const availableProjects = projectStack.getByRole("region", { name: "Available Projects" });
+	const linkedProjects = projectStack.getByRole("region", { name: "Linked projects", exact: true });
+	const availableProjects = projectStack.getByRole("region", { name: "Available projects" });
 	await expect(linkedProjects.getByText("Linked", { exact: true }).locator("..")).toHaveText(
 		"Linked2",
 	);
@@ -1352,7 +1352,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(linkedProjects).toHaveCount(0);
 	await expect(availableProjects.getByTestId("agent-project-card")).toHaveCount(1);
 	await search.fill("[]$");
-	await expect(projectStack.getByText("No matching Projects", { exact: true })).toBeVisible();
+	await expect(projectStack.getByText("No matching projects", { exact: true })).toBeVisible();
 	await expect(projectStack.getByRole("region")).toHaveCount(0);
 	await search.fill("");
 	await expect(projectCards).toHaveCount(4);
@@ -1483,7 +1483,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(main.getByRole("heading", { name: "Agents", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Install skill", exact: true })).toBeVisible();
 	await expect(
-		main.getByRole("button", { name: /^(Link|Unlink|Add|Remove) .* (Workspace|Project)$/ }),
+		main.getByRole("button", { name: /^(Link|Unlink|Add|Remove) .* (workspace|project)$/ }),
 	).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /Add keys to / })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "View all Skills", exact: true })).toHaveAttribute(
@@ -1568,7 +1568,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(main.getByRole("button", { name: "View all Vaults" })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /Install skill/i })).toHaveCount(0);
 	await expect(
-		main.getByRole("button", { name: /^(Link|Unlink|Add|Remove) .* (Workspace|Project)$/ }),
+		main.getByRole("button", { name: /^(Link|Unlink|Add|Remove) .* (workspace|project)$/ }),
 	).toHaveCount(0);
 	const desktopWorkspace = page
 		.getByTestId("app-sidebar")
@@ -1580,9 +1580,9 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(
 		desktopWorkspace.getByRole("link", { name: "Skills", exact: true }),
 	).not.toHaveAttribute("data-active", "");
-	const linkedVaults = main.getByRole("region", { name: "In this Workspace Vaults", exact: true });
+	const linkedVaults = main.getByRole("region", { name: "In this workspace vaults", exact: true });
 	await expect(linkedVaults.getByTestId("project-vault-card")).toHaveCount(2);
-	await expect(main.getByRole("region", { name: "Available Workspace Vaults" })).toHaveCount(0);
+	await expect(main.getByRole("region", { name: "Available workspace vaults" })).toHaveCount(0);
 	await expect(linkedVaults.getByRole("button")).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Create vault", exact: true })).toHaveCount(0);
 
@@ -1602,7 +1602,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await main.getByRole("tab", { name: "Vaults", exact: true }).click();
 	await expect(main.getByText("Team Vault", { exact: true })).toBeVisible();
 	await expect(main.getByText("Shared Vault", { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: /^(Add|Remove) .* Project$/ })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /^(Add|Remove) .* project$/ })).toHaveCount(0);
 	await main.getByRole("tab", { name: "Access", exact: true }).click();
 	await expect(main.getByRole("button", { name: "Leave project" })).toBeVisible();
 	await page.goto(
@@ -1611,7 +1611,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 	await expect(main.getByRole("heading", { name: longContextProjectName, level: 1 })).toBeVisible();
 	await expect(
 		main
-			.getByRole("region", { name: "Available Project Vaults" })
+			.getByRole("region", { name: "Available project vaults" })
 			.getByTestId("project-vault-card"),
 	).toHaveCount(4);
 	await expect(main.getByRole("button", { name: "Create vault", exact: true })).toBeVisible();
@@ -1633,7 +1633,7 @@ test("connected agent shares the Project catalog and preserves scoped Skills and
 		"/agents/11111111-1111-4111-8111-111111111111/project-access/project-inaccessible/skills",
 	);
 	await expect(
-		main.getByText("Project not available to this Agent", { exact: true }),
+		main.getByText("Project not available to this agent", { exact: true }),
 	).toBeVisible();
 	await expect(main.getByRole("button", { name: "Back to Projects" })).toHaveAttribute(
 		"href",
@@ -1798,7 +1798,7 @@ test("Workspace Skills fail closed on Project binding errors without reading Ski
 	);
 	const main = page.locator("main");
 	await expect(
-		main.getByText("Couldn't verify Workspace or Project access", { exact: true }),
+		main.getByText("Couldn't verify workspace or project access", { exact: true }),
 	).toBeVisible({ timeout: 15_000 });
 	// Fail closed: the Workspace rail keeps only its unconditional Projects
 	// entry — scoped Skills/Vaults items stay hidden while bindings error.
@@ -1923,7 +1923,7 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 		`/agents/11111111-1111-4111-8111-111111111111/skills/scoped-skill?project=project-inaccessible&${routeQuery}`,
 	);
 	await expect(
-		main.getByText("Project not available to this Agent", { exact: true }),
+		main.getByText("Project not available to this agent", { exact: true }),
 	).toBeVisible();
 	await expect(main.getByRole("heading", { name: "Scoped Skill", level: 1 })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Agent Skills" })).toHaveCount(0);
@@ -1963,7 +1963,7 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 		`/agents/11111111-1111-4111-8111-111111111111/skills/missing-skill?project=${contextProjectId}&${routeQuery}`,
 	);
 	await expect(main.getByText("Skill not found", { exact: true })).toBeVisible();
-	await expect(main.getByText("This Skill was not found in this Agent's Projects.")).toBeVisible();
+	await expect(main.getByText("This skill was not found in this agent's projects.")).toBeVisible();
 	expect(legacySkillDetailRequests).toEqual([]);
 
 	const errorPage = await page.context().newPage();
@@ -1978,7 +1978,7 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 		);
 		const errorMain = errorPage.locator("main");
 		await expect(
-			errorMain.getByText("Couldn't verify Workspace or Project access", { exact: true }),
+			errorMain.getByText("Couldn't verify workspace or project access", { exact: true }),
 		).toBeVisible({ timeout: 15_000 });
 		await expect(errorMain.getByRole("button", { name: "Agent Skills" })).toHaveCount(0);
 		await expect(
@@ -2070,7 +2070,7 @@ test("Project catalog stays readable while link state fails and recovers", async
 	} finally {
 		releaseBindings();
 	}
-	await expect(main.getByText("Couldn't load Project links", { exact: true })).toBeVisible();
+	await expect(main.getByText("Couldn't load project links", { exact: true })).toBeVisible();
 	await expect(main.getByTestId("agent-project-stack").getByRole("region")).toHaveCount(0);
 	await expect(
 		card.getByRole("button", { name: "Link status unavailable for Unrelated Project" }),
@@ -2081,16 +2081,16 @@ test("Project catalog stays readable while link state fails and recovers", async
 	await expect(
 		card.getByRole("button", { name: "Link Unrelated Project", exact: true }),
 	).toBeEnabled();
-	const available = main.getByRole("region", { name: "Available Projects" });
+	const available = main.getByRole("region", { name: "Available projects" });
 	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
 		"Available1",
 	);
-	await expect(main.getByRole("region", { name: "Linked Projects", exact: true })).toHaveCount(0);
+	await expect(main.getByRole("region", { name: "Linked projects", exact: true })).toHaveCount(0);
 	await page.route("**/v1/agents/*/projects", (route) =>
 		fulfillJson(route, { detail: "Skill key conflict" }, 409),
 	);
 	await card.getByRole("button", { name: "Link Unrelated Project", exact: true }).click();
-	await expect(page.getByText("Couldn't update Project link", { exact: true })).toBeVisible();
+	await expect(page.getByText("Couldn't update project link", { exact: true })).toBeVisible();
 	await expect(available.getByText("Available", { exact: true }).locator("..")).toHaveText(
 		"Available1",
 	);
@@ -2109,7 +2109,7 @@ test("cached Project links retain their state and destination after a failed ref
 	const unlink = card.getByRole("button", { name: "Unlink Team Knowledge" });
 	await expect(unlink).toBeEnabled();
 	const href = await link.getAttribute("href");
-	const linked = page.getByRole("region", { name: "Linked Projects", exact: true });
+	const linked = page.getByRole("region", { name: "Linked projects", exact: true });
 	await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked2");
 	const bindingRoute = "**/v1/agents/*/project-bindings";
 	await page.route(bindingRoute, (route) =>
@@ -2117,10 +2117,10 @@ test("cached Project links retain their state and destination after a failed ref
 	);
 	await page.clock.setFixedTime(new Date(Date.now() + 60_000));
 	await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
-	await expect(page.getByText("Couldn't load Project links", { exact: true })).toBeVisible();
+	await expect(page.getByText("Couldn't load project links", { exact: true })).toBeVisible();
 	await expect(unlink).toBeDisabled();
 	await expect(linked.getByText("Linked", { exact: true }).locator("..")).toHaveText("Linked2");
-	await expect(page.getByRole("region", { name: "Available Projects" })).toHaveCount(0);
+	await expect(page.getByRole("region", { name: "Available projects" })).toHaveCount(0);
 	await expect(link).toHaveAttribute("href", href ?? "");
 	await page.unroute(bindingRoute);
 	await page.locator("main").getByRole("button", { name: "Retry" }).click();
@@ -2157,7 +2157,7 @@ test("Agent Vault inventory aggregates bound Projects and retains safe data on r
 	);
 	await page.goto(origin);
 	const main = page.locator("main");
-	await expect(main.getByText("Couldn't load Agent Vault access")).toBeVisible();
+	await expect(main.getByText("Couldn't load agent vault access")).toBeVisible();
 	await expect(main.getByRole("link", { name: /Open vault / })).toHaveCount(0);
 	expect(vaultRequests).toEqual([]);
 	failBindings = false;
@@ -2198,7 +2198,7 @@ test("Agent Vault inventory aggregates bound Projects and retains safe data on r
 	failVaults = true;
 	await page.clock.setFixedTime(new Date(Date.now() + 60_000));
 	await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
-	await expect(inventory.getByText("Couldn’t refresh Vaults")).toBeVisible();
+	await expect(inventory.getByText("Couldn't refresh vaults")).toBeVisible();
 	await expect(inventory.getByRole("link", { name: /Open vault / })).toHaveCount(3);
 	failVaults = false;
 	await inventory.getByRole("button", { name: "Retry" }).click();

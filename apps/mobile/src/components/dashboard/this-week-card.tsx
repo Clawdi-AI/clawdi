@@ -73,7 +73,9 @@ function SecondaryStat({
 		<WebView recipe={styles.stat} className="flex-1">
 			<WebText recipe={styles.statLabel}>{label}</WebText>
 			{value === null ? (
-				<Skeleton className={webView(styles.valueSkeleton)} />
+				<Skeleton
+					className={webView(small ? styles.textValueSkeleton : styles.numericValueSkeleton)}
+				/>
 			) : (
 				<WebText recipe={small ? styles.textValue : styles.numericValue} numberOfLines={1}>
 					{value}

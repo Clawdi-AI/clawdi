@@ -419,6 +419,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/subscription/trial-offer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get V2 Trial Offer */
+        get: operations["get_v2_trial_offer_v2_subscription_trial_offer_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/subscription/cancel": {
         parameters: {
             query?: never;
@@ -842,6 +859,11 @@ export interface components {
             /** Next Cursor */
             next_cursor?: string | null;
         };
+        /** AccountNotificationReadAllRequest */
+        AccountNotificationReadAllRequest: {
+            /** Up To Id */
+            up_to_id?: string | null;
+        };
         /** AccountNotificationReadAllResponse */
         AccountNotificationReadAllResponse: {
             /** Updated Count */
@@ -869,7 +891,10 @@ export interface components {
             severity: "info" | "warning" | "destructive";
             /** Action Label */
             action_label?: string | null;
-            /** Action Url */
+            /**
+             * Action Url
+             * @description Canonical HTTPS click target. Same-origin URLs are in-app routes on the Hosted app; other hosts are allowlisted external links.
+             */
             action_url?: string | null;
             /**
              * Created At
@@ -1836,7 +1861,7 @@ export interface components {
              * @default custom
              * @enum {string}
              */
-            ui_mode: "custom" | "hosted";
+            ui_mode: "custom" | "embedded" | "hosted";
             /** Locale */
             locale?: string | null;
             quote?: components["schemas"]["V2ComputeSubscriptionQuoteResponse-Input"] | null;
@@ -2901,6 +2926,11 @@ export interface components {
             /** Entitled Until */
             entitled_until: string | null;
         };
+        /** V2TrialOfferResponse */
+        V2TrialOfferResponse: {
+            /** Cardless Trial */
+            cardless_trial: boolean;
+        };
         /** V2UpdateDeploymentRequest */
         V2UpdateDeploymentRequest: {
             /** Runtime */
@@ -3479,7 +3509,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["AccountNotificationReadAllRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3488,6 +3522,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountNotificationReadAllResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -4693,6 +4736,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2CheckoutResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_v2_trial_offer_v2_subscription_trial_offer_get: {
+        parameters: {
+            query?: {
+                channel?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2TrialOfferResponse"];
                 };
             };
             /** @description Validation Error */

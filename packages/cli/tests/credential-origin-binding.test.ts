@@ -144,7 +144,9 @@ describe("Cloud bearer origin binding", () => {
 
 		process.env.CLAWDI_API_URL = "https://attacker.example.test";
 		const hostile = new ApiClient();
-		await expect(hostile.GET("/v1/auth/me")).rejects.toThrow("bound to Cloud origin");
+		await expect(hostile.GET("/v1/auth/me")).rejects.toThrow(
+			"Saved sign-in is for CLAWDI_API_URL=",
+		);
 		expect(requests).toBe(1);
 	});
 
@@ -184,7 +186,7 @@ describe("Cloud bearer origin binding", () => {
 		process.env.CLAWDI_AUTH_TOKEN_ORIGIN = "https://CLOUD.Example.Test:443/";
 		expect(await getClawdiAccessToken(CLOUD_ORIGIN)).toBe("environment-secret");
 		await expect(getClawdiAccessToken("https://attacker.example.test")).rejects.toThrow(
-			"bound to Cloud origin",
+			"Saved sign-in is for CLAWDI_API_URL=",
 		);
 	});
 
@@ -216,7 +218,7 @@ describe("Cloud bearer origin binding", () => {
 					return Response.json({});
 				},
 			}),
-		).rejects.toThrow("bound to Cloud origin");
+		).rejects.toThrow("Saved sign-in is for CLAWDI_API_URL=");
 		expect(requests).toBe(0);
 		expect(getStoredAuth()).not.toBeNull();
 	});
@@ -237,7 +239,7 @@ describe("Hosted shared OAuth profile binding", () => {
 				return Response.json([]);
 			},
 		});
-		await expect(client.getPlans()).rejects.toThrow("canonical Clerk OAuth login");
+		await expect(client.getPlans()).rejects.toThrow("Clerk OAuth sign-in");
 		expect(requests).toBe(0);
 	});
 
@@ -269,7 +271,9 @@ describe("Hosted shared OAuth profile binding", () => {
 				return Response.json([]);
 			},
 		});
-		await expect(mismatched.getPlans()).rejects.toThrow("not bound");
+		await expect(mismatched.getPlans()).rejects.toThrow(
+			"doesn't match the current CLAWDI_API_URL and CLAWDI_DEPLOY_API_URL",
+		);
 		expect(requests).toBe(0);
 
 		const snapshot = new HostedDeployClient({
@@ -287,7 +291,9 @@ describe("Hosted shared OAuth profile binding", () => {
 				hostedApiOrigin: "https://other-hosted.example.test",
 			}),
 		);
-		await expect(snapshot.getPlans()).rejects.toThrow("not bound");
+		await expect(snapshot.getPlans()).rejects.toThrow(
+			"doesn't match the current CLAWDI_API_URL and CLAWDI_DEPLOY_API_URL",
+		);
 		expect(requests).toBe(0);
 	});
 });

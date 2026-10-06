@@ -1,7 +1,7 @@
 import type { Project } from "@clawdi/shared/api";
 import { agentSourceBadgeClasses, hostedAgentGroupsClasses } from "@clawdi/shared/ui";
 import {
-	agentSourceLabel,
+	agentSourceKindLabel,
 	agentSurfaceCopy,
 	hostedAgentCountLabel,
 	hostedAgentGroupsCopy,
@@ -63,7 +63,7 @@ function AgentsView({ project }: { project?: Project }) {
 					items: [
 						{
 							id: "all",
-							label: "All Projects",
+							label: "All projects",
 							onPress: () => router.setParams({ projectId: undefined }),
 						},
 						...(projects.data ?? []).map((item) => ({
@@ -103,7 +103,7 @@ function AgentsView({ project }: { project?: Project }) {
 												fill="currentColor"
 												className={webBoth(agentSourceBadgeClasses.icon)}
 											/>
-											<Text>{agentSourceLabel("hosted")}</Text>
+											<Text>{agentSourceKindLabel("hosted")}</Text>
 										</StatusBadge>
 									}
 								>

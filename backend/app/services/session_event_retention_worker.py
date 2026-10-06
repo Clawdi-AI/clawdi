@@ -5,16 +5,18 @@ import logging
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, exists, or_, select
+from sqlalchemy import and_, case, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.session import Session, SessionEventChunk, SessionEventGeneration
 from app.models.session_share import SessionShare
 from app.services.file_store import FileStore, get_file_store
+from app.services.session_events import SESSION_EVENT_STAGING_MAX_AGE
 
 log = logging.getLogger(__name__)
 
 STAGING_RETENTION = timedelta(days=1)
+SUPERSEDED_STAGING_RETENTION = timedelta(hours=1)
 SUPERSEDED_RETENTION = timedelta(days=7)
 
 
@@ -34,6 +36,14 @@ class SessionEventRetentionWorker:
 
     async def run_once(self, *, now: datetime | None = None) -> UUID | None:
         current_time = now or datetime.now(UTC)
+        # Overtaken bases can never CAS-commit, but allow active uploads to finish.
+        staging_cutoff = case(
+            (
+                SessionEventGeneration.base_revision < Session.event_revision,
+                current_time - SUPERSEDED_STAGING_RETENTION,
+            ),
+            else_=current_time - STAGING_RETENTION,
+        )
         async with self._sessionmaker() as db:
             generation = (
                 await db.execute(
@@ -48,8 +58,19 @@ class SessionEventRetentionWorker:
                         or_(
                             and_(
                                 SessionEventGeneration.status == "staging",
-                                SessionEventGeneration.created_at
-                                < current_time - STAGING_RETENTION,
+                                or_(
+                                    SessionEventGeneration.created_at
+                                    < current_time - SESSION_EVENT_STAGING_MAX_AGE,
+                                    and_(
+                                        SessionEventGeneration.updated_at < staging_cutoff,
+                                        # Preserve legacy uploads with fresh chunks below the cap.
+                                        ~exists().where(
+                                            SessionEventChunk.generation_id
+                                            == SessionEventGeneration.id,
+                                            SessionEventChunk.updated_at >= staging_cutoff,
+                                        ),
+                                    ),
+                                ),
                             ),
                             and_(
                                 SessionEventGeneration.status == "committed",

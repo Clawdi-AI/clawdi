@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SkillModule } from "../adapters/base";
 import { CodexAdapter } from "../adapters/codex";
+import { DshAdapter } from "../adapters/dsh";
+import { PiAdapter } from "../adapters/pi";
 import { ApiClient } from "../lib/api-client";
 import {
 	readProjectSkillMaterialization,
@@ -29,6 +31,8 @@ describe("Connected Project Skill reconcile", () => {
 	let originalHome: string | undefined;
 	let originalClawdiHome: string | undefined;
 	let originalCodexHome: string | undefined;
+	let originalPiHome: string | undefined;
+	let originalDshHome: string | undefined;
 	let originalApiUrl: string | undefined;
 	let originalFetch: typeof fetch;
 
@@ -37,11 +41,15 @@ describe("Connected Project Skill reconcile", () => {
 		originalHome = process.env.HOME;
 		originalClawdiHome = process.env.CLAWDI_HOME;
 		originalCodexHome = process.env.CODEX_HOME;
+		originalPiHome = process.env.PI_CODING_AGENT_DIR;
+		originalDshHome = process.env.DSH_HOME;
 		originalApiUrl = process.env.CLAWDI_API_URL;
 		originalFetch = globalThis.fetch;
 		process.env.HOME = root;
 		process.env.CLAWDI_HOME = join(root, ".clawdi");
 		process.env.CODEX_HOME = join(root, ".codex");
+		process.env.PI_CODING_AGENT_DIR = join(root, ".pi", "agent");
+		process.env.DSH_HOME = join(root, ".dsh");
 		process.env.CLAWDI_API_URL = apiOrigin;
 	});
 
@@ -53,6 +61,10 @@ describe("Connected Project Skill reconcile", () => {
 		else process.env.CLAWDI_HOME = originalClawdiHome;
 		if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
 		else process.env.CODEX_HOME = originalCodexHome;
+		if (originalPiHome === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = originalPiHome;
+		if (originalDshHome === undefined) delete process.env.DSH_HOME;
+		else process.env.DSH_HOME = originalDshHome;
 		if (originalApiUrl === undefined) delete process.env.CLAWDI_API_URL;
 		else process.env.CLAWDI_API_URL = originalApiUrl;
 		rmSync(root, { recursive: true, force: true });
@@ -116,34 +128,41 @@ describe("Connected Project Skill reconcile", () => {
 		return { archiveRequests, capabilityReports };
 	}
 
-	it("installs the complete desired inventory through the existing adapter and records ownership", async () => {
-		const alpha = await desiredSkill("alpha", "Alpha");
-		const { archiveRequests, capabilityReports } = serveInventory([alpha]);
-		const adapter = new CodexAdapter();
+	it.each([
+		["Codex", CodexAdapter],
+		["Pi", PiAdapter],
+		["DeepSeek Harness", DshAdapter],
+	] as const)(
+		"installs the desired inventory through %s and records ownership",
+		async (_name, Adapter) => {
+			const alpha = await desiredSkill("alpha", "Alpha");
+			const { archiveRequests, capabilityReports } = serveInventory([alpha]);
+			const adapter = new Adapter();
 
-		await reconcileConnectedProjectSkills({
-			api: new ApiClient({ requireAuth: false }),
-			agentId,
-			agentType: adapter.agentType,
-			skills: adapter.skills,
-		});
+			await reconcileConnectedProjectSkills({
+				api: new ApiClient({ requireAuth: false }),
+				agentId,
+				agentType: adapter.agentType,
+				skills: adapter.skills,
+			});
 
-		expect(readFileSync(adapter.skills.path("alpha"), "utf8")).toContain("# Alpha");
-		expect(archiveRequests).toHaveLength(1);
-		expect(capabilityReports.map((body) => JSON.parse(body))).toEqual([
-			{ project_skill_reconcile_version: 1 },
-		]);
-		expect(readProjectSkillMaterialization({ agentType: "codex", localSkillKey: "alpha" })).toEqual(
-			{
-				agent_type: "codex",
+			expect(readFileSync(adapter.skills.path("alpha"), "utf8")).toContain("# Alpha");
+			expect(archiveRequests).toHaveLength(1);
+			expect(capabilityReports.map((body) => JSON.parse(body))).toEqual([
+				{ project_skill_reconcile_version: 1 },
+			]);
+			expect(
+				readProjectSkillMaterialization({ agentType: adapter.agentType, localSkillKey: "alpha" }),
+			).toEqual({
+				agent_type: adapter.agentType,
 				local_skill_key: "alpha",
 				source_project_id: projectId,
 				source_skill_key: "alpha",
 				content_hash: alpha.desired.content_hash,
 				reconcile_agent_id: agentId,
-			},
-		);
-	});
+			});
+		},
+	);
 
 	it("fails closed on an unowned local collision without downloading or overwriting", async () => {
 		const alpha = await desiredSkill("alpha", "Cloud");
@@ -159,10 +178,63 @@ describe("Connected Project Skill reconcile", () => {
 				agentType: adapter.agentType,
 				skills: adapter.skills,
 			}),
-		).rejects.toThrow("already exists in this Agent's Workspace");
+		).rejects.toThrow("Project Skills skipped due to local conflicts: alpha");
 		expect(readFileSync(adapter.skills.path("alpha"), "utf8")).toBe("# Local Workspace Skill\n");
 		expect(archiveRequests).toHaveLength(0);
 	});
+
+	it.each(["unowned", "receipt mismatch", "locally modified", "duplicate Project"] as const)(
+		"isolates a %s key while installing and removing other keys",
+		async (conflict) => {
+			const alpha = await desiredSkill("alpha", "Cloud Alpha");
+			const beta = await desiredSkill("beta", "Cloud Beta");
+			const gamma = await desiredSkill("gamma", "Removed Gamma");
+			const adapter = new CodexAdapter();
+			await adapter.skills.writeArchive("alpha", alpha.archive);
+			await adapter.skills.writeArchive("gamma", gamma.archive);
+			recordProjectSkillMaterialization({
+				agentType: "codex",
+				localSkillKey: "gamma",
+				sourceProjectId: projectId,
+				sourceSkillKey: "gamma",
+				contentHash: gamma.desired.content_hash,
+				reconcileAgentId: agentId,
+			});
+			if (conflict !== "unowned")
+				recordProjectSkillMaterialization({
+					agentType: "codex",
+					localSkillKey: "alpha",
+					sourceProjectId: projectId,
+					sourceSkillKey: "alpha",
+					contentHash: alpha.desired.content_hash,
+					reconcileAgentId: conflict === "receipt mismatch" ? "other-agent" : agentId,
+				});
+			if (conflict === "locally modified" || conflict === "unowned")
+				writeFileSync(adapter.skills.path("alpha"), "# Local Alpha\n");
+			const before = readFileSync(adapter.skills.path("alpha"), "utf8");
+			serveInventory([
+				alpha,
+				beta,
+				...(conflict === "duplicate Project"
+					? [{ ...alpha, desired: { ...alpha.desired, project_id: "other-project" } }]
+					: []),
+			]);
+			await expect(
+				reconcileConnectedProjectSkills({
+					api: new ApiClient({ requireAuth: false }),
+					agentId,
+					agentType: "codex",
+					skills: adapter.skills,
+				}),
+			).rejects.toThrow("Project Skills skipped due to local conflicts: alpha");
+			expect(readFileSync(adapter.skills.path("alpha"), "utf8")).toBe(before);
+			expect(readFileSync(adapter.skills.path("beta"), "utf8")).toContain("Cloud Beta");
+			expect(existsSync(adapter.skills.path("gamma"))).toBe(false);
+			expect(
+				readProjectSkillMaterialization({ agentType: "codex", localSkillKey: "gamma" }),
+			).toBeNull();
+		},
+	);
 
 	it("removes only exact daemon-owned materializations", async () => {
 		const alpha = await desiredSkill("alpha", "Alpha");

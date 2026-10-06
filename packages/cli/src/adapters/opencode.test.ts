@@ -3,7 +3,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { projectEventsToMessages } from "../lib/session-events";
 import { OpenCodeAdapter } from "./opencode";
+import { assertSessionGolden } from "./session-golden.test-support";
 
 const originalDb = process.env.OPENCODE_DB;
 const originalXdgData = process.env.XDG_DATA_HOME;
@@ -254,6 +256,87 @@ function fixtureDatabase(): { adapter: OpenCodeAdapter; databasePath: string } {
 }
 
 describe("OpenCode session adapter", () => {
+	test.each([
+		["/repo/subdirectory", 1],
+		["/repo2", 0],
+	])("filters cwd %s by project and its descendants", async (cwd, count) => {
+		const { adapter, databasePath } = fixtureDatabase();
+		const writer = new Database(databasePath);
+		try {
+			writer.run("UPDATE session SET directory = ?", [cwd]);
+		} finally {
+			writer.close();
+		}
+		const scan = await adapter.sessions.collect({ kind: "complete", projectFilter: "/repo" });
+		expect(scan.sessions).toHaveLength(count);
+	});
+
+	test("preserves origin/main session bytes and localHash", async () => {
+		await assertSessionGolden("opencode", fixtureDatabase().adapter.sessions);
+	});
+	test.each([false, true])(
+		"counts projected messages rather than database rows (streaming=%s)",
+		async (streaming) => {
+			const { adapter, databasePath } = fixtureDatabase();
+			const db = new Database(databasePath);
+			try {
+				insertJson(db, "part", [
+					"prt_extra",
+					"msg_user",
+					"ses_fixture",
+					Date.parse("2026-08-27T10:00:01.500Z"),
+					Date.parse("2026-08-27T10:00:01.500Z"),
+					JSON.stringify({ type: "text", text: "Second user text part" }),
+				]);
+			} finally {
+				db.close();
+			}
+			const session = await adapter.sessions.resolve("opencode.ses_fixture", {
+				streaming,
+				signal: new AbortController().signal,
+			});
+			if (!session) throw new Error("Expected OpenCode session fixture");
+			const events = [];
+			for await (const event of session.readEvents?.() ?? session.events ?? []) events.push(event);
+			expect(session.messageCount).toBe(projectEventsToMessages(events).length);
+			expect(session.messageCount).toBe(3);
+		},
+	);
+
+	test("ignores unread columns in schema validation and source revisions", async () => {
+		const { adapter, databasePath } = fixtureDatabase();
+		const original = await adapter.sessions.resolve("opencode.ses_fixture");
+		const db = new Database(databasePath);
+		try {
+			db.run(
+				"UPDATE session SET version='unused', tokens_reasoning=999, tokens_cache_write=999, time_archived=1, agent='unused'",
+			);
+			db.run("UPDATE part SET time_updated=1");
+		} finally {
+			db.close();
+		}
+		const updated = await adapter.sessions.resolve("opencode.ses_fixture");
+		expect(updated?.sourceRevision).toBe(original?.sourceRevision);
+		expect(updated?.events).toEqual(original?.events);
+		const schema = new Database(databasePath);
+		try {
+			for (const column of [
+				"version",
+				"tokens_reasoning",
+				"tokens_cache_write",
+				"time_archived",
+				"agent",
+			])
+				schema.exec(`ALTER TABLE session DROP COLUMN ${column}`);
+			schema.exec("ALTER TABLE part DROP COLUMN time_updated");
+		} finally {
+			schema.close();
+		}
+		const narrowed = await adapter.sessions.resolve("opencode.ses_fixture");
+		expect(narrowed?.sourceRevision).toBe(original?.sourceRevision);
+		expect(narrowed?.events).toEqual(original?.events);
+	});
+
 	test("invalidates the source revision for metadata changes and refuses rewritten content", async () => {
 		const { adapter, databasePath } = fixtureDatabase();
 		const context = { streaming: true, signal: new AbortController().signal };

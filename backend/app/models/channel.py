@@ -76,6 +76,8 @@ DELIVERY_STATUS_IN_PROGRESS = "in_progress"
 DELIVERY_STATUS_SUCCEEDED = "succeeded"
 DELIVERY_STATUS_FAILED = "failed"
 
+CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE = "discord_gateway_terminal_close"
+
 
 class ChannelAccount(Base, TimestampMixin):
     __tablename__ = "channel_accounts"
@@ -795,7 +797,6 @@ class ChannelDelivery(Base, TimestampMixin):
         nullable=False,
         default=DELIVERY_STATUS_PENDING,
         server_default=DELIVERY_STATUS_PENDING,
-        index=True,
     )
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     max_attempts: Mapped[int] = mapped_column(

@@ -9,6 +9,7 @@ import {
 	projectEventsToMessages,
 } from "./session-events";
 import {
+	isSessionBlockCurrent,
 	type PendingEventUpload,
 	persistFencedSessionEntry,
 	readFencedSessionEntry,
@@ -16,6 +17,8 @@ import {
 	type SessionFence,
 	type SessionsLock,
 } from "./sessions-lock";
+
+import { getCliVersion } from "./version";
 
 export type SelectedSessionProtocol = "snapshot-v1" | "events-v1";
 
@@ -29,6 +32,13 @@ export interface SessionUploadPlan {
 	eventCount?: number;
 	finalEventHead?: string;
 	snapshotSizeBytes?: number;
+}
+
+export class SessionPlanStaleError extends Error {
+	constructor(localSessionId: string) {
+		super(`${localSessionId} upload plan is stale; retry with a fresh scan`);
+		this.name = "SessionPlanStaleError";
+	}
 }
 
 export type SessionContentSyncResult =
@@ -209,7 +219,11 @@ export function sessionPlanIsDurablyBlocked(
 	lock: SessionsLock = readSessionsLock(),
 ): string | null {
 	const entry = readFencedSessionEntry(lock, fence);
-	return entry?.local_hash === plan.localHash ? (entry.blocked?.message ?? null) : null;
+	return entry?.local_hash === plan.localHash &&
+		entry.blocked &&
+		isSessionBlockCurrent(entry.blocked)
+		? entry.blocked.message
+		: null;
 }
 
 function sourceRevisionEntry(session: RawSession): { source_revision?: string } {
@@ -235,7 +249,17 @@ export async function syncSessionContent(input: {
 	session: RawSession;
 	plan: SessionUploadPlan;
 	needsSnapshotContent: boolean;
+	confirmPlanCurrent?: () => Promise<boolean>;
 }): Promise<SessionContentSyncResult> {
+	const blocked = sessionPlanIsDurablyBlocked(input.fence, input.plan);
+	if (blocked) {
+		return {
+			status: "blocked",
+			uploaded: false,
+			localHash: input.plan.localHash,
+			message: blocked,
+		};
+	}
 	if (input.plan.protocol === "snapshot-v1") return syncSnapshotSession(input);
 	return syncEventSession(input);
 }
@@ -300,6 +324,7 @@ async function syncEventSession(input: {
 	fence: SessionFence;
 	session: RawSession;
 	plan: SessionUploadPlan;
+	confirmPlanCurrent?: () => Promise<boolean>;
 }): Promise<SessionContentSyncResult> {
 	const eventCount = input.plan.eventCount;
 	const finalHead = input.plan.finalEventHead;
@@ -310,6 +335,7 @@ async function syncEventSession(input: {
 		throw new Error("events-v1 capability disappeared after session negotiation");
 	}
 	let uploaded = false;
+	let planConfirmed = false;
 	for (let attempt = 0; attempt < EVENT_RETRY_LIMIT; attempt++) {
 		const remote = await input.api.getSessionEventHead(
 			input.session.localSessionId,
@@ -338,6 +364,11 @@ async function syncEventSession(input: {
 				persistEventSuccess(input, appendResult.head);
 				return { status: "synced", uploaded, localHash: finalHead };
 			}
+			if (head.generation && head.count > eventCount && !planConfirmed) {
+				if (!input.confirmPlanCurrent || (await input.confirmPlanCurrent()) !== true)
+					throw new SessionPlanStaleError(input.session.localSessionId);
+				planConfirmed = true;
+			}
 			const rewriteResult = await replaceEventGeneration(input, head, capabilities);
 			uploaded = uploaded || rewriteResult.uploaded;
 			persistEventSuccess(input, rewriteResult.head);
@@ -349,6 +380,21 @@ async function syncEventSession(input: {
 					sizeBytes: error.sizeBytes,
 					message: error.message,
 				});
+			}
+			if (error instanceof EventSchemaInvalidError) {
+				return persistBlocked(input, {
+					code: "event_schema_invalid",
+					message: `${input.session.localSessionId} events-v1 upload rejected: ${error.message}`,
+				});
+			}
+			if (error instanceof ApiError && error.status === 410) {
+				const prior = readFencedSessionEntry(readSessionsLock(), input.fence);
+				if (prior?.pending?.kind !== "rewrite") throw error;
+				// Expired staging identities must never be resumed on the next attempt.
+				const entry = { ...prior };
+				delete entry.pending;
+				persistFencedSessionEntry(input.fence, entry);
+				continue;
 			}
 			if (!(error instanceof ApiError) || error.status !== 409) throw error;
 		}
@@ -367,14 +413,15 @@ async function appendEvents(
 	limits: { targetBytes: number; maxBytes: number },
 ): Promise<{ head: EventHead; uploaded: boolean }> {
 	if (!initialHead.generation) throw new Error("cannot append without a generation");
+	const generation = initialHead.generation;
 	let head = initialHead;
 	let uploaded = false;
 	for await (const chunk of chunkEvents(input.plan, initialHead.count, limits)) {
 		const finalCount = chunk.startSeq + chunk.count;
 		const pendingShape = {
 			kind: "append" as const,
-			generation: initialHead.generation,
-			base_generation: initialHead.generation,
+			generation,
+			base_generation: generation,
 			base_revision: head.revision,
 			base_count: chunk.startSeq,
 			base_head_hash: chunk.baseHead,
@@ -383,21 +430,23 @@ async function appendEvents(
 		};
 		const appendId = reusableAppendId(input.fence, pendingShape) ?? randomUUID();
 		persistPending(input, { ...pendingShape, append_id: appendId });
-		const response = await input.api.appendSessionEvents({
-			localSessionId: input.session.localSessionId,
-			environmentId: input.fence.environmentId,
-			appendId,
-			generation: initialHead.generation,
-			baseRevision: head.revision,
-			baseCount: chunk.startSeq,
-			baseHeadHash: chunk.baseHead,
-			finalCount,
-			finalHeadHash: chunk.resultHead,
-			contentHash: chunk.contentHash,
-			file: chunk.bytes,
-		});
+		const response = await validateEventUpload(() =>
+			input.api.appendSessionEvents({
+				localSessionId: input.session.localSessionId,
+				environmentId: input.fence.environmentId,
+				appendId,
+				generation,
+				baseRevision: head.revision,
+				baseCount: chunk.startSeq,
+				baseHeadHash: chunk.baseHead,
+				finalCount,
+				finalHeadHash: chunk.resultHead,
+				contentHash: chunk.contentHash,
+				file: chunk.bytes,
+			}),
+		);
 		assertEventResponse(response, {
-			generation: initialHead.generation,
+			generation,
 			revision: head.revision + 1,
 			count: finalCount,
 			headHash: chunk.resultHead,
@@ -493,14 +542,16 @@ async function replaceEventGeneration(
 	}
 	let uploaded = false;
 	for await (const chunk of chunkEvents(input.plan, 0, limits)) {
-		const response = await input.api.uploadSessionEventGenerationChunk({
-			localSessionId: input.session.localSessionId,
-			generation: pending.generation,
-			startSeq: chunk.startSeq,
-			baseHeadHash: chunk.baseHead,
-			contentHash: chunk.contentHash,
-			file: chunk.bytes,
-		});
+		const response = await validateEventUpload(() =>
+			input.api.uploadSessionEventGenerationChunk({
+				localSessionId: input.session.localSessionId,
+				generation: pending.generation,
+				startSeq: chunk.startSeq,
+				baseHeadHash: chunk.baseHead,
+				contentHash: chunk.contentHash,
+				file: chunk.bytes,
+			}),
+		);
 		if (
 			response.generation !== pending.generation ||
 			response.start_seq !== chunk.startSeq ||
@@ -689,8 +740,8 @@ function reusablePending(
 function persistBlocked(
 	input: { fence: SessionFence; session: RawSession; plan: SessionUploadPlan },
 	block: {
-		code: "legacy_session_too_large" | "event_too_large";
-		sizeBytes: number;
+		code: "legacy_session_too_large" | "event_too_large" | "event_schema_invalid";
+		sizeBytes?: number;
 		message: string;
 	},
 ): SessionContentSyncResult {
@@ -702,9 +753,10 @@ function persistBlocked(
 		blocked: {
 			code: block.code,
 			content_hash: input.plan.localHash,
-			size_bytes: block.sizeBytes,
+			...(block.sizeBytes === undefined ? {} : { size_bytes: block.sizeBytes }),
 			message: block.message,
 			blocked_at: new Date().toISOString(),
+			cli_version: getCliVersion(),
 		},
 	});
 	return {
@@ -766,5 +818,17 @@ class EventTooLargeError extends Error {
 			`events-v1 event ${seq} is ${sizeBytes} bytes and exceeds the ${maxBytes} byte chunk limit`,
 		);
 		this.name = "EventTooLargeError";
+	}
+}
+
+class EventSchemaInvalidError extends Error {}
+
+async function validateEventUpload<T>(upload: () => Promise<T>): Promise<T> {
+	try {
+		return await upload();
+	} catch (error) {
+		if (error instanceof ApiError && error.status === 422)
+			throw new EventSchemaInvalidError(error.message);
+		throw error;
 	}
 }

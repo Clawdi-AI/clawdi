@@ -48,7 +48,7 @@ export function StripeElementsProvider({
 			<Alert data-hosted="true">
 				<AlertCircle aria-hidden />
 				<AlertDescription>
-					Secure payments are temporarily unavailable. Please try again later.
+					Secure payments are temporarily unavailable. Try again later.
 				</AlertDescription>
 			</Alert>
 		);

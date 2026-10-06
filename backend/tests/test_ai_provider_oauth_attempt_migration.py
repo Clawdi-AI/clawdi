@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -10,16 +8,9 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from tests.migration_harness import load_migration
+
 MIGRATION_FILENAME = "e8f4a1c9d2b7_ai_provider_oauth_attempts_and_revoke.py"
-
-
-def _load_migration():
-    path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location("ai_provider_oauth_attempt_migration", path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 @pytest.mark.asyncio
@@ -28,7 +19,7 @@ async def test_ai_provider_oauth_attempt_migration_rejects_unfinished_revoke_com
     engine: AsyncEngine,
     revoke_status: str,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "ai_provider_oauth_attempt_migration")
     assert migration.down_revision == "a9c4e7d2f1b6"
     schema = f"ai_provider_oauth_attempt_{uuid.uuid4().hex}"
     user_id = uuid.uuid4()
@@ -184,7 +175,7 @@ async def test_ai_provider_oauth_attempt_migration_rejects_active_attempts(
     engine: AsyncEngine,
     attempt_status: str,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "ai_provider_oauth_attempt_migration")
     schema = f"ai_provider_oauth_active_{uuid.uuid4().hex}"
     user_id = uuid.uuid4()
     provider_row_id = uuid.uuid4()

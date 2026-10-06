@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { readJson } from "../lib/api-client";
+import { ApiClient, readJson } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getAuth, getConfig } from "../lib/config";
 import { resolveProjectId } from "../lib/project-resolver";
@@ -50,7 +50,7 @@ export async function vaultResolveCommand(
 	const { apiUrl } = getConfig();
 	const auth = getAuth();
 	if (!auth?.apiKey) {
-		console.error(chalk.red("Not logged in. Run `clawdi auth login` first."));
+		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
 		process.exitCode = 1;
 		return;
 	}
@@ -75,10 +75,12 @@ export async function vaultResolveCommand(
 	if (opts.debug) params.set("debug", "true");
 	if (opts.dryRun) params.set("preview", "true");
 
-	const r = await fetch(`${apiUrl}/v1/vault/resolve?${params.toString()}`, {
-		method: "POST",
-		headers: { Authorization: `Bearer ${accessToken}` },
-	});
+	const r = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).request(
+		`/v1/vault/resolve?${params.toString()}`,
+		{
+			method: "POST",
+		},
+	);
 	let body: VaultResolveHit | { detail?: unknown };
 	try {
 		body = await readJson<VaultResolveHit | { detail?: unknown }>(r, "/v1/vault/resolve");
@@ -105,13 +107,13 @@ export async function vaultResolveCommand(
 			if (detail?.code === "ambiguous_vault_reference_slug") {
 				console.error(
 					chalk.gray(
-						"Repair or rename the conflicting Vault namespace before resolving this reference.",
+						"Repair or rename the conflicting vault namespace before resolving this reference.",
 					),
 				);
 			} else {
 				console.error(
 					chalk.gray(
-						"Re-run with --allow-conflicts to use the first project by Vault resolution priority.",
+						"Re-run with --allow-conflicts to use the first project by vault resolution priority.",
 					),
 				);
 			}

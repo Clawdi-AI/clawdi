@@ -1,12 +1,11 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import {
 	canonicalJson,
-	canonicalPayloadJson,
 	type SessionEventDraft,
 	sequenceSessionEvents,
 } from "../lib/session-events";
@@ -18,16 +17,12 @@ import type {
 	SessionScanResult,
 	SyncReadContext,
 } from "./base";
-import { getPiHome, getPiSessionsDir, isPathWithinRoots } from "./paths";
-import {
-	type JsonObject,
-	jsonObject,
-	jsonString,
-	reasoningContent,
-	toolResultContent,
-	visibleContentParts,
-} from "./rich-event-mapping";
+import { getPiHome, getPiSessionsDir, matchesProjectFilter } from "./paths";
+import { piMessageDrafts } from "./pi-message-drafts";
+import { type JsonObject, jsonObject, jsonString, visibleContentParts } from "./rich-event-mapping";
+import { jsonlPathsWithin, listJsonlFiles } from "./session-files";
 import { describeSessionContent, JsonlSessionSource } from "./session-source";
+import { flatSkillModule } from "./skill-dir";
 import { openSessionIndex } from "./sqlite";
 import { readCommandVersion } from "./version";
 
@@ -212,7 +207,11 @@ async function* readPiEvents(
 			if (v4 && lane) setLane.run(lane, id);
 			if (!v4) {
 				if (data.type === "message") addUsage(usage, jsonObject(data.message)?.usage);
-				else if (data.type === "compaction" || data.type === "branch_summary")
+				else if (
+					data.type === "usage" ||
+					data.type === "compaction" ||
+					data.type === "branch_summary"
+				)
 					addUsage(usage, data.usage);
 			}
 		}
@@ -379,170 +378,11 @@ function entryEvents(sessionKey: string, entry: ParsedPiEntry): SessionEventDraf
 	if (type !== "message") return [];
 	const message = jsonObject(entry.data.message);
 	if (!message) return [];
-	const role = jsonString(message.role);
-	const messageTimestamp = timestampIso(entry.data, message) ?? timestamp;
-	if (role === "user") {
-		const parts = visibleContentParts(message.content);
-		return parts.length > 0
-			? [
-					{
-						type: "message",
-						role: "user",
-						parts,
-						source: source(sessionKey, entry),
-						...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-					},
-				]
-			: [];
-	}
-	if (role === "assistant") {
-		if (message.stopReason === "deferred") return [];
-		const content = Array.isArray(message.content) ? message.content : [];
-		const model = jsonString(message.model) ?? undefined;
-		const drafts: SessionEventDraft[] = [];
-		const parts = visibleContentParts(content);
-		if (parts.length > 0) {
-			drafts.push({
-				type: "message",
-				role: "assistant",
-				parts,
-				source: source(sessionKey, entry, 0),
-				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-				...(model ? { model } : {}),
-			});
-		}
-		for (let index = 0; index < content.length; index++) {
-			const part = jsonObject(content[index]);
-			if (!part) continue;
-			const reasoning = reasoningContent(part);
-			if (reasoning) {
-				drafts.push({
-					type: "reasoning",
-					...reasoning,
-					source: source(sessionKey, entry, index + 1),
-					...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-					...(model ? { model } : {}),
-				});
-			}
-			if (part.type !== "toolCall") continue;
-			const callId = jsonString(part.id);
-			const name = jsonString(part.name);
-			if (!callId || !name) continue;
-			drafts.push({
-				type: "tool_call",
-				call_id: callId,
-				name,
-				arguments_json: canonicalPayloadJson(part.arguments),
-				source: source(sessionKey, entry, index + 1),
-				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-				...(model ? { model } : {}),
-			});
-			const toolThought = reasoningContent({
-				type: "redacted_thinking",
-				signature: part.thoughtSignature,
-			});
-			if (toolThought) {
-				drafts.push({
-					type: "reasoning",
-					...toolThought,
-					source: source(sessionKey, entry, index + 1),
-					...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-					...(model ? { model } : {}),
-				});
-			}
-		}
-		return drafts;
-	}
-	if (role === "toolResult") {
-		const callId = jsonString(message.toolCallId);
-		if (!callId) return [];
-		const result = toolResultContent(message.content, message.details);
-		const toolName = jsonString(message.toolName);
-		const drafts: SessionEventDraft[] = [
-			{
-				type: "tool_result",
-				call_id: callId,
-				...(toolName ? { name: toolName } : {}),
-				status: message.isError === true ? "error" : "completed",
-				...result,
-				source: source(sessionKey, entry),
-				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-			},
-		];
-		const details = jsonObject(message.details);
-		const privateState = reasoningContent({
-			type: "redacted_thinking",
-			signature: details?.thinkingSignature ?? details?.thoughtSignature,
-		});
-		if (privateState) {
-			drafts.push({
-				type: "reasoning",
-				...privateState,
-				source: source(sessionKey, entry, 1),
-				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-			});
-		}
-		return drafts;
-	}
-	if (role === "bashExecution") {
-		const command = jsonString(message.command);
-		if (!command) return [];
-		const callId = `pi-shell-${entry.id}`;
-		const output = typeof message.output === "string" ? message.output : "";
-		return [
-			{
-				type: "tool_call",
-				call_id: callId,
-				name: "shell",
-				arguments_json: canonicalPayloadJson({ command }),
-				source: source(sessionKey, entry, 0),
-				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-			},
-			{
-				type: "tool_result",
-				call_id: callId,
-				name: "shell",
-				status:
-					message.cancelled === true || (numberValue(message.exitCode) ?? 0) !== 0
-						? "error"
-						: "completed",
-				parts: output ? [{ type: "text", text: output }] : [],
-				source: source(sessionKey, entry, 1),
-				...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-			},
-		];
-	}
-	if (role === "custom" && message.display === true) {
-		const parts = visibleContentParts(message.content);
-		return parts.length > 0
-			? [
-					{
-						type: "message",
-						role: "system",
-						parts,
-						source: source(sessionKey, entry),
-						...(messageTimestamp ? { timestamp: messageTimestamp } : {}),
-					},
-				]
-			: [];
-	}
-	return [];
-}
-
-function listJsonlFiles(root: string): string[] {
-	if (!existsSync(root)) return [];
-	const files: string[] = [];
-	const pending = [root];
-	while (pending.length > 0) {
-		const dir = pending.pop();
-		if (!dir) continue;
-		for (const entry of readdirSync(dir, { withFileTypes: true })) {
-			const path = join(dir, entry.name);
-			if (entry.isDirectory()) pending.push(path);
-			else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(path);
-		}
-	}
-	return files.sort();
+	return piMessageDrafts(message, {
+		source: (partIndex) => source(sessionKey, entry, partIndex),
+		recordId: entry.id,
+		timestamp,
+	});
 }
 
 async function parseSession(
@@ -562,7 +402,7 @@ async function parseSession(
 		const id = jsonString(record.data.id);
 		const cwd = jsonString(record.data.cwd);
 		if (sourceId !== undefined && id !== sourceId) return null;
-		if (projectFilter && (!cwd || resolve(cwd) !== resolve(projectFilter))) return null;
+		if (!matchesProjectFilter(cwd, projectFilter ? resolve(projectFilter) : null)) return null;
 		break;
 	}
 	const metadata: PiReadMetadata = { header: null, usage: emptyUsage() };
@@ -573,7 +413,7 @@ async function parseSession(
 	const sessionKey = jsonString(header.id);
 	if (!sessionKey || (sourceId !== undefined && sessionKey !== sourceId)) return null;
 	const cwd = jsonString(header.cwd);
-	if (projectFilter && (!cwd || resolve(cwd) !== resolve(projectFilter))) return null;
+	if (!matchesProjectFilter(cwd, projectFilter ? resolve(projectFilter) : null)) return null;
 	const headerTimestamp =
 		numberValue(header.createdAt) ?? jsonString(header.timestamp) ?? undefined;
 	const parsedHeaderTimestamp = headerTimestamp === undefined ? null : new Date(headerTimestamp);
@@ -608,6 +448,7 @@ async function parseSession(
 
 export class PiAdapter implements AgentAdapterCore {
 	readonly agentType = "pi" as const;
+	readonly skills = flatSkillModule({ root: () => join(getPiHome(), "skills") });
 	readonly sessions = {
 		contentProtocol: async (context?: SyncReadContext) => {
 			context?.signal.throwIfAborted();
@@ -621,7 +462,7 @@ export class PiAdapter implements AgentAdapterCore {
 	};
 
 	async detect(): Promise<boolean> {
-		return existsSync(getPiSessionsDir()) || existsSync(getPiHome());
+		return existsSync(getPiHome());
 	}
 
 	async getVersion(): Promise<string | null> {
@@ -635,19 +476,12 @@ export class PiAdapter implements AgentAdapterCore {
 		context?.signal.throwIfAborted();
 		const root = resolve(getPiSessionsDir());
 		if (request.kind === "paths") {
-			if (request.paths.length === 0) {
+			const paths = jsonlPathsWithin(request, [root]);
+			if (!paths)
 				return this.collectSessions(
 					{ kind: "complete", projectFilter: request.projectFilter },
 					context,
 				);
-			}
-			const paths = request.paths.map((path) => resolve(path));
-			if (paths.some((path) => !isPathWithinRoots(path, [root]) || !path.endsWith(".jsonl"))) {
-				return this.collectSessions(
-					{ kind: "complete", projectFilter: request.projectFilter },
-					context,
-				);
-			}
 			const sessions: RawSession[] = [];
 			for (const path of paths) {
 				const session = await parseSession(path, request.projectFilter, undefined, context);
@@ -656,7 +490,7 @@ export class PiAdapter implements AgentAdapterCore {
 			return { sessions, dedupedCount: 0, coverage: "partial" };
 		}
 		const sessions: RawSession[] = [];
-		for (const path of listJsonlFiles(root)) {
+		for (const path of listJsonlFiles(root).sort()) {
 			if (context) await setImmediate(undefined, { signal: context.signal });
 			const session = await parseSession(path, request.projectFilter, undefined, context);
 			if (session) sessions.push(session);

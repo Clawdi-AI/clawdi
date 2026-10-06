@@ -91,7 +91,7 @@ function isOwnedEnvId(
 	return Boolean(envId && (claimedEnvIds.has(envId) || legacyEnvIds.has(envId)));
 }
 
-export const hostedAgentGroupsCopy = { cloud: "Clawdi Cloud", other: "Other agents" } as const;
+export const hostedAgentGroupsCopy = { cloud: "Cloud Agents", other: "Connected Agents" } as const;
 export function hostedAgentCountLabel(count: number): string {
 	return `${count} agent${count === 1 ? "" : "s"}`;
 }

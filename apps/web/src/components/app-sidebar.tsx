@@ -114,6 +114,7 @@ import {
 	CONNECTOR_CATALOG_PAGE_SIZE,
 	connectionsQueryOptions,
 } from "@/lib/connectors-data";
+import { env } from "@/lib/env";
 import { IS_HOSTED } from "@/lib/hosted";
 import type { AgentNavigationVariant } from "@/lib/navigation-model";
 import {
@@ -446,7 +447,7 @@ function AgentSectionList({
 								: agentProjectResourceHref(agentId, primaryProject.id, section),
 						icon: item.icon,
 						tint: item.tint,
-						tooltip: section === "vaults" ? "Available Vaults" : `${item.label} in Workspace`,
+						tooltip: section === "vaults" ? "Available vaults" : `${item.label} in workspace`,
 						active:
 							section === "vaults"
 								? activeAgentRoute?.section === "vaults" || activePrimaryProjectResource === section
@@ -1057,7 +1058,7 @@ function FocusRailContent({
 				<SidebarMenu className="items-center">
 					<SidebarMenuItem>
 						<a
-							href="https://clawdi.ai"
+							href={env.VITE_CLAWDI_MARKETING_URL}
 							target="_blank"
 							rel="noopener noreferrer"
 							aria-label="Open Clawdi homepage"

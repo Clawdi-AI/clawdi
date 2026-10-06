@@ -117,7 +117,7 @@ function WorkspaceSkills({ id, workspaceTab }: { id?: string; workspaceTab?: boo
 							variant="ghost"
 							size="icon-sm"
 							className={webView(panel.removeAction)}
-							accessibilityLabel={`Uninstall ${skill.name} from Agent`}
+							accessibilityLabel={`Uninstall ${skill.name} from agent`}
 							onPress={() =>
 								router.push({
 									pathname: "/agents/[id]/skills/uninstall",
@@ -133,7 +133,7 @@ function WorkspaceSkills({ id, workspaceTab }: { id?: string; workspaceTab?: boo
 			icon={Sparkles}
 			iconTint={RESOURCE_TINT_CLASSES.skills}
 			title="Skills"
-			description="Skills available in this Agent's Workspace. Skills synced from the Agent are read-only."
+			description="Skills available in this agent's workspace. Skills synced from the agent are read-only."
 			navigation={id ? <AgentSectionNavigation agentId={id} section="skills" /> : null}
 		>
 			<Alert title={agentSurfaceCopy.installOnTheAgent}>

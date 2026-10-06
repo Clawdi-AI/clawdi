@@ -15,6 +15,7 @@ import type { AgentAdapter, RawSession, SkillModule } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError } from "../lib/api-client";
 import { setAuth } from "../lib/config";
+import { sequenceSessionEvents } from "../lib/session-events";
 import { planSessionUpload, sessionFence } from "../lib/session-upload";
 import {
 	persistFencedSessionEntry,
@@ -29,6 +30,7 @@ import {
 	recordSkillProjectionClaim,
 } from "../lib/skills-lock";
 import { computeSkillArchiveHash } from "../lib/tar";
+import { getCliVersion } from "../lib/version";
 import { releaseManagedSkill, reserveManagedSkill } from "../runtime/managed-skill-reservation";
 import { RetryQueue } from "./queue";
 import {
@@ -86,6 +88,89 @@ function sessionQueueFence(
 }
 
 describe("stable session enqueue abort fence", () => {
+	it("keeps a validation-blocked projection out of later scans while changed content is queued", async () => {
+		const root = mkdtempSync(join(tmpdir(), "session-schema-block-"));
+		const originalHome = process.env.HOME;
+		try {
+			process.env.HOME = root;
+			const session: RawSession = {
+				localSessionId: "session-1",
+				projectPath: null,
+				startedAt: new Date(0),
+				endedAt: null,
+				messageCount: 1,
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				model: null,
+				modelsUsed: [],
+				durationSeconds: null,
+				summary: null,
+				messages: [],
+				rawFilePath: "/sessions/1.jsonl",
+				sourceRevision: "source-r1",
+				events: sequenceSessionEvents([
+					{
+						type: "message",
+						role: "user",
+						source: { adapter: "hermes", session_key: "session-1", record_id: "1" },
+						parts: [{ type: "text", text: "before fix" }],
+					},
+				]),
+			};
+			const plan = planSessionUpload(session, "events-v1");
+			const fence = {
+				apiOrigin: "https://cloud.example.test",
+				environmentId: "agent-1",
+				adapter: "hermes" as const,
+				sourceSessionKey: session.localSessionId,
+			};
+			persistFencedSessionEntry(fence, {
+				protocol: plan.protocol,
+				local_hash: plan.localHash,
+				source_revision: session.sourceRevision,
+				blocked: {
+					code: "event_schema_invalid",
+					content_hash: plan.localHash,
+					message: "schema rejected",
+					blocked_at: new Date().toISOString(),
+					cli_version: getCliVersion(),
+				},
+			});
+			const queued: unknown[] = [];
+			const blocked: string[] = [];
+			const options = {
+				abort: new AbortController().signal,
+				sessions: [session],
+				queue: {
+					enqueueWhenAvailable: async (item: unknown) => {
+						queued.push(item);
+						return 1;
+					},
+				},
+				lastPushedHash: new Map<string, string>(),
+				inFlightHash: new Map<string, string>(),
+				protocol: plan.protocol,
+				fenceFor: () => fence,
+				onBlocked: (_session: RawSession, message: string) => {
+					blocked.push(message);
+				},
+			};
+			expect((await enqueueChangedSessionsAfterStability(options)).enqueued).toBe(0);
+			expect((await enqueueChangedSessionsAfterStability(options)).enqueued).toBe(0);
+			expect(blocked).toEqual(["schema rejected", "schema rejected"]);
+			expect(queued).toEqual([]);
+			const first = session.events?.[0];
+			if (first?.type !== "message") throw new Error("expected message fixture");
+			session.events = [{ ...first, parts: [{ type: "text", text: "after fix" }] }];
+			expect((await enqueueChangedSessionsAfterStability(options)).enqueued).toBe(1);
+			expect(queued).toHaveLength(1);
+		} finally {
+			if (originalHome === undefined) delete process.env.HOME;
+			else process.env.HOME = originalHome;
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 	it("does not enqueue after collection finishes into an abort", async () => {
 		const abort = new AbortController();
 		const queued: unknown[] = [];
@@ -523,6 +608,78 @@ describe("Agent filesystem projection reconcile", () => {
 			}
 		});
 	});
+
+	it.each(["skill_push", "skill_delete"] as const)(
+		"retires an invalid legacy %s while uploading the next valid Skill",
+		async (kind) => {
+			await withProjectionCase(async ({ root, queue, reconcile }) => {
+				for (const key of ["bad key", "valid"]) {
+					mkdirSync(join(root, key));
+					writeFileSync(join(root, key, "SKILL.md"), "# Fixture\n");
+				}
+				const common = {
+					agent_id: "agent-1",
+					project_id: "project-1",
+					skill_key: "bad key",
+					enqueued_at: new Date().toISOString(),
+					attempts: 0,
+				};
+				queue.enqueue(
+					kind === "skill_push" ? { ...common, kind, new_hash: "legacy" } : { ...common, kind },
+				);
+				const legacyClaims = new Map([["bad key", "legacy"]]);
+				await reconcile(legacyClaims, new Set(["bad key"]));
+				expect(queue.depth).toBe(2);
+				const originalFetch = globalThis.fetch;
+				const warn = spyOn((await import("./log")).log, "warn");
+				let requests = 0;
+				try {
+					globalThis.fetch = (async (request: Request) => {
+						requests++;
+						expect((await request.formData()).get("skill_key")).toBe("valid");
+						return Response.json({ skill_key: "valid", version: 1 });
+					}) as typeof fetch;
+					const adapter = adapterRegistry.hermes.create();
+					const abortController = new AbortController();
+					const lastPushed = new Map<string, string>();
+					for (const expectedOutcome of ["absent", "applied"] as const) {
+						const item = queue.peek();
+						if (!item) throw new Error("expected queued Skill");
+						expect(
+							await processQueueItem(
+								{
+									environmentId: "agent-1",
+									adapter,
+									abort: abortController.signal,
+									abortController,
+								},
+								new ApiClient({ requireAuth: false }),
+								queue,
+								item,
+								queueModules(adapter),
+								lastPushed,
+								new Map(),
+								new Map(),
+							),
+						).toBe(expectedOutcome);
+					}
+					expect(queue.depth).toBe(0);
+					expect(requests).toBe(1);
+					expect(lastPushed.has("bad key")).toBe(false);
+					expect(lastPushed.has("valid")).toBe(true);
+					expect(legacyClaims.get("bad key")).toBe("legacy");
+					expect(readFileSync(join(root, "bad key", "SKILL.md"), "utf8")).toBe("# Fixture\n");
+					expect(warn).toHaveBeenCalledWith("engine.invalid_skill_key_skipped", {
+						key_shape: "length=7, components=1, reason=invalid_characters",
+						origin: "queue",
+					});
+				} finally {
+					warn.mockRestore();
+					globalThis.fetch = originalFetch;
+				}
+			});
+		},
+	);
 
 	it("durably deletes a claimed nested key missing after directory removal", async () => {
 		await withProjectionCase(async ({ queue, reconcile }) => {
@@ -1098,23 +1255,22 @@ describe("Agent filesystem projection reconcile", () => {
 				});
 				expect(queue.peek()?.version).toBe(absenceDelete?.version);
 
-				// A full offline queue may evict the Skill operation. Once the
-				// unrelated session completes and the daemon restarts, the durable
-				// queue is empty while the remote revision remains unchanged.
-				const sessionVersion = queue.enqueue({
-					kind: "session_push",
-					...sessionQueueFence(api, adapterRegistry.hermes.create(), "session-1"),
-					local_session_id: "session-1",
-					content_hash: "session-hash",
+				// Skills have independent capacity: exercise an eviction from a
+				// competing Skill, then complete it before restarting the queue.
+				const competingVersion = queue.enqueue({
+					kind: "skill_delete",
+					agent_id: "agent-1",
+					project_id: "project-1",
+					skill_key: "other-skill",
 					enqueued_at: new Date().toISOString(),
 					attempts: 0,
 				});
-				expect(queue.peek()?.kind).toBe("session_push");
-				const sessionItem = queue.peek();
-				if (!sessionItem || sessionItem.version !== sessionVersion) {
-					throw new Error("expected retained session queue item");
+				expect(queue.peek()?.kind).toBe("skill_delete");
+				const competingItem = queue.peek();
+				if (!competingItem || competingItem.version !== competingVersion) {
+					throw new Error("expected retained competing Skill item");
 				}
-				queue.markDoneIfVersion(sessionItem);
+				queue.markDoneIfVersion(competingItem);
 				await queue.flushPersist();
 				const restarted = new RetryQueue({ agentType: "hermes", maxItems: 1 });
 				restarted.load();
@@ -1336,8 +1492,8 @@ describe("daemon SSE routing", () => {
 	});
 });
 
-describe("Pi sessions-only daemon", () => {
-	it("uploads its real fixture without starting any Skills control plane", async () => {
+describe("Pi sessions and Skills daemon", () => {
+	it("uploads its real fixture while starting Skills sync", async () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-pi-engine-"));
 		const originalFetch = globalThis.fetch;
 		const originalHome = process.env.HOME;
@@ -1348,6 +1504,8 @@ describe("Pi sessions-only daemon", () => {
 		const originalAuthOrigin = process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
 		const requests: Request[] = [];
 		const abortController = new AbortController();
+		let sessionUploaded = false;
+		let skillsListed = false;
 		try {
 			process.env.HOME = root;
 			process.env.PI_CODING_AGENT_DIR = join(root, "pi-agent");
@@ -1368,6 +1526,25 @@ describe("Pi sessions-only daemon", () => {
 				const path = new URL(request.url).pathname;
 				if (path === "/v1/agents/agent-pi") {
 					return Response.json({ id: "agent-pi", default_project_id: "project-1" });
+				}
+				if (path === "/v1/sync/events") {
+					return new Response(": ready\n\n", {
+						headers: { "content-type": "text/event-stream" },
+					});
+				}
+				if (path === "/v1/runtime/project-skill-capability") {
+					return new Response(null, { status: 204 });
+				}
+				if (path === "/v1/runtime/project-skills") {
+					return Response.json({ agent_id: "agent-pi", skills: [] });
+				}
+				if (path === "/v1/skills") {
+					skillsListed = true;
+					if (sessionUploaded) queueMicrotask(() => abortController.abort());
+					return Response.json(
+						{ items: [], total: 0, page: 1, page_size: 200 },
+						{ headers: { ETag: '"1:project-1"' } },
+					);
 				}
 				if (path === "/v1/sessions/upload-capabilities") {
 					return new Response('{"detail":"Not found"}', { status: 404 });
@@ -1392,7 +1569,8 @@ describe("Pi sessions-only daemon", () => {
 					const form = await request.formData();
 					const expectedHash = form.get("expected_content_hash");
 					expect(typeof expectedHash).toBe("string");
-					queueMicrotask(() => abortController.abort());
+					sessionUploaded = true;
+					if (skillsListed) queueMicrotask(() => abortController.abort());
 					return Response.json({ status: "uploaded", content_hash: expectedHash });
 				}
 				if (path === "/v1/agents/agent-pi/sync-heartbeat") {
@@ -1412,8 +1590,9 @@ describe("Pi sessions-only daemon", () => {
 			const paths = requests.map((request) => new URL(request.url).pathname);
 			expect(paths).toContain("/v1/sessions/pi.fixture-session/upload");
 			expect(paths).toContain("/v1/agents/agent-pi");
-			expect(paths).not.toContain("/v1/sync/events");
-			expect(paths.some((path) => path.includes("/skills"))).toBe(false);
+			expect(paths).toContain("/v1/sync/events");
+			expect(paths).toContain("/v1/runtime/project-skills");
+			expect(paths).toContain("/v1/skills");
 			const heartbeat = requests.find((request) =>
 				new URL(request.url).pathname.endsWith("/sync-heartbeat"),
 			);
@@ -1533,6 +1712,298 @@ describe("daemon startup Agent lookup", () => {
 			rmSync(root, { recursive: true, force: true });
 		}
 	}
+
+	it.each([false, true])(
+		"reports drop deltas after failed heartbeats with bounded health text (long error=%s)",
+		async (longError) => {
+			const reports: Array<{
+				dropped_count_delta: number;
+				last_sync_error: string | null;
+			}> = [];
+			let finish: () => void = () => {};
+			await withStartupCase(
+				async (request) => {
+					const body = (await request.json()) as {
+						dropped_count_delta: number;
+						last_sync_error: string | null;
+					};
+					expect(body).not.toHaveProperty("reset_queue_counters");
+					reports.push(body);
+					if (reports.length === 1) return new Response("temporarily unavailable", { status: 500 });
+					if (reports.length === 3) finish();
+					return new Response(null, { status: 204 });
+				},
+				async ({ abortController, logs }) => {
+					finish = () => abortController.abort();
+					const queue = new RetryQueue({ agentType: "pi" });
+					queue.recordPermanentDrop();
+					queue.recordPermanentDrop("retry_exhausted");
+					const opts = {
+						environmentId: "agent-isolated",
+						adapter: adapterRegistry.pi.create(),
+						abort: abortController.signal,
+						abortController,
+						heartbeatIntervalMs: 1,
+					};
+					await heartbeatLoop(
+						opts,
+						new ApiClient({ requireAuth: false }),
+						queue,
+						abortController.signal,
+						() => ({
+							last_revision_seen: null,
+							last_sync_error: longError ? "x".repeat(10_000) : null,
+						}),
+						() => {},
+					);
+					const dropLogs = logs
+						.map((line): { event: string } => JSON.parse(line))
+						.filter(({ event }) => event === "engine.queue_dropped");
+					expect(dropLogs).toEqual([
+						expect.objectContaining({
+							dropped_count_delta: 2,
+							reasons: { permanent: 1, retry_exhausted: 1 },
+						}),
+					]);
+				},
+			);
+			expect(reports.map(({ dropped_count_delta }) => dropped_count_delta)).toEqual([2, 2, 0]);
+			const dropMessage = "queue_dropped: permanent=1, retry_exhausted=1";
+			const errorWithDrops = longError ? `${"x".repeat(500)}; ${dropMessage}` : dropMessage;
+			expect(reports.map(({ last_sync_error }) => last_sync_error)).toEqual([
+				errorWithDrops,
+				errorWithDrops,
+				longError ? "x".repeat(1000) : null,
+			]);
+			for (const report of reports) {
+				expect(report.last_sync_error?.length ?? 0).toBeLessThanOrEqual(1000);
+			}
+		},
+	);
+
+	it("bounds individual health errors and the reported heartbeat text", async () => {
+		const health = new SyncHealth();
+		health.set("push", "one", "x".repeat(10_000));
+		expect(health.project()).toBe("x".repeat(500));
+		health.clear("push", "one");
+		health.setIfAbsent("push", "two", "y".repeat(10_000));
+		expect(health.project()).toBe("y".repeat(500));
+		let reported: string | undefined;
+		await withStartupCase(
+			async (request) => {
+				const payload = (await request.json()) as { last_sync_error: string };
+				reported = payload.last_sync_error;
+				return new Response(null, { status: 204 });
+			},
+			async ({ abortController }) => {
+				const opts = {
+					environmentId: "agent-isolated",
+					adapter: adapterRegistry.pi.create(),
+					abort: abortController.signal,
+					abortController,
+				};
+				await heartbeatLoop(
+					opts,
+					new ApiClient({ requireAuth: false }),
+					new RetryQueue({ agentType: "pi" }),
+					abortController.signal,
+					() => {
+						abortController.abort();
+						return { last_revision_seen: null, last_sync_error: "z".repeat(10_000) };
+					},
+					() => {},
+				);
+			},
+		);
+		expect(reported).toBe("z".repeat(1000));
+	});
+
+	it("reloads a hash replaced by another process on the next scan", async () => {
+		await withStartupCase(
+			async () => Response.json({ id: "agent-isolated" }),
+			async ({ abortController }) => {
+				const session: RawSession = {
+					localSessionId: "external-write",
+					projectPath: null,
+					startedAt: new Date(0),
+					endedAt: null,
+					messageCount: 1,
+					inputTokens: 0,
+					outputTokens: 0,
+					cacheReadTokens: 0,
+					model: null,
+					modelsUsed: [],
+					durationSeconds: null,
+					summary: null,
+					messages: [{ role: "user", content: "new content" }],
+					rawFilePath: "/sessions/external-write",
+				};
+				const plan = planSessionUpload(session, "snapshot-v1");
+				const fence = sessionFence(new ApiClient(), {
+					environmentId: "agent-isolated",
+					adapter: "hermes",
+					sourceSessionKey: session.localSessionId,
+				});
+				persistFencedSessionEntry(fence, { protocol: plan.protocol, local_hash: plan.localHash });
+				let scans = 0;
+				let resolved = false;
+				const adapter: AgentAdapter = {
+					agentType: "hermes",
+					detect: async () => true,
+					getVersion: async () => null,
+					sessions: {
+						contentProtocol: async () => "snapshot-v1",
+						watchPaths: () => [],
+						collect: async () => ({ sessions: [], coverage: "complete", dedupedCount: 0 }),
+						scan: async () => ({
+							coverage: "complete",
+							batches: (async function* () {
+								scans++;
+								yield {
+									sessions: [session],
+									observedLocalSessionIds: [session.localSessionId],
+									dedupedCount: 0,
+								};
+								if (scans === 1)
+									persistFencedSessionEntry(fence, {
+										protocol: plan.protocol,
+										local_hash: "old hash",
+									});
+							})(),
+						}),
+						resolve: async () => {
+							resolved = true;
+							abortController.abort();
+							return null;
+						},
+					},
+				};
+				const originalTimeout = globalThis.setTimeout;
+				function fastTimeout(handler: TimerHandler, timeout?: number, ...args: unknown[]): number;
+				function fastTimeout<TArgs extends unknown[]>(
+					handler: (...args: TArgs) => void,
+					timeout?: number,
+					...args: TArgs
+				): ReturnType<typeof setTimeout>;
+				function fastTimeout(
+					handler: TimerHandler,
+					timeout?: number,
+					...args: unknown[]
+				): number | ReturnType<typeof setTimeout> {
+					if (typeof handler !== "function") throw new Error("unexpected string timer");
+					return originalTimeout(() => handler(...args), timeout === 300_000 ? 1 : timeout);
+				}
+				const timerSpy = spyOn(globalThis, "setTimeout").mockImplementation(
+					Object.assign(fastTimeout, { __promisify__: originalTimeout.__promisify__ }),
+				);
+				const deadline = originalTimeout(() => abortController.abort(), 5000);
+				try {
+					await runSyncEngine({
+						environmentId: "agent-isolated",
+						adapter,
+						abort: abortController.signal,
+						abortController,
+						forcePollWatcher: true,
+					});
+					expect(scans).toBeGreaterThanOrEqual(2);
+					expect(resolved).toBe(true);
+				} finally {
+					clearTimeout(deadline);
+					timerSpy.mockRestore();
+					abortController.abort();
+				}
+			},
+		);
+	});
+
+	it("requeues an expired block with the same source revision", async () => {
+		await withStartupCase(
+			async () => Response.json({ id: "agent-isolated" }),
+			async ({ abortController }) => {
+				const session: RawSession = {
+					localSessionId: "expired",
+					projectPath: null,
+					startedAt: new Date(0),
+					endedAt: null,
+					messageCount: 1,
+					inputTokens: 0,
+					outputTokens: 0,
+					cacheReadTokens: 0,
+					model: null,
+					modelsUsed: [],
+					durationSeconds: null,
+					summary: null,
+					messages: [{ role: "user", content: "unchanged" }],
+					rawFilePath: "/sessions/expired",
+					sourceRevision: "same-revision",
+				};
+				const api = new ApiClient();
+				const plan = planSessionUpload(session, "snapshot-v1");
+				persistFencedSessionEntry(
+					sessionFence(api, {
+						environmentId: "agent-isolated",
+						adapter: "hermes",
+						sourceSessionKey: session.localSessionId,
+					}),
+					{
+						protocol: plan.protocol,
+						local_hash: plan.localHash,
+						source_revision: session.sourceRevision,
+						blocked: {
+							code: "legacy_session_too_large",
+							content_hash: plan.localHash,
+							message: "old rejection",
+							cli_version: getCliVersion(),
+							blocked_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+						},
+					},
+				);
+				let resolved = false;
+				const adapter: AgentAdapter = {
+					agentType: "hermes",
+					detect: async () => true,
+					getVersion: async () => null,
+					sessions: {
+						contentProtocol: async () => "snapshot-v1",
+						watchPaths: () => [],
+						collect: async () => ({ sessions: [session], coverage: "complete", dedupedCount: 0 }),
+						scan: async (_request, known) => {
+							expect(known.has(session.localSessionId)).toBe(false);
+							return {
+								coverage: "complete",
+								batches: (async function* () {
+									yield {
+										sessions: [session],
+										observedLocalSessionIds: [session.localSessionId],
+										dedupedCount: 0,
+									};
+								})(),
+							};
+						},
+						resolve: async () => {
+							resolved = true;
+							abortController.abort();
+							return null;
+						},
+					},
+				};
+				const deadline = setTimeout(() => abortController.abort(), 5000);
+				try {
+					await runSyncEngine({
+						environmentId: "agent-isolated",
+						adapter,
+						abort: abortController.signal,
+						abortController,
+						forcePollWatcher: true,
+					});
+					expect(resolved).toBe(true);
+				} finally {
+					clearTimeout(deadline);
+					abortController.abort();
+				}
+			},
+		);
+	});
 
 	it("retains a preparing session while Skills and heartbeats progress, then recovers without restart", async () => {
 		let heartbeats = 0;

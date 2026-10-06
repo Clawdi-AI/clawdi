@@ -20,7 +20,7 @@ export const initialDeploymentCopy = {
 	failureDescription: "Setup stopped before this agent became ready.",
 	retry: "Retry startup",
 	check: "Check again",
-	progress: "Deployment progress",
+	progress: "Setup progress",
 } as const;
 
 export function initialDeploymentPresentation(
@@ -45,7 +45,7 @@ export function initialDeploymentPresentation(
 				? {
 						label: `Installing and starting ${runtimeLabel}`,
 						description:
-							"Provisioning a private workspace, installing the Agent, and confirming readiness.",
+							"Provisioning a private workspace, installing the agent, and confirming readiness.",
 					}
 				: { label: "Ready", description: "Setup is complete." };
 	return {

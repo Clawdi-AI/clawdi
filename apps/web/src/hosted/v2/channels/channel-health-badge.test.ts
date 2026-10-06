@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ChannelHealthItem } from "./channel-types";
-import { HealthBadge } from "./channel-ui";
+import { DiscordConnectionIssueAlert, HealthBadge } from "./channel-ui";
 
 const warningHealth: ChannelHealthItem = {
 	account_id: "00000000-0000-0000-0000-000000000001",
@@ -28,5 +28,17 @@ describe("HealthBadge", () => {
 		);
 		expect(markup).toContain('title="Additional activity: 1 inbound message pending."');
 		expect(markup).not.toContain(">Warning<");
+	});
+});
+
+describe("DiscordConnectionIssueAlert", () => {
+	test("renders the token recovery guidance", () => {
+		const markup = renderToStaticMarkup(
+			createElement(DiscordConnectionIssueAlert, { issue: "authentication_failed" }),
+		);
+
+		expect(markup).toContain("Discord bot token rejected");
+		expect(markup).toContain("Update the bot token to reconnect.");
+		expect(markup).toContain('role="alert"');
 	});
 });

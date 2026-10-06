@@ -180,7 +180,7 @@ export function agentPluginInstallability(
 		return {
 			installable: false,
 			label: "Unavailable",
-			reason: "This plugin is not compatible with this Agent.",
+			reason: "This plugin is not compatible with this agent.",
 		};
 	}
 	return { installable: true, label: "Install", reason: null };
@@ -363,14 +363,14 @@ function observationErrorDescription(
 ): string {
 	switch (code) {
 		case "reconcile_failed":
-			return "The agent could not apply this plugin.";
+			return "The agent couldn't apply this plugin.";
 		case "receipt_missing":
-			return "The plugin could not be verified after setup.";
+			return "The plugin couldn't be verified after setup.";
 		case "receipt_unreadable":
-			return "The plugin installation could not be verified.";
+			return "The plugin installation couldn't be verified.";
 		case "receipt_mismatch":
 			return "The installed plugin does not match the requested version.";
 		default:
-			return "The plugin could not be set up. Remove it and try again.";
+			return "The plugin couldn't be set up. Remove it and try again.";
 	}
 }

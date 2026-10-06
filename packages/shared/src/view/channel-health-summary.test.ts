@@ -63,13 +63,13 @@ describe("channel health summaries", () => {
 			[
 				"runtime_observation_missing",
 				"Setting up",
-				"The channel is waiting for the Agent to finish setup.",
+				"The channel is waiting for the agent to finish setup.",
 			],
-			["runtime_observation_stale", "Agent offline", "The linked Agent is not currently online."],
+			["runtime_observation_stale", "Agent offline", "The linked agent is not currently online."],
 			[
 				"runtime_not_converged",
 				"Setting up",
-				"The Agent is still applying this channel's settings.",
+				"The agent is still applying this channel's settings.",
 			],
 			[
 				"runtime_observation_unknown",
@@ -98,7 +98,7 @@ describe("channel health summaries", () => {
 			channelHealthSummary(health({ health_status: "warning", reasons: ["agent_not_linked"] })),
 		).toEqual({
 			label: "Not linked",
-			detail: "This channel is not linked to an Agent.",
+			detail: "This channel is not linked to an agent.",
 		});
 	});
 
@@ -117,7 +117,7 @@ describe("channel health summaries", () => {
 			),
 		).toEqual({
 			label: "Channel unavailable",
-			detail: "The Agent reported a problem with this channel. Open Health for details.",
+			detail: "The agent reported a problem with this channel. Open Health for details.",
 		});
 	});
 });

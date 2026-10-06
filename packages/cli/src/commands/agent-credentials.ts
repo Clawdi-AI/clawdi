@@ -133,7 +133,7 @@ interface FilePlan {
 
 function requireAuth() {
 	if (!isLoggedIn()) {
-		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
+		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
 		process.exit(1);
 	}
 }
@@ -547,7 +547,7 @@ export async function collectAgentCredentialProfilePayload(
 	}
 
 	if (!opts.yes) {
-		const destination = opts.destinationLabel ?? "Clawdi Vault";
+		const destination = opts.destinationLabel ?? "Clawdi vault";
 		const ok = await p.confirm({ message: `Import this credential profile into ${destination}?` });
 		if (p.isCancel(ok) || !ok) {
 			p.cancel("Cancelled.");

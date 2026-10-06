@@ -63,8 +63,8 @@ export default function SharedSessionLinksPage() {
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, sharedSessionLinksClasses.page)}>
 			<PageHeader
-				title="Shared Session links"
-				description="Review and turn off every active Session link from one place."
+				title="Shared Session Links"
+				description="Review and turn off every active session link from one place."
 				actions={
 					<Button render={<Link to="/sessions" />} nativeButton={false} variant="outline" size="sm">
 						<ArrowLeft />
@@ -84,11 +84,11 @@ export default function SharedSessionLinksPage() {
 			) : items.length === 0 ? (
 				<EmptyState
 					icon={Link2}
-					title="No active Session links"
-					description="Links you create from a Session will appear here."
+					title="No active session links"
+					description="Links you create from a session will appear here."
 					action={
 						<Button render={<Link to="/sessions" />} nativeButton={false} variant="outline">
-							Browse Sessions
+							Browse sessions
 						</Button>
 					}
 				/>
@@ -179,7 +179,7 @@ function SharedLinkRow({
 				</p>
 				{share.kind === "live" ? (
 					<p className={sharedSessionLinksClasses.meta}>
-						Updates when the Session is uploaded again.
+						Updates when the session is uploaded again.
 					</p>
 				) : null}
 			</div>
@@ -213,7 +213,7 @@ function SharedLinkRow({
 					<AlertDialogHeader>
 						<AlertDialogTitle>Turn off this share link?</AlertDialogTitle>
 						<AlertDialogDescription>
-							Anyone using this link will immediately lose access. The original Session stays
+							Anyone using this link will immediately lose access. The original session stays
 							unchanged.
 						</AlertDialogDescription>
 					</AlertDialogHeader>

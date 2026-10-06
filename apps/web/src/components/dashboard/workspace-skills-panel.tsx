@@ -136,7 +136,7 @@ export function ConnectedWorkspaceSkillsPanel({
 					<DialogHeader>
 						<DialogTitle>{agentSurfaceCopy.installSkill}</DialogTitle>
 						<DialogDescription>
-							Enter a GitHub Skill path, then run the generated command on the Agent machine.
+							Enter a GitHub skill path, then run the generated command on the agent machine.
 						</DialogDescription>
 					</DialogHeader>
 					<div className={workspaceSkillsPanelClasses.form}>
@@ -181,7 +181,7 @@ function ConnectedSkillRemoveAction({
 				size="icon-sm"
 				className={workspaceSkillsPanelClasses.removeAction}
 				onClick={() => setOpen(true)}
-				aria-label={`Uninstall ${skill.name} from Agent`}
+				aria-label={`Uninstall ${skill.name} from agent`}
 			>
 				<Trash2 className={workspaceSkillsPanelClasses.actionIcon} />
 			</Button>

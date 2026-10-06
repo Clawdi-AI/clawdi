@@ -245,7 +245,7 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 			title={
 				pluginName ? pluginDisplayName(items[0] ?? { name: pluginName }) : agentSurfaceCopy.plugins
 			}
-			description="Install Skills and MCP servers for this agent."
+			description="Install skills and MCP servers for this agent."
 		>
 			<Stack.Screen options={{ headerSearchBarOptions: pluginName ? undefined : headerSearch }} />
 			<ListToolbar

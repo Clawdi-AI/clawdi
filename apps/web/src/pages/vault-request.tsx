@@ -1,7 +1,8 @@
-import { ApiClientError, type components, createVaultSupplyClient } from "@clawdi/shared/api";
+import type { components, paths } from "@clawdi/shared/api";
 import { vaultRequestClasses } from "@clawdi/shared/ui";
 import { buildVaultSupplyAgentMessage, VAULT_REQUEST_COPY } from "@clawdi/shared/view";
 import { Eye, EyeOff } from "lucide-react";
+import createClient from "openapi-fetch";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,10 +24,7 @@ import {
 import { env } from "@/lib/env";
 
 type RequestContext = components["schemas"]["VaultSecretRequestStatus"];
-const client = createVaultSupplyClient({
-	baseUrl: env.VITE_CLAWDI_API_URL,
-	fetch: (request, init) => fetch(request, init),
-});
+const client = createClient<paths>({ baseUrl: env.VITE_CLAWDI_API_URL });
 const UNAVAILABLE = VAULT_REQUEST_COPY.unavailable;
 
 function SecretInput({
@@ -157,8 +155,13 @@ export function VaultRequestPage() {
 		const controller = new AbortController();
 		setPhase("loading");
 		void client
-			.inspect(token.current, undefined, controller.signal)
-			.then((data) => {
+			.POST("/v1/vault/requests/inspect", {
+				body: { token: token.current },
+				cache: "no-store",
+				referrerPolicy: "no-referrer",
+				signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
+			})
+			.then(({ data, response }) => {
 				if (controller.signal.aborted) return;
 				if (data) {
 					setContext(data);
@@ -172,19 +175,15 @@ export function VaultRequestPage() {
 					);
 					setUpdates(data.update_fields);
 					setPhase("ready");
+				} else if (response.status === 410 || response.status === 422) setPhase("unavailable");
+				else {
+					setError("Couldn't load this request. Try again.");
+					setPhase("error");
 				}
 			})
-			.catch((error: unknown) => {
+			.catch(() => {
 				if (!controller.signal.aborted) {
-					if (error instanceof ApiClientError && [410, 422].includes(error.status)) {
-						setPhase("unavailable");
-						return;
-					}
-					setError(
-						error instanceof ApiClientError
-							? "Could not load this request. Try again."
-							: "Could not connect. Try again.",
-					);
+					setError("Couldn't connect. Try again.");
 					setPhase("error");
 				}
 			});
@@ -220,37 +219,42 @@ export function VaultRequestPage() {
 		const generation = selectionGeneration.current;
 		const timer = window.setTimeout(() => {
 			void client
-				.inspect(token.current, fields, controller.signal)
-				.then((data) => {
-					if (controller.signal.aborted || generation !== selectionGeneration.current) return;
-					setUpdates(data.update_fields);
-					setSelectionReady(true);
+				.POST("/v1/vault/requests/inspect", {
+					body: { token: token.current, fields },
+					cache: "no-store",
+					referrerPolicy: "no-referrer",
+					signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]),
 				})
-				.catch((error: unknown) => {
+				.then(({ data, response }) => {
 					if (controller.signal.aborted || generation !== selectionGeneration.current) return;
-					const status = error instanceof ApiClientError ? error.status : undefined;
-					if (status === 410) {
+					if (data) {
+						setUpdates(data.update_fields);
+						setSelectionReady(true);
+					} else if (response.status === 410) {
 						setRows([]);
 						setImportText("");
 						setPreview(undefined);
 						token.current = "";
 						setPhase("unavailable");
-					} else if (status === 409) {
+					} else if (response.status === 409) {
 						setSelectionError(
 							"Selected fields changed or are reserved. Remove added fields or ask your agent for a new link.",
 						);
-					} else if (status === 422) {
+					} else if (response.status === 422) {
 						setSelectionError(
 							"Selected field names are invalid. Use distinct names and at most 32 fields.",
 						);
 					} else {
 						setSelectionError(
-							status === undefined
-								? "Could not connect to check selected fields. Try again."
-								: "Could not check selected fields. The server is unavailable. Try again.",
+							"Couldn't check selected fields. The server is unavailable. Try again.",
 						);
 						setSelectionRetryable(true);
 					}
+				})
+				.catch(() => {
+					if (controller.signal.aborted || generation !== selectionGeneration.current) return;
+					setSelectionError("Couldn't connect to check selected fields. Try again.");
+					setSelectionRetryable(true);
 				});
 		}, 300);
 		return () => {
@@ -279,27 +283,31 @@ export function VaultRequestPage() {
 		}
 		setImportBusy(true);
 		try {
-			const data = await client.inspect(token.current, fields);
-			setPreview({ entries: parsed.entries, updateFields: data.update_fields });
-		} catch (error) {
-			const status = error instanceof ApiClientError ? error.status : undefined;
-			if (status === 410) {
-				setRows([]);
-				setImportText("");
-				setPreview(undefined);
-				token.current = "";
-				setPhase("unavailable");
-			} else if (status === 409) {
-				setError("Could not preview these fields. A selected field changed or is reserved.");
-			} else if (status === 422) {
-				setError("Selected field names are invalid. Use distinct names and at most 32 fields.");
-			} else {
-				setError(
-					status === undefined
-						? "Could not connect. Try previewing again."
-						: "Could not preview these fields. The server is unavailable. Try again.",
-				);
+			const { data, response } = await client.POST("/v1/vault/requests/inspect", {
+				body: { token: token.current, fields },
+				cache: "no-store",
+				referrerPolicy: "no-referrer",
+				signal: AbortSignal.timeout(20000),
+			});
+			if (!data) {
+				if (response.status === 410) {
+					setRows([]);
+					setImportText("");
+					setPreview(undefined);
+					token.current = "";
+					setPhase("unavailable");
+				} else if (response.status === 409) {
+					setError("Couldn't preview these fields. A selected field changed or is reserved.");
+				} else if (response.status === 422) {
+					setError("Selected field names are invalid. Use distinct names and at most 32 fields.");
+				} else {
+					setError("Couldn't preview these fields. The server is unavailable. Try again.");
+				}
+				return;
 			}
+			setPreview({ entries: parsed.entries, updateFields: data.update_fields });
+		} catch {
+			setError("Couldn't connect. Try previewing again.");
 		} finally {
 			setImportBusy(false);
 		}
@@ -333,36 +341,39 @@ export function VaultRequestPage() {
 		setPhase("saving");
 		setError("");
 		try {
-			const data = await client.supply(
-				token.current,
-				Object.fromEntries(rows.map((row) => [row.name, row.value])),
-			);
-			setContext(data);
-			setRows([]);
-			setImportText("");
-			setPreview(undefined);
-			token.current = "";
-			setPhase("done");
-		} catch (error) {
-			const status = error instanceof ApiClientError ? error.status : undefined;
-			if (status === 409) {
-				setPhase("ready");
-				invalidateSelection();
-			} else if (status === 410) {
+			const { data, response } = await client.POST("/v1/vault/requests/supply", {
+				body: {
+					token: token.current,
+					fields: Object.fromEntries(rows.map((row) => [row.name, row.value])),
+				},
+				cache: "no-store",
+				referrerPolicy: "no-referrer",
+				signal: AbortSignal.timeout(20000),
+			});
+			if (data) {
+				setContext(data);
 				setRows([]);
 				setImportText("");
 				setPreview(undefined);
 				token.current = "";
-				setPhase("unavailable");
-			} else if (status !== undefined && status < 500) {
-				setError("Could not save. Supply every requested field and try again.");
+				setPhase("done");
+			} else if (response.status === 409) {
 				setPhase("ready");
+				invalidateSelection();
+			} else if (response.status === 410) {
+				setRows([]);
+				setImportText("");
+				setPreview(undefined);
+				setPhase("unavailable");
 			} else {
-				setError(
-					"Save could not be confirmed. Ask your agent to check the request status before trying again.",
-				);
+				setError("Couldn't save. Supply every requested field and try again.");
 				setPhase("ready");
 			}
+		} catch {
+			setError(
+				"Save couldn't be confirmed. Ask your agent to check the request status before trying again.",
+			);
+			setPhase("ready");
 		}
 	}
 
@@ -414,7 +425,7 @@ export function VaultRequestPage() {
 							<p className={vaultRequestClasses.receipt}>{agentMessage}</p>
 							{copyState === "error" && (
 								<p role="alert" className={vaultRequestClasses.error}>
-									Could not copy. Select and copy the message above manually.
+									Couldn't copy. Select and copy the message above manually.
 								</p>
 							)}
 							<div className={vaultRequestClasses.footer}>
@@ -584,7 +595,7 @@ export function VaultRequestPage() {
 															),
 														);
 													} catch {
-														setError("Could not read a UTF-8 text file.");
+														setError("Couldn't read a UTF-8 text file.");
 													} finally {
 														setImportBusy(false);
 													}
@@ -610,7 +621,7 @@ export function VaultRequestPage() {
 																? "Fill requested field"
 																: "Add field"}
 														{preview.updateFields.includes(entry.key)
-															? " · Update existing Vault value on save"
+															? " · Update existing vault value on save"
 															: ""}
 													</li>
 												))}

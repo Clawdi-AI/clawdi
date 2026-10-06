@@ -190,11 +190,6 @@ MUTATION_AUTHORITIES = (
     ),
     (
         "app/routes/agent_project_bindings.py",
-        "list_project_bindings",
-        "queue_environment_runtime_manifest_changed",
-    ),
-    (
-        "app/routes/agent_project_bindings.py",
         "add_context_project_binding",
         "queue_environment_runtime_manifest_changed",
     ),

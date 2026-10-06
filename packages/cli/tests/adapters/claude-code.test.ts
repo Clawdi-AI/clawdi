@@ -2,13 +2,15 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
+import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
+import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
 import {
 	managedSkillReservationState,
 	releaseManagedSkill,
 	reserveManagedSkill,
 } from "../../src/runtime/managed-skill-reservation";
-import { addSkillDirectorySymlinkCases, cleanupTmp, copyFixtureToTmp } from "./helpers";
+import { cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
 let origHome: string | undefined;
@@ -74,6 +76,122 @@ describe("ClaudeCodeAdapter.detect", () => {
 });
 
 describe("ClaudeCodeAdapter.collectSessions", () => {
+	it("ignores invalid metadata timestamps without changing uploaded content", async () => {
+		const adapter = new ClaudeCodeAdapter();
+		const original = (await adapter.sessions.collect({ kind: "complete" })).sessions[0];
+		if (!original) throw new Error("expected Claude fixture session");
+		writeFileSync(
+			original.rawFilePath,
+			`${readFileSync(original.rawFilePath, "utf8").replace(
+				"2026-04-20T10:00:00.000Z",
+				"not-a-timestamp",
+			)}${JSON.stringify({ type: "session-metadata", timestamp: "not-a-timestamp" })}\n`,
+		);
+		const current = (await adapter.sessions.collect({ kind: "complete" })).sessions[0];
+		if (!current) throw new Error("expected Claude fixture session with valid message timestamps");
+		expect(current.startedAt.toISOString()).toBe("2026-04-20T10:00:01.000Z");
+		expect(current.endedAt?.toISOString()).toBe("2026-04-20T10:00:05.000Z");
+		expect(current.events).toEqual(original.events);
+		expect((await prepareSessionUpload(current, "events-v1")).localHash).toBe(
+			(await prepareSessionUpload(original, "events-v1")).localHash,
+		);
+	});
+
+	it("bounds models in metadata records that emit no events", async () => {
+		const adapter = new ClaudeCodeAdapter();
+		const session = (await adapter.sessions.collect({ kind: "complete" })).sessions[0];
+		if (!session) throw new Error("expected Claude fixture session");
+		const records = Array.from({ length: 128 }, (_, index) =>
+			JSON.stringify({
+				type: "assistant",
+				message: { role: "assistant", model: `model-${index}`, content: [] },
+			}),
+		);
+		writeFileSync(
+			session.rawFilePath,
+			`${readFileSync(session.rawFilePath, "utf8")}${records.join("\n")}\n`,
+		);
+		await expect(adapter.sessions.collect({ kind: "complete" })).rejects.toThrow(
+			"session model metadata exceeds supported bounds",
+		);
+	});
+
+	it("keeps a two-record prompt and answer transcript", async () => {
+		const file = join(tmpHome, ".claude", "projects", "-Users-fixture-project", "two-record.jsonl");
+		writeFileSync(
+			file,
+			[
+				{
+					uuid: "short-user",
+					timestamp: "2026-10-06T01:00:00.000Z",
+					message: { role: "user", content: "Short prompt" },
+				},
+				{
+					uuid: "short-assistant",
+					timestamp: "2026-10-06T01:00:01.000Z",
+					message: { role: "assistant", content: "Short answer" },
+				},
+			]
+				.map((record) => JSON.stringify(record))
+				.join("\n") + "\n",
+		);
+		const session = await new ClaudeCodeAdapter().sessions.resolve("two-record");
+		expect(session?.messageCount).toBe(2);
+		expect(session?.messages.map((message) => message.content)).toEqual([
+			"Short prompt",
+			"Short answer",
+		]);
+	});
+
+	it("describes the first projected user message for the summary", async () => {
+		const file = join(tmpHome, ".claude", "projects", "-Users-fixture-project", "summary.jsonl");
+		writeFileSync(
+			file,
+			[
+				{
+					uuid: "summary-user",
+					timestamp: "2026-10-06T01:00:00.000Z",
+					message: {
+						role: "user",
+						content: [
+							{ type: "text", text: "First paragraph" },
+							{ type: "text", text: "Second paragraph" },
+						],
+					},
+				},
+				{
+					uuid: "summary-assistant",
+					timestamp: "2026-10-06T01:00:01.000Z",
+					message: { role: "assistant", content: "Answer" },
+				},
+			]
+				.map((record) => JSON.stringify(record))
+				.join("\n") + "\n",
+		);
+		const session = await new ClaudeCodeAdapter().sessions.resolve("summary");
+		expect(session?.summary).toBe("First paragraph\nSecond paragraph");
+		expect(session?.summary).toBe(session?.messages[0]?.content);
+	});
+
+	it("counts shared multi-block message usage once and still counts records without an id", async () => {
+		const file = join(
+			tmpHome,
+			".claude",
+			"projects",
+			"-Users-fixture-project",
+			"usage-dedup.jsonl",
+		);
+		cpSync(resolve(import.meta.dir, "../fixtures/claude-usage-dedup.jsonl"), file);
+		const session = await new ClaudeCodeAdapter().sessions.resolve("usage-dedup");
+		expect(session).toMatchObject({ inputTokens: 9, outputTokens: 16, cacheReadTokens: 4 });
+		expect(
+			session?.events?.filter((event) => event.source.record_id.startsWith("block-")),
+		).toHaveLength(3);
+	});
+
+	it("preserves origin/main session bytes and localHash", async () => {
+		await assertSessionGolden("claude-code", new ClaudeCodeAdapter().sessions);
+	});
 	it("parses the fixture session with correct tokens and model", async () => {
 		const a = new ClaudeCodeAdapter();
 		const { sessions, dedupedCount } = await a.sessions.collect({ kind: "complete" });
@@ -162,12 +280,12 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 		expect(notMatched.sessions).toHaveLength(0);
 	});
 
-	it("skips sessions with fewer than 3 JSONL lines", async () => {
+	it("skips transcripts without projected messages", async () => {
 		const shortPath = join(tmpHome, ".claude", "projects", "-Users-fixture-project", "short.jsonl");
 		writeFileSync(shortPath, `${JSON.stringify({ timestamp: "2026-04-20T10:00:00Z" })}\n`);
 		const a = new ClaudeCodeAdapter();
 		const { sessions } = await a.sessions.collect({ kind: "complete" });
-		// original long session still counts, short file is skipped
+		// The original session counts; a metadata-only file has no projected messages.
 		expect(sessions).toHaveLength(1);
 	});
 
@@ -382,7 +500,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		expect(result.sessions.map((s) => s.localSessionId).sort()).toEqual(["aaaa-aaaa", "bbbb-bbbb"]);
 	});
 
-	it("does not consider sessions with fewer than 10 uuids as predecessors", async () => {
+	it("dedupes short predecessors when their UUIDs are a strict subset", async () => {
 		const cwd = "/Users/fixture/resume-too-short";
 		const aUuids = uuidRange("u", 5);
 		const bUuids = [...aUuids, ...uuidRange("v", 15)];
@@ -393,8 +511,8 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		const adapter = new ClaudeCodeAdapter();
 		const result = await adapter.sessions.collect({ kind: "complete", projectFilter: cwd });
 
-		expect(result.dedupedCount).toBe(0);
-		expect(result.sessions.map((s) => s.localSessionId).sort()).toEqual(["aaaa-aaaa", "bbbb-bbbb"]);
+		expect(result.dedupedCount).toBe(1);
+		expect(result.sessions.map((s) => s.localSessionId).sort()).toEqual(["bbbb-bbbb"]);
 	});
 
 	it("does not dedupe a single session in a project (group of 1)", async () => {
@@ -420,28 +538,6 @@ describe("ClaudeCodeAdapter.collectSkills", () => {
 		const demo = skills.find((s) => s.skillKey === "demo")!;
 		expect(demo.content).toContain("description: A demo skill");
 		expect(demo.filePath).toContain("/.claude/skills/demo/SKILL.md");
-	});
-
-	it("discovers safe top-level directory symlinks and isolates unsafe ones", async () => {
-		const root = join(tmpHome, ".claude", "skills");
-		const linked = addSkillDirectorySymlinkCases(root, join(tmpHome, "outside-claude-skill"));
-		const adapter = new ClaudeCodeAdapter();
-		const skills = await adapter.skills.collect();
-		expect(skills.map((skill) => skill.skillKey).sort()).toEqual(["demo", "linked"]);
-		expect(skills.find((skill) => skill.skillKey === "linked")?.directoryPath).toBe(linked);
-		expect((await adapter.skills.listKeys()).sort()).toEqual(["demo", "linked"]);
-	});
-
-	it("does not scan a hidden managed Skill recovery directory", async () => {
-		const recovery = join(tmpHome, ".claude", "skills", ".clawdi-previous-test");
-		mkdirSync(recovery, { recursive: true });
-		writeFileSync(join(recovery, "SKILL.md"), "# Managed recovery artifact\n");
-
-		const adapter = new ClaudeCodeAdapter();
-		expect((await adapter.skills.collect()).map((skill) => skill.skillKey)).not.toContain(
-			".clawdi-previous-test",
-		);
-		expect(await adapter.skills.listKeys()).not.toContain(".clawdi-previous-test");
 	});
 
 	it("adopts a pre-ledger bundled clawdi target without uploading it", async () => {

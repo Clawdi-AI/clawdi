@@ -17,10 +17,10 @@ export function AddAgentDialog({ open, onClose }: { open: boolean; onClose: () =
 		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
 			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
 				<DialogHeader>
-					<DialogTitle>Add an Agent</DialogTitle>
+					<DialogTitle>Add an agent</DialogTitle>
 					<DialogDescription>
-						Connect an Agent on your machine — Claude Code, Codex, Hermes, OpenClaw, Pi, or
-						OpenCode.
+						Connect an agent you run on your machine or server — Claude Code, Codex, Hermes,
+						OpenClaw, Pi, or OpenCode.
 					</DialogDescription>
 				</DialogHeader>
 				<AddAgentSetup />

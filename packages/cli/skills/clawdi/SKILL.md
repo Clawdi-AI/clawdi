@@ -1,11 +1,11 @@
 ---
 name: clawdi
-description: "API keys, tokens, memory, sessions, Projects, integrations. Use Clawdi Cloud when a task needs passwords or safe credential storage/provision, missing user memory or Project/Vault context, past conversations, Clawdi share URLs, or connected-service fallback such as Gmail, GitHub, Notion, Drive, or Calendar. Do not invoke solely because a project, person, repo, or tool is named."
+description: "API keys, tokens, memory, sessions, Projects, integrations. Use Clawdi when a task needs passwords or safe credential storage/provision, missing user memory or Project/Vault context, past conversations, Clawdi share URLs, or connected-service fallback such as Gmail, GitHub, Notion, Drive, or Calendar. Do not invoke solely because a project, person, repo, or tool is named."
 ---
 
-# Clawdi Cloud
+# Clawdi
 
-Use Clawdi Cloud tools through the `clawdi` MCP server when they provide context or
+Use Clawdi tools through the `clawdi` MCP server when they provide context or
 capabilities unavailable more directly.
 
 ## Context Routing

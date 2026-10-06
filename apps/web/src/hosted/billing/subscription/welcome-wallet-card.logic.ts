@@ -11,8 +11,8 @@ export function welcomeWalletDescription({
 }): string {
 	if (grantApplied) {
 		return grantAmount
-			? `Your ${grantAmount} welcome balance is available in your Wallet.`
-			: "Your welcome balance is available in your Wallet.";
+			? `Your ${grantAmount} welcome balance is available in your wallet.`
+			: "Your welcome balance is available in your wallet.";
 	}
 	if (grantPending) {
 		if (grantCheckTimedOut) return "It hasn’t appeared yet. Refresh to check again.";
@@ -21,5 +21,5 @@ export function welcomeWalletDescription({
 			: "Your welcome balance is on the way.";
 		return balance;
 	}
-	return "Your Wallet is ready.";
+	return "Your wallet is ready.";
 }

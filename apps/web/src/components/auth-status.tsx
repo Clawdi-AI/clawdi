@@ -1,5 +1,6 @@
-import { Link } from "@tanstack/react-router";
+import { useRouterState } from "@tanstack/react-router";
 import { LoaderCircle, LogIn, RotateCcw } from "lucide-react";
+import { AuthActionLink } from "@/components/auth-action-link";
 import { Button } from "@/components/ui/button";
 
 export function AuthStatus({
@@ -13,13 +14,14 @@ export function AuthStatus({
 	signingIn?: boolean;
 	error?: string | null;
 }) {
+	const href = useRouterState({ select: (state) => state.location.href });
 	return (
 		<section className="flex min-h-64 flex-col items-center justify-center gap-4 p-6">
 			{status === "loading" ? (
 				<LoaderCircle className="size-5 animate-spin" role="status" aria-label="Loading session" />
 			) : (
 				<p className="text-sm text-muted-foreground">
-					{status === "signed-out" ? "Please sign in to continue." : "Session unavailable."}
+					{status === "signed-out" ? "Sign in to continue." : "Session unavailable."}
 				</p>
 			)}
 			{onSignIn ? (
@@ -28,7 +30,7 @@ export function AuthStatus({
 					Sign in again
 				</Button>
 			) : status === "signed-out" ? (
-				<Button nativeButton={false} render={<Link to="/sign-in" />}>
+				<Button nativeButton={false} render={<AuthActionLink href={href} />}>
 					<LogIn className="size-4" />
 					Sign in
 				</Button>

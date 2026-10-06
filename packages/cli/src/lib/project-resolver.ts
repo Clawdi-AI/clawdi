@@ -1,4 +1,4 @@
-import { ApiError, readJson } from "./api-client";
+import { ApiClient, ApiError, readJson } from "./api-client";
 
 /**
  * Resolve a user-supplied `<project>` argument to a backend project UUID.
@@ -34,10 +34,9 @@ export async function resolveProjectId(
 	bearer: string,
 	input: string | undefined,
 ): Promise<string> {
+	const api = new ApiClient({ authToken: bearer, baseUrl: apiUrl });
 	if (!input || input === "default") {
-		const r = await fetch(`${apiUrl}/v1/projects/default`, {
-			headers: { Authorization: `Bearer ${bearer}` },
-		});
+		const r = await api.request("/v1/projects/default");
 		if (!r.ok) {
 			throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 		}
@@ -83,9 +82,9 @@ function parseOwnerQualifiedProject(
 }
 
 export async function listProjects(apiUrl: string, bearer: string): Promise<ProjectBrief[]> {
-	const projectResponse = await fetch(`${apiUrl}/v1/projects`, {
-		headers: { Authorization: `Bearer ${bearer}` },
-	});
+	const projectResponse = await new ApiClient({ authToken: bearer, baseUrl: apiUrl }).request(
+		"/v1/projects",
+	);
 	if (!projectResponse.ok) {
 		throw new ApiError({
 			status: projectResponse.status,

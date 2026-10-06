@@ -1412,7 +1412,6 @@ async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped_an
         [
             ("ai_provider.managed.upsert", "success", seed_user.id),
             ("ai_provider.managed.credential.rotate", "success", seed_user.id),
-            ("ai_provider.managed.read", "success", seed_user.id),
             ("ai_provider.managed.read", "cross_owner_denied", other.id),
             ("ai_provider.managed.delete", "cross_owner_denied", other.id),
             ("ai_provider.managed.runtime_metadata.replace", "cross_owner_denied", other.id),
@@ -1959,6 +1958,7 @@ async def test_admin_deployment_provider_invalidates_only_bound_runtime_on_manif
     from sqlalchemy import select
 
     from app.models.ai_provider import AiProvider, AiProviderAuthPayload
+    from app.models.audit import ControlPlaneAuditEvent
     from app.models.hosted_runtime import HostedRuntimeState
     from app.models.user import User
     from app.services import sync_events
@@ -1966,6 +1966,19 @@ async def test_admin_deployment_provider_invalidates_only_bound_runtime_on_manif
 
     deployment_id = "8403"
     provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}{deployment_id}"
+
+    async def provider_audit_details(action: str) -> list[dict]:
+        return list(
+            (
+                await db_session.execute(
+                    select(ControlPlaneAuditEvent.details).where(
+                        ControlPlaneAuditEvent.action == action,
+                        ControlPlaneAuditEvent.resource_id == provider_id,
+                    )
+                )
+            ).scalars()
+        )
+
     owner = {"kind": "clerk", "ref": seed_user.clerk_id}
     other = User(clerk_id="managed_provider_manifest_event_other_owner")
     db_session.add(other)
@@ -2115,6 +2128,7 @@ async def test_admin_deployment_provider_invalidates_only_bound_runtime_on_manif
         assert readback.json()["runtime_env_name"] == MANAGED_AI_PROVIDER_RUNTIME_ENV
         assert readback.json()["base_url"] == request_body["base_url"]
         assert readback.json()["models"] == request_body["models"]
+        assert await provider_audit_details("ai_provider.managed.read") == []
         await db_session.refresh(provider)
         assert provider.api_mode == "openai_chat"
         assert provider.runtime_env_name == legacy_runtime_env
@@ -2141,6 +2155,12 @@ async def test_admin_deployment_provider_invalidates_only_bound_runtime_on_manif
         assert provider.base_url == legacy_metadata["base_url"]
         assert provider.models == legacy_metadata["models"]
         assert preserved_storage() == preserved
+        upgrade_audits = await provider_audit_details(
+            "ai_provider.managed.runtime_metadata.replace"
+        )
+        assert len(upgrade_audits) == 1
+        assert upgrade_audits[0]["outcome"] == "success"
+        assert upgrade_audits[0]["metadata_before"] != upgrade_audits[0]["metadata_after"]
 
         unchanged_at = datetime.now(UTC) - timedelta(days=1)
         provider.updated_at = unchanged_at
@@ -2153,6 +2173,10 @@ async def test_admin_deployment_provider_invalidates_only_bound_runtime_on_manif
         await db_session.refresh(provider)
         assert provider.updated_at == unchanged_at
         assert all(queue.empty() for queue in queues)
+        assert (
+            await provider_audit_details("ai_provider.managed.runtime_metadata.replace")
+            == upgrade_audits
+        )
 
         metadata = {
             "owner": owner,
@@ -2177,6 +2201,11 @@ async def test_admin_deployment_provider_invalidates_only_bound_runtime_on_manif
         assert changed.json()["base_url"] == metadata["base_url"]
         assert changed.json()["models"] == metadata["models"]
         assert_only_bound_event()
+        change_audits = await provider_audit_details("ai_provider.managed.runtime_metadata.replace")
+        assert len(change_audits) == 2
+        [change_audit] = [audit for audit in change_audits if audit != upgrade_audits[0]]
+        assert change_audit["metadata_before"] == upgrade_audits[0]["metadata_after"]
+        assert change_audit["metadata_before"] != change_audit["metadata_after"]
         await db_session.refresh(provider)
         await db_session.refresh(payload)
         assert preserved_storage() == preserved

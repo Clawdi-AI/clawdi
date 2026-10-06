@@ -12,6 +12,7 @@ export const billingKeys = {
 	subscriptionCreateQuote: (planSlug: string, billingTermMonths: number, fundingSource: string) =>
 		[...subscriptionCreateQuotes, planSlug, billingTermMonths, fundingSource] as const,
 	plans: ["billing", "plans"] as const,
+	trialOffer: (channel: string) => ["billing", "trial-offer", channel] as const,
 	subscriptions: ["billing", "subscriptions"] as const,
 	includedBasicAvailability: ["billing", "included-basic-availability"] as const,
 	reusableSubscriptions: ["billing", "reusable-subscriptions"] as const,

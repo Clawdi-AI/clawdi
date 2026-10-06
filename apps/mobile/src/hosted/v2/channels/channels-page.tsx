@@ -325,7 +325,7 @@ function ChannelsView() {
 										}
 									>
 										<Icon as={Link2} />
-										<Text>Link Agent</Text>
+										<Text>Link agent</Text>
 									</Button>
 									{item.kind === "custom" ? (
 										<Button

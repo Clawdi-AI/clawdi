@@ -112,6 +112,7 @@ jobs:
           printf '%s  %s\n' "$tarball_sha" "$tarball" > "$release_dir/$tarball.sha256"
           cp dist-release/clawdi-cli-*.tar.gz "$release_dir/"
           cp dist-release/clawdi-cli-manifest.txt "$release_dir/"
+          cp dist-release/clawdi-cli-manifest-v2.txt "$release_dir/"
           cp ../../install.sh "$release_dir/"
           (cd "$release_dir" && sha256sum --check "$tarball.sha256")
           bun run scripts/check-native-release.mjs "$release_dir" "$(node -p "require('./package.json').version")"
@@ -139,6 +140,8 @@ jobs:
     permissions:
       contents: write
       id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -186,8 +189,9 @@ jobs:
           test -s "$tarball"
           test -s "$tarball.sha256"
           test -s clawdi-cli-manifest.txt
+          test -s clawdi-cli-manifest-v2.txt
           test -s install.sh
-          for target in linux-x64 linux-arm64 linux-x64-musl linux-arm64-musl darwin-x64 darwin-arm64; do
+          for target in linux-x64 linux-arm64 linux-x64-musl linux-arm64-musl darwin-x64 darwin-arm64 win32-x64 win32-arm64; do
             test -s "clawdi-cli-$target.tar.gz"
           done
           sha256sum --check "$tarball.sha256"
@@ -195,6 +199,14 @@ jobs:
           manifest=$(tar -xOf "$tarball" package/package.json)
           test "$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync(0,'utf8')).name)" <<< "$manifest")" = "clawdi"
           test "$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync(0,'utf8')).version)" <<< "$manifest")" = "$VERSION"
+
+      - name: Attest native release archives
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            release/clawdi-cli-*.tar.gz
+            release/clawdi-cli-manifest.txt
+            release/clawdi-cli-manifest-v2.txt
 
       - name: Publish or verify immutable tarball
         id: publish
@@ -277,6 +289,7 @@ jobs:
             assets=(
               release/clawdi-cli-*.tar.gz
               release/clawdi-cli-manifest.txt
+              release/clawdi-cli-manifest-v2.txt
               release/install.sh
             )
             missing_assets=$(RELEASE_JSON="$existing_release" node - "${assets[@]}" <<'NODE'
@@ -322,6 +335,7 @@ jobs:
             release create "$tag"
             release/clawdi-cli-*.tar.gz
             release/clawdi-cli-manifest.txt
+            release/clawdi-cli-manifest-v2.txt
             release/install.sh
             --target "$GITHUB_SHA"
             --title "Clawdi CLI v$VERSION"

@@ -178,7 +178,7 @@ export class DesktopCliService {
 			requestedTypes.size !== requested.length ||
 			requested.some((connection) => !isDesktopAgentType(connection.type))
 		) {
-			throw new Error("Choose at least one supported Agent.");
+			throw new Error("Choose at least one supported agent.");
 		}
 
 		const detected = await this.detectAgents();
@@ -380,7 +380,7 @@ export class DesktopCliService {
 		try {
 			result = await this.runJson(cli, ["auth", "status", "--json"]);
 		} catch (cause) {
-			throw new DesktopCliError("Could not read the local sign-in state.", { cause });
+			throw new DesktopCliError("Couldn't read the local sign-in state.", { cause });
 		}
 		const authenticated =
 			result.authenticated === true && readString(result.credentialType) === "clerk-oauth";
@@ -477,19 +477,19 @@ function runtimeStartError(cause: unknown): DesktopCliError {
 			cause,
 		});
 	}
-	return new DesktopCliError("The bundled Clawdi runtime could not start. Reinstall Clawdi.", {
+	return new DesktopCliError("The bundled Clawdi runtime couldn't start. Reinstall Clawdi.", {
 		cause,
 	});
 }
 
 function parseDetectedAgent(value: unknown): DesktopDetectedAgent {
 	if (!isRecord(value) || !isDesktopAgentType(value.type)) {
-		throw new Error("Clawdi returned an unsupported Agent type.");
+		throw new Error("Clawdi returned an unsupported agent type.");
 	}
 	const displayName = readString(value.displayName);
 	const inspection =
 		value.inspection === "complete" || value.inspection === "failed" ? value.inspection : null;
-	if (!displayName || !inspection) throw new Error("Clawdi returned invalid Agent details.");
+	if (!displayName || !inspection) throw new Error("Clawdi returned invalid agent details.");
 	return {
 		type: value.type,
 		displayName,
@@ -539,6 +539,7 @@ function displayNameFor(type: DesktopAgentType): string {
 			hermes: "Hermes",
 			pi: "Pi",
 			opencode: "OpenCode",
+			dsh: "DeepSeek Harness",
 		} satisfies Record<DesktopAgentType, string>
 	)[type];
 }

@@ -19,7 +19,6 @@ import type {
 	HostedSavedAiProvider,
 } from "@clawdi/shared/api";
 import {
-	DEFAULT_DEPLOY_POLL_LIMIT,
 	type DeployPromptAdapter,
 	deployCommand,
 	type HostedDeployGateway,
@@ -278,7 +277,7 @@ describe("deploy option parsing", () => {
 		]);
 		expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: "" });
 		const normalizedHelp = stdout.replace(/\s+/g, " ");
-		expect(normalizedHelp).toContain("managed, unmanaged, or an exact saved provider id");
+		expect(normalizedHelp).toContain("managed, unmanaged, or an exact saved provider ID");
 		expect(normalizedHelp).toContain("--request-id <uuid>");
 		expect(normalizedHelp).toContain("--compute basic --request-id <uuid> --yes --json");
 		expect(normalizedHelp).toContain("--payment wallet --request-id <uuid> --yes --json");
@@ -712,7 +711,7 @@ describe("deploy orchestration", () => {
 				client,
 				interactive: false,
 			}),
-		).rejects.toThrow("exact provider id");
+		).rejects.toThrow("exact provider ID");
 		await expect(
 			runDeployFlow(parseDeployCommandOptions({ ...base, provider: "needs-key" }), {
 				client,
@@ -1040,7 +1039,7 @@ describe("deploy orchestration", () => {
 		}
 		expect(safeDeployError(secretError)).toEqual({
 			code: "invalid_checkout_response",
-			message: "Hosted returned a browser-only checkout secret that the CLI will not handle.",
+			message: "Clawdi returned a browser-only checkout secret that the CLI won't handle.",
 		});
 		expect(JSON.stringify(safeDeployError(secretError))).not.toContain("must-not-leak");
 
@@ -1063,7 +1062,7 @@ describe("deploy orchestration", () => {
 		});
 		await expect(
 			runDeployFlow(options, { client: mismatchClient, interactive: false }),
-		).rejects.toThrow("requested deployment intent");
+		).rejects.toThrow("requested Cloud Agent");
 	});
 
 	test("reuses the request id and logical Stripe intent across recovery runs", async () => {
@@ -1298,7 +1297,6 @@ describe("deploy orchestration", () => {
 
 		expect(client.requestPolls).toBe(2);
 		expect(result).toMatchObject({ status: "accepted", deployment_id: "hdep_paid" });
-		expect(DEFAULT_DEPLOY_POLL_LIMIT).toBe(1_200);
 	});
 
 	test("uses only projected public terminal failures and hides unknown errors", async () => {
@@ -1334,15 +1332,15 @@ describe("deploy orchestration", () => {
 
 		expect(safeDeployError(terminalError)).toEqual({
 			code: "deployment_failed",
-			message: "Hosted could not complete this deployment.",
+			message: "Clawdi couldn't create this Cloud Agent.",
 		});
 		expect(safeDeployError(new Error("database password leaked"))).toEqual({
 			code: "deploy_failed",
-			message: "Deployment could not be completed. Retry with the same --request-id.",
+			message: "The Cloud Agent couldn't be created. Retry with the same --request-id.",
 		});
 		expect(safeDeployError(new HostedDeployApiError(400, "database password leaked"))).toEqual({
 			code: "hosted_invalid_request",
-			message: "Hosted rejected the deployment input. Review the selected options and retry.",
+			message: "Clawdi rejected the deploy options. Review them and retry.",
 		});
 		expect(safeDeployError(new HostedDeployApiError(402, "internal wallet detail"))).toEqual({
 			code: "insufficient_wallet_balance",

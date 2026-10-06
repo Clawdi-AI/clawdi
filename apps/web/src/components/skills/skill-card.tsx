@@ -107,7 +107,7 @@ export function SkillCard({
 							size="icon-sm"
 							disabled={uninstallPending}
 							className={skillCardClasses.removeAction}
-							aria-label={`Remove ${skill.name} from Project`}
+							aria-label={`Remove ${skill.name} from project`}
 						>
 							<Trash2 className={skillCardClasses.actionIcon} />
 						</Button>

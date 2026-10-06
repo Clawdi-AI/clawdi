@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -11,23 +9,16 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from tests.migration_harness import load_migration
+
 REVISION = "7c2e9a4b6d1f"
 MIGRATION_FILENAME = f"{REVISION}_add_hosted_runtime_apply_generation.py"
-
-
-def _load_migration():
-    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location("hosted_runtime_apply_generation", migration_path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 def test_hosted_runtime_apply_generation_migration_is_additive_and_constrained(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "hosted_runtime_apply_generation")
     schema = f"hosted_runtime_apply_generation_{uuid.uuid4().hex}"
     environment_id = uuid.uuid4()
     sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))

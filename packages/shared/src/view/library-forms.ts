@@ -4,7 +4,7 @@ export const memoryFormCopy = {
 	content: "Memory content",
 	placeholder: "Prefer concise PR summaries…",
 	category: "Category",
-	secrets: "Use Vault for secrets",
+	secrets: "Use vault for secrets",
 	cancel: "Cancel",
 	save: "Save memory",
 	deleteTitle: "Delete this memory?",
@@ -21,7 +21,7 @@ export const memoryFormCopy = {
 
 export const vaultFormCopy = {
 	title: "Create vault",
-	description: "A bundle of API keys your Agents can use. Add it to Projects to control access.",
+	description: "A bundle of API keys your agents can use. Add it to projects to control access.",
 	name: "Name",
 	placeholder: "GitHub, OpenAI, Production…",
 	nameTaken: "That vault already exists. Open it from the vault list or use a different name.",
@@ -65,9 +65,9 @@ export const vaultKeyFormCopy = {
 	invalid: "Fix import text",
 	destination: "Destination vault",
 	deleteVaultDescription:
-		"Every key in this vault is removed for every Project using it. Agents lose access immediately.",
+		"Every key in this vault is removed for every project using it. Agents lose access immediately.",
 	deleteVault: "Delete vault",
-	deleteKeyDescription: "The key is removed for every Project using this vault.",
+	deleteKeyDescription: "The key is removed for every project using this vault.",
 	deleteKey: "Delete key",
 	chooseVault: "Choose a vault…",
 	copyDescription:
@@ -87,7 +87,7 @@ export function transferVaultKeysLabel(mode: "copy" | "move", count: number) {
 }
 
 export function vaultMoveWarning(name: string, count: number) {
-	return `${name} is used by ${count} Projects — moving these keys removes them from all of those Projects.`;
+	return `${name} is used by ${count} Projects — moving these keys removes them from all of those projects.`;
 }
 
 export function vaultImportDetectedCount(count: number, skipped: number) {

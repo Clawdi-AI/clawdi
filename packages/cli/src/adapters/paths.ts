@@ -1,6 +1,7 @@
-import { type Dirent, existsSync, realpathSync, statSync } from "node:fs";
+import { type Dirent, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Directory names to skip when scanning for skills. Applied by every adapter's
@@ -14,6 +15,20 @@ export function isPathWithinRoots(path: string, roots: readonly string[]): boole
 		const fromRoot = relative(root, path);
 		return fromRoot === "" || (!fromRoot.startsWith("..") && !isAbsolute(fromRoot));
 	});
+}
+
+/** Include a project and its descendants, with filesystem path boundaries. */
+export function matchesProjectFilter(
+	path: string | null | undefined,
+	absFilter: string | null,
+): boolean {
+	if (!absFilter) return true;
+	if (typeof path !== "string" || !path) return false;
+	const fromFilter = relative(absFilter, path);
+	return (
+		fromFilter === "" ||
+		(fromFilter !== ".." && !fromFilter.startsWith(`..${sep}`) && !isAbsolute(fromFilter))
+	);
 }
 
 /**
@@ -81,13 +96,48 @@ export function getHermesHome(): string {
 	return process.env.HERMES_HOME?.trim() || join(home(), ".hermes");
 }
 
+/** DeepSeek Harness: honors `$DSH_HOME`; fallback `~/.dsh`. */
+export function getDshHome(): string {
+	const override = process.env.DSH_HOME;
+	const path = override?.trim() ? override : join(home(), ".dsh");
+	if (path === "~") return home();
+	if (path.startsWith("~/") || path.startsWith("~\\")) return resolve(join(home(), path.slice(2)));
+	return resolve(path);
+}
+
 /** Pi coding agent: honors `$PI_CODING_AGENT_DIR`; fallback `~/.pi/agent`. */
 export function getPiHome(): string {
 	return process.env.PI_CODING_AGENT_DIR?.trim() || join(home(), ".pi", "agent");
 }
 
 export function getPiSessionsDir(): string {
+	const override = process.env.PI_CODING_AGENT_SESSION_DIR?.trim();
+	if (override) return normalizePiSessionPath(override);
+	try {
+		const settings: unknown = JSON.parse(
+			readFileSync(join(getPiHome(), "settings.json"), "utf8").replace(/^\uFEFF/, ""),
+		);
+		if (
+			settings &&
+			typeof settings === "object" &&
+			"sessionDir" in settings &&
+			typeof settings.sessionDir === "string" &&
+			settings.sessionDir.trim()
+		) {
+			return normalizePiSessionPath(settings.sessionDir);
+		}
+	} catch {
+		// Missing, unreadable, or invalid global settings leave the default intact.
+	}
 	return join(getPiHome(), "sessions");
+}
+
+function normalizePiSessionPath(path: string): string {
+	if (path === "~") return home();
+	if (path.startsWith("~/") || (process.platform === "win32" && path.startsWith("~\\"))) {
+		return join(home(), path.slice(2));
+	}
+	return path.startsWith("file://") ? fileURLToPath(path) : path;
 }
 
 /** OpenCode data root, matching the official xdg-basedir default. */

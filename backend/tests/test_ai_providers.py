@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -70,6 +70,7 @@ from app.services.managed_ai_provider import (
 from app.services.platform_contract import platform_request_hash
 from app.services.vault_crypto import decrypt, encrypt
 from tests.conftest import create_env_with_project
+from tests.db_lock_helpers import wait_for_lock_wait
 
 _TEST_SYSTEM = {}
 
@@ -5724,35 +5725,9 @@ async def test_auth_and_runtime_mutations_serialize_on_common_user_lock(
             )
             assert len(backend_pids) == 2
 
-            async def wait_for_business_lock_waits() -> None:
-                first_pid, second_pid = backend_pids
-                async with session_factory() as observer:
-                    while True:
-                        waiting_pids = frozenset(
-                            (
-                                await observer.execute(
-                                    text(
-                                        """
-                                        SELECT pid
-                                        FROM pg_stat_activity
-                                        WHERE pid IN (:first_pid, :second_pid)
-                                          AND state = 'active'
-                                          AND wait_event_type = 'Lock'
-                                        """
-                                    ),
-                                    {
-                                        "first_pid": first_pid,
-                                        "second_pid": second_pid,
-                                    },
-                                )
-                            ).scalars()
-                        )
-                        if waiting_pids == backend_pids:
-                            return
-                        await observer.rollback()
-                        await asyncio.sleep(0.01)
-
-            await asyncio.wait_for(wait_for_business_lock_waits(), timeout=2)
+            await asyncio.gather(
+                *(wait_for_lock_wait(session_factory, pid, timeout=2) for pid in backend_pids)
+            )
             await lock_holder.commit()
             await asyncio.wait_for(asyncio.gather(*tasks), timeout=2)
         except BaseException:

@@ -32,7 +32,7 @@ export function walletDeployAmountPresentation({
 	const shortfallUsd = walletDebitShortfallUsd(walletDebit);
 	return {
 		amount: `Debit today: ${formatUsdExact(walletDebit.debitAmountUsd)}`,
-		caption: `From Wallet · renews ${billingTermMonths === 12 ? "yearly" : "monthly"}`,
+		caption: `From wallet · renews ${billingTermMonths === 12 ? "yearly" : "monthly"}`,
 		detail:
 			shortfallUsd === null
 				? null

@@ -265,6 +265,7 @@ export function AgentOverview({
 				<WebView recipe={layout.tools}>
 					<RuntimeBrowser deployment={deployment} overview />
 					<OverviewNavigationCard
+						prominent
 						title={copy.chatViaChannels}
 						description={copy.channelsDescription}
 						icon={MessagesSquare}

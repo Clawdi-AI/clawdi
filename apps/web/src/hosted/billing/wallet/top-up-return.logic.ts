@@ -15,7 +15,7 @@ export interface WalletTopupReturnToast {
 
 export const WALLET_TOPUP_ACCEPTED_TOAST = {
 	title: "Payment accepted",
-	description: "We're confirming your Wallet credit now.",
+	description: "We're confirming your wallet credit now.",
 } as const;
 
 export function buildWalletAutoReloadReturnUrl(currentHref: string): string {

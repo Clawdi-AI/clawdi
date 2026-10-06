@@ -50,7 +50,7 @@ export function assertHostedDeployAccessToken(
 	if (token.startsWith("clawdi_")) {
 		throw new HostedDeployAuthorizationError(
 			"cloud_key_rejected",
-			"A legacy Clawdi API key cannot authorize Hosted deployment. Run `clawdi auth login` without --manual.",
+			"A legacy Clawdi API key can't deploy Cloud Agents. Run `clawdi auth login` without --manual.",
 		);
 	}
 	if (
@@ -61,7 +61,7 @@ export function assertHostedDeployAccessToken(
 	) {
 		throw new HostedDeployAuthorizationError(
 			"invalid_hosted_token",
-			"Hosted deployment requires a Clerk OAuth access token.",
+			"Deploying Cloud Agents requires a Clerk OAuth access token.",
 		);
 	}
 	const expiresAt = Date.parse(credential.expiresAt);
@@ -95,7 +95,7 @@ export function createHostedDeployAuthProvider(
 			if (!isClerkOAuthAuth(beforeRefresh)) {
 				throw new HostedDeployAuthorizationError(
 					"hosted_oauth_login_required",
-					"Hosted deployment requires the canonical Clerk OAuth login. Run `clawdi auth login` without --manual.",
+					"Deploying Cloud Agents requires a Clerk OAuth sign-in. Run `clawdi auth login` without --manual.",
 				);
 			}
 			try {
@@ -103,7 +103,7 @@ export function createHostedDeployAuthProvider(
 			} catch {
 				throw new HostedDeployAuthorizationError(
 					"hosted_endpoint_binding_mismatch",
-					"This Clerk OAuth login is not bound to the current Cloud and Hosted endpoints. Restore endpoint configuration or run `clawdi auth logout` followed by `clawdi auth login`.",
+					"This sign-in doesn't match the current CLAWDI_API_URL and CLAWDI_DEPLOY_API_URL. Restore them, or run `clawdi auth logout` and then `clawdi auth login`.",
 				);
 			}
 			const token = await getClawdiAccessToken(profile.cloudApiUrl);
@@ -111,7 +111,7 @@ export function createHostedDeployAuthProvider(
 			if (!isClerkOAuthAuth(refreshed)) {
 				throw new HostedDeployAuthorizationError(
 					"hosted_oauth_login_required",
-					"Clerk OAuth login is unavailable. Run `clawdi auth login` again.",
+					"Clerk OAuth sign-in is unavailable. Run `clawdi auth login` again.",
 				);
 			}
 			try {
@@ -119,7 +119,7 @@ export function createHostedDeployAuthProvider(
 			} catch {
 				throw new HostedDeployAuthorizationError(
 					"hosted_endpoint_binding_mismatch",
-					"The refreshed Clerk OAuth login is not bound to the current Cloud and Hosted endpoints. Run `clawdi auth login` again.",
+					"The refreshed sign-in doesn't match the current CLAWDI_API_URL and CLAWDI_DEPLOY_API_URL. Run `clawdi auth login` again.",
 				);
 			}
 			return { token, expiresAt: refreshed.accessTokenExpiresAt };

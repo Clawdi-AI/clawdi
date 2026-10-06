@@ -221,7 +221,7 @@ export function VaultsSurface({
 					filterableProjects.length > 1 ? (
 						<>
 							<FilterChip active={projectFilter === "all"} onClick={() => setProjectFilter("all")}>
-								All Vaults
+								All vaults
 								<span className={vaultsSurfaceClasses.count}>{items.length}</span>
 							</FilterChip>
 							{filterableProjects.map((p) => (
@@ -248,7 +248,7 @@ export function VaultsSurface({
 				<ApiErrorPanel
 					error={vaultsQuery.error}
 					onRetry={() => void vaultsQuery.refetch()}
-					title="Couldn’t refresh Vaults"
+					title="Couldn't refresh vaults"
 				/>
 			) : null}
 			{shouldBlockQueryError(vaultsQuery.error, vaultsQuery.data) ? (
@@ -270,9 +270,9 @@ export function VaultsSurface({
 					title={hasActiveFilter ? "No vaults match these filters" : "No vaults yet"}
 					description={
 						hasActiveFilter
-							? "Try a different search or Project filter."
+							? "Try a different search or project filter."
 							: isAgent || embedded
-								? "This agent does not have any Vaults through its Projects yet."
+								? "This agent does not have any vaults through its projects yet."
 								: "Create a vault to group API keys for your agents."
 					}
 				/>
@@ -284,7 +284,7 @@ export function VaultsSurface({
 							onRetry={() => {
 								void projects.refetch();
 							}}
-							title="Couldn't load Project names"
+							title="Couldn't load project names"
 						/>
 					) : null}
 					<div className={HERO_GRID_CLASS}>
@@ -445,9 +445,9 @@ export function VaultCard({
 				) : projectNamesUnavailable && (vault.project_ids?.length ?? 0) > 0 ? (
 					"Project details unavailable"
 				) : (vault.project_ids?.length ?? 0) > 0 ? (
-					"Linked to Projects"
+					"Linked to projects"
 				) : (
-					"not in any Project yet"
+					"not in any project yet"
 				),
 			]}
 			footerWrap
@@ -516,7 +516,7 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			setOpen(false);
 			toast.success("Vault created", {
-				description: "Use Add keys on its card, then add it to a Project.",
+				description: "Use Add keys on its card, then add it to a project.",
 				action: {
 					label: "Open vault",
 					onClick: () =>
@@ -550,7 +550,7 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 					<ApiErrorPanel
 						error={vaultsQuery.error}
 						onRetry={() => void vaultsQuery.refetch()}
-						title="Couldn't load Vault catalog"
+						title="Couldn't load vault catalog"
 					/>
 				) : null}
 				<form

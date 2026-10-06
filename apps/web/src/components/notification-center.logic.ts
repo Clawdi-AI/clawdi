@@ -17,9 +17,11 @@ export type AccountNotification = {
 	severity: "info" | "warning" | "destructive";
 };
 
-export type NotificationCenterView = "all" | "unread";
-
-const NOTIFICATION_ACTION_ORIGINS = new Set(["https://cloud.clawdi.ai", "https://www.clawdi.ai"]);
+const NOTIFICATION_ACTION_ORIGINS = new Set([
+	"https://cloud.clawdi.ai",
+	"https://clawdi.ai",
+	"https://www.clawdi.ai",
+]);
 
 // Project invitations are the first notification source. Keep the shell named
 // generically so future notification types (agent health, billing, access
@@ -37,15 +39,6 @@ export function getPendingNotificationCount(
 	accountUnreadCount = 0,
 ): number {
 	return (notifications?.length ?? 0) + accountUnreadCount;
-}
-
-export function filterAccountNotifications(
-	notifications: readonly AccountNotification[],
-	view: NotificationCenterView,
-): readonly AccountNotification[] {
-	return view === "unread"
-		? notifications.filter((notification) => !notification.read)
-		: notifications;
 }
 
 export function resolveNotificationUrl(
@@ -68,19 +61,14 @@ export function getNotificationCenterTriggerLabel(count: number): string {
 	return "Notifications";
 }
 
-export function getNotificationCenterEmptyCopy(view: NotificationCenterView): {
+export function getNotificationCenterEmptyCopy(): {
 	title: string;
 	description: string;
 } {
-	return view === "unread"
-		? {
-				title: "You're all caught up",
-				description: "New account updates and project invitations will appear here.",
-			}
-		: {
-				title: "No notifications yet",
-				description: "Account updates and project invitations will appear here.",
-			};
+	return {
+		title: "No notifications yet",
+		description: "Account updates and project invitations will appear here.",
+	};
 }
 
 export function getNotificationCenterDescription(): string {
@@ -88,7 +76,7 @@ export function getNotificationCenterDescription(): string {
 }
 
 export function getProjectInvitationAccessCopy(): string {
-	return "View shared Projects and link them to your Agents. Only the owner can edit.";
+	return "View shared projects and link them to your agents. Only the owner can edit.";
 }
 
 export function getAcceptedProjectInvitationToastCopy(projectName?: string): {
@@ -97,6 +85,6 @@ export function getAcceptedProjectInvitationToastCopy(projectName?: string): {
 } {
 	return {
 		title: projectName ? `Joined ${projectName}` : "Project joined",
-		description: "Open the Project to view its resources or link it to an Agent.",
+		description: "Open the project to view its resources or link it to an agent.",
 	};
 }

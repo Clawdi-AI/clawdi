@@ -109,7 +109,7 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 	const cardStatus: AgentCardStatusProjection = {
 		visual: {
 			label: runtimeStatus.primary.label,
-			tooltip: `Compute status: ${runtimeStatus.primary.label}.`,
+			tooltip: `Agent status: ${runtimeStatus.primary.label}.`,
 			dotClass: statusDotVariants({ status: runtimeStatus.primary.tone }),
 		},
 		labels: [

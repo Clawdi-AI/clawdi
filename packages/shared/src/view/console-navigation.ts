@@ -89,7 +89,7 @@ export const CONSOLE_NAVIGATION_ITEMS: Record<
 		label: "Agents",
 		href: "/agents",
 		tint: "bg-identity-6-bg text-identity-6-fg",
-		description: "Every Agent in this account.",
+		description: "Every agent in this account.",
 		tooltip: "All agents",
 		availability: "all",
 	},

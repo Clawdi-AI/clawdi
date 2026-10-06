@@ -181,7 +181,7 @@ export async function mountTerminal(
 		updateStatus("reconnecting");
 		writeTerminalNotice(
 			term,
-			`${message} Reconnecting ${reconnectAttempts}/${TERMINAL_RECONNECT_DELAYS_MS.length} in ${delaySeconds}s...`,
+			`${message} Reconnecting ${reconnectAttempts}/${TERMINAL_RECONNECT_DELAYS_MS.length} in ${delaySeconds}s…`,
 		);
 		retryTimer = window.setTimeout(() => {
 			retryTimer = null;
@@ -219,7 +219,7 @@ export async function mountTerminal(
 				);
 				return;
 			}
-			handleConnectionFailure("Secure terminal could not be opened.", mode);
+			handleConnectionFailure("Secure terminal couldn't be opened.", mode);
 			return;
 		}
 		ws.binaryType = "arraybuffer";
@@ -354,12 +354,12 @@ export async function mountTerminal(
 			websocketUrl = await options.requestWebsocketUrl();
 		} catch {
 			if (disposed || generation !== connectionGeneration) return;
-			handleConnectionFailure("Fresh terminal access could not be requested. Try again.", mode);
+			handleConnectionFailure("Fresh terminal access couldn't be requested. Try again.", mode);
 			return;
 		}
 		if (disposed || generation !== connectionGeneration) return;
 		if (!websocketUrl) {
-			handleConnectionFailure("Secure terminal could not be opened. Try again.", mode);
+			handleConnectionFailure("Secure terminal couldn't be opened. Try again.", mode);
 			return;
 		}
 		openWebSocket(terminalWebSocketTarget(websocketUrl), websocketUrl, mode, generation);

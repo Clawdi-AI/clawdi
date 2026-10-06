@@ -5,6 +5,7 @@ import hashlib
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -12,6 +13,7 @@ import pytest_asyncio
 from httpx import ASGITransport
 from sqlalchemy import func, select
 
+from app.core.agent_types import AGENT_TYPE_LABELS
 from app.core.config import settings
 from app.core.database import get_control_session, get_session
 from app.main import app
@@ -24,7 +26,11 @@ from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, 
 from app.models.user import PRINCIPAL_KIND_PARTNER_TENANT, User
 from app.schemas.platform import PLATFORM_RUNTIME_KEY_SCOPES, PlatformRuntimeStateUpsert
 from app.services.hosted_runtime_secrets import runtime_secret_values_idempotency_identity
-from app.services.platform_contract import platform_request_hash, store_platform_response
+from app.services.platform_contract import (
+    platform_request_hash,
+    prune_platform_mutation_idempotency,
+    store_platform_response,
+)
 from app.services.runtime_source import (
     expected_runtime_bundle_v2_etag,
     load_runtime_source_batch,
@@ -200,6 +206,40 @@ async def _create_platform_agent(
         headers=_headers(key),
         json=_agent_body(owner, agent_id),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_type", "status_code"),
+    [(agent_type, 200) for agent_type in AGENT_TYPE_LABELS]
+    + [
+        (agent_type, 422)
+        for agent_type in ("privileged", "admin", "k8s-debug", "x" * 51, "claude-code")
+    ],
+)
+async def test_platform_registration_validates_agent_type(
+    platform_client,
+    db_session,
+    seed_user,
+    agent_type: str,
+    status_code: int,
+):
+    agent_id = uuid.uuid4()
+    body = {**_agent_body(_clerk_owner(seed_user), agent_id), "agent_type": agent_type}
+    response = await platform_client.post(
+        "/v1/platform/agents",
+        headers=_headers("agent-type-validation"),
+        json=body,
+    )
+
+    assert response.status_code == status_code, response.text
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    if status_code == 200:
+        assert agent is not None
+        assert agent.agent_type == agent_type
+    else:
+        assert agent is None
+        assert response.json()["detail"][0]["loc"] == ["body", "agent_type"]
 
 
 @pytest.mark.asyncio
@@ -1735,3 +1775,24 @@ async def test_platform_channel_bundle_initialization_is_atomic(
         )
         == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_platform_idempotency_retention_prunes_expired_rows(db_session, seed_user):
+    row = store_platform_response(
+        db_session,
+        operation="retention.test",
+        idempotency_key=f"retention-{uuid.uuid4().hex}",
+        request_hash="a" * 64,
+        owner_user_id=seed_user.id,
+        resource_type="test",
+        resource_id=None,
+        response_status=200,
+        response_body={"ok": True},
+    )
+    now = datetime.now(UTC)
+    row.expires_at = now - timedelta(seconds=1)
+    await db_session.flush()
+
+    assert await prune_platform_mutation_idempotency(db_session, now=now, limit=10) == 1
+    assert await db_session.get(PlatformMutationIdempotency, row.id) is None

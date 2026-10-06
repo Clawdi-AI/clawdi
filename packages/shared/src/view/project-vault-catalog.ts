@@ -43,19 +43,19 @@ export function projectVaultCatalogRows({
 }
 
 export const PROJECT_VAULT_COPY = {
-	searchPlaceholder: "Search Vaults…",
-	searchLabel: "Search Vaults",
+	searchPlaceholder: "Search vaults…",
+	searchLabel: "Search vaults",
 	available: "Available",
-	noMatches: "No Vaults match that search.",
-	empty: "No Vaults available yet.",
+	noMatches: "No vaults match that search.",
+	empty: "No vaults available yet.",
 	name: "Vault name",
 	placeholder: "Production credentials…",
 	invalidName: "Use a name containing letters or numbers.",
-	removeDescription: "Removing a Vault preserves its keys and other Projects.",
+	removeDescription: "Removing a vault preserves its keys and other projects.",
 };
 export function projectVaultCatalogDescription(context: string) {
-	return `Add Vaults from your Library to this ${context}. Removing a Vault preserves its keys and other Projects.`;
+	return `Add vaults from your library to this ${context}. Removing a vault preserves its keys and other projects.`;
 }
 export function projectVaultCreateDescription(context: string) {
-	return `Create an account-owned Vault for this ${context}. It will also remain available in your Vault library.`;
+	return `Create an account-owned vault for this ${context}. It will also remain available in your vault library.`;
 }

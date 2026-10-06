@@ -1,9 +1,8 @@
-import { connectorFormCopy as copy } from "@clawdi/shared/view";
-
-("use client");
+"use client";
 
 import type { components } from "@clawdi/shared/api";
 import { accountAliasDialogClasses } from "@clawdi/shared/ui";
+import { connectorFormCopy as copy } from "@clawdi/shared/view";
 import { useEffect, useRef, useState } from "react";
 import { AccountAliasField } from "@/components/connectors/account-alias-field";
 import { Button } from "@/components/ui/button";
@@ -49,7 +48,7 @@ export function AccountAliasDialog({
 			if (mountedRef.current) onClose();
 		} catch {
 			if (mountedRef.current) {
-				setError("Couldn't rename account. Try again. If the problem persists, refresh the page.");
+				setError("Couldn't rename account. Try again, or refresh the page if this continues.");
 			}
 		} finally {
 			inflightRef.current = false;

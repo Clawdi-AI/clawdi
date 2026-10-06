@@ -36,6 +36,7 @@ from app.models.channel import (
 from app.schemas.channel import (
     ChannelAccountResponse,
     ChannelBindingResponse,
+    ChannelConnectionIssue,
     ChannelMessageResponse,
     ChannelVisibility,
 )
@@ -101,7 +102,11 @@ def channel_visibility(account: ChannelAccount) -> ChannelVisibility:
     raise ValueError("invalid channel account visibility")
 
 
-def account_response(account: ChannelAccount) -> ChannelAccountResponse:
+def account_response(
+    account: ChannelAccount,
+    *,
+    connection_issue: ChannelConnectionIssue | None = None,
+) -> ChannelAccountResponse:
     return ChannelAccountResponse(
         id=account.id,
         provider=account.provider,
@@ -111,6 +116,7 @@ def account_response(account: ChannelAccount) -> ChannelAccountResponse:
         has_provider_token=bool(account.encrypted_provider_token and account.provider_token_nonce),
         webhook_url=channel_webhook_url(account.id, account.provider),
         created_at=account.created_at,
+        connection_issue=connection_issue,
     )
 
 

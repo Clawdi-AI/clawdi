@@ -357,7 +357,7 @@ export function AgentSettingsPanel({
 			{legacyDashboardUrl ? (
 				<SettingsSection
 					title="Legacy dashboard"
-					description="Manage this Legacy hosted agent in the legacy dashboard."
+					description="Manage this legacy Cloud Agent in the legacy dashboard."
 				>
 					<div className={agentSettingsPanelClasses.actionRow}>
 						<p className={agentSettingsPanelClasses.actionDescription}>

@@ -130,7 +130,7 @@ export function ProjectsSurface({
 	const updateLink = useMutation({
 		mutationFn: async ({ projectId, linked }: { projectId: string; linked: boolean }) => {
 			if (!agentId || !linksKnown || bindings.error || projects.error)
-				throw new Error("Refresh Project links and try again.");
+				throw new Error("Refresh project links and try again.");
 			return unwrap(
 				await api.PATCH("/v1/agents/{agent_id}/projects", {
 					params: { path: { agent_id: agentId } },
@@ -146,7 +146,7 @@ export function ProjectsSurface({
 			toast.success(linked ? "Project unlinked" : "Project linked");
 		},
 		onError: (error) =>
-			toast.error("Couldn't update Project link", { description: normalizeApiError(error) }),
+			toast.error("Couldn't update project link", { description: normalizeApiError(error) }),
 		onSettled: () => {
 			linkLocked.current = false;
 		},
@@ -170,7 +170,7 @@ export function ProjectsSurface({
 				titleAdornment={headerAdornment}
 				description={
 					agentId
-						? "Choose the Projects this Agent can use."
+						? "Choose the projects this agent can use."
 						: getProjectResourceDefinition("projects").managementDescription
 				}
 				actions={
@@ -180,8 +180,8 @@ export function ProjectsSurface({
 							await refresh();
 							toast.success(agentId ? "Project created and linked" : "Project created", {
 								description: agentId
-									? "This Agent can use its Skills and Vaults immediately."
-									: "It is ready for Skills, Vaults, and Agent links.",
+									? "This agent can use its skills and vaults immediately."
+									: "It is ready for skills, vaults, and agent links.",
 								action: {
 									label: "Open project",
 									onClick: () =>
@@ -212,20 +212,20 @@ export function ProjectsSurface({
 				<ApiErrorPanel
 					error={bindings.error}
 					onRetry={() => void bindings.refetch()}
-					title="Couldn't load Project links"
+					title="Couldn't load project links"
 				/>
 			) : null}
 			{agentId && bindings.data && !bindings.error && !linksKnown ? (
 				<EmptyState
 					variant="inset"
-					description="This Agent's Workspace is not available yet. You can browse Projects while linking is unavailable."
+					description="This agent's workspace is not available yet. You can browse Projects while linking is unavailable."
 				/>
 			) : null}
 			{projects.error ? (
 				<ApiErrorPanel
 					error={projects.error}
 					onRetry={() => void projects.refetch()}
-					title="Couldn't load Projects"
+					title="Couldn't load projects"
 				/>
 			) : null}
 			{projects.isLoading ? (
@@ -237,11 +237,11 @@ export function ProjectsSurface({
 			) : shouldBlockQueryError(projects.error, projects.data) ? null : rows.length === 0 &&
 				missingBindings.length === 0 ? (
 				<EmptyState
-					title={search.trim() ? "No matching Projects" : "No Projects yet"}
+					title={search.trim() ? "No matching projects" : "No projects yet"}
 					description={
 						search.trim()
 							? `Nothing matches “${search.trim()}”. Try a different search.`
-							: "Create a Project to bundle Skills and Vaults for your Agents."
+							: "Create a project to bundle skills and vaults for your agents."
 					}
 				/>
 			) : (
@@ -250,7 +250,7 @@ export function ProjectsSurface({
 						<section
 							key={group.label ?? "catalog"}
 							className={projectsSurfaceClasses.section}
-							aria-label={group.label ? `${group.label} Projects` : undefined}
+							aria-label={group.label ? `${group.label} projects` : undefined}
 						>
 							{group.label ? (
 								<SectionLabel count={group.rows.length + group.missingBindings.length}>
@@ -259,7 +259,7 @@ export function ProjectsSurface({
 							) : null}
 							<ul
 								className={HERO_GRID_CLASS}
-								aria-label={group.label ? `${group.label} Projects` : "Projects"}
+								aria-label={group.label ? `${group.label} projects` : "Projects"}
 								data-testid={agentId ? "agent-project-grid" : "project-grid"}
 							>
 								{group.rows.map((project) => {

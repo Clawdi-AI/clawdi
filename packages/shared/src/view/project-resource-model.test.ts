@@ -53,14 +53,14 @@ describe("project resource model", () => {
 
 	it("renders stable user-facing scope labels", () => {
 		expect(projectResourceScopeLabel("container")).toBe("Project home");
-		expect(projectResourceScopeLabel("project-managed")).toBe("Saved in a Project");
+		expect(projectResourceScopeLabel("project-managed")).toBe("Saved in a project");
 		expect(projectResourceScopeLabel("activity")).toBe("Account activity");
 		expect(projectResourceScopeLabel("all-agents")).toBe("All agents");
 		expect(projectResourceScopeDescription(getProjectResourceDefinition("memories"))).toContain(
 			"all agents",
 		);
 		expect(projectResourceScopeDescription(getProjectResourceDefinition("skills"))).toContain(
-			"Pick the Project",
+			"Pick the project",
 		);
 	});
 

@@ -137,7 +137,7 @@ test("Hosted Skills install, open pinned content, and uninstall without a Cloud 
 	await page.getByRole("button", { name: "Install skill", exact: true }).click();
 	const dialog = page.getByRole("dialog");
 	await dialog.getByRole("tab", { name: "GitHub", exact: true }).click();
-	await dialog.getByLabel("GitHub Skill repository").fill("example/skills/review-pr");
+	await dialog.getByLabel("GitHub skill repository").fill("example/skills/review-pr");
 	await dialog.getByRole("button", { name: "Install skill", exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await page.getByRole("link", { name: /review-pr/ }).click();
@@ -148,12 +148,12 @@ test("Hosted Skills install, open pinned content, and uninstall without a Cloud 
 	);
 	await expect(page.getByRole("button", { name: "Copy skill" })).toBeVisible();
 	await page.getByRole("link", { name: "Skills", exact: true }).last().click();
-	await page.getByRole("button", { name: "Uninstall review-pr from Agent" }).click();
+	await page.getByRole("button", { name: "Uninstall review-pr from agent" }).click();
 	await page
 		.getByRole("alertdialog")
 		.getByRole("button", { name: "Uninstall skill", exact: true })
 		.click();
-	await expect(page.getByText("No Skills are available in this Agent's Workspace.")).toBeVisible();
+	await expect(page.getByText("No skills are available in this agent's workspace.")).toBeVisible();
 });
 
 test("Hosted Skills explain unavailable installation and retain discovered Skill details", async ({
@@ -187,7 +187,7 @@ test("Hosted Skills explain unavailable installation and retain discovered Skill
 	await page.goto(listPath);
 	await expect(page.getByRole("button", { name: "Install skill", exact: true })).toBeEnabled();
 	await expect(
-		page.getByText("Installation will be available when your Agent is ready."),
+		page.getByText("Installation will be available when your agent is ready."),
 	).toBeVisible();
 	await expect(page.getByRole("link", { name: /Local Guide/ })).toBeVisible();
 	await expect(page.getByRole("button", { name: /Uninstall Local Guide/ })).toHaveCount(0);
@@ -219,14 +219,14 @@ test("Hosted Skills keep errors actionable and allow retry without losing the fo
 	await page.getByRole("button", { name: "Install skill", exact: true }).click();
 	const dialog = page.getByRole("dialog");
 	await dialog.getByRole("tab", { name: "GitHub", exact: true }).click();
-	await dialog.getByLabel("GitHub Skill repository").fill("example/skills/review-pr");
+	await dialog.getByLabel("GitHub skill repository").fill("example/skills/review-pr");
 	await dialog.getByRole("button", { name: "Install skill", exact: true }).click();
 	await expect(
 		dialog.getByText(
-			"Couldn't find a valid Skill at this GitHub path. Check the repository and try again.",
+			"Couldn't find a valid skill at this GitHub path. Check the repository and try again.",
 		),
 	).toBeVisible();
-	await expect(dialog.getByLabel("GitHub Skill repository")).toHaveValue(
+	await expect(dialog.getByLabel("GitHub skill repository")).toHaveValue(
 		"example/skills/review-pr",
 	);
 	await dialog.getByRole("button", { name: "Install skill", exact: true }).click();
@@ -234,10 +234,10 @@ test("Hosted Skills keep errors actionable and allow retry without losing the fo
 	await dialog.getByRole("button", { name: "Install skill", exact: true }).click();
 	await expect(dialog).toBeHidden();
 	await expect(page.getByRole("link", { name: /review-pr/ })).toBeVisible();
-	await expect(page.getByText("Couldn't update Skills", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Couldn't update skills", { exact: true })).toHaveCount(0);
 });
 
-test("Library Skills use references from both entry points, show source content, and uninstall", async ({
+test("Library skills use references from both entry points, show source content, and uninstall", async ({
 	page,
 }) => {
 	await workspace(page);
@@ -346,9 +346,9 @@ test("Library Skills use references from both entry points, show source content,
 	await page.goto(listPath);
 	await page.getByRole("button", { name: "Install skill", exact: true }).click();
 	const dialog = page.getByRole("dialog");
-	await dialog.getByRole("combobox", { name: "Library Project" }).click();
+	await dialog.getByRole("combobox", { name: "Library project" }).click();
 	await page.getByRole("option", { name: /Team Skills/ }).click();
-	await dialog.getByRole("combobox", { name: "Library Skill" }).click();
+	await dialog.getByRole("combobox", { name: "Library skill" }).click();
 	await page.getByRole("option", { name: "review-pr", exact: true }).click();
 	await dialog.getByRole("button", { name: "Install skill", exact: true }).click();
 	await expect(dialog).toBeHidden();
@@ -357,11 +357,11 @@ test("Library Skills use references from both entry points, show source content,
 	await expect(page.getByRole("button", { name: "Copy skill" })).toBeDisabled();
 	await page.getByRole("button", { name: "Retry", exact: true }).click();
 	await expect(page.getByRole("heading", { name: "Team review", exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "View source Skill" })).toHaveAttribute(
+	await expect(page.getByRole("link", { name: "View source skill" })).toHaveAttribute(
 		"href",
 		/\/agents\/[^/]+\/skills\/[^?]+\?project=project-library/,
 	);
-	await page.getByRole("link", { name: "View source Skill" }).click();
+	await page.getByRole("link", { name: "View source skill" }).click();
 	await expect(page).toHaveURL(
 		(url) =>
 			url.pathname === `/agents/${agentId}/skills/team/review-pr` &&
@@ -372,7 +372,7 @@ test("Library Skills use references from both entry points, show source content,
 	).toBeVisible();
 	await page.goBack();
 	await page.getByRole("link", { name: "Skills", exact: true }).last().click();
-	await page.getByRole("button", { name: "Uninstall review-pr from Agent" }).click();
+	await page.getByRole("button", { name: "Uninstall review-pr from agent" }).click();
 	await page
 		.getByRole("alertdialog")
 		.getByRole("button", { name: "Uninstall skill", exact: true })
@@ -395,8 +395,8 @@ test("Library Skills use references from both entry points, show source content,
 		}),
 	);
 	await page.goto(`/skills?project=${libraryProjectId}`);
-	await page.getByRole("button", { name: "Install review-pr on an Agent" }).click();
-	await dialog.getByRole("combobox", { name: "Target Agent" }).click();
+	await page.getByRole("button", { name: "Install review-pr on an agent" }).click();
+	await dialog.getByRole("combobox", { name: "Target agent" }).click();
 	await page.getByRole("option", { name: /Reviewer/ }).click();
 	await dialog.getByRole("button", { name: "Install skill", exact: true }).click();
 	await expect(dialog).toBeHidden();

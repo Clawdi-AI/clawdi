@@ -30,11 +30,43 @@ from app.models.session import (
     Session,
     SessionMessageSearch,
 )
+from app.routes import search as search_routes
 from app.services.session_search import (
     SearchableSessionMessage,
     rebuild_session_search_index,
     replace_snapshot_search_index,
 )
+from tests.db_lock_helpers import wait_for_lock_wait
+
+
+@pytest.mark.asyncio
+async def test_global_search_isolates_failed_source_transaction(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    async def fail_sessions(db, auth, query):
+        await db.execute(text("SELECT 1 / 0"))
+        return []
+
+    async def healthy_agents(db, auth, query):
+        return [
+            search_routes.SearchHit(
+                type="agent",
+                id="agent-after-failure",
+                title="Search still works",
+                href="/agents/agent-after-failure",
+            )
+        ]
+
+    monkeypatch.setattr(search_routes, "_search_sessions", fail_sessions)
+    monkeypatch.setattr(search_routes, "_search_agents", healthy_agents)
+
+    response = await client.get("/v1/search", params={"q": "isolated"})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["failed_sources"] == ["sessions"]
+    assert [hit["id"] for hit in body["results"]] == ["agent-after-failure"]
 
 
 async def _register_env(client: httpx.AsyncClient) -> str:
@@ -43,7 +75,7 @@ async def _register_env(client: httpx.AsyncClient) -> str:
         json={
             "machine_id": "search-machine",
             "machine_name": "Search Mac",
-            "agent_type": "claude-code",
+            "agent_type": "claude_code",
             "agent_version": "0.1.0",
             "os": "darwin",
         },
@@ -486,17 +518,14 @@ async def test_cancelled_snapshot_search_insert_restores_committed_revision(
                     await started.wait()
                     # Prove cancellation reaches the INSERT's FK wait, after the
                     # old documents were deleted, rather than an earlier checkout.
-                    while not await observer.scalar(
-                        text(
-                            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
-                            "WHERE pid = :pid AND wait_event_type = 'Lock' "
-                            "AND query LIKE 'INSERT INTO session_message_search%unnest(%' "
-                            "AND :blocker = ANY(pg_blocking_pids(pid)))"
-                        ),
-                        {"pid": writer_pid, "blocker": blocker_pid},
-                    ):
-                        await observer.rollback()
-                        await asyncio.sleep(0.01)
+                    assert isinstance(writer_pid, int)
+                    assert isinstance(blocker_pid, int)
+                    await wait_for_lock_wait(
+                        async_sessionmaker(engine),
+                        writer_pid,
+                        query_pattern="INSERT INTO session_message_search%unnest(%",
+                        blocker_pid=blocker_pid,
+                    )
                     task.cancel()
                     with pytest.raises(asyncio.CancelledError):
                         await task

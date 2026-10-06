@@ -213,7 +213,7 @@ backend, dashboard, local key minting, and cleanup.
 Once it's up, a canonical smoke loop:
 
 ```bash
-clawdi auth login     # Clerk OAuth Authorization Code + PKCE
+clawdi auth login     # Clerk OAuth Device Authorization Grant
 clawdi setup          # register this agent + install the built-in skill
 clawdi doctor         # all ✓ means the full pipe is wired up
 clawdi push --dry-run # preview what push would upload
@@ -241,11 +241,25 @@ Cloud reads its public-client identifiers from the strictly registered global
 `clerk_cli_oauth` App Setting. Cloud and Hosted are configured independently;
 there is no automatic synchronization or shared secret reference between them.
 
-On SSH, run `clawdi auth login --no-open`, open the printed URL locally, then
-paste the complete failed loopback callback URL into the masked terminal
-prompt. Clerk does not advertise RFC 8628 device authorization. A non-TTY flow
-can save the pending PKCE transaction and later run `clawdi auth complete` with
-the callback URL on stdin; the authorization code is never accepted as a flag.
+`clawdi auth login` discovers Clerk's device authorization endpoint from the
+issuer metadata, prints a short-lived sign-in link and code, and waits for
+approval. Check that the browser page shows the same code and approve only a
+sign-in you just started on this machine. Local interactive terminals open the
+browser automatically; SSH and non-TTY commands print the link and keep polling.
+`--no-open` suppresses opening the browser. `clawdi auth complete` resumes a
+pending device sign-in without reading stdin; transactions from older CLIs are
+cleared with instructions to start again.
+
+Self-hosted Clerk OAuth applications must enable **Device authorization grant**
+under Configure → OAuth applications in the Clerk Dashboard. The Backend API
+equivalent is `PATCH /v1/oauth_applications/<application_id>` with
+`{"device_authorization_grant_enabled": true}`. Keep the registered loopback
+redirect URI for older CLIs. Instances without Clerk OAuth can use
+`clawdi auth login --manual` with an API key from Settings → API Keys.
+
+Done: `clawdi auth login` prints the link and code, then reports `Signed in as`
+after browser approval. Run `clawdi auth status --json` to check the saved
+`clerk-oauth` credential. Local development without Clerk uses `--manual`.
 
 The Hosted deploy wizard shares its defaults, validation, request builder,
 compute/payment selection, and deployment-request projection with the Web
@@ -283,6 +297,66 @@ the binding, preserving existing model choices. Custom saved providers require
 AI Providers, not the local `ai-provider list` catalog.
 
 ## Cloud context and remote Skills
+
+Pi session discovery uses `PI_CODING_AGENT_SESSION_DIR`, then `sessionDir` in
+the global `$PI_CODING_AGENT_DIR/settings.json` (default
+`~/.pi/agent/settings.json`), then `$PI_CODING_AGENT_DIR/sessions`.
+Project-level `.pi/settings.json` values cannot be inferred globally; set the
+environment override when syncing those sessions.
+
+```bash
+bash scripts/test.sh cli src/adapters/paths.test.ts src/adapters/pi.test.ts
+```
+
+Done: both test files pass, including discovery and resolution from custom Pi
+session directories.
+
+For Pi >= 0.99.0, setup detects MCP registrations with `pi mcp list --json`
+and registers `pi mcp add clawdi -- clawdi mcp`. Teardown uses
+`pi mcp remove clawdi`. Registration uses Pi's default codemode exposure.
+Older or unrecognized Pi versions show the manual-registration hint.
+
+Pi Skills are managed as directories under `$PI_CODING_AGENT_DIR/skills`
+(default `~/.pi/agent/skills`), including setup's bundled `clawdi` Skill and
+connected Project Skills. Pi's single-file `.md` skills are not managed.
+
+DeepSeek Harness (`dsh`, npm `@deepseek-ai/dsh`) supports local detection,
+`dsh --version`, and directory Skills under `$DSH_HOME/skills` (default
+`~/.dsh/skills`). Setup installs the bundled Skill at `skills/clawdi` and
+shows a manual MCP configuration hint; it does not write Cordis patches.
+Session sync and Hosted runtimes are not supported. Single-file `.md` skills
+are not managed.
+
+```bash
+bash scripts/test.sh cli src/adapters/dsh.test.ts tests/commands/setup.test.ts
+```
+
+Done: dsh registers only the `skills` module and setup installs its bundled
+Skill without modifying MCP configuration.
+
+Skill keys preserve local directory spelling: each of up to four `/`-separated
+components starts with an ASCII letter or digit and then uses letters, digits,
+`.`, `_`, or `-`; total length is at most 200 characters. Nested keys cannot end
+with `download`, `content`, or `install`. Hermes derives keys from the directory
+path relative to its Skills root, rather than the frontmatter display name.
+Unsupported names are skipped individually, with length, component count and
+reason logged; local files are preserved. Rename them to this grammar to sync.
+Automatic normalization would let distinct local directories collide.
+
+Session snapshot uploads send `environment_id` and `expected_content_hash` in
+the multipart form to `/v1/sessions/{local_session_id}/upload`. The origin is
+required by the CLI even with account-wide credentials: the same local ID on
+two Agents denotes two separate sessions. An unfenced ambiguous upload returns
+`session_origin_required`; upgrading the CLI supplies the origin without
+merging existing sessions.
+
+```bash
+bash scripts/test.sh cli tests/skill-key.test.ts tests/adapters/hermes.test.ts src/serve/sync-engine.test.ts src/lib/api-client.test.ts
+bash scripts/test.sh backend tests/test_skill_key.py tests/test_skill_upload_preflight.py tests/test_sessions.py
+```
+
+Done: both commands exit 0; invalid Skills do not block valid ones and equal
+local session IDs retain separate content for each Agent.
 
 These commands use the configured Cloud API and require login. `session list`
 continues to read local history; `session search`, `read`, and `export` use Cloud
@@ -428,8 +502,8 @@ Shape:
 - `openclaw/` — `sessions.json` index + `<id>.jsonl` transcript (with a `model_change` event); `skills/demo` + `skills/node_modules` (SKIP_DIRS)
 - `pi/` — official JSONL v1-v4 records covering active-leaf branching,
   compaction retained tails, visible tools, attachment metadata, and
-  owner-private thinking with visible-only message projection; Pi has no Skills
-  fixture because it is sessions-only
+  owner-private thinking with visible-only message projection; Skills contract
+  tests create temporary directory bundles for Pi
 
 OpenCode's adapter test creates the consumed subset of the pinned upstream
 SQLite schema in a temporary directory. That fixture is intentionally generated

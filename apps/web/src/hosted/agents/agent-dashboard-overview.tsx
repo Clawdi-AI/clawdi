@@ -33,6 +33,7 @@ export function AgentDashboardOverview({
 				tint={item.tint}
 				link={available ? agentSectionLink(agentId, "console") : null}
 				disabled={!available}
+				prominent
 			/>
 		</div>
 	);

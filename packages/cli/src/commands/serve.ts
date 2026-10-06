@@ -29,18 +29,20 @@ import { join } from "node:path";
 import { AGENT_TYPES, type AgentType } from "../adapters/registry";
 import { loadAuthTokenFile } from "../lib/auth-token-file";
 import {
+	ClerkOAuthError,
 	captureStoredCredentialIdentity,
 	clearPendingClerkOAuthLogin,
 	commitClawdiCredential,
-	createClerkOAuthAuthorization,
 	createCredentialEndpointBinding,
-	exchangeClerkOAuthCode,
 	fetchClerkOAuthClientConfig,
 	fetchClerkOAuthDiscovery,
 	isClerkOAuthAuth,
 	logoutClawdiCredentials,
+	persistClerkDeviceSlowDown,
 	persistPendingClerkOAuthLogin,
+	pollClerkDeviceTokenOnce,
 	type StoredCredentialIdentity,
+	startClerkDeviceAuthorization,
 	verifyAndPersistClerkOAuthLogin,
 } from "../lib/clerk-oauth";
 import { getAuth, getClawdiDir, getConfig, getPendingAuth, isLoggedIn } from "../lib/config";
@@ -230,7 +232,7 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 			} catch {
 				log.warn("serve.vault_cleanup_failed", {
 					agent: agentType,
-					message: "Owned Vault files need local repair.",
+					message: "Owned vault files need local repair.",
 				});
 			}
 		}
@@ -344,7 +346,7 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 	rejectUnsupportedOpts("install", opts as Record<string, unknown>, INSTALL_ALLOWED);
 	const rpcListen = resolveRpcListenConfig(opts as RpcListenOpts);
 	if (!isLoggedIn()) {
-		console.error("Not logged in. Run `clawdi auth login` first — the daemon needs an api key.");
+		console.error("Not signed in. Run `clawdi auth login` first — the daemon needs an api key.");
 		process.exit(1);
 	}
 	const registered = listRegisteredAgentTypes();
@@ -728,7 +730,8 @@ export function createControlRpcHandlers(opts: ControlRpcHandlerOptions = {}): C
 	handlers["sync.pull_dry_run"] = (params) => syncPullDryRunRpc(params);
 	handlers["auth.status"] = (params) => authStatusRpc(params);
 	handlers["auth.login"] = (params) => authLoginRpc(params);
-	handlers["auth.complete"] = (params) => authCompleteRpc(params);
+	const devicePoll = { state: "", nextPollAt: 0 };
+	handlers["auth.complete"] = (params) => authCompleteRpc(params, devicePoll);
 	handlers["auth.logout"] = (params) => authLogoutRpc(params);
 	if (evaluateHostPolicyForCommand("update").allowed) {
 		handlers["update.check"] = (params) => updateCheckRpc(params);
@@ -848,14 +851,15 @@ function authStatusRpc(params: unknown): unknown {
 		user: auth ? { email: auth.email, id: auth.userId } : null,
 		credential_type: isClerkOAuthAuth(auth) ? "clerk-oauth" : auth ? "legacy-api-key" : null,
 		api_url: getConfig().apiUrl,
-		pending_auth: pending
-			? {
-					authorization_url: pending.authorizationUrl,
-					redirect_uri: pending.redirectUri,
-					expires_at: pending.expiresAt,
-					api_url: pending.apiUrl,
-				}
-			: null,
+		pending_auth:
+			pending?.authType === "clerk_oauth_device"
+				? {
+						verification_uri: pending.verificationUri,
+						user_code: pending.userCode,
+						expires_at: pending.expiresAt,
+						api_url: pending.apiUrl,
+					}
+				: null,
 	};
 }
 
@@ -875,7 +879,9 @@ async function authLoginRpc(params: unknown): Promise<unknown> {
 	const apiUrl = optionalStringParam(record.api_url, "api_url") ?? endpointConfig.apiUrl;
 	const apiKey = optionalStringParam(record.api_key, "api_key");
 	if (existing && replace && !apiKey) {
-		throw new Error("auth.login replace requires api_key, or call auth.logout before OAuth login.");
+		throw new Error(
+			"auth.login replace requires api_key, or call auth.logout before OAuth sign-in.",
+		);
 	}
 	if (apiKey) {
 		requireBooleanConfirmation(record, "confirm_secret_access", "auth.login API key import");
@@ -885,36 +891,87 @@ async function authLoginRpc(params: unknown): Promise<unknown> {
 	return startOAuthAuthRpc(apiUrl, endpointConfig.deployApiUrl, expectedCredential);
 }
 
-async function authCompleteRpc(params: unknown): Promise<unknown> {
+async function authCompleteRpc(
+	params: unknown,
+	poll: { state: string; nextPollAt: number },
+): Promise<unknown> {
 	const record = rpcParamsRecord(params);
-	rejectRpcParams(record, new Set(["callback_url", "confirm_secret_access"]));
-	if (getAuth()) return { status: "already_logged_in" };
+	rejectRpcParams(record, new Set());
+	const existing = getAuth();
+	if (existing)
+		return { status: "logged_in", user: { email: existing.email, id: existing.userId } };
 	const pending = getPendingAuth();
 	if (!pending) return { status: "no_pending_auth" };
-	if (Date.parse(pending.expiresAt) <= Date.now()) {
+	if (pending.authType === "clerk_oauth_pkce") {
+		await clearPendingClerkOAuthLogin(pending);
+		return {
+			status: "no_pending_auth",
+			message: "This sign-in was started by an older Clawdi CLI. Run `clawdi auth login` again.",
+		};
+	}
+	if (
+		!Number.isFinite(Date.parse(pending.expiresAt)) ||
+		Date.parse(pending.expiresAt) <= Date.now()
+	) {
 		await clearPendingClerkOAuthLogin(pending);
 		return { status: "expired" };
 	}
-	requireBooleanConfirmation(
-		record,
-		"confirm_secret_access",
-		"auth.complete OAuth callback import",
-	);
-	const callbackUrl = requiredStringParam(record, "callback_url");
-	const auth = await exchangeClerkOAuthCode(pending, callbackUrl);
-	const verification = await verifyAndPersistClerkOAuthLogin(pending.apiUrl, auth, {
-		expectedCredential: { kind: "none" },
-		pending,
-	});
-	if (verification.kind === "cloud_unverified") {
-		return {
-			status: "cloud_unverified",
-			cloud_verified: false,
-			reason: verification.reason,
-			...(verification.httpStatus ? { http_status: verification.httpStatus } : {}),
-		};
+	if (poll.state === pending.state && poll.nextPollAt > Date.now()) {
+		return { status: "pending", interval: pending.interval };
 	}
-	return { status: "logged_in", cloud_verified: true, user: verification.user };
+	poll.state = pending.state;
+	poll.nextPollAt = Date.now() + pending.interval * 1_000;
+	// Both token polling and Cloud verification share the RPC's ten-second budget.
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 9_000);
+	const fetcher = (request: Request) => fetch(request, { signal: controller.signal });
+	try {
+		const result = await pollClerkDeviceTokenOnce(pending, {
+			fetch: fetcher,
+			onSlowDown: persistClerkDeviceSlowDown,
+		});
+		if (result.status === "pending") {
+			poll.nextPollAt = Date.now() + pending.interval * (result.retryable ? 2 : 1) * 1_000;
+			return { status: "pending", interval: pending.interval };
+		}
+		let verification: Awaited<ReturnType<typeof verifyAndPersistClerkOAuthLogin>>;
+		try {
+			verification = await verifyAndPersistClerkOAuthLogin(pending.apiUrl, result.auth, {
+				expectedCredential: { kind: "none" },
+				pending,
+				fetch: fetcher,
+			});
+		} catch (error) {
+			const current = getAuth();
+			if (
+				error instanceof ClerkOAuthError &&
+				error.code === "credential_state_changed" &&
+				isClerkOAuthAuth(current) &&
+				current.subject === result.auth.subject
+			) {
+				return { status: "logged_in", user: { id: current.userId, email: current.email } };
+			}
+			throw error;
+		}
+		if (verification.kind === "cloud_unverified") {
+			return {
+				status: "logged_in",
+				cloud_verified: false,
+				reason: verification.reason,
+				...(verification.httpStatus ? { http_status: verification.httpStatus } : {}),
+			};
+		}
+		return { status: "logged_in", cloud_verified: true, user: verification.user };
+	} catch (error) {
+		await clearPendingClerkOAuthLogin(pending);
+		if (error instanceof ClerkOAuthError && error.code === "oauth_denied")
+			return { status: "denied" };
+		if (error instanceof ClerkOAuthError && error.code === "oauth_login_expired")
+			return { status: "expired" };
+		throw error;
+	} finally {
+		clearTimeout(timeout);
+	}
 }
 
 async function authLogoutRpc(params: unknown): Promise<unknown> {
@@ -1029,11 +1086,11 @@ async function startOAuthAuthRpc(
 ): Promise<unknown> {
 	const endpointBinding = createCredentialEndpointBinding(apiUrl, hostedApiUrl);
 	if (!endpointBinding.hostedApiOrigin) {
-		throw new Error("Hosted endpoint binding is required for OAuth login.");
+		throw new Error("OAuth sign-in requires a CLAWDI_DEPLOY_API_URL binding.");
 	}
 	const config = await fetchClerkOAuthClientConfig(endpointBinding.cloudApiOrigin);
 	const discovery = await fetchClerkOAuthDiscovery(config);
-	const pending = createClerkOAuthAuthorization({
+	const pending = await startClerkDeviceAuthorization({
 		config,
 		discovery,
 		apiUrl: endpointBinding.cloudApiOrigin,
@@ -1042,8 +1099,10 @@ async function startOAuthAuthRpc(
 	await persistPendingClerkOAuthLogin(pending, expectedCredential);
 	return {
 		status: "pending",
-		authorization_url: pending.authorizationUrl,
-		redirect_uri: pending.redirectUri,
+		verification_uri: pending.verificationUri,
+		verification_uri_complete: pending.verificationUriComplete,
+		user_code: pending.userCode,
+		interval: pending.interval,
 		expires_at: pending.expiresAt,
 		api_url: pending.apiUrl,
 	};

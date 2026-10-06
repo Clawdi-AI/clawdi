@@ -35,16 +35,14 @@ export function LowBalanceBanner({
 		? "Auto-reload was declined"
 		: needsAction
 			? "Your bank needs to confirm a top-up"
-			: "Your Wallet balance is running low";
+			: "Your wallet balance is running low";
 
-	const consequence = hasWalletCompute
-		? "Clawdi AI and wallet-funded compute can be interrupted if the balance stays low."
-		: "Clawdi AI can pause if the balance stays low.";
+	const services = hasWalletCompute ? "Clawdi AI and wallet-funded compute" : "Clawdi AI";
 	const body = declined
-		? `We couldn’t charge your saved card. Top up manually or update your payment method. ${consequence}`
+		? `We couldn't charge your saved card. Top up or update your payment method to keep ${services} running.`
 		: needsAction
-			? `A top-up is waiting on confirmation from your bank. ${consequence}`
-			: `You have about ${formatUsdExact(wallet.balance_usd)} left. Top up or turn on auto-reload. ${consequence}`;
+			? `A top-up is waiting for your bank to confirm it. ${services} may pause if your balance stays low.`
+			: `You have about ${formatUsdExact(wallet.balance_usd)} left. Top up or turn on auto-reload to keep ${services} running.`;
 
 	return (
 		<Alert data-hosted="true" variant={declined ? "destructive" : "default"}>

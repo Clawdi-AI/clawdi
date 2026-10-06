@@ -15,7 +15,7 @@ export async function vaultMaterialize(options: MaterializeOptions): Promise<voi
 	const api = new ApiClient();
 	const result = await updateVaultEnv(options.out, async (binding) => {
 		if (binding && binding.apiUrl !== apiUrl)
-			throw new Error("API URL differs from the saved Vault binding.");
+			throw new Error("API URL differs from the saved vault binding.");
 		const me = await api
 			.GET("/v1/auth/me")
 			.then(unwrap)
@@ -25,7 +25,7 @@ export async function vaultMaterialize(options: MaterializeOptions): Promise<voi
 				);
 			});
 		if (binding && binding.userId !== me.id)
-			throw new Error("Account differs from the saved Vault binding.");
+			throw new Error("Account differs from the saved vault binding.");
 		const vaultId = options.vault ?? binding?.vaultId;
 		const projectId = options.project ?? binding?.projectId;
 		const section = options.section ?? binding?.section ?? null;
@@ -37,7 +37,7 @@ export async function vaultMaterialize(options: MaterializeOptions): Promise<voi
 				binding.projectId !== projectId ||
 				binding.section !== section)
 		) {
-			throw new Error("Source differs from the saved Vault binding; choose a new target file.");
+			throw new Error("Source differs from the saved vault binding; choose a new target file.");
 		}
 		const material = validateVaultMaterial(
 			await api

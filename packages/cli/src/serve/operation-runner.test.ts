@@ -18,7 +18,13 @@ writeFileSync(
 		'import { writeFileSync } from "node:fs";',
 		'const mode = process.argv[2] ?? "";',
 		'const marker = process.argv[3] ?? "";',
-		'if (mode === "grandchild") {',
+		'if (mode === "env") {',
+		"  console.log(JSON.stringify({",
+		"    CLAWDI_AUTH_TOKEN: process.env.CLAWDI_AUTH_TOKEN,",
+		"    CLAWDI_AUTH_TOKEN_ORIGIN: process.env.CLAWDI_AUTH_TOKEN_ORIGIN,",
+		"    CLAWDI_API_URL: process.env.CLAWDI_API_URL,",
+		"  }));",
+		'} else if (mode === "grandchild") {',
 		'  process.on("SIGTERM", () => {});',
 		"  setInterval(() => {}, 1_000);",
 		'} else if (mode === "stubborn" || mode === "orphaning") {',
@@ -42,6 +48,51 @@ writeFileSync(
 
 afterAll(() => {
 	rmSync(root, { recursive: true, force: true });
+});
+
+describe("operation CLI environment", () => {
+	it.each(["https://example.test", undefined])(
+		"passes daemon credentials and endpoint with token origin %s",
+		async (origin) => {
+			const oldToken = process.env.CLAWDI_AUTH_TOKEN;
+			const oldOrigin = process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+			const oldApiUrl = process.env.CLAWDI_API_URL;
+			process.env.CLAWDI_AUTH_TOKEN = "clawdi_test_capture_token_value";
+			if (origin === undefined) delete process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+			else process.env.CLAWDI_AUTH_TOKEN_ORIGIN = origin;
+			process.env.CLAWDI_API_URL = "https://example.test/api";
+			const expectedEnv: NodeJS.ProcessEnv = {
+				CLAWDI_AUTH_TOKEN: "clawdi_test_capture_token_value",
+				CLAWDI_API_URL: "https://example.test/api",
+			};
+			if (origin !== undefined) expectedEnv.CLAWDI_AUTH_TOKEN_ORIGIN = origin;
+			const manager = createManager();
+
+			try {
+				const result = await runCliCommandImmediate(
+					{ name: "env", args: ["env"], timeoutMs: 2_000 },
+					workerInvocation,
+				);
+				expect(result.exit_code).toBe(0);
+				expect(JSON.parse(result.stdout)).toEqual(expectedEnv);
+
+				const operation = manager.start({ name: "env", args: ["env"] });
+				await waitFor(() => manager.get(operation.id)?.status !== "running");
+				expect(manager.get(operation.id)?.exit_code).toBe(0);
+				expect(JSON.parse(manager.logs(operation.id)?.stdout.join("\n") ?? "")).toEqual(
+					expectedEnv,
+				);
+			} finally {
+				await manager.shutdownAll();
+				if (oldToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+				else process.env.CLAWDI_AUTH_TOKEN = oldToken;
+				if (oldOrigin === undefined) delete process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+				else process.env.CLAWDI_AUTH_TOKEN_ORIGIN = oldOrigin;
+				if (oldApiUrl === undefined) delete process.env.CLAWDI_API_URL;
+				else process.env.CLAWDI_API_URL = oldApiUrl;
+			}
+		},
+	);
 });
 
 if (process.platform !== "win32") {

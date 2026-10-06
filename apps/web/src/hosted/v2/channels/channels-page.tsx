@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
-import { ENTITY_STRETCHED_LINK_CLASS, EntityCardSkeleton } from "@/components/entity-card";
+import { ENTITY_STRETCHED_LINK_CLASS } from "@/components/entity-card";
 import { FilterChip } from "@/components/filter-chip";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
@@ -19,6 +19,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Spinner } from "@/components/ui/spinner";
 import {
 	CHANNEL_CARD_GRID_CLASS,
+	ChannelCardSkeleton,
 	ChannelCard as SharedChannelCard,
 } from "@/hosted/v2/channels/channel-card";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
@@ -29,6 +30,7 @@ import type {
 } from "@/hosted/v2/channels/channel-types";
 import {
 	ChannelStatusBadge,
+	DiscordConnectionIssueAlert,
 	HealthBadge,
 	isNormalChannelHealth,
 	isNormalChannelStatus,
@@ -174,7 +176,7 @@ function OwnedBotsSection({
 		content = (
 			<div className={CHANNEL_CARD_GRID_CLASS}>
 				{[0, 1, 2].map((i) => (
-					<EntityCardSkeleton key={i} trailingBadge />
+					<ChannelCardSkeleton key={i} />
 				))}
 			</div>
 		);
@@ -234,7 +236,7 @@ function SharedBotsSection({
 	if (isLoading) {
 		content = (
 			<div className={CHANNEL_CARD_GRID_CLASS}>
-				<EntityCardSkeleton trailingBadge />
+				<ChannelCardSkeleton />
 			</div>
 		);
 	} else if (error) {
@@ -280,7 +282,7 @@ function SharedBotCard({ bot }: { bot: ChannelBotPoolItem }) {
 		: !bot.capabilities.link_agent
 			? "You don't have permission to link this bot."
 			: atCapacity
-				? "This bot has reached its Agent limit."
+				? "This bot has reached its agent limit."
 				: undefined;
 	return (
 		<div data-shared-channel-account-id={bot.id} className={channelsPageClasses.sharedCard}>
@@ -326,7 +328,7 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: Ch
 						/>
 						<ConfirmAction
 							title={`Delete ${channel.name}?`}
-							description="This deletes the Custom bot, its Agent links, and its paired chats. This can't be undone."
+							description="This deletes the custom bot, its agent links, and its paired chats. This can't be undone."
 							confirmLabel="Delete custom bot"
 							destructive
 							onConfirm={() => del.mutateAsync({ params: { path: { account_id: channel.id } } })}
@@ -349,6 +351,9 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: Ch
 					</>
 				}
 			/>
+			{channel.provider === "discord" ? (
+				<DiscordConnectionIssueAlert issue={channel.connection_issue} />
+			) : null}
 			<Link to="/channels/$id" params={{ id: channel.id }} className={ENTITY_STRETCHED_LINK_CLASS}>
 				<span className={channelsPageClasses.screenReaderOnly}>Open {channel.name}</span>
 			</Link>

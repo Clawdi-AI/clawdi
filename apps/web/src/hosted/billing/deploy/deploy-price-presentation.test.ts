@@ -83,7 +83,7 @@ describe("CTA-adjacent amount presentation", () => {
 			}),
 		).toEqual({
 			amount: "Debit today: $100.00",
-			caption: "From Wallet · renews yearly",
+			caption: "From wallet · renews yearly",
 			detail: null,
 		});
 	});
@@ -115,7 +115,7 @@ describe("CTA-adjacent amount presentation", () => {
 			}),
 		).toEqual({
 			amount: "Debit today: $20.00",
-			caption: "From Wallet · renews monthly",
+			caption: "From wallet · renews monthly",
 			detail: "Available $12.50 · short $7.50",
 		});
 	});

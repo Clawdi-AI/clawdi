@@ -5,16 +5,16 @@ import { deploymentStatusFromResource } from "./deployment-status";
 
 export const computeStatusDetailsCopy = {
 	checking: "Clawdi is checking this agent.",
-	failed: "The last compute change did not complete.",
+	failed: "The last change to this agent didn't complete.",
 	stuck: "This change appears to be stuck. You can cancel it and try again.",
 	restarting: "Restarting",
-	slow: "This compute change is taking longer than expected.",
-	updating: "Updating compute settings.",
+	slow: "This change is taking longer than expected.",
+	updating: "Updating agent settings.",
 	starting: "Startup is still in progress.",
-	stopping: "Compute is stopping.",
-	deleting: "Compute is being removed.",
-	deleted: "Compute is no longer available.",
-	unknown: "Clawdi cannot confirm the current compute status.",
+	stopping: "Agent is stopping.",
+	deleting: "Agent is being deleted.",
+	deleted: "Agent was deleted.",
+	unknown: "Clawdi can't confirm this agent's status.",
 } as const;
 
 export function computeStatusDetailsPresentation(deployment: DeploymentRead) {
@@ -41,7 +41,7 @@ export function computeStatusDetailsPresentation(deployment: DeploymentRead) {
 	};
 	const description =
 		status.kind === "stopped"
-			? `Compute is stopped. Channels and ${runtimeBrowserUiLabel(deployment.resource.spec.runtime)} are unavailable.`
+			? `Agent is stopped. Channels and ${runtimeBrowserUiLabel(deployment.resource.spec.runtime)} are unavailable.`
 			: status.kind in descriptions
 				? descriptions[status.kind as keyof typeof descriptions]
 				: null;

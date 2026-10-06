@@ -57,7 +57,7 @@ describe("focused sidebar status projection", () => {
 			href: "/agents/hosted",
 			env: env({ sync_enabled: true, last_sync_at: "2020-01-01T00:00:00Z" }),
 			cardStatus: {
-				visual: { label: "Running", tooltip: "Compute status: Running.", dotClass: "dot" },
+				visual: { label: "Running", tooltip: "Agent status: Running.", dotClass: "dot" },
 				labels: ["Running"],
 			},
 		};

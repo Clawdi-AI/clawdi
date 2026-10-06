@@ -76,7 +76,7 @@ function ConnectorsListSkeleton({ embedded }: { embedded: boolean }) {
 			{embedded ? null : (
 				<PageHeader title="Connectors" description={CONNECTORS_RESOURCE.managementDescription} />
 			)}
-			<Skeleton className={connectorsSurfaceClasses.search} />
+			<ListToolbar search={<Skeleton className="h-9 w-full" />} />
 			<section className={connectorsSurfaceClasses.section}>
 				<SectionLabel>Your connections</SectionLabel>
 				<div className={CONNECTOR_GRID_CLASS}>
@@ -86,7 +86,7 @@ function ConnectorsListSkeleton({ embedded }: { embedded: boolean }) {
 				</div>
 			</section>
 			<section className={connectorsSurfaceClasses.section}>
-				<SectionLabel>All Connectors</SectionLabel>
+				<SectionLabel>All connectors</SectionLabel>
 				<div className={CONNECTOR_GRID_CLASS}>
 					{Array.from({ length: 16 }).map((_, i) => (
 						<ConnectorCardSkeleton key={i} />
@@ -403,7 +403,7 @@ function CatalogSection({
 	}
 	return (
 		<section className={connectorsSurfaceClasses.section}>
-			<SectionLabel count={count}>All Connectors</SectionLabel>
+			<SectionLabel count={count}>All connectors</SectionLabel>
 			{content}
 		</section>
 	);

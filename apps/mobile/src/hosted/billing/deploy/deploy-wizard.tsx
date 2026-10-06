@@ -106,7 +106,7 @@ export function CreateAgentScreen() {
 	return (
 		<SafeAreaScreen>
 			<WebView recipe={agentsIndexClasses.page}>
-				<PageHeader title={tab === "deploy" ? agentSurfaceCopy.deployAnAgent : "Add an Agent"} />
+				<PageHeader title={tab === "deploy" ? agentSurfaceCopy.deployAnAgent : "Add an agent"} />
 				<NativeSegments
 					value={tab}
 					onChange={setTab}
@@ -786,7 +786,7 @@ function CreationForm() {
 							</WebView>
 						</SettingsSection>
 						<SettingsSection title={agentSurfaceCopy.personalize}>
-							<WebView recipe={styles.personalize}>
+							<WebView recipe={styles.personalize} className="items-stretch">
 								<AppText>{deployFormCopy.name}</AppText>
 								<AppTextInput
 									accessibilityLabel={deployFormCopy.name}

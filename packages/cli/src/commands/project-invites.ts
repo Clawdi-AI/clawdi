@@ -46,7 +46,7 @@ export async function projectInvitesCommand(
 			`/v1/projects/${projectId}/invitations/${opts.cancel}`,
 			{ method: "DELETE" },
 		);
-		console.log(`${chalk.green("✓")} Invitation cancelled.`);
+		console.log(`${chalk.green("✓")} Invitation canceled.`);
 		console.log(chalk.gray("  The recipient will no longer see it in their inbox."));
 		return;
 	}
@@ -67,7 +67,7 @@ export async function projectInvitesCommand(
 	console.log(chalk.bold(`Pending project invites (${items.length})`));
 	console.log(
 		chalk.gray(
-			"  Accepting grants viewer read access, including CLI Vault runtime reads. Agent use is separate.",
+			"  Accepting grants viewer read access, including CLI vault runtime reads. Agent use is separate.",
 		),
 	);
 	for (const inv of items) {

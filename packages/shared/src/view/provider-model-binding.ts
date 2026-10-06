@@ -312,7 +312,7 @@ export function providerAuthLabel(type: string): string {
 
 export const aiBindingCopy = {
 	managed: "Clawdi AI",
-	managedDescription: "No setup required. Usage draws from your Wallet.",
+	managedDescription: "No setup required. Usage draws from your wallet.",
 	unmanaged: "Configure inside agent",
 	unmanagedDescription: "Configure model access inside the agent.",
 	unmanagedNotice:

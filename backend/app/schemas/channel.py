@@ -11,6 +11,12 @@ ChannelVisibility = Literal["private", "public"]
 ChannelBotPoolAccess = Literal["owner", "public"]
 ChannelHealthStatus = Literal["ok", "warning", "error"]
 ChannelRuntimeStatus = Literal["connecting", "connected"]
+ChannelConnectionIssue = Literal[
+    "authentication_failed",
+    "disallowed_intents",
+    "invalid_intents",
+    "invalid_configuration",
+]
 WhatsAppOnboardingState = Literal[
     "generating",
     "ready",
@@ -79,6 +85,7 @@ class ChannelAccountResponse(BaseModel):
     has_provider_token: bool
     webhook_url: str
     created_at: datetime
+    connection_issue: ChannelConnectionIssue | None = None
 
 
 class ChannelBotPoolCapabilities(BaseModel):

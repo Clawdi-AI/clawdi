@@ -44,7 +44,7 @@ async def _register_env(client: httpx.AsyncClient, machine_id: str = "test-machi
         json={
             "machine_id": machine_id,
             "machine_name": "Test Mac",
-            "agent_type": "claude-code",
+            "agent_type": "claude_code",
             "agent_version": "0.1.0",
             "os": "darwin",
         },
@@ -76,7 +76,7 @@ async def test_environment_register_uses_machine_key_identity(
     env = (
         await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == env_id))
     ).scalar_one()
-    assert env.registration_key == f"machine:{machine_id}:agent:claude-code"
+    assert env.registration_key == f"machine:{machine_id}:agent:claude_code"
 
     detail = await client.get(f"/v1/environments/{env_id}")
     assert detail.status_code == 200, detail.text
@@ -502,7 +502,7 @@ async def test_sessions_and_search_use_canonical_agent_identity_fields(
     assert item["agent_display_name"] == "Launch runner"
     assert item["agent_default_name"] == "Research Agent"
     assert item["machine_name"] == "Shared Hosted Compute"
-    assert item["agent_type"] == "claude-code"
+    assert item["agent_type"] == "claude_code"
 
     detail = await client.get(f"/v1/sessions/{item['id']}")
     assert detail.status_code == 200, detail.text
@@ -1445,7 +1445,7 @@ async def test_session_batch_rejects_unowned_environment_id(client: httpx.AsyncC
 
 
 async def _register_env_named(
-    client: httpx.AsyncClient, machine_id: str, agent_type: str = "claude-code"
+    client: httpx.AsyncClient, machine_id: str, agent_type: str = "claude_code"
 ) -> str:
     r = await client.post(
         "/v1/environments",
@@ -1470,6 +1470,8 @@ async def test_session_batch_isolates_equal_local_ids_by_immutable_origin(
     started = datetime.now(UTC).isoformat()
     content = b"[]"
     content_hash = hashlib.sha256(content).hexdigest()
+    content_b = b'[{"role":"user","content":"Agent B fixture"}]'
+    content_hash_b = hashlib.sha256(content_b).hexdigest()
 
     # Land a session in env A first.
     r1 = await client.post(
@@ -1506,17 +1508,24 @@ async def test_session_batch_isolates_equal_local_ids_by_immutable_origin(
                     "started_at": started,
                     "message_count": 5,
                     "model": "gpt-5",
-                    "content_hash": content_hash,
+                    "content_hash": content_hash_b,
                 }
             ]
         },
     )
     assert r2.status_code == 200, r2.text
     assert r2.json()["created"] == 1
+    ambiguous = await client.post(
+        "/v1/sessions/shared-id/upload",
+        files={"file": ("shared-id.json", content_b, "application/json")},
+    )
+    assert ambiguous.status_code == 409, ambiguous.text
+    assert ambiguous.json()["detail"]["code"] == "session_origin_required"
+    assert "environment_id" in ambiguous.json()["detail"]["message"]
     upload_b = await client.post(
         "/v1/sessions/shared-id/upload",
-        data={"environment_id": env_b, "expected_content_hash": content_hash},
-        files={"file": ("shared-id.json", content, "application/json")},
+        data={"environment_id": env_b, "expected_content_hash": content_hash_b},
+        files={"file": ("shared-id.json", content_b, "application/json")},
     )
     assert upload_b.status_code == 200, upload_b.text
     assert upload_a.json()["file_key"] != upload_b.json()["file_key"]
@@ -1526,6 +1535,13 @@ async def test_session_batch_isolates_equal_local_ids_by_immutable_origin(
     listing_b = (await client.get(f"/v1/sessions?environment_id={env_b}")).json()
     assert listing_b["total"] == 1
     assert listing_b["items"][0]["local_session_id"] == "shared-id"
+    session_a_id = listing["items"][0]["id"]
+    session_b_id = listing_b["items"][0]["id"]
+    assert (await client.get(f"/v1/sessions/{session_a_id}/content")).json() == []
+    messages_b = (await client.get(f"/v1/sessions/{session_b_id}/content")).json()
+    assert [(message["role"], message["content"]) for message in messages_b] == [
+        ("user", "Agent B fixture")
+    ]
 
 
 @pytest.mark.asyncio
@@ -1535,7 +1551,7 @@ async def test_session_batch_updates_only_matching_origin(
     """An existing row from another origin cannot affect batch diffing."""
     from app.models.session import Session
 
-    env_a = await _register_env_named(client, "machine-a", agent_type="claude-code")
+    env_a = await _register_env_named(client, "machine-a", agent_type="claude_code")
     env_b = await _register_env_named(client, "machine-b", agent_type="codex")
 
     # Winner already in env A — directly inserted (pre-fetch

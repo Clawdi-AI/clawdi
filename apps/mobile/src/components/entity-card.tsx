@@ -594,6 +594,7 @@ export function EntityAddCard({
 
 export function EntityCardSkeleton({
 	iconSize = "md",
+	align = "center",
 	metaLines = 1,
 	statusDot = false,
 	titleBadge = false,
@@ -602,6 +603,7 @@ export function EntityCardSkeleton({
 	className,
 }: {
 	iconSize?: "sm" | "md";
+	align?: "center" | "start";
 	metaLines?: 0 | 1 | 2;
 	statusDot?: boolean;
 	titleBadge?: boolean;
@@ -611,7 +613,16 @@ export function EntityCardSkeleton({
 }) {
 	return (
 		<AppView className={entityCardChassisClass({ variant: "compact", className })}>
-			<AppView className={webView(entityCardClasses.skeletonRow)}>
+			<AppView
+				className={cn(
+					webView(entityCardClasses.skeletonLayout),
+					webView(
+						align === "start"
+							? entityCardClasses.skeletonAlignStart
+							: entityCardClasses.skeletonAlignCenter,
+					),
+				)}
+			>
 				<Skeleton
 					className={cn(
 						webView(entityCardClasses.shrink),
@@ -621,14 +632,19 @@ export function EntityCardSkeleton({
 					)}
 				/>
 				<AppView className={webView(entityCardClasses.body)}>
-					<AppView className={webView(entityCardClasses.titleRow)}>
+					<AppView className={webView(entityCardClasses.skeletonTitleRow)}>
 						{statusDot ? <Skeleton className={webView(entityCardClasses.skeletonDot)} /> : null}
-						<Skeleton className={webView(entityCardClasses.skeletonTitle)} />
+						{/* `h-lh` has no RN equivalent; h-5 is the text-sm line height. */}
+						<Skeleton className={cn(webView(entityCardClasses.skeletonTitle), "h-5")} />
 						{titleBadge ? <Skeleton className={webView(entityCardClasses.skeletonBadge)} /> : null}
 					</AppView>
-					{metaLines > 0 ? <Skeleton className={webView(entityCardClasses.skeletonMeta)} /> : null}
-					{metaLines > 1 ? (
-						<Skeleton className={webView(entityCardClasses.skeletonSecondMeta)} />
+					{metaLines > 0 ? (
+						<AppView className={webView(entityCardClasses.skeletonMetaLines)}>
+							<Skeleton className={cn(webView(entityCardClasses.skeletonMeta), "h-5")} />
+							{metaLines > 1 ? (
+								<Skeleton className={cn(webView(entityCardClasses.skeletonSecondMeta), "h-5")} />
+							) : null}
+						</AppView>
 					) : null}
 				</AppView>
 				{trailingBadge ? <Skeleton className={webView(entityCardClasses.skeletonBadge)} /> : null}
@@ -647,10 +663,12 @@ export function EntityCardSkeleton({
 /** Loading shape for top-level resource cards. */
 export function HeroCardSkeleton({
 	compact = false,
+	iconSize = compact ? "sm" : "md",
 	footerItems = 2,
 	className,
 }: {
 	compact?: boolean;
+	iconSize?: "sm" | "md";
 	footerItems?: 0 | 1 | 2;
 	className?: string;
 }) {
@@ -670,20 +688,25 @@ export function HeroCardSkeleton({
 		>
 			<Skeleton
 				className={
-					compact
+					iconSize === "sm"
 						? webView(entityCardClasses.compactHeroSkeletonIcon)
 						: webView(entityCardClasses.skeletonIcon)
 				}
 			/>
 			<AppView className={webView(entityCardClasses.heroSkeletonBody)}>
-				<Skeleton className={webView(entityCardClasses.heroSkeletonTitle)} />
-				<Skeleton className={webView(entityCardClasses.heroSkeletonDescription)} />
+				{/* `h-lh` has no RN equivalent; heights match each line's type scale. */}
+				<AppView className={webView(entityCardClasses.heroSkeletonTitleLine)}>
+					<Skeleton className={cn(webView(entityCardClasses.heroSkeletonTitle), "h-5")} />
+				</AppView>
+				<AppView className={webView(entityCardClasses.heroSkeletonDescriptionLine)}>
+					<Skeleton className={cn(webView(entityCardClasses.heroSkeletonDescription), "h-5")} />
+				</AppView>
 			</AppView>
 			{footerItems > 0 ? (
 				<AppView className={webView(entityCardClasses.heroSkeletonFooter)}>
-					<Skeleton className={webView(entityCardClasses.heroSkeletonFirstFact)} />
+					<Skeleton className={cn(webView(entityCardClasses.heroSkeletonFirstFact), "h-4")} />
 					{footerItems > 1 ? (
-						<Skeleton className={webView(entityCardClasses.heroSkeletonSecondFact)} />
+						<Skeleton className={cn(webView(entityCardClasses.heroSkeletonSecondFact), "h-4")} />
 					) : null}
 				</AppView>
 			) : null}

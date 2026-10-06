@@ -4,14 +4,14 @@ export const whatsappOnboardingCopy = {
 	accountDescription: "Add a WhatsApp account you own by scanning a linked-device QR.",
 	warningTitle: "Use a dedicated number",
 	warningDescription:
-		"Clawdi uses WhatsApp’s linked-device feature. When linked to an Agent, replies are sent from this account—use a separate number, not your primary personal one.",
+		"Clawdi connects as a WhatsApp linked device, and agent replies come from this account. Use a separate number, not your personal one.",
 	connectAccount: "Connect your account",
 	checking: "Checking linked-device availability…",
 	accountNextSteps:
-		"This adds the account under Custom bots. Agent Link and chat Pair are separate next steps.",
+		"This adds the account under custom bots. Agent link and chat pair are separate next steps.",
 	accountName: "Account name",
 	accountPlaceholder: "Personal WhatsApp",
-	nameHint: "This names the Custom bot inventory entry. It does not rename your WhatsApp account.",
+	nameHint: "This names the custom bot inventory entry. It does not rename your WhatsApp account.",
 	generateQr: "Generate QR",
 	generating: "Generating QR code…",
 	scanned: "Device approved",
@@ -37,10 +37,10 @@ export function whatsappReadinessMessage(
 		case "no_capacity":
 			return "All linked-device slots are currently in use.";
 		case "managed_sidecar_required":
-			return "Linked WhatsApp devices are not supported by this Agent.";
+			return "Linked WhatsApp devices are not supported by this agent.";
 		case "temporarily_unavailable":
 			return "Linked-device pairing is temporarily unavailable.";
 		default:
-			return "Linked-device pairing is not available for this Agent.";
+			return "Linked-device pairing is not available for this agent.";
 	}
 }

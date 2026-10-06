@@ -64,7 +64,7 @@ export function OnboardingCard({
 								size="lg"
 								className={onboardingCardClasses.deployAction}
 							>
-								<Rocket data-icon="inline-start" /> Deploy on Clawdi
+								<Rocket data-icon="inline-start" /> Deploy a Cloud Agent
 							</Button>
 						) : null}
 						<Button
@@ -74,7 +74,7 @@ export function OnboardingCard({
 							className={onboardingCardClasses.connectAction}
 							onClick={connectAgent}
 						>
-							<TerminalSquare data-icon="inline-start" /> Connect an Agent on your machine
+							<TerminalSquare data-icon="inline-start" /> Connect your own agent
 						</Button>
 					</div>
 				</CardContent>

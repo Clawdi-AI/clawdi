@@ -109,7 +109,7 @@ export async function push(opts: PushOpts) {
 	p.intro(chalk.bold("clawdi push"));
 
 	if (!opts.dryRun && !isLoggedIn()) {
-		p.log.error("Not logged in. Run `clawdi auth login` first.");
+		p.log.error("Not signed in. Run `clawdi auth login` first.");
 		p.outro(chalk.red("Aborted."));
 		process.exitCode = 1;
 		return;
@@ -298,7 +298,7 @@ export async function push(opts: PushOpts) {
 		parts.push(`${totals.created} new, ${totals.updated} updated, ${unchangedTotal} unchanged`);
 		if (totals.suppressed > 0) {
 			parts.push(
-				`${totals.suppressed} cloud Session${totals.suppressed === 1 ? "" : "s"} kept deleted`,
+				`${totals.suppressed} cloud session${totals.suppressed === 1 ? "" : "s"} kept deleted`,
 			);
 		}
 		parts.push(`${totals.content} content upload${totals.content === 1 ? "" : "s"}`);
@@ -426,12 +426,12 @@ async function scanOneAgent(
 		}
 		if (invalidSkillCount > 0) {
 			notes.push(
-				`Skipped ${invalidSkillCount} skill ${invalidSkillCount === 1 ? "directory" : "directories"} with invalid names. Rename local skill directories to letters, numbers, dot, underscore, hyphen, or up to 4 slash-separated components.`,
+				`Skipped ${invalidSkillCount} skill ${invalidSkillCount === 1 ? "directory" : "directories"} with invalid names. Use only letters, numbers, dots, underscores, and hyphens, with at most 4 slash-separated parts.`,
 			);
 		}
 		if (projectMaterializationCount > 0) {
 			notes.push(
-				`Skipped ${projectMaterializationCount} Project-owned skill ${projectMaterializationCount === 1 ? "reference" : "references"}; update them from their source Project.`,
+				`Skipped ${projectMaterializationCount} project-owned skill ${projectMaterializationCount === 1 ? "reference" : "references"}; update them from their source project.`,
 			);
 		}
 	}
@@ -498,7 +498,8 @@ async function scanOneAgent(
 				!(
 					cached?.protocol === plan.protocol &&
 					cached.local_hash === plan.localHash &&
-					cached.pending === undefined
+					cached.pending === undefined &&
+					cached.blocked === undefined
 				)
 			)
 				retained.push(s);
@@ -568,6 +569,7 @@ async function uploadOneAgent(
 	moduleState: ModuleState,
 ): Promise<AgentUploadResult | "aborted"> {
 	const { agentType, envId, sessions, sessionPlans, skills } = scan;
+	const sessionsModule = adapterForType(agentType)?.sessions;
 
 	if (!envId) {
 		p.log.error("Environment id missing — rerun `clawdi setup`.");
@@ -694,6 +696,13 @@ async function uploadOneAgent(
 						session: s,
 						plan,
 						needsSnapshotContent: needsContent.has(id),
+						confirmPlanCurrent: async () => {
+							const current = await sessionsModule?.resolve(id);
+							return (
+								!!current &&
+								(await prepareSessionUpload(current, plan.protocol)).localHash === plan.localHash
+							);
+						},
 					});
 					if (result.status === "blocked") {
 						p.log.warn(result.message);
