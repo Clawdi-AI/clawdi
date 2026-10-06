@@ -98,7 +98,7 @@ Incus/ZFS fixtures; results live in its design document. Production and real mod
 
 Hosted qualification now fills blank volumes and installs software in place;
 TTL retirement/refill supplies freshness without cloned software volumes.
-Three samples per runtime gave claim-to-first-Cloud-`ok` medians of 16.49 s
+Before the independent-review fixes, three samples per runtime gave claim-to-first-Cloud-`ok` medians of 16.49 s
 OpenClaw and 15.67 s Hermes, within the owner-accepted approximately 17.5/16 s
 ceilings. Full fill medians were 189.04/364.99 s respectively; TTL retirement
 and replacement readiness took 204.74 s. All six functional samples completed.
@@ -107,6 +107,20 @@ The fixture exited 1 solely because its original Hermes ceiling remained
 An additional startup-order change was discarded after changed-file Biome
 failed, before native measurement. The paired Hosted pool design document
 retains the complete results and qualification limits.
+
+Independent-review qualification used one sample per runtime: claim to first
+fixture Cloud `ok` took 15.71 s for OpenClaw and 13.94 s for Hermes; full fill took
+184.24 s and 340.44 s. Both reboot/preservation checks passed, as did a 194.05 s
+TTL retire/refill cycle. The fixture exited 0 and cleaned all disposable resources.
+This review changes correctness and scope gates; it does not tune performance.
+
+Review Docker qualification on source `ce9b3100ceea0466b9c90c8ea35bf2465963cd5e`
+(rebased onto main `cf25066df`) passed full CLI typecheck/tests (196 files),
+runtime-systemd (25 tests), CI and changed-file Biome (12 files). The official
+Hermes upstream contract passed all 14 tests on commit
+`93cbf617c7007286a249cc00506c012933fb537c` (`0.21.5+7736.g93cbf61`).
+The earlier upstream runner collision with the native artifact directory was
+resolved by waiting for that fixture's cleanup, then rerunning successfully.
 
 Done: Docker CLI typecheck/tests, real systemd and changed-file Biome pass;
 PostgreSQL regressions cover fallback/preservation. Paired native qualification
