@@ -21,8 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
+from app.core.cleanup import finish_cleanup
 from app.core.config import settings
-from app.core.database import finish_cleanup
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,

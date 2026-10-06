@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
-from app.core.database import finish_cleanup
+from app.core.cleanup import finish_cleanup
 
 log = logging.getLogger(__name__)
 
