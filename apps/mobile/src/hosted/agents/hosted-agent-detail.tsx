@@ -9,13 +9,17 @@ import {
 	deploymentRuntimeStatusPresentation,
 	deploymentStatusFromResource,
 	initialDeploymentCopy,
+	RUNTIME_UI_WITHDRAWN_DESCRIPTION,
+	runtimeConsoleCopy,
+	runtimeConsolePresentation,
 	runtimeDisplayName,
 	type SettlingTracker,
 	shouldShowInitialDeploymentProgress,
+	stoppedAgentDescription,
 } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { TerminalSquare } from "lucide-react-native";
+import { MonitorPlay, TerminalSquare } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentOverview } from "@/components/dashboard/agent-overview-resource-bodies";
@@ -38,6 +42,7 @@ import { ComputeStatusDetails } from "@/hosted/agents/compute-status-details";
 import { CancelOperation } from "@/hosted/agents/deployment-cancel-action";
 import { DeploymentControls } from "@/hosted/agents/deployment-controls";
 import { InitialDeploymentPage } from "@/hosted/agents/initial-deployment-page";
+import { RuntimeBrowser } from "@/hosted/agents/runtime-handoff";
 import {
 	DEPLOYMENT_POLL_WINDOW_MS,
 	deploymentNeedsPolling,
@@ -46,14 +51,17 @@ import {
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 export function DeploymentDetailScreen({
 	deploymentId,
 	management,
+	section,
 }: {
 	deploymentId: string | undefined;
 	management?: boolean;
+	section?: "console";
 }) {
 	const scope = useAccountScope();
 	return (
@@ -61,6 +69,7 @@ export function DeploymentDetailScreen({
 			key={`${scope.accountKey}:${scope.generation}:${deploymentId}`}
 			deploymentId={deploymentId ?? ""}
 			management={management}
+			section={section}
 		/>
 	);
 }
@@ -68,9 +77,11 @@ export function DeploymentDetailScreen({
 function DeploymentDetail({
 	deploymentId,
 	management,
+	section,
 }: {
 	deploymentId: string | undefined;
 	management?: boolean;
+	section?: "console";
 }) {
 	const cache = useQueryClient();
 	const [accepted, setAccepted] = useState<HostedDeployOperation | null>(null);
@@ -166,6 +177,12 @@ function DeploymentDetail({
 		]);
 	};
 	const activeOperation = operation.data ?? accepted ?? deployment?.accepted_operation;
+	const cancellableOperation =
+		activeOperation?.name === operationName &&
+		activeOperation?.metadata.deploymentId === deploymentId &&
+		!operation.isError
+			? activeOperation
+			: null;
 	const polling = deploymentPollingState(
 		deployment ? [deployment] : undefined,
 		trackers.current,
@@ -179,6 +196,119 @@ function DeploymentDetail({
 	const checkAgain = async () => {
 		await Promise.all([query.refetch(), ...(operationId ? [operation.refetch()] : [])]);
 	};
+
+	if (section === "console" && deployment) {
+		const view = runtimeConsolePresentation(
+			deployment,
+			transition === "timed_out" || transition === "escalated",
+			transition === "escalated",
+		);
+		return (
+			<SafeAreaScreen>
+				<NativeHeader title={view.browserLabel} />
+				<AgentSectionNavigation agentId={deployment.agent_id ?? ""} section="console" />
+				{query.isError ? (
+					<ApiErrorPanel error={query.error} onRetry={() => void query.refetch()} />
+				) : null}
+				<EmptyState
+					icon={MonitorPlay}
+					className="flex-1"
+					title={
+						view.state === "ready"
+							? view.browserLabel
+							: view.state === "stopped"
+								? "Stopped"
+								: view.state === "withdrawn"
+									? view.withdrawnTitle
+									: view.state === "pending"
+										? view.pendingTitle
+										: view.notRunningTitle
+					}
+					description={
+						view.state === "stopped"
+							? stoppedAgentDescription(deployment)
+							: view.state === "withdrawn"
+								? RUNTIME_UI_WITHDRAWN_DESCRIPTION
+								: view.state === "pending"
+									? view.pendingDescription
+									: view.state === "not_running"
+										? view.notRunningDescription
+										: undefined
+					}
+					action={
+						view.state === "ready" ? (
+							<RuntimeBrowser deployment={deployment} />
+						) : (
+							<WebView recipe="flex flex-wrap justify-center gap-2" className="flex-row">
+								{view.state === "pending" ||
+								transition === "timed_out" ||
+								transition === "escalated" ? (
+									<ActionButton
+										label={runtimeConsoleCopy.check}
+										disabled={query.isFetching || operation.isFetching}
+										onPress={() => void checkAgain()}
+									/>
+								) : null}
+								{view.state === "withdrawn" ? (
+									<ActionButton
+										label={runtimeConsoleCopy.channels}
+										onPress={() => router.push(`/agents/${deployment.agent_id}/channel-links`)}
+									/>
+								) : null}
+								{view.state === "pending" || view.state === "withdrawn" ? (
+									<ActionButton
+										label={
+											view.state === "pending"
+												? runtimeConsoleCopy.terminalNow
+												: runtimeConsoleCopy.terminal
+										}
+										onPress={() => router.push(`/agents/${deployment.agent_id}/terminal`)}
+									/>
+								) : null}
+								{(view.state === "stopped" || view.state === "not_running") &&
+								deployment.start_action === "start" ? (
+									<DeploymentControls
+										section="startup"
+										startLabel={view.state === "stopped" ? "Start" : "Start agent"}
+										deployment={deployment}
+										deploymentId={deployment.resource.id}
+										blocked={query.isError}
+										transitioning={Boolean(activeOperation && !activeOperation.done)}
+										onAccepted={async (result) => {
+											setAccepted(result);
+											await refreshResources();
+										}}
+										onAbsent={refreshResources}
+									/>
+								) : view.state === "stopped" ? (
+									<ActionButton
+										label={
+											deployment.start_action === "subscribe"
+												? "Subscribe to start"
+												: deployment.start_action === "top_up"
+													? "Top up to start"
+													: deployment.start_action === "contact_support"
+														? "Contact support"
+														: "Pay to start"
+										}
+										onPress={() =>
+											router.push({
+												pathname: "/agents/[id]/compute",
+												params: { id: deployment.agent_id ?? "" },
+											})
+										}
+									/>
+								) : null}
+								{transition === "escalated" && cancellableOperation ? (
+									<CancelOperation operation={cancellableOperation} onRequested={checkAgain} />
+								) : null}
+							</WebView>
+						)
+					}
+				/>
+			</SafeAreaScreen>
+		);
+	}
 
 	if (management)
 		return (
@@ -368,8 +498,11 @@ function DeploymentDetail({
 												disabled={query.isFetching || operation.isFetching}
 												onPress={() => void checkAgain()}
 											/>
-											{transition === "escalated" && activeOperation ? (
-												<CancelOperation operation={activeOperation} onRequested={checkAgain} />
+											{transition === "escalated" && cancellableOperation ? (
+												<CancelOperation
+													operation={cancellableOperation}
+													onRequested={checkAgain}
+												/>
 											) : null}
 										</WebView>
 									) : undefined

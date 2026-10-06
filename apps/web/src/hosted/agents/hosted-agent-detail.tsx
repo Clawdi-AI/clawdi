@@ -18,7 +18,10 @@ import {
 	formatShortDate,
 	initialDeploymentCopy,
 	initialDeploymentPresentation,
+	RUNTIME_UI_WITHDRAWN_DESCRIPTION,
+	runtimeConsolePresentation,
 	shouldShowInitialDeploymentProgress,
+	stoppedAgentDescription,
 } from "@clawdi/shared/view";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
@@ -873,13 +876,7 @@ function StoppedAgentState({
 		<EmptyState
 			variant={variant}
 			title="Stopped"
-			description={
-				computeSubscriptionRequiredToStart(deployment)
-					? "This agent is stopped. Choose a subscription to start it. Your saved data is kept."
-					: deployment.start_action === "start"
-						? "This agent is stopped. Start it to use its tools again."
-						: "This agent is stopped. Your saved data is kept."
-			}
+			description={stoppedAgentDescription(deployment)}
 			action={<StartComputeAction deployment={deployment} label="Start" />}
 		/>
 	);
@@ -1506,8 +1503,6 @@ function OverviewTab({
 // ── Runtime UI ───────────────────────────────────────────────────────────────
 
 const RUNTIME_UI_LAUNCH_TOAST_ID = "runtime-ui-launch";
-const RUNTIME_UI_WITHDRAWN_DESCRIPTION =
-	"Your agent keeps running. Chat with it through channels, or use Terminal.";
 export function ConsoleTab({
 	deployment,
 	runtime,
@@ -1529,9 +1524,12 @@ export function ConsoleTab({
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const isRunning = isRunningStatus(status);
-	const isStarting = isStartingStatus(status);
-	const label = runtimeDisplayName(runtime);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
+	const view = runtimeConsolePresentation(
+		deployment,
+		deploymentTransitionTimedOut,
+		deploymentTransitionEscalated,
+	);
 	const ready = deploymentRuntimeUiIsReady(deployment);
 	const url = ready ? runtimeConsoleUrl(deployment, runtime) : null;
 	const runtimeEndpoint = deployment.runtime_ui_endpoint;
@@ -1559,24 +1557,8 @@ export function ConsoleTab({
 				icon={
 					deploymentTransitionTimedOut || deploymentTransitionEscalated ? AlertCircle : MonitorPlay
 				}
-				title={
-					deploymentTransitionEscalated
-						? "Your agent’s setup appears to be stuck"
-						: deploymentTransitionTimedOut
-							? "Your agent is taking longer than expected"
-							: isStarting
-								? startingTitle()
-								: "Agent is not running"
-				}
-				description={
-					deploymentTransitionEscalated
-						? "This change is still in progress. You can cancel it and try again."
-						: deploymentTransitionTimedOut
-							? "This change is still in progress. Check again now or keep waiting."
-							: isStarting
-								? `${browserUiLabel} will open here when ready.`
-								: `Start the agent to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
-				}
+				title={view.notRunningTitle}
+				description={view.notRunningDescription}
 				action={
 					deploymentTransitionTimedOut || deploymentTransitionEscalated ? (
 						<div className="flex flex-wrap justify-center gap-2">
@@ -1611,7 +1593,7 @@ export function ConsoleTab({
 		return (
 			<EmptyState
 				icon={MonitorPlay}
-				title={`${browserUiLabel} is unavailable`}
+				title={view.withdrawnTitle}
 				description={RUNTIME_UI_WITHDRAWN_DESCRIPTION}
 				action={
 					<div className="flex flex-wrap justify-center gap-2">
@@ -1644,8 +1626,8 @@ export function ConsoleTab({
 		return (
 			<EmptyState
 				icon={MonitorPlay}
-				title={`${browserUiLabel} isn’t ready yet`}
-				description={`Your agent is running. Check again in a moment, or use Terminal now while ${label} starts its browser interface.`}
+				title={view.pendingTitle}
+				description={view.pendingDescription}
 				action={
 					<div className="flex flex-wrap justify-center gap-2">
 						<Button

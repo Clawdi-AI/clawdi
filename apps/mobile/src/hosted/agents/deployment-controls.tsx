@@ -49,6 +49,7 @@ export function DeploymentControls({
 	onAbsent,
 	section = "all",
 	onBusyChange,
+	startLabel,
 }: {
 	deployment: DeploymentRead | undefined;
 	deploymentId: string;
@@ -58,6 +59,7 @@ export function DeploymentControls({
 	onAbsent: () => Promise<void>;
 	section?: "all" | "ai" | "startup";
 	onBusyChange?: (busy: boolean) => void;
+	startLabel?: string;
 }) {
 	const t = useI18n();
 	const scope = useAccountScope();
@@ -266,7 +268,9 @@ export function DeploymentControls({
 			deploymentLifecycleAvailable("start", state) &&
 			deployment?.start_action === "start" ? (
 				<ActionButton
-					label={section === "startup" ? initialDeploymentCopy.retry : t("runtime.start")}
+					label={
+						startLabel ?? (section === "startup" ? initialDeploymentCopy.retry : t("runtime.start"))
+					}
 					disabled={busy}
 					onPress={() => confirm({ action: "start" })}
 				/>

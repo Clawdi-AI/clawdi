@@ -17,7 +17,7 @@ import { DeploymentDetailScreen } from "@/hosted/agents/hosted-agent-detail";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountScope } from "@/platform/account-lifecycle";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
-export default function AgentDetailRoute() {
+export default function AgentDetailRoute({ section }: { section?: "console" } = {}) {
 	const params = useLocalSearchParams<{ id?: string | string[] }>();
 	const cache = useQueryClient();
 	const scope = useAccountScope();
@@ -34,7 +34,8 @@ export default function AgentDetailRoute() {
 		agent = useCloudAgent(agentId);
 	const inventory = useDashboardAgents();
 	const deployment = inventory.inventory.data?.find((d) => d.agent_id === agentId);
-	if (deployment) return <DeploymentDetailScreen deploymentId={deployment.resource.id} />;
+	if (deployment)
+		return <DeploymentDetailScreen deploymentId={deployment.resource.id} section={section} />;
 	return (
 		<SafeAreaScreen>
 			<AppScrollView

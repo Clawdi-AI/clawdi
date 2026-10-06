@@ -3,6 +3,7 @@ import {
 	AGENT_NAVIGATION_GROUPS,
 	agentSectionCopy,
 	type MobileAgentSection,
+	runtimeBrowserUiLabel,
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
@@ -17,7 +18,7 @@ export function AgentSectionNavigation({
 	section = "overview",
 }: {
 	agentId: string;
-	section?: MobileAgentSection;
+	section?: MobileAgentSection | "console" | "files" | "terminal";
 }) {
 	const inventory = useDashboardAgents();
 	const deployment = inventory.inventory.data?.find((d) => d.agent_id === agentId);
@@ -90,6 +91,11 @@ export function AgentSectionNavigation({
 					})),
 					...(deployment
 						? [
+								{
+									id: "console-entry",
+									label: runtimeBrowserUiLabel(deployment.resource.spec.runtime),
+									onPress: () => router.push(`/agents/${agentId}/console`),
+								},
 								{
 									id: "terminal-entry",
 									label: "Terminal",

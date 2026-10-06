@@ -66,6 +66,7 @@ export * from "./provider-chooser";
 export * from "./provider-fields-form";
 export * from "./provider-model-binding";
 export * from "./resource-identity";
+export * from "./runtime-console";
 export * from "./runtime-ui-readiness";
 export * from "./session-agent-label";
 export * from "./session-queries";

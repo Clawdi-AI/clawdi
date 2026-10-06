@@ -46,6 +46,7 @@ export default function AgentSectionPage() {
 			return <TerminalPage />;
 		// Existing runtime controls own console/files browser grants and lifecycle fences.
 		case "console":
+			return <AgentDetailPage section="console" />;
 		case "files":
 			return <AgentDetailPage />;
 		default:
