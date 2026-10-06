@@ -129,6 +129,46 @@ afterEach(() => {
 });
 
 describe("setup daemon install", () => {
+	it.each(["default", "override"])(
+		"registers dsh Skills and preserves Cordis patches at the %s home",
+		async (source) => {
+			const { captured } = installEnvironmentMock("env-dsh");
+			const dshHome = source === "default" ? join(home, ".dsh") : join(home, "custom-dsh");
+			if (source === "override") process.env.DSH_HOME = dshHome;
+			mkdirSync(join(dshHome, "profiles", "headless"), { recursive: true });
+			const patch = "plugins:\n  custom: !!js fixture-expression\n";
+			const patchPaths = [
+				join(dshHome, "cordis.patch.yml"),
+				join(dshHome, "profiles", "headless", "cordis.patch.yml"),
+			];
+			for (const path of patchPaths) writeFileSync(path, patch);
+			writeExecutable(
+				join(home, "bin", "dsh"),
+				'#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/dsh-args"\n[ "$*" = "--version" ] || exit 99\nprintf "0.2.0-rc.2\\n"\n',
+			);
+
+			await setup({ agent: "dsh", yes: true, daemon: false });
+
+			const registration = captured.find(
+				(req) => req.method === "POST" && req.path === "/v1/agents",
+			);
+			expect(registration?.body).toMatchObject({
+				agent_type: "dsh",
+				agent_version: "0.2.0-rc.2",
+				adapter_modules: ["skills"],
+			});
+			expect(
+				JSON.parse(readFileSync(join(home, ".clawdi", "environments", "dsh.json"), "utf8")),
+			).toMatchObject({ id: "env-dsh", agentType: "dsh" });
+			const target = join(dshHome, "skills", "clawdi");
+			expect(existsSync(join(target, "SKILL.md"))).toBe(true);
+			expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
+			for (const path of patchPaths) expect(readFileSync(path, "utf8")).toBe(patch);
+			expect(readFileSync(join(home, "dsh-args"), "utf8").trim()).toBe("--version");
+			expect(consoleOutput.join("\n")).toContain("configure Clawdi MCP manually");
+		},
+	);
+
 	it("registers MCP when the idempotency probe fails", async () => {
 		installEnvironmentMock("env-codex-probe");
 		writeExecutable(
@@ -144,19 +184,23 @@ describe("setup daemon install", () => {
 		expect(consoleOutput.some((line) => line.includes("Could not auto-register"))).toBe(false);
 	});
 
-	it("registers Pi as sessions-only without installing Skill or MCP state", async () => {
+	it("keeps a manual MCP hint for Pi before 0.99.0", async () => {
 		const { captured } = installEnvironmentMock("env-pi");
 		process.env.PI_CODING_AGENT_DIR = join(home, "pi-agent");
+		writeExecutable(join(home, "bin", "pi"), "#!/bin/sh\nprintf '0.98.0\\n'\n");
 
 		await setup({ agent: "pi", yes: true, daemon: false });
 
 		const registration = captured.find((req) => req.method === "POST" && req.path === "/v1/agents");
 		expect(registration?.body).toMatchObject({
 			agent_type: "pi",
-			adapter_modules: ["sessions"],
+			adapter_modules: ["sessions", "skills"],
 		});
-		expect(existsSync(join(home, "pi-agent", "skills"))).toBe(false);
+		const target = join(home, "pi-agent", "skills", "clawdi");
+		expect(existsSync(join(target, "SKILL.md"))).toBe(true);
+		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
 		expect(existsSync(join(home, "pi-agent", "mcp.json"))).toBe(false);
+		expect(consoleOutput.join("\n")).toContain("Run manually: pi mcp add clawdi -- clawdi mcp");
 	});
 
 	it("registers OpenCode as sessions-only without installing Skill or MCP state", async () => {
@@ -469,6 +513,31 @@ describe("setup OpenClaw MCP registration", () => {
 
 		const args = readFileSync(join(home, "openclaw-mcp-args"), "utf-8").trim().split("\n");
 		expect(args).toEqual(["mcp", "set", "clawdi", '{"command":"clawdi","args":["mcp"]}']);
+	});
+});
+
+describe("setup Pi MCP registration", () => {
+	it("registers the canonical stdio server using the official Pi command", async () => {
+		installEnvironmentMock("env-pi-mcp");
+		writeExecutable(
+			join(home, "bin", "pi"),
+			`#!/bin/sh
+case "$*" in
+  --version) printf '1.0.4\\n' ;;
+  'mcp list --json') printf '{"servers":[],"errors":[]}\\n' ;;
+  *) printf '%s\\n' "$@" > "$HOME/pi-mcp-args" ;;
+esac
+`,
+		);
+		await setup({ agent: "pi", yes: true, daemon: false });
+		expect(readFileSync(join(home, "pi-mcp-args"), "utf8").trim().split("\n")).toEqual([
+			"mcp",
+			"add",
+			"clawdi",
+			"--",
+			"clawdi",
+			"mcp",
+		]);
 	});
 });
 

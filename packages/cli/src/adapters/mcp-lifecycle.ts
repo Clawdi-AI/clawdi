@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import chalk from "chalk";
 import { reconcileLocalHermesMcp } from "../commands/hermes-mcp";
 import { errMessage } from "../lib/errors";
+import { compareSemver, isValidSemver } from "../lib/semver";
+import { readCommandVersion } from "./version";
 
 export interface McpLifecycle {
 	register(): Promise<void>;
@@ -12,6 +14,8 @@ function commandLifecycle(input: {
 	label: string;
 	listCommand?: readonly [command: string, ...args: string[]];
 	registeredPattern?: RegExp;
+	isRegistered?: (listed: string) => boolean;
+	isSupported?: () => boolean;
 	registerCommand: readonly [command: string, ...args: string[]];
 	unregisterCommand: readonly [command: string, ...args: string[]];
 	manualRegister: string;
@@ -19,7 +23,12 @@ function commandLifecycle(input: {
 }): McpLifecycle {
 	return {
 		async register() {
-			if (input.listCommand && input.registeredPattern) {
+			if (input.isSupported && !input.isSupported()) {
+				console.log(chalk.yellow(`⚠ Could not auto-register MCP server in ${input.label}.`));
+				console.log(chalk.gray(`  Run manually: ${input.manualRegister}`));
+				return;
+			}
+			if (input.listCommand && (input.registeredPattern || input.isRegistered)) {
 				try {
 					const [command, ...args] = input.listCommand;
 					const listed = execFileSync(command, args, {
@@ -27,7 +36,7 @@ function commandLifecycle(input: {
 						env: process.env,
 						encoding: "utf8",
 					});
-					if (input.registeredPattern.test(listed)) {
+					if (input.isRegistered?.(listed) || input.registeredPattern?.test(listed)) {
 						console.log(chalk.gray(`✓ MCP server already registered in ${input.label}`));
 						return;
 					}
@@ -46,6 +55,10 @@ function commandLifecycle(input: {
 		},
 		async unregister() {
 			try {
+				if (input.isSupported && !input.isSupported()) {
+					console.log(chalk.gray(`${input.label}: MCP server removal not supported`));
+					return;
+				}
 				const [command, ...args] = input.unregisterCommand;
 				execFileSync(command, args, { stdio: "pipe", env: process.env });
 				console.log(chalk.green(`${input.label}: removed MCP server registration`));
@@ -85,6 +98,39 @@ export const codexMcpLifecycle: McpLifecycle = commandLifecycle({
 	unregisterCommand: ["codex", "mcp", "remove", "clawdi"],
 	manualRegister: "codex mcp add clawdi -- clawdi mcp",
 	registeredMessage: "✓ MCP server registered in Codex",
+});
+
+export const piMcpLifecycle: McpLifecycle = commandLifecycle({
+	label: "Pi",
+	isSupported: () => {
+		const version = readCommandVersion("pi", ["--version"]);
+		return version !== null && isValidSemver(version) && compareSemver(version, "0.99.0") >= 0;
+	},
+	listCommand: ["pi", "mcp", "list", "--json"],
+	isRegistered: (listed) => {
+		const report: unknown = JSON.parse(listed);
+		if (!report || typeof report !== "object" || !("servers" in report)) return false;
+		return (
+			Array.isArray(report.servers) &&
+			report.servers.some(
+				(server: unknown) =>
+					server !== null &&
+					typeof server === "object" &&
+					"name" in server &&
+					server.name === "clawdi" &&
+					"scope" in server &&
+					server.scope === "global" &&
+					"transport" in server &&
+					server.transport === "clawdi mcp" &&
+					"enabled" in server &&
+					server.enabled === true,
+			)
+		);
+	},
+	registerCommand: ["pi", "mcp", "add", "clawdi", "--", "clawdi", "mcp"],
+	unregisterCommand: ["pi", "mcp", "remove", "clawdi"],
+	manualRegister: "pi mcp add clawdi -- clawdi mcp (requires Pi >= 0.99.0)",
+	registeredMessage: "✓ MCP server registered in Pi",
 });
 
 export const openClawMcpLifecycle: McpLifecycle = commandLifecycle({

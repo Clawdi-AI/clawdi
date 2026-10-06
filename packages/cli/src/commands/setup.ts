@@ -304,7 +304,9 @@ async function shouldInstallDaemons(opts: SetupOpts): Promise<boolean> {
 }
 
 export async function reconcileAgentIntegrations(adapter: AgentAdapter): Promise<void> {
-	await adapterRegistry[adapter.agentType].mcpLifecycle?.register();
+	const entry = adapterRegistry[adapter.agentType];
+	await entry.mcpLifecycle?.register();
+	if (!entry.mcpLifecycle && entry.manualMcpHint) console.log(chalk.gray(entry.manualMcpHint));
 	if (adapter.skills) await installBuiltinSkill(adapter.agentType);
 }
 

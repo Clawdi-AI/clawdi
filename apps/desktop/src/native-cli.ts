@@ -539,6 +539,7 @@ function displayNameFor(type: DesktopAgentType): string {
 			hermes: "Hermes",
 			pi: "Pi",
 			opencode: "OpenCode",
+			dsh: "DeepSeek Harness",
 		} satisfies Record<DesktopAgentType, string>
 	)[type];
 }

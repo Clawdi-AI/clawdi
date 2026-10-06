@@ -5,20 +5,25 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { prepareSessionUpload } from "../lib/session-upload";
 import { PiAdapter } from "./pi";
 import { assertSessionGolden } from "./session-golden.test-support";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+const originalSessionDir = process.env.PI_CODING_AGENT_SESSION_DIR;
 const temporaryRoots: string[] = [];
 
 afterEach(() => {
 	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
 	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+	if (originalSessionDir === undefined) delete process.env.PI_CODING_AGENT_SESSION_DIR;
+	else process.env.PI_CODING_AGENT_SESSION_DIR = originalSessionDir;
 	for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -26,6 +31,7 @@ function fixtureSession(): { adapter: PiAdapter; file: string; root: string } {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-pi-adapter-"));
 	temporaryRoots.push(root);
 	process.env.PI_CODING_AGENT_DIR = root;
+	delete process.env.PI_CODING_AGENT_SESSION_DIR;
 	const file = join(root, "sessions", "--workspace-demo--", "session.jsonl");
 	mkdirSync(dirname(file), { recursive: true });
 	copyFileSync(join(import.meta.dir, "../../tests/fixtures/pi/session-v3.jsonl"), file);
@@ -40,6 +46,66 @@ function copyFixture(root: string, fixture: string, name: string): string {
 }
 
 describe("Pi session adapter", () => {
+	test.each(["environment", "global settings"])(
+		"collects, resolves, and watches the directory from %s",
+		async (source) => {
+			const { adapter, root } = fixtureSession();
+			const sessionDir = join(root, "custom-sessions");
+			renameSync(join(root, "sessions"), sessionDir);
+			if (source === "environment") process.env.PI_CODING_AGENT_SESSION_DIR = sessionDir;
+			else writeFileSync(join(root, "settings.json"), JSON.stringify({ sessionDir }));
+			expect(adapter.sessions.watchPaths()).toEqual([sessionDir]);
+			expect((await adapter.sessions.collect({ kind: "complete" })).sessions).toHaveLength(1);
+			expect(
+				(
+					await adapter.sessions.collect({
+						kind: "paths",
+						paths: [join(sessionDir, "--workspace-demo--", "session.jsonl")],
+					})
+				).sessions,
+			).toHaveLength(1);
+			expect((await adapter.sessions.resolve("pi.fixture-session"))?.localSessionId).toBe(
+				"pi.fixture-session",
+			);
+		},
+	);
+
+	test("adds v3 usage entries across the full history without changing projected bytes", async () => {
+		const { adapter, file } = fixtureSession();
+		const before = await adapter.sessions.resolve("pi.fixture-session");
+		const entries = readFileSync(file, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		for (const entry of entries) {
+			if (entry.id === "e2" || entry.id === "abandoned" || entry.id === "e6") {
+				entry.message.usage = { input: 10, output: 2, cacheRead: 3 };
+			}
+			if (entry.type === "compaction") entry.usage = { input: 20, output: 4, cacheRead: 6 };
+		}
+		entries.push(
+			{ type: "usage", id: "u1", parentId: "e8", usage: { input: 30, output: 5, cacheRead: 7 } },
+			{ type: "usage", id: "u2", parentId: "u1", usage: { input: 40, output: 6, cacheRead: 8 } },
+			{ type: "usage", id: "u3", parentId: "u2", usage: { input: -1, output: "invalid" } },
+			{
+				type: "branch_summary",
+				id: "b1",
+				parentId: "u3",
+				usage: { input: 5, output: 1, cacheRead: 2 },
+			},
+		);
+		writeFileSync(file, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+
+		const after = await adapter.sessions.resolve("pi.fixture-session");
+		expect(after).toMatchObject({ inputTokens: 125, outputTokens: 22, cacheReadTokens: 32 });
+		expect(after?.events).toEqual(before?.events);
+		expect(after?.messages).toEqual(before?.messages);
+		if (!before || !after) throw new Error("Expected fixture sessions");
+		expect((await prepareSessionUpload(after, "events-v1")).localHash).toBe(
+			(await prepareSessionUpload(before, "events-v1")).localHash,
+		);
+	});
+
 	test.each([
 		["/repo/subdirectory", 1],
 		["/repo2", 0],

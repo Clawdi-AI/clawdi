@@ -7,6 +7,9 @@ const AGENT_HOME_OVERRIDE_KEYS = [
 	"CODEX_HOME",
 	"HERMES_HOME",
 	"OPENCLAW_STATE_DIR",
+	"PI_CODING_AGENT_DIR",
+	"PI_CODING_AGENT_SESSION_DIR",
+	"DSH_HOME",
 ] as const;
 
 type AgentHomeOverrideKey = (typeof AGENT_HOME_OVERRIDE_KEYS)[number];

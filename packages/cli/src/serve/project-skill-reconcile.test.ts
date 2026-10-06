@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SkillModule } from "../adapters/base";
 import { CodexAdapter } from "../adapters/codex";
+import { DshAdapter } from "../adapters/dsh";
+import { PiAdapter } from "../adapters/pi";
 import { ApiClient } from "../lib/api-client";
 import {
 	readProjectSkillMaterialization,
@@ -29,6 +31,8 @@ describe("Connected Project Skill reconcile", () => {
 	let originalHome: string | undefined;
 	let originalClawdiHome: string | undefined;
 	let originalCodexHome: string | undefined;
+	let originalPiHome: string | undefined;
+	let originalDshHome: string | undefined;
 	let originalApiUrl: string | undefined;
 	let originalFetch: typeof fetch;
 
@@ -37,11 +41,15 @@ describe("Connected Project Skill reconcile", () => {
 		originalHome = process.env.HOME;
 		originalClawdiHome = process.env.CLAWDI_HOME;
 		originalCodexHome = process.env.CODEX_HOME;
+		originalPiHome = process.env.PI_CODING_AGENT_DIR;
+		originalDshHome = process.env.DSH_HOME;
 		originalApiUrl = process.env.CLAWDI_API_URL;
 		originalFetch = globalThis.fetch;
 		process.env.HOME = root;
 		process.env.CLAWDI_HOME = join(root, ".clawdi");
 		process.env.CODEX_HOME = join(root, ".codex");
+		process.env.PI_CODING_AGENT_DIR = join(root, ".pi", "agent");
+		process.env.DSH_HOME = join(root, ".dsh");
 		process.env.CLAWDI_API_URL = apiOrigin;
 	});
 
@@ -53,6 +61,10 @@ describe("Connected Project Skill reconcile", () => {
 		else process.env.CLAWDI_HOME = originalClawdiHome;
 		if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
 		else process.env.CODEX_HOME = originalCodexHome;
+		if (originalPiHome === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = originalPiHome;
+		if (originalDshHome === undefined) delete process.env.DSH_HOME;
+		else process.env.DSH_HOME = originalDshHome;
 		if (originalApiUrl === undefined) delete process.env.CLAWDI_API_URL;
 		else process.env.CLAWDI_API_URL = originalApiUrl;
 		rmSync(root, { recursive: true, force: true });
@@ -116,34 +128,41 @@ describe("Connected Project Skill reconcile", () => {
 		return { archiveRequests, capabilityReports };
 	}
 
-	it("installs the complete desired inventory through the existing adapter and records ownership", async () => {
-		const alpha = await desiredSkill("alpha", "Alpha");
-		const { archiveRequests, capabilityReports } = serveInventory([alpha]);
-		const adapter = new CodexAdapter();
+	it.each([
+		["Codex", CodexAdapter],
+		["Pi", PiAdapter],
+		["DeepSeek Harness", DshAdapter],
+	] as const)(
+		"installs the desired inventory through %s and records ownership",
+		async (_name, Adapter) => {
+			const alpha = await desiredSkill("alpha", "Alpha");
+			const { archiveRequests, capabilityReports } = serveInventory([alpha]);
+			const adapter = new Adapter();
 
-		await reconcileConnectedProjectSkills({
-			api: new ApiClient({ requireAuth: false }),
-			agentId,
-			agentType: adapter.agentType,
-			skills: adapter.skills,
-		});
+			await reconcileConnectedProjectSkills({
+				api: new ApiClient({ requireAuth: false }),
+				agentId,
+				agentType: adapter.agentType,
+				skills: adapter.skills,
+			});
 
-		expect(readFileSync(adapter.skills.path("alpha"), "utf8")).toContain("# Alpha");
-		expect(archiveRequests).toHaveLength(1);
-		expect(capabilityReports.map((body) => JSON.parse(body))).toEqual([
-			{ project_skill_reconcile_version: 1 },
-		]);
-		expect(readProjectSkillMaterialization({ agentType: "codex", localSkillKey: "alpha" })).toEqual(
-			{
-				agent_type: "codex",
+			expect(readFileSync(adapter.skills.path("alpha"), "utf8")).toContain("# Alpha");
+			expect(archiveRequests).toHaveLength(1);
+			expect(capabilityReports.map((body) => JSON.parse(body))).toEqual([
+				{ project_skill_reconcile_version: 1 },
+			]);
+			expect(
+				readProjectSkillMaterialization({ agentType: adapter.agentType, localSkillKey: "alpha" }),
+			).toEqual({
+				agent_type: adapter.agentType,
 				local_skill_key: "alpha",
 				source_project_id: projectId,
 				source_skill_key: "alpha",
 				content_hash: alpha.desired.content_hash,
 				reconcile_agent_id: agentId,
-			},
-		);
-	});
+			});
+		},
+	);
 
 	it("fails closed on an unowned local collision without downloading or overwriting", async () => {
 		const alpha = await desiredSkill("alpha", "Cloud");

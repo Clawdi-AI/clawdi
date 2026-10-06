@@ -17,8 +17,9 @@ function serviceFixture(failFirstInstall = false) {
 	const root = mkdtempSync(join(tmpdir(), "desktop-cli-runtime-"));
 	roots.push(root);
 	process.env.APPIMAGE = join(root, "Clawdi.AppImage");
+	const cliName = process.platform === "win32" ? "clawdi.exe" : "clawdi";
 	for (const file of [
-		"clawdi",
+		cliName,
 		"skills/clawdi/SKILL.md",
 		"skills/hosted-versions/1/clawdi/SKILL.md",
 		"egress-addon/clawdi_egress_addon.py",
@@ -32,13 +33,43 @@ function serviceFixture(failFirstInstall = false) {
 		cliVersion: "1.2.0",
 		daemonVersion: "1.2.0",
 		live: false,
-		executable: join(root, "resources/native/clawdi"),
+		executable: join(root, "resources/native", cliName),
 	};
 	const execute: typeof runCommand = async (_command, args) => {
 		const command = args.join(" ");
 		calls.push(command);
 		let result: unknown;
 		switch (command) {
+			case "agent detect --json":
+				result = {
+					agents: [
+						{
+							type: "dsh",
+							displayName: "DeepSeek Harness",
+							detected: true,
+							registered: false,
+							version: "0.2.0-rc.2",
+							inspection: "complete",
+						},
+					],
+				};
+				break;
+			case "agent reconnect --desktop-list":
+				result = {
+					schemaVersion: "clawdi.agentReconnectCandidates.v1",
+					agents: [
+						{
+							id: "dsh-agent",
+							type: "dsh",
+							displayName: "DeepSeek Harness",
+							name: "Research",
+							machineName: "Laptop",
+							isThisMachine: false,
+							lastSyncAt: null,
+						},
+					],
+				};
+				break;
 			case "update --native-identity":
 				return { stdout: `${state.cliVersion}\t${process.platform}-${process.arch}\n`, stderr: "" };
 			case "auth status --json":
@@ -88,6 +119,31 @@ function serviceFixture(failFirstInstall = false) {
 	);
 	return { service, calls, state, runtimeDirectory: join(root, "data/runtimes") };
 }
+
+test("accepts dsh detection and reconnect candidates from the CLI", async () => {
+	const { service } = serviceFixture();
+	expect(await service.detectAgents()).toEqual([
+		{
+			type: "dsh",
+			displayName: "DeepSeek Harness",
+			detected: true,
+			registered: false,
+			version: "0.2.0-rc.2",
+			inspection: "complete",
+		},
+	]);
+	expect(await service.listReconnectableAgents()).toEqual([
+		{
+			id: "dsh-agent",
+			type: "dsh",
+			displayName: "DeepSeek Harness",
+			name: "Research",
+			machineName: "Laptop",
+			isThisMachine: false,
+			lastSyncAt: null,
+		},
+	]);
+});
 
 test.skipIf(process.platform !== "linux")(
 	"bootstrap is read-only; verified stopped AppImage reconciliation installs once",

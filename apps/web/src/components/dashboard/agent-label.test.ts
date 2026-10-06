@@ -21,9 +21,14 @@ describe("cleanMachineName", () => {
 });
 
 describe("agentDisplayName", () => {
-	test("uses canonical labels for session-only adapters", () => {
+	test("uses canonical labels for self-managed adapters", () => {
 		expect(agentTypeLabel("pi")).toBe("Pi");
 		expect(agentTypeLabel("opencode")).toBe("OpenCode");
+		expect(agentTypeLabel("dsh")).toBe("DeepSeek Harness");
+		expect(agentIdentity({ agent_type: "dsh" })).toEqual({
+			primaryLabel: "DeepSeek Harness",
+			secondaryLabel: null,
+		});
 	});
 
 	test("uses a direct canonical name without appending the runtime", () => {
