@@ -368,8 +368,12 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		const modelsUsed = new Set<string>();
 		let projectPath: string | null = null;
 		let firstUserPrompt: string | null = null;
+		let customTitle: string | null = null;
+		let aiTitle: string | null = null;
 
 		for await (const { data: raw } of source.records()) {
+			if (raw.type === "custom-title") customTitle = jsonString(raw.customTitle) ?? customTitle;
+			if (raw.type === "ai-title") aiTitle = jsonString(raw.aiTitle) ?? aiTitle;
 			const entry = raw as SessionJsonlEntry;
 			const msg = entry.message;
 			const role = msg?.role;
@@ -445,7 +449,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			cacheReadTokens,
 			model,
 			modelsUsed: [...modelsUsed],
-			summary: firstUserPrompt,
+			summary: customTitle ?? aiTitle ?? firstUserPrompt,
 			...description.content,
 			sourceRevision: source.revision,
 			durationSeconds,

@@ -76,6 +76,48 @@ describe("ClaudeCodeAdapter.detect", () => {
 });
 
 describe("ClaudeCodeAdapter.collectSessions", () => {
+	it.each([
+		{ titleType: "all", expected: "Final custom title" },
+		{ titleType: "ai-title", expected: "Final AI title" },
+		{ titleType: "none", expected: "Actual user prompt" },
+	])(
+		"uses the last custom title, then last AI title, then real prompt ($titleType)",
+		async ({ titleType, expected }) => {
+			const file = join(
+				tmpHome,
+				".claude",
+				"projects",
+				"-Users-fixture-project",
+				"title-fixture.jsonl",
+			);
+			const promptRecords = readFileSync(
+				resolve(import.meta.dir, "../fixtures/claude-meta-summary.jsonl"),
+				"utf8",
+			);
+			const titleRecords = readFileSync(
+				resolve(import.meta.dir, "../fixtures/claude-titles.jsonl"),
+				"utf8",
+			)
+				.trim()
+				.split("\n")
+				.filter((line) => titleType === "all" || JSON.parse(line).type === titleType);
+			writeFileSync(file, promptRecords);
+			const adapter = new ClaudeCodeAdapter();
+			const original = await adapter.sessions.resolve("title-fixture");
+			if (!original) throw new Error("expected Claude title fixture");
+			const originalHash = (await prepareSessionUpload(original, "events-v1")).localHash;
+			writeFileSync(file, `${promptRecords}${titleRecords.join("\n")}\n`);
+			for (const streaming of [false, true]) {
+				const session = await adapter.sessions.resolve("title-fixture", {
+					streaming,
+					signal: new AbortController().signal,
+				});
+				if (!session) throw new Error("expected titled Claude fixture");
+				expect(session.summary).toBe(expected);
+				expect((await prepareSessionUpload(session, "events-v1")).localHash).toBe(originalHash);
+			}
+		},
+	);
 	it("hides meta injections and excludes compact summaries from the title", async () => {
 		const file = join(
 			tmpHome,
