@@ -128,18 +128,19 @@ resolution with zero, one, and multiple matching sessions.
 
 ## Personal-key issuance exception
 
-New personal keys from `POST /v1/auth/keys` (and its `/api` alias) require
-nonempty explicit `scopes` from the personal-key permission bundle and
-`expires_in_days` of 7, 30, or 90. Label-only creation now returns 422. This
-intentional security change must ship with the dashboard scope/expiry form;
-the backend must not merge before those web commits are present.
+`POST /v1/auth/keys` and its `/api` alias permanently return 410. Users can no
+longer create personal API keys. The detail directs users to `clawdi auth login`
+(or `--no-open` on a server) and states that existing keys keep working until
+revoked. This is an intentional security exception to additive compatibility.
+The dashboard now offers only key listing and revocation.
 
-Legacy CLI `/cli/auth/device` and `/cli/auth/approve` return 410 with upgrade
-guidance. OAuth login and existing keys remain supported. Key creation/listing
-responses add nullable `scopes`; `null` denotes full access for legacy keys.
-Admin issuance still permits omitted scopes and expiry, with an optional
-`expires_in_days` between 1 and 365. See the
-[backend key contract](backend-development.md#api-key-issuance).
+Legacy CLI `/cli/auth/device` and `/cli/auth/approve` also return 410 with upgrade
+guidance. OAuth login and existing keys remain supported. List and internal
+creation responses include nullable `scopes` and `expires_at`; `scopes: null`
+denotes full access for legacy/internal keys. Admin issuance still permits
+omitted scopes and expiry, with optional `expires_in_days` between 1 and 365.
+See the [backend key contract](backend-development.md#api-key-issuance) for the
+exact retirement message and retained operations.
 
 Done: `scripts/test.sh backend tests/test_auth_keys.py tests/test_cli_auth_device_flow.py tests/test_admin_endpoints.py`
 passes for canonical and legacy issuance routes.

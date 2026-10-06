@@ -376,48 +376,40 @@ Conventions:
 
 ## API key issuance
 
-`POST /v1/auth/keys` requires dashboard authentication and this body:
+Users cannot create personal API keys. `POST /v1/auth/keys` and its
+`/api/auth/keys` alias always return 410, with no request-body validation or
+key issuance:
 
 ```json
-{"label":"automation","scopes":["sessions:read","sessions:write"],"expires_in_days":30}
+{"detail":"API keys can no longer be created. Run `clawdi auth login` (use `--no-open` on a server). Existing keys keep working until revoked."}
 ```
 
-`environment_id` remains an optional owned Agent UUID string. Scopes are
-required, nonempty, deduplicated in input order, and limited to these groups:
+CLI login uses Clerk OAuth Device Authorization Grant, including on servers
+with `clawdi auth login --no-open`. `--manual` only pastes an existing key.
+Settings → API Keys lists and revokes existing keys; it has no creation UI.
+Existing keys retain their permissions and expiry behavior.
 
-| Group | Scopes |
-|---|---|
-| Sessions | `sessions:read`, `sessions:write` |
-| Skills | `skills:read`, `skills:write` |
-| Memories | `memories:read`, `memories:write` |
-| Projects | `projects:read` |
-| Vault | `vault:read`, `vault:write` |
-| Connectors | `connectors:read`, `connectors:invoke` |
+Dashboard-authenticated `GET /v1/auth/keys` returns an array of metadata:
+`id`, `label`, `key_prefix`, `created_at`, nullable `last_used_at`, `expires_at`,
+`revoked_at`, and nullable `scopes`. It never returns `raw_key` or `key_hash`.
+`scopes: null` means full access for a legacy/internal key. Managed keys and
+revoked keys are hidden. `DELETE /v1/auth/keys/{key_id}` returns
+`{"status":"revoked"}`; it soft-revokes owned, unmanaged keys. List and revoke
+retain their `/api` aliases and dashboard authentication gate.
 
-`expires_in_days` is required and accepts only 7, 30, or 90. The server computes
-UTC `expires_at`; there is no client-controlled absolute expiry field. Missing,
-empty, or unsupported scopes and missing/unsupported lifetimes return 422.
-All 11 scopes still produce a key rejected by account-management
-`require_user_auth` routes. Existing full-access, non-expiring keys stay usable.
-
-Creation returns `ApiKeyCreated`: `id`, `label`, `key_prefix`, `created_at`,
-nullable `last_used_at`, `expires_at`, `revoked_at`, nullable `scopes`, and
-`raw_key` (once only). `GET /v1/auth/keys` returns an array of the same metadata
-without `raw_key`. `scopes: null` means full access for a legacy key. Both
-operations retain their `/api/auth/keys` compatibility alias.
+Internal issuers use the admin route or the Hosted/platform contracts.
+`POST /v1/admin/auth/keys` permits optional `expires_in_days` from 1 through 365;
+omitted expiry/scopes retain non-expiring/full-access issuance, and audit
+details include `has_expiry`. Internal creation returns `ApiKeyCreated`, the
+same metadata as the list plus `raw_key` (once only).
 
 Legacy CLI `POST /v1/cli/auth/device` and dashboard-authenticated
 `POST /v1/cli/auth/approve` return 410 with
 `{"detail":"This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`."}`.
 Their `/api` aliases do the same. They create no keys or new authorizations.
 Existing `/poll`, `/lookup`, `/deny`, and `/oauth/*` behavior is preserved.
-Admin creation permits optional `expires_in_days` from 1 through 365; omitted
-expiry/scopes retain non-expiring/full-access issuance, and audit details include
-`has_expiry`.
+See [API compatibility](api-compatibility.md#personal-key-issuance-exception).
 
-The backend's required fields must merge and release with the web scope/expiry
-form. Add the web commits before merging; when releasing separately, web goes
-first. See [API compatibility](api-compatibility.md#personal-key-issuance-exception).
 Done: `scripts/test.sh backend tests/test_auth_keys.py tests/test_cli_auth_device_flow.py tests/test_admin_endpoints.py`
 exits 0 against the runner's throwaway database.
 

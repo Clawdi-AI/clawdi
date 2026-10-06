@@ -12,9 +12,10 @@ End-to-end guide for connecting Claude Code to Clawdi and using it day-to-day. A
 clawdi auth login
 ```
 
-Authorize Clawdi in your browser. The CLI saves OAuth credentials privately and
-refreshes them automatically. If the browser cannot open automatically, use
-`clawdi auth login --no-open` and securely paste the browser callback.
+Open the printed sign-in link in your browser, check that the page shows the
+same code as the CLI, and approve the sign-in you just started. The CLI waits
+for approval, saves OAuth credentials privately, and refreshes them
+automatically. Use `clawdi auth login --no-open` to suppress browser opening.
 Done: `clawdi auth status` reports `clerk-oauth`.
 
 Verify:
@@ -32,23 +33,23 @@ Clawdi Status
 
 ### Servers and automation
 
-In the dashboard, open **Settings → API Keys**, select the permissions your
-script needs, and choose an expiry of **7, 30, or 90 days** (default: 30).
-New personal keys always have explicit scopes and expiry. Copy the key once:
+Run this on the server and open the printed link in a browser on your own
+computer:
 
 ```bash
-clawdi auth login --manual
+clawdi auth login --no-open
 ```
 
-Paste it at the hidden prompt. For an unattended process, inject the same scoped,
-expiring key through `CLAWDI_AUTH_TOKEN` using your secret manager. Renew it before
-expiry. Session and skill sync need `sessions:read`, `sessions:write`,
-`skills:read`, and `skills:write`; choose memory, project, vault, and connector
-permissions as needed. Selecting all 11 available scopes still creates an
-expiring key and does not grant account-management access. Use OAuth for account
-settings and dashboard vault/connector management. Existing legacy keys keep
-their permissions.
-Done: `clawdi auth status` reports `legacy-api-key` for a manually saved key.
+Check that the browser page shows the same code, then approve. The CLI saves
+and refreshes the OAuth grant without requiring a callback to be pasted.
+Done: `clawdi auth status` reports `clerk-oauth`.
+
+Users can no longer create API keys. Settings → API Keys only lists and revokes
+existing keys. `clawdi auth login --manual` only pastes an existing key; existing
+keys keep their permissions and expiry behavior until revoked. An unattended
+process can still receive an existing or internally issued key through
+`CLAWDI_AUTH_TOKEN` from its secret manager. New internal keys are issued by
+admin or Hosted/platform workflows.
 
 ### 2. Register Claude Code as an agent
 
