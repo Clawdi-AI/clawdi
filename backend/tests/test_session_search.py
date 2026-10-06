@@ -75,7 +75,7 @@ async def _register_env(client: httpx.AsyncClient) -> str:
         json={
             "machine_id": "search-machine",
             "machine_name": "Search Mac",
-            "agent_type": "claude-code",
+            "agent_type": "claude_code",
             "agent_version": "0.1.0",
             "os": "darwin",
         },

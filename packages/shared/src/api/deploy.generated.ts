@@ -890,7 +890,10 @@ export interface components {
             severity: "info" | "warning" | "destructive";
             /** Action Label */
             action_label?: string | null;
-            /** Action Url */
+            /**
+             * Action Url
+             * @description Canonical HTTPS click target. Same-origin URLs are in-app routes on the Hosted app; other hosts are allowlisted external links.
+             */
             action_url?: string | null;
             /**
              * Created At

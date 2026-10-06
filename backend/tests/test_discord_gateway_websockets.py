@@ -280,6 +280,11 @@ async def test_terminal_discord_auth_close_waits_for_account_revision_change(
     assert account_id not in worker._tasks
     assert worker._terminal_account_revisions == {account_id: "revision-1"}
 
+    monkeypatch.setattr(discord_gateway_worker_module, "monotonic", lambda: 10**12)
+    worker._sync_tasks({account_id: "revision-1"}, stop)
+    assert account_id not in worker._tasks
+    assert attempts == 1
+
     worker._sync_tasks({account_id: "revision-2"}, stop)
     try:
         await asyncio.wait_for(rearmed.wait(), timeout=1)
@@ -397,6 +402,8 @@ async def test_established_discord_gateway_session_clears_terminal_close_markers
         async def send(self, _message: str) -> None:
             return None
 
+    worker._terminal_account_revisions[account_id] = revision
+    worker._terminal_account_retry_at[account_id] = 123.0
     state = _GatewayState(account_revision=revision)
     try:
         await worker._handle_gateway_frame(
@@ -421,6 +428,8 @@ async def test_established_discord_gateway_session_clears_terminal_close_markers
             )
         assert marker is None
         assert state.session_established is True
+        assert account_id not in worker._terminal_account_revisions
+        assert account_id not in worker._terminal_account_retry_at
     finally:
         await worker.stop()
         async with sessionmaker() as db:
@@ -692,3 +701,47 @@ async def test_real_websockets_discord_gateway_transport_contract(
     assert discord_gateway_close_code(raised.value) == 4009
     assert raised.value.rcvd is not None
     assert raised.value.rcvd.reason == "session timed out"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("close_code", [4010, 4011, 4012, 4013, 4014])
+async def test_terminal_discord_configuration_close_retries_same_revision_after_cooldown(
+    engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch, close_code: int
+) -> None:
+    account_id = UUID("00000000-0000-4000-8000-000000000908")
+    worker = DiscordGatewayWorker(
+        async_sessionmaker(engine, expire_on_commit=False), lock_engine=engine
+    )
+    clock = 100.0
+    monkeypatch.setattr(discord_gateway_worker_module, "monotonic", lambda: clock)
+    monkeypatch.setattr(
+        discord_gateway_worker_module, "discord_gateway_close_code", lambda _exc: close_code
+    )
+    attempts = 0
+    retry_started = asyncio.Event()
+
+    async def run_account(_account_id, _stop, state):
+        nonlocal attempts
+        attempts += 1
+        state.account_revision = "revision-1"
+        if attempts == 1:
+            raise ConnectionClosedError(None, None, None)
+        retry_started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(worker, "_run_account_with_lock", run_account)
+    stop = asyncio.Event()
+    try:
+        worker._sync_tasks({account_id: "revision-1"}, stop)
+        await asyncio.wait_for(worker._tasks[account_id], timeout=1)
+        clock += 1799
+        worker._sync_tasks({account_id: "revision-1"}, stop)
+        assert attempts == 1
+        assert account_id not in worker._tasks
+        clock += 1
+        worker._sync_tasks({account_id: "revision-1"}, stop)
+        await asyncio.wait_for(retry_started.wait(), timeout=1)
+        assert attempts == 2
+        assert worker._terminal_account_revisions == {account_id: "revision-1"}
+    finally:
+        await worker.stop()

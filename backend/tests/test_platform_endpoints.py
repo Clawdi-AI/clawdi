@@ -13,6 +13,7 @@ import pytest_asyncio
 from httpx import ASGITransport
 from sqlalchemy import func, select
 
+from app.core.agent_types import AGENT_TYPE_LABELS
 from app.core.config import settings
 from app.core.database import get_control_session, get_session
 from app.main import app
@@ -205,6 +206,40 @@ async def _create_platform_agent(
         headers=_headers(key),
         json=_agent_body(owner, agent_id),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_type", "status_code"),
+    [(agent_type, 200) for agent_type in AGENT_TYPE_LABELS]
+    + [
+        (agent_type, 422)
+        for agent_type in ("privileged", "admin", "k8s-debug", "x" * 51, "claude-code")
+    ],
+)
+async def test_platform_registration_validates_agent_type(
+    platform_client,
+    db_session,
+    seed_user,
+    agent_type: str,
+    status_code: int,
+):
+    agent_id = uuid.uuid4()
+    body = {**_agent_body(_clerk_owner(seed_user), agent_id), "agent_type": agent_type}
+    response = await platform_client.post(
+        "/v1/platform/agents",
+        headers=_headers("agent-type-validation"),
+        json=body,
+    )
+
+    assert response.status_code == status_code, response.text
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    if status_code == 200:
+        assert agent is not None
+        assert agent.agent_type == agent_type
+    else:
+        assert agent is None
+        assert response.json()["detail"][0]["loc"] == ["body", "agent_type"]
 
 
 @pytest.mark.asyncio

@@ -56,7 +56,7 @@ async def _register_env(client: httpx.AsyncClient) -> str:
         json={
             "machine_id": "test-public-machine",
             "machine_name": "Public Mac",
-            "agent_type": "claude-code",
+            "agent_type": "claude_code",
             "agent_version": "0.1.0",
             "os": "darwin",
         },
@@ -192,7 +192,7 @@ async def test_public_detail_returns_stripped_payload(
 
     assert body["summary"] == "Public test session"
     assert body["project_path"] == "/Users/paco/workspace/ghostty"
-    assert body["agent_type"] == "claude-code"
+    assert body["agent_type"] == "claude_code"
     assert body["model"] == "claude-sonnet-4-6"
 
     for forbidden in (
@@ -241,7 +241,7 @@ async def test_public_export_md_has_front_matter_and_body(
     assert body.startswith("---\n")
     assert 'source: "clawdi-shared-session"' in body
     assert f"/s/{sid}" in body
-    assert 'agent: "claude-code"' in body
+    assert 'agent: "claude_code"' in body
     assert 'model: "claude-sonnet-4-6"' in body
 
     assert "## User" in body
@@ -422,7 +422,7 @@ async def test_owner_export_md_matches_public_format(client: httpx.AsyncClient):
 
     assert body.startswith("---\n")
     assert 'source: "clawdi-session"' in body
-    assert 'agent: "claude-code"' in body
+    assert 'agent: "claude_code"' in body
     assert "## User" in body
     assert "## Assistant" in body
 

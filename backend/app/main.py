@@ -18,13 +18,13 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 
 from app.core.auth import AccountSuspendedHTTPException, warm_clerk_jwks
+from app.core.cleanup import finish_cleanup
 from app.core.config import settings
 from app.core.database import (
     ControlLockTimeoutError,
     control_engine,
     control_snapshot_engine,
     engine,
-    finish_cleanup,
     get_session,
 )
 from app.core.logging_config import configure_application_logging

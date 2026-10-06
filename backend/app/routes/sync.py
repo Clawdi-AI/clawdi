@@ -49,7 +49,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.types import Send
 
 from app.core.auth import AuthContext, require_scope_short_session
-from app.core.database import async_session_factory, finish_cleanup
+from app.core.cleanup import finish_cleanup
+from app.core.database import async_session_factory
 from app.core.project import project_ids_visible_to
 from app.core.skill_sync_protocol import (
     SKILL_SYNC_PROTOCOL_HEADER,

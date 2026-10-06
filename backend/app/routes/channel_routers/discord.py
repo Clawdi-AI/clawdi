@@ -40,8 +40,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile
 
+from app.core.cleanup import finish_cleanup
 from app.core.config import settings
-from app.core.database import async_session_factory, finish_cleanup, get_session
+from app.core.database import async_session_factory, get_session
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BOT_AGENT_LINK_STATUS_ACTIVE,

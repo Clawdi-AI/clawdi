@@ -6141,8 +6141,11 @@ export interface components {
              * @description Deprecated and ignored; agent default names are assigned by the server.
              */
             default_name?: string | null;
-            /** Agent Type */
-            agent_type: string;
+            /**
+             * Agent Type
+             * @enum {string}
+             */
+            agent_type: "claude_code" | "codex" | "openclaw" | "hermes" | "pi" | "opencode" | "dsh";
             /** Agent Version */
             agent_version?: string | null;
             /** Os */
@@ -7510,8 +7513,11 @@ export interface components {
              * @description Canonical Agent name supplied by the owning control plane.
              */
             default_name?: string | null;
-            /** Agent Type */
-            agent_type: string;
+            /**
+             * Agent Type
+             * @enum {string}
+             */
+            agent_type: "claude_code" | "codex" | "openclaw" | "hermes" | "pi" | "opencode" | "dsh";
             /** Agent Version */
             agent_version?: string | null;
             /**

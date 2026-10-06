@@ -15,6 +15,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.core.agent_types import SupportedAgentType
 from app.schemas.runtime_observed import (
     HostedRuntimeObservedProviderPayload,
     RuntimeObservedConfigResponse,
@@ -219,7 +220,7 @@ class EnvironmentCreate(BaseModel):
         max_length=200,
         description="Deprecated and ignored; agent default names are assigned by the server.",
     )
-    agent_type: str
+    agent_type: SupportedAgentType
     agent_version: str | None = None
     os: str
     adapter_modules: list[Literal["sessions", "skills"]] | None = Field(

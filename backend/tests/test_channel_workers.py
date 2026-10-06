@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, create_autospec
 from uuid import UUID
 
 import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
 from app.routes.channel_routers.whatsapp import _wait_whatsapp_websocket_inbox
@@ -264,11 +265,11 @@ async def test_whatsapp_websocket_inbox_wakes_on_inbound_signal(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_channel_message_retention_worker_delays_first_prune(monkeypatch):
+async def test_channel_message_retention_worker_runs_immediately(monkeypatch):
     worker = ChannelMessageRetentionWorker(None, poll_interval_seconds=0.2)
     calls: list[str] = []
 
-    async def fake_run_once() -> int:
+    async def fake_run_once(_stop) -> int:
         calls.append("run_once")
         return 0
 
@@ -279,7 +280,7 @@ async def test_channel_message_retention_worker_delays_first_prune(monkeypatch):
     stop.set()
     await asyncio.wait_for(task, timeout=1)
 
-    assert calls == []
+    assert calls == ["run_once"]
 
 
 @pytest.mark.asyncio
@@ -496,3 +497,55 @@ async def test_channel_worker_exports_process_local_metrics_without_changing_hea
     assert "msg_router_channel_queue_pending" in metrics
     assert "200 OK" in health_response
     assert '"status":"ok"' in health_response
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed_phase", ["replay", "idempotency", "channel", None])
+async def test_channel_retention_phases_fail_independently_and_drain(monkeypatch, failed_phase):
+    import app.services.channel_message_retention_worker as retention
+
+    replay = AsyncMock(side_effect=[2, 1])
+    idempotency = AsyncMock(side_effect=[2, 1])
+    channel = AsyncMock(
+        side_effect=[ChannelRetentionBatch(messages=2), ChannelRetentionBatch(messages=1)]
+    )
+    phases = {"replay": replay, "idempotency": idempotency, "channel": channel}
+    if failed_phase is not None:
+        phases[failed_phase].side_effect = RuntimeError("prune unavailable")
+    monkeypatch.setattr(retention, "prune_platform_workload_assertion_replays", replay)
+    monkeypatch.setattr(retention, "prune_platform_mutation_idempotency", idempotency)
+    monkeypatch.setattr(retention, "prune_channel_retention_batch", channel)
+    worker = ChannelMessageRetentionWorker(
+        create_autospec(async_sessionmaker, instance=True, return_value=_FakeRetentionSession()),
+        batch_size=2,
+        max_batches=3,
+    )
+    observe = AsyncMock()
+    monkeypatch.setattr(worker, "_observe_queues", observe)
+
+    assert await worker.run_once() == (9 if failed_phase is None else 6)
+    for phase, prune in phases.items():
+        assert prune.await_count == (1 if phase == failed_phase else 2)
+    observe.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_platform_retention_prunes_stop_at_batch_budget(monkeypatch):
+    import app.services.channel_message_retention_worker as retention
+
+    replay = AsyncMock(return_value=2)
+    idempotency = AsyncMock(return_value=2)
+    monkeypatch.setattr(retention, "prune_platform_workload_assertion_replays", replay)
+    monkeypatch.setattr(retention, "prune_platform_mutation_idempotency", idempotency)
+    monkeypatch.setattr(
+        retention, "prune_channel_retention_batch", AsyncMock(return_value=ChannelRetentionBatch())
+    )
+    worker = ChannelMessageRetentionWorker(
+        create_autospec(async_sessionmaker, instance=True, return_value=_FakeRetentionSession()),
+        batch_size=2,
+        max_batches=3,
+    )
+    monkeypatch.setattr(worker, "_observe_queues", AsyncMock())
+
+    assert await worker.run_once() == 12
+    assert replay.await_count == idempotency.await_count == 3
