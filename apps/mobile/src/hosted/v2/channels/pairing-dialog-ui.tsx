@@ -68,6 +68,7 @@ export function ChannelPairingView({
 			{url ? (
 				<>
 					<ActionButton
+						variant="default"
 						label={
 							provider === "discord"
 								? path === "dm"

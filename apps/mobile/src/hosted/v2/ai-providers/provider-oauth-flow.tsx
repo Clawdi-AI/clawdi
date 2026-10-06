@@ -372,7 +372,12 @@ export function ProviderOAuthView({
 							</WebText>
 						</WebView>
 					</WebView>
-					<ActionButton label={copy.open} disabled={busy || issue === "expired"} onPress={open} />
+					<ActionButton
+						variant="default"
+						label={copy.open}
+						disabled={busy || issue === "expired"}
+						onPress={open}
+					/>
 					{issue === "failed" ? (
 						<ActionButton label={copy.restart} disabled={!online} onPress={restart} />
 					) : null}
