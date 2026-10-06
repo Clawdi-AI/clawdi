@@ -116,6 +116,49 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 		);
 	});
 
+	it("keeps a two-record prompt and answer transcript", async () => {
+		const file = join(tmpHome, ".claude", "projects", "-Users-fixture-project", "two-record.jsonl");
+		writeFileSync(
+			file,
+			[
+				{
+					uuid: "short-user",
+					timestamp: "2026-10-06T01:00:00.000Z",
+					message: { role: "user", content: "Short prompt" },
+				},
+				{
+					uuid: "short-assistant",
+					timestamp: "2026-10-06T01:00:01.000Z",
+					message: { role: "assistant", content: "Short answer" },
+				},
+			]
+				.map((record) => JSON.stringify(record))
+				.join("\n") + "\n",
+		);
+		const session = await new ClaudeCodeAdapter().sessions.resolve("two-record");
+		expect(session?.messageCount).toBe(2);
+		expect(session?.messages.map((message) => message.content)).toEqual([
+			"Short prompt",
+			"Short answer",
+		]);
+	});
+
+	it("counts shared multi-block message usage once and still counts records without an id", async () => {
+		const file = join(
+			tmpHome,
+			".claude",
+			"projects",
+			"-Users-fixture-project",
+			"usage-dedup.jsonl",
+		);
+		cpSync(resolve(import.meta.dir, "../fixtures/claude-usage-dedup.jsonl"), file);
+		const session = await new ClaudeCodeAdapter().sessions.resolve("usage-dedup");
+		expect(session).toMatchObject({ inputTokens: 9, outputTokens: 16, cacheReadTokens: 4 });
+		expect(
+			session?.events?.filter((event) => event.source.record_id.startsWith("block-")),
+		).toHaveLength(3);
+	});
+
 	it("preserves origin/main session bytes and localHash", async () => {
 		await assertSessionGolden("claude-code", new ClaudeCodeAdapter().sessions);
 	});
@@ -207,12 +250,12 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 		expect(notMatched.sessions).toHaveLength(0);
 	});
 
-	it("skips sessions with fewer than 3 JSONL lines", async () => {
+	it("skips transcripts without projected messages", async () => {
 		const shortPath = join(tmpHome, ".claude", "projects", "-Users-fixture-project", "short.jsonl");
 		writeFileSync(shortPath, `${JSON.stringify({ timestamp: "2026-04-20T10:00:00Z" })}\n`);
 		const a = new ClaudeCodeAdapter();
 		const { sessions } = await a.sessions.collect({ kind: "complete" });
-		// original long session still counts, short file is skipped
+		// The original session counts; a metadata-only file has no projected messages.
 		expect(sessions).toHaveLength(1);
 	});
 
@@ -427,7 +470,7 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		expect(result.sessions.map((s) => s.localSessionId).sort()).toEqual(["aaaa-aaaa", "bbbb-bbbb"]);
 	});
 
-	it("does not consider sessions with fewer than 10 uuids as predecessors", async () => {
+	it("dedupes short predecessors when their UUIDs are a strict subset", async () => {
 		const cwd = "/Users/fixture/resume-too-short";
 		const aUuids = uuidRange("u", 5);
 		const bUuids = [...aUuids, ...uuidRange("v", 15)];
@@ -438,8 +481,8 @@ describe("ClaudeCodeAdapter dedupeResumeChains", () => {
 		const adapter = new ClaudeCodeAdapter();
 		const result = await adapter.sessions.collect({ kind: "complete", projectFilter: cwd });
 
-		expect(result.dedupedCount).toBe(0);
-		expect(result.sessions.map((s) => s.localSessionId).sort()).toEqual(["aaaa-aaaa", "bbbb-bbbb"]);
+		expect(result.dedupedCount).toBe(1);
+		expect(result.sessions.map((s) => s.localSessionId).sort()).toEqual(["bbbb-bbbb"]);
 	});
 
 	it("does not dedupe a single session in a project (group of 1)", async () => {

@@ -155,6 +155,25 @@ function addFinancialAgent(stateRoot: string, sessionId = "oc-financial-001") {
 }
 
 describe("OpenClawAdapter.detect", () => {
+	it.each(["version", "empty", "failed"])("reads only --version (%s)", async (mode) => {
+		const log = join(tmpHome, "version-arguments.log");
+		writeFileSync(
+			join(tmpHome, "bin", "openclaw"),
+			`#!/bin/sh
+printf '%s\\n' "$1" >> "${log}"
+if [ "$1" = "--version" ]; then
+  ${mode === "failed" ? "exit 1" : mode === "empty" ? "exit 0" : "printf '%s\\n' 'OpenClaw 2026.9.8 (fixture)'"}
+else
+  printf '%s\\n' 'Usage: OpenClaw help banner'
+fi
+`,
+		);
+		expect(await new OpenClawAdapter().getVersion()).toBe(
+			mode === "version" ? "OpenClaw 2026.9.8 (fixture)" : null,
+		);
+		expect(readFileSync(log, "utf8")).toBe("--version\n");
+	});
+
 	it("returns true when $HOME/.openclaw exists", async () => {
 		const a = new OpenClawAdapter();
 		expect(await a.detect()).toBe(true);

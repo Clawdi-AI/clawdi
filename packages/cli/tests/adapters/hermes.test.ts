@@ -256,6 +256,29 @@ describe("HermesAdapter.collectSessions", () => {
 		}
 	});
 
+	it.each([
+		["plain-model", "plain-model"],
+		['{"default":"json-model","api_key":"sk-json-secret"}', "json-model"],
+		["{'default': 'repr-model', 'headers': {'Authorization': 'Bearer sk-repr-secret'}}", null],
+		['{"default":"broken-model","api_key":"sk-broken-secret"', null],
+	])("accepts only strict JSON model objects (%s)", async (stored, expected) => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		try {
+			db.run(
+				"INSERT INTO sessions (id, source, model, started_at) VALUES ('model-fixture', 'cli', ?, 1776247200)",
+				stored,
+			);
+			db.run(
+				"INSERT INTO messages (session_id, role, content, timestamp) VALUES ('model-fixture', 'assistant', 'Safe answer', 1776247201)",
+			);
+		} finally {
+			db.close();
+		}
+		const session = await new HermesAdapter().sessions.resolve("model-fixture");
+		expect(session?.model).toBe(expected);
+		expect(JSON.stringify(session)).not.toContain("sk-");
+	});
+
 	it("keeps prior identities as an append-only prefix when a row is added", async () => {
 		const adapter = new HermesAdapter();
 		const before = (await adapter.sessions.resolve("s-modern"))?.events ?? [];

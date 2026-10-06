@@ -912,9 +912,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	}
 
 	async getVersion(): Promise<string | null> {
-		return (
-			readCommandVersion("openclaw", ["--version"]) ?? readCommandVersion("openclaw", ["--help"])
-		);
+		return readCommandVersion("openclaw", ["--version"]);
 	}
 
 	private async scanSessions(
