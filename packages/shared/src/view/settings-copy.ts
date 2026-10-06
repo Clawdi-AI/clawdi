@@ -35,6 +35,9 @@ export const settingsCopy = {
 	createDescription: "Use a recognizable name so you know which client can be revoked later.",
 	saveKey: "Save your API key",
 	saveKeyDescription: "Copy this key now. For your security, it won’t be available again.",
+	keyCreated: "Key created",
+	storeKey: "Store it in your secret manager and set it as CLAWDI_AUTH_TOKEN on the client.",
+	done: "Done",
 	acknowledgeKey: "I have copied and stored this API key safely.",
 	revokeDescription:
 		"Requests using this key will stop working. This can’t be undone; create and install a new key to reconnect the client.",

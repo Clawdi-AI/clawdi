@@ -5,8 +5,7 @@ import { EmptyState } from "@/components/empty-state";
 import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 import { SettingsPanelHeader, SettingsSection } from "@/components/settings/settings-panel-header";
 import { SettingsShell } from "@/components/settings/shell";
-import { Button } from "@/components/ui/button";
-import { Text } from "@/components/ui/text";
+import { NativeList } from "@/components/ui/native-list";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { nextBillingCursor, uniqueBillingItems } from "@/hosted/billing/format";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
@@ -55,75 +54,81 @@ function WalletView() {
 		(item) => item.id,
 	);
 	return (
-		<SettingsShell active="wallet" back>
-			<WebView recipe={billingPageClass}>
-				<SettingsPanelHeader
-					title={t("billingParity.wallet")}
-					description={t("billingParity.walletDescription")}
-				/>
-				{!compute ? (
-					<EmptyState variant="inset" title={t("billing.unavailable")} />
-				) : wallet.isPending ? (
-					<RouteLoadingSkeleton />
-				) : wallet.isError || !wallet.data ? (
-					<ApiErrorPanel error={wallet.error} onRetry={() => void wallet.refetch()} />
-				) : (
-					<>
-						<BalanceCard wallet={wallet.data} />
-						<WalletSettingsSections wallet={wallet.data} />
-						<SettingsSection
-							title={t("billingParity.transactions")}
-							description={t("billingParity.transactionsDescription")}
-						>
-							<WebView recipe={transactionsSectionClasses.section}>
-								{transactions.isPending ? (
-									<RouteLoadingSkeleton />
-								) : transactions.isError && !transactions.data ? (
-									<ApiErrorPanel
-										error={transactions.error}
-										onRetry={() => void transactions.refetch()}
-									/>
-								) : rows.length ? (
-									<WebView recipe={transactionsSectionClasses.mobileRows}>
-										{rows.map((item) => (
-											<TransactionRow key={item.id} item={item} />
-										))}
-									</WebView>
-								) : (
-									<EmptyState
-										variant="inset"
-										title={t("billingParity.emptyTransactions")}
-										description={t("billingParity.emptyTransactionsDescription")}
-									/>
-								)}
-								{rows.length ? (
-									<WebText recipe={transactionsSectionClasses.description}>
-										{t("billingParity.transactionsCount").replace("{count}", String(rows.length))}
-									</WebText>
-								) : null}
-								{transactions.hasNextPage ? (
-									<Button
-										variant="outline"
-										disabled={transactions.isFetching}
-										onPress={() => void transactions.fetchNextPage()}
-									>
-										<Text>{t("inventory.loadMore")}</Text>
-									</Button>
-								) : null}
-								{transactions.isError && transactions.data ? (
-									<ApiErrorPanel
-										error={transactions.error}
-										onRetry={() => void transactions.refetch()}
-									/>
-								) : null}
-							</WebView>
-						</SettingsSection>
+		<SettingsShell active="wallet" back scroll={false}>
+			<NativeList
+				data={wallet.data && !wallet.isError ? rows : []}
+				keyExtractor={(item) => item.id}
+				renderItem={({ item }) => <TransactionRow item={item} />}
+				refreshing={wallet.isRefetching || transactions.isRefetching}
+				onRefresh={() => {
+					void wallet.refetch();
+					void transactions.refetch();
+				}}
+				hasMore={transactions.hasNextPage}
+				loadingMore={transactions.isFetching}
+				onLoadMore={() => void transactions.fetchNextPage()}
+				header={
+					<WebView recipe={billingPageClass}>
+						<SettingsPanelHeader
+							title={t("billingParity.wallet")}
+							description={t("billingParity.walletDescription")}
+						/>
+						{!compute ? (
+							<EmptyState variant="inset" title={t("billing.unavailable")} />
+						) : wallet.isPending ? (
+							<RouteLoadingSkeleton />
+						) : wallet.isError || !wallet.data ? (
+							<ApiErrorPanel error={wallet.error} onRetry={() => void wallet.refetch()} />
+						) : (
+							<>
+								<BalanceCard wallet={wallet.data} />
+								<WalletSettingsSections wallet={wallet.data} />
+								<SettingsSection
+									title={t("billingParity.transactions")}
+									description={t("billingParity.transactionsDescription")}
+								/>
+							</>
+						)}
+					</WebView>
+				}
+				empty={
+					wallet.data && !wallet.isError ? (
+						transactions.isPending ? (
+							<RouteLoadingSkeleton />
+						) : transactions.isError ? (
+							<ApiErrorPanel
+								error={transactions.error}
+								onRetry={() => void transactions.refetch()}
+							/>
+						) : (
+							<EmptyState
+								variant="inset"
+								title={t("billingParity.emptyTransactions")}
+								description={t("billingParity.emptyTransactionsDescription")}
+							/>
+						)
+					) : null
+				}
+				footer={
+					<WebView recipe={transactionsSectionClasses.section}>
+						{transactions.isFetchingNextPage ? <RouteLoadingSkeleton /> : null}
+						{transactions.isError && transactions.data ? (
+							<ApiErrorPanel
+								error={transactions.error}
+								onRetry={() => void transactions.refetch()}
+							/>
+						) : null}
+						{rows.length ? (
+							<WebText recipe={transactionsSectionClasses.description}>
+								{t("billingParity.transactionsCount").replace("{count}", String(rows.length))}
+							</WebText>
+						) : null}
 						<WebText recipe={transactionsSectionClasses.description}>
 							{t("billing.noStore")}
 						</WebText>
-					</>
-				)}
-			</WebView>
+					</WebView>
+				}
+			/>
 		</SettingsShell>
 	);
 }

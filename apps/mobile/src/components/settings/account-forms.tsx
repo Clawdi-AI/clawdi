@@ -9,13 +9,13 @@ import {
 	ClerkSwitch as FormSwitch,
 	ClerkText as FormText,
 } from "@/components/auth/clerk-form";
-import { SettingsBackButton } from "@/components/settings/back-button";
 import { Avatar } from "@/components/ui/avatar";
 import { QrImage } from "@/components/ui/qr-image";
 import { Separator } from "@/components/ui/separator";
 import { AppScrollView, AppView } from "@/components/ui/view";
 import { webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
+import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 type ContactItem = {
@@ -94,12 +94,13 @@ export function ProfileFormView({
 	return (
 		<SafeAreaScreen>
 			<AppScrollView
+				contentInsetAdjustmentBehavior="automatic"
+				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("profile.title")}</FormText>
+				<NativeHeader title={t("profile.title")} />
 				<FormText>{t("profile.description")}</FormText>
 				<Separator />
 				{reverification.prompt}
@@ -218,12 +219,13 @@ export function PasswordFormView({
 	return (
 		<SafeAreaScreen>
 			<AppScrollView
+				contentInsetAdjustmentBehavior="automatic"
+				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("password.title")}</FormText>
+				<NativeHeader title={t("password.title")} />
 				<FormText>{t("password.description")}</FormText>
 				<FormText>{t(enabled ? "password.enabled" : "password.absent")}</FormText>
 				<Separator />
@@ -335,12 +337,13 @@ export function MfaFormView({
 	return (
 		<SafeAreaScreen>
 			<AppScrollView
+				contentInsetAdjustmentBehavior="automatic"
+				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("mfa.title")}</FormText>
+				<NativeHeader title={t("mfa.title")} />
 				<FormText>{t("mfa.description")}</FormText>
 				<FormText>{t(enabled ? "mfa.enabled" : "mfa.disabled")}</FormText>
 				<Separator />
@@ -471,12 +474,13 @@ export function PasskeysFormView({
 	return (
 		<SafeAreaScreen>
 			<AppScrollView
+				contentInsetAdjustmentBehavior="automatic"
+				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("passkeys.title")}</FormText>
+				<NativeHeader title={t("passkeys.title")} />
 				<FormText>{t("passkeys.description")}</FormText>
 				<Separator />
 				{reverification.prompt}
@@ -582,12 +586,13 @@ export function AccountContactsFormView({
 	return (
 		<SafeAreaScreen>
 			<AppScrollView
+				contentInsetAdjustmentBehavior="automatic"
+				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t(`${kind}.title`)}</FormText>
+				<NativeHeader title={t(`${kind}.title`)} />
 				<FormText>{t(`${kind}.description`)}</FormText>
 				<Separator />
 				{reverification.prompt}
@@ -691,12 +696,13 @@ export function DeviceSessionsFormView({
 	return (
 		<SafeAreaScreen>
 			<AppScrollView
+				contentInsetAdjustmentBehavior="automatic"
+				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("devices.title")}</FormText>
+				<NativeHeader title={t("devices.title")} />
 				<FormText>{t("devices.description")}</FormText>
 				<Separator />
 				{reverification.prompt}
@@ -773,12 +779,13 @@ export function ConnectedAccountsFormView({
 	return (
 		<SafeAreaScreen>
 			<AppScrollView
+				contentInsetAdjustmentBehavior="automatic"
+				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("connections.title")}</FormText>
+				<NativeHeader title={t("connections.title")} />
 				<FormText>{t("connections.description")}</FormText>
 				<Separator />
 				{reverification.prompt}
@@ -862,12 +869,13 @@ export function DeleteAccountFormView({
 	return (
 		<SafeAreaScreen>
 			<AppScrollView
+				contentInsetAdjustmentBehavior="automatic"
+				keyboardShouldPersistTaps="handled"
 				contentContainerClassName={webView(
 					`${generalPanelClasses.panel.replace("gap-8", "")} ${apiKeysPanelClasses.form} ${settingsDialogClasses.panel}`,
 				)}
 			>
-				<SettingsBackButton />
-				<FormText accessibilityRole="header">{t("deletion.title")}</FormText>
+				<NativeHeader title={t("deletion.title")} />
 				<FormText>{email}</FormText>
 				<FormText>{t("deletion.warning")}</FormText>
 				{outcome === "idle" ? (

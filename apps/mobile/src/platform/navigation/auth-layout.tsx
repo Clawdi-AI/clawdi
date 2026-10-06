@@ -3,6 +3,7 @@ import { Redirect, Stack, useGlobalSearchParams } from "expo-router";
 import { LoadingScreen } from "@/components/ui/feedback";
 import { useAppAuth } from "@/platform/auth/auth-client";
 import { ClerkOnly } from "@/platform/auth/clerk-only";
+import { useNativeStackOptions } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 export default function AuthLayout() {
@@ -14,6 +15,7 @@ export default function AuthLayout() {
 }
 
 function ClerkAuthLayout() {
+	const options = useNativeStackOptions();
 	const { isLoaded, isSignedIn } = useAppAuth();
 	const params = useGlobalSearchParams<{ publicShareId?: string }>();
 	const returnShare =
@@ -25,7 +27,7 @@ function ClerkAuthLayout() {
 		);
 	return (
 		<SafeAreaScreen>
-			<Stack screenOptions={{ headerShown: false, animation: "fade" }} />
+			<Stack screenOptions={{ ...options, animation: "fade" }} />
 		</SafeAreaScreen>
 	);
 }

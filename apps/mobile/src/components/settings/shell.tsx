@@ -12,10 +12,12 @@ export function SettingsShell({
 	children,
 	active = "general",
 	back: _back,
+	scroll = true,
 }: {
 	children: ReactNode;
 	active?: "general" | "api-keys" | "wallet" | "compute";
 	back?: boolean;
+	scroll?: boolean;
 }) {
 	const t = useI18n();
 	const router = useRouter();
@@ -57,13 +59,17 @@ export function SettingsShell({
 					}}
 				/>
 			</WebView>
-			<AppScrollView
-				keyboardShouldPersistTaps="handled"
-				contentInsetAdjustmentBehavior="automatic"
-				contentContainerClassName={webView(styles.panel)}
-			>
-				{children}
-			</AppScrollView>
+			{scroll ? (
+				<AppScrollView
+					keyboardShouldPersistTaps="handled"
+					contentInsetAdjustmentBehavior="automatic"
+					contentContainerClassName={webView(styles.panel)}
+				>
+					{children}
+				</AppScrollView>
+			) : (
+				children
+			)}
 		</AppSafeAreaView>
 	);
 }

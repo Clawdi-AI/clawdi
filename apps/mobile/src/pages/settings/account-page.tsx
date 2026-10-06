@@ -1,6 +1,5 @@
 import { generalPanelClasses } from "@clawdi/shared/ui";
 import { useRouter } from "expo-router";
-import { SettingsBackButton } from "@/components/settings/back-button";
 import { SettingsPanelHeader, SettingsSection } from "@/components/settings/settings-panel-header";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
@@ -14,7 +13,6 @@ export default function AccountSettingsRoute() {
 	return (
 		<SafeAreaScreen>
 			<AppScrollView contentContainerClassName={webView(generalPanelClasses.panel)}>
-				<SettingsBackButton />
 				<SettingsPanelHeader
 					title={t("settingsParity.account")}
 					description={t("settingsParity.accountDescription")}

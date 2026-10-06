@@ -13,7 +13,7 @@ export default function SettingsPanelPage() {
 			return <GeneralPage />;
 		case "api-keys":
 			return (
-				<SettingsShell active="api-keys" back>
+				<SettingsShell active="api-keys" back scroll={false}>
 					<ApiKeysPanel />
 				</SettingsShell>
 			);
