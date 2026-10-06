@@ -63,7 +63,7 @@ jobs:
           bun-version-file: package.json
 
       - name: Install workspace dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Typecheck
         working-directory: packages/cli
@@ -101,6 +101,9 @@ jobs:
         working-directory: packages/cli
         run: |
           sh -n ../../install.sh
+          if command -v pwsh >/dev/null 2>&1; then
+            pwsh -NoProfile -Command '[ScriptBlock]::Create((Get-Content -Raw ../../install.ps1)) | Out-Null'
+          fi
           node scripts/check-publish-manifest.mjs
           release_dir="$RUNNER_TEMP/clawdi-cli-release"
           install_dir="$RUNNER_TEMP/clawdi-cli-install"
@@ -114,6 +117,7 @@ jobs:
           cp dist-release/clawdi-cli-manifest.txt "$release_dir/"
           cp dist-release/clawdi-cli-manifest-v2.txt "$release_dir/"
           cp ../../install.sh "$release_dir/"
+          cp ../../install.ps1 "$release_dir/"
           (cd "$release_dir" && sha256sum --check "$tarball.sha256")
           bun run scripts/check-native-release.mjs "$release_dir" "$(node -p "require('./package.json').version")"
           cd "$install_dir"
@@ -164,7 +168,7 @@ jobs:
           test "$(node -p "require('./packages/cli/package.json').version")" = "$VERSION"
 
       - name: Install immutable verification dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Verify trusted publishing toolchain
         run: |
@@ -191,6 +195,7 @@ jobs:
           test -s clawdi-cli-manifest.txt
           test -s clawdi-cli-manifest-v2.txt
           test -s install.sh
+          test -s install.ps1
           for target in linux-x64 linux-arm64 linux-x64-musl linux-arm64-musl darwin-x64 darwin-arm64 win32-x64 win32-arm64; do
             test -s "clawdi-cli-$target.tar.gz"
           done
@@ -291,6 +296,7 @@ jobs:
               release/clawdi-cli-manifest.txt
               release/clawdi-cli-manifest-v2.txt
               release/install.sh
+              release/install.ps1
             )
             missing_assets=$(RELEASE_JSON="$existing_release" node - "${assets[@]}" <<'NODE'
           const { createHash } = require("node:crypto");
@@ -337,6 +343,7 @@ jobs:
             release/clawdi-cli-manifest.txt
             release/clawdi-cli-manifest-v2.txt
             release/install.sh
+            release/install.ps1
             --target "$GITHUB_SHA"
             --title "Clawdi CLI v$VERSION"
             --notes "$notes"

@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	realpathSync,
 	rmSync,
@@ -12,11 +14,14 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as tar from "tar";
 import {
 	activateNativeLauncherTransaction,
 	downloadAndStageNativeRelease,
 	validateNativeArchive,
 } from "./native-activation";
+import type { NativeCompiledIdentity } from "./native-distribution";
+import { NATIVE_PUBLISH_TARGET_CATALOG, nativeAssetName } from "./native-release-manifest";
 import type { PrivateDirectoryLockLease } from "./private-directory-lock";
 
 const roots: string[] = [];
@@ -25,7 +30,7 @@ afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("native archive safety", () => {
+(process.platform === "win32" ? describe.skip : describe)("native archive safety", () => {
 	it("accepts the exact native resource roots", async () => {
 		expect(await validateNativeArchive(buildArchive())).toBeUndefined();
 	});
@@ -77,7 +82,7 @@ describe("native release download bounds", () => {
 	});
 });
 
-describe("native launcher transaction", () => {
+(process.platform === "win32" ? describe.skip : describe)("native launcher transaction", () => {
 	it("restores and revalidates the previous launcher after the new smoke fails", () => {
 		const root = fixtureRoot();
 		const previous = join(root, "previous-clawdi");
@@ -161,3 +166,118 @@ function testFetcher(
 ): typeof fetch {
 	return Object.assign(implementation, { preconnect: fetch.preconnect });
 }
+
+describe("Windows native launcher transaction", () => {
+	for (const failed of [false, true]) {
+		it(
+			failed
+				? "restores the previous junction after failed smoke"
+				: "swaps a real junction and removes its backup after verification",
+			() => {
+				const root = fixtureRoot();
+				const previousDir = join(root, "previous");
+				const activeDir = join(root, "active");
+				const launcher = join(root, "current");
+				mkdirSync(previousDir);
+				mkdirSync(activeDir);
+				const previous = {
+					version: "1.2.3",
+					target: "win32-x64" as const,
+					executable: join(previousDir, "clawdi.exe"),
+				};
+				const active = {
+					version: "1.2.4",
+					target: "win32-x64" as const,
+					executable: join(activeDir, "clawdi.exe"),
+				};
+				writeFileSync(previous.executable, "1.2.3");
+				writeFileSync(active.executable, failed ? "invalid" : "1.2.4");
+				symlinkSync(previousDir, launcher, "junction");
+				const seen: string[] = [];
+				const readIdentity = (command: string): NativeCompiledIdentity | null => {
+					seen.push(realpathSync.native(command));
+					const version = readFileSync(command, "utf8");
+					return version === "invalid" ? null : { version, target: "win32-x64" };
+				};
+				const activate = () =>
+					activateNativeLauncherTransaction(
+						{ launcher, previous, active },
+						{ token: "test", assertOwned: () => undefined },
+						{ platform: "win32", readIdentity },
+					);
+				if (failed) expect(activate).toThrow("failed version verification");
+				else activate();
+				expect(realpathSync.native(launcher)).toBe(
+					realpathSync.native(failed ? previousDir : activeDir),
+				);
+				expect(seen).toEqual(
+					failed
+						? [realpathSync.native(active.executable), realpathSync.native(previous.executable)]
+						: [realpathSync.native(active.executable)],
+				);
+				expect(readdirSync(root).some((entry) => entry.startsWith("current.old-"))).toBeFalse();
+				expect(existsSync(previous.executable)).toBeTrue();
+			},
+		);
+	}
+	it("removes a failed first-install junction without deleting its target", () => {
+		const root = fixtureRoot();
+		const launcher = join(root, "current");
+		expect(() =>
+			activateNativeLauncherTransaction(
+				{
+					launcher,
+					previous: null,
+					active: { version: "1.2.3", target: "win32-arm64", executable: join(root, "clawdi.exe") },
+				},
+				{ token: "test", assertOwned: () => undefined },
+				{ platform: "win32", readIdentity: () => null },
+			),
+		).toThrow("failed version verification");
+		expect(existsSync(launcher)).toBeFalse();
+		expect(existsSync(join(root, "skills"))).toBeTrue();
+	});
+});
+
+describe("Windows native release staging", () => {
+	it("requests v2 and extracts clawdi.exe with its exact manifest", async () => {
+		const root = fixtureRoot();
+		writeFileSync(join(root, "clawdi.exe"), "Windows native\n");
+		const archivePath = join(root, "windows.tar.gz");
+		tar.create({ file: archivePath, cwd: root, gzip: true, sync: true }, [
+			"clawdi.exe",
+			"egress-addon",
+			"skills",
+		]);
+		const archive = readFileSync(archivePath);
+		const manifest = [
+			"clawdi.nativeRelease.v2",
+			"version\t1.2.3",
+			...NATIVE_PUBLISH_TARGET_CATALOG.map(
+				({ target }) =>
+					`artifact\t${target}\t${nativeAssetName(target)}\t${new Bun.CryptoHasher("sha256").update(archive).digest("hex")}`,
+			),
+			"",
+		].join("\n");
+		const urls: string[] = [];
+		const staged = await downloadAndStageNativeRelease({
+			prefix: root,
+			version: "1.2.3",
+			target: "win32-x64",
+			releaseBaseUrl: "https://example.invalid/exact",
+			fetcher: testFetcher(async (url) => {
+				urls.push(String(url));
+				return new Response(String(url).endsWith(".txt") ? manifest : archive);
+			}),
+		});
+		expect(urls).toEqual([
+			"https://example.invalid/exact/clawdi-cli-manifest-v2.txt",
+			"https://example.invalid/exact/clawdi-cli-win32-x64.tar.gz",
+		]);
+		expect(readFileSync(join(staged.stageDir, "clawdi.exe"), "utf8")).toBe("Windows native\n");
+		expect(readFileSync(join(staged.stageDir, "clawdi-cli-manifest-v2.txt"), "utf8")).toBe(
+			manifest,
+		);
+		expect(existsSync(join(staged.stageDir, "clawdi"))).toBeFalse();
+	});
+});

@@ -19,6 +19,7 @@ import {
 	detectPackageManagerUpdateOwnershipFromPaths,
 	installCommand,
 	maybeAutoUpdate,
+	nativeInstallCommand,
 	runBackgroundUpdateWorker,
 	runInstallerProcess,
 	update,
@@ -267,6 +268,20 @@ describe("package manager update ownership", () => {
 				},
 			),
 		).toBeNull();
+	});
+});
+
+describe("Windows native install guidance", () => {
+	it("prints the PowerShell installer with a validated exact version", () => {
+		expect(nativeInstallCommand(undefined, "win32")).toBe(
+			"irm https://clawdi.ai/install.ps1 | iex",
+		);
+		expect(nativeInstallCommand("1.2.3-beta.1+build.2", "win32")).toBe(
+			"$env:CLAWDI_VERSION='1.2.3-beta.1+build.2'; irm https://clawdi.ai/install.ps1 | iex",
+		);
+		expect(() => nativeInstallCommand("1.2.3'; exit", "win32")).toThrow(
+			"invalid clawdi update version",
+		);
 	});
 });
 
