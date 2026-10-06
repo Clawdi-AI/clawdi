@@ -1,5 +1,6 @@
 "use client";
 
+import { formatShortDate } from "@clawdi/shared/view";
 import { CalendarClock, CreditCard, RefreshCw, TriangleAlert, WalletCards } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -40,7 +41,6 @@ import {
 	resolveBasicPlan,
 	resolvePerformancePlan,
 } from "@/hosted/billing/subscription/subscription-utils";
-import { formatShortDate } from "@/lib/format";
 import {
 	defaultPlanChangeSelection,
 	isFundingSourceSwitchQuote,

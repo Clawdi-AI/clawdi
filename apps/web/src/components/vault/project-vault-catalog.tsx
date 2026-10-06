@@ -1,5 +1,13 @@
 "use client";
 
+import { projectVaultCatalogClasses } from "@clawdi/shared/ui";
+import {
+	displayProjectName,
+	isCustomProject,
+	PROJECT_VAULT_COPY,
+	projectVaultCatalogDescription,
+	projectVaultCatalogRows,
+} from "@clawdi/shared/view";
 import { useMutation } from "@tanstack/react-query";
 import { parseAsString, useQueryState } from "nuqs";
 import { useRef } from "react";
@@ -8,13 +16,11 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HERO_GRID_CLASS } from "@/components/entity-card";
 import { ListToolbar } from "@/components/list-toolbar";
-import { displayProjectName, isCustomProject } from "@/components/projects/project-metadata";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
 import { SearchInput } from "@/components/ui/search-input";
 import { Spinner } from "@/components/ui/spinner";
 import { useVaultCatalog } from "@/components/vault/vault-catalog-query";
-import { compareVaultsForCatalog, vaultSearchRank } from "@/components/vault/vault-search";
 import { VaultCard, VaultCardSkeleton } from "@/components/vault/vaults-surface";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
@@ -79,26 +85,14 @@ export function ProjectVaultCatalog({
 	const context = project.kind === "environment" ? "workspace" : "project";
 	const attachedIds = new Set(attachedVaults?.map((vault) => vault.id));
 	const attachmentsKnown = attachedVaults !== undefined;
-	const scopedSnapshotIsNewer = attachedVaultsUpdatedAt > catalog.dataUpdatedAt;
-	const vaultsById = new Map(attachedVaults?.map((vault) => [vault.id, vault]));
-	for (const vault of canAttach ? (catalog.data?.items ?? []) : []) {
-		const attached = vaultsById.get(vault.id);
-		// Metadata follows the latest snapshot; only the catalog knows other Project links.
-		const metadata = attached && scopedSnapshotIsNewer ? attached : vault;
-		const projectIds = scopedSnapshotIsNewer
-			? attached
-				? Array.from(new Set([...vault.project_ids, project.id]))
-				: vault.project_ids.filter((id) => id !== project.id)
-			: vault.project_ids;
-		vaultsById.set(vault.id, { ...metadata, project_ids: projectIds });
-	}
-	const rows = Array.from(vaultsById.values())
-		.filter((vault) => vaultSearchRank(vault, search) !== null)
-		.sort(
-			(a, b) =>
-				Number(a.is_owner === false) - Number(b.is_owner === false) ||
-				compareVaultsForCatalog(a, b, search),
-		);
+	const rows = projectVaultCatalogRows({
+		projectId: project.id,
+		attachedVaults,
+		attachedVaultsUpdatedAt,
+		catalogVaults: canAttach ? (catalog.data?.items ?? []) : [],
+		catalogUpdatedAt: catalog.dataUpdatedAt,
+		search,
+	});
 	const groups = attachmentsKnown
 		? [
 				{ label: `In this ${context}`, rows: rows.filter((vault) => attachedIds.has(vault.id)) },
@@ -143,21 +137,20 @@ export function ProjectVaultCatalog({
 	});
 
 	return (
-		<div className="space-y-4" data-testid="project-vault-catalog">
+		<div className={projectVaultCatalogClasses.root} data-testid="project-vault-catalog">
 			<ListToolbar
 				search={
 					<SearchInput
 						value={search}
 						onChange={setSearch}
-						placeholder="Search vaults…"
-						ariaLabel="Search vaults"
+						placeholder={PROJECT_VAULT_COPY.searchPlaceholder}
+						ariaLabel={PROJECT_VAULT_COPY.searchLabel}
 					/>
 				}
 			/>
 			{canAttach ? (
-				<p className="text-sm text-muted-foreground">
-					Add vaults from your library to this {context}. Removing a vault preserves its keys and
-					other projects.
+				<p className={projectVaultCatalogClasses.description}>
+					{projectVaultCatalogDescription(context)}
 				</p>
 			) : null}
 			{error ? (
@@ -179,7 +172,7 @@ export function ProjectVaultCatalog({
 					group.rows.length > 0 ? (
 						<section
 							key={group.label ?? "catalog"}
-							className="space-y-3"
+							className={projectVaultCatalogClasses.section}
 							aria-label={
 								group.label
 									? `${group.label}${group.label === "Available" ? ` ${context}` : ""} vaults`
@@ -210,7 +203,11 @@ export function ProjectVaultCatalog({
 											? agentResourceScope(scope.agentId)
 											: LIBRARY_RESOURCE_SCOPE;
 									return (
-										<div key={vault.id} data-testid="project-vault-card" className="min-w-0">
+										<div
+											key={vault.id}
+											data-testid="project-vault-card"
+											className={projectVaultCatalogClasses.card}
+										>
 											<VaultCard
 												vault={vault}
 												projectNameById={projectNames}
@@ -275,7 +272,7 @@ export function ProjectVaultCatalog({
 				(!canAttach || !shouldBlockQueryError(catalog.error, catalog.data)) ? (
 				<EmptyState
 					variant="inset"
-					description={search.trim() ? "No vaults match that search." : "No vaults available yet."}
+					description={search.trim() ? PROJECT_VAULT_COPY.noMatches : PROJECT_VAULT_COPY.empty}
 				/>
 			) : null}
 		</div>

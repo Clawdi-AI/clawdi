@@ -1,12 +1,11 @@
 "use client";
 
+import { formatShortDate } from "@clawdi/shared/view";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import type {
-	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeQuoteResponse,
 	ComputePlanChangeResult,
-	ComputePlanSlug,
 	Plan,
 } from "@/hosted/billing/contracts";
 import {
@@ -22,7 +21,6 @@ import {
 	isFundingSourceOnlySelection,
 	isValidPaidPlanChangeQuote,
 	type PlanChangeSelection,
-	planChangeUnavailableReason,
 	shouldRecoverWalletToCardSwitch,
 	shouldResetUnacceptedPlanChangeQuote,
 	visiblePlanChangeOperationName,
@@ -34,7 +32,6 @@ import {
 	type WalletFundingErrorCopy,
 } from "@/hosted/billing/wallet/wallet-funding";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
-import { formatShortDate } from "@/lib/format";
 import { useProductAccess } from "@/lib/product-access";
 
 const PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY = {
@@ -42,41 +39,13 @@ const PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY = {
 	refundDebt: "Top up before confirming this wallet-funded plan change.",
 } satisfies WalletFundingErrorCopy;
 
-export type PlanChangeTarget = {
-	deploymentId: string;
-	currentPlanSlug: ComputePlanSlug;
-	initialPlanSlug: ComputePlanSlug;
-	currentBillingTermMonths: ComputePlanChangeQuoteRequest["target_billing_term_months"];
-	currentFundingSource: PlanChangeSelection["funding_source"];
-	status: string;
-	paymentSourceOnly: boolean;
-	cancelAtPeriodEnd: boolean;
-	isPaidCompute: boolean;
-	allowCombinedChange: boolean;
-	projectedOperationName: string | null;
-};
+export {
+	type PlanChangeTarget,
+	planChangeBillingTerm,
+	planChangeTargetUnavailableReason,
+} from "@clawdi/shared/view";
 
-export function planChangeBillingTerm(
-	value: number,
-): ComputePlanChangeQuoteRequest["target_billing_term_months"] {
-	return value === 12 ? 12 : 1;
-}
-
-export function planChangeTargetUnavailableReason({
-	canCreateCloudAgents,
-	target,
-}: {
-	canCreateCloudAgents: boolean;
-	target: PlanChangeTarget;
-}): string | null {
-	return planChangeUnavailableReason({
-		canCreateCloudAgents,
-		cancelAtPeriodEnd: target.cancelAtPeriodEnd,
-		status: target.status,
-		hasSubscriptionTarget: target.deploymentId.trim().length > 0,
-	});
-}
-
+import { type PlanChangeTarget, planChangeTargetUnavailableReason } from "@clawdi/shared/view";
 export function planChangeTargetFingerprint(target: PlanChangeTarget): string {
 	return [
 		target.deploymentId.trim(),

@@ -1,6 +1,6 @@
+import type { ProjectResourceId } from "@clawdi/shared/view";
 import type { LucideIcon } from "lucide-react";
 import { Brain, FolderKanban, Key, MessageSquare, Plug, Sparkles } from "lucide-react";
-import type { ProjectResourceId } from "@/lib/project-resource-model";
 
 export const PROJECT_RESOURCE_ICONS = {
 	projects: FolderKanban,

@@ -1,5 +1,17 @@
 "use client";
 
+import { vaultsSurfaceClasses } from "@clawdi/shared/ui";
+import {
+	compareVaultsForCatalog,
+	displayProjectName,
+	formatResourceCount,
+	vaultFormCopy as formCopy,
+	getProjectResourceDefinition,
+	identityFor,
+	LIBRARY_COPY,
+	vaultSearchRank,
+	vaultSearchSupportingText,
+} from "@clawdi/shared/view";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { Lock, Plus } from "lucide-react";
@@ -14,7 +26,6 @@ import { IconChip } from "@/components/icon-chip";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { displayProjectName } from "@/components/projects/project-metadata";
 import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
@@ -37,17 +48,10 @@ import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
 import { useAgentProjectVaults } from "@/components/vault/agent-vaults-query";
 import { useVaultCatalog } from "@/components/vault/vault-catalog-query";
 import { vaultsForSelectedProject } from "@/components/vault/vault-scope";
-import {
-	compareVaultsForCatalog,
-	vaultSearchRank,
-	vaultSearchSupportingText,
-} from "@/components/vault/vault-search";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
-import { identityFor } from "@/lib/identity";
-import { formatResourceCount, getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import {
 	agentResourceScope,
@@ -187,16 +191,14 @@ export function VaultsSurface({
 				<PageHeader
 					title="Vaults"
 					description={
-						isAgent
-							? "Vaults available through this agent's workspace and linked projects. Configure vaults in the source project."
-							: VAULTS_RESOURCE.managementDescription
+						isAgent ? LIBRARY_COPY.agentVaultsDescription : VAULTS_RESOURCE.managementDescription
 					}
 					actions={
 						isAgent ? null : (
 							<>
 								<AddKeysDialog>
 									<Button size="sm" variant="outline">
-										<Plus className="size-3.5" />
+										<Plus className={vaultsSurfaceClasses.createIcon} />
 										Add keys
 									</Button>
 								</AddKeysDialog>
@@ -208,13 +210,19 @@ export function VaultsSurface({
 			)}
 
 			<ListToolbar
-				search={<SearchInput value={search} onChange={setSearch} placeholder="Search vaults…" />}
+				search={
+					<SearchInput
+						value={search}
+						onChange={setSearch}
+						placeholder={LIBRARY_COPY.searchVaults}
+					/>
+				}
 				filters={
 					filterableProjects.length > 1 ? (
 						<>
 							<FilterChip active={projectFilter === "all"} onClick={() => setProjectFilter("all")}>
 								All vaults
-								<span className="text-muted-foreground tabular-nums">{items.length}</span>
+								<span className={vaultsSurfaceClasses.count}>{items.length}</span>
 							</FilterChip>
 							{filterableProjects.map((p) => (
 								<FilterChip
@@ -222,11 +230,11 @@ export function VaultsSurface({
 									active={projectFilter === p.id}
 									onClick={() => setProjectFilter(p.id)}
 								>
-									<span aria-hidden className="select-none">
+									<span aria-hidden className={vaultsSurfaceClasses.protectedValue}>
 										{identityFor(p.name).emoji}
 									</span>
 									{projectNameById.get(p.id)}
-									<span className="text-muted-foreground tabular-nums">
+									<span className={vaultsSurfaceClasses.count}>
 										{vaultCountByProject.get(p.id) ?? 0}
 									</span>
 								</FilterChip>
@@ -295,9 +303,9 @@ export function VaultsSurface({
 						))}
 					</div>
 					{shared.length > 0 ? (
-						<section className="space-y-2">
+						<section className={vaultsSurfaceClasses.section}>
 							<SectionLabel count={shared.length}>Shared with you</SectionLabel>
-							<p className="text-xs text-muted-foreground">
+							<p className={vaultsSurfaceClasses.description}>
 								Read-only — your agents can use these keys; only the owner can edit them.
 							</p>
 							<div className={HERO_GRID_CLASS}>
@@ -390,7 +398,11 @@ export function VaultCard({
 		listCount === undefined && shouldBlockQueryError(keys.error, keys.data) ? (
 			"Key count unavailable"
 		) : keyCount === null ? (
-			<Skeleton key="key-count" className="h-3 w-12" aria-label="Loading key count" />
+			<Skeleton
+				key="key-count"
+				className={vaultsSurfaceClasses.skeletonCount}
+				aria-label="Loading key count"
+			/>
 		) : (
 			formatResourceCount(keyCount, "key")
 		);
@@ -398,13 +410,13 @@ export function VaultCard({
 
 	return (
 		<HeroCard
-			className="h-full"
+			className={vaultsSurfaceClasses.card}
 			icon={
-				<IconChip tint={identity.colorClasses} className="relative text-xl">
+				<IconChip tint={identity.colorClasses} className={vaultsSurfaceClasses.identity}>
 					{identity.emoji}
 					{shared ? (
-						<span className="absolute -right-1 -bottom-1 flex size-4 items-center justify-center rounded-full border bg-card">
-							<Lock className="size-2.5 text-muted-foreground" />
+						<span className={vaultsSurfaceClasses.sharedLock}>
+							<Lock className={vaultsSurfaceClasses.lockIcon} />
 						</span>
 					) : null}
 				</IconChip>
@@ -423,7 +435,7 @@ export function VaultCard({
 				keyCountLabel,
 				usedBy.length > 0 ? (
 					<Tooltip>
-						<TooltipTrigger render={<span className="truncate" />}>
+						<TooltipTrigger render={<span className={vaultsSurfaceClasses.name} />}>
 							{visibleProjectIds ? "From " : "used by "}
 							{usedBy.slice(0, 2).join(", ")}
 							{usedBy.length > 2 ? ` +${usedBy.length - 2}` : ""}
@@ -526,15 +538,13 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 			}}
 		>
 			<DialogTrigger render={<Button size="sm" />}>
-				<Plus className="size-3.5" />
+				<Plus className={vaultsSurfaceClasses.createIcon} />
 				Create vault
 			</DialogTrigger>
-			<DialogContent className="sm:max-w-md">
+			<DialogContent className={vaultsSurfaceClasses.dialog}>
 				<DialogHeader>
 					<DialogTitle>Create vault</DialogTitle>
-					<DialogDescription>
-						A bundle of API keys your agents can use. Add it to projects to control access.
-					</DialogDescription>
+					<DialogDescription>{formCopy.description}</DialogDescription>
 				</DialogHeader>
 				{vaultsQuery.error ? (
 					<ApiErrorPanel
@@ -544,35 +554,35 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 					/>
 				) : null}
 				<form
-					className="space-y-4"
+					className={vaultsSurfaceClasses.form}
 					onSubmit={(e) => {
 						e.preventDefault();
 						if (canCreate && !create.isPending) create.mutate();
 					}}
 				>
-					<div className="space-y-1.5">
+					<div className={vaultsSurfaceClasses.field}>
 						<Label htmlFor="vault-name">Name</Label>
 						<Input
 							id="vault-name"
 							value={name}
 							onChange={(e) => setName(e.target.value)}
-							placeholder="GitHub, OpenAI, Production…"
+							placeholder={formCopy.placeholder}
 							maxLength={200}
 							autoComplete="off"
 							autoFocus
 						/>
-						{slugTaken ? (
-							<p className="text-xs text-destructive">
-								That vault already exists. Open it from the vault list or use a different name.
-							</p>
-						) : null}
+						{slugTaken ? <p className={vaultsSurfaceClasses.error}>{formCopy.nameTaken}</p> : null}
 					</div>
 					<DialogFooter>
 						<Button type="button" variant="ghost" onClick={() => setOpen(false)}>
 							Cancel
 						</Button>
 						<Button type="submit" disabled={!canCreate || create.isPending}>
-							{create.isPending ? <Spinner /> : <Plus className="size-3.5" />}
+							{create.isPending ? (
+								<Spinner />
+							) : (
+								<Plus className={vaultsSurfaceClasses.createIcon} />
+							)}
 							Create vault
 						</Button>
 					</DialogFooter>

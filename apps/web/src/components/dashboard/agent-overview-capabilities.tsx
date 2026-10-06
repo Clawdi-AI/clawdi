@@ -1,3 +1,5 @@
+import { agentOverviewCapabilitiesClasses } from "@clawdi/shared/ui";
+import { agentOverviewCopy } from "@clawdi/shared/view";
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { ArrowRight, type LucideIcon, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
@@ -22,7 +24,7 @@ export type AgentOverviewModuleContent = {
 
 type OverviewLinkOptions = Pick<LinkProps, "to" | "params" | "search" | "hash">;
 
-export const OVERVIEW_CHANNELS_DESCRIPTION = "Telegram, Discord, or WhatsApp";
+export const OVERVIEW_CHANNELS_DESCRIPTION = agentOverviewCopy.channelsDescription;
 
 export function AgentOverviewStatusCard({
 	agentId,
@@ -59,23 +61,23 @@ export function AgentOverviewStatusCard({
 			data-overview-status={title.toLowerCase().replaceAll(" ", "-")}
 			data-testid={loading ? "overview-status-card-skeleton" : undefined}
 			aria-busy={loading || undefined}
-			className="h-full min-w-0 gap-0 border border-foreground/10 py-0 ring-0"
+			className={agentOverviewCapabilitiesClasses.module}
 		>
-			<CardHeader className="p-0">
+			<CardHeader className={agentOverviewCapabilitiesClasses.header}>
 				{loading ? (
-					<div className="flex items-center gap-3 px-4 py-3">{heading}</div>
+					<div className={agentOverviewCapabilitiesClasses.loadingHeading}>{heading}</div>
 				) : (
 					<Link
 						{...agentSectionLink(agentId, section)}
 						aria-label={title}
-						className="group flex items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+						className={agentOverviewCapabilitiesClasses.headingLink}
 					>
 						{heading}
 					</Link>
 				)}
 			</CardHeader>
 			{children ? (
-				<CardContent className="flex flex-1 flex-col px-4 pb-4">{children}</CardContent>
+				<CardContent className={agentOverviewCapabilitiesClasses.content}>{children}</CardContent>
 			) : null}
 		</Card>
 	);
@@ -83,10 +85,16 @@ export function AgentOverviewStatusCard({
 
 export function OverviewModuleError({ label, onRetry }: { label: string; onRetry?: () => void }) {
 	return (
-		<div className="space-y-2 text-sm text-muted-foreground" role="status">
+		<div className={agentOverviewCapabilitiesClasses.error} role="status">
 			<p>Can’t load {label.toLowerCase()}</p>
 			{onRetry ? (
-				<Button type="button" variant="ghost" size="sm" className="h-7 px-2" onClick={onRetry}>
+				<Button
+					type="button"
+					variant="ghost"
+					size="sm"
+					className={agentOverviewCapabilitiesClasses.retry}
+					onClick={onRetry}
+				>
 					<RefreshCw /> Retry
 				</Button>
 			) : null}
@@ -134,8 +142,14 @@ function OverviewCardHeading({
 			<IconChip size={prominent ? "md" : "sm"} tint={loading ? "bg-muted animate-pulse" : tint}>
 				{loading ? null : <Icon />}
 			</IconChip>
-			<div className="min-w-0 flex-1">
-				<CardTitle>{loading ? <Skeleton className="h-lh w-24 max-w-full" /> : title}</CardTitle>
+			<div className={agentOverviewCapabilitiesClasses.headingBody}>
+				<CardTitle>
+					{loading ? (
+						<Skeleton className={agentOverviewCapabilitiesClasses.titleSkeleton} />
+					) : (
+						title
+					)}
+				</CardTitle>
 				<CardDescription data-overview-primary-value>
 					{loading ? (
 						<OverviewDescriptionSkeleton label={title}>
@@ -147,13 +161,15 @@ function OverviewCardHeading({
 				</CardDescription>
 			</div>
 			{arrow && loading ? (
-				<Skeleton className="size-4 shrink-0" />
+				<Skeleton className={agentOverviewCapabilitiesClasses.arrowSkeleton} />
 			) : arrow ? (
 				<ArrowRight
 					aria-hidden="true"
 					className={cn(
-						"size-4 shrink-0 transition-transform group-hover:translate-x-0.5",
-						prominent ? "text-foreground" : "text-muted-foreground",
+						agentOverviewCapabilitiesClasses.arrow,
+						prominent
+							? agentOverviewCapabilitiesClasses.arrowProminent
+							: agentOverviewCapabilitiesClasses.arrowDefault,
 					)}
 				/>
 			) : null}
@@ -162,7 +178,7 @@ function OverviewCardHeading({
 }
 
 export function OverviewModuleUnavailable() {
-	return <p className="text-sm text-muted-foreground">Unavailable right now</p>;
+	return <p className={agentOverviewCapabilitiesClasses.unavailable}>Unavailable right now</p>;
 }
 
 export function OverviewMetadata({
@@ -171,11 +187,11 @@ export function OverviewMetadata({
 	items: readonly { label: string; value: ReactNode }[];
 }) {
 	return (
-		<dl className="space-y-2 text-xs text-muted-foreground">
+		<dl className={agentOverviewCapabilitiesClasses.metadata}>
 			{items.map((item) => (
-				<div key={item.label} className="flex min-w-0 items-start justify-between gap-3">
+				<div key={item.label} className={agentOverviewCapabilitiesClasses.metadataRow}>
 					<dt>{item.label}</dt>
-					<dd className="min-w-0 break-words text-right">{item.value}</dd>
+					<dd className={agentOverviewCapabilitiesClasses.metadataValue}>{item.value}</dd>
 				</div>
 			))}
 		</dl>
@@ -196,24 +212,31 @@ export function AgentOverviewCapabilities({
 	const groups = agentOverviewGroups(variant);
 	return (
 		<div
-			className="flex flex-col gap-8"
+			className={agentOverviewCapabilitiesClasses.root}
 			data-agent-overview={variant}
 			data-agent-overview-skeleton={loading ? variant : undefined}
 		>
 			{groups.map((group) => (
 				<section
 					key={group.id}
-					className="flex flex-col gap-3"
+					className={agentOverviewCapabilitiesClasses.section}
 					aria-labelledby={`agent-overview-${group.id}`}
 				>
 					<AgentOverviewSectionHeading>
-						<h2 id={`agent-overview-${group.id}`} className="text-sm font-semibold">
-							{loading ? <Skeleton className="h-lh w-20" /> : group.label}
+						<h2
+							id={`agent-overview-${group.id}`}
+							className={agentOverviewCapabilitiesClasses.sectionTitle}
+						>
+							{loading ? (
+								<Skeleton className={agentOverviewCapabilitiesClasses.sectionTitleSkeleton} />
+							) : (
+								group.label
+							)}
 						</h2>
 					</AgentOverviewSectionHeading>
 					<div
 						data-overview-layout="two-column"
-						className="grid auto-rows-fr items-stretch gap-3 @2xl/main:grid-cols-2"
+						className={agentOverviewCapabilitiesClasses.modules}
 					>
 						{group.modules.map((module) => {
 							const item = AGENT_SECTION_NAVIGATION_ITEMS[module.section];
@@ -285,21 +308,21 @@ export function OverviewNavigationCard({
 			aria-busy={loading || undefined}
 			data-overview-prominent={prominent || undefined}
 			className={cn(
-				"h-full min-w-0 border py-3 ring-0",
+				agentOverviewCapabilitiesClasses.statusCard,
 				prominent
-					? "border-primary/30 bg-linear-to-br from-primary/15 via-primary/5 to-transparent py-4 transition-colors has-[a:hover]:border-primary/50 has-[a:hover]:from-primary/20"
-					: "border-foreground/10",
+					? agentOverviewCapabilitiesClasses.statusCardProminent
+					: agentOverviewCapabilitiesClasses.statusCardDefault,
 			)}
 		>
-			<CardHeader className="h-full grid-rows-1 content-center gap-0">
+			<CardHeader className={agentOverviewCapabilitiesClasses.statusHeader}>
 				{loading ? (
-					<div className="flex min-w-0 items-center gap-3">{content}</div>
+					<div className={agentOverviewCapabilitiesClasses.statusContent}>{content}</div>
 				) : disabled ? (
 					<button
 						type="button"
 						disabled
 						aria-label={title}
-						className="flex min-w-0 items-center gap-3 text-left opacity-50"
+						className={agentOverviewCapabilitiesClasses.disabledStatus}
 					>
 						{content}
 					</button>
@@ -307,12 +330,12 @@ export function OverviewNavigationCard({
 					<Link
 						{...link}
 						aria-label={title}
-						className="group flex min-w-0 items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+						className={agentOverviewCapabilitiesClasses.statusLink}
 					>
 						{content}
 					</Link>
 				) : (
-					<div className="flex min-w-0 items-center gap-3">{content}</div>
+					<div className={agentOverviewCapabilitiesClasses.statusContent}>{content}</div>
 				)}
 			</CardHeader>
 		</Card>

@@ -1,11 +1,22 @@
 "use client";
 
+import { SESSION_SORT_KEYS as SORT_KEYS } from "@clawdi/shared/api";
 import {
 	isSearchQueryReady,
 	SEARCH_QUERY_MAX_LENGTH,
 	SEARCH_QUERY_MIN_LENGTH,
 	searchQueryLength,
 } from "@clawdi/shared/consts";
+import { sessionsPageClasses } from "@clawdi/shared/ui";
+import {
+	agentTypeLabel,
+	SESSION_LIST_COPY as copy,
+	formatNumber,
+	getProjectResourceDefinition,
+	recencyBucketFor,
+	type SessionListQuery,
+	sessionListEmptyMessage,
+} from "@clawdi/shared/view";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "@tanstack/react-router";
 import type { SortingState } from "@tanstack/react-table";
@@ -14,7 +25,6 @@ import { parseAsBoolean, parseAsString, parseAsStringLiteral, useQueryStates } f
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import { agentTypeLabel } from "@/components/dashboard/agent-label";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -28,27 +38,18 @@ import { SearchInput } from "@/components/ui/search-input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
-import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { type SessionListQuery, sessionListQueryOptions } from "@/lib/session-queries";
+import { sessionListQueryOptions } from "@/lib/session-queries";
 import { sessionDetailLink } from "@/lib/session-search-anchor";
 import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { useDebouncedValue } from "@/lib/use-debounced";
-import { cn, formatNumber, recencyBucketFor } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 // `relevance` ranks deterministic phrase matches across metadata and messages.
 // Relevance is special-cased server-side: it's only meaningful when q
 // is non-empty, and the route silently falls back to last_activity_at
 // otherwise. We mirror that in the UI by only surfacing the "Relevance"
 // sort option when the search box has text.
-const SORT_KEYS = [
-	"last_activity_at",
-	"started_at",
-	"message_count",
-	"tokens",
-	"updated_at",
-	"relevance",
-] as const;
 type SortKey = (typeof SORT_KEYS)[number];
 const SESSIONS_RESOURCE = getProjectResourceDefinition("sessions");
 
@@ -60,9 +61,9 @@ export default function SessionsPage() {
 	return (
 		<Suspense
 			fallback={
-				<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+				<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, sessionsPageClasses.root)}>
 					<PageHeader
-						title="Sessions"
+						title={copy.title}
 						description={SESSIONS_RESOURCE.managementDescription}
 						actions={<SharedLinksButton />}
 					/>
@@ -196,8 +197,8 @@ function SessionsListInner() {
 
 	const prFilterOptions = useMemo(
 		() => [
-			{ label: "Has PR links", value: "true" },
-			{ label: "No PR links", value: "false" },
+			{ label: copy.hasPr, value: "true" },
+			{ label: copy.noPr, value: "false" },
 		],
 		[],
 	);
@@ -206,8 +207,8 @@ function SessionsListInner() {
 	// over; "Manual" is how users find the sessions they actually ran.
 	const typeFilterOptions = useMemo(
 		() => [
-			{ label: "Manual", value: "false" },
-			{ label: "Automated (cron, heartbeat)", value: "true" },
+			{ label: copy.manual, value: "false" },
+			{ label: copy.automated, value: "true" },
 		],
 		[],
 	);
@@ -261,11 +262,7 @@ function SessionsListInner() {
 	) {
 		setPaginationState({ pageIndex: params.page - 1, pageSize: params.pageSize });
 	}
-	const emptyMessage = searchQuery
-		? `No sessions found for “${draftSearchQuery}”.`
-		: isFiltered
-			? "No sessions match your filters."
-			: "No sessions yet. Once your agent has a conversation, it'll show up here.";
+	const emptyMessage = sessionListEmptyMessage(searchQuery, isFiltered, draftSearchQuery);
 	const sessionToolbar = (
 		<ListToolbar
 			search={
@@ -289,7 +286,7 @@ function SessionsListInner() {
 										: params.sort,
 						});
 					}}
-					placeholder="Search sessions and messages…"
+					placeholder={copy.searchPlaceholder}
 					maxLength={SEARCH_QUERY_MAX_LENGTH}
 				/>
 			}
@@ -297,7 +294,7 @@ function SessionsListInner() {
 				<>
 					{agentOptions.length > 0 ? (
 						<DataTableFacetedFilter
-							title="Agent"
+							title={copy.agent}
 							options={agentOptions}
 							selected={params.agent ? [params.agent] : []}
 							onChange={(arr) => {
@@ -306,7 +303,7 @@ function SessionsListInner() {
 						/>
 					) : null}
 					<DataTableFacetedFilter
-						title="Type"
+						title={copy.type}
 						options={typeFilterOptions}
 						selected={
 							params.automated === true ? ["true"] : params.automated === false ? ["false"] : []
@@ -320,7 +317,7 @@ function SessionsListInner() {
 						}}
 					/>
 					<DataTableFacetedFilter
-						title="PR links"
+						title={copy.prLinks}
 						options={prFilterOptions}
 						selected={params.has_pr === true ? ["true"] : params.has_pr === false ? ["false"] : []}
 						onChange={(arr) => {
@@ -336,7 +333,7 @@ function SessionsListInner() {
 			actions={
 				<>
 					{(isFiltered || isListUpdating) && data ? (
-						<span className="text-xs text-muted-foreground tabular-nums" aria-live="polite">
+						<span className={sessionsPageClasses.updateStatus} aria-live="polite">
 							{searchQueryError
 								? searchQueryError
 								: isListUpdating
@@ -350,7 +347,7 @@ function SessionsListInner() {
 						<Button
 							variant="ghost"
 							size="sm"
-							className="h-8 px-2"
+							className={sessionsPageClasses.clearFilters}
 							onClick={() =>
 								void setParams({
 									q: "",
@@ -362,7 +359,7 @@ function SessionsListInner() {
 								})
 							}
 						>
-							Reset
+							{copy.reset}
 						</Button>
 					) : null}
 					<ToggleGroup
@@ -402,9 +399,9 @@ function SessionsListInner() {
 	);
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, sessionsPageClasses.root)}>
 			<PageHeader
-				title="Sessions"
+				title={copy.title}
 				description={SESSIONS_RESOURCE.managementDescription}
 				actions={<SharedLinksButton />}
 			/>
@@ -415,10 +412,10 @@ function SessionsListInner() {
 					onRetry={() => {
 						void refetch();
 					}}
-					title="Couldn't load sessions"
+					title={copy.error}
 				/>
 			) : (
-				<div className="space-y-4">
+				<div className={sessionsPageClasses.content}>
 					{sessionToolbar}
 					{params.view === "table" ? (
 						<div className="hidden md:block">
@@ -456,7 +453,7 @@ function SessionsListInner() {
 												)
 										: undefined
 								}
-								className="space-y-0"
+								className={sessionsPageClasses.table}
 							/>
 						</div>
 					) : null}
@@ -488,7 +485,7 @@ function SharedLinksButton() {
 			size="sm"
 		>
 			<Link2 />
-			Shared links
+			{copy.sharedLinks}
 		</Button>
 	);
 }

@@ -1,8 +1,8 @@
-# Portable read clients
+# Portable API clients
 
 `@clawdi/shared/api` exports `createCloudApiClient` and `createHostedApiClient`.
 They take `{ baseUrl, getToken, fetch, timeoutMs?, observeResponse? }`. Supply the
-platform fetch implementation (the native foundation selects `expo/fetch`) and
+platform fetch implementation (the native provider injects `globalThis.fetch`) and
 an authenticated, account-generation-scoped token getter. No React, Clerk, DOM
 lifecycle, billing mutation, or message sending implementation is imported.
 
@@ -10,6 +10,49 @@ lifecycle, billing mutation, or message sending implementation is imported.
 | --- | --- |
 | Cloud | `listAgents(query?, signal?)`, `getAgent(id, signal?)`, `listSessions(query?, signal?)`, `getSession(id, signal?)`, `getSessionMessages(id, query?, signal?)` |
 | Hosted | `listDeployments(signal?)`, `getDeployment(id, signal?)`, `getDeploymentByRequest(requestId, signal?)`, `getOperation(operationId, signal?)` |
+
+Cloud also exposes generated-contract Project, Skill and Memory inventories,
+dashboard statistics, Memory create/update/delete and Project create/update/archive.
+These explicit mutations use the same authenticated, bounded transport; its
+historical `read` name does not restrict the HTTP method. Mutations are never
+automatically retried. After an uncertain result, refresh before an explicit retry.
+Project ownership and kind restrictions remain authoritative on the server.
+Memory search returns ranked top matches; do not append offset pages for a search.
+
+`createAccountApiClient` exposes account settings and API key list/create/revoke.
+Keep newly returned raw keys out of query caches, persistence and logs. Settings
+editors must not send a masked secret back as a replacement value.
+
+[`createProjectSharingClient`](project-sharing-client.ts) exposes owner-managed
+links/invitations/members, stop-sharing, recipient invitations, link preview/join
+and leaving a Project. Accepting an invitation or link
+does not include any Agent IDs. Membership and ownership remain server decisions;
+no share token is used as an authentication fallback. Newly created link URLs and
+raw tokens must not enter query caches, logs or persistent storage. Native callers
+must fence their presentation against blur, backgrounding and account retirement.
+
+`createAgentProjectClient` exposes Agent Project bindings and context link/unlink/
+reorder operations. `project-scope.ts` is also used by Web: the primary Workspace
+is immutable, and the context reorder builder excludes it from mutation payloads.
+
+`createSkillClient` uses explicit Project-scoped get/create/update/delete/install
+routes. `skill-policy.ts` and `skill-content.ts` are shared by actual Web and native
+consumers, not separate copies. Capture the content hash when editing starts;
+never replace it with a background refetch's hash. Deletion requires a valid
+captured hash. HTTP 412 must preserve the draft until explicit discard/reload.
+GitHub input parsing rejects non-HTTPS URLs and ambiguous traversal. Skill
+provenance and Project ownership remain server-enforced, regardless of UI policy.
+
+`createSessionSharingClient` lists active snapshot/live links, creates explicit
+public snapshots, revokes the exact `(kind, id)` link, and reads owner Markdown.
+Revocation handles the generated 204 contract without changing empty-body rules
+for other endpoints. Markdown uses the existing server serializer, not a client
+reconstruction; reject HTML gateway responses even when they return HTTP 200.
+Web and native share range construction and matching through `session-sharing.ts`.
+Excerpt positions must come from `SessionTimelineMessageResponse.position`, never
+from a filtered/paginated array index. Keep native share-sheet presentation fenced
+against backgrounding, blur and account retirement. No public snapshot is created
+implicitly by owner Markdown export.
 
 Query types and inferred return types come from the existing generated
 [`api.generated.ts`](api.generated.ts) and
@@ -63,6 +106,21 @@ RevenueCat routes, product mappings, or a store continuation here. Adding
 payment methods or regenerating Hosted contracts requires the Hosted owner's
 reviewed immutable schema, source SHA, OpenAPI digest, generator command, and
 compatibility results. Do not hand-edit either generated file.
+
+## Connectors
+
+`createConnectorClient` uses the generated Cloud catalog, connection, credential,
+alias and tool contracts with the same bounded account-authenticated transport.
+It does not retry mutations or store credentials. Consumers must keep submitted
+secrets outside query/mutation caches and discard presentation after account or
+foreground changes. An omitted OAuth `redirect_url` selects the provider-managed
+callback; native custom schemes are not permitted by the existing Cloud schema.
+Browser return is not authorization success: reload the connection inventory.
+
+`connector-state.ts` is consumed by both Web and native for auth-flow selection,
+credential defaults/visibility, active status and metadata batching. Existing Web
+logic tests continue through compatibility re-exports, rather than duplicating
+each case for mobile. `connector-client.test.ts` checks the mutation wire shapes.
 
 ## Verification
 

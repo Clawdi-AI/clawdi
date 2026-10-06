@@ -1,0 +1,12 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"lib": ["dom", "esnext"],
+		"typeRoots": ["../../apps/web/node_modules/@types"],
+		"types": ["bun"],
+		"paths": {
+			"@playwright/test": ["../../apps/web/node_modules/@playwright/test"]
+		}
+	},
+	"include": ["*.ts"]
+}

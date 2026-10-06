@@ -11,7 +11,8 @@ Run the comprehensive entrypoints with:
 
 ```bash
 scripts/test.sh              # full JS and backend suites
-scripts/test.sh js           # full web, shared, sidecar, and CLI tests
+scripts/test.sh js           # full desktop, mobile, web, shared, sidecar, and CLI tests
+scripts/test.sh mobile       # Mobile typecheck and tests, no PostgreSQL
 scripts/test.sh web          # web typecheck, full tests, and OSS build
 scripts/test.sh cli          # CLI typecheck and full tests
 scripts/test.sh backend      # migrations and full pytest
@@ -24,9 +25,10 @@ contracts:
 scripts/test.sh ci
 ```
 
-- Workspace typecheck, which executes the web, CLI, shared, and sidecar
+- Workspace typecheck, which executes the desktop, mobile, web, CLI, shared, and sidecar
   package typecheck commands.
 - The Clean Runner workflow/selection/resource contract test.
+- All Desktop and Mobile tests.
 - The existing web OSS-boundary test and the full OSS build.
 - All shared and WhatsApp sidecar tests.
 - The existing CLI smoke test.
@@ -42,13 +44,13 @@ dependency-install, suite composition, and dispatch behavior. JavaScript and
 backend install steps remain in the suite wrappers, so every entrypoint
 installs each dependency set at most once per container.
 
-Done: `scripts/test.sh ci` exits 0 and reports passing contract, web, shared,
+Done: `scripts/test.sh ci` exits 0 and reports passing contract, desktop, mobile, web, shared,
 sidecar, CLI, and backend smoke tests.
 
 ## Dynamic and static coverage
 
 Pull requests and pushes dynamically execute `scripts/test.sh ci`. That runs
-the shared workspace-typecheck, web-test, web-build, shared-test,
+the shared workspace-typecheck, desktop-test, mobile-test, web-test, web-build, shared-test,
 sidecar-test, CLI-test, and backend-test primitives. Web, CLI, and backend use
 the focused files listed above; shared and sidecar remain complete.
 

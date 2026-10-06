@@ -1,6 +1,8 @@
 "use client";
 
 import { nativeAiProvider } from "@clawdi/shared";
+import { providerDialogClasses as dialogStyles } from "@clawdi/shared/ui";
+import { providerFieldsFormCopy as copy } from "@clawdi/shared/view";
 
 import { ArrowLeft, CircleAlert } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -492,13 +494,9 @@ export function AddProviderDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={requestClose} onOpenChangeComplete={completeOpenChange}>
-			<DialogContent
-				data-hosted="true"
-				data-v2="true"
-				className="flex max-h-[min(36rem,calc(100dvh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl"
-			>
-				<DialogHeader className="relative shrink-0 px-5 pt-5 pr-14 sm:px-6 sm:pt-6 sm:pr-14">
-					<div className="flex min-w-0 items-center gap-2">
+			<DialogContent data-hosted="true" data-v2="true" className={dialogStyles.content}>
+				<DialogHeader className={dialogStyles.header}>
+					<div className={dialogStyles.headerRow}>
 						{canGoBack ? (
 							<Button
 								variant="ghost"
@@ -506,14 +504,14 @@ export function AddProviderDialog({
 								aria-label="Back"
 								disabled={busy}
 								onClick={goBack}
-								className="shrink-0"
+								className={dialogStyles.icon}
 							>
 								<ArrowLeft />
 							</Button>
 						) : null}
-						<DialogTitle className="flex min-w-0 items-center gap-3">
+						<DialogTitle className={dialogStyles.titleRow}>
 							{step === "configure" || isEdit || renderedOAuth || providerGroup ? (
-								<span aria-hidden="true" className="shrink-0">
+								<span aria-hidden="true" className={dialogStyles.icon}>
 									<EntityIcon
 										kind="provider"
 										id={
@@ -528,7 +526,7 @@ export function AddProviderDialog({
 									/>
 								</span>
 							) : null}
-							<span className="min-w-0 break-words">
+							<span className={dialogStyles.title}>
 								{renderedOAuth
 									? "Sign in with ChatGPT"
 									: isEdit
@@ -537,17 +535,14 @@ export function AddProviderDialog({
 											? `Edit ${providerLabel}`
 											: `Finish ${providerLabel} setup`
 										: step === "choose"
-											? (providerGroup?.label ?? "Add a provider")
+											? (providerGroup?.label ?? copy.addTitle)
 											: `Set up ${providerLabel}`}
 							</span>
 						</DialogTitle>
 					</div>
 				</DialogHeader>
 
-				<div
-					data-testid="provider-dialog-body"
-					className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6"
-				>
+				<div data-testid="provider-dialog-body" className={dialogStyles.body}>
 					{renderedOAuth ? (
 						<ProviderOAuthFlow
 							issue={renderedOAuthIssue}
@@ -607,7 +602,7 @@ export function AddProviderDialog({
 				</div>
 
 				{step === "choose" && !isEdit && !renderedOAuth ? null : (
-					<DialogFooter className="shrink-0 border-t bg-popover px-5 py-3 sm:px-6 sm:py-4">
+					<DialogFooter className={dialogStyles.footer}>
 						{renderedOAuth ? (
 							<Button variant="outline" onClick={() => requestClose(false)} disabled={busy}>
 								Cancel
@@ -624,14 +619,14 @@ export function AddProviderDialog({
 									{form.authMethod === "oauth" && !isEdit
 										? busy
 											? "Opening sign-in…"
-											: "Continue to ChatGPT"
+											: copy.continueChatGpt
 										: isEdit
 											? busy
 												? "Saving settings…"
-												: "Save settings"
+												: copy.save
 											: busy
 												? "Adding provider…"
-												: "Add provider"}
+												: copy.add}
 								</Button>
 							</>
 						)}

@@ -1,3 +1,5 @@
+import { subscriptionSourcePickerClasses as styles } from "@clawdi/shared/ui";
+import { subscriptionSourceCopy as copy, formatShortDate } from "@clawdi/shared/view";
 import { Cpu, CreditCard, Plus, WalletCards, Zap } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EntityChoiceCard } from "@/components/entity-card";
@@ -10,7 +12,6 @@ import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { billingTermLabel, billingTermSuffix, formatCurrencyCents } from "@/hosted/billing/format";
 import type { SubscriptionSource } from "@/hosted/billing/subscription/subscription-create-adapter";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
-import { formatShortDate } from "@/lib/format";
 
 export function SubscriptionSourcePicker({
 	disabled = false,
@@ -42,8 +43,8 @@ export function SubscriptionSourcePicker({
 
 	const paidDisabled = disabled || error != null || isLoading;
 	return (
-		<div data-hosted="true" className="@container/subscription-source flex min-w-0 flex-col gap-3">
-			<div className="grid min-w-0 items-start gap-2 @3xl/subscription-source:grid-cols-2">
+		<div data-hosted="true" className={styles.root}>
+			<div className={styles.grid}>
 				{showIncluded ? (
 					<EntityChoiceCard
 						selected={value?.mode === "included"}
@@ -54,11 +55,11 @@ export function SubscriptionSourcePicker({
 								<Cpu />
 							</IconChip>
 						}
-						title="Basic plan"
-						description="Use your included Basic entitlement."
-						details={<span className="text-xs font-medium text-foreground">$0 due now</span>}
-						badge={<Badge variant="secondary">Included</Badge>}
-						className="items-start p-3"
+						title={copy.includedTitle}
+						description={copy.includedDescription}
+						details={<span className={styles.dueNow}>{copy.dueNow}</span>}
+						badge={<Badge variant="secondary">{copy.included}</Badge>}
+						className={styles.choice}
 					/>
 				) : null}
 				{reusableSubscriptions.map((subscription) => (
@@ -83,14 +84,14 @@ export function SubscriptionSourcePicker({
 							<Plus />
 						</IconChip>
 					}
-					title="New paid subscription"
-					description="Choose a plan, billing term, and payment source."
-					className="items-start p-3"
+					title={copy.newTitle}
+					description={copy.newDescription}
+					className={styles.choice}
 				/>
 			</div>
 			{isLoading ? (
-				<p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-					<Spinner className="size-3.5" /> Checking compute availability…
+				<p className={styles.loading} role="status">
+					<Spinner className={styles.icon} /> Checking compute availability…
 				</p>
 			) : error != null ? (
 				<ApiErrorPanel
@@ -147,41 +148,41 @@ function ExistingSubscriptionChoice({
 				</IconChip>
 			}
 			title={computeTierLabel(subscription.plan_slug)}
-			description="$0 due now"
+			description={copy.dueNow}
 			badge={statusBadge}
 			detailsPlacement="responsive"
 			details={
-				<dl className="grid min-w-0 grid-cols-2 gap-x-2 gap-y-1 text-[11px] @md/choice:gap-x-3 @md/choice:text-xs">
-					<div className="min-w-0">
-						<dt className="text-muted-foreground">Term</dt>
-						<dd className="whitespace-nowrap text-foreground">
+				<dl className={styles.existingFacts}>
+					<div className={styles.fact}>
+						<dt className={styles.factLabel}>Term</dt>
+						<dd className={styles.factValue}>
 							{billingTermLabel(subscription.billing_term_months)}
 						</dd>
 					</div>
-					<div className="min-w-0">
-						<dt className="text-muted-foreground">Payment</dt>
-						<dd className="flex min-w-0 items-center gap-1 text-foreground">
+					<div className={styles.fact}>
+						<dt className={styles.factLabel}>Payment</dt>
+						<dd className={styles.payment}>
 							{subscription.funding_source === "wallet" ? (
-								<WalletCards className="size-3 shrink-0" />
+								<WalletCards className={styles.paymentIcon} />
 							) : (
-								<CreditCard className="size-3 shrink-0" />
+								<CreditCard className={styles.paymentIcon} />
 							)}
-							<span className="whitespace-nowrap">{paymentLabel}</span>
+							<span className={styles.price}>{paymentLabel}</span>
 						</dd>
 					</div>
-					<div className="min-w-0">
-						<dt className="text-muted-foreground">{canceling ? "Ends" : "Renews"}</dt>
-						<dd className="whitespace-nowrap text-foreground">{dateLabel}</dd>
+					<div className={styles.fact}>
+						<dt className={styles.factLabel}>{canceling ? "Ends" : "Renews"}</dt>
+						<dd className={styles.factValue}>{dateLabel}</dd>
 					</div>
 					{priceLabel ? (
-						<div className="min-w-0">
-							<dt className="text-muted-foreground">Plan price</dt>
-							<dd className="whitespace-nowrap text-foreground tabular-nums">{priceLabel}</dd>
+						<div className={styles.fact}>
+							<dt className={styles.factLabel}>Plan price</dt>
+							<dd className={styles.nowrap}>{priceLabel}</dd>
 						</div>
 					) : null}
 				</dl>
 			}
-			className="items-start p-3"
+			className={styles.choice}
 		/>
 	);
 }

@@ -1,15 +1,19 @@
 "use client";
-
+import { connectedAgentDetailClasses } from "@clawdi/shared/ui";
+import {
+	agentDisplayName,
+	agentSurfaceCopy,
+	daemonStatusVisual,
+	errorMessage,
+	relativeTime,
+} from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, Cpu, ExternalLink, Laptop } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { ConnectorsSurface } from "@/components/connectors/connectors-surface";
-import {
-	AgentSourceBadgeForEnvironment,
-	agentDisplayName,
-} from "@/components/dashboard/agent-label";
+import { AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
 import {
 	AgentOverviewCapabilities,
 	AgentOverviewCapabilitiesSkeleton,
@@ -43,7 +47,6 @@ import {
 } from "@/components/dashboard/agent-project-scope";
 import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
-import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { OverviewComputeBody } from "@/components/dashboard/overview-compute-body";
 import { DetailNotFound } from "@/components/detail/layout";
 import { ListToolbar } from "@/components/list-toolbar";
@@ -76,7 +79,7 @@ import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { agentResourceScope } from "@/lib/resource-navigation";
 import { sessionListQueryOptions } from "@/lib/session-queries";
-import { cn, errorMessage, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type AgentTab = "overview" | "sessions" | "memories" | "connectors" | "projects" | "settings";
 
@@ -216,7 +219,7 @@ export function ConnectedAgentDetail({
 						onRetry={() => {
 							void refetchAgent();
 						}}
-						title="Couldn't load agent"
+						title={agentSurfaceCopy.couldnTLoadAgent}
 					/>
 				)
 			) : isLoading ? (
@@ -227,14 +230,16 @@ export function ConnectedAgentDetail({
 					message="This Connected Agent does not provide session sync."
 				/>
 			) : agent ? (
-				<section className="flex flex-col gap-6">
+				<section className={connectedAgentDetailClasses.section}>
 					{activeTab === "projects" ? null : (
 						<PageHeader
 							title={activeTab === "overview" ? (agentTitle ?? activeTabLabel) : activeTabLabel}
 							titleAdornment={headerStatus}
 							description={activeTabMeta.description}
 							icon={
-								ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
+								ActiveTabIcon ? (
+									<ActiveTabIcon className={connectedAgentDetailClasses.sectionIcon} />
+								) : null
 							}
 							actions={
 								activeTab === "memories" ? (
@@ -261,10 +266,13 @@ export function ConnectedAgentDetail({
 					)}
 
 					{activeTab === "overview" ? (
-						<div className="flex flex-col gap-8">
+						<div className={connectedAgentDetailClasses.overview}>
 							<AgentOverviewActivity
 								heading={
-									<h2 id="connected-recent-sessions" className="text-sm font-semibold">
+									<h2
+										id="connected-recent-sessions"
+										className={connectedAgentDetailClasses.sectionTitle}
+									>
 										Recent sessions
 									</h2>
 								}
@@ -274,7 +282,7 @@ export function ConnectedAgentDetail({
 										nativeButton={false}
 										variant="ghost"
 										size="sm"
-										className="text-muted-foreground"
+										className={connectedAgentDetailClasses.viewAll}
 									>
 										View all
 										<ArrowRight />
@@ -282,7 +290,10 @@ export function ConnectedAgentDetail({
 								}
 								sessions={
 									supportsSessions ? (
-										<section aria-labelledby="connected-recent-sessions" className="min-w-0">
+										<section
+											aria-labelledby="connected-recent-sessions"
+											className={connectedAgentDetailClasses.sessions}
+										>
 											{blockingOverviewSessionsError ? (
 												<OverviewModuleError
 													label="Sessions"
@@ -303,16 +314,16 @@ export function ConnectedAgentDetail({
 								<AgentOverviewStatusCard
 									agentId={id}
 									section="settings"
-									title="Status"
+									title={agentSurfaceCopy.status}
 									icon={Laptop}
-									tint="bg-identity-7-bg text-identity-7-fg"
+									tint={connectedAgentDetailClasses.statusTint}
 									description={
-										<span className="flex items-center gap-2">
+										<span className={connectedAgentDetailClasses.statusLabel}>
 											<StatusDot status={syncTone} /> {syncStatus.label}
 										</span>
 									}
 								>
-									<div className="flex h-full flex-col justify-end">
+									<div className={connectedAgentDetailClasses.statusContent}>
 										<OverviewMetadata
 											items={[
 												{ label: "Machine", value: agent.machine_name },
@@ -400,7 +411,9 @@ export function ConnectedAgentDetail({
 							agentId={id}
 							headerAdornment={headerStatus}
 							headerIcon={
-								ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
+								ActiveTabIcon ? (
+									<ActiveTabIcon className={connectedAgentDetailClasses.sectionIcon} />
+								) : null
 							}
 						/>
 					) : null}
@@ -426,17 +439,17 @@ export function ConnectedAgentDetailSkeleton({
 				data-testid="agent-live-tool-loading-shell"
 				role="status"
 				aria-label={`${agentSectionLabel(section)} loading`}
-				className="flex min-h-0 w-full flex-1 flex-col overflow-hidden"
+				className={connectedAgentDetailClasses.sectionSkeleton}
 			>
-				<div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-					<div className="flex h-12 shrink-0 items-center justify-between gap-3 px-4 lg:px-6">
-						<div className="flex min-w-0 items-center gap-2">
-							<Skeleton className="size-4 shrink-0 rounded-sm" />
-							<Skeleton className="h-4 w-32 max-w-[45vw]" />
+				<div className={connectedAgentDetailClasses.sectionSkeletonBody}>
+					<div className={connectedAgentDetailClasses.sectionSkeletonHeader}>
+						<div className={connectedAgentDetailClasses.sectionSkeletonHeading}>
+							<Skeleton className={connectedAgentDetailClasses.sectionIconSkeleton} />
+							<Skeleton className={connectedAgentDetailClasses.sectionTitleSkeleton} />
 						</div>
-						<Skeleton className="h-8 w-20 shrink-0" />
+						<Skeleton className={connectedAgentDetailClasses.sectionActionSkeleton} />
 					</div>
-					<Skeleton className="min-h-0 flex-1 rounded-none" />
+					<Skeleton className={connectedAgentDetailClasses.sectionContentSkeleton} />
 				</div>
 			</div>
 		);
@@ -462,7 +475,7 @@ function AgentDetailContentSkeleton({
 	if (section !== "overview") {
 		return (
 			<section
-				className="flex flex-col gap-6"
+				className={connectedAgentDetailClasses.section}
 				data-agent-detail-skeleton
 				data-agent-detail-section={section}
 			>
@@ -472,10 +485,10 @@ function AgentDetailContentSkeleton({
 					actions={section === "memories"}
 					description={AGENT_SECTION_NAVIGATION_ITEMS[section].description ?? false}
 				/>
-				<div className="space-y-4">
-					<Skeleton className="h-4 w-28" />
-					<Skeleton className="h-4 w-56 max-w-full" />
-					<Skeleton className="h-40 w-full" />
+				<div className={connectedAgentDetailClasses.skeletonContent}>
+					<Skeleton className={connectedAgentDetailClasses.metadataSkeleton} />
+					<Skeleton className={connectedAgentDetailClasses.descriptionSkeleton} />
+					<Skeleton className={connectedAgentDetailClasses.contentSkeleton} />
 				</div>
 			</section>
 		);
@@ -483,7 +496,7 @@ function AgentDetailContentSkeleton({
 
 	return (
 		<section
-			className="flex flex-col gap-6"
+			className={connectedAgentDetailClasses.section}
 			data-agent-detail-skeleton
 			data-agent-detail-section="overview"
 		>
@@ -492,7 +505,7 @@ function AgentDetailContentSkeleton({
 				iconClassName="size-4 rounded-sm"
 				description={AGENT_SECTION_NAVIGATION_ITEMS.overview.description ?? false}
 			/>
-			<div className="flex flex-col gap-8">
+			<div className={connectedAgentDetailClasses.overview}>
 				{variant === "hosted" ? (
 					<AgentOverviewTools>
 						{(
@@ -521,11 +534,11 @@ function AgentDetailContentSkeleton({
 				) : null}
 				<AgentOverviewActivity
 					heading={
-						<h2 className="text-sm font-semibold">
-							<Skeleton className="h-lh w-28" />
+						<h2 className={connectedAgentDetailClasses.sectionTitle}>
+							<Skeleton className={connectedAgentDetailClasses.activityTitleSkeleton} />
 						</h2>
 					}
-					action={<Skeleton className="h-8 w-20" />}
+					action={<Skeleton className={connectedAgentDetailClasses.activityActionSkeleton} />}
 					sessions={<OverviewSessionListSkeleton />}
 				>
 					<AgentOverviewStatusCard
@@ -540,11 +553,17 @@ function AgentDetailContentSkeleton({
 						{variant === "hosted" ? (
 							<OverviewComputeBody loading />
 						) : (
-							<div className="flex h-full flex-col justify-end">
+							<div className={connectedAgentDetailClasses.statusContent}>
 								<OverviewMetadata
 									items={[
-										{ label: "Machine", value: <Skeleton className="h-lh w-24" /> },
-										{ label: "Last seen", value: <Skeleton className="h-lh w-20" /> },
+										{
+											label: "Machine",
+											value: <Skeleton className={connectedAgentDetailClasses.machineSkeleton} />,
+										},
+										{
+											label: "Last seen",
+											value: <Skeleton className={connectedAgentDetailClasses.lastSeenSkeleton} />,
+										},
 									]}
 								/>
 							</div>

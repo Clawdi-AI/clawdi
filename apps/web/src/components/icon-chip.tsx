@@ -1,14 +1,10 @@
+import { ICON_CHIP_SIZE_CLASS, type IconChipSize } from "@clawdi/shared/ui";
+
+export type { IconChipSize } from "@clawdi/shared/ui";
+
+import { iconChipClasses } from "@clawdi/shared/ui";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
-
-const ICON_CHIP_SIZE_CLASS = {
-	xs: "size-5 rounded-md [&>svg]:size-3.5",
-	sm: "size-8 rounded-md [&>svg]:size-4",
-	md: "size-10 rounded-lg [&>svg]:size-5",
-	lg: "size-12 rounded-xl [&>svg]:size-6",
-} as const;
-
-export type IconChipSize = keyof typeof ICON_CHIP_SIZE_CLASS;
 
 /**
  * Tinted tile for symbolic UI glyphs: Lucide icons, compact emoji/object marks,
@@ -17,7 +13,7 @@ export type IconChipSize = keyof typeof ICON_CHIP_SIZE_CLASS;
  */
 export function IconChip({
 	size = "md",
-	tint = "bg-muted text-muted-foreground",
+	tint = iconChipClasses.defaultTint,
 	className,
 	children,
 	"aria-hidden": ariaHidden = true,
@@ -31,12 +27,7 @@ export function IconChip({
 	return (
 		<span
 			aria-hidden={ariaHidden}
-			className={cn(
-				"flex shrink-0 select-none items-center justify-center leading-none",
-				ICON_CHIP_SIZE_CLASS[size],
-				tint,
-				className,
-			)}
+			className={cn(iconChipClasses.root, ICON_CHIP_SIZE_CLASS[size], tint, className)}
 		>
 			{children}
 		</span>

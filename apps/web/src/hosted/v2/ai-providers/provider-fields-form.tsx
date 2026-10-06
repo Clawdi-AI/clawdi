@@ -1,4 +1,10 @@
 "use client";
+import { providerFieldsFormClasses as styles } from "@clawdi/shared/ui";
+import {
+	providerFieldsFormCopy as copy,
+	providerCredentialLinkLabel,
+	providerCredentialName,
+} from "@clawdi/shared/view";
 
 import { ExternalLink, Eye, EyeOff, RefreshCw, UserRound } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -68,16 +74,16 @@ export function ProviderFieldsForm({
 			? Object.keys(API_MODE_LABEL).filter(isApiMode)
 			: meta.apiModes;
 	const credentialLabel = preset?.credential_label ?? "API key";
-	const credentialName = credentialLabel === "API key" ? "API key" : credentialLabel.toLowerCase();
+	const credentialName = providerCredentialName(credentialLabel);
 	const [apiKeyVisible, setApiKeyVisible] = useState(false);
 	useEffect(() => {
 		setApiKeyVisible(false);
 	}, [form.authMethod]);
 
 	return (
-		<div data-hosted="true" data-v2="true" className="flex flex-col gap-4">
-			<div className="flex flex-col gap-1.5">
-				<Label htmlFor="provider-label">Name</Label>
+		<div data-hosted="true" data-v2="true" className={styles.root}>
+			<div className={styles.field}>
+				<Label htmlFor="provider-label">{copy.name}</Label>
 				<Input
 					id="provider-label"
 					value={form.label}
@@ -90,8 +96,8 @@ export function ProviderFieldsForm({
 
 			{form.authMethod === "api_key" && showCustomRouting ? (
 				<>
-					<div className="flex flex-col gap-1.5">
-						<Label htmlFor="provider-mode">API format</Label>
+					<div className={styles.field}>
+						<Label htmlFor="provider-mode">{copy.apiFormat}</Label>
 						<Select
 							items={apiModes.map((mode) => ({ value: mode, label: API_MODE_LABEL[mode] }))}
 							value={form.apiMode}
@@ -99,7 +105,7 @@ export function ProviderFieldsForm({
 								if (isApiMode(value)) onUpdate({ apiMode: value });
 							}}
 						>
-							<SelectTrigger id="provider-mode" className="w-full">
+							<SelectTrigger id="provider-mode" className={styles.select}>
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
@@ -111,13 +117,13 @@ export function ProviderFieldsForm({
 							</SelectContent>
 						</Select>
 					</div>
-					<div className="flex flex-col gap-1.5">
-						<Label htmlFor="provider-base">Endpoint</Label>
+					<div className={styles.field}>
+						<Label htmlFor="provider-base">{copy.endpoint}</Label>
 						<Input
 							id="provider-base"
 							value={form.baseUrl}
 							onChange={(event) => onUpdate({ baseUrl: event.target.value })}
-							placeholder="https://api.example.com/v1"
+							placeholder={copy.endpointPlaceholder}
 							autoComplete="off"
 							spellCheck={false}
 						/>
@@ -126,30 +132,30 @@ export function ProviderFieldsForm({
 			) : null}
 
 			{isOAuthEdit ? (
-				<div className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center">
-					<UserRound className="size-4 shrink-0 text-muted-foreground" />
-					<div className="min-w-0 flex-1">
-						<p className="text-sm font-medium">ChatGPT sign-in</p>
-						<p className="text-xs text-muted-foreground">Subscription access</p>
+				<div className={styles.oauth}>
+					<UserRound className={styles.oauthIcon} />
+					<div className={styles.content}>
+						<p className={styles.title}>{copy.chatGpt}</p>
+						<p className={styles.hint}>{copy.subscriptionAccess}</p>
 					</div>
 					<Button variant="outline" size="sm" onClick={onReconnectOAuth} disabled={startingOAuth}>
 						{startingOAuth ? <Spinner /> : <RefreshCw />}
-						Reconnect
+						{copy.reconnect}
 					</Button>
 				</div>
 			) : form.authMethod === "api_key" ? (
-				<div className="flex flex-col gap-1.5">
-					<div className="flex items-center justify-between gap-2">
+				<div className={styles.field}>
+					<div className={styles.credentialHeader}>
 						<Label htmlFor="provider-key">{credentialLabel}</Label>
 						{apiKeyUrl ? (
 							<a
 								href={apiKeyUrl}
 								target="_blank"
 								rel="noreferrer"
-								className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary hover:underline"
+								className={styles.credentialLink}
 							>
-								{preset?.credential_link_label ?? `Get ${credentialName}`}{" "}
-								<ExternalLink className="size-3" aria-hidden="true" />
+								{providerCredentialLinkLabel(credentialLabel, preset?.credential_link_label)}{" "}
+								<ExternalLink className={styles.externalIcon} aria-hidden="true" />
 							</a>
 						) : null}
 					</div>
@@ -160,9 +166,7 @@ export function ProviderFieldsForm({
 							value={form.apiKey}
 							onChange={(event) => onUpdate({ apiKey: event.target.value })}
 							placeholder={
-								isEdit && savedCredentialAvailable
-									? "Leave blank to keep current credential"
-									: `Enter ${credentialName}`
+								isEdit && savedCredentialAvailable ? copy.keepCredential : `Enter ${credentialName}`
 							}
 							autoComplete="off"
 							autoCapitalize="none"

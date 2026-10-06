@@ -1,6 +1,7 @@
 "use client";
 
 import type { ClawdiDesktopShellBridge } from "@clawdi/shared/desktop";
+import { authPageClasses } from "@clawdi/shared/ui";
 import { SignIn } from "@clerk/tanstack-react-start";
 import { LoaderCircle, LogIn } from "lucide-react";
 import { useState } from "react";
@@ -19,7 +20,7 @@ export default function SignInPage() {
 	if (isDevAuthBypass) return <DevAuthBypassPage mode="sign-in" />;
 
 	return (
-		<main className="flex min-h-dvh items-center justify-center">
+		<main className={authPageClasses.main}>
 			<SignIn />
 		</main>
 	);

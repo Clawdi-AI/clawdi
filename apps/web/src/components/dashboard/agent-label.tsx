@@ -1,3 +1,13 @@
+import { agentLabelClasses, agentSourceBadgeClasses } from "@clawdi/shared/ui";
+import {
+	type AgentSourceKind,
+	agentIdentity,
+	agentSourceDescription,
+	agentSourceKindLabel,
+	agentTypeLabel,
+	cleanAgentName,
+	cleanMachineName,
+} from "@clawdi/shared/view";
 import { Cloud, History, Laptop } from "lucide-react";
 import type { ReactNode } from "react";
 import { AgentIcon, type AgentIconSize } from "@/components/dashboard/agent-icon";
@@ -44,9 +54,9 @@ export function AgentInline({
 	const title = identity.primaryLabel;
 	if (!hasIdentity) return null;
 	return (
-		<span className={cn("inline-flex items-center gap-1.5", className)}>
+		<span className={cn(agentLabelClasses.inline.root, className)}>
 			<AgentIcon agent={type} size="xs" />
-			<span className="font-medium text-foreground">{title}</span>
+			<span className={agentLabelClasses.inline.label}>{title}</span>
 		</span>
 	);
 }
@@ -82,72 +92,9 @@ export function AgentInline({
  * heroes can move it to a dedicated wrapping row.
  */
 
-const TYPE_LABEL: Record<string, string> = {
-	"claude-code": "Claude Code",
-	claude_code: "Claude Code",
-	codex: "Codex",
-	hermes: "Hermes",
-	openclaw: "OpenClaw",
-	opencode: "OpenCode",
-	pi: "Pi",
-	dsh: "DeepSeek Harness",
-};
-
-export function agentTypeLabel(type: string | null | undefined): string {
-	if (!type) return "Unknown";
-	return TYPE_LABEL[type] ?? type;
-}
-
-export type AgentSourceKind = "hosted" | "connected";
-
 function sourceFromOwnershipKind(kind: AgentOwnershipKind): AgentSourceKind | null {
 	if (kind === "unresolved") return null;
 	return kind === "cloud" ? "hosted" : "connected";
-}
-
-export type AgentIdentityInput = {
-	name?: string | null;
-	display_name?: string | null;
-	default_name?: string | null;
-	machine_name?: string | null;
-	agent_type?: string | null;
-};
-
-export type AgentIdentity = {
-	/** Canonical primary label for this agent in dashboard chrome. */
-	primaryLabel: string;
-	/** Runtime disambiguator when it is not already the primary label. */
-	secondaryLabel: string | null;
-};
-
-export function agentIdentity(env: AgentIdentityInput): AgentIdentity {
-	const customName = cleanAgentName(env.display_name) || null;
-	const defaultName = cleanAgentName(env.default_name) || null;
-	const apiName = cleanAgentName(env.name) || null;
-	const machineName = cleanMachineName(env.machine_name) || null;
-	const runtimeName = agentTypeLabel(env.agent_type);
-	const primaryLabel = customName ?? defaultName ?? apiName ?? machineName ?? runtimeName;
-	const secondaryLabel = runtimeName !== primaryLabel ? runtimeName : null;
-	return {
-		primaryLabel,
-		secondaryLabel,
-	};
-}
-
-export function agentDisplayName(env: AgentIdentityInput): string {
-	return agentIdentity(env).primaryLabel;
-}
-
-function cleanAgentName(value: string | null | undefined): string {
-	return value?.trim() ?? "";
-}
-
-export function agentSourceKindLabel(source: AgentSourceKind): string {
-	return source === "hosted" ? "Cloud Agent" : "Connected Agent";
-}
-
-export function agentSourceDescription(source: AgentSourceKind): string {
-	return source === "hosted" ? "Runs on Clawdi" : "Runs from your machine or server";
 }
 
 export function AgentSourceBadge({
@@ -164,7 +111,10 @@ export function AgentSourceBadge({
 	const Icon = source === "hosted" ? Cloud : Laptop;
 	const label = agentSourceKindLabel(source);
 	const title = agentSourceDescription(source);
-	const iconClass = source === "hosted" ? "text-info-muted-foreground" : "text-muted-foreground";
+	const iconClass =
+		source === "hosted"
+			? agentSourceBadgeClasses.hostedIcon
+			: agentSourceBadgeClasses.connectedIcon;
 	// Solid silhouette at badge sizes: the outline cloud dissolves under ~16px.
 	const iconFill = source === "hosted" ? "currentColor" : "none";
 	return (
@@ -172,20 +122,24 @@ export function AgentSourceBadge({
 			status="neutral"
 			title={title}
 			className={cn(
-				"shrink-0 whitespace-nowrap border font-medium leading-none shadow-sm",
+				agentSourceBadgeClasses.root,
 				iconOnly
-					? "size-5 justify-center rounded-full p-0"
+					? agentSourceBadgeClasses.iconOnly
 					: compact
-						? "h-5 gap-1 rounded-full px-1.5 text-2xs"
-						: "h-5 gap-1.5 rounded-full px-2 text-2xs",
-				source === "hosted"
-					? "border-info-muted bg-info-muted text-info-muted-foreground"
-					: "border-border bg-background text-muted-foreground",
+						? agentSourceBadgeClasses.compact
+						: agentSourceBadgeClasses.regular,
+				source === "hosted" ? agentSourceBadgeClasses.hosted : agentSourceBadgeClasses.connected,
 				className,
 			)}
 		>
-			<Icon className={cn(iconOnly ? "!size-3.5" : "size-3.5", iconClass)} fill={iconFill} />
-			{iconOnly ? <span className="sr-only">{label}</span> : label}
+			<Icon
+				className={cn(
+					iconOnly ? agentSourceBadgeClasses.iconOnlyIcon : agentSourceBadgeClasses.icon,
+					iconClass,
+				)}
+				fill={iconFill}
+			/>
+			{iconOnly ? <span className={agentSourceBadgeClasses.screenReaderOnly}>{label}</span> : label}
 		</StatusBadge>
 	);
 }
@@ -204,19 +158,26 @@ export function LegacyAgentBadge({
 			status="neutral"
 			title="Managed in the legacy dashboard"
 			className={cn(
-				"shrink-0 whitespace-nowrap border border-warning-muted bg-warning-muted font-medium leading-none text-warning-muted-foreground shadow-sm",
+				agentSourceBadgeClasses.legacyRoot,
 				iconOnly
-					? "size-5 justify-center rounded-full p-0"
+					? agentSourceBadgeClasses.iconOnly
 					: compact
-						? "h-5 gap-1 rounded-full px-1.5 text-2xs"
-						: "h-5 gap-1.5 rounded-full px-2 text-2xs",
+						? agentSourceBadgeClasses.compact
+						: agentSourceBadgeClasses.regular,
 				className,
 			)}
 		>
 			<History
-				className={cn(iconOnly ? "!size-3.5" : "size-3.5", "text-warning-muted-foreground")}
+				className={cn(
+					iconOnly ? agentSourceBadgeClasses.iconOnlyIcon : agentSourceBadgeClasses.icon,
+					agentSourceBadgeClasses.legacyIcon,
+				)}
 			/>
-			{iconOnly ? <span className="sr-only">Legacy</span> : "Legacy"}
+			{iconOnly ? (
+				<span className={agentSourceBadgeClasses.screenReaderOnly}>Legacy</span>
+			) : (
+				"Legacy"
+			)}
 		</StatusBadge>
 	);
 }
@@ -241,7 +202,9 @@ export function AgentSourceBadgeForEnvironment({
 	const ownership = useAgentOwnership();
 	const kind = ownershipKind ?? agentOwnershipKindFromId(env.id, ownership);
 	if (kind === "unresolved") {
-		return <Skeleton aria-label="Agent source loading" className="h-5 w-24 rounded-full" />;
+		return (
+			<Skeleton aria-label="Agent source loading" className={agentSourceBadgeClasses.skeleton} />
+		);
 	}
 	if (kind === "legacy") {
 		if (iconOnly) return null;
@@ -255,70 +218,12 @@ export function AgentSourceBadgeForEnvironment({
 	);
 }
 
-export function compareAgentEnvironments(
-	a: {
-		id?: string | null;
-		name?: string | null;
-		display_name?: string | null;
-		default_name?: string | null;
-		machine_name?: string | null;
-		agent_type?: string | null;
-		sort_order?: number | null;
-	},
-	b: {
-		id?: string | null;
-		name?: string | null;
-		display_name?: string | null;
-		default_name?: string | null;
-		machine_name?: string | null;
-		agent_type?: string | null;
-		sort_order?: number | null;
-	},
-): number {
-	const aOrder = a.sort_order ?? Number.MAX_SAFE_INTEGER;
-	const bOrder = b.sort_order ?? Number.MAX_SAFE_INTEGER;
-	if (aOrder !== bOrder) return aOrder - bOrder;
-
-	const aName = agentDisplayName(a);
-	const bName = agentDisplayName(b);
-	const name = aName.localeCompare(bName);
-	if (name !== 0) return name;
-
-	const type = agentTypeLabel(a.agent_type).localeCompare(agentTypeLabel(b.agent_type));
-	if (type !== 0) return type;
-	return (a.id ?? "").localeCompare(b.id ?? "");
-}
-
-/** Strip mDNS-style suffixes (`.local`, `.lan`) from a hostname.
- * Bonjour appends `.local` automatically on macOS — the user
- * never typed it, never thinks about it, and showing it just
- * eats column width without conveying any information. */
-export function cleanMachineName(raw: string | null | undefined): string {
-	if (!raw) return "";
-	const cleaned = raw.replace(/\.(local|lan)$/i, "").trim();
-	return cleaned;
-}
-
-const NAME_CLASS: Record<AgentIconSize, string> = {
-	xs: "text-xs font-medium",
-	sm: "text-sm font-medium",
-	md: "text-sm font-medium",
-	lg: "text-base font-medium",
-	rail: "text-base font-medium",
-	xl: "text-2xl font-semibold tracking-tight",
-};
+const NAME_CLASS: Record<AgentIconSize, string> = agentLabelClasses.nameBySize;
 
 // Tighter line-height + smaller subtitle gap on hero size so the
 // icon and the text block balance optically — `text-2xl` titles
 // against a default `leading-normal` left a too-loose stack.
-const SUBTITLE_GAP: Record<AgentIconSize, string> = {
-	xs: "mt-0",
-	sm: "mt-0.5",
-	md: "mt-0.5",
-	lg: "mt-0.5",
-	rail: "mt-0.5",
-	xl: "mt-1",
-};
+const SUBTITLE_GAP: Record<AgentIconSize, string> = agentLabelClasses.subtitleGapBySize;
 
 export function AgentLabel({
 	name,
@@ -382,24 +287,21 @@ export function AgentLabel({
 	for (const m of filteredMeta) subtitleSegments.push(m);
 
 	return (
-		<div className={cn("flex min-w-0 items-center gap-3", className)}>
+		<div className={cn(agentLabelClasses.root, className)}>
 			<AgentIcon agent={type} size={size} avatarUrl={avatarUrl} />
-			<div className="min-w-0 flex-1">
-				<div className="flex min-w-0 items-center gap-2">
-					<span className={cn("truncate leading-tight", NAME_CLASS[size])} title={titleText}>
+			<div className={agentLabelClasses.copy}>
+				<div className={agentLabelClasses.heading}>
+					<span className={cn(agentLabelClasses.name, NAME_CLASS[size])} title={titleText}>
 						{titleText}
 					</span>
-					{titleAdornment ? <span className="shrink-0">{titleAdornment}</span> : null}
+					{titleAdornment ? (
+						<span className={agentLabelClasses.adornment}>{titleAdornment}</span>
+					) : null}
 				</div>
 				{subtitleSegments.length > 0 ? (
-					<div
-						className={cn(
-							"flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground",
-							SUBTITLE_GAP[size],
-						)}
-					>
+					<div className={cn(agentLabelClasses.subtitle, SUBTITLE_GAP[size])}>
 						{subtitleSegments.map((seg, i) => (
-							<span key={`seg-${i}`} className="inline-flex items-center whitespace-nowrap">
+							<span key={`seg-${i}`} className={agentLabelClasses.subtitleSegment}>
 								{seg}
 							</span>
 						))}

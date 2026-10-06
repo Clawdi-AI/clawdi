@@ -1,4 +1,6 @@
 import type { components, paths } from "@clawdi/shared/api";
+import { vaultRequestClasses } from "@clawdi/shared/ui";
+import { buildVaultSupplyAgentMessage, VAULT_REQUEST_COPY } from "@clawdi/shared/view";
 import { Eye, EyeOff } from "lucide-react";
 import createClient from "openapi-fetch";
 import { useEffect, useRef, useState } from "react";
@@ -23,8 +25,7 @@ import { env } from "@/lib/env";
 
 type RequestContext = components["schemas"]["VaultSecretRequestStatus"];
 const client = createClient<paths>({ baseUrl: env.VITE_CLAWDI_API_URL });
-const UNAVAILABLE =
-	"This request has changed or its link has expired. Ask your agent for a new link.";
+const UNAVAILABLE = VAULT_REQUEST_COPY.unavailable;
 
 function SecretInput({
 	id,
@@ -55,7 +56,7 @@ function SecretInput({
 		"data-private": "true",
 		disabled,
 		maxLength,
-		className: "min-w-0 font-mono wrap-anywhere",
+		className: vaultRequestClasses.secretInput,
 	};
 	return (
 		<InputGroup>
@@ -74,7 +75,7 @@ function SecretInput({
 					value={multiline ? "" : value}
 					readOnly={multiline}
 					required={required && !multiline}
-					placeholder={multiline ? "Multiline value hidden" : undefined}
+					placeholder={multiline ? VAULT_REQUEST_COPY.multiline : undefined}
 					onChange={(event) => onChange(event.target.value)}
 					onPaste={(event) => {
 						const pasted = event.clipboardData.getData("text");
@@ -130,10 +131,7 @@ export function VaultRequestPage() {
 	const [error, setError] = useState("");
 	const [attempt, setAttempt] = useState(0);
 	const [copyState, setCopyState] = useState<"idle" | "copying" | "copied" | "error">("idle");
-	const agentMessage =
-		phase === "done" && context
-			? `I've saved the requested credentials. Please check Vault request ${context.id}; once its status is supplied, continue our previous task using existing authorized capabilities. Do not include secret values in chat.`
-			: "";
+	const agentMessage = phase === "done" && context ? buildVaultSupplyAgentMessage(context.id) : "";
 
 	async function copyMessage() {
 		if (!agentMessage || copyState === "copying") return;
@@ -381,8 +379,8 @@ export function VaultRequestPage() {
 
 	if (phase === "loading") {
 		return (
-			<main className="mx-auto min-h-dvh w-full max-w-lg px-4 py-10">
-				<p role="status" className="text-sm text-muted-foreground">
+			<main className={vaultRequestClasses.page}>
+				<p role="status" className={vaultRequestClasses.loading}>
 					Loading request…
 				</p>
 			</main>
@@ -390,49 +388,47 @@ export function VaultRequestPage() {
 	}
 
 	return (
-		<main className="mx-auto min-h-dvh w-full max-w-lg px-4 py-10">
-			<Card className="min-w-0 w-full">
-				<CardHeader className="gap-5">
-					<div className="flex items-center gap-2">
+		<main className={vaultRequestClasses.page}>
+			<Card className={vaultRequestClasses.card}>
+				<CardHeader className={vaultRequestClasses.header}>
+					<div className={vaultRequestClasses.brand}>
 						<img
 							src="/clawdi-logo-transparent.png"
 							alt=""
 							width={28}
 							height={28}
-							className="size-7 shrink-0 rounded-md"
+							className={vaultRequestClasses.brandIcon}
 						/>
-						<span className="text-sm font-semibold tracking-tight">Clawdi</span>
+						<span className={vaultRequestClasses.brandName}>Clawdi</span>
 					</div>
 					<CardTitle>
-						<h1 className="text-xl font-semibold tracking-tight">
+						<h1 className={vaultRequestClasses.title}>
 							{phase === "done"
-								? "Saved securely"
+								? VAULT_REQUEST_COPY.saved
 								: phase === "unavailable"
-									? "Link unavailable"
-									: "Save to vault"}
+									? VAULT_REQUEST_COPY.unavailableTitle
+									: VAULT_REQUEST_COPY.title}
 						</h1>
 					</CardTitle>
 				</CardHeader>
 				<CardContent>
 					{phase === "unavailable" && (
-						<p role="alert" className="text-muted-foreground">
+						<p role="alert" className={vaultRequestClasses.muted}>
 							{UNAVAILABLE}
 						</p>
 					)}
 					{phase === "done" && agentMessage && (
 						<>
-							<p role="status" className="text-muted-foreground">
-								Your secrets are saved. Send this message to your agent to continue.
+							<p role="status" className={vaultRequestClasses.muted}>
+								{VAULT_REQUEST_COPY.done}
 							</p>
-							<p className="select-text rounded-lg border bg-muted/30 p-3 text-sm leading-relaxed break-words">
-								{agentMessage}
-							</p>
+							<p className={vaultRequestClasses.receipt}>{agentMessage}</p>
 							{copyState === "error" && (
-								<p role="alert" className="text-sm text-destructive">
+								<p role="alert" className={vaultRequestClasses.error}>
 									Couldn't copy. Select and copy the message above manually.
 								</p>
 							)}
-							<div className="flex justify-end">
+							<div className={vaultRequestClasses.footer}>
 								<Button onClick={copyMessage} disabled={copyState === "copying"}>
 									{copyState === "copied"
 										? "Copied"
@@ -446,43 +442,43 @@ export function VaultRequestPage() {
 					{phase === "error" && (
 						<>
 							<p role="alert">{error}</p>
-							<div className="flex justify-end">
+							<div className={vaultRequestClasses.footer}>
 								<Button onClick={() => setAttempt((value) => value + 1)}>Try again</Button>
 							</div>
 						</>
 					)}
 					{context && (phase === "ready" || phase === "saving") && (
 						<form
-							className="space-y-5"
+							className={vaultRequestClasses.form}
 							onSubmit={(event) => {
 								event.preventDefault();
 								void save();
 							}}
 						>
-							<div className="space-y-1 border-b pb-5 text-sm">
-								<p className="font-medium break-words">
+							<div className={vaultRequestClasses.context}>
+								<p className={vaultRequestClasses.contextTitle}>
 									{context.vault_name} · {context.project_name}
 								</p>
-								{context.section && <p className="break-words">Section: {context.section}</p>}
-								<p className="text-muted-foreground">
+								{context.section && (
+									<p className={vaultRequestClasses.wrap}>Section: {context.section}</p>
+								)}
+								<p className={vaultRequestClasses.muted}>
 									Expires {new Date(context.expires_at).toLocaleString()}
 								</p>
 							</div>
-							<p className="text-sm text-muted-foreground">
-								Only these fields will be saved. Anyone with vault access can use them.
-							</p>
+							<p className={vaultRequestClasses.loading}>{VAULT_REQUEST_COPY.privacy}</p>
 							{!!updates.length && (
-								<p className="text-sm text-muted-foreground">
+								<p className={vaultRequestClasses.loading}>
 									Fields marked Update replace existing values when you save.
 								</p>
 							)}
 							<fieldset
 								disabled={phase === "saving" || importBusy || !!preview}
-								className="min-w-0 space-y-5"
+								className={vaultRequestClasses.fields}
 							>
 								{rows.map(({ id, name, value, required }) => (
-									<div className="space-y-2" key={id}>
-										<div className="flex items-center justify-between gap-2">
+									<div className={vaultRequestClasses.field} key={id}>
+										<div className={vaultRequestClasses.fieldHeader}>
 											{required ? (
 												<Label htmlFor={`secret-${id}`}>{name}</Label>
 											) : (
@@ -492,7 +488,7 @@ export function VaultRequestPage() {
 													maxLength={200}
 													required
 													pattern="[A-Za-z0-9_.\-]+"
-													className="font-mono"
+													className={vaultRequestClasses.mono}
 													onChange={(event) => {
 														invalidateSelection();
 														setRows((current) =>
@@ -517,7 +513,7 @@ export function VaultRequestPage() {
 												</Button>
 											)}
 											{updates.includes(name) && (
-												<span className="text-xs font-medium text-muted-foreground">Update</span>
+												<span className={vaultRequestClasses.update}>Update</span>
 											)}
 										</div>
 										<SecretInput
@@ -536,7 +532,7 @@ export function VaultRequestPage() {
 									</div>
 								))}
 
-								<div className="flex gap-2">
+								<div className={vaultRequestClasses.actions}>
 									<Button
 										type="button"
 										variant="outline"
@@ -564,8 +560,8 @@ export function VaultRequestPage() {
 								</div>
 							</fieldset>
 							{importOpen && (
-								<div className="space-y-3 rounded-lg border p-3">
-									<p className="text-sm text-muted-foreground">
+								<div className={vaultRequestClasses.importPanel}>
+									<p className={vaultRequestClasses.loading}>
 										Paste or choose a .env file. Values stay text; variables and commands are never
 										expanded.
 									</p>
@@ -612,13 +608,13 @@ export function VaultRequestPage() {
 									)}
 									{preview && (
 										<>
-											<p className="text-sm">
+											<p className={vaultRequestClasses.preview}>
 												Apply these values to the form, then save all fields together.
 											</p>
-											<ul className="space-y-2 text-sm">
+											<ul className={vaultRequestClasses.previewList}>
 												{preview.entries.map((entry) => (
-													<li key={entry.key} className="break-words">
-														<span className="font-mono">{entry.key}</span> —{" "}
+													<li key={entry.key} className={vaultRequestClasses.wrap}>
+														<span className={vaultRequestClasses.mono}>{entry.key}</span> —{" "}
 														{rows.some((row) => row.name === entry.key && row.value)
 															? "Replace entered value"
 															: rows.some((row) => row.name === entry.key)
@@ -650,7 +646,7 @@ export function VaultRequestPage() {
 								</div>
 							)}
 							{(error || selectionError) && (
-								<p role="alert" className="text-sm text-destructive">
+								<p role="alert" className={vaultRequestClasses.error}>
 									{error || selectionError}
 									{!error && selectionRetryable && (
 										<Button
@@ -666,7 +662,7 @@ export function VaultRequestPage() {
 									)}
 								</p>
 							)}
-							<div className="flex justify-end">
+							<div className={vaultRequestClasses.footer}>
 								<Button
 									type="submit"
 									disabled={phase === "saving" || !selectionReady || importOpen}

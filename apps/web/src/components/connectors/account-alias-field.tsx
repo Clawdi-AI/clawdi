@@ -1,3 +1,5 @@
+import { accountAliasFieldClasses } from "@clawdi/shared/ui";
+import { connectorFormCopy as copy } from "@clawdi/shared/view";
 import { useId } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,21 +15,21 @@ export function AccountAliasField({
 }) {
 	const id = useId();
 	return (
-		<div className="flex flex-col gap-1.5">
-			<Label htmlFor={id}>Name (optional)</Label>
+		<div className={accountAliasFieldClasses.field}>
+			<Label htmlFor={id}>{copy.name}</Label>
 			<Input
 				id={id}
 				value={value}
 				maxLength={256}
 				onChange={(event) => onChange(event.target.value)}
 				disabled={disabled}
-				placeholder="e.g. Work Gmail"
+				placeholder={copy.namePlaceholder}
 				autoComplete="off"
 				spellCheck={false}
 				aria-describedby={`${id}-hint`}
 			/>
-			<p id={`${id}-hint`} className="text-xs text-muted-foreground">
-				Choose a unique name to help identify this account. Leave blank to use the account identity.
+			<p id={`${id}-hint`} className={accountAliasFieldClasses.hint}>
+				{copy.nameHint}
 			</p>
 		</div>
 	);

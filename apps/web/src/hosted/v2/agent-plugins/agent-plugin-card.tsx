@@ -1,10 +1,11 @@
 "use client";
 
+import { agentPluginCardClasses } from "@clawdi/shared/ui";
+import { agentSurfaceCopy, identityFor } from "@clawdi/shared/view";
 import { Blocks } from "lucide-react";
 import { HeroCard } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import type { HostedRuntime } from "@/hosted/runtimes";
-import { identityFor } from "@/lib/identity";
 import { AgentPluginActions, type AgentPluginPendingAction } from "./agent-plugin-actions";
 import {
 	type AgentPluginInventoryItem,
@@ -38,19 +39,23 @@ export function AgentPluginCard({
 	const actionState = agentPluginActionState(item, runtime);
 
 	return (
-		<div data-hosted="true" data-v2="true" className="contents">
+		<div data-hosted="true" data-v2="true" className={agentPluginCardClasses.root}>
 			<HeroCard
-				className="min-h-36"
+				className={agentPluginCardClasses.card}
 				onClick={() => onOpen(item.name)}
 				ariaLabel={`View ${title} details`}
 				icon={
-					<IconChip size="sm" tint={identityFor(item.name).colorClasses} className="rounded-lg">
+					<IconChip
+						size="sm"
+						tint={identityFor(item.name).colorClasses}
+						className={agentPluginCardClasses.iconTile}
+					>
 						<Blocks />
 					</IconChip>
 				}
 				title={title}
 				description={
-					item.catalog?.description ?? "This plugin is no longer available in the Store."
+					item.catalog?.description ?? agentSurfaceCopy.thisPluginIsNoLongerAvailableInTheStore
 				}
 				footer={[
 					item.catalog?.publisher,

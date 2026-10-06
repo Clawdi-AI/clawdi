@@ -1,332 +1,27 @@
-import type {
-	DeploymentOperation,
-	HostedDeployment,
-	HostedDeploymentStatus,
-} from "@/hosted/billing/contracts";
+import {
+	type DeploymentStatus,
+	isTransitionalStatus,
+	parseDeploymentStatus,
+} from "@clawdi/shared/view";
 
-export const KNOWN_DEPLOYMENT_STATUSES = [
-	"creating",
-	"starting",
-	"running",
-	"stopping",
-	"stopped",
-	"restarting",
-	"updating",
-	"failed",
-	"deleting",
-	"deleted",
-] as const;
+export {
+	type DeploymentStatus,
+	type DeploymentStatusPresentation,
+	type DeploymentStatusTone,
+	deploymentRuntimeStatusPresentation,
+	deploymentStatusFromResource,
+	deploymentStatusLabel,
+	deploymentStatusTone,
+	hasCurrentRuntimeHealthDegradation,
+	isRunningStatus,
+	KNOWN_DEPLOYMENT_STATUSES,
+	type KnownDeploymentStatus,
+	parseDeploymentStatus,
+	type UnknownDeploymentStatus,
+} from "@clawdi/shared/view";
 
-export type KnownDeploymentStatus = (typeof KNOWN_DEPLOYMENT_STATUSES)[number];
-export type DeploymentStatusTone = "success" | "warning" | "destructive" | "info" | "neutral";
-
-type KnownDeploymentStatusModel = {
-	kind: KnownDeploymentStatus;
-	raw: KnownDeploymentStatus;
-	known: true;
-};
-
-export type UnknownDeploymentStatus =
-	| {
-			kind: "unknown";
-			raw: string;
-			known: false;
-			reason: "unrecognized";
-	  }
-	| {
-			kind: "unknown";
-			raw: null;
-			known: false;
-			reason: "status_unavailable";
-	  };
-
-export type DeploymentStatus = KnownDeploymentStatusModel | UnknownDeploymentStatus;
-export type DeploymentStatusPresentation = {
-	status: DeploymentStatus;
-	label: string;
-	tone: DeploymentStatusTone;
-};
-// `plan_change` is a projected failure phase; `runtime_switch` remains a live
-// legacy wire value while the hosted main rollout converges.
-export type DeploymentOperationVerb =
-	| DeploymentOperation["metadata"]["verb"]
-	| "plan_change"
-	| "runtime_switch";
-
-export const DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS = 10_000;
-export const DEPLOYMENT_TRANSITION_TIMEOUT_MS = 5 * 60_000;
-export const DEPLOYMENT_CREATION_TRANSITION_TIMEOUT_MS = 10 * 60_000;
-// The backend controller keeps recovering stalled generations on its own
-// (60s scan, `clawdi_v2_a3_stalled_generation_seconds` in clawdi-hosted
-// backend/app/v2/hosted/controller_scheduling.py). Escalation waits well
-// past that recovery cadence and past the "taking longer than expected"
-// window before offering cancellation, anchored on the same backend-reported
-// operation create time.
-export const DEPLOYMENT_TRANSITION_ESCALATION_MS = 15 * 60_000;
-export const DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS = 60_000;
-
-export type SettlingTracker = {
-	key: string;
-	startedAtMs: number;
-};
-
-export type SettlingPollState = {
-	refetchInterval: number | false;
-	timedOut: boolean;
-	escalated: boolean;
-	tracker: SettlingTracker;
-};
-
-export type DeploymentTransitionState = {
-	kind: "converging" | "timed_out" | "escalated";
-	verb: DeploymentOperationVerb | null;
-	startedAtMs: number;
-};
-
-export type DeploymentPollingState = {
-	refetchInterval: number | false;
-	trackers: ReadonlyMap<string, SettlingTracker>;
-	transitions: ReadonlyMap<string, DeploymentTransitionState>;
-};
-
-const KNOWN_STATUS_SET = new Set<string>(KNOWN_DEPLOYMENT_STATUSES);
-const LEGACY_STATUS_ALIASES = new Map<string, KnownDeploymentStatus>([["ready", "running"]]);
-
-export function parseDeploymentStatus(raw: string): DeploymentStatus {
-	const value = raw.trim();
-	const normalized = value.toLowerCase();
-	const alias = LEGACY_STATUS_ALIASES.get(normalized);
-	if (alias) {
-		return { kind: alias, raw: alias, known: true };
-	}
-	if (KNOWN_STATUS_SET.has(normalized)) {
-		const kind = normalized as KnownDeploymentStatus;
-		return { kind, raw: kind, known: true };
-	}
-	return { kind: "unknown", raw: value, known: false, reason: "unrecognized" };
-}
-
-/**
- * A missing declarative projection is different from an unrecognized future
- * status value. Keep that distinction explicit instead of feeding null through
- * the string parser or fabricating a lifecycle state.
- */
-export function deploymentStatusFromResource(
-	status: HostedDeploymentStatus | null,
-): DeploymentStatus {
-	if (status === null) {
-		return { kind: "unknown", raw: null, known: false, reason: "status_unavailable" };
-	}
-	return parseDeploymentStatus(status.summary_state);
-}
-
-export function deploymentStatusLabel(status: DeploymentStatus): string {
-	switch (status.kind) {
-		case "creating":
-			return "Starting";
-		case "starting":
-			return "Starting";
-		case "running":
-			return "Running";
-		case "stopping":
-			return "Stopping";
-		case "stopped":
-			return "Stopped";
-		case "restarting":
-			return "Restarting";
-		case "updating":
-			return "Updating";
-		case "failed":
-			return "Failed";
-		case "deleting":
-			return "Deleting";
-		case "deleted":
-			return "Deleted";
-		case "unknown":
-			return "Status unavailable";
-		default:
-			return exhaustive(status);
-	}
-}
-
-export function deploymentStatusTone(status: DeploymentStatus): DeploymentStatusTone {
-	switch (status.kind) {
-		case "running":
-		case "restarting":
-		case "updating":
-			return "success";
-		case "failed":
-			return "destructive";
-		case "stopped":
-		case "deleted":
-			return "neutral";
-		case "creating":
-		case "starting":
-		case "stopping":
-		case "deleting":
-			return "info";
-		case "unknown":
-			return "warning";
-		default:
-			return exhaustive(status);
-	}
-}
-
-export function hasCurrentRuntimeHealthDegradation(status: HostedDeploymentStatus): boolean {
-	return (
-		status.summary_state === "running" &&
-		status.conditions.some(
-			(condition) =>
-				condition.type === "Degraded" &&
-				condition.status === "True" &&
-				condition.reason === "RuntimeHealthDegraded" &&
-				condition.observedGeneration === status.observedGeneration,
-		)
-	);
-}
-
-/**
- * Serving advisories are user-resolvable `Degraded=True` reasons the hosted
- * controller projects while the agent keeps running (`Ready` stays True). They
- * never carry a lifecycle failure, so they must not render as failed.
- */
-export const DEPLOYMENT_SERVING_ADVISORY_REASONS = [
-	"ProviderConflict",
-	"RuntimeUiUnavailable",
-] as const;
-export type DeploymentServingAdvisoryReason = (typeof DEPLOYMENT_SERVING_ADVISORY_REASONS)[number];
-
-const SERVING_ADVISORY_REASON_SET = new Set<string>(DEPLOYMENT_SERVING_ADVISORY_REASONS);
-
-function isServingAdvisoryReason(reason: string): reason is DeploymentServingAdvisoryReason {
-	return SERVING_ADVISORY_REASON_SET.has(reason);
-}
-
-/** The current-generation serving advisory, if the controller projects one. */
-export function currentServingAdvisory(
-	status: HostedDeploymentStatus | null | undefined,
-): DeploymentServingAdvisoryReason | null {
-	if (!status) return null;
-	for (const condition of status.conditions) {
-		if (
-			condition.type === "Degraded" &&
-			condition.status === "True" &&
-			condition.observedGeneration === status.observedGeneration &&
-			isServingAdvisoryReason(condition.reason)
-		) {
-			return condition.reason;
-		}
-	}
-	return null;
-}
-
-/** The runtime withdrew only its optional dashboard; the agent itself keeps serving. */
-export function deploymentRuntimeUiWithdrawn(
-	status: HostedDeploymentStatus | null | undefined,
-): boolean {
-	return currentServingAdvisory(status) === "RuntimeUiUnavailable";
-}
-
-// Post-ready runtime failures keep the running substrate so the owner can repair it.
-const POST_READY_RUNTIME_FAILURE_CODES = new Set([
-	"runtime_unreachable",
-	"runtime_configuration_failed",
-]);
-
-/** Public readiness evidence authorizes a launch attempt, not an authenticated browser session. */
-export function deploymentTerminalIsAvailable(deployment: HostedDeployment): boolean {
-	const { metadata, spec, status } = deployment.resource;
-	if (spec.desired_lifecycle !== "running" || !status || status.deleted_at) return false;
-	if (status.summary_state === "running") return true;
-	const generation = metadata.generation;
-	return Boolean(
-		status.summary_state === "failed" &&
-			generation >= 1 &&
-			status.observedGeneration === generation &&
-			status.driver_acknowledged_generation === generation &&
-			status.driver_applied_generation === generation &&
-			status.observed_at &&
-			deployment.compute_slot_occupancy?.backing_infra === "present" &&
-			status.failure &&
-			POST_READY_RUNTIME_FAILURE_CODES.has(status.failure.code) &&
-			status.failure.phase === "reconcile" &&
-			status.failure.observedGeneration === generation,
-	);
-}
-
-/** Versioned component admission or aggregate readiness permits a credential attempt. */
-export function deploymentRuntimeUiIsReady(deployment: HostedDeployment): boolean {
-	const { metadata, spec, status } = deployment.resource;
-	const generation = metadata.generation;
-	const ready = status?.conditions.find((condition) => condition.type === "Ready");
-	const componentReady = deployment.runtime_ui_endpoint?.component_readiness === 1;
-	return Boolean(
-		generation >= 1 &&
-			spec.desired_lifecycle === "running" &&
-			(status?.summary_state === "running" ||
-				(componentReady && status?.summary_state === "failed")) &&
-			!status.deleted_at &&
-			status.observed_at &&
-			status.observedGeneration === generation &&
-			!deploymentRuntimeUiWithdrawn(status) &&
-			status.driver_acknowledged_generation === generation &&
-			status.driver_applied_generation === generation &&
-			(componentReady ||
-				(ready?.status === "True" &&
-					ready.observedGeneration === generation &&
-					!hasCurrentRuntimeHealthDegradation(status))) &&
-			deployment.runtime_ui_endpoint?.runtime === spec.runtime &&
-			deployment.runtime_ui_endpoint.role === "control_ui" &&
-			deployment.runtime_ui_endpoint.url,
-	);
-}
-
-/**
- * A running agent whose browser UI has not been admitted yet. A withdrawn
- * dashboard is a settled advisory, not a convergence to poll for.
- */
-export function deploymentAwaitingRuntimeUi(deployment: HostedDeployment): boolean {
-	const status = deployment.resource.status;
-	return (
-		deploymentStatusFromResource(status).kind === "running" &&
-		!deploymentRuntimeUiWithdrawn(status) &&
-		!deploymentRuntimeUiIsReady(deployment)
-	);
-}
-
-export function deploymentRuntimeStatusPresentation(
-	resourceStatus: HostedDeploymentStatus | null,
-): DeploymentStatusPresentation {
-	const status = deploymentStatusFromResource(resourceStatus);
-	if (resourceStatus && hasCurrentRuntimeHealthDegradation(resourceStatus)) {
-		return { status, label: "Temporarily unavailable", tone: "warning" };
-	}
-	return {
-		status,
-		label: deploymentStatusLabel(status),
-		tone: deploymentStatusTone(status),
-	};
-}
-
-export function isRunningStatus(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "running":
-		case "restarting":
-		case "updating":
-			return true;
-		case "creating":
-		case "starting":
-		case "stopping":
-		case "stopped":
-		case "failed":
-		case "deleting":
-		case "deleted":
-		case "unknown":
-			return false;
-		default:
-			return exhaustive(status);
-	}
-}
+import { deploymentLifecycleAvailable } from "@clawdi/shared/api";
+import type { DeploymentOperation } from "@/hosted/billing/contracts";
 
 /**
  * Stopping a deployment removes its cloud-agent projection while preserving
@@ -374,104 +69,20 @@ export function isTerminalStatus(status: DeploymentStatus): boolean {
 	}
 }
 
-export function isTransitionalStatus(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "creating":
-		case "starting":
-		case "stopping":
-		case "restarting":
-		case "updating":
-		case "deleting":
-		case "unknown":
-			return true;
-		case "running":
-		case "stopped":
-		case "failed":
-		case "deleted":
-			return false;
-		default:
-			return exhaustive(status);
-	}
-}
-
 export function canStart(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "stopped":
-		case "failed":
-			return true;
-		case "creating":
-		case "starting":
-		case "running":
-		case "stopping":
-		case "restarting":
-		case "updating":
-		case "deleting":
-		case "deleted":
-		case "unknown":
-			return false;
-		default:
-			return exhaustive(status);
-	}
+	return deploymentLifecycleAvailable("start", status.kind);
 }
 
 export function canStop(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "running":
-		case "starting":
-			return true;
-		case "creating":
-		case "stopping":
-		case "stopped":
-		case "restarting":
-		case "updating":
-		case "failed":
-		case "deleting":
-		case "deleted":
-		case "unknown":
-			return false;
-		default:
-			return exhaustive(status);
-	}
+	return deploymentLifecycleAvailable("stop", status.kind);
 }
 
 export function canRestart(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "running":
-		case "failed":
-			return true;
-		case "creating":
-		case "starting":
-		case "stopping":
-		case "stopped":
-		case "restarting":
-		case "updating":
-		case "deleting":
-		case "deleted":
-		case "unknown":
-			return false;
-		default:
-			return exhaustive(status);
-	}
+	return deploymentLifecycleAvailable("restart", status.kind);
 }
 
 export function canDelete(status: DeploymentStatus): boolean {
-	switch (status.kind) {
-		case "creating":
-		case "starting":
-		case "running":
-		case "stopping":
-		case "stopped":
-		case "restarting":
-		case "updating":
-		case "failed":
-			return true;
-		case "deleting":
-		case "deleted":
-		case "unknown":
-			return false;
-		default:
-			return exhaustive(status);
-	}
+	return deploymentLifecycleAvailable("delete", status.kind);
 }
 
 /**
@@ -485,38 +96,6 @@ export function canCancelOperation(operation: DeploymentOperation | null | undef
 	return (
 		operation.metadata.verb !== "migrate_image" && operation.metadata.verb !== "rollback_image"
 	);
-}
-
-/** Shared started-at/timeout primitive for lifecycle and runtime-UI convergence. */
-export function boundedSettlingPollState({
-	key,
-	startedAtMs,
-	tracker,
-	nowMs,
-	pollIntervalMs,
-	timeoutMs,
-	escalationMs = Infinity,
-}: {
-	key: string;
-	startedAtMs: number;
-	tracker: SettlingTracker | null;
-	nowMs: number;
-	pollIntervalMs: number;
-	timeoutMs: number;
-	escalationMs?: number;
-}): SettlingPollState {
-	const safeStartedAtMs =
-		Number.isFinite(startedAtMs) && startedAtMs <= nowMs ? startedAtMs : nowMs;
-	const nextTracker = tracker?.key === key ? tracker : { key, startedAtMs: safeStartedAtMs };
-	const ageMs = nowMs - nextTracker.startedAtMs;
-	const timedOut = ageMs >= timeoutMs;
-	const escalated = timedOut && ageMs >= escalationMs;
-	return {
-		refetchInterval: timedOut ? false : pollIntervalMs,
-		timedOut,
-		escalated,
-		tracker: nextTracker,
-	};
 }
 
 export function shouldPollDeployments(
@@ -536,81 +115,30 @@ export function shouldPollDeployments(
 	});
 }
 
-/**
- * Fast-poll each accepted lifecycle operation only during its bounded
- * convergence window, then fall back to the foreground reconciliation
- * interval so delayed transitions still surface without a background
- * polling loop.
- */
-export function deploymentPollingState(
-	deployments: readonly HostedDeployment[] | null | undefined,
-	trackers: ReadonlyMap<string, SettlingTracker>,
-	nowMs: number,
-): DeploymentPollingState {
-	const nextTrackers = new Map<string, SettlingTracker>();
-	const transitions = new Map<string, DeploymentTransitionState>();
-	let refetchInterval: number | false = false;
-
-	for (const deployment of deployments ?? []) {
-		if (deployment.accepted_operation?.done && deployment.accepted_operation.error) continue;
-		const status = deploymentStatusFromResource(deployment.resource.status);
-		const awaitingRuntimeUi = deploymentAwaitingRuntimeUi(deployment);
-		if (!isTransitionalStatus(status) && !awaitingRuntimeUi) continue;
-
-		const deploymentId = deployment.resource.id;
-		const operation = deployment.accepted_operation;
-		const operationStartedAtMs = Date.parse(operation?.metadata.createTime ?? "");
-		const pollState = boundedSettlingPollState({
-			key: awaitingRuntimeUi
-				? `${deploymentTransitionFallbackKey(deployment)}:runtime-ui`
-				: (operation?.name ?? deploymentTransitionFallbackKey(deployment)),
-			startedAtMs:
-				!awaitingRuntimeUi && Number.isFinite(operationStartedAtMs) ? operationStartedAtMs : nowMs,
-			tracker: trackers.get(deploymentId) ?? null,
-			nowMs,
-			pollIntervalMs: DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
-			timeoutMs:
-				!awaitingRuntimeUi && operation?.metadata.verb === "create"
-					? DEPLOYMENT_CREATION_TRANSITION_TIMEOUT_MS
-					: DEPLOYMENT_TRANSITION_TIMEOUT_MS,
-			escalationMs: DEPLOYMENT_TRANSITION_ESCALATION_MS,
-		});
-		nextTrackers.set(deploymentId, pollState.tracker);
-		transitions.set(deploymentId, {
-			kind: pollState.escalated ? "escalated" : pollState.timedOut ? "timed_out" : "converging",
-			verb: operation?.metadata.verb ?? null,
-			startedAtMs: pollState.tracker.startedAtMs,
-		});
-		if (typeof pollState.refetchInterval === "number") {
-			refetchInterval =
-				typeof refetchInterval === "number"
-					? Math.min(refetchInterval, pollState.refetchInterval)
-					: pollState.refetchInterval;
-		}
-	}
-	if (deployments !== null && deployments !== undefined && typeof refetchInterval !== "number") {
-		refetchInterval = DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS;
-	}
-
-	return { refetchInterval, trackers: nextTrackers, transitions };
-}
-
-export function deploymentRefetchInterval(
-	deployments: readonly HostedDeployment[] | null | undefined,
-	trackers: ReadonlyMap<string, SettlingTracker> = new Map(),
-	nowMs = Date.now(),
-): number | false {
-	return deploymentPollingState(deployments, trackers, nowMs).refetchInterval;
-}
-
-function deploymentTransitionFallbackKey(deployment: HostedDeployment): string {
-	return [
-		deployment.resource.id,
-		deployment.resource.metadata.generation,
-		deployment.resource.spec.desired_lifecycle,
-	].join(":");
-}
-
 function exhaustive(value: never): never {
 	throw new Error(`Unhandled deployment status: ${JSON.stringify(value)}`);
 }
+
+export { deploymentTerminalIsAvailable } from "@clawdi/shared/api";
+export {
+	boundedSettlingPollState,
+	currentServingAdvisory,
+	DEPLOYMENT_CREATION_TRANSITION_TIMEOUT_MS,
+	DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
+	DEPLOYMENT_SERVING_ADVISORY_REASONS,
+	DEPLOYMENT_TRANSITION_ESCALATION_MS,
+	DEPLOYMENT_TRANSITION_TIMEOUT_MS,
+	DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
+	type DeploymentOperationVerb,
+	type DeploymentPollingState,
+	type DeploymentServingAdvisoryReason,
+	type DeploymentTransitionState,
+	deploymentAwaitingRuntimeUi,
+	deploymentPollingState,
+	deploymentRefetchInterval,
+	deploymentRuntimeUiIsReady,
+	deploymentRuntimeUiWithdrawn,
+	isTransitionalStatus,
+	type SettlingPollState,
+	type SettlingTracker,
+} from "@clawdi/shared/view";

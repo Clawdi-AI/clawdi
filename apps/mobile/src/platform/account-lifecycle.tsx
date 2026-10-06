@@ -1,4 +1,3 @@
-import { useAuth } from "@clerk/expo";
 import { useQueryClient } from "@tanstack/react-query";
 import {
 	createContext,
@@ -8,26 +7,21 @@ import {
 	useLayoutEffect,
 	useRef,
 } from "react";
-
 import {
 	type AccountRead,
 	type AccountScope,
 	createAccountScope,
 	isObsoleteAccountQuery,
 	readInAccountScope,
-} from "../auth/account-scope";
+} from "@/platform/auth/account-scope";
+import { useAppAuth } from "@/platform/auth/auth-client";
 
-export type { AccountRead, AccountScope } from "../auth/account-scope";
-export {
-	AccountScopeChangedError,
-	accountQueryKey,
-	readInAccountScope,
-} from "../auth/account-scope";
+export { accountQueryKey, clearAccountScope } from "@/platform/auth/account-scope";
 
 const AccountScopeContext = createContext<AccountScope | null>(null);
 
 export function AccountScopeProvider({ children }: { children: ReactNode }) {
-	const { isLoaded, isSignedIn, sessionId, userId } = useAuth();
+	const { isLoaded, isSignedIn, sessionId, userId } = useAppAuth();
 	const queryClient = useQueryClient();
 	const normalizedUserId = userId ?? null;
 	const normalizedSessionId = sessionId ?? null;

@@ -1,0 +1,35 @@
+/** Exact Web recipes from apps/web/src/components/dashboard/agent-overview-capabilities.tsx. */
+export const agentOverviewCapabilitiesClasses = {
+	module: "h-full min-w-0 gap-0 border border-foreground/10 py-0 ring-0",
+	header: "p-0",
+	loadingHeading: "flex items-center gap-3 px-4 py-3",
+	headingLink:
+		"group flex items-center gap-3 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+	content: "flex flex-1 flex-col px-4 pb-4",
+	error: "space-y-2 text-sm text-muted-foreground",
+	retry: "h-7 px-2",
+	headingBody: "min-w-0 flex-1",
+	titleSkeleton: "h-lh w-24 max-w-full",
+	arrowSkeleton: "size-4 shrink-0",
+	arrow: "size-4 shrink-0 transition-transform group-hover:translate-x-0.5",
+	arrowProminent: "text-foreground",
+	arrowDefault: "text-muted-foreground",
+	unavailable: "text-sm text-muted-foreground",
+	metadata: "space-y-2 text-xs text-muted-foreground",
+	metadataRow: "flex min-w-0 items-start justify-between gap-3",
+	metadataValue: "min-w-0 break-words text-right",
+	root: "flex flex-col gap-8",
+	section: "flex flex-col gap-3",
+	sectionTitle: "text-sm font-semibold",
+	sectionTitleSkeleton: "h-lh w-20",
+	modules: "grid auto-rows-fr items-stretch gap-3 @2xl/main:grid-cols-2",
+	statusCard: "h-full min-w-0 border py-3 ring-0",
+	statusCardProminent:
+		"border-primary/30 bg-linear-to-br from-primary/15 via-primary/5 to-transparent py-4 transition-colors has-[a:hover]:border-primary/50 has-[a:hover]:from-primary/20",
+	statusCardDefault: "border-foreground/10",
+	statusHeader: "h-full grid-rows-1 content-center gap-0",
+	statusContent: "flex min-w-0 items-center gap-3",
+	disabledStatus: "flex min-w-0 items-center gap-3 text-left opacity-50",
+	statusLink:
+		"group flex min-w-0 items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+} as const;

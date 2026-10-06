@@ -1,3 +1,4 @@
+import { brandIconTileClasses } from "@clawdi/shared/ui";
 import type { ComponentType, SVGProps } from "react";
 import { cn } from "@/lib/utils";
 
@@ -27,17 +28,13 @@ export function BrandIconTile({
 		<span
 			role="img"
 			aria-label={label}
-			className={cn(
-				boxClassName,
-				"flex shrink-0 items-center justify-center border border-border/60 bg-muted/40 text-foreground shadow-none",
-				className,
-			)}
+			className={cn(boxClassName, brandIconTileClasses.root, className)}
 		>
 			<Icon
 				size={iconSize}
 				style={{ width: iconSize, height: iconSize }}
 				aria-hidden
-				className={cn("shrink-0", iconClassName)}
+				className={cn(brandIconTileClasses.mark, iconClassName)}
 				data-icon-source="lobehub"
 			/>
 		</span>

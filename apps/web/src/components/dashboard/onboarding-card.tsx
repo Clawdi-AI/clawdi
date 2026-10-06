@@ -1,5 +1,9 @@
 "use client";
 
+import { onboardingCardClasses } from "@clawdi/shared/ui";
+
+import { onboardingCardModel } from "@clawdi/shared/view";
+
 import { Link } from "@tanstack/react-router";
 import { Rocket, TerminalSquare } from "lucide-react";
 import { useState } from "react";
@@ -26,19 +30,7 @@ export function OnboardingCard({
 }: OnboardingCardProps) {
 	const desktopBridge = useDesktopBridge();
 	const [connectOpen, setConnectOpen] = useState(false);
-	const isAdditionalAgent = variant === "additional-agent";
-	const title = isAdditionalAgent
-		? "Add another agent"
-		: canDeployOnClawdi
-			? "Get your first agent running"
-			: "Let's connect your first agent";
-	const description = isAdditionalAgent
-		? canDeployOnClawdi
-			? "Deploy a Cloud Agent, or connect an agent you already run."
-			: "Connect another agent you run and manage it from this dashboard."
-		: canDeployOnClawdi
-			? "Deploy a Cloud Agent, or connect an agent you already run."
-			: "Connect an agent you run and manage it from this dashboard.";
+	const { isAdditionalAgent, title, description } = onboardingCardModel(variant, canDeployOnClawdi);
 	const connectAgent = () => {
 		if (desktopBridge) {
 			void desktopBridge.openConnectWizard().catch(() => setConnectOpen(true));
@@ -51,8 +43,8 @@ export function OnboardingCard({
 		<>
 			<Card>
 				<CardHeader>
-					<CardTitle className="flex items-center gap-2">
-						<Rocket className="size-5 text-primary" />
+					<CardTitle className={onboardingCardClasses.title}>
+						<Rocket className={onboardingCardClasses.titleIcon} />
 						{title}
 					</CardTitle>
 					<CardDescription>{description}</CardDescription>
@@ -60,7 +52,9 @@ export function OnboardingCard({
 				<CardContent>
 					<div
 						className={
-							canDeployOnClawdi && !isAdditionalAgent ? "grid gap-2 xl:grid-cols-2" : "grid gap-2"
+							canDeployOnClawdi && !isAdditionalAgent
+								? onboardingCardClasses.actionsWithDeploy
+								: onboardingCardClasses.actions
 						}
 					>
 						{canDeployOnClawdi ? (
@@ -68,7 +62,7 @@ export function OnboardingCard({
 								render={<Link to="/deploy" />}
 								nativeButton={false}
 								size="lg"
-								className="w-full"
+								className={onboardingCardClasses.deployAction}
 							>
 								<Rocket data-icon="inline-start" /> Deploy a Cloud Agent
 							</Button>
@@ -77,7 +71,7 @@ export function OnboardingCard({
 							type="button"
 							variant={canDeployOnClawdi ? "outline" : "default"}
 							size="lg"
-							className="h-auto min-h-10 w-full whitespace-normal py-2"
+							className={onboardingCardClasses.connectAction}
 							onClick={connectAgent}
 						>
 							<TerminalSquare data-icon="inline-start" /> Connect your own agent

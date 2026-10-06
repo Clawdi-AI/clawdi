@@ -1,5 +1,21 @@
 "use client";
 
+import { stripFrontmatter } from "@clawdi/shared/api";
+import { detailLayoutClasses, skillDetailClasses } from "@clawdi/shared/ui";
+import { skillDraftUnchanged, skillFormCopy, skillRemovalTitle } from "@clawdi/shared/view";
+
+export { stripFrontmatter } from "@clawdi/shared/api";
+
+import {
+	agentDisplayName,
+	cleanMachineName,
+	decodeResourceRouteParam,
+	displayProjectName,
+	errorMessage,
+	LIBRARY_COPY,
+	projectResourceHref,
+	relativeTime,
+} from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
@@ -20,7 +36,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { agentDisplayName, cleanMachineName } from "@/components/dashboard/agent-label";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import { useAgentProjectBrowseAccess } from "@/components/dashboard/agent-project-browse-access";
 import { resolveAgentProjectScope } from "@/components/dashboard/agent-project-scope";
@@ -37,7 +52,7 @@ import { Markdown } from "@/components/markdown";
 import { Stat } from "@/components/meta/stat";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { displayProjectName, ProjectIdentity } from "@/components/projects/project-metadata";
+import { ProjectIdentity } from "@/components/projects/project-metadata";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { SkillRemovalDescription } from "@/components/skills/skill-removal-description";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -57,27 +72,17 @@ import {
 } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
-import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 import { skillCapabilities } from "@/lib/skill-authority";
 import { useCommittedLocation } from "@/lib/use-committed-location";
-import { cn, errorMessage, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import {
 	removeDeletedSkillQueries,
 	skillDetailQueryKey,
 	skillDetailQueryPrefix,
 	skillDetailViewState,
 } from "@/pages/dashboard/skills/skill-query-cache";
-
-// Strip the leading `---\n...\n---` YAML frontmatter so the markdown
-// renderer doesn't show "name:" / "description:" lines (already
-// rendered above in PageHeader) and so the closing
-// `---` doesn't render as a stray `<hr>` next to the Separator.
-export function stripFrontmatter(raw: string): string {
-	const m = raw.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
-	return m ? (m[1] ?? "") : raw;
-}
 
 // nuqs used to require a Suspense boundary here; router-owned search does
 // not suspend, so the page renders directly.
@@ -415,7 +420,7 @@ export function SkillDetailContent({
 			draftInstructions.trim() !== stripFrontmatter(skill.content ?? "").trim());
 
 	return (
-		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
+		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, detailLayoutClasses.detailPage)}>
 			<UnsavedNavigationGuard dirty={editDirty} busy={saveEdit.isPending} />
 			<DetailBackLink
 				href={skillListHref}
@@ -459,7 +464,7 @@ export function SkillDetailContent({
 					title="Couldn't load skill"
 				/>
 			) : viewState === "loading" ? (
-				<div className="space-y-3 py-2" data-testid="agent-skill-detail-loading">
+				<div className={skillDetailClasses.loading} data-testid="agent-skill-detail-loading">
 					<PageHeaderSkeleton icon actions />
 				</div>
 			) : viewState === "detail" && skill ? (
@@ -503,7 +508,7 @@ export function SkillDetailContent({
 									<SendSkillDialog skill={skill}>
 										<Button variant="outline" size="sm">
 											<Copy />
-											Copy or move
+											{LIBRARY_COPY.copyOrMove}
 										</Button>
 									</SendSkillDialog>
 									<Button
@@ -523,9 +528,9 @@ export function SkillDetailContent({
 										Edit
 									</Button>
 									<ConfirmAction
-										title={`Remove ${skill.name} from project?`}
+										title={skillRemovalTitle(skill.name)}
 										description={<SkillRemovalDescription projectName={sourceProjectName} />}
-										confirmLabel="Remove from project"
+										confirmLabel={LIBRARY_COPY.removeFromProject}
 										destructive
 										onConfirm={onUninstall}
 									>
@@ -534,10 +539,10 @@ export function SkillDetailContent({
 											size="sm"
 											disabled={uninstall.isPending || !isProjectReady}
 											title={!isProjectReady ? "Project unavailable" : undefined}
-											className="text-destructive hover:text-destructive"
+											className={skillDetailClasses.removeAction}
 										>
 											<Trash2 />
-											Remove from project
+											{LIBRARY_COPY.removeFromProject}
 										</Button>
 									</ConfirmAction>
 								</>
@@ -560,9 +565,18 @@ export function SkillDetailContent({
 											!draftName.trim() ||
 											!draftDescription.trim() ||
 											!draftInstructions.trim() ||
-											(draftName === skill.name &&
-												draftDescription === (skill.description ?? "") &&
-												draftInstructions.trim() === stripFrontmatter(skill.content ?? "").trim())
+											skillDraftUnchanged(
+												{
+													name: draftName,
+													description: draftDescription,
+													instructions: draftInstructions,
+												},
+												{
+													name: skill.name,
+													description: skill.description ?? "",
+													instructions: stripFrontmatter(skill.content ?? ""),
+												},
+											)
 										}
 									>
 										<Save />
@@ -581,18 +595,18 @@ export function SkillDetailContent({
 											href={`https://github.com/${skill.source_repo}`}
 											target="_blank"
 											rel="noreferrer"
-											className="inline-flex items-center gap-1 hover:text-foreground"
+											className={skillDetailClasses.projectLink}
 										>
 											{skill.source_repo}
-											<ExternalLink className="size-3" />
+											<ExternalLink className={skillDetailClasses.metadataIcon} />
 										</a>
 									</>
 								) : null}
 								{agentCaption ? (
 									<>
 										<span>·</span>
-										<span className="inline-flex items-center gap-1">
-											<Laptop className="size-3" />
+										<span className={skillDetailClasses.inlineMeta}>
+											<Laptop className={skillDetailClasses.metadataIcon} />
 											{agentCaption}
 										</span>
 									</>
@@ -617,14 +631,14 @@ export function SkillDetailContent({
 						/>
 					</DetailStats>
 
-					<DetailPanel className="space-y-3">
-						<div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-							<div className="space-y-1">
-								<div className="flex items-center gap-2">
-									<FolderKanban className="size-4 text-muted-foreground" />
-									<h2 className="text-sm font-semibold">Project</h2>
+					<DetailPanel className={skillDetailClasses.panel}>
+						<div className={skillDetailClasses.panelHeading}>
+							<div className={skillDetailClasses.headingStack}>
+								<div className={skillDetailClasses.headingRow}>
+									<FolderKanban className={skillDetailClasses.headingIcon} />
+									<h2 className={skillDetailClasses.heading}>Project</h2>
 								</div>
-								<p className="text-xs text-muted-foreground">
+								<p className={skillDetailClasses.subtitle}>
 									{isAgentSyncProjection
 										? "This skill is synced from the agent and is read-only here. Manage it on the agent."
 										: "This skill belongs to this project. Linked agents use it automatically."}
@@ -637,9 +651,9 @@ export function SkillDetailContent({
 						{skillProject ? (
 							<ProjectIdentity project={skillProject} showAccess titleClassName="text-sm" />
 						) : sourceProjectName ? (
-							<div className="rounded-md border bg-background/70 px-3 py-2.5">
-								<div className="text-sm font-medium">{sourceProjectName}</div>
-								<p className="mt-1 text-xs text-muted-foreground">
+							<div className={skillDetailClasses.projectCard}>
+								<div className={skillDetailClasses.projectName}>{sourceProjectName}</div>
+								<p className={skillDetailClasses.projectDescription}>
 									Project details are still loading.
 								</p>
 							</div>
@@ -652,15 +666,14 @@ export function SkillDetailContent({
 					</DetailPanel>
 
 					{isEditing ? (
-						<DetailPanel className="space-y-4">
+						<DetailPanel className={skillDetailClasses.instructionPanel}>
 							<div>
-								<h2 className="text-sm font-semibold">Edit skill</h2>
-								<p className="mt-1 text-xs text-muted-foreground">
-									Saving updates this project skill. Linked agents receive the new version
-									automatically, and imported support files stay attached.
+								<h2 className={skillDetailClasses.heading}>{skillFormCopy.editTitle}</h2>
+								<p className={skillDetailClasses.projectDescription}>
+									{skillFormCopy.editDescription}
 								</p>
 							</div>
-							<div className="space-y-1.5">
+							<div className={skillDetailClasses.field}>
 								<Label htmlFor="edit-skill-name">Skill name</Label>
 								<Input
 									id="edit-skill-name"
@@ -670,7 +683,7 @@ export function SkillDetailContent({
 									disabled={saveEdit.isPending}
 								/>
 							</div>
-							<div className="space-y-1.5">
+							<div className={skillDetailClasses.field}>
 								<Label htmlFor="edit-skill-description">Description</Label>
 								<Input
 									id="edit-skill-description"
@@ -680,7 +693,7 @@ export function SkillDetailContent({
 									disabled={saveEdit.isPending}
 								/>
 							</div>
-							<div className="space-y-1.5">
+							<div className={skillDetailClasses.field}>
 								<Label htmlFor="edit-skill-instructions">Instructions</Label>
 								<Textarea
 									ref={textareaRef}
@@ -688,21 +701,21 @@ export function SkillDetailContent({
 									name="skill-instructions"
 									value={draftInstructions}
 									onChange={(event) => setDraftInstructions(event.target.value)}
-									className="min-h-[420px] text-sm leading-relaxed"
+									className={skillDetailClasses.textarea}
 									autoComplete="off"
 									disabled={saveEdit.isPending}
 								/>
 							</div>
 						</DetailPanel>
 					) : skill.content ? (
-						<DetailPanel className="space-y-4">
-							<div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-								<div className="space-y-1">
-									<div className="flex items-center gap-2">
-										<BookOpen className="size-4 text-muted-foreground" />
-										<h2 className="text-sm font-semibold">Instruction file</h2>
+						<DetailPanel className={skillDetailClasses.instructionPanel}>
+							<div className={skillDetailClasses.panelHeading}>
+								<div className={skillDetailClasses.headingStack}>
+									<div className={skillDetailClasses.headingRow}>
+										<BookOpen className={skillDetailClasses.headingIcon} />
+										<h2 className={skillDetailClasses.heading}>Instruction file</h2>
 									</div>
-									<p className="text-xs text-muted-foreground">
+									<p className={skillDetailClasses.subtitle}>
 										{isAgentSyncProjection
 											? "This skill belongs to the agent's workspace. Edit it on the agent."
 											: "This instruction file belongs to the project. Linked agents use updates automatically."}
@@ -713,7 +726,7 @@ export function SkillDetailContent({
 								</Badge>
 							</div>
 							{skillBody ? (
-								<div className="prose prose-sm max-w-none dark:prose-invert">
+								<div className={skillDetailClasses.markdown}>
 									<Markdown content={skillBody} />
 								</div>
 							) : (
@@ -724,14 +737,14 @@ export function SkillDetailContent({
 							)}
 						</DetailPanel>
 					) : (
-						<DetailPanel className="space-y-4">
-							<div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-								<div className="space-y-1">
-									<div className="flex items-center gap-2">
-										<BookOpen className="size-4 text-muted-foreground" />
-										<h2 className="text-sm font-semibold">Instruction file</h2>
+						<DetailPanel className={skillDetailClasses.instructionPanel}>
+							<div className={skillDetailClasses.panelHeading}>
+								<div className={skillDetailClasses.headingStack}>
+									<div className={skillDetailClasses.headingRow}>
+										<BookOpen className={skillDetailClasses.headingIcon} />
+										<h2 className={skillDetailClasses.heading}>Instruction file</h2>
 									</div>
-									<p className="text-xs text-muted-foreground">
+									<p className={skillDetailClasses.subtitle}>
 										{isAgentSyncProjection
 											? "This skill was synced from the agent, but its instructions are not available yet."
 											: "This project skill has no editable instruction body."}

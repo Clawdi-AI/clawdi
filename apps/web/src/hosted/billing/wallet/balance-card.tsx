@@ -1,5 +1,7 @@
 "use client";
 
+import { balanceCardClasses } from "@clawdi/shared/ui";
+import { billingCopy } from "@clawdi/shared/view";
 import { Coins, CreditCard, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -24,38 +26,30 @@ export function BalanceCard({
 	const low = isLowBalance(wallet.balance_usd);
 	return (
 		<Card data-hosted="true">
-			<CardContent className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-				<div className="space-y-1.5">
-					<div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-						<Coins className="size-4" aria-hidden />
-						Wallet balance
+			<CardContent className={balanceCardClasses.layout}>
+				<div className={balanceCardClasses.copy}>
+					<div className={balanceCardClasses.label}>
+						<Coins className={balanceCardClasses.icon} aria-hidden />
+						{billingCopy.walletBalance}
 					</div>
 					<div>
-						<span
-							className={
-								low
-									? "text-4xl font-semibold tracking-tight tabular-nums text-warning-muted-foreground"
-									: "text-4xl font-semibold tracking-tight tabular-nums"
-							}
-						>
+						<span className={low ? balanceCardClasses.negativeBalance : balanceCardClasses.balance}>
 							{formatUsdExact(wallet.balance_usd)}
 						</span>
 					</div>
-					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-						<span>
-							Pays for AI usage and wallet-funded compute subscriptions. Card-paid subscriptions do
-							not use this balance.
-						</span>
+					<div className={balanceCardClasses.meta}>
+						<span>{billingCopy.walletExplanation}</span>
 						{low ? (
-							<span className="inline-flex items-center gap-1 font-medium text-warning-muted-foreground">
-								<TriangleAlert className="size-3.5" aria-hidden /> Low — top up before
+							<span className={balanceCardClasses.warning}>
+								<TriangleAlert className={balanceCardClasses.warningIcon} aria-hidden /> Low — top
+								up before
 								{hasWalletCompute ? " AI or compute is interrupted" : " Clawdi AI pauses"}
 							</span>
 						) : null}
 					</div>
 				</div>
-				<div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto lg:shrink-0">
-					<Button onClick={onTopUp} className="w-full sm:w-auto">
+				<div className={balanceCardClasses.actions}>
+					<Button onClick={onTopUp} className={balanceCardClasses.action}>
 						<CreditCard /> Top up
 					</Button>
 				</div>

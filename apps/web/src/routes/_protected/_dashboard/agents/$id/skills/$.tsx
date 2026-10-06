@@ -1,3 +1,4 @@
+import { decodeResourceRouteParam } from "@clawdi/shared/view";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useMemo } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -13,7 +14,6 @@ import {
 	agentSkillDetailHref,
 } from "@/lib/agent-routes";
 import { routeHeadTitle } from "@/lib/document-title";
-import { decodeResourceRouteParam } from "@/lib/project-resource-model";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { useCommittedRouteIsLatestTarget } from "@/lib/use-committed-location";
 import { cn } from "@/lib/utils";

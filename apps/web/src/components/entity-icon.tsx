@@ -1,3 +1,4 @@
+import { entityIconClasses } from "@clawdi/shared/ui";
 import { AgentFrameworkIcon } from "@/components/agent-framework-icon";
 import { BrandIconTile } from "@/components/brand-icon-tile";
 import { providerBrandIcon } from "@/components/entity-brand-icons";
@@ -34,16 +35,16 @@ const CHANNEL_PNG: Readonly<Record<string, string>> = {
 };
 
 const SIZE = {
-	sm: { px: 24, box: "size-6 rounded-md", mono: "text-3xs" },
-	md: { px: 40, box: "size-10 rounded-lg", mono: "text-sm" },
-	lg: { px: 48, box: "size-12 rounded-xl", mono: "text-base" },
+	sm: { px: 24, box: entityIconClasses.smallTile, mono: entityIconClasses.smallMonogram },
+	md: { px: 40, box: entityIconClasses.mediumTile, mono: entityIconClasses.mediumMonogram },
+	lg: { px: 48, box: entityIconClasses.largeTile, mono: entityIconClasses.largeMonogram },
 } as const;
 
 export type EntityIconSize = keyof typeof SIZE;
 export type EntityKind = "channel" | "provider" | "framework";
 
-const SHADOW = "shadow-[0_2px_6px_rgba(0,0,0,0.1)] dark:shadow-none";
-const PROVIDER_TILE = "border border-border/60 bg-muted/40 shadow-none";
+const SHADOW = entityIconClasses.channelShadow;
+const PROVIDER_TILE = entityIconClasses.providerTile;
 
 function NeutralMonogram({
 	label,
@@ -57,15 +58,7 @@ function NeutralMonogram({
 	const s = SIZE[size];
 	const mono = label.trim().charAt(0).toUpperCase() || "?";
 	return (
-		<span
-			aria-hidden
-			className={cn(
-				s.box,
-				"flex shrink-0 items-center justify-center bg-muted font-semibold text-muted-foreground",
-				s.mono,
-				className,
-			)}
-		>
+		<span aria-hidden className={cn(s.box, entityIconClasses.monogram, s.mono, className)}>
 			{mono}
 		</span>
 	);
@@ -114,7 +107,7 @@ export function EntityIcon({
 				alt={alt}
 				width={s.px}
 				height={s.px}
-				className={cn(s.box, "shrink-0 object-cover", SHADOW, className)}
+				className={cn(s.box, entityIconClasses.channelImage, SHADOW, className)}
 			/>
 		);
 	}

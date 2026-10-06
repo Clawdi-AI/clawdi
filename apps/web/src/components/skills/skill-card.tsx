@@ -1,5 +1,14 @@
 "use client";
 
+import { skillCardClasses } from "@clawdi/shared/ui";
+import type { SkillCardEntity } from "@clawdi/shared/view";
+import {
+	agentSurfaceCopy,
+	identityFor,
+	relativeTime,
+	skillRemovalTitle,
+	skillSearchSupportingText,
+} from "@clawdi/shared/view";
 import { Sparkles, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { EmptyState, type EmptyStateVariant } from "@/components/empty-state";
@@ -13,19 +22,14 @@ import { IconChip } from "@/components/icon-chip";
 import { SearchHighlightedText } from "@/components/search-highlighted-text";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { SkillRemovalDescription } from "@/components/skills/skill-removal-description";
-import { skillSearchSupportingText } from "@/components/skills/skill-search";
 import { TruncatedText } from "@/components/truncated-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import type { components } from "@/lib/api-schemas";
-import { identityFor } from "@/lib/identity";
 import type { SkillCapabilities } from "@/lib/skill-authority";
-import { relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
-export type SkillCardEntity = Pick<SkillSummary, "skill_key" | "name" | "description"> &
-	Partial<Pick<SkillSummary, "source" | "source_repo" | "version" | "updated_at">>;
 type SkillLinkBuilder = (skill: SkillSummary) => EntityCardLinkOptions | null;
 
 /* Skills are objects, not spreadsheet rows — they get the same card
@@ -37,7 +41,7 @@ export function SkillCard({
 	skill,
 	cloudSkill,
 	readOnly = false,
-	readOnlyLabel = "Read-only",
+	readOnlyLabel = agentSurfaceCopy.readOnly,
 	showVersion = true,
 	actions,
 	onUninstall,
@@ -89,7 +93,7 @@ export function SkillCard({
 				{canSend && cloudSkill ? <SendSkillDialog skill={cloudSkill} /> : null}
 				{canUninstall ? (
 					<ConfirmAction
-						title={`Remove ${skill.name} from project?`}
+						title={skillRemovalTitle(skill.name)}
 						description={<SkillRemovalDescription />}
 						confirmLabel="Remove from project"
 						destructive
@@ -102,10 +106,10 @@ export function SkillCard({
 							variant="ghost"
 							size="icon-sm"
 							disabled={uninstallPending}
-							className="text-muted-foreground hover:text-destructive"
+							className={skillCardClasses.removeAction}
 							aria-label={`Remove ${skill.name} from project`}
 						>
-							<Trash2 className="size-3.5" />
+							<Trash2 className={skillCardClasses.actionIcon} />
 						</Button>
 					</ConfirmAction>
 				) : null}
@@ -113,9 +117,9 @@ export function SkillCard({
 		) : undefined;
 	return (
 		<HeroCard
-			className="min-h-28 gap-2"
+			className={skillCardClasses.body}
 			icon={
-				<IconChip size="sm" tint={id.colorClasses} className="rounded-lg text-base">
+				<IconChip size="sm" tint={id.colorClasses} className={skillCardClasses.iconTile}>
 					{id.emoji}
 				</IconChip>
 			}
@@ -125,12 +129,12 @@ export function SkillCard({
 			badges={
 				<>
 					{showVersion && skill.version !== undefined ? (
-						<Badge variant="outline" className="shrink-0">
+						<Badge variant="outline" className={skillCardClasses.badge}>
 							v{skill.version}
 						</Badge>
 					) : null}
 					{readOnly && readOnlyLabel ? (
-						<Badge variant="secondary" className="shrink-0">
+						<Badge variant="secondary" className={skillCardClasses.badge}>
 							{readOnlyLabel}
 						</Badge>
 					) : null}
@@ -149,18 +153,15 @@ export function SkillCard({
 			footer={[
 				provenanceLabel ? <span key="provenance">{provenanceLabel}</span> : null,
 				sourceLabel ? (
-					<span
-						key="source-label"
-						className="inline-flex max-w-44 items-center gap-1 rounded-md bg-muted px-1.5 py-0.5"
-					>
-						<span aria-hidden className="select-none">
+					<span key="source-label" className={skillCardClasses.projectChip}>
+						<span aria-hidden className={skillCardClasses.versionPrefix}>
 							{sourceLabel.emoji}
 						</span>
 						<TruncatedText>{sourceLabel.name}</TruncatedText>
 					</span>
 				) : null,
 				skill.source_repo ? (
-					<span key="source" className="font-mono" translate="no">
+					<span key="source" className={skillCardClasses.version} translate="no">
 						{skill.source_repo}
 					</span>
 				) : null,

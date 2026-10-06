@@ -1,5 +1,6 @@
 "use client";
 
+import { errorMessage, identityFor } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
@@ -27,9 +28,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
-import { identityFor } from "@/lib/identity";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
 

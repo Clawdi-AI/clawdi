@@ -1,10 +1,16 @@
 "use client";
 
+import { addAgentSetupClasses } from "@clawdi/shared/ui";
+import {
+	agentRegistrationDescription,
+	agentSurfaceCopy,
+	CLI_STEPS,
+	INSTALLATION_DOCS_URL,
+} from "@clawdi/shared/view";
 import { Link } from "@tanstack/react-router";
 import { Bot, Check, Copy, Terminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AgentLabel, AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
-import { agentRegistrationDescription } from "@/components/dashboard/agent-registration-status";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
@@ -26,30 +32,8 @@ function useOrigin() {
 	return origin;
 }
 
-// Tests keep these install steps in sync with the READMEs and get-started.md.
-export const CLI_STEPS = [
-	{
-		title: "Install the CLI",
-		code: "curl -fsSL https://clawdi.ai/install.sh | sh",
-		description: "Install the latest Clawdi CLI without Node.js or sudo.",
-	},
-	{
-		title: "Sign in",
-		code: "clawdi auth login",
-		description: "Complete browser authorization before continuing to the next step.",
-	},
-	{
-		title: "Connect and enable sync",
-		code: "clawdi setup",
-		description:
-			"Detects Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode; connects each one to your account and enables background sync.",
-	},
-	{
-		title: "Verify setup",
-		code: "clawdi doctor",
-		description: "Check that Clawdi is ready on this machine.",
-	},
-];
+// The CLI onboarding contract test reads the install steps from this module.
+export { CLI_STEPS };
 
 export function CopyButton({
 	text,
@@ -79,7 +63,11 @@ export function CopyButton({
 				className={cn("text-muted-foreground hover:text-foreground", className)}
 				aria-label={label}
 			>
-				{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+				{copied ? (
+					<Check className={addAgentSetupClasses.actionIcon} />
+				) : (
+					<Copy className={addAgentSetupClasses.actionIcon} />
+				)}
 			</Button>
 		</>
 	);
@@ -122,9 +110,9 @@ export function AddAgentSetup() {
 	);
 
 	return (
-		<div className="space-y-4">
+		<div className={addAgentSetupClasses.root}>
 			<Tabs defaultValue="prompt">
-				<TabsList className="w-full sm:w-auto">
+				<TabsList className={addAgentSetupClasses.tabsList}>
 					<TabsTrigger value="commands">
 						<Terminal data-icon="inline-start" /> Run commands
 					</TabsTrigger>
@@ -132,59 +120,59 @@ export function AddAgentSetup() {
 						<Bot data-icon="inline-start" /> Ask your agent
 					</TabsTrigger>
 				</TabsList>
-				<TabsContent value="commands" className="mt-2 space-y-4">
+				<TabsContent value="commands" className={addAgentSetupClasses.commands}>
 					<div>
-						<p className="text-sm font-medium">Run these commands in order on the machine</p>
-						<p className="mt-1 text-xs text-muted-foreground">
-							Windows or package-manager users? See{" "}
-							<a
-								href="https://docs.clawdi.ai/installation"
-								className="underline underline-offset-4"
-							>
-								installation
+						<p className={addAgentSetupClasses.title}>
+							{agentSurfaceCopy.runTheseCommandsInOrderOnTheMachine}
+						</p>
+						<p className={addAgentSetupClasses.requirementHint}>
+							{agentSurfaceCopy.installationHint}{" "}
+							<a href={INSTALLATION_DOCS_URL} className={addAgentSetupClasses.installationLink}>
+								{agentSurfaceCopy.installationLink}
 							</a>
 							.
 						</p>
 					</div>
 					<CommandSteps steps={CLI_STEPS} numbered />
 				</TabsContent>
-				<TabsContent value="prompt" className="mt-2 space-y-3">
+				<TabsContent value="prompt" className={addAgentSetupClasses.promptContent}>
 					<div>
-						<p className="text-sm font-medium">Ask your agent to set up Clawdi</p>
-						<p className="mt-1 text-xs text-muted-foreground">
-							Paste this prompt into Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode on the
-							machine.
+						<p className={addAgentSetupClasses.title}>
+							{agentSurfaceCopy.askYourAgentToSetUpClawdi}
+						</p>
+						<p className={addAgentSetupClasses.requirementHint}>
+							{agentSurfaceCopy.pasteThisPromptIntoClaudeCodeCodexHermesOpenClaw}
 						</p>
 					</div>
-					<div className="rounded-lg border bg-muted/30">
-						<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-							<span className="text-2xs uppercase tracking-wider text-muted-foreground">
-								Setup prompt
+					<div className={addAgentSetupClasses.promptPanel}>
+						<div className={addAgentSetupClasses.promptHeader}>
+							<span className={addAgentSetupClasses.promptLabel}>
+								{agentSurfaceCopy.setupPrompt}
 							</span>
 							<CopyButton text={prompt} label="Copy setup prompt" />
 						</div>
-						<pre className="whitespace-pre-wrap p-3 font-mono text-xs leading-relaxed">
-							{prompt}
-						</pre>
+						<pre className={addAgentSetupClasses.prompt}>{prompt}</pre>
 					</div>
 				</TabsContent>
 			</Tabs>
 
-			<div className="border-t pt-4">
-				<div className="flex items-center gap-2">
+			<div className={addAgentSetupClasses.registration}>
+				<div className={addAgentSetupClasses.registrationHeading}>
 					{newAgents.length > 0 ? (
-						<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-success text-success-foreground">
-							<Check className="size-3.5" />
+						<span className={addAgentSetupClasses.registeredIcon}>
+							<Check className={addAgentSetupClasses.actionIcon} />
 						</span>
 					) : null}
-					<span className="text-sm font-medium">
-						{newAgents.length > 0 ? "Agent registered" : "Watch for your agent"}
+					<span className={addAgentSetupClasses.title}>
+						{newAgents.length > 0
+							? agentSurfaceCopy.agentRegistered
+							: agentSurfaceCopy.watchForYourAgent}
 					</span>
 				</div>
 				{newAgents.length > 0 ? (
-					<div className="mt-2 space-y-2 rounded-lg border border-success/30 bg-success-muted p-3">
+					<div className={addAgentSetupClasses.registeredAgents}>
 						{newAgents.map((env) => (
-							<div key={env.id} className="flex items-center justify-between gap-3">
+							<div key={env.id} className={addAgentSetupClasses.registeredAgent}>
 								<AgentLabel
 									machineName={env.machine_name}
 									displayName={env.display_name}
@@ -193,7 +181,7 @@ export function AddAgentSetup() {
 									avatarUrl={env.avatar_url}
 									size="sm"
 									titleAdornment={<AgentSourceBadgeForEnvironment env={env} compact />}
-									className="min-w-0 flex-1"
+									className={addAgentSetupClasses.body}
 								/>
 								<Button
 									render={<Link to="/agents/$id" params={{ id: env.id }} />}
@@ -201,19 +189,19 @@ export function AddAgentSetup() {
 									size="sm"
 									variant="outline"
 								>
-									Open agent
+									{agentSurfaceCopy.openAgent}
 								</Button>
 							</div>
 						))}
-						<p className="text-xs text-success-muted-foreground">
+						<p className={addAgentSetupClasses.registeredDescription}>
 							{agentRegistrationDescription(newAgents)}
 						</p>
 					</div>
 				) : (
-					<div className="mt-2 flex items-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground">
-						<span className="relative flex size-2">
-							<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
-							<span className="relative inline-flex size-2 rounded-full bg-primary" />
+					<div className={addAgentSetupClasses.waiting}>
+						<span className={addAgentSetupClasses.waitingIndicator}>
+							<span className={addAgentSetupClasses.waitingPulse} />
+							<span className={addAgentSetupClasses.waitingDot} />
 						</span>
 						Waiting for your agent to connect…
 					</div>
@@ -231,17 +219,17 @@ function CommandSteps({
 	numbered?: boolean;
 }) {
 	return (
-		<div className="space-y-3">
+		<div className={addAgentSetupClasses.steps}>
 			{steps.map((step, index) => (
-				<div key={step.title} className="flex gap-3">
+				<div key={step.title} className={addAgentSetupClasses.step}>
 					{numbered ? <StepNumber n={index + 1} /> : null}
-					<div className="min-w-0 flex-1">
-						<div className="text-sm font-medium">{step.title}</div>
-						<div className="mt-1 flex items-center gap-1.5 rounded-md border bg-muted/30 px-3 py-1.5">
-							<code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs">{step.code}</code>
+					<div className={addAgentSetupClasses.body}>
+						<div className={addAgentSetupClasses.title}>{step.title}</div>
+						<div className={addAgentSetupClasses.commandRow}>
+							<code className={addAgentSetupClasses.command}>{step.code}</code>
 							<CopyButton text={step.code} label={`Copy ${step.title} command`} />
 						</div>
-						<p className="mt-1 text-xs text-muted-foreground">{step.description}</p>
+						<p className={addAgentSetupClasses.requirementHint}>{step.description}</p>
 					</div>
 				</div>
 			))}
@@ -250,9 +238,5 @@ function CommandSteps({
 }
 
 function StepNumber({ n }: { n: number }) {
-	return (
-		<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-			{n}
-		</span>
-	);
+	return <span className={addAgentSetupClasses.stepNumber}>{n}</span>;
 }
