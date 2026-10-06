@@ -31,6 +31,7 @@ import {
 	jsonObject,
 	jsonString,
 	reasoningContent,
+	SESSION_PROJECTION_REVISION,
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
@@ -110,8 +111,6 @@ const MODERN_MESSAGE_OPTIONAL_COLUMNS = [
 
 const HERMES_CONTENT_JSON_PREFIX = "\0json:";
 const HERMES_SESSION_SCAN_BATCH_SIZE = 32;
-// Bump when persisted Hermes rows map to different Session/Event bytes.
-const HERMES_SESSION_PROJECTION_REVISION = 4;
 const HERMES_EAGER_MAX_ROWS = 512;
 
 function messagePayloadSizeSql(columns: readonly TableInfoRow[]): string {
@@ -169,7 +168,7 @@ async function sessionSourceRevision(
 ): Promise<string> {
 	const hash = createHash("sha256").update(
 		JSON.stringify([
-			HERMES_SESSION_PROJECTION_REVISION,
+			SESSION_PROJECTION_REVISION,
 			row.id,
 			row.source,
 			row.model,

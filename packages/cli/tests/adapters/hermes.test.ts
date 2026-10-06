@@ -267,6 +267,20 @@ describe("HermesAdapter.collectSessions", () => {
 		});
 	});
 
+	it("reprojects unchanged source rows after the shared projection revision changes", async () => {
+		// Captured with projection revision 4; only the mapper version changed.
+		const previous = "6ce040ade9bbc99c25a517446b1789db7036860f01f801da3299b58927e82453";
+		const scan = await scanSessionModule(
+			new HermesAdapter().sessions,
+			{ kind: "complete" },
+			new Map([["s-modern", previous]]),
+		);
+		const sessions = [];
+		for await (const batch of scan.batches) sessions.push(...batch.sessions);
+		expect(sessions).toHaveLength(1);
+		expect(sessions[0]?.sourceRevision).not.toBe(previous);
+	});
+
 	it("scans large stores in bounded batches and expands only revised sessions", async () => {
 		const db = new Database(join(tmpHome, ".hermes", "state.db"));
 		for (let index = 0; index < 40; index++) {

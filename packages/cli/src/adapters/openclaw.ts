@@ -48,6 +48,7 @@ import {
 	jsonObject,
 	jsonString,
 	reasoningContent,
+	SESSION_PROJECTION_REVISION,
 	stableRecordId,
 	toolResultContent,
 	visibleContentParts,
@@ -1164,7 +1165,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				if (transcriptPaths && !transcriptPaths.has(normalizedTranscriptPath)) continue;
 				matchedTranscriptPaths.add(normalizedTranscriptPath);
 				observedLocalSessionIds.push(sessionId);
-				const sourceRevision = `${sessionId}:${updatedAt}`;
+				const sourceRevision = `p${SESSION_PROJECTION_REVISION}:${sessionId}:${updatedAt}`;
 				const externalSession = !isInternalOpenClawSession(indexKey, entry);
 				if (externalSession && existsSync(transcriptPath)) {
 					classifiedTranscriptPaths.add(normalizedTranscriptPath);
@@ -1228,7 +1229,9 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			const projectPath = entry.spawnedCwd ?? entry.spawnedWorkspaceDir ?? entry.acp?.cwd ?? null;
 			if (!matchesProjectFilter(projectPath, absFilter)) continue;
 			if (sessionId) observedLocalSessionIds.push(sessionId);
-			const sourceRevision = sessionId ? `${sessionId}:${updatedAt}` : null;
+			const sourceRevision = sessionId
+				? `p${SESSION_PROJECTION_REVISION}:${sessionId}:${updatedAt}`
+				: null;
 			if (sessionId && knownSourceRevisions.get(sessionId) === sourceRevision) continue;
 
 			const reader = officialTranscriptReader(entry, context);
