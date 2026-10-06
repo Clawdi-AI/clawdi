@@ -6,6 +6,7 @@ import { scanSessionModule } from "../../src/adapters/base";
 import { HermesAdapter } from "../../src/adapters/hermes";
 import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
 import { computeLastActivityIso } from "../../src/lib/session-activity";
+import { projectEventsToMessages } from "../../src/lib/session-events";
 import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
 import { reserveManagedSkill } from "../../src/runtime/managed-skill-reservation";
@@ -86,6 +87,18 @@ describe("HermesAdapter.collectSessions", () => {
 			expect(JSON.stringify(result)).not.toContain("base64");
 		},
 	);
+	it.each([false, true])("counts projected visible messages (streaming=%s)", async (streaming) => {
+		const session = await new HermesAdapter().sessions.resolve("s-modern", {
+			streaming,
+			signal: new AbortController().signal,
+		});
+		if (!session) throw new Error("Expected Hermes session fixture");
+		const events = [];
+		for await (const event of session.readEvents?.() ?? session.events ?? []) events.push(event);
+		expect(session.messageCount).toBe(projectEventsToMessages(events).length);
+		expect(session.messageCount).toBe(8);
+	});
+
 	it("selects events-v1 and maps every safe modern row in stable source order", async () => {
 		const a = new HermesAdapter();
 		expect(await a.sessions.contentProtocol()).toBe("events-v1");
@@ -97,7 +110,7 @@ describe("HermesAdapter.collectSessions", () => {
 			projectPath: null,
 			model: "gpt-5.3-codex",
 			modelsUsed: ["gpt-5.3-codex"],
-			messageCount: 12,
+			messageCount: 8,
 			inputTokens: 120,
 			outputTokens: 45,
 			cacheReadTokens: 8,

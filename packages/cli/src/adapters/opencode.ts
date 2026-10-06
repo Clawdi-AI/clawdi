@@ -467,7 +467,6 @@ async function parseSession(
 	`)
 		.get(row.id, row.id) as { bytes: number };
 	let revision: string | undefined;
-	let messageCount = 0;
 	const databasePath = getOpenCodeDbPath();
 	const readEvents = async function* (): AsyncGenerator<SessionEvent> {
 		const reader = await openReadonlySqlite(databasePath);
@@ -539,7 +538,6 @@ async function parseSession(
 			if (revision !== undefined && hash !== revision)
 				throw new Error("OpenCode source changed during sync; retry with a fresh scan");
 			revision = hash;
-			messageCount = count;
 		} finally {
 			try {
 				if (transaction) reader.exec("ROLLBACK");
@@ -565,7 +563,7 @@ async function parseSession(
 		projectPath: row.directory,
 		startedAt,
 		endedAt,
-		messageCount,
+		messageCount: description.messageCount,
 		inputTokens: nonNegativeNumber(row.tokens_input),
 		outputTokens: nonNegativeNumber(row.tokens_output),
 		cacheReadTokens: nonNegativeNumber(row.tokens_cache_read),

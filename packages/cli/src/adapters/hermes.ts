@@ -800,7 +800,7 @@ export class HermesAdapter implements AgentAdapterCore {
 			projectPath: null,
 			startedAt,
 			endedAt,
-			messageCount: row.message_count ?? (stream ? streamedMessageCount : messages.length),
+			messageCount: stream ? streamedMessageCount : messages.length,
 			inputTokens: row.input_tokens ?? 0,
 			outputTokens: row.output_tokens ?? 0,
 			cacheReadTokens: row.cache_read_tokens ?? 0,

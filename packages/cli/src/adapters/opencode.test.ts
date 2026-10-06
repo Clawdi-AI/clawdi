@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { projectEventsToMessages } from "../lib/session-events";
 import { OpenCodeAdapter } from "./opencode";
 import { assertSessionGolden } from "./session-golden.test-support";
 
@@ -273,6 +274,35 @@ describe("OpenCode session adapter", () => {
 	test("preserves origin/main session bytes and localHash", async () => {
 		await assertSessionGolden("opencode", fixtureDatabase().adapter.sessions);
 	});
+	test.each([false, true])(
+		"counts projected messages rather than database rows (streaming=%s)",
+		async (streaming) => {
+			const { adapter, databasePath } = fixtureDatabase();
+			const db = new Database(databasePath);
+			try {
+				insertJson(db, "part", [
+					"prt_extra",
+					"msg_user",
+					"ses_fixture",
+					Date.parse("2026-08-27T10:00:01.500Z"),
+					Date.parse("2026-08-27T10:00:01.500Z"),
+					JSON.stringify({ type: "text", text: "Second user text part" }),
+				]);
+			} finally {
+				db.close();
+			}
+			const session = await adapter.sessions.resolve("opencode.ses_fixture", {
+				streaming,
+				signal: new AbortController().signal,
+			});
+			if (!session) throw new Error("Expected OpenCode session fixture");
+			const events = [];
+			for await (const event of session.readEvents?.() ?? session.events ?? []) events.push(event);
+			expect(session.messageCount).toBe(projectEventsToMessages(events).length);
+			expect(session.messageCount).toBe(3);
+		},
+	);
+
 	test("invalidates the source revision for metadata changes and refuses rewritten content", async () => {
 		const { adapter, databasePath } = fixtureDatabase();
 		const context = { streaming: true, signal: new AbortController().signal };
