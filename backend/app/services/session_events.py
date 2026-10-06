@@ -5,7 +5,7 @@ import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
@@ -17,6 +17,8 @@ from app.schemas.session_events import (
     SessionToolCallEvent,
     SessionToolResultEvent,
 )
+
+SESSION_EVENT_STAGING_MAX_AGE = timedelta(days=2)
 
 EMPTY_EVENT_HEAD = hashlib.sha256(b"clawdi-events-v1\n").hexdigest()
 EVENT_ADAPTER: TypeAdapter[SessionEvent] = TypeAdapter(SessionEvent)

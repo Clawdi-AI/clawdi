@@ -37,6 +37,7 @@ from app.services.file_store import get_file_store
 from app.services.session_content_notifications import notify_session_content_changed
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
+    SESSION_EVENT_STAGING_MAX_AGE,
     SessionEventChunkInvalid,
     validate_event_chunk_async,
 )
@@ -207,6 +208,20 @@ async def get_session_event_head(
     return _head_response(session)
 
 
+def _require_unexpired_staging_generation(generation: SessionEventGeneration) -> None:
+    if (
+        generation.status == "staging"
+        and generation.created_at < datetime.now(UTC) - SESSION_EVENT_STAGING_MAX_AGE
+    ):
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            detail={
+                "code": "session_event_staging_expired",
+                "message": "Staging generation expired; restart the upload",
+            },
+        )
+
+
 @router.post("/sessions/{local_session_id}/events/generations")
 async def stage_session_event_generation(
     body: SessionEventGenerationCreate,
@@ -231,6 +246,7 @@ async def stage_session_event_generation(
             or existing.final_head_hash != body.final_head_hash
         ):
             raise HTTPException(status.HTTP_409_CONFLICT, "Generation identity conflict")
+        _require_unexpired_staging_generation(existing)
         return SessionEventGenerationResponse(generation=existing.id, status=existing.status)
     if not _cas_matches(
         session,
@@ -259,6 +275,7 @@ async def stage_session_event_generation(
             or existing_append.final_head_hash != body.final_head_hash
         ):
             raise HTTPException(status.HTTP_409_CONFLICT, "append_id identity conflict")
+        _require_unexpired_staging_generation(existing_append)
         return SessionEventGenerationResponse(
             generation=existing_append.id, status=existing_append.status
         )
@@ -330,6 +347,7 @@ async def upload_session_event_generation_chunk(
         and session.origin_environment_id != auth.api_key.environment_id
     ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Staging generation not found")
+    _require_unexpired_staging_generation(generation)
     existing = (
         await db.execute(
             select(SessionEventChunk).where(
@@ -465,6 +483,7 @@ async def commit_session_event_generation(
         or generation.final_head_hash != body.final_head_hash
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, "Generation commit identity conflict")
+    _require_unexpired_staging_generation(generation)
     if generation.status == "committed":
         if not _cas_matches(
             session,

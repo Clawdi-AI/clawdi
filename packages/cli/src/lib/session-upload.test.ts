@@ -707,3 +707,79 @@ describe("events-v1 incremental upload", () => {
 		},
 	);
 });
+
+it.each([
+	["stage", false],
+	["chunk", false],
+	["commit", false],
+	["stage", true],
+	["chunk", true],
+	["commit", true],
+] as const)("restarts an expired staged upload at %s (streamed=%s)", async (expireAt, streamed) => {
+	const api = eventApi();
+	const session = rawSession(events(["one", "hello"]), streamed);
+	const plan = await prepareSessionUpload(session, "events-v1");
+	const fence = sessionFence(api, {
+		environmentId: "agent-pi",
+		adapter: "pi",
+		sourceSessionKey: session.localSessionId,
+	});
+	api.getSessionEventHead = async () => ({
+		protocol: "events-v1",
+		generation: null,
+		revision: 0,
+		count: 0,
+		head_hash: EMPTY_EVENT_HEAD,
+	});
+	let interrupted = true;
+	let expired = false;
+	const stages: Array<{ generation: string; appendId: string }> = [];
+	const expire = () => {
+		expired = true;
+		throw new ApiError({ status: 410, body: "session_event_staging_expired", hint: "" });
+	};
+	api.stageSessionEventGeneration = async (_id, body) => {
+		stages.push({ generation: body.generation, appendId: body.append_id });
+		if (!interrupted && expireAt === "stage" && !expired) expire();
+		return { generation: body.generation, status: "staging" };
+	};
+	api.uploadSessionEventGenerationChunk = async (input) => {
+		if (interrupted) {
+			interrupted = false;
+			throw new ApiError({ status: 503, body: "interrupted upload", hint: "" });
+		}
+		if (expireAt === "chunk" && !expired) expire();
+		return {
+			generation: input.generation,
+			start_seq: input.startSeq,
+			end_seq: input.startSeq,
+			count: 1,
+			content_hash: input.contentHash,
+			result_head_hash: plan.localHash,
+		};
+	};
+	api.commitSessionEventGeneration = async (_id, generation, body) => {
+		if (expireAt === "commit" && !expired) expire();
+		return {
+			generation,
+			revision: body.base_revision + 1,
+			count: body.final_count,
+			head_hash: body.final_head_hash,
+		};
+	};
+	const input = { api, fence, session, plan, needsSnapshotContent: false };
+	await expect(syncSessionContent(input)).rejects.toThrow("interrupted upload");
+	const pending = readFencedSessionEntry(readSessionsLock(), fence)?.pending;
+	if (!pending) throw new Error("expected durable staged upload");
+	const result = await syncSessionContent(input);
+	const fresh = stages[2];
+	if (!fresh) throw new Error("expected fresh generation after expiry");
+	expect(stages).toHaveLength(3);
+	expect(stages[1]?.generation).toBe(pending.generation);
+	expect(fresh.generation).not.toBe(pending.generation);
+	expect(fresh.appendId).not.toBe(pending.append_id);
+	expect(result.status).toBe("synced");
+	const receipt = readFencedSessionEntry(readSessionsLock(), fence);
+	expect(receipt?.event_generation).toBe(fresh.generation);
+	expect(receipt?.pending).toBeUndefined();
+});

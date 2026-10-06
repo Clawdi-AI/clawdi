@@ -387,6 +387,15 @@ async function syncEventSession(input: {
 					message: `${input.session.localSessionId} events-v1 upload rejected: ${error.message}`,
 				});
 			}
+			if (error instanceof ApiError && error.status === 410) {
+				const prior = readFencedSessionEntry(readSessionsLock(), input.fence);
+				if (prior?.pending?.kind !== "rewrite") throw error;
+				// Expired staging identities must never be resumed on the next attempt.
+				const entry = { ...prior };
+				delete entry.pending;
+				persistFencedSessionEntry(input.fence, entry);
+				continue;
+			}
 			if (!(error instanceof ApiError) || error.status !== 409) throw error;
 		}
 	}
