@@ -10,9 +10,13 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ProtectedRouteImport } from './routes/_protected'
+import { Route as AgentSetupPromptDottxtRouteImport } from './routes/agent-setup-prompt[.]txt'
 import { Route as DesktopAuthRouteImport } from './routes/desktop-auth'
+import { Route as GetStartedDotmdRouteImport } from './routes/get-started[.]md'
+import { Route as LlmsDottxtRouteImport } from './routes/llms[.]txt'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as SignUpRouteImport } from './routes/sign-up'
+import { Route as SkillDotmdRouteImport } from './routes/skill[.]md'
 import { Route as VaultRequestRouteImport } from './routes/vault-request'
 import { Route as ProtectedDashboardRouteImport } from './routes/_protected/_dashboard'
 import { Route as ProtectedCliAuthorizeRouteImport } from './routes/_protected/cli-authorize'
@@ -23,11 +27,13 @@ import { Route as SChar123idChar125DotmdRouteImport } from './routes/s/{$id}[.]m
 import { Route as ShareTokenRouteImport } from './routes/share/$token'
 import { Route as SignInSplatRouteImport } from './routes/sign-in/$'
 import { Route as SignUpSplatRouteImport } from './routes/sign-up/$'
+import { Route as DotwellKnownAgentSkillsIndexDotjsonRouteImport } from './routes/[.]well-known/agent-skills/index[.]json'
 import { Route as ProtectedDashboardIndexRouteImport } from './routes/_protected/_dashboard/index'
 import { Route as ProtectedDashboardAiProvidersRouteImport } from './routes/_protected/_dashboard/ai-providers'
 import { Route as ProtectedDashboardDashboardRouteImport } from './routes/_protected/_dashboard/dashboard'
 import { Route as ProtectedDashboardDeployRouteImport } from './routes/_protected/_dashboard/deploy'
 import { Route as ProtectedTerminalIdRouteImport } from './routes/_protected/terminal/$id'
+import { Route as SkillsClawdiSKILLDotmdRouteImport } from './routes/skills/clawdi/SKILL[.]md'
 import { Route as ProtectedDashboardAgentsIndexRouteImport } from './routes/_protected/_dashboard/agents/index'
 import { Route as ProtectedDashboardAgentsIdRouteImport } from './routes/_protected/_dashboard/agents/$id'
 import { Route as ProtectedDashboardChannelsIndexRouteImport } from './routes/_protected/_dashboard/channels/index'
@@ -66,9 +72,24 @@ const ProtectedRoute = ProtectedRouteImport.update({
   id: '/_protected',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgentSetupPromptDottxtRoute = AgentSetupPromptDottxtRouteImport.update({
+  id: '/agent-setup-prompt.txt',
+  path: '/agent-setup-prompt.txt',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DesktopAuthRoute = DesktopAuthRouteImport.update({
   id: '/desktop-auth',
   path: '/desktop-auth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GetStartedDotmdRoute = GetStartedDotmdRouteImport.update({
+  id: '/get-started.md',
+  path: '/get-started.md',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LlmsDottxtRoute = LlmsDottxtRouteImport.update({
+  id: '/llms.txt',
+  path: '/llms.txt',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignInRoute = SignInRouteImport.update({
@@ -79,6 +100,11 @@ const SignInRoute = SignInRouteImport.update({
 const SignUpRoute = SignUpRouteImport.update({
   id: '/sign-up',
   path: '/sign-up',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SkillDotmdRoute = SkillDotmdRouteImport.update({
+  id: '/skill.md',
+  path: '/skill.md',
   getParentRoute: () => rootRouteImport,
 } as any)
 const VaultRequestRoute = VaultRequestRouteImport.update({
@@ -131,6 +157,12 @@ const SignUpSplatRoute = SignUpSplatRouteImport.update({
   path: '/$',
   getParentRoute: () => SignUpRoute,
 } as any)
+const DotwellKnownAgentSkillsIndexDotjsonRoute =
+  DotwellKnownAgentSkillsIndexDotjsonRouteImport.update({
+    id: '/.well-known/agent-skills/index.json',
+    path: '/.well-known/agent-skills/index.json',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ProtectedDashboardIndexRoute = ProtectedDashboardIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -158,6 +190,11 @@ const ProtectedTerminalIdRoute = ProtectedTerminalIdRouteImport.update({
   id: '/terminal/$id',
   path: '/terminal/$id',
   getParentRoute: () => ProtectedRoute,
+} as any)
+const SkillsClawdiSKILLDotmdRoute = SkillsClawdiSKILLDotmdRouteImport.update({
+  id: '/skills/clawdi/SKILL.md',
+  path: '/skills/clawdi/SKILL.md',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ProtectedDashboardAgentsIndexRoute =
   ProtectedDashboardAgentsIndexRouteImport.update({
@@ -360,9 +397,13 @@ const ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ProtectedDashboardIndexRoute
+  '/agent-setup-prompt.txt': typeof AgentSetupPromptDottxtRoute
   '/desktop-auth': typeof DesktopAuthRoute
+  '/get-started.md': typeof GetStartedDotmdRoute
+  '/llms.txt': typeof LlmsDottxtRoute
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
+  '/skill.md': typeof SkillDotmdRoute
   '/vault-request': typeof VaultRequestRoute
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
@@ -372,10 +413,12 @@ export interface FileRoutesByFullPath {
   '/share/$token': typeof ShareTokenRoute
   '/sign-in/$': typeof SignInSplatRoute
   '/sign-up/$': typeof SignUpSplatRoute
+  '/.well-known/agent-skills/index.json': typeof DotwellKnownAgentSkillsIndexDotjsonRoute
   '/ai-providers': typeof ProtectedDashboardAiProvidersRoute
   '/dashboard': typeof ProtectedDashboardDashboardRoute
   '/deploy': typeof ProtectedDashboardDeployRoute
   '/terminal/$id': typeof ProtectedTerminalIdRoute
+  '/skills/clawdi/SKILL.md': typeof SkillsClawdiSKILLDotmdRoute
   '/agents/$id': typeof ProtectedDashboardAgentsIdRouteWithChildren
   '/channels/$id': typeof ProtectedDashboardChannelsIdRoute
   '/connectors/$name': typeof ProtectedDashboardConnectorsNameRoute
@@ -412,9 +455,13 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof ProtectedDashboardIndexRoute
+  '/agent-setup-prompt.txt': typeof AgentSetupPromptDottxtRoute
   '/desktop-auth': typeof DesktopAuthRoute
+  '/get-started.md': typeof GetStartedDotmdRoute
+  '/llms.txt': typeof LlmsDottxtRoute
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
+  '/skill.md': typeof SkillDotmdRoute
   '/vault-request': typeof VaultRequestRoute
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
@@ -424,10 +471,12 @@ export interface FileRoutesByTo {
   '/share/$token': typeof ShareTokenRoute
   '/sign-in/$': typeof SignInSplatRoute
   '/sign-up/$': typeof SignUpSplatRoute
+  '/.well-known/agent-skills/index.json': typeof DotwellKnownAgentSkillsIndexDotjsonRoute
   '/ai-providers': typeof ProtectedDashboardAiProvidersRoute
   '/dashboard': typeof ProtectedDashboardDashboardRoute
   '/deploy': typeof ProtectedDashboardDeployRoute
   '/terminal/$id': typeof ProtectedTerminalIdRoute
+  '/skills/clawdi/SKILL.md': typeof SkillsClawdiSKILLDotmdRoute
   '/channels/$id': typeof ProtectedDashboardChannelsIdRoute
   '/connectors/$name': typeof ProtectedDashboardConnectorsNameRoute
   '/memories/$id': typeof ProtectedDashboardMemoriesIdRoute
@@ -463,9 +512,13 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_protected': typeof ProtectedRouteWithChildren
+  '/agent-setup-prompt.txt': typeof AgentSetupPromptDottxtRoute
   '/desktop-auth': typeof DesktopAuthRoute
+  '/get-started.md': typeof GetStartedDotmdRoute
+  '/llms.txt': typeof LlmsDottxtRoute
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
+  '/skill.md': typeof SkillDotmdRoute
   '/vault-request': typeof VaultRequestRoute
   '/_protected/_dashboard': typeof ProtectedDashboardRouteWithChildren
   '/_protected/cli-authorize': typeof ProtectedCliAuthorizeRoute
@@ -476,10 +529,12 @@ export interface FileRoutesById {
   '/share/$token': typeof ShareTokenRoute
   '/sign-in/$': typeof SignInSplatRoute
   '/sign-up/$': typeof SignUpSplatRoute
+  '/.well-known/agent-skills/index.json': typeof DotwellKnownAgentSkillsIndexDotjsonRoute
   '/_protected/_dashboard/ai-providers': typeof ProtectedDashboardAiProvidersRoute
   '/_protected/_dashboard/dashboard': typeof ProtectedDashboardDashboardRoute
   '/_protected/_dashboard/deploy': typeof ProtectedDashboardDeployRoute
   '/_protected/terminal/$id': typeof ProtectedTerminalIdRoute
+  '/skills/clawdi/SKILL.md': typeof SkillsClawdiSKILLDotmdRoute
   '/_protected/_dashboard/': typeof ProtectedDashboardIndexRoute
   '/_protected/_dashboard/agents/$id': typeof ProtectedDashboardAgentsIdRouteWithChildren
   '/_protected/_dashboard/channels/$id': typeof ProtectedDashboardChannelsIdRoute
@@ -519,9 +574,13 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/agent-setup-prompt.txt'
     | '/desktop-auth'
+    | '/get-started.md'
+    | '/llms.txt'
     | '/sign-in'
     | '/sign-up'
+    | '/skill.md'
     | '/vault-request'
     | '/cli-authorize'
     | '/runtime-handoff'
@@ -531,10 +590,12 @@ export interface FileRouteTypes {
     | '/share/$token'
     | '/sign-in/$'
     | '/sign-up/$'
+    | '/.well-known/agent-skills/index.json'
     | '/ai-providers'
     | '/dashboard'
     | '/deploy'
     | '/terminal/$id'
+    | '/skills/clawdi/SKILL.md'
     | '/agents/$id'
     | '/channels/$id'
     | '/connectors/$name'
@@ -571,9 +632,13 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/agent-setup-prompt.txt'
     | '/desktop-auth'
+    | '/get-started.md'
+    | '/llms.txt'
     | '/sign-in'
     | '/sign-up'
+    | '/skill.md'
     | '/vault-request'
     | '/cli-authorize'
     | '/runtime-handoff'
@@ -583,10 +648,12 @@ export interface FileRouteTypes {
     | '/share/$token'
     | '/sign-in/$'
     | '/sign-up/$'
+    | '/.well-known/agent-skills/index.json'
     | '/ai-providers'
     | '/dashboard'
     | '/deploy'
     | '/terminal/$id'
+    | '/skills/clawdi/SKILL.md'
     | '/channels/$id'
     | '/connectors/$name'
     | '/memories/$id'
@@ -621,9 +688,13 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_protected'
+    | '/agent-setup-prompt.txt'
     | '/desktop-auth'
+    | '/get-started.md'
+    | '/llms.txt'
     | '/sign-in'
     | '/sign-up'
+    | '/skill.md'
     | '/vault-request'
     | '/_protected/_dashboard'
     | '/_protected/cli-authorize'
@@ -634,10 +705,12 @@ export interface FileRouteTypes {
     | '/share/$token'
     | '/sign-in/$'
     | '/sign-up/$'
+    | '/.well-known/agent-skills/index.json'
     | '/_protected/_dashboard/ai-providers'
     | '/_protected/_dashboard/dashboard'
     | '/_protected/_dashboard/deploy'
     | '/_protected/terminal/$id'
+    | '/skills/clawdi/SKILL.md'
     | '/_protected/_dashboard/'
     | '/_protected/_dashboard/agents/$id'
     | '/_protected/_dashboard/channels/$id'
@@ -676,14 +749,20 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   ProtectedRoute: typeof ProtectedRouteWithChildren
+  AgentSetupPromptDottxtRoute: typeof AgentSetupPromptDottxtRoute
   DesktopAuthRoute: typeof DesktopAuthRoute
+  GetStartedDotmdRoute: typeof GetStartedDotmdRoute
+  LlmsDottxtRoute: typeof LlmsDottxtRoute
   SignInRoute: typeof SignInRouteWithChildren
   SignUpRoute: typeof SignUpRouteWithChildren
+  SkillDotmdRoute: typeof SkillDotmdRoute
   VaultRequestRoute: typeof VaultRequestRoute
   SIdRoute: typeof SIdRoute
   SChar123idChar125DotjsonRoute: typeof SChar123idChar125DotjsonRoute
   SChar123idChar125DotmdRoute: typeof SChar123idChar125DotmdRoute
   ShareTokenRoute: typeof ShareTokenRoute
+  DotwellKnownAgentSkillsIndexDotjsonRoute: typeof DotwellKnownAgentSkillsIndexDotjsonRoute
+  SkillsClawdiSKILLDotmdRoute: typeof SkillsClawdiSKILLDotmdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -695,11 +774,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agent-setup-prompt.txt': {
+      id: '/agent-setup-prompt.txt'
+      path: '/agent-setup-prompt.txt'
+      fullPath: '/agent-setup-prompt.txt'
+      preLoaderRoute: typeof AgentSetupPromptDottxtRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/desktop-auth': {
       id: '/desktop-auth'
       path: '/desktop-auth'
       fullPath: '/desktop-auth'
       preLoaderRoute: typeof DesktopAuthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/get-started.md': {
+      id: '/get-started.md'
+      path: '/get-started.md'
+      fullPath: '/get-started.md'
+      preLoaderRoute: typeof GetStartedDotmdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/llms.txt': {
+      id: '/llms.txt'
+      path: '/llms.txt'
+      fullPath: '/llms.txt'
+      preLoaderRoute: typeof LlmsDottxtRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-in': {
@@ -714,6 +814,13 @@ declare module '@tanstack/react-router' {
       path: '/sign-up'
       fullPath: '/sign-up'
       preLoaderRoute: typeof SignUpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/skill.md': {
+      id: '/skill.md'
+      path: '/skill.md'
+      fullPath: '/skill.md'
+      preLoaderRoute: typeof SkillDotmdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/vault-request': {
@@ -786,6 +893,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignUpSplatRouteImport
       parentRoute: typeof SignUpRoute
     }
+    '/.well-known/agent-skills/index.json': {
+      id: '/.well-known/agent-skills/index.json'
+      path: '/.well-known/agent-skills/index.json'
+      fullPath: '/.well-known/agent-skills/index.json'
+      preLoaderRoute: typeof DotwellKnownAgentSkillsIndexDotjsonRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_protected/_dashboard/': {
       id: '/_protected/_dashboard/'
       path: '/'
@@ -820,6 +934,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/terminal/$id'
       preLoaderRoute: typeof ProtectedTerminalIdRouteImport
       parentRoute: typeof ProtectedRoute
+    }
+    '/skills/clawdi/SKILL.md': {
+      id: '/skills/clawdi/SKILL.md'
+      path: '/skills/clawdi/SKILL.md'
+      fullPath: '/skills/clawdi/SKILL.md'
+      preLoaderRoute: typeof SkillsClawdiSKILLDotmdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_protected/_dashboard/agents/': {
       id: '/_protected/_dashboard/agents/'
@@ -1217,14 +1338,21 @@ const SignUpRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   ProtectedRoute: ProtectedRouteWithChildren,
+  AgentSetupPromptDottxtRoute: AgentSetupPromptDottxtRoute,
   DesktopAuthRoute: DesktopAuthRoute,
+  GetStartedDotmdRoute: GetStartedDotmdRoute,
+  LlmsDottxtRoute: LlmsDottxtRoute,
   SignInRoute: SignInRouteWithChildren,
   SignUpRoute: SignUpRouteWithChildren,
+  SkillDotmdRoute: SkillDotmdRoute,
   VaultRequestRoute: VaultRequestRoute,
   SIdRoute: SIdRoute,
   SChar123idChar125DotjsonRoute: SChar123idChar125DotjsonRoute,
   SChar123idChar125DotmdRoute: SChar123idChar125DotmdRoute,
   ShareTokenRoute: ShareTokenRoute,
+  DotwellKnownAgentSkillsIndexDotjsonRoute:
+    DotwellKnownAgentSkillsIndexDotjsonRoute,
+  SkillsClawdiSKILLDotmdRoute: SkillsClawdiSKILLDotmdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

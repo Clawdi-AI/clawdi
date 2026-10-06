@@ -1,9 +1,3 @@
----
-name: clawdi-onboarding
-description: First-time setup walkthrough for connecting this machine to Clawdi.
-homepage: https://cloud.clawdi.ai
----
-
 # Clawdi Setup
 
 You're helping the user connect this machine to Clawdi—the best home for all their AI agents. They can run agents in the cloud or connect their own, with context and tools in one place.
@@ -78,6 +72,9 @@ clawdi setup
 ```
 
 Auto-detects every installed AI agent (Claude Code, Codex, Hermes, OpenClaw, Pi, and OpenCode), registers each with the cloud, configures only the local modules each agent supports, and installs background sync daemons by default. Pi and OpenCode sync sessions only; neither receives skill or MCP installation. Without an `--agent` flag it picks up everything detected — which is what you want, so later sync steps can cover all of them.
+
+`clawdi setup` installs the Clawdi skill into each detected agent that supports skills.
+Don't install https://clawdi.ai/skills/clawdi/SKILL.md separately.
 
 If `clawdi setup` reports that it couldn't install the daemon (for example, no systemd),
 registration still succeeded. Continue, and handle the daemon in **Verify live sync**.
@@ -252,7 +249,7 @@ clawdi doctor
 
 Every check should be green. Then point the user at their dashboard:
 
-> All set. Open https://cloud.clawdi.ai/sessions — you should see N sessions from this machine across {agents}.
+> All set. Open the **Sessions** page in your Clawdi dashboard — you should see N sessions from this machine across {agents}.
 
 Where N = `new + updated + unchanged` from the previous step, and {agents} is the list registered in setup.
 

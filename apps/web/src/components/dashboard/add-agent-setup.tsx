@@ -8,18 +8,15 @@ import { agentRegistrationDescription } from "@/components/dashboard/agent-regis
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { agentSetupPrompt } from "@/lib/agent-setup-prompt";
 import { useOpenApi } from "@/lib/api";
+import { publicSiteOrigin } from "@/lib/public-site";
 import { cn } from "@/lib/utils";
 
 // Fallback origin used during SSR and on the first client render before the
 // useEffect fires, so server and client markup match. The real origin is
 // swapped in post-mount.
 const DEFAULT_ORIGIN = "https://cloud.clawdi.ai";
-
-// Single source for the agent setup prompt and CLI install steps; tests keep README and skill.md in sync.
-export function agentSetupPrompt(origin: string): string {
-	return `Set up Clawdi on this machine. Read all of ${origin}/skill.md (for example, run \`curl -fsSL ${origin}/skill.md\`) and follow its steps in order.`;
-}
 
 function useOrigin() {
 	const [origin, setOrigin] = useState(DEFAULT_ORIGIN);
@@ -29,6 +26,7 @@ function useOrigin() {
 	return origin;
 }
 
+// Tests keep these install steps in sync with the READMEs and get-started.md.
 export const CLI_STEPS = [
 	{
 		title: "Install the CLI",
@@ -95,7 +93,7 @@ export function CopyButton({
 export function AddAgentSetup() {
 	const api = useOpenApi();
 	const origin = useOrigin();
-	const prompt = agentSetupPrompt(origin);
+	const prompt = agentSetupPrompt(publicSiteOrigin(origin));
 	const baseline = useRef<Set<string> | null>(null);
 
 	// Live success detection: snapshot the env ids on first load, then poll
