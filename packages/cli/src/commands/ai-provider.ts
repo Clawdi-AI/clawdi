@@ -38,6 +38,8 @@ import {
 } from "../lib/ai-provider-test";
 import { ApiClient } from "../lib/api-client";
 import { PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { confirmOrRequireYes } from "../lib/prompts";
+import { isInteractive } from "../lib/tty";
 import { collectAgentCredentialProfilePayload } from "./agent-credentials";
 
 interface AiProviderAddOptions {
@@ -74,6 +76,7 @@ interface AiProviderListOptions {
 interface AiProviderRemoveOptions {
 	force?: boolean;
 	json?: boolean;
+	yes?: boolean;
 }
 
 interface AiProviderValidateOptions {
@@ -224,6 +227,15 @@ export async function aiProviderRemoveCommand(
 ): Promise<void> {
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	const next = removeAiProvider(catalog, providerId, Boolean(opts.force));
+	if (
+		isInteractive() &&
+		!(await confirmOrRequireYes(`Remove AI provider ${providerId}?`, {
+			yes: opts.yes,
+			action: "remove this AI provider",
+		}))
+	) {
+		return;
+	}
 	writeAiProviderCatalog(next);
 	if (opts.json) {
 		console.log(JSON.stringify({ removed: providerId }, null, 2));

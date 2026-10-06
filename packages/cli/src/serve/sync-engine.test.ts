@@ -316,6 +316,8 @@ describe("Session deletion convergence", () => {
 			sessions.resolve = async () => session;
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 				const request = input instanceof Request ? input : new Request(input, init);
+				if (new URL(request.url).pathname.endsWith("/profiles"))
+					return new Response("Not Found", { status: 404 });
 				const path = new URL(request.url).pathname;
 				requests.push(path);
 				if (path === "/v1/sessions/batch") {
@@ -455,6 +457,8 @@ describe("Session deletion convergence", () => {
 			let sentMessages: unknown;
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 				const request = input instanceof Request ? input : new Request(input, init);
+				if (new URL(request.url).pathname.endsWith("/profiles"))
+					return new Response("Not Found", { status: 404 });
 				const path = new URL(request.url).pathname;
 				if (path === "/v1/sessions/batch") {
 					const body = (await request.json()) as { sessions: Array<Record<string, unknown>> };
@@ -1028,6 +1032,8 @@ describe("Agent filesystem projection reconcile", () => {
 				const calls: string[] = [];
 				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 					const request = input instanceof Request ? input : new Request(input, init);
+					if (new URL(request.url).pathname.endsWith("/profiles"))
+						return new Response("Not Found", { status: 404 });
 					const url = new URL(request.url);
 					if (request.method === "DELETE") {
 						const projectId = url.searchParams.get("project_id") ?? "missing";
@@ -1125,6 +1131,8 @@ describe("Agent filesystem projection reconcile", () => {
 					let verifiedHash: string | null = null;
 					globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 						const request = input instanceof Request ? input : new Request(input, init);
+						if (new URL(request.url).pathname.endsWith("/profiles"))
+							return new Response("Not Found", { status: 404 });
 						const form = await request.formData();
 						const archive = form.get("file");
 						const suppliedHash = form.get("content_hash");
@@ -1190,6 +1198,8 @@ describe("Agent filesystem projection reconcile", () => {
 			try {
 				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 					const request = input instanceof Request ? input : new Request(input, init);
+					if (new URL(request.url).pathname.endsWith("/profiles"))
+						return new Response("Not Found", { status: 404 });
 					const etag = `"${revision}:project-1"`;
 					if (includeRevision && request.headers.get("if-none-match") === etag) {
 						return new Response(null, { status: 304, headers: { etag } });
@@ -1343,6 +1353,8 @@ describe("Agent filesystem projection reconcile", () => {
 			try {
 				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 					const request = input instanceof Request ? input : new Request(input, init);
+					if (new URL(request.url).pathname.endsWith("/profiles"))
+						return new Response("Not Found", { status: 404 });
 					const page = Number.parseInt(new URL(request.url).searchParams.get("page") ?? "1", 10);
 					const itemCount = page === 1 ? 200 : 1;
 					const items = Array.from({ length: itemCount }, (_, index) => {
@@ -1420,6 +1432,8 @@ describe("Agent filesystem projection reconcile", () => {
 			try {
 				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 					const request = input instanceof Request ? input : new Request(input, init);
+					if (new URL(request.url).pathname.endsWith("/profiles"))
+						return new Response("Not Found", { status: 404 });
 					const page = Number.parseInt(new URL(request.url).searchParams.get("page") ?? "1", 10);
 					const payload = pages[page - 1] ?? { items: [], total: pages[0]?.total ?? 0 };
 					return new Response(JSON.stringify(payload), {
@@ -1522,6 +1536,8 @@ describe("Pi sessions and Skills daemon", () => {
 
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 				const request = input instanceof Request ? input : new Request(input, init);
+				if (new URL(request.url).pathname.endsWith("/profiles"))
+					return new Response("Not Found", { status: 404 });
 				requests.push(request.clone());
 				const path = new URL(request.url).pathname;
 				if (path === "/v1/agents/agent-pi") {
@@ -1687,6 +1703,8 @@ describe("daemon startup Agent lookup", () => {
 			process.exitCode = 0;
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 				const request = input instanceof Request ? input : new Request(input, init);
+				if (new URL(request.url).pathname.endsWith("/profiles"))
+					return new Response("Not Found", { status: 404 });
 				requests.push(request);
 				return fetchImpl(request);
 			}) as typeof fetch;
@@ -2176,6 +2194,8 @@ describe("daemon startup Agent lookup", () => {
 				);
 				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 					const request = input instanceof Request ? input : new Request(input, init);
+					if (new URL(request.url).pathname.endsWith("/profiles"))
+						return new Response("Not Found", { status: 404 });
 					requests.push(request);
 					abortController.abort();
 					return Response.json({ id: "agent-owned", default_project_id: "project-1" });
@@ -2219,6 +2239,8 @@ describe("daemon startup Agent lookup", () => {
 				);
 				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 					const request = input instanceof Request ? input : new Request(input, init);
+					if (new URL(request.url).pathname.endsWith("/profiles"))
+						return new Response("Not Found", { status: 404 });
 					requests.push(request);
 					writeFileSync(
 						registrationPath,

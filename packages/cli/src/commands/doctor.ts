@@ -9,6 +9,7 @@ import { getAuth, getClawdiDir, getConfig, isLoggedIn } from "../lib/config";
 interface Check {
 	name: string;
 	ok: boolean;
+	skipped?: boolean;
 	detail?: string;
 	hint?: string;
 }
@@ -65,7 +66,7 @@ async function checkAgents(): Promise<Check[]> {
 		const label = adapterRegistry[a.agentType].displayName;
 		const detected = await a.detect();
 		if (!detected) {
-			results.push({ name: `Agent: ${label}`, ok: false, detail: "not installed" });
+			results.push({ name: `Agent: ${label}`, ok: true, skipped: true, detail: "not installed" });
 			continue;
 		}
 		const version = await a.getVersion();
@@ -181,8 +182,8 @@ export async function doctor(opts: { json?: boolean } = {}) {
 	console.log(chalk.bold("clawdi doctor"));
 	console.log();
 	for (const c of checks) {
-		const icon = c.ok ? chalk.green("✓") : chalk.red("✗");
-		const name = c.ok ? chalk.white(c.name) : chalk.red(c.name);
+		const icon = c.skipped ? chalk.gray("–") : c.ok ? chalk.green("✓") : chalk.red("✗");
+		const name = c.skipped ? chalk.gray(c.name) : c.ok ? chalk.white(c.name) : chalk.red(c.name);
 		const detail = c.detail ? chalk.gray(` — ${c.detail}`) : "";
 		console.log(`  ${icon} ${name}${detail}`);
 		if (!c.ok && c.hint) {

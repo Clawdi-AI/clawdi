@@ -477,7 +477,11 @@ export async function execRuntimeUserCommand(
 	args: string[],
 	home: string,
 	cwd: string,
-	options: RuntimeUserCommandOptions & { maxBufferBytes: number; timeoutMs: number },
+	options: RuntimeUserCommandOptions & {
+		maxBufferBytes: number;
+		timeoutMs: number;
+		signal?: AbortSignal;
+	},
 ): Promise<{ stdout: string; stderr: string }> {
 	const child = runtimeUserCommand(command, args, home, options);
 	return execFileAsync(child.command, child.args, {
@@ -486,6 +490,8 @@ export async function execRuntimeUserCommand(
 		encoding: "utf8",
 		maxBuffer: options.maxBufferBytes,
 		timeout: options.timeoutMs,
+		signal: options.signal,
+		killSignal: "SIGKILL",
 	});
 }
 

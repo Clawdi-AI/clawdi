@@ -48,6 +48,7 @@ from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRunt
 from app.models.memory import Memory
 from app.models.session import (
     AgentEnvironment,
+    AgentProfile,
     Session,
     SessionEventChunk,
     SessionSyncSuppression,
@@ -58,6 +59,7 @@ from app.models.session_permission import (
     SessionPermission,
 )
 from app.models.session_share import SessionShare
+from app.schemas.agent_profile import ProfileKey
 from app.schemas.common import Paginated
 from app.schemas.runtime import (
     HostedRuntimePlatformMcpServer,
@@ -149,6 +151,7 @@ from app.services.session_content import (
 )
 from app.services.session_content_notifications import notify_session_content_changed
 from app.services.session_export import session_to_markdown
+from app.services.session_profile import profile_required
 from app.services.session_refs import extract_related_refs
 from app.services.session_search import (
     SearchableSessionMessage,
@@ -345,7 +348,12 @@ async def _register_agent_identity(
         # against the Connected runtime shape; do not retain its observations.
         clear_connected_agent_registration(registered.env)
     await db.commit()
-    return EnvironmentCreatedResponse(id=str(registered.env.id))
+    return EnvironmentCreatedResponse(
+        id=str(registered.env.id),
+        dashboard_url=(
+            f"{settings.web_origin.rstrip('/')}/sessions" if settings.web_origin else None
+        ),
+    )
 
 
 @router.post("/agents")
@@ -476,7 +484,12 @@ async def rebind_agent(
         rebound_id,
         env.agent_type,
     )
-    return EnvironmentCreatedResponse(id=str(rebound_id))
+    return EnvironmentCreatedResponse(
+        id=str(rebound_id),
+        dashboard_url=(
+            f"{settings.web_origin.rstrip('/')}/sessions" if settings.web_origin else None
+        ),
+    )
 
 
 @router.post("/environments", deprecated=True)
@@ -1530,6 +1543,8 @@ async def _delete_managed_avatar_key_best_effort(key: str | None) -> None:
 
 
 def _session_content_key(session: Session) -> str:
+    if session.file_key:
+        return session.file_key
     if session.origin_environment_id is None:
         return f"sessions/{session.user_id}/{session.local_session_id}.json"
     return (
@@ -2340,6 +2355,7 @@ async def batch_create_sessions(
                 Session.local_session_id,
                 Session.environment_id,
                 Session.origin_environment_id,
+                Session.origin_profile_key,
                 Session.content_hash,
                 Session.file_key,
                 Session.content_protocol,
@@ -2368,6 +2384,7 @@ async def batch_create_sessions(
         await db.execute(
             select(
                 SessionSyncSuppression.origin_environment_id,
+                SessionSyncSuppression.origin_profile_key,
                 SessionSyncSuppression.local_session_id,
             ).where(
                 SessionSyncSuppression.user_id == auth.user_id,
@@ -2382,35 +2399,87 @@ async def batch_create_sessions(
             )
         )
     ).all()
+    profile_rejected: list[str] = []
+    rejected_pairs: set[tuple[UUID | None, str]] = set()
+    for item in body.sessions:
+        if body.profile_key is not None:
+            if item.profile_key is not None and item.profile_key != body.profile_key:
+                raise HTTPException(422, "A batch must contain only one profile")
+            item.profile_key = body.profile_key
+        if item.profile_key is None:
+            keys = {
+                row.origin_profile_key
+                for row in existing_rows
+                if row.origin_environment_id == item.environment_id
+                and row.local_session_id == item.local_session_id
+            }
+            if not keys:
+                keys = {
+                    row.origin_profile_key
+                    for row in suppression_rows
+                    if row.origin_environment_id == item.environment_id
+                    and row.local_session_id == item.local_session_id
+                }
+            if len(keys) > 1:
+                profile_rejected.append(item.local_session_id)
+                rejected_pairs.add((item.environment_id, item.local_session_id))
+                continue
+            item.profile_key = next(iter(keys), "")
+        # During expand the old unique constraint still owns upserts. Never
+        # update a different profile through its user/Agent/local-id conflict.
+        if any(
+            row.origin_environment_id == item.environment_id
+            and row.local_session_id == item.local_session_id
+            and row.origin_profile_key != item.profile_key
+            for row in existing_rows
+        ):
+            profile_rejected.append(item.local_session_id)
+            rejected_pairs.add((item.environment_id, item.local_session_id))
     legacy_suppressed_ids = {
         row.local_session_id for row in suppression_rows if row.origin_environment_id is None
     }
     exact_suppressed_pairs = {
-        (row.origin_environment_id, row.local_session_id)
+        (row.origin_environment_id, row.origin_profile_key, row.local_session_id)
         for row in suppression_rows
         if row.origin_environment_id is not None
     }
 
-    def is_suppressed(environment_id: UUID | None, local_session_id: str) -> bool:
+    def is_suppressed(
+        environment_id: UUID | None, profile_key: str | None, local_session_id: str
+    ) -> bool:
         return (
             local_session_id in legacy_suppressed_ids
-            or (environment_id, local_session_id) in exact_suppressed_pairs
+            or (environment_id, profile_key, local_session_id) in exact_suppressed_pairs
         )
 
     suppressed = list(
         dict.fromkeys(
             s.local_session_id
             for s in body.sessions
-            if is_suppressed(s.environment_id, s.local_session_id)
+            if is_suppressed(s.environment_id, s.profile_key, s.local_session_id)
         )
     )
     active_sessions = [
-        s for s in body.sessions if not is_suppressed(s.environment_id, s.local_session_id)
+        s
+        for s in body.sessions
+        if (s.environment_id, s.local_session_id) not in rejected_pairs
+        and not is_suppressed(s.environment_id, s.profile_key, s.local_session_id)
     ]
     active_existing_rows = [
         row
         for row in existing_rows
-        if not is_suppressed(row.origin_environment_id, row.local_session_id)
+        if not is_suppressed(
+            row.origin_environment_id, row.origin_profile_key, row.local_session_id
+        )
+        and (
+            row.origin_environment_id is None
+            or any(
+                item.environment_id == row.origin_environment_id
+                and item.profile_key == row.origin_profile_key
+                and item.local_session_id == row.local_session_id
+                for item in active_sessions
+            )
+        )
     ]
     if not active_sessions:
         await db.commit()
@@ -2419,7 +2488,7 @@ async def batch_create_sessions(
             updated=0,
             unchanged=0,
             needs_content=[],
-            rejected=[],
+            rejected=profile_rejected,
             suppressed=suppressed,
         )
 
@@ -2440,7 +2509,8 @@ async def batch_create_sessions(
         )
 
     existing_by_pair = {
-        (row.origin_environment_id, row.local_session_id): row for row in active_existing_rows
+        (row.origin_environment_id, row.origin_profile_key, row.local_session_id): row
+        for row in active_existing_rows
     }
 
     rows = [
@@ -2448,6 +2518,7 @@ async def batch_create_sessions(
             "user_id": auth.user_id,
             "environment_id": s.environment_id,
             "origin_environment_id": s.environment_id,
+            "origin_profile_key": s.profile_key,
             "local_session_id": s.local_session_id,
             "project_path": s.project_path,
             "started_at": s.started_at,
@@ -2489,12 +2560,13 @@ async def batch_create_sessions(
     # below) re-enqueues the upload. Hash unchanged → file_key kept,
     # so a no-op re-push doesn't churn the blob.
     event_pairs = [
-        (s.environment_id, s.local_session_id)
+        (s.environment_id, s.profile_key, s.local_session_id)
         for s in active_sessions
         if s.content_protocol == "events-v1"
     ]
     events_requested = tuple_(
         insert_stmt.excluded.origin_environment_id,
+        insert_stmt.excluded.origin_profile_key,
         insert_stmt.excluded.local_session_id,
     ).in_(event_pairs)
     events_committed = Session.content_protocol == "events-v1"
@@ -2559,6 +2631,7 @@ async def batch_create_sessions(
             # behave correctly: they get a real bump on first proper push.
             "updated_at": case((hash_changed, func.now()), else_=Session.updated_at),
         },
+        where=Session.origin_profile_key == insert_stmt.excluded.origin_profile_key,
     )
     # Concurrent `DELETE /v1/environments/{id}` between the pre-flight
     # SELECT and this UPSERT can still race the FK. PG sqlstate 23503 means
@@ -2567,7 +2640,11 @@ async def batch_create_sessions(
     try:
         upserted_id_rows = (
             await db.execute(
-                upsert_stmt.returning(Session.origin_environment_id, Session.local_session_id)
+                upsert_stmt.returning(
+                    Session.origin_environment_id,
+                    Session.origin_profile_key,
+                    Session.local_session_id,
+                )
             )
         ).all()
         await db.commit()
@@ -2595,10 +2672,10 @@ async def batch_create_sessions(
     updated = 0
     unchanged = 0
     needs_content: list[str] = []
-    rejected: list[str] = []
-    upserted_pairs = {(row[0], row[1]) for row in upserted_id_rows}
+    rejected: list[str] = list(profile_rejected)
+    upserted_pairs = {(row[0], row[1], row[2]) for row in upserted_id_rows}
     for s in active_sessions:
-        pair = (s.environment_id, s.local_session_id)
+        pair = (s.environment_id, s.profile_key, s.local_session_id)
         if pair not in upserted_pairs:
             # Kept for response compatibility and defensive handling of a
             # future conditional upsert. The current origin-fenced upsert
@@ -2681,6 +2758,7 @@ async def list_sessions(
     ),
     agent: str | None = Query(default=None, description="Filter by agent_type"),
     environment_id: UUID | None = Query(default=None, description="Filter by agent environment"),
+    profile_key: ProfileKey | None = Query(default=None),
     # Faceted filters. Multi-valued where the dashboard wants chip
     # multi-select (model, tag); scalar where the chip is single-pick
     # (min_messages, has_pr). All optional — list page renders the
@@ -2786,6 +2864,9 @@ async def list_sessions(
         session_filters.append(Session.last_activity_at < until)
     if environment_id:
         session_filters.append(Session.environment_id == environment_id)
+
+    if profile_key is not None:
+        session_filters.append(Session.origin_profile_key == profile_key)
 
     if model:
         session_filters.append(Session.model.in_(model))
@@ -2923,6 +3004,23 @@ async def list_sessions(
         total = result_rows[0].total
         rows = [row[:-1] for row in result_rows if row[0] is not None]
 
+    profile_pairs = {(row[0].origin_environment_id, row[0].origin_profile_key) for row in rows}
+    labels = (
+        {
+            (p.environment_id, p.profile_key): p.display_name or p.upstream_key
+            for p in (
+                await db.execute(
+                    select(AgentProfile).where(
+                        tuple_(AgentProfile.environment_id, AgentProfile.profile_key).in_(
+                            profile_pairs
+                        )
+                    )
+                )
+            ).scalars()
+        }
+        if profile_pairs
+        else {}
+    )
     items: list[SessionListItemResponse] = []
     for row in rows:
         search_match: SessionSearchMatchResponse | None = None
@@ -2958,6 +3056,7 @@ async def list_sessions(
                 machine_name=machine_name,
                 is_shared=bool(shared),
                 search_match=search_match,
+                profile_display_name=labels.get((s.origin_environment_id, s.origin_profile_key)),
             )
         )
 
@@ -3002,6 +3101,14 @@ async def get_session_detail(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
 
     session, agent_type, display_name, default_name, machine_name, is_shared = row
+    profile = (
+        await db.execute(
+            select(AgentProfile).where(
+                AgentProfile.environment_id == session.origin_environment_id,
+                AgentProfile.profile_key == session.origin_profile_key,
+            )
+        )
+    ).scalar_one_or_none()
     return SessionDetailResponse(
         **_session_to_response(
             session,
@@ -3010,6 +3117,9 @@ async def get_session_detail(
             agent_default_name=default_name,
             machine_name=machine_name,
             is_shared=bool(is_shared),
+            profile_display_name=(profile.display_name or profile.upstream_key)
+            if profile
+            else None,
         ).model_dump(),
         has_content=session_has_uploaded_content(session),
     )
@@ -3072,6 +3182,7 @@ async def delete_session(
         suppression = pg_insert(SessionSyncSuppression).values(
             user_id=auth.user_id,
             origin_environment_id=session.origin_environment_id,
+            origin_profile_key=session.origin_profile_key,
             local_session_id=session.local_session_id,
         )
         await db.execute(suppression.on_conflict_do_nothing())
@@ -3097,6 +3208,7 @@ async def upload_session_content(
     # inside the user's Session prefix.
     local_session_id: str = Path(..., pattern=_SESSION_LOCAL_ID_PATTERN),
     environment_id: UUID | None = Form(default=None),
+    profile_key: ProfileKey | None = Form(default=None),
     expected_content_hash: str | None = Form(default=None, pattern=r"^[0-9a-f]{64}$"),
     file: UploadFile = File(...),
     auth: AuthContext = Depends(require_scope("sessions:write")),
@@ -3105,6 +3217,10 @@ async def upload_session_content(
 ) -> SessionUploadResponse:
     """Upload session messages JSON to FileStore."""
     record_pre_handler(request.scope)
+    # FastAPI maps empty optional Form strings to None; the empty profile key
+    # is an explicit identity and must remain distinguishable from an old CLI.
+    if profile_key is None and (await request.form()).get("profile_key") == "":
+        profile_key = ""
     with request_stage(request.scope, "upload_lookup_lock_ms"):
         bound_env = _bound_env_id(auth)
         stmt = select(Session).where(
@@ -3119,10 +3235,14 @@ async def upload_session_content(
             stmt = stmt.where(Session.origin_environment_id == bound_env)
         elif environment_id is not None:
             stmt = stmt.where(Session.origin_environment_id == environment_id)
+        if profile_key is not None:
+            stmt = stmt.where(Session.origin_profile_key == profile_key)
         sessions = list((await db.execute(stmt)).scalars())
         if not sessions:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
         if len(sessions) != 1:
+            if len({row.origin_environment_id for row in sessions}) == 1:
+                raise profile_required()
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 detail={
@@ -3147,6 +3267,8 @@ async def upload_session_content(
         if not sessions:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
         if len(sessions) != 1:
+            if len({row.origin_environment_id for row in sessions}) == 1:
+                raise profile_required()
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 detail={
@@ -3532,6 +3654,8 @@ async def get_session_messages(
 @router.post("/sessions/{local_session_id}/extract")
 async def extract_session_memories(
     local_session_id: str = Path(..., pattern=r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,199}$"),
+    environment_id: UUID | None = Query(default=None),
+    profile_key: ProfileKey | None = Query(default=None),
     auth: AuthContext = Depends(require_scope("memories:write")),
     fence_headers: ConnectedAgentFenceHeaders = Depends(connected_agent_fence_headers),
     db: AsyncSession = Depends(get_session),
@@ -3555,15 +3679,26 @@ async def extract_session_memories(
         )
 
     bound_env = _bound_env_id(auth)
+    if bound_env is not None and environment_id is not None and bound_env != environment_id:
+        raise HTTPException(403, "api key bound to another environment")
     stmt = select(Session).where(
         Session.user_id == auth.user_id,
         Session.local_session_id == local_session_id,
     )
-    if bound_env is not None:
-        stmt = stmt.where(Session.environment_id == bound_env)
-    session = (await db.execute(stmt)).scalar_one_or_none()
-    if not session:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+    if bound_env is not None or environment_id is not None:
+        stmt = stmt.where(Session.origin_environment_id == (bound_env or environment_id))
+    if profile_key is not None:
+        stmt = stmt.where(Session.origin_profile_key == profile_key)
+    matches = list((await db.execute(stmt)).scalars())
+    if not matches:
+        raise HTTPException(404, "Session not found")
+    if len(matches) > 1:
+        if len({row.origin_environment_id for row in matches}) == 1:
+            raise profile_required()
+        raise HTTPException(
+            409, detail={"code": "session_origin_required", "message": "Send environment_id."}
+        )
+    session = matches[0]
     if session.origin_environment_id is not None:
         await require_connected_agent_fence(
             db,
@@ -3887,6 +4022,7 @@ def _session_to_response(
     machine_name: str | None = None,
     is_shared: bool = False,
     search_match: SessionSearchMatchResponse | None = None,
+    profile_display_name: str | None = None,
 ) -> SessionListItemResponse:
     agent_name = (
         agent_name_from_fields(agent_display_name, agent_default_name, machine_name, None)
@@ -3896,6 +4032,8 @@ def _session_to_response(
     return SessionListItemResponse(
         id=str(s.id),
         local_session_id=s.local_session_id,
+        profile_key=s.origin_profile_key,
+        profile_display_name=profile_display_name if s.origin_profile_key else agent_name,
         project_path=s.project_path,
         agent_name=agent_name,
         agent_display_name=agent_display_name,

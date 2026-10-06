@@ -7,6 +7,7 @@ import { getClawdiDir } from "./config";
 import { getCliVersion } from "./version";
 
 export interface SessionFence {
+	profileKey?: string;
 	apiOrigin: string;
 	environmentId: string;
 	adapter: AgentType;
@@ -45,6 +46,7 @@ export function isSessionBlockCurrent(block: SessionUploadBlock, now = Date.now(
 }
 
 export interface FencedSessionLockEntry {
+	profile_key?: string;
 	api_origin: string;
 	environment_id: string;
 	adapter: AgentType;
@@ -126,6 +128,7 @@ export function writeFencedSessionEntry(
 		adapter: fence.adapter,
 		source_session_key: fence.sourceSessionKey,
 		...entry,
+		...(fence.profileKey !== undefined ? { profile_key: fence.profileKey } : {}),
 	};
 	return current;
 }
@@ -245,6 +248,7 @@ export function isFencedSessionLockEntry(value: unknown): value is FencedSession
 		typeof value.environment_id === "string" &&
 		typeof value.adapter === "string" &&
 		typeof value.source_session_key === "string" &&
+		(value.profile_key === undefined || typeof value.profile_key === "string") &&
 		(value.protocol === "snapshot-v1" || value.protocol === "events-v1") &&
 		(value.source_revision === undefined || typeof value.source_revision === "string")
 	);

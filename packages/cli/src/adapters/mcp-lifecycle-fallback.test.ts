@@ -44,7 +44,7 @@ exit 0
 			{ mode: 0o755 },
 		);
 
-		await claudeMcpLifecycle.register();
+		expect(await claudeMcpLifecycle.register()).toBe(true);
 
 		const calls = readFileSync(join(root, "claude-calls"), "utf8").trim().split("\n");
 		expect(calls[0]).toBe("mcp list");
@@ -56,11 +56,11 @@ exit 0
 		mkdirSync(codexHome);
 		process.env.CODEX_HOME = codexHome;
 
-		await codexMcpLifecycle.register();
+		expect(await codexMcpLifecycle.register()).toBe(true);
 		const configPath = join(codexHome, "config.toml");
 		const registered = readFileSync(configPath, "utf8");
 		expect(registered).toContain("[mcp_servers.clawdi]");
-		await codexMcpLifecycle.register();
+		expect(await codexMcpLifecycle.register()).toBe(true);
 		expect(readFileSync(configPath, "utf8")).toBe(registered);
 	});
 });

@@ -37,6 +37,58 @@ unauthenticated) work without a backend. Anything that hits the API
 the baked-in production URL for release builds and `http://localhost:8000`
 for dev builds (`bun run dev` / `build:dev`).
 
+## Profile discovery and sync
+
+One sync engine registers all discovered profiles and reads their sessions
+separately. Hermes uses its managed Python and upstream `list_profile_names()`,
+`get_profile_dir()`, and `profile.yaml.previous_names`. OpenClaw uses
+`agents list --json`; `OPENCLAW_AGENT_ID`, or `main` when unset, remains the
+default Agent regardless of upstream `isDefault`. Readers take explicit homes
+and select their own profile. The Hermes home used before upgrading retains the
+Cloud default key, even when it names an upstream profile; the upstream root
+then uses the named key `default`, unless that conflicts. Enumeration failures
+send `complete: false`: Hermes retains complete default coverage and OpenClaw
+reads the configured `OPENCLAW_AGENT_ID` when set, or all legacy agents when
+unset. Profile endpoint 404/5xx responses
+select the same legacy behavior for that cycle. Legacy fallback omits profile
+keys from uploads so the backend can preserve an existing session's attribution.
+
+Hermes rename attribution applies only when a newly discovered key records a
+known removed key in upstream rename history. A durable API/Agent-fenced journal
+retries interrupted inventory and rename operations and moves local receipts
+without changing their hashes or pending generations. When multiple removed
+keys match, the last matching entry in upstream history wins. Only that profile
+is renamed; the others stay removed/offline, and one warning containing profile
+keys accompanies continued sync. Without upstream history, the old
+profile stays offline and the new profile syncs independently. OpenClaw moves
+existing Cloud session metadata to the discovered Agent before content sync.
+
+Default session state keys and projection bytes remain unchanged. Named keys
+include the profile dimension. Sessions remain one-way and read-only. Skill
+collection, reconciliation, and linked Project installation use only the default
+profile, including OpenClaw's default Agent workspace. Hermes MCP uses the
+official `hermes -p <profile> config` mechanism for every profile; OpenClaw MCP
+remains gateway-wide. Profile inventory refresh also runs with session sync
+disabled. Discovery runs asynchronously at startup, five-minute reconciliation,
+and profile inventory changes observed through the existing watcher/stat path.
+Session-file changes do not rediscover profiles. Hermes MCP is reconciled at
+setup and once for each newly seen profile. Named profile failures skip that
+reader and report incomplete inventory while the default continues; only a
+complete discovery can mark a missing profile removed. OpenClaw shares one
+official all-agents session inventory per scan and attributes only newly
+observed IDs.
+
+The CLI release must wait for the web profile list and filter PR. The backend
+expand release retains the legacy Session unique constraint; repeated local IDs
+across profiles require the later contract release and are rejected meanwhile.
+
+```bash
+scripts/test.sh cli tests/profiles.test.ts tests/adapters/openclaw.test.ts
+```
+
+Done: discovery, rename retries, default state-key stability, per-profile MCP,
+and OpenClaw reader/skill isolation tests pass.
+
 ## MCP forwarding deadlines
 
 The stdio proxy gives `tools/call` a 390-second HTTP deadline, including response

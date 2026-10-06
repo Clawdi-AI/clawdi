@@ -40,6 +40,9 @@ export async function teardown(opts: {
 	}
 
 	if (!opts.yes) {
+		if (!isInteractive()) {
+			console.error("--yes will be required in a non-interactive shell starting in 0.16");
+		}
 		const labels = targets.map((t) => adapterRegistry[t].displayName).join(", ");
 		p.log.info(`Will tear down: ${labels}`, { output: process.stderr });
 		const ok = await askYesNo("Proceed?");

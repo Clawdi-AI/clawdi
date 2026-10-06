@@ -5,6 +5,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { parseDotenvDetailed } from "../lib/dotenv";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
+import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { buildExactClawdiReference } from "../lib/secret-references";
@@ -399,24 +400,18 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 	const targetProject = await resolveVaultWriteProject(api, opts.project);
 	const target = formatVaultTarget(vaultSlug, section, targetProject);
 
-	// Skip the confirmation prompt under `--yes` so CI / scripted
-	// imports (demos, .env bootstrap) don't hang on stdin. The
-	// preview banner still renders so the operator can see what
-	// just landed.
 	p.note(
 		Object.keys(fields).join("\n"),
 		`${Object.keys(fields).length} keys from ${file} -> ${target}`,
 		{ output: process.stderr },
 	);
-	if (!opts.yes) {
-		const ok = await p.confirm({
-			output: process.stderr,
-			message: `Import these keys to ${target}?`,
-		});
-		if (p.isCancel(ok) || !ok) {
-			p.cancel("Cancelled.", { output: process.stderr });
-			return;
-		}
+	if (
+		!(await confirmOrRequireYes(`Import these keys to ${target}?`, {
+			yes: opts.yes,
+			action: `import these keys to ${target}`,
+		}))
+	) {
+		return;
 	}
 
 	const vaultId = await ensureVault(

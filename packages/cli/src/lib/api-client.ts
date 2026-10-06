@@ -534,12 +534,13 @@ export class ApiClient {
 		localSessionId: string,
 		file: Buffer,
 		filename: string,
-		fence: { environmentId: string; expectedContentHash: string },
+		fence: { environmentId: string; expectedContentHash: string; profileKey?: string },
 	): Promise<SessionUploadResponse> {
 		return this.multipartPost<SessionUploadResponse>(
 			`/v1/sessions/${encodeURIComponent(localSessionId)}/upload`,
 			{
 				environment_id: fence.environmentId,
+				...(fence.profileKey !== undefined ? { profile_key: fence.profileKey } : {}),
 				expected_content_hash: fence.expectedContentHash,
 			},
 			file,
@@ -556,12 +557,16 @@ export class ApiClient {
 	async getSessionEventHead(
 		localSessionId: string,
 		environmentId: string,
+		profileKey?: string,
 	): Promise<SessionEventHeadResponse> {
 		return unwrap(
 			await this.GET("/v1/sessions/{local_session_id}/events/head", {
 				params: {
 					path: { local_session_id: localSessionId },
-					query: { environment_id: environmentId },
+					query: {
+						environment_id: environmentId,
+						...(profileKey !== undefined ? { profile_key: profileKey } : {}),
+					},
 				},
 			}),
 		);
@@ -612,6 +617,7 @@ export class ApiClient {
 	}
 
 	async appendSessionEvents(input: {
+		profileKey?: string;
 		localSessionId: string;
 		environmentId: string;
 		appendId: string;
@@ -629,6 +635,7 @@ export class ApiClient {
 			`/v1/sessions/${encodeURIComponent(input.localSessionId)}/events/append`,
 			{
 				environment_id: input.environmentId,
+				...(input.profileKey !== undefined ? { profile_key: input.profileKey } : {}),
 				append_id: input.appendId,
 				generation: input.generation,
 				base_revision: String(input.baseRevision),
