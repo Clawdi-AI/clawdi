@@ -252,6 +252,8 @@ class ClawdiEgressAddon:
                 self.snapshot_ack.unlink(missing_ok=True)
             except OSError:
                 pass
+        # Engine exit makes the sidecar fail and exposes unhealthy manager state.
+        ctx.master.shutdown()
 
 
 def merged_config(environ: dict[str, str | None]) -> dict[str, str]:

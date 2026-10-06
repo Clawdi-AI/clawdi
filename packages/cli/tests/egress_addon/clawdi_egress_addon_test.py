@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import quote
 
 
@@ -100,7 +100,10 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             profiles = [{"id": "claim", "kind": "http", "match": {"host": "service.test"},
                 "rewrite": {"upstreamBaseUrl": "https://relay.test", "setHeaders": {
                     "authorization": {"type": "secretRef", "secretRef": "secret://key"}}}}]
-            with patch.object(addon.os, "fstat", side_effect=root_owned):
+            master = SimpleNamespace(shutdown=Mock())
+            with patch.object(addon.os, "fstat", side_effect=root_owned), patch.object(
+                addon.ctx, "master", master, create=True
+            ):
                 publish(False, [], {})
                 engine.reload_from_environment({"CLAWDI_EGRESS_SNAPSHOT_FILE": str(input_path),
                     "CLAWDI_EGRESS_SNAPSHOT_ACK": str(ack)})
@@ -123,11 +126,13 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                     engine.refresh_snapshot()
                     self.assertEqual(engine.secrets, {"secret://key": "rotated"})
                     self.assertTrue(acknowledged())
+                    master.shutdown.assert_not_called()
                 publish(True, profiles, {})
                 engine.refresh_snapshot()
                 self.assertEqual(engine.apply_to_flow(Flow()).action, "deny")
                 self.assertFalse(acknowledged())
                 self.assertEqual(engine.secrets, {})
+                master.shutdown.assert_called_once()
                 publish(True, profiles, {"secret://key": "repaired"})
                 engine.refresh_snapshot()
                 self.assertEqual(engine.apply_to_flow(Flow()).action, "http")
