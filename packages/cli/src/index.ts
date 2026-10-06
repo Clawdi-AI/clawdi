@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import chalk from "chalk";
 import { Command, Option } from "commander";
 import { AGENT_TYPE_HELP_LABEL, SKILL_AGENT_TYPE_HELP_LABEL } from "./adapters/registry.js";
 import { registerServeCommand } from "./commands/serve-cli.js";
@@ -8,6 +9,17 @@ import { getCliVersion } from "./lib/version.js";
 import { evaluateHostPolicyForCommand } from "./runtime/host-policy.js";
 
 const program = new Command();
+
+function disableColor(): void {
+	chalk.level = 0;
+	// Clack uses node:util styleText, which honors FORCE_COLOR=0.
+	process.env.FORCE_COLOR = "0";
+}
+
+const args = process.argv.slice(2);
+const separatorIndex = args.indexOf("--");
+const cliArgs = separatorIndex === -1 ? args : args.slice(0, separatorIndex);
+if (process.env.NO_COLOR || cliArgs.includes("--no-color")) disableColor();
 
 function commandPath(command: Command): string {
 	const names: string[] = [];
@@ -38,6 +50,7 @@ program
 		"The best home for all your AI agents. Run them in the cloud or connect your own—with their context and tools in one place.",
 	)
 	.version(getCliVersion())
+	.option("--no-color", "Disable color output")
 	.addHelpText(
 		"after",
 		`
@@ -63,6 +76,7 @@ Environment:
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
   CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via \`config set autoUpdate false\`)
   CLAWDI_AUTH_TOKEN        Authenticate non-interactive Cloud API requests
+  NO_COLOR                Disable color output when non-empty
   CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)
   CODEX_HOME               Custom Codex home (else ~/.codex)
   HERMES_HOME              Custom Hermes home (else ~/.hermes)
