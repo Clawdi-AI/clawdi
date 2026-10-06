@@ -30,7 +30,7 @@ import { installAnonymousOpenClawGatewayService } from "./runtime-systemd-reconc
 import { runRuntimeUserCommand, withRuntimeUserFileAccess } from "./runtime-user-command";
 
 /** Shared structural settings; tokens are generated per instance, never per tenant. */
-export function anonymousOpenClawGatewayPatch(token: string | null): Record<string, unknown> {
+export function anonymousOpenClawGatewayPatch(token: string): Record<string, unknown> {
 	return {
 		gateway: {
 			mode: "local",
@@ -79,8 +79,8 @@ export function preinstallOpenClawBundledSkill(paths: RuntimePaths): void {
 	);
 }
 
-/** The sealed volume carries a disabled official unit, no usable gateway token
- * and no process. The /run environment-file condition also gates copied units. */
+/** Stage the official unit in this anonymous pool instance. Warm-up owns its
+ * first start after publishing the per-boot environment and anonymous egress. */
 export function prepareAnonymousOpenClawGateway(
 	paths: RuntimePaths,
 	identity: { uid: number; gid: number },
@@ -118,13 +118,6 @@ export function prepareAnonymousOpenClawGateway(
 			runtimeGid: identity.gid,
 			timeoutMs: 120_000,
 		},
-	);
-	// Neither a copied token nor a credential env key is an activation authority.
-	applyOpenClawConfigMergePatch(
-		sdk,
-		JSON.stringify(anonymousOpenClawGatewayPatch(null)),
-		paths.userHome,
-		paths.userHome,
 	);
 	preinstallOpenClawBundledSkill(paths);
 }

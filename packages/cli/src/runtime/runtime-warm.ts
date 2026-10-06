@@ -43,7 +43,7 @@ export async function warmHostedOpenClawRuntime(
 	)
 		throw new Error("runtime warm requires an unclaimed runtime with no applied tenant state");
 	initializeAnonymousEgressSnapshot(paths);
-	// Refresh verification after the golden volume copy, before the claim shim.
+	// Verify the managed CLI from this instance before the claim shim.
 	reconcilePendingRuntimeCliUpgrade(paths);
 	const command = runtimeCommandPath("openclaw", paths.userHome);
 	if (!command) throw new Error("OpenClaw is not installed");

@@ -244,7 +244,7 @@ export function prepareRuntimePreinstallation(
 				throw new Error("official runtime artifact integrity mismatch");
 			pinnedVersion = join(temporary, "openclaw.tgz");
 			writeFileSync(pinnedVersion, archive, { mode: 0o444, flag: "wx" });
-			// The builder uses umask 077; the dropped runtime user must read this
+			// The pool fill uses umask 077; the dropped runtime user must read this
 			// verified root-owned artifact through its traversable temporary directory.
 			chmodSync(pinnedVersion, 0o444);
 		}
@@ -286,7 +286,7 @@ export function prepareRuntimePreinstallation(
 				maxBuffer: 1024 * 1024,
 			});
 			if (result.error || result.status !== 0) {
-				// Anonymous build diagnostics contain no inherited credentials.
+				// Anonymous fill diagnostics contain no inherited credentials.
 				if (result.stdout) process.stderr.write(result.stdout.slice(-8192));
 				if (result.stderr) process.stderr.write(result.stderr.slice(-8192));
 				throw new Error(
