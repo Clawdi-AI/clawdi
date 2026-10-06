@@ -571,6 +571,66 @@ async def test_admin_mint_accepts_arbitrary_scopes(admin_client, db_session, see
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("expires_in_days", [None, 1, 30, 365])
+async def test_admin_key_expiry_and_auth_independent_of_platform_fallback(
+    admin_client,
+    db_session,
+    seed_user,
+    monkeypatch,
+    expires_in_days,
+):
+    from sqlalchemy import select
+
+    from app.models.api_key import ApiKey
+    from app.models.audit import ControlPlaneAuditEvent
+
+    monkeypatch.setattr(settings, "platform_legacy_admin_auth_enabled", False)
+    body = {"target_clerk_id": seed_user.clerk_id, "label": "optional-admin-expiry"}
+    if expires_in_days is not None:
+        body["expires_in_days"] = expires_in_days
+    before = datetime.now(UTC)
+    minted = await admin_client.post("/v1/admin/auth/keys", headers=_AUTH, json=body)
+    assert minted.status_code == 200, minted.text
+    key_id = uuid.UUID(minted.json()["id"])
+    key = await db_session.get(ApiKey, key_id)
+    assert key is not None
+    assert key.scopes is None
+    assert key.managed is False
+    if expires_in_days is None:
+        assert key.expires_at is None
+        assert minted.json()["expires_at"] is None
+    else:
+        assert before + timedelta(days=expires_in_days) <= key.expires_at
+        assert key.expires_at <= datetime.now(UTC) + timedelta(days=expires_in_days)
+        assert datetime.fromisoformat(minted.json()["expires_at"]) == key.expires_at
+    event = await db_session.scalar(
+        select(ControlPlaneAuditEvent).where(
+            ControlPlaneAuditEvent.action == "api_key.mint",
+            ControlPlaneAuditEvent.resource_id == str(key_id),
+        )
+    )
+    assert event is not None
+    assert event.details["has_expiry"] is (expires_in_days is not None)
+    revoked = await admin_client.delete(f"/v1/admin/auth/keys/{key_id}", headers=_AUTH)
+    assert revoked.status_code == 200, revoked.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expires_in_days", [0, -1, 366, True, "30"])
+async def test_admin_key_expiry_rejects_invalid_ttl(admin_client, seed_user, expires_in_days):
+    response = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "label": "invalid-admin-expiry",
+            "expires_in_days": expires_in_days,
+        },
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_admin_mint_api_key_writes_control_plane_audit(admin_client, db_session, seed_user):
     from sqlalchemy import select
 

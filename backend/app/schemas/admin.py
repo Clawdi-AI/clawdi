@@ -62,6 +62,39 @@ class AdminWorkloadClientBootstrap(BaseModel):
         return value.strip()
 
 
+class AdminWorkloadClientScopesUpdate(BaseModel):
+    """Replace the complete scope grant using its current authority revision."""
+
+    model_config = ConfigDict(extra="forbid")
+    expected_revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+    scopes: list[str] = Field(min_length=1, max_length=8)
+    reason: str = Field(min_length=1, max_length=200)
+
+    @field_validator("scopes")
+    @classmethod
+    def approved_scopes(cls, value: list[str]) -> list[str]:
+        from app.services.platform_workload_auth import PLATFORM_WORKLOAD_SCOPES
+
+        if not set(value) <= set(PLATFORM_WORKLOAD_SCOPES) or len(value) != len(set(value)):
+            raise ValueError("scopes must be unique approved platform workload scopes")
+        return value
+
+    @field_validator("reason")
+    @classmethod
+    def nonempty_reason(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("reason must not be blank")
+        return value.strip()
+
+
+class AdminWorkloadClientScopesResponse(BaseModel):
+    client_id: str
+    credential_id: UUID
+    status: str
+    scopes: list[str]
+    revision: str
+
+
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp"]
 AdminChannelVisibility = Literal["private", "public"]
 AdminChannelStatus = Literal["active", "disabled"]
@@ -151,6 +184,7 @@ class AdminApiKeyCreate(BaseModel):
     environment_id: str | None = None
     scopes: list[str] | None = None
     managed: bool = False
+    expires_in_days: int | None = Field(default=None, ge=1, le=365, strict=True)
 
 
 class AdminPrincipalSuspensionUpdate(BaseModel):

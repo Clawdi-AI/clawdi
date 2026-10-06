@@ -3,9 +3,9 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
-import { isLoggedIn } from "../lib/config";
 import { parseDotenvDetailed } from "../lib/dotenv";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
+import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { buildExactClawdiReference } from "../lib/secret-references";
 import { isInteractive } from "../lib/tty";
@@ -22,13 +22,6 @@ const BROAD_VAULT_SLUGS = new Set([
 	"test",
 	"testing",
 ]);
-
-function requireAuth() {
-	if (!isLoggedIn()) {
-		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exit(1);
-	}
-}
 
 interface VaultListRow {
 	id: string;
@@ -388,7 +381,7 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 	}
 
 	if (parsed.skippedInvalidIdentifiers.length > 0) {
-		console.log(chalk.yellow(formatSkippedInvalidIdentifiers(parsed.skippedInvalidIdentifiers)));
+		console.error(chalk.yellow(formatSkippedInvalidIdentifiers(parsed.skippedInvalidIdentifiers)));
 	}
 
 	if (Object.keys(fields).length === 0) {
@@ -413,11 +406,15 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 	p.note(
 		Object.keys(fields).join("\n"),
 		`${Object.keys(fields).length} keys from ${file} -> ${target}`,
+		{ output: process.stderr },
 	);
 	if (!opts.yes) {
-		const ok = await p.confirm({ message: `Import these keys to ${target}?` });
+		const ok = await p.confirm({
+			output: process.stderr,
+			message: `Import these keys to ${target}?`,
+		});
 		if (p.isCancel(ok) || !ok) {
-			p.cancel("Cancelled.");
+			p.cancel("Cancelled.", { output: process.stderr });
 			return;
 		}
 	}
@@ -482,13 +479,14 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 
 	if (!opts.yes) {
 		const ok = await p.confirm({
+			output: process.stderr,
 			message:
 				attachedProjectIds.length > 1
 					? `Delete ${normalizedKey} globally from ${attachedProjectIds.length} projects using ${target}?`
 					: `Delete ${normalizedKey} from ${target}?`,
 		});
 		if (p.isCancel(ok) || !ok) {
-			p.cancel("Cancelled.");
+			p.cancel("Cancelled.", { output: process.stderr });
 			return;
 		}
 	}
@@ -540,13 +538,16 @@ async function readVaultSetValue(key: string, opts: VaultSetOptions): Promise<st
 			"Cannot prompt for a vault value in a non-interactive shell. Use --stdin with piped input.",
 		);
 	}
-	const value = await p.password({ message: `Value for ${key}:` });
+	const value = await p.password({
+		output: process.stderr,
+		message: `Value for ${key}:`,
+	});
 	if (p.isCancel(value)) {
-		p.cancel("Cancelled.");
+		p.cancel("Cancelled.", { output: process.stderr });
 		return null;
 	}
 	if (!value && !opts.allowEmpty) {
-		p.cancel("Cancelled.");
+		p.cancel("Cancelled.", { output: process.stderr });
 		return null;
 	}
 	return value;
@@ -599,7 +600,7 @@ function hasVaultItems(items: Record<string, string[]>): boolean {
 
 function warnIfBroadVaultSlug(vaultSlug: string) {
 	if (!BROAD_VAULT_SLUGS.has(vaultSlug)) return;
-	console.log(
+	console.error(
 		chalk.yellow(
 			`Hint: consider using a service-specific vault slug instead of "${sanitizeMetadata(vaultSlug)}" for shared project secrets.`,
 		),
@@ -624,7 +625,7 @@ async function loadVault(api: ApiClient, vaultSlug: string): Promise<VaultListRo
 async function warnIfSharedVaultWrite(api: ApiClient, vaultSlug: string) {
 	const projectIds = await loadVaultProjectIds(api, vaultSlug).catch(() => []);
 	if (projectIds.length <= 1) return;
-	console.log(
+	console.error(
 		chalk.yellow(
 			`  Shared vault: "${sanitizeMetadata(vaultSlug)}" is attached to ${projectIds.length} projects. This write updates the same key set for every attached project.`,
 		),

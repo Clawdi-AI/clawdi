@@ -2,16 +2,9 @@ import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { Memory } from "../lib/api-schemas";
-import { isLoggedIn } from "../lib/config";
+import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { requireSearchQuery } from "../lib/search-query";
-
-function requireAuth() {
-	if (!isLoggedIn()) {
-		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exit(1);
-	}
-}
 
 interface ListOpts {
 	json?: boolean;
@@ -101,7 +94,7 @@ export async function memoryAdd(content: string, opts: { category?: string } = {
 		: "fact";
 
 	if (opts.category && category === "fact" && opts.category !== "fact") {
-		console.log(
+		console.error(
 			chalk.yellow(
 				`⚠ Unknown category "${opts.category}". Valid: ${VALID_CATEGORIES.join(", ")}. Defaulting to "fact".`,
 			),

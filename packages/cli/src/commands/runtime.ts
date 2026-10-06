@@ -632,11 +632,12 @@ function renderRuntimeInit(
 	paths: RuntimePaths,
 	message: string,
 	color: (value: string) => string,
-): () => void {
-	return () => {
-		console.log(chalk.bold("clawdi runtime init"));
-		console.log(color(`  ${message}`));
-		console.log(chalk.gray(`  status: ${paths.bootStatus}`));
+): (status: RuntimeBootStatus) => void {
+	return (status) => {
+		const output = status.exitCode === 0 ? console.log : console.error;
+		output(chalk.bold("clawdi runtime init"));
+		output(color(`  ${message}`));
+		output(chalk.gray(`  status: ${paths.bootStatus}`));
 	};
 }
 
@@ -763,7 +764,7 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 			],
 			persist: false,
 			render: () =>
-				console.log(chalk.red("runtime init is only available in hosted runtime mode.")),
+				console.error(chalk.red("runtime init is only available in hosted runtime mode.")),
 		});
 		return;
 	}
@@ -785,7 +786,7 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 			exitCode: 20,
 			errors: [message],
 			persist: false,
-			render: () => console.log(chalk.red(message)),
+			render: () => console.error(chalk.red(message)),
 		});
 		return;
 	}
@@ -801,7 +802,7 @@ export async function runtimeInit(opts: RuntimeInitOptions = {}) {
 			exitCode: 20,
 			errors: [`could not create runtime state directories: ${toErrorMessage(error)}`],
 			persist: false,
-			render: (status) => console.log(chalk.red(status.error)),
+			render: (status) => console.error(chalk.red(status.error)),
 		});
 		return;
 	}
@@ -827,7 +828,7 @@ async function runtimeInitLocked(
 			exitCode,
 			errors,
 			render: (status) =>
-				console.log((exitCode === 20 ? chalk.yellow : chalk.red)(`${prefix}${status.error}`)),
+				console.error((exitCode === 20 ? chalk.yellow : chalk.red)(`${prefix}${status.error}`)),
 		});
 	if (opts.nonInteractive !== true) {
 		repair("detect", ["runtime init requires --non-interactive in hosted mode"], 20, "  repair: ");

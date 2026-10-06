@@ -75,6 +75,7 @@ from app.services.channels import (
     channel_control_command_event_was_handled,
     channel_runtime_account_key,
     channel_runtime_placeholder_token,
+    consume_inbound_messages_for_offline_agents,
     decrypt_provider_token,
     drop_pending_telegram_updates,
     find_binding,
@@ -92,6 +93,7 @@ from app.services.channels import (
     record_telegram_update_references,
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
+    send_agent_offline_reply,
     send_control_command_reply,
     send_platform_unbound_channel_message,
     send_telegram_message,
@@ -813,6 +815,11 @@ async def telegram_webhook(
         if existing is not None:
             return TelegramWebhookResponse(ok=True, binding_id=existing.binding_id)
     message = messages[0][0] if messages else None
+    offline_bindings = (
+        await consume_inbound_messages_for_offline_agents(db, account=account, messages=messages)
+        if not binding_result.command_handled
+        else ()
+    )
     for routed_message, binding in messages:
         await record_telegram_update_references(
             db,
@@ -822,6 +829,18 @@ async def telegram_webhook(
             payload=payload,
         )
     await db.commit()
+    if offline_bindings:
+        await send_agent_offline_reply(
+            db,
+            account=account,
+            binding=offline_bindings[0],
+            external_chat_id=external_chat_id,
+            telegram_message_thread_id=telegram_message_thread_id_from_update(payload),
+            telegram_direct_messages_topic_id=telegram_direct_messages_topic_id_from_update(
+                payload
+            ),
+        )
+        await db.commit()
     reply = await send_control_command_reply(
         db,
         account=account,
@@ -856,6 +875,8 @@ async def telegram_webhook(
     if message is not None and message.binding_id and not binding_result.command_handled:
         delivered_at = datetime.now(UTC)
         for routed_message, binding in messages:
+            if routed_message.delivered_at is not None:
+                continue
             delivered = await _deliver_telegram_agent_webhook_for_binding(
                 db,
                 account=account,

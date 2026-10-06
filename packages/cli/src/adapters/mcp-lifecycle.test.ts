@@ -6,19 +6,24 @@ import { piMcpLifecycle } from "./mcp-lifecycle";
 
 const originalPath = process.env.PATH;
 const originalLog = console.log;
+const originalError = console.error;
 let root = "";
 let output: string[] = [];
+let errors: string[] = [];
 
 beforeEach(() => {
 	root = mkdtempSync(join(tmpdir(), "clawdi-pi-mcp-"));
 	mkdirSync(join(root, "bin"));
 	process.env.PATH = `${join(root, "bin")}:${originalPath ?? ""}`;
 	output = [];
+	errors = [];
 	console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+	console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
 });
 
 afterEach(() => {
 	console.log = originalLog;
+	console.error = originalError;
 	if (originalPath === undefined) delete process.env.PATH;
 	else process.env.PATH = originalPath;
 	rmSync(root, { recursive: true, force: true });
@@ -91,16 +96,18 @@ describe("Pi MCP lifecycle", () => {
 			expect(await piMcpLifecycle.register()).toBe(false);
 			await piMcpLifecycle.unregister();
 			expect(calls()).toEqual(["--version", "--version"]);
-			expect(output.join("\n")).toMatch(/Run manually: pi mcp add clawdi -- \/.+ mcp/);
-			expect(output.join("\n")).toContain("requires Pi >= 0.99.0");
+			expect(errors.join("\n")).toMatch(/Run manually: pi mcp add clawdi -- \/.+ mcp/);
+			expect(errors.join("\n")).toContain("requires Pi >= 0.99.0");
+			expect(output.join("\n")).not.toContain("Could not auto-register MCP server");
 		},
 	);
 
 	test("reports a manual hint when registration fails", async () => {
 		stubPi("1.0.4", { servers: [] }, 0, 1);
 		expect(await piMcpLifecycle.register()).toBe(false);
-		expect(output.join("\n")).toContain("Could not auto-register MCP server in Pi");
-		expect(output.join("\n")).toMatch(/Run manually: pi mcp add clawdi -- \/.+ mcp/);
+		expect(errors.join("\n")).toContain("Could not auto-register MCP server in Pi");
+		expect(errors.join("\n")).toMatch(/Run manually: pi mcp add clawdi -- \/.+ mcp/);
+		expect(output).toEqual([]);
 	});
 
 	test.each([0, 1])("unregisters through the official CLI with exit %s", async (exit) => {

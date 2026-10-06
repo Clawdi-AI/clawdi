@@ -88,8 +88,8 @@ function commandLifecycle(input: {
 			const invocation = resolveCurrentCliInvocation(["mcp"]);
 			const manualRegister = input.manualRegister(invocation);
 			if (input.isSupported && !input.isSupported()) {
-				console.log(chalk.yellow(`⚠ Could not auto-register MCP server in ${input.label}.`));
-				console.log(chalk.gray(`  Run manually: ${manualRegister}`));
+				console.error(chalk.yellow(`⚠ Could not auto-register MCP server in ${input.label}.`));
+				console.error(chalk.gray(`  Run manually: ${manualRegister}`));
 				return false;
 			}
 			if (input.listCommand && (input.registeredPattern || input.isRegistered)) {
@@ -122,8 +122,8 @@ function commandLifecycle(input: {
 				} catch {
 					// Fall through to the manual command when the fallback cannot write safely.
 				}
-				console.log(chalk.yellow(`⚠ Could not auto-register MCP server in ${input.label}.`));
-				console.log(chalk.gray(`  Run manually: ${manualRegister}`));
+				console.error(chalk.yellow(`⚠ Could not auto-register MCP server in ${input.label}.`));
+				console.error(chalk.gray(`  Run manually: ${manualRegister}`));
 				return false;
 			}
 		},
@@ -272,8 +272,10 @@ export const hermesMcpLifecycle: McpLifecycle = {
 			console.log(chalk.green("✓ MCP server registered in Hermes"));
 			return true;
 		} catch (error) {
-			console.log(chalk.yellow(`⚠ Could not register MCP server in Hermes: ${errMessage(error)}`));
-			console.log(chalk.gray("  Check with: hermes config get mcp_servers --json"));
+			console.error(
+				chalk.yellow(`⚠ Could not register MCP server in Hermes: ${errMessage(error)}`),
+			);
+			console.error(chalk.gray("  Check with: hermes config get mcp_servers --json"));
 			return false;
 		}
 	},
@@ -286,10 +288,10 @@ export const hermesMcpLifecycle: McpLifecycle = {
 				console.log(chalk.gray("Hermes: MCP server already absent"));
 			}
 		} catch (error) {
-			console.log(
+			console.error(
 				chalk.yellow(`Hermes: could not remove MCP server registration (${errMessage(error)})`),
 			);
-			console.log(chalk.gray("  Check with: hermes config get mcp_servers --json"));
+			console.error(chalk.gray("  Check with: hermes config get mcp_servers --json"));
 		}
 	},
 };

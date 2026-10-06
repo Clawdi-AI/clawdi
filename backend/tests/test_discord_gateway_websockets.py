@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 
@@ -352,6 +353,198 @@ async def test_discord_gateway_terminal_close_marker_persistence(
             assert marker is not None
             assert marker.scope == "revision-under-test"
             assert marker.outcome == expected_outcome
+    finally:
+        await worker.stop()
+        async with sessionmaker() as db:
+            account = await db.get(ChannelAccount, account_id)
+            if account is not None:
+                await db.delete(account)
+                await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_persisted_auth_close_marker_blocks_account_after_worker_restart(
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account_id = uuid4()
+    revision = "revision-current"
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessionmaker() as db:
+        db.add(
+            ChannelAccount(
+                id=account_id,
+                provider="discord",
+                name=f"discord-marker-restart-{account_id}",
+                user_id=None,
+                visibility="public",
+                status="active",
+                webhook_secret_hash="test-only",
+            )
+        )
+        await db.flush()
+        db.add(
+            ChannelAccountRuntimeMarker(
+                account_id=account_id,
+                kind=CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+                scope=revision,
+                outcome="authentication_failed",
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await db.commit()
+
+    async def active_accounts(_sessionmaker):
+        return {account_id: revision}
+
+    started = asyncio.Event()
+    worker = DiscordGatewayWorker(sessionmaker, lock_engine=engine)
+
+    async def run_account(_account_id, _stop, _state):
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(
+        discord_gateway_worker_module, "list_active_discord_gateway_accounts", active_accounts
+    )
+    monkeypatch.setattr(worker, "_run_account_with_lock", run_account)
+    try:
+        await worker.run_once()
+        await asyncio.sleep(0)
+        assert not started.is_set()
+        assert worker._terminal_account_revisions == {account_id: revision}
+        assert account_id not in worker._tasks
+    finally:
+        await worker.stop()
+        async with sessionmaker() as db:
+            account = await db.get(ChannelAccount, account_id)
+            if account is not None:
+                await db.delete(account)
+                await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_persisted_terminal_close_marker_for_old_revision_does_not_block_account(
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account_id = uuid4()
+    revision = "revision-current"
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessionmaker() as db:
+        db.add(
+            ChannelAccount(
+                id=account_id,
+                provider="discord",
+                name=f"discord-marker-old-revision-{account_id}",
+                user_id=None,
+                visibility="public",
+                status="active",
+                webhook_secret_hash="test-only",
+            )
+        )
+        await db.flush()
+        db.add(
+            ChannelAccountRuntimeMarker(
+                account_id=account_id,
+                kind=CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+                scope="revision-old",
+                outcome="authentication_failed",
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await db.commit()
+
+    async def active_accounts(_sessionmaker):
+        return {account_id: revision}
+
+    started = asyncio.Event()
+    worker = DiscordGatewayWorker(sessionmaker, lock_engine=engine)
+
+    async def run_account(_account_id, _stop, _state):
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(
+        discord_gateway_worker_module, "list_active_discord_gateway_accounts", active_accounts
+    )
+    monkeypatch.setattr(worker, "_run_account_with_lock", run_account)
+    try:
+        await worker.run_once()
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert account_id in worker._tasks
+    finally:
+        await worker.stop()
+        async with sessionmaker() as db:
+            account = await db.get(ChannelAccount, account_id)
+            if account is not None:
+                await db.delete(account)
+                await db.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("age_seconds", "should_start"),
+    [
+        (discord_gateway_worker_module.DISCORD_TERMINAL_CLOSE_RETRY_SECONDS + 1, True),
+        (1, False),
+    ],
+)
+async def test_persisted_configuration_close_marker_uses_occurred_at_for_retry_window(
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    age_seconds: int,
+    should_start: bool,
+) -> None:
+    account_id = uuid4()
+    revision = "revision-current"
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessionmaker() as db:
+        db.add(
+            ChannelAccount(
+                id=account_id,
+                provider="discord",
+                name=f"discord-marker-retry-window-{account_id}",
+                user_id=None,
+                visibility="public",
+                status="active",
+                webhook_secret_hash="test-only",
+            )
+        )
+        await db.flush()
+        db.add(
+            ChannelAccountRuntimeMarker(
+                account_id=account_id,
+                kind=CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+                scope=revision,
+                outcome="invalid_configuration",
+                updated_at=datetime.now(UTC) - timedelta(seconds=age_seconds),
+            )
+        )
+        await db.commit()
+
+    async def active_accounts(_sessionmaker):
+        return {account_id: revision}
+
+    started = asyncio.Event()
+    worker = DiscordGatewayWorker(sessionmaker, lock_engine=engine)
+
+    async def run_account(_account_id, _stop, _state):
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr(
+        discord_gateway_worker_module, "list_active_discord_gateway_accounts", active_accounts
+    )
+    monkeypatch.setattr(worker, "_run_account_with_lock", run_account)
+    try:
+        await worker.run_once()
+        if should_start:
+            await asyncio.wait_for(started.wait(), timeout=1)
+        else:
+            await asyncio.sleep(0)
+            assert not started.is_set()
+        assert (account_id in worker._tasks) is should_start
     finally:
         await worker.stop()
         async with sessionmaker() as db:

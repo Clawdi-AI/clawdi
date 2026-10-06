@@ -21,6 +21,7 @@ import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getAuth, getConfig } from "../lib/config";
+import { requireAuth } from "../lib/require-auth";
 import { addToken, findToken, listTokens, removeToken, type ShareToken } from "../share/tokens";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -558,12 +559,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 
 export async function inboxDeclineCommand(invitationId: string): Promise<void> {
 	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exitCode = 1;
-		return;
-	}
+	requireAuth();
 	const accessToken = await getClawdiAccessToken(apiUrl);
 	const r = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).request(
 		`/v1/me/invitations/${invitationId}/decline`,

@@ -32,6 +32,7 @@ from app.services import whatsapp_delivery_transport
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.channels import (
     channel_control_command_event_was_handled,
+    consume_inbound_messages_for_offline_agents,
     enqueue_channel_outbound_message,
     find_binding,
     find_existing_inbound_provider_event,
@@ -41,6 +42,7 @@ from app.services.channels import (
     record_inbound_messages_for_bindings,
     require_channel_tenant_user_id,
     resolve_inbound_binding,
+    send_agent_offline_reply,
     send_control_command_reply,
 )
 from app.services.whatsapp_baileys import (
@@ -753,6 +755,11 @@ async def persist_whatsapp_provider_event(
         provider_event_scope=PROVIDER_EVENT_SCOPE_ACCOUNT,
         require_active_authority=not binding_result.command_handled,
     )
+    offline_bindings = (
+        await consume_inbound_messages_for_offline_agents(db, account=account, messages=messages)
+        if not binding_result.command_handled
+        else ()
+    )
     for _message, binding in messages:
         if binding is not None:
             await remember_whatsapp_binding_aliases(
@@ -762,6 +769,14 @@ async def persist_whatsapp_provider_event(
                 alt_jid=alt_jid,
             )
     await db.commit()
+    if offline_bindings:
+        await send_agent_offline_reply(
+            db,
+            account=account,
+            binding=offline_bindings[0],
+            external_chat_id=external_chat_id,
+        )
+        await db.commit()
     reply = await send_control_command_reply(
         db,
         account=account,

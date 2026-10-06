@@ -77,6 +77,7 @@ from app.routes.channel_routers.shared import (
 )
 from app.services.channel_wakeups import channel_inbound_messages_enqueued
 from app.services.channels import (
+    AGENT_OFFLINE_REPLY,
     DISCORD_REF_INTERACTION_ID_TOKEN,
     DISCORD_REF_INTERACTION_TOKEN,
     ChannelAgentContext,
@@ -84,6 +85,7 @@ from app.services.channels import (
     channel_control_command_event_was_handled,
     channel_runtime_account_key,
     channel_runtime_placeholder_token,
+    consume_inbound_messages_for_offline_agents,
     dequeue_discord_gateway_events,
     discord_channel_scope_from_payload,
     discord_chat_from_payload,
@@ -1671,6 +1673,14 @@ async def discord_webhook(
         text=discord_text_from_payload(payload),
         payload=payload,
     )
+    pending_messages = [
+        message
+        for message, binding in messages
+        if binding is not None and message.delivered_at is None
+    ]
+    if not binding_result.command_handled:
+        await consume_inbound_messages_for_offline_agents(db, account=account, messages=messages)
+    agent_offline = any(message.delivered_at is not None for message in pending_messages)
     for message, binding in messages:
         if (
             binding is not None
@@ -1707,6 +1717,8 @@ async def discord_webhook(
         # request to be released with 202 and no body when that separate
         # callback path is used.
         # https://discord.com/developers/docs/interactions/receiving-and-responding#interaction-callback
+        if agent_offline:
+            return {"type": 4, "data": {"content": AGENT_OFFLINE_REPLY, "flags": 64}}
         return Response(status_code=status.HTTP_202_ACCEPTED)
     if command is None and payload.get("type") == 4:
         return {"type": 8, "data": {"choices": []}}
