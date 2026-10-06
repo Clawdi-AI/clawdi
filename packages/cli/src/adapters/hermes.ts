@@ -164,6 +164,7 @@ function messageRevisionQuery(columns: readonly TableInfoRow[]): string {
 async function sessionSourceRevision(
 	row: SessionRow,
 	statement: ReturnType<ReadonlySqliteDatabase["prepare"]>,
+	modelsUsed: readonly string[],
 	context?: SyncReadContext,
 	lastId = Number.MAX_SAFE_INTEGER,
 ): Promise<string> {
@@ -180,6 +181,7 @@ async function sessionSourceRevision(
 			row.input_tokens,
 			row.output_tokens,
 			row.cache_read_tokens,
+			modelsUsed,
 		]),
 	);
 	let count = 0;
@@ -638,7 +640,7 @@ export class HermesAdapter implements AgentAdapterCore {
 				for (const row of rows) {
 					const size = readers.size.get(row.id) as SessionSizeRow;
 					const sourceRevision = readers.revision
-						? await sessionSourceRevision(row, readers.revision, context, size.last_id)
+						? await sessionSourceRevision(row, readers.revision, this.sessionModelsUsed(readers, row), context, size.last_id)
 						: undefined;
 					if (sourceRevision && knownSourceRevisions.get(row.id) === sourceRevision) continue;
 					const session = await this.materializeSession(
@@ -683,7 +685,7 @@ export class HermesAdapter implements AgentAdapterCore {
 			return await this.materializeSession(
 				row,
 				readers.revision
-					? await sessionSourceRevision(row, readers.revision, context, size.last_id)
+					? await sessionSourceRevision(row, readers.revision, this.sessionModelsUsed(readers, row), context, size.last_id)
 					: undefined,
 				readers,
 				size,
@@ -700,8 +702,10 @@ export class HermesAdapter implements AgentAdapterCore {
 		const names = new Set(messageColumns.map((column) => column.name));
 		const displayScope = `(${names.has("active") ? "active" : "1"} = 1 OR ${names.has("compacted") ? "compacted" : "0"} = 1)`;
 		const hasIdentity = names.has("display_identity");
+		const hasModelUsage = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_model_usage'").get());
 		return {
 			modern,
+			models: hasModelUsage ? db.prepare("SELECT model FROM session_model_usage WHERE session_id = ? GROUP BY model ORDER BY min(first_seen), model") : null,
 			displayDuplicates: modern && hasIdentity ? db.prepare(`
 				SELECT id FROM (
 					SELECT id, row_number() OVER (PARTITION BY display_identity ORDER BY id) AS generation
@@ -735,6 +739,17 @@ export class HermesAdapter implements AgentAdapterCore {
 					`,
 			),
 		};
+	}
+
+	private sessionModelsUsed(readers: ReturnType<HermesAdapter["sessionReaders"]>, row: SessionRow): string[] {
+		if (!readers.models) {
+			const model = parseModelField(row.model);
+			return model ? [model] : [];
+		}
+		return (readers.models.all(row.id) as Array<{ model: string }>).flatMap((row) => {
+			const model = jsonString(row.model);
+			return model ? [model] : [];
+		});
 	}
 
 	private async hiddenDisplayRowIds(
@@ -880,7 +895,7 @@ export class HermesAdapter implements AgentAdapterCore {
 			outputTokens: row.output_tokens ?? 0,
 			cacheReadTokens: row.cache_read_tokens ?? 0,
 			model,
-			modelsUsed: model ? [model] : [],
+			modelsUsed: this.sessionModelsUsed(readers, row),
 			durationSeconds,
 			summary,
 			messages,
@@ -944,7 +959,7 @@ export class HermesAdapter implements AgentAdapterCore {
 					!current ||
 					!readers.revision ||
 					current.model !== row.model ||
-					(await sessionSourceRevision(row, readers.revision, context, lastId)) !== revision
+					(await sessionSourceRevision(row, readers.revision, this.sessionModelsUsed(readers, row), context, lastId)) !== revision
 				)
 					throw new Error(`Hermes session ${row.id} changed during sync; retry with a fresh scan`);
 			};

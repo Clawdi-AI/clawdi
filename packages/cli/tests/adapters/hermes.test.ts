@@ -144,6 +144,40 @@ describe("HermesAdapter.collectSessions", () => {
 			else eagerEvents = events;
 		}
 	});
+	it("reads modelsUsed in first_seen order without changing projected event bytes", async () => {
+		const adapter = new HermesAdapter();
+		const before = await adapter.sessions.resolve("s-modern");
+		if (!before) throw new Error("Expected Hermes model-usage fixture");
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		try {
+			db.exec(`CREATE TABLE session_model_usage (
+				session_id TEXT NOT NULL, model TEXT NOT NULL, billing_provider TEXT NOT NULL,
+				first_seen REAL, PRIMARY KEY (session_id, model, billing_provider)
+			)`);
+			const insert = db.prepare("INSERT INTO session_model_usage VALUES ('s-modern', ?, ?, ?)");
+			insert.run("gpt-5.5", "openai", 30);
+			insert.run("claude-opus-4-7", "anthropic", 20);
+			insert.run("gpt-5.5", "custom", 10);
+		} finally {
+			db.close();
+		}
+		for (const streaming of [false, true]) {
+			const after = await adapter.sessions.resolve("s-modern", {
+				streaming, signal: new AbortController().signal,
+			});
+			if (!after) throw new Error("Expected Hermes model-usage fixture");
+			expect(after.model).toBe(before.model);
+			expect(after.modelsUsed).toEqual(["gpt-5.5", "claude-opus-4-7"]);
+			const events = [];
+			for await (const event of after.readEvents?.() ?? after.events ?? []) events.push(event);
+			expect(events).toEqual(before.events);
+			expect((await prepareSessionUpload(after, "events-v1")).localHash).toBe((await prepareSessionUpload(before, "events-v1")).localHash);
+			expect(after.sourceRevision).not.toBe(before.sourceRevision);
+		}
+		const cleanup = new Database(join(tmpHome, ".hermes", "state.db"));
+		try { cleanup.exec("DROP TABLE session_model_usage"); } finally { cleanup.close(); }
+		expect((await adapter.sessions.resolve("s-modern"))?.modelsUsed).toEqual(["gpt-5.3-codex"]);
+	});
 	it.each(["user", "tool"])(
 		"re-maps persisted %s inline images without invalid attachment metadata",
 		async (role) => {
