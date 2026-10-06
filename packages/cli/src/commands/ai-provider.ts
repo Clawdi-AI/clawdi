@@ -177,7 +177,7 @@ export async function aiProviderListCommand(opts: AiProviderListOptions = {}): P
 		return;
 	}
 	if (catalog.providers.length === 0) {
-		console.log("No AI Providers configured.");
+		console.log("No AI providers configured.");
 		return;
 	}
 	const rows = catalog.providers.map((provider) => [
@@ -211,7 +211,7 @@ export async function aiProviderEditCommand(
 ): Promise<void> {
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	const existing = catalog.providers.find((provider) => provider.id === providerId);
-	if (!existing) throw new Error(`AI Provider not found: ${providerId}`);
+	if (!existing) throw new Error(`AI provider not found: ${providerId}`);
 	const updated = buildProvider(providerId, opts, existing);
 	const next = applyDefault(upsertAiProvider(catalog, updated, true), updated, opts);
 	writeAiProviderCatalog(next);
@@ -229,7 +229,7 @@ export async function aiProviderRemoveCommand(
 		console.log(JSON.stringify({ removed: providerId }, null, 2));
 		return;
 	}
-	console.log(chalk.green(`✓ Removed AI Provider ${providerId}`));
+	console.log(chalk.green(`✓ Removed AI provider ${providerId}`));
 }
 
 export async function aiProviderValidateCommand(
@@ -251,10 +251,10 @@ export async function aiProviderValidateCommand(
 		if (!opts.json) {
 			for (const error of result.errors) console.log(chalk.red(`error: ${error}`));
 		}
-		throw new Error("AI Provider validation failed.");
+		throw new Error("AI provider validation failed.");
 	}
 	if (!opts.json) {
-		console.log(chalk.green("✓ AI Provider catalog is valid"));
+		console.log(chalk.green("✓ AI provider catalog is valid"));
 	}
 }
 
@@ -283,7 +283,7 @@ export async function aiProviderExportCommand(opts: AiProviderExportOptions = {}
 	const output = `${JSON.stringify(exportPayload, null, 2)}\n`;
 	if (opts.out) {
 		writePrivateFile(opts.out, output);
-		console.log(chalk.green(`✓ Exported AI Provider catalog to ${opts.out}`));
+		console.log(chalk.green(`✓ Exported AI provider catalog to ${opts.out}`));
 		return;
 	}
 	process.stdout.write(output);
@@ -304,11 +304,11 @@ export async function aiProviderImportCommand(
 			? catalogFromOpenClawConfig(JSON.parse(readFileSync(opts.fromOpenclaw, "utf-8")) as unknown)
 			: coerceAiProviderCatalog(stripEncryptedSecrets(fileInput));
 	if (opts.importSecrets && !file) {
-		throw new Error("--import-secrets requires an AI Provider export file.");
+		throw new Error("--import-secrets requires an AI provider export file.");
 	}
 	const result = validateAiProviderCatalog(incoming);
 	if (!result.valid) {
-		throw new Error(`Imported AI Provider catalog is invalid:\n${result.errors.join("\n")}`);
+		throw new Error(`Imported AI provider catalog is invalid:\n${result.errors.join("\n")}`);
 	}
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	let next = catalog;
@@ -333,7 +333,7 @@ export async function aiProviderImportCommand(
 		console.log(JSON.stringify({ imported: incoming.providers.length }, null, 2));
 		return;
 	}
-	console.log(chalk.green(`✓ Imported ${incoming.providers.length} AI Provider(s)`));
+	console.log(chalk.green(`✓ Imported ${incoming.providers.length} AI provider(s)`));
 }
 
 export async function aiProviderTestCommand(
@@ -342,12 +342,12 @@ export async function aiProviderTestCommand(
 ): Promise<void> {
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	const provider = catalog.providers.find((entry) => entry.id === providerId);
-	if (!provider) throw new Error(`AI Provider not found: ${providerId}`);
+	if (!provider) throw new Error(`AI provider not found: ${providerId}`);
 	const validation = validateAiProviderCatalog(catalogForProvider(catalog, providerId), {
 		allowNoAuthPublic: false,
 	});
 	if (!validation.valid) {
-		throw new Error(`AI Provider is invalid:\n${validation.errors.join("\n")}`);
+		throw new Error(`AI provider is invalid:\n${validation.errors.join("\n")}`);
 	}
 	const authStatus = await inspectAiProviderAuth(provider);
 	const shouldProbe = opts.live === true || opts.probe === true;
@@ -378,7 +378,7 @@ export async function aiProviderImportAuthCommand(
 	opts: AiProviderImportAuthOptions = {},
 ): Promise<void> {
 	if (opts.project) {
-		throw new Error("AI Provider auth is account-global; --project is not supported here.");
+		throw new Error("AI provider auth is account-global; --project is not supported here.");
 	}
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	const provider = findProvider(catalog, providerId);
@@ -401,7 +401,7 @@ export async function aiProviderImportAuthCommand(
 		dryRun: opts.dryRun,
 		json: opts.json,
 		quiet: opts.json,
-		destinationLabel: "AI Provider auth",
+		destinationLabel: "AI provider auth",
 	});
 	if (!collected) return;
 	const nextProvider = await storeAgentProfileForProvider(provider, collected);
@@ -434,7 +434,7 @@ export async function aiProviderConnectCommand(
 	const provider = findProvider(catalog, providerId);
 	const method = opts.method ?? "oauth";
 	if (method !== "oauth") {
-		throw new Error("AI Provider connect currently supports --method oauth.");
+		throw new Error("AI provider connect currently supports --method oauth.");
 	}
 	let callbackMode = parseOAuthCallbackMode(opts.callback ?? (opts.json ? "manual" : "loopback"));
 	if (opts.redirectUri && callbackMode === "loopback") {
@@ -902,7 +902,7 @@ function buildProvider(
 	opts: AiProviderAddOptions | AiProviderEditOptions,
 	existing?: AiProvider,
 ): AiProvider {
-	if (!isAiProviderId(providerId)) throw new Error(`Invalid AI Provider id: ${providerId}`);
+	if (!isAiProviderId(providerId)) throw new Error(`Invalid AI provider ID: ${providerId}`);
 	const type = parseProviderType(opts.type ?? existing?.type);
 	const apiMode = parseApiMode(
 		opts.apiMode ?? existing?.api_mode ?? defaultAiProviderApiMode(type),
@@ -1009,14 +1009,14 @@ function defaultAuthTool(provider: AiProvider): string | undefined {
 function assertSupportedOAuthProvider(oauthProvider: string): void {
 	if (oauthProvider === CODEX_OAUTH_PROVIDER) return;
 	throw new Error(
-		`AI Provider OAuth currently supports Codex only. Use API key, env:, or clawdi:// auth for ${oauthProvider}.`,
+		`AI provider OAuth currently supports Codex only. Use API key, env:, or clawdi:// auth for ${oauthProvider}.`,
 	);
 }
 
 function assertSupportedAgentProfileTool(tool: string): void {
 	if (tool === CODEX_AGENT_PROFILE_TOOL) return;
 	throw new Error(
-		`AI Provider auth profiles currently support Codex only. Use API key, env:, clawdi:// auth, or legacy agent credential commands for ${tool}.`,
+		`AI provider auth profiles currently support Codex only. Use API key, env:, clawdi:// auth, or legacy agent credential commands for ${tool}.`,
 	);
 }
 
@@ -1119,7 +1119,7 @@ function exportableEnvRef(auth: AiProviderAuth): string | null {
 		if (auth.ref.startsWith("env:")) return auth.ref;
 		if (auth.ref.startsWith("clawdi://")) {
 			throw new Error(
-				"Provider-only encrypted export does not resolve clawdi:// refs. Export/import keeps those refs and leaves the Vault secret in Vault.",
+				"Provider-only encrypted export does not resolve clawdi:// refs. Export/import keeps those refs and leaves the vault secret in vault.",
 			);
 		}
 	}
@@ -1233,7 +1233,7 @@ function prepareEncryptedSecretImport(
 		throw new Error("Only --import-secrets env-file is supported in the provider-only path.");
 	}
 	if (!out) throw new Error("--import-secrets env-file requires --out <file>.");
-	const root = asRecord(input, "AI Provider export");
+	const root = asRecord(input, "AI provider export");
 	const bundle = root.encrypted_secrets;
 	if (!bundle || typeof bundle !== "object" || Array.isArray(bundle)) {
 		throw new Error("Export file does not contain encrypted_secrets.");
@@ -1457,7 +1457,7 @@ function recordField(
 
 function findProvider(catalog: AiProviderCatalog, providerId: string): AiProvider {
 	const provider = catalog.providers.find((entry) => entry.id === providerId);
-	if (!provider) throw new Error(`AI Provider not found: ${providerId}`);
+	if (!provider) throw new Error(`AI provider not found: ${providerId}`);
 	return provider;
 }
 
@@ -1559,7 +1559,7 @@ function printMutationResult(action: string, provider: AiProvider, json?: boolea
 		console.log(JSON.stringify({ [action]: provider.id, provider }, null, 2));
 		return;
 	}
-	console.log(chalk.green(`✓ ${capitalize(action)} AI Provider ${provider.id}`));
+	console.log(chalk.green(`✓ ${capitalize(action)} AI provider ${provider.id}`));
 	console.log(chalk.dim(`Catalog: ${aiProviderCatalogPath()}`));
 }
 

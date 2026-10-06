@@ -43,7 +43,7 @@ import { isInteractive } from "../lib/tty";
 
 function requireAuth() {
 	if (!isLoggedIn()) {
-		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
+		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
 		process.exit(1);
 	}
 }
@@ -80,7 +80,7 @@ interface SkillMutationTarget {
 
 function requireSkillsAdapter(adapter: AgentAdapter): SkillCapableAdapter {
 	if (!adapter.skills) {
-		throw new Error(`${adapterRegistry[adapter.agentType].displayName} does not support Skills.`);
+		throw new Error(`${adapterRegistry[adapter.agentType].displayName} does not support skills.`);
 	}
 	return adapter as SkillCapableAdapter;
 }
@@ -99,7 +99,7 @@ async function resolveAgentProjectTarget(
 	const agentId = project.origin_environment_id;
 	if (!agentId) {
 		throw new Error(
-			"This Workspace no longer has a live Agent identity. Skill mutation is disabled.",
+			"This workspace no longer has a live agent identity. Skill mutation is disabled.",
 		);
 	}
 	const agent = unwrap(
@@ -108,12 +108,12 @@ async function resolveAgentProjectTarget(
 		}),
 	);
 	if (agent.default_project_id !== projectId) {
-		throw new Error("The Workspace identity changed; refusing an unfenced Skill mutation.");
+		throw new Error("The workspace identity changed; refusing an unfenced skill mutation.");
 	}
 	if (getEnvIdByAgent(agent.agent_type) !== agentId) {
 		const machineName = agent.machine_name || "another machine";
 		throw new Error(
-			`This Workspace belongs to ${machineName}'s ${agent.agent_type} Agent. Run the command on that machine.`,
+			`This workspace belongs to ${machineName}'s ${agent.agent_type} agent. Run the command on that machine.`,
 		);
 	}
 	const entry = adapterRegistry[agent.agent_type as keyof typeof adapterRegistry];
@@ -396,7 +396,7 @@ export async function skillAdd(
 		} catch (error) {
 			console.log(
 				chalk.yellow(
-					`Saved ${sanitizeMetadata(skillKey)} in the Agent filesystem; the dashboard will retry the update the next time the daemon syncs.`,
+					`Saved ${sanitizeMetadata(skillKey)} in the agent filesystem; the dashboard will retry the update the next time the daemon syncs.`,
 				),
 			);
 			throw error;
@@ -510,7 +510,7 @@ export async function skillRm(key: string, opts: { agent?: string; project?: str
 			});
 		}
 		if (materialization && !hasAgentProjection) {
-			console.log(chalk.green(`✓ Removed ${sanitizeMetadata(key)} from Agent`));
+			console.log(chalk.green(`✓ Removed ${sanitizeMetadata(key)} from agent`));
 			return;
 		}
 		try {

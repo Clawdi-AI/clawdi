@@ -8,7 +8,7 @@ import { requireSearchQuery } from "../lib/search-query";
 
 function requireAuth() {
 	if (!isLoggedIn()) {
-		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
+		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
 		process.exit(1);
 	}
 }

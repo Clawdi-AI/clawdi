@@ -23,12 +23,12 @@ export function readAiProviderCatalog(
 	try {
 		parsed = JSON.parse(raw);
 	} catch {
-		throw new Error(`AI Provider catalog is not valid JSON: ${path}`);
+		throw new Error(`AI provider catalog is not valid JSON: ${path}`);
 	}
 	const catalog = coerceAiProviderCatalog(parsed);
 	const result = validateAiProviderCatalog(catalog, options);
 	if (!result.valid) {
-		throw new Error(`AI Provider catalog is invalid:\n${result.errors.join("\n")}`);
+		throw new Error(`AI provider catalog is invalid:\n${result.errors.join("\n")}`);
 	}
 	return catalog;
 }
@@ -36,7 +36,7 @@ export function readAiProviderCatalog(
 export function writeAiProviderCatalog(catalog: AiProviderCatalog): void {
 	const result = validateAiProviderCatalog(catalog);
 	if (!result.valid) {
-		throw new Error(`Refusing to write invalid AI Provider catalog:\n${result.errors.join("\n")}`);
+		throw new Error(`Refusing to write invalid AI provider catalog:\n${result.errors.join("\n")}`);
 	}
 	const path = aiProviderCatalogPath();
 	writePrivateFileAtomic(path, `${JSON.stringify(catalog, null, 2)}\n`, {
@@ -52,7 +52,7 @@ export function upsertAiProvider(
 ): AiProviderCatalog {
 	const index = catalog.providers.findIndex((entry) => entry.id === provider.id);
 	if (index >= 0 && !replace) {
-		throw new Error(`AI Provider already exists: ${provider.id}. Pass --replace to overwrite it.`);
+		throw new Error(`AI provider already exists: ${provider.id}. Pass --replace to overwrite it.`);
 	}
 	const providers = [...catalog.providers];
 	if (index >= 0) providers[index] = provider;
@@ -66,13 +66,13 @@ export function removeAiProvider(
 	force: boolean,
 ): AiProviderCatalog {
 	const exists = catalog.providers.some((entry) => entry.id === providerId);
-	if (!exists) throw new Error(`AI Provider not found: ${providerId}`);
+	if (!exists) throw new Error(`AI provider not found: ${providerId}`);
 	if (
 		!force &&
 		(catalog.defaults?.chat_provider_id === providerId ||
 			catalog.defaults?.embedding_provider_id === providerId)
 	) {
-		throw new Error(`AI Provider ${providerId} is still referenced by defaults. Pass --force.`);
+		throw new Error(`AI provider ${providerId} is still referenced by defaults. Pass --force.`);
 	}
 	const providers = catalog.providers.filter((entry) => entry.id !== providerId);
 	const defaults = { ...catalog.defaults };
@@ -88,12 +88,12 @@ export function removeAiProvider(
 export function coerceAiProviderCatalog(input: unknown): AiProviderCatalog {
 	const source =
 		isRecord(input) && isRecord(input.ai_provider_catalog) ? input.ai_provider_catalog : input;
-	if (!isRecord(source)) throw new Error("AI Provider catalog must be an object.");
+	if (!isRecord(source)) throw new Error("AI provider catalog must be an object.");
 	if (source.schema_version !== 1) {
-		throw new Error("AI Provider catalog schema_version must be 1.");
+		throw new Error("AI provider catalog schema_version must be 1.");
 	}
 	if (!Array.isArray(source.providers)) {
-		throw new Error("AI Provider catalog providers must be an array.");
+		throw new Error("AI provider catalog providers must be an array.");
 	}
 	return {
 		schema_version: source.schema_version,

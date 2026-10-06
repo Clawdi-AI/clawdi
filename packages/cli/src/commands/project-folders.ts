@@ -26,24 +26,24 @@ export async function projectFolderLinkCommand(
 		owner_display: project.owner_display ?? null,
 	});
 
-	console.log(`${chalk.green("✓")} Linked this folder to Project ${chalk.cyan(label)}.`);
+	console.log(`${chalk.green("✓")} Linked this folder to project ${chalk.cyan(label)}.`);
 	if (project.name && project.name !== project.slug) {
 		console.log(chalk.gray(`  Project name: ${project.name}`));
 	}
 	console.log(chalk.gray(`  Folder: ${link.path}`));
-	console.log(chalk.gray("  clawdi run/inject will use this Project for vault references."));
+	console.log(chalk.gray("  clawdi run/inject will use this project for vault references."));
 }
 
 export async function projectFolderUnlinkCommand(folderPath: string | undefined): Promise<void> {
 	const path = normalizeFolderPath(folderPath);
 	const removed = removeProjectFolderLink(path);
 	if (!removed) {
-		console.log(`No linked Project folder found for ${chalk.cyan(path)}.`);
+		console.log(`No linked project folder found for ${chalk.cyan(path)}.`);
 		const parent = findProjectFolderLink(path);
 		if (parent) {
 			console.log(
 				chalk.gray(
-					`  Parent link still applies: ${parent.link.path} -> Project ${parent.link.project_label}`,
+					`  Parent link still applies: ${parent.link.path} -> project ${parent.link.project_label}`,
 				),
 			);
 			console.log(
@@ -53,7 +53,7 @@ export async function projectFolderUnlinkCommand(folderPath: string | undefined)
 		return;
 	}
 	console.log(
-		`${chalk.green("✓")} Unlinked this folder from Project ${chalk.cyan(removed.project_label)}.`,
+		`${chalk.green("✓")} Unlinked this folder from project ${chalk.cyan(removed.project_label)}.`,
 	);
 	console.log(chalk.gray(`  Folder: ${removed.path}`));
 }
@@ -68,7 +68,7 @@ export async function projectFolderStatusCommand(folderPath: string | undefined)
 			`  Source: ${match.source === "exact" ? "linked folder (exact)" : "linked folder (parent)"}`,
 		);
 		console.log(`  Folder: ${match.link.path}`);
-		console.log(chalk.gray("  clawdi run/inject will use this Project for vault references."));
+		console.log(chalk.gray("  clawdi run/inject will use this project for vault references."));
 		return;
 	}
 
@@ -94,7 +94,7 @@ async function findVisibleProject(
 	const projects = await listProjects(apiUrl, apiKey);
 	const project = projects.find((item) => item.id === projectId);
 	if (!project) {
-		throw new Error(`No visible Project matches '${projectArg}'. Try \`clawdi project list\`.`);
+		throw new Error(`No visible project matches '${projectArg}'. Try \`clawdi project list\`.`);
 	}
 	return project;
 }

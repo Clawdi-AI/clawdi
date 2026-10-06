@@ -129,11 +129,11 @@ export async function projectShowCommand(
 		console.log(`  Manage sharing: ${chalk.cyan(`clawdi project share ${alias}`)}`);
 		console.log(`  People:         ${chalk.cyan(`clawdi project members ${alias}`)}`);
 		console.log(
-			`  Link to Agent:${chalk.cyan(` clawdi agent projects link <agent-id> --project ${alias}`)}`,
+			`  Link to agent:${chalk.cyan(` clawdi agent projects link <agent-id> --project ${alias}`)}`,
 		);
 	} else {
 		console.log(chalk.bold("Next actions"));
-		console.log("  Link to Agent:");
+		console.log("  Link to agent:");
 		console.log(`    ${chalk.cyan(`clawdi agent projects link <agent-id> --project ${alias}`)}`);
 		console.log(`  Leave: ${chalk.cyan(`clawdi project leave ${alias}`)}`);
 	}

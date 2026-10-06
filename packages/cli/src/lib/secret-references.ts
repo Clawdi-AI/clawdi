@@ -231,7 +231,7 @@ async function requestClawdiReference<T extends VaultReferencePreview>(
 			const explicitProjectId = await resolveProjectId(apiUrl, accessToken, opts.project);
 			if (explicitProjectId !== referenceProjectId) {
 				throw new Error(
-					`Reference points to Project ${referenceProjectId}, but --project resolved to ${explicitProjectId}. Omit --project or use a reference from that Project.`,
+					`Reference points to project ${referenceProjectId}, but --project resolved to ${explicitProjectId}. Omit --project or use a reference from that project.`,
 				);
 			}
 		}
@@ -373,7 +373,7 @@ async function requestClawdiReferenceBulk<T extends VaultReferencePreview>(
 			projectId = await resolveCachedProjectId(ref.project);
 			if (opts.project && explicitProjectId !== projectId) {
 				throw new Error(
-					`Reference points to Project ${projectId}, but --project resolved to ${explicitProjectId}. Omit --project or use a reference from that Project.`,
+					`Reference points to project ${projectId}, but --project resolved to ${explicitProjectId}. Omit --project or use a reference from that project.`,
 				);
 			}
 		}

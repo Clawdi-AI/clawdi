@@ -272,7 +272,7 @@ export async function update(
 	}
 	if (result.status === "disabled") {
 		console.log();
-		console.log(chalk.yellow("Local CLI updates are disabled by Hosted policy."));
+		console.log(chalk.yellow("CLI updates are managed by this Cloud Agent's runtime."));
 		process.exitCode = 1;
 		return;
 	}

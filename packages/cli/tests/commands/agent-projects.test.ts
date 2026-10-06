@@ -155,10 +155,10 @@ describe("agent project commands", () => {
 		const out = lines.join("\n");
 		expect(out).toContain("Projects for agent-1");
 		expect(out).toContain("Workspace");
-		expect(out).toContain("Linked Projects (1)");
+		expect(out).toContain("Linked projects (1)");
 		expect(out).toContain("@alice-a3b4/shared-toolkit");
 		expect(out).toContain("viewer");
-		expect(out).toContain("Vault resolution: Workspace, then linked Projects.");
+		expect(out).toContain("Vault resolution: workspace, then linked projects.");
 		expect(out).toContain("id=attach-shared");
 		expect(out).toContain("Move:   clawdi agent projects move agent-1 --item attach-shared:1");
 		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);

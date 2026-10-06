@@ -106,7 +106,7 @@ export async function projectListCommand(opts: {
 		if (!opts.includeEnvs && environmentProjects.length > 0 && !opts.sharedWithMe) {
 			console.log(
 				chalk.gray(
-					`Hidden Agent Workspaces: ${environmentProjects.length}. Show them with \`clawdi project list --include-workspaces\`.`,
+					`Hidden agent workspaces: ${environmentProjects.length}. Show them with \`clawdi project list --include-workspaces\`.`,
 				),
 			);
 		}
@@ -131,8 +131,8 @@ export async function projectListCommand(opts: {
 
 	if (!opts.sharedWithMe && machines.length > 0) {
 		if (owned.length > 0) console.log();
-		console.log(chalk.bold(`Agent Workspaces (${machines.length}):`));
-		console.log(chalk.gray("  Private resources permanently used by one registered Agent."));
+		console.log(chalk.bold(`Agent workspaces (${machines.length}):`));
+		console.log(chalk.gray("  Private resources permanently used by one registered agent."));
 		for (const s of machines) {
 			const alias = projectAlias(s);
 			console.log(
@@ -148,7 +148,7 @@ export async function projectListCommand(opts: {
 	if (!opts.owned && shared.length > 0) {
 		if (!opts.sharedWithMe) console.log();
 		console.log(chalk.bold(`Shared with me (${shared.length}):`));
-		console.log(chalk.gray("  Viewer access is read-only. Link to an Agent when needed."));
+		console.log(chalk.gray("  Viewer access is read-only. Link to an agent when needed."));
 		for (const s of shared) {
 			const alias = projectAlias(s);
 			console.log(
@@ -159,7 +159,7 @@ export async function projectListCommand(opts: {
 			);
 			console.log(`    ${chalk.gray(`Open:  clawdi project show ${alias}`)}`);
 			console.log(
-				`    ${chalk.gray(`Link to Agent: clawdi agent projects link <agent-id> --project ${alias}`)}`,
+				`    ${chalk.gray(`Link to agent: clawdi agent projects link <agent-id> --project ${alias}`)}`,
 			);
 		}
 	}
@@ -168,7 +168,7 @@ export async function projectListCommand(opts: {
 		if (owned.length > 0 || shared.length > 0) console.log();
 		console.log(
 			chalk.gray(
-				`Hidden Agent Workspaces: ${environmentProjects.length}. Show them with \`clawdi project list --include-workspaces\`.`,
+				`Hidden agent workspaces: ${environmentProjects.length}. Show them with \`clawdi project list --include-workspaces\`.`,
 			),
 		);
 	}

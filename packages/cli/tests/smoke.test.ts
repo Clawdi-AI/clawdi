@@ -376,8 +376,8 @@ describe("CLI smoke — src entry", () => {
 				CLAWDI_RUN_DIR: join(root, "run", "clawdi"),
 			});
 			expect(result.code).not.toBe(0);
-			expect(result.stderr).toContain("disabled in hosted runtime mode");
-			expect(result.stderr).toContain("managed by the hosted runtime installation");
+			expect(result.stderr).toContain("disabled inside Cloud Agents");
+			expect(result.stderr).toContain("managed by the Cloud Agent runtime");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

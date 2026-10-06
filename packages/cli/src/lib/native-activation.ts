@@ -155,7 +155,7 @@ export async function activateStagedNativeRelease(
 	lockOptions?: PrivateDirectoryLockOptions,
 ): Promise<{ launcher: string; previousVersion: string | null }> {
 	if (!evaluateHostPolicyForCommand("update").allowed) {
-		throw new Error("native CLI activation is disabled by Hosted policy");
+		throw new Error("native CLI activation is disabled inside Cloud Agents");
 	}
 	return await withPrivateDirectoryLock(
 		join(getClawdiDir(), "update.lock"),

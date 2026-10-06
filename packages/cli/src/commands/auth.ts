@@ -114,7 +114,7 @@ async function authLoginManual(apiUrl: string, expectedCredential: StoredCredent
 		return;
 	}
 
-	verifySpinner.stop(chalk.green(`Logged in as ${me.email || me.name || me.id}`));
+	verifySpinner.stop(chalk.green(`Signed in as ${me.email || me.name || me.id}`));
 	postLoginHint();
 }
 
@@ -136,7 +136,7 @@ async function startOAuthLogin(
 	if (!endpointBinding.hostedApiOrigin) {
 		throw new ClerkOAuthError(
 			"invalid_credential_endpoint_binding",
-			"Hosted endpoint binding is required for OAuth login.",
+			"OAuth sign-in requires a CLAWDI_DEPLOY_API_URL binding.",
 		);
 	}
 	const clientConfig = await fetchClerkOAuthClientConfig(endpointBinding.cloudApiOrigin);
@@ -204,17 +204,15 @@ export async function finishOAuthLogin(
 			pending,
 		});
 	} catch (error) {
-		spinner?.stop(chalk.red("Cloud rejected the OAuth session."));
+		spinner?.stop(chalk.red("Clawdi rejected the OAuth session."));
 		throw error;
 	}
 	if (verification.kind === "cloud_unverified") {
-		spinner?.stop(
-			chalk.yellow("Logged in; Cloud profile verification is temporarily unavailable."),
-		);
+		spinner?.stop(chalk.yellow("Signed in; Clawdi couldn't verify your profile right now."));
 		if (!opts.quiet) {
 			p.log.message(
 				chalk.gray(
-					"The Clerk grant is saved, but Cloud has not verified it. Run `clawdi auth status` and retry a Cloud command when service recovers.",
+					"The Clerk grant is saved, but Clawdi hasn't verified it. Run `clawdi auth status` and retry a command when the service recovers.",
 				),
 			);
 			postLoginHint();
@@ -223,7 +221,7 @@ export async function finishOAuthLogin(
 	}
 
 	const me = verification.user;
-	spinner?.stop(chalk.green(`Logged in as ${me.email || me.name || me.id}`));
+	spinner?.stop(chalk.green(`Signed in as ${me.email || me.name || me.id}`));
 	if (!opts.quiet) postLoginHint();
 	return true;
 }
@@ -232,7 +230,7 @@ function reportOAuthError(error: unknown): void {
 	if (error instanceof ClerkOAuthError) {
 		p.log.error(error.message);
 	} else {
-		p.log.error("Could not complete Clawdi OAuth login. Check your connection and retry.");
+		p.log.error("Could not complete Clawdi OAuth sign-in. Check your connection and retry.");
 	}
 	p.log.message(
 		chalk.gray("Legacy compatibility remains available with: ") +
@@ -256,7 +254,7 @@ async function waitForLoopbackCallback(
 						reject(
 							new ClerkOAuthError(
 								"oauth_login_expired",
-								"OAuth login expired. Run `clawdi auth login` again.",
+								"OAuth sign-in expired. Run `clawdi auth login` again.",
 							),
 						),
 					remainingMs,
@@ -271,7 +269,7 @@ async function waitForLoopbackCallback(
 export async function authLogin(opts: { manual?: boolean; open?: boolean } = {}) {
 	const existing = getAuth();
 	if (existing) {
-		p.log.warn(`Already logged in as ${existing.email || existing.userId || "unknown"}`);
+		p.log.warn(`Already signed in as ${existing.email || existing.userId || "unknown"}`);
 		p.log.info("Run `clawdi auth logout` first to switch accounts.");
 		return;
 	}
@@ -367,7 +365,7 @@ export async function authLogin(opts: { manual?: boolean; open?: boolean } = {})
 export async function authComplete() {
 	if (isLoggedIn()) {
 		const existing = getAuth();
-		p.log.info(`Already logged in as ${existing?.email || existing?.userId || "unknown"}.`);
+		p.log.info(`Already signed in as ${existing?.email || existing?.userId || "unknown"}.`);
 		return;
 	}
 
@@ -465,7 +463,7 @@ export async function authDesktopSessionMachine(): Promise<void> {
 
 export async function authLogout() {
 	if (!isLoggedIn()) {
-		p.log.info("Not logged in.");
+		p.log.info("Not signed in.");
 		return;
 	}
 
@@ -487,25 +485,25 @@ export async function authLogout() {
 	if (installedAgents.length > 0) {
 		p.log.warn(
 			`${installedAgents.length} daemon(s) still installed (${installedAgents.join(", ")}). ` +
-				`These keep running after logout and will fail with 401 against the cloud. ` +
-				`Run \`clawdi daemon uninstall\` first, or accept the noise.`,
+				`They keep running after sign-out and will fail to authenticate. ` +
+				`Run \`clawdi daemon uninstall\` to stop them.`,
 		);
 	}
 
 	const result = await logoutClawdiCredentials(getConfig().apiUrl);
 	if (result.environmentCredential) {
 		p.log.warn(
-			"CLAWDI_AUTH_TOKEN controls this process. Unset it in the environment to log out; persisted credentials were not changed.",
+			"CLAWDI_AUTH_TOKEN controls this process. Unset it in the environment to sign out; persisted credentials were not changed.",
 		);
 		return;
 	}
 	if (result.remoteRevoked) p.log.success("Remote Clerk OAuth grant revoked.");
 	else if (result.loggedOut) {
 		p.log.warn(
-			"The local credential was removed. If remote OAuth revocation was unavailable, revoke the Clawdi OAuth application in your Clerk account if needed.",
+			"Couldn't revoke the remote OAuth grant. The local credential was removed; revoke the Clawdi app in your Clerk account if needed.",
 		);
 	}
-	p.log.success("Logged out. Credentials removed; account-bound Agent registrations preserved.");
+	p.log.success("Signed out. Credentials removed; this account's agent registrations were kept.");
 }
 
 type AuthStatusSource = "auth.json" | "CLAWDI_AUTH_TOKEN" | "runtime-auth-token" | "none";

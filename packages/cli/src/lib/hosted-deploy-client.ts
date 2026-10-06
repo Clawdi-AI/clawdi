@@ -46,7 +46,7 @@ export class HostedDeployApiError extends Error {
 	readonly detail: string;
 
 	constructor(status: number, detail: string) {
-		super(detail || `Hosted deploy API request failed (${status}).`);
+		super(detail || `Deploy API request failed (${status}).`);
 		this.name = "HostedDeployApiError";
 		this.status = status;
 		this.detail = detail;
@@ -65,8 +65,8 @@ async function fetchWithTimeout(request: Request): Promise<Response> {
 		throw new HostedDeployApiError(
 			0,
 			timedOut
-				? "Hosted API request timed out. A mutation may have been accepted; inspect its status before retrying."
-				: "Could not reach the Hosted deploy API. Check your connection and deployApiUrl.",
+				? "Deploy API request timed out. A change may have been accepted; check its status before retrying."
+				: "Could not reach the deploy API. Check your connection and deployApiUrl.",
 		);
 	} finally {
 		clearTimeout(timeout);
@@ -81,7 +81,7 @@ function unwrapHosted<T>(result: HostedResult<T>): T {
 		);
 	}
 	if (result.data === undefined) {
-		throw new HostedDeployApiError(502, "Hosted deploy API returned an empty response.");
+		throw new HostedDeployApiError(502, "The deploy API returned an empty response.");
 	}
 	return result.data;
 }
@@ -143,7 +143,7 @@ export class HostedDeployClient {
 				if (new URL(request.url).origin !== expectedOrigin) {
 					throw new HostedDeployAuthorizationError(
 						"hosted_request_origin_mismatch",
-						"Hosted request origin changed before authorization. No credential was sent.",
+						"Deploy API request origin changed before authorization. No credential was sent.",
 					);
 				}
 				const credential = await auth.getAccessToken();
@@ -175,12 +175,10 @@ export class HostedDeployClient {
 			(item) => item.agent_id === agentId && item.resource.spec.desired_lifecycle !== "deleted",
 		);
 		if (matches.length !== 1) {
-			throw new Error(
-				"This Agent does not have one active Hosted deployment supporting remote Skills.",
-			);
+			throw new Error("This agent isn't an active Cloud Agent that supports remote skills.");
 		}
 		const deployment = matches[0];
-		if (!deployment) throw new Error("Hosted deployment is unavailable.");
+		if (!deployment) throw new Error("This Cloud Agent is unavailable.");
 		return deployment;
 	}
 
@@ -300,13 +298,13 @@ export class HostedDeployClient {
 				}
 			}
 		}
-		throw new HostedDeployApiError(0, "Hosted deploy API request failed.");
+		throw new HostedDeployApiError(0, "Deploy API request failed.");
 	}
 
 	async getOperation(operationName: string): Promise<HostedDeployOperation> {
 		const prefix = "operations/";
 		const operationId = operationName.startsWith(prefix) ? operationName.slice(prefix.length) : "";
-		if (!operationId) throw new Error("Hosted deploy API returned an invalid operation name.");
+		if (!operationId) throw new Error("The deploy API returned an invalid operation name.");
 		return unwrapHosted(
 			await this.client.GET("/v2/operations/{operation_id}", {
 				params: { path: { operation_id: operationId } },

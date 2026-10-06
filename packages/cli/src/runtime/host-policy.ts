@@ -48,9 +48,9 @@ function hostedPolicy(): HostPolicy {
 			{ command: "teardown", reason: "runtime teardown is managed by the host lifecycle" },
 			{
 				command: "agent reconnect",
-				reason: "Connected Agent identity is managed outside hosted runtimes",
+				reason: "Connected Agent identity can't be managed inside a Cloud Agent",
 			},
-			{ command: "update", reason: "CLI updates are managed by the hosted runtime installation" },
+			{ command: "update", reason: "CLI updates are managed by the Cloud Agent runtime" },
 		],
 		managedState: [paths.serviceStateRoot, paths.runRoot],
 		systemWritableState: [
@@ -154,7 +154,7 @@ export function deniedCommandReason(
 	for (const entry of normalizeDeniedCommands(policy)) {
 		const denied = entry.command.trim().replace(/\s+/g, " ");
 		if (normalized === denied || normalized.startsWith(`${denied} `)) {
-			return entry.reason ?? "disabled by hosted runtime policy";
+			return entry.reason ?? "disabled by Cloud Agent runtime policy";
 		}
 	}
 	return null;

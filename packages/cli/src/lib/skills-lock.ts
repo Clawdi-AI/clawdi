@@ -118,7 +118,7 @@ export function projectSkillMaterializationCacheKey(
 /** Convert a platform path relative to an adapter root into wire Skill-key form. */
 export function canonicalMaterializedSkillKey(relativePath: string): string {
 	const canonical = relativePath.replaceAll("\\", "/").replace(/^\.\/+/, "");
-	if (!isValidSkillKey(canonical)) throw new Error("Invalid materialized Skill path");
+	if (!isValidSkillKey(canonical)) throw new Error("Invalid materialized skill path");
 	return canonical;
 }
 
@@ -368,13 +368,13 @@ export function recordProjectSkillMaterialization(
 	materialization: ProjectSkillMaterializationInput,
 ): void {
 	assertValidMaterializationIdentity(materialization);
-	if (!materialization.sourceProjectId) throw new Error("Source Project ID is required");
+	if (!materialization.sourceProjectId) throw new Error("Source project ID is required");
 	if (!isValidSkillKey(materialization.sourceSkillKey)) {
-		throw new Error("Invalid source Project Skill key");
+		throw new Error("Invalid source project skill key");
 	}
-	if (!materialization.contentHash) throw new Error("Materialized Skill hash is required");
+	if (!materialization.contentHash) throw new Error("Materialized skill hash is required");
 	if (materialization.reconcileAgentId !== undefined && !materialization.reconcileAgentId) {
-		throw new Error("Reconcile Agent ID must not be empty");
+		throw new Error("Reconcile agent ID must not be empty");
 	}
 	withPrivateDirectoryLockSync(lockPath(), (lease) => {
 		const lock = readSkillsLock();
@@ -580,15 +580,15 @@ function readProjectSkillMaterializations(
 }
 
 function assertValidProjectionIdentity(identity: SkillProjectionIdentity): void {
-	if (identity.agentType.length === 0) throw new Error("Skill projection Agent type is required");
-	if (identity.agentId.length === 0) throw new Error("Skill projection Agent ID is required");
-	if (identity.projectId.length === 0) throw new Error("Skill projection Project ID is required");
-	if (!isValidSkillKey(identity.skillKey)) throw new Error("Invalid Skill projection key");
+	if (identity.agentType.length === 0) throw new Error("Skill projection agent type is required");
+	if (identity.agentId.length === 0) throw new Error("Skill projection agent ID is required");
+	if (identity.projectId.length === 0) throw new Error("Skill projection project ID is required");
+	if (!isValidSkillKey(identity.skillKey)) throw new Error("Invalid skill projection key");
 }
 
 function assertValidMaterializationIdentity(identity: ProjectSkillMaterializationIdentity): void {
-	if (!identity.agentType) throw new Error("Materialized Skill Agent type is required");
-	if (!isValidSkillKey(identity.localSkillKey)) throw new Error("Invalid materialized Skill key");
+	if (!identity.agentType) throw new Error("Materialized skill agent type is required");
+	if (!isValidSkillKey(identity.localSkillKey)) throw new Error("Invalid materialized skill key");
 }
 
 function emptyLock(): SkillsLock {

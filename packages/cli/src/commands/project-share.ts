@@ -99,18 +99,18 @@ export async function projectShareCommand(
 		),
 	);
 	console.log(chalk.gray("Access: viewer role, no write access."));
-	console.log(chalk.gray("Viewers can resolve shared Vault values through CLI runtime reads."));
-	console.log(chalk.gray("Linking it to an Agent is separate and explicit after accept."));
+	console.log(chalk.gray("Viewers can resolve shared vault values through CLI runtime reads."));
+	console.log(chalk.gray("Linking it to an agent is separate and explicit after accept."));
 	console.log(chalk.gray(`Owner handle: @${body.owner_handle}`));
 	if (body.label) console.log(chalk.gray(`Label: ${body.label}`));
 	console.log();
 	console.log(`Recipient accepts: ${chalk.cyan(`clawdi inbox accept ${body.url}`)}`);
 	if (projectSlug) {
 		console.log(
-			`Recipient links to Agent later: ${chalk.cyan(`clawdi agent projects link <agent-id> --project @${body.owner_handle}/${projectSlug}`)}`,
+			`Recipient links to agent later: ${chalk.cyan(`clawdi agent projects link <agent-id> --project @${body.owner_handle}/${projectSlug}`)}`,
 		);
 	}
 	console.log();
-	console.log(chalk.bold("Link to Agent prompt:"));
+	console.log(chalk.bold("Link to agent prompt:"));
 	console.log(buildShareAgentHandoffPrompt(body));
 }

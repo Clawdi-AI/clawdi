@@ -78,7 +78,7 @@ export async function pull(opts: PullOpts) {
 	p.intro(chalk.bold("clawdi pull"));
 
 	if (!isLoggedIn()) {
-		p.log.error("Not logged in. Run `clawdi auth login` first.");
+		p.log.error("Not signed in. Run `clawdi auth login` first.");
 		p.outro(chalk.red("Aborted."));
 		process.exitCode = 1;
 		return;

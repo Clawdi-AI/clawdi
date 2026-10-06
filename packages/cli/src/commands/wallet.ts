@@ -39,7 +39,7 @@ function bindingAddress(binding: HostedWalletBinding): string | null {
 function invalidHostedResponse(): WalletStatusError {
 	return new WalletStatusError(
 		"invalid_hosted_response",
-		"Hosted returned an invalid Wallet response.",
+		"Clawdi returned an invalid wallet response.",
 	);
 }
 
@@ -83,18 +83,21 @@ function safeWalletStatusError(error: unknown): { code: string; message: string 
 	if (error instanceof WalletStatusError) return { code: error.code, message: error.message };
 	if (error instanceof HostedDeployApiError) {
 		if (error.status === 401) {
-			return { code: "hosted_auth_required", message: "Hosted CLI authorization was rejected." };
+			return {
+				code: "hosted_auth_required",
+				message: "CLI authorization was rejected. Run `clawdi auth login`, then try again.",
+			};
 		}
 		if (error.status === 403) {
-			return { code: "hosted_forbidden", message: "This account cannot access Hosted Wallet." };
+			return { code: "hosted_forbidden", message: "This account can't access the wallet." };
 		}
 		return {
 			code:
 				error.status >= 500 || error.status === 0 ? "hosted_unavailable" : "hosted_wallet_error",
 			message:
 				error.status >= 500 || error.status === 0
-					? "Hosted Wallet is temporarily unavailable."
-					: "Hosted rejected the Wallet request.",
+					? "Wallet is temporarily unavailable."
+					: "Clawdi rejected the wallet request.",
 		};
 	}
 	return { code: "wallet_status_failed", message: "Wallet status could not be loaded." };

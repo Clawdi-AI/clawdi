@@ -61,7 +61,7 @@ export async function setup(opts: SetupOpts) {
 	}
 	const auth = getAuth();
 	if (!auth) {
-		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
+		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
 		process.exitCode = 1;
 		return;
 	}

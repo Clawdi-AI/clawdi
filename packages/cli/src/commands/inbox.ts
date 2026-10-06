@@ -766,7 +766,7 @@ function renderJoinedSuccess(
 	console.log(chalk.gray("  Role: viewer (read access)."));
 	const bound = body.bound_agent_ids ?? [];
 	if (bound.length > 0) {
-		console.log(chalk.gray(`  Linked to ${bound.length} Agent${bound.length === 1 ? "" : "s"}.`));
+		console.log(chalk.gray(`  Linked to ${bound.length} agent${bound.length === 1 ? "" : "s"}.`));
 	} else {
 		console.log(
 			chalk.gray(`  Link to agent: clawdi agent projects link <agent-id> --project ${projectRef}`),

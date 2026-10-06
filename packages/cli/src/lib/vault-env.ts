@@ -58,7 +58,7 @@ const materialSchema = z.object({
 
 export function validateVaultMaterial(value: unknown): VaultMaterial {
 	const parsed = materialSchema.safeParse(value);
-	if (!parsed.success) throw new Error("Invalid Vault material response.");
+	if (!parsed.success) throw new Error("Invalid vault material response.");
 	const { values, item_ids: ids, references } = parsed.data;
 	const keys = Object.keys(values);
 	if (
@@ -67,7 +67,7 @@ export function validateVaultMaterial(value: unknown): VaultMaterial {
 		keys.length !== Object.keys(references).length ||
 		keys.some((key) => !Object.hasOwn(ids, key) || !Object.hasOwn(references, key))
 	) {
-		throw new Error("Incomplete Vault source identity.");
+		throw new Error("Incomplete vault source identity.");
 	}
 	return parsed.data;
 }
@@ -124,7 +124,7 @@ function encode(name: string, value: string): string {
 	}
 	const unquoted = `${name}=${value}\n`;
 	if (/^[^\s#'"`]+$/.test(value) && parseEnv(unquoted)[name] === value) return unquoted;
-	throw new Error(`Cannot safely encode ${name} as dotenv text; use an authorized Vault read.`);
+	throw new Error(`Cannot safely encode ${name} as dotenv text; use an authorized vault read.`);
 }
 
 const digest = (salt: string, text: string) =>
@@ -132,12 +132,12 @@ const digest = (salt: string, text: string) =>
 
 export function readVaultBinding(content: string): VaultEnvBinding | undefined {
 	const markers = records(content).filter((row) => row.text.startsWith(MARKER));
-	if (markers.length > 1) throw new Error("Multiple Vault bindings in target file.");
+	if (markers.length > 1) throw new Error("Multiple vault bindings in target file.");
 	if (!markers[0]) return undefined;
 	try {
 		return bindingSchema.parse(JSON.parse(markers[0].text.slice(MARKER.length)));
 	} catch {
-		throw new Error("Invalid Vault binding; restore its metadata or choose a new target file.");
+		throw new Error("Invalid vault binding; restore its metadata or choose a new target file.");
 	}
 }
 
@@ -191,10 +191,10 @@ export function renderVaultEnv(content: string, apiUrl: string, material: VaultM
 	const fields = new Map<string, VaultEnvBinding["fields"][string]>();
 	for (const [name, value] of Object.entries(material.values)) {
 		if (byName.has(name) && !oldFields.has(name))
-			throw new Error(`Unmanaged local variable conflicts with Vault: ${name}`);
+			throw new Error(`Unmanaged local variable conflicts with vault: ${name}`);
 		const itemId = itemIds.get(name);
 		const reference = references.get(name);
-		if (!itemId || !reference) throw new Error("Incomplete Vault source identity.");
+		if (!itemId || !reference) throw new Error("Incomplete vault source identity.");
 		const text = encode(name, value);
 		additions.set(name, text);
 		fields.set(name, { itemId, reference, hash: digest(binding.salt, text) });

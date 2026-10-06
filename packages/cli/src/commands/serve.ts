@@ -230,7 +230,7 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 			} catch {
 				log.warn("serve.vault_cleanup_failed", {
 					agent: agentType,
-					message: "Owned Vault files need local repair.",
+					message: "Owned vault files need local repair.",
 				});
 			}
 		}
@@ -344,7 +344,7 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 	rejectUnsupportedOpts("install", opts as Record<string, unknown>, INSTALL_ALLOWED);
 	const rpcListen = resolveRpcListenConfig(opts as RpcListenOpts);
 	if (!isLoggedIn()) {
-		console.error("Not logged in. Run `clawdi auth login` first — the daemon needs an api key.");
+		console.error("Not signed in. Run `clawdi auth login` first — the daemon needs an api key.");
 		process.exit(1);
 	}
 	const registered = listRegisteredAgentTypes();
@@ -875,7 +875,9 @@ async function authLoginRpc(params: unknown): Promise<unknown> {
 	const apiUrl = optionalStringParam(record.api_url, "api_url") ?? endpointConfig.apiUrl;
 	const apiKey = optionalStringParam(record.api_key, "api_key");
 	if (existing && replace && !apiKey) {
-		throw new Error("auth.login replace requires api_key, or call auth.logout before OAuth login.");
+		throw new Error(
+			"auth.login replace requires api_key, or call auth.logout before OAuth sign-in.",
+		);
 	}
 	if (apiKey) {
 		requireBooleanConfirmation(record, "confirm_secret_access", "auth.login API key import");
@@ -1029,7 +1031,7 @@ async function startOAuthAuthRpc(
 ): Promise<unknown> {
 	const endpointBinding = createCredentialEndpointBinding(apiUrl, hostedApiUrl);
 	if (!endpointBinding.hostedApiOrigin) {
-		throw new Error("Hosted endpoint binding is required for OAuth login.");
+		throw new Error("OAuth sign-in requires a CLAWDI_DEPLOY_API_URL binding.");
 	}
 	const config = await fetchClerkOAuthClientConfig(endpointBinding.cloudApiOrigin);
 	const discovery = await fetchClerkOAuthDiscovery(config);

@@ -52,13 +52,13 @@ Examples:
   $ clawdi skill list --json        Machine-readable skill listing
   $ clawdi memory search "redis"    Search memories by text
   $ clawdi vault set OPENAI_API_KEY Store a secret
-  $ clawdi project folder link --project engineering  Use this folder with a Project
+  $ clawdi project folder link --project engineering  Use this folder with a project
   $ clawdi run --env-file .env.clawdi -- npm run dev  Resolve clawdi:// refs at runtime
 
 Environment:
   CLAWDI_API_URL           Override the Clawdi API endpoint
   CLAWDI_DEPLOY_API_URL    Override the deploy API endpoint
-  CLAWDI_AUTH_TOKEN_ORIGIN Explicit Cloud origin binding for CLAWDI_AUTH_TOKEN
+  CLAWDI_AUTH_TOKEN_ORIGIN CLAWDI_API_URL origin that CLAWDI_AUTH_TOKEN is bound to
   CLAWDI_DEBUG             Print stack traces on error
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
   CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via \`config set autoUpdate false\`)
@@ -79,8 +79,8 @@ program.hook("preAction", (_thisCommand, actionCommand) => {
 	const command = commandPath(actionCommand);
 	const decision = evaluateHostPolicyForCommand(command);
 	if (decision.allowed) return;
-	const reason = decision.reason ?? "disabled by hosted runtime policy";
-	throw new Error(`Command \`clawdi ${command}\` is disabled in hosted runtime mode: ${reason}`);
+	const reason = decision.reason ?? "disabled by Cloud Agent runtime policy";
+	throw new Error(`Command \`clawdi ${command}\` is disabled inside Cloud Agents: ${reason}`);
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -88,9 +88,9 @@ program.hook("preAction", (_thisCommand, actionCommand) => {
 // ─────────────────────────────────────────────────────────────
 program
 	.command("deploy")
-	.description("Create a Hosted agent with an interactive, payment-aware wizard")
+	.description("Create a Cloud Agent with an interactive, payment-aware wizard")
 	.option("--runtime <runtime>", "Runtime: hermes or openclaw")
-	.option("--provider <provider>", "AI provider: managed, unmanaged, or an exact saved provider id")
+	.option("--provider <provider>", "AI provider: managed, unmanaged, or an exact saved provider ID")
 	.option(
 		"--model <model>",
 		"Primary model id (required when a saved provider has no unique default)",
@@ -105,7 +105,7 @@ program
 		"--request-id <uuid>",
 		"Stable UUID for safe retries (required for every non-interactive deploy)",
 	)
-	.option("-y, --yes", "Confirm the deployment and any exact Wallet debit")
+	.option("-y, --yes", "Confirm the Cloud Agent and any exact wallet debit")
 	.option("--no-wait", "Return after the server accepts the request")
 	.option("--no-open", "Print secure card checkout without opening a browser")
 	.option("--json", "Emit one machine-readable result object")
@@ -115,15 +115,15 @@ program
 Examples:
   $ clawdi deploy
   $ clawdi deploy --runtime hermes --provider managed --model <id> --compute basic --request-id <uuid> --yes --json
-  # Native saved provider: choose models inside the Agent
+  # Native saved provider: choose models inside the agent
   $ clawdi deploy --provider <saved-provider-id> --compute basic --request-id <uuid> --yes --json
   # Custom saved provider: select its model
   $ clawdi deploy --provider <saved-provider-id> --model <id> --compute basic --request-id <uuid> --yes --json
   $ clawdi deploy --compute performance --term 12 --payment wallet --request-id <uuid> --yes --json
   $ clawdi deploy --compute performance --payment card --request-id <uuid> --yes --json
 
-Card payment uses Hosted Checkout in your browser. Reuse --request-id to recover
-the same logical deployment. Every non-interactive deploy requires it before
+Card payment uses secure checkout in your browser. Reuse --request-id to recover
+the same deploy attempt. Every non-interactive deploy requires it before
 any create or checkout mutation. No provider secrets are accepted as flags.`,
 	)
 	.action(async (opts) => {
@@ -152,7 +152,7 @@ authCmd
 			const { authLogin, authLoginDesktop } = await import("./commands/auth.js");
 			if (opts.desktop) {
 				if (opts.manual || opts.open === false) {
-					throw new Error("Desktop sign-in does not accept interactive login options.");
+					throw new Error("Desktop sign-in does not accept interactive sign-in options.");
 				}
 				await authLoginDesktop({ force: opts.force });
 				return;
@@ -164,7 +164,7 @@ authCmd
 
 authCmd
 	.command("complete")
-	.description("Finish a login started in non-interactive mode (after browser approval)")
+	.description("Finish a sign-in started in non-interactive mode (after browser approval)")
 	.action(async () => {
 		const { authComplete } = await import("./commands/auth.js");
 		await authComplete();
@@ -212,11 +212,11 @@ program
 // ─────────────────────────────────────────────────────────────
 // wallet
 // ─────────────────────────────────────────────────────────────
-const walletCmd = program.command("wallet").description("Inspect Clawdi Wallet");
+const walletCmd = program.command("wallet").description("Inspect Clawdi wallet");
 
 walletCmd
 	.command("status")
-	.description("Show authenticated Wallet balance, binding, and USDC funding readiness")
+	.description("Show authenticated wallet balance, binding, and USDC funding readiness")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (opts: { json?: boolean }) => {
 		const { runWalletStatusCommand } = await import("./commands/wallet.js");
@@ -280,11 +280,11 @@ program
 	.option("--agent <type>", `Agent type (${AGENT_TYPE_HELP_LABEL})`)
 	.option(
 		"--vault-workspace <path>",
-		"Bind this Agent to an explicit Vault workspace (requires --agent)",
+		"Bind this agent to an explicit vault workspace (requires --agent)",
 	)
 	.option(
 		"--vault-native-agent <id>",
-		"Select the official OpenClaw agent whose workspace supplies Vault files",
+		"Select the official OpenClaw agent whose workspace supplies vault files",
 	)
 	.option("-y, --yes", "Register every detected agent without prompting")
 	.option("--no-daemon", "Skip installing/starting background sync daemons")
@@ -326,7 +326,7 @@ program
 	.description("Push local data (sessions, skills) to the cloud")
 	.option(
 		"--modules <modules>",
-		"Narrow to specific modules (comma-separated: sessions,skills). Default: all.",
+		"Narrow to specific modules (comma-separated: sessions,skills); default: all",
 	)
 	.option(
 		"--project <path>",
@@ -364,7 +364,7 @@ Examples:
 program
 	.command("pull")
 	.description(
-		"Mirror sessions, or explicitly import Skills from a Cloud-owned workspace/personal Project",
+		"Mirror sessions, or explicitly import skills from a Clawdi-owned workspace or personal project",
 	)
 	.option(
 		"--modules <modules>",
@@ -372,7 +372,7 @@ program
 	)
 	.option(
 		"-p, --project <id-or-slug>",
-		"Import Skills from an explicit Custom/personal Project (Agent Workspaces are rejected)",
+		"Import skills from an explicit Custom/personal project (agent workspaces are rejected)",
 	)
 	.option("--agent <type>", `Narrow to one agent (${AGENT_TYPE_HELP_LABEL})`)
 	.option(
@@ -380,7 +380,7 @@ program
 		"Pull everything: every module, every registered agent (still narrowable via --modules / --agent)",
 	)
 	.option("--all-agents", "Pull for every registered agent on this machine (implied by --all)")
-	.option("--dry-run", "Preview session mirrors or explicit Skill imports without writing locally")
+	.option("--dry-run", "Preview session mirrors or explicit skill imports without writing locally")
 	.addHelpText(
 		"after",
 		`
@@ -407,11 +407,11 @@ registerServeCommand(program);
 // ─────────────────────────────────────────────────────────────
 // ai-provider
 // ─────────────────────────────────────────────────────────────
-const aiProviderCmd = program.command("ai-provider").description("Manage AI Providers");
+const aiProviderCmd = program.command("ai-provider").description("Manage AI providers");
 
 aiProviderCmd
 	.command("list")
-	.description("List configured AI Providers")
+	.description("List configured AI providers")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (opts) => {
 		const { aiProviderListCommand } = await import("./commands/ai-provider.js");
@@ -420,7 +420,7 @@ aiProviderCmd
 
 aiProviderCmd
 	.command("add <provider-id>")
-	.description("Add an AI Provider to the local Provider Catalog")
+	.description("Add an AI provider to the local provider catalog")
 	.requiredOption("--type <type>", "Provider type")
 	.option("--label <label>", "Display label")
 	.option("--base-url <url>", "Provider base URL")
@@ -451,7 +451,7 @@ Examples:
 
 aiProviderCmd
 	.command("edit <provider-id>")
-	.description("Edit an AI Provider")
+	.description("Edit an AI provider")
 	.option("--type <type>", "Provider type")
 	.option("--label <label>", "Display label")
 	.option("--base-url <url>", "Provider base URL")
@@ -475,7 +475,7 @@ aiProviderCmd
 aiProviderCmd
 	.command("remove <provider-id>")
 	.alias("rm")
-	.description("Remove an AI Provider")
+	.description("Remove an AI provider")
 	.option("--force", "Remove even if defaults reference it")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (providerId: string, opts) => {
@@ -485,7 +485,7 @@ aiProviderCmd
 
 aiProviderCmd
 	.command("validate [provider-id]")
-	.description("Validate the AI Provider Catalog")
+	.description("Validate the AI provider catalog")
 	.option("--allow-no-auth-public", "Allow no-auth providers on public URLs")
 	.option("--json", "Emit machine-readable JSON")
 	.action(async (providerId: string | undefined, opts) => {
@@ -511,7 +511,7 @@ aiProviderCmd
 	.command("connect <provider-id>")
 	.description("Connect provider auth through an OAuth/device-code flow")
 	.option("--method <method>", "Connect method", "oauth")
-	.option("--tool <tool>", "Tool login profile to connect, currently codex")
+	.option("--tool <tool>", "Tool sign-in profile to connect, currently codex")
 	.option("--callback <mode>", "OAuth callback mode: loopback or manual")
 	.option("--redirect-uri <uri>", "Override OAuth redirect URI for manual callback mode")
 	.option("--timeout <seconds>", "Seconds to wait for loopback callback", "600")
@@ -525,7 +525,7 @@ aiProviderCmd
 
 aiProviderCmd
 	.command("complete-oauth <provider-id>")
-	.description("Complete AI Provider OAuth with a pasted redirect URL or code/state")
+	.description("Complete AI provider OAuth with a pasted redirect URL or code/state")
 	.option("--redirect-url <url>", "Full OAuth redirect URL containing code and state")
 	.option("--code <code>", "OAuth authorization code")
 	.option("--state <state>", "OAuth state returned by connect")
@@ -538,7 +538,7 @@ aiProviderCmd
 
 aiProviderCmd
 	.command("import-auth <provider-id>")
-	.description("Import a local auth profile and bind it to an AI Provider")
+	.description("Import a local auth profile and bind it to an AI provider")
 	.option("--tool <tool>", "Tool profile to import, currently codex")
 	.option("--profile <name>", "Profile name", "default")
 	.option("--source <source>", "Credential source: file or keychain", "file")
@@ -556,7 +556,7 @@ aiProviderCmd
 
 aiProviderCmd
 	.command("export")
-	.description("Export Provider Catalog metadata and refs")
+	.description("Export provider catalog metadata and refs")
 	.option("--out <file>", "Write to a file instead of stdout")
 	.option("--include-secrets", "Include encrypted env-backed secrets in the export")
 	.option("--secret-passphrase", "Encrypt included secrets with a passphrase from env")
@@ -572,7 +572,7 @@ aiProviderCmd
 
 aiProviderCmd
 	.command("import [file]")
-	.description("Import and merge a Provider Catalog file")
+	.description("Import and merge a provider catalog file")
 	.option("--from-hermes <path>", "Import providers from a Hermes config.yaml")
 	.option("--from-openclaw <path>", "Import providers from an OpenClaw projection JSON")
 	.option("--import-secrets <target>", "Import encrypted secrets to a target, currently env-file")
@@ -830,22 +830,22 @@ const vaultCmd = program
 		"after",
 		`
 Scope:
-  Vaults are account-level key bundles. Projects attach to a Vault to use the
-  same shared key set. set/import update the Vault for every attached Project.
-  rm deletes a key from the Vault; detach only removes one Project's access.
+  Vaults are account-level key bundles. Projects attach to a vault to use the
+  same shared key set. set/import update the vault for every attached project.
+  rm deletes a key from the vault; detach only removes one project's access.
   Key paths are KEY, vault/KEY, or vault/section/KEY.`,
 	);
 
 vaultCmd
 	.command("materialize")
 	.alias("pull")
-	.description("Bind one Vault to a local dotenv file, or pull its saved binding")
+	.description("Bind one vault to a local dotenv file, or pull its saved binding")
 	.requiredOption(
 		"--out <absolute-path>",
 		"Explicit local dotenv target (must be Git-ignored in a repository)",
 	)
-	.option("--vault <uuid>", "Exact Vault identity; required on first pull")
-	.option("--project <uuid>", "Exact Project attachment; required on first pull")
+	.option("--vault <uuid>", "Exact vault identity; required on first pull")
+	.option("--project <uuid>", "Exact project attachment; required on first pull")
 	.option("--section <name>", "Limit to one section (empty string selects unsectioned keys)")
 	.action(async (opts) => {
 		const { vaultMaterialize } = await import("./commands/vault-materialize.js");
@@ -918,8 +918,8 @@ vaultCmd
 
 vaultCmd
 	.command("attach <vault>")
-	.description("Make an existing Vault available in a Project")
-	.requiredOption("-p, --project <id-or-slug>", "Project that should use this Vault")
+	.description("Make an existing vault available in a project")
+	.requiredOption("-p, --project <id-or-slug>", "Project that should use this vault")
 	.addHelpText(
 		"after",
 		"\nExamples:\n  $ clawdi vault attach providers --project redpill-providers",
@@ -932,8 +932,8 @@ vaultCmd
 vaultCmd
 	.command("detach <vault>")
 	.alias("unlink")
-	.description("Remove a Project's access to a Vault without deleting keys")
-	.requiredOption("-p, --project <id-or-slug>", "Project that should stop using this Vault")
+	.description("Remove a project's access to a vault without deleting keys")
+	.requiredOption("-p, --project <id-or-slug>", "Project that should stop using this vault")
 	.addHelpText(
 		"after",
 		"\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault unlink providers --project old-agent",
@@ -946,15 +946,15 @@ vaultCmd
 vaultCmd
 	.command("rm <key>")
 	.alias("delete")
-	.description("Delete a key from a Vault")
+	.description("Delete a key from a vault")
 	.option(
 		"-p, --project <id-or-slug>",
-		"Select the Project used to locate the Vault (default: your default-write project)",
+		"Select the project used to locate the vault (default: your default-write project)",
 	)
 	.option("-y, --yes", "Skip the confirmation prompt")
 	.option(
 		"--global",
-		"Allow deleting a key from a Vault attached to multiple Projects (affects every Project using it)",
+		"Allow deleting a key from a vault attached to multiple projects (affects every project using it)",
 	)
 	.addHelpText(
 		"after",
@@ -972,10 +972,10 @@ vaultCmd
 		"-p, --project <project>",
 		"Project to resolve from (default: your default-write project)",
 	)
-	.option("-a, --agent <agent-id-or-type>", "Resolve through Workspace and linked Projects")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through workspace and linked projects")
 	.option(
 		"--allow-conflicts",
-		"Allow first-match wins for Workspace and linked-Project Vault conflicts",
+		"Allow first-match wins for workspace and linked-project vault conflicts",
 	)
 	.option("--debug", "Show project precedence and skipped matches")
 	.option("--dry-run", "Check where the key resolves without printing the plaintext value")
@@ -998,10 +998,10 @@ program
 	.description("Read one clawdi:// secret reference")
 	.argument("<reference>", "Reference to read")
 	.option("-p, --project <project>", "Project to resolve from")
-	.option("-a, --agent <agent-id-or-type>", "Resolve through Workspace and linked Projects")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through workspace and linked projects")
 	.option(
 		"--allow-conflicts",
-		"Allow first-match wins for Workspace and linked-Project Vault conflicts",
+		"Allow first-match wins for workspace and linked-project vault conflicts",
 	)
 	.option("--debug", "Show project precedence without printing secrets in diagnostics")
 	.option("--dry-run", "Check the reference without printing the plaintext value")
@@ -1024,12 +1024,12 @@ program
 	.option("--out <file>", "Output path, or - for stdout", "-")
 	.option("--force", "Overwrite an existing output file")
 	.option("-p, --project <project>", "Project to resolve from")
-	.option("-a, --agent <agent-id-or-type>", "Resolve through Workspace and linked Projects")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through workspace and linked projects")
 	.option(
 		"--allow-conflicts",
-		"Allow first-match wins for Workspace and linked-Project Vault conflicts",
+		"Allow first-match wins for workspace and linked-project vault conflicts",
 	)
-	.option("--no-project-folder", "Skip linked-folder Project lookup")
+	.option("--no-project-folder", "Skip linked-folder project lookup")
 	.option("--dry-run", "Show references that would resolve without writing output")
 	.addHelpText(
 		"after",
@@ -1064,15 +1064,15 @@ skillCmd
 skillCmd
 	.command("add <path>")
 	.description("Upload a skill directory or single .md file")
-	.option("-a, --agent <type>", `Upload to an Agent Workspace (${SKILL_AGENT_TYPE_HELP_LABEL})`)
+	.option("-a, --agent <type>", `Upload to an agent workspace (${SKILL_AGENT_TYPE_HELP_LABEL})`)
 	.option(
 		"-p, --project <id-or-slug>",
-		"Upload to an explicit project (UUID, slug, or name). Mutex with --agent.",
+		"Upload to an explicit project (UUID, slug, or name); can't be combined with --agent",
 	)
 	.option("-y, --yes", "Skip the confirmation prompt")
 	.addHelpText(
 		"after",
-		"\nExamples:\n  $ clawdi skill add ./my-skill --project engineering   # Project\n  $ clawdi skill add ./my-skill --agent codex            # Agent Workspace",
+		"\nExamples:\n  $ clawdi skill add ./my-skill --project engineering   # Project\n  $ clawdi skill add ./my-skill --agent codex            # Agent workspace",
 	)
 	.action(async (path, opts) => {
 		const { skillAdd } = await import("./commands/skill.js");
@@ -1085,7 +1085,7 @@ skillCmd
 	.option("-a, --agent <type>", `Install to a single agent (${SKILL_AGENT_TYPE_HELP_LABEL})`)
 	.option(
 		"-p, --project <id-or-slug>",
-		"Install into an explicit owned project (UUID, slug, or name). Mutex with --agent.",
+		"Install into an explicit owned project (UUID, slug, or name); can't be combined with --agent",
 	)
 	.addHelpText(
 		"after",
@@ -1104,10 +1104,10 @@ Examples:
 skillCmd
 	.command("rm <key>")
 	.description("Remove a skill from the cloud")
-	.option("-a, --agent <type>", `Remove from an Agent Workspace (${SKILL_AGENT_TYPE_HELP_LABEL})`)
+	.option("-a, --agent <type>", `Remove from an agent workspace (${SKILL_AGENT_TYPE_HELP_LABEL})`)
 	.option(
 		"-p, --project <id-or-slug>",
-		"Remove from an explicit owned project (UUID, slug, or name). Mutex with --agent.",
+		"Remove from an explicit owned project (UUID, slug, or name); can't be combined with --agent",
 	)
 	.action(async (key, opts) => {
 		const { skillRm } = await import("./commands/skill.js");
@@ -1181,7 +1181,7 @@ sessionCmd
 
 sessionCmd
 	.command("export <session-id>")
-	.description("Export an uploaded Cloud session as Markdown to stdout")
+	.description("Export an uploaded session as Markdown to stdout")
 	.option("--json", "Export owner metadata and messages as JSON instead")
 	.action(async (id, opts) => {
 		const { sessionExport } = await import("./commands/session.js");
@@ -1423,8 +1423,8 @@ program
 program
 	.command("run")
 	.description("Run a command with clawdi:// references resolved")
-	.option("-p, --project <id-or-slug>", "Resolve references from an explicit Project")
-	.option("-a, --agent <agent-id-or-type>", "Resolve through Workspace and linked Projects")
+	.option("-p, --project <id-or-slug>", "Resolve references from an explicit project")
+	.option("-a, --agent <agent-id-or-type>", "Resolve through workspace and linked projects")
 	.option(
 		"--env-file <file>",
 		"Load dotenv-like file and resolve clawdi:// references",
@@ -1432,12 +1432,12 @@ program
 		[],
 	)
 	.option("--no-inherit-env", "Do not inherit the parent process environment")
-	.option("--all-vault-env", "Legacy mode: inject every vault env value from the selected Project")
+	.option("--all-vault-env", "Legacy mode: inject every vault env value from the selected project")
 	.option(
 		"--allow-conflicts",
-		"Allow first-match wins for Workspace and linked-Project Vault conflicts",
+		"Allow first-match wins for workspace and linked-project vault conflicts",
 	)
-	.option("--no-project-folder", "Skip linked-folder Project lookup")
+	.option("--no-project-folder", "Skip linked-folder project lookup")
 	.option("--dry-run", "Show reference resolution plan without launching the command")
 	.addOption(
 		new Option(
@@ -1480,8 +1480,8 @@ Folder-link workflow:
   $ clawdi run -- npm run deploy
 
 Notes:
-	  project list shows user-created and shared Projects by default.
-	  Use project list --include-workspaces to inspect Agent Workspaces.`,
+	  project list shows user-created and shared projects by default.
+	  Use project list --include-workspaces to inspect agent workspaces.`,
 	);
 
 projectCmd
@@ -1506,7 +1506,7 @@ projectCmd
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.option("--shared-with-me", "Show only projects shared with you")
 	.option("--owned", "Show only projects you own")
-	.option("--include-workspaces", "Include Agent Workspaces")
+	.option("--include-workspaces", "Include agent workspaces")
 	.addOption(new Option("--include-envs").hideHelp())
 	.addHelpText(
 		"after",
@@ -1539,11 +1539,11 @@ projectCmd
 
 const projectFolderCmd = projectCmd
 	.command("folder")
-	.description("Link local folders to Projects for automatic vault env selection");
+	.description("Link local folders to projects for automatic vault env selection");
 
 projectFolderCmd
 	.command("link [path]")
-	.description("Use this folder with a Project")
+	.description("Use this folder with a project")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, or owner-qualified slug")
 	.addHelpText(
 		"after",
@@ -1559,7 +1559,7 @@ Examples:
 
 projectFolderCmd
 	.command("unlink [path]")
-	.description("Stop using this folder with its linked Project")
+	.description("Stop using this folder with its linked project")
 	.addHelpText(
 		"after",
 		`
@@ -1574,7 +1574,7 @@ Examples:
 
 projectFolderCmd
 	.command("status [path]")
-	.description("Show which Project clawdi run will use for a folder")
+	.description("Show which project clawdi run will use for a folder")
 	.addHelpText(
 		"after",
 		`
@@ -1666,10 +1666,10 @@ const agentCmd = program.command("agent").description("Manage agents");
 
 const agentSkillsCmd = agentCmd
 	.command("skills")
-	.description("Manage remote Cloud Agent Skills (not local --agent types)");
+	.description("Manage remote Cloud Agent skills (not local --agent types)");
 agentSkillsCmd
 	.command("list <agent-id>")
-	.description("List remote desired Skills, capabilities and observed convergence")
+	.description("List remote desired skills, capabilities and observed convergence")
 	.option("--json", "Output as JSON")
 	.action(async (id, opts) => {
 		const { agentSkillsList } = await import("./commands/agent-skills.js");
@@ -1677,7 +1677,7 @@ agentSkillsCmd
 	});
 agentSkillsCmd
 	.command("read <agent-id> <skill-key>")
-	.description("Read remote Skill detail using its exact inventory key")
+	.description("Read remote skill detail using its exact inventory key")
 	.option("--json", "Output as JSON")
 	.action(async (id, key, opts) => {
 		const { agentSkillsRead } = await import("./commands/agent-skills.js");
@@ -1685,10 +1685,10 @@ agentSkillsCmd
 	});
 agentSkillsCmd
 	.command("install <agent-id>")
-	.description("Request a public GitHub Skill or Library reference; inspect list for application")
+	.description("Request a public GitHub skill or library reference; inspect list for application")
 	.option("--github <repo>", "Public GitHub owner/repo or URL")
 	.option("--path <directory>", "Skill directory within the GitHub repository")
-	.option("--library <skill-id>", "Cloud Library Skill UUID")
+	.option("--library <skill-id>", "Library skill UUID")
 	.option("--request-id <uuid>", "GitHub mutation idempotency key (generated if omitted)")
 	.option(
 		"--resource-version <version>",
@@ -1701,7 +1701,7 @@ agentSkillsCmd
 	});
 agentSkillsCmd
 	.command("rm <agent-id> <skill-key>")
-	.description("Request removal by exact remote inventory key; linked/bundled Skills are read-only")
+	.description("Request removal by exact remote inventory key; linked/bundled skills are read-only")
 	.option("--request-id <uuid>", "GitHub mutation idempotency key (generated if omitted)")
 	.option(
 		"--resource-version <version>",
@@ -1724,7 +1724,7 @@ agentCmd
 
 agentCmd
 	.command("reconnect [agent-id]")
-	.description("Recover a local Agent binding without creating a new cloud identity")
+	.description("Recover a local agent binding without creating a new cloud identity")
 	.option("--agent <type>", `Agent type (${AGENT_TYPE_HELP_LABEL})`)
 	.option("-y, --yes", "Skip confirmation when the target is unambiguous")
 	.option("--confirm-takeover", "Confirm disconnecting a recently active installation")
@@ -1745,7 +1745,7 @@ const agentCredentialsCmd = agentCmd
 
 agentCredentialsCmd
 	.command("import <tool>")
-	.description("Import a personal local CLI credential profile into Clawdi Vault")
+	.description("Import a personal local CLI credential profile into Clawdi vault")
 	.option("-p, --project <id-or-slug>", "Target a specific project")
 	.option("--profile <name>", "Profile name", "default")
 	.option("--source <source>", "Credential source: file or keychain", "file")
@@ -1798,11 +1798,11 @@ Examples:
 
 const agentProjectsCmd = agentCmd
 	.command("projects")
-	.description("View Workspace and linked Projects");
+	.description("View workspace and linked projects");
 
 agentProjectsCmd
 	.command("list <agent-id>")
-	.description("Show Workspace and linked-Project Vault priority")
+	.description("Show workspace and linked-project vault priority")
 	.option("--json", "Emit machine-readable JSON (agent contract)")
 	.action(async (agentId, opts) => {
 		const { agentProjectsListCommand } = await import("./commands/agent-projects.js");
@@ -1812,7 +1812,7 @@ agentProjectsCmd
 agentProjectsCmd
 	.command("link <agent-id>")
 	.alias("attach")
-	.description("Link a Project for Vault resolution")
+	.description("Link a project for vault resolution")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
 	.option("--order <n>", "Vault resolution priority (>=1)")
 	.action(async (agentId, opts) => {
@@ -1823,7 +1823,7 @@ agentProjectsCmd
 agentProjectsCmd
 	.command("unlink <agent-id>")
 	.alias("detach")
-	.description("Unlink a Project from Vault resolution")
+	.description("Unlink a project from vault resolution")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
 	.action(async (agentId, opts) => {
 		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
@@ -1832,10 +1832,10 @@ agentProjectsCmd
 
 agentProjectsCmd
 	.command("move <agent-id>")
-	.description("Update Vault resolution priority")
+	.description("Update vault resolution priority")
 	.option(
 		"--item <id:order>",
-		"Linked Project relation id and target Vault priority (repeatable)",
+		"Linked project relation ID and target vault priority (repeatable)",
 		collectValues,
 		[] as string[],
 	)
@@ -1868,7 +1868,7 @@ inboxCmd
 	.option("--url <link>", "Explicit share URL (bypass shape detection)")
 	.option(
 		"-a, --agent <agent-id>",
-		"Link the accepted Project to one or more Agents (repeat or comma-separate)",
+		"Link the accepted project to one or more agents (repeat or comma-separate)",
 		collectCsvValues,
 		[] as string[],
 	)
@@ -1882,7 +1882,7 @@ Examples:
     $ clawdi inbox accept https://clawdi.ai/share/abc...
     $ clawdi inbox accept 1a2b3c4d-...    # invitation id
 
-  Accept and link to Agent:
+  Accept and link to agent:
     $ clawdi inbox accept --url <link> --agent <agent-id>
     $ clawdi inbox accept --invite <id> --agent <agent-id>`,
 	)
@@ -1896,7 +1896,7 @@ inboxCmd
 	.description("Explicitly join one locally staged project share")
 	.option(
 		"-a, --agent <agent-id>",
-		"Link the joined Project to one or more Agents (repeat or comma-separate)",
+		"Link the joined project to one or more agents (repeat or comma-separate)",
 		collectCsvValues,
 		[] as string[],
 	)

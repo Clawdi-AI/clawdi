@@ -25,7 +25,7 @@ const BROAD_VAULT_SLUGS = new Set([
 
 function requireAuth() {
 	if (!isLoggedIn()) {
-		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
+		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
 		process.exit(1);
 	}
 }
@@ -243,7 +243,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 		console.log(chalk.white(`Project ${projectLabel(group.projectId)}`));
 		for (const { vault, items } of group.rows) {
 			const projectCount = vaultProjectIds(vault).length;
-			const attachedSummary = projectCount > 1 ? ` (${projectCount} attached Projects)` : "";
+			const attachedSummary = projectCount > 1 ? ` (${projectCount} attached projects)` : "";
 			console.log(chalk.gray(`  Vault ${sanitizeMetadata(vault.slug)}${attachedSummary}`));
 			for (const row of group.projectId
 				? buildVaultReferenceRows(group.projectId, vault.slug, items)
@@ -262,7 +262,7 @@ interface VaultProjectOptions {
 export async function vaultAttach(vaultSlugArg: string, opts: VaultProjectOptions = {}) {
 	requireAuth();
 	if (!opts.project) {
-		throw new Error("Pass --project to choose which Project should use this Vault.");
+		throw new Error("Pass --project to choose which project should use this vault.");
 	}
 
 	const vaultSlug = cleanVaultSlug(vaultSlugArg);
@@ -271,7 +271,7 @@ export async function vaultAttach(vaultSlugArg: string, opts: VaultProjectOption
 	const vault = await loadVault(api, vaultSlug);
 	if (!vault) {
 		throw new Error(
-			`No Vault named "${vaultSlug}" was found. Store a key first with \`clawdi vault set ${vaultSlug}/KEY --prompt\`.`,
+			`No vault named "${vaultSlug}" was found. Store a key first with \`clawdi vault set ${vaultSlug}/KEY --prompt\`.`,
 		);
 	}
 	const projectIdsBefore = vaultProjectIds(vault);
@@ -293,7 +293,7 @@ export async function vaultAttach(vaultSlugArg: string, opts: VaultProjectOption
 	);
 	console.log(
 		chalk.gray(
-			`  Keys in this Vault are now available from ${attachedCount} Project${attachedCount === 1 ? "" : "s"} and remain one shared key set.`,
+			`  Keys in this vault are now available from ${attachedCount} project${attachedCount === 1 ? "" : "s"} and remain one shared key set.`,
 		),
 	);
 }
@@ -301,7 +301,7 @@ export async function vaultAttach(vaultSlugArg: string, opts: VaultProjectOption
 export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOptions = {}) {
 	requireAuth();
 	if (!opts.project) {
-		throw new Error("Pass --project to choose which Project should stop using this Vault.");
+		throw new Error("Pass --project to choose which project should stop using this vault.");
 	}
 
 	const vaultSlug = cleanVaultSlug(vaultSlugArg);
@@ -309,7 +309,7 @@ export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOption
 	const targetProject = await resolveVaultWriteProject(api, opts.project);
 	const vault = await loadVault(api, vaultSlug);
 	if (!vault) {
-		throw new Error(`No Vault named "${vaultSlug}" was found.`);
+		throw new Error(`No vault named "${vaultSlug}" was found.`);
 	}
 	const projectIdsBefore = vaultProjectIds(vault);
 	if (!projectIdsBefore.includes(targetProject.projectId)) {
@@ -337,7 +337,7 @@ export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOption
 	);
 	console.log(
 		chalk.gray(
-			`  No keys were deleted. This Vault remains attached to ${remainingCount} Project${remainingCount === 1 ? "" : "s"}.`,
+			`  No keys were deleted. This vault remains attached to ${remainingCount} project${remainingCount === 1 ? "" : "s"}.`,
 		),
 	);
 }
@@ -472,11 +472,11 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 	const targetProject = await resolveVaultWriteProject(api, opts.project);
 	const target = formatVaultTarget(vaultSlug, section, targetProject);
 	const vault = await loadVault(api, vaultSlug);
-	if (!vault) throw new Error(`No Vault named "${vaultSlug}" was found.`);
+	if (!vault) throw new Error(`No vault named "${vaultSlug}" was found.`);
 	const attachedProjectIds = vaultProjectIds(vault);
 	if (attachedProjectIds.length > 1 && !opts.global) {
 		throw new Error(
-			`Refusing to delete ${normalizedKey} from shared vault "${vaultSlug}". This Vault is attached to ${attachedProjectIds.length} Projects, so deleting the key would remove it for every Project. Re-run with --global after you have confirmed that is intended.`,
+			`Refusing to delete ${normalizedKey} from shared vault "${vaultSlug}". This vault is attached to ${attachedProjectIds.length} projects, so deleting the key would remove it for every project. Re-run with --global after you have confirmed that is intended.`,
 		);
 	}
 
@@ -484,7 +484,7 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 		const ok = await p.confirm({
 			message:
 				attachedProjectIds.length > 1
-					? `Delete ${normalizedKey} globally from ${attachedProjectIds.length} Projects using ${target}?`
+					? `Delete ${normalizedKey} globally from ${attachedProjectIds.length} projects using ${target}?`
 					: `Delete ${normalizedKey} from ${target}?`,
 		});
 		if (p.isCancel(ok) || !ok) {
@@ -509,7 +509,7 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 
 	const suffix =
 		attachedProjectIds.length > 1
-			? ` globally from shared ${target} (${attachedProjectIds.length} Projects attached)`
+			? ` globally from shared ${target} (${attachedProjectIds.length} projects attached)`
 			: ` from ${target}`;
 	console.log(chalk.green(`✓ Deleted ${normalizedKey}${suffix}`));
 }
@@ -626,7 +626,7 @@ async function warnIfSharedVaultWrite(api: ApiClient, vaultSlug: string) {
 	if (projectIds.length <= 1) return;
 	console.log(
 		chalk.yellow(
-			`  Shared Vault: "${sanitizeMetadata(vaultSlug)}" is attached to ${projectIds.length} Projects. This write updates the same key set for every attached Project.`,
+			`  Shared vault: "${sanitizeMetadata(vaultSlug)}" is attached to ${projectIds.length} projects. This write updates the same key set for every attached project.`,
 		),
 	);
 }

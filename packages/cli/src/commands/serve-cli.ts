@@ -66,7 +66,7 @@ export function registerServeCommand(program: Command, handlers?: ServeHandlers)
 		.option("--port <port>", "Control HTTP RPC port")
 		.option("--allow-remote", "Allow the control HTTP RPC listener to bind a non-loopback host")
 		.description(
-			"Manage the background sync daemon — projects local Agent Skills to Cloud and mirrors sessions",
+			"Manage the background sync daemon — syncs local agent skills to Clawdi and mirrors sessions",
 		)
 		.addHelpText(
 			"after",

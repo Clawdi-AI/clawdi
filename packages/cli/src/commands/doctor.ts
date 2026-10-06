@@ -26,21 +26,21 @@ async function checkAuth(): Promise<Check> {
 		return {
 			name: "Auth",
 			ok: false,
-			detail: "not logged in",
+			detail: "not signed in",
 			hint: "Run `clawdi auth login`",
 		};
 	}
 	return {
 		name: "Auth",
 		ok: true,
-		detail: auth.email || auth.userId || "logged in",
+		detail: auth.email || auth.userId || "signed in",
 	};
 }
 
 async function checkApiReachable(): Promise<Check> {
 	const config = getConfig();
 	if (!isLoggedIn()) {
-		return { name: "API reachability", ok: false, detail: "skipped (not logged in)" };
+		return { name: "API reachability", ok: false, detail: "skipped (not signed in)" };
 	}
 	try {
 		const api = new ApiClient();
@@ -106,7 +106,7 @@ function checkRegisteredEnvs(): Check {
 
 async function checkVault(): Promise<Check> {
 	if (!isLoggedIn()) {
-		return { name: "Vault metadata", ok: false, detail: "skipped (not logged in)" };
+		return { name: "Vault metadata", ok: false, detail: "skipped (not signed in)" };
 	}
 	try {
 		const api = new ApiClient();
@@ -132,7 +132,7 @@ async function checkVault(): Promise<Check> {
 
 async function checkMcp(): Promise<Check> {
 	if (!isLoggedIn()) {
-		return { name: "Clawdi MCP", ok: false, detail: "skipped (not logged in)" };
+		return { name: "Clawdi MCP", ok: false, detail: "skipped (not signed in)" };
 	}
 	try {
 		const api = new ApiClient();

@@ -289,10 +289,10 @@ describe("host policy", () => {
 			"runtime setup is managed by clawdi runtime init",
 		);
 		expect(deniedCommandReason(result.policy, "agent reconnect")).toBe(
-			"Connected Agent identity is managed outside hosted runtimes",
+			"Connected Agent identity can't be managed inside a Cloud Agent",
 		);
 		expect(deniedCommandReason(result.policy, "update")).toBe(
-			"CLI updates are managed by the hosted runtime installation",
+			"CLI updates are managed by the Cloud Agent runtime",
 		);
 		expect(deniedCommandReason(result.policy, "mcp")).toBe(null);
 		expect(evaluateHostPolicyForCommand("mcp")).toEqual({
