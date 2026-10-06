@@ -171,6 +171,9 @@ test("API key settings protects secrets and reconciles optimistic revokes", asyn
 				writeText: () => Promise.reject(new DOMException("Clipboard blocked")),
 			},
 		});
+		const execCommand = document.execCommand.bind(document);
+		document.execCommand = (command, ...args) =>
+			command === "copy" ? false : execCommand(command, ...args);
 	});
 	const api = await stubApiKeys(page);
 
