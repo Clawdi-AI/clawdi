@@ -53,11 +53,13 @@ function rpcOAuthAccessToken(): string {
 
 function rpcPendingAuth(): PendingAuth {
 	return {
-		authType: "clerk_oauth_pkce",
+		authType: "clerk_oauth_device",
 		state: "rpc-state",
-		codeVerifier: "rpc-verifier",
-		authorizationUrl: "https://clerk.example.test/oauth/authorize",
-		redirectUri: "http://127.0.0.1:18473/oauth/callback",
+		deviceCode: "rpc-private-device-code",
+		userCode: "ABCD-EFGH",
+		verificationUri: "https://accounts.example.test/device",
+		verificationUriComplete: "https://accounts.example.test/device?user_code=ABCD-EFGH",
+		interval: 5,
 		issuer: "https://clerk.example.test",
 		clientId: "clawdi-cli",
 		audience: "clawdi-api",
@@ -462,6 +464,134 @@ describe("full control RPC handler surface", () => {
 		}
 	});
 
+	it("starts device auth and exposes only public fields; complete polls once without callback import", async () => {
+		const originalClawdiHome = process.env.CLAWDI_HOME;
+		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
+		const originalFetch = globalThis.fetch;
+		const tmpHome = mkdtempSync(join(tmpdir(), "clawdi-rpc-device-"));
+		process.env.CLAWDI_HOME = join(tmpHome, ".clawdi");
+		delete process.env.CLAWDI_AUTH_TOKEN;
+		let tokenCalls = 0;
+		let tokenError = "authorization_pending";
+		globalThis.fetch = Object.assign(
+			async (input: RequestInfo | URL) => {
+				const request = input instanceof Request ? input : new Request(input);
+				const path = new URL(request.url).pathname;
+				if (path === "/v1/cli/auth/oauth/config")
+					return Response.json({
+						issuer: "https://clerk.example.test",
+						client_id: "clawdi-cli",
+						audience: "clawdi-api",
+						authorized_parties: [],
+						redirect_uri: "ignored",
+					});
+				if (path === "/.well-known/oauth-authorization-server")
+					return Response.json({
+						issuer: "https://clerk.example.test",
+						device_authorization_endpoint: "https://clerk.example.test/oauth/device_authorization",
+						token_endpoint: "https://clerk.example.test/oauth/token",
+						grant_types_supported: [
+							"urn:ietf:params:oauth:grant-type:device_code",
+							"refresh_token",
+						],
+						token_endpoint_auth_methods_supported: ["none"],
+					});
+				if (path === "/oauth/device_authorization")
+					return Response.json({
+						device_code: "rpc-private-device-code",
+						user_code: "ABCD-EFGH",
+						verification_uri: "https://accounts.example.test/device",
+						verification_uri_complete: "https://accounts.example.test/device?user_code=ABCD-EFGH",
+						expires_in: 120,
+						interval: 7,
+					});
+				if (path === "/oauth/token") {
+					tokenCalls++;
+					return Response.json({ error: tokenError }, { status: 400 });
+				}
+				throw new Error("Unexpected fake request");
+			},
+			{ preconnect: originalFetch.preconnect },
+		);
+		try {
+			const [{ createControlRpcHandlers }, config] = await Promise.all([
+				import("./serve"),
+				import("../lib/config"),
+			]);
+			const handlers = createControlRpcHandlers();
+			const login = handlers["auth.login"],
+				status = handlers["auth.status"],
+				complete = handlers["auth.complete"];
+			if (!login || !status || !complete) throw new Error("Missing auth handlers");
+			expect(await complete({})).toEqual({ status: "no_pending_auth" });
+			const pending = await login({ api_url: "https://cloud.example.test" });
+			expect(pending).toMatchObject({
+				status: "pending",
+				verification_uri: "https://accounts.example.test/device",
+				verification_uri_complete: "https://accounts.example.test/device?user_code=ABCD-EFGH",
+				user_code: "ABCD-EFGH",
+				interval: 7,
+				api_url: "https://cloud.example.test",
+			});
+			expect(JSON.stringify(pending)).not.toContain("rpc-private-device-code");
+			const pendingStatus = await status({});
+			expect(pendingStatus).toMatchObject({
+				pending_auth: {
+					verification_uri: "https://accounts.example.test/device",
+					user_code: "ABCD-EFGH",
+					api_url: "https://cloud.example.test",
+				},
+			});
+			expect(JSON.stringify(pendingStatus)).not.toContain("rpc-private-device-code");
+			await expect((async () => complete({ callback_url: "old-callback" }))()).rejects.toThrow(
+				"callback_url",
+			);
+			await expect((async () => complete({ confirm_secret_access: true }))()).rejects.toThrow(
+				"confirm_secret_access",
+			);
+			expect(await complete({})).toEqual({ status: "pending", interval: 7 });
+			expect(await complete({})).toEqual({ status: "pending", interval: 7 });
+			expect(tokenCalls).toBe(1);
+			const slowHandler = createControlRpcHandlers()["auth.complete"];
+			if (!slowHandler) throw new Error("Missing complete handler");
+			tokenError = "slow_down";
+			expect(await slowHandler({})).toEqual({ status: "pending", interval: 12 });
+			expect(config.getPendingAuth()).toMatchObject({ interval: 12 });
+			for (const [error, outcome] of [
+				["access_denied", "denied"],
+				["expired_token", "expired"],
+			]) {
+				config.setPendingAuth(rpcPendingAuth());
+				tokenError = error ?? "";
+				const once = createControlRpcHandlers()["auth.complete"];
+				if (!once) throw new Error("Missing complete handler");
+				expect(await once({})).toEqual({ status: outcome });
+				expect(config.getPendingAuth()).toBeNull();
+			}
+			writeFileSync(
+				join(tmpHome, ".clawdi", "pending-auth.json"),
+				JSON.stringify({
+					authType: "clerk_oauth_pkce",
+					state: "old",
+					expiresAt: new Date(Date.now() + 60_000).toISOString(),
+				}),
+			);
+			expect(await status({})).toMatchObject({ pending_auth: null });
+			expect(await complete({})).toMatchObject({
+				status: "no_pending_auth",
+				message: expect.stringContaining("older Clawdi CLI"),
+			});
+			expect(config.getPendingAuth()).toBeNull();
+		} finally {
+			globalThis.fetch = originalFetch;
+			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalClawdiHome;
+			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalToken;
+			rmSync(tmpHome, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps auth.complete Cloud verification outcomes explicit and secret-free", async () => {
 		const originalClawdiHome = process.env.CLAWDI_HOME;
 		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
@@ -474,8 +604,6 @@ describe("full control RPC handler surface", () => {
 				import("./serve"),
 				import("../lib/config"),
 			]);
-			const handler = createControlRpcHandlers()["auth.complete"];
-			if (!handler) throw new Error("missing auth.complete handler");
 
 			for (const cloudCase of [
 				"verified",
@@ -487,6 +615,8 @@ describe("full control RPC handler surface", () => {
 			] as const) {
 				config.clearAuth();
 				config.setPendingAuth(rpcPendingAuth());
+				const handler = createControlRpcHandlers()["auth.complete"];
+				if (!handler) throw new Error("missing auth.complete handler");
 				const paths: string[] = [];
 				globalThis.fetch = Object.assign(
 					async (input: RequestInfo | URL) => {
@@ -533,10 +663,7 @@ describe("full control RPC handler surface", () => {
 				let result: unknown;
 				let caught: unknown;
 				try {
-					result = await handler({
-						callback_url: "http://127.0.0.1:18473/oauth/callback?code=rpc-code&state=rpc-state",
-						confirm_secret_access: true,
-					});
+					result = await handler({});
 				} catch (error) {
 					caught = error;
 				}
@@ -550,7 +677,7 @@ describe("full control RPC handler surface", () => {
 					expect(config.getStoredAuth()).toMatchObject({ userId: "rpc-cloud-user" });
 				} else if (cloudCase === "server_error" || cloudCase === "network") {
 					expect(result).toEqual({
-						status: "cloud_unverified",
+						status: "logged_in",
 						cloud_verified: false,
 						reason: cloudCase === "network" ? "network" : "server_error",
 						...(cloudCase === "server_error" ? { http_status: 503 } : {}),

@@ -164,12 +164,26 @@ describe("setup notice", () => {
 		},
 	);
 
+	it("reports integration success when Codex registration uses the config fallback", async () => {
+		installEnvironmentMock("env-notice");
+		mkdirSync(join(home, ".codex", "sessions"), { recursive: true });
+		writeExecutable(join(home, "bin", "codex"), "#!/bin/sh\nexit 1\n");
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		const output = consoleOutput.join("\n");
+		expect(output).toContain("MCP server registered in Codex (config.toml)");
+		expect(output).toContain("Skill and MCP tools installed for supported agents");
+		expect(output).not.toContain("Could not auto-register MCP server");
+	});
+
 	it.each(["claude", "codex"])(
 		"reports integration success when the other registered agent succeeds despite %s failing",
 		async (failedAgent) => {
 			installEnvironmentMock("env-notice");
 			mkdirSync(join(home, ".claude", "projects"), { recursive: true });
 			mkdirSync(join(home, ".codex", "sessions"), { recursive: true });
+			if (failedAgent === "codex") mkdirSync(join(home, ".codex", "config.toml"));
 			for (const agent of ["claude", "codex"]) {
 				writeExecutable(
 					join(home, "bin", agent),
@@ -257,14 +271,13 @@ describe("setup daemon install", () => {
 		installEnvironmentMock("env-codex-probe");
 		writeExecutable(
 			join(home, "bin", "codex"),
-			'#!/bin/sh\nif [ "$*" = "mcp list" ]; then exit 9; fi\nif [ "$*" = "mcp add clawdi -- clawdi mcp" ]; then printf "%s\\n" "$*" > "$HOME/codex-mcp-register"; fi\nexit 0\n',
+			'#!/bin/sh\nif [ "$*" = "mcp list" ]; then exit 9; fi\ncase "$*" in "mcp add clawdi -- "*) printf "%s\\n" "$*" > "$HOME/codex-mcp-register" ;; esac\nexit 0\n',
 		);
 
 		await setup({ agent: "codex", yes: true, daemon: false });
 
-		expect(readFileSync(join(home, "codex-mcp-register"), "utf-8").trim()).toBe(
-			"mcp add clawdi -- clawdi mcp",
-		);
+		const registration = readFileSync(join(home, "codex-mcp-register"), "utf-8").trim();
+		expect(registration).toMatch(/^mcp add clawdi -- \/.+ mcp$/);
 		expect(consoleOutput.some((line) => line.includes("Could not auto-register"))).toBe(false);
 	});
 
@@ -284,7 +297,7 @@ describe("setup daemon install", () => {
 		expect(existsSync(join(target, "SKILL.md"))).toBe(true);
 		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
 		expect(existsSync(join(home, "pi-agent", "mcp.json"))).toBe(false);
-		expect(consoleOutput.join("\n")).toContain("Run manually: pi mcp add clawdi -- clawdi mcp");
+		expect(consoleOutput.join("\n")).toMatch(/Run manually: pi mcp add clawdi -- \/.+ mcp/);
 		expect(consoleOutput.join("\n")).not.toContain(
 			"Skill and MCP tools installed for supported agents",
 		);
@@ -496,7 +509,7 @@ describe("setup Hermes MCP registration", () => {
 
 		const after = readFileSync(configPath, "utf-8");
 		expect(parseYaml(after)).toMatchObject({
-			mcp_servers: { clawdi: { command: "clawdi", args: ["mcp"] } },
+			mcp_servers: { clawdi: { command: expect.any(String), args: [expect.any(String), "mcp"] } },
 		});
 		expect(after).not.toContain("clawdi-mcp:");
 		expect(after).not.toContain("https://backend.example.test/composio/mcp");
@@ -525,7 +538,7 @@ describe("setup Hermes MCP registration", () => {
 		const after = readFileSync(configPath, "utf-8");
 		expect(parseYaml(after)).toMatchObject({
 			mcp_servers: {
-				clawdi: { command: "clawdi", args: ["mcp"] },
+				clawdi: { command: expect.any(String), args: [expect.any(String), "mcp"] },
 				other: { command: "other" },
 			},
 		});
@@ -556,7 +569,7 @@ describe("setup Hermes MCP registration", () => {
 		const after = readFileSync(configPath, "utf-8");
 		expect(parseYaml(after)).toMatchObject({
 			mcp_servers: {
-				clawdi: { command: "clawdi", args: ["mcp"] },
+				clawdi: { command: expect.any(String), args: [expect.any(String), "mcp"] },
 				other: { command: "other" },
 			},
 		});
@@ -572,7 +585,7 @@ describe("setup Hermes MCP registration", () => {
 
 		const after = readFileSync(configPath, "utf-8");
 		expect(parseYaml(after)).toMatchObject({
-			mcp_servers: { clawdi: { command: "clawdi", args: ["mcp"] } },
+			mcp_servers: { clawdi: { command: expect.any(String), args: [expect.any(String), "mcp"] } },
 		});
 	});
 
@@ -598,7 +611,7 @@ describe("setup Hermes MCP registration", () => {
 				"user.server": {
 					headers: { Authorization: `Bearer ${HERMES_TEST_MCP_TOKEN_REF}` },
 				},
-				clawdi: { command: "clawdi", args: ["mcp"] },
+				clawdi: { command: expect.any(String), args: [expect.any(String), "mcp"] },
 			},
 		});
 		expect(after).not.toContain("resolved-secret-must-not-be-written");
@@ -612,7 +625,11 @@ describe("setup OpenClaw MCP registration", () => {
 		await setup({ agent: "openclaw", yes: true, daemon: false });
 
 		const args = readFileSync(join(home, "openclaw-mcp-args"), "utf-8").trim().split("\n");
-		expect(args).toEqual(["mcp", "set", "clawdi", '{"command":"clawdi","args":["mcp"]}']);
+		expect(args.slice(0, 3)).toEqual(["mcp", "set", "clawdi"]);
+		expect(JSON.parse(args[3] ?? "{}")).toMatchObject({
+			command: expect.any(String),
+			args: [expect.any(String), "mcp"],
+		});
 	});
 });
 
@@ -630,14 +647,10 @@ esac
 `,
 		);
 		await setup({ agent: "pi", yes: true, daemon: false });
-		expect(readFileSync(join(home, "pi-mcp-args"), "utf8").trim().split("\n")).toEqual([
-			"mcp",
-			"add",
-			"clawdi",
-			"--",
-			"clawdi",
-			"mcp",
-		]);
+		const args = readFileSync(join(home, "pi-mcp-args"), "utf8").trim().split("\n");
+		expect(args.slice(0, 4)).toEqual(["mcp", "add", "clawdi", "--"]);
+		expect(args.at(-1)).toBe("mcp");
+		expect(args[4]).toMatch(/^\/.+/);
 	});
 });
 
