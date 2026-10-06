@@ -150,6 +150,41 @@ class AgentEnvironment(Base, TimestampMixin):
     )
 
 
+class AgentProfile(Base):
+    __tablename__ = "agent_profiles"
+    __table_args__ = (
+        UniqueConstraint("environment_id", "profile_key", name="uq_agent_profiles_environment_key"),
+        Index(
+            "uq_agent_profiles_default",
+            "environment_id",
+            unique=True,
+            postgresql_where=text("is_default"),
+        ),
+        CheckConstraint("state IN ('active', 'removed')", name="ck_agent_profiles_state"),
+        CheckConstraint("is_default = (profile_key = '')", name="ck_agent_profiles_default_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    environment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agent_environments.id", ondelete="CASCADE"), nullable=False
+    )
+    profile_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    upstream_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(120))
+    state: Mapped[str] = mapped_column(String(20), nullable=False, server_default="active")
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="SET NULL")
+    )
+
+
 class SessionSyncSuppression(Base):
     __tablename__ = "session_sync_suppressions"
 
@@ -162,9 +197,10 @@ class SessionSyncSuppression(Base):
             postgresql_where=text("origin_environment_id IS NULL"),
         ),
         Index(
-            "uq_session_sync_suppressions_origin",
+            "uq_session_sync_suppressions_origin_profile",
             "user_id",
             "origin_environment_id",
+            "origin_profile_key",
             "local_session_id",
             unique=True,
             postgresql_where=text("origin_environment_id IS NOT NULL"),
@@ -180,6 +216,7 @@ class SessionSyncSuppression(Base):
     # NULL rows are legacy wildcard suppressions. Current deletes always write
     # the immutable origin so equal source-local IDs from other Agents remain live.
     origin_environment_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    origin_profile_key: Mapped[str] = mapped_column(String(64), nullable=False, server_default="")
     local_session_id: Mapped[str] = mapped_column(String(200))
 
 
@@ -189,8 +226,9 @@ class Session(Base, TimestampMixin):
         UniqueConstraint(
             "user_id",
             "origin_environment_id",
+            "origin_profile_key",
             "local_session_id",
-            name="uq_sessions_user_origin_local",
+            name="uq_sessions_user_origin_profile_local",
         ),
     )
 
@@ -211,6 +249,7 @@ class Session(Base, TimestampMixin):
         UUID(as_uuid=True), nullable=True, index=True
     )
     local_session_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    origin_profile_key: Mapped[str] = mapped_column(String(64), nullable=False, server_default="")
     project_path: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
