@@ -242,7 +242,6 @@ try {
     if ((Invoke-ClawdiNative $executable @('--version')) -cne $version) { throw 'Staged native executable failed version smoke.' }
     if ((Invoke-ClawdiNative $executable @('update', '--native-identity')) -cne "$version`t$target") { throw 'Staged native executable identity does not match the selected target.' }
     $launcher = Invoke-ClawdiNative $executable @('update', '--native-activate', '--native-stage', $stage, '--native-prefix', $prefix, '--native-version', $version, '--native-target', $target) 180000
-    $stage = $null
     $current = Join-Path $nativeRoot 'current'
     if ($launcher -cne (Join-Path $current 'clawdi.exe')) { throw 'Native activation returned an unexpected launcher.' }
     Add-ClawdiPath $current
@@ -250,6 +249,11 @@ try {
 } catch {
     throw "clawdi install: $($_.Exception.Message)"
 } finally {
-    if ($stage -and (Test-Path -LiteralPath $stage)) { Remove-Item -LiteralPath $stage -Recurse -Force }
-    if ($bootstrap -and (Test-Path -LiteralPath $bootstrap)) { Remove-Item -LiteralPath $bootstrap -Recurse -Force }
+    foreach ($directory in @($stage, $bootstrap)) {
+        try {
+            if ($directory -and (Test-Path -LiteralPath $directory)) { Remove-Item -LiteralPath $directory -Recurse -Force }
+        } catch {
+            # Cleanup must not mask the install result; the activating process has exited.
+        }
+    }
 }

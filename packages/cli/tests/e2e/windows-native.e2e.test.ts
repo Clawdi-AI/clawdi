@@ -26,7 +26,7 @@ const nativeBinary = process.env.CLAWDI_NATIVE_BINARY;
 const enabled = process.platform === "win32" && testRoot && nativeBinary;
 
 (enabled ? describe : describe.skip)("Windows native lifecycle", () => {
-	it("installs three versions, preserves rollback, configures Codex and installs a user daemon", async () => {
+	it("installs three versions, reinstalls latest, preserves rollback, configures Codex and installs a user daemon", async () => {
 		if (!testRoot || !nativeBinary) throw new Error("Windows native CI fixture is required");
 		const root = realpathSync.native(mkdtempSync(join(testRoot, "lifecycle-")));
 		const prefix = join(root, "prefix with spaces");
@@ -88,6 +88,21 @@ const enabled = process.platform === "win32" && testRoot && nativeBinary;
 					.map((entry) => `${entry}-win32-x64`)
 					.sort(),
 			);
+			const installedVersions = readdirSync(join(nativeRoot, "versions")).sort();
+			const installedDirectory = realpathSync.native(current);
+			const reinstall = await runAsync("powershell.exe", [
+				"-NoProfile",
+				"-NonInteractive",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-Command",
+				`$ErrorActionPreference='Stop'; & ${literal(installer)}; if ((clawdi --version) -cne ${literal(version)}) { throw 'Current session PATH was not updated' }`,
+			]);
+			expect(reinstall.code, `${reinstall.stdout}\n${reinstall.stderr}`).toBe(0);
+			expect(run(launcher, ["--version"]).trim()).toBe(version);
+			expect(lstatSync(current).isSymbolicLink()).toBeTrue();
+			expect(realpathSync.native(current)).toBe(installedDirectory);
+			expect(readdirSync(join(nativeRoot, "versions")).sort()).toEqual(installedVersions);
 			const previousDir = join(nativeRoot, "versions", `${version}-g2.2-win32-x64`);
 			for (const file of ["clawdi.exe", "clawdi-cli-manifest-v2.txt", "skills/clawdi/SKILL.md"]) {
 				expect(lstatSync(join(previousDir, file)).isFile()).toBeTrue();
