@@ -258,6 +258,11 @@ describe("runtime manifest datasource", () => {
 	it.each(["missing", "unhealthy", "default"])(
 		"runtime init publishes gated initial health without replacing %s watcher authority",
 		async (watchState) => {
+			const hotApply = watchState !== "default";
+			const credentialReference = (id: string) =>
+				hotApply
+					? { source: "file", provider: "clawdi-runtime", id: `/${id}` }
+					: { source: "env", provider: "default", id };
 			installSuccessfulSystemctlFixture();
 			setRuntimeApplyGeneration(7, CANONICAL_TEST_CONTEXT);
 			const home = join(root, "home", "clawdi");
@@ -270,6 +275,7 @@ describe("runtime manifest datasource", () => {
 			const openclawPluginSource = join(home, ".openclaw", "extensions", "discord", "index.js");
 			const previousExitCode = process.exitCode;
 			const previousLog = console.log;
+			const previousHotApply = process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY;
 			const logs: string[] = [];
 			mkdirSync(join(run, "secrets"), { recursive: true });
 			mkdirSync(join(home, ".local", "bin"), { recursive: true });
@@ -443,7 +449,7 @@ exit 64
 					event: { status: "error", stage: "final", errors: ["previous failure"] },
 				});
 				if (watchState === "unhealthy") writeFileSync(paths.runtimeWatchStatus, existingWatch);
-				if (watchState !== "default") process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
+				process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = hotApply ? "1" : "0";
 				await runtimeInit({ nonInteractive: true, json: true });
 				if (watchState === "unhealthy")
 					expect(readFileSync(paths.runtimeWatchStatus, "utf8")).toBe(existingWatch);
@@ -475,11 +481,9 @@ exit 64
 				const nativeConfig = JSON.parse(nativeConfigText);
 				expect(nativeConfigText).not.toContain("agent-token-init");
 				expect(nativeConfigText).not.toContain("discord-agent-token-init");
-				expect(nativeConfig.channels.telegram.accounts.clawdi_accttelegram.botToken).toEqual({
-					source: "env",
-					provider: "default",
-					id: "CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN",
-				});
+				expect(nativeConfig.channels.telegram.accounts.clawdi_accttelegram.botToken).toEqual(
+					credentialReference("CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN"),
+				);
 				expect(nativeConfig.secrets.providers.default).toEqual({ source: "env" });
 				expect(nativeConfig.plugins.entries).toMatchObject({
 					telegram: { enabled: true },
@@ -491,11 +495,7 @@ exit 64
 				const discordAccount = discordAccounts.clawdi_acctdiscord1;
 				expect(discordAccount).toMatchObject({
 					enabled: true,
-					token: {
-						source: "env",
-						provider: "default",
-						id: "CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN",
-					},
+					token: credentialReference("CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN"),
 					dmPolicy: "allowlist",
 					allowFrom: ["discord-user"],
 					guilds: { "discord-guild": { requireMention: true } },
@@ -516,8 +516,13 @@ exit 64
 				});
 				expect(existsSync(join(run, "secrets", "runtime-secrets.json"))).toBe(false);
 				const gatewayEnv = readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway");
-				expect(gatewayEnv).toContain("999999999:00000000000000000000000000000000");
-				expect(gatewayEnv).toContain("clawdi_00000000000000000000000000000000");
+				for (const placeholder of [
+					"999999999:00000000000000000000000000000000",
+					"clawdi_00000000000000000000000000000000",
+				]) {
+					if (hotApply) expect(gatewayEnv).not.toContain(placeholder);
+					else expect(gatewayEnv).toContain(placeholder);
+				}
 				expect(gatewayEnv).not.toContain("agent-token-init");
 				expect(gatewayEnv).not.toContain("discord-agent-token-init");
 				const egressSecretsText = readFileSync(
@@ -579,6 +584,8 @@ exit 64
 				expect(status.status).toBe("ok");
 				expect(status.activeGeneration).toBe(7);
 			} finally {
+				if (previousHotApply === undefined) delete process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY;
+				else process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = previousHotApply;
 				restore();
 				console.log = previousLog;
 				process.exitCode = previousExitCode;
