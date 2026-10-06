@@ -700,7 +700,7 @@ exec python3 "$@"`,
 	}
 });
 
-test("a failed named profile stays offline and leaves the default scanning", async () => {
+test("a failed named profile reports incomplete inventory and leaves the default scanning", async () => {
 	writeFileSync(join(home, ".hermes", "profiles", "work", "config.yaml"), "[invalid-config]");
 	const inventories: unknown[] = [];
 	const client = api(async (input) => {
@@ -716,10 +716,47 @@ test("a failed named profile stays offline and leaves the default scanning", asy
 		expect(result?.sessions.length).toBeGreaterThan(0);
 		expect(result?.sessions.every((session) => session.profileKey === "")).toBeTrue();
 		expect(inventories.at(-1)).toEqual({
-			complete: true,
+			complete: false,
 			profiles: [{ upstream_key: "default", is_default: true }],
 		});
 		expect(warn.mock.calls).toEqual([["profiles.sync_failed", { profile_key: "work" }]]);
+	} finally {
+		warn.mockRestore();
+	}
+});
+
+test("named reader failures never report removal across repeated scans and refreshes", async () => {
+	writeFileSync(join(home, ".hermes", "profiles", "work", "state.db"), "invalid SQLite database");
+	const inventories: unknown[] = [];
+	const client = api(async (input) => {
+		const request = input instanceof Request ? input : new Request(input);
+		if (request.method === "PUT") inventories.push(await request.json());
+		return response([row(""), row("work")]);
+	});
+	const warn = spyOn(log, "warn");
+	try {
+		const sync = createProfileSync(new HermesAdapter(), client, "env");
+		const result = await sync.sessions?.collect({ kind: "complete" });
+		expect(result?.coverage).toBe("partial");
+		expect(result?.sessions.length).toBeGreaterThan(0);
+		expect(result?.sessions.every((session) => session.profileKey === "")).toBeTrue();
+		await sync.sessions?.collect({ kind: "complete" });
+		expect(inventories).toHaveLength(2);
+		expect(warn.mock.calls).toEqual([["profiles.sync_failed", { profile_key: "work" }]]);
+		await sync.refresh();
+		await sync.sessions?.collect({ kind: "complete" });
+		const present = {
+			complete: true,
+			profiles: [
+				{ upstream_key: "default", is_default: true },
+				{ upstream_key: "work", is_default: false },
+			],
+		};
+		const unreadable = {
+			complete: false,
+			profiles: [{ upstream_key: "default", is_default: true }],
+		};
+		expect(inventories).toEqual([present, unreadable, present, unreadable]);
 	} finally {
 		warn.mockRestore();
 	}

@@ -163,7 +163,7 @@ export function createProfileSync(
 		failed.add(profileKey);
 		if (supported && environmentId && !options.readOnly) {
 			try {
-				unwrap(await putInventory(true));
+				unwrap(await putInventory(false));
 			} catch {
 				/* Default sync remains available. */
 			}

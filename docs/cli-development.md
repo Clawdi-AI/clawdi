@@ -72,9 +72,11 @@ remains gateway-wide. Profile inventory refresh also runs with session sync
 disabled. Discovery runs asynchronously at startup, five-minute reconciliation,
 and profile inventory changes observed through the existing watcher/stat path.
 Session-file changes do not rediscover profiles. Hermes MCP is reconciled at
-setup and once for each newly seen profile; named failures remain offline while
-the default continues. OpenClaw shares one official all-agents session inventory
-per scan and attributes only newly observed IDs.
+setup and once for each newly seen profile. Named profile failures skip that
+reader and report incomplete inventory while the default continues; only a
+complete discovery can mark a missing profile removed. OpenClaw shares one
+official all-agents session inventory per scan and attributes only newly
+observed IDs.
 
 The CLI release must wait for the web profile list and filter PR. The backend
 expand release retains the legacy Session unique constraint; repeated local IDs
