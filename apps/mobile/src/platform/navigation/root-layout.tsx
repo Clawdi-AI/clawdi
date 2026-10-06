@@ -13,10 +13,12 @@ import { isDevAuthBypass } from "@/platform/auth/auth-client";
 import { MobileProviders } from "@/platform/mobile-providers";
 import { useNativeStackOptions } from "@/platform/navigation/native-header";
 import { formSheetOptions } from "@/platform/navigation/sheet-options";
+import { AppSplash, ClerkAppSplash, HideSplash } from "@/platform/splash";
 
 export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
 	return (
 		<I18nProvider>
+			<HideSplash ready />
 			<AppView className="flex-1 justify-center bg-background p-6">
 				<ErrorState onRetry={() => void retry().catch(() => undefined)} />
 			</AppView>
@@ -53,18 +55,25 @@ export default function RootLayout() {
 						<AppearanceProvider>
 							{runtime.ok ? (
 								isDevAuthBypass() ? (
-									app
+									<>
+										<AppSplash />
+										{app}
+									</>
 								) : (
 									<ClerkProvider
 										publishableKey={runtime.value.clerkPublishableKey}
 										tokenCache={tokenCache}
 										experimental={{ rethrowOfflineNetworkErrors: true }}
 									>
+										<ClerkAppSplash />
 										{app}
 									</ClerkProvider>
 								)
 							) : (
-								<ConfigurationErrorScreen reason={runtime.reason} />
+								<>
+									<AppSplash />
+									<ConfigurationErrorScreen reason={runtime.reason} />
+								</>
 							)}
 						</AppearanceProvider>
 					</SafeAreaProvider>

@@ -1,4 +1,6 @@
 const { readLinkHosts, webLinkPaths } = require("./config/linking.cjs");
+// Launch surfaces use the shared `--background` tokens; regenerate with `bun run icons`.
+const appColors = require("./assets/app-colors.json");
 
 function publicValue(name) {
 	const value = process.env[name]?.trim();
@@ -46,6 +48,11 @@ module.exports = ({ config }) => {
 	};
 	const android = {
 		...config.android,
+		adaptiveIcon: {
+			foregroundImage: "./assets/brand-mark.png",
+			monochromeImage: "./assets/brand-mark-monochrome.png",
+			backgroundColor: appColors.light,
+		},
 		...(packageName ? { package: packageName } : {}),
 	};
 	return {
@@ -55,12 +62,27 @@ module.exports = ({ config }) => {
 		scheme: "clawdi",
 		version: "0.1.0",
 		orientation: "portrait",
+		icon: "./assets/icon.png",
 		userInterfaceStyle: "automatic",
 		platforms: ["ios", "android"],
 		experiments: {
 			typedRoutes: true,
 		},
-		plugins: ["expo-router", "expo-secure-store", ["expo-font", fontPluginOptions()]],
+		plugins: [
+			"expo-router",
+			"expo-secure-store",
+			["expo-font", fontPluginOptions()],
+			[
+				"expo-splash-screen",
+				{
+					image: "./assets/brand-mark.png",
+					imageWidth: 200,
+					backgroundColor: appColors.light,
+					dark: { backgroundColor: appColors.dark },
+				},
+			],
+			"expo-apple-authentication",
+		],
 		...(Object.keys(ios).length ? { ios } : {}),
 		...(Object.keys(android).length ? { android } : {}),
 		...(linkHosts.length
