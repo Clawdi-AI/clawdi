@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { ErrorState, LoadingScreen } from "@/components/ui/feedback";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
+import { NativeList } from "@/components/ui/native-list";
 import { SheetPage } from "@/components/ui/sheet-page";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Text as AppText, Text } from "@/components/ui/text";
@@ -73,7 +74,7 @@ function ProjectGate({ projectId }: { projectId?: string }) {
 	);
 }
 
-function SharingView({ project, embedded = false }: { project: Project; embedded?: boolean }) {
+function SharingView({ project }: { project: Project }) {
 	const t = useI18n();
 	const confirmationDialog = useConfirmation();
 	const scope = useAccountScope();
@@ -184,12 +185,8 @@ function SharingView({ project, embedded = false }: { project: Project; embedded
 			await refresh();
 		});
 
-	const content = (
-		<WebView recipe={shareProjectClasses.panels}>
-			{inventory.isError ? (
-				<ApiErrorPanel error={inventory.error} onRetry={() => void inventory.refetch()} />
-			) : null}
-			{action.error ? <ApiErrorPanel error={t("sharing.failed")} /> : null}
+	const cells = [
+		<WebView key="invitations" recipe={shareProjectClasses.section}>
 			<WebView recipe={shareProjectClasses.section}>
 				<WebView recipe={shareProjectClasses.form} className="flex-row">
 					<Input
@@ -212,69 +209,69 @@ function SharingView({ project, embedded = false }: { project: Project; embedded
 					</Button>
 				</WebView>
 				{inventory.isPending ? <Skeleton className="h-16" /> : null}
-				{(inventory.data?.invitations ?? []).map((invitation) => (
-					<WebView key={invitation.id} recipe={shareProjectClasses.row}>
-						<WebView recipe={shareProjectClasses.identity}>
-							<WebText recipe={shareProjectClasses.name}>{invitation.invitee_email}</WebText>
-							<Badge variant="outline">
-								<Text>{t("libraryPort.pending")}</Text>
-							</Badge>
-						</WebView>
-						<Button
-							variant="ghost"
-							size="sm"
-							disabled={action.busy}
-							onPress={() =>
-								confirm(
-									formCopy.cancelTitle,
-									canceledInvitationDescription(invitation.invitee_email),
-									(signal) => sharing.cancelInvitation(project.id, invitation.id, signal),
-									formCopy.cancelInvitation,
-									formCopy.keepInvitation,
-								)
-							}
-						>
-							<Text>{t("sharing.cancelInvite")}</Text>
-						</Button>
-					</WebView>
-				))}
 			</WebView>
+		</WebView>,
+		...(inventory.data?.invitations ?? []).map((invitation) => (
+			<WebView key={invitation.id} recipe={shareProjectClasses.row}>
+				<WebView recipe={shareProjectClasses.identity}>
+					<WebText recipe={shareProjectClasses.name}>{invitation.invitee_email}</WebText>
+					<Badge variant="outline">
+						<Text>{t("libraryPort.pending")}</Text>
+					</Badge>
+				</WebView>
+				<Button
+					variant="ghost"
+					size="sm"
+					disabled={action.busy}
+					onPress={() =>
+						confirm(
+							formCopy.cancelTitle,
+							canceledInvitationDescription(invitation.invitee_email),
+							(signal) => sharing.cancelInvitation(project.id, invitation.id, signal),
+							formCopy.cancelInvitation,
+							formCopy.keepInvitation,
+						)
+					}
+				>
+					<Text>{t("sharing.cancelInvite")}</Text>
+				</Button>
+			</WebView>
+		)),
+		<WebView key="members" recipe={shareProjectClasses.section}>
 			<WebView recipe={shareProjectClasses.section}>
 				<WebText recipe={shareProjectClasses.heading}>{SHARING_COPY.people}</WebText>
 				{inventory.isSuccess && !inventory.data.members.length ? (
 					<WebText recipe={shareProjectClasses.description}>{SHARING_COPY.onlyYou}</WebText>
 				) : null}
-				{(inventory.data?.members ?? []).map((member) => (
-					<WebView key={member.id} recipe={shareProjectClasses.row}>
-						<WebView recipe={shareProjectClasses.identity}>
-							<WebText recipe={shareProjectClasses.name}>
-								{member.user_email ?? member.user_display ?? member.user_id}
-							</WebText>
-							<WebText recipe={shareProjectClasses.meta}>
-								{formatMembershipToken(member.role)}
-							</WebText>
-						</WebView>
-						<Button
-							variant="ghost"
-							size="icon"
-							accessibilityLabel={formCopy.removeMember}
-							disabled={action.busy}
-							onPress={() =>
-								confirm(
-									formCopy.removeTitle,
-									removedMemberDescription(
-										member.user_email ?? member.user_display ?? member.user_id,
-									),
-									(signal) => sharing.removeMember(project.id, member.user_id, signal),
-									formCopy.removeMember,
-								)
-							}
-						>
-							<Icon as={UserMinus} className={webBoth(shareProjectClasses.destructiveIcon)} />
-						</Button>
-					</WebView>
-				))}
 			</WebView>
+		</WebView>,
+		...(inventory.data?.members ?? []).map((member) => (
+			<WebView key={member.id} recipe={shareProjectClasses.row}>
+				<WebView recipe={shareProjectClasses.identity}>
+					<WebText recipe={shareProjectClasses.name}>
+						{member.user_email ?? member.user_display ?? member.user_id}
+					</WebText>
+					<WebText recipe={shareProjectClasses.meta}>{formatMembershipToken(member.role)}</WebText>
+				</WebView>
+				<Button
+					variant="ghost"
+					size="icon"
+					accessibilityLabel={formCopy.removeMember}
+					disabled={action.busy}
+					onPress={() =>
+						confirm(
+							formCopy.removeTitle,
+							removedMemberDescription(member.user_email ?? member.user_display ?? member.user_id),
+							(signal) => sharing.removeMember(project.id, member.user_id, signal),
+							formCopy.removeMember,
+						)
+					}
+				>
+					<Icon as={UserMinus} className={webBoth(shareProjectClasses.destructiveIcon)} />
+				</Button>
+			</WebView>
+		)),
+		<WebView key="links" recipe={shareProjectClasses.linksSection}>
 			<WebView recipe={shareProjectClasses.linksSection}>
 				<WebView recipe={shareProjectClasses.headingRow}>
 					<WebText recipe={shareProjectClasses.heading}>{SHARING_COPY.inviteLink}</WebText>
@@ -332,84 +329,101 @@ function SharingView({ project, embedded = false }: { project: Project; embedded
 						</Button>
 					</WebView>
 				) : null}
-				{(inventory.data?.links ?? []).map((link) => (
-					<WebView key={link.id} recipe={shareProjectClasses.row}>
-						<WebView recipe={shareProjectClasses.identity}>
-							<WebText recipe={shareProjectClasses.name}>
-								{link.label ?? SHARING_COPY.inviteLink}
-							</WebText>
-							<WebText recipe={shareProjectClasses.linkMeta}>
-								{formatDate(link.created_at)} · {link.redeem_count} {t("sharing.redemptions")}
-							</WebText>
-							{!linkIsActive(link) ? (
-								<Badge variant="secondary">
-									<Text>{t("sharing.inactive")}</Text>
-								</Badge>
-							) : null}
-						</WebView>
-						{linkIsActive(link) ? (
+			</WebView>
+		</WebView>,
+		...(inventory.data?.links ?? []).map((link) => (
+			<WebView key={link.id} recipe={shareProjectClasses.row}>
+				<WebView recipe={shareProjectClasses.identity}>
+					<WebText recipe={shareProjectClasses.name}>
+						{link.label ?? SHARING_COPY.inviteLink}
+					</WebText>
+					<WebText recipe={shareProjectClasses.linkMeta}>
+						{formatDate(link.created_at)} · {link.redeem_count} {t("sharing.redemptions")}
+					</WebText>
+					{!linkIsActive(link) ? (
+						<Badge variant="secondary">
+							<Text>{t("sharing.inactive")}</Text>
+						</Badge>
+					) : null}
+				</WebView>
+				{linkIsActive(link) ? (
+					<Button
+						variant="ghost"
+						size="sm"
+						disabled={action.busy}
+						onPress={() =>
+							confirm(
+								formCopy.revokeTitle,
+								formCopy.revokeDescription,
+								(signal) => sharing.revokeLink(project.id, link.id, signal),
+								formCopy.revoke,
+							)
+						}
+					>
+						<Text>{t("sharing.revoke")}</Text>
+					</Button>
+				) : null}
+			</WebView>
+		)),
+	];
+	return (
+		<SheetPage
+			title={`Share ${project.name}`}
+			fallback="/projects"
+			busy={action.busy}
+			scroll={false}
+		>
+			<NativeList
+				data={cells}
+				keyExtractor={(cell, index) => String(cell.key ?? index)}
+				renderItem={({ item }) => item}
+				refreshing={inventory.isRefetching}
+				onRefresh={() => void inventory.refetch()}
+				header={
+					<>
+						<WebText recipe={shareProjectClasses.description}>{SHARING_COPY.permissions}</WebText>
+						{inventory.isError ? (
+							<ApiErrorPanel error={inventory.error} onRetry={() => void inventory.refetch()} />
+						) : null}
+						{action.error ? <ApiErrorPanel error={t("sharing.failed")} /> : null}
+					</>
+				}
+				footer={
+					<WebView recipe={shareProjectClasses.panels}>
+						<AppPressable
+							className="flex-row items-center"
+							accessibilityRole="button"
+							accessibilityLabel={SHARING_COPY.manage}
+							accessibilityState={{ expanded: manageOpen }}
+							onPress={() => setManageOpen(!manageOpen)}
+						>
+							<Icon as={manageOpen ? ChevronDown : ChevronRight} />
+							<WebText recipe={shareProjectClasses.manageTrigger}>{SHARING_COPY.manage}</WebText>
+						</AppPressable>
+						{manageOpen ? (
 							<Button
 								variant="ghost"
 								size="sm"
+								textClassName={webText(shareProjectClasses.manageAction)}
+								className="self-start"
 								disabled={action.busy}
 								onPress={() =>
 									confirm(
-										formCopy.revokeTitle,
-										formCopy.revokeDescription,
-										(signal) => sharing.revokeLink(project.id, link.id, signal),
-										formCopy.revoke,
+										formCopy.stopTitle,
+										formCopy.stopDescription,
+										(signal) => sharing.stopSharing(project.id, signal),
+										SHARING_COPY.stop,
+										formCopy.keepSharing,
 									)
 								}
 							>
-								<Text>{t("sharing.revoke")}</Text>
+								<Text>{SHARING_COPY.stop}</Text>
 							</Button>
 						) : null}
+						{confirmationDialog.dialog}
 					</WebView>
-				))}
-			</WebView>
-			<AppPressable
-				className="flex-row items-center"
-				accessibilityRole="button"
-				accessibilityLabel={SHARING_COPY.manage}
-				accessibilityState={{ expanded: manageOpen }}
-				onPress={() => setManageOpen(!manageOpen)}
-			>
-				<Icon as={manageOpen ? ChevronDown : ChevronRight} />
-				<WebText recipe={shareProjectClasses.manageTrigger}>{SHARING_COPY.manage}</WebText>
-			</AppPressable>
-			{manageOpen ? (
-				<Button
-					variant="ghost"
-					size="sm"
-					textClassName={webText(shareProjectClasses.manageAction)}
-					className="self-start"
-					disabled={action.busy}
-					onPress={() =>
-						confirm(
-							formCopy.stopTitle,
-							formCopy.stopDescription,
-							(signal) => sharing.stopSharing(project.id, signal),
-							SHARING_COPY.stop,
-							formCopy.keepSharing,
-						)
-					}
-				>
-					<Text>{SHARING_COPY.stop}</Text>
-				</Button>
-			) : null}
-			{confirmationDialog.dialog}
-		</WebView>
-	);
-	return embedded ? (
-		content
-	) : (
-		<SheetPage
-			title={`Share ${project.name}`}
-			description={SHARING_COPY.permissions}
-			fallback="/projects"
-			busy={action.busy}
-		>
-			{content}
+				}
+			/>
 		</SheetPage>
 	);
 }

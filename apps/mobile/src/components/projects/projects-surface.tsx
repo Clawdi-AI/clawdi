@@ -1,9 +1,5 @@
 import type { Project } from "@clawdi/shared/api";
-import {
-	createProjectDialogClasses,
-	HERO_GRID_CLASS,
-	projectDetailClasses,
-} from "@clawdi/shared/ui";
+import { createProjectDialogClasses, projectDetailClasses } from "@clawdi/shared/ui";
 import {
 	archiveProjectTitle,
 	canManageCustomProject,
@@ -18,26 +14,17 @@ import {
 	projectSharingFormCopy,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { MoreHorizontal, Pencil, Plus } from "lucide-react-native";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { LibraryPage } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCardSkeleton } from "@/components/entity-card";
 import { HeaderActionGroup } from "@/components/header-action-group";
-import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { ProjectResourceCard } from "@/components/projects/project-resource-card";
+import { ResourceError } from "@/components/resource-error";
 import { Button } from "@/components/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -46,14 +33,20 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
-import { SearchInput } from "@/components/ui/search-input";
+import { NativeList } from "@/components/ui/native-list";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { WebView, webView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
+import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { useHeaderSearch } from "@/platform/navigation/native-header";
+import { useSheet } from "@/platform/navigation/use-sheet";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
+import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function useCloudProjects() {
 	const { cloud } = useMobileApi();
@@ -82,28 +75,7 @@ function ProjectsView() {
 	const read = useAccountRead();
 	const { cloud, sharing } = useMobileApi();
 	const action = useAuthAction(scope);
-	const [name, setName] = useState("");
-	const [description, setDescription] = useState("");
-	const [editing, setEditing] = useState<string | null>(null);
-	const [open, setOpen] = useState(false);
 	const [search, setSearch] = useState("");
-	const reset = () => {
-		setName("");
-		setDescription("");
-		setEditing(null);
-		setOpen(false);
-	};
-	const save = () =>
-		action.run(async (isCurrent) => {
-			if (!name.trim()) return;
-			const body = { name: name.trim(), description: description.trim() || null };
-			await read((signal) =>
-				editing ? cloud.updateProject(editing, body, signal) : cloud.createProject(body, signal),
-			);
-			if (!isCurrent()) return;
-			reset();
-			await projects.refetch();
-		});
 	const archive = (project: Project) => {
 		const signal = scope.signal;
 		confirmationDialog.show(
@@ -116,10 +88,10 @@ function ProjectsView() {
 					style: "destructive",
 					onPress: () => {
 						if (signal.aborted || !scope.isCurrent()) return;
-						return action.run(async (isCurrent) => {
+						return action.runOrThrow(async (isCurrent) => {
 							await read((requestSignal) => cloud.archiveProject(project.id, requestSignal));
 							if (!isCurrent()) return;
-							if (editing === project.id) reset();
+
 							await projects.refetch();
 						});
 					},
@@ -140,7 +112,7 @@ function ProjectsView() {
 					className: projectDetailClasses.destructiveButton,
 					onPress: () => {
 						if (signal.aborted || !scope.isCurrent()) return;
-						return action.run(async (isCurrent) => {
+						return action.runOrThrow(async (isCurrent) => {
 							await read(
 								(requestSignal) => sharing.leaveProject(project.id, requestSignal),
 								signal,
@@ -160,145 +132,213 @@ function ProjectsView() {
 				(projectSearchRank(a, search) ?? 0) - (projectSearchRank(b, search) ?? 0) ||
 				compareProjectsForUse(a, b),
 		);
+	const searchOptions = useHeaderSearch({
+		value: search,
+		onChange: setSearch,
+		placeholder: t("libraryPort.searchProjects"),
+	});
 	return (
-		<LibraryPage>
-			<PageHeader
-				title={t("projects.title")}
-				description={getProjectResourceDefinition("projects").managementDescription}
-				actions={
-					<HeaderActionGroup>
-						<Button
-							size="sm"
-							disabled={action.busy}
-							onPress={() => {
-								reset();
-								setOpen(true);
-							}}
-						>
-							<Icon as={Plus} />
-							<Text>{t("libraryPort.createProject")}</Text>
-						</Button>
-						<DropdownMenu>
-							<DropdownMenuTrigger
-								render={
-									<Button variant="ghost" size="icon-sm" accessibilityLabel={t("projects.title")}>
-										<Icon as={MoreHorizontal} />
-									</Button>
-								}
-							/>
-							<DropdownMenuContent>
-								<DropdownMenuItem
-									label={t("sharing.joinLink")}
-									onSelect={() => router.push("/share/new")}
-								/>
-								<DropdownMenuItem
-									label={t("sharing.received")}
-									onSelect={() => router.push("/projects/invitations")}
-								/>
-							</DropdownMenuContent>
-						</DropdownMenu>
-					</HeaderActionGroup>
-				}
+		<SafeAreaScreen>
+			<Stack.Screen
+				options={{ headerSearchBarOptions: searchOptions, headerLargeTitleEnabled: true }}
 			/>
-			<ListToolbar
-				search={
-					<SearchInput
-						value={search}
-						onChange={setSearch}
-						placeholder={t("libraryPort.searchProjects")}
-					/>
-				}
-			/>
-			{projects.error ? (
-				<ApiErrorPanel error={projects.error} onRetry={() => void projects.refetch()} />
-			) : null}
-			<WebView recipe={HERO_GRID_CLASS}>
-				{projects.isPending ? (
-					[0, 1, 2].map((i) => <HeroCardSkeleton key={i} />)
-				) : rows.length === 0 && !projects.error ? (
-					<EmptyState
-						title={t(search.trim() ? "libraryPort.noProjectMatches" : "libraryPort.noProjects")}
-						description={t("libraryPort.emptyProjects")}
-					/>
-				) : (
-					rows.map((project) => (
-						<ProjectResourceCard
-							key={project.id}
-							project={project}
-							searchQuery={search}
-							footer={[
-								formatResourceCount(project.skill_count, "skill"),
-								formatResourceCount(project.vault_count, "vault"),
-								project.is_owner === false && (project.owner_display || project.owner_handle)
-									? `by ${project.owner_display || project.owner_handle}`
-									: null,
-							]}
+			<NativeList
+				data={rows}
+				keyExtractor={(project) => project.id}
+				refreshing={projects.isRefetching}
+				onRefresh={() => void projects.refetch()}
+				header={
+					<>
+						<PageHeader
+							title={t("projects.title")}
+							description={getProjectResourceDefinition("projects").managementDescription}
 							actions={
-								<DropdownMenu>
-									<DropdownMenuTrigger
+								<HeaderActionGroup>
+									<Button
+										size="sm"
 										disabled={action.busy}
-										render={
-											<Button variant="ghost" size="icon-sm" accessibilityLabel={project.name}>
-												<Icon as={MoreHorizontal} />
-											</Button>
-										}
-									/>
-									<DropdownMenuContent>
-										{canManageCustomProject(project) ? (
-											<>
-												<DropdownMenuItem
-													label={t("projects.sharing")}
-													onSelect={() =>
-														router.push({
-															pathname: "/projects/[id]/sharing",
-															params: { id: project.id },
-														})
-													}
-												/>
-												<DropdownMenuItem
-													label={t("libraryPort.edit")}
-													onSelect={() => {
-														setEditing(project.id);
-														setName(project.name);
-														setDescription(project.description ?? "");
-														setOpen(true);
-													}}
-												/>
-												<DropdownMenuItem
-													label={t("projects.archive")}
-													variant="destructive"
-													onSelect={() => archive(project)}
-												/>
-											</>
-										) : (
+										onPress={() => {
+											router.push("/projects/new");
+										}}
+									>
+										<Icon as={Plus} />
+										<Text>{t("libraryPort.createProject")}</Text>
+									</Button>
+									<DropdownMenu>
+										<DropdownMenuTrigger
+											render={
+												<Button
+													variant="ghost"
+													size="icon-sm"
+													accessibilityLabel={t("projects.title")}
+												>
+													<Icon as={MoreHorizontal} />
+												</Button>
+											}
+										/>
+										<DropdownMenuContent>
 											<DropdownMenuItem
-												label={t("projects.leave")}
-												onSelect={() => leave(project)}
+												label={t("sharing.joinLink")}
+												onSelect={() => router.push("/projects/join")}
 											/>
-										)}
-									</DropdownMenuContent>
-								</DropdownMenu>
+											<DropdownMenuItem
+												label={t("sharing.received")}
+												onSelect={() => router.push("/projects/invitations")}
+											/>
+										</DropdownMenuContent>
+									</DropdownMenu>
+								</HeaderActionGroup>
 							}
 						/>
-					))
+						{projects.error ? (
+							<ApiErrorPanel error={projects.error} onRetry={() => void projects.refetch()} />
+						) : null}
+					</>
+				}
+				renderItem={({ item: project }) => (
+					<ProjectResourceCard
+						key={project.id}
+						project={project}
+						searchQuery={search}
+						footer={[
+							formatResourceCount(project.skill_count, "skill"),
+							formatResourceCount(project.vault_count, "vault"),
+							project.is_owner === false && (project.owner_display || project.owner_handle)
+								? `by ${project.owner_display || project.owner_handle}`
+								: null,
+						]}
+						actions={
+							<DropdownMenu>
+								<DropdownMenuTrigger
+									disabled={action.busy}
+									render={
+										<Button variant="ghost" size="icon-sm" accessibilityLabel={project.name}>
+											<Icon as={MoreHorizontal} />
+										</Button>
+									}
+								/>
+								<DropdownMenuContent>
+									{canManageCustomProject(project) ? (
+										<>
+											<DropdownMenuItem
+												label={t("projects.sharing")}
+												onSelect={() =>
+													router.push({
+														pathname: "/projects/[id]/sharing",
+														params: { id: project.id },
+													})
+												}
+											/>
+											<DropdownMenuItem
+												label={t("libraryPort.edit")}
+												onSelect={() => {
+													router.push({
+														pathname: "/projects/[id]/edit",
+														params: { id: project.id },
+													});
+												}}
+											/>
+											<DropdownMenuItem
+												label={t("projects.archive")}
+												variant="destructive"
+												onSelect={() => archive(project)}
+											/>
+										</>
+									) : (
+										<DropdownMenuItem label={t("projects.leave")} onSelect={() => leave(project)} />
+									)}
+								</DropdownMenuContent>
+							</DropdownMenu>
+						}
+					/>
 				)}
-			</WebView>
-			<Dialog
-				open={open}
-				onOpenChange={(v) => {
-					if (!action.busy) setOpen(v);
-				}}
-			>
-				<DialogContent
-					className={webView(createProjectDialogClasses.dialog)}
-					showCloseButton={!action.busy}
-				>
-					<DialogHeader>
-						<DialogTitle>{editing ? formCopy.editTitle : formCopy.title}</DialogTitle>
-						<DialogDescription>
-							{editing ? formCopy.editDescription : formCopy.description}
-						</DialogDescription>
-					</DialogHeader>
+				empty={
+					projects.isPending ? (
+						<HeroCardSkeleton />
+					) : !projects.error ? (
+						<EmptyState
+							title={t(search.trim() ? "libraryPort.noProjectMatches" : "libraryPort.noProjects")}
+							description={t("libraryPort.emptyProjects")}
+						/>
+					) : null
+				}
+			/>
+			{confirmationDialog.dialog}
+		</SafeAreaScreen>
+	);
+}
+
+export function ProjectEditorScreen() {
+	const scope = useAccountScope();
+	const params = useLocalSearchParams<{ id?: string }>();
+	return (
+		<ProjectEditor
+			key={`${scope.identity}:${scope.generation}:${params.id ?? "new"}`}
+			id={routeParam(params.id)}
+		/>
+	);
+}
+function ProjectEditor({ id: editing }: { id?: string }) {
+	const t = useI18n(),
+		scope = useAccountScope(),
+		read = useAccountRead(),
+		capture = useForegroundLease();
+	const { cloud } = useMobileApi();
+	const projects = useCloudProjects();
+	const cache = useQueryClient();
+	const action = useAuthAction(scope);
+	const [name, setName] = useState("");
+	const [description, setDescription] = useState("");
+	const [closeError, setCloseError] = useState<unknown>();
+	const project = projects.data?.find((p) => p.id === editing);
+	useEffect(() => {
+		if (project) {
+			setName(project.name);
+			setDescription(project.description ?? "");
+		}
+	}, [project]);
+	const sheet = useSheet<boolean>({ fallback: "/projects", busy: action.busy });
+	const save = () =>
+		action.run(async (current) => {
+			const visible = capture();
+			if (!name.trim() || !visible()) return;
+			if (editing) {
+				const fresh = (await read((signal) => cloud.listProjects(signal))).find(
+					(p) => p.id === editing,
+				);
+				if (!fresh || !canManageCustomProject(fresh)) throw new Error("Project unavailable");
+			}
+			if (!current() || !visible()) return;
+			await read((signal) =>
+				editing
+					? cloud.updateProject(
+							editing,
+							{ name: name.trim(), description: description.trim() || null },
+							signal,
+						)
+					: cloud.createProject(
+							{ name: name.trim(), description: description.trim() || null },
+							signal,
+						),
+			);
+			if (!current()) return;
+			await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
+			if (current() && visible()) await sheet.close(true);
+		});
+	return (
+		<SheetPage
+			title={editing ? formCopy.editTitle : formCopy.title}
+			description={editing ? formCopy.editDescription : formCopy.description}
+			fallback="/projects"
+			busy={action.busy}
+			sheet={sheet}
+		>
+			{projects.isPending && editing ? (
+				<HeroCardSkeleton />
+			) : editing && (!project || !canManageCustomProject(project)) ? (
+				<ResourceError missing={!projects.isError} onRetry={() => void projects.refetch()} />
+			) : (
+				<>
 					<WebView recipe={createProjectDialogClasses.form}>
 						<WebView recipe={createProjectDialogClasses.field}>
 							<Label>{formCopy.name}</Label>
@@ -325,18 +365,22 @@ function ProjectsView() {
 						</WebView>
 					</WebView>
 					{action.error ? <ApiErrorPanel error={action.error} /> : null}
-					<DialogFooter>
-						<Button variant="ghost" disabled={action.busy} onPress={reset}>
+					<WebView recipe={createProjectDialogClasses.form}>
+						<Button
+							variant="ghost"
+							disabled={action.busy}
+							onPress={() => void sheet.close().catch(setCloseError)}
+						>
 							<Text>{t("libraryPort.cancel")}</Text>
 						</Button>
 						<Button disabled={action.busy || !name.trim()} onPress={() => void save()}>
 							<Icon as={editing ? Pencil : Plus} />
 							<Text>{editing ? formCopy.saveChanges : formCopy.title}</Text>
 						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
-			{confirmationDialog.dialog}
-		</LibraryPage>
+					</WebView>
+				</>
+			)}
+			{closeError ? <ApiErrorPanel error={closeError} /> : null}
+		</SheetPage>
 	);
 }

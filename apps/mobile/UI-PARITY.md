@@ -196,6 +196,10 @@ on failure; use `useAuthAction.runOrThrow` when using that action wrapper.
     await remove(); if (current()) await invalidate(); })} />;
 ```
 
+Data sheets use `SheetPage scroll={false}` so `NativeList` owns scrolling and
+refresh. Put the sheet description and form controls in the list header; the
+native sheet keeps the same close/error and busy-dismiss guards.
+
 **Lists** — `src/components/ui/native-list.tsx`. One FlatList owns scrolling,
 RefreshControl and `onEndReached`. Keep Web sections, filters, empty/error/
 skeleton components in `header`, `empty`, `footer`; reuse entity recipes for

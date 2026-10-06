@@ -1,5 +1,4 @@
 import type { Project } from "@clawdi/shared/api";
-import { projectActionsClasses } from "@clawdi/shared/ui";
 import {
 	canManageCustomProject,
 	displayProjectName,
@@ -8,19 +7,10 @@ import {
 } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { MoreHorizontal, Pencil } from "lucide-react-native";
+import { MoreHorizontal } from "lucide-react-native";
 import { useRef, useState } from "react";
-import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -29,9 +19,6 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
-import { Input, Label } from "@/components/ui/input";
-import { Text } from "@/components/ui/text";
-import { WebView, webBoth } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -46,10 +33,7 @@ export function ProjectCardActions({ project }: { project: Project }) {
 	const { cloud } = useMobileApi(),
 		action = useAuthAction(scope),
 		cache = useQueryClient();
-	const [editOpen, setEditOpen] = useState(false),
-		[archiveOpen, setArchiveOpen] = useState(false),
-		[name, setName] = useState(project.name),
-		[description, setDescription] = useState(project.description ?? "");
+	const [archiveOpen, setArchiveOpen] = useState(false);
 	const confirmationLease = useRef<() => boolean>(() => false);
 	const check = async () => {
 		const fresh = (await read((s) => cloud.listProjects(s))).find((p) => p.id === project.id);
@@ -76,10 +60,7 @@ export function ProjectCardActions({ project }: { project: Project }) {
 					<DropdownMenuItem
 						label={t("libraryPort.edit")}
 						onSelect={() => {
-							setName(project.name);
-							setDescription(project.description ?? "");
-							action.clearError();
-							setEditOpen(true);
+							router.push({ pathname: "/projects/[id]/edit", params: { id: project.id } });
 						}}
 					/>
 					<DropdownMenuItem
@@ -102,65 +83,6 @@ export function ProjectCardActions({ project }: { project: Project }) {
 					/>
 				</DropdownMenuContent>
 			</DropdownMenu>
-			<Dialog
-				open={editOpen}
-				onOpenChange={(next) => {
-					if (!action.busy) setEditOpen(next);
-				}}
-			>
-				<DialogContent>
-					<DialogHeader>
-						<DialogTitle>{t("libraryPort.editProject")}</DialogTitle>
-						<DialogDescription>{PROJECT_ACTION_COPY.editDescription}</DialogDescription>
-					</DialogHeader>
-					<WebView recipe={projectActionsClasses.form}>
-						<WebView recipe={projectActionsClasses.field}>
-							<Label>{t("libraryPort.name")}</Label>
-							<Input value={name} onChangeText={setName} maxLength={200} editable={!action.busy} />
-						</WebView>
-						<WebView recipe={projectActionsClasses.field}>
-							<Label>{t("libraryPort.description")}</Label>
-							<Input
-								value={description}
-								onChangeText={setDescription}
-								maxLength={2000}
-								multiline
-								editable={!action.busy}
-								className={webBoth(projectActionsClasses.textarea)}
-							/>
-						</WebView>
-					</WebView>
-					{action.error ? <ApiErrorPanel error={action.error} /> : null}
-					<DialogFooter>
-						<Button variant="ghost" disabled={action.busy} onPress={() => setEditOpen(false)}>
-							<Text>{t("libraryPort.cancel")}</Text>
-						</Button>
-						<Button
-							disabled={action.busy || !name.trim()}
-							onPress={() => {
-								const visible = capture();
-								void action.run(async (current) => {
-									await check();
-									if (!current() || !visible()) return;
-									await read((s) =>
-										cloud.updateProject(
-											project.id,
-											{ name: name.trim(), description: description.trim() || null },
-											s,
-										),
-									);
-									if (!current()) return;
-									await refresh();
-									if (current() && visible()) setEditOpen(false);
-								});
-							}}
-						>
-							<Icon as={Pencil} />
-							<Text>{t("libraryPort.save")}</Text>
-						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
 			<ConfirmAction
 				open={archiveOpen}
 				onOpenChange={setArchiveOpen}

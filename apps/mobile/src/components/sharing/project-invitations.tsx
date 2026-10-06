@@ -6,9 +6,11 @@ import { EmptyState } from "@/components/empty-state";
 import { HeroCard, HeroCardSkeleton } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
+import { NativeList } from "@/components/ui/native-list";
 import { SheetPage } from "@/components/ui/sheet-page";
 import { Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
+import { WebText } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -60,20 +62,24 @@ function InvitationsView() {
 	};
 
 	return (
-		<SheetPage
-			title={t("sharing.received")}
-			description={t("sharing.receivedDescription")}
-			fallback="/projects"
-			busy={action.busy}
-		>
-			{invitations.error ? (
-				<ApiErrorPanel error={invitations.error} onRetry={() => void invitations.refetch()} />
-			) : null}
-			{action.error ? <ApiErrorPanel error={t("sharing.responseFailed")} /> : null}
-			{invitations.isPending ? (
-				<HeroCardSkeleton />
-			) : (
-				invitations.data?.map((invitation) => (
+		<SheetPage title={t("sharing.received")} scroll={false} fallback="/projects" busy={action.busy}>
+			<NativeList
+				data={invitations.data ?? []}
+				keyExtractor={(invitation) => invitation.id}
+				refreshing={invitations.isRefetching}
+				onRefresh={() => void invitations.refetch()}
+				header={
+					<>
+						<WebText recipe="text-sm text-muted-foreground">
+							{t("sharing.receivedDescription")}
+						</WebText>
+						{invitations.error ? (
+							<ApiErrorPanel error={invitations.error} onRetry={() => void invitations.refetch()} />
+						) : null}
+						{action.error ? <ApiErrorPanel error={t("sharing.responseFailed")} /> : null}
+					</>
+				}
+				renderItem={({ item: invitation }) => (
 					<HeroCard
 						key={invitation.id}
 						title={invitation.project_name}
@@ -100,11 +106,15 @@ function InvitationsView() {
 							</>
 						}
 					/>
-				))
-			)}
-			{invitations.isSuccess && !invitations.data.length ? (
-				<EmptyState description={t("sharing.noInvitations")} />
-			) : null}
+				)}
+				empty={
+					invitations.isPending ? (
+						<HeroCardSkeleton />
+					) : !invitations.error ? (
+						<EmptyState description={t("sharing.noInvitations")} />
+					) : null
+				}
+			/>
 			{confirmationDialog.dialog}
 		</SheetPage>
 	);
