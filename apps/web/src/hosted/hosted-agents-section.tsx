@@ -249,7 +249,7 @@ export function HostedAgentsByCompute({
 						leading={<AgentSourceBadge source="hosted" compact />}
 						count={`${hostedTiles.length} agent${hostedTiles.length === 1 ? "" : "s"}`}
 					>
-						Clawdi hosted
+						Cloud Agents
 					</SectionLabel>
 					<AgentTileGrid tiles={hostedTiles} />
 				</section>

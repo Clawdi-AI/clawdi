@@ -43,7 +43,7 @@ program
 		`
 Examples:
   $ clawdi auth login               Authenticate with Clawdi
-  $ clawdi deploy                   Create a Hosted agent with the deploy wizard
+  $ clawdi deploy                   Create a Cloud Agent with the deploy wizard
   $ clawdi auth status --json       Inspect credential source without printing secrets
   $ clawdi setup                    Detect agents and register the current machine
   $ clawdi session list             Preview local sessions before pushing
@@ -57,7 +57,7 @@ Examples:
 
 Environment:
   CLAWDI_API_URL           Override the Clawdi API endpoint
-  CLAWDI_DEPLOY_API_URL    Override the Hosted deploy API endpoint
+  CLAWDI_DEPLOY_API_URL    Override the deploy API endpoint
   CLAWDI_AUTH_TOKEN_ORIGIN Explicit Cloud origin binding for CLAWDI_AUTH_TOKEN
   CLAWDI_DEBUG             Print stack traces on error
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check

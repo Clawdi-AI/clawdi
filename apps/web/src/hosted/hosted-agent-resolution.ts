@@ -33,7 +33,7 @@ export type HostedInventoryQueryState = {
 
 export class HostedInventoryUnavailableError extends Error {
 	constructor() {
-		super("Hosted agent inventory is unavailable from this dashboard.");
+		super("Cloud Agents aren't available in this dashboard.");
 		this.name = "HostedInventoryUnavailableError";
 	}
 }

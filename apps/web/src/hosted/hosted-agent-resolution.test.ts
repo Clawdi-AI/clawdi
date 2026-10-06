@@ -60,9 +60,9 @@ function cancelledDelete(deploymentId: string): DeploymentOperation {
 }
 
 describe("hosted inventory resolution matrix", () => {
-	test("uses the unified Clawdi branding for unavailable hosted inventory", () => {
+	test("uses Cloud Agent terminology for unavailable inventory", () => {
 		const error = new HostedInventoryUnavailableError();
-		expect(error.message).toBe("Hosted agent inventory is unavailable from this dashboard.");
+		expect(error.message).toBe("Cloud Agents aren't available in this dashboard.");
 		expect(error.message).not.toContain("Clawdi Cloud");
 	});
 

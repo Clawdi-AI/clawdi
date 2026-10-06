@@ -174,7 +174,7 @@ export function HostedUnavailableBanner({
 			error={error}
 			onRetry={onRetry}
 			normalizer={normalizer}
-			title="Hosted agent inventory unavailable"
+			title="Cloud Agents unavailable"
 		/>
 	);
 }

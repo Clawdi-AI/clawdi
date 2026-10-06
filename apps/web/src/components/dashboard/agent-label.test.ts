@@ -141,9 +141,10 @@ describe("compareAgentEnvironments", () => {
 });
 
 describe("agent source branding", () => {
-	test("names hosted agents as Clawdi agents without reviving the old product name", () => {
-		expect(agentSourceKindLabel("hosted")).toBe("Clawdi hosted agent");
-		expect(agentSourceDescription("hosted")).toBe("Hosted and managed by Clawdi");
+	test("uses Cloud and Connected Agent labels without reviving the old product name", () => {
+		expect(agentSourceKindLabel("hosted")).toBe("Cloud Agent");
+		expect(agentSourceKindLabel("connected")).toBe("Connected Agent");
+		expect(agentSourceDescription("hosted")).toBe("Runs on Clawdi");
 		expect(agentSourceKindLabel("hosted")).not.toContain("Clawdi Cloud");
 		expect(agentSourceDescription("hosted")).not.toContain("Clawdi Cloud");
 	});

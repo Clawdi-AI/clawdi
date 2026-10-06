@@ -151,7 +151,7 @@ export function AgentHome({
 						onRetry={() => {
 							void refetch();
 						}}
-						title="Hosted agent inventory unavailable"
+						title="Cloud Agents unavailable"
 					/>
 				</div>
 			);

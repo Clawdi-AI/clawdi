@@ -13,7 +13,7 @@ database migration, CI, and implementation details.
 ## Unreleased
 
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
-  name while keeping hosted and connected agent distinctions intact.
+  name while keeping Cloud and Connected Agent distinctions intact.
 
 ### CLI 0.14.106
 

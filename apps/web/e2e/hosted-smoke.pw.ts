@@ -4507,7 +4507,7 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 	await page.evaluate(() => {
 		document.documentElement.dataset.deleteNotFoundFlash = "false";
 		const observer = new MutationObserver(() => {
-			if (document.body.textContent?.includes("Clawdi hosted agent not found")) {
+			if (document.body.textContent?.includes("Agent not found")) {
 				document.documentElement.dataset.deleteNotFoundFlash = "true";
 			}
 			if (window.location.pathname === "/") observer.disconnect();
