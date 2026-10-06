@@ -16,6 +16,7 @@ import {
 	getClawdiDir,
 	getPendingAuth,
 	getStoredAuth,
+	type LegacyPendingAuth,
 	type PendingAuth,
 	setAuth,
 	setPendingAuth,
@@ -27,10 +28,10 @@ import {
 
 const REQUEST_TIMEOUT_MS = 20_000;
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 60_000;
-const OAUTH_LOGIN_TTL_MS = 10 * 60_000;
 const JWT_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const OAUTH_ACCESS_TOKEN_TYPES = new Set(["at+jwt", "application/at+jwt"]);
-const REQUIRED_DISCOVERY_GRANTS = ["authorization_code", "refresh_token"] as const;
+const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+const REQUIRED_DISCOVERY_GRANTS = [DEVICE_GRANT, "refresh_token"] as const;
 const REQUIRED_SCOPES = ["openid", "profile", "email", "offline_access"] as const;
 
 export type ClerkOAuthClientConfig = {
@@ -38,12 +39,11 @@ export type ClerkOAuthClientConfig = {
 	clientId: string;
 	audience: string;
 	authorizedParties: string[];
-	redirectUri: string;
 };
 
 export type ClerkOAuthDiscovery = {
 	issuer: string;
-	authorizationEndpoint: string;
+	deviceAuthorizationEndpoint: string;
 	tokenEndpoint: string;
 };
 
@@ -413,41 +413,17 @@ function exactAuthorizedParty(raw: string): string {
 	return url.origin;
 }
 
-function exactLoopbackRedirectUri(raw: string): string {
-	let url: URL;
-	try {
-		url = new URL(raw);
-	} catch {
-		throw new ClerkOAuthError("invalid_oauth_config", "Clawdi OAuth redirect URI is invalid.");
-	}
-	const loopback =
-		url.hostname === "localhost" ||
-		url.hostname === "127.0.0.1" ||
-		url.hostname === "[::1]" ||
-		url.hostname === "::1";
-	if (
-		url.protocol !== "http:" ||
-		!loopback ||
-		!url.port ||
-		url.username ||
-		url.password ||
-		url.search ||
-		url.hash ||
-		url.pathname !== "/oauth/callback"
-	) {
-		throw new ClerkOAuthError(
-			"invalid_oauth_config",
-			"Clawdi OAuth redirect URI must be a registered loopback /oauth/callback URL.",
-		);
-	}
-	return url.toString();
-}
-
-async function fetchWithTimeout(request: Request): Promise<Response> {
+async function fetchWithTimeout(
+	request: Request,
+	signal?: AbortSignal,
+	timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<Response> {
 	const controller = new AbortController();
-	const timeout = globalThis.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+	const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs);
 	try {
-		return await fetch(request, { signal: controller.signal });
+		return await fetch(request, {
+			signal: signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
+		});
 	} catch {
 		throw new ClerkOAuthError(
 			"oauth_network_error",
@@ -481,7 +457,7 @@ export async function fetchClerkOAuthClientConfig(
 	if (!response.ok) {
 		throw new ClerkOAuthError(
 			"oauth_not_configured",
-			"Clawdi OAuth sign-in is not configured. Use `clawdi auth login --manual` only for legacy API-key compatibility.",
+			"Clawdi OAuth sign-in is not configured. Use `clawdi auth login --manual` with an API key from Settings → API Keys.",
 		);
 	}
 	const body = await readJson(response);
@@ -493,15 +469,8 @@ export async function fetchClerkOAuthClientConfig(
 	const audience = typeof body.audience === "string" ? body.audience.trim() : null;
 	const authorizedParties =
 		body.authorized_parties === undefined ? [] : stringArray(body.authorized_parties);
-	const redirectUri = nonEmptyString(body.redirect_uri, 2_048);
-	if (
-		!issuer ||
-		!clientId ||
-		audience === null ||
-		audience.length > 512 ||
-		!authorizedParties ||
-		!redirectUri
-	) {
+
+	if (!issuer || !clientId || audience === null || audience.length > 512 || !authorizedParties) {
 		throw new ClerkOAuthError("invalid_oauth_config", "Clawdi returned incomplete OAuth settings.");
 	}
 	return {
@@ -509,7 +478,6 @@ export async function fetchClerkOAuthClientConfig(
 		clientId,
 		audience,
 		authorizedParties: authorizedParties.map(exactAuthorizedParty),
-		redirectUri: exactLoopbackRedirectUri(redirectUri),
 	};
 }
 
@@ -538,115 +506,161 @@ export async function fetchClerkOAuthDiscovery(
 		);
 	}
 	const issuer = nonEmptyString(body.issuer, 2_048);
-	const authorizationEndpoint = nonEmptyString(body.authorization_endpoint, 2_048);
+	const deviceAuthorizationEndpoint = nonEmptyString(body.device_authorization_endpoint, 2_048);
 	const tokenEndpoint = nonEmptyString(body.token_endpoint, 2_048);
 	const grants = stringArray(body.grant_types_supported);
-	const challenges = stringArray(body.code_challenge_methods_supported);
 	const tokenAuthMethods = stringArray(body.token_endpoint_auth_methods_supported);
 	if (
 		!issuer ||
 		exactIssuer(issuer) !== config.issuer ||
-		!authorizationEndpoint ||
 		!tokenEndpoint ||
-		!grants ||
-		!REQUIRED_DISCOVERY_GRANTS.every((grant) => grants.includes(grant)) ||
-		!challenges?.includes("S256") ||
 		!tokenAuthMethods?.includes("none")
 	) {
 		throw new ClerkOAuthError(
 			"invalid_oauth_discovery",
-			"Clerk OAuth discovery does not support the required public-client PKCE contract.",
+			"Clerk OAuth discovery does not support the required public-client token contract.",
 		);
+	}
+	if (
+		!deviceAuthorizationEndpoint ||
+		!grants ||
+		!REQUIRED_DISCOVERY_GRANTS.every((grant) => grants.includes(grant))
+	) {
+		throw deviceGrantUnavailable();
 	}
 	return {
 		issuer: config.issuer,
-		authorizationEndpoint: exactIssuerEndpoint(
-			authorizationEndpoint,
+		deviceAuthorizationEndpoint: exactIssuerEndpoint(
+			deviceAuthorizationEndpoint,
 			config.issuer,
-			"authorization endpoint",
+			"device authorization endpoint",
 		),
 		tokenEndpoint: exactIssuerEndpoint(tokenEndpoint, config.issuer, "token endpoint"),
 	};
 }
 
-export function createClerkOAuthAuthorization({
+function deviceGrantUnavailable(): ClerkOAuthError {
+	return new ClerkOAuthError(
+		"oauth_device_grant_unavailable",
+		"This Clawdi server's sign-in app doesn't allow device sign-in yet. An administrator must enable \"Device authorization grant\" on its Clerk OAuth application (https://docs.clawdi.ai/account/authentication#self-hosted). Until then, use `clawdi auth login --manual` with an API key.",
+	);
+}
+
+function deviceLoginFailed(): ClerkOAuthError {
+	return new ClerkOAuthError(
+		"oauth_exchange_failed",
+		"Clawdi sign-in could not be completed. Run `clawdi auth login` again.",
+	);
+}
+
+function deviceLoginExpired(): ClerkOAuthError {
+	return new ClerkOAuthError(
+		"oauth_login_expired",
+		"The code expired. Run `clawdi auth login` again.",
+	);
+}
+
+function verificationUri(value: unknown): string | null {
+	const raw = nonEmptyString(value, 2_048);
+	if (!raw) return null;
+	try {
+		const url = new URL(raw);
+		return url.protocol === "https:" && !url.username && !url.password && !url.hash
+			? url.toString()
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+export async function startClerkDeviceAuthorization({
 	config,
 	discovery,
 	apiUrl,
 	hostedApiUrl,
+	fetch: fetcher = fetchWithTimeout,
 	now = Date.now,
 }: {
 	config: ClerkOAuthClientConfig;
 	discovery: ClerkOAuthDiscovery;
 	apiUrl: string;
 	hostedApiUrl: string;
+	fetch?: FetchLike;
 	now?: () => number;
-}): PendingAuth {
+}): Promise<PendingAuth> {
 	const endpointBinding = createCredentialEndpointBinding(apiUrl, hostedApiUrl);
-	const state = randomBytes(32).toString("base64url");
-	const codeVerifier = randomBytes(48).toString("base64url");
-	const challenge = createHash("sha256").update(codeVerifier).digest("base64url");
-	const authorizationUrl = new URL(discovery.authorizationEndpoint);
-	authorizationUrl.searchParams.set("response_type", "code");
-	authorizationUrl.searchParams.set("client_id", config.clientId);
-	authorizationUrl.searchParams.set("redirect_uri", config.redirectUri);
-	authorizationUrl.searchParams.set("scope", REQUIRED_SCOPES.join(" "));
-	authorizationUrl.searchParams.set("state", state);
-	authorizationUrl.searchParams.set("code_challenge", challenge);
-	authorizationUrl.searchParams.set("code_challenge_method", "S256");
+	let response: Response;
+	try {
+		response = await fetcher(
+			tokenFormRequest(
+				discovery.deviceAuthorizationEndpoint,
+				new URLSearchParams({ client_id: config.clientId, scope: REQUIRED_SCOPES.join(" ") }),
+			),
+		);
+	} catch {
+		throw new ClerkOAuthError(
+			"oauth_network_error",
+			"Could not reach Clawdi authentication. Check your connection and retry.",
+		);
+	}
+	if (!response.ok) {
+		const body = await readJson(response);
+		if (
+			isRecord(body) &&
+			["unauthorized_client", "unsupported_grant_type"].includes(String(body.error))
+		) {
+			throw deviceGrantUnavailable();
+		}
+		throw deviceLoginFailed();
+	}
+	const body = await readJson(response);
+	if (!isRecord(body)) throw deviceLoginFailed();
+	const deviceCode = nonEmptyString(body.device_code);
+	const userCode = nonEmptyString(body.user_code, 512);
+	const uri = verificationUri(body.verification_uri);
+	const completeUri =
+		body.verification_uri_complete === undefined
+			? undefined
+			: verificationUri(body.verification_uri_complete);
+	const expiresIn = body.expires_in;
+	const interval = body.interval === undefined ? 5 : body.interval;
+	if (
+		!deviceCode ||
+		!userCode ||
+		!uri ||
+		completeUri === null ||
+		typeof expiresIn !== "number" ||
+		!Number.isInteger(expiresIn) ||
+		expiresIn < 1 ||
+		expiresIn > 3_600 ||
+		typeof interval !== "number" ||
+		!Number.isInteger(interval) ||
+		interval < 1 ||
+		interval > 60
+	) {
+		throw new ClerkOAuthError(
+			"invalid_oauth_response",
+			"Clerk returned an invalid device authorization response.",
+		);
+	}
 	return {
-		authType: "clerk_oauth_pkce",
-		state,
-		codeVerifier,
-		authorizationUrl: authorizationUrl.toString(),
-		redirectUri: config.redirectUri,
+		authType: "clerk_oauth_device",
+		state: randomBytes(32).toString("base64url"),
+		deviceCode,
+		userCode,
+		verificationUri: uri,
+		...(completeUri ? { verificationUriComplete: completeUri } : {}),
+		interval,
 		issuer: config.issuer,
 		clientId: config.clientId,
 		audience: config.audience,
 		authorizedParties: config.authorizedParties,
 		tokenEndpoint: discovery.tokenEndpoint,
-		expiresAt: new Date(now() + OAUTH_LOGIN_TTL_MS).toISOString(),
+		expiresAt: new Date(now() + expiresIn * 1_000).toISOString(),
 		apiUrl: endpointBinding.cloudApiOrigin,
 		endpointBinding,
 		scopes: [...REQUIRED_SCOPES],
 	};
-}
-
-export function parseClerkOAuthCallback(pending: PendingAuth, raw: string): string {
-	let callback: URL;
-	try {
-		callback = new URL(raw.trim());
-	} catch {
-		throw new ClerkOAuthError(
-			"invalid_oauth_callback",
-			"Paste the complete loopback callback URL from your browser.",
-		);
-	}
-	const expected = new URL(pending.redirectUri);
-	if (
-		callback.origin !== expected.origin ||
-		callback.pathname !== expected.pathname ||
-		callback.username ||
-		callback.password ||
-		callback.hash ||
-		callback.searchParams.get("state") !== pending.state
-	) {
-		throw new ClerkOAuthError(
-			"invalid_oauth_callback",
-			"OAuth callback validation failed. Start `clawdi auth login` again.",
-		);
-	}
-	if (callback.searchParams.has("error")) {
-		throw new ClerkOAuthError("oauth_denied", "Clawdi OAuth authorization was denied.");
-	}
-	const code = callback.searchParams.get("code")?.trim() ?? "";
-	if (!code || code.length > 4_096) {
-		throw new ClerkOAuthError(
-			"invalid_oauth_callback",
-			"OAuth callback did not contain a valid authorization code.",
-		);
-	}
-	return code;
 }
 
 function validateOAuthAccessToken({
@@ -805,50 +819,121 @@ async function tokenResponse(
 	};
 }
 
-export async function exchangeClerkOAuthCode(
+export type ClerkDevicePollOptions = ClerkOAuthNetworkOptions & {
+	sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+	signal?: AbortSignal;
+	onSlowDown?: (pending: PendingAuth) => void | Promise<void>;
+};
+
+export type ClerkDevicePollResult =
+	| { status: "authenticated"; auth: ClerkOAuthAuth }
+	| { status: "pending"; retryable: boolean };
+
+/** A single request for the daemon RPC; it never waits for another poll. */
+export async function pollClerkDeviceTokenOnce(
 	pending: PendingAuth,
-	callbackUrl: string,
-	options: ClerkOAuthNetworkOptions = {},
-): Promise<ClerkOAuthAuth> {
+	options: ClerkDevicePollOptions = {},
+): Promise<ClerkDevicePollResult> {
 	const now = options.now ?? Date.now;
-	if (pending.authType !== "clerk_oauth_pkce" || Date.parse(pending.expiresAt) <= now()) {
-		throw new ClerkOAuthError(
-			"oauth_login_expired",
-			"Pending OAuth sign-in expired. Run `clawdi auth login` again.",
-		);
-	}
+	const expiresAt = Date.parse(pending.expiresAt);
+	if (!Number.isFinite(expiresAt) || expiresAt <= now()) throw deviceLoginExpired();
+	if (options.signal?.aborted) throw deviceLoginFailed();
 	const endpointBinding = normalizedBinding(pending.endpointBinding);
 	if (!endpointBinding?.hostedApiOrigin) {
 		throw new ClerkOAuthError(
 			"oauth_endpoint_binding_required",
-			"Pending OAuth sign-in predates endpoint binding. Run `clawdi auth login` again.",
+			"Pending sign-in has no endpoint binding. Run `clawdi auth login` again.",
 		);
 	}
-	const pendingCloudOrigin = canonicalApiOrigin(normalizeCloudApiBaseUrl(pending.apiUrl));
-	if (endpointBinding.cloudApiOrigin !== pendingCloudOrigin) {
+	if (
+		endpointBinding.cloudApiOrigin !== canonicalApiOrigin(normalizeCloudApiBaseUrl(pending.apiUrl))
+	) {
 		throw new ClerkOAuthError(
 			"invalid_credential_endpoint_binding",
 			"The pending sign-in doesn't match CLAWDI_API_URL. Run `clawdi auth login` again.",
 		);
 	}
-	const code = parseClerkOAuthCallback(pending, callbackUrl);
+	const endpoint = exactIssuerEndpoint(
+		pending.tokenEndpoint,
+		exactIssuer(pending.issuer),
+		"token endpoint",
+	);
 	const form = new URLSearchParams({
-		grant_type: "authorization_code",
+		grant_type: DEVICE_GRANT,
+		device_code: pending.deviceCode,
 		client_id: pending.clientId,
-		redirect_uri: pending.redirectUri,
-		code,
-		code_verifier: pending.codeVerifier,
 	});
-	const fetcher = options.fetch ?? fetchWithTimeout;
-	const auth = await tokenResponse(await fetcher(tokenFormRequest(pending.tokenEndpoint, form)), {
+	let response: Response;
+	try {
+		response = await (
+			options.fetch ??
+			((request) =>
+				fetchWithTimeout(request, options.signal, Math.min(REQUEST_TIMEOUT_MS, expiresAt - now())))
+		)(tokenFormRequest(endpoint, form));
+	} catch {
+		if (expiresAt <= now()) throw deviceLoginExpired();
+		if (options.signal?.aborted) throw deviceLoginFailed();
+		return { status: "pending", retryable: true };
+	}
+	if (expiresAt <= now()) throw deviceLoginExpired();
+	if (cloudVerificationMayBeRetried(response.status)) return { status: "pending", retryable: true };
+	if (!response.ok) {
+		const body = await readJson(response);
+		const error = isRecord(body) ? body.error : undefined;
+		if (error === "authorization_pending") return { status: "pending", retryable: false };
+		if (error === "slow_down") {
+			pending.interval += 5;
+			await options.onSlowDown?.(pending);
+			return { status: "pending", retryable: false };
+		}
+		if (error === "access_denied") throw new ClerkOAuthError("oauth_denied", "Sign-in was denied.");
+		if (error === "expired_token") throw deviceLoginExpired();
+		if (error === "unauthorized_client" || error === "unsupported_grant_type")
+			throw deviceGrantUnavailable();
+		throw deviceLoginFailed();
+	}
+	const auth = await tokenResponse(response, {
 		issuer: pending.issuer,
 		clientId: pending.clientId,
 		audience: pending.audience,
 		authorizedParties: pending.authorizedParties ?? [],
-		tokenEndpoint: pending.tokenEndpoint,
+		tokenEndpoint: endpoint,
 		now: now(),
 	});
-	return { ...auth, endpointBinding };
+	return { status: "authenticated", auth: { ...auth, endpointBinding } };
+}
+
+async function devicePollSleep(ms: number, signal?: AbortSignal): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		const abort = () => {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", abort);
+			reject(deviceLoginFailed());
+		};
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", abort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", abort, { once: true });
+		if (signal?.aborted) abort();
+	});
+}
+
+export async function pollClerkDeviceToken(
+	pending: PendingAuth,
+	options: ClerkDevicePollOptions = {},
+): Promise<ClerkOAuthAuth> {
+	const now = options.now ?? Date.now;
+	const sleep = options.sleep ?? devicePollSleep;
+	let delay = pending.interval;
+	while (true) {
+		const remaining = Date.parse(pending.expiresAt) - now();
+		if (!Number.isFinite(remaining) || remaining <= 0) throw deviceLoginExpired();
+		await sleep(Math.min(delay * 1_000, remaining), options.signal);
+		const result = await pollClerkDeviceTokenOnce(pending, options);
+		if (result.status === "authenticated") return result.auth;
+		delay = pending.interval * (result.retryable ? 2 : 1);
+	}
 }
 
 function credentialLockPath(): string {
@@ -880,8 +965,11 @@ function sameCredentialIdentity(
 	);
 }
 
-function pendingMatches(left: PendingAuth | null, right: PendingAuth): boolean {
-	return left?.authType === "clerk_oauth_pkce" && left.state === right.state;
+function pendingMatches(
+	left: PendingAuth | LegacyPendingAuth | null,
+	right: PendingAuth | LegacyPendingAuth,
+): boolean {
+	return left?.authType === right.authType && left?.state === right.state;
 }
 
 function assertPersistentCredentialWritesAllowed(): void {
@@ -919,8 +1007,20 @@ export async function persistPendingClerkOAuthLogin(
 	);
 }
 
+/** Keep the issuer's increased polling interval without replacing a newer transaction. */
+export async function persistClerkDeviceSlowDown(pending: PendingAuth): Promise<void> {
+	assertPersistentCredentialWritesAllowed();
+	await withPrivateDirectoryLock(credentialLockPath(), async (lease) => {
+		const current = getPendingAuth();
+		if (current?.authType === "clerk_oauth_device" && pendingMatches(current, pending)) {
+			lease.assertOwned();
+			setPendingAuth({ ...current, interval: Math.max(current.interval, pending.interval) });
+		}
+	});
+}
+
 export async function clearPendingClerkOAuthLogin(
-	pending: PendingAuth,
+	pending: PendingAuth | LegacyPendingAuth,
 	lockOptions?: PrivateDirectoryLockOptions,
 ): Promise<void> {
 	if (process.env.CLAWDI_AUTH_TOKEN) return;

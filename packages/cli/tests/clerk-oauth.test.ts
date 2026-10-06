@@ -4,21 +4,22 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	type ClerkDevicePollOptions,
 	type ClerkOAuthClientConfig,
 	type ClerkOAuthDiscovery,
 	ClerkOAuthError,
 	captureStoredCredentialIdentity,
 	commitClawdiCredential,
-	createClerkOAuthAuthorization,
-	exchangeClerkOAuthCode,
 	fetchClerkOAuthClientConfig,
 	fetchClerkOAuthDiscovery,
 	getClawdiAccessToken,
 	logoutClawdiCredentials,
+	pollClerkDeviceToken,
+	pollClerkDeviceTokenOnce,
 	revokeClerkOAuthSession,
+	startClerkDeviceAuthorization,
 	verifyAndPersistClerkOAuthLogin,
 } from "../src/lib/clerk-oauth";
-import { startClerkOAuthLoopback } from "../src/lib/clerk-oauth-loopback";
 import {
 	type ClerkOAuthAuth,
 	clearAuth,
@@ -38,11 +39,10 @@ const CONFIG: ClerkOAuthClientConfig = {
 	clientId: "clawdi-cli",
 	audience: "clawdi-api",
 	authorizedParties: [AUTHORIZED_PARTY],
-	redirectUri: "http://127.0.0.1:18473/oauth/callback",
 };
 const DISCOVERY: ClerkOAuthDiscovery = {
 	issuer: CONFIG.issuer,
-	authorizationEndpoint: `${CONFIG.issuer}/oauth/authorize`,
+	deviceAuthorizationEndpoint: `${CONFIG.issuer}/oauth/device_authorization`,
 	tokenEndpoint: `${CONFIG.issuer}/oauth/token`,
 };
 
@@ -87,11 +87,13 @@ function storedOAuth(overrides: Partial<ClerkOAuthAuth> = {}): ClerkOAuthAuth {
 
 function pending(): PendingAuth {
 	return {
-		authType: "clerk_oauth_pkce",
+		authType: "clerk_oauth_device",
 		state: "state-value",
-		codeVerifier: "verifier-value",
-		authorizationUrl: `${DISCOVERY.authorizationEndpoint}?state=state-value`,
-		redirectUri: CONFIG.redirectUri,
+		deviceCode: "private-device-code",
+		userCode: "ABCD-EFGH",
+		verificationUri: "https://accounts.example.test/device",
+		verificationUriComplete: "https://accounts.example.test/device?user_code=ABCD-EFGH",
+		interval: 5,
 		issuer: CONFIG.issuer,
 		clientId: CONFIG.clientId,
 		audience: CONFIG.audience,
@@ -106,6 +108,47 @@ function pending(): PendingAuth {
 		},
 		scopes: ["openid", "profile", "email", "offline_access"],
 	};
+}
+
+function discoveryBody(overrides: Record<string, unknown> = {}) {
+	return {
+		issuer: CONFIG.issuer,
+		device_authorization_endpoint: DISCOVERY.deviceAuthorizationEndpoint,
+		token_endpoint: DISCOVERY.tokenEndpoint,
+		grant_types_supported: ["urn:ietf:params:oauth:grant-type:device_code", "refresh_token"],
+		token_endpoint_auth_methods_supported: ["none"],
+		...overrides,
+	};
+}
+
+function deviceBody(overrides: Record<string, unknown> = {}) {
+	return {
+		device_code: "private-device-code",
+		user_code: "ABCD-EFGH",
+		verification_uri: "https://accounts.example.test/device",
+		verification_uri_complete: "https://accounts.example.test/device?user_code=ABCD-EFGH",
+		expires_in: 600,
+		interval: 5,
+		...overrides,
+	};
+}
+
+function startDevice(
+	overrides: Record<string, unknown> = {},
+	fetcher?: (request: Request) => Promise<Response>,
+) {
+	return startClerkDeviceAuthorization({
+		config: CONFIG,
+		discovery: DISCOVERY,
+		apiUrl: CLOUD_API_URL,
+		hostedApiUrl: HOSTED_API_URL,
+		now: () => NOW,
+		fetch: fetcher ?? (async () => Response.json(deviceBody(overrides))),
+	});
+}
+
+function pollDevice(transaction: PendingAuth, options: ClerkDevicePollOptions = {}) {
+	return pollClerkDeviceToken(transaction, { sleep: async () => {}, ...options });
 }
 
 function tokenResponse(token: string, refreshToken = "refresh-new"): Response {
@@ -141,7 +184,7 @@ afterEach(() => {
 	rmSync(stateDir, { recursive: true, force: true });
 });
 
-describe("Clerk public OAuth PKCE", () => {
+describe("Clerk public OAuth device authorization", () => {
 	test("loads optional audience and independent authorized-party origins", async () => {
 		const config = await fetchClerkOAuthClientConfig("https://cloud.example.test", {
 			fetch: async () =>
@@ -150,7 +193,7 @@ describe("Clerk public OAuth PKCE", () => {
 					client_id: CONFIG.clientId,
 					audience: "",
 					authorized_parties: [`${AUTHORIZED_PARTY}/`, "https://BÜCHER.example:443/"],
-					redirect_uri: CONFIG.redirectUri,
+					redirect_uri: "ignored-by-device-flow",
 				}),
 		});
 		expect(config).toEqual({
@@ -158,21 +201,6 @@ describe("Clerk public OAuth PKCE", () => {
 			audience: "",
 			authorizedParties: [AUTHORIZED_PARTY, "https://xn--bcher-kva.example"],
 		});
-	});
-
-	test("requires the registered /oauth/callback loopback path", async () => {
-		await expect(
-			fetchClerkOAuthClientConfig("https://cloud.example.test", {
-				fetch: async () =>
-					Response.json({
-						issuer: CONFIG.issuer,
-						client_id: CONFIG.clientId,
-						audience: "",
-						authorized_parties: [],
-						redirect_uri: "http://127.0.0.1:18473/callback",
-					}),
-			}),
-		).rejects.toThrow("/oauth/callback");
 	});
 
 	test.each([
@@ -190,7 +218,7 @@ describe("Clerk public OAuth PKCE", () => {
 						client_id: CONFIG.clientId,
 						audience: CONFIG.audience,
 						authorized_parties: [authorizedParty],
-						redirect_uri: CONFIG.redirectUri,
+						redirect_uri: "ignored-by-device-flow",
 					}),
 			}),
 		).rejects.toThrow("authorized party");
@@ -215,7 +243,7 @@ describe("Clerk public OAuth PKCE", () => {
 					client_id: CONFIG.clientId,
 					audience: CONFIG.audience,
 					authorized_parties: CONFIG.authorizedParties,
-					redirect_uri: CONFIG.redirectUri,
+					redirect_uri: "ignored-by-device-flow",
 				}),
 		});
 
@@ -249,67 +277,234 @@ describe("Clerk public OAuth PKCE", () => {
 						client_id: CONFIG.clientId,
 						audience: CONFIG.audience,
 						authorized_parties: CONFIG.authorizedParties,
-						redirect_uri: CONFIG.redirectUri,
+						redirect_uri: "ignored-by-device-flow",
 					}),
 			}),
 		).rejects.toThrow("OAuth issuer");
 	});
 
-	test("requires the official authorization-code, refresh-token, and S256 discovery contract", async () => {
+	test("requires device and refresh grants without PKCE metadata", async () => {
 		const seen: string[] = [];
 		const discovery = await fetchClerkOAuthDiscovery(CONFIG, {
 			fetch: async (request) => {
 				seen.push(request.url);
-				return Response.json({
-					issuer: CONFIG.issuer,
-					authorization_endpoint: DISCOVERY.authorizationEndpoint,
-					token_endpoint: DISCOVERY.tokenEndpoint,
-					grant_types_supported: ["authorization_code", "refresh_token"],
-					code_challenge_methods_supported: ["S256"],
-					token_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
-				});
+				return Response.json(discoveryBody());
 			},
 		});
 		expect(discovery).toEqual(DISCOVERY);
-		expect(seen).toEqual(["https://clerk.example.test/.well-known/oauth-authorization-server"]);
+		expect(seen).toEqual([`${CONFIG.issuer}/.well-known/oauth-authorization-server`]);
+	});
 
+	test.each([
+		{ device_authorization_endpoint: undefined },
+		{ grant_types_supported: ["authorization_code", "refresh_token"] },
+		{ grant_types_supported: ["urn:ietf:params:oauth:grant-type:device_code"] },
+	])("reports unavailable device grant for %j", async (overrides) => {
+		await expect(
+			fetchClerkOAuthDiscovery(CONFIG, {
+				fetch: async () => Response.json(discoveryBody(overrides)),
+			}),
+		).rejects.toMatchObject({ code: "oauth_device_grant_unavailable" });
+	});
+
+	test.each(["device_authorization_endpoint", "token_endpoint"])(
+		"rejects cross-origin %s",
+		async (field) => {
+			await expect(
+				fetchClerkOAuthDiscovery(CONFIG, {
+					fetch: async () =>
+						Response.json(discoveryBody({ [field]: "https://other.example.test/token" })),
+				}),
+			).rejects.toMatchObject({ code: "invalid_oauth_discovery" });
+		},
+	);
+
+	test("requires public-client token authentication", async () => {
 		await expect(
 			fetchClerkOAuthDiscovery(CONFIG, {
 				fetch: async () =>
-					Response.json({
-						issuer: CONFIG.issuer,
-						authorization_endpoint: DISCOVERY.authorizationEndpoint,
-						token_endpoint: DISCOVERY.tokenEndpoint,
-						grant_types_supported: [
-							"authorization_code",
-							"urn:ietf:params:oauth:grant-type:device_code",
-						],
-						code_challenge_methods_supported: ["S256"],
-						token_endpoint_auth_methods_supported: ["none"],
-					}),
+					Response.json(
+						discoveryBody({ token_endpoint_auth_methods_supported: ["client_secret_basic"] }),
+					),
 			}),
-		).rejects.toThrow("public-client PKCE contract");
+		).rejects.toMatchObject({ code: "invalid_oauth_discovery" });
 	});
 
-	test("creates S256 authorization state without a client secret", () => {
-		const transaction = createClerkOAuthAuthorization({
-			config: CONFIG,
-			discovery: DISCOVERY,
-			apiUrl: "https://cloud.example.test",
-			hostedApiUrl: HOSTED_API_URL,
-			now: () => NOW,
+	test("starts device authorization using server lifetime and interval, then stores it privately", async () => {
+		const requests: Request[] = [];
+		const transaction = await startDevice({}, async (request) => {
+			requests.push(request.clone());
+			return Response.json(deviceBody({ expires_in: 123, interval: 7 }));
 		});
-		const url = new URL(transaction.authorizationUrl);
-		expect(url.searchParams.get("response_type")).toBe("code");
-		expect(url.searchParams.get("client_id")).toBe(CONFIG.clientId);
-		expect(url.searchParams.get("redirect_uri")).toBe(CONFIG.redirectUri);
-		expect(url.searchParams.get("scope")).toBe("openid profile email offline_access");
-		expect(url.searchParams.get("code_challenge_method")).toBe("S256");
-		expect(url.searchParams.get("code_challenge")).not.toBe(transaction.codeVerifier);
-		expect(url.searchParams.has("client_secret")).toBe(false);
+		expect(requests[0]?.url).toBe(DISCOVERY.deviceAuthorizationEndpoint);
+		expect(requests[0]?.redirect).toBe("error");
+		const form = new URLSearchParams(await requests[0]?.text());
+		expect(Object.fromEntries(form)).toEqual({
+			client_id: CONFIG.clientId,
+			scope: "openid profile email offline_access",
+		});
+		expect(transaction).toMatchObject({
+			authType: "clerk_oauth_device",
+			interval: 7,
+			expiresAt: new Date(NOW + 123_000).toISOString(),
+		});
 		setPendingAuth(transaction);
 		expect(statSync(join(stateDir, "pending-auth.json")).mode & 0o777).toBe(0o600);
 		expect(statSync(stateDir).mode & 0o777).toBe(0o700);
+	});
+
+	test("defaults only a missing interval and accepts a missing complete URI", async () => {
+		expect(
+			await startDevice({ interval: undefined, verification_uri_complete: undefined }),
+		).toMatchObject({ interval: 5, verificationUri: "https://accounts.example.test/device" });
+	});
+
+	test.each([
+		{ expires_in: 0 },
+		{ expires_in: 3601 },
+		{ expires_in: 1.5 },
+		{ expires_in: "600" },
+		{ interval: 0 },
+		{ interval: 61 },
+		{ interval: 1.5 },
+		{ interval: "5" },
+		{ interval: null },
+		{ device_code: "" },
+		{ user_code: "" },
+		{ verification_uri: "http://accounts.example.test/device" },
+		{ verification_uri_complete: "http://accounts.example.test/device" },
+		{ verification_uri: "https://user:password@accounts.example.test/device" },
+	])("rejects invalid device response %j without exposing device code", async (overrides) => {
+		try {
+			await startDevice(overrides);
+			throw new Error("expected rejection");
+		} catch (error) {
+			expect(error).toBeInstanceOf(ClerkOAuthError);
+			expect(String(error)).not.toContain("private-device-code");
+		}
+	});
+
+	test.each(["unauthorized_client", "unsupported_grant_type"])(
+		"reports %s from device start safely",
+		async (error) => {
+			await expect(
+				startDevice({}, async () =>
+					Response.json({ error, error_description: "private-device-code" }, { status: 400 }),
+				),
+			).rejects.toMatchObject({ code: "oauth_device_grant_unavailable" });
+		},
+	);
+
+	test("waits the interval between pending responses and approval", async () => {
+		let time = NOW;
+		const sleeps: number[] = [];
+		const requests: Request[] = [];
+		const replies = ["authorization_pending", "authorization_pending", "success"];
+		const auth = await pollClerkDeviceToken(pending(), {
+			now: () => time,
+			sleep: async (ms) => {
+				sleeps.push(ms);
+				time += ms;
+			},
+			fetch: async (request) => {
+				requests.push(request.clone());
+				const error = replies.shift();
+				return error === "success"
+					? tokenResponse(accessToken())
+					: Response.json({ error }, { status: 400 });
+			},
+		});
+		expect(sleeps).toEqual([5_000, 5_000, 5_000]);
+		expect(auth.subject).toBe("user_same_sub");
+		expect(Object.fromEntries(new URLSearchParams(await requests[0]?.text()))).toEqual({
+			grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+			device_code: "private-device-code",
+			client_id: CONFIG.clientId,
+		});
+	});
+
+	test("slow_down adds five seconds to all subsequent waits", async () => {
+		const sleeps: number[] = [];
+		const intervals: number[] = [];
+		const replies = ["slow_down", "authorization_pending", "success"];
+		await pollClerkDeviceToken(pending(), {
+			now: () => NOW,
+			sleep: async (ms) => {
+				sleeps.push(ms);
+			},
+			onSlowDown: (value) => {
+				intervals.push(value.interval);
+			},
+			fetch: async () => {
+				const error = replies.shift();
+				return error === "success"
+					? tokenResponse(accessToken())
+					: Response.json({ error }, { status: 400 });
+			},
+		});
+		expect(sleeps).toEqual([5_000, 10_000, 10_000]);
+		expect(intervals).toEqual([10]);
+	});
+
+	test.each([503, 408, 425, 429, "network"])("retries %s with bounded backoff", async (status) => {
+		let calls = 0;
+		const sleeps: number[] = [];
+		await pollClerkDeviceToken(pending(), {
+			now: () => NOW,
+			sleep: async (ms) => {
+				sleeps.push(ms);
+			},
+			fetch: async () => {
+				if (++calls > 2) return tokenResponse(accessToken());
+				if (status === "network") throw new Error("private-device-code");
+				return new Response("private-device-code", { status });
+			},
+		});
+		expect(sleeps).toEqual([5_000, 10_000, 10_000]);
+	});
+
+	test.each([
+		["access_denied", "oauth_denied"],
+		["expired_token", "oauth_login_expired"],
+		["unauthorized_client", "oauth_device_grant_unavailable"],
+		["unsupported_grant_type", "oauth_device_grant_unavailable"],
+		["invalid_grant", "oauth_exchange_failed"],
+		["invalid_client", "oauth_exchange_failed"],
+		["unexpected_error", "oauth_exchange_failed"],
+	])("stops on %s without leaking private response details", async (error, code) => {
+		let caught: unknown;
+		try {
+			await pollDevice(pending(), {
+				now: () => NOW,
+				fetch: async () =>
+					Response.json({ error, error_description: "private-device-code" }, { status: 400 }),
+			});
+		} catch (failure) {
+			caught = failure;
+		}
+		expect(caught).toMatchObject({ code });
+		expect(String(caught)).not.toContain("private-device-code");
+	});
+
+	test("local expiry stops before making a request", async () => {
+		let calls = 0;
+		let time = NOW;
+		await expect(
+			pollClerkDeviceToken(
+				{ ...pending(), expiresAt: new Date(NOW + 3_000).toISOString() },
+				{
+					now: () => time,
+					sleep: async (ms) => {
+						time += ms;
+					},
+					fetch: async () => {
+						calls++;
+						return tokenResponse(accessToken());
+					},
+				},
+			),
+		).rejects.toMatchObject({ code: "oauth_login_expired" });
+		expect(calls).toBe(0);
 	});
 
 	test("rejects wrong issuer, audience, client, and authorized party", async () => {
@@ -323,28 +518,20 @@ describe("Clerk public OAuth PKCE", () => {
 		];
 		for (const claims of cases) {
 			await expect(
-				exchangeClerkOAuthCode(
-					pending(),
-					`${CONFIG.redirectUri}?code=short-code&state=state-value`,
-					{
-						now: () => NOW,
-						fetch: async () => tokenResponse(accessToken(claims)),
-					},
-				),
+				pollDevice(pending(), {
+					now: () => NOW,
+					fetch: async () => tokenResponse(accessToken(claims)),
+				}),
 			).rejects.toThrow("wrong issuer, client, audience, or authorized party");
 		}
 	});
 
 	test("accepts Clerk access tokens without an optional audience", async () => {
 		const token = accessToken({ aud: undefined });
-		const auth = await exchangeClerkOAuthCode(
-			pending(),
-			`${CONFIG.redirectUri}?code=short-code&state=state-value`,
-			{
-				now: () => NOW,
-				fetch: async () => tokenResponse(token),
-			},
-		);
+		const auth = await pollDevice(pending(), {
+			now: () => NOW,
+			fetch: async () => tokenResponse(token),
+		});
 		expect(auth.subject).toBe("user_same_sub");
 	});
 
@@ -363,14 +550,10 @@ describe("Clerk public OAuth PKCE", () => {
 
 		for (const testCase of cases) {
 			const transaction = { ...pending(), authorizedParties: [...testCase.authorizedParties] };
-			const exchange = exchangeClerkOAuthCode(
-				transaction,
-				`${CONFIG.redirectUri}?code=short-code&state=state-value`,
-				{
-					now: () => NOW,
-					fetch: async () => tokenResponse(accessToken({ azp: testCase.azp })),
-				},
-			);
+			const exchange = pollDevice(transaction, {
+				now: () => NOW,
+				fetch: async () => tokenResponse(accessToken({ azp: testCase.azp })),
+			});
 			if (testCase.accepted) {
 				expect((await exchange).subject).toBe("user_same_sub");
 			} else {
@@ -391,14 +574,10 @@ describe("Clerk public OAuth PKCE", () => {
 
 		for (const testCase of cases) {
 			const transaction = { ...pending(), audience: testCase.audience };
-			const exchange = exchangeClerkOAuthCode(
-				transaction,
-				`${CONFIG.redirectUri}?code=short-code&state=state-value`,
-				{
-					now: () => NOW,
-					fetch: async () => tokenResponse(accessToken({ aud: testCase.aud })),
-				},
-			);
+			const exchange = pollDevice(transaction, {
+				now: () => NOW,
+				fetch: async () => tokenResponse(accessToken({ aud: testCase.aud })),
+			});
 			if (testCase.accepted) expect((await exchange).subject).toBe("user_same_sub");
 			else {
 				await expect(exchange).rejects.toThrow(
@@ -409,11 +588,10 @@ describe("Clerk public OAuth PKCE", () => {
 	});
 
 	test("persists the refresh grant only after Cloud accepts and enriches it", async () => {
-		const auth = await exchangeClerkOAuthCode(
-			pending(),
-			`${CONFIG.redirectUri}?code=short-code&state=state-value`,
-			{ now: () => NOW, fetch: async () => tokenResponse(accessToken(), "refresh-secret") },
-		);
+		const auth = await pollDevice(pending(), {
+			now: () => NOW,
+			fetch: async () => tokenResponse(accessToken(), "refresh-secret"),
+		});
 		expect(getAuth()).toBeNull();
 		const verification = await verifyAndPersistClerkOAuthLogin("https://cloud.example.test", auth, {
 			fetch: async () =>
@@ -437,14 +615,10 @@ describe("Clerk public OAuth PKCE", () => {
 
 	test("retains an explicitly unverified grant for Cloud 5xx and network failures", async () => {
 		for (const testCase of ["server_error", "network"] as const) {
-			const auth = await exchangeClerkOAuthCode(
-				pending(),
-				`${CONFIG.redirectUri}?code=short-code&state=state-value`,
-				{
-					now: () => NOW,
-					fetch: async () => tokenResponse(accessToken(), `refresh-${testCase}`),
-				},
-			);
+			const auth = await pollDevice(pending(), {
+				now: () => NOW,
+				fetch: async () => tokenResponse(accessToken(), `refresh-${testCase}`),
+			});
 			const verification = await verifyAndPersistClerkOAuthLogin(
 				"https://cloud.example.test",
 				auth,
@@ -473,14 +647,10 @@ describe("Clerk public OAuth PKCE", () => {
 	test("revokes best-effort and clears deterministic Cloud rejection without leaking secrets", async () => {
 		for (const status of [400, 401, 403] as const) {
 			const refreshToken = `refresh-rejected-${status}`;
-			const auth = await exchangeClerkOAuthCode(
-				pending(),
-				`${CONFIG.redirectUri}?code=short-code&state=state-value`,
-				{
-					now: () => NOW,
-					fetch: async () => tokenResponse(accessToken(), refreshToken),
-				},
-			);
+			const auth = await pollDevice(pending(), {
+				now: () => NOW,
+				fetch: async () => tokenResponse(accessToken(), refreshToken),
+			});
 			const requests: Request[] = [];
 			let caught: unknown;
 			try {
@@ -898,26 +1068,16 @@ describe("Clerk public OAuth PKCE", () => {
 			const origin = `http://127.0.0.1:${redirectAddress.port}`;
 			for (const status of [307, 308]) {
 				redirectStatus = status;
-				let exchangeError: unknown;
-				try {
-					await exchangeClerkOAuthCode(
-						{
-							...pending(),
-							issuer: origin,
-							tokenEndpoint: `${origin}/oauth/token`,
-							codeVerifier: `verifier-${status}-secret`,
-						},
-						`${CONFIG.redirectUri}?code=code-${status}-secret&state=state-value`,
-						{ now: () => NOW },
-					);
-				} catch (error) {
-					exchangeError = error;
-				}
-				expect(exchangeError).toBeInstanceOf(Error);
-				const exchangeMessage =
-					exchangeError instanceof Error ? exchangeError.message : String(exchangeError);
-				expect(exchangeMessage).not.toContain(`code-${status}-secret`);
-				expect(exchangeMessage).not.toContain(`verifier-${status}-secret`);
+				const exchangeResult = await pollClerkDeviceTokenOnce(
+					{
+						...pending(),
+						issuer: origin,
+						tokenEndpoint: `${origin}/oauth/token`,
+						deviceCode: `device-${status}-secret`,
+					},
+					{ now: () => NOW },
+				);
+				expect(exchangeResult).toEqual({ status: "pending", retryable: true });
 
 				setAuth(
 					storedOAuth({
@@ -957,11 +1117,10 @@ describe("Clerk public OAuth PKCE", () => {
 			}
 			expect(evilRequests).toBe(0);
 			expect(firstHopBodies).toHaveLength(6);
-			expect(firstHopBodies[0]).toContain("code=code-307-secret");
-			expect(firstHopBodies[0]).toContain("code_verifier=verifier-307-secret");
+			expect(firstHopBodies[0]).toContain("device_code=device-307-secret");
 			expect(firstHopBodies[1]).toContain("refresh-307-secret");
 			expect(firstHopBodies[2]).toContain("refresh-307-secret");
-			expect(firstHopBodies[3]).toContain("code=code-308-secret");
+			expect(firstHopBodies[3]).toContain("device_code=device-308-secret");
 			expect(firstHopBodies[4]).toContain("refresh-308-secret");
 			expect(firstHopBodies[5]).toContain("refresh-308-secret");
 		} finally {
@@ -970,71 +1129,5 @@ describe("Clerk public OAuth PKCE", () => {
 				new Promise<void>((resolve) => evil.close(() => resolve())),
 			]);
 		}
-	});
-});
-
-describe("Clerk OAuth loopback", () => {
-	test("captures only the registered callback path and keeps the code out of HTML", async () => {
-		const probe = createServer();
-		await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
-		const address = probe.address();
-		if (!address || typeof address === "string") throw new Error("missing probe port");
-		await new Promise<void>((resolve) => probe.close(() => resolve()));
-		const redirectUri = `http://127.0.0.1:${address.port}/oauth/callback`;
-		const loopback = await startClerkOAuthLoopback(redirectUri, "state-value");
-		const rejected = await fetch(`${redirectUri}?code=wrong-code&state=wrong-state`);
-		expect(rejected.status).toBe(400);
-		expect(rejected.headers.get("content-security-policy")).toBe(
-			"default-src 'none'; style-src 'unsafe-inline'",
-		);
-		const rejectedHtml = await rejected.text();
-		expect(rejectedHtml).not.toContain("wrong-code");
-		expect(rejectedHtml).toContain("Sign-in not completed");
-		expect(rejectedHtml).toContain('data-status="rejected"');
-		expect(rejectedHtml).toContain('role="alert"');
-		expect(rejectedHtml).toContain('aria-describedby="result-description"');
-		expect(rejectedHtml).toContain("Sign-in wasn't completed.");
-		expect(rejectedHtml).not.toContain('class="brand"');
-		expect(rejectedHtml).not.toContain("<img");
-		expect(rejectedHtml).not.toContain("C_");
-		const response = await fetch(`${redirectUri}?code=secret-code&state=state-value`);
-		expect(response.status).toBe(200);
-		const acceptedHtml = await response.text();
-		expect(acceptedHtml).not.toContain("secret-code");
-		expect(acceptedHtml).toContain("Sign-in complete");
-		expect(acceptedHtml).toContain('data-status="accepted"');
-		expect(acceptedHtml).toContain('role="status"');
-		expect(acceptedHtml).toContain("Close this window and return to your terminal.");
-		expect(acceptedHtml).not.toContain('class="brand"');
-		expect(acceptedHtml).not.toContain("<img");
-		expect(acceptedHtml).not.toContain("<link");
-		expect(acceptedHtml).not.toContain("C_");
-		expect(acceptedHtml).not.toContain("<script");
-		expect(await loopback.callbackUrl).toBe(`${redirectUri}?code=secret-code&state=state-value`);
-		await loopback.close();
-	});
-
-	test("directs Desktop sign-in back to Clawdi without changing the loopback flow", async () => {
-		const probe = createServer();
-		await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
-		const address = probe.address();
-		if (!address || typeof address === "string") throw new Error("missing probe port");
-		await new Promise<void>((resolve) => probe.close(() => resolve()));
-		const redirectUri = `http://127.0.0.1:${address.port}/oauth/callback`;
-		const loopback = await startClerkOAuthLoopback(redirectUri, "desktop-state", {
-			returnTarget: "desktop",
-		});
-
-		const rejected = await fetch(`${redirectUri}?state=wrong-state&error=access_denied`);
-		const rejectedHtml = await rejected.text();
-		expect(rejectedHtml).toContain("Return to Clawdi and try again.");
-		expect(rejectedHtml).not.toContain("terminal");
-
-		const accepted = await fetch(`${redirectUri}?code=desktop-code&state=desktop-state`);
-		const acceptedHtml = await accepted.text();
-		expect(acceptedHtml).toContain("Return to Clawdi to continue.");
-		expect(acceptedHtml).not.toContain("terminal");
-		expect(await loopback.callbackUrl).toBe(`${redirectUri}?code=desktop-code&state=desktop-state`);
-		await loopback.close();
 	});
 });

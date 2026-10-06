@@ -213,7 +213,7 @@ backend, dashboard, local key minting, and cleanup.
 Once it's up, a canonical smoke loop:
 
 ```bash
-clawdi auth login     # Clerk OAuth Authorization Code + PKCE
+clawdi auth login     # Clerk OAuth Device Authorization Grant
 clawdi setup          # register this agent + install the built-in skill
 clawdi doctor         # all ✓ means the full pipe is wired up
 clawdi push --dry-run # preview what push would upload
@@ -241,11 +241,25 @@ Cloud reads its public-client identifiers from the strictly registered global
 `clerk_cli_oauth` App Setting. Cloud and Hosted are configured independently;
 there is no automatic synchronization or shared secret reference between them.
 
-On SSH, run `clawdi auth login --no-open`, open the printed URL locally, then
-paste the complete failed loopback callback URL into the masked terminal
-prompt. Clerk does not advertise RFC 8628 device authorization. A non-TTY flow
-can save the pending PKCE transaction and later run `clawdi auth complete` with
-the callback URL on stdin; the authorization code is never accepted as a flag.
+`clawdi auth login` discovers Clerk's device authorization endpoint from the
+issuer metadata, prints a short-lived sign-in link and code, and waits for
+approval. Check that the browser page shows the same code and approve only a
+sign-in you just started on this machine. Local interactive terminals open the
+browser automatically; SSH and non-TTY commands print the link and keep polling.
+`--no-open` suppresses opening the browser. `clawdi auth complete` resumes a
+pending device sign-in without reading stdin; transactions from older CLIs are
+cleared with instructions to start again.
+
+Self-hosted Clerk OAuth applications must enable **Device authorization grant**
+under Configure → OAuth applications in the Clerk Dashboard. The Backend API
+equivalent is `PATCH /v1/oauth_applications/<application_id>` with
+`{"device_authorization_grant_enabled": true}`. Keep the registered loopback
+redirect URI for older CLIs. Instances without Clerk OAuth can use
+`clawdi auth login --manual` with an API key from Settings → API Keys.
+
+Done: `clawdi auth login` prints the link and code, then reports `Signed in as`
+after browser approval. Run `clawdi auth status --json` to check the saved
+`clerk-oauth` credential. Local development without Clerk uses `--manual`.
 
 The Hosted deploy wizard shares its defaults, validation, request builder,
 compute/payment selection, and deployment-request projection with the Web

@@ -1,13 +1,20 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { authLogin, browserOpenCommand, finishOAuthLogin } from "../../src/commands/auth";
+import {
+	authComplete,
+	authLogin,
+	authLoginDesktop,
+	browserOpenCommand,
+} from "../../src/commands/auth";
+import * as browser from "../../src/lib/browser";
 import {
 	clearAuth,
 	getAuth,
 	getPendingAuth,
 	type PendingAuth,
+	setAuth,
 	setPendingAuth,
 } from "../../src/lib/config";
 import { addToken } from "../../src/share/tokens";
@@ -36,11 +43,13 @@ function oauthAccessToken(): string {
 
 function oauthPending(): PendingAuth {
 	return {
-		authType: "clerk_oauth_pkce",
+		authType: "clerk_oauth_device",
 		state: "interactive-state",
-		codeVerifier: "interactive-verifier",
-		authorizationUrl: "https://clerk.example.test/oauth/authorize",
-		redirectUri: "http://127.0.0.1:18473/oauth/callback",
+		deviceCode: "private-device-code",
+		userCode: "ABCD-EFGH",
+		verificationUri: "https://accounts.example.test/device",
+		verificationUriComplete: "https://accounts.example.test/device?user_code=ABCD-EFGH",
+		interval: 1,
 		issuer: "https://clerk.example.test",
 		clientId: "clawdi-cli",
 		audience: "clawdi-api",
@@ -57,7 +66,108 @@ function oauthPending(): PendingAuth {
 	};
 }
 
+const stdout: string[] = [];
+const stderr: string[] = [];
+let openSpy: ReturnType<typeof spyOn<typeof browser, "openInBrowser">>;
+let stdoutSpy: ReturnType<typeof spyOn<typeof console, "log">>;
+let stderrSpy: ReturnType<typeof spyOn<typeof console, "error">>;
+let writeSpy: ReturnType<typeof spyOn<typeof process.stderr, "write">>;
+let ttyDescriptors: { input?: PropertyDescriptor; output?: PropertyDescriptor };
+let sshEnv: Record<string, string | undefined>;
+
+function setTty(value: boolean): void {
+	Object.defineProperty(process.stdin, "isTTY", { value, configurable: true });
+	Object.defineProperty(process.stdout, "isTTY", { value, configurable: true });
+}
+
+function tokenHandler() {
+	return {
+		method: "POST",
+		path: "/oauth/token",
+		response: () =>
+			jsonResponse({
+				access_token: oauthAccessToken(),
+				refresh_token: "refresh-secret",
+				token_type: "Bearer",
+				scope: "openid profile email offline_access",
+			}),
+	};
+}
+
+function profileHandler() {
+	return {
+		method: "GET",
+		path: "/v1/auth/me",
+		response: () => jsonResponse({ id: "cloud-user", email: "user@example.test", name: "User" }),
+	};
+}
+
+function startHandlers() {
+	return [
+		{
+			method: "GET",
+			path: "/v1/cli/auth/oauth/config",
+			response: () =>
+				jsonResponse({
+					issuer: "https://clerk.example.test",
+					client_id: "clawdi-cli",
+					audience: "clawdi-api",
+					authorized_parties: ["https://accounts.clawdi.test"],
+					redirect_uri: "ignored",
+				}),
+		},
+		{
+			method: "GET",
+			path: "/.well-known/oauth-authorization-server",
+			response: () =>
+				jsonResponse({
+					issuer: "https://clerk.example.test",
+					device_authorization_endpoint: "https://clerk.example.test/oauth/device_authorization",
+					token_endpoint: "https://clerk.example.test/oauth/token",
+					grant_types_supported: ["urn:ietf:params:oauth:grant-type:device_code", "refresh_token"],
+					token_endpoint_auth_methods_supported: ["none"],
+				}),
+		},
+		{
+			method: "POST",
+			path: "/oauth/device_authorization",
+			response: () =>
+				jsonResponse({
+					device_code: "private-device-code",
+					user_code: "ABCD-EFGH",
+					verification_uri: "https://accounts.example.test/device",
+					verification_uri_complete: "https://accounts.example.test/device?user_code=ABCD-EFGH",
+					expires_in: 600,
+					interval: 1,
+				}),
+		},
+	];
+}
+
 beforeEach(() => {
+	stdout.length = 0;
+	stderr.length = 0;
+	openSpy = spyOn(browser, "openInBrowser").mockImplementation(() => {});
+	stdoutSpy = spyOn(console, "log").mockImplementation((...args) => {
+		stdout.push(args.map(String).join(" "));
+	});
+	stderrSpy = spyOn(console, "error").mockImplementation((...args) => {
+		stderr.push(args.map(String).join(" "));
+	});
+	writeSpy = spyOn(process.stderr, "write").mockImplementation((chunk) => {
+		stderr.push(String(chunk));
+		return true;
+	});
+	ttyDescriptors = {
+		input: Object.getOwnPropertyDescriptor(process.stdin, "isTTY"),
+		output: Object.getOwnPropertyDescriptor(process.stdout, "isTTY"),
+	};
+	setTty(false);
+	sshEnv = {};
+	for (const key of ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"]) {
+		sshEnv[key] = process.env[key];
+		delete process.env[key];
+	}
 	origHome = process.env.HOME;
 	origClawdiHome = process.env.CLAWDI_HOME;
 	origApiUrl = process.env.CLAWDI_API_URL;
@@ -80,10 +190,22 @@ beforeEach(() => {
 	delete process.env.CLAWDI_HOME;
 	process.env.CLAWDI_API_URL = "https://api.test";
 	delete process.env.CLAWDI_AUTH_TOKEN;
-	process.exitCode = undefined;
+	process.exitCode = 0;
 });
 
 afterEach(() => {
+	openSpy.mockRestore();
+	stdoutSpy.mockRestore();
+	stderrSpy.mockRestore();
+	writeSpy.mockRestore();
+	if (ttyDescriptors.input) Object.defineProperty(process.stdin, "isTTY", ttyDescriptors.input);
+	else delete process.stdin.isTTY;
+	if (ttyDescriptors.output) Object.defineProperty(process.stdout, "isTTY", ttyDescriptors.output);
+	else delete process.stdout.isTTY;
+	for (const [key, value] of Object.entries(sshEnv)) {
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
 	if (origClawdiHome) process.env.CLAWDI_HOME = origClawdiHome;
@@ -112,57 +234,243 @@ describe("authLogin authentication boundary", () => {
 		});
 	});
 
-	it("starts Clerk Authorization Code + PKCE without calling a device grant", async () => {
-		rmSync(join(tmpHome, ".clawdi", "auth.json"), { force: true });
+	it("non-TTY login prints link and code, persists private pending state, and polls to a verified credential", async () => {
+		clearAuth();
+		let polls = 0;
 		const { captured, restore } = mockFetch([
+			...startHandlers(),
 			{
-				method: "GET",
-				path: "/v1/cli/auth/oauth/config",
-				response: () =>
-					jsonResponse({
-						issuer: "https://clerk.example.test",
-						client_id: "clawdi-cli",
-						audience: "clawdi-api",
-						authorized_parties: ["https://accounts.clawdi.test"],
-						redirect_uri: "http://127.0.0.1:18473/oauth/callback",
-					}),
+				method: "POST",
+				path: "/oauth/token",
+				response: () => {
+					const saved = getPendingAuth();
+					expect(saved?.authType).toBe("clerk_oauth_device");
+					expect(statSync(join(tmpHome, ".clawdi", "pending-auth.json")).mode & 0o777).toBe(0o600);
+					return ++polls === 1
+						? jsonResponse({ error: "authorization_pending" }, 400)
+						: tokenHandler().response();
+				},
 			},
-			{
-				method: "GET",
-				path: "/.well-known/oauth-authorization-server",
-				response: () =>
-					jsonResponse({
-						issuer: "https://clerk.example.test",
-						authorization_endpoint: "https://clerk.example.test/oauth/authorize",
-						token_endpoint: "https://clerk.example.test/oauth/token",
-						grant_types_supported: ["authorization_code", "refresh_token"],
-						code_challenge_methods_supported: ["S256"],
-						token_endpoint_auth_methods_supported: ["client_secret_basic", "none"],
-					}),
-			},
+			profileHandler(),
 		]);
-
 		try {
-			await authLogin({ open: false });
-			const { getPendingAuth } = await import("../../src/lib/config");
-			const pending = getPendingAuth();
-			expect(pending?.authType).toBe("clerk_oauth_pkce");
-			expect(pending?.endpointBinding).toEqual({
-				version: 1,
-				cloudApiOrigin: "https://api.test",
-				hostedApiOrigin: "http://localhost:50021",
-			});
-			const authorizationUrl = new URL(pending?.authorizationUrl ?? "");
-			expect(authorizationUrl.searchParams.get("code_challenge_method")).toBe("S256");
-			expect(authorizationUrl.searchParams.has("client_secret")).toBe(false);
+			await authLogin();
 		} finally {
 			restore();
 		}
-
+		expect(openSpy).not.toHaveBeenCalled();
+		expect(stdout.join("\n")).toContain(
+			"Open:  https://accounts.example.test/device?user_code=ABCD-EFGH",
+		);
+		expect(stdout.join("\n")).toContain("Code:  ABCD-EFGH");
+		expect(stdout.join("\n")).toContain("check that the page shows the same code");
+		expect(stdout.join("\n")).toContain(
+			"Approve only if you started this sign-in on this machine just now",
+		);
+		expect(stdout.join("\n")).toContain("Signed in as user@example.test");
+		expect(stdout.concat(stderr).join("\n")).not.toContain("private-device-code");
+		expect(getPendingAuth()).toBeNull();
+		expect(getAuth()).toMatchObject({
+			authType: "clerk_oauth",
+			userId: "cloud-user",
+			refreshToken: "refresh-secret",
+		});
 		expect(captured.map((request) => request.path)).toEqual([
 			"/v1/cli/auth/oauth/config",
 			"/.well-known/oauth-authorization-server",
+			"/oauth/device_authorization",
+			"/oauth/token",
+			"/oauth/token",
+			"/v1/auth/me",
 		]);
+	});
+
+	it.each(["open", "no-open", "ssh"])(
+		"TTY %s uses device authorization with the right browser behavior",
+		async (mode) => {
+			clearAuth();
+			setTty(true);
+			if (mode === "ssh") process.env.SSH_CONNECTION = "fake-ssh";
+			const { restore } = mockFetch([...startHandlers(), tokenHandler(), profileHandler()]);
+			try {
+				await authLogin({ open: mode !== "no-open" });
+			} finally {
+				restore();
+			}
+			if (mode === "open")
+				expect(openSpy).toHaveBeenCalledWith(
+					"https://accounts.example.test/device?user_code=ABCD-EFGH",
+				);
+			else expect(openSpy).not.toHaveBeenCalled();
+			expect(stderr.join("\n")).toContain("ABCD-EFGH");
+			expect(stdout).toEqual([]);
+		},
+	);
+
+	it("auth complete resumes persisted device authorization without stdin", async () => {
+		clearAuth();
+		setPendingAuth(oauthPending());
+		const { restore } = mockFetch([tokenHandler(), profileHandler()]);
+		try {
+			await authComplete();
+		} finally {
+			restore();
+		}
+		expect(getPendingAuth()).toBeNull();
+		expect(getAuth()?.userId).toBe("cloud-user");
+		expect(stdout.join("\n")).toContain("ABCD-EFGH");
+		expect(openSpy).not.toHaveBeenCalled();
+	});
+
+	it("clears stale pending PKCE state with instructions to start again", async () => {
+		clearAuth();
+		writeFileSync(
+			join(tmpHome, ".clawdi", "pending-auth.json"),
+			JSON.stringify({
+				authType: "clerk_oauth_pkce",
+				state: "old",
+				expiresAt: new Date(Date.now() + 60_000).toISOString(),
+				codeVerifier: "old-secret",
+			}),
+		);
+		await authComplete();
+		expect(getPendingAuth()).toBeNull();
+		expect(process.exitCode).toBe(1);
+		expect(stderr.join("\n")).toContain("older Clawdi CLI");
+		expect(stderr.join("\n")).not.toContain("old-secret");
+	});
+
+	it("reports missing and expired device authorization", async () => {
+		clearAuth();
+		await authComplete();
+		expect(stderr.join("\n")).toContain("No pending sign-in");
+		setPendingAuth({ ...oauthPending(), expiresAt: new Date(Date.now() - 1).toISOString() });
+		await authComplete();
+		expect(getPendingAuth()).toBeNull();
+		expect(process.exitCode).toBe(1);
+		expect(stderr.join("\n")).toContain("The code expired");
+	});
+
+	it.each([
+		"access_denied",
+		"expired_token",
+		"unauthorized_client",
+		"unsupported_grant_type",
+		"invalid_grant",
+	])("clears pending state after %s", async (error) => {
+		clearAuth();
+		setPendingAuth(oauthPending());
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/oauth/token",
+				response: () => jsonResponse({ error, error_description: "private-device-code" }, 400),
+			},
+		]);
+		try {
+			await authComplete();
+		} finally {
+			restore();
+		}
+		expect(getPendingAuth()).toBeNull();
+		expect(getAuth()).toBeNull();
+		expect(process.exitCode).toBe(1);
+		expect(stdout.concat(stderr).join("\n")).not.toContain("private-device-code");
+	});
+
+	it("reports success when a concurrent device poll already committed the same Clerk subject", async () => {
+		clearAuth();
+		setPendingAuth(oauthPending());
+		const pending = oauthPending();
+		const { restore } = mockFetch([
+			tokenHandler(),
+			{
+				method: "GET",
+				path: "/v1/auth/me",
+				response: () => {
+					setAuth({
+						authType: "clerk_oauth",
+						apiKey: oauthAccessToken(),
+						refreshToken: "concurrent-refresh",
+						accessTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+						issuer: pending.issuer,
+						clientId: pending.clientId,
+						audience: pending.audience,
+						authorizedParties: pending.authorizedParties,
+						tokenEndpoint: pending.tokenEndpoint,
+						scopes: pending.scopes,
+						subject: "oauth-user",
+						userId: "cloud-user",
+						email: "user@example.test",
+						endpointBinding: pending.endpointBinding,
+					});
+					return profileHandler().response();
+				},
+			},
+			{
+				method: "POST",
+				path: "/v1/cli/auth/oauth/revoke",
+				response: () => jsonResponse({ status: "revoked" }),
+			},
+		]);
+		try {
+			await authComplete();
+		} finally {
+			restore();
+		}
+		expect(process.exitCode).toBe(0);
+		expect(getAuth()).toMatchObject({ refreshToken: "concurrent-refresh" });
+		expect(stdout.join("\n")).toContain("Signed in as user@example.test");
+	});
+
+	it("Desktop opens the device link and preserves exactly one success JSON object", async () => {
+		clearAuth();
+		const { restore } = mockFetch([...startHandlers(), tokenHandler(), profileHandler()]);
+		try {
+			await authLoginDesktop();
+		} finally {
+			restore();
+		}
+		expect(openSpy).toHaveBeenCalledWith(
+			"https://accounts.example.test/device?user_code=ABCD-EFGH",
+		);
+		expect(stdout).toHaveLength(1);
+		expect(JSON.parse(stdout[0] ?? "")).toEqual({
+			schemaVersion: "clawdi.desktopLogin.v1",
+			status: "authenticated",
+			user: { id: "cloud-user", email: "user@example.test" },
+		});
+		expect(stderr).toHaveLength(1);
+		expect(JSON.parse(stderr[0] ?? "")).toMatchObject({
+			schemaVersion: "clawdi.desktopLogin.progress.v1",
+			verificationUri: "https://accounts.example.test/device?user_code=ABCD-EFGH",
+			userCode: "ABCD-EFGH",
+		});
+		expect(stdout.concat(stderr).join("\n")).not.toContain("private-device-code");
+	});
+	it("Desktop reuses an existing Clerk session unless force requests new authorization", async () => {
+		clearAuth();
+		const { captured, restore } = mockFetch([...startHandlers(), tokenHandler(), profileHandler()]);
+		try {
+			await authLoginDesktop();
+			const requestsAfterLogin = captured.length;
+			stdout.length = 0;
+			stderr.length = 0;
+			openSpy.mockClear();
+			await authLoginDesktop();
+			expect(captured).toHaveLength(requestsAfterLogin);
+			expect(openSpy).not.toHaveBeenCalled();
+			expect(stderr).toEqual([]);
+			expect(stdout).toHaveLength(1);
+			stdout.length = 0;
+			await authLoginDesktop({ force: true });
+			expect(captured).toHaveLength(requestsAfterLogin * 2);
+			expect(openSpy).toHaveBeenCalledTimes(1);
+			expect(stdout).toHaveLength(1);
+			expect(stderr).toHaveLength(1);
+		} finally {
+			restore();
+		}
 	});
 });
 
@@ -209,13 +517,8 @@ describe("interactive OAuth Cloud verification boundary", () => {
 				},
 			]);
 			try {
-				expect(
-					await finishOAuthLogin(
-						pending,
-						`${pending.redirectUri}?code=interactive-code&state=${pending.state}`,
-						{ kind: "none" },
-					),
-				).toBe(true);
+				await authComplete();
+				expect(process.exitCode, stderr.join("\n")).not.toBe(1);
 			} finally {
 				restore();
 			}
@@ -274,13 +577,8 @@ describe("interactive OAuth Cloud verification boundary", () => {
 				},
 			]);
 			try {
-				await expect(
-					finishOAuthLogin(
-						pending,
-						`${pending.redirectUri}?code=interactive-code&state=${pending.state}`,
-						{ kind: "none" },
-					),
-				).rejects.toThrow();
+				await authComplete();
+				expect(process.exitCode).toBe(1);
 			} finally {
 				restore();
 			}
