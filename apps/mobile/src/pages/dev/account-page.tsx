@@ -96,7 +96,7 @@ function AccountStories() {
 						agent_link_id: "fixture-link",
 						agent_id: "fixture-agent",
 						code: "FIXTURE",
-						expires_at: "2099-01-01T00:00:00Z",
+						expires_at: new Date(Date.now() + 300_000).toISOString(),
 						pairing_command: "/pair FIXTURE",
 						bot_username: "acme_ops_bot",
 						discord_install_url:
