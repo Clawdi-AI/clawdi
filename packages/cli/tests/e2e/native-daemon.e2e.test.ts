@@ -140,6 +140,17 @@ nativeDescribe("native daemon invocation smoke", () => {
 		let daemonStdout = "";
 		let daemonStderr = "";
 		try {
+			const signedOut = await runBinary(
+				stableLauncher,
+				["push", "--no-color"],
+				{ ...env, CLAWDI_AUTH_TOKEN: "", NO_COLOR: "", FORCE_COLOR: "1" },
+				root,
+			);
+			expect(signedOut.code).toBe(1);
+			expect(signedOut.stdout).toBe("");
+			expect(signedOut.stderr).toContain("Not signed in");
+			expect(signedOut.stderr).not.toContain(String.fromCharCode(27));
+
 			const installed = await runBinary(
 				stableLauncher,
 				["daemon", "install", "--host", "127.0.0.1", "--port", "0"],

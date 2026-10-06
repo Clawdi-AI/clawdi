@@ -20,6 +20,13 @@ beforeAll(async () => {
 	Object.defineProperty(stream, "isTTY", { value: true, configurable: true });
 	Object.defineProperty(stream, "columns", { value: 80, configurable: true });
 }
+if (process.env.CLAWDI_TEST_CONSOLE_REPORT) {
+	process.once("beforeExit", () => {
+		console.error("Console error report");
+		console.warn("Console warning report");
+		console.log({ inspectedValue: 42 });
+	});
+}
 `,
 	);
 	const result = await Bun.build({
@@ -116,6 +123,35 @@ for (const runtime of ["bun", "node"] as const) {
 					expect(result.output).not.toContain(ansiEscape);
 				});
 			}
+		}
+
+		for (const colorSetting of ["NO_COLOR", "--no-color"]) {
+			const colorEnv = colorSetting === "NO_COLOR" ? { NO_COLOR: "1" } : {};
+			const colorArgs = colorSetting === "--no-color" ? ["--no-color"] : [];
+
+			it(`keeps console errors, warnings, and inspected values plain with ${colorSetting}`, async () => {
+				const result = await runCli(runtime, ["status", ...colorArgs], {
+					...colorEnv,
+					CLAWDI_TEST_CONSOLE_REPORT: "1",
+				});
+				expect(result.code).toBe(0);
+				expect(result.output).toContain("Console error report");
+				expect(result.output).toContain("Console warning report");
+				expect(result.output).toContain("inspectedValue: 42");
+				expect(result.output).not.toContain(ansiEscape);
+			});
+
+			it(`keeps Clack and module-validation errors plain with ${colorSetting}`, async () => {
+				const result = await runCli(
+					runtime,
+					["push", "--dry-run", "--agent", "claude_code", "--modules", "nope", ...colorArgs],
+					colorEnv,
+				);
+				expect(result.code).toBe(0);
+				expect(result.output).toContain("clawdi push");
+				expect(result.output).toContain("Unknown module(s): nope");
+				expect(result.output).not.toContain(ansiEscape);
+			});
 		}
 
 		it("accepts --no-color on a nested command", async () => {

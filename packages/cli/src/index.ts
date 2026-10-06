@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { Console } from "node:console";
 import chalk from "chalk";
 import { Command, Option } from "commander";
 import { AGENT_TYPE_HELP_LABEL, SKILL_AGENT_TYPE_HELP_LABEL } from "./adapters/registry.js";
@@ -14,6 +15,12 @@ function disableColor(): void {
 	chalk.level = 0;
 	// Clack uses node:util styleText, which honors FORCE_COLOR=0.
 	process.env.FORCE_COLOR = "0";
+	// Bun's built-in console caches color support before startup. Use standard
+	// Console methods so errors, warnings, and inspected values stay plain.
+	Object.assign(
+		globalThis.console,
+		new Console({ stdout: process.stdout, stderr: process.stderr, colorMode: false }),
+	);
 }
 
 const args = process.argv.slice(2);
