@@ -422,13 +422,13 @@ async def prune_platform_workload_assertion_replays(
 ) -> int:
     """Delete replay receipts that can no longer authorize a replay.
 
-    Assertions remain valid during the configured clock-skew allowance, so the
-    retention cutoff deliberately stays behind the current time by that same
-    allowance. The caller owns the transaction and commits the bounded batch.
+    Preserve receipts for twice the verification leeway, with a ten-minute
+    minimum, after assertion expiry to cover skew between verifiers and the
+    cleanup worker. The caller commits the bounded batch.
     """
     if limit <= 0:
         raise ValueError("replay retention limit must be positive")
-    cutoff = now - timedelta(seconds=PLATFORM_WORKLOAD_CLOCK_SKEW_SECONDS)
+    cutoff = now - timedelta(seconds=max(2 * PLATFORM_WORKLOAD_CLOCK_SKEW_SECONDS, 10 * 60))
     replay_ids = list(
         (
             await db.execute(
