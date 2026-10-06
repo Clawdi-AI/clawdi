@@ -8,6 +8,7 @@ type Schemas = components["schemas"];
 // ── Read responses ────────────────────────────────────────────────────────
 export type Memory = Schemas["MemoryResponse"];
 export type SkillSummary = Schemas["SkillSummaryResponse"];
+export type AgentProfile = Schemas["AgentProfileResponse"];
 export type SessionListItem = Schemas["SessionListItemResponse"];
 export type SessionDetail = Schemas["SessionDetailResponse"];
 export type SessionMessage = Schemas["SessionTimelineMessageResponse"];
