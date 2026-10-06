@@ -1,7 +1,9 @@
 import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import {
 	accessSync,
+	chmodSync,
 	constants,
+	cpSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
@@ -15,6 +17,7 @@ import {
 	type Stats,
 	statSync,
 	symlinkSync,
+	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -699,10 +702,13 @@ function tryVerifyCliTarget(
 		};
 	}
 	try {
-		const version = smokeCliVersion(target.activeTarget);
+		const version = withPrivateCliSnapshot(target.activeTarget, (command) => {
+			const version = smokeCliVersion(command);
+			verifyCliRuntime(command);
+			return version;
+		});
 		if (target.version !== undefined && version !== target.version) return null;
 		if (!hostedCliPackageSpecSchema.safeParse(`clawdi@${version}`).success) return null;
-		verifyCliRuntime(target.activeTarget);
 		return {
 			activeTarget: target.activeTarget,
 			version,
@@ -917,6 +923,27 @@ function finishCliVerification(
 function commandOutput(stdout: string | null, stderr: string | null): string {
 	const output = [stdout, stderr].filter(Boolean).join("\n").trim();
 	return output ? `: ${output.slice(0, 1000)}` : "";
+}
+
+/** Execute only a private copy. Package-relative imports stay inside the copy. */
+function withPrivateCliSnapshot<T>(command: string, run: (command: string) => T): T {
+	const source = realpathSync(command);
+	const bytes = readFileSync(source);
+	const temporary = mkdtempSync(join(tmpdir(), "clawdi-cli-verification-"));
+	chmodSync(temporary, 0o700);
+	try {
+		const packageRoot = dirname(dirname(source));
+		let snapshot = join(temporary, "clawdi");
+		if (source.endsWith("/bin/clawdi.mjs") && existsSync(join(packageRoot, "package.json"))) {
+			cpSync(packageRoot, join(temporary, "package"), { recursive: true, dereference: true });
+			snapshot = join(temporary, "package/bin/clawdi.mjs");
+		}
+		writeFileSync(snapshot, bytes, { mode: 0o700 });
+		chmodSync(snapshot, 0o700);
+		return run(snapshot);
+	} finally {
+		rmSync(temporary, { recursive: true, force: true });
+	}
 }
 
 function smokeCliVersion(command: string): string {

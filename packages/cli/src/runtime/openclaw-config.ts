@@ -22,10 +22,13 @@ export function readPlainOpenClawConfig(configPath: string): Record<string, unkn
 }
 
 /** Scan references in JSON5 and include documents without authorizing local skips. */
+export type OpenClawConfigEvidence = ReturnType<typeof readPrivateFileEvidence>;
+
 export function visitOpenClawConfigDocuments(
 	configPath: string,
 	visit: (value: Record<string, unknown>) => void,
 	depth = 0,
+	evidenceSet?: OpenClawConfigEvidence[],
 ): void {
 	if (depth > 10) throw new Error("OpenClaw config include depth exceeded");
 	const evidence = readPrivateFileEvidence(configPath, {
@@ -39,7 +42,8 @@ export function visitOpenClawConfigDocuments(
 		config = recordValue(JSON5.parse(evidence.content.toString("utf8")) as unknown);
 		evidence.assertCurrent();
 	} finally {
-		evidence.close();
+		if (evidenceSet) evidenceSet.push(evidence);
+		else evidence.close();
 	}
 	if (!config) throw new Error("OpenClaw config document must be an object");
 	const walk = (value: unknown): void => {
@@ -54,7 +58,12 @@ export function visitOpenClawConfigDocuments(
 			const includes = Array.isArray(record.$include) ? record.$include : [record.$include];
 			for (const include of includes) {
 				if (typeof include !== "string") throw new Error("Invalid OpenClaw config include");
-				visitOpenClawConfigDocuments(resolve(dirname(configPath), include), visit, depth + 1);
+				visitOpenClawConfigDocuments(
+					resolve(dirname(configPath), include),
+					visit,
+					depth + 1,
+					evidenceSet,
+				);
 			}
 		}
 		for (const [key, child] of Object.entries(record)) if (key !== "$include") walk(child);

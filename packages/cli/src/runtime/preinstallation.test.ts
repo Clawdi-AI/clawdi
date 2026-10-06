@@ -1,6 +1,7 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import * as filesystem from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -294,3 +295,27 @@ chmod 755 "$HOME/.local/bin/npm"
 			);
 	},
 );
+
+test("installer replacement after hash cannot change executed bytes", () => {
+	const f = fixture();
+	const original = filesystem.mkdtempSync;
+	const spy = spyOn(filesystem, "mkdtempSync").mockImplementation(
+		new Proxy(original, {
+			apply(target, receiver, args) {
+				writeFileSync(f.installer, "#!/bin/bash\nexit 99\n");
+				return Reflect.apply(target, receiver, args);
+			},
+		}),
+	);
+	try {
+		const receipt = prepareRuntimePreinstallation(f.spec, f.installer, {
+			...f,
+			uid: process.getuid?.(),
+			gid: process.getgid?.(),
+		});
+		expect(receipt.health).toBe("2026.9.8");
+		expect(readFileSync(f.installer, "utf8")).toContain("exit 99");
+	} finally {
+		spy.mockRestore();
+	}
+});

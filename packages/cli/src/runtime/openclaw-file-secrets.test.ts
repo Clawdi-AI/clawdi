@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import * as filesystem from "node:fs";
 import {
 	existsSync,
 	mkdirSync,
@@ -210,4 +211,27 @@ test("upgrade GC retains the pre-apply generation even when multiple candidates 
 	writeFileSync(configPath, next.config);
 	gcOpenClawFileSecrets(home, openClawCredentialGeneration(home));
 	expect(existsSync(running.path)).toBe(false);
+});
+
+test("GC re-reads references published after its initial scan before unlinking", () => {
+	const home = credentialHome();
+	const configPath = join(home, ".openclaw", "openclaw.json");
+	const current = credentialGeneration(home, "current-race");
+	const candidate = credentialGeneration(home, "newly-committed");
+	writeFileSync(configPath, current.config);
+	const original = filesystem.readdirSync;
+	const spy = spyOn(filesystem, "readdirSync").mockImplementation(
+		new Proxy(original, {
+			apply(target, receiver, args) {
+				writeFileSync(configPath, candidate.config);
+				return Reflect.apply(target, receiver, args);
+			},
+		}),
+	);
+	try {
+		gcOpenClawFileSecrets(home);
+		expect(existsSync(candidate.path)).toBe(true);
+	} finally {
+		spy.mockRestore();
+	}
 });

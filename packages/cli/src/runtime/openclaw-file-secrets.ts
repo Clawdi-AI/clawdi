@@ -4,7 +4,11 @@ import { basename, join } from "node:path";
 import { readPrivateFileEvidence, writePrivateFileAtomic } from "../lib/private-file";
 import { assertDirectoryIdentity, openTrustedDirectory } from "../lib/trusted-directory";
 import { isPlainRecord, recordValue } from "./manifest-shared";
-import { readPlainOpenClawConfig, visitOpenClawConfigDocuments } from "./openclaw-config";
+import {
+	type OpenClawConfigEvidence,
+	readPlainOpenClawConfig,
+	visitOpenClawConfigDocuments,
+} from "./openclaw-config";
 
 export const OPENCLAW_FILE_SECRET_PROVIDER = "clawdi-runtime";
 
@@ -90,19 +94,30 @@ export function openClawFileSecretEnvironmentKeys(home: string): Set<string> {
 	return keys;
 }
 
+const CONFIG_BACKUPS = [".bak", ".bak.1", ".bak.2", ".bak.3", ".bak.4", ".pre-update"];
+
 const MANAGED_CREDENTIAL_FILE = /^openclaw-[a-f0-9]{64}\.json$/;
 
-function managedCredentialReferences(path: string, directory: string): string[] {
+function managedCredentialReferences(
+	path: string,
+	directory: string,
+	evidence?: OpenClawConfigEvidence[],
+): string[] {
 	const result = new Set<string>();
-	visitOpenClawConfigDocuments(path, (value) => {
-		if (
-			value.source === "file" &&
-			typeof value.path === "string" &&
-			value.path === join(directory, basename(value.path)) &&
-			MANAGED_CREDENTIAL_FILE.test(basename(value.path))
-		)
-			result.add(basename(value.path));
-	});
+	visitOpenClawConfigDocuments(
+		path,
+		(value) => {
+			if (
+				value.source === "file" &&
+				typeof value.path === "string" &&
+				value.path === join(directory, basename(value.path)) &&
+				MANAGED_CREDENTIAL_FILE.test(basename(value.path))
+			)
+				result.add(basename(value.path));
+		},
+		0,
+		evidence,
+	);
 	return [...result].sort();
 }
 
@@ -127,7 +142,7 @@ export function gcOpenClawFileSecrets(
 		const current = managedCredentialReferences(configPath, directory);
 		const keep = new Set(current);
 		// Upstream CONFIG_BACKUP_COUNT=5; .pre-update is outside that ring.
-		for (const suffix of [".bak", ".bak.1", ".bak.2", ".bak.3", ".bak.4", ".pre-update"]) {
+		for (const suffix of CONFIG_BACKUPS) {
 			const path = configPath + suffix;
 			if (existsSync(path))
 				for (const name of managedCredentialReferences(path, directory)) keep.add(name);
@@ -185,7 +200,27 @@ export function gcOpenClawFileSecrets(
 		for (const name of files) {
 			if (keep.has(name)) continue;
 			assertDirectoryIdentity(directory, fd);
-			unlinkSync(join(pinned, name));
+			// Re-read all current/include/rollback references for each deletion and
+			// CAS their held identities immediately before unlink. New references,
+			// includes or backups after the initial scan cannot authorize deletion.
+			const evidence: OpenClawConfigEvidence[] = [];
+			const configPaths = [configPath, ...CONFIG_BACKUPS.map((suffix) => configPath + suffix)];
+			const present = configPaths.map(existsSync);
+			try {
+				const references = new Set(
+					configPaths.flatMap((path, index) =>
+						present[index] ? managedCredentialReferences(path, directory, evidence) : [],
+					),
+				);
+				if (references.has(name)) continue;
+				for (const document of evidence) document.assertCurrent();
+				if (configPaths.some((path, index) => existsSync(path) !== present[index]))
+					throw new Error("OpenClaw rollback config changed during credential cleanup");
+				assertDirectoryIdentity(directory, fd);
+				unlinkSync(join(pinned, name));
+			} finally {
+				for (const document of evidence) document.close();
+			}
 		}
 	} finally {
 		closeSync(fd);

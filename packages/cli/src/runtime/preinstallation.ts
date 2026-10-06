@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	chownSync,
+	existsSync,
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
@@ -97,7 +98,19 @@ export type PreinstallationSpec = z.infer<typeof preinstallationSpecSchema>;
 
 const SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 export function anonymousInstallerEnvironment(home: string): Record<string, string> {
+	// The pool controller installs the firewall before any installer can run.
+	const proxy: Record<string, string> = existsSync("/run/clawdi-pool-network/active")
+		? {
+				HTTPS_PROXY: "http://127.0.0.1:18081",
+				HTTP_PROXY: "http://127.0.0.1:18081",
+				NO_PROXY: "localhost,127.0.0.1",
+				NODE_USE_ENV_PROXY: "1",
+				NPM_CONFIG_HTTPS_PROXY: "http://127.0.0.1:18081",
+				NPM_CONFIG_PROXY: "http://127.0.0.1:18081",
+			}
+		: {};
 	return {
+		...proxy,
 		HOME: home,
 		USER: "clawdi",
 		LOGNAME: "clawdi",
@@ -200,6 +213,7 @@ export function prepareRuntimePreinstallation(
 			spec.cliIntegrity
 	)
 		throw new Error("preinstallation CLI archive integrity mismatch");
+	// Read once; every later execution uses this verified private snapshot.
 	const script = readFileSync(installer);
 	if (createHash("sha256").update(script).digest("hex") !== spec.installerSha256)
 		throw new Error("preinstallation installer integrity mismatch");
@@ -208,6 +222,17 @@ export function prepareRuntimePreinstallation(
 	const temporary = mkdtempSync(join(tmpdir(), "clawdi-preinstallation-"));
 	chmodSync(temporary, 0o755);
 	try {
+		const verifiedInstaller = join(temporary, "installer.sh");
+		writeFileSync(verifiedInstaller, script, { mode: 0o444, flag: "wx" });
+		chmodSync(verifiedInstaller, 0o444);
+		let verifiedCliArchive: string | undefined;
+		if (options.hosted) {
+			const bytes = readFileSync(options.hosted.cliArchive);
+			if (`sha512-${createHash("sha512").update(bytes).digest("base64")}` !== spec.cliIntegrity)
+				throw new Error("preinstallation CLI archive integrity mismatch");
+			verifiedCliArchive = join(temporary, "clawdi.tgz");
+			writeFileSync(verifiedCliArchive, bytes, { mode: 0o400, flag: "wx" });
+		}
 		let pinnedVersion = spec.runtimeVersion;
 		if (spec.runtime === "openclaw") {
 			const download =
@@ -297,7 +322,7 @@ export function prepareRuntimePreinstallation(
 				? [result.stdout, result.stderr].filter(Boolean).join("\n").trim()
 				: result.stdout.trim();
 		}
-		run("bash", ["--noprofile", "--norc", installer, ...args], 30 * 60 * 1000);
+		run("bash", ["--noprofile", "--norc", verifiedInstaller, ...args], 30 * 60 * 1000);
 		const command = join(home, ".local/bin", spec.runtime);
 		const health = run(command, ["--version"], 30_000, { includeStderr: true });
 		if (!health) throw new Error("anonymous runtime health check returned no version");
@@ -356,7 +381,7 @@ export function prepareRuntimePreinstallation(
 		if (probes.configPath !== undefined && !isAbsolute(probes.configPath))
 			throw new Error("installed Hermes config path is not absolute");
 		if (options.hosted) {
-			const { paths, cliArchive } = options.hosted;
+			const { paths } = options.hosted;
 			// The same content-addressed checks used by tenant convergence then find
 			// these tenant-independent artifacts present and skip their downloads.
 			if (spec.egressEngine) {
@@ -370,7 +395,8 @@ export function prepareRuntimePreinstallation(
 				prepareAnonymousOpenClawGateway(paths, identity);
 				prepareOpenClawProbeResults(paths, command);
 			}
-			installRuntimeCliArchive(paths, spec.cliPackageSpec, cliArchive);
+			if (!verifiedCliArchive) throw new Error("verified CLI archive is unavailable");
+			installRuntimeCliArchive(paths, spec.cliPackageSpec, verifiedCliArchive);
 		}
 		// Only caches explicitly redirected by this command are disposable.
 		// Keep upstream-generated runtime defaults and bundled software unchanged.
