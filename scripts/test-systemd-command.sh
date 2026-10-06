@@ -43,9 +43,9 @@ timeout --kill-after=15s 120s tar -C "$repo_root" \
 	--exclude='./backend/data' --exclude=tmp --exclude='*.log' --exclude='*.tsbuildinfo' \
 	--exclude='.component-tools.*' --exclude='.provider-recovery-baseline.*' \
 	-cf - . | timeout --kill-after=15s 120s docker exec --interactive "$container" tar -C /work -xf -
-timeout --kill-after=15s 930s docker exec --env BUN_CONFIG_MAX_HTTP_REQUESTS="${BUN_CONFIG_MAX_HTTP_REQUESTS:-256}" "$container" timeout 900 bash -euo pipefail -c '
+timeout --kill-after=15s 930s docker exec "$container" timeout 900 bash -euo pipefail -c '
 	cd /work
-	bun install --frozen-lockfile --ignore-scripts
+	bun install --frozen-lockfile --ignore-scripts --network-concurrency=16
 	package_root=/work/packages/cli
 	# Match the clean runner: subprocess-heavy files need separate Bun processes.
 	for test_file in packages/cli/src/runtime/systemd.test.ts packages/cli/src/runtime/oom-protection.test.ts packages/cli/src/adapters/openclaw-runtime-user.test.ts packages/cli/src/runtime/persisted-step-revisions.test.ts; do

@@ -186,7 +186,7 @@ copy_repo() {
 }
 
 install_js() {
-	bun install --frozen-lockfile --ignore-scripts
+	bun install --frozen-lockfile --ignore-scripts --network-concurrency=16
 	# The disposable container disk holds Bun's cache: the mobile dependency
 	# graph exceeds the former 2 GiB tmpfs. Release the cache after installation;
 	# node_modules remains available and no cache persists between runs.
