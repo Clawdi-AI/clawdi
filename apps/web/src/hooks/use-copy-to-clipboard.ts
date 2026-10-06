@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 interface CopyToastCopy {
@@ -8,6 +8,23 @@ interface CopyToastCopy {
 	success?: string | false;
 	/** Failure toast title (clipboard blocked / insecure context). */
 	error?: string;
+}
+
+function copyWithSelection(value: string): boolean {
+	const textarea = document.createElement("textarea");
+	const activeElement = document.activeElement;
+	textarea.value = value;
+	textarea.setAttribute("readonly", "");
+	textarea.style.position = "fixed";
+	textarea.style.opacity = "0";
+	try {
+		document.body.appendChild(textarea);
+		textarea.select();
+		return document.execCommand("copy");
+	} finally {
+		textarea.remove();
+		if (activeElement instanceof HTMLElement) activeElement.focus();
+	}
 }
 
 /**
@@ -19,14 +36,32 @@ interface CopyToastCopy {
  */
 export function useCopyToClipboard(toasts: CopyToastCopy = {}) {
 	const [copied, setCopied] = useState(false);
+	const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const mounted = useRef(true);
+	useEffect(() => {
+		mounted.current = true;
+		return () => {
+			mounted.current = false;
+			if (resetTimer.current !== null) clearTimeout(resetTimer.current);
+		};
+	}, []);
 	async function copy(value: string) {
 		try {
-			await navigator.clipboard.writeText(value);
+			try {
+				await navigator.clipboard.writeText(value);
+			} catch {
+				if (!copyWithSelection(value)) throw new Error("Clipboard unavailable");
+			}
+			if (!mounted.current) return;
+			if (resetTimer.current !== null) clearTimeout(resetTimer.current);
 			setCopied(true);
 			if (toasts.success !== false) toast.success(toasts.success ?? "Copied to clipboard");
-			setTimeout(() => setCopied(false), 1500);
+			resetTimer.current = setTimeout(() => setCopied(false), 1500);
 		} catch {
-			toast.error(toasts.error ?? "Couldn’t copy — select and copy manually.");
+			if (!mounted.current) return;
+			if (resetTimer.current !== null) clearTimeout(resetTimer.current);
+			setCopied(false);
+			toast.error(toasts.error ?? "Couldn't copy — select and copy manually.");
 		}
 	}
 	return { copied, copy };
