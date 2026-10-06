@@ -41,17 +41,21 @@ export async function agentList(opts: { json?: boolean } = {}): Promise<void> {
 		console.log("No agents found.");
 		return;
 	}
-	console.log(
-		chalk.bold("ID                                    Name  Type  Machine  Last activity"),
+	const headers = ["ID", "Name", "Type", "Machine", "Last activity"];
+	const rows = agents.map((agent) => [
+		agent.id,
+		sanitizeMetadata(agent.display_name || agent.name),
+		sanitizeMetadata(agent.agent_type),
+		sanitizeMetadata(agent.machine_name),
+		sanitizeMetadata(agent.last_seen_at ?? "Never"),
+	]);
+	const widths = headers.map((header, index) =>
+		Math.max(header.length, ...rows.map((row) => row[index]?.length ?? 0)),
 	);
-	for (const agent of agents) {
-		const name = sanitizeMetadata(agent.display_name || agent.name);
-		const type = sanitizeMetadata(agent.agent_type);
-		const machine = sanitizeMetadata(agent.machine_name);
-		console.log(
-			`${agent.id}  ${name}  ${type}  ${machine}  ${sanitizeMetadata(agent.last_seen_at ?? "Never")}`,
-		);
-	}
+	const line = (cells: string[]) =>
+		cells.map((cell, index) => cell.padEnd(widths[index] ?? cell.length)).join("  ");
+	console.log(chalk.bold(line(headers)));
+	for (const row of rows) console.log(line(row));
 }
 
 export async function agentRm(

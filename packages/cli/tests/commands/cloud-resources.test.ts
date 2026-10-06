@@ -142,13 +142,36 @@ describe("agent list", () => {
 		]);
 	});
 
-	it("renders full IDs and safe names in the table", async () => {
-		agents = [{ ...agent, display_name: "My\x1b[31m laptop" }];
+	it("aligns columns for different lengths while preserving full IDs and safe names", async () => {
+		const secondAgentId = "123e4567-e89b-42d3-a456-426614174003";
+		agents = [
+			{ ...agent, display_name: "My\x1b[31m laptop" },
+			{
+				...agent,
+				id: secondAgentId,
+				name: "Long workstation agent name",
+				display_name: null,
+				agent_type: "claude_code",
+				machine_name: "Build workstation",
+				last_seen_at: null,
+			},
+		];
 		const result = await runCli(["agent", "list"]);
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("Last activity");
-		for (const field of [agentId, "My laptop", "codex", "Test Mac", "2026-10-06T12:00:00Z"]) {
-			expect(result.stdout).toContain(field);
+		const [header = "", ...rows] = result.stdout.trimEnd().split("\n");
+		const columns = ["ID", "Name", "Type", "Machine", "Last activity"];
+		for (const column of columns) expect(header).toContain(column);
+		expect(rows).toHaveLength(2);
+		const expectedRows = [
+			[agentId, "My laptop", "codex", "Test Mac", "2026-10-06T12:00:00Z"],
+			[secondAgentId, "Long workstation agent name", "claude_code", "Build workstation", "Never"],
+		];
+		for (const [rowIndex, fields] of expectedRows.entries()) {
+			const row = rows[rowIndex] ?? "";
+			for (const [columnIndex, field] of fields.entries()) {
+				expect(row).toContain(field);
+				expect(row.indexOf(field)).toBe(header.indexOf(columns[columnIndex] ?? ""));
+			}
 		}
 		expect(result.stdout).not.toContain("\x1b");
 		expect(result.stderr).toBe("");
