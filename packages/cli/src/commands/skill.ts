@@ -18,6 +18,7 @@ import { adapterRegistry } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { SkillSummary } from "../lib/api-schemas";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
+import { requireUuid } from "../lib/cli-options";
 import { getConfig } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
@@ -31,7 +32,7 @@ import {
 	fetchProjectIdForEnv,
 	getEnvIdByAgent,
 } from "../lib/select-adapter";
-import { sanitizeSkillKey } from "../lib/skill-key";
+import { assertValidSkillKey, sanitizeSkillKey } from "../lib/skill-key";
 import {
 	readProjectSkillMaterialization,
 	readSkillProjectionState,
@@ -166,6 +167,29 @@ function countFiles(dir: string): number {
 }
 
 export { readBoundedResponseBytes };
+
+export async function skillShow(
+	key: string,
+	opts: { project?: string; json?: boolean } = {},
+): Promise<void> {
+	requireAuth();
+	assertValidSkillKey(key);
+	const api = new ApiClient();
+	const projectId = requireUuid(
+		await resolveProjectId(api.baseUrl, await api.getAccessToken(), opts.project),
+		"Project ID",
+	);
+	const skill = unwrap(
+		await api.GET("/v1/projects/{project_id}/skills/{skill_key}", {
+			params: { path: { project_id: projectId, skill_key: key } },
+		}),
+	);
+	console.log(
+		opts.json
+			? JSON.stringify({ schemaVersion: "clawdi.skillShow.v1", project_id: projectId, skill })
+			: `${skill.name} (${skill.skill_key}, v${skill.version})\n${skill.content ?? "No skill content available."}`,
+	);
+}
 
 async function installGithubSkillForAgent(
 	api: ApiClient,
