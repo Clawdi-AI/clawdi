@@ -92,10 +92,153 @@ interface SessionJsonlEntry {
 	uuid?: string;
 }
 
+const UNSELECTED_BRANCH_SEMANTICS: SessionEventSemantics = {
+	lifecycle: "inactive",
+	display: "hidden",
+	compressed_summary: false,
+	display_kind: "unselected_branch",
+};
+
+interface ClaudeRecordIndex {
+	recordSeq: number;
+	uuid?: string;
+	parentUuid?: string;
+	logicalParentUuid?: string;
+	type?: string;
+	subtype?: string;
+	role?: string;
+	isSidechain: boolean;
+	teamName: boolean;
+	isProgress: boolean;
+	isForkBriefing: boolean;
+	messageId?: string;
+	toolUseIds: Set<string>;
+	toolResultIds: Set<string>;
+}
+
+interface ClaudeBranchSelection {
+	selected: ReadonlySet<number>;
+}
+
+function stringField(raw: JsonObject, key: string): string | undefined {
+	return jsonString(raw[key]) ?? undefined;
+}
+
+function contentBlocks(raw: JsonObject): JsonObject[] {
+	const message = jsonObject(raw.message);
+	const content = message?.content;
+	if (!Array.isArray(content)) return [];
+	return content.map(jsonObject).filter((value): value is JsonObject => value !== null);
+}
+
+function isForkBriefing(raw: JsonObject): boolean {
+	const type = stringField(raw, "type");
+	const subtype = stringField(raw, "subtype");
+	if (type === "fork_briefing" || subtype === "fork_briefing") return true;
+	return contentBlocks(raw).some(
+		(block) =>
+			stringField(block, "type") === "attachment" &&
+			(stringField(block, "subtype") === "fork_briefing" ||
+				stringField(block, "name") === "fork_briefing"),
+	);
+}
+
+function buildClaudeRecordIndex(raw: JsonObject, recordSeq: number): ClaudeRecordIndex {
+	const message = jsonObject(raw.message);
+	const role = jsonString(message?.role) ?? undefined;
+	const toolUseIds = new Set<string>();
+	const toolResultIds = new Set<string>();
+	for (const block of contentBlocks(raw)) {
+		if (stringField(block, "type") === "tool_use") {
+			const id = stringField(block, "id");
+			if (id) toolUseIds.add(id);
+		}
+		if (stringField(block, "type") === "tool_result") {
+			const id = stringField(block, "tool_use_id");
+			if (id) toolResultIds.add(id);
+		}
+	}
+	return {
+		recordSeq,
+		uuid: stringField(raw, "uuid"),
+		parentUuid: stringField(raw, "parentUuid"),
+		logicalParentUuid: stringField(raw, "logicalParentUuid"),
+		type: stringField(raw, "type"),
+		subtype: stringField(raw, "subtype"),
+		role,
+		isSidechain: raw.isSidechain === true,
+		teamName: typeof raw.teamName === "string" && raw.teamName.length > 0,
+		isProgress: raw.isProgress === true || raw.type === "progress" || raw.subtype === "progress",
+		isForkBriefing: isForkBriefing(raw),
+		messageId: jsonString(message?.id) ?? undefined,
+		toolUseIds,
+		toolResultIds,
+	};
+}
+
+function selectClaudeBranch(records: readonly ClaudeRecordIndex[]): ClaudeBranchSelection {
+	const eligibleRecords = records.filter(
+		(record) =>
+			!record.isSidechain && !record.teamName && !record.isProgress && !record.isForkBriefing,
+	);
+	if (
+		eligibleRecords.length === 0 ||
+		!records.some((record) => record.parentUuid || record.logicalParentUuid)
+	) {
+		return { selected: new Set(records.map((record) => record.recordSeq)) };
+	}
+	const byUuid = new Map<string, ClaudeRecordIndex>();
+	for (const record of records) if (record.uuid) byUuid.set(record.uuid, record);
+	const children = new Map<string, ClaudeRecordIndex[]>();
+	for (const record of byUuid.values()) {
+		if (!record.parentUuid) continue;
+		const list = children.get(record.parentUuid) ?? [];
+		list.push(record);
+		children.set(record.parentUuid, list);
+	}
+	const eligible = (record: ClaudeRecordIndex): boolean =>
+		!record.isSidechain && !record.teamName && !record.isProgress && !record.isForkBriefing;
+	const hasQualifyingChild = (record: ClaudeRecordIndex): boolean =>
+		(record.uuid ? children.get(record.uuid) : undefined)?.some(eligible) ?? false;
+	let leaf: ClaudeRecordIndex | undefined;
+	for (const record of records) {
+		if (eligible(record) && !hasQualifyingChild(record)) leaf = record;
+	}
+	if (!leaf) return { selected: new Set() };
+
+	let cursor: ClaudeRecordIndex | undefined = leaf;
+	const selected = new Set<number>();
+	while (cursor) {
+		selected.add(cursor.recordSeq);
+		const parentUuid: string | undefined =
+			(cursor.type === "compact_boundary" || cursor.subtype === "compact_boundary") &&
+			!cursor.parentUuid
+				? cursor.logicalParentUuid
+				: cursor.parentUuid;
+		cursor = parentUuid ? byUuid.get(parentUuid) : undefined;
+	}
+
+	const selectedMessageIds = new Set<string>();
+	const selectedToolUseIds = new Set<string>();
+	for (const record of records) {
+		if (!selected.has(record.recordSeq)) continue;
+		if (record.messageId) selectedMessageIds.add(record.messageId);
+		for (const id of record.toolUseIds) selectedToolUseIds.add(id);
+	}
+	for (const record of records) {
+		if (record.messageId && selectedMessageIds.has(record.messageId))
+			selected.add(record.recordSeq);
+		if ([...record.toolResultIds].some((id) => selectedToolUseIds.has(id)))
+			selected.add(record.recordSeq);
+	}
+	return { selected };
+}
+
 function claudeEventDrafts(
 	raw: JsonObject,
 	sessionKey: string,
 	recordSeq: number,
+	selected?: ReadonlySet<number>,
 ): SessionEventDraft[] {
 	const message = jsonObject(raw.message);
 	if (!message) return [];
@@ -124,6 +267,14 @@ function claudeEventDrafts(
 				: raw.isCompactSummary === true
 					? { lifecycle: "active", display: "event", compressed_summary: true }
 					: undefined;
+	const branchSemantics =
+		selected &&
+		(role === "user" || role === "assistant") &&
+		!selected.has(recordSeq) &&
+		raw.isMeta !== true &&
+		raw.isCompactSummary !== true
+			? UNSELECTED_BRANCH_SEMANTICS
+			: undefined;
 	if (role === "user" || role === "assistant" || role === "system" || role === "developer") {
 		const parts = visibleContentParts(message.content);
 		if (parts.length > 0) {
@@ -179,7 +330,10 @@ function claudeEventDrafts(
 			});
 		}
 	}
-	return semantics ? drafts.map((draft) => ({ ...draft, semantics })) : drafts;
+	const effectiveSemantics = branchSemantics ?? semantics;
+	return effectiveSemantics
+		? drafts.map((draft) => ({ ...draft, semantics: effectiveSemantics }))
+		: drafts;
 }
 
 type ParsedSession = Omit<RawSession, "localSessionId" | "rawFilePath">;
@@ -432,8 +586,10 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		let firstUserPrompt: string | null = null;
 		let customTitle: string | null = null;
 		let aiTitle: string | null = null;
+		const recordIndex: ClaudeRecordIndex[] = [];
 
-		for await (const { data: raw } of source.records()) {
+		for await (const { data: raw, recordSeq } of source.records()) {
+			recordIndex.push(buildClaudeRecordIndex(raw, recordSeq));
 			if (raw.type === "custom-title") customTitle = jsonString(raw.customTitle) ?? customTitle;
 			if (raw.type === "ai-title") aiTitle = jsonString(raw.aiTitle) ?? aiTitle;
 			const entry = raw as SessionJsonlEntry;
@@ -483,11 +639,12 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 				cacheReadTokens += msg.usage.cache_read_input_tokens ?? 0;
 			}
 		}
+		const branchSelection = selectClaudeBranch(recordIndex);
 		const readEvents = async function* () {
 			let seq = 0;
 			for await (const { data: raw, recordSeq } of source.records()) {
 				const events = sequenceSessionEvents(
-					claudeEventDrafts(raw, sourceSessionKey, recordSeq),
+					claudeEventDrafts(raw, sourceSessionKey, recordSeq, branchSelection.selected),
 					seq,
 				);
 				seq += events.length;
