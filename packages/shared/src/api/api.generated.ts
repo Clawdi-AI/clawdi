@@ -6229,11 +6229,6 @@ export interface components {
             /** Api Key */
             api_key?: string | null;
         };
-        /** DeviceStartRequest */
-        DeviceStartRequest: {
-            /** Client Label */
-            client_label?: string | null;
-        };
         /** DeviceStartResponse */
         DeviceStartResponse: {
             /** Device Code */
@@ -12371,11 +12366,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DeviceStartRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -12393,15 +12384,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

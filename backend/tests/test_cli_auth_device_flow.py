@@ -59,6 +59,24 @@ async def test_retired_device_and_approve_issue_no_keys(client, db_session, pref
     assert da.api_key_raw is None
 
 
+@pytest.mark.parametrize("prefix", ["/v1", "/api"])
+@pytest.mark.parametrize("body", [None, {}, {"client_label": ["invalid legacy input"]}])
+async def test_retired_device_never_requires_a_request_body(client, db_session, prefix, body):
+    before_keys = await db_session.scalar(select(func.count()).select_from(ApiKey))
+    before_devices = await db_session.scalar(select(func.count()).select_from(DeviceAuthorization))
+    response = await client.post(f"{prefix}/cli/auth/device", json=body)
+    assert response.status_code == 410, response.text
+    assert response.json() == {
+        "detail": "This sign-in method is no longer supported. Update the Clawdi CLI "
+        "and run `clawdi auth login`."
+    }
+    assert await db_session.scalar(select(func.count()).select_from(ApiKey)) == before_keys
+    assert (
+        await db_session.scalar(select(func.count()).select_from(DeviceAuthorization))
+        == before_devices
+    )
+
+
 async def test_existing_approved_authorization_still_delivers_once(client, db_session):
     started = await _seed_legacy_device(db_session, approved=True)
     first = await client.post("/v1/cli/auth/poll", json={"device_code": started["device_code"]})

@@ -29,7 +29,6 @@ from app.schemas.cli_auth import (
     DeviceLookupResponse,
     DevicePollRequest,
     DevicePollResponse,
-    DeviceStartRequest,
     DeviceStartResponse,
     DeviceTerminalResponse,
     OAuthConfigResponse,
@@ -276,7 +275,7 @@ def _expire_if_due(da: DeviceAuthorization) -> bool:
         }
     },
 )
-async def start_device_flow(body: DeviceStartRequest):
+async def start_device_flow():
     raise HTTPException(status.HTTP_410_GONE, _RETIRED_DEVICE_FLOW_DETAIL)
 
 
