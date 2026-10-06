@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.platform_workload_auth import PlatformWorkloadClient, PlatformWorkloadSigningKey
 from app.schemas.admin import (
     AdminWorkloadClientBootstrap,
+    AdminWorkloadClientScopesResponse,
+    AdminWorkloadClientScopesUpdate,
     AdminWorkloadSignerBootstrap,
     AdminWorkloadSignerReceipt,
 )
@@ -145,6 +147,60 @@ async def inspect_verifier_access(
     if client is None:
         raise HTTPException(404, "Workload client not found")
     return _access(client)
+
+
+async def update_workload_client_scopes(
+    db: AsyncSession,
+    *,
+    client_id: str,
+    body: AdminWorkloadClientScopesUpdate,
+    request_id: str,
+) -> AdminWorkloadClientScopesResponse:
+    try:
+        client = await db.scalar(
+            select(PlatformWorkloadClient)
+            .where(PlatformWorkloadClient.client_id == client_id)
+            .with_for_update()
+        )
+        if client is None:
+            raise HTTPException(404, "Workload client not found")
+        before = _access(client)
+        if body.expected_revision != before.revision:
+            raise HTTPException(409, "Workload credential authority changed")
+        if client.status != "active":
+            raise HTTPException(409, "Inactive credentials cannot receive scopes")
+        before_scopes = list(client.allowed_scopes)
+        client.allowed_scopes = list(body.scopes)
+        # Authentication checks the current grant on every request. Keep unrelated
+        # in-flight tokens valid on additive grants, as the verifier grant does.
+        response = AdminWorkloadClientScopesResponse(
+            client_id=client.client_id,
+            credential_id=client.id,
+            status=client.status,
+            scopes=client.allowed_scopes,
+            revision=_access(client).revision,
+        )
+        record_control_plane_audit(
+            db,
+            actor_type="admin",
+            action="platform.workload_client.scopes",
+            resource_type="platform_workload_client",
+            resource_id=str(client.id),
+            source="api.admin",
+            details={
+                "request_id": request_id,
+                "reason": body.reason,
+                "before_revision": before.revision,
+                "after_revision": response.revision,
+                "before_scopes": before_scopes,
+                "after_scopes": response.scopes,
+            },
+        )
+        await db.commit()
+        return response
+    except Exception:
+        await db.rollback()
+        raise
 
 
 async def update_verifier_access(

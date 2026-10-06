@@ -2581,7 +2581,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Platform Get Api Key Usage */
+        get: operations["platform_get_api_key_usage_v1_platform_auth_keys__key_id__get"];
         put?: never;
         post?: never;
         /** Platform Revoke Api Key */
@@ -4958,6 +4959,25 @@ export interface components {
              * @constant
              */
             status: "revoked";
+        };
+        /**
+         * ApiKeyUsageResponse
+         * @description Usage metadata for rotation decisions, without credential material.
+         */
+        ApiKeyUsageResponse: {
+            /** Id */
+            id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Last Used At */
+            last_used_at: string | null;
+            /** Expires At */
+            expires_at: string | null;
+            /** Revoked At */
+            revoked_at: string | null;
         };
         /** BindingCreate */
         BindingCreate: {
@@ -15849,6 +15869,43 @@ export interface operations {
             };
         };
     };
+    platform_get_api_key_usage_v1_platform_auth_keys__key_id__get: {
+        parameters: {
+            query: {
+                kind: "clerk" | "partner_tenant";
+                ref: string;
+            };
+            header?: {
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiKeyUsageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     platform_revoke_api_key_v1_platform_auth_keys__key_id__delete: {
         parameters: {
             query?: never;
@@ -18155,6 +18212,7 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -18226,6 +18284,7 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 environment_id: string;
@@ -18302,6 +18361,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -18337,6 +18397,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 environment_id: string;
@@ -18374,6 +18435,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 environment_id: string;
@@ -18411,6 +18473,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 environment_id: string;
@@ -18448,6 +18511,7 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
             };
             path: {
                 environment_id: string;

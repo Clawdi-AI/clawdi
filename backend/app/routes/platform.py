@@ -28,7 +28,7 @@ from app.models.user import (
     PRINCIPAL_KIND_PARTNER_TENANT,
     User,
 )
-from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
+from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse, ApiKeyUsageResponse
 from app.schemas.platform import (
     PlatformAgentCreate,
     PlatformApiKeyCreate,
@@ -583,14 +583,12 @@ async def _load_owned_key(
     action: str,
     request: Request,
     idempotency_key: str,
+    for_update: bool = True,
 ) -> ApiKey:
-    api_key = (
-        await db.execute(
-            select(ApiKey)
-            .where(ApiKey.id == key_id, ApiKey.user_id == owner_user_id)
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
+    query = select(ApiKey).where(ApiKey.id == key_id, ApiKey.user_id == owner_user_id)
+    if for_update:
+        query = query.with_for_update()
+    api_key = (await db.execute(query)).scalar_one_or_none()
     if api_key is not None:
         return api_key
     exists = await db.scalar(select(ApiKey.id).where(ApiKey.id == key_id))
@@ -615,6 +613,8 @@ async def _load_owned_key(
 async def _resolve_runtime_source_authority_owner_id(
     db: AsyncSession,
     owner: PlatformOwner,
+    *,
+    not_found_detail: str = "Runtime source not found",
 ) -> UUID:
     try:
         if owner.kind == PRINCIPAL_KIND_CLERK:
@@ -636,10 +636,10 @@ async def _resolve_runtime_source_authority_owner_id(
                 )
             ).scalar_one_or_none()
         if resolved is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Runtime source not found")
+            raise HTTPException(status.HTTP_404_NOT_FOUND, not_found_detail)
         await assert_user_authority_active(db, resolved.id)
     except (PrincipalIdentityConflictError, PrincipalTerminatedError):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Runtime source not found") from None
+        raise HTTPException(status.HTTP_404_NOT_FOUND, not_found_detail) from None
     except PrincipalLifecycleConfigurationError:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1303,6 +1303,36 @@ async def platform_mint_api_key(
         },
     )
     return response
+
+
+@router.get("/auth/keys/{key_id}", response_model=ApiKeyUsageResponse)
+async def platform_get_api_key_usage(
+    key_id: UUID,
+    owner: Annotated[PlatformOwner, Query()],
+    request: Request,
+    _auth: PlatformMutationAuth = Depends(require_platform_mutation_auth("platform:keys:revoke")),
+    db: AsyncSession = Depends(get_control_session),
+) -> ApiKeyUsageResponse:
+    owner_user_id = await _resolve_runtime_source_authority_owner_id(
+        db, owner, not_found_detail="API key not found"
+    )
+    api_key = await _load_owned_key(
+        db,
+        key_id=key_id,
+        owner=owner,
+        owner_user_id=owner_user_id,
+        action="api_key.usage",
+        request=request,
+        idempotency_key="",
+        for_update=False,
+    )
+    return ApiKeyUsageResponse(
+        id=str(api_key.id),
+        created_at=api_key.created_at,
+        last_used_at=api_key.last_used_at,
+        expires_at=api_key.expires_at,
+        revoked_at=api_key.revoked_at,
+    )
 
 
 @router.delete("/auth/keys/{key_id}", response_model=ApiKeyRevokeResponse)
