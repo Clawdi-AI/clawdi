@@ -374,6 +374,84 @@ Conventions:
   `Operations(MigrationContext.configure(...))`, and isolate scratch tables in a
   temporary schema.
 
+## API key issuance
+
+`POST /v1/auth/keys` requires dashboard authentication and this body:
+
+```json
+{"label":"automation","scopes":["sessions:read","sessions:write"],"expires_in_days":30}
+```
+
+`environment_id` remains an optional owned Agent UUID string. Scopes are
+required, nonempty, deduplicated in input order, and limited to these groups:
+
+| Group | Scopes |
+|---|---|
+| Sessions | `sessions:read`, `sessions:write` |
+| Skills | `skills:read`, `skills:write` |
+| Memories | `memories:read`, `memories:write` |
+| Projects | `projects:read` |
+| Vault | `vault:read`, `vault:write` |
+| Connectors | `connectors:read`, `connectors:invoke` |
+
+`expires_in_days` is required and accepts only 7, 30, or 90. The server computes
+UTC `expires_at`; there is no client-controlled absolute expiry field. Missing,
+empty, or unsupported scopes and missing/unsupported lifetimes return 422.
+All 11 scopes still produce a key rejected by account-management
+`require_user_auth` routes. Existing full-access, non-expiring keys stay usable.
+
+Creation returns `ApiKeyCreated`: `id`, `label`, `key_prefix`, `created_at`,
+nullable `last_used_at`, `expires_at`, `revoked_at`, nullable `scopes`, and
+`raw_key` (once only). `GET /v1/auth/keys` returns an array of the same metadata
+without `raw_key`. `scopes: null` means full access for a legacy key. Both
+operations retain their `/api/auth/keys` compatibility alias.
+
+Legacy CLI `POST /v1/cli/auth/device` and dashboard-authenticated
+`POST /v1/cli/auth/approve` return 410 with
+`{"detail":"This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`."}`.
+Their `/api` aliases do the same. They create no keys or new authorizations.
+Existing `/poll`, `/lookup`, `/deny`, and `/oauth/*` behavior is preserved.
+Admin creation permits optional `expires_in_days` from 1 through 365; omitted
+expiry/scopes retain non-expiring/full-access issuance, and audit details include
+`has_expiry`.
+
+The backend's required fields must merge and release with the web scope/expiry
+form. Add the web commits before merging; when releasing separately, web goes
+first. See [API compatibility](api-compatibility.md#personal-key-issuance-exception).
+Done: `scripts/test.sh backend tests/test_auth_keys.py tests/test_cli_auth_device_flow.py tests/test_admin_endpoints.py`
+exits 0 against the runner's throwaway database.
+
+## Credential-kind request metrics
+
+`clawdi_backend_authenticated_requests_total` counts successful authentications
+once at the auth dependency boundary, including requests subsequently rejected
+by route authorization. Invalid/expired credentials are not counted. Its only
+labels are `kind` and `surface`; they never contain keys, IDs, or user data.
+
+- `kind`: `personal_api_key`, `env_api_key`, `managed_legacy_key`, `runtime_key`,
+  `clerk_oauth_cli`, `clerk_session`, `dev_bypass`, `mcp_bridge_token`,
+  `platform_workload`, `admin_key`.
+- `surface`: `user`, `mcp_bridge`, `admin`, `platform`, `v2_runtime`.
+
+Admin compatibility fallback is counted on its platform/runtime surface rather
+than as an admin-route request. OAuth token exchange and capability/share links
+are excluded. The existing Prometheus multiprocess registry aggregates workers.
+Counters reset with the multiprocess directory on deployment; compare readings
+from the same running instance for deltas.
+
+Set `METRICS_BEARER_TOKEN` in deployment configuration before exposing these
+counts, and update any scrapers to send the token. The existing auth code rejects
+missing/incorrect tokens with 401 when configured. To inspect a local backend
+whose token is already available in the shell:
+
+```bash
+curl -fsS -H "Authorization: Bearer ${METRICS_BEARER_TOKEN}" http://localhost:8000/metrics \
+  | rg '^clawdi_backend_authenticated_requests_total'
+```
+
+Done: `scripts/test.sh backend tests/test_metrics.py` verifies bearer protection,
+fixed labels, and aggregation across processes.
+
 ## Generated API client
 
 `packages/shared/src/api/api.generated.ts` is generated from FastAPI OpenAPI.

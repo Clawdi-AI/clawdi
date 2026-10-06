@@ -282,7 +282,11 @@ login. Process-injected `CLAWDI_AUTH_TOKEN` credentials retain production Cloud
 compatibility, while custom Cloud endpoints must also set the explicit
 `CLAWDI_AUTH_TOKEN_ORIGIN` binding.
 `clawdi auth logout` asks the Cloud backend to revoke the refresh grant before
-removing local state. The legacy `--manual` API-key path remains Cloud-only.
+removing local state. The `--manual` API-key path remains Cloud-only and is for
+servers and automation: new personal keys require explicit scopes and expiry
+(7, 30, or 90 days). `CLAWDI_AUTH_TOKEN` accepts the same scoped, expiring keys.
+The retired browser-approved `/cli/auth/device` and `/cli/auth/approve` endpoints
+return 410 with CLI upgrade guidance; use OAuth login on your own computer.
 The Clerk Public OAuth Application must allow `openid`, `profile`, `email`, and
 `offline_access`; the last scope is required for the persisted refresh grant.
 At the Clerk instance level, `oauth_jwt_access_tokens` must be enabled through

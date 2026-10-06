@@ -126,6 +126,24 @@ scripts/test.sh backend tests/test_agent_profiles.py tests/test_agent_profiles_m
 Done: both test files pass, including unchanged stored content and old-client
 resolution with zero, one, and multiple matching sessions.
 
+## Personal-key issuance exception
+
+New personal keys from `POST /v1/auth/keys` (and its `/api` alias) require
+nonempty explicit `scopes` from the personal-key permission bundle and
+`expires_in_days` of 7, 30, or 90. Label-only creation now returns 422. This
+intentional security change must ship with the dashboard scope/expiry form;
+the backend must not merge before those web commits are present.
+
+Legacy CLI `/cli/auth/device` and `/cli/auth/approve` return 410 with upgrade
+guidance. OAuth login and existing keys remain supported. Key creation/listing
+responses add nullable `scopes`; `null` denotes full access for legacy keys.
+Admin issuance still permits omitted scopes and expiry, with an optional
+`expires_in_days` between 1 and 365. See the
+[backend key contract](backend-development.md#api-key-issuance).
+
+Done: `scripts/test.sh backend tests/test_auth_keys.py tests/test_cli_auth_device_flow.py tests/test_admin_endpoints.py`
+passes for canonical and legacy issuance routes.
+
 ## Generated clients
 
 OpenAPI feeds the shared TypeScript client used by both web and CLI:

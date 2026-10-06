@@ -9,17 +9,13 @@ End-to-end guide for connecting Claude Code to Clawdi and using it day-to-day. A
 ### 1. Log in
 
 ```bash
-$ clawdi auth login
-To get an API key:
-  1. Go to the Clawdi dashboard
-  2. Open user menu → API Keys
-  3. Create a new key and copy it
-
-Paste your API key: clawdi_xxxxxxxxxxxxxxxxxxxxxxxx
-
-✓ Logged in as you@example.com
-  Credentials saved to ~/.clawdi/auth.json
+clawdi auth login
 ```
+
+Authorize Clawdi in your browser. The CLI saves OAuth credentials privately and
+refreshes them automatically. If the browser cannot open automatically, use
+`clawdi auth login --no-open` and securely paste the browser callback.
+Done: `clawdi auth status` reports `clerk-oauth`.
 
 Verify:
 
@@ -33,6 +29,26 @@ Clawdi Status
 
   Sync:    no sync history
 ```
+
+### Servers and automation
+
+In the dashboard, open **Settings → API Keys**, select the permissions your
+script needs, and choose an expiry of **7, 30, or 90 days** (default: 30).
+New personal keys always have explicit scopes and expiry. Copy the key once:
+
+```bash
+clawdi auth login --manual
+```
+
+Paste it at the hidden prompt. For an unattended process, inject the same scoped,
+expiring key through `CLAWDI_AUTH_TOKEN` using your secret manager. Renew it before
+expiry. Session and skill sync need `sessions:read`, `sessions:write`,
+`skills:read`, and `skills:write`; choose memory, project, vault, and connector
+permissions as needed. Selecting all 11 available scopes still creates an
+expiring key and does not grant account-management access. Use OAuth for account
+settings and dashboard vault/connector management. Existing legacy keys keep
+their permissions.
+Done: `clawdi auth status` reports `legacy-api-key` for a manually saved key.
 
 ### 2. Register Claude Code as an agent
 
@@ -181,7 +197,9 @@ You: run the ingestion script with my vault secrets injected
 Claude: → Bash(`clawdi run -- python scripts/ingest.py`)
 ```
 
-Secrets live encrypted in the backend; the web dashboard can list keys but cannot read values. Only the CLI (authenticated with an API key) can resolve them.
+Secrets live encrypted in the backend; the web dashboard can list keys but cannot
+read values. Interactive CLI vault management uses OAuth; scoped keys use the
+permitted MCP vault tools.
 
 ### C. Skills — portable instructions that all your agents share
 
