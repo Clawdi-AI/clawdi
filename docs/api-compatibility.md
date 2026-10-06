@@ -110,8 +110,10 @@ OpenClaw default-profile metadata and suppressions for up to 1,000 local IDs.
 The Hermes sibling `/rename` accepts `{new_upstream_key}` and preserves the
 source profile UUID while moving sessions and suppressions in place. Both
 operations preserve content bytes, object references, hashes, and session UUIDs;
-an existing rename destination returns HTTP 409 `profile_conflict`, even if it
-has no sessions. CLI reconciliation renames before PUT inventory. Both metadata
+an existing rename destination returns HTTP 409 `profile_conflict` if it contains
+sessions or suppressions. Empty destinations are replaced to support older CLIs
+that PUT inventory before rename; keep this branch until the CLI floor reaches
+0.15.5. New CLI reconciliation renames before PUT inventory. Both metadata
 move operations require `sessions:write`; `skills:write` alone is insufficient.
 
 The migration adds defaulted profile columns without session backfill and builds

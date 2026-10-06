@@ -212,6 +212,8 @@ async def test_hermes_rename_moves_metadata_in_place(client, db_session, seed_us
             )
         )
     ).scalar_one()
+    # Old CLIs publish the new inventory before requesting the rename.
+    assert (await inventory(client, env, ["default", "job"])).status_code == 200
     path = f"/v1/agents/{env.id}/profiles/work/rename"
     res = await client.post(path, json={"new_upstream_key": "job"})
     assert res.status_code == 200, res.text
@@ -405,9 +407,9 @@ async def test_named_snapshot_content_keeps_existing_storage_paths(client, db_se
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("occupied", [False, True])
-async def test_rename_rejects_existing_target_without_partial_updates(
-    client, db_session, seed_user, occupied
+@pytest.mark.parametrize("content", ["session", "suppression"])
+async def test_rename_rejects_occupied_target_without_partial_updates(
+    client, db_session, seed_user, content
 ):
     env = await create_env_with_project(
         db_session,
@@ -417,10 +419,20 @@ async def test_rename_rejects_existing_target_without_partial_updates(
         agent_type="hermes",
     )
     await inventory(client, env, ["default", "work", "job"])
-    for key in ("work", "job") if occupied else ("work",):
+    for key in ("work", "job") if content == "session" else ("work",):
         await client.post(
             "/v1/sessions/batch", json={"profile_key": key, "sessions": [metadata(env, key)]}
         )
+    if content == "suppression":
+        db_session.add(
+            SessionSyncSuppression(
+                user_id=seed_user.id,
+                origin_environment_id=env.id,
+                origin_profile_key="job",
+                local_session_id="deleted",
+            )
+        )
+        await db_session.flush()
     res = await client.post(
         f"/v1/agents/{env.id}/profiles/work/rename", json={"new_upstream_key": "job"}
     )
@@ -442,7 +454,41 @@ async def test_rename_rejects_existing_target_without_partial_updates(
         .scalars()
         .all()
     )
-    assert set(rows) == ({"work", "job"} if occupied else {"work"})
+    assert set(rows) == ({"work", "job"} if content == "session" else {"work"})
+    if content == "suppression":
+        assert (
+            await db_session.scalar(
+                select(SessionSyncSuppression.origin_profile_key).where(
+                    SessionSyncSuppression.origin_environment_id == env.id
+                )
+            )
+        ) == "job"
+
+
+@pytest.mark.asyncio
+async def test_rename_into_empty_target_preserves_profile_uuid(client, db_session, seed_user):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=uuid.uuid4().hex,
+        machine_name="test",
+        agent_type="hermes",
+    )
+    res = await inventory(client, env, ["default", "work", "job"])
+    assert res.status_code == 200, res.text
+    original = {p["profile_key"]: p["id"] for p in res.json()}
+    res = await client.post(
+        f"/v1/agents/{env.id}/profiles/work/rename", json={"new_upstream_key": "job"}
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {"sessions_moved": 0, "suppressions_moved": 0}
+    res = await client.get(f"/v1/agents/{env.id}/profiles")
+    assert res.status_code == 200, res.text
+    profiles = {p["profile_key"]: p for p in res.json()}
+    assert set(profiles) == {"", "job"}
+    assert profiles["job"]["id"] == original["work"]
+    assert profiles["job"]["id"] != original["job"]
+    assert profiles["job"]["state"] == "active"
 
 
 @pytest.mark.asyncio
