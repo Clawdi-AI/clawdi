@@ -118,7 +118,7 @@ export function AddAgentSetup() {
 
 	return (
 		<div className="space-y-4">
-			<Tabs defaultValue="commands">
+			<Tabs defaultValue="prompt">
 				<TabsList className="w-full sm:w-auto">
 					<TabsTrigger value="commands">
 						<Terminal data-icon="inline-start" /> Run commands
