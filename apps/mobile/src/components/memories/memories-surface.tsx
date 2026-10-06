@@ -31,7 +31,6 @@ import {
 } from "@/components/ui/select";
 import { SheetPage } from "@/components/ui/sheet-page";
 import { Text } from "@/components/ui/text";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { WebView, webView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
@@ -40,6 +39,7 @@ import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { useHeaderSearch } from "@/platform/navigation/native-header";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
@@ -159,22 +159,11 @@ function MemoriesView() {
 						/>
 						<ListToolbar
 							filters={
-								<ToggleGroup
-									value={[category]}
-									onValueChange={(v) => {
-										if (v[0]) setCategory(v[0]);
-									}}
-									variant="outline"
-									size="sm"
-									spacing={1}
-									className={webView(memoriesSurfaceClasses.filters)}
-								>
-									{MEMORY_CATEGORIES.map((c) => (
-										<ToggleGroupItem key={c.value} value={c.value}>
-											{c.label}
-										</ToggleGroupItem>
-									))}
-								</ToggleGroup>
+								<NativeSegments
+									value={category}
+									onChange={setCategory}
+									options={MEMORY_CATEGORIES.map((c) => ({ value: c.value, label: c.label }))}
+								/>
 							}
 						/>
 						{memories.error ? (

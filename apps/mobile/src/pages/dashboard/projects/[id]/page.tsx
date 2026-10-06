@@ -26,7 +26,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { NativeList } from "@/components/ui/native-list";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Text } from "@/components/ui/text";
 import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
@@ -37,6 +36,7 @@ import { useI18n } from "@/lib/i18n";
 import { projectRouteFilter, routeParam } from "@/lib/route-params";
 import { SkillRow, useCloudSkills } from "@/pages/dashboard/skills/page";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 export function ProjectDetailScreen({ initialTab: requestedTab }: { initialTab?: string } = {}) {
@@ -179,19 +179,11 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 							],
 						}}
 					/>
-					<Tabs value={tab} onValueChange={navigate}>
-						<TabsList variant="default" className={webView(projectDetailClasses.tabs)}>
-							{PROJECT_LOCAL_TABS.map((item) => (
-								<TabsTrigger
-									key={item.id}
-									value={item.id}
-									className={webBoth(projectDetailClasses.tab)}
-								>
-									{item.label}
-								</TabsTrigger>
-							))}
-						</TabsList>
-					</Tabs>
+					<NativeSegments
+						value={tab}
+						onChange={navigate}
+						options={PROJECT_LOCAL_TABS.map((item) => ({ value: item.id, label: item.label }))}
+					/>
 					{tab === "overview" ? (
 						<DetailPanel className={webView(projectDetailClasses.panel)}>
 							<WebView recipe={projectDetailClasses.headingStack}>
