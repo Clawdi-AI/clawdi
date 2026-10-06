@@ -54,7 +54,10 @@ Set those three generated values in `backend/.env`. Also set:
 ```dotenv
 DEV_AUTH_BYPASS=true
 DEV_AUTH_TOKEN=dev-bypass
+CLERK_JWT_ISSUER=https://dev-local.clerk.accounts.dev
 ```
+
+Local development needs an issuer value for admin-created keys; any HTTPS issuer works locally.
 
 Run backend:
 

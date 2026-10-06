@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const srcEntry = fileURLToPath(new URL("../src/index.ts", import.meta.url));
-const skillPath = new URL("../../../apps/web/public/skill.md", import.meta.url);
+const skillPath = new URL("../../../apps/web/src/content/get-started.md", import.meta.url);
 const webRoot = fileURLToPath(new URL("../../../apps/web/", import.meta.url));
 
 function quickstartCommands(path: URL, heading: string): string[] {

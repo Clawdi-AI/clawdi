@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { after, mock, test } from "node:test";
+import { AGENT_FILES } from "../src/lib/agent-files.ts";
 
 // Exercise the deployed bundle graph with real Clerk middleware and providers.
 // These syntactically valid fixture keys do not belong to a Clerk tenant.
@@ -75,6 +76,8 @@ test("production documents use fresh CSP nonces on every executable script", asy
 		assert.match(csp, /'strict-dynamic'/);
 		assert.doesNotMatch(csp, /script-src[^;]*(?:'unsafe-inline'|'unsafe-eval')/);
 		assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+		assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+		assert.equal(response.headers.get("referrer-policy"), "strict-origin-when-cross-origin");
 		nonces.add(nonce);
 		const html = await response.text();
 		for (const [tag] of html.matchAll(/<script\b[^>]*>/g)) {
@@ -85,6 +88,26 @@ test("production documents use fresh CSP nonces on every executable script", asy
 	}
 	assert.equal(nonces.size, 2);
 });
+
+for (const file of Object.values(AGENT_FILES)) {
+	for (const method of ["GET", "HEAD"]) {
+		test(`production ${method} ${file.path} stays publicly cacheable without a document nonce`, async () => {
+			const response = await server.fetch(new Request(request(file.path), { method }));
+			assert.equal(response.status, file.path === AGENT_FILES.legacyGuide.path ? 301 : 200);
+			assert.equal(
+				response.headers.get("cache-control"),
+				"public, max-age=300, s-maxage=300, stale-while-revalidate=86400",
+			);
+			assert.equal(response.headers.get("content-security-policy"), null);
+			assert.equal(response.headers.get("content-type"), `${file.contentType}; charset=utf-8`);
+			assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+			assert.equal(response.headers.get("referrer-policy"), "strict-origin-when-cross-origin");
+			if (file.path === AGENT_FILES.legacyGuide.path) {
+				assert.equal(response.headers.get("location"), "https://clawdi.ai/get-started.md");
+			}
+		});
+	}
+}
 
 for (const [path, title] of [
 	["/sign-in", "Sign in"],
