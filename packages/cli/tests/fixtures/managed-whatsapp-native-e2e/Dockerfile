@@ -141,6 +141,7 @@ WORKDIR /workspace
 COPY --from=harness-dependencies /opt/e2e-harness/.venv /opt/e2e-harness/.venv
 COPY --from=cli-dependencies /workspace/node_modules /workspace/node_modules
 COPY --from=cli-dependencies /workspace/packages/cli/node_modules /workspace/packages/cli/node_modules
+COPY --from=cli-dependencies /workspace/packages/shared/node_modules /workspace/packages/shared/node_modules
 COPY package.json ./
 COPY packages/cli/package.json packages/cli/package.json
 COPY packages/shared/package.json packages/shared/package.json

@@ -50,10 +50,18 @@ def generation(
         final_count=1,
         final_head_hash="1" * 64,
         created_at=created_at,
+        updated_at=created_at,
     )
 
 
-def chunk(session_id: uuid.UUID, generation_id: uuid.UUID, key: str) -> SessionEventChunk:
+def chunk(
+    session_id: uuid.UUID,
+    generation_id: uuid.UUID,
+    key: str,
+    *,
+    created_at: datetime | None = None,
+) -> SessionEventChunk:
+    activity = created_at or datetime.now(UTC)
     return SessionEventChunk(
         id=uuid.uuid4(),
         session_id=session_id,
@@ -65,6 +73,8 @@ def chunk(session_id: uuid.UUID, generation_id: uuid.UUID, key: str) -> SessionE
         result_head_hash="1" * 64,
         content_hash="2" * 64,
         file_key=key,
+        created_at=activity,
+        updated_at=activity,
     )
 
 
@@ -90,6 +100,7 @@ async def test_retention_deletes_only_stale_noncurrent_generations(
     superseded.superseded_at = now - timedelta(days=8)
     abandoned = generation(session.id, status="staging", created_at=now - timedelta(days=2))
     recent = generation(session.id, status="staging", created_at=now)
+    recent.base_revision = 1
     shared = generation(session.id, status="committed", created_at=now - timedelta(days=30))
     shared.superseded_at = now - timedelta(days=8)
     db_session.add_all([current, superseded, abandoned, recent, shared])
@@ -102,7 +113,12 @@ async def test_retention_deletes_only_stale_noncurrent_generations(
     db_session.add_all(
         [
             chunk(session.id, superseded.id, "events/superseded.ndjson"),
-            chunk(session.id, abandoned.id, "events/abandoned.ndjson"),
+            chunk(
+                session.id,
+                abandoned.id,
+                "events/abandoned.ndjson",
+                created_at=abandoned.created_at,
+            ),
             chunk(session.id, shared.id, "events/shared.ndjson"),
             SessionShare(
                 session_id=session.id,
@@ -154,6 +170,89 @@ async def test_retention_deletes_only_stale_noncurrent_generations(
         await db_session.commit()
         assert await worker.run_once(now=now) == shared.id
         assert "events/shared.ndjson" in store.deleted
+    finally:
+        await db_session.delete(session)
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_retention_reclaims_obsolete_bases_and_preserves_active_uploads(
+    db_session: AsyncSession,
+    engine,
+    seed_user: User,
+) -> None:
+    now = datetime.now(UTC)
+    session = Session(
+        user_id=seed_user.id,
+        local_session_id=f"staging-retention-{uuid.uuid4().hex}",
+        started_at=now,
+        last_activity_at=now,
+        event_revision=5,
+    )
+    db_session.add(session)
+    await db_session.flush()
+
+    obsolete = generation(session.id, status="staging", created_at=now - timedelta(hours=2))
+    obsolete.base_revision = 4
+    locked = generation(session.id, status="staging", created_at=now - timedelta(hours=2))
+    locked.base_revision = 4
+    active = generation(session.id, status="staging", created_at=now - timedelta(days=2))
+    active.base_revision = 5
+    active.updated_at = now
+    legacy_active = generation(session.id, status="staging", created_at=now - timedelta(days=2))
+    legacy_active.base_revision = 5
+    recent = generation(session.id, status="staging", created_at=now)
+    recent.base_revision = 4
+    abandoned = generation(session.id, status="staging", created_at=now - timedelta(days=2))
+    abandoned.base_revision = 5
+    current = generation(session.id, status="committed", created_at=now)
+    current.base_revision = 4
+    superseded = generation(session.id, status="committed", created_at=now)
+    superseded.superseded_at = now
+    db_session.add_all(
+        [obsolete, locked, active, legacy_active, recent, abandoned, current, superseded]
+    )
+    await db_session.flush()
+    session.event_generation_id = current.id
+    db_session.add_all(
+        [
+            chunk(
+                session.id, obsolete.id, "events/obsolete.ndjson", created_at=obsolete.created_at
+            ),
+            chunk(session.id, locked.id, "events/locked.ndjson", created_at=locked.created_at),
+            chunk(session.id, legacy_active.id, "events/active.ndjson"),
+        ]
+    )
+    await db_session.commit()
+    try:
+        store = RecordingFileStore()
+        sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+        worker = SessionEventRetentionWorker(sessionmaker, file_store=store)
+        async with sessionmaker() as uploading:
+            await uploading.execute(
+                select(SessionEventGeneration)
+                .where(SessionEventGeneration.id == locked.id)
+                .with_for_update()
+            )
+            assert {await worker.run_once(now=now), await worker.run_once(now=now)} == {
+                obsolete.id,
+                abandoned.id,
+            }
+            assert await worker.run_once(now=now) is None
+            assert store.deleted == ["events/obsolete.ndjson"]
+            await uploading.rollback()
+
+        assert await worker.run_once(now=now) == locked.id
+        assert await worker.run_once(now=now) is None
+        remaining = set(
+            await db_session.scalars(
+                select(SessionEventGeneration.id).where(
+                    SessionEventGeneration.session_id == session.id
+                )
+            )
+        )
+        assert remaining == {active.id, legacy_active.id, recent.id, current.id, superseded.id}
+        assert store.deleted == ["events/obsolete.ndjson", "events/locked.ndjson"]
     finally:
         await db_session.delete(session)
         await db_session.commit()

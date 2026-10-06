@@ -74,6 +74,7 @@ KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v2/operations/{operation_id}": {"get"},
     "/v2/operations/{operation_id}:cancel": {"post"},
     "/v2/subscription/checkout": {"post"},
+    "/v2/subscription/trial-offer": {"get"},
     "/v2/subscription/cancel": {"post"},
     "/v2/subscription/fix-payment": {"post"},
     "/v2/subscription/plan/cancel-scheduled-change": {"post"},

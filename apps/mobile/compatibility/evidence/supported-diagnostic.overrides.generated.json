@@ -1,0 +1,89 @@
+{
+  "template": "57.0.28",
+  "overrides": {
+    "expo": {
+      "from": "57.0.26",
+      "to": "~57.0.26"
+    },
+    "react": {
+      "from": "19.3.0",
+      "to": "19.2.3"
+    },
+    "@expo/ui": {
+      "from": "57.0.21",
+      "to": "~57.0.21"
+    },
+    "expo-font": {
+      "from": "57.0.4",
+      "to": "~57.0.4"
+    },
+    "react-dom": {
+      "from": "19.3.0",
+      "to": "19.2.3"
+    },
+    "expo-router": {
+      "from": "57.0.24",
+      "to": "~57.0.24"
+    },
+    "expo-linking": {
+      "from": "57.0.11",
+      "to": "~57.0.11"
+    },
+    "react-native": {
+      "from": "0.87.1",
+      "to": "0.86.3"
+    },
+    "expo-constants": {
+      "from": "57.0.20",
+      "to": "~57.0.20"
+    },
+    "expo-system-ui": {
+      "from": "57.0.4",
+      "to": "~57.0.4"
+    },
+    "expo-status-bar": {
+      "from": "57.0.1",
+      "to": "~57.0.1"
+    },
+    "expo-web-browser": {
+      "from": "57.0.3",
+      "to": "~57.0.3"
+    },
+    "react-native-screens": {
+      "from": "4.28.0",
+      "to": "~4.26.0"
+    },
+    "react-native-worklets": {
+      "from": "0.13.0",
+      "to": "0.10.1"
+    },
+    "react-native-reanimated": {
+      "from": "4.7.0",
+      "to": "4.5.1"
+    },
+    "react-native-gesture-handler": {
+      "from": "3.3.0",
+      "to": "~2.32.0"
+    },
+    "react-native-safe-area-context": {
+      "from": "5.10.1",
+      "to": "~5.7.0"
+    },
+    "react-native-svg": {
+      "from": "15.15.5",
+      "to": "15.15.4"
+    },
+    "@babel/core": {
+      "from": "8.0.6",
+      "to": "7.29.7"
+    },
+    "@react-native/metro-config": {
+      "from": "0.87.1",
+      "to": "0.86.3"
+    },
+    "@types/react": {
+      "from": "19.3.0",
+      "to": "~19.2.4"
+    }
+  }
+}

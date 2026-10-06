@@ -76,9 +76,11 @@ export function ResourcesCard({
 function ResourceRowSkeleton() {
 	return (
 		<div className="flex items-center gap-3 px-6 py-3">
-			<Skeleton className="size-4" />
-			<Skeleton className="h-4 flex-1" />
-			<Skeleton className="h-4 w-8" />
+			<Skeleton className="size-7 shrink-0 rounded-lg" />
+			<div className="min-w-0 flex-1">
+				<Skeleton className="h-4 w-20" />
+			</div>
+			<Skeleton className="h-4 w-6" />
 		</div>
 	);
 }

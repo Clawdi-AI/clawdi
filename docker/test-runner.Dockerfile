@@ -1,4 +1,4 @@
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.2
 ARG NODE_VERSION=24.19.0
 ARG UV_VERSION=0.12.5
 
@@ -26,7 +26,7 @@ RUN apt-get update \
 
 RUN groupadd --gid 1000 clawdi-test \
 	&& useradd --uid 1000 --gid 1000 --home-dir /tmp/clawdi-home --no-create-home clawdi-test \
-	&& install -d -m 0755 -o clawdi-test -g clawdi-test /etc/clawdi
+	&& install -d -m 0755 -o clawdi-test -g clawdi-test /etc/clawdi /var/cache/bun
 
 ENV HOME=/tmp/clawdi-home \
 	USER=clawdi-test \

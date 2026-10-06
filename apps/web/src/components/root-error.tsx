@@ -19,15 +19,16 @@ const isDevelopment =
  * Keeping it minimal: user sees a clear message + a retry button + a dev-only
  * error detail, nothing more.
  */
-export default function RootError({
-	error,
-	reset,
-}: {
-	error: Error & { digest?: string };
-	reset: () => void;
-}) {
+export default function RootError({ error, reset }: { error: unknown; reset: () => void }) {
 	const router = useRouter();
 	const needsDesktopUpdate = error instanceof DesktopBridgeCompatibilityError;
+	const message = error instanceof Error ? error.message : String(error);
+	const digest =
+		typeof error === "object" && error !== null && "digest" in error
+			? typeof error.digest === "string"
+				? error.digest
+				: undefined
+			: undefined;
 
 	useEffect(() => {
 		// Lost connections are client conditions, not app faults.
@@ -60,8 +61,8 @@ export default function RootError({
 				</div>
 				{isDevelopment && (
 					<pre className="text-left text-xs bg-muted text-muted-foreground rounded-md p-3 overflow-auto max-h-40">
-						{error.message}
-						{error.digest ? `\n\ndigest: ${error.digest}` : ""}
+						{message}
+						{digest ? `\n\ndigest: ${digest}` : ""}
 					</pre>
 				)}
 				<Button onClick={retry} variant="default">

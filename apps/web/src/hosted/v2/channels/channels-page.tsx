@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
-import { ENTITY_STRETCHED_LINK_CLASS, EntityCardSkeleton } from "@/components/entity-card";
+import { ENTITY_STRETCHED_LINK_CLASS } from "@/components/entity-card";
 import { FilterChip } from "@/components/filter-chip";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
@@ -17,6 +17,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Spinner } from "@/components/ui/spinner";
 import {
 	CHANNEL_CARD_GRID_CLASS,
+	ChannelCardSkeleton,
 	ChannelCard as SharedChannelCard,
 } from "@/hosted/v2/channels/channel-card";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
@@ -27,6 +28,7 @@ import type {
 } from "@/hosted/v2/channels/channel-types";
 import {
 	ChannelStatusBadge,
+	DiscordConnectionIssueAlert,
 	HealthBadge,
 	isNormalChannelHealth,
 	isNormalChannelStatus,
@@ -172,7 +174,7 @@ function OwnedBotsSection({
 		content = (
 			<div className={CHANNEL_CARD_GRID_CLASS}>
 				{[0, 1, 2].map((i) => (
-					<EntityCardSkeleton key={i} trailingBadge />
+					<ChannelCardSkeleton key={i} />
 				))}
 			</div>
 		);
@@ -228,7 +230,7 @@ function SharedBotsSection({
 	if (isLoading) {
 		content = (
 			<div className={CHANNEL_CARD_GRID_CLASS}>
-				<EntityCardSkeleton trailingBadge />
+				<ChannelCardSkeleton />
 			</div>
 		);
 	} else if (error) {
@@ -331,6 +333,9 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: Ch
 					</>
 				}
 			/>
+			{channel.provider === "discord" ? (
+				<DiscordConnectionIssueAlert issue={channel.connection_issue} />
+			) : null}
 			<Link to="/channels/$id" params={{ id: channel.id }} className={ENTITY_STRETCHED_LINK_CLASS}>
 				<span className="sr-only">Open {channel.name}</span>
 			</Link>

@@ -279,6 +279,105 @@ async def test_channel_message_retention_worker_delays_first_prune(monkeypatch):
     assert calls == []
 
 
+@pytest.mark.asyncio
+async def test_runtime_observation_retention_worker_runs_immediately(monkeypatch):
+    worker = RuntimeObservationRetentionWorker(None, poll_interval_seconds=60)
+    stop = asyncio.Event()
+    calls = 0
+
+    async def fake_run_once() -> int:
+        nonlocal calls
+        calls += 1
+        stop.set()
+        return 0
+
+    monkeypatch.setattr(worker, "run_once", fake_run_once)
+
+    await asyncio.wait_for(worker.run_forever(stop), timeout=1)
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True], ids=["idle", "error"])
+async def test_runtime_observation_retention_worker_drains_then_waits(monkeypatch, caplog, fail):
+    worker = RuntimeObservationRetentionWorker(
+        None, poll_interval_seconds=60, drain_pause_seconds=0.001
+    )
+    stop = asyncio.Event()
+    drained = asyncio.Event()
+    retried = asyncio.Event()
+    calls = 0
+
+    async def fake_run_once() -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return 500
+        if calls == 2:
+            return 1
+        if calls == 3:
+            drained.set()
+            if fail:
+                raise RuntimeError("injected compaction failure")
+        else:
+            retried.set()
+        return 0
+
+    monkeypatch.setattr(worker, "run_once", fake_run_once)
+    task = asyncio.create_task(worker.run_forever(stop))
+    try:
+        await asyncio.wait_for(drained.wait(), timeout=1)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(retried.wait(), timeout=0.02)
+        assert calls == 3
+        assert not task.done()
+        if fail:
+            assert "runtime observation retention worker failed" in caplog.text
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_retention_worker_stops_during_drain_pause(monkeypatch):
+    worker = RuntimeObservationRetentionWorker(
+        None, poll_interval_seconds=60, drain_pause_seconds=60
+    )
+    stop = asyncio.Event()
+    compacted = asyncio.Event()
+    calls = 0
+
+    async def fake_run_once() -> int:
+        nonlocal calls
+        calls += 1
+        compacted.set()
+        return 1
+
+    monkeypatch.setattr(worker, "run_once", fake_run_once)
+    task = asyncio.create_task(worker.run_forever(stop))
+    try:
+        await asyncio.wait_for(compacted.wait(), timeout=1)
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, timeout=1)
+
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_observation_retention_worker_propagates_cancellation(monkeypatch):
+    worker = RuntimeObservationRetentionWorker(None, poll_interval_seconds=60)
+
+    async def fake_run_once() -> int:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(worker, "run_once", fake_run_once)
+
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(worker.run_forever(), timeout=1)
+
+
 class _FakeRetentionSession:
     async def __aenter__(self):
         return self

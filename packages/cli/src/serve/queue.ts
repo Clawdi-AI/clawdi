@@ -9,9 +9,9 @@
  * middle (PID 1 OOM-killed in a container, laptop sleep, etc.)
  * doesn't drop work either.
  *
- * Bounded — when the queue hits `maxItems`, the first eligible entry is
+ * Bounded — each module has `maxItems` slots. When a module fills, its oldest entry is
  * evicted to make room for the new one and a `dropped_count`
- * counter ticks up. The dashboard surfaces that counter so a
+ * counter for that reason ticks up. The dashboard surfaces that counter so a
  * stuck daemon ("queue keeps growing, nothing landing") is
  * visible. Without a bound, a daemon offline overnight would
  * fill the disk.
@@ -103,6 +103,17 @@ type QueueItemInput =
 			source_session_key: string;
 	  });
 
+export const QUEUE_DROP_REASONS = [
+	"capacity_skills",
+	"capacity_sessions",
+	"permanent",
+	"retry_exhausted",
+	"oversized",
+	"invalid_persisted",
+] as const;
+export type QueueDropReason = (typeof QUEUE_DROP_REASONS)[number];
+export type QueueDropDeltas = Partial<Record<QueueDropReason, number>>;
+
 const DEFAULT_MAX_ITEMS = 500;
 
 function queuePath(agentType: string): string {
@@ -191,7 +202,7 @@ function isQueueItem(raw: unknown): raw is QueueItem {
 export class RetryQueue {
 	private items: QueueItem[] = [];
 	private highWater = 0;
-	private droppedCount = 0;
+	private droppedByReason: QueueDropDeltas = {};
 	private nextVersion = 1;
 	private readonly maxItems: number;
 	private readonly agentType: string;
@@ -222,6 +233,7 @@ export class RetryQueue {
 
 	constructor(opts: {
 		agentType: string;
+		/** Capacity reserved independently for each module. */
 		maxItems?: number;
 		/** Fires once per item evicted by `evictIfFull`. The
 		 * sync-engine wires this to clear in-flight session
@@ -280,9 +292,11 @@ export class RetryQueue {
 					}
 				} else {
 					droppedDuringLoad += 1;
+					this.recordDrop("invalid_persisted");
 				}
 			} catch {
 				droppedDuringLoad += 1;
+				this.recordDrop("invalid_persisted");
 			}
 		}
 		// Reseed the version counter past anything we just loaded.
@@ -305,7 +319,7 @@ export class RetryQueue {
 
 	/** Atomic-replace the on-disk queue. We write the whole file every
 	 * time rather than appending — the queue is small enough (≤500
-	 * items at ~200B each = 100KB), and a full rewrite avoids the
+	 * items per module at ~200B each = 200KB total), and a full rewrite avoids the
 	 * append-with-truncation footgun where `pop()` requires
 	 * out-of-band bookkeeping.
 	 *
@@ -387,7 +401,7 @@ export class RetryQueue {
 		// in-flight attempt becomes stale. Its latest state joins pending peers.
 		if (idx >= 0) this.items.splice(idx, 1);
 		this.items.push(stamped);
-		this.evictIfFull();
+		this.evictIfFull(stamped);
 		this.highWater = Math.max(this.highWater, this.items.length);
 		this.persist();
 		this.notifyItemWaiters();
@@ -403,8 +417,9 @@ export class RetryQueue {
 		while (!abort.aborted) {
 			const candidate = stampVersion(item, this.nextVersion);
 			const replacesExisting = this.items.some((existing) => sameKey(existing, candidate));
-			if (replacesExisting || this.items.length < this.maxItems) return this.enqueue(item);
-			await this.waitForCapacityChange(abort);
+			if (replacesExisting || this.moduleDepth(candidate) < this.maxItems)
+				return this.enqueue(item);
+			await this.waitForCapacityChange(candidate, abort);
 		}
 		return null;
 	}
@@ -444,8 +459,8 @@ export class RetryQueue {
 		for (const finish of waiters) finish();
 	}
 
-	private waitForCapacityChange(abort: AbortSignal): Promise<void> {
-		if (this.items.length < this.maxItems || abort.aborted) return Promise.resolve();
+	private waitForCapacityChange(item: QueueItem, abort: AbortSignal): Promise<void> {
+		if (this.moduleDepth(item) < this.maxItems || abort.aborted) return Promise.resolve();
 		return new Promise((resolve) => {
 			let settled = false;
 			const finish = () => {
@@ -457,7 +472,7 @@ export class RetryQueue {
 			};
 			this.capacityWaiters.add(finish);
 			abort.addEventListener("abort", finish, { once: true });
-			if (this.items.length < this.maxItems) finish();
+			if (this.moduleDepth(item) < this.maxItems) finish();
 		});
 	}
 
@@ -468,42 +483,26 @@ export class RetryQueue {
 		for (const finish of waiters) finish();
 	}
 
-	private evictIfFull(): void {
-		// Eviction priority: drop the first queued skill operation, only fall
-		// back to dropping sessions when no skills remain to evict.
-		// Skills are content-deduped by skill_key — the periodic local
-		// inventory scan re-derives the latest push/delete state after
-		// eviction. Session content, by contrast, is the
-		// agent's transcript history: once dropped from the queue
-		// it's gone for the lifetime of this daemon (the in-flight
-		// guard holds the hash, the watcher won't re-enqueue).
-		// Treating both kinds the same in a FIFO sweep meant a
-		// long offline window flooded with skill edits could
-		// silently evict pending session uploads. Sessions take
-		// a back seat only after we've shed every shedable skill.
-		while (this.items.length > this.maxItems) {
-			const shedIdx = this.items.findIndex((i) => isSkillOperation(i));
-			let evicted: QueueItem;
-			if (shedIdx >= 0) {
-				evicted = this.items.splice(shedIdx, 1)[0];
-			} else {
-				// All sessions, no more skills to drop. Surface this
-				// as a `session_drop` so the heartbeat can flag the
-				// outlier separately from the routine skill drops.
-				evicted = this.items.shift() as QueueItem;
-			}
-			this.droppedCount += 1;
-			// Local observability: a 12h offline window with the
-			// queue at cap silently shed N items before this commit
-			// — the heartbeat aggregator surfaces the count remotely
-			// but no local log fired. warn level + the per-item
-			// fields below let `clawdi daemon doctor` and journalctl
-			// piece together what was lost.
+	private moduleDepth(item: QueueItem): number {
+		return this.items.filter((existing) => isSkillOperation(existing) === isSkillOperation(item))
+			.length;
+	}
+
+	private evictIfFull(item: QueueItem): void {
+		while (this.moduleDepth(item) > this.maxItems) {
+			const index = this.items.findIndex(
+				(existing) => isSkillOperation(existing) === isSkillOperation(item),
+			);
+			const [evicted] = this.items.splice(index, 1);
+			if (!evicted) return;
+			const reason = isSkillOperation(evicted) ? "capacity_skills" : "capacity_sessions";
+			this.recordDrop(reason);
 			log.warn("queue.evicted", {
 				kind: evicted.kind,
 				key: isSkillOperation(evicted) ? evicted.skill_key : evicted.local_session_id,
 				queue_depth: this.items.length,
-				dropped_total: this.droppedCount,
+				reason,
+				dropped_delta: this.droppedByReason[reason],
 			});
 			this.onEvict?.(evicted);
 		}
@@ -564,27 +563,28 @@ export class RetryQueue {
 	 * dropped since last heartbeat" without us tracking absolute
 	 * counters across daemon restarts. Pair with `restoreDroppedDelta`
 	 * if the heartbeat POST fails — otherwise the count is gone. */
-	drainDroppedDelta(): number {
-		const delta = this.droppedCount;
-		this.droppedCount = 0;
-		return delta;
+	drainDroppedDelta(): QueueDropDeltas {
+		const deltas = this.droppedByReason;
+		this.droppedByReason = {};
+		return deltas;
 	}
 
-	/** Add a previously-drained delta back to the running counter
-	 * after a failed heartbeat POST so we don't permanently lose
-	 * the count exactly when the network is flakiest. */
-	restoreDroppedDelta(delta: number): void {
-		if (delta > 0) this.droppedCount += delta;
+	/** Restore each unsent reason after a failed heartbeat. */
+	restoreDroppedDelta(deltas: QueueDropDeltas): void {
+		for (const reason of QUEUE_DROP_REASONS) {
+			const delta = deltas[reason];
+			if (delta && delta > 0)
+				this.droppedByReason[reason] = (this.droppedByReason[reason] ?? 0) + delta;
+		}
 	}
 
-	/** Record a non-evict drop (4xx permanent error, max-attempts
-	 * exhausted). Bumps the same counter as eviction so the
-	 * dashboard's "dropped" pill surfaces ALL silent loss
-	 * paths uniformly. Pre-fix only FIFO eviction ticked the
-	 * counter; a 4xx-rejected session vanished without any UI
-	 * signal. */
-	recordPermanentDrop(): void {
-		this.droppedCount += 1;
+	/** Record a terminal drop from the drain loop. Counters live only in memory. */
+	recordPermanentDrop(reason: "permanent" | "retry_exhausted" | "oversized" = "permanent"): void {
+		this.recordDrop(reason);
+	}
+
+	private recordDrop(reason: QueueDropReason): void {
+		this.droppedByReason[reason] = (this.droppedByReason[reason] ?? 0) + 1;
 	}
 }
 

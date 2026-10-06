@@ -6,7 +6,6 @@ import { EmptyState } from "@/components/empty-state";
 import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import {
@@ -17,6 +16,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
+import { TransactionRowsSkeleton } from "@/hosted/billing/components/state-views";
 import type { WalletTransaction } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { useWalletTransactions } from "@/hosted/billing/hooks";
@@ -138,14 +138,7 @@ export function TransactionsSection() {
 		>
 			<div className="flex flex-col gap-4">
 				{transactions.isLoading ? (
-					<div className="space-y-px overflow-hidden rounded-lg border">
-						{Array.from({ length: 5 }, (_, index) => `transaction-${index}`).map((key) => (
-							<div key={key} className="flex items-center justify-between gap-4 px-3 py-3">
-								<Skeleton className="h-4 w-40" />
-								<Skeleton className="h-4 w-16" />
-							</div>
-						))}
-					</div>
+					<TransactionRowsSkeleton />
 				) : shouldBlockQueryError(transactions.error, transactions.data) ? (
 					<ApiErrorPanel
 						normalizer={billingErrorNormalizer}

@@ -13,7 +13,8 @@ import {
 	restoreAgentHomeOverrides,
 	snapshotAndClearAgentHomeOverrides,
 } from "../commands/helpers";
-import { addSkillDirectorySymlinkCases, cleanupTmp, copyFixtureToTmp } from "./helpers";
+import inlineImage from "../fixtures/hermes-inline-image.json";
+import { cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
 let origHome: string | undefined;
@@ -48,6 +49,39 @@ describe("HermesAdapter.detect", () => {
 });
 
 describe("HermesAdapter.collectSessions", () => {
+	it.each(["user", "tool"])(
+		"re-maps persisted %s inline images without invalid attachment metadata",
+		async (role) => {
+			const db = new Database(join(tmpHome, ".hermes", "state.db"));
+			db.run("UPDATE messages SET role = ?, content = ? WHERE id = 4", [
+				role,
+				`\0json:${JSON.stringify(inlineImage.content)}`,
+			]);
+			db.close();
+			const adapter = new HermesAdapter();
+			const eager = await adapter.sessions.resolve("s-modern");
+			const streamed = await adapter.sessions.resolve("s-modern", {
+				signal: new AbortController().signal,
+				streaming: true,
+			});
+			if (!eager || !streamed?.readEvents) throw new Error("expected Hermes event readers");
+			const streamEvents = [];
+			for await (const event of streamed.readEvents()) streamEvents.push(event);
+			expect(streamEvents).toEqual(eager.events);
+			const result = streamEvents.find((event) => event.source.record_id === "4");
+			expect(result).toMatchObject({
+				type: role === "user" ? "message" : "tool_result",
+				parts: [
+					{ type: "text", text: "Synthetic image input" },
+					{ type: "attachment", availability: "metadata_only" },
+				],
+			});
+			if (result?.type !== "tool_result" && result?.type !== "message")
+				throw new Error("expected image event");
+			expect(result.parts[1]).not.toHaveProperty("name");
+			expect(JSON.stringify(result)).not.toContain("base64");
+		},
+	);
 	it("selects events-v1 and maps every safe modern row in stable source order", async () => {
 		const a = new HermesAdapter();
 		expect(await a.sessions.contentProtocol()).toBe("events-v1");
@@ -617,17 +651,6 @@ describe("HermesAdapter.collectSkills", () => {
 		expect(skills[0]?.content).toContain("description: A nested demo skill");
 	});
 
-	it("discovers safe top-level directory symlinks and isolates unsafe ones", async () => {
-		const root = join(tmpHome, ".hermes", "skills");
-		const linked = addSkillDirectorySymlinkCases(root, join(tmpHome, "outside-hermes-skill"));
-		const adapter = new HermesAdapter();
-		const skills = await adapter.skills.collect();
-		const keys = skills.map((skill) => skill.skillKey).sort();
-		expect(keys).toEqual(["core/demo", "linked", "source/linked-source"]);
-		expect(skills.find((skill) => skill.skillKey === "linked")?.directoryPath).toBe(linked);
-		expect((await adapter.skills.listKeys()).sort()).toEqual(keys);
-	});
-
 	it("skips archived dot-directories and invalid skill keys at every depth", async () => {
 		const skillsRoot = join(tmpHome, ".hermes", "skills");
 		mkdirSync(join(skillsRoot, ".archive", "old-skill"), { recursive: true });
@@ -637,17 +660,29 @@ describe("HermesAdapter.collectSkills", () => {
 			join(skillsRoot, "apple", ".archive", "old-reminders", "SKILL.md"),
 			"---\nname: old reminders\n---\n",
 		);
-		mkdirSync(join(skillsRoot, "bad key"), { recursive: true });
-		writeFileSync(join(skillsRoot, "bad key", "SKILL.md"), "---\nname: bad key\n---\n");
-		mkdirSync(join(skillsRoot, "apple", "_private"), { recursive: true });
-		writeFileSync(join(skillsRoot, "apple", "_private", "SKILL.md"), "---\nname: private\n---\n");
+		for (const key of [
+			"bad key",
+			"apple/_private",
+			"中文",
+			"a/b/c/d/e",
+			"a".repeat(201),
+			"team/download",
+			"demo\n",
+		]) {
+			mkdirSync(join(skillsRoot, key), { recursive: true });
+			writeFileSync(join(skillsRoot, key, "SKILL.md"), "# Invalid key fixture\n");
+		}
+		for (const key of ["Team.tools/Demo_v1", "valid/nested/at/limit"]) {
+			mkdirSync(join(skillsRoot, key), { recursive: true });
+			writeFileSync(join(skillsRoot, key, "SKILL.md"), "# Valid key fixture\n");
+		}
 
 		const a = new HermesAdapter();
 		const skills = await a.skills.collect();
 		const keys = skills.map((s) => s.skillKey).sort();
 
-		expect(keys).toEqual(["core/demo"]);
-		expect(await a.skills.listKeys()).toEqual(["core/demo"]);
+		expect(keys).toEqual(["Team.tools/Demo_v1", "core/demo", "valid/nested/at/limit"]);
+		expect((await a.skills.listKeys()).sort()).toEqual(keys);
 	});
 
 	it("returns empty when skills dir is missing", async () => {

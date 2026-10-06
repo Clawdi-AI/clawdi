@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { ENTITY_CARD_BASE, ENTITY_GRID_CLASS, EntityHeader } from "@/components/entity-card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ProviderChip } from "@/hosted/v2/channels/channel-ui";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +16,7 @@ export const CHANNEL_CARD_GRID_CLASS = cn(ENTITY_GRID_CLASS, "items-stretch xl:g
  */
 export function ChannelCard({
 	provider,
+	icon,
 	title,
 	state,
 	actions,
@@ -22,6 +24,8 @@ export function ChannelCard({
 	headerClassName,
 }: {
 	provider: string;
+	/** Replaces the provider chip; used by the loading skeleton. */
+	icon?: ReactNode;
 	title: ReactNode;
 	state?: ReactNode | ReactNode[];
 	actions?: ReactNode;
@@ -43,7 +47,7 @@ export function ChannelCard({
 			>
 				<EntityHeader
 					align="start"
-					icon={<ProviderChip provider={provider} />}
+					icon={icon ?? <ProviderChip provider={provider} />}
 					title={title}
 					titleAttribute={typeof title === "string" ? title : undefined}
 					meta={state}
@@ -58,5 +62,33 @@ export function ChannelCard({
 				) : null}
 			</div>
 		</article>
+	);
+}
+
+/** Loading shape rendered through the real `ChannelCard` shell. */
+export function ChannelCardSkeleton({
+	actions = true,
+	headerClassName,
+}: {
+	actions?: boolean;
+	headerClassName?: string;
+}) {
+	return (
+		<div aria-hidden="true" className="h-full min-w-0">
+			<ChannelCard
+				provider=""
+				icon={<Skeleton className="size-10 shrink-0 rounded-lg" />}
+				title={<Skeleton className="h-lh w-32 max-w-full" />}
+				headerClassName={headerClassName}
+				actions={
+					actions ? (
+						<>
+							<Skeleton className="h-8 w-24 rounded-md" />
+							<Skeleton className="size-8 rounded-md" />
+						</>
+					) : undefined
+				}
+			/>
+		</div>
 	);
 }

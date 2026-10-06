@@ -5,11 +5,12 @@ export function writeFakeOpenClawConfigMutationSdk(
 	home: string,
 	options: {
 		importLog?: string;
+		mutationProbe?: { path: string; log: string };
 		initialConfig?: Record<string, unknown>;
 		beforeMutation?: Record<string, unknown>;
 	} = {},
 ): string {
-	const { importLog, initialConfig = {} } = options;
+	const { importLog, mutationProbe, initialConfig = {} } = options;
 	const packageRoot = join(home, ".local", "lib", "node_modules", "openclaw");
 	const configPath = join(home, ".openclaw", "openclaw.json");
 	mkdirSync(packageRoot, { recursive: true });
@@ -29,11 +30,11 @@ export function writeFakeOpenClawConfigMutationSdk(
 	);
 	const logImport = (name: string) =>
 		importLog
-			? `import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(importLog)}, ${JSON.stringify(`${name}\n`)});\n`
+			? `import { appendFileSync as appendImportLog } from "node:fs"; appendImportLog(${JSON.stringify(importLog)}, ${JSON.stringify(`${name}\n`)});\n`
 			: "";
 	writeFileSync(
 		join(packageRoot, "config-mutation.mjs"),
-		`${logImport("config-mutation")}import { readFileSync, writeFileSync } from "node:fs";
+		`${logImport("config-mutation")}import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 const configPath = ${JSON.stringify(configPath)};
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const hasLegacyMemorySearch = (config) => {
@@ -46,6 +47,7 @@ export async function readConfigFileSnapshotForWrite() {
   return { snapshot: { valid: !hasLegacyMemorySearch(config), config, sourceConfig: structuredClone(config) } };
 }
 export async function mutateConfigFile(options) {
+  ${mutationProbe ? `appendFileSync(${JSON.stringify(mutationProbe.log)}, readFileSync(${JSON.stringify(mutationProbe.path)}, "utf8"));` : ""}
   ${options.beforeMutation ? `writeFileSync(configPath, ${JSON.stringify(JSON.stringify(options.beforeMutation))});` : ""}
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   await options.mutate(config, { snapshot: {}, previousHash: null, attempt: 1 });

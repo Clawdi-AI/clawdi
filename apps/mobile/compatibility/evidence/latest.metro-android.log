@@ -1,0 +1,6 @@
+Starting Metro Bundler
+
+ WARN  Attempted to import the module "/work/node_modules/react-native/src/private/featureflags/ReactNativeFeatureFlags" which is not listed in the "exports" of "/work/node_modules/react-native" under the requested subpath "./src/private/featureflags/ReactNativeFeatureFlags". Falling back to file-based resolution. Consider updating the call site or asking the package maintainer(s) to expose this API.
+Android Bundling failed 44693ms node_modules/expo-router/entry.js (2645 modules)
+
+SyntaxError: node_modules/heroui-native/lib/module/components/sub-menu/sub-menu.js: /work/node_modules/heroui-native/lib/module/components/sub-menu/sub-menu.js: [Worklets] Babel plugin exception: [BABEL] /work/node_modules/heroui-native/lib/module/components/sub-menu/sub-menu.js: Requires Babel "^7.0.0-0", but was loaded with "8.0.6". If you are sure you have a compatible version of @babel/core, it is likely that something in your build process is loading the wrong version. Inspect the stack trace of this error to look for the first entry that doesn't mention "@babel/core" or "babel-core" to see what is calling Babel. (While processing: "/work/node_modules/@babel/preset-typescript/lib/index.js")

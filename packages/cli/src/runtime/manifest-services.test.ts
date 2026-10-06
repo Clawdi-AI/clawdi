@@ -1041,6 +1041,9 @@ esac
 		expect(hermesUnit).not.toContain("\nExecStart=");
 		expect(hermesUnit).not.toContain("\nWorkingDirectory=");
 		expect(hermesUnit).toContain("UnsetEnvironment=CLAWDI_AUTH_TOKEN");
+		expect(hermesUnit).toContain("OOMPolicy=continue");
+		expect(hermesUnit).toMatch(/Environment=TERMINAL_LOCAL_MEMORY_MAX_MB=\d+/);
+		expect(hermesUnit).not.toContain("OOMScoreAdjust=");
 		const dashboardUnit = readFileSync(
 			join(paths.systemdUserRoot, "clawdi-hermes-dashboard.service"),
 			"utf8",
@@ -1060,6 +1063,7 @@ esac
 		expect(openclawUnit).not.toContain("\nExecStart=");
 		expect(openclawUnit).not.toContain("\nWorkingDirectory=");
 		expect(openclawUnit).toContain("UnsetEnvironment=CLAWDI_AUTH_TOKEN");
+		expect(openclawUnit).toContain("OOMPolicy=continue");
 		expect(hermesUnit).toContain(
 			`ConditionPathExists=${join(paths.systemdEnvRoot, "hermes-gateway.service.env")}`,
 		);
@@ -1086,6 +1090,8 @@ esac
 		expect(runtimeWatchUnit).not.toContain("\nRuntimeDirectoryMode=");
 		expect(runtimeWatchUnit).not.toContain("\nRuntimeDirectoryPreserve=");
 		expect(runtimeWatchUnit).toContain("TasksMax=infinity");
+		expect(runtimeWatchUnit).not.toContain("OOMScoreAdjust");
+		expect(runtimeWatchUnit).toContain("OOMPolicy=continue");
 		expect(runtimeWatchUnit).not.toContain("ConditionPathExists=");
 		expect(runtimeWatchEnv).not.toContain("runtime-byok-value");
 		expect(runtimeWatchEnv).not.toContain("service-byok-value");

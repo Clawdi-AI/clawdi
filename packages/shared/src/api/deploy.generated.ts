@@ -418,6 +418,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/subscription/trial-offer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get V2 Trial Offer */
+        get: operations["get_v2_trial_offer_v2_subscription_trial_offer_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/subscription/cancel": {
         parameters: {
             query?: never;
@@ -1654,6 +1671,11 @@ export interface components {
              * @default false
              */
             can_use_v2: boolean;
+            /**
+             * Can Create V1 Deployment
+             * @default false
+             */
+            can_create_v1_deployment: boolean;
         };
         /** V1UserResponse */
         V1UserResponse: {
@@ -1830,7 +1852,7 @@ export interface components {
              * @default custom
              * @enum {string}
              */
-            ui_mode: "custom" | "hosted";
+            ui_mode: "custom" | "embedded" | "hosted";
             /** Locale */
             locale?: string | null;
             quote?: components["schemas"]["V2ComputeSubscriptionQuoteResponse-Input"] | null;
@@ -2892,6 +2914,11 @@ export interface components {
             current_period_end: string | null;
             /** Entitled Until */
             entitled_until: string | null;
+        };
+        /** V2TrialOfferResponse */
+        V2TrialOfferResponse: {
+            /** Cardless Trial */
+            cardless_trial: boolean;
         };
         /** V2UpdateDeploymentRequest */
         V2UpdateDeploymentRequest: {
@@ -4667,6 +4694,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2CheckoutResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_v2_trial_offer_v2_subscription_trial_offer_get: {
+        parameters: {
+            query?: {
+                channel?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2TrialOfferResponse"];
                 };
             };
             /** @description Validation Error */

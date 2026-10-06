@@ -15,6 +15,37 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping hosted and connected agent distinctions intact.
 
+### CLI 0.14.106
+
+- Rejected sessions retry after CLI upgrades or within a day, and concurrent pushes preserve newer session history while allowing confirmed local truncation.
+- Background sync reconnects promptly after stable connections drop, reports bounded errors and queue drops, and keeps session backlogs from displacing Skills.
+- Linked Project Skills continue reconciling around local conflicts, and large Skill and session uploads have enough time to transfer over slower connections.
+
+### CLI 0.14.105
+
+- Invalid local Skill keys report their shape without exposing names, and old queued invalid Skills no longer leave sync permanently errored while other Skills continue syncing.
+- Session snapshot uploads always include their Agent origin, keeping equal local session IDs isolated across Agents.
+
+### CLI 0.14.104
+
+- Codex sessions with oversized or invalid attachment names sync successfully, preserving available filenames and attachment metadata.
+
+### CLI 0.14.103
+
+- CLI-only updates from 0.14.101 and 0.14.102 keep unchanged gateways running, including updates that add OOM protection and subsequent runtime reconciliations.
+
+### CLI 0.14.102
+
+- OpenClaw gateways no longer restart during CLI-only handoffs when their managed runtime settings are unchanged, and required provider credentials are published before configuration reloads.
+- Gateway services now survive tool-child OOM kills, while Hermes bounds local tool memory to half of the instance's visible memory budget.
+
+### CLI 0.14.101
+
+- Hermes sessions with inline images sync successfully, including previously
+  stuck histories, after upgrading the CLI.
+- Sessions rejected for invalid events report the failure and stop retrying until
+  their content changes, while other sessions continue syncing.
+
 ### CLI 0.14.100
 
 - Large session histories sync without loading the entire history into memory,

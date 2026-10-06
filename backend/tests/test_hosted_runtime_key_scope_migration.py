@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -11,6 +9,8 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+from tests.migration_harness import load_migration
 
 MIGRATION_FILENAME = "f4c8a1d7e2b9_expand_hosted_runtime_key_scopes.py"
 FULL_SCOPES = [
@@ -28,18 +28,6 @@ PREVIOUS_SCOPES = [
     "skills:read",
     "skills:write",
 ]
-
-
-def _load_migration():
-    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location(
-        "hosted_runtime_key_scope_migration",
-        migration_path,
-    )
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 def _create_previous_schema(connection: sa.Connection) -> None:
@@ -115,7 +103,7 @@ def _insert_runtime_key(
 def test_hosted_runtime_key_scope_migration_backfills_and_relaxes_only_authorization(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "hosted_runtime_key_scope_migration")
     schema = f"hosted_runtime_key_scopes_{uuid.uuid4().hex}"
     environment_id = uuid.uuid4()
     sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))

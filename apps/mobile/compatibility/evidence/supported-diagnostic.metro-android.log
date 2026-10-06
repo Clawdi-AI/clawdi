@@ -1,0 +1,32 @@
+Starting Metro Bundler
+
+Android Bundled 70485ms node_modules/expo-router/entry.js (2711 modules)
+
+› Assets (28):
+node_modules/@expo-google-fonts/material-symbols/400Regular/MaterialSymbols_400Regular.ttf (967KB)
+node_modules/@expo/ui/assets/keyboard_arrow_down.xml (378B)
+node_modules/expo-router/assets/arrow_down.png (9.5KB)
+node_modules/expo-router/assets/arrow_right.xml (307B)
+node_modules/expo-router/assets/checkmark.xml (312B)
+node_modules/expo-router/assets/error.png (469B)
+node_modules/expo-router/assets/file.png (138B)
+node_modules/expo-router/assets/forward.png (188B)
+node_modules/expo-router/assets/pkg.png (364B)
+node_modules/expo-router/assets/react-navigation/elements/back-icon-mask.png (653B)
+node_modules/expo-router/assets/react-navigation/elements/back-icon.png (4 variations | 152B)
+node_modules/expo-router/assets/react-navigation/elements/clear-icon.png (4 variations | 425B)
+node_modules/expo-router/assets/react-navigation/elements/close-icon.png (4 variations | 235B)
+node_modules/expo-router/assets/react-navigation/elements/search-icon.png (4 variations | 599B)
+node_modules/expo-router/assets/sitemap.png (465B)
+node_modules/expo-router/assets/unmatched.png (4.8KB)
+
+› android bundles (1):
+_expo/static/js/android/entry-31a9508cb21f268ba1ffab6fd776a886.hbc (7.3MB)
+
+› web bundles (1):
+_expo/static/css/global-d41d8cd98f00b204e9800998ecf8427e.css (0B)
+
+› Files (1):
+metadata.json (1.9KB)
+
+Exported: dist/android

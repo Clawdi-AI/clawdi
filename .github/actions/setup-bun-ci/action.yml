@@ -16,9 +16,8 @@ inputs:
     required: false
     default: "24.x"
   bun-version:
-    description: Bun version to install (defaults to package.json engines or repo BUN_VERSION env)
+    description: Optional Bun version override (defaults to the root packageManager)
     required: false
-    default: "1.4.0"
 
 runs:
   using: composite
@@ -32,6 +31,7 @@ runs:
       uses: oven-sh/setup-bun@v2
       with:
         bun-version: ${{ inputs.bun-version }}
+        bun-version-file: package.json
 
     - name: Install dependencies
       if: runner.os != 'Windows'

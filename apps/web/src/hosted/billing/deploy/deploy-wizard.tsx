@@ -105,6 +105,7 @@ import {
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import {
+	billingErrorDetail,
 	billingErrorNormalizer,
 	deploymentRequestTerminalOutcome,
 	deploySubmissionErrorPresentation,
@@ -120,6 +121,7 @@ import {
 	usePlans,
 	useResolveDeploymentRequest,
 	useSubscriptionCreateQuote,
+	useTrialOffer,
 } from "@/hosted/billing/hooks";
 import {
 	forgetIdempotencyAttempt,
@@ -299,6 +301,7 @@ export function DeployWizard() {
 	const search = useRouterState({ select: (state) => state.location.searchStr });
 	const channel = resolveDeployChannel(search);
 	const [preinstallBundle, setPreinstallBundle] = useState(true);
+	const pluginBundle = channel && preinstallBundle ? channel : null;
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const billingClient = useBillingClient();
@@ -418,6 +421,7 @@ export function DeployWizard() {
 		onNavigate: navigateCheckoutReturn,
 	});
 	const plans = usePlans();
+	const trialOffer = useTrialOffer(pluginBundle);
 	const includedBasic = useIncludedBasicAvailability();
 	const reusableSubscriptions = useReusableSubscriptions(billingClient);
 	const managedModelCatalog = useManagedModelCatalog();
@@ -535,6 +539,8 @@ export function DeployWizard() {
 				paidSelection.offer.card_trial_period_days,
 			)
 		: null;
+	// The backend applies the same channel policy at checkout; this only sets copy.
+	const cardlessTrial = selectedCardTrial !== null && trialOffer.data?.cardless_trial === true;
 	const walletBillingTerm = supportedBillingTerm(paidSelection?.billingTermMonths ?? 1);
 	const walletDisabledReason = walletBillingTerm
 		? null
@@ -783,7 +789,7 @@ export function DeployWizard() {
 				},
 				aiFields,
 			}),
-			...(channel && preinstallBundle ? { plugin_bundle: "sui" as const } : {}),
+			...(pluginBundle ? { plugin_bundle: pluginBundle } : {}),
 		};
 	}
 
@@ -941,22 +947,32 @@ export function DeployWizard() {
 					checkoutFingerprint,
 					newIdempotencyKey,
 				);
-				const outcome = await createSubscription
-					.execute({
+				const execute = (attempt: IdempotencyAttempt) =>
+					createSubscription.execute({
 						selection,
 						subscriptionSelection,
 						target,
 						uiMode: cardCheckoutUiMode,
-						idempotencyKey: checkoutAttemptRef.current.key,
+						idempotencyKey: attempt.key,
 						quote: lastSuccessfulSubscriptionQuote,
-					})
-					.catch((error: unknown) => {
-						if (isIdempotencyKeyReusedError(error)) {
-							forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
-							checkoutAttemptRef.current = null;
-						}
-						throw error;
 					});
+				const outcome = await execute(checkoutAttemptRef.current).catch((error: unknown) => {
+					if (isIdempotencyKeyReusedError(error)) {
+						forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
+						checkoutAttemptRef.current = null;
+						throw error;
+					}
+					if (billingErrorDetail(error)?.code !== "checkout_attempt_expired") throw error;
+					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
+					checkoutAttemptRef.current = idempotencyAttemptFor(
+						null,
+						"subscription-checkout",
+						checkoutFingerprint,
+						newIdempotencyKey,
+					);
+					// Only this first failure is retried; a second failure reaches the outer handler.
+					return execute(checkoutAttemptRef.current);
+				});
 				if (outcome.flowType === "subscription_activation") {
 					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
 					checkoutAttemptRef.current = null;
@@ -1063,7 +1079,9 @@ export function DeployWizard() {
 								state: walletQuoteState,
 								walletDebit,
 							})
-						: cardDeployAmountPresentation(paidSelection.offer)
+						: cardlessTrial && selectedCardTrial
+							? { amount: selectedCardTrial.label, caption: "No card required", detail: null }
+							: cardDeployAmountPresentation(paidSelection.offer)
 					: null;
 	const walletTopUpAction =
 		paidSelection !== null && paymentMethod === "wallet" && walletInsufficient;
@@ -1415,8 +1433,12 @@ export function DeployWizard() {
 														<CreditCard />
 													</IconChip>
 												}
-												title="Card subscription"
-												description="Recurring subscription via Stripe. Manage or cancel anytime."
+												title={cardlessTrial ? "Free trial" : "Card subscription"}
+												description={
+													cardlessTrial
+														? "No card required. Add a payment method to continue after your trial."
+														: "Recurring subscription via Stripe. Manage or cancel anytime."
+												}
 												badge={
 													selectedCardTrial ? (
 														<Badge variant="secondary">{selectedCardTrial.label}</Badge>
@@ -1462,8 +1484,8 @@ export function DeployWizard() {
 				</SettingsSection>
 				<div className="pb-32 @2xl/main:pb-24">
 					<SettingsSection title="Personalize">
-						<div className="flex max-w-2xl flex-col gap-4">
-							<div className="flex w-full max-w-md flex-col gap-1.5">
+						<div className="flex flex-wrap items-start gap-4">
+							<div className="flex w-64 flex-col gap-1.5">
 								<Label htmlFor="agent-name">Name in Clawdi</Label>
 								<Input
 									id="agent-name"
@@ -1504,43 +1526,41 @@ export function DeployWizard() {
 									</span>
 								) : null}
 							</div>
-							<div className="flex flex-wrap items-start gap-4">
-								<div className="flex flex-col gap-1.5">
-									<Label htmlFor="agent-language">Language</Label>
-									<Select
-										items={LANGUAGE_SELECT_ITEMS}
-										value={language || "default"}
-										onValueChange={(v) => {
-											setLanguage(v === null || v === "default" ? "" : v);
-										}}
-									>
-										<SelectTrigger id="agent-language" type="button">
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectGroup>
-												<SelectItem value="default">Default</SelectItem>
-												{LANGUAGE_OPTIONS.map((l) => (
-													<SelectItem key={l.code} value={l.code}>
-														{l.label}
-													</SelectItem>
-												))}
-											</SelectGroup>
-										</SelectContent>
-									</Select>
-								</div>
-								{tzOptions.length > 0 ? (
-									<div className="flex w-full max-w-sm min-w-0 flex-col gap-1.5">
-										<Label htmlFor="agent-timezone">Timezone</Label>
-										<TimezoneCombobox
-											id="agent-timezone"
-											value={timezone}
-											onValueChange={setTimezone}
-											options={tzOptions}
-										/>
-									</div>
-								) : null}
+							<div className="flex flex-col gap-1.5">
+								<Label htmlFor="agent-language">Language</Label>
+								<Select
+									items={LANGUAGE_SELECT_ITEMS}
+									value={language || "default"}
+									onValueChange={(v) => {
+										setLanguage(v === null || v === "default" ? "" : v);
+									}}
+								>
+									<SelectTrigger id="agent-language" type="button">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectGroup>
+											<SelectItem value="default">Default</SelectItem>
+											{LANGUAGE_OPTIONS.map((l) => (
+												<SelectItem key={l.code} value={l.code}>
+													{l.label}
+												</SelectItem>
+											))}
+										</SelectGroup>
+									</SelectContent>
+								</Select>
 							</div>
+							{tzOptions.length > 0 ? (
+								<div className="flex w-64 min-w-0 flex-col gap-1.5">
+									<Label htmlFor="agent-timezone">Timezone</Label>
+									<TimezoneCombobox
+										id="agent-timezone"
+										value={timezone}
+										onValueChange={setTimezone}
+										options={tzOptions}
+									/>
+								</div>
+							) : null}
 						</div>
 					</SettingsSection>
 				</div>
@@ -1686,7 +1706,11 @@ export function DeployWizard() {
 				}}
 				clientSecret={checkoutSession?.clientSecret ?? null}
 				title={`Complete ${checkoutSession?.tierLabel ?? "compute"} checkout`}
-				description="Enter payment details without leaving this page. Redirect-based payment methods return here after confirmation."
+				description={
+					cardlessTrial
+						? "Review your free trial. No card required."
+						: "Enter payment details without leaving this page. Redirect-based payment methods return here after confirmation."
+				}
 				summary={checkoutSession?.summary ?? null}
 				onComplete={() => {
 					if (checkoutSession) {

@@ -15,6 +15,7 @@ from app.models.channel import (
     CHANNEL_PROVIDER_WHATSAPP,
     CHANNEL_STATUS_DISABLED,
     DELIVERY_STATUS_FAILED,
+    DELIVERY_STATUS_IN_PROGRESS,
     DELIVERY_STATUS_SUCCEEDED,
     MESSAGE_DIRECTION_INBOUND,
     PAIR_CODE_STATUS_CLAIMED,
@@ -90,6 +91,15 @@ async def _create_account_and_binding(
     db.add(binding)
     await db.flush()
     return account, link, binding
+
+
+async def _claim_delivery(db: AsyncSession, delivery: ChannelDelivery) -> ChannelDelivery:
+    delivery.status = DELIVERY_STATUS_IN_PROGRESS
+    delivery.locked_at = datetime.now(UTC)
+    delivery.locked_by = f"retention-test:{delivery.id}"
+    delivery.attempts += 1
+    await db.flush()
+    return delivery
 
 
 async def _add_message(
@@ -226,7 +236,9 @@ async def test_queued_success_and_terminal_failure_prune_with_delivery_cascade(
         return "provider-success", {"ok": True}
 
     monkeypatch.setattr(channel_service, "send_provider_outbound_payload", fake_success)
-    await deliver_channel_delivery(db_session, delivery=succeeded_delivery)
+    await deliver_channel_delivery(
+        db_session, delivery=await _claim_delivery(db_session, succeeded_delivery)
+    )
     assert succeeded_delivery.status == DELIVERY_STATUS_SUCCEEDED
     assert succeeded_message.delivered_at is not None
 
@@ -241,7 +253,9 @@ async def test_queued_success_and_terminal_failure_prune_with_delivery_cascade(
         raise HTTPException(status_code=400, detail="provider rejected message")
 
     monkeypatch.setattr(channel_service, "send_provider_outbound_payload", fake_terminal_failure)
-    await deliver_channel_delivery(db_session, delivery=failed_delivery)
+    await deliver_channel_delivery(
+        db_session, delivery=await _claim_delivery(db_session, failed_delivery)
+    )
     assert failed_delivery.status == DELIVERY_STATUS_FAILED
     assert failed_message.delivered_at is None
 

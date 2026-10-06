@@ -464,18 +464,18 @@ export function MemoryCard({
 function MemoryCardSkeleton({ lineCount }: { lineCount: number }) {
 	return (
 		<EntityCardChassis variant="resource">
-			<div className="space-y-2">
+			{/* Same type scale as MemoryCard's body, one bar per line box. */}
+			<div className="pr-10 text-sm leading-relaxed">
 				{Array.from({ length: lineCount }).map((_, lineIndex) => (
-					<Skeleton
-						key={lineIndex}
-						className={cn("h-4", lineIndex === lineCount - 1 ? "w-2/3" : "w-full")}
-					/>
+					<div key={lineIndex} className="flex h-lh items-center">
+						<Skeleton className={cn("h-4", lineIndex === lineCount - 1 ? "w-2/3" : "w-full")} />
+					</div>
 				))}
 			</div>
-			<div className="mt-4 flex items-center gap-2">
+			<div className="mt-3 flex items-center gap-2 text-xs">
 				<Skeleton className="h-5 w-24 rounded-full" />
-				<Skeleton className="h-3 w-14" />
-				<Skeleton className="ml-auto h-3 w-20" />
+				<Skeleton className="h-lh w-14" />
+				<Skeleton className="h-lh w-20" />
 			</div>
 		</EntityCardChassis>
 	);
@@ -484,10 +484,14 @@ function MemoryCardSkeleton({ lineCount }: { lineCount: number }) {
 function MemoriesGridSkeleton() {
 	return (
 		<div className="space-y-6" data-testid="memories-surface">
-			<div className="flex flex-wrap gap-2">
-				<Skeleton className="h-11 w-56 sm:h-9" />
-				<Skeleton className="h-11 w-72 sm:h-9" />
-			</div>
+			<ListToolbar
+				search={<Skeleton className="h-9 w-full" />}
+				filters={CATEGORIES.map((c) => (
+					<Skeleton key={c.value} className="flex h-8 items-center px-2.5 text-sm text-transparent">
+						{c.label}
+					</Skeleton>
+				))}
+			/>
 			<div className={ENTITY_CARD_MASONRY_CLASS}>
 				{[4, 7, 3, 5, 6, 4].map((lineCount, index) => (
 					<MemoryCardSkeleton key={index} lineCount={lineCount} />

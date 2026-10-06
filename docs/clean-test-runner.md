@@ -82,9 +82,10 @@ suite` step reports the full web, shared, sidecar, CLI, and backend counts.
 
 Client CI keeps one stable `verify` check while routing work through package
 dependency signals. Web-only changes run Web build, typecheck, and tests;
-sidecar-only changes run the sidecar equivalents. Shared changes fan out to
-Shared, Web, and CLI, while root lockfile and workspace configuration changes
-fan out to all four packages. Native CLI lifecycle and publish-manifest checks
+sidecar-only changes run the sidecar equivalents. Mobile changes run Mobile
+typecheck, tests, and independent iOS/Android Metro exports. Shared changes fan
+out to Shared, Web, CLI, and Mobile, while root lockfile and workspace
+configuration changes fan out to all five packages. Native CLI lifecycle and publish-manifest checks
 run only for CLI-relevant changes. When selected, the serial CLI package suite
 and native lifecycle run as two bounded concurrent branches after the native
 binary is built. A separate `deploy_contract` signal controls only generated
@@ -139,6 +140,15 @@ Done: `docker compose -f docker-compose.test.yml config` exits 0 and renders
 the configured CPU, memory, memory-plus-swap, and PID values.
 
 ## Measurement evidence
+
+Bun's install cache now lives on the disposable container disk, not a bounded
+memory-backed mount. Adding the Expo workspace exceeded the former 2 GiB Bun
+cache tmpfs and caused `ENOSPC` during installation. The cache directory is
+owned by the unprivileged runner user, cleared after install, and removed with
+the container; no persistent cache volume or larger memory limit is required.
+The `/tmp` and uv cache mounts remain bounded tmpfs. The measurements below
+predate the mobile workspace and describe the historical tmpfs configuration,
+not the current dependency graph.
 
 Measurements were captured on 2026-07-18 with Docker 29.6.1, Docker Compose
 5.3.1, cgroup v2, 32 logical CPUs, and 25,189,486,592 bytes of host memory.

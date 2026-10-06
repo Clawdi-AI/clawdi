@@ -26,6 +26,7 @@ import {
 	emitSdk,
 	heldTokenCalls,
 	holdSessionToken,
+	lastSignOutRedirectUrl,
 	releaseActivation,
 	releaseSessionToken,
 	serverAuth,
@@ -260,6 +261,9 @@ window.authTest = {
 	get signOutCalls() {
 		return signOutCalls;
 	},
+	get lastSignOutRedirectUrl() {
+		return lastSignOutRedirectUrl;
+	},
 	refetch: () => currentClient?.refetchQueries(),
 };
 declare global {
@@ -284,6 +288,7 @@ declare global {
 			oldMutationPublished: boolean;
 			abortedPreload: boolean;
 			signOutCalls: number;
+			lastSignOutRedirectUrl: string | undefined;
 			refetch: () => Promise<void> | undefined;
 		};
 	}

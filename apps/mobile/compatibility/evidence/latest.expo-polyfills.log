@@ -1,0 +1,34 @@
+node:internal/modules/cjs/loader:1568
+  throw err;
+  ^
+
+Error: Cannot find module '/work/node_modules/react-native/rn-get-polyfills'
+Require stack:
+- /work/node_modules/@expo/metro-config/build/ExpoMetroConfig.js
+- /work/node_modules/@expo/metro-config/build/config/loadUserConfig.js
+- /work/node_modules/@expo/metro-config/build/index.js
+- /work/node_modules/expo/metro-config.js
+- /work/metro.config.cjs
+- /work/[eval]
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1564:15)
+    at wrapResolveFilename (node:internal/modules/cjs/loader:1118:27)
+    at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1142:10)
+    at defaultResolve (node:internal/modules/cjs/loader:1199:20)
+    at nextStep (node:internal/modules/customization_hooks:189:26)
+    at He (/work/node_modules/@tailwindcss/node/dist/index.js:1:1283)
+    at nextStep (node:internal/modules/customization_hooks:189:26)
+    at resolveWithHooks (node:internal/modules/customization_hooks:417:10)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1212:25)
+    at Module._load (node:internal/modules/cjs/loader:1341:5) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [
+    '/work/node_modules/@expo/metro-config/build/ExpoMetroConfig.js',
+    '/work/node_modules/@expo/metro-config/build/config/loadUserConfig.js',
+    '/work/node_modules/@expo/metro-config/build/index.js',
+    '/work/node_modules/expo/metro-config.js',
+    '/work/metro.config.cjs',
+    '/work/[eval]'
+  ]
+}
+
+Node.js v24.21.0

@@ -1,6 +1,6 @@
 {
 	"name": "clawdi",
-	"version": "0.14.100",
+	"version": "0.14.106",
 	"description": "The best home for all your AI agents. Run them in the cloud or connect your own—with their context and tools in one place.",
 	"license": "MIT",
 	"type": "module",
@@ -65,16 +65,16 @@
 		"@clack/prompts": "^1.8.1",
 		"@clawdi/shared": "workspace:*",
 		"@modelcontextprotocol/sdk": "^1.30.1",
-		"@types/bun": "^1.4.2",
-		"@types/node": "^26.6.3",
+		"@types/bun": "catalog:",
+		"@types/node": "catalog:",
 		"chalk": "^6.0.0",
 		"commander": "^15.0.0",
 		"eventsource-parser": "^4.1.1",
 		"json5": "2.2.3",
-		"openapi-fetch": "^0.17.0",
+		"openapi-fetch": "catalog:",
 		"tar": "^7.5.22",
 		"typescript": "catalog:",
-		"yaml": "^2.9.1",
+		"yaml": "catalog:",
 		"zod": "catalog:"
 	}
 }

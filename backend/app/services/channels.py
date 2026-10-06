@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -17,7 +18,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException, status
 from pydantic import JsonValue, StrictStr, TypeAdapter, ValidationError
-from sqlalchemy import and_, delete, exists, func, or_, select, union_all, update
+from sqlalchemy import and_, case, delete, exists, func, or_, select, union_all, update
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
@@ -221,6 +222,10 @@ DISCORD_BOT_GUILD_MEMBERSHIP_UNAVAILABLE = "discord_bot_guild_membership_unavail
 DISCORD_DM_CHAT_TYPES = frozenset({"dm", "direct_messages", "group_dm", "private"})
 DELIVERY_LINK_LOCK_CONTENTION_ERROR = "channel agent link is being updated"
 DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS = 30
+# A delivery lease must outlive the bounded provider send so a live worker
+# always finalizes before another worker can reclaim the row.
+DELIVERY_SEND_TIMEOUT_SECONDS = 120
+DELIVERY_LEASE_SECONDS = 300
 DELIVERY_ERROR_ACCOUNT_INACTIVE = "channel_account_inactive"
 DELIVERY_ERROR_BINDING_INACTIVE = "channel_binding_inactive"
 DELIVERY_ERROR_FAILED = "channel_delivery_failed"
@@ -2849,6 +2854,49 @@ async def find_platform_channel_runtime_marker(
     )
 
 
+async def delete_channel_account_runtime_markers(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    kind: str,
+) -> None:
+    await db.execute(
+        delete(ChannelAccountRuntimeMarker).where(
+            ChannelAccountRuntimeMarker.account_id == account_id,
+            ChannelAccountRuntimeMarker.kind == kind,
+        )
+    )
+
+
+async def upsert_channel_account_runtime_marker(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    kind: str,
+    scope: str,
+    outcome: str,
+    occurred_at: datetime,
+) -> None:
+    """Upsert an account-scoped runtime marker in the current transaction."""
+
+    statement = postgresql_insert(ChannelAccountRuntimeMarker).values(
+        account_id=account_id,
+        kind=kind,
+        scope=scope,
+        outcome=outcome,
+        updated_at=occurred_at,
+    )
+    statement = statement.on_conflict_do_update(
+        index_elements=[
+            ChannelAccountRuntimeMarker.account_id,
+            ChannelAccountRuntimeMarker.kind,
+            ChannelAccountRuntimeMarker.scope,
+        ],
+        set_={"outcome": outcome, "updated_at": occurred_at},
+    )
+    await db.execute(statement)
+
+
 def record_platform_channel_runtime_marker(
     db: AsyncSession,
     *,
@@ -4850,10 +4898,65 @@ async def claim_next_channel_delivery(
         return None
     delivery.status = DELIVERY_STATUS_IN_PROGRESS
     delivery.locked_at = now
-    delivery.locked_by = worker_id
+    # `locked_by` doubles as the attempt lease token: finalization only applies
+    # while the row still carries the token written by this claim.
+    delivery.locked_by = f"{worker_id[:80]}:{uuid4().hex}"
     delivery.attempts += 1
     await db.flush()
     return delivery
+
+
+async def reap_expired_channel_delivery_leases(db: AsyncSession) -> int:
+    """Return in-progress deliveries whose attempt lease expired to the queue.
+
+    A lease outlives the bounded provider send, so only a worker that died or
+    lost its database connection before finalizing leaves one behind.
+    """
+    now = datetime.now(UTC)
+    result = await db.execute(
+        update(ChannelDelivery)
+        .where(
+            ChannelDelivery.status == DELIVERY_STATUS_IN_PROGRESS,
+            or_(
+                ChannelDelivery.locked_at.is_(None),
+                ChannelDelivery.locked_at <= now - timedelta(seconds=DELIVERY_LEASE_SECONDS),
+            ),
+        )
+        .values(
+            status=case(
+                (
+                    ChannelDelivery.attempts >= ChannelDelivery.max_attempts,
+                    DELIVERY_STATUS_FAILED,
+                ),
+                else_=DELIVERY_STATUS_PENDING,
+            ),
+            next_attempt_at=now,
+            locked_at=None,
+            locked_by=None,
+            last_error=DELIVERY_ERROR_FAILED,
+        )
+        .returning(ChannelDelivery.id)
+        .execution_options(synchronize_session=False)
+    )
+    reaped = len(result.scalars().all())
+    if reaped:
+        log.warning("returned %d expired channel delivery leases to the queue", reaped)
+    return reaped
+
+
+@dataclass(frozen=True)
+class _ChannelDeliverySend:
+    account: ChannelAccount
+    external_chat_id: str
+    text: str
+    provider_payload: JsonObject | None
+    discord_nonce: str | None
+
+
+@dataclass(frozen=True)
+class _ChannelDeliverySent:
+    provider_message_id: str | None
+    provider_response: JsonObject
 
 
 async def deliver_channel_delivery(
@@ -4861,10 +4964,97 @@ async def deliver_channel_delivery(
     *,
     delivery: ChannelDelivery,
 ) -> ChannelDelivery:
+    """Deliver one claimed delivery without holding database state across the send.
+
+    The caller's claim is validated and committed first, so the row lock, the
+    link/binding locks and the pooled connection are released before the
+    provider request. The outcome is then written in a new short transaction
+    guarded by the claim's lease token; a stale attempt (reaped or archived
+    meanwhile) is ignored.
+
+    Delivery is at-least-once: if the worker dies or cannot commit the outcome
+    after the provider accepted the message, the lease expires and the message
+    is sent again. Discord deduplicates the retry through the message nonce;
+    WhatsApp provider payloads reuse their message id; Telegram has no send
+    idempotency key, so a duplicate is possible there.
+    """
+    delivery_id = delivery.id
+    lease_token = delivery.locked_by
+    if lease_token is None:
+        return delivery
+    send = await _prepare_channel_delivery_send(db, delivery=delivery, lease_token=lease_token)
+    await db.commit()
+    if send is None:
+        return delivery
+
+    outcome: _ChannelDeliverySent | HTTPException
+    try:
+        async with asyncio.timeout(DELIVERY_SEND_TIMEOUT_SECONDS):
+            provider_message_id, provider_response = await send_provider_outbound_payload(
+                account=send.account,
+                external_chat_id=send.external_chat_id,
+                text=send.text,
+                provider_payload=send.provider_payload,
+                discord_nonce=send.discord_nonce,
+            )
+        outcome = _ChannelDeliverySent(provider_message_id, provider_response)
+    except HTTPException as exc:
+        outcome = exc
+    except Exception:  # noqa: BLE001 - one failed send must still release its lease.
+        log.exception("channel delivery %s send failed", delivery_id)
+        outcome = HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="channel delivery failed",
+        )
+
+    finalized = await _finalize_channel_delivery(
+        db,
+        delivery_id=delivery_id,
+        lease_token=lease_token,
+        provider=send.account.provider,
+        outcome=outcome,
+    )
+    await db.commit()
+    return finalized or delivery
+
+
+async def _owned_delivery_for_update(
+    db: AsyncSession,
+    *,
+    delivery_id: UUID,
+    lease_token: str,
+) -> ChannelDelivery | None:
+    return (
+        await db.execute(
+            select(ChannelDelivery)
+            .where(
+                ChannelDelivery.id == delivery_id,
+                ChannelDelivery.status == DELIVERY_STATUS_IN_PROGRESS,
+                ChannelDelivery.locked_by == lease_token,
+            )
+            .execution_options(populate_existing=True)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+
+
+async def _prepare_channel_delivery_send(
+    db: AsyncSession,
+    *,
+    delivery: ChannelDelivery,
+    lease_token: str,
+) -> _ChannelDeliverySend | None:
+    owned = await _owned_delivery_for_update(
+        db,
+        delivery_id=delivery.id,
+        lease_token=lease_token,
+    )
+    if owned is None:
+        return None
     account: ChannelAccount | None = None
     try:
-        account = await _delivery_account(db, delivery)
-        link = await _lock_active_delivery_link(db, delivery)
+        account = await _delivery_account(db, owned)
+        link = await _lock_active_delivery_link(db, owned)
         if link is not None:
             if not await bot_agent_link_has_strict_v2_authority(db, link=link):
                 raise HTTPException(
@@ -4883,77 +5073,76 @@ async def deliver_channel_delivery(
                         duplicate=True,
                     ),
                 )
-        message = await _delivery_message(db, delivery)
-        await _lock_active_delivery_binding(db, delivery=delivery, message=message)
-        provider_message_id, _provider_response = await send_provider_outbound_payload(
-            account=account,
-            external_chat_id=message.external_chat_id,
-            text=message.text or "",
-            provider_payload=_channel_message_provider_payload(message),
-            discord_nonce=(
-                _discord_delivery_nonce(message.id)
-                if account.provider == CHANNEL_PROVIDER_DISCORD
-                else None
-            ),
-        )
+        message = await _delivery_message(db, owned)
+        await _lock_active_delivery_binding(db, delivery=owned, message=message)
     except HTTPException as exc:
-        error = _http_exception_detail(exc)
-        delivery_provider = (
+        provider = (
             account.provider
             if account is not None
             else await db.scalar(
-                select(ChannelAccount.provider).where(ChannelAccount.id == delivery.account_id)
+                select(ChannelAccount.provider).where(ChannelAccount.id == owned.account_id)
             )
         )
-        use_safe_diagnostics = delivery_provider in {
-            CHANNEL_PROVIDER_TELEGRAM,
-            CHANNEL_PROVIDER_DISCORD,
-            CHANNEL_PROVIDER_WHATSAPP,
-        }
-        if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
-            _schedule_delivery_retry(
-                delivery,
-                error,
-                use_safe_diagnostics=use_safe_diagnostics,
-                retry_after_seconds=_http_retry_after_seconds(exc),
-            )
-        elif _is_delivery_link_lock_contention(exc, error=error):
-            _schedule_delivery_link_contention_retry(
-                delivery,
-                error,
-                use_safe_diagnostics=use_safe_diagnostics,
-            )
-        elif exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
-            _fail_delivery(
-                delivery,
-                error,
-                use_safe_diagnostics=use_safe_diagnostics,
-            )
-        else:
-            _schedule_delivery_retry(
-                delivery,
-                error,
-                use_safe_diagnostics=use_safe_diagnostics,
-            )
+        _apply_delivery_error(owned, exc, provider=provider)
+        await db.flush()
+        return None
+    return _ChannelDeliverySend(
+        account=account,
+        external_chat_id=message.external_chat_id,
+        text=message.text or "",
+        provider_payload=_channel_message_provider_payload(message),
+        discord_nonce=(
+            _discord_delivery_nonce(message.id)
+            if account.provider == CHANNEL_PROVIDER_DISCORD
+            else None
+        ),
+    )
+
+
+async def _finalize_channel_delivery(
+    db: AsyncSession,
+    *,
+    delivery_id: UUID,
+    lease_token: str,
+    provider: str,
+    outcome: _ChannelDeliverySent | HTTPException,
+) -> ChannelDelivery | None:
+    delivery = await _owned_delivery_for_update(
+        db,
+        delivery_id=delivery_id,
+        lease_token=lease_token,
+    )
+    if delivery is None:
+        log.warning("ignoring stale channel delivery %s outcome", delivery_id)
+        return None
+    if isinstance(outcome, HTTPException):
+        _apply_delivery_error(delivery, outcome, provider=provider)
         await db.flush()
         return delivery
 
+    message = (
+        await db.execute(
+            select(ChannelMessage)
+            .where(ChannelMessage.id == delivery.message_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
     stored_provider_response = (
         _safe_delivery_provider_response(
-            provider=account.provider,
-            provider_message_id=provider_message_id,
+            provider=provider,
+            provider_message_id=outcome.provider_message_id,
         )
-        if account.provider
+        if provider
         in {
             CHANNEL_PROVIDER_TELEGRAM,
             CHANNEL_PROVIDER_DISCORD,
             CHANNEL_PROVIDER_WHATSAPP,
         }
-        else _provider_response
+        else outcome.provider_response
     )
-    message.provider_message_id = provider_message_id
+    message.provider_message_id = outcome.provider_message_id
     message.payload = _delivery_success_payload(message.payload, stored_provider_response)
-    if account.provider in CHANNEL_RETENTION_PROVIDERS:
+    if provider in CHANNEL_RETENTION_PROVIDERS:
         message.delivered_at = datetime.now(UTC)
     delivery.status = DELIVERY_STATUS_SUCCEEDED
     delivery.locked_at = None
@@ -4962,6 +5151,45 @@ async def deliver_channel_delivery(
     delivery.provider_response = stored_provider_response
     await db.flush()
     return delivery
+
+
+def _apply_delivery_error(
+    delivery: ChannelDelivery,
+    exc: HTTPException,
+    *,
+    provider: str | None,
+) -> None:
+    error = _http_exception_detail(exc)
+    use_safe_diagnostics = provider in {
+        CHANNEL_PROVIDER_TELEGRAM,
+        CHANNEL_PROVIDER_DISCORD,
+        CHANNEL_PROVIDER_WHATSAPP,
+    }
+    if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
+        _schedule_delivery_retry(
+            delivery,
+            error,
+            use_safe_diagnostics=use_safe_diagnostics,
+            retry_after_seconds=_http_retry_after_seconds(exc),
+        )
+    elif _is_delivery_link_lock_contention(exc, error=error):
+        _schedule_delivery_link_contention_retry(
+            delivery,
+            error,
+            use_safe_diagnostics=use_safe_diagnostics,
+        )
+    elif exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
+        _fail_delivery(
+            delivery,
+            error,
+            use_safe_diagnostics=use_safe_diagnostics,
+        )
+    else:
+        _schedule_delivery_retry(
+            delivery,
+            error,
+            use_safe_diagnostics=use_safe_diagnostics,
+        )
 
 
 def _channel_message_provider_payload(message: ChannelMessage) -> JsonObject | None:

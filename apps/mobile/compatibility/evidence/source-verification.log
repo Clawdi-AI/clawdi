@@ -1,0 +1,7 @@
+Resolving dependencies
+Resolved, downloaded and extracted [22]
+Saved lockfile
+Checked 15 files in 43ms. No fixes applied.
+Synthetic summary identity=true: exit 0
+Synthetic summary identity=false: exit 1
+Synthetic summary identity=missing: exit 1

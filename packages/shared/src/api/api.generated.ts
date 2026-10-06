@@ -5163,6 +5163,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Connection Issue */
+            connection_issue?: ("authentication_failed" | "disallowed_intents" | "invalid_intents" | "invalid_configuration") | null;
             /** Webhook Secret */
             webhook_secret: string;
             /** Agent Link Id */
@@ -5200,6 +5202,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Connection Issue */
+            connection_issue?: ("authentication_failed" | "disallowed_intents" | "invalid_intents" | "invalid_configuration") | null;
         };
         /** ChannelActivityItemResponse */
         ChannelActivityItemResponse: {
@@ -5445,6 +5449,8 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Connection Issue */
+            connection_issue?: ("authentication_failed" | "disallowed_intents" | "invalid_intents" | "invalid_configuration") | null;
             /**
              * Access
              * @enum {string}
@@ -8233,9 +8239,16 @@ export interface components {
             /** Activecliversion */
             activeCliVersion: string | null;
             applied: components["schemas"]["HostedRuntimeObservedAppliedV2"] | null;
+            components?: components["schemas"]["HostedRuntimeObservedComponentsV1"] | null;
+            /** Truncated */
+            truncated?: boolean | null;
             skills?: components["schemas"]["HostedRuntimeObservedSkillsV1"] | null;
             agentPlugins: components["schemas"]["HostedRuntimeObservedAgentPluginsV1"] | null;
             userActivity: components["schemas"]["HostedRuntimeObservedUserActivityV1"] | null;
+            /** Error */
+            error?: string | null;
+            /** Convergeerror */
+            convergeError?: string | null;
             providerConflicts?: components["schemas"]["HostedRuntimeObservedProviderConflictsV1"] | null;
             serviceWithdrawals?: components["schemas"]["HostedRuntimeObservedServiceWithdrawalsV1"] | null;
         };

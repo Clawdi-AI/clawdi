@@ -199,6 +199,15 @@ export function usePlans({ enabled = true }: { enabled?: boolean } = {}) {
 	});
 }
 
+export function useTrialOffer(channel: string | null) {
+	const client = useBillingClient();
+	return useBillingQuery({
+		queryKey: billingKeys.trialOffer(channel ?? ""),
+		queryFn: () => client.getTrialOffer(channel ?? ""),
+		enabled: channel !== null,
+	});
+}
+
 export function useSubscriptions() {
 	const client = useBillingClient();
 	return useInfiniteQuery({

@@ -265,7 +265,11 @@ import {
 	buildAgentChannelCardGroups,
 	canonicalAgentChannelLinks,
 } from "@/hosted/v2/channels/agent-channel-cards.logic";
-import { CHANNEL_CARD_GRID_CLASS, ChannelCard } from "@/hosted/v2/channels/channel-card";
+import {
+	CHANNEL_CARD_GRID_CLASS,
+	ChannelCard,
+	ChannelCardSkeleton,
+} from "@/hosted/v2/channels/channel-card";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client.logic";
 import {
@@ -277,6 +281,7 @@ import {
 	CHANNEL_DESTRUCTIVE_ACTION_CLASS,
 	ChannelStatusBadge,
 	CopyInline,
+	DiscordConnectionIssueAlert,
 	isNormalChannelStatus,
 } from "@/hosted/v2/channels/channel-ui";
 import {
@@ -1420,6 +1425,7 @@ function OverviewTab({
 					icon={AGENT_SECTION_NAVIGATION_ITEMS.channels.icon}
 					tint={AGENT_SECTION_NAVIGATION_ITEMS.channels.tint}
 					link={agentSectionLink(agentId, "channels")}
+					prominent
 				/>
 				<OverviewNavigationCard
 					id="model-provider"
@@ -2254,7 +2260,7 @@ function AiProviderTab({
 					title={authCardLabel("unmanaged")}
 					description="Configure model access inside the agent."
 				/>
-				{providers.isLoading ? <EntityCardSkeleton titleBadge trailingBadge /> : null}
+				{providers.isLoading ? <EntityCardSkeleton align="start" titleBadge trailingBadge /> : null}
 				{shouldBlockQueryError(providers.error, providers.data) ? (
 					<div className="@2xl/main:col-span-2">
 						<ApiErrorPanel
@@ -2922,8 +2928,8 @@ function AgentChannelBotsSection({
 			{isLoading && bots.length === 0 ? (
 				<div role="status" className={CHANNEL_CARD_GRID_CLASS}>
 					<span className="sr-only">Loading {title}</span>
-					<EntityCardSkeleton actions />
-					<EntityCardSkeleton actions />
+					<ChannelCardSkeleton headerClassName={AGENT_CHANNEL_CARD_HEADER_CLASS} />
+					<ChannelCardSkeleton headerClassName={AGENT_CHANNEL_CARD_HEADER_CLASS} />
 				</div>
 			) : bots.length > 0 ? (
 				<div className={CHANNEL_CARD_GRID_CLASS}>
@@ -3008,7 +3014,10 @@ function AgentChannelBotCard({
 			</ConfirmAction>
 		) : null;
 	return (
-		<div data-agent-channel-account-id={bot.id} className="h-full min-w-0">
+		<div data-agent-channel-account-id={bot.id} className="flex h-full min-w-0 flex-col gap-2">
+			{bot.provider === "discord" ? (
+				<DiscordConnectionIssueAlert issue={bot.connection_issue} />
+			) : null}
 			{bot.link ? (
 				<ConnectedChannelGroup
 					link={bot.link}

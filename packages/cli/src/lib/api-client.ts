@@ -466,21 +466,19 @@ export class ApiClient {
 		}
 	}
 
-	/** Upload per-session content JSON to `/v1/sessions/{id}/upload`. */
+	/** Upload content with its immutable Agent origin, even for unbound credentials. */
 	async uploadSessionContent(
 		localSessionId: string,
 		file: Buffer,
 		filename: string,
-		fence?: { environmentId: string; expectedContentHash: string },
+		fence: { environmentId: string; expectedContentHash: string },
 	): Promise<SessionUploadResponse> {
 		return this.multipartPost<SessionUploadResponse>(
 			`/v1/sessions/${encodeURIComponent(localSessionId)}/upload`,
-			fence
-				? {
-						environment_id: fence.environmentId,
-						expected_content_hash: fence.expectedContentHash,
-					}
-				: {},
+			{
+				environment_id: fence.environmentId,
+				expected_content_hash: fence.expectedContentHash,
+			},
 			file,
 			filename,
 		);
@@ -614,10 +612,11 @@ export class ApiClient {
 		// Wrapping narrows it without a cast.
 		formData.append("file", new Blob([new Uint8Array(file)]), filename);
 
+		const timeoutMs = DEFAULT_TIMEOUT_MS + (file.length / (128 * 1024)) * 1000;
 		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+		const timer = setTimeout(() => controller.abort(), timeoutMs);
 		// Mirror engine-wide abort onto this upload's controller so
-		// `clawdi daemon` shutdown doesn't wait the full 30s timeout
+		// `clawdi daemon` shutdown doesn't wait the full upload timeout
 		// for an in-flight upload to give up. Pre-fix the runtime
 		// would hang on the active multipart fetch even after the
 		// engine signalled abort, delaying SIGTERM cleanup and
@@ -640,7 +639,7 @@ export class ApiClient {
 				body: formData,
 				signal: controller.signal,
 			});
-			const res = await retryingFetch(request, DEFAULT_TIMEOUT_MS, controller.signal);
+			const res = await retryingFetch(request, timeoutMs, controller.signal);
 			if (!res.ok) {
 				const body = await res.text();
 				throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });

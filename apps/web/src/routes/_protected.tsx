@@ -19,19 +19,27 @@ const getAuthState = createServerFn({ method: "GET" }).handler(async () => {
 	return { userId, sessionId };
 });
 
+const loadProtectedRoute = async ({ location }: { location: { href: string } }) => {
+	if (env.VITE_CLAWDI_DESKTOP_BUILD) return { authIdentity: null };
+	const authState = await getAuthState({
+		// Navigation can outlive the connection; classify the transport
+		// failure so the error boundary does not report it as an app fault.
+		fetch: (input, init) =>
+			fetch(input, init).catch((cause: unknown) => {
+				throw new ApiNetworkError("offline", { cause });
+			}),
+	});
+	return {
+		authIdentity: requireRouteIdentity(
+			authState,
+			location.href,
+			env.VITE_CLAWDI_HOSTED ? env.VITE_CLAWDI_MARKETING_URL : undefined,
+		),
+	};
+};
+
 export const Route = createFileRoute("/_protected")({
-	beforeLoad: async ({ location }) => {
-		if (env.VITE_CLAWDI_DESKTOP_BUILD) return { authIdentity: null };
-		const authState = await getAuthState({
-			// Navigation can outlive the connection; classify the transport
-			// failure so the error boundary does not report it as an app fault.
-			fetch: (input, init) =>
-				fetch(input, init).catch((cause: unknown) => {
-					throw new ApiNetworkError("offline", { cause });
-				}),
-		});
-		return { authIdentity: requireRouteIdentity(authState, location.href) };
-	},
+	beforeLoad: loadProtectedRoute,
 	errorComponent: RootError,
 	component: ProtectedLayout,
 });

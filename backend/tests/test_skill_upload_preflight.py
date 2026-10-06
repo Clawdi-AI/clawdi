@@ -4,6 +4,7 @@ import httpx
 import pytest
 from starlette.types import Message, Receive, Scope, Send
 
+from app.core.skill_key import describe_skill_key
 from app.middleware.skill_upload_preflight import SkillUploadPreflightMiddleware
 
 
@@ -35,7 +36,15 @@ def _multipart_body(*, skill_key: str | None) -> tuple[bytes, str]:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("skill_key", "expected_status"),
-    [("../system", 422), ("team/install", 400)],
+    [
+        ("../system", 422),
+        ("team/install", 400),
+        ("中文", 422),
+        ("my skill", 422),
+        ("demo\n", 422),
+        ("a/b/c/d/e", 422),
+        ("a" * 201, 422),
+    ],
 )
 async def test_skill_upload_preflight_rejects_unsafe_legacy_project_keys_before_inner_app(
     skill_key: str,
@@ -62,7 +71,7 @@ async def test_skill_upload_preflight_rejects_unsafe_legacy_project_keys_before_
 
     assert response.status_code == expected_status
     if expected_status == 422:
-        assert response.json() == {"detail": "Invalid skill_key"}
+        assert response.json() == {"detail": f"Invalid skill_key ({describe_skill_key(skill_key)})"}
     else:
         assert "reserved suffix" in response.json()["detail"]
     assert called is False

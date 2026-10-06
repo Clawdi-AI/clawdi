@@ -104,9 +104,11 @@ async def observe(
     boot="boot-1",
     sequence=1,
     activity=None,
+    components=None,
     skills=None,
     provider_conflicts=None,
     service_withdrawals=None,
+    converge_error=None,
     apply_receipt_id="apply-receipt-0001",
     boot_nonce="boot-nonce-000001",
 ):
@@ -127,6 +129,7 @@ async def observe(
             },
             "boot": None,
             "cli": None,
+            "components": components,
             "agentPlugins": {"schemaVersion": 1, "installations": []},
             "applyReceiptId": apply_receipt_id,
             "bootNonce": boot_nonce,
@@ -134,6 +137,7 @@ async def observe(
             "sequence": sequence,
             "eventId": str(uuid.uuid4()),
             "userActivity": activity,
+            "convergeError": converge_error,
             "skills": skills,
             **({"providerConflicts": provider_conflicts} if provider_conflicts else {}),
             **({"serviceWithdrawals": service_withdrawals} if service_withdrawals else {}),
@@ -317,15 +321,29 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
             {"runtime": "hermes", "providerId": "banban", "code": "native_credential_pool_conflict"}
         ],
     }
+    components = {
+        "schemaVersion": 1,
+        "entries": [
+            {
+                "component": "openclaw-ui",
+                "status": "ok",
+                "configRevision": "d" * 64,
+                "accessRevision": "e" * 64,
+                "invocationId": "f" * 32,
+            }
+        ],
+    }
     withdrawals = {"schemaVersion": 1, "entries": [{"runtime": "hermes", "service": "dashboard"}]}
     first = await observe(
         db_session,
         fresh,
         old,
         activity=activity,
+        components=components,
         skills=skills,
         provider_conflicts=conflicts,
         service_withdrawals=withdrawals,
+        converge_error="convergence warning",
     )
     coalesced = await observe(
         db_session,
@@ -333,9 +351,11 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         now,
         sequence=2,
         activity=activity,
+        components=components,
         skills=skills,
         provider_conflicts=conflicts,
         service_withdrawals=withdrawals,
+        converge_error="convergence warning",
     )
     assert first.stream_position == coalesced.stream_position
     await observe(db_session, expired, old - timedelta(seconds=1), boot="boot-older")
@@ -399,12 +419,18 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
     assert set(diagnostics) == {
         "activeCliVersion",
         "applied",
+        "components",
+        "truncated",
         "agentPlugins",
         "skills",
         "userActivity",
+        "error",
+        "convergeError",
         "providerConflicts",
         "serviceWithdrawals",
     }
+    assert diagnostics["components"] == components
+    assert diagnostics["convergeError"] == "convergence warning"
     assert diagnostics["skills"] == skills
     assert diagnostics["providerConflicts"] == conflicts
     assert diagnostics["serviceWithdrawals"] == withdrawals

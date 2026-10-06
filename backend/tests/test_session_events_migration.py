@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -11,16 +9,9 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from tests.migration_harness import load_migration
+
 MIGRATION_FILENAME = "c6e8a1f4d2b9_session_events_and_adapter_modules.py"
-
-
-def _load_migration():
-    migration_path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location("session_events_migration", migration_path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 def _create_previous_schema(connection: sa.Connection) -> None:
@@ -109,7 +100,7 @@ def _insert_suppression(
 def test_session_events_migration_downgrade_is_lossless_or_fails_closed(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "session_events_migration")
     schema = f"session_events_migration_{uuid.uuid4().hex}"
     sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))
     original_op = migration.op

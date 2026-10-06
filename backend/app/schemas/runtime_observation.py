@@ -631,9 +631,13 @@ class RuntimeDriftObservationDiagnostics(RuntimeObservationResponseModel):
 
     active_cli_version: str | None = Field(alias="activeCliVersion", min_length=1, max_length=200)
     applied: HostedRuntimeObservedAppliedV2 | None
+    components: HostedRuntimeObservedComponentsV1 | None = None
+    truncated: bool | None = None
     skills: HostedRuntimeObservedSkillsV1 | None = None
     agent_plugins: HostedRuntimeObservedAgentPluginsV1 | None = Field(alias="agentPlugins")
     user_activity: HostedRuntimeObservedUserActivityV1 | None = Field(alias="userActivity")
+    error: str | None = Field(default=None, max_length=4000)
+    converge_error: str | None = Field(alias="convergeError", default=None, max_length=4000)
     provider_conflicts: HostedRuntimeObservedProviderConflictsV1 | None = Field(
         alias="providerConflicts", default=None
     )

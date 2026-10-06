@@ -148,7 +148,15 @@ function CheckoutElementForm({
 		if (checkout) settleOnce(checkout.status);
 	}, [checkout, settleOnce]);
 
-	if (checkoutState.type === "loading") {
+	// Before any Element mounts, Stripe can already confirm a session that needs no payment
+	// details, such as a $0 if_required trial. Decide once so mounting Elements cannot flip it.
+	const [collectsPaymentDetails, setCollectsPaymentDetails] = useState<boolean | null>(null);
+	useEffect(() => {
+		if (checkout && collectsPaymentDetails === null)
+			setCollectsPaymentDetails(!checkout.canConfirm);
+	}, [checkout, collectsPaymentDetails]);
+
+	if (checkoutState.type === "loading" || (checkout && collectsPaymentDetails === null)) {
 		return (
 			<div
 				data-hosted="true"
@@ -203,29 +211,33 @@ function CheckoutElementForm({
 
 	return (
 		<div data-hosted="true" className="flex flex-col gap-4">
-			<ExpressCheckoutElement
-				options={{
-					buttonHeight: 44,
-					buttonTheme: {},
-					buttonType: {},
-					layout: { maxColumns: 2, maxRows: 1 },
-					paymentMethodOrder: ["apple_pay", "google_pay", "link"],
-					paymentMethods: {
-						applePay: "auto",
-						googlePay: "auto",
-						link: "auto",
-						amazonPay: "never",
-						klarna: "never",
-						paypal: "never",
-					},
-				}}
-				onConfirm={confirmCheckout}
-			/>
-			<PaymentElement
-				options={{
-					layout: { type: "tabs", defaultCollapsed: false },
-				}}
-			/>
+			{collectsPaymentDetails ? (
+				<>
+					<ExpressCheckoutElement
+						options={{
+							buttonHeight: 44,
+							buttonTheme: {},
+							buttonType: {},
+							layout: { maxColumns: 2, maxRows: 1 },
+							paymentMethodOrder: ["apple_pay", "google_pay", "link"],
+							paymentMethods: {
+								applePay: "auto",
+								googlePay: "auto",
+								link: "auto",
+								amazonPay: "never",
+								klarna: "never",
+								paypal: "never",
+							},
+						}}
+						onConfirm={confirmCheckout}
+					/>
+					<PaymentElement
+						options={{
+							layout: { type: "tabs", defaultCollapsed: false },
+						}}
+					/>
+				</>
+			) : null}
 			{error ? (
 				<Alert data-hosted="true" variant="destructive">
 					<AlertCircle />
@@ -248,8 +260,10 @@ function CheckoutElementForm({
 						<>
 							<Spinner data-icon="inline-start" /> Confirming payment…
 						</>
-					) : (
+					) : collectsPaymentDetails || !readyCheckout.recurring?.trial ? (
 						submitLabel
+					) : (
+						"Start free trial"
 					)}
 				</Button>
 			</div>

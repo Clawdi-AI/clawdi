@@ -35,9 +35,30 @@ def has_reserved_skill_key_suffix(skill_key: str) -> bool:
 def is_valid_skill_key(skill_key: str) -> bool:
     return (
         len(skill_key) <= MAX_SKILL_KEY_LEN
-        and _SKILL_KEY_RE.match(skill_key) is not None
+        and _SKILL_KEY_RE.fullmatch(skill_key) is not None
         and not has_reserved_skill_key_suffix(skill_key)
     )
+
+
+def describe_skill_key(skill_key: str) -> str:
+    """Diagnose rejected names without including directory names or content."""
+    parts = skill_key.split("/")
+    reason = "valid"
+    if not skill_key:
+        reason = "empty"
+    elif len(skill_key) > MAX_SKILL_KEY_LEN:
+        reason = "too_long"
+    elif len(parts) > 4:
+        reason = "too_deep"
+    elif not skill_key.isascii():
+        reason = "non_ascii"
+    elif re.search(r"[^A-Za-z0-9/._-]", skill_key):
+        reason = "invalid_characters"
+    elif any(re.match(r"^[A-Za-z0-9]", part) is None for part in parts):
+        reason = "invalid_component_start"
+    elif has_reserved_skill_key_suffix(skill_key):
+        reason = "reserved_suffix"
+    return f"length={len(skill_key)}, components={len(parts)}, reason={reason}"
 
 
 def is_legacy_hidden_skill_key(skill_key: str) -> bool:
@@ -59,5 +80,5 @@ def validate_derived_skill_key(skill_key: str) -> str:
     must pass the same storage and route-safety contract as client input.
     """
     if not is_valid_skill_key(skill_key):
-        raise SkillKeyValidationError(f"derived skill_key {skill_key!r} is not safe for storage")
+        raise SkillKeyValidationError(f"Invalid skill_key ({describe_skill_key(skill_key)})")
     return skill_key

@@ -75,7 +75,7 @@ function ConnectorsListSkeleton({ embedded }: { embedded: boolean }) {
 			{embedded ? null : (
 				<PageHeader title="Connectors" description={CONNECTORS_RESOURCE.managementDescription} />
 			)}
-			<Skeleton className="h-10 w-full max-w-xl" />
+			<ListToolbar search={<Skeleton className="h-9 w-full" />} />
 			<section className="space-y-3">
 				<SectionLabel>Your connections</SectionLabel>
 				<div className={CONNECTOR_GRID_CLASS}>

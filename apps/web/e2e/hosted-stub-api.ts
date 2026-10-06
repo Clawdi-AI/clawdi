@@ -934,6 +934,10 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 			return r.fulfill({ status: 204, body: "" });
 		}
 		if (p === "/v2/subscription/plans") return fulfillJson(r, plans);
+		if (p === "/v2/subscription/trial-offer") {
+			const channel = new URL(r.request().url()).searchParams.get("channel");
+			return fulfillJson(r, { cardless_trial: channel === "sui" });
+		}
 		if (p === "/v2/subscriptions" && r.request().method() === "GET") {
 			const cursor = new URL(r.request().url()).searchParams.get("cursor") ?? "initial";
 			return fulfillJson(

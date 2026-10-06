@@ -41,6 +41,7 @@ from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDER_WHATSAPP,
+    CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
     CHANNEL_STATUS_DISABLED,
     CHANNEL_VISIBILITY_PUBLIC,
     DELIVERY_STATUS_FAILED,
@@ -53,6 +54,7 @@ from app.models.channel import (
     PAIR_CODE_STATUS_PENDING,
     PAIR_CODE_STATUS_REVOKED,
     ChannelAccount,
+    ChannelAccountRuntimeMarker,
     ChannelAgentCredential,
     ChannelAgentReference,
     ChannelBinding,
@@ -118,6 +120,7 @@ from app.services.discord_gateway_worker import (
     DiscordGatewayWorker,
     _GatewayState,
     _send_heartbeat,
+    discord_gateway_account_revision,
     discord_gateway_advisory_lock_key,
     discord_gateway_intents,
     discord_gateway_uri,
@@ -148,6 +151,7 @@ from app.services.whatsapp_provider_bridge import (
     register_whatsapp_provider_transport,
     unregister_whatsapp_provider_transport,
 )
+from tests.db_lock_helpers import wait_for_lock_wait
 from tests.hosted_runtime_fixtures import (
     CANONICAL_CODEX_TOOLS,
     ensure_canonical_codex_tool_provider,
@@ -159,32 +163,6 @@ TELEGRAM_AGENT_TOKEN_RE = re.compile(r"^[1-9][0-9]{8}:[A-Za-z0-9_-]{32,}$")
 DISCORD_TEST_APPLICATION_ID = "123456789012345678"
 DISCORD_TEST_PUBLIC_KEY = "11" * 32
 _REAL_DISCORD_BOT_GUILD_MEMBERSHIP_CHECK = channel_service.discord_bot_guild_membership_check
-
-
-async def _wait_for_postgres_lock_wait(
-    sessionmaker: async_sessionmaker[AsyncSession],
-    backend_pid: int,
-) -> None:
-    async with sessionmaker() as observer:
-        while True:
-            waiting = await observer.scalar(
-                text(
-                    """
-                    SELECT EXISTS (
-                        SELECT 1
-                        FROM pg_stat_activity
-                        WHERE pid = :backend_pid
-                          AND state = 'active'
-                          AND wait_event_type = 'Lock'
-                    )
-                    """
-                ),
-                {"backend_pid": backend_pid},
-            )
-            if waiting is True:
-                return
-            await observer.rollback()
-            await asyncio.sleep(0.01)
 
 
 def _discord_ready_config(
@@ -680,6 +658,9 @@ class _FakeProviderClient:
     response_content: bytes | None = None
     response_headers: dict[str, str] | None = None
 
+    def __init_subclass__(cls) -> None:
+        cls.calls = []
+
     def __init__(self, *, timeout, limits=None):
         self.timeout = timeout
 
@@ -938,15 +919,18 @@ def _reset_sequenced_provider_client(status_codes: list[int]) -> None:
 
 
 def _clear_fake_provider_calls() -> None:
-    _FakeProviderClient.calls = []
-    _FailingProviderClient.calls = []
-    _SequencedProviderClient.calls = []
-    _StatefulDiscordCommandClient.calls = []
+    clients = [_FakeProviderClient]
+    while clients:
+        client = clients.pop()
+        client.calls = []
+        clients.extend(client.__subclasses__())
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_channel_provider_http_client():
     await channel_service.close_channel_provider_http_client()
+    _reset_fake_provider_client()
+    _clear_fake_provider_calls()
     try:
         yield
     finally:
@@ -2469,6 +2453,49 @@ async def test_channel_bot_pool_lists_public_bots_and_owned_private_bots(
 
 
 @pytest.mark.asyncio
+async def test_discord_connection_issue_uses_current_account_revision(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = await _create_paired_discord_channel(
+        client,
+        name=f"discord-runtime-marker-{uuid4().hex}",
+    )
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    revision = discord_gateway_account_revision(account)
+    db_session.add(
+        ChannelAccountRuntimeMarker(
+            account_id=account.id,
+            kind=CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+            scope=revision,
+            outcome="authentication_failed",
+        )
+    )
+    await db_session.commit()
+
+    listed = await client.get("/v1/channels")
+    assert listed.status_code == 200, listed.text
+    listed_account = next(item for item in listed.json() if item["id"] == created["id"])
+    assert listed_account["connection_issue"] == "authentication_failed"
+    fetched = await client.get(f"/v1/channels/{created['id']}")
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["connection_issue"] == "authentication_failed"
+
+    account.config = {
+        **(account.config if isinstance(account.config, dict) else {}),
+        "gateway_intents": 513,
+    }
+    await db_session.commit()
+    listed_after_revision_change = await client.get("/v1/channels")
+    assert listed_after_revision_change.status_code == 200
+    changed_account = next(
+        item for item in listed_after_revision_change.json() if item["id"] == created["id"]
+    )
+    assert changed_account["connection_issue"] is None
+
+
+@pytest.mark.asyncio
 async def test_public_bot_pool_capacity_rejects_new_agent_links(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -3461,8 +3488,13 @@ async def test_channel_link_admission_serializes_behind_runtime_retirement(
             owner_id=user.id,
         )
 
+        link_backend_pid: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
         async def create_link_after_retirement_lock():
             async with session_factory() as link_session:
+                backend_pid = await link_session.scalar(text("SELECT pg_backend_pid()"))
+                assert isinstance(backend_pid, int)
+                link_backend_pid.set_result(backend_pid)
                 account = await link_session.get(ChannelAccount, UUID(created.json()["id"]))
                 assert account is not None
                 return await channel_service.get_or_create_bot_agent_link(
@@ -3473,7 +3505,7 @@ async def test_channel_link_admission_serializes_behind_runtime_retirement(
                 )
 
         pending_link = asyncio.create_task(create_link_after_retirement_lock())
-        await asyncio.sleep(0.05)
+        await wait_for_lock_wait(session_factory, await asyncio.wait_for(link_backend_pid, 2))
         assert not pending_link.done()
         await retirement_session.commit()
 
@@ -4513,7 +4545,8 @@ async def test_list_channel_agent_links_by_agent_returns_linked_channel_summarie
     assert public_item["binding_count"] == 1
     assert other_private["id"] not in by_account_id
     assert other_user_listing.status_code == 404
-    assert select_count == 3
+    # Constant query budget: base listing queries plus one batched connection-issue lookup.
+    assert select_count == 4
 
 
 @pytest.mark.asyncio
@@ -13849,8 +13882,13 @@ async def test_telegram_concurrent_replayed_unpair_cannot_archive_replacement_bi
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     previous_session_override = app.dependency_overrides[get_session]
 
+    request_backend_pids: asyncio.Queue[int] = asyncio.Queue()
+
     async def independent_request_session() -> AsyncIterator[AsyncSession]:
         async with sessionmaker() as request_db:
+            backend_pid = await request_db.scalar(text("SELECT pg_backend_pid()"))
+            assert isinstance(backend_pid, int)
+            request_backend_pids.put_nowait(backend_pid)
             yield request_db
 
     await db_session.rollback()
@@ -13866,10 +13904,15 @@ async def test_telegram_concurrent_replayed_unpair_cannot_archive_replacement_bi
     try:
         first_unpair_task = asyncio.create_task(post_update(original_unpair))
         await asyncio.wait_for(unpair_before_event_commit.wait(), timeout=2)
+        await asyncio.wait_for(request_backend_pids.get(), timeout=2)
         replacement_pair_task = asyncio.create_task(post_update(replacement_pair_update))
-        await asyncio.sleep(0.05)
+        await wait_for_lock_wait(
+            sessionmaker, await asyncio.wait_for(request_backend_pids.get(), timeout=2)
+        )
         replay_task = asyncio.create_task(post_update(original_unpair))
-        await asyncio.sleep(0.05)
+        await wait_for_lock_wait(
+            sessionmaker, await asyncio.wait_for(request_backend_pids.get(), timeout=2)
+        )
         release_unpair_commit.set()
         first_unpair, repaired, replay = await asyncio.gather(
             first_unpair_task,
@@ -13877,6 +13920,7 @@ async def test_telegram_concurrent_replayed_unpair_cannot_archive_replacement_bi
             replay_task,
         )
     finally:
+        release_unpair_commit.set()
         app.dependency_overrides[get_session] = previous_session_override
 
     assert first_unpair.json()["unpaired"] is True
@@ -14659,7 +14703,7 @@ async def test_telegram_inbound_lease_makes_ui_unpair_wait_and_consume_inserted_
         unpair_backend_pid = await asyncio.wait_for(business_backend_pids.get(), timeout=2)
         assert unpair_backend_pid != inbound_backend_pid
         await asyncio.wait_for(
-            _wait_for_postgres_lock_wait(sessionmaker, unpair_backend_pid),
+            wait_for_lock_wait(sessionmaker, unpair_backend_pid),
             timeout=2,
         )
         release_inbound_commit.set()
@@ -16856,7 +16900,7 @@ async def test_discord_gateway_send_and_unpair_are_linearized(
         )
         unpair_backend_pid = await asyncio.wait_for(business_backend_pids.get(), timeout=2)
         await asyncio.wait_for(
-            _wait_for_postgres_lock_wait(sessionmaker, unpair_backend_pid),
+            wait_for_lock_wait(sessionmaker, unpair_backend_pid),
             timeout=2,
         )
         allow_send.set()
@@ -17052,7 +17096,7 @@ async def test_discord_inbound_record_and_unpair_are_linearized(
             )
             unpair_backend_pid = await asyncio.wait_for(business_backend_pids.get(), timeout=2)
             await asyncio.wait_for(
-                _wait_for_postgres_lock_wait(sessionmaker, unpair_backend_pid),
+                wait_for_lock_wait(sessionmaker, unpair_backend_pid),
                 timeout=2,
             )
             release_producer_commit.set()
@@ -17205,8 +17249,13 @@ async def test_discord_pair_winning_identity_lock_suppresses_unpaired_tutorial(
             )
             await db.commit()
 
+    tutorial_backend_pid: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
     async def instruct() -> bool:
         async with sessionmaker() as db:
+            backend_pid = await db.scalar(text("SELECT pg_backend_pid()"))
+            assert isinstance(backend_pid, int)
+            tutorial_backend_pid.set_result(backend_pid)
             account = await db.get(ChannelAccount, account_id)
             assert account is not None
             recorded = await record_discord_dispatch(
@@ -17230,9 +17279,12 @@ async def test_discord_pair_winning_identity_lock_suppresses_unpaired_tutorial(
     pair_task = asyncio.create_task(pair())
     await pair_locked.wait()
     tutorial_task = asyncio.create_task(instruct())
-    await asyncio.sleep(0.05)
-    assert not tutorial_task.done()
-    finish_pair.set()
+    try:
+        await wait_for_lock_wait(sessionmaker, await asyncio.wait_for(tutorial_backend_pid, 2))
+        assert not tutorial_task.done()
+    finally:
+        finish_pair.set()
+        await asyncio.gather(pair_task, tutorial_task, return_exceptions=True)
     await pair_task
 
     assert await tutorial_task is False
@@ -19876,7 +19928,7 @@ async def test_channel_delivery_link_lock_contention_does_not_exhaust_attempts(
     seed_user,
     monkeypatch,
 ):
-    _FakeProviderClient.calls = []
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 703}})
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
@@ -22604,8 +22656,13 @@ async def test_discord_concurrent_replayed_unpair_waits_for_event_commit_and_rep
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
     original_get_session_override = app.dependency_overrides[get_session]
 
+    request_backend_pids: asyncio.Queue[int] = asyncio.Queue()
+
     async def independent_request_session() -> AsyncIterator[AsyncSession]:
         async with sessionmaker() as request_db:
+            backend_pid = await request_db.scalar(text("SELECT pg_backend_pid()"))
+            assert isinstance(backend_pid, int)
+            request_backend_pids.put_nowait(backend_pid)
             yield request_db
 
     await db_session.rollback()
@@ -22621,10 +22678,15 @@ async def test_discord_concurrent_replayed_unpair_waits_for_event_commit_and_rep
     try:
         first_unpair_task = asyncio.create_task(post_interaction(original_unpair))
         await asyncio.wait_for(unpair_before_event_commit.wait(), timeout=2)
+        await asyncio.wait_for(request_backend_pids.get(), timeout=2)
         replacement_pair_task = asyncio.create_task(post_interaction(replacement_pair))
-        await asyncio.sleep(0.05)
+        await wait_for_lock_wait(
+            sessionmaker, await asyncio.wait_for(request_backend_pids.get(), timeout=2)
+        )
         replay_task = asyncio.create_task(post_interaction(original_unpair))
-        await asyncio.sleep(0.05)
+        await wait_for_lock_wait(
+            sessionmaker, await asyncio.wait_for(request_backend_pids.get(), timeout=2)
+        )
         release_unpair_commit.set()
 
         first_unpair, repaired, replay = await asyncio.gather(
@@ -22633,6 +22695,7 @@ async def test_discord_concurrent_replayed_unpair_waits_for_event_commit_and_rep
             replay_task,
         )
     finally:
+        release_unpair_commit.set()
         app.dependency_overrides[get_session] = original_get_session_override
     assert first_unpair.json()["data"]["content"].startswith("Server unpaired.")
     assert repaired.json()["data"]["content"].startswith("Server paired.")
@@ -23764,8 +23827,13 @@ async def test_discord_projection_lock_prevents_stale_put_after_new_desired_stat
                 force=True,
             )
 
+    writer_backend_pid: asyncio.Future[int] = asyncio.get_running_loop().create_future()
+
     async def store_v2_and_materialize() -> int:
         async with sessionmaker() as session:
+            backend_pid = await session.scalar(text("SELECT pg_backend_pid()"))
+            assert isinstance(backend_pid, int)
+            writer_backend_pid.set_result(backend_pid)
             current_link = await session.get(ChannelBotAgentLink, link_id)
             assert current_link is not None
             await session.refresh(current_link, with_for_update=True)
@@ -23778,9 +23846,12 @@ async def test_discord_projection_lock_prevents_stale_put_after_new_desired_stat
     first_task = asyncio.create_task(materialize_current())
     await asyncio.wait_for(first_started.wait(), timeout=2)
     second_task = asyncio.create_task(store_v2_and_materialize())
-    await asyncio.sleep(0.05)
-    assert provider_versions == ["version_one"]
-    release_first.set()
+    try:
+        await wait_for_lock_wait(sessionmaker, await asyncio.wait_for(writer_backend_pid, 2))
+        assert provider_versions == ["version_one"]
+    finally:
+        release_first.set()
+        await asyncio.gather(first_task, second_task, return_exceptions=True)
 
     assert await first_task == 1
     assert await second_task == 1

@@ -9,6 +9,6 @@ describe("AppNotFound", () => {
 
 		expect(markup).toContain('href="/"');
 		expect(markup).toContain("Back to dashboard");
-		expect(markup).toContain('href="https://clawdi.ai"');
+		expect(markup).toContain('href="https://clawdi.ai/home"');
 	});
 });

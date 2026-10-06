@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import threading
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -17,10 +17,12 @@ from app.models.user import User
 from app.services.session_events import (
     EMPTY_EVENT_HEAD,
     EVENT_ADAPTER,
+    SessionEventChunkInvalid,
     ValidatedEventChunk,
     advance_event_head,
     canonical_event_json,
     project_safe_messages,
+    validate_event_chunk,
 )
 from app.services.session_search import rebuild_session_search_index, stage_event_search_messages
 
@@ -114,6 +116,34 @@ def test_hermes_event_semantics_are_strict_and_normalized() -> None:
     assert validated.semantics.lifecycle == "inactive"
     assert validated.semantics.display_metadata is not None
     assert validated.semantics.display_metadata.attempt == 2
+
+
+def test_event_schema_diagnostics_identify_the_field_without_content() -> None:
+    event = _event(
+        7,
+        "message",
+        "sanitized",
+        role="user",
+        parts=[
+            {
+                "type": "attachment",
+                "attachment_id": "sha256:" + "a" * 64,
+                "availability": "metadata_only",
+                "name": "x" * 728,
+            }
+        ],
+    )
+    event["private_extra_field"] = "private value"
+    data, _ = _chunk([event])
+    with pytest.raises(SessionEventChunkInvalid) as caught:
+        validate_event_chunk(data, start_seq=7, base_head_hash=EMPTY_EVENT_HEAD)
+    diagnostic = str(caught.value)
+    assert "seq 7" in diagnostic
+    assert "message.parts.0.attachment.name (string_too_long)" in diagnostic
+    assert "<field> (extra_forbidden)" in diagnostic
+    assert "private_extra_field" not in diagnostic
+    assert "private value" not in diagnostic
+    assert "x" * 728 not in diagnostic
 
 
 def test_reasoning_event_requires_private_content() -> None:
@@ -255,6 +285,61 @@ async def _commit_generation(
     )
     assert committed.status_code == 200, committed.text
     return generation, final_head, append_id
+
+
+@pytest.mark.asyncio
+async def test_staging_uploads_and_retries_refresh_retention_activity(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    local_id = "codex.retention-heartbeat"
+    environment_id, _ = await _register_session(client, db_session, local_session_id=local_id)
+    events = [
+        _event(0, "message", "user", role="user", parts=[{"type": "text", "text": "fixture"}])
+    ]
+    generation_id = uuid.uuid4()
+    staged = await client.post(
+        f"/v1/sessions/{local_id}/events/generations",
+        json={
+            "environment_id": environment_id,
+            "generation": str(generation_id),
+            "append_id": str(uuid.uuid4()),
+            "base_generation": None,
+            "base_revision": 0,
+            "base_count": 0,
+            "base_head_hash": EMPTY_EVENT_HEAD,
+            "final_count": 1,
+            "final_head_hash": advance_event_head(EMPTY_EVENT_HEAD, events),
+        },
+    )
+    assert staged.status_code == 200, staged.text
+    generation = await db_session.get(SessionEventGeneration, generation_id)
+    assert generation is not None
+    data, content_hash = _chunk(events)
+    old_activity = datetime.now(UTC) - timedelta(days=2)
+    for _ in range(2):
+        generation.updated_at = old_activity
+        await db_session.flush()
+        before_upload = datetime.now(UTC)
+        uploaded = await client.put(
+            f"/v1/sessions/{local_id}/events/generations/{generation_id}/chunks/0",
+            data={"base_head_hash": EMPTY_EVENT_HEAD, "content_hash": content_hash},
+            files={"file": ("0.ndjson", data, "application/x-ndjson")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        await db_session.refresh(generation)
+        assert generation.updated_at >= before_upload
+        assert generation.status == "staging"
+
+    last_activity = generation.updated_at
+    invalid = await client.put(
+        f"/v1/sessions/{local_id}/events/generations/{generation_id}/chunks/0",
+        data={"base_head_hash": EMPTY_EVENT_HEAD, "content_hash": "f" * 64},
+        files={"file": ("0.ndjson", data, "application/x-ndjson")},
+    )
+    assert invalid.status_code == 409
+    await db_session.refresh(generation)
+    assert generation.updated_at == last_activity
 
 
 @pytest.mark.asyncio
@@ -511,6 +596,8 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
         files={"file": ("5.ndjson", invalid_data, "application/x-ndjson")},
     )
     assert rejected.status_code == 422
+    assert "seq 5" in rejected.json()["detail"]
+    assert "<field> (extra_forbidden)" in rejected.json()["detail"]
 
     class NoReadStore:
         def __init__(self, delegate: Any) -> None:

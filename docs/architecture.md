@@ -270,10 +270,14 @@ reasoning-specific continuation state needed to preserve it. `/content`, public
 sharing, exports, search, and memory inputs continue to project only useful
 user/assistant text. Attachment parts identify either a safe external reference
 or an explicit metadata-only record; this protocol does not store attachment
-bodies, local paths, or duplicate provider message envelopes. A worker removes
-abandoned staging generations after one day and superseded committed generations
-after a seven-day read grace period; the current generation is never eligible.
-Deleting an Agent nulls `environment_id` without deleting history; deletion
+bodies, local paths, or duplicate provider message envelopes. The hourly worker
+removes staging generations after one hour without upload activity when their
+base revision has been overtaken and can no longer CAS-commit, or after one day
+without upload activity otherwise. Accepted chunks and idempotent upload retries
+refresh activity; locked uploads are skipped. Superseded committed generations
+retain their seven-day read grace period; current and actively shared generations
+are never eligible. Deleting an Agent nulls `environment_id` without deleting
+history; deletion
 suppression remains fenced to immutable origin, with legacy origin-less
 suppressions read as wildcards.
 

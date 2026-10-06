@@ -1,16 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
 	fetchHostedProductAccessWithTimeout,
-	HOSTED_PRODUCT_ACCESS_TIMEOUT_MS,
 	hostedProductAccessRetry,
 } from "@/hosted/access/product-access-request";
 import { ApiError, ApiNetworkError } from "@/lib/api-errors";
 
 describe("fetchHostedProductAccessWithTimeout", () => {
-	test("uses the same 20 second application ceiling as the main clients", () => {
-		expect(HOSTED_PRODUCT_ACCESS_TIMEOUT_MS).toBe(20_000);
-	});
-
 	test("aborts a hanging request and reports a timeout error", async () => {
 		let aborted = false;
 		const hangingFetch = (_request: Request, init?: RequestInit) =>

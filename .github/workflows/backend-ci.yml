@@ -158,8 +158,6 @@ jobs:
           prune-cache: true
           cache-dependency-glob: backend/uv.lock
       - uses: ./.github/actions/setup-bun-ci
-        with:
-          bun-version: "1.4.0"
       - run: uv sync --frozen --no-install-project
       - name: PostgreSQL image parity
         run: uv run python ../scripts/check_postgres_image_parity.py
@@ -258,8 +256,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-bun-ci
-        with:
-          bun-version: "1.4.0"
       - name: Sidecar typecheck and tests
         run: |
           bun run --cwd packages/whatsapp-baileys-sidecar typecheck

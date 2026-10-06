@@ -8,18 +8,24 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosedError
 
 import app.services.discord_gateway_worker as discord_gateway_worker_module
+from app.models.channel import (
+    CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+    ChannelAccount,
+    ChannelAccountRuntimeMarker,
+)
 from app.routes.channel_routers import discord as discord_router
 from app.services.discord_advisory_session import DiscordAdvisorySession
 from app.services.discord_gateway_worker import (
     DiscordGatewayWorker,
     GatewayFrame,
     _GatewayState,
+    discord_gateway_account_revision,
     discord_gateway_close_code,
     discord_gateway_uri,
     parse_gateway_frame,
@@ -281,6 +287,147 @@ async def test_terminal_discord_auth_close_waits_for_account_revision_change(
         assert worker._terminal_account_revisions == {}
     finally:
         await worker.stop()
+
+
+@pytest.mark.parametrize(
+    ("close_code", "expected_outcome"),
+    [(4004, "authentication_failed"), (4009, None)],
+)
+@pytest.mark.asyncio
+async def test_discord_gateway_terminal_close_marker_persistence(
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    close_code: int,
+    expected_outcome: str | None,
+) -> None:
+    account_id = uuid4()
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessionmaker() as db:
+        db.add(
+            ChannelAccount(
+                id=account_id,
+                provider="discord",
+                name=f"discord-marker-{account_id}",
+                user_id=None,
+                visibility="public",
+                status="active",
+                webhook_secret_hash="test-only",
+            )
+        )
+        await db.commit()
+
+    worker = DiscordGatewayWorker(sessionmaker, lock_engine=engine)
+    stop = asyncio.Event()
+
+    async def run_account(_account_id, _stop, state):
+        state.account_revision = "revision-under-test"
+        if close_code == 4009:
+            stop.set()
+        raise ConnectionClosedError(None, None, None)
+
+    monkeypatch.setattr(worker, "_run_account_with_lock", run_account)
+    monkeypatch.setattr(
+        discord_gateway_worker_module,
+        "discord_gateway_close_code",
+        lambda _exc: close_code,
+    )
+    try:
+        await worker._run_account_forever(account_id, stop)
+        async with sessionmaker() as db:
+            marker = await db.scalar(
+                select(ChannelAccountRuntimeMarker).where(
+                    ChannelAccountRuntimeMarker.account_id == account_id,
+                    ChannelAccountRuntimeMarker.kind
+                    == CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+                )
+            )
+        if expected_outcome is None:
+            assert marker is None
+        else:
+            assert marker is not None
+            assert marker.scope == "revision-under-test"
+            assert marker.outcome == expected_outcome
+    finally:
+        await worker.stop()
+        async with sessionmaker() as db:
+            account = await db.get(ChannelAccount, account_id)
+            if account is not None:
+                await db.delete(account)
+                await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_established_discord_gateway_session_clears_terminal_close_markers(
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account_id = uuid4()
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+    async with sessionmaker() as db:
+        account = ChannelAccount(
+            id=account_id,
+            provider="discord",
+            name=f"discord-marker-clear-{account_id}",
+            user_id=None,
+            visibility="public",
+            status="active",
+            webhook_secret_hash="test-only",
+        )
+        db.add(account)
+        await db.flush()
+        db.add(
+            ChannelAccountRuntimeMarker(
+                account_id=account_id,
+                kind=CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+                scope=discord_gateway_account_revision(account),
+                outcome="authentication_failed",
+            )
+        )
+        await db.commit()
+        revision = discord_gateway_account_revision(account)
+
+    worker = DiscordGatewayWorker(sessionmaker, lock_engine=engine)
+    monkeypatch.setattr(
+        discord_gateway_worker_module,
+        "record_discord_gateway_dispatch",
+        lambda *_args, **_kwargs: asyncio.sleep(0),
+    )
+
+    class NoopGatewayConnection:
+        async def send(self, _message: str) -> None:
+            return None
+
+    state = _GatewayState(account_revision=revision)
+    try:
+        await worker._handle_gateway_frame(
+            account_id,
+            json.dumps({"op": 0, "t": "READY", "s": 1, "d": {}}),
+            state,
+            NoopGatewayConnection(),
+        )
+        await worker._handle_gateway_frame(
+            account_id,
+            json.dumps({"op": 0, "t": "RESUMED", "s": 2, "d": None}),
+            state,
+            NoopGatewayConnection(),
+        )
+        async with sessionmaker() as db:
+            marker = await db.scalar(
+                select(ChannelAccountRuntimeMarker).where(
+                    ChannelAccountRuntimeMarker.account_id == account_id,
+                    ChannelAccountRuntimeMarker.kind
+                    == CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE,
+                )
+            )
+        assert marker is None
+        assert state.session_established is True
+    finally:
+        await worker.stop()
+        async with sessionmaker() as db:
+            account = await db.get(ChannelAccount, account_id)
+            if account is not None:
+                await db.delete(account)
+                await db.commit()
 
 
 @pytest.mark.asyncio

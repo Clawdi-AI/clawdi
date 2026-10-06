@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
 import uuid
-from pathlib import Path
 
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
@@ -10,23 +8,16 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from tests.migration_harness import load_migration
+
 REVISION = "d7e9f1a2b3c4"
 MIGRATION_FILENAME = f"{REVISION}_scope_telegram_update_identity.py"
-
-
-def _load_migration():
-    path = Path(__file__).parents[1] / "alembic" / "versions" / MIGRATION_FILENAME
-    spec = importlib.util.spec_from_file_location("telegram_update_identity", path)
-    assert spec is not None and spec.loader is not None
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    return migration
 
 
 def test_telegram_update_identity_migration_scopes_and_round_trips(
     engine: AsyncEngine,
 ) -> None:
-    migration = _load_migration()
+    migration = load_migration(MIGRATION_FILENAME, "telegram_update_identity")
     schema = f"telegram_update_identity_{uuid.uuid4().hex}"
     telegram_account_id = uuid.uuid4()
     discord_account_id = uuid.uuid4()

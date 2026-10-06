@@ -9,7 +9,7 @@ import {
 	type SessionEventDraft,
 	sequenceSessionEvents,
 } from "../lib/session-events";
-import { isValidSkillKey } from "../lib/skill-key";
+import { describeSkillKey, isValidSkillKey } from "../lib/skill-key";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
@@ -17,6 +17,7 @@ import {
 	mutateUserSkillTarget,
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
+import { log } from "../serve/log";
 import type {
 	AgentAdapterCore,
 	RawSession,
@@ -116,7 +117,7 @@ const MODERN_MESSAGE_OPTIONAL_COLUMNS = [
 const HERMES_CONTENT_JSON_PREFIX = "\0json:";
 const HERMES_SESSION_SCAN_BATCH_SIZE = 32;
 // Bump when persisted Hermes rows map to different Session/Event bytes.
-const HERMES_SESSION_PROJECTION_REVISION = 3;
+const HERMES_SESSION_PROJECTION_REVISION = 4;
 const HERMES_EAGER_MAX_BYTES = 256 * 1024;
 const HERMES_EAGER_MAX_ROWS = 512;
 const HERMES_MESSAGE_MAX_BYTES = 8 * 1024 * 1024;
@@ -503,7 +504,12 @@ function shouldSkipHermesSkillDir(entryName: string): boolean {
 
 function hermesSkillKeyFromPath(fullPath: string): string | null {
 	const skillKey = relative(skillsDir(), fullPath).replaceAll("\\", "/");
-	return isValidSkillKey(skillKey) ? skillKey : null;
+	if (isValidSkillKey(skillKey)) return skillKey;
+	log.warn("adapter.invalid_skill_key_skipped", {
+		adapter: "hermes",
+		key_shape: describeSkillKey(skillKey),
+	});
+	return null;
 }
 
 /**

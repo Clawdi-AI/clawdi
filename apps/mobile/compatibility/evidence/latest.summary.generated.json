@@ -1,0 +1,37 @@
+{
+  "profile": "latest",
+  "checkedAt": "2026-10-02T06:34:53.536Z",
+  "checks": {
+    "install": 0,
+    "frozen-reinstall": 0,
+    "expo-dependencies": 1,
+    "expo-polyfills": 1,
+    "generate-uniwind-types": 0,
+    "typecheck": 1,
+    "typecheck-official-wrapper": 0,
+    "metro-ios": 1,
+    "metro-android": 1
+  },
+  "peerConflicts": [
+    {
+      "package": "heroui-native",
+      "peer": "react-native-gesture-handler",
+      "range": "^2.28.0",
+      "installed": "3.3.0"
+    }
+  ],
+  "invalidPeerRanges": [
+    {
+      "package": "@gorhom/bottom-sheet",
+      "peer": "react-native-reanimated",
+      "range": ">=3.16.0 || >=4.0.0-",
+      "installed": "4.7.0"
+    }
+  ],
+  "singleReactIdentity": true,
+  "nativeCompile": {
+    "android": "not run: compatibility gate blocked; no Android SDK in this container",
+    "ios": "not run: Linux container has no Xcode/Apple build runner"
+  },
+  "productApproved": false
+}

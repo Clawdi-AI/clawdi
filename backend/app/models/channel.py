@@ -76,6 +76,8 @@ DELIVERY_STATUS_IN_PROGRESS = "in_progress"
 DELIVERY_STATUS_SUCCEEDED = "succeeded"
 DELIVERY_STATUS_FAILED = "failed"
 
+CHANNEL_RUNTIME_MARKER_DISCORD_GATEWAY_TERMINAL_CLOSE = "discord_gateway_terminal_close"
+
 
 class ChannelAccount(Base, TimestampMixin):
     __tablename__ = "channel_accounts"

@@ -346,13 +346,14 @@ async def upload_session_event_generation_chunk(
         ):
             raise HTTPException(status.HTTP_409_CONFLICT, "Event chunk identity conflict")
         try:
-            if await _stage_missing_chunk_search_projection(
+            await _stage_missing_chunk_search_projection(
                 db,
                 session,
                 existing,
                 validated.events,
-            ):
-                await db.commit()
+            )
+            generation.updated_at = datetime.now(UTC)
+            await db.commit()
         except IntegrityError as exc:
             await db.rollback()
             raise HTTPException(
@@ -395,6 +396,7 @@ async def upload_session_event_generation_chunk(
             generation_id=generation_id,
             events=validated.events,
         )
+        generation.updated_at = datetime.now(UTC)
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
