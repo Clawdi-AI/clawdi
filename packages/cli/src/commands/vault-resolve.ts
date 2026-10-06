@@ -50,7 +50,7 @@ export async function vaultResolveCommand(
 	const { apiUrl } = getConfig();
 	const auth = getAuth();
 	if (!auth?.apiKey) {
-		console.error(chalk.red("Not logged in. Run `clawdi auth login` first."));
+		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
 		process.exitCode = 1;
 		return;
 	}
@@ -107,13 +107,13 @@ export async function vaultResolveCommand(
 			if (detail?.code === "ambiguous_vault_reference_slug") {
 				console.error(
 					chalk.gray(
-						"Repair or rename the conflicting Vault namespace before resolving this reference.",
+						"Repair or rename the conflicting vault namespace before resolving this reference.",
 					),
 				);
 			} else {
 				console.error(
 					chalk.gray(
-						"Re-run with --allow-conflicts to use the first project by Vault resolution priority.",
+						"Re-run with --allow-conflicts to use the first project by vault resolution priority.",
 					),
 				);
 			}

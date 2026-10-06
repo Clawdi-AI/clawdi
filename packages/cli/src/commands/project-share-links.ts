@@ -108,7 +108,7 @@ export async function projectShareLinksCommand(
 	console.log(chalk.bold(`Project share links (${links.length})`));
 	console.log(
 		chalk.gray(
-			"  Links grant viewer read access after accept, including CLI Vault runtime reads. Agent use stays separate.",
+			"  Links grant viewer read access after accept, including CLI vault runtime reads. Agent use stays separate.",
 		),
 	);
 	for (const link of links) {

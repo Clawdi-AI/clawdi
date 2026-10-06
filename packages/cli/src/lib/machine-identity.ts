@@ -20,7 +20,7 @@ export function getOrCreateMachineId(): string {
 		if (existing) return existing.id;
 		if (existsSync(identityPath)) {
 			throw new Error(
-				`Local installation identity is invalid at ${identityPath}. Move the damaged file aside, then run \`clawdi agent reconnect\` to recover the existing Agent identity.`,
+				`Local installation identity is invalid at ${identityPath}. Move the damaged file aside, then run \`clawdi agent reconnect\` to recover the existing agent identity.`,
 			);
 		}
 		const id = legacyMachineId(clawdiDir) ?? randomUUID();

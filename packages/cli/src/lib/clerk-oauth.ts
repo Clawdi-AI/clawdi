@@ -72,13 +72,13 @@ function canonicalStoredOrigin(raw: string, service: "Cloud" | "Hosted"): string
 	} catch {
 		throw bindingError(
 			"invalid_credential_endpoint_binding",
-			"The saved credential endpoint binding is invalid. Log out and sign in again.",
+			"The saved credential endpoint binding is invalid. Sign out and sign in again.",
 		);
 	}
 	if (raw !== origin) {
 		throw bindingError(
 			"invalid_credential_endpoint_binding",
-			"The saved credential endpoint binding is not canonical. Log out and sign in again.",
+			"The saved credential endpoint binding is not canonical. Sign out and sign in again.",
 		);
 	}
 	return origin;
@@ -121,18 +121,18 @@ function unboundCredentialError(auth: ClawdiAuth, targetOrigin: string): ClerkOA
 	if (auth.authType === "clerk_oauth") {
 		return bindingError(
 			"oauth_endpoint_binding_required",
-			"This Clerk OAuth credential predates endpoint binding and cannot be used safely. Run `clawdi auth logout`, then `clawdi auth login` again for the current Cloud and Hosted endpoints.",
+			"This saved sign-in predates endpoint binding and can't be used safely. Run `clawdi auth logout`, then `clawdi auth login`.",
 		);
 	}
 	if (process.env.CLAWDI_AUTH_TOKEN) {
 		return bindingError(
 			"environment_endpoint_binding_required",
-			`CLAWDI_AUTH_TOKEN is not bound to ${targetOrigin}. Set ${ENV_CREDENTIAL_ORIGIN} to the intended Cloud origin, or remove the endpoint override.`,
+			`CLAWDI_AUTH_TOKEN is not bound to ${targetOrigin}. Set ${ENV_CREDENTIAL_ORIGIN} to the CLAWDI_API_URL origin it belongs to, or remove the override.`,
 		);
 	}
 	return bindingError(
 		"legacy_endpoint_binding_required",
-		`This legacy API key is not bound to ${targetOrigin}. Run \`clawdi auth logout\`, then re-import it with \`clawdi auth login --manual\` for this Cloud origin.`,
+		`This legacy API key is not bound to ${targetOrigin}. Run \`clawdi auth logout\`, then re-import it with \`clawdi auth login --manual\` for this CLAWDI_API_URL.`,
 	);
 }
 
@@ -150,7 +150,7 @@ export function assertCloudCredentialEndpoint(auth: ClawdiAuth, cloudApiUrl: str
 	if (auth.authType === "clerk_oauth" && !isClerkOAuthAuth(auth)) {
 		throw bindingError(
 			"invalid_oauth_credential",
-			"The saved Clerk OAuth credential is incomplete. Log out and sign in again.",
+			"The saved Clerk OAuth credential is incomplete. Sign out and sign in again.",
 		);
 	}
 	const boundOrigin = boundCloudOrigin(auth);
@@ -163,7 +163,7 @@ export function assertCloudCredentialEndpoint(auth: ClawdiAuth, cloudApiUrl: str
 	if (boundOrigin !== targetOrigin) {
 		throw bindingError(
 			"credential_endpoint_mismatch",
-			`Credential is bound to Cloud origin ${boundOrigin}, but the request targets ${targetOrigin}. Restore the endpoint configuration or log out and sign in again.`,
+			`Saved sign-in is for CLAWDI_API_URL=${boundOrigin}, but this request targets ${targetOrigin}. Restore CLAWDI_API_URL, or sign out and sign in again.`,
 		);
 	}
 	return targetOrigin;
@@ -182,7 +182,7 @@ export function assertClerkOAuthEndpointProfile(
 	if (binding.cloudApiOrigin !== cloudOrigin || binding.hostedApiOrigin !== hostedOrigin) {
 		throw bindingError(
 			"credential_endpoint_mismatch",
-			`Credential is bound to Cloud ${binding.cloudApiOrigin} and Hosted ${binding.hostedApiOrigin}, but the request profile is Cloud ${cloudOrigin} and Hosted ${hostedOrigin}. Restore the endpoint configuration or log out and sign in again.`,
+			`Saved sign-in doesn't match the configured endpoints.\n  Saved:      CLAWDI_API_URL=${binding.cloudApiOrigin}, CLAWDI_DEPLOY_API_URL=${binding.hostedApiOrigin}\n  Configured: CLAWDI_API_URL=${cloudOrigin}, CLAWDI_DEPLOY_API_URL=${hostedOrigin}\nRestore those settings, or sign out and sign in again.`,
 		);
 	}
 }
@@ -481,7 +481,7 @@ export async function fetchClerkOAuthClientConfig(
 	if (!response.ok) {
 		throw new ClerkOAuthError(
 			"oauth_not_configured",
-			"Clawdi OAuth login is not configured. Use `clawdi auth login --manual` only for legacy API-key compatibility.",
+			"Clawdi OAuth sign-in is not configured. Use `clawdi auth login --manual` only for legacy API-key compatibility.",
 		);
 	}
 	const body = await readJson(response);
@@ -754,13 +754,13 @@ async function tokenResponse(
 		) {
 			throw new ClerkOAuthError(
 				"oauth_refresh_retryable",
-				"Clawdi login could not be refreshed. Check your connection and retry.",
+				"Clawdi sign-in could not be refreshed. Check your connection and retry.",
 			);
 		}
 		throw new ClerkOAuthError(
 			context.priorRefreshToken ? "oauth_session_expired" : "oauth_exchange_failed",
 			context.priorRefreshToken
-				? "Clawdi login could not be refreshed. Run `clawdi auth login` again."
+				? "Clawdi sign-in could not be refreshed. Run `clawdi auth login` again."
 				: "Clawdi login could not be completed. Run `clawdi auth login` again.",
 		);
 	}
@@ -814,21 +814,21 @@ export async function exchangeClerkOAuthCode(
 	if (pending.authType !== "clerk_oauth_pkce" || Date.parse(pending.expiresAt) <= now()) {
 		throw new ClerkOAuthError(
 			"oauth_login_expired",
-			"Pending OAuth login expired. Run `clawdi auth login` again.",
+			"Pending OAuth sign-in expired. Run `clawdi auth login` again.",
 		);
 	}
 	const endpointBinding = normalizedBinding(pending.endpointBinding);
 	if (!endpointBinding?.hostedApiOrigin) {
 		throw new ClerkOAuthError(
 			"oauth_endpoint_binding_required",
-			"Pending OAuth login predates endpoint binding. Run `clawdi auth login` again.",
+			"Pending OAuth sign-in predates endpoint binding. Run `clawdi auth login` again.",
 		);
 	}
 	const pendingCloudOrigin = canonicalApiOrigin(normalizeCloudApiBaseUrl(pending.apiUrl));
 	if (endpointBinding.cloudApiOrigin !== pendingCloudOrigin) {
 		throw new ClerkOAuthError(
 			"invalid_credential_endpoint_binding",
-			"Pending OAuth endpoint binding does not match its Cloud URL. Run `clawdi auth login` again.",
+			"The pending sign-in doesn't match CLAWDI_API_URL. Run `clawdi auth login` again.",
 		);
 	}
 	const code = parseClerkOAuthCallback(pending, callbackUrl);
@@ -888,7 +888,7 @@ function assertPersistentCredentialWritesAllowed(): void {
 	if (process.env.CLAWDI_AUTH_TOKEN) {
 		throw new ClerkOAuthError(
 			"environment_credential_active",
-			"CLAWDI_AUTH_TOKEN controls this process; unset it before changing persisted login state.",
+			"CLAWDI_AUTH_TOKEN controls this process; unset it before changing persisted sign-in state.",
 		);
 	}
 }
@@ -909,7 +909,7 @@ export async function persistPendingClerkOAuthLogin(
 			if (!sameCredentialIdentity(identityOf(getStoredAuth()), expected)) {
 				throw new ClerkOAuthError(
 					"credential_state_changed",
-					"Login state changed while OAuth authorization was starting. Retry without switching accounts concurrently.",
+					"Sign-in state changed while OAuth authorization was starting. Retry without switching accounts concurrently.",
 				);
 			}
 			lease.assertOwned();
@@ -948,7 +948,7 @@ export async function commitClawdiCredential(
 			if (!sameCredentialIdentity(identityOf(getStoredAuth()), expected)) {
 				throw new ClerkOAuthError(
 					"credential_state_changed",
-					"Login state changed while credentials were being verified. The newer identity was preserved.",
+					"Sign-in state changed while credentials were being verified. The newer identity was preserved.",
 				);
 			}
 			if (options.pending && !pendingMatches(getPendingAuth(), options.pending)) {
@@ -1249,7 +1249,7 @@ export async function getClawdiAccessToken(
 	if (!auth?.apiKey) {
 		throw new ClerkOAuthError(
 			"oauth_login_required",
-			"Not logged in. Run `clawdi auth login` first.",
+			"Not signed in. Run `clawdi auth login` first.",
 		);
 	}
 	assertCloudCredentialEndpoint(auth, cloudApiUrl);
@@ -1269,7 +1269,7 @@ export async function getClawdiAccessToken(
 				if (!latest?.apiKey) {
 					throw new ClerkOAuthError(
 						"oauth_login_required",
-						"Not logged in. Run `clawdi auth login` first.",
+						"Not signed in. Run `clawdi auth login` first.",
 					);
 				}
 				assertCloudCredentialEndpoint(latest, cloudApiUrl);

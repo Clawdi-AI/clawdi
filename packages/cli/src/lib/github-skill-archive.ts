@@ -88,7 +88,7 @@ export function assertSafeRepositoryPath(path: string): void {
 				hasAsciiControlCharacter(segment),
 		)
 	) {
-		throw new Error("GitHub Skill path is invalid.");
+		throw new Error("GitHub skill path is invalid.");
 	}
 }
 
@@ -149,7 +149,7 @@ export async function fetchGithubSkillArchive(
 			isAbsolute(fromRepositoryRoot) ||
 			!existsSync(join(sourceDir, "SKILL.md"))
 		) {
-			throw new Error("GitHub source does not contain a Skill at the requested path.");
+			throw new Error("GitHub source does not contain a skill at the requested path.");
 		}
 		const skillKey = sanitizeSkillKey(options.skillKey ?? basename(source.path ?? source.repo));
 		const canonicalRoot = mkdtempSync(join(tmpdir(), "clawdi-github-skill-stage-"));

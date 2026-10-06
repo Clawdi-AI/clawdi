@@ -71,7 +71,7 @@ export type DeployCommandDependencies = {
 type DeployAiMode = "managed" | "saved" | "unmanaged";
 type DeployPaymentMethod = "wallet" | "card";
 const HOSTED_CLI_PAID_CHECKOUT_UNAVAILABLE =
-	"This Hosted CLI authorization cannot purchase compute. No quote or payment was started; use the Web Deploy Wizard.";
+	"This CLI authorization can't purchase Cloud Agent plans. No quote or payment was started; use the deploy wizard in the dashboard.";
 
 export type ParsedDeployOptions = {
 	runtime?: HostedDeployRuntime;
@@ -337,11 +337,11 @@ function exactUsd(
 ): string {
 	const normalized = value?.trim() ?? "";
 	if (!/^-?\d+(?:\.\d+)?$/.test(normalized)) {
-		throw new Error(`Hosted Wallet quote is missing ${field}.`);
+		throw new Error(`Wallet quote is missing ${field}.`);
 	}
 	const amount = Number(normalized);
 	if (!Number.isFinite(amount) || (!options.allowNegative && amount < 0)) {
-		throw new Error(`Hosted Wallet quote contains an invalid ${field}.`);
+		throw new Error(`Wallet quote contains an invalid ${field}.`);
 	}
 	return normalized;
 }
@@ -416,7 +416,7 @@ function operationFailure(operation: HostedDeployOperation): PublicDeployFailure
 	const detail = projectedProblem ? publicProjectedDetail(projectedProblem.detail) : null;
 	return new PublicDeployFailure(
 		projectedProblem ? publicProjectedCode(projectedProblem.code) : "deployment_failed",
-		detail || "Hosted could not complete this deployment.",
+		detail || "Clawdi couldn't create this Cloud Agent.",
 	);
 }
 
@@ -426,16 +426,16 @@ function terminalRequestFailure(
 	if (requestStatus === "superseded") {
 		return new PublicDeployFailure(
 			"deployment_superseded",
-			"This deployment request was superseded by a newer attempt.",
+			"This deploy request was replaced by a newer attempt.",
 		);
 	}
 	if (requestStatus === "expired") {
 		return new PublicDeployFailure(
 			"deployment_request_expired",
-			"This deployment request expired before it could be completed.",
+			"This deploy request expired before it finished.",
 		);
 	}
-	return new PublicDeployFailure("deployment_failed", "Hosted could not complete this deployment.");
+	return new PublicDeployFailure("deployment_failed", "Clawdi couldn't create this Cloud Agent.");
 }
 
 type HostedDeployCheckoutSessionResult = Extract<
@@ -451,7 +451,7 @@ export function hostedCheckoutUrl(result: HostedDeployCheckoutSessionResult): st
 	} catch {
 		throw new PublicDeployFailure(
 			"invalid_checkout_url",
-			"Hosted did not return a valid secure card checkout URL.",
+			"Clawdi didn't return a valid secure checkout URL.",
 		);
 	}
 	if (
@@ -462,7 +462,7 @@ export function hostedCheckoutUrl(result: HostedDeployCheckoutSessionResult): st
 	) {
 		throw new PublicDeployFailure(
 			"invalid_checkout_url",
-			"Hosted did not return a valid secure card checkout URL.",
+			"Clawdi didn't return a valid secure checkout URL.",
 		);
 	}
 	return url.toString();
@@ -540,7 +540,7 @@ async function waitForDeploymentRequest({
 		if (projection.kind === "invalid_success") {
 			throw new PublicDeployFailure(
 				"invalid_deployment_result",
-				"Hosted completed the request without returning the agent identifier.",
+				"Clawdi completed the request without returning the agent ID.",
 			);
 		}
 		if (projection.kind === "operation" || projection.kind === "operation_name") {
@@ -603,7 +603,7 @@ export async function runDeployFlow(
 	if (!interactive && !parsed.requestId) {
 		throw new DeployInputError(
 			"request_id_required",
-			"--request-id is required for every non-interactive deploy before any Hosted mutation. Reuse the same UUID to recover an ambiguous attempt safely.",
+			"--request-id is required for every non-interactive deploy before any change is made. Reuse the same UUID to recover an ambiguous attempt safely.",
 		);
 	}
 	const requestId = parsed.requestId ?? randomUUID();
@@ -621,7 +621,7 @@ export async function runDeployFlow(
 			if (!(error instanceof HostedDeployApiError && error.status === 404)) throw error;
 		}
 	}
-	onEvent({ stage: "loading", message: "Loading Hosted plans and agent availability…" });
+	onEvent({ stage: "loading", message: "Loading plans and agent availability…" });
 	const needsManagedModels =
 		interactive || parsed.aiMode === undefined || parsed.aiMode === "managed";
 	const needsSavedProviders = interactive || parsed.aiMode === "saved";
@@ -687,7 +687,7 @@ export async function runDeployFlow(
 						const label = savedProviderLabel(provider);
 						const identity =
 							label === provider.provider_id ? label : `${label} (${provider.provider_id})`;
-						return `${identity}\n  ${issue?.message ?? "Unavailable for Hosted deployment."}`;
+						return `${identity}\n  ${issue?.message ?? "Unavailable for Cloud Agents."}`;
 					})
 					.join("\n"),
 				"Saved providers needing setup",
@@ -835,7 +835,7 @@ export async function runDeployFlow(
 		}
 		throw new PublicDeployFailure(
 			"compute_unavailable",
-			"No Hosted compute plan is currently available for deployment.",
+			"No Cloud Agent plan is available right now.",
 		);
 	}
 
@@ -933,7 +933,7 @@ export async function runDeployFlow(
 					{
 						value: "card",
 						label: "Card",
-						hint: "Secure Hosted Checkout opens in your browser",
+						hint: "Secure checkout opens in your browser",
 					},
 				],
 				"wallet",
@@ -1036,13 +1036,13 @@ export async function runDeployFlow(
 			walletQuote.billing_term_months !== billingTermMonths ||
 			walletQuote.funding_source !== "wallet"
 		) {
-			throw new Error("Hosted Wallet quote does not match the selected compute plan.");
+			throw new Error("The wallet quote doesn't match the selected plan.");
 		}
 		if (
 			!Number.isFinite(Date.parse(walletQuote.expires_at)) ||
 			Date.parse(walletQuote.expires_at) <= now()
 		) {
-			throw new Error("Hosted Wallet quote is already expired. Retry to get a fresh quote.");
+			throw new Error("The wallet quote expired. Retry to get a fresh quote.");
 		}
 		walletDebitUsd = exactUsd(walletQuote.debit_amount_usd, "the exact debit");
 		walletBalanceAfterUsd = exactUsd(walletQuote.balance_after_usd, "the balance after debit", {
@@ -1066,7 +1066,7 @@ export async function runDeployFlow(
 					? `${selectedSavedProvider ? savedProviderLabel(selectedSavedProvider) : providerId}${model ? ` · ${model}` : " · choose models inside agent"}`
 					: "Configure inside agent"
 		}`,
-		`Compute: ${planLabel(computePlanSlug)}${includedBasic ? " · included" : ` · ${paidSelection?.billingTermMonths} month term`}`,
+		`Plan: ${planLabel(computePlanSlug)}${includedBasic ? " · included" : ` · ${paidSelection?.billingTermMonths} month term`}`,
 		`Agent: ${agentName.trim()} · ${language || "default language"} · ${timezone.trim() || "default timezone"}`,
 		...(walletQuote && walletDebitUsd && walletBalanceAfterUsd
 			? [
@@ -1075,13 +1075,13 @@ export async function runDeployFlow(
 				]
 			: []),
 		...(payment === "card"
-			? ["Card: secure Hosted Checkout · no card details are handled by the CLI"]
+			? ["Card: secure checkout in your browser · the CLI never handles card details"]
 			: []),
 		`Request ID: ${requestId}`,
 	].join("\n");
 
 	if (interactive) {
-		prompts.note(summary, "Review deployment");
+		prompts.note(summary, "Review Cloud Agent");
 		const confirmationMessage = includedBasic
 			? "Deploy this agent?"
 			: payment === "wallet"
@@ -1123,10 +1123,10 @@ export async function runDeployFlow(
 			completed = waited.completed;
 		}
 	} else {
-		if (!paidSelection || !payment) throw new Error("Paid deployment selection is incomplete.");
+		if (!paidSelection || !payment) throw new Error("Paid plan selection is incomplete.");
 		const billingTermMonths = paidSelection.billingTermMonths;
 		if (!isHostedDeployBillingTerm(billingTermMonths)) {
-			throw new Error("Hosted subscriptions support 1- or 12-month billing terms only.");
+			throw new Error("Subscriptions support 1- or 12-month billing terms only.");
 		}
 		if (payment === "wallet" && (!walletQuote || !walletDebitUsd || !walletBalanceAfterUsd)) {
 			throw new Error("Wallet quote is unavailable at confirmation.");
@@ -1150,7 +1150,7 @@ export async function runDeployFlow(
 		if (checkout.funding_source !== fundingSource) {
 			throw new PublicDeployFailure(
 				"checkout_mismatch",
-				"Hosted checkout did not match the selected payment method.",
+				"Checkout didn't match the selected payment method.",
 			);
 		}
 		deployRequestId = requestId;
@@ -1159,7 +1159,7 @@ export async function runDeployFlow(
 			if (checkout.client_secret?.trim()) {
 				throw new PublicDeployFailure(
 					"invalid_checkout_response",
-					"Hosted returned a browser-only checkout secret that the CLI will not handle.",
+					"Clawdi returned a browser-only checkout secret that the CLI won't handle.",
 				);
 			}
 			if (payment !== "card") {
@@ -1183,14 +1183,14 @@ export async function runDeployFlow(
 			if (returnedRequestId && returnedRequestId !== requestId) {
 				throw new PublicDeployFailure(
 					"checkout_mismatch",
-					"Hosted checkout did not match the requested deployment intent.",
+					"Checkout didn't match the requested Cloud Agent.",
 				);
 			}
 			deploymentId = checkout.deployment_id?.trim() || null;
 			if (!deploymentId) {
 				throw new PublicDeployFailure(
 					"invalid_deployment_result",
-					"Hosted accepted payment without returning the agent identifier. Do not start another payment; check the Agents page in the dashboard.",
+					"Clawdi accepted payment without returning the agent ID. Don't start another payment; check your agents in the dashboard.",
 				);
 			}
 			onEvent({
@@ -1256,7 +1256,7 @@ export async function runDeployFlow(
 					? "Complete secure card checkout in your browser. Re-run with the same request ID to recover this attempt."
 					: deploymentId
 						? `${chalk.green("✓")} Agent ${chalk.bold(deploymentId)} was accepted. Check the dashboard for progress.`
-						: `${chalk.green("✓")} Deployment request accepted. Check the dashboard for progress.`;
+						: `${chalk.green("✓")} Cloud Agent request accepted. Check the dashboard for progress.`;
 		prompts.outro(finalMessage);
 	}
 	return result;
@@ -1274,17 +1274,17 @@ export function safeDeployError(error: unknown): { code: string; message: string
 			return {
 				code: "hosted_network_error",
 				message:
-					"Could not reach Hosted. The request may still have been accepted; retry with the same --request-id.",
+					"Could not reach Clawdi. The request may still have been accepted; retry with the same --request-id.",
 			};
 		}
 		if (error.status === 401) {
 			return {
 				code: "hosted_auth_required",
-				message: "Hosted CLI authorization was rejected. Re-authorize and try again.",
+				message: "CLI authorization was rejected. Run `clawdi auth login`, then try again.",
 			};
 		}
 		if (error.status === 403) {
-			return { code: "hosted_forbidden", message: "This account cannot use Hosted deployment." };
+			return { code: "hosted_forbidden", message: "This account can't create Cloud Agents." };
 		}
 		if (error.status === 402) {
 			return {
@@ -1294,38 +1294,38 @@ export function safeDeployError(error: unknown): { code: string; message: string
 			};
 		}
 		if (error.status === 404) {
-			return { code: "hosted_not_found", message: "The Hosted deployment request was not found." };
+			return { code: "hosted_not_found", message: "The deploy request was not found." };
 		}
 		if (error.status === 429) {
-			return { code: "hosted_rate_limited", message: "Hosted is busy. Wait a moment and retry." };
+			return { code: "hosted_rate_limited", message: "Clawdi is busy. Wait a moment and retry." };
 		}
 		if (error.status >= 500) {
 			return {
 				code: "hosted_unavailable",
-				message: "Hosted deployment is temporarily unavailable.",
+				message: "Cloud Agent deploys are temporarily unavailable.",
 			};
 		}
 		if (error.status === 400 || error.status === 422) {
 			return {
 				code: "hosted_invalid_request",
-				message: "Hosted rejected the deployment input. Review the selected options and retry.",
+				message: "Clawdi rejected the deploy options. Review them and retry.",
 			};
 		}
 		if (error.status === 409) {
 			return {
 				code: "hosted_conflict",
 				message:
-					"Hosted could not reuse this request ID for the selected options. Retry with the same options or choose a new request ID.",
+					"Clawdi couldn't reuse this request ID for the selected options. Retry with the same options or choose a new request ID.",
 			};
 		}
 		return {
 			code: "hosted_api_error",
-			message: "Hosted deploy API rejected the request.",
+			message: "The deploy API rejected the request.",
 		};
 	}
 	return {
 		code: "deploy_failed",
-		message: "Deployment could not be completed. Retry with the same --request-id.",
+		message: "The Cloud Agent couldn't be created. Retry with the same --request-id.",
 	};
 }
 

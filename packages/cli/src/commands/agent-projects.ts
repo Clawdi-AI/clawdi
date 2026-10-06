@@ -61,7 +61,7 @@ export async function agentProjectsListCommand(
 		.filter((row) => row.binding_type === "context")
 		.sort((a, b) => a.priority - b.priority);
 	console.log(chalk.bold(`Projects for ${agentId}`));
-	console.log(chalk.gray("Vault resolution: Workspace, then linked Projects."));
+	console.log(chalk.gray("Vault resolution: workspace, then linked projects."));
 	console.log();
 	console.log(chalk.bold("Workspace"));
 	if (primary) {
@@ -70,7 +70,7 @@ export async function agentProjectsListCommand(
 		console.log("  Workspace unavailable.");
 	}
 	console.log();
-	console.log(chalk.bold(`Linked Projects (${contexts.length})`));
+	console.log(chalk.bold(`Linked projects (${contexts.length})`));
 	if (contexts.length === 0) {
 		console.log("  None.");
 		console.log(chalk.gray(`  Link: clawdi agent projects link ${agentId} --project <project>`));
@@ -111,7 +111,7 @@ export async function agentProjectsAddContextCommand(
 		},
 	);
 	console.log(`${chalk.green("✓")} Linked to ${agentId}.`);
-	console.log(chalk.gray("  Vaults resolve after the Workspace."));
+	console.log(chalk.gray("  Vaults resolve after the workspace."));
 }
 
 export async function agentProjectsRemoveContextCommand(
@@ -129,12 +129,12 @@ export async function agentProjectsRemoveContextCommand(
 		(row) => row.binding_type === "context" && row.project_id === projectId,
 	);
 	if (matches.length === 0) {
-		console.error(chalk.red("No matching linked Project."));
+		console.error(chalk.red("No matching linked project."));
 		process.exitCode = 1;
 		return;
 	}
 	if (matches.length > 1) {
-		console.error(chalk.red("Multiple linked Projects match. Unlink by relation id."));
+		console.error(chalk.red("Multiple linked projects match. Unlink by relation ID."));
 		process.exitCode = 1;
 		return;
 	}
@@ -176,7 +176,7 @@ export async function agentProjectsReorderCommand(
 			body: JSON.stringify({ items }),
 		},
 	);
-	console.log(`${chalk.green("✓")} Updated Vault resolution priority for ${agentId}.`);
+	console.log(`${chalk.green("✓")} Updated vault resolution priority for ${agentId}.`);
 }
 
 function formatBindingProject(row: BindingRow, projectsById: Map<string, ProjectBrief>): string {

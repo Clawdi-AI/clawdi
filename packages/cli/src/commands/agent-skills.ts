@@ -5,7 +5,7 @@ import { HostedDeployClient } from "../lib/hosted-deploy-client";
 import { sanitizeMetadata, stripTerminalEscapes } from "../lib/sanitize";
 
 function requireAgentId(agentId: string): void {
-	if (!isLoggedIn()) throw new Error("Not logged in. Run `clawdi auth login` first.");
+	if (!isLoggedIn()) throw new Error("Not signed in. Run `clawdi auth login` first.");
 	if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(agentId)) {
 		throw new Error("Use the full remote Cloud Agent UUID, not a local --agent type.");
 	}
@@ -22,7 +22,7 @@ async function inventory(agentId: string) {
 	} catch (error) {
 		if (error instanceof ApiError && error.body.includes("hosted_skill_runtime_required")) {
 			throw new Error(
-				"Remote skills require a Hosted Hermes or OpenClaw agent. Use `skill --agent <type>` for local skills.",
+				"Remote skills require a Hermes or OpenClaw Cloud Agent. Use `clawdi skill --agent <type>` for Connected Agent skills.",
 			);
 		}
 		throw error;
@@ -215,7 +215,7 @@ async function mutateGithubSkill(
 		!workspace.items?.some((item) => item.skill_key === skillKey)
 	) {
 		throw new Error(
-			"GitHub skill not found in the Hosted desired inventory; no change was requested.",
+			"GitHub skill not found in this Cloud Agent's desired skills; no change was requested.",
 		);
 	}
 	try {

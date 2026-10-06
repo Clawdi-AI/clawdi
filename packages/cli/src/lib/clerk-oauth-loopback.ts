@@ -7,15 +7,15 @@ function callbackResponse(
 	returnTarget: OAuthReturnTarget,
 ): string {
 	const accepted = status === "accepted";
-	const title = accepted ? "Login complete" : "Login not completed";
+	const title = accepted ? "Sign-in complete" : "Sign-in not completed";
 	const description =
 		returnTarget === "desktop"
 			? accepted
-				? "You’re signed in. Return to Clawdi to continue."
-				: "Sign-in wasn’t completed. Return to Clawdi and try again."
+				? "You're signed in. Return to Clawdi to continue."
+				: "Sign-in wasn't completed. Return to Clawdi and try again."
 			: accepted
-				? "You’re signed in. Close this window and return to your terminal."
-				: "Sign-in wasn’t completed. Return to your terminal and run the login command again.";
+				? "You're signed in. Close this window and return to your terminal."
+				: "Sign-in wasn't completed. Return to your terminal and run the sign-in command again.";
 	const icon = accepted ? '<path d="m7.5 12.5 3 3 6-7"/>' : '<path d="m8.5 8.5 7 7m0-7-7 7"/>';
 	const role = accepted ? "status" : "alert";
 

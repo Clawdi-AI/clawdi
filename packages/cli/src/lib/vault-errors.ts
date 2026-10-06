@@ -1,7 +1,7 @@
-export const VAULT_PROJECT_ACCESS_ERROR = "Vault resolve could not access the selected Project.";
+export const VAULT_PROJECT_ACCESS_ERROR = "Vault resolve could not access the selected project.";
 
 export const VAULT_PROJECT_ACCESS_HINT =
-	"If this is a shared Project, update the Clawdi backend so Viewers can use shared Vault runtime reads.";
+	"If this is a shared project, update the Clawdi backend so Viewers can use shared vault runtime reads.";
 
 export function isVaultProjectNotFoundBody(body: unknown): boolean {
 	const parsed = parseBody(body);

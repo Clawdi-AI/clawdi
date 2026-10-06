@@ -307,7 +307,7 @@ export class ApiClient {
 			throw new ApiError({
 				status: 401,
 				body: "",
-				hint: "Not logged in. Run `clawdi auth login` first.",
+				hint: "Not signed in. Run `clawdi auth login` first.",
 			});
 		}
 		const baseUrl = normalizeCloudApiBaseUrl(opts.baseUrl ?? config.apiUrl);
@@ -330,7 +330,7 @@ export class ApiClient {
 						throw new ApiError({
 							status: 0,
 							body: "",
-							hint: "Cloud request origin changed before authorization. No credential was sent.",
+							hint: "API request origin changed before authorization. No credential was sent.",
 						});
 					}
 					request.headers.set("Authorization", `Bearer ${await getClawdiAccessToken(baseUrl)}`);
@@ -372,7 +372,7 @@ export class ApiClient {
 			throw new ApiError({
 				status: 0,
 				body: "",
-				hint: "Cloud request origin changed before authorization. No credential was sent.",
+				hint: "API request origin changed before authorization. No credential was sent.",
 			});
 		}
 		const headers = new Headers(init.headers);

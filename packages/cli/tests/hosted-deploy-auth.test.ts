@@ -67,7 +67,7 @@ describe("Hosted deploy auth boundary", () => {
 		);
 	});
 
-	test("requires the single canonical Clerk OAuth login", async () => {
+	test("requires the single Clerk OAuth sign-in", async () => {
 		const provider = createHostedDeployAuthProvider({
 			cloudApiUrl: "https://cloud.example.test",
 			hostedApiUrl: "https://deploy.example.test",

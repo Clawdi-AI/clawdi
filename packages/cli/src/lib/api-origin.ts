@@ -61,7 +61,7 @@ function requireSecureTransport(url: URL, label: string): void {
  * spelling: authenticated routes are always rooted at the URL origin.
  */
 export function normalizeCloudApiBaseUrl(raw: string): string {
-	const label = "Clawdi API URL";
+	const label = "API URL (CLAWDI_API_URL)";
 	const { url, rawPath } = parseApiBaseUrl(raw, label);
 	requireSecureTransport(url, label);
 	if ((rawPath !== "" && rawPath !== "/") || url.pathname !== "/") {
@@ -75,7 +75,7 @@ export function normalizeCloudApiBaseUrl(raw: string): string {
  * used to build generated-client requests. Other paths are not accepted.
  */
 export function normalizeHostedDeployApiBaseUrl(raw: string): string {
-	const label = "Hosted deploy API URL";
+	const label = "Deploy API URL (CLAWDI_DEPLOY_API_URL)";
 	const { url, rawPath } = parseApiBaseUrl(raw, label);
 	requireSecureTransport(url, label);
 	if (!["", "/", "/v2", "/v2/"].includes(rawPath)) {

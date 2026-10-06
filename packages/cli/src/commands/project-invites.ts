@@ -67,7 +67,7 @@ export async function projectInvitesCommand(
 	console.log(chalk.bold(`Pending project invites (${items.length})`));
 	console.log(
 		chalk.gray(
-			"  Accepting grants viewer read access, including CLI Vault runtime reads. Agent use is separate.",
+			"  Accepting grants viewer read access, including CLI vault runtime reads. Agent use is separate.",
 		),
 	);
 	for (const inv of items) {

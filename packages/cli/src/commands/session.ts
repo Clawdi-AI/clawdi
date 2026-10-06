@@ -195,7 +195,7 @@ interface CloudSessionOpts {
 
 function requireCloudSessionAuth(): boolean {
 	if (isLoggedIn()) return true;
-	console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
+	console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
 	process.exitCode = 1;
 	return false;
 }
@@ -311,7 +311,7 @@ interface SessionExtractOpts {
  */
 export async function sessionExtract(sessionId: string, opts: SessionExtractOpts = {}) {
 	if (!isLoggedIn()) {
-		console.log(chalk.red("Not logged in. Run `clawdi auth login` first."));
+		console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
 		process.exit(1);
 	}
 	const api = new ApiClient();

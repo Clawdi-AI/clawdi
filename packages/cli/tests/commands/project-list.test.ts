@@ -76,7 +76,7 @@ describe("projectListCommand", () => {
 		expect(out).toContain("viewer");
 		expect(out).toContain("Open:  clawdi project show @alice-a3b4/shared-toolkit");
 		expect(out).toContain(
-			"Link to Agent: clawdi agent projects link <agent-id> --project @alice-a3b4/shared-toolkit",
+			"Link to agent: clawdi agent projects link <agent-id> --project @alice-a3b4/shared-toolkit",
 		);
 		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);
 		expect(out).not.toContain("context boundary");
@@ -154,12 +154,12 @@ describe("projectListCommand", () => {
 			const hiddenOut = lines.join("\n");
 			expect(hiddenOut).toContain("My projects (1)");
 			expect(hiddenOut).not.toContain("env-abc123");
-			expect(hiddenOut).toContain("Hidden Agent Workspaces: 1");
+			expect(hiddenOut).toContain("Hidden agent workspaces: 1");
 
 			lines.length = 0;
 			await projectListCommand({ includeEnvs: true });
 			const includedOut = lines.join("\n");
-			expect(includedOut).toContain("Agent Workspaces (1)");
+			expect(includedOut).toContain("Agent workspaces (1)");
 			expect(includedOut).toContain("env-abc123");
 		} finally {
 			console.log = orig;

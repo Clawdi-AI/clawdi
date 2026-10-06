@@ -838,7 +838,7 @@ describe("Clerk public OAuth PKCE", () => {
 		});
 		releaseLogoutRefresh?.();
 		expect(await logout).toMatchObject({ loggedOut: true, remoteRevoked: true });
-		await expect(waitingRefresh).rejects.toThrow("Not logged in");
+		await expect(waitingRefresh).rejects.toThrow("Not signed in");
 		expect(waiterFetches).toBe(0);
 		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
 			"/oauth/token",
@@ -989,11 +989,11 @@ describe("Clerk OAuth loopback", () => {
 		);
 		const rejectedHtml = await rejected.text();
 		expect(rejectedHtml).not.toContain("wrong-code");
-		expect(rejectedHtml).toContain("Login not completed");
+		expect(rejectedHtml).toContain("Sign-in not completed");
 		expect(rejectedHtml).toContain('data-status="rejected"');
 		expect(rejectedHtml).toContain('role="alert"');
 		expect(rejectedHtml).toContain('aria-describedby="result-description"');
-		expect(rejectedHtml).toContain("Sign-in wasn’t completed.");
+		expect(rejectedHtml).toContain("Sign-in wasn't completed.");
 		expect(rejectedHtml).not.toContain('class="brand"');
 		expect(rejectedHtml).not.toContain("<img");
 		expect(rejectedHtml).not.toContain("C_");
@@ -1001,7 +1001,7 @@ describe("Clerk OAuth loopback", () => {
 		expect(response.status).toBe(200);
 		const acceptedHtml = await response.text();
 		expect(acceptedHtml).not.toContain("secret-code");
-		expect(acceptedHtml).toContain("Login complete");
+		expect(acceptedHtml).toContain("Sign-in complete");
 		expect(acceptedHtml).toContain('data-status="accepted"');
 		expect(acceptedHtml).toContain('role="status"');
 		expect(acceptedHtml).toContain("Close this window and return to your terminal.");

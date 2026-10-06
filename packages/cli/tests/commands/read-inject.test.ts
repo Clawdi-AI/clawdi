@@ -195,7 +195,7 @@ describe("readCommand", () => {
 		}
 
 		expect(captured.some((request) => request.path.startsWith("/v1/vault/resolve"))).toBe(false);
-		expect(err).toContain("Reference points to Project 00000000-0000-0000-0000-000000000123");
+		expect(err).toContain("Reference points to project 00000000-0000-0000-0000-000000000123");
 		expect(err).toContain("but --project resolved to 00000000-0000-0000-0000-000000000999");
 		expect(process.exitCode).toBe(1);
 	});

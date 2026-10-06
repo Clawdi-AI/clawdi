@@ -19,7 +19,7 @@ describe("MCP stdio proxy", () => {
 		process.env.CLAWDI_HOME = clawdiHome;
 		delete process.env.CLAWDI_AUTH_TOKEN;
 		try {
-			await expect(createClawdiMcpServer()).rejects.toThrow("Not logged in");
+			await expect(createClawdiMcpServer()).rejects.toThrow("Not signed in");
 		} finally {
 			if (previousClawdiHome === undefined) delete process.env.CLAWDI_HOME;
 			else process.env.CLAWDI_HOME = previousClawdiHome;

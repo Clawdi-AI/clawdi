@@ -835,7 +835,7 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.DEPLOY_TOKEN).toBe("vault-secret");
 
 		const out = lines.join("\n");
-		expect(out).toContain("Using Project engineering");
+		expect(out).toContain("Using project engineering");
 		expect(out).toContain("Injected 1 vault secrets");
 		expect(out).not.toContain("vault-secret");
 	});
@@ -869,7 +869,7 @@ describe("run command project folder selection", () => {
 		expect(calls).toHaveLength(1);
 		expect(calls[0]).toMatchObject({ command: "node", args: ["server.js"] });
 		expect(calls[0].env.API_TOKEN).toBe("from-default-project");
-		expect(lines.join("\n")).not.toContain("Using Project");
+		expect(lines.join("\n")).not.toContain("Using project");
 	});
 
 	it("runs without vault injection when resolve returns an invalid body", async () => {
@@ -904,7 +904,7 @@ describe("run command project folder selection", () => {
 		expect(lines.join("\n")).not.toContain("Injected");
 	});
 
-	it("explains shared Project backend drift when all-vault resolve returns project not found", async () => {
+	it("explains shared project backend drift when all-vault resolve returns project not found", async () => {
 		const { calls, spawnImpl } = recordSpawn();
 		const { restore } = mockFetch([
 			{
@@ -929,8 +929,8 @@ describe("run command project folder selection", () => {
 		expect(calls).toHaveLength(1);
 		const out = lines.join("\n");
 		expect(out).toContain("Could not fetch vault secrets");
-		expect(out).toContain("Vault resolve could not access the selected Project.");
-		expect(out).toContain("shared Project");
+		expect(out).toContain("Vault resolve could not access the selected project.");
+		expect(out).toContain("shared project");
 		expect(out).toContain("update the Clawdi backend");
 		expect(out).not.toContain("API error 404");
 		expect(out).not.toContain("Injected");
