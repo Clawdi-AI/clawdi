@@ -127,7 +127,9 @@ describe("agent list", () => {
 		const result = await runCli(["agent", "list", "--json"]);
 		expect(result.code).toBe(0);
 		expect(result.stderr).toBe("");
-		expect(JSON.parse(result.stdout)).toEqual([
+		const payload = JSON.parse(result.stdout);
+		expect(payload.schemaVersion).toBe("clawdi.agentList.v1");
+		expect(payload.agents).toEqual([
 			{
 				id: agentId,
 				name: "Default agent name",
@@ -181,7 +183,9 @@ describe("agent list", () => {
 		agents = [];
 		const json = await runCli(["agent", "list", "--json"]);
 		expect(json.code).toBe(0);
-		expect(JSON.parse(json.stdout)).toEqual([]);
+		const payload = JSON.parse(json.stdout);
+		expect(payload.schemaVersion).toBe("clawdi.agentList.v1");
+		expect(payload.agents).toEqual([]);
 		const text = await runCli(["agent", "list"]);
 		expect(text.code).toBe(0);
 		expect(text.stdout).toContain("No agents found.");
@@ -189,8 +193,20 @@ describe("agent list", () => {
 });
 
 for (const command of [
-	{ name: "agent", id: agentId, path: `/v1/agents/${agentId}`, status: "disconnected" },
-	{ name: "session", id: sessionId, path: `/v1/sessions/${sessionId}`, status: "deleted" },
+	{
+		name: "agent",
+		id: agentId,
+		path: `/v1/agents/${agentId}`,
+		schemaVersion: "clawdi.agentRm.v1",
+		status: "disconnected",
+	},
+	{
+		name: "session",
+		id: sessionId,
+		path: `/v1/sessions/${sessionId}`,
+		schemaVersion: "clawdi.sessionRm.v1",
+		status: "deleted",
+	},
 ]) {
 	describe(`${command.name} rm`, () => {
 		it.each(["local-session-id", "", "../other", `${command.id}/permissions`, "123e4567"])(
@@ -227,7 +243,13 @@ for (const command of [
 			const result = await runCli([command.name, "rm", command.id, flag, "--json"]);
 			expect(result.code).toBe(0);
 			expect(result.stderr).toBe("");
-			expect(JSON.parse(result.stdout)).toEqual({ id: command.id, status: command.status });
+			const payload = JSON.parse(result.stdout);
+			expect(payload.schemaVersion).toBe(command.schemaVersion);
+			expect(payload).toEqual({
+				schemaVersion: command.schemaVersion,
+				id: command.id,
+				status: command.status,
+			});
 			expect(requests).toEqual([
 				{ method: "DELETE", path: command.path, authorization: `Bearer ${accessToken}` },
 			]);

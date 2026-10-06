@@ -385,7 +385,7 @@ export async function sessionRm(
 	}
 	console.log(
 		opts.json
-			? JSON.stringify({ id: sessionId, status: "deleted" })
+			? JSON.stringify({ schemaVersion: "clawdi.sessionRm.v1", id: sessionId, status: "deleted" })
 			: `Permanently deleted uploaded session ${sessionId}.`,
 	);
 }

@@ -23,14 +23,17 @@ export async function agentList(opts: { json?: boolean } = {}): Promise<void> {
 	if (opts.json) {
 		console.log(
 			JSON.stringify(
-				agents.map((agent) => ({
-					id: agent.id,
-					name: agent.name,
-					display_name: agent.display_name ?? null,
-					agent_type: agent.agent_type,
-					machine_name: agent.machine_name,
-					last_seen_at: agent.last_seen_at,
-				})),
+				{
+					schemaVersion: "clawdi.agentList.v1",
+					agents: agents.map((agent) => ({
+						id: agent.id,
+						name: agent.name,
+						display_name: agent.display_name ?? null,
+						agent_type: agent.agent_type,
+						machine_name: agent.machine_name,
+						last_seen_at: agent.last_seen_at,
+					})),
+				},
 				null,
 				2,
 			),
@@ -97,7 +100,11 @@ export async function agentRm(
 	}
 	console.log(
 		opts.json
-			? JSON.stringify({ id: agentId, status: "disconnected" })
+			? JSON.stringify({
+					schemaVersion: "clawdi.agentRm.v1",
+					id: agentId,
+					status: "disconnected",
+				})
 			: `Disconnected agent ${agentId} and archived its workspace.`,
 	);
 }
