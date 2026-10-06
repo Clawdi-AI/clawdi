@@ -5,14 +5,20 @@ import {
 	agentChannelSectionClasses,
 	computeStatusDetailsClasses,
 	hostedAgentOverviewClasses,
+	initialDeploymentClasses as progressClasses,
 } from "@clawdi/shared/ui";
 import {
 	agentChannelLinkUnavailableReason,
 	agentChannelSectionCopy,
 	agentDisplayName,
 	aiBindingCopy,
+	canRetryInitialDeployment,
 	computeStatusDetailsCopy,
+	type DeploymentStatus,
 	formatShortDate,
+	initialDeploymentCopy,
+	initialDeploymentPresentation,
+	shouldShowInitialDeploymentProgress,
 } from "@clawdi/shared/view";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
@@ -208,7 +214,6 @@ import {
 	canRestart as canRestartDeployment,
 	canStart as canStartDeployment,
 	canStop as canStopDeployment,
-	type DeploymentStatus,
 	deploymentRuntimeStatusPresentation,
 	deploymentRuntimeUiIsReady,
 	deploymentRuntimeUiWithdrawn,
@@ -371,19 +376,13 @@ function LiveNote({ children }: { children: React.ReactNode }) {
 	);
 }
 
+export {
+	canRetryInitialDeployment,
+	shouldShowInitialDeploymentProgress,
+} from "@clawdi/shared/view";
+
 function isStartingStatus(status: DeploymentStatus): boolean {
 	return status.kind === "creating" || status.kind === "starting";
-}
-
-export function shouldShowInitialDeploymentProgress(
-	status: DeploymentStatus,
-	failure: DeploymentFailurePresentation | null,
-): boolean {
-	return (isStartingStatus(status) && failure === null) || failure?.failedVerb === "create";
-}
-
-export function canRetryInitialDeployment(failure: DeploymentFailurePresentation): boolean {
-	return failure.retryable !== false && failure.remediation.kind === "restart";
 }
 
 function startingTitle(): string {
@@ -1079,15 +1078,19 @@ export function InitialDeploymentPage({
 	if (failure?.failedVerb === "create") {
 		const canRetry = canRetryInitialDeployment(failure);
 		return (
-			<DetailPanel className="border-destructive/30 bg-destructive-muted p-6 md:p-8">
-				<div data-testid="hosted-initial-deployment-panel" role="alert" className="space-y-5">
+			<DetailPanel className={progressClasses.failurePanel}>
+				<div
+					data-testid="hosted-initial-deployment-panel"
+					role="alert"
+					className={progressClasses.failureBody}
+				>
 					<div>
-						<h2 className="flex items-center gap-2 text-lg font-semibold">
+						<h2 className={progressClasses.title}>
 							<AlertCircle className="size-5 text-destructive" />
-							Agent setup failed
+							{initialDeploymentCopy.failureTitle}
 						</h2>
-						<p className="mt-1 text-sm text-muted-foreground">
-							Setup stopped before this agent became ready.
+						<p className={progressClasses.description}>
+							{initialDeploymentCopy.failureDescription}
 						</p>
 					</div>
 					<Alert variant="destructive">
@@ -1098,69 +1101,46 @@ export function InitialDeploymentPage({
 							<p>{failure.description}</p>
 						</AlertDescription>
 					</Alert>
-					{canRetry ? <StartComputeAction deployment={deployment} label="Retry startup" /> : null}
+					{canRetry ? (
+						<StartComputeAction deployment={deployment} label={initialDeploymentCopy.retry} />
+					) : null}
 				</div>
 			</DetailPanel>
 		);
 	}
-	const stages = [
-		{ status: "creating", label: "Cloud resources" },
-		{ status: "starting", label: "Agent software" },
-		{ status: "running", label: "Ready" },
-	] as const;
-	const activeStageIndex = status.kind === "starting" ? 1 : status.kind === "running" ? 2 : 0;
-	const activeStage =
-		activeStageIndex === 0
-			? {
-					label: "Preparing cloud resources",
-					description: "Creating a private environment and connecting your AI provider.",
-				}
-			: activeStageIndex === 1
-				? {
-						label: `Installing and starting ${runtimeLabel}`,
-						description:
-							"Provisioning a private workspace, installing the Agent, and confirming readiness.",
-					}
-				: {
-						label: "Ready",
-						description: "Setup is complete.",
-					};
+	const { stages, activeStageIndex, activeStage, title, description, step } =
+		initialDeploymentPresentation(
+			status,
+			runtimeLabel,
+			deploymentTransitionTimedOut,
+			deploymentTransitionEscalated,
+		);
 	return (
 		<DetailPanel
 			className={cn(
-				"p-6 md:p-8",
+				progressClasses.panel,
 				(deploymentTransitionTimedOut || deploymentTransitionEscalated) &&
-					"border-warning/30 bg-warning-muted",
+					progressClasses.warningPanel,
 			)}
 		>
 			<div
 				data-testid="hosted-initial-deployment-panel"
 				role={deploymentTransitionTimedOut || deploymentTransitionEscalated ? "alert" : undefined}
-				className="space-y-6"
+				className={progressClasses.body}
 			>
 				<div>
-					<h2 className="flex items-center gap-2 text-lg font-semibold">
+					<h2 className={progressClasses.title}>
 						{deploymentTransitionTimedOut || deploymentTransitionEscalated ? (
 							<AlertCircle className="size-5" />
 						) : null}
-						{deploymentTransitionEscalated
-							? "Setup appears to be stuck"
-							: deploymentTransitionTimedOut
-								? "Setup is taking longer than expected"
-								: `Setting up ${runtimeLabel}`}
+						{title}
 					</h2>
-					<p className="mt-1 text-sm text-muted-foreground">
-						{deploymentTransitionEscalated
-							? "We’ll keep checking automatically. If you want, cancel this setup and try again."
-							: deploymentTransitionTimedOut
-								? "Your agent may still be starting. We’ll keep checking automatically."
-								: "Setup usually takes about 7–10 minutes. It continues if you leave, and this page updates automatically while open."}
-					</p>
+					<p className={progressClasses.description}>{description}</p>
 				</div>
 				<div>
-					<div className="flex items-baseline justify-between gap-4">
+					<div className={progressClasses.stageHeader}>
 						<p
-							className="inline-flex items-center gap-2 text-base font-semibold"
+							className={progressClasses.activeLabel}
 							role="status"
 							aria-live="polite"
 							aria-atomic="true"
@@ -1174,19 +1154,12 @@ export function InitialDeploymentPage({
 							) : null}
 							{activeStage.label}
 						</p>
-						<p className="shrink-0 text-xs font-medium text-muted-foreground">
-							Step {activeStageIndex + 1} of {stages.length}
-						</p>
+						<p className={progressClasses.step}>{step}</p>
 					</div>
-					<p className="mt-2 text-sm text-muted-foreground">{activeStage.description}</p>
-					<ol aria-label="Deployment progress" className="mt-4 grid w-full grid-cols-3 gap-2">
+					<p className={progressClasses.stageDescription}>{activeStage.description}</p>
+					<ol aria-label={initialDeploymentCopy.progress} className={progressClasses.stages}>
 						{stages.map((stage, index) => {
-							const stageState =
-								status.kind === "running" || index < activeStageIndex
-									? "completed"
-									: index === activeStageIndex
-										? "active"
-										: "pending";
+							const stageState = stage.state;
 							return (
 								<li
 									key={stage.status}
@@ -1198,21 +1171,21 @@ export function InitialDeploymentPage({
 									<div
 										aria-hidden="true"
 										className={cn(
-											"h-2 rounded-full",
+											progressClasses.bar,
 											stageState === "active"
-												? "bg-primary"
+												? progressClasses.activeBar
 												: stageState === "completed"
-													? "bg-primary/50"
-													: "bg-muted",
+													? progressClasses.completedBar
+													: progressClasses.pendingBar,
 										)}
 									/>
 									<p
 										aria-hidden="true"
 										className={cn(
-											"mt-2 text-xs",
+											progressClasses.stageLabel,
 											stageState === "pending"
-												? "text-muted-foreground"
-												: "font-medium text-foreground",
+												? progressClasses.pendingLabel
+												: progressClasses.readyLabel,
 										)}
 									>
 										{stage.label}
@@ -1223,7 +1196,7 @@ export function InitialDeploymentPage({
 					</ol>
 				</div>
 				{deploymentTransitionTimedOut || deploymentTransitionEscalated ? (
-					<div className="flex flex-wrap gap-2">
+					<div className={progressClasses.actions}>
 						<Button
 							type="button"
 							variant="outline"
@@ -1231,7 +1204,8 @@ export function InitialDeploymentPage({
 							disabled={isCheckingDeployment}
 							onClick={onCheckDeploymentAgain}
 						>
-							{isCheckingDeployment ? <Spinner className="size-3.5" /> : <RefreshCw />}Check again
+							{isCheckingDeployment ? <Spinner className="size-3.5" /> : <RefreshCw />}
+							{initialDeploymentCopy.check}
 						</Button>
 						{deploymentTransitionEscalated ? (
 							<DeploymentCancelAction deployment={deployment} />

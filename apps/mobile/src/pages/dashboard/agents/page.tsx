@@ -3,7 +3,6 @@ import { agentSourceBadgeClasses, hostedAgentGroupsClasses } from "@clawdi/share
 import {
 	agentSourceLabel,
 	agentSurfaceCopy,
-	compareAgentTiles,
 	hostedAgentCountLabel,
 	hostedAgentGroupsCopy,
 	selfManagedAgentTiles,
@@ -44,8 +43,8 @@ function AgentsView({ project }: { project?: Project }) {
 			: agents.error
 		: (dashboard.hostedStatus?.error ?? (dashboard.agents.data ? null : dashboard.agents.error));
 	const tiles = project ? selfManagedAgentTiles(agents.data) : dashboard.tiles;
-	const hosted = tiles.filter((tile) => tile.source === "on-clawdi").sort(compareAgentTiles);
-	const other = tiles.filter((tile) => tile.source !== "on-clawdi").sort(compareAgentTiles);
+	const hosted = tiles.filter((tile) => tile.source === "on-clawdi");
+	const other = tiles.filter((tile) => tile.source !== "on-clawdi");
 	const rows = loading || error ? [] : [...hosted, ...other];
 	const refresh = () => {
 		void agents.refetch();

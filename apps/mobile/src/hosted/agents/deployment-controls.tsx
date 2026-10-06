@@ -16,6 +16,7 @@ import {
 	agentSurfaceCopy,
 	aiBindingCopy,
 	firstModelForProvider,
+	initialDeploymentCopy,
 	isManagedProviderId,
 	primaryModelValue,
 } from "@clawdi/shared/view";
@@ -55,7 +56,7 @@ export function DeploymentControls({
 	transitioning: boolean;
 	onAccepted: (operation: HostedDeployOperation) => Promise<void>;
 	onAbsent: () => Promise<void>;
-	section?: "all" | "ai";
+	section?: "all" | "ai" | "startup";
 	onBusyChange?: (busy: boolean) => void;
 }) {
 	const t = useI18n();
@@ -207,7 +208,7 @@ export function DeploymentControls({
 	return (
 		<AppView className="gap-3">
 			{nativeConfirmation.dialog}
-			{section !== "ai" ? (
+			{section === "all" ? (
 				<>
 					<AppText accessibilityRole="header" className="text-xl font-semibold text-foreground">
 						{t("runtime.title")}
@@ -218,7 +219,7 @@ export function DeploymentControls({
 			{storageError ? (
 				<AppText accessibilityRole="alert">{t("runtime.storageError")}</AppText>
 			) : null}
-			{section !== "ai" || attempt || storageError ? (
+			{section === "all" || attempt || storageError ? (
 				<ActionButton
 					label={t("runtime.reloadAttempt")}
 					disabled={action.busy}
@@ -265,36 +266,36 @@ export function DeploymentControls({
 			deploymentLifecycleAvailable("start", state) &&
 			deployment?.start_action === "start" ? (
 				<ActionButton
-					label={t("runtime.start")}
+					label={section === "startup" ? initialDeploymentCopy.retry : t("runtime.start")}
 					disabled={busy}
 					onPress={() => confirm({ action: "start" })}
 				/>
 			) : null}
-			{section !== "ai" && state === "stopped" && deployment?.start_action !== "start" ? (
+			{section === "all" && state === "stopped" && deployment?.start_action !== "start" ? (
 				<AppText>{t("runtime.paymentRequired")}</AppText>
 			) : null}
-			{section !== "ai" && deploymentLifecycleAvailable("stop", state) ? (
+			{section === "all" && deploymentLifecycleAvailable("stop", state) ? (
 				<ActionButton
 					label={t("runtime.stop")}
 					disabled={busy}
 					onPress={() => confirm({ action: "stop" })}
 				/>
 			) : null}
-			{section !== "ai" && deploymentLifecycleAvailable("restart", state) ? (
+			{section === "all" && deploymentLifecycleAvailable("restart", state) ? (
 				<ActionButton
 					label={t("runtime.restart")}
 					disabled={busy}
 					onPress={() => confirm({ action: "restart" })}
 				/>
 			) : null}
-			{section !== "ai" && stable ? (
+			{section === "all" && stable ? (
 				<ActionButton
 					label={t("runtime.resetAccess")}
 					disabled={busy}
 					onPress={() => confirm({ action: "reset_runtime_ui_access" })}
 				/>
 			) : null}
-			{section !== "ai" && deploymentLifecycleAvailable("delete", state) ? (
+			{section === "all" && deploymentLifecycleAvailable("delete", state) ? (
 				<ActionButton
 					label={t("runtime.deleteAgent")}
 					disabled={writeBlocked}
@@ -306,9 +307,9 @@ export function DeploymentControls({
 			{attempt?.mutation.action === "delete" ? (
 				<AppText accessibilityRole="alert">{t("runtime.deleteWarning")}</AppText>
 			) : null}
-			{deployment ? (
+			{deployment && section !== "startup" ? (
 				<>
-					{section !== "ai" ? (
+					{section === "all" ? (
 						<LocaleSettings
 							key={JSON.stringify([
 								deployment.resource.spec.runtime_configuration.language,

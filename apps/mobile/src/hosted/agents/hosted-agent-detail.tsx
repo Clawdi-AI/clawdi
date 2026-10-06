@@ -3,13 +3,20 @@ import { agentsIndexClasses } from "@clawdi/shared/ui";
 import {
 	agentOverviewCopy,
 	agentSurfaceCopy,
+	canRetryInitialDeployment,
 	deploymentFailurePresentation,
+	deploymentPollingState,
 	deploymentRuntimeStatusPresentation,
+	deploymentStatusFromResource,
+	initialDeploymentCopy,
+	runtimeDisplayName,
+	type SettlingTracker,
+	shouldShowInitialDeploymentProgress,
 } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { TerminalSquare } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentOverview } from "@/components/dashboard/agent-overview-resource-bodies";
 import { AgentSourceBadge } from "@/components/dashboard/agent-section-source-badge";
@@ -30,8 +37,8 @@ import { isNotFound, useCloudAgent } from "@/hooks/cloud-inventory";
 import { ComputeStatusDetails } from "@/hosted/agents/compute-status-details";
 import { CancelOperation } from "@/hosted/agents/deployment-cancel-action";
 import { DeploymentControls } from "@/hosted/agents/deployment-controls";
+import { InitialDeploymentPage } from "@/hosted/agents/initial-deployment-page";
 import {
-	canPollDeployment,
 	DEPLOYMENT_POLL_WINDOW_MS,
 	deploymentNeedsPolling,
 	operationIdFromName,
@@ -75,27 +82,21 @@ function DeploymentDetail({
 	const router = useRouter();
 	const t = useI18n();
 	const [startedAt, setStartedAt] = useState(Date.now);
+	const trackers = useRef<ReadonlyMap<string, SettlingTracker>>(new Map());
 	const [, setPollEpoch] = useState(0);
 	useEffect(() => {
 		const refresh = () => setPollEpoch((value) => value + 1);
 		const unsubscribeFocus = focusManager.subscribe(refresh);
 		const unsubscribeOnline = onlineManager.subscribe(refresh);
-		const timer = setTimeout(
-			refresh,
-			Math.max(0, startedAt + DEPLOYMENT_POLL_WINDOW_MS - Date.now()),
-		);
+		const timer = setInterval(() => {
+			if (focusManager.isFocused() && onlineManager.isOnline()) refresh();
+		}, 10_000);
 		return () => {
 			unsubscribeFocus();
 			unsubscribeOnline();
-			clearTimeout(timer);
+			clearInterval(timer);
 		};
 	}, [startedAt]);
-	const pollingAllowed = canPollDeployment(
-		startedAt,
-		Date.now(),
-		focusManager.isFocused(),
-		onlineManager.isOnline(),
-	);
 	const query = useQuery({
 		queryKey: accountQueryKey(scope, "deployment", deploymentId ?? "missing"),
 		queryFn: ({ signal }) =>
@@ -105,13 +106,16 @@ function DeploymentDetail({
 			}, signal),
 		enabled: scope.isReady && Boolean(hosted && deploymentId),
 		retry: false,
-		refetchInterval: (q) =>
-			pollingAllowed &&
-			!q.state.error &&
-			deploymentNeedsPolling(q.state.data) &&
-			canPollDeployment(startedAt, Date.now(), focusManager.isFocused(), onlineManager.isOnline())
-				? 3000
-				: false,
+		refetchInterval: (q) => {
+			if (!focusManager.isFocused() || !onlineManager.isOnline() || q.state.error) return false;
+			const polling = deploymentPollingState(
+				q.state.data ? [q.state.data] : undefined,
+				trackers.current,
+				Date.now(),
+			);
+			trackers.current = polling.trackers;
+			return polling.refetchInterval;
+		},
 		refetchIntervalInBackground: false,
 		refetchOnWindowFocus: false,
 		refetchOnReconnect: false,
@@ -140,11 +144,12 @@ function DeploymentDetail({
 		enabled: scope.isReady && Boolean(hosted && operationId),
 		retry: false,
 		refetchInterval: (q) =>
-			pollingAllowed &&
-			!q.state.error &&
-			!q.state.data?.done &&
-			canPollDeployment(startedAt, Date.now(), focusManager.isFocused(), onlineManager.isOnline())
-				? 3000
+			focusManager.isFocused() && onlineManager.isOnline() && !q.state.error && !q.state.data?.done
+				? deploymentPollingState(
+						deployment ? [deployment] : undefined,
+						trackers.current,
+						Date.now(),
+					).refetchInterval
 				: false,
 		refetchIntervalInBackground: false,
 		refetchOnWindowFocus: false,
@@ -161,6 +166,20 @@ function DeploymentDetail({
 		]);
 	};
 	const activeOperation = operation.data ?? accepted ?? deployment?.accepted_operation;
+	const polling = deploymentPollingState(
+		deployment ? [deployment] : undefined,
+		trackers.current,
+		Date.now(),
+	);
+	trackers.current = polling.trackers;
+	const transition = deployment ? polling.transitions.get(deployment.resource.id)?.kind : undefined;
+	const failure = deployment ? deploymentFailurePresentation(deployment) : null;
+	const status = deploymentStatusFromResource(deployment?.resource.status ?? null);
+	const initial = Boolean(deployment && shouldShowInitialDeploymentProgress(status, failure));
+	const checkAgain = async () => {
+		await Promise.all([query.refetch(), ...(operationId ? [operation.refetch()] : [])]);
+	};
+
 	if (management)
 		return (
 			<SheetPage
@@ -321,7 +340,43 @@ function DeploymentDetail({
 							<ApiErrorPanel error={query.error} onRetry={() => void query.refetch()} />
 						) : null}
 						{query.isPending ? <EntityCardSkeleton /> : null}
-						{deployment && agent.data ? (
+						{deployment && initial ? (
+							<InitialDeploymentPage
+								status={status}
+								runtimeLabel={runtimeDisplayName(deployment.resource.spec.runtime)}
+								failure={failure}
+								timedOut={transition === "timed_out" || transition === "escalated"}
+								escalated={transition === "escalated"}
+								actions={
+									failure?.failedVerb === "create" && canRetryInitialDeployment(failure) ? (
+										<DeploymentControls
+											section="startup"
+											deployment={deployment}
+											deploymentId={deploymentId}
+											blocked={query.isError}
+											transitioning={Boolean(activeOperation && !activeOperation.done)}
+											onAccepted={async (result) => {
+												setAccepted(result);
+												await refreshResources();
+											}}
+											onAbsent={refreshResources}
+										/>
+									) : transition === "timed_out" || transition === "escalated" ? (
+										<WebView recipe="flex flex-wrap gap-2">
+											<ActionButton
+												label={initialDeploymentCopy.check}
+												disabled={query.isFetching || operation.isFetching}
+												onPress={() => void checkAgain()}
+											/>
+											{transition === "escalated" && activeOperation ? (
+												<CancelOperation operation={activeOperation} onRequested={checkAgain} />
+											) : null}
+										</WebView>
+									) : undefined
+								}
+							/>
+						) : null}
+						{deployment && !initial && agent.data ? (
 							<AgentOverview
 								agent={agent.data}
 								deployment={deployment}
@@ -334,7 +389,7 @@ function DeploymentDetail({
 								}}
 							/>
 						) : null}
-						{deployment && !agent.data ? (
+						{deployment && !initial && !agent.data ? (
 							<EmptyState
 								title={deploymentRuntimeStatusPresentation(deployment.resource.status).label}
 								description={
