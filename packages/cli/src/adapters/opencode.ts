@@ -273,13 +273,13 @@ function partEvents(
 				role,
 				parts: [{ type: "text", text }],
 				source: eventSource,
-				...(data.ignored === true
+				...(data.ignored === true || data.synthetic === true
 					? {
 							semantics: {
 								lifecycle: "active" as const,
 								display: "hidden" as const,
 								compressed_summary: false,
-								display_kind: "ignored_text",
+								display_kind: data.ignored === true ? "ignored_text" : "synthetic_text",
 							},
 						}
 					: {}),
