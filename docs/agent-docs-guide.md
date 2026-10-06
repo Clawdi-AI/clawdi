@@ -1,5 +1,5 @@
 # Agent Docs Guide
-Use this when editing `AGENTS.md`, `CLAUDE.md`, `apps/web/public/skill.md`, and
+Use this when editing `AGENTS.md`, `CLAUDE.md`, `apps/web/src/content/get-started.md`, and
 contributor docs under `docs/`.
 
 ## Rule
