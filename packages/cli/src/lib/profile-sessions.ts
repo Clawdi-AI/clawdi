@@ -175,6 +175,11 @@ export function createProfileSync(
 		failed.clear();
 		inventoryComplete = true;
 		discoveryPaths = discovery.watchPaths ?? profileDiscoveryWatchPaths(adapter);
+		if (!discovery.complete) {
+			fallback();
+			if (!options.readOnly && environmentId) unwrap(await putInventory(false));
+			return;
+		}
 		if (options.readOnly || !environmentId) return;
 		const prior = await api.GET("/v1/agents/{agent_id}/profiles", {
 			params: { path: { agent_id: environmentId } },

@@ -248,7 +248,10 @@ test("discovery failure reports incomplete inventory and only scans default", as
 	const module = createProfileSync(new HermesAdapter(), client, "env").sessions;
 	if (!module) throw new Error("Expected session module");
 	const result = await module.collect({ kind: "complete" });
-	expect(result.sessions.every((session) => session.profileKey === "")).toBeTrue();
+	expect(result.coverage).toBe("complete");
+	expect(result.sessions.length).toBeGreaterThan(0);
+	for (const session of result.sessions) expect(session).not.toHaveProperty("profileKey");
+	expect(await module.resolve("s-modern")).not.toHaveProperty("profileKey");
 	expect(inventories).toEqual([
 		{ complete: false, profiles: [{ upstream_key: "default", is_default: true }] },
 	]);
@@ -755,37 +758,58 @@ else exit 1; fi`,
 	expect(readFileSync(calls, "utf8").trim().split("\n")).toHaveLength(1);
 });
 
-test("OpenClaw discovery failure reads all legacy agents into the default", async () => {
-	const state = join(home, ".openclaw");
-	for (const name of ["main", "work"]) {
-		const dir = join(state, "agents", name, "sessions");
-		mkdirSync(dir, { recursive: true });
-		writeFileSync(
-			join(dir, "sessions.json"),
-			JSON.stringify({ [name]: { sessionId: name, updatedAt: 1776247200000 } }),
+test.each(["failed", "incomplete"])(
+	"OpenClaw %s discovery preserves legacy identity without an explicit default profile",
+	async (discovery) => {
+		delete process.env.OPENCLAW_AGENT_ID;
+		delete process.env.OPENCLAW_STATE_DIR;
+		const state = join(home, ".openclaw");
+		for (const name of ["main", "work"]) {
+			const dir = join(state, "agents", name, "sessions");
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(
+				join(dir, "sessions.json"),
+				JSON.stringify({ [name]: { sessionId: name, updatedAt: 1776247200000 } }),
+			);
+			writeFileSync(
+				join(dir, `${name}.jsonl`),
+				JSON.stringify({
+					type: "message",
+					timestamp: 1776247200000,
+					message: { role: "user", content: "fixture input" },
+				}),
+			);
+		}
+		executable(
+			join(home, "bin", "openclaw"),
+			discovery === "failed"
+				? "exit 1"
+				: `if [ "$*" = "agents list --json" ]; then
+    printf '[{"id":"work","workspace":"%s/work"}]' "$HOME"
+else exit 1; fi`,
 		);
-		writeFileSync(
-			join(dir, `${name}.jsonl`),
-			JSON.stringify({
-				type: "message",
-				timestamp: 1776247200000,
-				message: { role: "user", content: "fixture input" },
-			}),
-		);
-	}
-	executable(join(home, "bin", "openclaw"), "exit 1");
-	const client = api(async () => response([]));
-	const result = await createProfileSync(new OpenClawAdapter(), client, "env").sessions?.collect({
-		kind: "complete",
-	});
-	expect(result?.coverage).toBe("complete");
-	expect(
-		result?.sessions.map((session) => [session.profileKey, session.localSessionId]).sort(),
-	).toEqual([
-		["", "main"],
-		["", "work"],
-	]);
-});
+		const inventories: unknown[] = [];
+		const client = api(async (input) => {
+			const request = input instanceof Request ? input : new Request(input);
+			if (request.method === "PUT") inventories.push(await request.json());
+			return response([row(""), row("work")]);
+		});
+		const result = await createProfileSync(new OpenClawAdapter(), client, "env").sessions?.collect({
+			kind: "complete",
+		});
+		expect(result?.coverage).toBe("complete");
+		expect(
+			result?.sessions.map((session) => [session.profileKey, session.localSessionId]).sort(),
+		).toEqual([
+			[undefined, "main"],
+			[undefined, "work"],
+		]);
+		for (const session of result?.sessions ?? []) expect(session).not.toHaveProperty("profileKey");
+		expect(inventories).toEqual([
+			{ complete: false, profiles: [{ upstream_key: "main", is_default: true }] },
+		]);
+	},
+);
 
 test("a conflicting upstream root skips only the named default profile", async () => {
 	const customHome = join(home, "custom-home");
