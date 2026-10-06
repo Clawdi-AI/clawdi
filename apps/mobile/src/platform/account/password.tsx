@@ -2,9 +2,10 @@ import { useUser } from "@clerk/expo";
 import type { UserResource } from "@clerk/expo/types";
 import { Redirect, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, AppState } from "react-native";
+import { AppState } from "react-native";
 import { PasswordFormView } from "@/components/settings/account-forms";
 import { LoadingScreen } from "@/components/ui/feedback";
+import { useConfirmation } from "@/components/ui/use-confirmation";
 import { useI18n } from "@/lib/i18n";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -26,6 +27,7 @@ function PasswordForm({ user }: { user: UserResource }) {
 	const action = useAuthAction(scope.identity);
 	const reverification = useNativeReverification();
 	const confirmation = useRef(0);
+	const confirmationDialog = useConfirmation();
 	const [enabled, setEnabled] = useState(user.passwordEnabled);
 	const [oldPassword, setOldPassword] = useState("");
 	const [newPassword, setNewPassword] = useState("");
@@ -48,8 +50,8 @@ function PasswordForm({ user }: { user: UserResource }) {
 		});
 		return () => listener.remove();
 	}, [clear]);
-	const update = (remove: boolean) =>
-		void action.run(async (active) => {
+	const update = (remove: boolean, propagate = false) =>
+		(propagate ? action.runOrThrow : action.run)(async (active) => {
 			const visible = capture();
 			const current = () =>
 				active() &&
@@ -89,36 +91,38 @@ function PasswordForm({ user }: { user: UserResource }) {
 	const confirmRemove = () => {
 		const visible = capture();
 		const ticket = ++confirmation.current;
-		Alert.alert(t("password.remove"), t("password.removeWarning"), [
+		confirmationDialog.show(t("password.remove"), t("password.removeWarning"), [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: t("password.remove"),
 				style: "destructive",
 				onPress: () => {
 					if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
-					confirmation.current++;
-					update(true);
+					return update(true, true);
 				},
 			},
 		]);
 	};
 	return (
-		<PasswordFormView
-			action={action}
-			reverification={reverification}
-			enabled={enabled}
-			oldPassword={oldPassword}
-			newPassword={newPassword}
-			confirmationPassword={confirmationPassword}
-			otherSessions={otherSessions}
-			success={success}
-			setOldPassword={setOldPassword}
-			setNewPassword={setNewPassword}
-			setConfirmationPassword={setConfirmationPassword}
-			setOtherSessions={setOtherSessions}
-			edit={edit}
-			update={update}
-			confirmRemove={confirmRemove}
-		/>
+		<>
+			{confirmationDialog.dialog}
+			<PasswordFormView
+				action={action}
+				reverification={reverification}
+				enabled={enabled}
+				oldPassword={oldPassword}
+				newPassword={newPassword}
+				confirmationPassword={confirmationPassword}
+				otherSessions={otherSessions}
+				success={success}
+				setOldPassword={setOldPassword}
+				setNewPassword={setNewPassword}
+				setConfirmationPassword={setConfirmationPassword}
+				setOtherSessions={setOtherSessions}
+				edit={edit}
+				update={update}
+				confirmRemove={confirmRemove}
+			/>
+		</>
 	);
 }

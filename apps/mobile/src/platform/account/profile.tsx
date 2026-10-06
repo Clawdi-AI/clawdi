@@ -4,9 +4,9 @@ import { File } from "expo-file-system";
 import { Redirect, useNavigation } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import { useRef, useState } from "react";
-import { Alert } from "react-native";
 import { ProfileFormView } from "@/components/settings/account-forms";
 import { LoadingScreen } from "@/components/ui/feedback";
+import { useConfirmation } from "@/components/ui/use-confirmation";
 import { useI18n } from "@/lib/i18n";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -29,6 +29,7 @@ function ProfileForm({ user }: { user: UserResource }) {
 	const capture = useForegroundLease();
 	const navigation = useNavigation();
 	const confirmation = useRef(0);
+	const confirmationDialog = useConfirmation();
 	const [saved, setSaved] = useState({
 		firstName: user.firstName ?? "",
 		lastName: user.lastName ?? "",
@@ -39,8 +40,8 @@ function ProfileForm({ user }: { user: UserResource }) {
 	const [username, setUsername] = useState(saved.username);
 	const [success, setSuccess] = useState<false | "name" | "avatar">(false);
 	const [avatar, setAvatar] = useState({ url: user.imageUrl, custom: user.hasImage });
-	const updateAvatar = (remove: boolean) =>
-		void action.run(async (current) => {
+	const updateAvatar = (remove: boolean, propagate = false) =>
+		(propagate ? action.runOrThrow : action.run)(async (current) => {
 			if (user.id !== scope.accountKey || !scope.isCurrent() || !capture()()) return;
 			setSuccess(false);
 			let file: string | null = null;
@@ -78,15 +79,14 @@ function ProfileForm({ user }: { user: UserResource }) {
 	const removeAvatar = () => {
 		const visible = capture();
 		const ticket = ++confirmation.current;
-		Alert.alert(t("profile.removeAvatar"), t("profile.removeAvatarWarning"), [
+		confirmationDialog.show(t("profile.removeAvatar"), t("profile.removeAvatarWarning"), [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: t("profile.removeAvatar"),
 				style: "destructive",
 				onPress: () => {
 					if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
-					confirmation.current++;
-					updateAvatar(true);
+					return updateAvatar(true, true);
 				},
 			},
 		]);
@@ -96,14 +96,13 @@ function ProfileForm({ user }: { user: UserResource }) {
 	usePreventRemove(scope.isReady && dirty, ({ data }) => {
 		const visible = capture();
 		const ticket = ++confirmation.current;
-		Alert.alert(t("profile.unsavedTitle"), t("profile.unsavedMessage"), [
+		confirmationDialog.show(t("profile.unsavedTitle"), t("profile.unsavedMessage"), [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: t("profile.discard"),
 				style: "destructive",
 				onPress: () => {
 					if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
-					confirmation.current++;
 					navigation.dispatch(data.action);
 				},
 			},
@@ -147,23 +146,26 @@ function ProfileForm({ user }: { user: UserResource }) {
 			});
 		});
 	return (
-		<ProfileFormView
-			action={action}
-			reverification={reverification}
-			firstName={firstName}
-			lastName={lastName}
-			username={username}
-			success={success}
-			avatar={avatar}
-			email={user.primaryEmailAddress?.emailAddress}
-			setFirstName={setFirstName}
-			setLastName={setLastName}
-			setUsername={setUsername}
-			setSuccess={setSuccess}
-			updateAvatar={updateAvatar}
-			removeAvatar={removeAvatar}
-			dirty={dirty}
-			save={save}
-		/>
+		<>
+			{confirmationDialog.dialog}
+			<ProfileFormView
+				action={action}
+				reverification={reverification}
+				firstName={firstName}
+				lastName={lastName}
+				username={username}
+				success={success}
+				avatar={avatar}
+				email={user.primaryEmailAddress?.emailAddress}
+				setFirstName={setFirstName}
+				setLastName={setLastName}
+				setUsername={setUsername}
+				setSuccess={setSuccess}
+				updateAvatar={updateAvatar}
+				removeAvatar={removeAvatar}
+				dirty={dirty}
+				save={save}
+			/>
+		</>
 	);
 }

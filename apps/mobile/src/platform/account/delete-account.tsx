@@ -2,9 +2,9 @@ import { useClerk, useUser } from "@clerk/expo";
 import { useQueryClient } from "@tanstack/react-query";
 import { Redirect, useRouter } from "expo-router";
 import { useRef, useState } from "react";
-import { Alert } from "react-native";
 import { DeleteAccountFormView } from "@/components/settings/account-forms";
 import { LoadingScreen } from "@/components/ui/feedback";
+import { useConfirmation } from "@/components/ui/use-confirmation";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { clearAccountScope, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -36,6 +36,7 @@ function DeleteAccount({ email }: { email: string }) {
 	const capture = useForegroundLease();
 	const action = useAuthAction(scope.identity);
 	const confirmation = useRef(0);
+	const confirmationDialog = useConfirmation();
 	const [phrase, setPhrase] = useState("");
 	const [outcome, setOutcome] = useState<"idle" | "uncertain" | "accepted">("idle");
 	const leave = () =>
@@ -51,7 +52,7 @@ function DeleteAccount({ email }: { email: string }) {
 		const signal = scope.signal;
 		const visible = capture();
 		const ticket = ++confirmation.current;
-		Alert.alert(t("deletion.title"), `${email}\n\n${t("deletion.warning")}`, [
+		confirmationDialog.show(t("deletion.title"), `${email}\n\n${t("deletion.warning")}`, [
 			{ text: t("account.cancel"), style: "cancel" },
 			{
 				text: t("deletion.confirm"),
@@ -59,8 +60,7 @@ function DeleteAccount({ email }: { email: string }) {
 				onPress: () => {
 					if (ticket !== confirmation.current || signal.aborted || !scope.isCurrent() || !visible())
 						return;
-					confirmation.current++;
-					void action.run(async (current) => {
+					return action.run(async (current) => {
 						if (signal.aborted || !scope.isCurrent() || !visible()) return;
 						setPhrase("");
 						// A lost response cannot prove that termination was rejected. No automatic retry.
@@ -79,15 +79,18 @@ function DeleteAccount({ email }: { email: string }) {
 		]);
 	};
 	return (
-		<DeleteAccountFormView
-			action={action}
-			email={email}
-			compute={compute}
-			phrase={phrase}
-			outcome={outcome}
-			setPhrase={setPhrase}
-			confirm={confirm}
-			leave={leave}
-		/>
+		<>
+			{confirmationDialog.dialog}
+			<DeleteAccountFormView
+				action={action}
+				email={email}
+				compute={compute}
+				phrase={phrase}
+				outcome={outcome}
+				setPhrase={setPhrase}
+				confirm={confirm}
+				leave={leave}
+			/>
+		</>
 	);
 }
