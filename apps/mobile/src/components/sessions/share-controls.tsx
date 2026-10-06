@@ -42,7 +42,6 @@ import { NativeList } from "@/components/ui/native-list";
 import { SheetPage } from "@/components/ui/sheet-page";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Text } from "@/components/ui/text";
-import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webText, webView } from "@/components/ui/web-layout";
 import { useCloudSession } from "@/hooks/cloud-inventory";
 import { useMobileApi } from "@/lib/api-provider";
@@ -478,56 +477,66 @@ function SharesView({
 		return (
 			<SheetPage
 				title={copy.title}
-				description={copy.description}
 				fallback={{ pathname: "/sessions/[id]", params: { id: sessionId } }}
 				busy={action.busy}
+				scroll={false}
 			>
-				<WebView recipe={dialogStyles.body}>
-					{errorPanel}
-					{inventory.isPending || snapshots.isPending ? skeleton : null}
-					{latest ? row(latest, true) : null}
-					{others.length ? (
-						<>
-							<Button variant="ghost" size="sm" onPress={() => setOlder((value) => !value)}>
-								<Text>
-									{t("sessionDetail.older")} ({others.length})
-								</Text>
-							</Button>
-							{older ? (
-								<AppScrollView style={{ maxHeight: 320 }}>
-									{others.map((share) => row(share, true))}
-									{pagination}
-								</AppScrollView>
+				<NativeList
+					data={[...(latest ? [latest] : []), ...(older ? others : [])]}
+					keyExtractor={sessionShareIdentity}
+					renderItem={({ item }) => row(item, true)}
+					refreshing={inventory.isRefetching || snapshots.isRefetching}
+					onRefresh={() => {
+						void inventory.refetch();
+						void snapshots.refetch();
+					}}
+					hasMore={older && inventory.hasNextPage}
+					loadingMore={inventory.isFetching}
+					onLoadMore={() => void inventory.fetchNextPage().catch(() => undefined)}
+					header={
+						<WebView recipe={dialogStyles.body}>
+							<WebText recipe={"text-sm text-muted-foreground"}>{copy.description}</WebText>
+							{errorPanel}
+							{inventory.isPending || snapshots.isPending ? skeleton : null}
+							{others.length ? (
+								<Button variant="ghost" size="sm" onPress={() => setOlder((value) => !value)}>
+									<Text>
+										{t("sessionDetail.older")} ({others.length})
+									</Text>
+								</Button>
 							) : null}
+						</WebView>
+					}
+					footer={
+						<>
+							{" "}
+							<WebView recipe={dialogStyles.linkActions}>
+								<ConfirmAction
+									title={copy.title}
+									description={copy.description}
+									confirmLabel={t("sessionDetail.create")}
+									onConfirm={() => action.runOrThrow(create)}
+								>
+									<Button
+										variant={latest ? "outline" : "default"}
+										disabled={
+											failure ||
+											inventory.isFetching ||
+											snapshots.isFetching ||
+											session.isFetching ||
+											!session.data?.has_content
+										}
+									>
+										<Icon as={Link2} />
+										<Text>
+											{t(matching.length ? "sessionDetail.createSnapshot" : "sessionDetail.create")}
+										</Text>
+									</Button>
+								</ConfirmAction>
+							</WebView>
 						</>
-					) : (
-						pagination
-					)}
-				</WebView>
-				<WebView recipe={dialogStyles.linkActions}>
-					<ConfirmAction
-						title={copy.title}
-						description={copy.description}
-						confirmLabel={t("sessionDetail.create")}
-						onConfirm={() => action.runOrThrow(create)}
-					>
-						<Button
-							variant={latest ? "outline" : "default"}
-							disabled={
-								failure ||
-								inventory.isFetching ||
-								snapshots.isFetching ||
-								session.isFetching ||
-								!session.data?.has_content
-							}
-						>
-							<Icon as={Link2} />
-							<Text>
-								{t(matching.length ? "sessionDetail.createSnapshot" : "sessionDetail.create")}
-							</Text>
-						</Button>
-					</ConfirmAction>
-				</WebView>
+					}
+				/>
 			</SheetPage>
 		);
 	}

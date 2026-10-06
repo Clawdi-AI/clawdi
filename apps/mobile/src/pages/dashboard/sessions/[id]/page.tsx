@@ -90,8 +90,8 @@ export default function SessionDetailRoute() {
 						<Stat icon={Hash} label={session.local_session_id.slice(0, 8)} />
 					</DetailMeta>
 				}
-				actions={<SessionShareActions sessionId={session.id} hasContent={session.has_content} />}
 			/>
+			<SessionShareActions sessionId={session.id} hasContent={session.has_content} />
 		</WebView>
 	);
 	return (
