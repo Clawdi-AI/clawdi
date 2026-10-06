@@ -44,6 +44,7 @@ import { Alert } from "../../ui/alert";
 import { ApiErrorPanel } from "../../ui/api-error-panel";
 import { Badge } from "../../ui/badge";
 import { Button } from "../../ui/button";
+import { Checkbox } from "../../ui/checkbox";
 import { ChoiceSelect } from "../../ui/detail/choice-select";
 import { DetailBackLink, LibraryPage } from "../../ui/detail/layout";
 import {
@@ -611,7 +612,10 @@ function VaultDetail({
 						onOpenChange={(v) => {
 							if (!action.busy) {
 								setAddOpen(v);
-								if (!v) setDraft("");
+								if (!v) {
+									setDraft("");
+									setReplace(false);
+								}
 							}
 						}}
 					>
@@ -666,7 +670,13 @@ function VaultDetail({
 								) : null}
 								{preview.conflicts.length > 0 && !preview.parsed.errors.length ? (
 									<WebView recipe={addKeysDialogClasses.conflicts} className="flex-row">
-										<Switch checked={replace} onCheckedChange={setReplace} disabled={action.busy} />
+										<Checkbox
+											checked={replace}
+											onCheckedChange={setReplace}
+											disabled={action.busy}
+											accessibilityLabel={formCopy.overwrite}
+											className={webView(addKeysDialogClasses.checkbox)}
+										/>
 										<WebView recipe={addKeysDialogClasses.newField} className="flex-1">
 											<Label className={webBoth(addKeysDialogClasses.label)}>
 												{formCopy.overwrite}
@@ -745,6 +755,7 @@ function VaultDetail({
 										onPress={() => {
 											setAddOpen(false);
 											setDraft("");
+											setReplace(false);
 										}}
 									>
 										<Text>{t("account.cancel")}</Text>
