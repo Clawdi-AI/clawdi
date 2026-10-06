@@ -22,9 +22,10 @@ export function headerWalletBalancePresentation(
 
 export function headerWalletBalanceControlPresentation(
 	state: "loading" | "ready" | "unavailable",
-	displayedBalance?: string | null,
+	formattedBalance?: string | null,
 	interactive = false,
 ) {
+	const displayedBalance = state === "ready" ? formattedBalance : null;
 	const statusLabel = displayedBalance
 		? `Wallet balance ${displayedBalance}`
 		: state === "loading"

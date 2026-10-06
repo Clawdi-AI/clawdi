@@ -1,16 +1,6 @@
 "use client";
 
-import { transferVaultKeys } from "@clawdi/shared/api";
-
-import { copyKeysDialogClasses } from "@clawdi/shared/ui";
-import {
-	errorMessage,
-	vaultKeyFormCopy as formCopy,
-	identityFor,
-	transferVaultKeysLabel,
-	transferVaultKeysTitle,
-	vaultMoveWarning,
-} from "@clawdi/shared/view";
+import { errorMessage, identityFor } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
@@ -47,6 +37,7 @@ type VaultSummary = components["schemas"]["VaultResponse"];
  * decrypt/re-encrypt server-side; "move" is copy + delete-at-source. */
 
 const NEW_VAULT = "__new__";
+const CHUNK = 150; // API caps fields per request at 200
 
 export function CopyKeysDialog({
 	vault,
@@ -70,6 +61,7 @@ export function CopyKeysDialog({
 	const [newVaultName, setNewVaultName] = useState("");
 
 	const attachedCount = vault.project_ids?.length ?? 0;
+	const verb = mode === "move" ? "Move" : "Copy";
 
 	const vaultsQuery = $api.useQuery(
 		"get",
@@ -95,7 +87,7 @@ export function CopyKeysDialog({
 				value: targetVault.id,
 				label: targetVault.name,
 			})),
-			{ value: NEW_VAULT, label: formCopy.createVault },
+			{ value: NEW_VAULT, label: "Create vault…" },
 		],
 		[targetVaults],
 	);
@@ -142,29 +134,62 @@ export function CopyKeysDialog({
 				);
 				targetVaultId = created.id;
 			}
-			if (!targetVaultId || targetVaultId === vault.id) throw new Error("Choose another vault");
-			const { copied, failed, sourceRemoveFailed } = await transferVaultKeys(keys, mode, {
-				copy: async (section, fields) =>
-					unwrap(
-						await api.POST("/v1/vault/{slug}/items/copy", {
-							params: {
-								path: { slug: vault.slug },
-								query: { vault_id: vault.id, target_vault_id: targetVaultId },
-							},
-							body: { target_slug: targetSlug, section, fields },
-						}),
-					),
-				remove: async (section, fields) =>
-					unwrap(
-						await api.DELETE("/v1/vault/{slug}/items", {
-							params: {
-								path: { slug: vault.slug },
-								query: { vault_id: vault.id, global_delete: true },
-							},
-							body: { section, fields },
-						}),
-					),
-			});
+			// Group by section — the copy endpoint works per section.
+			const bySection = new Map<string, string[]>();
+			for (const k of keys) {
+				const section = k.section === "(default)" ? "" : k.section;
+				const bucket = bySection.get(section);
+				if (bucket) bucket.push(k.name);
+				else bySection.set(section, [k.name]);
+			}
+			let copied = 0;
+			const failed: string[] = [];
+			const sourceRemoveFailed: string[] = [];
+			for (const [section, names] of bySection) {
+				for (let i = 0; i < names.length; i += CHUNK) {
+					const fields = names.slice(i, i + CHUNK);
+					let copiedInChunk = 0;
+					try {
+						const result = unwrap(
+							await api.POST("/v1/vault/{slug}/items/copy", {
+								params: {
+									path: { slug: vault.slug },
+									query: {
+										vault_id: vault.id,
+										target_vault_id: targetVaultId,
+									},
+								},
+								body: { target_slug: targetSlug, section, fields },
+							}),
+						);
+						copiedInChunk = result.copied;
+						copied += result.copied;
+					} catch {
+						failed.push(...fields);
+						continue;
+					}
+					if (mode === "move") {
+						try {
+							if (copiedInChunk > 0) {
+								await unwrap(
+									await api.DELETE("/v1/vault/{slug}/items", {
+										params: {
+											path: { slug: vault.slug },
+											query: {
+												vault_id: vault.id,
+												global_delete: true,
+											},
+										},
+										body: { section, fields },
+									}),
+								);
+							}
+						} catch {
+							sourceRemoveFailed.push(...fields);
+						}
+					}
+				}
+			}
 			if (copied === 0) {
 				throw new Error(
 					failed.length > 0 ? `Couldn't copy ${failed.join(", ")}` : "No keys copied",
@@ -173,6 +198,8 @@ export function CopyKeysDialog({
 			return { targetSlug, copied, failed, sourceRemoveFailed };
 		},
 		onSuccess: ({ targetSlug, copied, failed, sourceRemoveFailed }) => {
+			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
+			qc.invalidateQueries({ queryKey: ["vault-items"] });
 			const sourceCleanupFailed = sourceRemoveFailed.length > 0;
 			toast.success(
 				`${copied} ${copied === 1 ? "key" : "keys"} ${
@@ -181,23 +208,14 @@ export function CopyKeysDialog({
 				{
 					description:
 						`Now in vault://${targetSlug}.` +
-						(sourceCleanupFailed
-							? ` Source deletion skipped or unconfirmed: ${sourceRemoveFailed.join(", ")}.`
-							: "") +
-						(failed.length > 0
-							? ` Copy incomplete or unconfirmed: ${failed.join(", ")}. Check both vaults before retrying.`
-							: ""),
+						(sourceCleanupFailed ? ` Source not removed: ${sourceRemoveFailed.join(", ")}.` : "") +
+						(failed.length > 0 ? ` Failed: ${failed.join(", ")}.` : ""),
 				},
 			);
 			setOpen(false);
 			onDone?.();
 		},
 		onError: (e) => toast.error(`Couldn't ${mode} keys`, { description: errorMessage(e) }),
-		onSettled: () =>
-			Promise.all([
-				qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] }),
-				qc.invalidateQueries({ queryKey: ["vault-items"] }),
-			]),
 	});
 
 	useEffect(() => {
@@ -209,9 +227,11 @@ export function CopyKeysDialog({
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger render={children} />
-			<DialogContent className={copyKeysDialogClasses.dialog}>
+			<DialogContent className="sm:max-w-md">
 				<DialogHeader>
-					<DialogTitle>{transferVaultKeysTitle(mode, keys.length)}</DialogTitle>
+					<DialogTitle>
+						{verb} {keys.length} {keys.length === 1 ? "key" : "keys"} to…
+					</DialogTitle>
 					{/* Copy-vs-reference semantics must be explicit (Kingsley's
 					    review): a copied key is an independent secret — rotating
 					    one later does NOT update the other. When the user's real
@@ -219,12 +239,14 @@ export function CopyKeysDialog({
 					    (add this vault to that Project) is the right tool, so
 					    offer it right here. */}
 					<DialogDescription>
-						{mode === "move" ? formCopy.moveDescription : formCopy.copyDescription}
+						{mode === "move"
+							? "Values stay server-side; the originals are removed from this vault."
+							: "Each key becomes an independent copy — changing a value later updates only one vault, not both."}
 					</DialogDescription>
 				</DialogHeader>
-				<div className={copyKeysDialogClasses.body}>
-					<div className={copyKeysDialogClasses.destinationRow}>
-						<div className={copyKeysDialogClasses.field}>
+				<div className="space-y-4">
+					<div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+						<div className="space-y-1.5">
 							<Label htmlFor="copy-keys-target">Destination vault</Label>
 							<Select
 								items={targetVaultItems}
@@ -233,36 +255,38 @@ export function CopyKeysDialog({
 									if (value !== null) setTargetChoice(value);
 								}}
 							>
-								<SelectTrigger id="copy-keys-target" className={copyKeysDialogClasses.trigger}>
+								<SelectTrigger id="copy-keys-target" className="w-full">
 									<SelectValue placeholder="Choose a vault…" />
 								</SelectTrigger>
-								<SelectContent className={copyKeysDialogClasses.menu}>
+								<SelectContent className="max-h-80">
 									{targetVaults.map((v) => (
 										<SelectItem key={v.id} value={v.id}>
-											<span aria-hidden className={copyKeysDialogClasses.emoji}>
+											<span aria-hidden className="select-none">
 												{identityFor(v.name).emoji}
 											</span>
 											{v.name}
 										</SelectItem>
 									))}
 									<SelectItem value={NEW_VAULT}>
-										<Plus className={copyKeysDialogClasses.icon} />
-										{formCopy.createVault}
+										<Plus className="size-3.5" />
+										Create vault…
 									</SelectItem>
 								</SelectContent>
 							</Select>
 						</div>
 						{effectiveChoice === NEW_VAULT ? (
-							<div className={copyKeysDialogClasses.newField}>
+							<div className="space-y-1">
 								<Input
 									value={newVaultName}
 									onChange={(e) => setNewVaultName(e.target.value)}
-									placeholder={formCopy.newVaultPlaceholder}
+									placeholder="Vault name…"
 									aria-label="Vault name"
-									className={copyKeysDialogClasses.newInput}
+									className="sm:w-44"
 								/>
 								{newVaultSlugTaken ? (
-									<p className={copyKeysDialogClasses.newError}>{formCopy.newVaultTaken}</p>
+									<p className="max-w-44 text-xs text-destructive">
+										That vault already exists. Choose it from the list or use a different name.
+									</p>
 								) : null}
 							</div>
 						) : null}
@@ -277,24 +301,25 @@ export function CopyKeysDialog({
 						/>
 					) : null}
 					{mode === "move" && attachedCount > 1 ? (
-						<p className={copyKeysDialogClasses.warning}>
-							{vaultMoveWarning(vault.name, attachedCount)}
+						<p className="text-xs font-medium text-warning-muted-foreground">
+							{vault.name} is used by {attachedCount} Projects — moving these keys removes them from
+							all of those projects.
 						</p>
 					) : null}
 					{mode === "copy" ? (
-						<p className={copyKeysDialogClasses.hint}>
+						<p className="text-xs text-muted-foreground">
 							Just want these keys available in another project? Use{" "}
-							<span className={copyKeysDialogClasses.emphasis}>Link vault</span> on this vault
-							instead — one source of truth, changes apply everywhere.
+							<span className="font-medium text-foreground">Link vault</span> on this vault instead
+							— one source of truth, changes apply everywhere.
 						</p>
 					) : null}
 					<Button
-						className={copyKeysDialogClasses.trigger}
+						className="w-full"
 						disabled={run.isPending || !canRun}
 						onClick={() => run.mutate()}
 					>
-						{run.isPending ? <Spinner /> : <ArrowRight className={copyKeysDialogClasses.icon} />}
-						{transferVaultKeysLabel(mode, keys.length)}
+						{run.isPending ? <Spinner /> : <ArrowRight className="size-3.5" />}
+						{verb} {keys.length} {keys.length === 1 ? "key" : "keys"}
 					</Button>
 				</div>
 			</DialogContent>

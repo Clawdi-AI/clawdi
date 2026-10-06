@@ -19,7 +19,6 @@ import {
 	initialDeploymentCopy,
 	initialDeploymentPresentation,
 	RUNTIME_UI_WITHDRAWN_DESCRIPTION,
-	runtimeConsolePresentation,
 	shouldShowInitialDeploymentProgress,
 	stoppedAgentDescription,
 } from "@clawdi/shared/view";
@@ -1530,12 +1529,9 @@ export function ConsoleTab({
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const isRunning = isRunningStatus(status);
+	const isStarting = isStartingStatus(status);
+	const label = runtimeDisplayName(runtime);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
-	const view = runtimeConsolePresentation(
-		deployment,
-		deploymentTransitionTimedOut,
-		deploymentTransitionEscalated,
-	);
 	const ready = deploymentRuntimeUiIsReady(deployment);
 	const url = ready ? runtimeConsoleUrl(deployment, runtime) : null;
 	const runtimeEndpoint = deployment.runtime_ui_endpoint;
@@ -1563,8 +1559,24 @@ export function ConsoleTab({
 				icon={
 					deploymentTransitionTimedOut || deploymentTransitionEscalated ? AlertCircle : MonitorPlay
 				}
-				title={view.notRunningTitle}
-				description={view.notRunningDescription}
+				title={
+					deploymentTransitionEscalated
+						? "Your agent’s setup appears to be stuck"
+						: deploymentTransitionTimedOut
+							? "Your agent is taking longer than expected"
+							: isStarting
+								? startingTitle()
+								: "Agent is not running"
+				}
+				description={
+					deploymentTransitionEscalated
+						? "This change is still in progress. You can cancel it and try again."
+						: deploymentTransitionTimedOut
+							? "This change is still in progress. Check again now or keep waiting."
+							: isStarting
+								? `${browserUiLabel} will open here when ready.`
+								: `Start the agent to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+				}
 				action={
 					deploymentTransitionTimedOut || deploymentTransitionEscalated ? (
 						<div className="flex flex-wrap justify-center gap-2">
@@ -1599,7 +1611,7 @@ export function ConsoleTab({
 		return (
 			<EmptyState
 				icon={MonitorPlay}
-				title={view.withdrawnTitle}
+				title={`${browserUiLabel} is unavailable`}
 				description={RUNTIME_UI_WITHDRAWN_DESCRIPTION}
 				action={
 					<div className="flex flex-wrap justify-center gap-2">
@@ -1632,8 +1644,8 @@ export function ConsoleTab({
 		return (
 			<EmptyState
 				icon={MonitorPlay}
-				title={view.pendingTitle}
-				description={view.pendingDescription}
+				title={`${browserUiLabel} isn’t ready yet`}
+				description={`Your agent is running. Check again in a moment, or use Terminal now while ${label} starts its browser interface.`}
 				action={
 					<div className="flex flex-wrap justify-center gap-2">
 						<Button

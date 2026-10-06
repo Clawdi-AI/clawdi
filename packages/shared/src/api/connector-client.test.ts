@@ -2,12 +2,13 @@ import { expect, test } from "bun:test";
 import { createConnectorClient } from "./connector-client";
 import { filterConnectorTools } from "./connector-state";
 
-test("tool search matches identifiers, names and descriptions literally without mutating order", () => {
+test("tool search matches Web's visible names and descriptions literally without mutating order", () => {
 	const tools = [
 		{ name: "files.list[v2]", display_name: "List files", description: "Read shared documents" },
 		{ name: "users.get", display_name: "Find user", description: "Read account profile" },
 	];
-	expect(filterConnectorTools(tools, "  FILES.LIST[V2] ")).toEqual([tools[0]]);
+	expect(filterConnectorTools(tools, "  FILES.LIST[V2] ")).toEqual([]);
+	expect(filterConnectorTools(tools, " LIST FILES ")).toEqual([tools[0]]);
 	expect(filterConnectorTools(tools, "find USER")).toEqual([tools[1]]);
 	expect(filterConnectorTools(tools, "shared documents")).toEqual([tools[0]]);
 	expect(filterConnectorTools(tools, ".*")).toEqual([]);

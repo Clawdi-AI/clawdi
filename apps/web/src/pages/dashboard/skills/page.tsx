@@ -1,7 +1,5 @@
 "use client";
 
-import { parseProjectSkillGitHubInput } from "@clawdi/shared/api";
-
 import { detailLayoutClasses, skillsPageClasses } from "@clawdi/shared/ui";
 import {
 	canManageCustomProject,
@@ -504,11 +502,19 @@ function ImportSkillDialog({
 	const [source, setSource] = useState("");
 	const importSkill = useMutation({
 		mutationFn: async () => {
-			const body = parseProjectSkillGitHubInput(source);
+			const clean = source
+				.trim()
+				.replace(/^https?:\/\/github\.com\//, "")
+				.replace(/\/$/, "");
+			const parts = clean.split("/").filter(Boolean);
+			if (parts.length < 2) throw new Error("Enter owner/repository or a GitHub skill path");
 			return unwrap(
 				await api.POST("/v1/projects/{project_id}/skills/install", {
 					params: { path: { project_id: project.id } },
-					body,
+					body: {
+						repo: `${parts[0]}/${parts[1]}`,
+						path: parts.length > 2 ? parts.slice(2).join("/") : undefined,
+					},
 				}),
 			);
 		},

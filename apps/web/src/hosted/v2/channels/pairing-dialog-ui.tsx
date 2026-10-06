@@ -1,9 +1,9 @@
 "use client";
 
-import { pairingQr } from "@clawdi/shared/qr";
 import { channelFormClasses as formStyles } from "@clawdi/shared/ui";
 import { Check, Copy } from "lucide-react";
-import { type ComponentProps, type ReactNode, useMemo } from "react";
+import { QRCodeSVG } from "qrcode.react";
+import type { ComponentProps, ReactNode } from "react";
 import {
 	DialogContent,
 	DialogDescription,
@@ -88,23 +88,16 @@ export function PairingNotice({ title, children }: { title: string; children: Re
 }
 
 export function PairingQrCode({ value, label }: { value: string; label: string }) {
-	const qr = useMemo(() => pairingQr(value), [value]);
-	if (!qr) return <p role="alert">QR code unavailable. Request a new code.</p>;
 	return (
 		<div data-pairing-qr-container className="flex justify-center">
 			<div className="max-w-full rounded-md border bg-white p-3 shadow-sm">
-				<svg
-					viewBox={`0 0 ${qr.size} ${qr.size}`}
-					width={192}
-					height={192}
-					shapeRendering="crispEdges"
+				<QRCodeSVG
+					value={value}
+					size={192}
 					className="h-auto w-full max-w-44 sm:max-w-48"
 					role="img"
 					aria-label={label}
-				>
-					<rect width={qr.size} height={qr.size} fill="white" />
-					<path d={qr.path} fill="black" />
-				</svg>
+				/>
 			</div>
 		</div>
 	);

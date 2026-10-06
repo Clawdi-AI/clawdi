@@ -15,22 +15,13 @@ export type DeploymentMutation =
 	| { action: "start" | "stop" | "restart" | "reset_runtime_ui_access" }
 	| { action: "update"; body: DeploymentUpdate }
 	| { action: "delete"; body: DeployComponents["schemas"]["V2DeleteDeploymentRequest"] };
+/** Web's cancel eligibility: any in-flight operation except backend-managed image cohorts. */
 export function canCancelDeploymentOperation(
 	operation: DeployComponents["schemas"]["LongRunningOperation"] | null | undefined,
 ): boolean {
-	return Boolean(
-		operation?.done === false &&
-			[
-				"create",
-				"plan_change",
-				"start",
-				"stop",
-				"restart",
-				"update",
-				"rename",
-				"delete",
-				"reset_runtime_ui_access",
-			].includes(operation.metadata?.verb),
+	if (!operation || operation.done) return false;
+	return (
+		operation.metadata.verb !== "migrate_image" && operation.metadata.verb !== "rollback_image"
 	);
 }
 

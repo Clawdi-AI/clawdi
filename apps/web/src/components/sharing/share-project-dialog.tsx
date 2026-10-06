@@ -1,6 +1,5 @@
 "use client";
 
-import { linkIsExpired } from "@clawdi/shared/api";
 import { buildShareAgentHandoffPrompt } from "@clawdi/shared/sharing";
 import { shareProjectClasses } from "@clawdi/shared/ui";
 import {
@@ -365,7 +364,9 @@ function FreshLinkBanner({ link, onDismiss }: { link: ShareLinkCreated; onDismis
 	);
 }
 
-const isExpiredLink = linkIsExpired;
+function isExpiredLink(link: ShareLinkRow) {
+	return link.expires_at !== null && new Date(link.expires_at).getTime() <= Date.now();
+}
 
 function LinkRow({
 	link,

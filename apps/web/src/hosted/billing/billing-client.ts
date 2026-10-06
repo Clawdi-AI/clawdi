@@ -6,8 +6,6 @@ import {
 	type DeployPaths,
 	extractApiDetail,
 	projectHostedDeployRequest,
-	providerRemovalHeaders,
-	strongDeploymentEtag,
 	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
@@ -228,11 +226,17 @@ export function acceptDeclarativeOperation<T extends DeploymentOperation | null>
 }
 
 function strongResourceEtag(resourceVersion: string): string {
-	try {
-		return strongDeploymentEtag(resourceVersion);
-	} catch {
+	const valid =
+		resourceVersion.length > 0 &&
+		resourceVersion.length <= 128 &&
+		Array.from(resourceVersion).every((character) => {
+			const code = character.charCodeAt(0);
+			return code >= 0x21 && code <= 0x7e && character !== '"' && character !== "\\";
+		});
+	if (!valid) {
 		throw new BillingApiError(502, "The agent service returned an invalid resource version.");
 	}
+	return `"${resourceVersion}"`;
 }
 
 function isPreconditionConflict(error: unknown): error is BillingApiError {
@@ -829,11 +833,11 @@ export function createBillingClient(
 				await api.DELETE("/v2/ai-providers/{provider_id}", {
 					params: {
 						path: { provider_id: providerId },
-						header: providerRemovalHeaders(
-							impactRevision,
-							providerIncarnationToken,
-							idempotencyKey,
-						),
+						header: {
+							"Idempotency-Key": idempotencyKey,
+							"Impact-Revision": impactRevision,
+							"Provider-Incarnation": providerIncarnationToken,
+						},
 					},
 				}),
 			),

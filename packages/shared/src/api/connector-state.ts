@@ -2,17 +2,15 @@ import type { components } from "./api.generated";
 
 type SearchableTool = Pick<
 	components["schemas"]["ConnectorToolResponse"],
-	"name" | "display_name" | "description"
+	"display_name" | "description"
 >;
 
-/** Literal substring search: provider identifiers may contain regex/search punctuation. */
+/** Web's connector tool search: literal, case-insensitive match on the visible name or description. */
 export function filterConnectorTools<T extends SearchableTool>(tools: T[], search: string): T[] {
-	const query = search.trim().toLowerCase();
-	if (!query) return tools;
-	return tools.filter((tool) =>
-		[tool.name, tool.display_name, tool.description].some((value) =>
-			value?.toLowerCase().includes(query),
-		),
+	if (!search.trim()) return tools;
+	const q = search.trim().toLowerCase();
+	return tools.filter(
+		(t) => t.display_name?.toLowerCase().includes(q) || t.description?.toLowerCase().includes(q),
 	);
 }
 

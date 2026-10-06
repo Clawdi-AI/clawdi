@@ -1,6 +1,6 @@
 "use client";
 
-import { buildSkillUpdateRequest, stripFrontmatter } from "@clawdi/shared/api";
+import { stripFrontmatter } from "@clawdi/shared/api";
 import { detailLayoutClasses, skillDetailClasses } from "@clawdi/shared/ui";
 import { skillDraftUnchanged, skillFormCopy, skillRemovalTitle } from "@clawdi/shared/view";
 
@@ -321,14 +321,12 @@ export function SkillDetailContent({
 			return unwrap(
 				await api.PUT("/v1/projects/{project_id}/skills/{skill_key}/content", {
 					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
-					body: buildSkillUpdateRequest(
-						{
-							name: draftName,
-							description: draftDescription,
-							instructions: draftInstructions,
-						},
-						editingHash,
-					),
+					body: {
+						name: draftName,
+						description: draftDescription,
+						instructions: draftInstructions.trim(),
+						content_hash: editingHash,
+					},
 				}),
 			);
 		},

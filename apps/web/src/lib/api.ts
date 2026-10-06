@@ -1,11 +1,6 @@
 "use client";
 
-import {
-	buildSkillArchiveForm,
-	type components,
-	extractApiDetail,
-	type paths,
-} from "@clawdi/shared/api";
+import { type components, extractApiDetail, type paths } from "@clawdi/shared/api";
 import createClient from "openapi-fetch";
 import createQueryClient from "openapi-react-query";
 import { useCallback, useMemo } from "react";
@@ -203,7 +198,11 @@ export function useSkillArchiveUploader() {
 			archive: Blob,
 			options?: { createOnly?: boolean },
 		): Promise<SkillUploadResponse> => {
-			const form = buildSkillArchiveForm(skillKey, archive, options?.createOnly);
+			const fileName = `${skillKey.replace(/\//g, "-")}.tar.gz`;
+			const form = new FormData();
+			form.append("skill_key", skillKey);
+			form.append("file", archive, fileName);
+			if (options?.createOnly) form.append("create_only", "true");
 
 			const headers = new Headers();
 			const token = await getToken();

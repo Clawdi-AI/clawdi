@@ -367,10 +367,7 @@ export function ApiKeysPanel() {
 				<AlertDialogContent>
 					<AlertDialogHeader>
 						<AlertDialogTitle>
-							{settingsCopy.revokeTitle.replace(
-								"{label}",
-								renderedRevokeTarget?.label ?? "API key",
-							)}
+							Revoke “{renderedRevokeTarget?.label ?? "API key"}”?
 						</AlertDialogTitle>
 						<AlertDialogDescription>{settingsCopy.revokeDescription}</AlertDialogDescription>
 					</AlertDialogHeader>

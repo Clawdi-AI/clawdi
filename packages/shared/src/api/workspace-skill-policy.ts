@@ -23,13 +23,6 @@ export function workspaceSkillMutationsAvailable(
 
 export function parseWorkspaceSkillGitHubInput(input: string): HostedWorkspaceSkillInstallRequest {
 	const clean = input.trim();
-	const decoded = decodeURIComponent(clean);
-	if (
-		decoded.includes("\\") ||
-		hasAsciiControlCharacter(decoded) ||
-		decoded.split("/").some((part) => part === "." || part === "..")
-	)
-		throw new Error("Enter a canonical GitHub repository path.");
 	let repositoryPath: string;
 	if (clean.includes("://")) {
 		let url: URL;

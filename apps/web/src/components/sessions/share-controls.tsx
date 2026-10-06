@@ -1,7 +1,6 @@
 "use client";
 
 import {
-	buildSessionShareRequest,
 	type components,
 	type SessionShareTarget,
 	sessionShareMatchesTarget,
@@ -123,7 +122,7 @@ function SessionShareDialogContent({
 			unwrap(
 				await api.POST("/v1/sessions/{session_id}/shares", {
 					params: { path: { session_id: sessionId } },
-					body: buildSessionShareRequest(target),
+					body: target,
 				}),
 			),
 		onSuccess: (share) => {

@@ -1,4 +1,4 @@
-/** Web auth chrome and Clerk's shadcn element overrides. */
+/** Web auth chrome; `cardBox`/`input` style the mobile auth frame like Clerk's shadcn card. */
 export const authPageClasses = {
 	main: "flex min-h-dvh items-center justify-center",
 	cardBox: "shadow-sm border",

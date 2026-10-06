@@ -1,4 +1,3 @@
-import { authPageClasses } from "@clawdi/shared/ui";
 import { ClerkProvider } from "@clerk/tanstack-react-start";
 import { shadcn } from "@clerk/themes";
 import { useRouter } from "@tanstack/react-router";
@@ -29,14 +28,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	return (
 		<ClerkProvider
 			nonce={nonce}
-			appearance={{
-				...shadcn,
-				elements: {
-					...shadcn.elements,
-					cardBox: authPageClasses.cardBox,
-					input: authPageClasses.input,
-				},
-			}}
+			appearance={shadcn}
 			publishableKey={env.VITE_CLERK_PUBLISHABLE_KEY}
 			signInFallbackRedirectUrl="/"
 			signInUrl="/sign-in"

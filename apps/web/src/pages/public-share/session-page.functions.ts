@@ -1,10 +1,12 @@
-import { ApiClientError, type components, createPublicSessionClient } from "@clawdi/shared/api";
+import type { components, paths } from "@clawdi/shared/api";
 import { auth } from "@clerk/tanstack-react-start/server";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest, setResponseHeader } from "@tanstack/react-start/server";
+import createClient from "openapi-fetch";
 import { z } from "zod";
 import { env } from "@/lib/env";
 
+const PAGE_SIZE = 100;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type PublicMessagesPage = components["schemas"]["SessionMessagesPage"];
@@ -35,43 +37,74 @@ export const getPublicShareData = createServerFn({ method: "GET" })
 			token = await getToken();
 		}
 
-		const client = createPublicSessionClient({
+		const api = createClient<paths>({
 			baseUrl: env.VITE_CLAWDI_API_URL,
-			fetch: (request, init) => fetch(request, init),
-			...(token ? { getToken: async () => token } : {}),
+			headers: token ? { Authorization: `Bearer ${token}` } : undefined,
 		});
-		try {
-			const view = await client.resolve(data.shareId, signal);
-			const messagesPage = await client.messages(data.shareId, view.source, 0, signal);
-			if (view.source === "snapshot")
-				return {
-					kind: "ok",
-					share: { ...view.detail, source: "share" },
-					messagesPage,
-				};
-			const legacy = view.detail;
+		const frozen = await api.GET("/v1/public/session-shares/{share_id}", {
+			params: { path: { share_id: data.shareId } },
+			cache: "no-store",
+			signal,
+		});
+		if (frozen.response.status === 410) return { kind: "expired" };
+		if (frozen.error === undefined) {
+			const messages = await api.GET("/v1/public/session-shares/{share_id}/messages", {
+				params: {
+					path: { share_id: data.shareId },
+					query: { offset: 0, limit: PAGE_SIZE },
+				},
+				cache: "no-store",
+				signal,
+			});
+			if (messages.response.status === 410) return { kind: "expired" };
+			if (messages.error !== undefined) {
+				throw new Error(`backend returned ${messages.response.status}`);
+			}
 			return {
 				kind: "ok",
-				share: {
-					id: legacy.id,
-					title: legacy.summary || `Shared session ${legacy.id.slice(0, 8)}`,
-					agent_type: legacy.agent_type,
-					model: legacy.model,
-					started_at: legacy.started_at,
-					created_at: legacy.started_at,
-					message_count: legacy.message_count,
-					scope: "session",
-					source: "legacy",
-				},
-				messagesPage,
+				share: { ...frozen.data, source: "share" },
+				messagesPage: messages.data,
 			};
-		} catch (error) {
-			if (error instanceof ApiClientError) {
-				if (error.status === 401) return { kind: "unauthorized" };
-				if (error.status === 403) return { kind: "forbidden" };
-				if (error.status === 404) return { kind: "not-found" };
-				if (error.status === 410) return { kind: "expired" };
-			}
-			throw error;
 		}
+		if (frozen.response.status !== 404) {
+			throw new Error(`backend returned ${frozen.response.status}`);
+		}
+
+		// Compatibility: links created before frozen shares used the Session UUID.
+		const legacy = await api.GET("/v1/public/sessions/{session_id}", {
+			params: { path: { session_id: data.shareId } },
+			cache: "no-store",
+			signal,
+		});
+		if (legacy.response.status === 404) return { kind: "not-found" };
+		if (legacy.response.status === 401) return { kind: "unauthorized" };
+		if (legacy.response.status === 403) return { kind: "forbidden" };
+		if (legacy.error !== undefined) throw new Error(`backend returned ${legacy.response.status}`);
+
+		const messages = await api.GET("/v1/public/sessions/{session_id}/messages", {
+			params: {
+				path: { session_id: data.shareId },
+				query: { offset: 0, limit: PAGE_SIZE, direction: "asc" },
+			},
+			cache: "no-store",
+			signal,
+		});
+		if (messages.error !== undefined) {
+			throw new Error(`backend returned ${messages.response.status}`);
+		}
+		return {
+			kind: "ok",
+			share: {
+				id: legacy.data.id,
+				title: legacy.data.summary || `Shared session ${legacy.data.id.slice(0, 8)}`,
+				agent_type: legacy.data.agent_type,
+				model: legacy.data.model,
+				started_at: legacy.data.started_at,
+				created_at: legacy.data.started_at,
+				message_count: legacy.data.message_count,
+				scope: "session",
+				source: "legacy",
+			},
+			messagesPage: messages.data,
+		};
 	});

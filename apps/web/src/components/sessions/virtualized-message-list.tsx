@@ -46,7 +46,6 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 	const activeLatestScrollRef = useRef<{
 		requestId: number;
 		reachedBottom: boolean;
-		completed: boolean;
 		windowKey: string | null;
 	} | null>(null);
 	const [readyWindowKey, setReadyWindowKey] = useState<string | null>(null);
@@ -82,12 +81,6 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 	const windowKey = scrollParent
 		? `${scrollParent === window ? "window" : "container"}:${props.windowStartOffset}`
 		: null;
-	useEffect(
-		() => () => {
-			activeLatestScrollRef.current = null;
-		},
-		[windowKey, scrollParent],
-	);
 	const scrollToHighlight = useCallback(() => {
 		const requestKey = props.highlightScrollRequestKey;
 		if (!requestKey) {
@@ -160,34 +153,13 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 			return;
 		}
 		issuedLatestScrollRequestRef.current = requestId;
-		const request = {
+		activeLatestScrollRef.current = {
 			requestId,
-			// An already-bottom window will not emit another atBottomStateChange.
-			reachedBottom: atBottomWindowKey === windowKey,
-			completed: false,
+			reachedBottom: false,
 			windowKey,
 		};
-		activeLatestScrollRef.current = request;
-		virtuoso.scrollIntoView({
-			index: rows.length - 1,
-			align: "end",
-			behavior: "auto",
-			done: () => {
-				if (activeLatestScrollRef.current !== request) return;
-				request.completed = true;
-				// The last row's edge excludes surrounding page padding. Align the
-				// page only after Virtuoso finishes its own measurement/scroll work.
-				scrollParent.scrollTo({
-					top:
-						scrollParent instanceof HTMLElement
-							? scrollParent.scrollHeight
-							: document.documentElement.scrollHeight,
-					behavior: "auto",
-				});
-			},
-		});
+		virtuoso.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" });
 	}, [
-		atBottomWindowKey,
 		props.latestScrollRequestId,
 		props.windowStartOffset,
 		readyWindowKey,
@@ -206,8 +178,7 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 				activeRequest.windowKey === windowKey
 			) {
 				if (atBottom) activeRequest.reachedBottom = true;
-				else if (activeRequest.reachedBottom && activeRequest.completed)
-					activeLatestScrollRef.current = null;
+				else if (activeRequest.reachedBottom) activeLatestScrollRef.current = null;
 			}
 			setAtBottomWindowKey(atBottom ? windowKey : null);
 			props.onAtBottomChange?.(atBottom);

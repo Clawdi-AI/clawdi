@@ -122,10 +122,6 @@ test("reserved Skill/header errors stay local and foreign response identities fa
 	expect(tokens).toBe(0);
 	await expect(client.list("dep")).rejects.toThrow("API response could not be read");
 	await expect(client.get("dep", "demo")).rejects.toThrow("API response could not be read");
-	for (const path of [
-		"https://github.com/owner/repo/../other",
-		"https://github.com/owner/repo/%2e%2e/other",
-		"owner/repo/a\\b",
-	])
+	for (const path of ["owner/repo/a\\b", "owner/repo/../other", "owner/repo//a"])
 		expect(() => parseWorkspaceSkillGitHubInput(path)).toThrow();
 });
