@@ -52,12 +52,13 @@ import { type SyncReadContext, scanSessionModule } from "../adapters/base";
 import { profileSessionKey } from "../adapters/profiles";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { canonicalApiOrigin } from "../lib/api-origin";
-import { getAuth } from "../lib/config";
+import { getAuth, getConfig } from "../lib/config";
 import {
 	bindEnvironmentRegistrationUser,
 	readEnvironmentRegistration,
 } from "../lib/environment-registration";
 import { createProfileSync } from "../lib/profile-sessions";
+import { normalizeProject } from "../lib/project-path";
 import { computeLastActivityIso } from "../lib/session-activity";
 import {
 	negotiateSessionProtocol,
@@ -283,6 +284,7 @@ export class SyncHealth {
 interface StableSessionEnqueueOptions {
 	abort: AbortSignal;
 	sessions: readonly RawSession[];
+	excluded: ReadonlySet<string>;
 	queue: Pick<RetryQueue, "enqueueWhenAvailable">;
 	lastPushedHash: ReadonlyMap<string, string>;
 	inFlightHash: Map<string, string>;
@@ -304,6 +306,7 @@ export async function enqueueChangedSessionsAfterStability(
 	let enqueued = 0;
 	for (const session of opts.sessions) {
 		if (opts.abort.aborted) return { enqueued, confirmedSourceRevisions };
+		if (session.projectPath && opts.excluded.has(normalizeProject(session.projectPath))) continue;
 		const plan = await prepareSessionUpload(session, opts.protocol);
 		const hash = plan.localHash;
 		const fence = opts.fenceFor(session);
@@ -1127,6 +1130,7 @@ async function prepareSessionSync(
 	const executeScan = async (request: SessionScanRequest): Promise<void> => {
 		if (opts.abort.aborted) return;
 		try {
+			const excluded = new Set(getConfig().excludeProjects ?? []);
 			lastPushedSessionHash.clear();
 			for (const [key, hash] of loadFencedSessionHashes(api, opts)) {
 				lastPushedSessionHash.set(key, hash);
@@ -1154,6 +1158,7 @@ async function prepareSessionSync(
 				const result = await enqueueChangedSessionsAfterStability({
 					abort: opts.abort,
 					sessions: batch.sessions,
+					excluded,
 					queue,
 					lastPushedHash: lastPushedSessionHash,
 					inFlightHash: inFlightSessionHash,

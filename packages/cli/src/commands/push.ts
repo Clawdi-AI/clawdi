@@ -1,5 +1,3 @@
-import { homedir } from "node:os";
-import { resolve as resolvePath } from "node:path";
 import chalk from "chalk";
 import {
 	type AgentAdapter,
@@ -10,9 +8,11 @@ import {
 import { profileSessionKey } from "../adapters/profiles";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
+import { getConfig } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { createProfileSync } from "../lib/profile-sessions";
 import { progress as p } from "../lib/progress";
+import { normalizeProject } from "../lib/project-path";
 import { parseModules } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import {
@@ -465,7 +465,7 @@ async function scanOneAgent(
 	let sessionProtocol: SelectedSessionProtocol | null = null;
 	const sessionApi = new ApiClient({ requireAuth: !opts.dryRun });
 	const excludeSet = new Set<string>(
-		(opts.excludeProject ?? []).map((path) => normalizeProject(path)),
+		[...(getConfig().excludeProjects ?? []), ...(opts.excludeProject ?? [])].map(normalizeProject),
 	);
 
 	if (agentType === "hermes" && modules.includes("sessions") && projectFilter !== undefined) {
@@ -534,7 +534,7 @@ async function scanOneAgent(
 		}
 	}
 
-	// Apply --exclude-project after scan. Exact-equality match on normalized
+	// Apply persisted exclusions and --exclude-project after scan. Exact-equality match on normalized
 	// absolute paths — `~/work` does NOT exclude `~/work/foo` (users say what
 	// they mean; prefix-match would silently drop sibling repos).
 	if (excludeSet.size > 0 && sessions.length > 0) {
@@ -992,14 +992,4 @@ async function uploadOneAgent(
 		moduleState.skills = { lastActivityAt: new Date().toISOString() };
 	}
 	return "complete";
-}
-
-function normalizeProject(input: string): string {
-	// Expand `~` ourselves — `path.resolve` doesn't do tilde expansion, so a
-	// shell-less caller (e.g. an agent invoking the CLI directly) that passes
-	// `~/scratch` would otherwise get `<cwd>/~/scratch`, which never matches.
-	let expanded = input;
-	if (expanded === "~") expanded = homedir();
-	else if (expanded.startsWith("~/")) expanded = `${homedir()}${expanded.slice(1)}`;
-	return resolvePath(expanded);
 }
