@@ -432,6 +432,18 @@ test("Console actions remain reachable on narrow screens", async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
 	await expectNoHorizontalOverflow(page.locator("html"), "390px Console document");
 
+	await connectAgent.click();
+	const dialog = page.getByRole("dialog", { name: "Add an agent" });
+	await expect(dialog.getByRole("tab", { name: "Ask your agent", exact: true })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
+	await expect(dialog.getByRole("tabpanel")).toContainText("/skill.md");
+	await dialog.getByRole("tab", { name: "Run commands", exact: true }).click();
+	await expect(dialog.getByRole("tabpanel")).toContainText("clawdi setup");
+	await page.keyboard.press("Escape");
+	await expect(dialog).not.toBeVisible();
+
 	const connectors = main.getByRole("link", { name: /^Connectors/ });
 	await connectors.focus();
 	await page.keyboard.press("Tab");
