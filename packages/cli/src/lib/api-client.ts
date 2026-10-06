@@ -23,7 +23,7 @@ type SessionEventChunkResponse = components["schemas"]["SessionEventChunkRespons
 type SessionEventCommitRequest = components["schemas"]["SessionEventCommitRequest"];
 type SessionEventAppendResponse = components["schemas"]["SessionEventAppendResponse"];
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+export const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [100, 400, 1600] as const;
 const USER_AGENT = `clawdi-cli/${getCliVersion()}`;
@@ -129,6 +129,7 @@ export async function retryingFetch(
 	req: Request,
 	timeoutMs: number,
 	externalSignal: AbortSignal | undefined,
+	stream = false,
 ): Promise<Response> {
 	const retry = IDEMPOTENT_METHODS.has(req.method);
 	const maxAttempts = retry ? MAX_RETRIES : 1;
@@ -182,11 +183,6 @@ export async function retryingFetch(
 		// Combine per-request timeout with the external (daemon)
 		// abort signal. Either firing cancels the in-flight fetch.
 		const controller = new AbortController();
-		const onExternalAbort = () => controller.abort();
-		if (externalSignal) {
-			if (externalSignal.aborted) controller.abort();
-			else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
-		}
 		let timedOut = false;
 		const timer = setTimeout(() => {
 			timedOut = true;
@@ -195,20 +191,25 @@ export async function retryingFetch(
 
 		let buffered: Response;
 		try {
-			const res = await fetch(base.clone(), { signal: controller.signal });
-			// Own the complete REST response lifecycle here. Returning the
-			// network-backed Response would detach the timeout and caller abort
-			// before openapi-fetch (or a hand-written caller) consumes the body.
-			// Buffering keeps cancellation effective through JSON, text, and
-			// binary bodies, including error responses that are retried below.
-			const body = await res.arrayBuffer();
-			const hasNullBody =
-				base.method === "HEAD" || res.status === 204 || res.status === 205 || res.status === 304;
-			buffered = new Response(hasNullBody ? null : body, {
-				status: res.status,
-				statusText: res.statusText,
-				headers: res.headers,
-			});
+			const signal = externalSignal
+				? AbortSignal.any([controller.signal, externalSignal])
+				: controller.signal;
+			const res = await fetch(base.clone(), { signal });
+			// Ordinary REST calls keep their deadline through body consumption.
+			// Streaming callers own body bounds and deadlines; the combined
+			// signal keeps caller cancellation attached after headers arrive.
+			if (stream) {
+				buffered = res;
+			} else {
+				const body = await res.arrayBuffer();
+				const hasNullBody =
+					base.method === "HEAD" || res.status === 204 || res.status === 205 || res.status === 304;
+				buffered = new Response(hasNullBody ? null : body, {
+					status: res.status,
+					statusText: res.statusText,
+					headers: res.headers,
+				});
+			}
 		} catch (e: unknown) {
 			if (externalSignal?.aborted) {
 				throw new ApiError({
@@ -231,12 +232,12 @@ export async function retryingFetch(
 			throw lastErr;
 		} finally {
 			clearTimeout(timer);
-			if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
 		}
 
 		if (buffered.ok) return buffered;
 
 		if (buffered.status === 429 && retry && attempt < maxAttempts - 1) {
+			if (stream) await buffered.body?.cancel();
 			const retryAfterMs = parseRetryAfter(buffered.headers.get("retry-after"), {
 				maxMs: MAX_SAFE_RETRY_AFTER_MS,
 			});
@@ -255,7 +256,10 @@ export async function retryingFetch(
 			continue;
 		}
 
-		if (buffered.status >= 500 && retry && attempt < maxAttempts - 1) continue;
+		if (buffered.status >= 500 && retry && attempt < maxAttempts - 1) {
+			if (stream) await buffered.body?.cancel();
+			continue;
+		}
 
 		return buffered;
 	}
@@ -366,7 +370,7 @@ export class ApiClient {
 	}
 
 	/** Send an untyped API request through the same auth and timeout pipeline. */
-	async request(path: string, init: RequestInit = {}): Promise<Response> {
+	private async buildRequest(path: string, init: RequestInit): Promise<Request> {
 		const url = new URL(path, this.baseUrl);
 		if (url.origin !== new URL(this.baseUrl).origin) {
 			throw new ApiError({
@@ -381,10 +385,24 @@ export class ApiClient {
 		if (this.machineId) headers.set(MACHINE_ID_HEADER, this.machineId);
 		headers.set(SKILL_SYNC_PROTOCOL_HEADER, SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1);
 		if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", randomUUID());
+		return new Request(url, { ...init, headers });
+	}
+
+	async request(path: string, init: RequestInit = {}): Promise<Response> {
+		return retryingFetch(await this.buildRequest(path, init), DEFAULT_TIMEOUT_MS, this.abortSignal);
+	}
+
+	/** Return an unbuffered response. Retries and the default timeout cover
+	 * connection/headers only; callers must bound and cancel body consumption. */
+	async requestStream(path: string, init: RequestInit = {}): Promise<Response> {
+		const signals = [this.abortSignal, init.signal].filter(
+			(signal): signal is AbortSignal => signal != null,
+		);
 		return retryingFetch(
-			new Request(url, { ...init, headers }),
+			await this.buildRequest(path, init),
 			DEFAULT_TIMEOUT_MS,
-			this.abortSignal,
+			signals.length ? AbortSignal.any(signals) : undefined,
+			true,
 		);
 	}
 

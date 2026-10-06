@@ -57,62 +57,66 @@ class ChannelMessageRetentionWorker:
         stop_event = stop or asyncio.Event()
         current_time = datetime.now(UTC)
         processed_total = 0
-        async with self._sessionmaker() as db:
-            replay_deletions = await prune_platform_workload_assertion_replays(
-                db,
-                now=current_time,
-                limit=self._batch_size,
-            )
-            await db.commit()
-        processed_total += replay_deletions
-        if replay_deletions:
-            log.info("platform workload replay retention completed: deleted=%s", replay_deletions)
-        async with self._sessionmaker() as db:
-            idempotency_deletions = await prune_platform_mutation_idempotency(
-                db,
-                now=current_time,
-                limit=self._batch_size,
-            )
-            await db.commit()
-        processed_total += idempotency_deletions
-        if idempotency_deletions:
-            log.info(
-                "platform mutation idempotency retention completed: deleted=%s",
-                idempotency_deletions,
-            )
+        for phase, prune in (
+            ("platform workload replay", prune_platform_workload_assertion_replays),
+            ("platform mutation idempotency", prune_platform_mutation_idempotency),
+        ):
+            phase_total = 0
+            try:
+                for batch_index in range(self._max_batches):
+                    if stop_event.is_set():
+                        break
+                    async with self._sessionmaker() as db:
+                        deleted = await prune(db, now=current_time, limit=self._batch_size)
+                        await db.commit()
+                    phase_total += deleted
+                    processed_total += deleted
+                    if deleted < self._batch_size:
+                        break
+                    if batch_index + 1 < self._max_batches:
+                        await asyncio.sleep(0.01)
+                    else:
+                        log.warning("%s retention batch budget exhausted", phase)
+            except Exception:  # noqa: BLE001 - each retention phase must run independently.
+                log.exception("%s retention failed", phase)
+            if phase_total:
+                log.info("%s retention completed: deleted=%s", phase, phase_total)
         last_saturated: tuple[str, ...] = ()
         batches = 0
-        while batches < self._max_batches and not stop_event.is_set():
-            async with self._sessionmaker() as db:
-                batch = await prune_channel_retention_batch(
-                    db,
-                    now=current_time,
-                    limit=self._batch_size,
-                )
-                await db.commit()
-            batches += 1
-            processed_total += batch.total
-            if batch.telegram_delivery_expirations:
-                channel_retention_delivery_expirations.labels(provider="telegram").inc(
-                    batch.telegram_delivery_expirations
-                )
-            for record_kind, deleted in (
-                ("messages", batch.messages),
-                ("debug_events", batch.debug_events),
-                ("pair_codes", batch.pair_codes),
-                ("agent_references", batch.agent_references),
-            ):
-                if deleted:
-                    channel_retention_deletions.labels(record_kind=record_kind).inc(deleted)
-            if batch.discord_interaction_payloads:
-                channel_retention_secret_scrubs.labels(
-                    provider="discord",
-                    secret_kind="interaction_token",
-                ).inc(batch.discord_interaction_payloads)
-            last_saturated = batch.saturated_kinds(self._batch_size)
-            if not last_saturated:
-                break
-            await asyncio.sleep(0)
+        try:
+            while batches < self._max_batches and not stop_event.is_set():
+                async with self._sessionmaker() as db:
+                    batch = await prune_channel_retention_batch(
+                        db,
+                        now=current_time,
+                        limit=self._batch_size,
+                    )
+                    await db.commit()
+                batches += 1
+                processed_total += batch.total
+                if batch.telegram_delivery_expirations:
+                    channel_retention_delivery_expirations.labels(provider="telegram").inc(
+                        batch.telegram_delivery_expirations
+                    )
+                for record_kind, deleted in (
+                    ("messages", batch.messages),
+                    ("debug_events", batch.debug_events),
+                    ("pair_codes", batch.pair_codes),
+                    ("agent_references", batch.agent_references),
+                ):
+                    if deleted:
+                        channel_retention_deletions.labels(record_kind=record_kind).inc(deleted)
+                if batch.discord_interaction_payloads:
+                    channel_retention_secret_scrubs.labels(
+                        provider="discord",
+                        secret_kind="interaction_token",
+                    ).inc(batch.discord_interaction_payloads)
+                last_saturated = batch.saturated_kinds(self._batch_size)
+                if not last_saturated:
+                    break
+                await asyncio.sleep(0.01)
+        except Exception:  # noqa: BLE001 - platform retention and observations still run.
+            log.exception("channel message retention failed")
 
         if batches == self._max_batches and last_saturated:
             for record_kind in last_saturated:
@@ -126,7 +130,10 @@ class ChannelMessageRetentionWorker:
                 processed_total,
             )
         if not stop_event.is_set():
-            await self._observe_queues(now=datetime.now(UTC))
+            try:
+                await self._observe_queues(now=datetime.now(UTC))
+            except Exception:  # noqa: BLE001 - observation must not undo completed retention.
+                log.exception("channel queue observation failed")
         if processed_total:
             log.info(
                 "channel retention completed: processed=%s batches=%s",
@@ -167,11 +174,6 @@ class ChannelMessageRetentionWorker:
 
     async def run_forever(self, stop: asyncio.Event | None = None) -> None:
         stop_event = stop or asyncio.Event()
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=self._poll_interval_seconds)
-            return
-        except TimeoutError:
-            pass
         while not stop_event.is_set():
             try:
                 await self.run_once(stop_event)

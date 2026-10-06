@@ -256,3 +256,68 @@ async def test_retention_reclaims_obsolete_bases_and_preserves_active_uploads(
     finally:
         await db_session.delete(session)
         await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_absolute_staging_cap_overrides_fresh_activity_but_preserves_current_and_shared(
+    db_session: AsyncSession, engine, seed_user: User
+) -> None:
+    now = datetime.now(UTC)
+    session = Session(
+        user_id=seed_user.id,
+        local_session_id=f"absolute-cap-{uuid.uuid4().hex}",
+        started_at=now,
+        last_activity_at=now,
+    )
+    db_session.add(session)
+    await db_session.flush()
+    old = now - timedelta(days=2, seconds=1)
+    heartbeat = generation(session.id, status="staging", created_at=old)
+    heartbeat.updated_at = now
+    fresh_chunk = generation(session.id, status="staging", created_at=old)
+    under_cap = generation(session.id, status="staging", created_at=now - timedelta(hours=39))
+    under_cap.updated_at = now
+    current = generation(session.id, status="staging", created_at=old)
+    shared = generation(session.id, status="staging", created_at=old)
+    db_session.add_all([heartbeat, fresh_chunk, under_cap, current, shared])
+    await db_session.flush()
+    session.event_generation_id = current.id
+    db_session.add_all(
+        [
+            chunk(session.id, fresh_chunk.id, "events/expired-fresh-chunk.ndjson", created_at=now),
+            SessionShare(
+                session_id=session.id,
+                created_by=seed_user.id,
+                scope="session",
+                end_position=0,
+                source_protocol="events-v1",
+                source_revision=shared.final_head_hash,
+                event_generation_id=shared.id,
+                event_count=1,
+                public_metadata={"title": "Shared generation"},
+            ),
+        ]
+    )
+    await db_session.commit()
+    try:
+        store = RecordingFileStore()
+        worker = SessionEventRetentionWorker(
+            async_sessionmaker(engine, expire_on_commit=False), file_store=store
+        )
+        assert {await worker.run_once(now=now), await worker.run_once(now=now)} == {
+            heartbeat.id,
+            fresh_chunk.id,
+        }
+        assert await worker.run_once(now=now) is None
+        assert store.deleted == ["events/expired-fresh-chunk.ndjson"]
+        remaining = set(
+            await db_session.scalars(
+                select(SessionEventGeneration.id).where(
+                    SessionEventGeneration.session_id == session.id
+                )
+            )
+        )
+        assert remaining == {under_cap.id, current.id, shared.id}
+    finally:
+        await db_session.delete(session)
+        await db_session.commit()

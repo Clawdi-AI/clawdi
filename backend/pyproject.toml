@@ -125,6 +125,7 @@ strict = [
     "app/core/api_scopes.py",
     "app/core/asyncpg_dialect.py",
     "app/core/auth.py",
+    "app/core/cleanup.py",
     "app/core/config.py",
     "app/core/database.py",
     "app/core/logging_config.py",

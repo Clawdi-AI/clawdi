@@ -39,8 +39,8 @@ from mcp.shared.exceptions import MCPError
 from mcp.types import CallToolResult, ListToolsResult
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
 
+from app.core.cleanup import finish_cleanup
 from app.core.config import settings
-from app.core.database import finish_cleanup
 from app.schemas.connector import (
     ConnectorAuthFieldResponse,
     ConnectorAuthFieldsResponse,

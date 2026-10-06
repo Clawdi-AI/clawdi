@@ -1374,3 +1374,69 @@ async def test_events_v1_rewrite_commit_is_cas_fenced(
     for retired_query in ("orchid junction 731", "cobalt river 583"):
         retired_search = (await client.get("/v1/sessions", params={"q": retired_query})).json()
         assert all(item["search_match"] is None for item in retired_search["items"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["stage", "chunk", "chunk_retry", "commit"])
+async def test_expired_staging_generations_reject_activity_with_stable_410(
+    client: httpx.AsyncClient, db_session: AsyncSession, action: str
+) -> None:
+    local_id = f"codex.expired-staging-{action}"
+    environment_id, _session = await _register_session(
+        client, db_session, local_session_id=local_id
+    )
+    generation_id = uuid.uuid4()
+    events = [_event(0, "message", "user", role="user", parts=[{"type": "text", "text": "hello"}])]
+    body = {
+        "environment_id": environment_id,
+        "generation": str(generation_id),
+        "append_id": str(uuid.uuid4()),
+        "base_generation": None,
+        "base_revision": 0,
+        "base_count": 0,
+        "base_head_hash": EMPTY_EVENT_HEAD,
+        "final_count": 1,
+        "final_head_hash": advance_event_head(EMPTY_EVENT_HEAD, events),
+    }
+    stage_url = f"/v1/sessions/{local_id}/events/generations"
+    assert (await client.post(stage_url, json=body)).status_code == 200
+    data, content_hash = _chunk(events)
+    chunk_url = f"{stage_url}/{generation_id}/chunks/0"
+    if action in {"chunk_retry", "commit"}:
+        uploaded = await client.put(
+            chunk_url,
+            data={"base_head_hash": EMPTY_EVENT_HEAD, "content_hash": content_hash},
+            files={"file": ("0.ndjson", data, "application/x-ndjson")},
+        )
+        assert uploaded.status_code == 200, uploaded.text
+    generation = await db_session.get(SessionEventGeneration, generation_id)
+    assert generation is not None
+    generation.created_at = datetime.now(UTC) - timedelta(days=2, seconds=1)
+    await db_session.flush()
+    await db_session.refresh(generation)
+    previous_activity = generation.updated_at
+    if action == "stage":
+        rejected = await client.post(stage_url, json=body)
+    elif action == "commit":
+        rejected = await client.post(
+            f"{stage_url}/{generation_id}/commit",
+            json={
+                key: value
+                for key, value in body.items()
+                if key not in {"environment_id", "generation"}
+            },
+        )
+    else:
+        rejected = await client.put(
+            chunk_url,
+            data={"base_head_hash": EMPTY_EVENT_HEAD, "content_hash": content_hash},
+            files={"file": ("0.ndjson", data, "application/x-ndjson")},
+        )
+    assert rejected.status_code == 410, rejected.text
+    assert rejected.json()["detail"]["code"] == "session_event_staging_expired"
+    await db_session.refresh(generation)
+    assert generation.updated_at == previous_activity
+    assert generation.status == "staging"
+    body["generation"] = str(uuid.uuid4())
+    body["append_id"] = str(uuid.uuid4())
+    assert (await client.post(stage_url, json=body)).status_code == 200
