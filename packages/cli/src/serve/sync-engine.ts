@@ -1146,12 +1146,14 @@ async function prepareSessionSync(
 			);
 			const observedResources = new Set<string>();
 			const confirmedSourceRevisions: FencedSessionSourceRevisionUpdate[] = [];
+			const scanIssues: Array<{ path: string; reason: string }> = [];
 			let enqueued = 0;
 			for await (const batch of scan.batches) {
 				// Profile rename/attribution may have moved receipts during this scan.
 				lastPushedSessionHash.clear();
 				for (const [key, hash] of loadFencedSessionHashes(api, opts))
 					lastPushedSessionHash.set(key, hash);
+				scanIssues.push(...(batch.scanIssues ?? []));
 				for (const localSessionId of batch.observedLocalSessionIds) {
 					observedResources.add(`session:${localSessionId}`);
 				}
@@ -1193,6 +1195,13 @@ async function prepareSessionSync(
 				health.clearAbsent("push", "session:", observedResources);
 			}
 			health.clear("push", "session_scan");
+			if (scanIssues.length > 0) {
+				health.set(
+					"push",
+					"session_scan",
+					scanIssues.map((issue) => `blocked ${issue.path}: ${issue.reason}`).join("; "),
+				);
+			}
 			if (enqueued > 0) log.info("engine.sessions_enqueued", { count: enqueued });
 		} catch (error) {
 			if (opts.abort.aborted) return;

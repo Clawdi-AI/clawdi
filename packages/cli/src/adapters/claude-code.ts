@@ -9,6 +9,7 @@ import type {
 	AgentAdapterCore,
 	RawSession,
 	SessionEventSemantics,
+	SessionScanIssue,
 	SessionScanRequest,
 	SessionScanResult,
 	SyncReadContext,
@@ -25,7 +26,12 @@ import {
 	visibleContentParts,
 } from "./rich-event-mapping";
 import { jsonlPathsWithin } from "./session-files";
-import { addSessionModel, describeSessionContent, JsonlSessionSource } from "./session-source";
+import {
+	addSessionModel,
+	describeSessionContent,
+	JsonlSessionSource,
+	SessionSourceBlockedError,
+} from "./session-source";
 import { flatSkillModule } from "./skill-dir";
 import { withSessionIndex } from "./sqlite";
 import { readCommandVersion } from "./version";
@@ -489,6 +495,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 				"INSERT INTO inventory VALUES (?, ?, (SELECT count(*) FROM uuids WHERE source_key=?))",
 			);
 			const sources: Array<{ session: RawSession; sourceKey: number; isSubagent: boolean }> = [];
+			const scanIssues: SessionScanIssue[] = [];
 			let sourceKey = 0;
 			for (const projectDirName of projectDirNames) {
 				const projectPath = join(projectsDir(), projectDirName);
@@ -516,6 +523,10 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 						sources.push({ session, sourceKey: key, isSubagent: file.isSubagent });
 					} catch (error) {
 						context?.signal.throwIfAborted();
+						if (error instanceof SessionSourceBlockedError) {
+							scanIssues.push({ path: error.path, reason: error.reason });
+							continue;
+						}
 						if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
 							throw error;
 					}
@@ -543,6 +554,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 					.filter((session) => !dedupedIds.has(session.localSessionId)),
 				dedupedCount: dedupedIds.size,
 				coverage,
+				scanIssues,
 			};
 		});
 	}
@@ -639,6 +651,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 				cacheReadTokens += msg.usage.cache_read_input_tokens ?? 0;
 			}
 		}
+		if (source.blockedReason) throw new SessionSourceBlockedError(source.path);
 		const branchSelection = selectClaudeBranch(recordIndex);
 		const readEvents = async function* () {
 			let seq = 0;
