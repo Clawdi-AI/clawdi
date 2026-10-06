@@ -136,12 +136,67 @@ function row(key: string, state = "active", count = 0) {
 }
 
 test("official Hermes discovery ignores shells and tombstones and exposes upstream rename history", async () => {
-	const profiles = await discoverHermesProfiles();
-	expect(profiles.map((profile) => profile.profileKey)).toEqual(["", "work"]);
-	expect(profiles[1]?.previousNames).toEqual(["old"]);
-	expect(profiles[1]?.reader?.watchPaths()).toContain(
-		join(home, ".hermes", "profiles", "work", "state.db"),
+	writeFileSync(
+		join(home, ".hermes", "hermes-agent", "hermes_cli", "profiles.py"),
+		"\ndef list_profiles():\n    raise RuntimeError('use the newer name API')\n",
+		{ flag: "a" },
 	);
+	const warn = spyOn(log, "warn");
+	try {
+		const { complete, profiles } = await discoverAgentProfiles(new HermesAdapter());
+		expect(complete).toBeTrue();
+		expect(profiles.map((profile) => profile.profileKey)).toEqual(["", "work"]);
+		expect(profiles[1]?.previousNames).toEqual(["old"]);
+		expect(profiles[1]?.reader?.watchPaths()).toContain(
+			join(home, ".hermes", "profiles", "work", "state.db"),
+		);
+		expect(warn.mock.calls).toEqual([]);
+	} finally {
+		warn.mockRestore();
+	}
+});
+
+test("Hermes 0.20.x discovery uses its upstream roster without identity or tombstone filtering", async () => {
+	writeFileSync(
+		join(home, ".hermes", "hermes-agent", "hermes_cli", "profiles.py"),
+		`
+import json, os
+from pathlib import Path
+from types import SimpleNamespace
+root = Path(os.environ['HOME']) / '.hermes'
+def get_profile_dir(name):
+    return root if name == 'default' else root / 'profiles' / name
+def list_profiles():
+    return [SimpleNamespace(name=name, path=get_profile_dir(name))
+            for name in json.loads((root / 'official-roster.json').read_text())]
+def read_profile_meta(path):
+    return {'description': '', 'description_auto': False}
+`,
+	);
+	// These directories are profiles in 0.20.x even without newer identity metadata.
+	roster(["default", "deleted", "no-identity", "work"]);
+	const warn = spyOn(log, "warn");
+	try {
+		const discovery = await discoverAgentProfiles(new HermesAdapter());
+		expect(discovery.complete).toBeTrue();
+		expect(discovery.profiles.map((profile) => profile.profileKey)).toEqual([
+			"",
+			"deleted",
+			"no-identity",
+			"work",
+		]);
+		expect(discovery.profiles[0]).toMatchObject({ upstreamKey: "default", isDefault: true });
+		expect(discovery.profiles[3]).toMatchObject({
+			upstreamKey: "work",
+			isDefault: false,
+			previousNames: [],
+			home: join(home, ".hermes", "profiles", "work"),
+		});
+		expect(discovery.watchPaths).toEqual([join(home, ".hermes", "profiles")]);
+		expect(warn.mock.calls).toEqual([]);
+	} finally {
+		warn.mockRestore();
+	}
 });
 
 test("default receipt keys remain byte-identical and named profiles cannot collide", () => {
@@ -245,7 +300,19 @@ test("discovery failure reports incomplete inventory and only scans default", as
 		if (request.method === "PUT") inventories.push(await request.json());
 		return response([]);
 	});
-	const discovery = await discoverAgentProfiles(new HermesAdapter());
+	const warn = spyOn(log, "warn");
+	let discovery: Awaited<ReturnType<typeof discoverAgentProfiles>>;
+	try {
+		discovery = await discoverAgentProfiles(new HermesAdapter());
+		expect(warn.mock.calls).toEqual([
+			[
+				"profiles.discovery_incomplete",
+				{ agent_type: "hermes", reason: "upstream_discovery_failed" },
+			],
+		]);
+	} finally {
+		warn.mockRestore();
+	}
 	expect(discovery.complete).toBeFalse();
 	expect(discovery.profiles.map((profile) => profile.profileKey)).toEqual([""]);
 	const module = createProfileSync(new HermesAdapter(), client, "env").sessions;

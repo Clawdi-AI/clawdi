@@ -15,6 +15,10 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
+### CLI 0.15.3
+
+- **Hermes:** Named profiles sync on older Hermes versions (0.20.0–0.20.4) using their upstream profile API. Incomplete profile discovery reports a fixed failure reason without exposing local paths or subprocess output.
+
 ### CLI 0.15.2
 
 - **OpenClaw:** Profile discovery, session reads, and Skills workspace resolution find the installed CLI when running as the agent user with a restricted PATH. Transcript SDK reads also use an absolute runtime executable.
