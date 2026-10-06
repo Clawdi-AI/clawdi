@@ -591,7 +591,7 @@ for (const runtime of ["openclaw", "hermes"] as const) {
 				.click();
 			if (retryDetail) {
 				await expect(
-					page.getByText("Retrying loads the deployed Agent without creating another one."),
+					page.getByText("Retrying loads the deployed agent without creating another one."),
 				).toBeVisible();
 				await page.getByTestId("deploy-action-bar").getByRole("button", { name: /Retry/ }).click();
 			}
