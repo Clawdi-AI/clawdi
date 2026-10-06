@@ -256,8 +256,10 @@ export function prepareRuntimePreinstallation(
 							},
 						)
 					: undefined;
-			if (download?.error || (download && download.status !== 0))
+			if (download?.error || (download && download.status !== 0)) {
+				if (download?.stderr) process.stderr.write(download.stderr.toString().slice(-8192));
 				throw new Error("official runtime artifact download failed");
+			}
 			const archive =
 				options.runtimeArtifact !== undefined
 					? readFileSync(options.runtimeArtifact)
