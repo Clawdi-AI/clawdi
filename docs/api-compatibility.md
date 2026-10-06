@@ -87,9 +87,9 @@ payload before changing the handler.
 profile inventory. PUT accepts `{complete, profiles: [{upstream_key, is_default}]}`;
 only a complete inventory marks missing profiles `removed`. Removed profiles
 retain their sessions. Responses include stable profile UUIDs, keys, derived
-`is_default`, state, first-seen/removal timestamps, and session counts. By owner
-decision, profile responses omit `online`, `last_seen_at`, `display_name`, and
-`upstream_key`; profile identity and labels come from `profile_key`.
+`is_default`, state, and session counts. By owner decision, profile responses omit
+`online`, `last_seen_at`, `display_name`, `upstream_key`, `first_seen_at`, and
+`removed_at`; profile identity and labels come from `profile_key`.
 Profile writes require `sessions:write` or `skills:write` and the existing
 Agent credential and machine fences. The v1 heartbeat contract is unchanged.
 

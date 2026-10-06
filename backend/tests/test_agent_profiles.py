@@ -7,7 +7,14 @@ from sqlalchemy import event, select
 from app.models.session import AgentProfile, Session, SessionSyncSuppression
 from tests.conftest import create_env_with_project
 
-REMOVED_PROFILE_FIELDS = {"online", "last_seen_at", "display_name", "upstream_key"}
+REMOVED_PROFILE_FIELDS = {
+    "online",
+    "last_seen_at",
+    "display_name",
+    "upstream_key",
+    "first_seen_at",
+    "removed_at",
+}
 
 
 async def inventory(client, env, keys, complete=True, api_prefix="/v1"):
@@ -615,8 +622,6 @@ async def test_get_profiles_synthesizes_missing_default_without_writes(
     default = profiles[0]
     assert uuid.UUID(default["id"])
     assert default["state"] == "active"
-    assert default["removed_at"] is None
-    assert datetime.fromisoformat(default["first_seen_at"]) == env.created_at
     assert default["session_count"] == 1 and profiles[1]["session_count"] == 0
     assert statements and not commits
     assert not any(

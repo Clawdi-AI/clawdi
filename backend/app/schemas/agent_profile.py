@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -37,8 +36,6 @@ class AgentProfileResponse(BaseModel):
     profile_key: str
     is_default: bool
     state: Literal["active", "removed"]
-    first_seen_at: datetime
-    removed_at: datetime | None
     session_count: int
 
 

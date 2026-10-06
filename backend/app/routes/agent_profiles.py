@@ -1,11 +1,9 @@
-from datetime import UTC, datetime
 from uuid import UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import load_only
 
 from app.core.auth import AuthContext, require_any_scope, require_scope
 from app.core.database import get_session
@@ -70,15 +68,6 @@ async def _responses(db: AsyncSession, agent: AgentEnvironment) -> list[AgentPro
     rows = (
         await db.execute(
             select(AgentProfile, func.coalesce(counts.c.count, 0))
-            .options(
-                load_only(
-                    AgentProfile.id,
-                    AgentProfile.profile_key,
-                    AgentProfile.state,
-                    AgentProfile.first_seen_at,
-                    AgentProfile.removed_at,
-                )
-            )
             .outerjoin(
                 counts,
                 counts.c.origin_profile_key == AgentProfile.profile_key,
@@ -93,8 +82,6 @@ async def _responses(db: AsyncSession, agent: AgentEnvironment) -> list[AgentPro
             profile_key=p.profile_key,
             is_default=p.profile_key == "",
             state=p.state,
-            first_seen_at=p.first_seen_at,
-            removed_at=p.removed_at,
             session_count=count,
         )
         for p, count in rows
@@ -118,8 +105,6 @@ async def _responses(db: AsyncSession, agent: AgentEnvironment) -> list[AgentPro
                 profile_key="",
                 is_default=True,
                 state="active",
-                first_seen_at=agent.created_at,
-                removed_at=None,
                 session_count=count or 0,
             ),
         )
@@ -152,15 +137,12 @@ async def put_agent_profiles(
         p.profile_key: p
         for p in (
             await db.execute(
-                select(AgentProfile)
-                .where(
+                select(AgentProfile).where(
                     AgentProfile.environment_id == agent_id,
                 )
-                .options(load_only(AgentProfile.id, AgentProfile.profile_key, AgentProfile.state))
             )
         ).scalars()
     }
-    now = datetime.now(UTC)
     present: set[str] = set()
     for item in body.profiles:
         key = "" if item.is_default else item.upstream_key
@@ -176,12 +158,10 @@ async def put_agent_profiles(
             )
             db.add(p)
         p.state = "active"
-        p.removed_at = None
     if body.complete:
         for key, p in known.items():
             if key not in present and p.state != "removed":
                 p.state = "removed"
-                p.removed_at = now
     await db.commit()
     return await _responses(db, agent)
 
@@ -235,12 +215,10 @@ async def attribute_sessions(
         raise HTTPException(400, "Session attribution is only supported for OpenClaw")
     target = (
         await db.execute(
-            select(AgentProfile)
-            .where(
+            select(AgentProfile).where(
                 AgentProfile.environment_id == agent_id,
                 AgentProfile.profile_key == profile_key,
             )
-            .options(load_only(AgentProfile.id, AgentProfile.state))
         )
     ).scalar_one_or_none()
     if target is None or target.state != "active":
@@ -267,11 +245,9 @@ async def rename_profile(
         p.profile_key: p
         for p in (
             await db.execute(
-                select(AgentProfile)
-                .where(
+                select(AgentProfile).where(
                     AgentProfile.environment_id == agent_id,
                 )
-                .options(load_only(AgentProfile.id, AgentProfile.profile_key, AgentProfile.state))
             )
         ).scalars()
     }
@@ -314,6 +290,5 @@ async def rename_profile(
     result = await _move(db, auth, agent_id, profile_key, new)
     source.profile_key = new
     source.state = "active"
-    source.removed_at = None
     await db.commit()
     return result

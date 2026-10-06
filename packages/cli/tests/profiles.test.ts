@@ -126,8 +126,6 @@ function row(key: string, state = "active", count = 0) {
 		is_default: key === "",
 		state,
 		session_count: count,
-		first_seen_at: "2026-10-06T00:00:00Z",
-		removed_at: null,
 	};
 }
 

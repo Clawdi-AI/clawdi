@@ -4080,13 +4080,6 @@ export interface components {
              * @enum {string}
              */
             state: "active" | "removed";
-            /**
-             * First Seen At
-             * Format: date-time
-             */
-            first_seen_at: string;
-            /** Removed At */
-            removed_at: string | null;
             /** Session Count */
             session_count: number;
         };
