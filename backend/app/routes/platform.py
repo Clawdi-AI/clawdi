@@ -1313,9 +1313,20 @@ async def platform_get_api_key_usage(
     _auth: PlatformMutationAuth = Depends(require_platform_mutation_auth("platform:keys:revoke")),
     db: AsyncSession = Depends(get_control_session),
 ) -> ApiKeyUsageResponse:
-    owner_user_id = await _resolve_runtime_source_authority_owner_id(
-        db, owner, not_found_detail="API key not found"
-    )
+    try:
+        owner_user_id = await _resolve_runtime_source_authority_owner_id(
+            db, owner, not_found_detail="API key not found"
+        )
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_404_NOT_FOUND:
+            raise
+        # An unknown owner still mismatches an existing key. Do not create a
+        # principal during this read; reserve 404 for a missing key.
+        if await db.scalar(select(ApiKey.id).where(ApiKey.id == key_id)) is not None:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "API key is not owned by requested owner"
+            ) from None
+        raise
     api_key = await _load_owned_key(
         db,
         key_id=key_id,

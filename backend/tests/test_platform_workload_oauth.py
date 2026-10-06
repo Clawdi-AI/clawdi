@@ -423,6 +423,17 @@ async def test_runtime_expiry_replay_usage_and_expired_ingestion(
         usage_path, params=_owner(foreign), headers={"Authorization": f"Bearer {revoke_token}"}
     )
     assert mismatch.status_code == 403, mismatch.text
+    unknown_owner = {"kind": "clerk", "ref": f"unknown-usage-{uuid.uuid4().hex}"}
+    unknown_mismatch = await client.get(
+        usage_path, params=unknown_owner, headers={"Authorization": f"Bearer {revoke_token}"}
+    )
+    assert unknown_mismatch.status_code == 403, unknown_mismatch.text
+    unknown_missing = await client.get(
+        f"/v1/platform/auth/keys/{uuid.uuid4()}",
+        params=unknown_owner,
+        headers={"Authorization": f"Bearer {revoke_token}"},
+    )
+    assert unknown_missing.status_code == 404, unknown_missing.text
 
     ingestion_path = f"/v2/runtime/environments/{environment_id}/observations"
     observation_body = _payload().model_dump(mode="json", by_alias=True)
