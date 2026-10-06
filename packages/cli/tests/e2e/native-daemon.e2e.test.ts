@@ -228,11 +228,12 @@ nativeDescribe("native daemon invocation smoke", () => {
 			});
 			const rpc = (await rpcResponse.json()) as {
 				error?: { message?: string };
-				result?: { exit_code?: number; stdout?: string };
+				result?: { exit_code?: number; stdout?: string; stderr?: string };
 			};
 			expect(rpc.error).toBeUndefined();
 			expect(rpc.result?.exit_code).toBe(0);
-			expect(rpc.result?.stdout).toContain("Dry run");
+			expect(rpc.result?.stdout).toBe("");
+			expect(rpc.result?.stderr).toContain("Dry run");
 
 			daemon.kill("SIGTERM");
 			await withTimeout(daemon.exited, 5_000);
