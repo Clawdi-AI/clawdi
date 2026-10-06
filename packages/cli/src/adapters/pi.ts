@@ -403,14 +403,19 @@ async function parseSession(
 		if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
 		throw error;
 	}
+	let firstRecordMatches = true;
+	let firstRecord = true;
 	for await (const record of sourceFile.records()) {
+		if (!firstRecord) continue;
+		firstRecord = false;
 		const id = jsonString(record.data.id);
 		const cwd = jsonString(record.data.cwd);
-		if (sourceId !== undefined && id !== sourceId) return null;
-		if (!matchesProjectFilter(cwd, projectFilter ? resolve(projectFilter) : null)) return null;
-		break;
+		firstRecordMatches =
+			(sourceId === undefined || id === sourceId) &&
+			matchesProjectFilter(cwd, projectFilter ? resolve(projectFilter) : null);
 	}
 	if (sourceFile.blockedReason) throw new SessionSourceBlockedError(sourceFile.path);
+	if (!firstRecordMatches) return null;
 	const metadata: PiReadMetadata = { header: null, usage: emptyUsage() };
 	const readEvents = () => readPiEvents(sourceFile, metadata);
 	const description = await describeSessionContent(readEvents, sourceFile.eager);

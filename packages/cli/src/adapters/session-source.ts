@@ -24,24 +24,15 @@ export interface JsonlRecord {
 	length: number;
 }
 
-class OversizedSessionRecordError extends Error {
-	constructor(readonly path: string) {
-		super(`session source record exceeds ${SESSION_RECORD_MAX_BYTES} bytes`);
-		this.name = "OversizedSessionRecordError";
-	}
-}
+const SESSION_SOURCE_BLOCK_REASON = `session source record exceeds ${SESSION_RECORD_MAX_BYTES} bytes`;
 
 export class SessionSourceBlockedError extends Error {
-	readonly reason = `session source record exceeds ${SESSION_RECORD_MAX_BYTES} bytes`;
+	readonly reason = SESSION_SOURCE_BLOCK_REASON;
 
 	constructor(readonly path: string) {
-		super(`${path}: ${reasonForSessionSourceBlock()}`);
+		super(`${path}: ${SESSION_SOURCE_BLOCK_REASON}`);
 		this.name = "SessionSourceBlockedError";
 	}
-}
-
-function reasonForSessionSourceBlock(): string {
-	return `session source record exceeds ${SESSION_RECORD_MAX_BYTES} bytes`;
 }
 
 /** Pin a file prefix; appends belong to the next scan, rewrites invalidate this reader. */
@@ -128,7 +119,7 @@ export class JsonlSessionSource {
 			let validRecords = 0;
 			const append = (part: Buffer) => {
 				lineBytes += part.length;
-				if (lineBytes > SESSION_RECORD_MAX_BYTES) throw new OversizedSessionRecordError(this.path);
+				if (lineBytes > SESSION_RECORD_MAX_BYTES) throw new SessionSourceBlockedError(this.path);
 				if (part.length) parts.push(Buffer.from(part));
 			};
 			const record = (): JsonlRecord | null => {
@@ -190,8 +181,8 @@ export class JsonlSessionSource {
 				this.complete = complete;
 				this.validRecords = validRecords;
 			} catch (error) {
-				if (!(error instanceof OversizedSessionRecordError)) throw error;
-				this.blockedReason = error.message;
+				if (!(error instanceof SessionSourceBlockedError)) throw error;
+				this.blockedReason = error.reason;
 				this.complete = false;
 				return;
 			}

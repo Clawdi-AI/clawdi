@@ -123,6 +123,8 @@ export interface RawSession {
 	rawFilePath: string;
 	/** Opaque adapter revision used to avoid materializing unchanged backing content. */
 	sourceRevision?: string;
+	/** Optional adapter metadata that participates in the local sync hash. */
+	localHashMetadata?: string;
 	/**
 	 * Adapter-classified timestamp of the latest real user input in this
 	 * session. `null` means the complete materialized session contains no real

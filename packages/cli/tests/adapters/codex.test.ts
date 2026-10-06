@@ -57,7 +57,10 @@ describe("CodexAdapter.detect", () => {
 describe("CodexAdapter.collectSessions", () => {
 	it("skips an oversized JSONL file while reporting a scan issue", async () => {
 		const oversized = join(tmpHome, ".codex", "sessions", "oversized.jsonl");
-		writeFileSync(oversized, `{"text":"${"x".repeat(SESSION_RECORD_MAX_BYTES)}"}`);
+		writeFileSync(
+			oversized,
+			`{"type":"session_meta","payload":{"id":"oversized"}}\n{"text":"${"x".repeat(SESSION_RECORD_MAX_BYTES)}"}`,
+		);
 		const result = await new CodexAdapter().sessions.collect({ kind: "complete" });
 		expect(result.sessions).toHaveLength(1);
 		expect(result.scanIssues).toEqual([

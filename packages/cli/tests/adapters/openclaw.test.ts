@@ -8,6 +8,7 @@ import {
 	assertProjectionGolden,
 	assertSessionGolden,
 } from "../../src/adapters/session-golden.test-support";
+import { SESSION_RECORD_MAX_BYTES } from "../../src/adapters/session-source";
 import { projectEventsToMessages } from "../../src/lib/session-events";
 import { tarSkillDir } from "../../src/lib/tar";
 import { log } from "../../src/serve/log";
@@ -281,6 +282,30 @@ describe("OpenClawAdapter.collectSessions", () => {
 		rmSync(join(tmpHome, "bin", "openclaw"));
 		process.env.PATH = join(tmpHome, "bin");
 		await assertSessionGolden("openclaw-legacy", new OpenClawAdapter().sessions);
+	});
+	it("reports an oversized legacy transcript record after the first line", async () => {
+		rmSync(join(tmpHome, "bin", "openclaw"));
+		process.env.PATH = join(tmpHome, "bin");
+		const transcript = join(
+			tmpHome,
+			".openclaw",
+			"agents",
+			"main",
+			"sessions",
+			"oc-session-001.jsonl",
+		);
+		writeFileSync(
+			transcript,
+			`${readFileSync(transcript, "utf8")}\n{"text":"${"x".repeat(SESSION_RECORD_MAX_BYTES)}"}`,
+		);
+		const result = await new OpenClawAdapter().sessions.collect({ kind: "complete" });
+		expect(result.sessions).toHaveLength(0);
+		expect(result.scanIssues).toEqual([
+			expect.objectContaining({
+				path: transcript,
+				reason: expect.stringContaining("source record exceeds"),
+			}),
+		]);
 	});
 	it("preserves origin/main session bytes and localHash", async () => {
 		await assertSessionGolden("openclaw", new OpenClawAdapter().sessions);

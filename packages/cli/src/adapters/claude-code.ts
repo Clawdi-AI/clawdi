@@ -455,7 +455,8 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 				firstUserPrompt === null &&
 				role === "user" &&
 				raw.isMeta !== true &&
-				raw.isCompactSummary !== true
+				raw.isCompactSummary !== true &&
+				!(Array.isArray(msg?.content) && msg.content.some((part) => part.type === "tool_result"))
 			) {
 				const text = visibleContentParts(msg?.content)
 					.filter((part) => part.type === "text")
@@ -524,6 +525,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			model,
 			modelsUsed: [...modelsUsed],
 			summary: customTitle ?? aiTitle ?? firstUserPrompt,
+			localHashMetadata: customTitle ?? aiTitle ?? firstUserPrompt ?? "",
 			...description.content,
 			sourceRevision: source.revision,
 			durationSeconds,

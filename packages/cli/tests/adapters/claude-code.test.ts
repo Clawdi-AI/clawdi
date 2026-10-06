@@ -6,6 +6,7 @@ import {
 	assertProjectionGolden,
 	assertSessionGolden,
 } from "../../src/adapters/session-golden.test-support";
+import { SESSION_RECORD_MAX_BYTES } from "../../src/adapters/session-source";
 import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
 import {
@@ -79,6 +80,28 @@ describe("ClaudeCodeAdapter.detect", () => {
 });
 
 describe("ClaudeCodeAdapter.collectSessions", () => {
+	it("reports an oversized record after existing Claude history", async () => {
+		const file = join(
+			tmpHome,
+			".claude",
+			"projects",
+			"-Users-fixture-project",
+			"11111111-2222-3333-4444-555555555555.jsonl",
+		);
+		writeFileSync(
+			file,
+			`${readFileSync(file, "utf8")}\n{"text":"${"x".repeat(SESSION_RECORD_MAX_BYTES)}"}`,
+		);
+		const result = await new ClaudeCodeAdapter().sessions.collect({ kind: "complete" });
+		expect(result.sessions).toHaveLength(0);
+		expect(result.scanIssues).toEqual([
+			expect.objectContaining({
+				path: file,
+				reason: expect.stringContaining("source record exceeds"),
+			}),
+		]);
+	});
+
 	it.each([
 		{ titleType: "all", expected: "Final custom title" },
 		{ titleType: "ai-title", expected: "Final AI title" },
@@ -117,7 +140,9 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 				});
 				if (!session) throw new Error("expected titled Claude fixture");
 				expect(session.summary).toBe(expected);
-				expect((await prepareSessionUpload(session, "events-v1")).localHash).toBe(originalHash);
+				const localHash = (await prepareSessionUpload(session, "events-v1")).localHash;
+				if (titleType === "none") expect(localHash).toBe(originalHash);
+				else expect(localHash).not.toBe(originalHash);
 			}
 		},
 	);

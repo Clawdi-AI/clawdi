@@ -1,6 +1,8 @@
 import { type ExecFileOptions, execFile, spawn } from "node:child_process";
+import { homedir } from "node:os";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
+import { resolveRuntimeUserCommand } from "../runtime/runtime-user-command";
 
 const execFileAsync = promisify(execFile);
 let commandTail: Promise<void> = Promise.resolve();
@@ -40,7 +42,7 @@ export function runOpenClawSdkCommand(
 		() =>
 			new Promise<string>((resolve, reject) => {
 				options.signal?.throwIfAborted();
-				const running = spawn(
+				const child = resolveRuntimeUserCommand(
 					"node",
 					[
 						"--max-old-space-size=256",
@@ -50,8 +52,12 @@ export function runOpenClawSdkCommand(
 						sdkPath,
 						JSON.stringify(params),
 					],
-					{ stdio: ["ignore", "ignore", "ignore", "pipe"], env: process.env },
+					process.env.HOME ?? homedir(),
 				);
+				const running = spawn(child.command, child.args, {
+					stdio: ["ignore", "ignore", "ignore", "pipe"],
+					env: child.env,
+				});
 				const result = running.stdio[3];
 				const chunks: Buffer[] = [];
 				let bytes = 0;
@@ -104,11 +110,12 @@ function runOpenClawSubprocess(
 	return enqueueOpenClawCommand(async () => {
 		options.signal?.throwIfAborted();
 		const { signal, ...limits } = options;
-		const running = execFileAsync(executable, args, {
+		const child = resolveRuntimeUserCommand(executable, args, process.env.HOME ?? homedir());
+		const running = execFileAsync(child.command, child.args, {
 			...limits,
 			killSignal: "SIGKILL",
 			encoding: "utf8",
-			env: options.env ?? process.env,
+			env: child.env,
 		});
 		const closed = new Promise<void>((resolve) => running.child.once("close", () => resolve()));
 		const abort = () => {

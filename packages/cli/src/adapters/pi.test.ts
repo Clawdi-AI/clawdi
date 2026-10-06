@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { prepareSessionUpload } from "../lib/session-upload";
 import { PiAdapter } from "./pi";
 import { assertSessionGolden } from "./session-golden.test-support";
+import { SESSION_RECORD_MAX_BYTES } from "./session-source";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 const originalSessionDir = process.env.PI_CODING_AGENT_SESSION_DIR;
@@ -46,6 +47,19 @@ function copyFixture(root: string, fixture: string, name: string): string {
 }
 
 describe("Pi session adapter", () => {
+	test("reports an oversized record after the header without returning the session", async () => {
+		const { adapter, file } = fixtureSession();
+		appendFileSync(file, `{"text":"${"x".repeat(SESSION_RECORD_MAX_BYTES)}"}`);
+		const result = await adapter.sessions.collect({ kind: "complete" });
+		expect(result.sessions).toHaveLength(0);
+		expect(result.scanIssues).toEqual([
+			expect.objectContaining({
+				path: file,
+				reason: expect.stringContaining("source record exceeds"),
+			}),
+		]);
+	});
+
 	test.each(["environment", "global settings"])(
 		"collects, resolves, and watches the directory from %s",
 		async (source) => {
