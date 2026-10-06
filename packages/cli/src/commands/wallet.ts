@@ -1,4 +1,5 @@
 import type { HostedDeployWallet, HostedWalletBinding } from "@clawdi/shared/api";
+import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
 import { isInteractive } from "../lib/tty";
 
@@ -81,6 +82,12 @@ export async function walletStatusCommand(
 
 function safeWalletStatusError(error: unknown): { code: string; message: string } {
 	if (error instanceof WalletStatusError) return { code: error.code, message: error.message };
+	if (
+		error instanceof HostedDeployAuthorizationError &&
+		error.code === "hosted_oauth_login_required"
+	) {
+		return { code: "not_signed_in", message: "Not signed in. Run `clawdi auth login` first." };
+	}
 	if (error instanceof HostedDeployApiError) {
 		if (error.status === 401) {
 			return {

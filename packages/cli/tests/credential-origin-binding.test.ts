@@ -239,7 +239,7 @@ describe("Hosted shared OAuth profile binding", () => {
 				return Response.json([]);
 			},
 		});
-		await expect(client.getPlans()).rejects.toThrow("Clerk OAuth sign-in");
+		await expect(client.getPlans()).rejects.toThrow("needs a browser sign-in");
 		expect(requests).toBe(0);
 	});
 

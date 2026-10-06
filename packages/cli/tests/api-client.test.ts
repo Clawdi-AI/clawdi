@@ -83,7 +83,7 @@ describe("ApiClient error classification", () => {
 	// but the path literal must type-check against the generated OpenAPI
 	// `paths` map. Pick any real endpoint for the method under test.
 
-	it("throws ApiError with status + hint on 401", async () => {
+	it("throws ApiError with status and login guidance on 401", async () => {
 		fakeLogin("http://127.0.0.1:0");
 		const origFetch = globalThis.fetch;
 		globalThis.fetch = async () => new Response("unauthorized", { status: 401 });
@@ -98,7 +98,7 @@ describe("ApiClient error classification", () => {
 			}
 			expect(caught).toBeInstanceOf(ApiError);
 			expect((caught as ApiError).status).toBe(401);
-			expect((caught as ApiError).hint).toContain("clawdi auth login");
+			expect((caught as ApiError).message).toContain("clawdi auth login");
 		} finally {
 			globalThis.fetch = origFetch;
 		}

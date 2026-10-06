@@ -116,7 +116,7 @@ beforeEach(() => {
 		console.log = originalLog;
 		console.error = originalError;
 	};
-	process.exitCode = undefined;
+	process.exitCode = 0;
 });
 
 afterEach(() => {
@@ -125,7 +125,7 @@ afterEach(() => {
 	restoreConsole?.();
 	restoreConsole = null;
 	process.argv[1] = originalArgv1 ?? "";
-	process.exitCode = undefined;
+	process.exitCode = 0;
 
 	for (const key of ENV_KEYS) delete process.env[key];
 	for (const [key, value] of Object.entries(envSnapshot)) {
@@ -296,6 +296,33 @@ describe("setup daemon install", () => {
 		expect(registration).toMatch(/^mcp add clawdi -- \/.+ mcp$/);
 		expect(consoleErrors.join("\n")).not.toContain("Could not");
 	});
+
+	it("finishes setup after a hung MCP registration with a manual hint", async () => {
+		installEnvironmentMock("env-codex-timeout");
+		writeExecutable(
+			join(home, "bin", "codex"),
+			`#!/bin/sh
+case "$*" in
+  'mcp add clawdi -- '*) exec '${process.execPath}' -e 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)' ;;
+esac
+exit 0
+`,
+		);
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		expect(consoleErrors.join("\n")).toContain("MCP registration in Codex timed out.");
+		expect(consoleErrors.join("\n")).toMatch(/Run manually: codex mcp add clawdi -- \/.+ mcp/);
+		expect(consoleOutput.join("\n")).not.toContain("Run manually:");
+		expect(consoleOutput.join("\n")).toContain("Clawdi is on for this machine:");
+		expect(consoleOutput.join("\n")).not.toContain(
+			"Skill and MCP tools installed for supported agents",
+		);
+		expect(
+			JSON.parse(readFileSync(join(home, ".clawdi", "environments", "codex.json"), "utf8")),
+		).toMatchObject({ id: "env-codex-timeout" });
+		expect(process.exitCode).toBe(0);
+	}, 20_000);
 
 	it("keeps a manual MCP hint for Pi before 0.99.0", async () => {
 		const { captured } = installEnvironmentMock("env-pi");

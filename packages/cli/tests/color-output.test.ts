@@ -27,6 +27,9 @@ if (process.env.CLAWDI_TEST_CONSOLE_REPORT) {
 		console.log({ inspectedValue: 42 });
 	});
 }
+if (process.env.CLAWDI_TEST_MALFORMED_RESPONSE) {
+	globalThis.fetch = async () => Response.json({});
+}
 `,
 	);
 	const result = await Bun.build({
@@ -84,6 +87,43 @@ async function runCli(
 
 for (const runtime of ["bun", "node"] as const) {
 	describe(`CLI color output (${runtime}, simulated TTY)`, () => {
+		const unexpectedErrorEnv = {
+			CLAWDI_TEST_MALFORMED_RESPONSE: "1",
+			CLAWDI_AUTH_TOKEN: "clawdi_test_color_key",
+			CLAWDI_AUTH_TOKEN_ORIGIN: "http://127.0.0.1:0",
+		};
+
+		it("retains FORCE_COLOR for unexpected errors by default", async () => {
+			const result = await runCli(runtime, ["memory", "list"], unexpectedErrorEnv);
+			expect(result.code).toBe(1);
+			expect(result.stdout).toBe("");
+			expect(result.output).toContain("Unexpected error (");
+			expect(result.output).toContain("CLAWDI_DEBUG=1");
+			expect(result.output).toContain(ansiEscape);
+		});
+
+		for (const args of [
+			["--no-color", "memory", "list"],
+			["memory", "list", "--no-color"],
+			["memory", "list"],
+		]) {
+			for (const debug of [false, true]) {
+				it(`keeps unexpected errors and debug stacks plain: ${args.join(" ")}, debug=${debug}`, async () => {
+					const result = await runCli(runtime, args, {
+						...unexpectedErrorEnv,
+						...(args.includes("--no-color") ? {} : { NO_COLOR: "1" }),
+						...(debug ? { CLAWDI_DEBUG: "1" } : {}),
+					});
+					expect(result.code).toBe(1);
+					expect(result.stdout).toBe("");
+					expect(result.output).toContain("Unexpected error (");
+					expect(result.output).toContain("https://github.com/Clawdi-AI/clawdi/issues");
+					expect(result.output.includes("TypeError:")).toBe(debug);
+					expect(result.output).not.toContain(ansiEscape);
+				});
+			}
+		}
+
 		for (const command of ["status", "push"]) {
 			const expectedCode = command === "status" ? 0 : 1;
 			const expectedText = command === "status" ? "Clawdi Status" : "Not signed in";
@@ -147,7 +187,7 @@ for (const runtime of ["bun", "node"] as const) {
 					["push", "--dry-run", "--agent", "claude_code", "--modules", "nope", ...colorArgs],
 					colorEnv,
 				);
-				expect(result.code).toBe(0);
+				expect(result.code).toBe(1);
 				expect(result.output).toContain("clawdi push");
 				expect(result.output).toContain("Unknown module(s): nope");
 				expect(result.output).not.toContain(ansiEscape);

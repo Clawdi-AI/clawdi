@@ -14,6 +14,14 @@ import { ensureCodexMcpServer, removeCodexMcpServer } from "./codex-mcp-config";
 import { getCodexHome } from "./paths";
 import { readCommandVersion } from "./version";
 
+const MCP_COMMAND_TIMEOUT_MS = 15_000;
+
+function commandTimedOut(error: unknown): boolean {
+	return (
+		typeof error === "object" && error !== null && "code" in error && error.code === "ETIMEDOUT"
+	);
+}
+
 export interface McpLifecycle {
 	register(): Promise<boolean>;
 	unregister(): Promise<void>;
@@ -87,6 +95,10 @@ function commandLifecycle(input: {
 		async register() {
 			const invocation = resolveCurrentCliInvocation(["mcp"]);
 			const manualRegister = input.manualRegister(invocation);
+			const reportTimeout = () => {
+				console.error(chalk.yellow(`⚠ MCP registration in ${input.label} timed out.`));
+				console.error(chalk.gray(`  Run manually: ${manualRegister}`));
+			};
 			if (input.isSupported && !input.isSupported()) {
 				console.error(chalk.yellow(`⚠ Could not auto-register MCP server in ${input.label}.`));
 				console.error(chalk.gray(`  Run manually: ${manualRegister}`));
@@ -99,21 +111,36 @@ function commandLifecycle(input: {
 						stdio: ["ignore", "pipe", "pipe"],
 						env: process.env,
 						encoding: "utf8",
+						timeout: MCP_COMMAND_TIMEOUT_MS,
+						killSignal: "SIGKILL",
 					});
 					if (input.isRegistered?.(listed) || input.registeredPattern?.test(listed)) {
 						console.log(chalk.gray(`✓ MCP server already registered in ${input.label}`));
 						return true;
 					}
-				} catch {
+				} catch (error) {
+					if (commandTimedOut(error)) {
+						reportTimeout();
+						return false;
+					}
 					// A failed probe is not evidence that registration cannot work.
 				}
 			}
 			try {
 				const [command, ...args] = input.registerCommand(invocation);
-				execFileSync(command, args, { stdio: "pipe", env: process.env });
+				execFileSync(command, args, {
+					stdio: "pipe",
+					env: process.env,
+					timeout: MCP_COMMAND_TIMEOUT_MS,
+					killSignal: "SIGKILL",
+				});
 				console.log(chalk.green(input.registeredMessage));
 				return true;
-			} catch {
+			} catch (error) {
+				if (commandTimedOut(error)) {
+					reportTimeout();
+					return false;
+				}
 				try {
 					if (input.fallbackRegister?.(invocation)) {
 						console.log(chalk.green(input.fallbackRegisteredMessage ?? input.registeredMessage));
