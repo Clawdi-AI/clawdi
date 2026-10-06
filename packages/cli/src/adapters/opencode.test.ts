@@ -7,7 +7,7 @@ import syntheticTextFixture from "../../tests/fixtures/opencode-synthetic-text.j
 import { projectEventsToMessages } from "../lib/session-events";
 import { prepareSessionUpload } from "../lib/session-upload";
 import { OpenCodeAdapter } from "./opencode";
-import { assertSessionGolden } from "./session-golden.test-support";
+import { assertProjectionGolden, assertSessionGolden } from "./session-golden.test-support";
 
 const originalDb = process.env.OPENCODE_DB;
 const originalXdgData = process.env.XDG_DATA_HOME;
@@ -299,6 +299,7 @@ describe("OpenCode session adapter", () => {
 				"Inspect this workspace",
 				"Visible OpenCode answer",
 			]);
+			assertProjectionGolden("opencode-synthetic-text", events);
 		}
 	});
 	test.each([

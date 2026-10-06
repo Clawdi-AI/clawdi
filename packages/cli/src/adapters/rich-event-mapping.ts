@@ -5,7 +5,7 @@ import { canonicalJson } from "../lib/session-events";
 import type { SessionContentPart, SessionReasoningEvent } from "./base";
 
 // Bump once per release when any adapter changes persisted Session/Event bytes.
-export const SESSION_PROJECTION_REVISION = 6;
+export const SESSION_PROJECTION_REVISION = 7;
 
 export type JsonObject = Record<string, unknown>;
 

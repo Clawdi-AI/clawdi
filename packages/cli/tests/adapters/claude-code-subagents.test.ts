@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
+import { assertProjectionGolden } from "../../src/adapters/session-golden.test-support";
 import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { log } from "../../src/serve/log";
 import { sessionPathSnapshot } from "../../src/serve/sessions-watcher";
@@ -66,8 +67,12 @@ describe("Claude subagent transcripts", () => {
 				});
 				if (!session) throw new Error("expected resolved subagent fixture");
 				const upload = await prepareSessionUpload(session, "events-v1");
-				for await (const event of upload.readEvents?.() ?? upload.events ?? [])
+				const events = [];
+				for await (const event of upload.readEvents?.() ?? upload.events ?? []) {
+					events.push(event);
 					expect(event.source.session_key).toBe(id);
+				}
+				if (id === "parent-a.agent-child") assertProjectionGolden("claude-subagent", events);
 			}
 		}
 		const currentParent = await adapter.sessions.resolve(parent.localSessionId);

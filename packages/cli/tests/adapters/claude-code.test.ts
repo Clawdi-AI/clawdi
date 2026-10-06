@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
-import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
+import {
+	assertProjectionGolden,
+	assertSessionGolden,
+} from "../../src/adapters/session-golden.test-support";
 import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
 import {
@@ -147,6 +150,7 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 				events.find((event) => event.source.record_id === "compact-summary")?.semantics,
 			).toEqual({ lifecycle: "active", display: "event", compressed_summary: true });
 			expect(events.filter((event) => event.semantics?.display_kind === "meta")).toHaveLength(2);
+			assertProjectionGolden("claude-meta-summary", events);
 		}
 		const session = await new ClaudeCodeAdapter().sessions.resolve("meta-summary");
 		expect(session?.messages.map((message) => message.content)).toEqual([

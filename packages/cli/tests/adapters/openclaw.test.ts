@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { type SessionScanBatch, scanSessionModule } from "../../src/adapters/base";
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
 import { SESSION_PROJECTION_REVISION } from "../../src/adapters/rich-event-mapping";
-import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
+import {
+	assertProjectionGolden,
+	assertSessionGolden,
+} from "../../src/adapters/session-golden.test-support";
 import { projectEventsToMessages } from "../../src/lib/session-events";
 import { tarSkillDir } from "../../src/lib/tar";
 import { log } from "../../src/serve/log";
@@ -683,6 +686,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 			"sdk-assistant",
 		]);
 		expect(readFileSync(join(stateRoot, "command-log"), "utf8")).not.toContain("start:gateway");
+		assertProjectionGolden("openclaw-sdk", sessions[0]?.events);
 	});
 
 	it.each([

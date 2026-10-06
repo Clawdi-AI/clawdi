@@ -10,7 +10,10 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { CodexAdapter } from "../../src/adapters/codex";
-import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
+import {
+	assertProjectionGolden,
+	assertSessionGolden,
+} from "../../src/adapters/session-golden.test-support";
 import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
 import attachmentNameFixtures from "../fixtures/codex-attachment-names.json";
@@ -67,7 +70,9 @@ describe("CodexAdapter.collectSessions", () => {
 			if (!session) throw new Error("expected namespaced Codex session");
 			const upload = await prepareSessionUpload(session, "events-v1");
 			const names: string[] = [];
+			const events = [];
 			for await (const event of upload.readEvents?.() ?? upload.events ?? []) {
+				events.push(event);
 				if (event.type === "tool_call") names.push(event.name);
 			}
 			expect(names).toEqual([
@@ -76,6 +81,7 @@ describe("CodexAdapter.collectSessions", () => {
 				"memory_search",
 				"mcp__clawdimemory_search",
 			]);
+			assertProjectionGolden("codex-namespace", events);
 		}
 	});
 	it("preserves origin/main session bytes and localHash", async () => {
