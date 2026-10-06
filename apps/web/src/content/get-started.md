@@ -29,12 +29,10 @@ On Windows (PowerShell):
 irm https://clawdi.ai/install.ps1 | iex
 ```
 
-The installer updates the current PowerShell session's PATH.
-If `clawdi` isn't found in the current shell, open a new terminal.
-For agents, run it from the same PowerShell session or use
-`$env:USERPROFILE\.local\share\clawdi\current\clawdi.exe`.
+The installer updates PATH for the current PowerShell session. If `clawdi` still isn't found, run
+`$env:USERPROFILE\.local\share\clawdi\current\clawdi.exe` directly.
 
-If Node.js 24+ is already your toolchain or for CI, install with npm:
+If Node.js 24 or newer is already the user's toolchain, or in CI, install with npm:
 
 ```bash
 npm install -g clawdi@latest
