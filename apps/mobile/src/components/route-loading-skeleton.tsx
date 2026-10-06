@@ -6,7 +6,7 @@ import { webView } from "@/components/ui/web-layout";
 export function RouteLoadingSkeleton() {
 	return (
 		<AppView className={webView(routeLoadingSkeletonClasses.root)}>
-			<PageHeaderSkeleton actions />
+			<PageHeaderSkeleton />
 			<AppView className={webView(routeLoadingSkeletonClasses.body)}>
 				<Skeleton className={webView(routeLoadingSkeletonClasses.heading)} />
 				<Skeleton className={webView(routeLoadingSkeletonClasses.description)} />

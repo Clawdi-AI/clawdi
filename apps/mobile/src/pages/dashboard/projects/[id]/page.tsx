@@ -139,7 +139,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 					onRetry={() => void query.refetch()}
 				/>
 			) : query.isPending ? (
-				<PageHeaderSkeleton icon actions />
+				<PageHeaderSkeleton icon />
 			) : null}
 			{project ? (
 				<>

@@ -1,9 +1,8 @@
 import { Stack } from "expo-router";
 import type { NativeStackNavigationOptions } from "expo-router/native-stack";
-import { type ReactNode, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { SearchBarCommands } from "react-native-screens";
 import { useCSSVariable } from "uniwind";
-import { HeaderActionGroup } from "@/components/header-action-group";
 import { HeaderActions } from "@/platform/navigation/header-actions";
 import type { HeaderAction, HeaderMenu } from "@/platform/navigation/native-header-types";
 
@@ -25,24 +24,15 @@ export function NativeHeader({
 	title,
 	actions,
 	menu,
-	contentActions,
 }: {
-	title?: string;
+	title: string;
 	actions?: HeaderAction[];
 	menu?: HeaderMenu;
-	/** Compatibility slot for existing Web action components. Prefer action descriptors. */
-	contentActions?: ReactNode;
 }) {
 	return (
 		<>
-			{title ? <Stack.Screen options={{ title }} /> : null}
-			{actions || menu ? (
-				<HeaderActions actions={actions} menu={menu} />
-			) : contentActions ? (
-				<Stack.Toolbar placement="right" asChild>
-					<HeaderActionGroup>{contentActions}</HeaderActionGroup>
-				</Stack.Toolbar>
-			) : null}
+			<Stack.Screen options={{ title }} />
+			{actions || menu ? <HeaderActions actions={actions} menu={menu} /> : null}
 		</>
 	);
 }

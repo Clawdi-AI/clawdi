@@ -185,12 +185,7 @@ function Gallery() {
 					<PageHeader
 						title={t("projects.title")}
 						description={t("projects.description")}
-						actions={
-							<Button>
-								<Icon as={Plus} />
-								<Text>{t("projects.create")}</Text>
-							</Button>
-						}
+						headerActions={[{ id: "create", label: t("projects.create"), onPress: noop }]}
 					/>
 					<PageHeader
 						icon={icon}
@@ -206,7 +201,7 @@ function Gallery() {
 							</StatusBadge>
 						}
 					/>
-					<PageHeaderSkeleton icon actions />
+					<PageHeaderSkeleton icon />
 					<PageHeaderSkeleton description={false} />
 					<HeaderActionGroup>
 						<Button variant="outline">

@@ -10,7 +10,6 @@ interface PageHeaderProps {
 	title: ReactNode;
 	titleAdornment?: ReactNode;
 	description?: ReactNode;
-	actions?: ReactNode;
 	headerActions?: HeaderAction[];
 	headerMenu?: HeaderMenu;
 	icon?: ReactNode;
@@ -23,7 +22,6 @@ export function PageHeader({
 	title,
 	titleAdornment,
 	description,
-	actions,
 	headerActions,
 	headerMenu,
 	icon,
@@ -50,13 +48,8 @@ export function PageHeader({
 					{status ? <WebView recipe={styles.status}>{status}</WebView> : null}
 				</WebView>
 			</WebView>
-			{!hidden ? (
-				<NativeHeader
-					title={typeof title === "string" ? title : undefined}
-					actions={headerActions}
-					menu={headerMenu}
-					contentActions={actions}
-				/>
+			{!hidden && typeof title === "string" ? (
+				<NativeHeader title={title} actions={headerActions} menu={headerMenu} />
 			) : null}
 		</WebView>
 	);
@@ -64,13 +57,11 @@ export function PageHeader({
 /** `h-lh` uses the title/body line heights in native layout. */
 export function PageHeaderSkeleton({
 	icon = false,
-	actions = false,
 	description = true,
 	iconClassName,
 	className,
 }: {
 	icon?: boolean;
-	actions?: boolean;
 	description?: boolean | string;
 	iconClassName?: string;
 	className?: string;
@@ -84,7 +75,6 @@ export function PageHeaderSkeleton({
 			description={
 				description ? <Skeleton className={cn(webView(styles.skeletonDescription), "h-5")} /> : null
 			}
-			actions={actions ? <Skeleton className={webView(styles.skeletonActions)} /> : null}
 		/>
 	);
 }

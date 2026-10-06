@@ -8,13 +8,15 @@ import { Icon } from "@/components/ui/icon";
 import { NativeList } from "@/components/ui/native-list";
 import { AppScrollView } from "@/components/ui/view";
 import { WebIcon, webView } from "@/components/ui/web-layout";
+import type { HeaderAction, HeaderMenu } from "@/platform/navigation/native-header-types";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export function AgentCollection<T>({
 	title,
 	icon,
 	iconTint,
 	description,
-	actions,
+	headerActions,
+	headerMenu,
 	navigation,
 	children,
 	data,
@@ -32,7 +34,8 @@ export function AgentCollection<T>({
 	icon?: LucideIcon;
 	iconTint?: string;
 	description?: string;
-	actions?: ReactNode;
+	headerActions?: HeaderAction[];
+	headerMenu?: HeaderMenu;
 	navigation?: ReactNode;
 	children?: ReactNode;
 	data?: T[];
@@ -51,7 +54,8 @@ export function AgentCollection<T>({
 			<PageHeader
 				title={title}
 				description={description}
-				actions={actions}
+				headerActions={headerActions}
+				headerMenu={headerMenu}
 				icon={
 					icon && iconTint ? (
 						<IconChip tint={iconTint}>

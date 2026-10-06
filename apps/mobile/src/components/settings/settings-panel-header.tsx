@@ -6,22 +6,25 @@ import type { ReactNode } from "react";
 import { Separator } from "@/components/ui/separator";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { NativeHeader } from "@/platform/navigation/native-header";
+import type { HeaderAction, HeaderMenu } from "@/platform/navigation/native-header-types";
 
 export function SettingsPanelHeader({
 	title,
 	description,
-	actions,
+	headerActions,
+	headerMenu,
 }: {
 	title: string;
 	description?: ReactNode;
-	actions?: ReactNode;
+	headerActions?: HeaderAction[];
+	headerMenu?: HeaderMenu;
 }) {
 	return (
 		<WebView recipe={header.header}>
 			<WebView recipe={header.copy}>
 				{description ? <WebText recipe={header.description}>{description}</WebText> : null}
 			</WebView>
-			<NativeHeader title={title} contentActions={actions} />
+			<NativeHeader title={title} actions={headerActions} menu={headerMenu} />
 		</WebView>
 	);
 }

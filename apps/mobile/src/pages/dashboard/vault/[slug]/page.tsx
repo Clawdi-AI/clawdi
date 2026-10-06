@@ -56,7 +56,7 @@ import { Switch } from "@/components/ui/switch";
 import { Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppView } from "@/components/ui/view";
-import { WebText, WebView, webBoth, webText, webView } from "@/components/ui/web-layout";
+import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { VaultRequests } from "@/components/vault/secret-requests";
 import { VaultSplit } from "@/components/vault/split-vault-dialog";
 import { useVaultCatalog } from "@/components/vault/vaults-surface";
@@ -893,7 +893,7 @@ function VaultDetail({
 								onRetry={() => void detail.refetch()}
 							/>
 						) : detail.isPending ? (
-							<PageHeaderSkeleton icon actions />
+							<PageHeaderSkeleton icon />
 						) : null}
 						{current && !detail.isError ? (
 							<>
@@ -912,19 +912,18 @@ function VaultDetail({
 											? "libraryPort.vaultDescription"
 											: "libraryPort.sharedVaultDescription",
 									)}
-									actions={
-										writable ? (
-											<Button
-												variant="outline"
-												size="sm"
-												textClassName={webText(vaultDetailClasses.deleteAction)}
-												onPress={remove}
-												disabled={action.busy}
-											>
-												<Icon as={Trash2} />
-												<Text>{t("libraryPort.delete")}</Text>
-											</Button>
-										) : undefined
+									headerActions={
+										writable
+											? [
+													{
+														id: "delete",
+														label: t("libraryPort.delete"),
+														destructive: true,
+														onPress: remove,
+														disabled: action.busy,
+													},
+												]
+											: undefined
 									}
 								/>
 								<WebView recipe={vaultDetailClasses.section}>

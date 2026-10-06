@@ -4,23 +4,26 @@ import { RefreshControl } from "react-native";
 import { AppSafeAreaView, AppScrollView } from "@/components/ui/view";
 import { WebView, webView } from "@/components/ui/web-layout";
 import { NativeHeader } from "@/platform/navigation/native-header";
+import type { HeaderAction, HeaderMenu } from "@/platform/navigation/native-header-types";
 /** The stack owns chrome; this scroll view owns Web sections and refresh. */
 export function TabPage({
 	title,
 	children,
 	refreshing = false,
 	onRefresh,
-	actions,
+	headerActions,
+	headerMenu,
 }: {
 	title: string;
 	children: ReactNode;
 	refreshing?: boolean;
 	onRefresh?: () => void;
-	actions?: ReactNode;
+	headerActions?: HeaderAction[];
+	headerMenu?: HeaderMenu;
 }) {
 	return (
 		<AppSafeAreaView edges={["left", "right"]} className={`flex-1 ${webView(styles.pageSurface)}`}>
-			<NativeHeader title={title} contentActions={actions} />
+			<NativeHeader title={title} actions={headerActions} menu={headerMenu} />
 			<AppScrollView
 				contentInsetAdjustmentBehavior="automatic"
 				refreshControl={

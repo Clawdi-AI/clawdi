@@ -108,9 +108,11 @@ for the deprecated `headerLargeTitle`). Titles use Web copy, shared color
 tokens and Geist. `PageHeader` and `SettingsPanelHeader` keep descriptions,
 identity/status/adornments; native stacks own titles and back controls.
 `PageHeader` accepts `headerActions` and `headerMenu` descriptors directly.
-Prefer action descriptors: iOS uses native `Stack.Toolbar`, Android uses
-Compose buttons/menus via its documented `asChild` slot. Existing Web action
-JSX can use `contentActions` during migration; menus remain native `MenuView`.
+All header actions use descriptors: iOS uses native `Stack.Toolbar`, Android
+uses Compose buttons/menus via its documented `asChild` slot. Set `destructive`
+for removal actions and preserve disabled states; confirmations use the native
+confirm helper. Inline Web content actions remain in content. `NativeHeader`
+requires the Web page title; JSX action compatibility slots are unsupported.
 
 ```tsx
 const actions = [{ id: "shared", label: copy.sharedLinks,

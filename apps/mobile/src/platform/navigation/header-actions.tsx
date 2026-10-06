@@ -1,4 +1,5 @@
 import { Stack } from "expo-router";
+import { useCSSVariable } from "uniwind";
 import type { HeaderAction, HeaderMenu } from "@/platform/navigation/native-header-types";
 
 export function HeaderActions({
@@ -8,6 +9,7 @@ export function HeaderActions({
 	actions?: HeaderAction[];
 	menu?: HeaderMenu;
 }) {
+	const destructive = useCSSVariable("--color-destructive");
 	return (
 		<Stack.Toolbar placement="right">
 			{actions.map((action) => (
@@ -15,6 +17,9 @@ export function HeaderActions({
 					key={action.id}
 					accessibilityLabel={action.accessibilityLabel}
 					disabled={action.disabled}
+					tintColor={
+						action.destructive && typeof destructive === "string" ? destructive : undefined
+					}
 					onPress={action.onPress}
 					style={{ fontFamily: "Geist-Medium" }}
 				>
