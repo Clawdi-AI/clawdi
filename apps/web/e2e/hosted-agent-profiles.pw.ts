@@ -48,13 +48,9 @@ function profile(
 	return {
 		id: `${agentId.slice(0, 8)}-0000-4000-8000-${(key || "default").padEnd(12, "0").slice(0, 12)}`,
 		profile_key: key,
-		upstream_key: key || "default",
 		is_default: key === "",
-		display_name: null,
 		state: "active",
-		online: true,
 		first_seen_at: "2026-10-01T00:00:00.000Z",
-		last_seen_at: now,
 		removed_at: null,
 		session_count: 0,
 		...overrides,
@@ -73,15 +69,10 @@ const profilesByAgent: Record<string, AgentProfile[]> = {
 		profile(MULTI_ID, "", { session_count: 25 }),
 		profile(MULTI_ID, "research", {
 			state: "removed",
-			online: false,
-			last_seen_at: "2026-10-04T12:00:00.000Z",
 			removed_at: "2026-10-05T12:00:00.000Z",
 			session_count: 1,
 		}),
-		profile(MULTI_ID, "staging", {
-			online: false,
-			last_seen_at: "2026-10-03T12:00:00.000Z",
-		}),
+		profile(MULTI_ID, "staging"),
 		profile(MULTI_ID, "work", { session_count: 3 }),
 	],
 	[SINGLE_ID]: [profile(SINGLE_ID, "", { session_count: 2 })],
@@ -100,7 +91,6 @@ function sessions(agentId: string, profileKey: string, count: number) {
 		machine_name: agent.machine_name,
 		environment_id: agentId,
 		profile_key: profileKey,
-		profile_display_name: profileKey || null,
 		started_at: now,
 		ended_at: null,
 		updated_at: now,
@@ -172,7 +162,7 @@ async function stubProfiles(page: Page) {
 	return requests;
 }
 
-test("Hosted overview lists every profile with its state", async ({ page }) => {
+test("Hosted overview lists every profile with its session count", async ({ page }) => {
 	await stubProfiles(page);
 
 	await page.goto(`/agents/${MULTI_ID}`);
@@ -181,17 +171,19 @@ test("Hosted overview lists every profile with its state", async ({ page }) => {
 	await expect(rows).toHaveCount(4);
 	await expect(rows.nth(0)).toContainText("Ops Hermes");
 	await expect(rows.nth(0)).toContainText("25 sessions");
-	await expect(rows.nth(0)).toContainText("Online");
 	await expect(rows.nth(1)).toContainText("Ops Hermes · staging");
-	await expect(rows.nth(1)).toContainText("Offline");
-	await expect(rows.nth(1)).toContainText("Last seen");
+	await expect(rows.nth(1)).toContainText("0 sessions");
 	await expect(rows.nth(2)).toContainText("Ops Hermes · work");
 	await expect(rows.nth(2)).toContainText("3 sessions");
 	await expect(rows.nth(3)).toContainText("Ops Hermes · research");
 	await expect(rows.nth(3)).toContainText("Removed");
-	await expect(rows.nth(3)).not.toContainText("Offline");
+	await expect(page.getByTestId("agent-profile-list")).not.toContainText(
+		/Online|Offline|Last seen/,
+	);
 
-	await page.getByRole("link", { name: "View sessions for Ops Hermes · work, online" }).click();
+	await page
+		.getByRole("link", { name: "View sessions for Ops Hermes · work", exact: true })
+		.click();
 	await expect(page).toHaveURL(new RegExp(`/agents/${MULTI_ID}/sessions\\?profile=`));
 	await expect(page.getByTestId("session-card")).toHaveCount(3);
 });

@@ -35,13 +35,9 @@ function profile(agentId: string, key: string, overrides: Record<string, unknown
 	return {
 		id: `${agentId.slice(0, 8)}-0000-4000-8000-${(key || "default").padEnd(12, "0").slice(0, 12)}`,
 		profile_key: key,
-		upstream_key: key || "default",
 		is_default: key === "",
-		display_name: null,
 		state: "active",
-		online: true,
 		first_seen_at: now,
-		last_seen_at: now,
 		removed_at: null,
 		session_count: 1,
 		...overrides,
@@ -52,7 +48,7 @@ const profilesByAgent: Record<string, unknown[]> = {
 	[SINGLE_ID]: [profile(SINGLE_ID, "")],
 	[MULTI_ID]: [
 		profile(MULTI_ID, ""),
-		profile(MULTI_ID, "research", { state: "removed", online: false, removed_at: now }),
+		profile(MULTI_ID, "research", { state: "removed", removed_at: now }),
 		profile(MULTI_ID, "work", { session_count: 2 }),
 	],
 };
@@ -61,7 +57,6 @@ function session(agentId: string, profileKey: string, summary: string) {
 	const owner = agents.find((candidate) => candidate.id === agentId);
 	return {
 		profile_key: profileKey,
-		profile_display_name: profileKey || null,
 		id: `${agentId.slice(0, 8)}-${profileKey || "default"}-${summary.length}`,
 		local_session_id: `local-${summary.length}`,
 		project_path: null,
@@ -160,14 +155,17 @@ test("multi-profile Agents list profiles and filter sessions by profile", async 
 	const rows = page.getByTestId("agent-profile-row");
 	await expect(rows).toHaveCount(3);
 	await expect(rows.nth(0)).toContainText("Ops Hermes");
-	await expect(rows.nth(0)).toContainText("Online");
 	await expect(rows.nth(1)).toContainText("Ops Hermes · work");
 	await expect(rows.nth(1)).toContainText("2 sessions");
 	await expect(rows.nth(2)).toContainText("Ops Hermes · research");
 	await expect(rows.nth(2)).toContainText("Removed");
-	await expect(rows.nth(2)).not.toContainText("Offline");
+	await expect(page.getByTestId("agent-profile-list")).not.toContainText(
+		/Online|Offline|Last seen/,
+	);
 
-	await page.getByRole("link", { name: "View sessions for Ops Hermes · work, online" }).click();
+	await page
+		.getByRole("link", { name: "View sessions for Ops Hermes · work", exact: true })
+		.click();
 	await expect(page).toHaveURL(/\/sessions\?profile=/);
 	await expect(page.getByTestId("session-card")).toHaveCount(2);
 	await expect(page.getByTestId("session-card").first()).toContainText("work");
