@@ -1,0 +1,5 @@
+{"type":"user","uuid":"skill-injection","timestamp":"2026-10-06T01:00:00.000Z","cwd":"/Users/fixture/project","isMeta":true,"message":{"role":"user","content":"Injected skill body"}}
+{"type":"user","uuid":"command-caveat","timestamp":"2026-10-06T01:00:01.000Z","isMeta":true,"message":{"role":"user","content":"Command caveat"}}
+{"type":"user","uuid":"compact-summary","timestamp":"2026-10-06T01:00:02.000Z","isCompactSummary":true,"message":{"role":"user","content":"Compressed conversation summary"}}
+{"type":"user","uuid":"real-prompt","timestamp":"2026-10-06T01:00:03.000Z","message":{"role":"user","content":"Actual user prompt"}}
+{"type":"assistant","uuid":"real-answer","timestamp":"2026-10-06T01:00:04.000Z","message":{"role":"assistant","content":"Actual assistant answer"}}

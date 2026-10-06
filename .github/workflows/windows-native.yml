@@ -1,0 +1,68 @@
+name: Windows native CLI
+
+on:
+  pull_request:
+    paths:
+      - "packages/cli/**"
+      - "packages/shared/**"
+      - "install.ps1"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/windows-native.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/cli/**"
+      - "packages/shared/**"
+      - "install.ps1"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/windows-native.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-native:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      BIOME_THREADS: "2"
+      CLAWDI_NO_AUTO_UPDATE: "1"
+      CLAWDI_NO_UPDATE_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Install dependencies without hooks
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Parse Windows installer
+        shell: powershell
+        run: |
+          [ScriptBlock]::Create((Get-Content -Raw install.ps1)) | Out-Null
+      - name: Build win32-x64 natively
+        env:
+          CLAWDI_NATIVE_TARGET: win32-x64
+        run: bun run --cwd packages/cli build:native
+      - name: Verify installer, activation, setup and per-user daemon
+        shell: powershell
+        run: |
+          $testRoot = Join-Path $env:RUNNER_TEMP "clawdi-windows-$([Guid]::NewGuid())"
+          $null = New-Item -ItemType Directory -Path $testRoot
+          $env:CLAWDI_WINDOWS_TEST_ROOT = $testRoot
+          $env:CLAWDI_NATIVE_BINARY = Join-Path $env:GITHUB_WORKSPACE 'packages/cli/dist-native/win32-x64/clawdi.exe'
+          $env:CLAWDI_HOME = Join-Path $testRoot 'clawdi'
+          $env:CODEX_HOME = Join-Path $testRoot 'codex'
+          $env:NO_COLOR = '1'
+          try {
+            Set-Location packages/cli
+            bun test --isolate --max-concurrency=1 --timeout=30000 src/lib/native-distribution.test.ts src/lib/native-activation.test.ts tests/e2e/windows-native.e2e.test.ts
+            if ($LASTEXITCODE -ne 0) { throw "Windows native tests failed ($LASTEXITCODE)." }
+          } finally {
+            Remove-Item -LiteralPath $testRoot -Recurse -Force
+          }

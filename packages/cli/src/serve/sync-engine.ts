@@ -39,7 +39,7 @@ import { type ConnectedVaultSync, prepareConnectedVaultSync } from "./vault-sync
 
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import type {
 	AgentAdapter,
@@ -1126,6 +1126,7 @@ async function prepareSessionSync(
 	}
 	let pendingScan: SessionScanRequest | null = null;
 	let activeScan: Promise<void> | null = null;
+	const sessionScanIssues = new Map<string, string>();
 
 	const executeScan = async (request: SessionScanRequest): Promise<void> => {
 		if (opts.abort.aborted) return;
@@ -1146,12 +1147,14 @@ async function prepareSessionSync(
 			);
 			const observedResources = new Set<string>();
 			const confirmedSourceRevisions: FencedSessionSourceRevisionUpdate[] = [];
+			const scanIssues: Array<{ path: string; reason: string }> = [];
 			let enqueued = 0;
 			for await (const batch of scan.batches) {
 				// Profile rename/attribution may have moved receipts during this scan.
 				lastPushedSessionHash.clear();
 				for (const [key, hash] of loadFencedSessionHashes(api, opts))
 					lastPushedSessionHash.set(key, hash);
+				scanIssues.push(...(batch.scanIssues ?? []));
 				for (const localSessionId of batch.observedLocalSessionIds) {
 					observedResources.add(`session:${localSessionId}`);
 				}
@@ -1192,7 +1195,32 @@ async function prepareSessionSync(
 			if (scan.coverage === "complete") {
 				health.clearAbsent("push", "session:", observedResources);
 			}
-			health.clear("push", "session_scan");
+			if (scan.coverage === "complete") {
+				sessionScanIssues.clear();
+			} else {
+				for (const issuePath of sessionScanIssues.keys()) {
+					if (
+						request.kind === "paths" &&
+						request.paths.some((path) => {
+							const scannedPath = resolve(path);
+							return issuePath === scannedPath || issuePath.startsWith(`${scannedPath}/`);
+						})
+					)
+						sessionScanIssues.delete(issuePath);
+				}
+			}
+			for (const issue of scanIssues) sessionScanIssues.set(issue.path, issue.reason);
+			if (sessionScanIssues.size === 0) {
+				health.clear("push", "session_scan");
+			} else {
+				health.set(
+					"push",
+					"session_scan",
+					[...sessionScanIssues]
+						.map(([path, reason]) => `${opts.adapter.agentType} ${basename(path)}: ${reason}`)
+						.join("; "),
+				);
+			}
 			if (enqueued > 0) log.info("engine.sessions_enqueued", { count: enqueued });
 		} catch (error) {
 			if (opts.abort.aborted) return;

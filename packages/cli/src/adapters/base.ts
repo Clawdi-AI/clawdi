@@ -123,6 +123,8 @@ export interface RawSession {
 	rawFilePath: string;
 	/** Opaque adapter revision used to avoid materializing unchanged backing content. */
 	sourceRevision?: string;
+	/** Optional adapter metadata that participates in the local sync hash. */
+	localHashMetadata?: string;
 	/**
 	 * Adapter-classified timestamp of the latest real user input in this
 	 * session. `null` means the complete materialized session contains no real
@@ -138,6 +140,11 @@ export type SessionScanRequest =
 	| { kind: "complete"; projectFilter?: string }
 	| { kind: "paths"; paths: readonly string[]; projectFilter?: string };
 
+export interface SessionScanIssue {
+	path: string;
+	reason: string;
+}
+
 /**
  * Return shape of `AgentAdapter.collectSessions`.
  *
@@ -152,6 +159,7 @@ export interface SessionScanResult {
 	sessions: RawSession[];
 	dedupedCount: number;
 	coverage: "complete" | "partial";
+	scanIssues?: readonly SessionScanIssue[];
 }
 
 export interface SessionScanBatch {
@@ -159,6 +167,7 @@ export interface SessionScanBatch {
 	/** Every local session observed in this batch, including revision-matched sessions. */
 	observedLocalSessionIds: readonly string[];
 	dedupedCount: number;
+	scanIssues?: readonly SessionScanIssue[];
 }
 
 export interface SessionUserActivity {
@@ -207,13 +216,15 @@ export function collectFromScan(
 		const result = await scan(request, new Map(), context);
 		const sessions: RawSession[] = [];
 		let dedupedCount = 0;
+		const scanIssues: SessionScanIssue[] = [];
 		for await (const batch of result.batches) {
 			context?.signal.throwIfAborted();
 			sessions.push(...batch.sessions);
 			dedupedCount += batch.dedupedCount;
+			scanIssues.push(...(batch.scanIssues ?? []));
 		}
 		context?.signal.throwIfAborted();
-		return { sessions, dedupedCount, coverage: result.coverage };
+		return { sessions, dedupedCount, coverage: result.coverage, scanIssues };
 	};
 }
 
@@ -239,6 +250,7 @@ export async function scanSessionModule(
 				sessions: result.sessions,
 				observedLocalSessionIds: result.sessions.map((session) => session.localSessionId),
 				dedupedCount: result.dedupedCount,
+				scanIssues: result.scanIssues,
 			};
 		})(),
 	};

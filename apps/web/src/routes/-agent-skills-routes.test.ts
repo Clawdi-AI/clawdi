@@ -121,6 +121,26 @@ for (const hosted of [false, true]) {
 			expect(llms.body).not.toContain("/skill.md");
 		});
 
+		test("serves device sign-in and automatic history upload instructions", () => {
+			const guide = responses["/get-started.md"].body;
+			const signIn = guide.split("## Sign in\n")[1]?.split("\n## ")[0];
+			expect(signIn).toContain("clawdi auth login\n");
+			expect(signIn).toContain("clawdi auth complete");
+			expect(signIn).toContain("Only relay");
+			expect(signIn).toContain("the link and code that your own command printed");
+			expect(signIn).toContain("Never invent a sign-in URL or code");
+			expect(signIn).not.toMatch(/127\.0\.0\.1|callback URL|printf|--no-open/);
+			expect(guide).toContain("Don't ask any other questions.");
+			expect(guide).toContain("clawdi update --yes");
+			expect(guide).toContain("clawdi push --modules sessions --all-agents --all --json");
+			expect(guide).toContain("totals.sessions");
+			expect(guide).toContain("new + updated + unchanged");
+			expect(guide).toContain("DeepSeek Harness (`dsh`)");
+			expect(guide).toContain("To skip a project: `clawdi config set excludeProjects <path>`");
+			expect(guide).toContain("Agents that aren't installed on this machine show as skipped.");
+			expect(guide).not.toContain("exits 1 in that case");
+		});
+
 		test("serves a plain guide with the approved SEO, caching, and content headers", () => {
 			const guide = responses["/get-started.md"];
 			expect(guide.status).toBe(200);

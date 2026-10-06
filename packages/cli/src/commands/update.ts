@@ -22,7 +22,7 @@ import {
 } from "../lib/current-cli-invocation";
 import { downloadAndStageNativeRelease } from "../lib/native-activation";
 import type { NativeInstallOwnership } from "../lib/native-distribution";
-import { nativeReleaseBaseUrl } from "../lib/native-release-manifest";
+import { nativeExecutableName, nativeReleaseBaseUrl } from "../lib/native-release-manifest";
 import {
 	type PrivateDirectoryLockOptions,
 	PrivateDirectoryLockTimeoutError,
@@ -556,8 +556,16 @@ export function installCommand(installer: Installer | null, version: string): st
 	return installer === "bun" ? `bun add -g ${spec}` : `npm i -g ${spec}`;
 }
 
-function nativeInstallCommand(version: string): string {
-	if (!isValidSemver(version)) throw new Error(`invalid clawdi update version: ${version}`);
+export function nativeInstallCommand(
+	version?: string,
+	platform: NodeJS.Platform = process.platform,
+): string {
+	if (version !== undefined && !isValidSemver(version))
+		throw new Error(`invalid clawdi update version: ${version}`);
+	if (platform === "win32") {
+		return `${version === undefined ? "" : `$env:CLAWDI_VERSION='${version}'; `}irm https://clawdi.ai/install.ps1 | iex`;
+	}
+	if (version === undefined) return "curl -fsSL https://clawdi.ai/install.sh | sh";
 	return `curl -fsSL https://github.com/Clawdi-AI/clawdi/releases/download/clawdi-cli-v${version}/install.sh | CLAWDI_VERSION=${version} sh`;
 }
 
@@ -888,10 +896,14 @@ async function runNativeUpdateInstall(input: {
 				? ["--native-lock-timeout-ms", String(input.lockOptions.timeoutMs)]
 				: []),
 		];
-		const exitCode = await runInstallerProcess(join(staged.stageDir, "clawdi"), activationArgs, {
-			signal: input.signal,
-			output: input.output,
-		});
+		const exitCode = await runInstallerProcess(
+			join(staged.stageDir, nativeExecutableName(staged.target)),
+			activationArgs,
+			{
+				signal: input.signal,
+				output: input.output,
+			},
+		);
 		if (exitCode === 75) return { status: "locked" };
 		if (exitCode !== 0) {
 			return {

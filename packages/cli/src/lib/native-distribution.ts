@@ -3,11 +3,13 @@ import { basename, dirname, join, normalize, resolve } from "node:path";
 import {
 	isNativeBuildTarget,
 	MAX_NATIVE_MANIFEST_BYTES,
+	NATIVE_PUBLISH_TARGET_CATALOG,
 	NATIVE_RELEASE_MANIFEST_NAME,
-	NATIVE_TARGETS,
+	NATIVE_RELEASE_MANIFEST_V2_NAME,
 	type NativeBuildTarget,
-	type NativeTarget,
+	nativeExecutableName,
 	parseNativeReleaseManifest,
+	parseNativeReleaseManifestV2,
 } from "./native-release-manifest";
 import { isValidSemver } from "./semver";
 
@@ -20,7 +22,7 @@ export interface NativeInstallOwnership {
 	versionsRoot: string;
 	versionDir: string;
 	version: string;
-	target: NativeTarget;
+	target: NativeBuildTarget;
 	executable: string;
 	launcher: string;
 }
@@ -36,20 +38,24 @@ const MAX_NATIVE_IDENTITY_BYTES = 4096;
 
 /**
  * Recognize the one repository-owned native layout. The stable launcher must
- * be a symlink to the exact immutable executable that is currently running.
+ * resolve to the exact immutable executable that is currently running.
  */
 export function detectNativeInstall(
 	executablePath: string,
 	compiledIdentity: NativeCompiledIdentity | null = currentNativeCompiledIdentity(),
+	platform: NodeJS.Platform = process.platform,
 ): NativeInstallOwnership | null {
 	if (!compiledIdentity) return null;
+	const windows = platform === "win32";
+	if (compiledIdentity.target.startsWith("win32-") !== windows) return null;
+	const executableName = nativeExecutableName(compiledIdentity.target);
 	let executable: string;
 	try {
 		executable = realpathSync.native(executablePath);
 	} catch {
 		return null;
 	}
-	if (basename(executable) !== "clawdi") return null;
+	if (basename(executable) !== executableName) return null;
 
 	const versionDir = dirname(executable);
 	const versionsRoot = dirname(versionDir);
@@ -73,10 +79,13 @@ export function detectNativeInstall(
 		return null;
 	}
 	try {
-		const manifestPath = join(versionDir, NATIVE_RELEASE_MANIFEST_NAME);
+		const manifestPath = join(versionDir, nativeInstallManifestName(identity.target));
 		const manifestFile = lstatSync(manifestPath);
 		if (!manifestFile.isFile() || manifestFile.size > MAX_NATIVE_MANIFEST_BYTES) return null;
-		const manifest = parseNativeReleaseManifest(readFileSync(manifestPath, "utf8"));
+		const manifest = parseNativeInstallManifest(
+			readFileSync(manifestPath, "utf8"),
+			identity.target,
+		);
 		if (
 			manifest.version !== identity.version ||
 			!manifest.artifacts.some((artifact) => artifact.target === identity.target)
@@ -92,9 +101,11 @@ export function detectNativeInstall(
 	} catch {
 		return null;
 	}
-	const launcher = join(prefix, "bin", "clawdi");
+	const launcherRoot = windows ? join(clawdiRoot, "current") : join(prefix, "bin", "clawdi");
+	const launcher = windows ? join(launcherRoot, executableName) : launcherRoot;
 	try {
-		if (!lstatSync(launcher).isSymbolicLink()) return null;
+		if (!lstatSync(launcherRoot).isSymbolicLink()) return null;
+		if (windows && realpathSync.native(launcherRoot) !== versionDir) return null;
 		if (realpathSync.native(launcher) !== executable) return null;
 	} catch {
 		return null;
@@ -116,7 +127,7 @@ export function writeNativeInstallIdentity(
 	identity: NativeCompiledIdentity,
 	manifestContent: string,
 ): void {
-	const manifest = parseNativeReleaseManifest(manifestContent);
+	const manifest = parseNativeInstallManifest(manifestContent, identity.target);
 	const artifact = manifest.artifacts.find((entry) => entry.target === identity.target);
 	if (manifest.version !== identity.version || !artifact) {
 		throw new Error("native release manifest does not match executable identity");
@@ -138,11 +149,11 @@ export function writeNativeInstallIdentity(
 export function validateNativeInstallIdentity(
 	directory: string,
 	identity: NativeCompiledIdentity,
-	manifestContent: string | ReturnType<typeof parseNativeReleaseManifest>,
+	manifestContent: string | ReturnType<typeof parseNativeInstallManifest>,
 ): void {
 	const manifest =
 		typeof manifestContent === "string"
-			? parseNativeReleaseManifest(manifestContent)
+			? parseNativeInstallManifest(manifestContent, identity.target)
 			: manifestContent;
 	const artifact = manifest.artifacts.find((entry) => entry.target === identity.target);
 	if (manifest.version !== identity.version || !artifact) {
@@ -180,17 +191,31 @@ export function currentNativeCompiledIdentity(): NativeCompiledIdentity | null {
 	return { version: CLAWDI_CLI_VERSION, target: CLAWDI_NATIVE_TARGET };
 }
 
-export function nativeVersionDirectoryName(version: string, target: NativeTarget): string {
+export function nativeVersionDirectoryName(version: string, target: NativeBuildTarget): string {
 	if (!isValidSemver(version)) throw new Error(`invalid native version: ${version}`);
 	return `${version}-${target}`;
 }
 
-function parseVersionDirectoryName(name: string): { version: string; target: NativeTarget } | null {
-	for (const target of NATIVE_TARGETS) {
+function parseVersionDirectoryName(
+	name: string,
+): { version: string; target: NativeBuildTarget } | null {
+	for (const { target } of NATIVE_PUBLISH_TARGET_CATALOG) {
 		const suffix = `-${target}`;
 		if (!name.endsWith(suffix)) continue;
 		const version = name.slice(0, -suffix.length);
 		return isValidSemver(version) ? { version, target } : null;
 	}
 	return null;
+}
+
+export function nativeInstallManifestName(target: NativeBuildTarget): string {
+	return target.startsWith("win32-")
+		? NATIVE_RELEASE_MANIFEST_V2_NAME
+		: NATIVE_RELEASE_MANIFEST_NAME;
+}
+
+export function parseNativeInstallManifest(content: string, target: NativeBuildTarget) {
+	return target.startsWith("win32-")
+		? parseNativeReleaseManifestV2(content)
+		: parseNativeReleaseManifest(content);
 }

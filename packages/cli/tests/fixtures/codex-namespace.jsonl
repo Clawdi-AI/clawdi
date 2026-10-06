@@ -1,0 +1,4 @@
+{"timestamp":"2026-10-06T01:00:00.000Z","type":"response_item","payload":{"type":"function_call","call_id":"without-namespace","name":"memory_search","arguments":"{}"}}
+{"timestamp":"2026-10-06T01:00:01.000Z","type":"response_item","payload":{"type":"function_call","call_id":"empty-namespace","namespace":"","name":"memory_search","arguments":"{}"}}
+{"timestamp":"2026-10-06T01:00:02.000Z","type":"response_item","payload":{"type":"function_call","call_id":"functions-namespace","namespace":"functions","name":"memory_search","arguments":"{}"}}
+{"timestamp":"2026-10-06T01:00:03.000Z","type":"response_item","payload":{"type":"function_call","call_id":"mcp-namespace","namespace":"mcp__clawdi","name":"memory_search","arguments":"{}"}}

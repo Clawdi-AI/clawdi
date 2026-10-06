@@ -75,11 +75,12 @@ describe("bounded session sources", () => {
 		}
 	});
 
-	test("rejects a source record beyond its limit before parsing", async () => {
+	test("blocks a source file when a record exceeds its limit before parsing", async () => {
 		const source = await JsonlSessionSource.open(
 			fixture(`{"text":"${"x".repeat(SESSION_RECORD_MAX_BYTES)}"}`),
 		);
-		await expect(records(source)).rejects.toThrow("source record exceeds");
+		expect(await records(source)).toEqual([]);
+		expect(source.blockedReason).toContain("source record exceeds");
 	});
 
 	test("cancels mid-buffer and releases the source handle", async () => {

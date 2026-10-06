@@ -12,9 +12,11 @@ import {
 	readFileSync,
 	realpathSync,
 	renameSync,
+	rmdirSync,
 	rmSync,
 	statSync,
 	symlinkSync,
+	unlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -24,17 +26,18 @@ import { getClawdiDir } from "./config";
 import {
 	currentNativeCompiledIdentity,
 	type NativeCompiledIdentity,
+	nativeInstallManifestName,
 	nativeVersionDirectoryName,
+	parseNativeInstallManifest,
 	validateNativeInstallIdentity,
 	writeNativeInstallIdentity,
 } from "./native-distribution";
 import {
-	isNativeTarget,
+	isNativeBuildTarget,
 	MAX_NATIVE_MANIFEST_BYTES,
-	NATIVE_RELEASE_MANIFEST_NAME,
-	type NativeReleaseArtifact,
-	type NativeTarget,
-	parseNativeReleaseManifest,
+	type NativeBuildTarget,
+	type NativeReleaseArtifactV2,
+	nativeExecutableName,
 } from "./native-release-manifest";
 import {
 	type PrivateDirectoryLockLease,
@@ -60,7 +63,7 @@ export interface StagedNativeRelease {
 	stageDir: string;
 	manifest: string;
 	version: string;
-	target: NativeTarget;
+	target: NativeBuildTarget;
 }
 
 export function nativeIdentityOutput(): string {
@@ -72,7 +75,7 @@ export function nativeIdentityOutput(): string {
 export async function downloadAndStageNativeRelease(input: {
 	prefix: string;
 	version: string;
-	target: NativeTarget;
+	target: NativeBuildTarget;
 	releaseBaseUrl: string;
 	signal?: AbortSignal;
 	fetcher?: typeof fetch;
@@ -96,7 +99,7 @@ export async function downloadAndStageNativeRelease(input: {
 	);
 	const fetcher = input.fetcher ?? fetch;
 	try {
-		const manifestUrl = `${input.releaseBaseUrl}/${NATIVE_RELEASE_MANIFEST_NAME}`;
+		const manifestUrl = `${input.releaseBaseUrl}/${nativeInstallManifestName(input.target)}`;
 		const manifestResponse = await fetcher(manifestUrl, {
 			signal: downloadAbort.signal,
 			redirect: "follow",
@@ -115,7 +118,7 @@ export async function downloadAndStageNativeRelease(input: {
 		const manifestText = new TextDecoder("utf-8", { fatal: true }).decode(
 			await readBoundedResponse(manifestResponse, MAX_NATIVE_MANIFEST_BYTES, "native manifest"),
 		);
-		const manifest = parseNativeReleaseManifest(manifestText);
+		const manifest = parseNativeInstallManifest(manifestText, input.target);
 		if (manifest.version !== input.version) {
 			throw new Error(
 				`native manifest version mismatch: expected ${input.version}, got ${manifest.version}`,
@@ -136,16 +139,19 @@ export async function downloadAndStageNativeRelease(input: {
 			"native artifact",
 		);
 		verifyNativeArchiveChecksum(archive, artifact);
-		await validateNativeArchive(archive);
+		const executableName = nativeExecutableName(input.target);
+		await validateNativeArchive(archive, executableName);
 
 		const nativeRoot = join(input.prefix, "share", "clawdi");
 		mkdirSync(nativeRoot, { recursive: true, mode: 0o755 });
 		const stageDir = mkdtempSync(join(nativeRoot, ".stage-"));
 		try {
-			await extractNativeArchive(stageDir, archive);
+			await extractNativeArchive(stageDir, archive, executableName);
 			validateStagedResources(stageDir);
-			chmodSync(join(stageDir, "clawdi"), 0o755);
-			writeFileSync(join(stageDir, NATIVE_RELEASE_MANIFEST_NAME), manifestText, { mode: 0o644 });
+			chmodSync(join(stageDir, executableName), 0o755);
+			writeFileSync(join(stageDir, nativeInstallManifestName(input.target)), manifestText, {
+				mode: 0o644,
+			});
 			return { stageDir, manifest: manifestText, version: input.version, target: input.target };
 		} catch (error) {
 			rmSync(stageDir, { recursive: true, force: true });
@@ -158,7 +164,7 @@ export async function downloadAndStageNativeRelease(input: {
 }
 
 export async function activateStagedNativeRelease(
-	input: { stageDir: string; prefix: string; version: string; target: NativeTarget },
+	input: { stageDir: string; prefix: string; version: string; target: NativeBuildTarget },
 	lockOptions?: PrivateDirectoryLockOptions,
 ): Promise<{ launcher: string; previousVersion: string | null }> {
 	if (!evaluateHostPolicyForCommand("update").allowed) {
@@ -172,7 +178,7 @@ export async function activateStagedNativeRelease(
 }
 
 async function activateStagedNativeReleaseWithLease(
-	input: { stageDir: string; prefix: string; version: string; target: NativeTarget },
+	input: { stageDir: string; prefix: string; version: string; target: NativeBuildTarget },
 	lease: PrivateDirectoryLockLease,
 ): Promise<{ launcher: string; previousVersion: string | null }> {
 	if (!isAbsolute(input.prefix) || !isAbsolute(input.stageDir)) {
@@ -189,7 +195,9 @@ async function activateStagedNativeReleaseWithLease(
 	if (dirname(stageDir) !== nativeRoot || !stageDir.startsWith(`${nativeRoot}${sep}.stage-`)) {
 		throw new Error("native stage must be a private child of the selected prefix");
 	}
-	const stagedExecutable = join(stageDir, "clawdi");
+	const executableName = nativeExecutableName(input.target);
+	const windows = process.platform === "win32";
+	const stagedExecutable = join(stageDir, executableName);
 	if (realpathSync.native(process.execPath) !== realpathSync.native(stagedExecutable)) {
 		throw new Error("native activation must run from the staged executable");
 	}
@@ -202,15 +210,15 @@ async function activateStagedNativeReleaseWithLease(
 
 	lease.assertOwned();
 	mkdirSync(versionsRoot, { recursive: true, mode: 0o755 });
-	const binDir = join(prefix, "bin");
+	const binDir = windows ? nativeRoot : join(prefix, "bin");
 	lease.assertOwned();
 	mkdirSync(binDir, { recursive: true, mode: 0o755 });
 	accessSync(binDir, constants.W_OK);
-	const launcher = join(binDir, "clawdi");
+	const launcher = join(binDir, windows ? "current" : executableName);
 	const previous = readOwnedLauncher(launcher, versionsRoot);
 
 	const finalDir = join(versionsRoot, nativeVersionDirectoryName(input.version, input.target));
-	const activeExecutable = join(finalDir, "clawdi");
+	const activeExecutable = join(finalDir, executableName);
 	let installedNewDirectory = false;
 	if (existsSync(finalDir)) {
 		validateInstalledVersion(finalDir, compiled);
@@ -245,7 +253,10 @@ async function activateStagedNativeReleaseWithLease(
 		[activeExecutable, previous?.executable ?? null],
 		lease,
 	);
-	return { launcher, previousVersion: previous?.version ?? null };
+	return {
+		launcher: windows ? join(launcher, executableName) : launcher,
+		previousVersion: previous?.version ?? null,
+	};
 }
 
 export function activateNativeLauncherTransaction(
@@ -255,11 +266,20 @@ export function activateNativeLauncherTransaction(
 		previous: (NativeCompiledIdentity & { executable: string }) | null;
 	},
 	lease: PrivateDirectoryLockLease,
+	runtime: {
+		platform?: NodeJS.Platform;
+		readIdentity?: (command: string) => NativeCompiledIdentity | null;
+	} = {},
 ): void {
+	const readIdentity = runtime.readIdentity ?? readNativeExecutableIdentity;
+	if ((runtime.platform ?? process.platform) === "win32") {
+		activateWindowsLauncherTransaction(input, lease, readIdentity);
+		return;
+	}
 	lease.assertOwned();
 	atomicLauncherSwap(input.launcher, input.active.executable);
 	try {
-		const activated = readNativeExecutableIdentity(input.launcher);
+		const activated = readIdentity(input.launcher);
 		if (activated?.version !== input.active.version || activated.target !== input.active.target) {
 			throw new Error("activated native launcher failed version verification");
 		}
@@ -267,7 +287,7 @@ export function activateNativeLauncherTransaction(
 		lease.assertOwned();
 		if (input.previous) {
 			atomicLauncherSwap(input.launcher, input.previous.executable);
-			const restored = readNativeExecutableIdentity(input.launcher);
+			const restored = readIdentity(input.launcher);
 			if (
 				restored?.version !== input.previous.version ||
 				restored.target !== input.previous.target
@@ -282,6 +302,56 @@ export function activateNativeLauncherTransaction(
 		}
 		throw error;
 	}
+}
+
+function activateWindowsLauncherTransaction(
+	input: Parameters<typeof activateNativeLauncherTransaction>[0],
+	lease: PrivateDirectoryLockLease,
+	readIdentity: (command: string) => NativeCompiledIdentity | null,
+): void {
+	const backup = `${input.launcher}.old-${randomUUID()}`;
+	let backedUp = false;
+	let created = false;
+	lease.assertOwned();
+	if (input.previous) {
+		renameSync(input.launcher, backup);
+		backedUp = true;
+	}
+	try {
+		lease.assertOwned();
+		symlinkSync(dirname(input.active.executable), input.launcher, "junction");
+		created = true;
+		const activated = readIdentity(join(input.launcher, "clawdi.exe"));
+		if (activated?.version !== input.active.version || activated.target !== input.active.target) {
+			throw new Error("activated native launcher failed version verification");
+		}
+	} catch (error) {
+		lease.assertOwned();
+		if (created) removeLauncherJunction(input.launcher);
+		if (backedUp && input.previous) {
+			renameSync(backup, input.launcher);
+			const restored = readIdentity(join(input.launcher, "clawdi.exe"));
+			if (
+				restored?.version !== input.previous.version ||
+				restored.target !== input.previous.target
+			) {
+				throw new Error("native activation failed and rollback verification also failed", {
+					cause: error,
+				});
+			}
+		}
+		throw error;
+	}
+	if (backedUp) {
+		lease.assertOwned();
+		removeLauncherJunction(backup);
+	}
+}
+
+function removeLauncherJunction(path: string): void {
+	// Remove only the reparse point; Unix fixtures use a directory symlink.
+	if (process.platform === "win32") rmdirSync(path);
+	else unlinkSync(path);
 }
 
 function readOwnedLauncher(
@@ -300,7 +370,9 @@ function readOwnedLauncher(
 	}
 	let executable: string;
 	try {
-		executable = realpathSync.native(launcher);
+		executable = realpathSync.native(
+			process.platform === "win32" ? join(launcher, "clawdi.exe") : launcher,
+		);
 	} catch (error) {
 		throw new Error(
 			`refusing to replace broken native launcher at ${launcher}: ${error instanceof Error ? error.message : String(error)}`,
@@ -312,7 +384,7 @@ function readOwnedLauncher(
 		relativeTarget.startsWith("..") ||
 		isAbsolute(relativeTarget) ||
 		relativeTarget.split(sep).length !== 2 ||
-		basename(executable) !== "clawdi"
+		basename(executable) !== (process.platform === "win32" ? "clawdi.exe" : "clawdi")
 	) {
 		throw new Error(`refusing to replace unowned symlink at ${launcher}; move it first`);
 	}
@@ -326,21 +398,23 @@ function validateInstalledVersion(directory: string, identity: NativeCompiledIde
 	const manifestContent = validateVersionManifest(directory, identity);
 	validateNativeInstallIdentity(directory, identity, manifestContent);
 	validateStagedResources(directory);
-	const actual = readNativeExecutableIdentity(join(directory, "clawdi"));
+	const actual = readNativeExecutableIdentity(
+		join(directory, nativeExecutableName(identity.target)),
+	);
 	if (!actual || actual.version !== identity.version || actual.target !== identity.target) {
 		throw new Error(`native version directory has an invalid executable identity: ${directory}`);
 	}
 }
 
 function validateVersionManifest(directory: string, identity: NativeCompiledIdentity): string {
-	const path = join(directory, NATIVE_RELEASE_MANIFEST_NAME);
+	const path = join(directory, nativeInstallManifestName(identity.target));
 	const manifestFile = lstatSync(path);
 	if (!manifestFile.isFile()) throw new Error("native version manifest is not a regular file");
 	if (manifestFile.size > MAX_NATIVE_MANIFEST_BYTES) {
 		throw new Error("native version manifest exceeds the size limit");
 	}
 	const content = readFileSync(path, "utf8");
-	const manifest = parseNativeReleaseManifest(content);
+	const manifest = parseNativeInstallManifest(content, identity.target);
 	if (
 		manifest.version !== identity.version ||
 		!manifest.artifacts.some((artifact) => artifact.target === identity.target)
@@ -364,9 +438,17 @@ function readNativeExecutableIdentity(command: string): NativeCompiledIdentity |
 		!version ||
 		!isValidSemver(version) ||
 		!target ||
-		!isNativeTarget(target)
+		!isNativeBuildTarget(target)
 	) {
 		return null;
+	}
+	if (target.startsWith("win32-")) {
+		const smoke = spawnSync(command, ["--version"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+			timeout: NATIVE_SMOKE_TIMEOUT_MS,
+		});
+		if (smoke.status !== 0 || smoke.stdout.trim() !== version) return null;
 	}
 	return { version, target };
 }
@@ -381,7 +463,7 @@ function atomicLauncherSwap(launcher: string, target: string): void {
 	}
 }
 
-function verifyNativeArchiveChecksum(archive: Buffer, artifact: NativeReleaseArtifact): void {
+function verifyNativeArchiveChecksum(archive: Buffer, artifact: NativeReleaseArtifactV2): void {
 	const actual = createHash("sha256").update(archive).digest("hex");
 	if (actual !== artifact.sha256) throw new Error("native artifact checksum mismatch");
 }
@@ -413,14 +495,18 @@ export async function validateNativeArchive(
 	}
 }
 
-async function extractNativeArchive(directory: string, archive: Buffer): Promise<void> {
+async function extractNativeArchive(
+	directory: string,
+	archive: Buffer,
+	executableName: "clawdi" | "clawdi.exe",
+): Promise<void> {
 	let entries = 0;
 	let unpackedBytes = 0;
 	await streamTar(
 		archive,
 		"extract",
 		(path, type, size) => {
-			assertAllowedNativeArchiveEntry(path, type, size);
+			assertAllowedNativeArchiveEntry(path, type, size, executableName);
 			entries += 1;
 			unpackedBytes += size;
 			if (entries > MAX_NATIVE_ARCHIVE_ENTRIES || unpackedBytes > MAX_NATIVE_UNPACKED_BYTES) {
@@ -491,7 +577,9 @@ function pruneNativeInstall(
 		if (!entry.isDirectory()) continue;
 		const directory = join(versionsRoot, entry.name);
 		if (keepDirectories.has(directory)) continue;
-		const identity = readNativeExecutableIdentity(join(directory, "clawdi"));
+		const identity = readNativeExecutableIdentity(
+			join(directory, process.platform === "win32" ? "clawdi.exe" : "clawdi"),
+		);
 		if (!identity) continue;
 		try {
 			validateInstalledVersion(directory, identity);
@@ -499,7 +587,11 @@ function pruneNativeInstall(
 			continue;
 		}
 		lease.assertOwned();
-		rmSync(directory, { recursive: true, force: true });
+		try {
+			rmSync(directory, { recursive: true, force: true });
+		} catch {
+			// Retry locked or busy directories on a later install.
+		}
 	}
 	for (const entry of readdirSync(nativeRoot, { withFileTypes: true })) {
 		if (!entry.name.startsWith(".stage-") || !entry.isDirectory()) continue;
@@ -512,7 +604,9 @@ function pruneNativeInstall(
 			continue;
 		}
 		try {
-			const identity = readNativeExecutableIdentity(join(directory, "clawdi"));
+			const identity = readNativeExecutableIdentity(
+				join(directory, process.platform === "win32" ? "clawdi.exe" : "clawdi"),
+			);
 			if (!identity) continue;
 			validateVersionManifest(directory, identity);
 		} catch {
@@ -528,7 +622,11 @@ function pruneNativeInstall(
 			continue;
 		}
 		lease.assertOwned();
-		rmSync(directory, { recursive: true, force: true });
+		try {
+			rmSync(directory, { recursive: true, force: true });
+		} catch {
+			// Retry locked or busy directories on a later install.
+		}
 	}
 }
 

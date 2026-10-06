@@ -15,6 +15,24 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
+### CLI 0.15.1
+
+- **Session history:** Codex tool names follow upstream namespace rules. Claude meta messages stay hidden and compact summaries appear as events. OpenCode synthetic text stays hidden.
+- **Claude Code:** Custom and AI session titles sync, including renames, and tool results no longer become fallback titles. Subagent transcripts sync as independent sessions.
+- **OpenClaw:** Official session entries sync reliably even when the SDK logs output, preserving entry IDs and the agent user's environment.
+- **Sync reliability:** Oversized transcript files report a sync error while other sessions continue. Incremental scans retain unresolved file errors without exposing absolute local paths.
+- **Upgrade:** Sessions are re-projected once after upgrading; only sessions whose projected content changes are re-uploaded.
+
+### CLI 0.15.0
+
+- **Sign-in:** `clawdi auth login` uses device authorization everywhere: it prints a link and a short code (and opens the browser in a terminal), then finishes on its own after you approve. Agents can run it end to end; `clawdi auth complete` resumes waiting. The local callback and paste-back flows are removed; `--manual` remains for existing API keys.
+- **Setup:** `clawdi setup` reports what it enabled, how to opt out, and links to your dashboard. MCP servers are registered with the absolute CLI path (Codex falls back to `~/.codex/config.toml`), registration commands time out instead of hanging, and `clawdi doctor` skips agents that aren't installed.
+- **Sync:** `clawdi config set excludeProjects <path>[,<path>]` keeps projects out of background sync and `clawdi push`. `clawdi push --json` and `clawdi pull --json` return versioned results (`clawdi.push.v1`, `clawdi.pull.v1`). The daemon now receives `CLAWDI_AUTH_TOKEN_ORIGIN` when credentials come from the environment.
+- **Install and update:** the installer adds `~/.local/bin` to your shell profile (opt out with `CLAWDI_NO_MODIFY_PATH=1`). Releases include native Windows x64/arm64 archives and GitHub build attestations. `clawdi update --yes` installs non-interactively, and an unreachable registry is now an error.
+- **Scripting:** results go to stdout and errors to stderr; prompts that need confirmation fail with a clear message without a TTY unless you pass `--yes`; progress is plain text without a TTY; `NO_COLOR` and `--no-color` disable color; numeric flags are validated; `clawdi config get/list` show effective values and their source.
+- **Clarity:** network and sign-in errors say what to do next, and `clawdi --help` groups commands by task.
+- **Agents:** Pi gains MCP registration and directory Skills, DeepSeek Harness (`dsh`) Skills are supported, and Hermes named profiles and OpenClaw agents sync as profiles.
+
 ### CLI 0.14.109
 
 - Hermes rewound, superseded, and duplicate compaction rows no longer appear in Cloud transcripts.
