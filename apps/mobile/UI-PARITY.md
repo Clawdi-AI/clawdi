@@ -218,6 +218,9 @@ Sessions and Library use this pattern; bounded settings/forms use ScrollView.
 **Segments and insets** — `src/platform/navigation/segmented-control.tsx`
 uses SDK 57's native community segmented control on iOS and Compose
 segmented buttons with shared colors/Geist on Android for settings navigation.
+For longer option sets, `scrollable` uses Compose's documented horizontal-scroll
+modifier and single-line labels; Project detail and Memory categories use it
+for their longer option sets.
 NativeTabs retains its default content-inset behavior (including Android's
 bottom safe area). `SafeAreaScreen` leaves top/bottom ownership to a visible
 stack header; native scroll views use `contentInsetAdjustmentBehavior="automatic"`

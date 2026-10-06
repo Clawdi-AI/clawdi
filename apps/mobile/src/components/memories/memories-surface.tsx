@@ -10,7 +10,7 @@ import {
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import { Plus } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCardSkeleton } from "@/components/entity-card";
@@ -160,6 +160,7 @@ function MemoriesView() {
 						<ListToolbar
 							filters={
 								<NativeSegments
+									scrollable
 									value={category}
 									onChange={setCategory}
 									options={MEMORY_CATEGORIES.map((c) => ({ value: c.value, label: c.label }))}
@@ -230,8 +231,12 @@ function MemoryEditor({ id: editing }: { id?: string }) {
 		enabled: scope.isReady && Boolean(editing),
 		retry: false,
 	});
+	const initialized = useRef(false);
 	useEffect(() => {
-		if (memory.data) setContent(memory.data.content);
+		if (memory.data && !initialized.current) {
+			initialized.current = true;
+			setContent(memory.data.content);
+		}
 	}, [memory.data]);
 	const sheet = useSheet<boolean>({ fallback: "/memories", busy: action.busy });
 	const save = () =>

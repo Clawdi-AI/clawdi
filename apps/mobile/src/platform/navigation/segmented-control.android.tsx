@@ -4,6 +4,7 @@ import {
 	SingleChoiceSegmentedButtonRow,
 	Text,
 } from "@expo/ui/jetpack-compose";
+import { horizontalScroll } from "@expo/ui/jetpack-compose/modifiers";
 import { useCSSVariable, useUniwind } from "uniwind";
 import type { NativeSegmentsProps } from "@/platform/navigation/segmented-control";
 
@@ -13,6 +14,7 @@ export function NativeSegments({
 	options,
 	onChange,
 	disabled = false,
+	scrollable = false,
 }: NativeSegmentsProps) {
 	const { theme } = useUniwind();
 	const [foreground, accent, background, border] = useCSSVariable([
@@ -24,7 +26,7 @@ export function NativeSegments({
 	const color = (v: string | number | undefined) => (typeof v === "string" ? v : undefined);
 	return (
 		<Host matchContents={{ vertical: true }} colorScheme={theme === "dark" ? "dark" : "light"}>
-			<SingleChoiceSegmentedButtonRow>
+			<SingleChoiceSegmentedButtonRow modifiers={scrollable ? [horizontalScroll()] : undefined}>
 				{options.map((option) => (
 					<SegmentedButton
 						key={option.value}
@@ -41,7 +43,9 @@ export function NativeSegments({
 						}}
 					>
 						<SegmentedButton.Label>
-							<Text style={{ fontFamily: "Geist-Medium", fontSize: 14 }}>{option.label}</Text>
+							<Text maxLines={1} style={{ fontFamily: "Geist-Medium", fontSize: 14 }}>
+								{option.label}
+							</Text>
 						</SegmentedButton.Label>
 					</SegmentedButton>
 				))}

@@ -509,7 +509,6 @@ function SharesView({
 					}
 					footer={
 						<>
-							{" "}
 							<WebView recipe={dialogStyles.linkActions}>
 								<ConfirmAction
 									title={copy.title}
@@ -545,7 +544,7 @@ function SharesView({
 			<NativeList
 				data={failure && !items.length ? [] : items}
 				keyExtractor={sessionShareIdentity}
-				contentContainerStyle={{ padding: 16, flexGrow: 1 }}
+				contentContainerStyle={{ padding: 16, flexGrow: 1, gap: 0 }}
 				refreshing={inventory.isRefetching && !inventory.isFetchingNextPage}
 				onRefresh={() => {
 					if (!inventory.isFetching) void inventory.refetch();

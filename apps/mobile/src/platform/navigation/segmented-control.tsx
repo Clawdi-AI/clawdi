@@ -6,6 +6,7 @@ export type NativeSegmentsProps = {
 	options: { value: string; label: string }[];
 	onChange: (value: string) => void;
 	disabled?: boolean;
+	scrollable?: boolean;
 };
 
 /** Native single-choice control; options retain the Web labels and ordering. */

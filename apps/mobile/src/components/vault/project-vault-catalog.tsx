@@ -277,7 +277,6 @@ export function ProjectVaultCatalog({
 						unavailable = disabled || (!linked && (!catalog.data || !!catalog.error));
 					return (
 						<>
-							{" "}
 							{label ? <SectionLabel count={count}>{label}</SectionLabel> : null}
 							<VaultCard
 								key={item.id}

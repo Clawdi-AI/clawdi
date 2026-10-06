@@ -16,7 +16,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { MoreHorizontal, Pencil, Plus } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCardSkeleton } from "@/components/entity-card";
@@ -274,8 +274,10 @@ function ProjectEditor({ id: editing }: { id?: string }) {
 	const [description, setDescription] = useState("");
 	const [closeError, setCloseError] = useState<unknown>();
 	const project = projects.data?.find((p) => p.id === editing);
+	const initialized = useRef(false);
 	useEffect(() => {
-		if (project) {
+		if (project && !initialized.current) {
+			initialized.current = true;
 			setName(project.name);
 			setDescription(project.description ?? "");
 		}

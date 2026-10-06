@@ -20,6 +20,7 @@ import {
 	fetchAllPages,
 	vaultKeyFormCopy as formCopy,
 	identityFor,
+	splitVaultTitle,
 	transferVaultKeysLabel,
 	transferVaultKeysTitle,
 	vaultImportActionLabel,
@@ -449,7 +450,7 @@ function VaultDetail({
 						: form === "transfer"
 							? transferVaultKeysTitle(transferMode, selected.length)
 							: form === "split"
-								? t("vault.splitTitle")
+								? splitVaultTitle(current?.name ?? "")
 								: t("vault.requestCreate")
 				}
 				description={

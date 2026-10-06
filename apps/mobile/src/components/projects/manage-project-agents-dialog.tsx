@@ -77,6 +77,7 @@ function ManageProjectAgents({
 	const cache = useQueryClient();
 	const action = useAuthAction(scope);
 	const sheet = useSheet<boolean>({ fallback: "/projects", busy: action.busy });
+	const [closeError, setCloseError] = useState<unknown>();
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 	useEffect(() => {
 		setSelected(new Set(linkedAgents?.map((agent) => agent.id)));
@@ -152,7 +153,7 @@ function ManageProjectAgents({
 					<>
 						<WebText recipe={projectDetailClasses.description}>
 							{t("libraryPort.chooseAgents")}
-						</WebText>{" "}
+						</WebText>
 						{linkedError ? (
 							<ApiErrorPanel error={linkedError} onRetry={onRetryLinked} />
 						) : ownership.isError ? (
@@ -229,7 +230,7 @@ function ManageProjectAgents({
 				}}
 				footer={
 					<WebView recipe={projectDetailClasses.form}>
-						{" "}
+						{closeError ? <ApiErrorPanel error={closeError} /> : null}
 						{action.error ? (
 							<Alert variant="destructive">{t("libraryPort.updateAgentsFailed")}</Alert>
 						) : null}
@@ -237,7 +238,7 @@ function ManageProjectAgents({
 							<Button
 								variant="ghost"
 								disabled={action.busy}
-								onPress={() => void sheet.close().catch(() => undefined)}
+								onPress={() => void sheet.close().catch(setCloseError)}
 							>
 								<Text>{t("libraryPort.cancel")}</Text>
 							</Button>
