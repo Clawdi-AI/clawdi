@@ -17,8 +17,6 @@ export type AccountNotification = {
 	severity: "info" | "warning" | "destructive";
 };
 
-export type NotificationCenterView = "all" | "unread";
-
 const NOTIFICATION_ACTION_ORIGINS = new Set([
 	"https://cloud.clawdi.ai",
 	"https://clawdi.ai",
@@ -43,15 +41,6 @@ export function getPendingNotificationCount(
 	return (notifications?.length ?? 0) + accountUnreadCount;
 }
 
-export function filterAccountNotifications(
-	notifications: readonly AccountNotification[],
-	view: NotificationCenterView,
-): readonly AccountNotification[] {
-	return view === "unread"
-		? notifications.filter((notification) => !notification.read)
-		: notifications;
-}
-
 export function resolveNotificationUrl(
 	value: string,
 	origin: string,
@@ -72,19 +61,14 @@ export function getNotificationCenterTriggerLabel(count: number): string {
 	return "Notifications";
 }
 
-export function getNotificationCenterEmptyCopy(view: NotificationCenterView): {
+export function getNotificationCenterEmptyCopy(): {
 	title: string;
 	description: string;
 } {
-	return view === "unread"
-		? {
-				title: "You're all caught up",
-				description: "New account updates and project invitations will appear here.",
-			}
-		: {
-				title: "No notifications yet",
-				description: "Account updates and project invitations will appear here.",
-			};
+	return {
+		title: "No notifications yet",
+		description: "Account updates and project invitations will appear here.",
+	};
 }
 
 export function getNotificationCenterDescription(): string {
