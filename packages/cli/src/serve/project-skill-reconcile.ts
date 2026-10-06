@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import type { SkillModule } from "../adapters/base";
-import { type ApiClient, unwrap } from "../lib/api-client";
+import { type ApiClient, DEFAULT_TIMEOUT_MS, unwrap } from "../lib/api-client";
 import { readBoundedResponseBytes } from "../lib/github-skill-archive";
 import {
 	commitProjectSkillMaterialization,
@@ -103,16 +103,21 @@ async function downloadDesiredArchive(
 	agentId: string,
 	desired: DesiredSkill,
 ): Promise<Buffer> {
-	const response = await api.request(assertArchiveUrl(api, agentId, desired).toString(), {
+	const signal = AbortSignal.timeout(5 * 60_000);
+	const response = await api.requestStream(assertArchiveUrl(api, agentId, desired).toString(), {
 		headers: { Accept: "application/gzip" },
 		redirect: "error",
+		signal,
 	});
 	if (!response.ok) {
+		await response.body?.cancel();
 		throw new Error(`Project Skill ${desired.skill_key} download failed (${response.status})`);
 	}
 	const bytes = await readBoundedResponseBytes(response, MAX_PROJECT_SKILL_ARCHIVE_BYTES, {
 		resourceLabel: "Project Skill archive",
 		limitLabel: "25 MB",
+		signal,
+		idleTimeoutMs: DEFAULT_TIMEOUT_MS,
 	});
 	const stage = await mkdtemp(join(tmpdir(), "clawdi-project-reconcile-"));
 	try {

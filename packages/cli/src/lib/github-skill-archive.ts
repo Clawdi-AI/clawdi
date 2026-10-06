@@ -34,8 +34,14 @@ export function hasAsciiControlCharacter(value: string): boolean {
 export async function readBoundedResponseBytes(
 	response: Response,
 	maxBytes: number,
-	options: { resourceLabel?: string; limitLabel?: string } = {},
+	options: {
+		resourceLabel?: string;
+		limitLabel?: string;
+		signal?: AbortSignal;
+		idleTimeoutMs?: number;
+	} = {},
 ): Promise<Buffer> {
+	options.signal?.throwIfAborted();
 	const resourceLabel = options.resourceLabel ?? "GitHub archive";
 	const limitLabel = options.limitLabel ?? "100 MB";
 	if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
@@ -57,9 +63,25 @@ export async function readBoundedResponseBytes(
 	const reader = response.body.getReader();
 	const chunks: Uint8Array[] = [];
 	let receivedBytes = 0;
+	let idleExpired = false;
+	let idleTimer: ReturnType<typeof setTimeout> | undefined;
+	const cancel = () => {
+		void reader.cancel("response aborted").catch(() => {});
+	};
+	options.signal?.addEventListener("abort", cancel, { once: true });
 	try {
 		while (true) {
+			options.signal?.throwIfAborted();
+			if (options.idleTimeoutMs !== undefined) {
+				idleTimer = setTimeout(() => {
+					idleExpired = true;
+					cancel();
+				}, options.idleTimeoutMs);
+			}
 			const next = await reader.read();
+			clearTimeout(idleTimer);
+			options.signal?.throwIfAborted();
+			if (idleExpired) throw new Error(`${resourceLabel} download timed out waiting for data.`);
 			if (next.done) break;
 			receivedBytes += next.value.byteLength;
 			if (receivedBytes > maxBytes) {
@@ -69,6 +91,8 @@ export async function readBoundedResponseBytes(
 			chunks.push(next.value);
 		}
 	} finally {
+		clearTimeout(idleTimer);
+		options.signal?.removeEventListener("abort", cancel);
 		reader.releaseLock();
 	}
 	return Buffer.concat(chunks, receivedBytes);
