@@ -114,8 +114,8 @@ fixture Cloud `ok` took 15.71 s for OpenClaw and 13.94 s for Hermes; full fill t
 TTL retire/refill cycle. The fixture exited 0 and cleaned all disposable resources.
 This review changes correctness and scope gates; it does not tune performance.
 
-Review Docker qualification on source `ce9b3100ceea0466b9c90c8ea35bf2465963cd5e`
-(rebased onto main `cf25066df`) passed full CLI typecheck/tests (196 files),
+Review Docker qualification on source `a98c6e2c5b55891b839bb2392be5335506fd476f`
+(rebased onto main `1089d545d`) passed full CLI typecheck/tests (196 files),
 runtime-systemd (25 tests), CI and changed-file Biome (12 files). The official
 Hermes upstream contract passed all 14 tests on commit
 `93cbf617c7007286a249cc00506c012933fb537c` (`0.21.5+7736.g93cbf61`).
