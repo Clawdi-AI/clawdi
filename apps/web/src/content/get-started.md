@@ -23,7 +23,18 @@ curl -fsSL https://clawdi.ai/install.sh | sh
 It installs to `~/.local/bin` and adds that directory to the user's shell profile. If `clawdi`
 still isn't found in your current shell, run `export PATH="$HOME/.local/bin:$PATH"`.
 
-Alternative for Windows, Node.js users, or CI (requires Node.js 24+):
+On Windows (PowerShell):
+
+```powershell
+irm https://clawdi.ai/install.ps1 | iex
+```
+
+The installer updates the current PowerShell session's PATH.
+If `clawdi` isn't found in the current shell, open a new terminal.
+For agents, run it from the same PowerShell session or use
+`$env:USERPROFILE\.local\share\clawdi\current\clawdi.exe`.
+
+If Node.js 24+ is already your toolchain or for CI, install with npm:
 
 ```bash
 npm install -g clawdi@latest

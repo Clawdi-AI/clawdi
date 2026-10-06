@@ -136,7 +136,7 @@ export function AddAgentSetup() {
 					<div>
 						<p className="text-sm font-medium">Run these commands in order on the machine</p>
 						<p className="mt-1 text-xs text-muted-foreground">
-							Windows or npm? See{" "}
+							Windows or package-manager users? See{" "}
 							<a
 								href="https://docs.clawdi.ai/installation"
 								className="underline underline-offset-4"
