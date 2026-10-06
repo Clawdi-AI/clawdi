@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { CodexAdapter } from "../../src/adapters/codex";
+import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
 import { tarSkillDir } from "../../src/lib/tar";
 import attachmentNameFixtures from "../fixtures/codex-attachment-names.json";
 import { cleanupTmp, copyFixtureToTmp } from "./helpers";
@@ -49,6 +50,9 @@ describe("CodexAdapter.detect", () => {
 });
 
 describe("CodexAdapter.collectSessions", () => {
+	it("preserves origin/main session bytes and localHash", async () => {
+		await assertSessionGolden("codex", new CodexAdapter().sessions);
+	});
 	it("maps sanitized attachment records to bounded basenames without losing the session", async () => {
 		const adapter = new CodexAdapter();
 		const original = (await adapter.sessions.collect({ kind: "complete" })).sessions[0];

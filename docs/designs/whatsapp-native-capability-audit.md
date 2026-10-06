@@ -122,7 +122,7 @@ bash scripts/test.sh backend tests/test_whatsapp_provider_bridge.py \
   tests/test_whatsapp_native_transport.py tests/test_whatsapp_sidecar_registry.py \
   tests/test_whatsapp_baileys.py tests/test_whatsapp_noise.py \
   tests/test_whatsapp_custom_onboarding.py tests/test_whatsapp_managed_onboarding.py \
-  tests/test_channel_debug_events.py tests/test_channels.py tests/test_channel_inbox.py
+  tests/test_channel_debug_events.py tests/test_channels_*.py tests/test_channel_inbox.py
 bash scripts/test.sh sidecar
 bash scripts/test.sh cli
 bash scripts/test.sh web src/hosted/v2/channels

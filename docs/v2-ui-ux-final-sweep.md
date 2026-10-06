@@ -8,7 +8,7 @@ after the last full visual pass.
 - **Method:** the web app was run locally in hosted mode (`VITE_CLAWDI_HOSTED=true`,
   dev-auth-bypass) and driven with Playwright against **stubbed** deploy-api
   (`/v2`, `/me`) and cloud-api (`/v1`) responses — the same host-stub pattern as
-  `apps/web/e2e/hosted-smoke.pw.ts` — so every surface and state (empty, loading,
+  `apps/web/e2e/hosted-{smoke,billing,openclaw,channels,rail-nav}.pw.ts` — so every surface and state (empty, loading,
   error, populated, gated) renders deterministically. 40 surfaces × light+dark
   captured. Screenshots live at `~/clawdi-ui-screenshots/v2-final-sweep/`
   (referenced by filename below; **not committed** per repo policy).

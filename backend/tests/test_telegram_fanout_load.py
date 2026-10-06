@@ -19,10 +19,10 @@ from app.models.channel import ChannelBinding, ChannelBotAgentLink, ChannelMessa
 from app.routes.channel_routers import telegram
 from app.services import channels, sync_events
 from app.services.channel_wakeups import channel_inbound_messages_enqueued as wakeup
+from tests.channel_helpers import _seed_existing_channel_link, _telegram_bot_path
 from tests.conftest import create_env_with_project, create_test_hosted_runtime_state
 from tests.test_channel_fanout_load import distribution
 from tests.test_channel_inbox import _create_account_and_binding
-from tests.test_channels import _seed_existing_channel_link, _telegram_bot_path
 
 pytestmark = [
     pytest.mark.committed_db,

@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { join } from "node:path";
 import { type SessionScanBatch, scanSessionModule } from "../../src/adapters/base";
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
+import { assertSessionGolden } from "../../src/adapters/session-golden.test-support";
 import { tarSkillDir } from "../../src/lib/tar";
 import { cleanupTmp, copyFixtureToTmp } from "./helpers";
 
@@ -181,6 +182,24 @@ describe("OpenClawAdapter.detect", () => {
 });
 
 describe("OpenClawAdapter.collectSessions", () => {
+	it("preserves origin/main Gateway session bytes and localHash", async () => {
+		const stateRoot = join(tmpHome, ".openclaw");
+		const agentRoot = join(stateRoot, "agents", "main", "agent");
+		mkdirSync(agentRoot, { recursive: true });
+		writeFileSync(join(agentRoot, "openclaw-agent.sqlite"), "fixture");
+		writeFileSync(join(stateRoot, "sqlite-session-test"), "enabled");
+		rmSync(join(stateRoot, "agents", "main", "sessions", "sessions.json"));
+		await assertSessionGolden("openclaw-gateway", new OpenClawAdapter().sessions);
+	});
+
+	it("preserves origin/main legacy session bytes and localHash", async () => {
+		rmSync(join(tmpHome, "bin", "openclaw"));
+		process.env.PATH = join(tmpHome, "bin");
+		await assertSessionGolden("openclaw-legacy", new OpenClawAdapter().sessions);
+	});
+	it("preserves origin/main session bytes and localHash", async () => {
+		await assertSessionGolden("openclaw", new OpenClawAdapter().sessions);
+	});
 	it.each(["none", "sessions", "gateway", "agents"])(
 		"serializes scan/resolve/roster subprocesses (injected failure: %s)",
 		async (failingCommand) => {

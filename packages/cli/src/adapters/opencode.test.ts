@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { OpenCodeAdapter } from "./opencode";
+import { assertSessionGolden } from "./session-golden.test-support";
 
 const originalDb = process.env.OPENCODE_DB;
 const originalXdgData = process.env.XDG_DATA_HOME;
@@ -254,6 +255,24 @@ function fixtureDatabase(): { adapter: OpenCodeAdapter; databasePath: string } {
 }
 
 describe("OpenCode session adapter", () => {
+	test.each([
+		["/repo/subdirectory", 1],
+		["/repo2", 0],
+	])("filters cwd %s by project and its descendants", async (cwd, count) => {
+		const { adapter, databasePath } = fixtureDatabase();
+		const writer = new Database(databasePath);
+		try {
+			writer.run("UPDATE session SET directory = ?", [cwd]);
+		} finally {
+			writer.close();
+		}
+		const scan = await adapter.sessions.collect({ kind: "complete", projectFilter: "/repo" });
+		expect(scan.sessions).toHaveLength(count);
+	});
+
+	test("preserves origin/main session bytes and localHash", async () => {
+		await assertSessionGolden("opencode", fixtureDatabase().adapter.sessions);
+	});
 	test("invalidates the source revision for metadata changes and refuses rewritten content", async () => {
 		const { adapter, databasePath } = fixtureDatabase();
 		const context = { streaming: true, signal: new AbortController().signal };
