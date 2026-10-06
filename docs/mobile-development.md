@@ -874,6 +874,9 @@ plugins and metadata, not native compilation, signing or store acceptance.
 for development (dev client), preview (internal APK) and production (store).
 Production uses remote build numbers with auto-increment; all binaries use
 fingerprint runtime compatibility.
+Each build profile pins Node 24.21.0 (the repository's Node 24 major) and Bun 1.4.2
+so Expo's synchronous `require(ESM)` uses the same toolchain locally and on EAS.
+See [EAS build tool versions](https://docs.expo.dev/build/eas-json/#selecting-build-tool-versions).
 
 Keep all `EXPO_PUBLIC_*` values in the selected EAS environment, with plaintext
 or sensitive visibility, never in build-profile `env`. [Expo Update uses that
