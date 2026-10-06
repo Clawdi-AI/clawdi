@@ -247,7 +247,7 @@ If extraction was unconfigured, say that instead. Either way, continue to Verify
 clawdi doctor
 ```
 
-Every check should be green. Then point the user at their dashboard:
+Auth, API reachability, Environments, Vault metadata, and Clawdi MCP should pass, along with the check for each agent you registered. Agents that aren't installed on this machine show `not installed`; that's expected, and `clawdi doctor` exits 1 in that case. Then point the user at their dashboard:
 
 > All set. Open the **Sessions** page in your Clawdi dashboard — you should see N sessions from this machine across {agents}.
 
