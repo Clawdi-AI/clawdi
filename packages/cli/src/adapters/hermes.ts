@@ -10,8 +10,6 @@ import {
 	sequenceSessionEvents,
 } from "../lib/session-events";
 import { describeSkillKey, isValidSkillKey } from "../lib/skill-key";
-import { replaceSkillArchiveTarGz } from "../lib/tar";
-import { mutateUserSkillTarget } from "../runtime/managed-skill-reservation";
 import { log } from "../serve/log";
 import type {
 	AgentAdapterCore,
@@ -535,16 +533,12 @@ export class HermesAdapter implements AgentAdapterCore {
 			this.resolveSession(localSessionId, context),
 		watchPaths: () => this.getSessionsWatchPaths(),
 	};
-	readonly skills = {
-		...flatSkillModule({
-			root: skillsDir,
-			nested: true,
-			acceptKey: acceptHermesSkillKey,
-			sharedPath: (key, owner) => join(skillsDir(), "shared", `${key}__${owner}`),
-		}),
-		writeSharedArchive: (key: string, owner: string, bytes: Buffer) =>
-			this.writeSharedSkillArchive(key, owner, bytes),
-	};
+	readonly skills = flatSkillModule({
+		root: skillsDir,
+		nested: true,
+		acceptKey: acceptHermesSkillKey,
+		sharedPath: (key, owner) => join(skillsDir(), "shared", `${key}__${owner}`),
+	});
 
 	async detect(): Promise<boolean> {
 		// Hermes stores state in a SQLite db. The dir alone may exist as a
@@ -927,22 +921,5 @@ export class HermesAdapter implements AgentAdapterCore {
 		// have an empty poll signature and become observable when created.
 		const database = stateDbPath();
 		return [database, `${database}-wal`, `${database}-journal`];
-	}
-
-	private async writeSharedSkillArchive(
-		key: string,
-		ownerHandle: string,
-		tarGzBytes: Buffer,
-	): Promise<void> {
-		const root = skillsDir();
-		const sharedRoot = join(root, "shared");
-		await replaceSkillArchiveTarGz(
-			key,
-			root,
-			this.skills.sharedPath(key, ownerHandle),
-			tarGzBytes,
-			undefined,
-			(mutation) => mutateUserSkillTarget(sharedRoot, "shared", mutation),
-		);
 	}
 }

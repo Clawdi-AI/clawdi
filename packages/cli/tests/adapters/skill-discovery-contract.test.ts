@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
 import { CodexAdapter } from "../../src/adapters/codex";
 import { HermesAdapter } from "../../src/adapters/hermes";
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
+import { tarSingleFile } from "../../src/lib/tar";
 import {
 	managedSkillReservationLedgerPath,
 	reserveManagedSkill,
@@ -42,6 +43,27 @@ describe.each([
 	afterEach(() => {
 		process.env = originalEnv;
 		cleanupTmp(tmpHome);
+	});
+
+	test("refuses a shared write reserved at the exact target and preserves its content and ledger", async () => {
+		const adapter = new Adapter();
+		const target = adapter.skills.sharedPath("demo", "owner");
+		mkdirSync(target, { recursive: true });
+		writeFileSync(join(target, "SKILL.md"), "# Managed shared skill\n");
+		reserveManagedSkill({
+			targetDir: target,
+			id: "demo__owner",
+			version: 1,
+			digest: "a".repeat(64),
+			manager: "local-setup",
+		});
+		const ledger = readFileSync(managedSkillReservationLedgerPath(), "utf8");
+		const archive = await tarSingleFile("demo", "# Replacement\n");
+		await expect(adapter.skills.writeSharedArchive("demo", "owner", archive)).rejects.toThrow(
+			"Skill demo__owner is reserved by a managed Skill owner",
+		);
+		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Managed shared skill\n");
+		expect(readFileSync(managedSkillReservationLedgerPath(), "utf8")).toBe(ledger);
 	});
 
 	test("listKeys does not migrate legacy setup skills or write a ledger", async () => {

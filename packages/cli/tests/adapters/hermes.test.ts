@@ -714,14 +714,14 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 		expect(readFileSync(extracted, "utf-8")).toContain("description: A nested demo skill");
 	});
 
-	it("refuses to write shared content through a managed shared namespace", async () => {
+	it("refuses to write shared content over the reserved shared target", async () => {
 		const skillsRoot = join(tmpHome, ".hermes", "skills");
-		const sharedRoot = join(skillsRoot, "shared");
+		const sharedRoot = join(skillsRoot, "shared", "demo__owner");
 		mkdirSync(sharedRoot, { recursive: true });
 		writeFileSync(join(sharedRoot, "SKILL.md"), "# Managed shared namespace\n");
 		reserveManagedSkill({
 			targetDir: sharedRoot,
-			id: "shared",
+			id: "demo__owner",
 			version: 1,
 			digest: "a".repeat(64),
 			manager: "local-setup",
@@ -730,10 +730,9 @@ describe("HermesAdapter.writeSkillArchive + getSkillPath", () => {
 
 		const adapter = new HermesAdapter();
 		await expect(adapter.skills.writeSharedArchive("demo", "owner", tarBytes)).rejects.toThrow(
-			"Skill shared is reserved by a managed Skill owner",
+			"Skill demo__owner is reserved by a managed Skill owner",
 		);
 		expect(readFileSync(join(sharedRoot, "SKILL.md"), "utf8")).toBe("# Managed shared namespace\n");
-		expect(existsSync(join(sharedRoot, "demo__owner"))).toBe(false);
 	});
 
 	it("getSkillPath returns the canonical SKILL.md anchor under skills/", () => {

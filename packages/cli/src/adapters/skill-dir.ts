@@ -120,7 +120,10 @@ export function flatSkillModule(
 		writeSharedArchive:
 			options.write?.writeSharedArchive ??
 			(async (key, owner, bytes) => {
-				await replaceSkillArchiveTarGz(key, options.root(), sharedPath(key, owner), bytes);
+				const target = sharedPath(key, owner);
+				await replaceSkillArchiveTarGz(key, options.root(), target, bytes, undefined, (mutation) =>
+					mutateUserSkillTarget(target, basename(target), mutation),
+				);
 			}),
 	};
 }
