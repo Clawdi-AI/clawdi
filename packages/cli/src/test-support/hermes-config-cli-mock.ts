@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 const DEFAULT_CONFIG: Record<string, unknown> = {
@@ -14,6 +14,19 @@ const DEFAULT_CONFIG: Record<string, unknown> = {
 	},
 };
 
+const commandArgs = process.argv.slice(2);
+if (commandArgs[0] === "-p") {
+	const profile = commandArgs[1];
+	commandArgs.splice(0, 2);
+	if (profile) {
+		const selectedHome = process.env.HERMES_HOME || join(process.env.HOME ?? "", ".hermes");
+		const root =
+			basename(dirname(selectedHome)) === "profiles"
+				? dirname(dirname(selectedHome))
+				: selectedHome;
+		process.env.HERMES_HOME = profile === "default" ? root : join(root, "profiles", profile);
+	}
+}
 const configPath = join(
 	process.env.HERMES_HOME?.trim() || join(process.env.HOME ?? "", ".hermes"),
 	"config.yaml",
@@ -124,7 +137,7 @@ function parseValue(raw: string): unknown {
 	return raw;
 }
 
-const [, action, ...args] = process.argv.slice(2);
+const [, action, ...args] = commandArgs;
 
 try {
 	if (action === "path") {

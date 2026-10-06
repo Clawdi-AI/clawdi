@@ -2,9 +2,11 @@ import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { Memory } from "../lib/api-schemas";
+import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { requireSearchQuery } from "../lib/search-query";
+import { isInteractive } from "../lib/tty";
 
 interface ListOpts {
 	json?: boolean;
@@ -115,8 +117,17 @@ export async function memoryAdd(content: string, opts: { category?: string } = {
 	console.log(chalk.green(`✓ Added memory ${result.id.slice(0, 8)} (${category})`));
 }
 
-export async function memoryRm(id: string) {
+export async function memoryRm(id: string, opts: { yes?: boolean } = {}) {
 	requireAuth();
+	if (
+		isInteractive() &&
+		!(await confirmOrRequireYes(`Delete memory ${id}?`, {
+			yes: opts.yes,
+			action: "delete this memory",
+		}))
+	) {
+		return;
+	}
 	const api = new ApiClient();
 	unwrap(await api.DELETE("/v1/memories/{memory_id}", { params: { path: { memory_id: id } } }));
 	console.log(chalk.green("✓ Deleted memory"));

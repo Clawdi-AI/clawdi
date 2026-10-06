@@ -81,6 +81,51 @@ behavior must be negotiated; a CLI product version is not a compatibility
 selector. When in doubt, add a regression test that exercises the old path and
 payload before changing the handler.
 
+## Agent profiles
+
+`GET/PUT /v1/agents/{agent_id}/profiles` reads and reconciles an Agent's
+profile inventory. PUT accepts `{complete, profiles: [{upstream_key, is_default}]}`;
+only a complete inventory marks missing profiles `removed`. Removed profiles
+retain their sessions and return `online: false`. Responses include stable
+profile UUIDs, keys, display names, timestamps, state, and session counts.
+Profile writes require `sessions:write` or `skills:write` and the existing
+Agent credential and machine fences. The v1 heartbeat contract is unchanged.
+
+The default Cloud key is the empty string. Session batch requests accept a
+batch-level `profile_key`; local-ID content endpoints accept it in their existing
+query, form, or JSON body. Omitted keys resolve one matching session across
+profiles, create new metadata under the default profile when no session matches,
+and reject ambiguity with HTTP 409 `profile_required` on single-session endpoints.
+Batches report ambiguous IDs in the per-item `rejected` list; unaffected items
+continue. Generation commits address their generation's Session directly.
+Deleted attributed
+sessions still resolve their suppression profile for older clients. Session
+lists accept `profile_key` and expose `profile_display_name` for the UI.
+
+`POST /v1/agents/{agent_id}/profiles/{profile_key}/attribute-sessions` moves
+OpenClaw default-profile metadata and suppressions for up to 1,000 local IDs.
+The Hermes sibling `/rename` accepts `{new_upstream_key}` and preserves the
+source profile UUID while moving sessions and suppressions in place. Both
+operations preserve content bytes, object references, hashes, and session UUIDs;
+an occupied rename destination returns HTTP 409 `profile_conflict`. Both metadata
+move operations require `sessions:write`; `skills:write` alone is insufficient.
+
+The migration adds defaulted profile columns without session backfill and builds
+the new unique indexes concurrently, retaining the old uniqueness and upsert target
+for old API binaries. Transactional DDL uses a three-second lock timeout and is
+retryable. Attaching the new Session index, dropping the old constraint and
+switching upserts are a separate contract release. Until then, cross-profile
+local-ID collisions are rejected per item without overwriting existing sessions.
+Storage keys retain their existing paths through attribution and rename. Run the
+Docker migration and compatibility checks:
+
+```bash
+scripts/test.sh backend tests/test_agent_profiles.py tests/test_agent_profiles_migration.py
+```
+
+Done: both test files pass, including unchanged stored content and old-client
+resolution with zero, one, and multiple matching sessions.
+
 ## Generated clients
 
 OpenAPI feeds the shared TypeScript client used by both web and CLI:

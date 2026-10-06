@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from app.schemas.agent_profile import ProfileKey
+
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
@@ -185,6 +187,7 @@ class SessionEventHeadResponse(BaseModel):
 class SessionEventGenerationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    profile_key: ProfileKey | None = None
     environment_id: uuid.UUID
     generation: uuid.UUID
     append_id: uuid.UUID
@@ -215,6 +218,7 @@ class SessionEventChunkResponse(BaseModel):
 
 
 class SessionEventCommitRequest(BaseModel):
+    profile_key: ProfileKey | None = None
     model_config = ConfigDict(extra="forbid")
 
     append_id: uuid.UUID

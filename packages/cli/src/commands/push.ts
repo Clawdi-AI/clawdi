@@ -8,9 +8,11 @@ import {
 	type RawSkill,
 	scanSessionModule,
 } from "../adapters/base";
+import { profileSessionKey } from "../adapters/profiles";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { errMessage } from "../lib/errors";
+import { createProfileSync } from "../lib/profile-sessions";
 import { parseModules } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import {
@@ -74,6 +76,7 @@ interface AgentUploadResult {
  * `clawdi push` look like it had only picked the first agent).
  */
 interface AgentScanResult {
+	sessionsModule?: AgentAdapter["sessions"];
 	agentType: AgentType;
 	modules: (typeof UP_MODULES)[number][];
 	envId: string | null;
@@ -381,7 +384,9 @@ async function scanOneAgent(
 	let sessions: RawSession[] = [];
 	const skills: RawSkill[] = [];
 	let skillsCacheSkipped = 0;
-	const sessionsModule = modules.includes("sessions") ? adapter.sessions : undefined;
+	const profileSync = createProfileSync(adapter, sessionApi, envId, { readOnly: opts.dryRun });
+	const sessionsModule = modules.includes("sessions") ? profileSync.sessions : undefined;
+	await profileSync.refresh();
 	if (sessionsModule) {
 		// `collectSessions` also reports a `dedupedCount` (resume chains it
 		// collapsed). That's internal housekeeping — not actionable and not
@@ -473,7 +478,7 @@ async function scanOneAgent(
 		const retained: RawSession[] = [];
 		for (const s of sessions) {
 			const plan = await prepareSessionUpload(s, sessionProtocol);
-			sessionPlans.set(s.localSessionId, plan);
+			sessionPlans.set(profileSessionKey(s.profileKey, s.localSessionId), plan);
 			if (!envId) {
 				retained.push(s);
 				continue;
@@ -481,7 +486,8 @@ async function scanOneAgent(
 			const fence = sessionFence(sessionApi, {
 				environmentId: envId,
 				adapter: agentType,
-				sourceSessionKey: s.localSessionId,
+				sourceSessionKey: profileSessionKey(s.profileKey, s.localSessionId),
+				profileKey: s.profileKey,
 			});
 			const blocked = sessionPlanIsDurablyBlocked(fence, plan, sessionsLock);
 			if (blocked) {
@@ -502,7 +508,9 @@ async function scanOneAgent(
 		}
 		sessions = retained;
 		sessionsCacheSkipped = before - sessions.length - sessionsBlocked;
-		const retainedSessionIds = new Set(sessions.map((session) => session.localSessionId));
+		const retainedSessionIds = new Set(
+			sessions.map((session) => profileSessionKey(session.profileKey, session.localSessionId)),
+		);
 		for (const id of [...sessionPlans.keys()]) {
 			if (!retainedSessionIds.has(id)) sessionPlans.delete(id);
 		}
@@ -537,6 +545,7 @@ async function scanOneAgent(
 		envId,
 		sessions,
 		sessionPlans,
+		sessionsModule,
 		sessionProtocol,
 		skills,
 		sessionsCacheSkipped,
@@ -565,7 +574,7 @@ async function uploadOneAgent(
 	moduleState: ModuleState,
 ): Promise<AgentUploadResult | "aborted"> {
 	const { agentType, envId, sessions, sessionPlans, skills } = scan;
-	const sessionsModule = adapterForType(agentType)?.sessions;
+	const sessionsModule = scan.sessionsModule;
 
 	if (!envId) {
 		p.log.error("Environment id missing — rerun `clawdi setup`.", { output: process.stderr });
@@ -599,13 +608,27 @@ async function uploadOneAgent(
 		// gives the same protection as defense-in-depth.
 		const SESSION_BATCH_CHUNK = 500;
 		try {
-			for (let offset = 0; offset < sessions.length; offset += SESSION_BATCH_CHUNK) {
-				const chunk = sessions.slice(offset, offset + SESSION_BATCH_CHUNK);
+			const groups = new Map<string | undefined, RawSession[]>();
+			for (const session of sessions) {
+				const group = groups.get(session.profileKey) ?? [];
+				group.push(session);
+				groups.set(session.profileKey, group);
+			}
+			const chunks: RawSession[][] = [];
+			for (const group of groups.values())
+				for (let offset = 0; offset < group.length; offset += SESSION_BATCH_CHUNK)
+					chunks.push(group.slice(offset, offset + SESSION_BATCH_CHUNK));
+			for (const chunk of chunks) {
+				const profileKey = chunk[0]?.profileKey;
 				const result = unwrap(
 					await api.POST("/v1/sessions/batch", {
 						body: {
+							...(profileKey !== undefined ? { profile_key: profileKey } : {}),
 							sessions: chunk.map((s) => {
-								const plan = requireSessionPlan(sessionPlans, s.localSessionId);
+								const plan = requireSessionPlan(
+									sessionPlans,
+									profileSessionKey(s.profileKey, s.localSessionId),
+								);
 								return {
 									environment_id: envId,
 									local_session_id: s.localSessionId,
@@ -629,8 +652,9 @@ async function uploadOneAgent(
 						},
 					}),
 				);
-				for (const id of result.needs_content) needsContent.add(id);
-				for (const id of result.suppressed ?? []) suppressedIds.add(id);
+				for (const id of result.needs_content) needsContent.add(profileSessionKey(profileKey, id));
+				for (const id of result.suppressed ?? [])
+					suppressedIds.add(profileSessionKey(profileKey, id));
 				sessionsCreated += result.created;
 				sessionsUpdated += result.updated;
 				sessionsUnchanged += result.unchanged;
@@ -641,7 +665,7 @@ async function uploadOneAgent(
 				// below so the next push retries. Pre-fix the absence
 				// from `needs_content` looked like success and we
 				// wrote a stale lock.
-				for (const id of result.rejected ?? []) rejectedIds.add(id);
+				for (const id of result.rejected ?? []) rejectedIds.add(profileSessionKey(profileKey, id));
 			}
 			for (const id of suppressedIds) needsContent.delete(id);
 			if (rejectedIds.size > 0) {
@@ -668,19 +692,25 @@ async function uploadOneAgent(
 			throw e;
 		}
 
-		if (sessions.some((session) => !rejectedIds.has(session.localSessionId))) {
+		if (
+			sessions.some(
+				(session) =>
+					!rejectedIds.has(profileSessionKey(session.profileKey, session.localSessionId)),
+			)
+		) {
 			const contentSpinner = p.spinner({ output: process.stderr });
 			contentSpinner.start(
 				`Syncing content for ${sessions.length} session${sessions.length === 1 ? "" : "s"}...`,
 			);
 			for (const s of sessions) {
-				const id = s.localSessionId;
+				const id = profileSessionKey(s.profileKey, s.localSessionId);
 				if (rejectedIds.has(id)) continue;
 				const plan = requireSessionPlan(sessionPlans, id);
 				const fence = sessionFence(api, {
 					environmentId: envId,
 					adapter: agentType,
 					sourceSessionKey: id,
+					profileKey: s.profileKey,
 				});
 				if (suppressedIds.has(id)) {
 					persistSuppressedSession(fence, s, plan);

@@ -56,6 +56,7 @@ let restoreConsole: (() => void) | null = null;
 let originalArgv1: string | undefined;
 let home = "";
 let consoleOutput: string[] = [];
+let consoleErrors: string[] = [];
 
 afterAll(() => {
 	rmSync(tmpRoot, { recursive: true, force: true });
@@ -99,11 +100,12 @@ beforeEach(() => {
 	const originalLog = console.log;
 	const originalError = console.error;
 	consoleOutput = [];
+	consoleErrors = [];
 	console.log = (...args: unknown[]) => {
 		consoleOutput.push(args.map(String).join(" "));
 	};
 	console.error = (...args: unknown[]) => {
-		consoleOutput.push(args.map(String).join(" "));
+		consoleErrors.push(args.map(String).join(" "));
 	};
 	restoreConsole = () => {
 		console.log = originalLog;
@@ -126,6 +128,106 @@ afterEach(() => {
 	}
 	restoreAgentHomeOverrides(agentHomeSnapshot);
 	rmSync(home, { recursive: true, force: true });
+});
+
+describe("setup notice", () => {
+	it("lists registered agents, opt-out commands, and the dashboard returned by the API", async () => {
+		installEnvironmentMock("env-notice", "https://dashboard.example.test/sessions");
+		mkdirSync(join(home, ".claude", "projects"), { recursive: true });
+		mkdirSync(join(home, ".codex", "sessions"), { recursive: true });
+		writeExecutable(join(home, "bin", "claude"), "#!/bin/sh\nprintf '1.0.0\\n'\n");
+		writeExecutable(join(home, "bin", "codex"), "#!/bin/sh\nprintf '1.0.0\\n'\n");
+
+		await setup({ yes: true, daemon: false });
+
+		const output = consoleOutput.join("\n");
+		expect(output).toContain("Clawdi is on for this machine:\n  • Agents: Claude Code, Codex");
+		expect(output).toContain("  • Skill and MCP tools installed for supported agents");
+		expect(output).toContain("To opt out later:\n");
+		expect(output).toContain("  • Stop all background sync:   clawdi daemon uninstall");
+		expect(output).not.toContain("clawdi config set excludeProjects");
+		expect(output).toContain("Open your dashboard: https://dashboard.example.test/sessions");
+		expect(output.match(/Clawdi is on for this machine:/g)).toHaveLength(1);
+		expect(consoleErrors).toEqual([]);
+	});
+
+	it.each(["codex", "hermes"])(
+		"omits the integration success line when MCP registration fails for %s",
+		async (agent) => {
+			installEnvironmentMock("env-notice");
+			writeExecutable(join(home, "bin", agent), "#!/bin/sh\nexit 1\n");
+
+			await setup({ agent, yes: true, daemon: false });
+
+			const output = consoleOutput.join("\n");
+			expect(output).toContain("Clawdi is on for this machine:");
+			expect(consoleErrors.join("\n")).toMatch(/Could not (auto-register|register) MCP server/);
+			expect(output).not.toMatch(/Could not (auto-register|register) MCP server/);
+			expect(output).toContain("Clawdi skill installed");
+			expect(output).not.toContain("Skill and MCP tools installed for supported agents");
+			expect(consoleErrors.join("\n")).not.toContain("Clawdi is on for this machine:");
+		},
+	);
+
+	it("reports integration success when Codex registration uses the config fallback", async () => {
+		installEnvironmentMock("env-notice");
+		mkdirSync(join(home, ".codex", "sessions"), { recursive: true });
+		writeExecutable(join(home, "bin", "codex"), "#!/bin/sh\nexit 1\n");
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		const output = consoleOutput.join("\n");
+		expect(output).toContain("MCP server registered in Codex (config.toml)");
+		expect(output).toContain("Skill and MCP tools installed for supported agents");
+		expect(consoleErrors).toEqual([]);
+	});
+
+	it.each(["claude", "codex"])(
+		"reports integration success when the other registered agent succeeds despite %s failing",
+		async (failedAgent) => {
+			installEnvironmentMock("env-notice");
+			mkdirSync(join(home, ".claude", "projects"), { recursive: true });
+			mkdirSync(join(home, ".codex", "sessions"), { recursive: true });
+			if (failedAgent === "codex") mkdirSync(join(home, ".codex", "config.toml"));
+			for (const agent of ["claude", "codex"]) {
+				writeExecutable(
+					join(home, "bin", agent),
+					agent === failedAgent ? "#!/bin/sh\nexit 1\n" : "#!/bin/sh\nprintf '1.0.0\\n'\n",
+				);
+			}
+
+			await setup({ yes: true, daemon: false });
+
+			const output = consoleOutput.join("\n");
+			expect(output).toContain("Clawdi is on for this machine:\n  • Agents: Claude Code, Codex");
+			expect(consoleErrors.join("\n")).toContain("Could not auto-register MCP server");
+			expect(output).not.toContain("Could not auto-register MCP server");
+			expect(output).toContain("Skill and MCP tools installed for supported agents");
+		},
+	);
+
+	it.each([null, undefined])("omits the dashboard link when the API returns %s", async (url) => {
+		installEnvironmentMock("env-notice", url);
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		const output = consoleOutput.join("\n");
+		expect(output).toContain("Clawdi is on for this machine:\n  • Agents: Codex");
+		expect(output).not.toContain("Open your dashboard:");
+	});
+
+	it("reports background sync as off when daemon installation fails", async () => {
+		installEnvironmentMock("env-notice");
+		writeFileSync(join(home, process.platform === "darwin" ? "Library" : ".config"), "blocked");
+
+		await setup({ agent: "codex", yes: true });
+
+		expect(process.exitCode).toBe(1);
+		const output = consoleOutput.join("\n");
+		expect(consoleErrors.join("\n")).toContain("Could not install daemon:");
+		expect(output).not.toContain("Could not install daemon:");
+		expect(output).toContain("Background sync: off. Run `clawdi push` to upload manually.");
+	});
 });
 
 describe("setup daemon install", () => {
@@ -166,6 +268,9 @@ describe("setup daemon install", () => {
 			for (const path of patchPaths) expect(readFileSync(path, "utf8")).toBe(patch);
 			expect(readFileSync(join(home, "dsh-args"), "utf8").trim()).toBe("--version");
 			expect(consoleOutput.join("\n")).toContain("configure Clawdi MCP manually");
+			expect(consoleOutput.join("\n")).not.toContain(
+				"Skill and MCP tools installed for supported agents",
+			);
 		},
 	);
 
@@ -180,7 +285,7 @@ describe("setup daemon install", () => {
 
 		const registration = readFileSync(join(home, "codex-mcp-register"), "utf-8").trim();
 		expect(registration).toMatch(/^mcp add clawdi -- \/.+ mcp$/);
-		expect(consoleOutput.some((line) => line.includes("Could not auto-register"))).toBe(false);
+		expect(consoleErrors).toEqual([]);
 	});
 
 	it("keeps a manual MCP hint for Pi before 0.99.0", async () => {
@@ -199,7 +304,11 @@ describe("setup daemon install", () => {
 		expect(existsSync(join(target, "SKILL.md"))).toBe(true);
 		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
 		expect(existsSync(join(home, "pi-agent", "mcp.json"))).toBe(false);
-		expect(consoleOutput.join("\n")).toMatch(/Run manually: pi mcp add clawdi -- \/.+ mcp/);
+		expect(consoleErrors.join("\n")).toMatch(/Run manually: pi mcp add clawdi -- \/.+ mcp/);
+		expect(consoleOutput.join("\n")).not.toContain("Run manually:");
+		expect(consoleOutput.join("\n")).not.toContain(
+			"Skill and MCP tools installed for supported agents",
+		);
 	});
 
 	it("registers OpenCode as sessions-only without installing Skill or MCP state", async () => {
@@ -216,6 +325,9 @@ describe("setup daemon install", () => {
 		const openCodeHome = join(home, "xdg-data", "opencode");
 		expect(existsSync(join(openCodeHome, "skills"))).toBe(false);
 		expect(existsSync(join(openCodeHome, "mcp.json"))).toBe(false);
+		expect(consoleOutput.join("\n")).not.toContain(
+			"Skill and MCP tools installed for supported agents",
+		);
 	});
 
 	it("defaults to installing one daemon unit for all registered agents", async () => {
@@ -236,6 +348,9 @@ describe("setup daemon install", () => {
 		expectDaemonRunSingleton();
 		expect(daemonUnitExists("claude_code")).toBe(false);
 		expect(daemonUnitExists("codex")).toBe(false);
+		expect(consoleOutput.join("\n")).toContain(
+			"Background sync: session history and skills upload to your account automatically",
+		);
 	});
 
 	it("binds the explicitly selected official OpenClaw workspace", async () => {
@@ -279,6 +394,9 @@ describe("setup daemon install", () => {
 		});
 		expect(daemonUnitExists("daemon")).toBe(false);
 		expect(daemonUnitExists("codex")).toBe(false);
+		expect(consoleOutput.join("\n")).toContain(
+			"Background sync: off. Run `clawdi push` to upload manually.",
+		);
 	});
 
 	it("does not install a daemon when environment registration fails", async () => {
@@ -291,6 +409,7 @@ describe("setup daemon install", () => {
 		expect(existsSync(join(home, ".clawdi", "environments", "codex.json"))).toBe(false);
 		expect(daemonUnitExists("daemon")).toBe(false);
 		expect(daemonUnitExists("codex")).toBe(false);
+		expect(consoleOutput.join("\n")).not.toContain("Clawdi is on for this machine:");
 	});
 
 	it("installs the bundled Skill with explicit local-setup ownership", async () => {
@@ -337,6 +456,10 @@ describe("setup daemon install", () => {
 
 		expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toBe("# User-owned Clawdi\n");
 		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
+		const output = consoleOutput.join("\n");
+		expect(consoleErrors.join("\n")).toContain("Could not install Clawdi skill");
+		expect(output).not.toContain("Could not install Clawdi skill");
+		expect(output).not.toContain("Skill and MCP tools installed for supported agents");
 	});
 
 	it("does not reclaim a future user clawdi target after migration and release", async () => {
@@ -369,8 +492,9 @@ describe("setup daemon install", () => {
 		process.exitCode = 0;
 		expect(daemonUnitExists("daemon")).toBe(true);
 		const output = consoleOutput.join("\n");
-		expect(output).toContain("systemctl activation failed");
-		expect(output).toContain("systemctl --user daemon-reload");
+		expect(consoleErrors.join("\n")).toContain("systemctl activation failed");
+		expect(consoleErrors.join("\n")).toContain("systemctl --user daemon-reload");
+		expect(output).not.toContain("systemctl activation failed");
 		expect(output).not.toContain("Singleton daemon installed");
 	});
 });
@@ -540,12 +664,12 @@ esac
 	});
 });
 
-function installEnvironmentMock(envId: string) {
+function installEnvironmentMock(envId: string, dashboardUrl?: string | null) {
 	const mock = mockFetch([
 		{
 			method: "POST",
 			path: "/v1/agents",
-			response: () => jsonResponse({ id: envId }),
+			response: () => jsonResponse({ id: envId, dashboard_url: dashboardUrl }),
 		},
 	]);
 	restoreFetch = mock.restore;
