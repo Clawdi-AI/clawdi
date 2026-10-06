@@ -28,7 +28,7 @@ const enabled = process.platform === "win32" && testRoot && nativeBinary;
 (enabled ? describe : describe.skip)("Windows native lifecycle", () => {
 	it("installs three versions, preserves rollback, configures Codex and installs a user daemon", async () => {
 		if (!testRoot || !nativeBinary) throw new Error("Windows native CI fixture is required");
-		const root = mkdtempSync(join(testRoot, "lifecycle-"));
+		const root = realpathSync.native(mkdtempSync(join(testRoot, "lifecycle-")));
 		const prefix = join(root, "prefix with spaces");
 		const nativeRoot = join(prefix, "share", "clawdi");
 		const current = join(nativeRoot, "current");
@@ -214,13 +214,13 @@ function powershell(script: string): string {
 }
 
 function run(command: string, args: string[]): string {
-	const result = spawnSync(command, args, { encoding: "utf8", timeout: 180_000 });
+	const result = spawnSync(command, args, { encoding: "utf8", timeout: 180_000, env: process.env });
 	if (result.status !== 0) throw new Error(`${command} failed: ${result.stderr}`);
 	return result.stdout;
 }
 
 async function runAsync(command: string, args: string[]) {
-	const child = Bun.spawn([command, ...args], { stdout: "pipe", stderr: "pipe" });
+	const child = Bun.spawn([command, ...args], { stdout: "pipe", stderr: "pipe", env: process.env });
 	const timer = setTimeout(() => child.kill(), 180_000);
 	try {
 		const [code, stdout, stderr] = await Promise.all([

@@ -50,7 +50,7 @@ jobs:
           CLAWDI_NATIVE_TARGET: win32-x64
         run: bun run --cwd packages/cli build:native
       - name: Verify installer, activation, setup and per-user daemon
-        shell: pwsh
+        shell: powershell
         run: |
           $testRoot = Join-Path $env:RUNNER_TEMP "clawdi-windows-$([Guid]::NewGuid())"
           $null = New-Item -ItemType Directory -Path $testRoot

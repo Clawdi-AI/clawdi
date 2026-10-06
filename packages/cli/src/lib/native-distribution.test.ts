@@ -60,7 +60,7 @@ function nativeManifest(version: string): string {
 
 describe("Windows native install ownership", () => {
 	it("requires a v2 marker and a junction to the exact running version directory", () => {
-		const prefix = mkdtempSync(join(tmpdir(), "clawdi-windows-identity-"));
+		const prefix = realpathSync.native(mkdtempSync(join(tmpdir(), "clawdi-windows-identity-")));
 		roots.push(prefix);
 		const identity = { version: "1.2.3", target: "win32-x64" as const };
 		const root = join(prefix, "share", "clawdi");
