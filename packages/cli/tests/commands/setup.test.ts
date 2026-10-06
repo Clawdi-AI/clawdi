@@ -13,7 +13,6 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { setup } from "../../src/commands/setup";
-import { CONFIG_KEYS } from "../../src/lib/config";
 import {
 	managedSkillReservationState,
 	releaseManagedSkill,
@@ -144,12 +143,48 @@ describe("setup notice", () => {
 		expect(output).toContain("  • Skill and MCP tools installed for supported agents");
 		expect(output).toContain("To opt out later:\n");
 		expect(output).toContain("  • Stop all background sync:   clawdi daemon uninstall");
-		expect(output.includes("clawdi config set excludeProjects")).toBe(
-			(CONFIG_KEYS as readonly string[]).includes("excludeProjects"),
-		);
+		expect(output).not.toContain("clawdi config set excludeProjects");
 		expect(output).toContain("Open your dashboard: https://dashboard.example.test/sessions");
 		expect(output.match(/Clawdi is on for this machine:/g)).toHaveLength(1);
 	});
+
+	it.each(["codex", "hermes"])(
+		"omits the integration success line when MCP registration fails for %s",
+		async (agent) => {
+			installEnvironmentMock("env-notice");
+			writeExecutable(join(home, "bin", agent), "#!/bin/sh\nexit 1\n");
+
+			await setup({ agent, yes: true, daemon: false });
+
+			const output = consoleOutput.join("\n");
+			expect(output).toContain("Clawdi is on for this machine:");
+			expect(output).toMatch(/Could not (auto-register|register) MCP server/);
+			expect(output).toContain("Clawdi skill installed");
+			expect(output).not.toContain("Skill and MCP tools installed for supported agents");
+		},
+	);
+
+	it.each(["claude", "codex"])(
+		"reports integration success when the other registered agent succeeds despite %s failing",
+		async (failedAgent) => {
+			installEnvironmentMock("env-notice");
+			mkdirSync(join(home, ".claude", "projects"), { recursive: true });
+			mkdirSync(join(home, ".codex", "sessions"), { recursive: true });
+			for (const agent of ["claude", "codex"]) {
+				writeExecutable(
+					join(home, "bin", agent),
+					agent === failedAgent ? "#!/bin/sh\nexit 1\n" : "#!/bin/sh\nprintf '1.0.0\\n'\n",
+				);
+			}
+
+			await setup({ yes: true, daemon: false });
+
+			const output = consoleOutput.join("\n");
+			expect(output).toContain("Clawdi is on for this machine:\n  • Agents: Claude Code, Codex");
+			expect(output).toContain("Could not auto-register MCP server");
+			expect(output).toContain("Skill and MCP tools installed for supported agents");
+		},
+	);
 
 	it.each([null, undefined])("omits the dashboard link when the API returns %s", async (url) => {
 		installEnvironmentMock("env-notice", url);
@@ -212,6 +247,9 @@ describe("setup daemon install", () => {
 			for (const path of patchPaths) expect(readFileSync(path, "utf8")).toBe(patch);
 			expect(readFileSync(join(home, "dsh-args"), "utf8").trim()).toBe("--version");
 			expect(consoleOutput.join("\n")).toContain("configure Clawdi MCP manually");
+			expect(consoleOutput.join("\n")).not.toContain(
+				"Skill and MCP tools installed for supported agents",
+			);
 		},
 	);
 
@@ -247,6 +285,9 @@ describe("setup daemon install", () => {
 		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
 		expect(existsSync(join(home, "pi-agent", "mcp.json"))).toBe(false);
 		expect(consoleOutput.join("\n")).toContain("Run manually: pi mcp add clawdi -- clawdi mcp");
+		expect(consoleOutput.join("\n")).not.toContain(
+			"Skill and MCP tools installed for supported agents",
+		);
 	});
 
 	it("registers OpenCode as sessions-only without installing Skill or MCP state", async () => {
@@ -263,6 +304,9 @@ describe("setup daemon install", () => {
 		const openCodeHome = join(home, "xdg-data", "opencode");
 		expect(existsSync(join(openCodeHome, "skills"))).toBe(false);
 		expect(existsSync(join(openCodeHome, "mcp.json"))).toBe(false);
+		expect(consoleOutput.join("\n")).not.toContain(
+			"Skill and MCP tools installed for supported agents",
+		);
 	});
 
 	it("defaults to installing one daemon unit for all registered agents", async () => {
@@ -391,6 +435,9 @@ describe("setup daemon install", () => {
 
 		expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toBe("# User-owned Clawdi\n");
 		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
+		const output = consoleOutput.join("\n");
+		expect(output).toContain("Could not install Clawdi skill");
+		expect(output).not.toContain("Skill and MCP tools installed for supported agents");
 	});
 
 	it("does not reclaim a future user clawdi target after migration and release", async () => {

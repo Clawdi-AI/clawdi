@@ -6,7 +6,7 @@ import { compareSemver, isValidSemver } from "../lib/semver";
 import { readCommandVersion } from "./version";
 
 export interface McpLifecycle {
-	register(): Promise<void>;
+	register(): Promise<boolean>;
 	unregister(): Promise<void>;
 }
 
@@ -26,7 +26,7 @@ function commandLifecycle(input: {
 			if (input.isSupported && !input.isSupported()) {
 				console.log(chalk.yellow(`⚠ Could not auto-register MCP server in ${input.label}.`));
 				console.log(chalk.gray(`  Run manually: ${input.manualRegister}`));
-				return;
+				return false;
 			}
 			if (input.listCommand && (input.registeredPattern || input.isRegistered)) {
 				try {
@@ -38,7 +38,7 @@ function commandLifecycle(input: {
 					});
 					if (input.isRegistered?.(listed) || input.registeredPattern?.test(listed)) {
 						console.log(chalk.gray(`✓ MCP server already registered in ${input.label}`));
-						return;
+						return true;
 					}
 				} catch {
 					// A failed probe is not evidence that registration cannot work.
@@ -48,9 +48,11 @@ function commandLifecycle(input: {
 				const [command, ...args] = input.registerCommand;
 				execFileSync(command, args, { stdio: "pipe", env: process.env });
 				console.log(chalk.green(input.registeredMessage));
+				return true;
 			} catch {
 				console.log(chalk.yellow(`⚠ Could not auto-register MCP server in ${input.label}.`));
 				console.log(chalk.gray(`  Run manually: ${input.manualRegister}`));
+				return false;
 			}
 		},
 		async unregister() {
@@ -152,12 +154,14 @@ export const hermesMcpLifecycle: McpLifecycle = {
 		try {
 			if (!reconcileLocalHermesMcp(true)) {
 				console.log(chalk.gray("✓ MCP server already registered in Hermes"));
-				return;
+				return true;
 			}
 			console.log(chalk.green("✓ MCP server registered in Hermes"));
+			return true;
 		} catch (error) {
 			console.log(chalk.yellow(`⚠ Could not register MCP server in Hermes: ${errMessage(error)}`));
 			console.log(chalk.gray("  Check with: hermes config get mcp_servers --json"));
+			return false;
 		}
 	},
 	async unregister() {
