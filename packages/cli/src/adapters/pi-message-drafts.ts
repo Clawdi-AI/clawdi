@@ -112,7 +112,7 @@ export function piMessageDrafts(
 					...(model ? { model } : {}),
 				});
 			}
-			if (part.type !== "toolCall" && part.type !== "tool_use") continue;
+			if (part.type !== "toolCall" && part.type !== "toolcall" && part.type !== "tool_use") continue;
 			const callId = jsonString(part.id);
 			const name = jsonString(part.name);
 			if (!callId || !name) continue;
