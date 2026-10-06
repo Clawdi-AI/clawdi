@@ -345,7 +345,12 @@ async def _register_agent_identity(
         # against the Connected runtime shape; do not retain its observations.
         clear_connected_agent_registration(registered.env)
     await db.commit()
-    return EnvironmentCreatedResponse(id=str(registered.env.id))
+    return EnvironmentCreatedResponse(
+        id=str(registered.env.id),
+        dashboard_url=(
+            f"{settings.web_origin.rstrip('/')}/sessions" if settings.web_origin else None
+        ),
+    )
 
 
 @router.post("/agents")
@@ -476,7 +481,12 @@ async def rebind_agent(
         rebound_id,
         env.agent_type,
     )
-    return EnvironmentCreatedResponse(id=str(rebound_id))
+    return EnvironmentCreatedResponse(
+        id=str(rebound_id),
+        dashboard_url=(
+            f"{settings.web_origin.rstrip('/')}/sessions" if settings.web_origin else None
+        ),
+    )
 
 
 @router.post("/environments", deprecated=True)

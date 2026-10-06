@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { setup } from "../../src/commands/setup";
+import { CONFIG_KEYS } from "../../src/lib/config";
 import {
 	managedSkillReservationState,
 	releaseManagedSkill,
@@ -128,6 +129,51 @@ afterEach(() => {
 	rmSync(home, { recursive: true, force: true });
 });
 
+describe("setup notice", () => {
+	it("lists registered agents, opt-out commands, and the dashboard returned by the API", async () => {
+		installEnvironmentMock("env-notice", "https://dashboard.example.test/sessions");
+		mkdirSync(join(home, ".claude", "projects"), { recursive: true });
+		mkdirSync(join(home, ".codex", "sessions"), { recursive: true });
+		writeExecutable(join(home, "bin", "claude"), "#!/bin/sh\nprintf '1.0.0\\n'\n");
+		writeExecutable(join(home, "bin", "codex"), "#!/bin/sh\nprintf '1.0.0\\n'\n");
+
+		await setup({ yes: true, daemon: false });
+
+		const output = consoleOutput.join("\n");
+		expect(output).toContain("Clawdi is on for this machine:\n  • Agents: Claude Code, Codex");
+		expect(output).toContain("  • Skill and MCP tools installed for supported agents");
+		expect(output).toContain("To opt out later:\n");
+		expect(output).toContain("  • Stop all background sync:   clawdi daemon uninstall");
+		expect(output.includes("clawdi config set excludeProjects")).toBe(
+			(CONFIG_KEYS as readonly string[]).includes("excludeProjects"),
+		);
+		expect(output).toContain("Open your dashboard: https://dashboard.example.test/sessions");
+		expect(output.match(/Clawdi is on for this machine:/g)).toHaveLength(1);
+	});
+
+	it.each([null, undefined])("omits the dashboard link when the API returns %s", async (url) => {
+		installEnvironmentMock("env-notice", url);
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		const output = consoleOutput.join("\n");
+		expect(output).toContain("Clawdi is on for this machine:\n  • Agents: Codex");
+		expect(output).not.toContain("Open your dashboard:");
+	});
+
+	it("reports background sync as off when daemon installation fails", async () => {
+		installEnvironmentMock("env-notice");
+		writeFileSync(join(home, process.platform === "darwin" ? "Library" : ".config"), "blocked");
+
+		await setup({ agent: "codex", yes: true });
+
+		expect(process.exitCode).toBe(1);
+		const output = consoleOutput.join("\n");
+		expect(output).toContain("Could not install daemon:");
+		expect(output).toContain("Background sync: off. Run `clawdi push` to upload manually.");
+	});
+});
+
 describe("setup daemon install", () => {
 	it.each(["default", "override"])(
 		"registers dsh Skills and preserves Cordis patches at the %s home",
@@ -237,6 +283,9 @@ describe("setup daemon install", () => {
 		expectDaemonRunSingleton();
 		expect(daemonUnitExists("claude_code")).toBe(false);
 		expect(daemonUnitExists("codex")).toBe(false);
+		expect(consoleOutput.join("\n")).toContain(
+			"Background sync: session history and skills upload to your account automatically",
+		);
 	});
 
 	it("binds the explicitly selected official OpenClaw workspace", async () => {
@@ -280,6 +329,9 @@ describe("setup daemon install", () => {
 		});
 		expect(daemonUnitExists("daemon")).toBe(false);
 		expect(daemonUnitExists("codex")).toBe(false);
+		expect(consoleOutput.join("\n")).toContain(
+			"Background sync: off. Run `clawdi push` to upload manually.",
+		);
 	});
 
 	it("does not install a daemon when environment registration fails", async () => {
@@ -292,6 +344,7 @@ describe("setup daemon install", () => {
 		expect(existsSync(join(home, ".clawdi", "environments", "codex.json"))).toBe(false);
 		expect(daemonUnitExists("daemon")).toBe(false);
 		expect(daemonUnitExists("codex")).toBe(false);
+		expect(consoleOutput.join("\n")).not.toContain("Clawdi is on for this machine:");
 	});
 
 	it("installs the bundled Skill with explicit local-setup ownership", async () => {
@@ -541,12 +594,12 @@ esac
 	});
 });
 
-function installEnvironmentMock(envId: string) {
+function installEnvironmentMock(envId: string, dashboardUrl?: string | null) {
 	const mock = mockFetch([
 		{
 			method: "POST",
 			path: "/v1/agents",
-			response: () => jsonResponse({ id: envId }),
+			response: () => jsonResponse({ id: envId, dashboard_url: dashboardUrl }),
 		},
 	]);
 	restoreFetch = mock.restore;

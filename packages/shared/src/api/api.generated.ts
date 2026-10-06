@@ -6154,6 +6154,8 @@ export interface components {
         EnvironmentCreatedResponse: {
             /** Id */
             id: string;
+            /** Dashboard Url */
+            dashboard_url?: string | null;
         };
         /** EnvironmentReorderRequest */
         EnvironmentReorderRequest: {

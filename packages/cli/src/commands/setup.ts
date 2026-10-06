@@ -15,7 +15,7 @@ import {
 	builtinSkillTargetDir,
 } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
-import { getAuth, getConfig } from "../lib/config";
+import { CONFIG_KEYS, getAuth, getConfig } from "../lib/config";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import {
 	assertUniqueVaultWorkspace,
@@ -91,23 +91,23 @@ export async function setup(opts: SetupOpts) {
 		}
 		const type = opts.agent as AgentType;
 		const adapter = adapterRegistry[type].create();
-		if (
-			!(await registerEnv(
-				api,
-				adapter,
-				await adapter.getVersion(),
-				machineId,
-				machineName,
-				auth.userId,
-				opts,
-				noteVaultBindingChange,
-			))
-		) {
+		const result = await registerEnv(
+			api,
+			adapter,
+			await adapter.getVersion(),
+			machineId,
+			machineName,
+			auth.userId,
+			opts,
+			noteVaultBindingChange,
+		);
+		if (!result.ok) {
 			process.exitCode = 1;
 			return;
 		}
 		await reconcileAgentIntegrations(adapter);
-		await maybeInstallDaemons(opts, vaultBindingChanged);
+		const daemonInstalled = await maybeInstallDaemons(opts, vaultBindingChanged);
+		printSetupNotice([adapterRegistry[type].displayName], daemonInstalled, result.dashboardUrl);
 		return;
 	}
 
@@ -166,28 +166,32 @@ export async function setup(opts: SetupOpts) {
 	}
 
 	console.log();
-	let registeredCount = 0;
+	const registeredNames: string[] = [];
+	let dashboardUrl: string | undefined;
 	let failedCount = 0;
 	for (const { adapter, version } of toRegister) {
-		if (
-			!(await registerEnv(
-				api,
-				adapter,
-				version,
-				machineId,
-				machineName,
-				auth.userId,
-				opts,
-				noteVaultBindingChange,
-			))
-		) {
+		const result = await registerEnv(
+			api,
+			adapter,
+			version,
+			machineId,
+			machineName,
+			auth.userId,
+			opts,
+			noteVaultBindingChange,
+		);
+		if (!result.ok) {
 			failedCount += 1;
 			continue;
 		}
-		registeredCount += 1;
+		registeredNames.push(adapterRegistry[adapter.agentType].displayName);
+		dashboardUrl ??= result.dashboardUrl;
 		await reconcileAgentIntegrations(adapter);
 	}
-	if (registeredCount > 0) await maybeInstallDaemons(opts, vaultBindingChanged);
+	if (registeredNames.length > 0) {
+		const daemonInstalled = await maybeInstallDaemons(opts, vaultBindingChanged);
+		printSetupNotice(registeredNames, daemonInstalled, dashboardUrl);
+	}
 	if (failedCount > 0) process.exitCode = 1;
 }
 
@@ -200,7 +204,7 @@ async function registerEnv(
 	userId?: string,
 	opts: SetupOpts = {},
 	onVaultBindingChange?: () => void,
-): Promise<boolean> {
+): Promise<{ ok: boolean; dashboardUrl?: string }> {
 	const agentType = adapter.agentType;
 	try {
 		const vaultWorkspace = await selectVaultWorkspace(agentType, opts);
@@ -240,16 +244,35 @@ async function registerEnv(
 					: `Vault file sync is disabled. Configure it with clawdi setup --agent ${agentType} --vault-workspace <path>.`,
 			),
 		);
-		return true;
+		return { ok: true, dashboardUrl: env.dashboard_url ?? undefined };
 	} catch (e) {
 		console.log(
 			chalk.red(`  Failed to register ${adapterRegistry[agentType].displayName}: ${errMessage(e)}`),
 		);
-		return false;
+		return { ok: false };
 	}
 }
 
-function installDaemonForAllRegisteredAgents(restartExisting: boolean) {
+function printSetupNotice(agents: string[], daemonInstalled: boolean, dashboardUrl?: string) {
+	const lines = [
+		"Clawdi is on for this machine:",
+		`  • Agents: ${agents.join(", ")}`,
+		"  • Skill and MCP tools installed for supported agents",
+		daemonInstalled
+			? "  • Background sync: session history and skills upload to your account automatically"
+			: "  • Background sync: off. Run `clawdi push` to upload manually.",
+		"To opt out later:",
+	];
+	if ((CONFIG_KEYS as readonly string[]).includes("excludeProjects")) {
+		lines.push("  • Skip a project:   clawdi config set excludeProjects <path>[,<path>]");
+	}
+	lines.push("  • Stop all background sync:   clawdi daemon uninstall");
+	if (dashboardUrl) lines.push(`Open your dashboard: ${dashboardUrl}`);
+	console.log();
+	console.log(lines.join("\n"));
+}
+
+function installDaemonForAllRegisteredAgents(restartExisting: boolean): boolean {
 	try {
 		const result = installDaemonService();
 		if (restartExisting && result.replaced) restartDaemonService();
@@ -258,10 +281,12 @@ function installDaemonForAllRegisteredAgents(restartExisting: boolean) {
 		console.log(chalk.gray(`  ${result.instructions}`));
 		const failed = cleanupLegacyDaemonUnits();
 		if (failed > 0) process.exitCode = 1;
+		return true;
 	} catch (e) {
 		console.log(chalk.yellow(`⚠ Could not install daemon: ${errMessage(e)}`));
 		console.log(chalk.gray("  Run manually: clawdi daemon install"));
 		process.exitCode = 1;
+		return false;
 	}
 }
 
@@ -313,19 +338,20 @@ export async function reconcileAgentIntegrations(adapter: AgentAdapter): Promise
 export async function maybeInstallDaemons(
 	opts: LocalAgentSetupOpts,
 	restartExisting = false,
-): Promise<void> {
-	if (await shouldInstallDaemons(opts)) installDaemonsForRegisteredAgents(restartExisting);
+): Promise<boolean> {
+	if (await shouldInstallDaemons(opts)) return installDaemonsForRegisteredAgents(restartExisting);
+	return false;
 }
 
-function installDaemonsForRegisteredAgents(restartExisting: boolean) {
+function installDaemonsForRegisteredAgents(restartExisting: boolean): boolean {
 	const registered = listRegisteredAgentTypes();
 	if (registered.length === 0) {
 		console.log(chalk.gray("No registered agents available for daemon install."));
-		return;
+		return false;
 	}
 	console.log();
 	console.log(chalk.cyan("Installing background sync daemon..."));
-	installDaemonForAllRegisteredAgents(restartExisting);
+	return installDaemonForAllRegisteredAgents(restartExisting);
 }
 
 async function installBuiltinSkill(agentType: AgentType) {

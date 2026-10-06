@@ -238,6 +238,7 @@ class EnvironmentCreate(BaseModel):
 
 class EnvironmentCreatedResponse(BaseModel):
     id: str
+    dashboard_url: str | None = None
 
 
 class EnvironmentUpdate(BaseModel):
