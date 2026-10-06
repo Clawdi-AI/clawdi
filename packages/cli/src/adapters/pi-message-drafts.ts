@@ -98,7 +98,11 @@ export function piMessageDrafts(
 		for (let index = 0; index < content.length; index++) {
 			const part = jsonObject(content[index]);
 			if (!part) continue;
-			const reasoning = reasoningContent(part);
+			const reasoning = reasoningContent(
+				part.type === "thinking" && part.redacted === true
+					? { type: "redacted_thinking", signature: part.thinkingSignature }
+					: part,
+			);
 			if (reasoning) {
 				drafts.push({
 					type: "reasoning",
