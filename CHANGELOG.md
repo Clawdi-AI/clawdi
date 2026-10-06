@@ -17,7 +17,7 @@ database migration, CI, and implementation details.
 
 ### CLI 0.15.3
 
-- **Hermes:** Named profiles sync on older Hermes versions (0.20.0–0.20.4) using their upstream profile API. Incomplete profile discovery reports a fixed failure reason without exposing local paths or subprocess output.
+- **Hermes:** Named profiles sync on Hermes builds that predate `hermes_cli.profiles.list_profile_names` using their upstream profile API. Incomplete profile discovery reports a fixed failure reason without exposing local paths or subprocess output.
 
 ### CLI 0.15.2
 
