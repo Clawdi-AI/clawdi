@@ -1,5 +1,6 @@
 import type { AgentIconSize } from "@/components/dashboard/agent-icon";
 import { type AgentIdentityInput, AgentLabel } from "@/components/dashboard/agent-label";
+import { sessionProfileLabel } from "@/lib/agent-profiles";
 
 export type SessionAgentIdentity = {
 	agent_name?: string | null;
@@ -7,6 +8,8 @@ export type SessionAgentIdentity = {
 	agent_default_name?: string | null;
 	machine_name?: string | null;
 	agent_type?: string | null;
+	profile_key?: string | null;
+	profile_display_name?: string | null;
 };
 
 export function sessionAgentIdentityInput(session: SessionAgentIdentity): AgentIdentityInput {
@@ -29,6 +32,7 @@ export function SessionAgentLabel({
 	className?: string;
 }) {
 	const identity = sessionAgentIdentityInput(session);
+	const profile = sessionProfileLabel(session);
 	return (
 		<AgentLabel
 			name={identity.name}
@@ -37,6 +41,13 @@ export function SessionAgentLabel({
 			machineName={identity.machine_name}
 			type={identity.agent_type}
 			size={size}
+			titleAdornment={
+				profile ? (
+					<span className="block max-w-32 truncate text-sm text-muted-foreground" title={profile}>
+						· {profile}
+					</span>
+				) : null
+			}
 			className={className}
 		/>
 	);

@@ -59,6 +59,11 @@ import {
 	useOverviewMemoriesModule,
 	useOverviewVaultsModule,
 } from "@/components/dashboard/agent-overview-resource-bodies";
+import {
+	AgentProfilesOverview,
+	useAgentProfiles,
+	useAgentSessionProfileFilter,
+} from "@/components/dashboard/agent-profiles";
 import { useAgentProjectBindings } from "@/components/dashboard/agent-project-bindings-query";
 import {
 	effectiveAgentProjectIds,
@@ -78,6 +83,7 @@ import {
 	EntityChoiceCard,
 } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
+import { ListToolbar } from "@/components/list-toolbar";
 import { MemoriesPageActions, MemoriesSurface } from "@/components/memories/memories-surface";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
@@ -681,6 +687,7 @@ export function HostedAgentDetail({
 							agentId={environmentId}
 							deployment={deployment}
 							agent={isAgentRouteId(environmentId) ? agent : null}
+							agentName={availableAgentTitle}
 							projectionStatus={projection.status}
 							sessions={sessions.data?.items ?? []}
 							sessionsLoading={sessions.isLoading}
@@ -723,7 +730,7 @@ export function HostedAgentDetail({
 						<FilesTab deployment={deployment} url={filesUrl} />
 					) : null}
 					{activeTab === "sessions" ? (
-						<HostedAgentSessionsTab environmentId={environmentId} />
+						<HostedAgentSessionsTab environmentId={environmentId} agentName={availableAgentTitle} />
 					) : null}
 					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
 					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
@@ -882,19 +889,38 @@ function StoppedAgentState({
 	);
 }
 
-function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
+function HostedAgentSessionsTab({
+	environmentId,
+	agentName,
+}: {
+	environmentId: string;
+	agentName: string;
+}) {
 	const $api = useOpenApi();
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
 	const sessionsQueryable = canQueryHostedAgentSessions(environmentId);
+	const profiles = useAgentProfiles(environmentId, { enabled: sessionsQueryable });
+	const profileFilter = useAgentSessionProfileFilter({
+		agentName,
+		profiles: profiles.data,
+		profilesLoading: profiles.isLoading,
+		onProfileChange: () => setPage(1),
+	});
+	const profileKey = profileFilter.profileKey;
 
 	useEffect(() => {
 		setPage(1);
 	}, [environmentId]);
 
 	const sessions = useQuery({
-		...sessionListQueryOptions($api, { environment_id: environmentId, page, page_size: pageSize }),
-		enabled: sessionsQueryable,
+		...sessionListQueryOptions($api, {
+			environment_id: environmentId,
+			profile_key: profileKey,
+			page,
+			page_size: pageSize,
+		}),
+		enabled: sessionsQueryable && !profileFilter.pending,
 		placeholderData: keepPreviousData,
 		// staleTime only controls freshness; this mounted-tab observer owns visibility refreshes.
 		...HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
@@ -927,10 +953,15 @@ function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
 
 	return (
 		<div className="space-y-4">
+			{profileFilter.filter ? <ListToolbar filters={profileFilter.filter} /> : null}
 			<SessionFeed
 				sessions={sessions.data?.items ?? []}
-				isLoading={sessions.isLoading && !sessions.data}
-				emptyMessage={HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE}
+				isLoading={(sessions.isLoading && !sessions.data) || profileFilter.pending}
+				emptyMessage={
+					profileKey === undefined
+						? HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE
+						: "No sessions synced from this profile yet."
+				}
 				showAgent={false}
 				sessionLink={(session) => agentSessionDetailLink(environmentId, session.id)}
 			/>
@@ -1245,6 +1276,7 @@ function OverviewTab({
 	agentId,
 	deployment,
 	agent,
+	agentName,
 	projectionStatus,
 	sessions,
 	sessionsLoading,
@@ -1256,6 +1288,7 @@ function OverviewTab({
 	agentId: string;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
+	agentName: string;
 	projectionStatus: HostedProjectionResolution<unknown>["status"];
 	sessions: SessionListItem[];
 	sessionsLoading: boolean;
@@ -1322,6 +1355,7 @@ function OverviewTab({
 					: Settings;
 	const billingClient = useBillingClient();
 	const projectBindings = useAgentProjectBindings(agentId, { enabled: Boolean(agent) });
+	const profiles = useAgentProfiles(agentId, { enabled: Boolean(agent) });
 	const projectionLoading = projectionStatus === "loading";
 	const projectionUnavailable = projectionStatus !== "resolved" && !projectionLoading;
 	const workspaceProjectId = agent
@@ -1517,6 +1551,13 @@ function OverviewTab({
 					/>
 				</AgentOverviewStatusCard>
 			</AgentOverviewActivity>
+			<AgentProfilesOverview
+				agentId={agentId}
+				agentName={agentName}
+				agentType={agent?.agent_type ?? deployment.resource.spec.runtime}
+				profiles={profiles.data}
+				linkSessions
+			/>
 			<AgentOverviewCapabilities agentId={agentId} variant="hosted" content={overviewContent} />
 		</div>
 	);
