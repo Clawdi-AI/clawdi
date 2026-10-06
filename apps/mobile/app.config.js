@@ -1,5 +1,5 @@
 const { readLinkHosts, webLinkPaths } = require("./config/linking.cjs");
-// Launch surfaces use the shared `--background` tokens; regenerate with `bun run icons`.
+// Brand red from the artwork and the shared `--background` tokens; regenerate with `bun run icons`.
 const appColors = require("./assets/app-colors.json");
 
 function publicValue(name) {
@@ -87,9 +87,9 @@ module.exports = ({ config }) => {
 		package: "ai.clawdi.app",
 		allowBackup: false,
 		adaptiveIcon: {
-			foregroundImage: "./assets/brand-mark.png",
-			monochromeImage: "./assets/brand-mark-monochrome.png",
-			backgroundColor: appColors.light,
+			foregroundImage: "./assets/adaptive-icon.png",
+			monochromeImage: "./assets/adaptive-icon-monochrome.png",
+			backgroundColor: appColors.brand,
 		},
 		// App files use the system picker or app-private cache, never legacy shared storage.
 		blockedPermissions: [
@@ -126,10 +126,10 @@ module.exports = ({ config }) => {
 				"expo-splash-screen",
 				{
 					image: "./assets/splash-icon.png",
-					// Largest width that keeps the mark inside Android 12's 192dp circular icon mask.
+					// The rounded square's corners reach 92dp from center, inside Android 12's 96dp icon mask.
 					imageWidth: 150,
 					backgroundColor: appColors.light,
-					dark: { image: "./assets/splash-icon-dark.png", backgroundColor: appColors.dark },
+					dark: { backgroundColor: appColors.dark },
 				},
 			],
 			// Keep native hooks stable for Build/Update; upload scripts read org/project/token from env.

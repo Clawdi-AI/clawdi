@@ -144,16 +144,19 @@ sign-in is offered. In the Clerk Dashboard:
 
 ### App icon and splash screen
 
-`bun run --cwd apps/mobile icons` renders `apps/web/public/clawdi.svg` into
-`apps/mobile/assets/`: an opaque 1024px `icon.png`, the Android adaptive
-foreground `brand-mark.png` (mark inside the 66dp safe zone), the themed-icon
-layer `brand-mark-monochrome.png` (red claw only), and the splash marks
-`splash-icon.png` / `splash-icon-dark.png` (the dark variant draws the outline
-in the dark `--foreground` token). Backgrounds come from the shared
-`--background` tokens via `assets/app-colors.json`; `app-icons.test.ts` fails
-when that file is stale. The root layout holds the native splash until the
-stored appearance is applied, so the first frame already uses the right theme.
-Icon and splash changes need a new native build.
+`bun run --cwd apps/mobile icons` renders the brand artwork
+`docs/images/logo.png` (800px master; Web ships the same artwork at 512px) into
+`apps/mobile/assets/`. Sizes above 800px are Lanczos3 upscales of the same
+artwork. Outputs: the full-bleed opaque 1024px `icon.png`; the Android adaptive
+foreground `adaptive-icon.png`, scaled so the face stays inside the 66dp safe
+zone, on the artwork's red; the themed-icon layer
+`adaptive-icon-monochrome.png`, which is the cream line art keyed off the red;
+and the rounded-square `splash-icon.png`, used in both themes. `assets/app-colors.json`
+holds the artwork red and the shared `--background` tokens used as splash
+backgrounds; `app-icons.test.ts` fails when the token colors are stale. The
+root layout holds the native splash until the stored appearance is applied, so
+the first frame already uses the right theme. Icon and splash changes need a new
+native build.
 
 `EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL` optionally enables the v2 compute control
 plane. It is separate from the Cloud identity/Session API and does not enable

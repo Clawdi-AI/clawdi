@@ -4,7 +4,9 @@ import { buildAppColors, colorsPath, oklchToHex } from "../../scripts/app-icons"
 import { readSharedTheme } from "../../scripts/theme";
 
 test("launch surface colors are generated from the current shared Web tokens", () => {
-	expect(JSON.parse(readFileSync(colorsPath, "utf8"))).toEqual(buildAppColors(readSharedTheme()));
+	expect(JSON.parse(readFileSync(colorsPath, "utf8"))).toMatchObject(
+		buildAppColors(readSharedTheme()),
+	);
 });
 
 test("oklch conversion matches the CSS Color 4 sRGB primaries", () => {
