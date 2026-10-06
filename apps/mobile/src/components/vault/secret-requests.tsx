@@ -8,6 +8,8 @@ import { useCloudProjects } from "@/components/projects/projects-surface";
 import { ResourceError } from "@/components/resource-error";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NativeList } from "@/components/ui/native-list";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Text as AppText, Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppView } from "@/components/ui/view";
@@ -95,7 +97,7 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 				text: t("vault.requestCreate"),
 				onPress: () => {
 					if (!visible() || signal.aborted || !scope.isCurrent()) return;
-					return action.run(async (isCurrent) => {
+					return action.runOrThrow(async (isCurrent) => {
 						// Keep the capability only in a foreground ref, never persisted or cached.
 						const result = await read((s) => vault.createRequest(request, s));
 						if (!isCurrent() || !visible()) return;
@@ -115,125 +117,139 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 		]);
 	};
 	return (
-		<AppView className="gap-3 rounded-xl bg-card p-4">
-			<AppText accessibilityRole="header" className="text-lg font-semibold text-foreground">
-				{t("vault.requests")}
-			</AppText>
-			<AppText className="text-muted-foreground">{t("vault.requestsDescription")}</AppText>
-			{canReshare ? (
-				<Button
-					variant="outline"
-					size="sm"
-					disabled={action.busy}
-					onPress={() => {
-						const visible = capture();
-						return action.run(async () => {
-							const link = lastLink.current;
-							if (!scope.isCurrent() || !visible()) return;
-							if (!link || link.expiresAt <= Date.now()) {
-								lastLink.current = null;
-								setCanReshare(false);
-								return;
-							}
-							await Share.share({ title: t("vault.requestShare"), message: link.url });
-						});
-					}}
-				>
-					<Text>{t("vault.requestReshare")}</Text>
-				</Button>
-			) : null}
-			<Button
-				variant="outline"
-				size="sm"
-				disabled={requests.isFetching || action.busy}
-				onPress={() => {
+		<SheetPage title={t("vault.requestCreate")} fallback="/vault" busy={action.busy} scroll={false}>
+			<NativeList
+				data={requests.data ?? []}
+				keyExtractor={(row) => row.id}
+				refreshing={requests.isRefetching}
+				onRefresh={() => {
 					started.current = Date.now();
 					void requests.refetch();
 				}}
-			>
-				<Text>{t("vault.refresh")}</Text>
-			</Button>
-			{requests.isPending ? <AppText>{t("loading.app")}</AppText> : null}
-			{requests.isError ? (
-				<ResourceError missing={false} onRetry={() => void requests.refetch()} />
-			) : null}
-			{projects.isError ? (
-				<ResourceError
-					missing={false}
-					onRetry={projects.isFetching ? undefined : () => void projects.refetch()}
-				/>
-			) : null}
-			{requests.data?.map((row) => (
-				<AppView key={row.id} className="gap-1">
-					<AppText className="text-foreground">{row.fields.join(", ")}</AppText>
-					<AppText className="text-muted-foreground">
-						{row.project_name} · {row.section || t("vault.defaultSection")}
-					</AppText>
-					<AppText>
-						{t(
-							row.status === "pending"
-								? "vault.requestPending"
-								: row.status === "supplied"
-									? "vault.requestSupplied"
-									: row.status === "conflict"
-										? "vault.requestConflict"
-										: "vault.requestExpired",
-						)}{" "}
-						· {row.expires_at}
-					</AppText>
-				</AppView>
-			))}
-			<ChoiceSelect
-				value={projectId}
-				onValueChange={setProjectId}
-				disabled={action.busy || projects.isError}
-				options={[
-					{ value: "", label: t("vault.attachTarget") },
-					...attached.map((p) => ({ value: p.id, label: p.name })),
-				]}
+				renderItem={({ item: row }) => (
+					<AppView key={row.id} className="gap-1">
+						<AppText className="text-foreground">{row.fields.join(", ")}</AppText>
+						<AppText className="text-muted-foreground">
+							{row.project_name} · {row.section || t("vault.defaultSection")}
+						</AppText>
+						<AppText>
+							{t(
+								row.status === "pending"
+									? "vault.requestPending"
+									: row.status === "supplied"
+										? "vault.requestSupplied"
+										: row.status === "conflict"
+											? "vault.requestConflict"
+											: "vault.requestExpired",
+							)}{" "}
+							· {row.expires_at}
+						</AppText>
+					</AppView>
+				)}
+				header={
+					<AppView className="gap-3 rounded-xl bg-card p-4">
+						<AppText accessibilityRole="header" className="text-lg font-semibold text-foreground">
+							{t("vault.requests")}
+						</AppText>
+						<AppText className="text-muted-foreground">{t("vault.requestsDescription")}</AppText>
+						{canReshare ? (
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={action.busy}
+								onPress={() => {
+									const visible = capture();
+									return action.runOrThrow(async () => {
+										const link = lastLink.current;
+										if (!scope.isCurrent() || !visible()) return;
+										if (!link || link.expiresAt <= Date.now()) {
+											lastLink.current = null;
+											setCanReshare(false);
+											return;
+										}
+										await Share.share({ title: t("vault.requestShare"), message: link.url });
+									});
+								}}
+							>
+								<Text>{t("vault.requestReshare")}</Text>
+							</Button>
+						) : null}
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={requests.isFetching || action.busy}
+							onPress={() => {
+								started.current = Date.now();
+								void requests.refetch();
+							}}
+						>
+							<Text>{t("vault.refresh")}</Text>
+						</Button>
+						{requests.isPending ? <AppText>{t("loading.app")}</AppText> : null}
+						{requests.isError ? (
+							<ResourceError missing={false} onRetry={() => void requests.refetch()} />
+						) : null}
+						{projects.isError ? (
+							<ResourceError
+								missing={false}
+								onRetry={projects.isFetching ? undefined : () => void projects.refetch()}
+							/>
+						) : null}
+
+						<ChoiceSelect
+							value={projectId}
+							onValueChange={setProjectId}
+							disabled={action.busy || projects.isError}
+							options={[
+								{ value: "", label: t("vault.attachTarget") },
+								...attached.map((p) => ({ value: p.id, label: p.name })),
+							]}
+						/>
+						<Input
+							accessibilityLabel={t("vault.section")}
+							placeholder={t("vault.section")}
+							value={section}
+							onChangeText={setSection}
+							maxLength={200}
+							editable={!action.busy}
+							autoCapitalize="none"
+							autoCorrect={false}
+						/>
+						<Input
+							accessibilityLabel={t("vault.requestFields")}
+							placeholder={t("vault.requestFields")}
+							value={fields}
+							onChangeText={setFields}
+							multiline
+							maxLength={6500}
+							editable={!action.busy}
+							autoCapitalize="none"
+							autoCorrect={false}
+						/>
+						<ChoiceSelect
+							value={expiry}
+							onValueChange={setExpiry}
+							disabled={action.busy}
+							options={[
+								{ value: 300, label: t("vault.requestFiveMinutes") },
+								{ value: 3600, label: t("vault.requestHour") },
+								{ value: 86400, label: t("vault.requestDay") },
+							]}
+						/>
+						{fields && !body ? <AppText>{t("vault.requestInvalid")}</AppText> : null}
+						<Button
+							variant="outline"
+							size="sm"
+							onPress={create}
+							disabled={!body || action.busy || projects.isError || projects.isFetching}
+						>
+							<Text>{t("vault.requestCreate")}</Text>
+						</Button>
+						{action.error ? <AppText accessibilityRole="alert">{t("vault.failed")}</AppText> : null}
+						{confirmationDialog.dialog}
+					</AppView>
+				}
 			/>
-			<Input
-				accessibilityLabel={t("vault.section")}
-				placeholder={t("vault.section")}
-				value={section}
-				onChangeText={setSection}
-				maxLength={200}
-				editable={!action.busy}
-				autoCapitalize="none"
-				autoCorrect={false}
-			/>
-			<Input
-				accessibilityLabel={t("vault.requestFields")}
-				placeholder={t("vault.requestFields")}
-				value={fields}
-				onChangeText={setFields}
-				multiline
-				maxLength={6500}
-				editable={!action.busy}
-				autoCapitalize="none"
-				autoCorrect={false}
-			/>
-			<ChoiceSelect
-				value={expiry}
-				onValueChange={setExpiry}
-				disabled={action.busy}
-				options={[
-					{ value: 300, label: t("vault.requestFiveMinutes") },
-					{ value: 3600, label: t("vault.requestHour") },
-					{ value: 86400, label: t("vault.requestDay") },
-				]}
-			/>
-			{fields && !body ? <AppText>{t("vault.requestInvalid")}</AppText> : null}
-			<Button
-				variant="outline"
-				size="sm"
-				onPress={create}
-				disabled={!body || action.busy || projects.isError || projects.isFetching}
-			>
-				<Text>{t("vault.requestCreate")}</Text>
-			</Button>
-			{action.error ? <AppText accessibilityRole="alert">{t("vault.failed")}</AppText> : null}
-			{confirmationDialog.dialog}
-		</AppView>
+		</SheetPage>
 	);
 }

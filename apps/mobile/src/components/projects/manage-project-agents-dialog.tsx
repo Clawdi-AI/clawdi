@@ -7,50 +7,65 @@ import {
 	projectAgentSyncLabel,
 } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
+import { useLocalSearchParams } from "expo-router";
 import { Bot, Save } from "lucide-react-native";
 import { Fragment, useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { AgentSourceBadge } from "@/components/dashboard/agent-section-source-badge";
+import { useProject } from "@/components/projects/project-scope";
+import { ResourceError } from "@/components/resource-error";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
+import { NativeList } from "@/components/ui/native-list";
 import { Separator } from "@/components/ui/separator";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Text } from "@/components/ui/text";
-import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { type CloudAgent, useCloudAgents } from "@/hooks/cloud-inventory";
 import { useAgentOwnership } from "@/hooks/use-agent-ownership";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
+import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { useSheet } from "@/platform/navigation/use-sheet";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
-export function ManageProjectAgentsDialog({
+export function ManageProjectAgentsScreen() {
+	const params = useLocalSearchParams<{ id?: string }>();
+	const id = routeParam(params.id);
+	const query = useProject(id);
+	const agents = useCloudAgents(id);
+	if (!query.data || query.isError)
+		return (
+			<SheetPage title="Manage agents" fallback="/projects">
+				<ResourceError missing={!query.isError} onRetry={() => void query.refetch()} />
+			</SheetPage>
+		);
+	return (
+		<ManageProjectAgents
+			key={query.data.id}
+			project={query.data}
+			linkedAgents={agents.data}
+			linkedError={agents.error}
+			onRetryLinked={() => void agents.refetch()}
+		/>
+	);
+}
+function ManageProjectAgents({
 	project,
 	linkedAgents,
 	linkedError,
 	onRetryLinked,
-	open,
-	onOpenChange,
 }: {
 	project: Project;
 	linkedAgents: CloudAgent[] | undefined;
 	linkedError?: unknown;
 	onRetryLinked: () => void;
-	open: boolean;
-	onOpenChange: (open: boolean) => void;
 }) {
 	const t = useI18n();
 	const allAgents = useCloudAgents();
@@ -61,10 +76,12 @@ export function ManageProjectAgentsDialog({
 	const { agentProjects } = useMobileApi();
 	const cache = useQueryClient();
 	const action = useAuthAction(scope);
+	const sheet = useSheet<boolean>({ fallback: "/projects", busy: action.busy });
+	const [closeError, setCloseError] = useState<unknown>();
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 	useEffect(() => {
-		setSelected(new Set(open ? linkedAgents?.map((agent) => agent.id) : []));
-	}, [open, linkedAgents]);
+		setSelected(new Set(linkedAgents?.map((agent) => agent.id)));
+	}, [linkedAgents]);
 	const ordered = (allAgents.data ?? [])
 		.filter((agent) => {
 			const kind = agentOwnershipKindFromId(agent.id, ownership.data ?? null);
@@ -102,120 +119,137 @@ export function ManageProjectAgentsDialog({
 			);
 			if (!current() || !foreground()) return;
 			await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
-			if (current() && foreground()) onOpenChange(false);
+			if (current() && foreground()) await sheet.close(true);
 		});
 	};
 	return (
-		<Dialog
-			open={open}
-			onOpenChange={(value) => {
-				if (!action.busy) {
-					action.clearError();
-					onOpenChange(value);
-				}
-			}}
+		<SheetPage
+			title={t("libraryPort.manageAgents")}
+			description={t("libraryPort.chooseAgents")}
+			fallback="/projects"
+			busy={action.busy}
+			sheet={sheet}
+			scroll={false}
 		>
-			<DialogContent className={webView(projectDetailClasses.agentsDialog)}>
-				<DialogHeader>
-					<DialogTitle>{t("libraryPort.manageAgents")}</DialogTitle>
-					<DialogDescription>{t("libraryPort.chooseAgents")}</DialogDescription>
-				</DialogHeader>
-				{linkedError ? (
-					<ApiErrorPanel error={linkedError} onRetry={onRetryLinked} />
-				) : ownership.isError ? (
-					<ApiErrorPanel error={ownership.error} onRetry={() => void ownership.refetch()} />
-				) : allAgents.isPending || ownership.isPending || !linkedAgents ? (
-					<Skeleton className={webView(projectDetailClasses.textarea)} />
-				) : allAgents.error ? (
-					<ApiErrorPanel
-						error={allAgents.error}
-						onRetry={() => void allAgents.refetch()}
-						title={t("libraryPort.loadAgentsFailed")}
-					/>
-				) : !ordered.length ? (
-					<Alert icon={Bot} title={t("libraryPort.noAgentsAvailable")}>
-						{t("libraryPort.addAgentFirst")}
-					</Alert>
-				) : (
-					<WebView recipe={projectDetailClasses.form}>
-						<AppScrollView className={webView(projectDetailClasses.agentChoices)}>
-							{ordered.map((agent, index) => {
-								const identity = agentIdentity(agent);
-								return (
-									<Fragment key={agent.id}>
-										<WebView recipe={projectDetailClasses.agentChoice}>
-											<Checkbox
-												checked={selected.has(agent.id)}
-												disabled={disabled}
-												accessibilityLabel={`${identity.primaryLabel} access`}
-												onCheckedChange={(checked) =>
-													setSelected((current) => {
-														const next = new Set(current);
-														if (checked) next.add(agent.id);
-														else next.delete(agent.id);
-														return next;
-													})
-												}
-											/>
-											<WebView
-												recipe={`${agentLabelClasses.root} ${projectDetailClasses.agentIdentity}`}
+			<NativeList
+				data={
+					linkedError ||
+					ownership.isError ||
+					allAgents.isPending ||
+					ownership.isPending ||
+					!linkedAgents ||
+					allAgents.isError
+						? []
+						: ordered
+				}
+				keyExtractor={(agent) => agent.id}
+				refreshing={allAgents.isRefetching || ownership.isRefetching}
+				onRefresh={() => {
+					void allAgents.refetch();
+					void ownership.refetch();
+					onRetryLinked?.();
+				}}
+				header={
+					<>
+						<WebText recipe={projectDetailClasses.description}>
+							{t("libraryPort.chooseAgents")}
+						</WebText>
+						{linkedError ? (
+							<ApiErrorPanel error={linkedError} onRetry={onRetryLinked} />
+						) : ownership.isError ? (
+							<ApiErrorPanel error={ownership.error} onRetry={() => void ownership.refetch()} />
+						) : allAgents.isPending || ownership.isPending || !linkedAgents ? (
+							<Skeleton className={webView(projectDetailClasses.textarea)} />
+						) : allAgents.error ? (
+							<ApiErrorPanel
+								error={allAgents.error}
+								onRetry={() => void allAgents.refetch()}
+								title={t("libraryPort.loadAgentsFailed")}
+							/>
+						) : !ordered.length ? (
+							<Alert icon={Bot} title={t("libraryPort.noAgentsAvailable")}>
+								{t("libraryPort.addAgentFirst")}
+							</Alert>
+						) : null}
+					</>
+				}
+				renderItem={({ item: agent, index }) => {
+					const identity = agentIdentity(agent);
+					return (
+						<Fragment key={agent.id}>
+							<WebView recipe={projectDetailClasses.agentChoice}>
+								<Checkbox
+									checked={selected.has(agent.id)}
+									disabled={disabled}
+									accessibilityLabel={`${identity.primaryLabel} access`}
+									onCheckedChange={(checked) =>
+										setSelected((current) => {
+											const next = new Set(current);
+											if (checked) next.add(agent.id);
+											else next.delete(agent.id);
+											return next;
+										})
+									}
+								/>
+								<WebView recipe={`${agentLabelClasses.root} ${projectDetailClasses.agentIdentity}`}>
+									<AgentIcon agent={agent.agent_type} avatarUrl={agent.avatar_url} size="sm" />
+									<WebView recipe={agentLabelClasses.copy}>
+										<WebView recipe={agentLabelClasses.heading}>
+											<WebText
+												recipe={`${agentLabelClasses.name} ${agentLabelClasses.nameBySize.sm}`}
+												numberOfLines={1}
 											>
-												<AgentIcon
-													agent={agent.agent_type}
-													avatarUrl={agent.avatar_url}
-													size="sm"
+												{identity.primaryLabel}
+											</WebText>
+											<WebView recipe={agentLabelClasses.adornment}>
+												<AgentSourceBadge
+													agentId={agent.id}
+													ownership={ownership.isError ? null : (ownership.data ?? null)}
+													showConnected={false}
 												/>
-												<WebView recipe={agentLabelClasses.copy}>
-													<WebView recipe={agentLabelClasses.heading}>
-														<WebText
-															recipe={`${agentLabelClasses.name} ${agentLabelClasses.nameBySize.sm}`}
-															numberOfLines={1}
-														>
-															{identity.primaryLabel}
-														</WebText>
-														<WebView recipe={agentLabelClasses.adornment}>
-															<AgentSourceBadge
-																agentId={agent.id}
-																ownership={ownership.isError ? null : (ownership.data ?? null)}
-																showConnected={false}
-															/>
-														</WebView>
-													</WebView>
-													<WebView
-														recipe={`${agentLabelClasses.subtitle} ${agentLabelClasses.subtitleGapBySize.sm}`}
-													>
-														{identity.secondaryLabel ? (
-															<WebText recipe={agentLabelClasses.subtitleSegment}>
-																{identity.secondaryLabel}
-															</WebText>
-														) : null}
-														<WebText recipe={agentLabelClasses.subtitleSegment}>
-															{projectAgentSyncLabel(agent.last_sync_at)}
-														</WebText>
-													</WebView>
-												</WebView>
 											</WebView>
 										</WebView>
-										{index < ordered.length - 1 ? <Separator /> : null}
-									</Fragment>
-								);
-							})}
-						</AppScrollView>
+										<WebView
+											recipe={`${agentLabelClasses.subtitle} ${agentLabelClasses.subtitleGapBySize.sm}`}
+										>
+											{identity.secondaryLabel ? (
+												<WebText recipe={agentLabelClasses.subtitleSegment}>
+													{identity.secondaryLabel}
+												</WebText>
+											) : null}
+											<WebText recipe={agentLabelClasses.subtitleSegment}>
+												{projectAgentSyncLabel(agent.last_sync_at)}
+											</WebText>
+										</WebView>
+									</WebView>
+								</WebView>
+							</WebView>
+							{index < ordered.length - 1 ? <Separator /> : null}
+						</Fragment>
+					);
+				}}
+				footer={
+					<WebView recipe={projectDetailClasses.form}>
+						{closeError ? <ApiErrorPanel error={closeError} /> : null}
 						{action.error ? (
 							<Alert variant="destructive">{t("libraryPort.updateAgentsFailed")}</Alert>
 						) : null}
-						<DialogFooter>
-							<Button variant="ghost" disabled={action.busy} onPress={() => onOpenChange(false)}>
+						<WebView recipe={projectDetailClasses.form}>
+							<Button
+								variant="ghost"
+								disabled={action.busy}
+								onPress={() => void sheet.close().catch(setCloseError)}
+							>
 								<Text>{t("libraryPort.cancel")}</Text>
 							</Button>
 							<Button disabled={disabled || (!add.length && !remove.length)} onPress={save}>
 								<Icon as={Save} />
 								<Text>{t("libraryPort.save")}</Text>
 							</Button>
-						</DialogFooter>
+						</WebView>
 					</WebView>
-				)}
-			</DialogContent>
-		</Dialog>
+				}
+			/>
+		</SheetPage>
 	);
 }

@@ -4,7 +4,7 @@ import {
 	resolveAgentProjectScope,
 	slugFromVaultName,
 } from "@clawdi/shared/api";
-import { HERO_GRID_CLASS, vaultsSurfaceClasses } from "@clawdi/shared/ui";
+import { vaultsSurfaceClasses } from "@clawdi/shared/ui";
 import {
 	compareVaultsForCatalog,
 	vaultFormCopy as copy,
@@ -14,7 +14,7 @@ import {
 	vaultSearchRank,
 } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, Stack, useLocalSearchParams } from "expo-router";
 import { Plus } from "lucide-react-native";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -29,20 +29,13 @@ import { ProjectResourceBoundary } from "@/components/projects/project-scope";
 import { useCloudProjects } from "@/components/projects/projects-surface";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
-import { SearchInput } from "@/components/ui/search-input";
+import { NativeList } from "@/components/ui/native-list";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Text } from "@/components/ui/text";
-import { WebText, WebView, webView } from "@/components/ui/web-layout";
-import { AddKeysDialog } from "@/components/vault/add-keys-dialog";
+import { WebText, WebView } from "@/components/ui/web-layout";
+import { useCompleteVaultCatalog } from "@/components/vault/project-vault-catalog";
 import { VaultCard } from "@/components/vault/vault-card";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { useMobileApi } from "@/lib/api-provider";
@@ -50,6 +43,9 @@ import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { useHeaderSearch } from "@/platform/navigation/native-header";
+import { useSheet } from "@/platform/navigation/use-sheet";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function useVaultCatalog(
@@ -178,18 +174,8 @@ function VaultCatalog({
 	agentProjectIds?: readonly string[];
 }) {
 	const t = useI18n();
-	const scope = useAccountScope();
-	const read = useAccountRead();
-	const cache = useQueryClient();
-	const { vault } = useMobileApi();
-	const action = useAuthAction(scope);
-	const capture = useForegroundLease();
 	const [search, setSearch] = useState("");
-	const [open, setOpen] = useState(false);
-	const [addOpen, setAddOpen] = useState(false);
 	const projects = useCloudProjects();
-	const [name, setName] = useState("");
-	const [slug, setSlug] = useState("");
 	const catalog = useVaultCatalog(search, project?.id, true, agentProjectIds);
 	const canCreate =
 		!agentId &&
@@ -197,31 +183,6 @@ function VaultCatalog({
 	const items = [
 		...new Map((catalog.data?.pages.flatMap((p) => p.items) ?? []).map((v) => [v.id, v])).values(),
 	].sort((a, b) => compareVaultsForCatalog(a, b, search));
-	const slugTaken = Boolean(
-		slug && items.some((item) => item.is_owner !== false && item.slug === slug),
-	);
-	const create = () => {
-		const visible = capture();
-		return action.run(async (isCurrent) => {
-			if (!visible()) return;
-			if (!canCreate || !name.trim() || !slug || slugTaken || catalog.isFetching || catalog.isError)
-				return;
-			const body = { name: name.trim(), slug };
-			const result = await read((signal) =>
-				project ? vault.createInProject(project.id, body, signal) : vault.create(body, signal),
-			);
-			if (!isCurrent()) return;
-			setName("");
-			setSlug("");
-			setOpen(false);
-			await cache.invalidateQueries({ queryKey: accountQueryKey(scope, "vault-catalog") });
-			if (isCurrent() && visible())
-				router.push({
-					pathname: "/vault/[slug]",
-					params: { vaultId: result.id, slug: result.slug },
-				});
-		});
-	};
 	const names = new Map((projects.data ?? []).map((p) => [p.id, p.name]));
 	const filterableProjects = (projects.data ?? [])
 		.filter((p) => p.vault_count > 0)
@@ -230,152 +191,222 @@ function VaultCatalog({
 	const card = (item: (typeof items)[number]) => (
 		<VaultCard key={item.id} vault={item} names={names} />
 	);
+
+	const listRows = [
+		...items.filter((v) => v.is_owner !== false),
+		...items.filter((v) => v.is_owner === false),
+	];
+	const searchOptions = useHeaderSearch({
+		value: search,
+		onChange: setSearch,
+		placeholder: t("libraryPort.searchVaults"),
+	});
 	return (
-		<LibraryPage>
-			{agentId ? <AgentSectionNavigation agentId={agentId} section="vaults" /> : null}
-			<PageHeader
-				title={getProjectResourceDefinition("vaults").label}
-				description={
-					agentId
-						? t("libraryPort.agentVaultsDescription")
-						: getProjectResourceDefinition("vaults").managementDescription
+		<SafeAreaScreen>
+			<Stack.Screen
+				options={{ headerSearchBarOptions: searchOptions, headerLargeTitleEnabled: !agentId }}
+			/>
+			<NativeList
+				data={listRows}
+				keyExtractor={(item) => item.id}
+				refreshing={catalog.isRefetching && !catalog.isFetchingNextPage}
+				onRefresh={() => void catalog.refetch()}
+				hasMore={catalog.hasNextPage}
+				loadingMore={catalog.isFetching}
+				onLoadMore={() => void catalog.fetchNextPage().catch(() => undefined)}
+				header={
+					<>
+						{agentId ? <AgentSectionNavigation agentId={agentId} section="vaults" /> : null}
+						<PageHeader
+							title={getProjectResourceDefinition("vaults").label}
+							description={
+								agentId
+									? t("libraryPort.agentVaultsDescription")
+									: getProjectResourceDefinition("vaults").managementDescription
+							}
+							headerMenu={
+								canCreate
+									? {
+											label: getProjectResourceDefinition("vaults").label,
+											items: [
+												{
+													id: "add",
+													label: t("libraryPort.addKeys"),
+													onPress: () => router.push("/vault/add-keys"),
+												},
+												{
+													id: "create",
+													label: t("libraryPort.createVault"),
+													onPress: () =>
+														router.push({
+															pathname: "/vault/new",
+															params: { projectId: project?.id ?? "" },
+														}),
+												},
+											],
+										}
+									: undefined
+							}
+						/>
+						<ListToolbar
+							filters={
+								filterableProjects.length > 1 ? (
+									<>
+										<FilterChip
+											active={!project}
+											onClick={() => router.setParams({ projectId: undefined })}
+										>
+											<Text>All Vaults {items.length}</Text>
+										</FilterChip>
+										{filterableProjects.map((p) => (
+											<FilterChip
+												key={p.id}
+												active={project?.id === p.id}
+												onClick={() => router.setParams({ projectId: p.id })}
+											>
+												<Text>
+													{identityFor(p.name).emoji} {p.name} {p.vault_count}
+												</Text>
+											</FilterChip>
+										))}
+									</>
+								) : undefined
+							}
+						/>
+						{catalog.error ? (
+							<ApiErrorPanel error={catalog.error} onRetry={() => void catalog.refetch()} />
+						) : null}
+					</>
 				}
-				actions={
-					canCreate ? (
-						<>
-							<Button variant="outline" size="sm" onPress={() => setAddOpen(true)}>
-								<Icon as={Plus} />
-								<Text>{t("libraryPort.addKeys")}</Text>
-							</Button>
-							<Button size="sm" onPress={() => setOpen(true)}>
-								<Icon as={Plus} />
-								<Text>{t("libraryPort.createVault")}</Text>
-							</Button>
-						</>
-					) : undefined
+				renderItem={({ item, index }) => (
+					<>
+						{item.is_owner === false && (index === 0 || listRows[index - 1]?.is_owner !== false) ? (
+							<>
+								<SectionLabel count={items.filter((v) => v.is_owner === false).length}>
+									{t("libraryPort.shared")}
+								</SectionLabel>
+								<WebText recipe={vaultsSurfaceClasses.description}>
+									{t("libraryPort.sharedVaults")}
+								</WebText>
+							</>
+						) : null}
+						{card(item)}
+					</>
+				)}
+				empty={
+					catalog.isPending ? (
+						<HeroCardSkeleton />
+					) : !catalog.error ? (
+						<EmptyState
+							title={t("libraryPort.noVaults")}
+							description={t("libraryPort.emptyVaults")}
+						/>
+					) : null
 				}
 			/>
-			<ListToolbar
-				search={
-					<SearchInput
-						value={search}
-						onChange={setSearch}
-						placeholder={t("libraryPort.searchVaults")}
+		</SafeAreaScreen>
+	);
+}
+export function VaultCreateScreen() {
+	const scope = useAccountScope();
+	const params = useLocalSearchParams<{ projectId?: string }>();
+	return (
+		<VaultCreate
+			key={`${scope.identity}:${scope.generation}:${params.projectId ?? "all"}`}
+			projectId={routeParam(params.projectId)}
+		/>
+	);
+}
+function VaultCreate({ projectId }: { projectId?: string }) {
+	const _t = useI18n(),
+		scope = useAccountScope(),
+		read = useAccountRead(),
+		capture = useForegroundLease();
+	const { vault, cloud } = useMobileApi();
+	const cache = useQueryClient();
+	const action = useAuthAction(scope);
+	const [name, setName] = useState("");
+	const [slug, setSlug] = useState("");
+	const [closeError, setCloseError] = useState<unknown>();
+	const catalog = useCompleteVaultCatalog();
+	const slugTaken = Boolean(
+		slug && catalog.data?.items.some((item) => item.is_owner !== false && item.slug === slug),
+	);
+	const sheet = useSheet<boolean>({ fallback: "/vault", busy: action.busy });
+	const create = () =>
+		action.run(async (current) => {
+			const visible = capture();
+			if (!visible() || !name.trim() || !slug || slugTaken || catalog.isFetching || catalog.isError)
+				return;
+			if (projectId) {
+				const fresh = (await read((signal) => cloud.listProjects(signal))).find(
+					(p) => p.id === projectId,
+				);
+				if (!fresh?.is_owner || fresh.archived_at || fresh.kind === "environment")
+					throw new Error("Project unavailable");
+			}
+			if (!current() || !visible()) return;
+			await read((s) =>
+				projectId
+					? vault.createInProject(projectId, { name: name.trim(), slug }, s)
+					: vault.create({ name: name.trim(), slug }, s),
+			);
+			if (!current()) return;
+			await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
+			if (current() && visible()) await sheet.close(true);
+		});
+	return (
+		<SheetPage
+			title={copy.title}
+			description={copy.description}
+			fallback="/vault"
+			busy={action.busy}
+			sheet={sheet}
+		>
+			<WebView recipe={vaultsSurfaceClasses.form}>
+				<WebView recipe={vaultsSurfaceClasses.field}>
+					<Label>{copy.name}</Label>
+					<Input
+						value={name}
+						onChangeText={(v) => {
+							setName(v);
+							setSlug(slugFromVaultName(v));
+						}}
+						maxLength={200}
+						editable={!action.busy}
+						placeholder={copy.placeholder}
+						accessibilityLabel={copy.name}
 					/>
-				}
-				filters={
-					filterableProjects.length > 1 ? (
-						<>
-							<FilterChip
-								active={!project}
-								onClick={() => router.setParams({ projectId: undefined })}
-							>
-								<Text>All Vaults {items.length}</Text>
-							</FilterChip>
-							{filterableProjects.map((p) => (
-								<FilterChip
-									key={p.id}
-									active={project?.id === p.id}
-									onClick={() => router.setParams({ projectId: p.id })}
-								>
-									<Text>
-										{identityFor(p.name).emoji} {p.name} {p.vault_count}
-									</Text>
-								</FilterChip>
-							))}
-						</>
-					) : undefined
-				}
-			/>
-			{catalog.error ? (
-				<ApiErrorPanel error={catalog.error} onRetry={() => void catalog.refetch()} />
-			) : null}
-			<WebView recipe={HERO_GRID_CLASS}>
-				{catalog.isPending
-					? [0, 1, 2].map((i) => <HeroCardSkeleton key={i} />)
-					: items.filter((v) => v.is_owner !== false).map(card)}
-			</WebView>
-			{items.some((v) => v.is_owner === false) ? (
-				<WebView recipe={vaultsSurfaceClasses.section}>
-					<SectionLabel count={items.filter((v) => v.is_owner === false).length}>
-						{t("libraryPort.shared")}
-					</SectionLabel>
-					<WebText recipe={vaultsSurfaceClasses.description}>
-						{t("libraryPort.sharedVaults")}
-					</WebText>
-					<WebView recipe={HERO_GRID_CLASS}>
-						{items.filter((v) => v.is_owner === false).map(card)}
-					</WebView>
+					{slugTaken ? (
+						<WebText recipe={vaultsSurfaceClasses.error}>{copy.nameTaken}</WebText>
+					) : null}
 				</WebView>
-			) : null}
-			{!catalog.isPending && !catalog.error && !items.length ? (
-				<EmptyState title={t("libraryPort.noVaults")} description={t("libraryPort.emptyVaults")} />
-			) : null}
-			{catalog.hasNextPage ? (
-				<Button
-					variant="outline"
-					disabled={catalog.isFetching}
-					onPress={() => void catalog.fetchNextPage()}
-				>
-					<Text>{t("inventory.loadMore")}</Text>
-				</Button>
-			) : null}
-			<AddKeysDialog open={addOpen} onOpenChange={setAddOpen} />
-			<Dialog
-				open={open}
-				onOpenChange={(v) => {
-					if (!action.busy) setOpen(v);
-				}}
-			>
-				<DialogContent
-					className={webView(vaultsSurfaceClasses.dialog)}
-					showCloseButton={!action.busy}
-				>
-					<DialogHeader>
-						<DialogTitle>{copy.title}</DialogTitle>
-						<DialogDescription>{copy.description}</DialogDescription>
-					</DialogHeader>
-					<WebView recipe={vaultsSurfaceClasses.form}>
-						<WebView recipe={vaultsSurfaceClasses.field}>
-							<Label>{copy.name}</Label>
-							<Input
-								value={name}
-								onChangeText={(v) => {
-									setName(v);
-									setSlug(slugFromVaultName(v));
-								}}
-								maxLength={200}
-								editable={!action.busy}
-								placeholder={copy.placeholder}
-								accessibilityLabel={copy.name}
-							/>
-							{slugTaken ? (
-								<WebText recipe={vaultsSurfaceClasses.error}>{copy.nameTaken}</WebText>
-							) : null}
-						</WebView>
-						{action.error ? <ApiErrorPanel error={action.error} /> : null}
-						<DialogFooter>
-							<Button variant="ghost" disabled={action.busy} onPress={() => setOpen(false)}>
-								<Text>{copy.cancel}</Text>
-							</Button>
-							<Button
-								disabled={
-									action.busy ||
-									!name.trim() ||
-									!slug ||
-									slugTaken ||
-									catalog.isFetching ||
-									catalog.isError
-								}
-								onPress={() => void create()}
-							>
-								<Icon as={Plus} />
-								<Text>{copy.title}</Text>
-							</Button>
-						</DialogFooter>
-					</WebView>
-				</DialogContent>
-			</Dialog>
-		</LibraryPage>
+				{action.error ? <ApiErrorPanel error={action.error} /> : null}
+				<WebView recipe={vaultsSurfaceClasses.form}>
+					<Button
+						variant="ghost"
+						disabled={action.busy}
+						onPress={() => void sheet.close().catch(setCloseError)}
+					>
+						<Text>{copy.cancel}</Text>
+					</Button>
+					<Button
+						disabled={
+							action.busy ||
+							!name.trim() ||
+							!slug ||
+							slugTaken ||
+							catalog.isFetching ||
+							catalog.isError
+						}
+						onPress={() => void create()}
+					>
+						<Icon as={Plus} />
+						<Text>{copy.title}</Text>
+					</Button>
+				</WebView>
+			</WebView>
+			{closeError ? <ApiErrorPanel error={closeError} /> : null}
+		</SheetPage>
 	);
 }

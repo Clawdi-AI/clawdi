@@ -4,12 +4,15 @@ import type { ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WebContent, WebView, webText, webView } from "@/components/ui/web-layout";
 import { NativeHeader } from "@/platform/navigation/native-header";
+import type { HeaderAction, HeaderMenu } from "@/platform/navigation/native-header-types";
 
 interface PageHeaderProps {
 	title: ReactNode;
 	titleAdornment?: ReactNode;
 	description?: ReactNode;
 	actions?: ReactNode;
+	headerActions?: HeaderAction[];
+	headerMenu?: HeaderMenu;
 	icon?: ReactNode;
 	status?: ReactNode;
 	className?: string;
@@ -21,6 +24,8 @@ export function PageHeader({
 	titleAdornment,
 	description,
 	actions,
+	headerActions,
+	headerMenu,
 	icon,
 	status,
 	className,
@@ -48,6 +53,8 @@ export function PageHeader({
 			{!hidden ? (
 				<NativeHeader
 					title={typeof title === "string" ? title : undefined}
+					actions={headerActions}
+					menu={headerMenu}
 					contentActions={actions}
 				/>
 			) : null}

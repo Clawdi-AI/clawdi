@@ -10,37 +10,29 @@ import { detailLayoutClasses, publicSessionClasses as styles } from "@clawdi/sha
 import { publicSessionScopeLabel, relativeTime } from "@clawdi/shared/view";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
-import { ArrowLeft, Clock, Link2, MessageSquare, MoreHorizontal } from "lucide-react-native";
+import { Clock, MessageSquare } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
-import { AppState, FlatList, Image, Share } from "react-native";
-import { withUniwind } from "uniwind";
+import { AppState, Share } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { PageHeader } from "@/components/page-header";
 import { SessionTimelineRowView } from "@/components/sessions/message-list";
 import { AgentInline, DetailMeta, DetailStats, ModelBadge, Stat } from "@/components/sessions/meta";
 import { MessagesSkeleton } from "@/components/sessions/skeleton";
 import { Button } from "@/components/ui/button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
+import { NativeList } from "@/components/ui/native-list";
 import { Text } from "@/components/ui/text";
 import { AppScrollView } from "@/components/ui/view";
-import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { WebText, WebView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useMobileRuntimeConfig } from "@/lib/config/runtime";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
-
-const BrandImage = withUniwind(Image);
 
 export function OpenShareScreen() {
 	const t = useI18n();
@@ -51,14 +43,6 @@ export function OpenShareScreen() {
 		<SafeAreaScreen>
 			<AppScrollView contentContainerStyle={{ padding: 16 }}>
 				<WebView recipe={styles.page} className="px-0">
-					<Button
-						variant="ghost"
-						size="sm"
-						onPress={() => (router.canGoBack() ? router.back() : router.replace("/sessions"))}
-					>
-						<Icon as={ArrowLeft} />
-						<Text>{t("sessionDetail.back")}</Text>
-					</Button>
 					<PageHeader
 						title={t("sessionDetail.openShare")}
 						description={t("sessionDetail.inputHelp")}
@@ -212,21 +196,6 @@ function PublicSession({ id }: { id: string | null }) {
 				});
 		});
 	};
-	const brand = (
-		<WebView recipe={styles.header}>
-			<WebView recipe={styles.headerRow}>
-				<WebView recipe={styles.brand}>
-					<BrandImage
-						source={require("../../../../web/public/clawdi-logo-transparent.png")}
-						className={webView(styles.brandImage)}
-					/>
-					<WebText recipe={styles.brandName} onPress={() => router.replace("/sessions")}>
-						{t("sessionDetail.brand")}
-					</WebText>
-				</WebView>
-			</WebView>
-		</WebView>
-	);
 	const gate =
 		error && ![401, 403, 404, 409, 410].includes(status) ? (
 			<ApiErrorPanel error={error} onRetry={refresh} />
@@ -289,23 +258,50 @@ function PublicSession({ id }: { id: string | null }) {
 		) : null;
 	return (
 		<SafeAreaScreen>
-			{brand}
+			<NativeHeader
+				title={title || t("publicSession.title")}
+				actions={[
+					{
+						id: "share",
+						label: t("sessionDetail.share"),
+						disabled: action.busy || !currentView,
+						onPress: shareLink,
+					},
+				]}
+				menu={{
+					label: t("sessionDetail.more"),
+					items: [
+						{
+							id: "md",
+							label: t("sessionDetail.export"),
+							disabled: action.busy || !currentView,
+							onPress: () => exportText("md"),
+						},
+						{
+							id: "json",
+							label: t("sessionDetail.exportJson"),
+							disabled: action.busy || !currentView,
+							onPress: () => exportText("json"),
+						},
+					],
+				}}
+			/>
 			{action.error ? <ApiErrorPanel error={null} title={t("sessionDetail.failed")} /> : null}
-			<FlatList
+			<NativeList
 				data={rows}
 				keyExtractor={(row) => String(row.rowKey)}
 				contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 24, flexGrow: 1 }}
+				hasMore={more}
+				loadingMore={loading || action.busy}
+				onLoadMore={next}
 				refreshing={loading}
 				onRefresh={refresh}
-				ListHeaderComponent={
+				header={
 					gate ??
 					(currentView ? (
 						<WebView recipe={styles.page} className="px-0 py-0">
 							<WebView recipe={styles.heading}>
 								<WebView recipe={styles.body}>
-									<WebText recipe={detailLayoutClasses.title}>
-										{title || t("publicSession.title")}
-									</WebText>
 									<DetailMeta>
 										<AgentInline
 											identity={{ agent_type: currentView.metadata.detail.agent_type }}
@@ -323,42 +319,6 @@ function PublicSession({ id }: { id: string | null }) {
 											)}
 										</WebText>
 									</DetailMeta>
-								</WebView>
-								<WebView recipe={styles.brand}>
-									<Button
-										variant="outline"
-										size="icon"
-										accessibilityLabel={t("sessionDetail.share")}
-										onPress={shareLink}
-										disabled={action.busy}
-									>
-										<Icon as={Link2} />
-									</Button>
-									<DropdownMenu>
-										<DropdownMenuTrigger
-											render={
-												<Button
-													variant="outline"
-													size="icon"
-													accessibilityLabel={t("sessionDetail.more")}
-												>
-													<Icon as={MoreHorizontal} />
-												</Button>
-											}
-										/>
-										<DropdownMenuContent>
-											<DropdownMenuItem
-												label={t("sessionDetail.export")}
-												disabled={action.busy}
-												onSelect={() => exportText("md")}
-											/>
-											<DropdownMenuItem
-												label={t("sessionDetail.exportJson")}
-												disabled={action.busy}
-												onSelect={() => exportText("json")}
-											/>
-										</DropdownMenuContent>
-									</DropdownMenu>
 								</WebView>
 							</WebView>
 							<DetailStats>
@@ -393,12 +353,12 @@ function PublicSession({ id }: { id: string | null }) {
 						}}
 					/>
 				)}
-				ListEmptyComponent={
+				empty={
 					!loading && currentView ? (
 						<WebText recipe={styles.empty}>{t("sessionDetail.emptyShare")}</WebText>
 					) : undefined
 				}
-				ListFooterComponent={
+				footer={
 					currentView ? (
 						<WebView recipe={styles.page} className="px-0 py-0">
 							{more ? (

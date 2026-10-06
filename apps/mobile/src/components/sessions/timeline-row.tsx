@@ -47,8 +47,8 @@ export function TimelineRow({
 				onShareMessage={(target) => {
 					if (scope.isCurrent())
 						router.push({
-							pathname: "/sessions/shared",
-							params: { sessionId, scope: target.scope, position: String(target.position) },
+							pathname: "/sessions/[id]/sharing",
+							params: { id: sessionId, scope: target.scope, position: String(target.position) },
 						});
 				}}
 			/>

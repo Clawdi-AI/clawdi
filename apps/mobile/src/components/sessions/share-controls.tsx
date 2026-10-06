@@ -22,16 +22,9 @@ import {
 } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
-import {
-	ArrowLeft,
-	ExternalLink,
-	Link2,
-	MoreHorizontal,
-	Share2,
-	Trash2,
-} from "lucide-react-native";
+import { ExternalLink, Link2, MoreHorizontal, Share2, Trash2 } from "lucide-react-native";
 import { useState } from "react";
-import { FlatList, Share } from "react-native";
+import { Share } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -39,23 +32,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
-import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
+import { NativeList } from "@/components/ui/native-list";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Text } from "@/components/ui/text";
-import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webText, webView } from "@/components/ui/web-layout";
 import { useCloudSession } from "@/hooks/cloud-inventory";
 import { useMobileApi } from "@/lib/api-provider";
@@ -63,6 +49,7 @@ import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
@@ -91,18 +78,39 @@ export function SessionShareActions({
 				await Share.share({ title: t("sessionDetail.export"), message: text });
 		});
 	};
+	const [deleting, setDeleting] = useState(false);
 	return (
-		<WebView recipe={styles.actions}>
-			<Button
-				variant="outline"
-				size="sm"
-				className={webView(dialogStyles.button)}
-				onPress={() => router.push({ pathname: "/sessions/shared", params: { sessionId } })}
-			>
-				<Icon as={Share2} />
-				<Text>{t("sessionDetail.share")}</Text>
-			</Button>
+		<>
+			<NativeHeader
+				actions={[
+					{
+						id: "share",
+						label: t("sessionDetail.share"),
+						onPress: () =>
+							router.push({ pathname: "/sessions/[id]/sharing", params: { id: sessionId } }),
+					},
+				]}
+				menu={{
+					label: t("sessionDetail.more"),
+					items: [
+						{
+							id: "export",
+							label: t("sessionDetail.export"),
+							disabled: action.busy || !hasContent,
+							onPress: exportMarkdown,
+						},
+						{
+							id: "delete",
+							label: t("sessionDetail.delete"),
+							destructive: true,
+							onPress: () => setDeleting(true),
+						},
+					],
+				}}
+			/>
 			<ConfirmAction
+				open={deleting}
+				onOpenChange={setDeleting}
 				title={t("sessionDetail.deleteTitle")}
 				description={t("sessionDetail.deleteDescription")}
 				confirmLabel={t("sessionDetail.deleteConfirm")}
@@ -118,30 +126,9 @@ export function SessionShareActions({
 					]);
 					if (scope.isCurrent() && visible()) router.replace("/sessions");
 				}}
-			>
-				<Button variant="outline" size="sm" textClassName="text-destructive">
-					<Icon as={Trash2} />
-					<Text>{t("sessionDetail.delete")}</Text>
-				</Button>
-			</ConfirmAction>
-			<DropdownMenu>
-				<DropdownMenuTrigger
-					render={
-						<Button variant="ghost" size="icon-sm" accessibilityLabel={t("sessionDetail.more")}>
-							<Icon as={MoreHorizontal} />
-						</Button>
-					}
-				/>
-				<DropdownMenuContent>
-					<DropdownMenuItem
-						disabled={action.busy || !hasContent}
-						label={t("sessionDetail.export")}
-						onSelect={exportMarkdown}
-					/>
-				</DropdownMenuContent>
-			</DropdownMenu>
+			/>
 			{action.error ? <ApiErrorPanel error={undefined} title={t("sessionDetail.failed")} /> : null}
-		</WebView>
+		</>
 	);
 }
 
@@ -149,10 +136,11 @@ export function SessionSharesScreen() {
 	const scope = useAccountScope();
 	const params = useLocalSearchParams<{
 		sessionId?: string | string[];
+		id?: string | string[];
 		scope?: string | string[];
 		position?: string | string[];
 	}>();
-	const sessionId = routeParam(params.sessionId),
+	const sessionId = routeParam(params.sessionId ?? params.id),
 		kind = params.scope === undefined ? "session" : routeParam(params.scope),
 		position = routeParam(params.position);
 	let target: SessionShareTarget | null = null;
@@ -487,91 +475,86 @@ function SharesView({
 				(target.scope === "session" || matching.some((value) => value.id === share.id)),
 		);
 		return (
-			<SafeAreaScreen>
-				<Dialog
-					open
-					onOpenChange={(open) => {
-						if (!open) router.canGoBack() ? router.back() : router.replace("/sessions");
+			<SheetPage
+				title={copy.title}
+				fallback={{ pathname: "/sessions/[id]", params: { id: sessionId } }}
+				busy={action.busy}
+				scroll={false}
+			>
+				<NativeList
+					data={[...(latest ? [latest] : []), ...(older ? others : [])]}
+					keyExtractor={sessionShareIdentity}
+					renderItem={({ item }) => row(item, true)}
+					refreshing={inventory.isRefetching || snapshots.isRefetching}
+					onRefresh={() => {
+						void inventory.refetch();
+						void snapshots.refetch();
 					}}
-				>
-					<DialogContent>
-						<DialogHeader>
-							<DialogTitle>{copy.title}</DialogTitle>
-							<DialogDescription>{copy.description}</DialogDescription>
-						</DialogHeader>
+					hasMore={older && inventory.hasNextPage}
+					loadingMore={inventory.isFetching}
+					onLoadMore={() => void inventory.fetchNextPage().catch(() => undefined)}
+					header={
 						<WebView recipe={dialogStyles.body}>
+							<WebText recipe={"text-sm text-muted-foreground"}>{copy.description}</WebText>
 							{errorPanel}
 							{inventory.isPending || snapshots.isPending ? skeleton : null}
-							{latest ? row(latest, true) : null}
 							{others.length ? (
-								<>
-									<Button variant="ghost" size="sm" onPress={() => setOlder((value) => !value)}>
-										<Text>
-											{t("sessionDetail.older")} ({others.length})
-										</Text>
-									</Button>
-									{older ? (
-										<AppScrollView style={{ maxHeight: 320 }}>
-											{others.map((share) => row(share, true))}
-											{pagination}
-										</AppScrollView>
-									) : null}
-								</>
-							) : (
-								pagination
-							)}
-						</WebView>
-						<DialogFooter>
-							<ConfirmAction
-								title={copy.title}
-								description={copy.description}
-								confirmLabel={t("sessionDetail.create")}
-								onConfirm={create}
-							>
-								<Button
-									variant={latest ? "outline" : "default"}
-									disabled={
-										failure ||
-										inventory.isFetching ||
-										snapshots.isFetching ||
-										session.isFetching ||
-										!session.data?.has_content
-									}
-								>
-									<Icon as={Link2} />
+								<Button variant="ghost" size="sm" onPress={() => setOlder((value) => !value)}>
 									<Text>
-										{t(matching.length ? "sessionDetail.createSnapshot" : "sessionDetail.create")}
+										{t("sessionDetail.older")} ({others.length})
 									</Text>
 								</Button>
-							</ConfirmAction>
-						</DialogFooter>
-					</DialogContent>
-				</Dialog>
-			</SafeAreaScreen>
+							) : null}
+						</WebView>
+					}
+					footer={
+						<>
+							<WebView recipe={dialogStyles.linkActions}>
+								<ConfirmAction
+									title={copy.title}
+									description={copy.description}
+									confirmLabel={t("sessionDetail.create")}
+									onConfirm={() => action.runOrThrow(create)}
+								>
+									<Button
+										variant={latest ? "outline" : "default"}
+										disabled={
+											failure ||
+											inventory.isFetching ||
+											snapshots.isFetching ||
+											session.isFetching ||
+											!session.data?.has_content
+										}
+									>
+										<Icon as={Link2} />
+										<Text>
+											{t(matching.length ? "sessionDetail.createSnapshot" : "sessionDetail.create")}
+										</Text>
+									</Button>
+								</ConfirmAction>
+							</WebView>
+						</>
+					}
+				/>
+			</SheetPage>
 		);
 	}
 	return (
 		<SafeAreaScreen>
-			<FlatList
+			<NativeList
 				data={failure && !items.length ? [] : items}
 				keyExtractor={sessionShareIdentity}
-				contentContainerStyle={{ padding: 16, flexGrow: 1 }}
+				contentContainerStyle={{ padding: 16, flexGrow: 1, gap: 0 }}
 				refreshing={inventory.isRefetching && !inventory.isFetchingNextPage}
 				onRefresh={() => {
 					if (!inventory.isFetching) void inventory.refetch();
 				}}
 				ListHeaderComponentStyle={{ marginBottom: 20 }}
-				ListHeaderComponent={
+				header={
 					<WebView recipe={styles.page} className="px-0">
 						<PageHeader
 							title={t("sessionDetail.sharedTitle")}
 							description={t("sessionDetail.sharedDescription")}
-							actions={
-								<Button variant="outline" size="sm" onPress={() => router.replace("/sessions")}>
-									<Icon as={ArrowLeft} />
-									<Text>Sessions</Text>
-								</Button>
-							}
 						/>
 						{errorPanel}
 					</WebView>
@@ -590,7 +573,7 @@ function SharesView({
 						{row(item)}
 					</WebView>
 				)}
-				ListEmptyComponent={
+				empty={
 					inventory.isPending && !invalid ? (
 						skeleton
 					) : !failure ? (
@@ -606,7 +589,12 @@ function SharesView({
 						/>
 					) : undefined
 				}
-				ListFooterComponent={pagination}
+				hasMore={inventory.hasNextPage}
+				loadingMore={inventory.isFetching}
+				onLoadMore={() => {
+					if (scope.isCurrent()) void inventory.fetchNextPage().catch(() => undefined);
+				}}
+				footer={pagination}
 			/>
 		</SafeAreaScreen>
 	);

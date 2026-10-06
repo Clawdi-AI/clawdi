@@ -20,16 +20,9 @@ import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Switch } from "@/components/ui/switch";
 import { Text } from "@/components/ui/text";
 import { AppScrollView } from "@/components/ui/view";
@@ -38,26 +31,23 @@ import { useCompleteVaultCatalog } from "@/components/vault/project-vault-catalo
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { useSheet } from "@/platform/navigation/use-sheet";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 const NEW_VAULT = "__new__";
 
 /** Global Web composer with an explicit stable destination and native secret lifecycle. */
-export function AddKeysDialog({
-	open,
-	onOpenChange,
-}: {
-	open: boolean;
-	onOpenChange: (open: boolean) => void;
-}) {
+export function AddKeysScreen() {
 	const t = useI18n(),
 		scope = useAccountScope(),
 		read = useAccountRead(),
 		capture = useForegroundLease();
 	const { vault } = useMobileApi(),
 		cache = useQueryClient();
-	const catalog = useCompleteVaultCatalog(undefined, open);
+	const catalog = useCompleteVaultCatalog(undefined, true);
 	const [saving, setSaving] = useState(false);
+	const [closeError, setCloseError] = useState<unknown>();
+	const sheet = useSheet<boolean>({ fallback: "/vault", busy: saving });
 	const [choice, setChoice] = useState(""),
 		[name, setName] = useState(""),
 		[text, setText] = useState(""),
@@ -76,14 +66,13 @@ export function AddKeysDialog({
 			const subscription = AppState.addEventListener("change", (state) => {
 				if (state !== "active") {
 					reset();
-					onOpenChange(false);
 				}
 			});
 			return () => {
 				subscription.remove();
 				reset();
 			};
-		}, [reset, onOpenChange]),
+		}, [reset]),
 	);
 	const ownVaults = (catalog.data?.items ?? []).filter((v) => v.is_owner !== false);
 	const effectiveChoice = choice || ownVaults[0]?.id || NEW_VAULT;
@@ -98,7 +87,7 @@ export function AddKeysDialog({
 				if (!selected) throw new Error("Vault unavailable");
 				return vault.sections(selected, s);
 			}, signal),
-		enabled: open && scope.isReady && !!selected,
+		enabled: scope.isReady && !!selected,
 		retry: false,
 	});
 	const preview = buildKeyImportPreview(
@@ -120,187 +109,179 @@ export function AddKeysDialog({
 	const close = () => {
 		if (!saving) {
 			reset();
-			onOpenChange(false);
+			void sheet.close().catch(setCloseError);
 		}
 	};
 	return (
 		<>
-			<Dialog
-				open={open}
-				onOpenChange={(next) => {
-					if (!next) close();
-				}}
+			<SheetPage
+				title={t("libraryPort.addKeys")}
+				description={
+					<Text>
+						{ADD_KEYS_COPY.pasteBefore}{" "}
+						<WebText recipe={addKeysDialogClasses.mono}>{ADD_KEYS_COPY.assignment}</WebText>{" "}
+						{ADD_KEYS_COPY.pasteAfter}
+					</Text>
+				}
+				fallback="/vault"
+				busy={saving}
+				sheet={sheet}
 			>
-				<DialogContent>
-					<DialogHeader>
-						<DialogTitle>{t("libraryPort.addKeys")}</DialogTitle>
-						<DialogDescription>
-							<Text>
-								{ADD_KEYS_COPY.pasteBefore}{" "}
-								<WebText recipe={addKeysDialogClasses.mono}>{ADD_KEYS_COPY.assignment}</WebText>{" "}
-								{ADD_KEYS_COPY.pasteAfter}
-							</Text>
-						</DialogDescription>
-					</DialogHeader>
-					<WebView recipe={addKeysDialogClasses.body}>
-						<Input
-							value={text}
-							onChangeText={setText}
-							placeholder={ADD_KEYS_COPY.placeholder}
-							accessibilityLabel={t("vault.importText")}
-							multiline
-							className={webBoth(addKeysDialogClasses.paste)}
-							editable={!saving}
-							maxLength={1048576}
-							autoCapitalize="none"
-							autoCorrect={false}
-							autoComplete="off"
-							textContentType="none"
-						/>
-						<WebView recipe={addKeysDialogClasses.destinationGrid}>
-							<WebView recipe={addKeysDialogClasses.field}>
-								<Label>{ADD_KEYS_COPY.into}</Label>
-								<ChoiceSelect
-									className={webBoth(addKeysDialogClasses.trigger)}
-									value={effectiveChoice}
-									displayValue={newVault ? ADD_KEYS_COPY.create : selected?.name}
-									onValueChange={(next) => {
-										setChoice(next);
-										setOverwrite(false);
-									}}
-									disabled={saving || catalog.isFetching || !!catalog.error}
-									options={[
-										...ownVaults.map((v) => ({
-											value: v.id,
-											label: `${identityFor(v.name).emoji} ${v.name}`,
-										})),
-										{ value: NEW_VAULT, label: ADD_KEYS_COPY.create },
-									]}
-								/>
-							</WebView>
-							{newVault ? (
-								<WebView recipe={addKeysDialogClasses.newField}>
-									<Input
-										value={name}
-										onChangeText={setName}
-										placeholder={ADD_KEYS_COPY.name}
-										maxLength={200}
-										editable={!saving}
-									/>
-									{taken ? (
-										<WebText recipe={addKeysDialogClasses.error}>{ADD_KEYS_COPY.taken}</WebText>
-									) : null}
-								</WebView>
-							) : null}
+				{closeError ? <ApiErrorPanel error={closeError} /> : null}
+				<WebView recipe={addKeysDialogClasses.body}>
+					<Input
+						value={text}
+						onChangeText={setText}
+						placeholder={ADD_KEYS_COPY.placeholder}
+						accessibilityLabel={t("vault.importText")}
+						multiline
+						className={webBoth(addKeysDialogClasses.paste)}
+						editable={!saving}
+						maxLength={1048576}
+						autoCapitalize="none"
+						autoCorrect={false}
+						autoComplete="off"
+						textContentType="none"
+					/>
+					<WebView recipe={addKeysDialogClasses.destinationGrid}>
+						<WebView recipe={addKeysDialogClasses.field}>
+							<Label>{ADD_KEYS_COPY.into}</Label>
+							<ChoiceSelect
+								className={webBoth(addKeysDialogClasses.trigger)}
+								value={effectiveChoice}
+								displayValue={newVault ? ADD_KEYS_COPY.create : selected?.name}
+								onValueChange={(next) => {
+									setChoice(next);
+									setOverwrite(false);
+								}}
+								disabled={saving || catalog.isFetching || !!catalog.error}
+								options={[
+									...ownVaults.map((v) => ({
+										value: v.id,
+										label: `${identityFor(v.name).emoji} ${v.name}`,
+									})),
+									{ value: NEW_VAULT, label: ADD_KEYS_COPY.create },
+								]}
+							/>
 						</WebView>
-						{catalog.error ? (
-							<ApiErrorPanel
-								error={catalog.error}
-								onRetry={() => void catalog.refetch()}
-								title="Couldn't load destinations"
-							/>
-						) : null}
-						{!newVault && sections.error ? (
-							<ApiErrorPanel
-								error={sections.error}
-								onRetry={() => void sections.refetch()}
-								title="Couldn't check existing keys"
-							/>
-						) : null}
-						{preview.parsed.errors.length ? (
-							<Alert variant="destructive" icon={AlertCircle} title={ADD_KEYS_COPY.invalid}>
-								<WebView recipe={addKeysDialogClasses.errors}>
-									{preview.parsed.errors.map((error, index) => (
-										<Text key={`${index}:${error}`}>• {error}</Text>
-									))}
-								</WebView>
-							</Alert>
-						) : null}
-						{preview.conflicts.length && !preview.parsed.errors.length ? (
-							<WebView recipe={addKeysDialogClasses.conflicts} className="flex-row">
-								<Switch checked={overwrite} onCheckedChange={setOverwrite} disabled={saving} />
-								<WebView recipe={addKeysDialogClasses.newField} className="flex-1">
-									<Label>{ADD_KEYS_COPY.overwrite}</Label>
-									<WebText recipe={addKeysDialogClasses.meta}>
-										{addKeysConflictCopy(preview.conflicts.length)}
-									</WebText>
-								</WebView>
+						{newVault ? (
+							<WebView recipe={addKeysDialogClasses.newField}>
+								<Input
+									value={name}
+									onChangeText={setName}
+									placeholder={ADD_KEYS_COPY.name}
+									maxLength={200}
+									editable={!saving}
+								/>
+								{taken ? (
+									<WebText recipe={addKeysDialogClasses.error}>{ADD_KEYS_COPY.taken}</WebText>
+								) : null}
 							</WebView>
 						) : null}
-						{preview.preview.length && !preview.parsed.errors.length ? (
-							<WebView recipe={addKeysDialogClasses.preview}>
-								<WebView recipe={addKeysDialogClasses.previewHeader} className="flex-row">
-									<WebText recipe={addKeysDialogClasses.previewTitle}>
-										{ADD_KEYS_COPY.preview}
-									</WebText>
-									<WebView recipe={addKeysDialogClasses.badges} className="flex-row">
-										<Badge variant="secondary">
-											<Text>{addKeysSummaryCopy(preview.summary.created, "create")}</Text>
+					</WebView>
+					{catalog.error ? (
+						<ApiErrorPanel
+							error={catalog.error}
+							onRetry={() => void catalog.refetch()}
+							title="Couldn't load destinations"
+						/>
+					) : null}
+					{!newVault && sections.error ? (
+						<ApiErrorPanel
+							error={sections.error}
+							onRetry={() => void sections.refetch()}
+							title="Couldn't check existing keys"
+						/>
+					) : null}
+					{preview.parsed.errors.length ? (
+						<Alert variant="destructive" icon={AlertCircle} title={ADD_KEYS_COPY.invalid}>
+							<WebView recipe={addKeysDialogClasses.errors}>
+								{preview.parsed.errors.map((error, index) => (
+									<Text key={`${index}:${error}`}>• {error}</Text>
+								))}
+							</WebView>
+						</Alert>
+					) : null}
+					{preview.conflicts.length && !preview.parsed.errors.length ? (
+						<WebView recipe={addKeysDialogClasses.conflicts} className="flex-row">
+							<Switch checked={overwrite} onCheckedChange={setOverwrite} disabled={saving} />
+							<WebView recipe={addKeysDialogClasses.newField} className="flex-1">
+								<Label>{ADD_KEYS_COPY.overwrite}</Label>
+								<WebText recipe={addKeysDialogClasses.meta}>
+									{addKeysConflictCopy(preview.conflicts.length)}
+								</WebText>
+							</WebView>
+						</WebView>
+					) : null}
+					{preview.preview.length && !preview.parsed.errors.length ? (
+						<WebView recipe={addKeysDialogClasses.preview}>
+							<WebView recipe={addKeysDialogClasses.previewHeader} className="flex-row">
+								<WebText recipe={addKeysDialogClasses.previewTitle}>
+									{ADD_KEYS_COPY.preview}
+								</WebText>
+								<WebView recipe={addKeysDialogClasses.badges} className="flex-row">
+									<Badge variant="secondary">
+										<Text>{addKeysSummaryCopy(preview.summary.created, "create")}</Text>
+									</Badge>
+									{preview.conflicts.length > 0 ? (
+										<Badge variant="outline">
+											<Text>
+												{overwrite
+													? addKeysSummaryCopy(preview.summary.updated, "update")
+													: addKeysSummaryCopy(preview.summary.skipped, "skip")}
+											</Text>
 										</Badge>
-										{preview.conflicts.length > 0 ? (
-											<Badge variant="outline">
-												<Text>
-													{overwrite
-														? addKeysSummaryCopy(preview.summary.updated, "update")
-														: addKeysSummaryCopy(preview.summary.skipped, "skip")}
-												</Text>
-											</Badge>
-										) : null}
-									</WebView>
-								</WebView>
-								<AppScrollView className={webBoth(addKeysDialogClasses.previewList)}>
-									{preview.preview.slice(0, 10).map((row) => (
-										<WebView
-											key={row.key}
-											recipe={addKeysDialogClasses.previewRow}
-											className="flex-row"
-										>
-											<WebText
-												recipe={addKeysDialogClasses.key}
-												className="flex-1"
-												numberOfLines={1}
-											>
-												{row.key}
-											</WebText>
-											<Badge variant={row.action === "create" ? "secondary" : "outline"}>
-												<Text>{addKeysActionCopy(row.action)}</Text>
-											</Badge>
-										</WebView>
-									))}
-									{preview.preview.length > 10 ? (
-										<WebText recipe={addKeysDialogClasses.more}>
-											{addKeysReadyCopy(preview.preview.length - 10)}
-										</WebText>
 									) : null}
-								</AppScrollView>
+								</WebView>
 							</WebView>
-						) : null}
+							<AppScrollView className={webBoth(addKeysDialogClasses.previewList)}>
+								{preview.preview.slice(0, 10).map((row) => (
+									<WebView
+										key={row.key}
+										recipe={addKeysDialogClasses.previewRow}
+										className="flex-row"
+									>
+										<WebText recipe={addKeysDialogClasses.key} className="flex-1" numberOfLines={1}>
+											{row.key}
+										</WebText>
+										<Badge variant={row.action === "create" ? "secondary" : "outline"}>
+											<Text>{addKeysActionCopy(row.action)}</Text>
+										</Badge>
+									</WebView>
+								))}
+								{preview.preview.length > 10 ? (
+									<WebText recipe={addKeysDialogClasses.more}>
+										{addKeysReadyCopy(preview.preview.length - 10)}
+									</WebText>
+								) : null}
+							</AppScrollView>
+						</WebView>
+					) : null}
 
+					<WebView recipe={addKeysDialogClasses.footer}>
+						<WebText recipe={addKeysDialogClasses.count}>
+							{addKeysDetectedCopy(preview.parsed.entries.length, preview.summary.skipped)}
+						</WebText>
 						<WebView recipe={addKeysDialogClasses.footer}>
-							<WebText recipe={addKeysDialogClasses.count}>
-								{addKeysDetectedCopy(preview.parsed.entries.length, preview.summary.skipped)}
-							</WebText>
-							<DialogFooter>
-								<Button variant="ghost" disabled={saving} onPress={close}>
-									<Text>{t("libraryPort.cancel")}</Text>
-								</Button>
-								<Button
-									disabled={!valid || saving}
-									onPress={() => {
-										confirmationLease.current = capture();
-										setConfirmOpen(true);
-									}}
-								>
-									<Icon as={Check} className={webBoth(addKeysDialogClasses.iconSmall)} />
-									<Text>
-										{ADD_KEYS_COPY.save} {preview.importableRows.length || ""}
-									</Text>
-								</Button>
-							</DialogFooter>
+							<Button variant="ghost" disabled={saving} onPress={close}>
+								<Text>{t("libraryPort.cancel")}</Text>
+							</Button>
+							<Button
+								disabled={!valid || saving}
+								onPress={() => {
+									confirmationLease.current = capture();
+									setConfirmOpen(true);
+								}}
+							>
+								<Icon as={Check} className={webBoth(addKeysDialogClasses.iconSmall)} />
+								<Text>
+									{ADD_KEYS_COPY.save} {preview.importableRows.length || ""}
+								</Text>
+							</Button>
 						</WebView>
 					</WebView>
-				</DialogContent>
-			</Dialog>
+				</WebView>
+			</SheetPage>
 			<ConfirmAction
 				open={confirmOpen}
 				onOpenChange={setConfirmOpen}
@@ -343,7 +324,7 @@ export function AddKeysDialog({
 						await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
 						if (confirmationLease.current()) {
 							reset();
-							onOpenChange(false);
+							await sheet.close(true);
 						}
 					} finally {
 						if (scope.isCurrent()) setSaving(false);

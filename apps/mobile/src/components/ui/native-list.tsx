@@ -1,5 +1,5 @@
 import { dashboardPageClasses } from "@clawdi/shared/ui";
-import type { ReactElement } from "react";
+import type { ReactElement, Ref } from "react";
 import { FlatList, type FlatListProps, RefreshControl } from "react-native";
 import { useResolveClassNames, useCSSVariable } from "uniwind";
 import { webView } from "@/components/ui/web-layout";
@@ -23,6 +23,7 @@ export function NativeList<T>({
 	| "ListEmptyComponent"
 	| "ListFooterComponent"
 > & {
+	ref?: Ref<FlatList<T>>;
 	refreshing?: boolean;
 	onRefresh?: () => void;
 	loadingMore?: boolean;

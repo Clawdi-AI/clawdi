@@ -107,6 +107,7 @@ native Stack. Root screens enable `headerLargeTitleEnabled` (the SDK 57 name
 for the deprecated `headerLargeTitle`). Titles use Web copy, shared color
 tokens and Geist. `PageHeader` and `SettingsPanelHeader` keep descriptions,
 identity/status/adornments; native stacks own titles and back controls.
+`PageHeader` accepts `headerActions` and `headerMenu` descriptors directly.
 Prefer action descriptors: iOS uses native `Stack.Toolbar`, Android uses
 Compose buttons/menus via its documented `asChild` slot. Existing Web action
 JSX can use `contentActions` during migration; menus remain native `MenuView`.
@@ -196,6 +197,10 @@ on failure; use `useAuthAction.runOrThrow` when using that action wrapper.
     await remove(); if (current()) await invalidate(); })} />;
 ```
 
+Data sheets use `SheetPage scroll={false}` so `NativeList` owns scrolling and
+refresh. Put the sheet description and form controls in the list header; the
+native sheet keeps the same close/error and busy-dismiss guards.
+
 **Lists** — `src/components/ui/native-list.tsx`. One FlatList owns scrolling,
 RefreshControl and `onEndReached`. Keep Web sections, filters, empty/error/
 skeleton components in `header`, `empty`, `footer`; reuse entity recipes for
@@ -213,6 +218,9 @@ Sessions and Library use this pattern; bounded settings/forms use ScrollView.
 **Segments and insets** — `src/platform/navigation/segmented-control.tsx`
 uses SDK 57's native community segmented control on iOS and Compose
 segmented buttons with shared colors/Geist on Android for settings navigation.
+For longer option sets, `scrollable` uses Compose's documented horizontal-scroll
+modifier and single-line labels; Project detail and Memory categories use it
+for their longer option sets.
 NativeTabs retains its default content-inset behavior (including Android's
 bottom safe area). `SafeAreaScreen` leaves top/bottom ownership to a visible
 stack header; native scroll views use `contentInsetAdjustmentBehavior="automatic"`

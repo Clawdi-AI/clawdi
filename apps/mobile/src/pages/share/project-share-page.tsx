@@ -1,5 +1,5 @@
 import type { components } from "@clawdi/shared/api";
-import { detailLayoutClasses, projectSharePageClasses as styles } from "@clawdi/shared/ui";
+import { projectSharePageClasses as styles } from "@clawdi/shared/ui";
 import {
 	projectInvitationCopy as copy,
 	projectInvitationAccess,
@@ -9,21 +9,18 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
-import { BackButton } from "@/components/detail/back-link";
-import { PageHeader } from "@/components/page-header";
 import { shareTokenFromUrl } from "@/components/sharing/project-sharing-state";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { SheetPage } from "@/components/ui/sheet-page";
 import { Text as AppText, Text } from "@/components/ui/text";
-import { AppScrollView } from "@/components/ui/view";
 import { WebText, webView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 export function ProjectJoinScreen() {
 	const scope = useAccountScope();
@@ -100,74 +97,68 @@ function JoinView({ initialLink }: { initialLink: string }) {
 			await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
 		});
 	return (
-		<SafeAreaScreen>
-			<AppScrollView contentContainerClassName={webView(detailLayoutClasses.detailPage)}>
-				<BackButton />
-				<PageHeader title={t("sharing.joinLink")} />
-				<AppText>{t("sharing.joinDescription")}</AppText>
-				<Input
-					accessibilityLabel={t("sharing.pasteLink")}
-					placeholder={t("sharing.pasteLink")}
-					secureTextEntry
-					autoCapitalize="none"
-					autoCorrect={false}
-					value={input}
-					editable={!action.busy}
-					maxLength={4096}
-					onChangeText={(value) => {
-						presentation.current += 1;
-						setInput(value);
-						setPreview(null);
-						setJoined(false);
-						action.clearError();
-					}}
-				/>
-				{input.trim() && !token ? (
-					<AppText accessibilityRole="alert">{t("sharing.invalidLink")}</AppText>
-				) : null}
-				<Button
-					variant="outline"
-					size="sm"
-					disabled={action.busy || !token}
-					onPress={() => void load()}
-				>
-					<Text>{t("sharing.preview")}</Text>
-				</Button>
-				{preview ? (
-					<Card>
-						<CardHeader>
-							<WebText recipe={styles.invitation}>{copy.title}</WebText>
-							<CardTitle className={webView(styles.title)}>{preview.data.project_name}</CardTitle>
-							<WebText recipe={styles.description}>
-								{copy.sharedBy}
-								<WebText recipe={styles.owner}>{preview.data.owner_display}</WebText>{" "}
-								<WebText recipe={styles.handle}>@{preview.data.owner_handle}</WebText>
-							</WebText>
-						</CardHeader>
-						<CardContent className={webView(styles.body)}>
-							<WebText recipe={styles.description}>
-								{projectInvitationCounts(preview.data.skill_count, preview.data.vault_count)}
-							</WebText>
-							<WebText recipe={styles.description}>
-								{projectInvitationAccess(preview.data.vault_count > 0)}
-							</WebText>
-							<Separator />
-							<Button
-								className={webView(styles.action)}
-								size="lg"
-								disabled={action.busy}
-								onPress={() => void join()}
-							>
-								<Text>{action.busy ? copy.joining : copy.accept}</Text>
-							</Button>
-						</CardContent>
-					</Card>
-				) : null}
-				{joined ? <AppText accessibilityLiveRegion="polite">{t("sharing.joined")}</AppText> : null}
-				{action.error ? (
-					<AppText accessibilityRole="alert">{t("sharing.joinFailed")}</AppText>
-				) : null}
-			</AppScrollView>
-		</SafeAreaScreen>
+		<SheetPage title={t("sharing.joinLink")} fallback="/projects" busy={action.busy}>
+			<AppText>{t("sharing.joinDescription")}</AppText>
+			<Input
+				accessibilityLabel={t("sharing.pasteLink")}
+				placeholder={t("sharing.pasteLink")}
+				secureTextEntry
+				autoCapitalize="none"
+				autoCorrect={false}
+				value={input}
+				editable={!action.busy}
+				maxLength={4096}
+				onChangeText={(value) => {
+					presentation.current += 1;
+					setInput(value);
+					setPreview(null);
+					setJoined(false);
+					action.clearError();
+				}}
+			/>
+			{input.trim() && !token ? (
+				<AppText accessibilityRole="alert">{t("sharing.invalidLink")}</AppText>
+			) : null}
+			<Button
+				variant="outline"
+				size="sm"
+				disabled={action.busy || !token}
+				onPress={() => void load()}
+			>
+				<Text>{t("sharing.preview")}</Text>
+			</Button>
+			{preview ? (
+				<Card>
+					<CardHeader>
+						<WebText recipe={styles.invitation}>{copy.title}</WebText>
+						<CardTitle className={webView(styles.title)}>{preview.data.project_name}</CardTitle>
+						<WebText recipe={styles.description}>
+							{copy.sharedBy}
+							<WebText recipe={styles.owner}>{preview.data.owner_display}</WebText>{" "}
+							<WebText recipe={styles.handle}>@{preview.data.owner_handle}</WebText>
+						</WebText>
+					</CardHeader>
+					<CardContent className={webView(styles.body)}>
+						<WebText recipe={styles.description}>
+							{projectInvitationCounts(preview.data.skill_count, preview.data.vault_count)}
+						</WebText>
+						<WebText recipe={styles.description}>
+							{projectInvitationAccess(preview.data.vault_count > 0)}
+						</WebText>
+						<Separator />
+						<Button
+							className={webView(styles.action)}
+							size="lg"
+							disabled={action.busy}
+							onPress={() => void join()}
+						>
+							<Text>{action.busy ? copy.joining : copy.accept}</Text>
+						</Button>
+					</CardContent>
+				</Card>
+			) : null}
+			{joined ? <AppText accessibilityLiveRegion="polite">{t("sharing.joined")}</AppText> : null}
+			{action.error ? <AppText accessibilityRole="alert">{t("sharing.joinFailed")}</AppText> : null}
+		</SheetPage>
 	);
 }

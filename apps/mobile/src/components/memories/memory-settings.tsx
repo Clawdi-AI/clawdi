@@ -1,7 +1,7 @@
 import { memoriesSurfaceClasses } from "@clawdi/shared/ui";
 import { memoryFormCopy as copy } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Brain, Database, Key } from "lucide-react-native";
+import { Key } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { AppState } from "react-native";
 import { Button } from "@/components/ui/button";
@@ -11,12 +11,12 @@ import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Text } from "@/components/ui/text";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
 
 export function MemorySettings() {
 	const scope = useAccountScope();
@@ -79,25 +79,18 @@ function MemorySettingsView() {
 	if (settings.isError) return <ErrorState onRetry={() => void settings.refetch()} />;
 	return (
 		<>
-			<ToggleGroup
-				value={[settings.data.provider]}
-				variant="outline"
-				size="sm"
+			<NativeSegments
+				value={settings.data.provider}
 				disabled={action.busy}
-				onValueChange={(v) => {
-					const p = v[0];
-					if (p === "builtin" || p === "mem0") void save(p);
+				options={[
+					{ value: "builtin", label: t("memories.builtin") },
+					{ value: "mem0", label: "Mem0" },
+				]}
+				onChange={(provider) => {
+					if (provider === "builtin" || provider === "mem0") void save(provider);
 				}}
-			>
-				<ToggleGroupItem value="builtin">
-					<Icon as={Database} />
-					<Text>{t("memories.builtin")}</Text>
-				</ToggleGroupItem>
-				<ToggleGroupItem value="mem0">
-					<Icon as={Brain} />
-					<Text>Mem0</Text>
-				</ToggleGroupItem>
-			</ToggleGroup>
+			/>
+			{action.error ? <ErrorState /> : null}
 			{settings.data.provider === "mem0" && !settings.data.configured ? (
 				<Card>
 					<CardHeader>
@@ -130,7 +123,6 @@ function MemorySettingsView() {
 								<Text>{copy.mem0Save}</Text>
 							</Button>
 						</WebView>
-						{action.error ? <ErrorState /> : null}
 					</CardContent>
 				</Card>
 			) : null}

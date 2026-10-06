@@ -14,9 +14,10 @@ import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/cons
 import { checkboxClasses, sessionDetailClasses as styles } from "@clawdi/shared/ui";
 import { sessionEmptyDescription, sessionTimelineFilters } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { Stack } from "expo-router";
 import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp } from "lucide-react-native";
 import { type ReactElement, useEffect, useRef, useState } from "react";
-import { FlatList } from "react-native";
+import type { FlatList } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { SessionSidebar } from "@/components/sessions/session-sidebar";
@@ -24,7 +25,7 @@ import { MessagesSkeleton } from "@/components/sessions/skeleton";
 import { TimelineRow } from "@/components/sessions/timeline-row";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { SearchInput } from "@/components/ui/search-input";
+import { NativeList } from "@/components/ui/native-list";
 import { Text } from "@/components/ui/text";
 import { AppPressable, AppView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
@@ -38,6 +39,7 @@ import {
 	timelineRequest,
 } from "@/lib/timeline-state";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { useHeaderSearch } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 type Props = {
@@ -168,113 +170,25 @@ function TranscriptView({
 	const selectMatch = (next: SessionSearchAnchor | null | undefined) => {
 		if (next && !messages.isFetching && scope.isCurrent()) setAnchor(next);
 	};
+	const searchOptions = useHeaderSearch({
+		value: draft,
+		onChange: (value) => {
+			setDraft(value);
+			setAnchor(undefined);
+			setDirection("asc");
+		},
+		placeholder: t("sessionDetail.searchPlaceholder"),
+		maxLength: SEARCH_QUERY_MAX_LENGTH,
+	});
 	return (
 		<SafeAreaScreen>
-			<WebView recipe={styles.page} className="px-4 pt-4">
-				<WebView recipe={styles.context}>
-					{header}
-					{hasContent ? (
-						<WebView recipe={styles.controls}>
-							<WebView recipe={styles.controlGrid}>
-								{sessionTimelineIncludesMessages(view) ? (
-									<SearchInput
-										value={draft}
-										placeholder={t("sessionDetail.searchPlaceholder")}
-										ariaLabel={t("sessionDetail.search")}
-										maxLength={SEARCH_QUERY_MAX_LENGTH}
-										onChange={(value) => {
-											setDraft(value);
-											setAnchor(undefined);
-											setDirection("asc");
-										}}
-									/>
-								) : null}
-								{draft && sessionTimelineIncludesMessages(view) ? (
-									<WebView recipe={styles.actions}>
-										<WebText recipe={styles.muted} accessibilityLiveRegion="polite">
-											{!isSearchQueryReady(draft)
-												? t("sessionDetail.searchMinimum")
-												: messages.isFetching
-													? t("sessionDetail.searching")
-													: messages.isError
-														? t("sessionDetail.unavailable")
-														: navigation
-															? `${navigation.index} / ${navigation.total}`
-															: "0 / 0"}
-										</WebText>
-										<Button
-											variant="ghost"
-											size="icon-xs"
-											accessibilityLabel={t("sessionDetail.previous")}
-											disabled={!navigation?.previous || messages.isFetching || messages.isError}
-											onPress={() => selectMatch(navigation?.previous)}
-										>
-											<Icon as={ChevronUp} />
-										</Button>
-										<Button
-											variant="ghost"
-											size="icon-xs"
-											accessibilityLabel={t("sessionDetail.next")}
-											disabled={!navigation?.next || messages.isFetching || messages.isError}
-											onPress={() => selectMatch(navigation?.next)}
-										>
-											<Icon as={ChevronDown} />
-										</Button>
-										{matchIndex >= 0 ? (
-											<Button variant="ghost" size="sm" onPress={jumpToMatch}>
-												<Text>{t("sessionDetail.match")}</Text>
-											</Button>
-										) : null}
-									</WebView>
-								) : null}
-								<WebView recipe={styles.toolbar}>
-									<WebView
-										recipe={styles.filters}
-										accessibilityLabel={t("sessionDetail.timelineLabel")}
-									>
-										{sessionTimelineFilters.map(({ category, label }) => {
-											const categories = sessionTimelineCategories(view);
-											const checked = categories.includes(category);
-											const disabled = checked && categories.length === 1;
-											return (
-												<AppPressable
-													key={category}
-													className={webView(styles.filter)}
-													accessibilityRole="checkbox"
-													accessibilityLabel={label}
-													accessibilityState={{ checked, disabled }}
-													hitSlop={8}
-													disabled={disabled}
-													onPress={() => {
-														const next = sessionTimelineViewFromCategories(
-															checked
-																? categories.filter((value) => value !== category)
-																: [...categories, category],
-														);
-														if (next) {
-															setView(next);
-															setAnchor(undefined);
-														}
-													}}
-												>
-													<WebView
-														recipe={checkboxClasses.root}
-														state={{ "data-checked": checked }}
-													>
-														{checked ? <Icon as={Check} /> : null}
-													</WebView>
-													<WebText recipe={styles.filterLabel}>{label}</WebText>
-												</AppPressable>
-											);
-										})}
-									</WebView>
-								</WebView>
-							</WebView>
-						</WebView>
-					) : null}
-				</WebView>
-			</WebView>
-			<FlatList
+			<Stack.Screen
+				options={{
+					headerSearchBarOptions:
+						hasContent && sessionTimelineIncludesMessages(view) ? searchOptions : undefined,
+				}}
+			/>
+			<NativeList
 				key={windowKey}
 				ref={list}
 				maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
@@ -285,6 +199,11 @@ function TranscriptView({
 					paddingTop: 16,
 					paddingBottom: 24,
 					flexGrow: 1,
+				}}
+				hasMore={messages.hasNextPage && !conflict}
+				loadingMore={messages.isFetching}
+				onLoadMore={() => {
+					if (scope.isCurrent()) void messages.fetchNextPage().catch(() => undefined);
 				}}
 				initialNumToRender={8}
 				windowSize={5}
@@ -302,24 +221,120 @@ function TranscriptView({
 					messages.isRefetching && !messages.isFetchingNextPage && !messages.isFetchingPreviousPage
 				}
 				onRefresh={refresh}
-				ListHeaderComponent={
-					<WebView recipe={styles.page} className="px-0">
-						<SessionSidebar relatedRefs={relatedRefs} />
-						{messages.hasPreviousPage ? (
-							<WebView recipe={styles.pagination}>
-								<Button
-									variant="ghost"
-									size="sm"
-									disabled={messages.isFetching || conflict}
-									onPress={() => {
-										if (scope.isCurrent()) void messages.fetchPreviousPage().catch(() => undefined);
-									}}
-								>
-									<Text>{t(direction === "asc" ? "timeline.earlier" : "timeline.later")}</Text>
-								</Button>
+				header={
+					<>
+						<WebView recipe={styles.page} className="px-4 pt-4">
+							<WebView recipe={styles.context}>
+								{header}
+								{hasContent ? (
+									<WebView recipe={styles.controls}>
+										<WebView recipe={styles.controlGrid}>
+											{draft && sessionTimelineIncludesMessages(view) ? (
+												<WebView recipe={styles.actions}>
+													<WebText recipe={styles.muted} accessibilityLiveRegion="polite">
+														{!isSearchQueryReady(draft)
+															? t("sessionDetail.searchMinimum")
+															: messages.isFetching
+																? t("sessionDetail.searching")
+																: messages.isError
+																	? t("sessionDetail.unavailable")
+																	: navigation
+																		? `${navigation.index} / ${navigation.total}`
+																		: "0 / 0"}
+													</WebText>
+													<Button
+														variant="ghost"
+														size="icon-xs"
+														accessibilityLabel={t("sessionDetail.previous")}
+														disabled={
+															!navigation?.previous || messages.isFetching || messages.isError
+														}
+														onPress={() => selectMatch(navigation?.previous)}
+													>
+														<Icon as={ChevronUp} />
+													</Button>
+													<Button
+														variant="ghost"
+														size="icon-xs"
+														accessibilityLabel={t("sessionDetail.next")}
+														disabled={!navigation?.next || messages.isFetching || messages.isError}
+														onPress={() => selectMatch(navigation?.next)}
+													>
+														<Icon as={ChevronDown} />
+													</Button>
+													{matchIndex >= 0 ? (
+														<Button variant="ghost" size="sm" onPress={jumpToMatch}>
+															<Text>{t("sessionDetail.match")}</Text>
+														</Button>
+													) : null}
+												</WebView>
+											) : null}
+											<WebView recipe={styles.toolbar}>
+												<WebView
+													recipe={styles.filters}
+													accessibilityLabel={t("sessionDetail.timelineLabel")}
+												>
+													{sessionTimelineFilters.map(({ category, label }) => {
+														const categories = sessionTimelineCategories(view);
+														const checked = categories.includes(category);
+														const disabled = checked && categories.length === 1;
+														return (
+															<AppPressable
+																key={category}
+																className={webView(styles.filter)}
+																accessibilityRole="checkbox"
+																accessibilityLabel={label}
+																accessibilityState={{ checked, disabled }}
+																hitSlop={8}
+																disabled={disabled}
+																onPress={() => {
+																	const next = sessionTimelineViewFromCategories(
+																		checked
+																			? categories.filter((value) => value !== category)
+																			: [...categories, category],
+																	);
+																	if (next) {
+																		setView(next);
+																		setAnchor(undefined);
+																	}
+																}}
+															>
+																<WebView
+																	recipe={checkboxClasses.root}
+																	state={{ "data-checked": checked }}
+																>
+																	{checked ? <Icon as={Check} /> : null}
+																</WebView>
+																<WebText recipe={styles.filterLabel}>{label}</WebText>
+															</AppPressable>
+														);
+													})}
+												</WebView>
+											</WebView>
+										</WebView>
+									</WebView>
+								) : null}
 							</WebView>
-						) : null}
-					</WebView>
+						</WebView>
+						<WebView recipe={styles.page} className="px-0">
+							<SessionSidebar relatedRefs={relatedRefs} />
+							{messages.hasPreviousPage ? (
+								<WebView recipe={styles.pagination}>
+									<Button
+										variant="ghost"
+										size="sm"
+										disabled={messages.isFetching || conflict}
+										onPress={() => {
+											if (scope.isCurrent())
+												void messages.fetchPreviousPage().catch(() => undefined);
+										}}
+									>
+										<Text>{t(direction === "asc" ? "timeline.earlier" : "timeline.later")}</Text>
+									</Button>
+								</WebView>
+							) : null}
+						</WebView>
+					</>
 				}
 				renderItem={({ item }) => (
 					<TimelineRow
@@ -331,7 +346,7 @@ function TranscriptView({
 						disabled={messages.isFetching || messages.isError}
 					/>
 				)}
-				ListEmptyComponent={
+				empty={
 					hasContent && !messages.isError ? (
 						messages.isPending ? (
 							<MessagesSkeleton />
@@ -346,7 +361,7 @@ function TranscriptView({
 						/>
 					) : undefined
 				}
-				ListFooterComponent={
+				footer={
 					<WebView recipe={styles.pagination}>
 						{isNotFound(messages.error) ? (
 							<WebText recipe={styles.muted}>{t("sessions.noMessages")}</WebText>

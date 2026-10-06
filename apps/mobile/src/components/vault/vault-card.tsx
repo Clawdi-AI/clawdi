@@ -33,8 +33,8 @@ export function VaultCard({
 	const usedBy = vault.project_ids.map((id) => names.get(id)).filter(Boolean);
 	const open = () =>
 		router.push({
-			pathname: "/vault/[slug]",
-			params: { vaultId: vault.id, slug: vault.slug, add: "1" },
+			pathname: "/vault/[slug]/add-keys",
+			params: { vaultId: vault.id, slug: vault.slug },
 		});
 	return (
 		<HeroCard

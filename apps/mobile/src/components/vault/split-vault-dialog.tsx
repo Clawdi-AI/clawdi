@@ -11,13 +11,11 @@ import {
 	splitVaultCopy as copy,
 	splitVaultRemoveLabel,
 	splitVaultSubmit,
-	splitVaultTitle,
 } from "@clawdi/shared/view";
 import { router } from "expo-router";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Text as AppText, Text } from "@/components/ui/text";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
@@ -52,9 +50,8 @@ export function VaultSplit({
 	if (!groups.length && !result) return null;
 	return (
 		<WebView recipe={styles.body}>
-			<DialogHeader>
-				<DialogTitle>{splitVaultTitle(sourceName)}</DialogTitle>
-				<DialogDescription>
+			<WebView recipe={styles.body}>
+				<WebText recipe="text-sm text-muted-foreground">
 					<Text>
 						{copy.descriptionBefore}
 						<WebText recipe={styles.mono}>{copy.prefixExample}</WebText>
@@ -62,8 +59,8 @@ export function VaultSplit({
 						<WebText recipe={styles.mono}>{copy.keyExample}</WebText>
 						{copy.descriptionAfter}
 					</Text>
-				</DialogDescription>
-			</DialogHeader>
+				</WebText>
+			</WebView>
 			{result ? (
 				<WebView recipe={styles.result} accessibilityRole="alert">
 					{result.groups.map((g) => (
