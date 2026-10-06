@@ -108,8 +108,8 @@ export function NewAgentButton({
 						<DialogTitle>New agent</DialogTitle>
 						<DialogDescription>
 							{canDeployOnClawdi
-								? "Deploy on Clawdi, or connect an agent on your machine."
-								: "Connect an agent on your machine."}
+								? "Deploy a Cloud Agent, or connect an agent you already run."
+								: "Connect an agent you already run."}
 						</DialogDescription>
 					</DialogHeader>
 					{deployAccessError ? (
@@ -125,14 +125,14 @@ export function NewAgentButton({
 						{canDeployOnClawdi ? (
 							<ChoiceCard
 								icon={checkingDeployAccess ? <Loader2 className="animate-spin" /> : <Rocket />}
-								title={checkingDeployAccess ? "Checking access" : "Deploy on Clawdi"}
+								title={checkingDeployAccess ? "Checking access" : "Deploy a Cloud Agent"}
 								description="Clawdi runs and manages it — pick a framework and go live in minutes."
 								onClick={chooseDeploy}
 							/>
 						) : null}
 						<ChoiceCard
 							icon={<TerminalSquare />}
-							title="Connect an agent on your machine"
+							title="Connect your own agent"
 							description={
 								desktopBridge
 									? "Find and connect Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode."

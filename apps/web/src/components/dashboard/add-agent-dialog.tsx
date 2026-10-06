@@ -19,8 +19,8 @@ export function AddAgentDialog({ open, onClose }: { open: boolean; onClose: () =
 				<DialogHeader>
 					<DialogTitle>Add an agent</DialogTitle>
 					<DialogDescription>
-						Connect an agent on your machine — Claude Code, Codex, Hermes, OpenClaw, Pi, or
-						OpenCode.
+						Connect an agent you run on your machine or server — Claude Code, Codex, Hermes,
+						OpenClaw, Pi, or OpenCode.
 					</DialogDescription>
 				</DialogHeader>
 				<AddAgentSetup />

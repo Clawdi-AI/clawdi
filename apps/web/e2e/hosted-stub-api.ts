@@ -16,6 +16,17 @@ type PlanChangeBillingEffect = PlanChangeProgress["billingEffect"];
 type PlanChangeQuote = DeployComponents["schemas"]["V2ComputePlanChangeQuoteResponse"];
 type PlanChangeOperation = DeployComponents["schemas"]["LongRunningOperation"];
 type AccountNotification = DeployComponents["schemas"]["AccountNotificationResponse"];
+type ReadAllRequest = { up_to_id?: string | null };
+
+function notificationIsAtOrOlder(
+	item: AccountNotification,
+	watermark: AccountNotification,
+): boolean {
+	const itemTime = Date.parse(item.created_at);
+	const watermarkTime = Date.parse(watermark.created_at);
+	if (itemTime !== watermarkTime) return itemTime < watermarkTime;
+	return item.id <= watermark.id;
+}
 
 function planChangeBillingEffect(changeKind: PlanChangeKind): PlanChangeBillingEffect {
 	switch (changeKind) {
@@ -848,6 +859,9 @@ export type HostedApiStubOptions = {
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
 	accountNotifications?: readonly AccountNotification[];
+	readAllRequests?: ReadAllRequest[];
+	readAllResponses?: StubResponse[];
+	deleteNotificationResponses?: StubResponse[];
 	fixPaymentRequests?: string[];
 	plans?: readonly unknown[];
 	planCMutationRequests?: string[];
@@ -907,11 +921,24 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 			});
 		}
 		if (p === "/v1/me/notifications/read-all" && method === "POST") {
+			const body = JSON.parse(r.request().postData() ?? "{}") as ReadAllRequest;
+			options.readAllRequests?.push(body);
+			const response = options.readAllResponses?.shift();
+			if (response) return fulfillJson(r, response.body, response.status);
+			const watermark = body.up_to_id
+				? accountNotifications.find((item) => item.id === body.up_to_id)
+				: undefined;
+			if (body.up_to_id && !watermark) {
+				return fulfillJson(r, { detail: "Notification not found" }, 404);
+			}
 			const readAt = new Date().toISOString();
-			const unreadCount = accountNotifications.filter((item) => item.read_at == null).length;
+			const unreadCount = accountNotifications.filter(
+				(item) => item.read_at == null && (!watermark || notificationIsAtOrOlder(item, watermark)),
+			).length;
 			accountNotifications = accountNotifications.map((item) => ({
 				...item,
-				read_at: item.read_at ?? readAt,
+				read_at:
+					item.read_at ?? (watermark && !notificationIsAtOrOlder(item, watermark) ? null : readAt),
 			}));
 			return fulfillJson(r, { updated_count: unreadCount });
 		}
@@ -930,6 +957,8 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		}
 		if (notificationMatch && method === "DELETE") {
 			const notificationId = decodeURIComponent(notificationMatch[1] ?? "");
+			const response = options.deleteNotificationResponses?.shift();
+			if (response) return fulfillJson(r, response.body, response.status);
 			accountNotifications = accountNotifications.filter((item) => item.id !== notificationId);
 			return r.fulfill({ status: 204, body: "" });
 		}
@@ -1298,6 +1327,14 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 		if (p === "/v1/auth/keys") return fulfillJson(r, []);
 		return fulfillJson(r, {});
 	});
+	return {
+		addAccountNotification(notification: AccountNotification) {
+			accountNotifications = [notification, ...accountNotifications];
+		},
+		getAccountNotifications() {
+			return accountNotifications;
+		},
+	};
 }
 
 export function collectBrowserErrors(page: Page): string[] {
