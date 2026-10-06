@@ -297,6 +297,11 @@ bash scripts/test.sh cli src/adapters/paths.test.ts src/adapters/pi.test.ts
 Done: both test files pass, including discovery and resolution from custom Pi
 session directories.
 
+For Pi >= 0.99.0, setup detects MCP registrations with `pi mcp list --json`
+and registers `pi mcp add clawdi -- clawdi mcp`. Teardown uses
+`pi mcp remove clawdi`. Registration uses Pi's default codemode exposure.
+Older or unrecognized Pi versions show the manual-registration hint.
+
 Skill keys preserve local directory spelling: each of up to four `/`-separated
 components starts with an ASCII letter or digit and then uses letters, digits,
 `.`, `_`, or `-`; total length is at most 200 characters. Nested keys cannot end

@@ -144,9 +144,10 @@ describe("setup daemon install", () => {
 		expect(consoleOutput.some((line) => line.includes("Could not auto-register"))).toBe(false);
 	});
 
-	it("registers Pi as sessions-only without installing Skill or MCP state", async () => {
+	it("keeps a manual MCP hint for Pi before 0.99.0", async () => {
 		const { captured } = installEnvironmentMock("env-pi");
 		process.env.PI_CODING_AGENT_DIR = join(home, "pi-agent");
+		writeExecutable(join(home, "bin", "pi"), "#!/bin/sh\nprintf '0.98.0\\n'\n");
 
 		await setup({ agent: "pi", yes: true, daemon: false });
 
@@ -157,6 +158,7 @@ describe("setup daemon install", () => {
 		});
 		expect(existsSync(join(home, "pi-agent", "skills"))).toBe(false);
 		expect(existsSync(join(home, "pi-agent", "mcp.json"))).toBe(false);
+		expect(consoleOutput.join("\n")).toContain("Run manually: pi mcp add clawdi -- clawdi mcp");
 	});
 
 	it("registers OpenCode as sessions-only without installing Skill or MCP state", async () => {
@@ -469,6 +471,31 @@ describe("setup OpenClaw MCP registration", () => {
 
 		const args = readFileSync(join(home, "openclaw-mcp-args"), "utf-8").trim().split("\n");
 		expect(args).toEqual(["mcp", "set", "clawdi", '{"command":"clawdi","args":["mcp"]}']);
+	});
+});
+
+describe("setup Pi MCP registration", () => {
+	it("registers the canonical stdio server using the official Pi command", async () => {
+		installEnvironmentMock("env-pi-mcp");
+		writeExecutable(
+			join(home, "bin", "pi"),
+			`#!/bin/sh
+case "$*" in
+  --version) printf '1.0.4\\n' ;;
+  'mcp list --json') printf '{"servers":[],"errors":[]}\\n' ;;
+  *) printf '%s\\n' "$@" > "$HOME/pi-mcp-args" ;;
+esac
+`,
+		);
+		await setup({ agent: "pi", yes: true, daemon: false });
+		expect(readFileSync(join(home, "pi-mcp-args"), "utf8").trim().split("\n")).toEqual([
+			"mcp",
+			"add",
+			"clawdi",
+			"--",
+			"clawdi",
+			"mcp",
+		]);
 	});
 });
 

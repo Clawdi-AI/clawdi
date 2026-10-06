@@ -10,6 +10,7 @@ import {
 	hermesMcpLifecycle,
 	type McpLifecycle,
 	openClawMcpLifecycle,
+	piMcpLifecycle,
 } from "./mcp-lifecycle";
 import { OpenClawAdapter } from "./openclaw";
 import { resolveOpenClawAgentWorkspace } from "./openclaw-workspace";
@@ -74,6 +75,7 @@ export const adapterRegistry: Record<AgentType, AdapterRegistryEntry> = {
 		envFileName: "pi.json",
 		home: getPiHome,
 		create: () => new PiAdapter(),
+		mcpLifecycle: piMcpLifecycle,
 	},
 	opencode: {
 		displayName: "OpenCode",
