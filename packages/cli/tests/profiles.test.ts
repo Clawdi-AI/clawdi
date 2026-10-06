@@ -123,14 +123,10 @@ function row(key: string, state = "active", count = 0) {
 	return {
 		id: `id-${key}`,
 		profile_key: key,
-		upstream_key: key || "default",
 		is_default: key === "",
 		state,
-		online: false,
-		display_name: null,
 		session_count: count,
 		first_seen_at: "2026-10-06T00:00:00Z",
-		last_seen_at: "2026-10-06T00:00:00Z",
 		removed_at: null,
 	};
 }
@@ -292,7 +288,7 @@ test("per-profile readers preserve duplicate imported IDs and projection bytes",
 	expect(workSession?.localSessionId).toBe("s-modern");
 });
 
-test("discovery failure reports incomplete inventory and only scans default", async () => {
+test("discovery failure skips inventory and only scans default", async () => {
 	writeFileSync(join(home, ".hermes", "discovery-failure"), "");
 	const inventories: unknown[] = [];
 	const client = api(async (input) => {
@@ -322,9 +318,7 @@ test("discovery failure reports incomplete inventory and only scans default", as
 	expect(result.sessions.length).toBeGreaterThan(0);
 	for (const session of result.sessions) expect(session).not.toHaveProperty("profileKey");
 	expect(await module.resolve("s-modern")).not.toHaveProperty("profileKey");
-	expect(inventories).toEqual([
-		{ complete: false, profiles: [{ upstream_key: "default", is_default: true }] },
-	]);
+	expect(inventories).toEqual([]);
 });
 
 test("old backend capability fallback uploads only default and omits profile metadata", async () => {
@@ -361,8 +355,8 @@ test("Hermes upstream rename moves Cloud before reading sessions and retains loc
 	await module.collect({ kind: "complete" });
 	expect(calls).toEqual([
 		"GET /v1/agents/env/profiles",
-		"PUT /v1/agents/env/profiles",
 		"POST /v1/agents/env/profiles/old/rename",
+		"PUT /v1/agents/env/profiles",
 	]);
 	const newFence = { ...oldFence, sourceSessionKey: "work:s-modern", profileKey: "work" };
 	expect(readFencedSessionEntry(readSessionsLock(), newFence)?.local_hash).toBe("unchanged");
@@ -371,24 +365,16 @@ test("Hermes upstream rename moves Cloud before reading sessions and retains loc
 
 for (const lostResponse of ["inventory", "rename"] as const) {
 	test(`Hermes rename survives a lost ${lostResponse} response and restart`, async () => {
-		let registered = false;
 		let renamed = false;
 		let lost = false;
 		let restarted = false;
 		let renames = 0;
 		const current = () =>
-			renamed
-				? [row(""), { ...row("work"), id: "id-old" }]
-				: [
-						row(""),
-						row("old", registered ? "removed" : "active", 2),
-						...(registered ? [row("work")] : []),
-					];
+			renamed ? [row(""), { ...row("work"), id: "id-old" }] : [row(""), row("old", "active", 2)];
 		const client = api(async (input) => {
 			const request = input instanceof Request ? input : new Request(input);
 			if (request.method === "GET") return response(current());
 			if (request.method === "PUT") {
-				registered = true;
 				if (lostResponse === "inventory" && !restarted) {
 					lost = true;
 					return response({ detail: "transport failure" }, 503);
@@ -418,15 +404,55 @@ for (const lostResponse of ["inventory", "rename"] as const) {
 		restarted = true;
 		await createProfileSync(new HermesAdapter(), client, "env").refresh();
 		expect(renames).toBe(1);
-		const entry = readFencedSessionEntry(readSessionsLock(), {
-			...oldFence,
-			sourceSessionKey: "work:s-modern",
-			profileKey: "work",
-		});
+		const entry = readFencedSessionEntry(
+			readSessionsLock(),
+			lostResponse === "rename"
+				? oldFence
+				: { ...oldFence, sourceSessionKey: "work:s-modern", profileKey: "work" },
+		);
 		expect(entry?.local_hash).toBe("unchanged");
 		expect(entry?.event_revision).toBe(2);
+		expect(existsSync(join(home, ".clawdi", "profile-renames"))).toBeFalse();
 	});
 }
+
+test("a failed rename skips PUT and isolates only that profile until the next refresh", async () => {
+	roster(["default", "work", "other"]);
+	const other = join(home, ".hermes", "profiles", "other");
+	mkdirSync(other);
+	cpSync(join(fixture, ".hermes", "state.db"), join(other, "state.db"));
+	let fail = true;
+	let renamed = false;
+	const calls: string[] = [];
+	const client = api(async (input) => {
+		const request = input instanceof Request ? input : new Request(input);
+		calls.push(request.method);
+		if (request.method === "POST") {
+			if (fail) return response({ detail: "unavailable" }, 503);
+			renamed = true;
+			return response({ sessions_moved: 2, suppressions_moved: 0 });
+		}
+		if (request.method === "PUT") {
+			expect((await request.json()).complete).toBeTrue();
+			expect(renamed).toBeTrue();
+		}
+		return response([row(""), row(renamed ? "work" : "old"), row("other")]);
+	});
+	const sync = createProfileSync(new HermesAdapter(), client, "env");
+	const first = await sync.sessions?.collect({ kind: "complete" });
+	expect(calls).toEqual(["GET", "POST"]);
+	expect(new Set(first?.sessions.map((session) => session.profileKey))).toEqual(
+		new Set(["", "other"]),
+	);
+	fail = false;
+	await sync.refresh();
+	const second = await sync.sessions?.collect({ kind: "complete" });
+	expect(calls).toEqual(["GET", "POST", "GET", "POST", "PUT"]);
+	expect(new Set(second?.sessions.map((session) => session.profileKey))).toEqual(
+		new Set(["", "work", "other"]),
+	);
+	expect(existsSync(join(home, ".clawdi", "profile-renames"))).toBeFalse();
+});
 
 test("an already known empty profile is not inferred to be a rename", async () => {
 	let renames = 0;
@@ -489,7 +515,7 @@ test("multiple removed names rename only the most recent match without blocking 
 	const client = api(async (input) => {
 		const request = input instanceof Request ? input : new Request(input);
 		if (request.method === "PUT") {
-			inventory.push(row("work"));
+			if (!inventory.some((profile) => profile.profile_key === "work")) inventory.push(row("work"));
 			return response(inventory);
 		}
 		if (request.method === "POST") {
@@ -766,7 +792,7 @@ exec '${process.execPath}' '${configMock}' "$@"`,
 	expect(readFileSync(commandLog, "utf8").trim().split("\n")).toHaveLength(3);
 });
 
-test("Hermes metadata edits and tombstones refresh the inventory without repeating MCP reconcile", async () => {
+test("Hermes metadata edits wait for refresh while tombstones refresh inventory immediately", async () => {
 	const reconcile = spyOn(await import("../src/commands/hermes-mcp"), "reconcileLocalHermesMcp");
 	let gets = 0;
 	const inventories: unknown[] = [];
@@ -782,6 +808,8 @@ test("Hermes metadata edits and tombstones refresh the inventory without repeati
 		const metadata = join(home, ".hermes", "profiles", "work", "profile.yaml");
 		writeFileSync(metadata, '{"previous_names":["older","old"]}');
 		await sync.sessions?.collect({ kind: "complete" });
+		expect(gets).toBe(1);
+		await sync.refresh();
 		expect(gets).toBe(2);
 		expect(reconcile).toHaveBeenCalledTimes(2);
 		roster(["default"]);
@@ -818,7 +846,7 @@ exec python3 "$@"`,
 	}
 });
 
-test("a failed named profile reports incomplete inventory and leaves the default scanning", async () => {
+test("a failed named profile leaves inventory intact and the default scanning", async () => {
 	writeFileSync(join(home, ".hermes", "profiles", "work", "config.yaml"), "[invalid-config]");
 	const inventories: unknown[] = [];
 	const client = api(async (input) => {
@@ -833,10 +861,15 @@ test("a failed named profile reports incomplete inventory and leaves the default
 		});
 		expect(result?.sessions.length).toBeGreaterThan(0);
 		expect(result?.sessions.every((session) => session.profileKey === "")).toBeTrue();
-		expect(inventories.at(-1)).toEqual({
-			complete: false,
-			profiles: [{ upstream_key: "default", is_default: true }],
-		});
+		expect(inventories).toEqual([
+			{
+				complete: true,
+				profiles: [
+					{ upstream_key: "default", is_default: true },
+					{ upstream_key: "work", is_default: false },
+				],
+			},
+		]);
 		expect(warn.mock.calls).toEqual([["profiles.sync_failed", { profile_key: "work" }]]);
 	} finally {
 		warn.mockRestore();
@@ -859,7 +892,7 @@ test("named reader failures never report removal across repeated scans and refre
 		expect(result?.sessions.length).toBeGreaterThan(0);
 		expect(result?.sessions.every((session) => session.profileKey === "")).toBeTrue();
 		await sync.sessions?.collect({ kind: "complete" });
-		expect(inventories).toHaveLength(2);
+		expect(inventories).toHaveLength(1);
 		expect(warn.mock.calls).toEqual([["profiles.sync_failed", { profile_key: "work" }]]);
 		await sync.refresh();
 		await sync.sessions?.collect({ kind: "complete" });
@@ -870,11 +903,7 @@ test("named reader failures never report removal across repeated scans and refre
 				{ upstream_key: "work", is_default: false },
 			],
 		};
-		const unreadable = {
-			complete: false,
-			profiles: [{ upstream_key: "default", is_default: true }],
-		};
-		expect(inventories).toEqual([present, unreadable, present, unreadable]);
+		expect(inventories).toEqual([present, present]);
 	} finally {
 		warn.mockRestore();
 	}
@@ -969,9 +998,7 @@ else exit 1; fi`,
 					],
 		);
 		for (const session of result?.sessions ?? []) expect(session).not.toHaveProperty("profileKey");
-		expect(inventories).toEqual([
-			{ complete: false, profiles: [{ upstream_key: agentId ?? "main", is_default: true }] },
-		]);
+		expect(inventories).toEqual([]);
 	},
 );
 

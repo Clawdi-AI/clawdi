@@ -1,8 +1,5 @@
-import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { z } from "zod";
 import {
 	type AgentAdapter,
 	collectFromScan,
@@ -25,8 +22,6 @@ import { reconcileLocalHermesMcp } from "../commands/hermes-mcp";
 import { log } from "../serve/log";
 import { type ApiClient, ApiError, unwrap } from "./api-client";
 import { canonicalApiOrigin } from "./api-origin";
-import { getClawdiDir } from "./config";
-import { writePrivateFileAtomic } from "./private-file";
 import {
 	isFencedSessionLockEntry,
 	readSessionsLock,
@@ -67,28 +62,6 @@ export function moveProfileSessionReceipts(
 	if (changed) writeSessionsLock(lock);
 }
 
-const pendingRenameSchema = z.array(
-	z.object({
-		sourceKey: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
-		targetKey: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/),
-		sourceId: z.string().min(1),
-	}),
-);
-type PendingRename = z.infer<typeof pendingRenameSchema>[number];
-
-function renameJournal(api: ApiClient, environmentId: string) {
-	const fence = createHash("sha256")
-		.update(JSON.stringify([canonicalApiOrigin(api.baseUrl), environmentId, "hermes"]))
-		.digest("hex");
-	const path = join(getClawdiDir(), "profile-renames", `${fence}.json`);
-	return {
-		read: (): PendingRename[] =>
-			existsSync(path) ? pendingRenameSchema.parse(JSON.parse(readFileSync(path, "utf8"))) : [],
-		write: (pending: PendingRename[]) =>
-			writePrivateFileAtomic(path, JSON.stringify(pending), { dirMode: 0o700, durable: true }),
-	};
-}
-
 export function createProfileSync(
 	adapter: AgentAdapter,
 	api: ApiClient,
@@ -109,29 +82,14 @@ export function createProfileSync(
 	const failed = new Set<string>();
 	const attributed = new Map<string, Set<string>>();
 	let supported = false;
-	let inventoryComplete = true;
 	const fallback = () => {
 		profiles = legacyProfileDiscovery(adapter).profiles;
 		supported = false;
-		inventoryComplete = true;
 	};
 	const signature = async () => {
 		const paths = [...discoveryPaths];
-		if (adapter.agentType === "hermes") {
-			for (const root of discoveryPaths) {
-				paths.push(join(root, ".deleted"));
-				try {
-					// Watch metadata changes even in profiles skipped after a read failure.
-					// Only upstream discovery determines which directories are identities.
-					const entries = await readdir(root, { withFileTypes: true });
-					for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name)))
-						if (entry.isDirectory() && entry.name !== ".deleted")
-							paths.push(join(root, entry.name, "profile.yaml"));
-				} catch {
-					/* A missing inventory root remains observable through its own stat. */
-				}
-			}
-		}
+		if (adapter.agentType === "hermes")
+			for (const root of discoveryPaths) paths.push(join(root, ".deleted"));
 		return JSON.stringify(
 			await Promise.all(
 				paths.map(async (path) => {
@@ -145,39 +103,17 @@ export function createProfileSync(
 			),
 		);
 	};
-	const putInventory = (complete: boolean) =>
-		api.PUT("/v1/agents/{agent_id}/profiles", {
-			params: { path: { agent_id: environmentId ?? "" } },
-			body: {
-				complete,
-				profiles: profiles
-					.filter((profile) => !failed.has(profile.profileKey))
-					.map((profile) => ({
-						upstream_key: profile.upstreamKey,
-						is_default: profile.isDefault,
-					})),
-			},
-		});
-	const failProfile = async (profileKey: string) => {
+	const failProfile = (profileKey: string) => {
 		if (!failed.has(profileKey)) log.warn("profiles.sync_failed", { profile_key: profileKey });
 		failed.add(profileKey);
-		if (supported && environmentId && !options.readOnly) {
-			try {
-				unwrap(await putInventory(false));
-			} catch {
-				/* Default sync remains available. */
-			}
-		}
 	};
 	const performRefresh = async (context?: SyncReadContext): Promise<void> => {
 		const discovery = await discoverAgentProfiles(adapter, context?.signal);
 		profiles = discovery.profiles;
 		failed.clear();
-		inventoryComplete = true;
 		discoveryPaths = discovery.watchPaths ?? profileDiscoveryWatchPaths(adapter);
 		if (!discovery.complete) {
 			fallback();
-			if (!options.readOnly && environmentId) unwrap(await putInventory(false));
 			return;
 		}
 		if (options.readOnly || !environmentId) return;
@@ -189,17 +125,16 @@ export function createProfileSync(
 			return;
 		}
 		const known = unwrap(prior);
-		const journal = renameJournal(api, environmentId);
-		let pending = adapter.agentType === "hermes" ? journal.read() : [];
-		if (adapter.agentType === "hermes" && discovery.complete) {
+		supported = true;
+		let renameFailed = false;
+		if (adapter.agentType === "hermes") {
 			const present = new Set(profiles.map((profile) => profile.profileKey));
 			for (const profile of profiles) {
 				if (profile.isDefault || known.some((row) => row.profile_key === profile.profileKey))
 					continue;
-				if (pending.some((rename) => rename.targetKey === profile.profileKey)) continue;
 				const removed = known.filter(
 					(row) =>
-						!row.is_default &&
+						row.profile_key !== "" &&
 						!present.has(row.profile_key) &&
 						profile.previousNames.includes(row.profile_key),
 				);
@@ -208,88 +143,72 @@ export function createProfileSync(
 					removed.some((row) => row.profile_key === key),
 				);
 				const source = removed.find((row) => row.profile_key === sourceKey);
-				if (source) {
-					if (removed.length > 1)
-						log.warn("profiles.rename_multiple_previous_names", {
-							profile_key: profile.profileKey,
-							selected_profile_key: source.profile_key,
-							removed_profile_keys: removed
-								.filter((row) => row !== source)
-								.map((row) => row.profile_key),
-						});
-					pending.push({
-						sourceKey: source.profile_key,
-						targetKey: profile.profileKey,
-						sourceId: source.id,
+				if (!source) continue;
+				if (removed.length > 1)
+					log.warn("profiles.rename_multiple_previous_names", {
+						profile_key: profile.profileKey,
+						selected_profile_key: source.profile_key,
+						removed_profile_keys: removed
+							.filter((row) => row !== source)
+							.map((row) => row.profile_key),
 					});
-				}
-			}
-			// Record first-discovery identity before inventory/rename mutations. A retry
-			// never infers a rename from session counts or overlapping session IDs.
-			if (pending.length > 0) journal.write(pending);
-		}
-		// Mark missing identities removed before applying recorded upstream renames.
-		const inventory = await putInventory(discovery.complete);
-		if (inventory.response.status === 404 || inventory.response.status >= 500) {
-			fallback();
-			return;
-		}
-		const roster = unwrap(inventory);
-		supported = true;
-		if (adapter.agentType === "hermes") {
-			for (const rename of [...pending]) {
-				const profile = profiles.find((row) => row.profileKey === rename.targetKey);
-				if (!profile) continue;
 				try {
-					const source = roster.find((row) => row.profile_key === rename.sourceKey);
-					const target = roster.find((row) => row.profile_key === rename.targetKey);
-					if (source) {
-						if (source.id !== rename.sourceId || source.state !== "removed")
-							throw new Error(
-								"Pending Hermes rename no longer matches the recorded upstream identity",
-							);
-						unwrap(
-							await api.POST("/v1/agents/{agent_id}/profiles/{profile_key}/rename", {
-								params: { path: { agent_id: environmentId, profile_key: rename.sourceKey } },
-								body: { new_upstream_key: profile.upstreamKey },
-							}),
-						);
-					} else if (target?.id !== rename.sourceId) {
-						throw new Error(
-							"Pending Hermes rename destination does not preserve its Cloud identity",
-						);
-					}
+					unwrap(
+						await api.POST("/v1/agents/{agent_id}/profiles/{profile_key}/rename", {
+							params: { path: { agent_id: environmentId, profile_key: source.profile_key } },
+							body: { new_upstream_key: profile.upstreamKey },
+						}),
+					);
 					moveProfileSessionReceipts(
 						api,
 						environmentId,
 						adapter.agentType,
-						rename.sourceKey,
-						rename.targetKey,
+						source.profile_key,
+						profile.profileKey,
 					);
-					pending = pending.filter((entry) => entry !== rename);
-					journal.write(pending);
+					source.profile_key = profile.profileKey;
 				} catch {
 					context?.signal.throwIfAborted();
-					await failProfile(profile.profileKey);
+					renameFailed = true;
+					failProfile(profile.profileKey);
 				}
 			}
-			if (discovery.complete)
-				for (const profile of profiles) {
-					if (mcpSeen.has(profile.profileKey) || failed.has(profile.profileKey)) continue;
-					mcpSeen.add(profile.profileKey);
-					try {
-						await reconcileLocalHermesMcp(
-							true,
-							profile.isDefault ? undefined : profile.upstreamKey,
-							context?.signal,
-						);
-					} catch {
-						context?.signal.throwIfAborted();
-						if (profile.isDefault) log.warn("profiles.mcp_failed", { profile_key: "" });
-						else await failProfile(profile.profileKey);
-					}
-				}
 		}
+		// Keep failed rename detection available on the next upstream/Cloud refresh.
+		// Inserting the destination now would hide a rename that did not commit.
+		if (!renameFailed) {
+			const inventory = await api.PUT("/v1/agents/{agent_id}/profiles", {
+				params: { path: { agent_id: environmentId } },
+				body: {
+					complete: true,
+					profiles: profiles.map((profile) => ({
+						upstream_key: profile.upstreamKey,
+						is_default: profile.isDefault,
+					})),
+				},
+			});
+			if (inventory.response.status === 404 || inventory.response.status >= 500) {
+				fallback();
+				return;
+			}
+			unwrap(inventory);
+		}
+		if (adapter.agentType === "hermes")
+			for (const profile of profiles) {
+				if (mcpSeen.has(profile.profileKey) || failed.has(profile.profileKey)) continue;
+				mcpSeen.add(profile.profileKey);
+				try {
+					await reconcileLocalHermesMcp(
+						true,
+						profile.isDefault ? undefined : profile.upstreamKey,
+						context?.signal,
+					);
+				} catch {
+					context?.signal.throwIfAborted();
+					if (profile.isDefault) log.warn("profiles.mcp_failed", { profile_key: "" });
+					else failProfile(profile.profileKey);
+				}
+			}
 	};
 	const refresh = async (context?: SyncReadContext): Promise<void> => {
 		if (refreshing) return refreshing;
@@ -324,7 +243,7 @@ export function createProfileSync(
 				} catch (error) {
 					context?.signal.throwIfAborted();
 					if (profile.isDefault) throw error;
-					await failProfile(profile.profileKey);
+					failProfile(profile.profileKey);
 				}
 			}
 			return "snapshot-v1";
@@ -416,16 +335,16 @@ export function createProfileSync(
 						if (profile.isDefault) throw error;
 						result.coverage = "partial";
 						userActivity.complete = false;
-						await failProfile(profile.profileKey);
+						failProfile(profile.profileKey);
 					}
 				}
 			}
 			const userActivity: SessionUserActivity = {
-				complete: readers.length > 0 && inventoryComplete,
+				complete: readers.length > 0,
 				lastUserInputAt: null,
 			};
 			const result: SessionBatchScan = {
-				coverage: request.kind === "complete" && inventoryComplete ? "complete" : "partial",
+				coverage: request.kind === "complete" ? "complete" : "partial",
 				userActivity,
 				batches: batches(),
 			};
@@ -447,7 +366,7 @@ export function createProfileSync(
 			} catch (error) {
 				context?.signal.throwIfAborted();
 				if (profile.isDefault) throw error;
-				await failProfile(profile.profileKey);
+				failProfile(profile.profileKey);
 				return null;
 			}
 		},
