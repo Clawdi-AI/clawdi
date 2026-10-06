@@ -756,7 +756,9 @@ async def persist_whatsapp_provider_event(
         require_active_authority=not binding_result.command_handled,
     )
     offline_bindings = (
-        await consume_inbound_messages_for_offline_agents(db, account=account, messages=messages)
+        await consume_inbound_messages_for_offline_agents(
+            db, account=account, messages=messages, claim_reply=True
+        )
         if not binding_result.command_handled
         else ()
     )
