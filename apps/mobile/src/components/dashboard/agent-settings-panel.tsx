@@ -167,7 +167,7 @@ function Settings({ id }: { id: string | undefined }) {
 	};
 	return (
 		<SafeAreaScreen>
-			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
+			<AppScrollView contentContainerClassName={`${webView(agentsIndexClasses.page)} pt-5 pb-6`}>
 				{id ? <AgentSectionNavigation agentId={id} section="settings" /> : null}
 				<PageHeader
 					icon={<Icon as={SettingsIcon} />}

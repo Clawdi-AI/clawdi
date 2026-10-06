@@ -85,7 +85,7 @@ export function AgentCollection<T>({
 			) : (
 				<AppScrollView
 					contentInsetAdjustmentBehavior="automatic"
-					contentContainerClassName={webView(agentsIndexClasses.page)}
+					contentContainerClassName={`${webView(agentsIndexClasses.page)} pt-5 pb-6`}
 				>
 					{header}
 				</AppScrollView>

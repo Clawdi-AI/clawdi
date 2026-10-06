@@ -67,6 +67,7 @@ function DeploymentDetail({
 }) {
 	const cache = useQueryClient();
 	const [accepted, setAccepted] = useState<HostedDeployOperation | null>(null);
+	const [managementBusy, setManagementBusy] = useState(false);
 	const [deletionReported, setDeletionReported] = useState(false);
 	const { hosted } = useMobileApi();
 	const scope = useAccountScope();
@@ -164,6 +165,7 @@ function DeploymentDetail({
 		return (
 			<SheetPage
 				title="Agent settings"
+				busy={managementBusy}
 				fallback={deployment?.agent_id ? `/agents/${deployment.agent_id}` : "/agents"}
 			>
 				{deployment ? <ComputeStatusDetails deployment={deployment} /> : null}
@@ -182,6 +184,7 @@ function DeploymentDetail({
 					<AppText accessibilityRole="alert">{t("runtime.deleteReported")}</AppText>
 				) : (
 					<DeploymentControls
+						onBusyChange={setManagementBusy}
 						deployment={deployment}
 						deploymentId={deploymentId ?? ""}
 						blocked={
@@ -283,7 +286,7 @@ function DeploymentDetail({
 		);
 	return (
 		<SafeAreaScreen>
-			<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
+			<AppScrollView contentContainerClassName={`${webView(agentsIndexClasses.page)} pt-5 pb-6`}>
 				{deployment?.agent_id ? (
 					<AgentSectionNavigation agentId={deployment.agent_id} />
 				) : (

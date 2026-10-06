@@ -23,7 +23,7 @@ export function AgentCreateProjectScreen() {
 	const scope = useAccountScope(),
 		read = useAccountRead(),
 		action = useAuthAction(scope);
-	const { agentProjects } = useMobileApi();
+	const { agentProjects, cloud } = useMobileApi();
 	const cache = useQueryClient();
 	const [name, setName] = useState(""),
 		[description, setDescription] = useState("");
@@ -35,13 +35,16 @@ export function AgentCreateProjectScreen() {
 	const submit = () =>
 		action.run(async (isCurrent) => {
 			if (!agentId || !name.trim() || !scope.isReady) return;
-			await read((signal) =>
-				agentProjects.createProject(
+			await read(async (signal) => {
+				const agent = await cloud.getAgent(agentId, signal);
+				if (agent.id !== agentId) throw new Error("Agent identity changed");
+				await agentProjects.listBindings(agentId, signal);
+				return agentProjects.createProject(
 					agentId,
 					{ name: name.trim(), description: description.trim() || null },
 					signal,
-				),
-			);
+				);
+			});
 			if (!isCurrent()) return;
 			await sheet.close(true);
 		});

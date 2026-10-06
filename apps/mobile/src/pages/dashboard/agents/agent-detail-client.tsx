@@ -38,7 +38,7 @@ export default function AgentDetailRoute() {
 	return (
 		<SafeAreaScreen>
 			<AppScrollView
-				contentContainerClassName={webView(agentsIndexClasses.page)}
+				contentContainerClassName={`${webView(agentsIndexClasses.page)} pt-5 pb-6`}
 				refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
 			>
 				{agentId ? <AgentSectionNavigation agentId={agentId} /> : null}

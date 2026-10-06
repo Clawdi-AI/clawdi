@@ -36,7 +36,7 @@ import {
 } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Crypto from "expo-crypto";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Cpu, CreditCard, Plus, Rocket, WalletCards, Zap } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -87,6 +87,7 @@ import {
 	replaceAttempt,
 	saveAttempt,
 } from "@/platform/creation-storage";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 const initialDraft: HostedDeployWizardDraft = {
@@ -100,22 +101,28 @@ const initialDraft: HostedDeployWizardDraft = {
 
 export function CreateAgentScreen() {
 	const scope = useAccountScope();
-	const [tab, setTab] = useState("connect");
+	const params = useLocalSearchParams<{ tab?: string }>();
+	const [tab, setTab] = useState(params.tab === "connect" ? "connect" : "deploy");
 	return (
 		<SafeAreaScreen>
 			<WebView recipe={agentsIndexClasses.page}>
 				<PageHeader title={tab === "deploy" ? agentSurfaceCopy.deployAnAgent : "Add an Agent"} />
-				<Tabs value={tab} onValueChange={setTab}>
-					<TabsList variant="default">
-						<TabsTrigger value="connect">Connect an Agent</TabsTrigger>
-						<TabsTrigger value="deploy">{agentSurfaceCopy.deployAnAgent}</TabsTrigger>
-					</TabsList>
-				</Tabs>
+				<NativeSegments
+					value={tab}
+					onChange={setTab}
+					options={[
+						{ value: "deploy", label: agentSurfaceCopy.deployAnAgent },
+						{ value: "connect", label: "Connect an Agent" },
+					]}
+				/>
 			</WebView>
 			{tab === "deploy" ? (
 				<CreationForm key={`${scope.accountKey}:${scope.generation}`} />
 			) : (
-				<AppScrollView contentContainerClassName={webView(agentsIndexClasses.page)}>
+				<AppScrollView
+					contentInsetAdjustmentBehavior="automatic"
+					contentContainerClassName={webView(agentsIndexClasses.page)}
+				>
 					<AddAgentSetup key={`${scope.accountKey}:${scope.generation}`} />
 				</AppScrollView>
 			)}

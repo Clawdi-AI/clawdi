@@ -47,6 +47,7 @@ export function DeploymentControls({
 	onAccepted,
 	onAbsent,
 	section = "all",
+	onBusyChange,
 }: {
 	deployment: DeploymentRead | undefined;
 	deploymentId: string;
@@ -55,6 +56,7 @@ export function DeploymentControls({
 	onAccepted: (operation: HostedDeployOperation) => Promise<void>;
 	onAbsent: () => Promise<void>;
 	section?: "all" | "ai";
+	onBusyChange?: (busy: boolean) => void;
 }) {
 	const t = useI18n();
 	const scope = useAccountScope();
@@ -62,6 +64,10 @@ export function DeploymentControls({
 	const capture = useForegroundLease();
 	const { deploymentMutations } = useMobileApi();
 	const action = useAuthAction(scope.identity);
+	useEffect(() => {
+		onBusyChange?.(action.busy);
+		return () => onBusyChange?.(false);
+	}, [action.busy, onBusyChange]);
 	const [attempt, setAttempt] = useState<RuntimeAttempt | null>(null);
 	const [storageKey, setStorageKey] = useState<string | null>(null);
 	const [storageError, setStorageError] = useState(false);
