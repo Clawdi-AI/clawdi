@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { getHermesHome } from "../adapters/paths";
-import { discoverHermesProfiles } from "../adapters/profiles";
+import { discoverHermesProfiles, type LocalAgentProfile } from "../adapters/profiles";
 import { resolveCurrentCliInvocation } from "../lib/current-cli-invocation";
 import {
 	beginHermesConfigTransactionAsync,
@@ -9,6 +9,7 @@ import {
 	type HermesConfigCommandContext,
 	reconcileHermesConfigValue,
 } from "../runtime/hermes-config";
+import { log } from "../serve/log";
 
 function localHermesConfigContext(profile?: string): HermesConfigCommandContext {
 	const home = process.env.HOME?.trim() || homedir();
@@ -53,13 +54,20 @@ export async function reconcileLocalHermesMcp(
 }
 
 export async function reconcileAllLocalHermesMcp(enabled: boolean): Promise<boolean> {
-	let names: string[];
+	let profiles: LocalAgentProfile[];
 	try {
-		names = (await discoverHermesProfiles()).map((profile) => profile.upstreamKey);
+		profiles = await discoverHermesProfiles();
 	} catch {
-		names = ["default"];
+		profiles = [{ profileKey: "", upstreamKey: "default", isDefault: true, previousNames: [] }];
 	}
 	let changed = false;
-	for (const name of names) changed = (await reconcileLocalHermesMcp(enabled, name)) || changed;
+	for (const profile of profiles) {
+		try {
+			changed = (await reconcileLocalHermesMcp(enabled, profile.upstreamKey)) || changed;
+		} catch (error) {
+			if (profile.isDefault) throw error;
+			log.warn("profiles.mcp_failed", { profile_key: profile.profileKey });
+		}
+	}
 	return changed;
 }

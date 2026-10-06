@@ -22,6 +22,7 @@ import {
 } from "../src/adapters/profiles";
 import { reconcileAllLocalHermesMcp } from "../src/commands/hermes-mcp";
 import { ApiClient } from "../src/lib/api-client";
+import { resolveCurrentCliInvocation } from "../src/lib/current-cli-invocation";
 import { createProfileSync, moveProfileSessionReceipts } from "../src/lib/profile-sessions";
 import { planSessionUpload, prepareSessionUpload, sessionFence } from "../src/lib/session-upload";
 import {
@@ -172,19 +173,20 @@ test("default receipt keys remain byte-identical and named profiles cannot colli
 	expect(readFencedSessionEntry(readSessionsLock(), fence)).toBeUndefined();
 });
 
-test("Hermes MCP uses the official selector for every profile and preserves other servers", async () => {
+test("Hermes MCP uses the official selector and absolute CLI invocation for every profile", async () => {
+	const { command, args } = resolveCurrentCliInvocation(["mcp"]);
 	const defaultConfig = join(home, ".hermes", "config.yaml");
 	const workConfig = join(home, ".hermes", "profiles", "work", "config.yaml");
 	writeFileSync(defaultConfig, "mcp_servers:\n  other:\n    command: other\n");
 	writeFileSync(workConfig, "mcp_servers:\n  work-only:\n    command: helper\n");
 	expect(await reconcileAllLocalHermesMcp(true)).toBeTrue();
 	expect(parse(readFileSync(defaultConfig, "utf8"))).toEqual({
-		mcp_servers: { other: { command: "other" }, clawdi: { command: "clawdi", args: ["mcp"] } },
+		mcp_servers: { other: { command: "other" }, clawdi: { command, args } },
 	});
 	expect(parse(readFileSync(workConfig, "utf8"))).toEqual({
 		mcp_servers: {
 			"work-only": { command: "helper" },
-			clawdi: { command: "clawdi", args: ["mcp"] },
+			clawdi: { command, args },
 		},
 	});
 	expect(await reconcileAllLocalHermesMcp(true)).toBeFalse();
@@ -192,6 +194,25 @@ test("Hermes MCP uses the official selector for every profile and preserves othe
 	expect(parse(readFileSync(workConfig, "utf8"))).toEqual({
 		mcp_servers: { "work-only": { command: "helper" } },
 	});
+});
+
+test("Hermes MCP setup skips a failed named profile and registers the remaining profiles", async () => {
+	writeFileSync(join(home, ".hermes", "profiles", "work", "config.yaml"), "[invalid-config]");
+	mkdirSync(join(home, ".hermes", "profiles", "research"));
+	roster(["default", "work", "research"]);
+	const { command, args } = resolveCurrentCliInvocation(["mcp"]);
+	const warn = spyOn(log, "warn");
+	try {
+		expect(await reconcileAllLocalHermesMcp(true)).toBeTrue();
+		for (const root of [join(home, ".hermes"), join(home, ".hermes", "profiles", "research")])
+			expect(parse(readFileSync(join(root, "config.yaml"), "utf8")).mcp_servers.clawdi).toEqual({
+				command,
+				args,
+			});
+		expect(warn.mock.calls).toEqual([["profiles.mcp_failed", { profile_key: "work" }]]);
+	} finally {
+		warn.mockRestore();
+	}
 });
 
 test("per-profile readers preserve duplicate imported IDs and projection bytes", async () => {
@@ -346,6 +367,7 @@ test("an already known empty profile is not inferred to be a rename", async () =
 });
 
 test("profile inventory and MCP refresh while session sync is disabled", async () => {
+	const { command, args } = resolveCurrentCliInvocation(["mcp"]);
 	const inventories: unknown[] = [];
 	const client = api(async (input) => {
 		const request = input instanceof Request ? input : new Request(input);
@@ -377,7 +399,7 @@ test("profile inventory and MCP refresh while session sync is disabled", async (
 	expect(
 		parse(readFileSync(join(home, ".hermes", "profiles", "work", "config.yaml"), "utf8"))
 			.mcp_servers.clawdi,
-	).toEqual({ command: "clawdi", args: ["mcp"] });
+	).toEqual({ command, args });
 });
 
 test("multiple removed names rename only the most recent match without blocking profile scans", async () => {
