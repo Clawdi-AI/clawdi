@@ -293,11 +293,10 @@ describe("backend image release workflow contract", () => {
 
 		const releaseGate = "steps.release-plan.outputs.release_required == 'true'";
 		expect(
-			imageRelease.jobs.build?.steps?.find((step) => step.uses === "docker/setup-buildx-action@v4")
-				?.with,
-		).toEqual({
-			"buildkitd-config-inline": '[registry."docker.io"]\n  mirrors = ["mirror.gcr.io"]\n',
-		});
+			imageRelease.jobs.build?.steps?.some(
+				(step) => step.uses === "./.github/actions/setup-docker-hub-mirror",
+			),
+		).toBe(true);
 		for (const name of [
 			"Build and push backend image",
 			"Build and push WhatsApp sidecar image",
@@ -447,7 +446,9 @@ describe("backend image release workflow contract", () => {
 		const sidecarKamalContract = backendCi.jobs.sidecar?.steps?.find(
 			(step) => step.name === "Kamal 2.12 render contract",
 		);
-		expect(sidecarKamalContract?.run).toContain('docker build --tag "$contract_image" --file - .');
+		expect(sidecarKamalContract?.run).toMatch(
+			/docker build[^\n]*--load[^\n]*--tag "\$contract_image"[^\n]*--file - \./,
+		);
 		expect(sidecarKamalContract?.run).toContain("COPY config/deploy.yml config/deploy.yml");
 		expect(sidecarKamalContract?.run).toContain(
 			"FROM ruby:3.4.10-bookworm@sha256:8ff02c55f0467a3d03bc6c41b7500f9f0b30086a1861c601cd4e9dc5b8536a66",

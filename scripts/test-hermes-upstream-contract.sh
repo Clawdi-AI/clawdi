@@ -170,7 +170,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker build --quiet --file "$fixture_dir/Dockerfile" --tag "$image" "$fixture_dir" >/dev/null
+# CI selects a docker-container builder; load images before docker run.
+load_args=()
+if [[ "${DOCKER_BUILD_LOAD:-0}" == "1" ]]; then
+	load_args+=(--load)
+fi
+docker build --quiet "${load_args[@]}" --file "$fixture_dir/Dockerfile" --tag "$image" "$fixture_dir" >/dev/null
 
 status=0
 docker run --name "$container" \
