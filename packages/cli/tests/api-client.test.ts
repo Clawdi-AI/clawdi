@@ -157,8 +157,39 @@ describe("ApiClient error classification", () => {
 				if (!(caught instanceof ApiError)) throw new Error("Expected API error");
 				expect(caught.status).toBe(401);
 				expect(caught.hint).toContain("API key has expired");
-				expect(caught.hint).toContain("Settings → API Keys");
+				expect(caught.hint).toContain("API keys can no longer be created");
+				expect(caught.hint).toContain("--no-open");
 				expect(caught.hint).toContain("clawdi auth login");
+			}
+		} finally {
+			globalThis.fetch = origFetch;
+		}
+	});
+
+	it("preserves the server's 410 message for typed and raw API requests", async () => {
+		fakeLogin("http://127.0.0.1:0");
+		const origFetch = globalThis.fetch;
+		const detail =
+			"API keys can no longer be created. Run `clawdi auth login` (use `--no-open` on a server). Existing keys keep working until revoked.";
+		globalThis.fetch = async () => Response.json({ detail }, { status: 410 });
+		try {
+			const { ApiClient, unwrap } = await import("../src/lib/api-client");
+			const api = new ApiClient();
+			for (const request of [
+				async () => unwrap(await api.POST("/v1/auth/keys")),
+				async () => api.getBytes("/v1/auth/me"),
+			]) {
+				let caught: unknown;
+				try {
+					await request();
+				} catch (error) {
+					caught = error;
+				}
+				expect(caught).toBeInstanceOf(ApiError);
+				if (!(caught instanceof ApiError)) throw new Error("Expected API error");
+				expect(caught.status).toBe(410);
+				expect(caught.hint).toBe(detail);
+				expect(caught.message).toBe(`API error 410: ${detail}`);
 			}
 		} finally {
 			globalThis.fetch = origFetch;

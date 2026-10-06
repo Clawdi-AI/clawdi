@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as prompts from "@clack/prompts";
 import {
 	authComplete,
 	authLogin,
@@ -219,6 +220,47 @@ afterEach(() => {
 });
 
 describe("authLogin authentication boundary", () => {
+	it.each([200, 410])("manual login only verifies an existing key (HTTP %s)", async (status) => {
+		clearAuth();
+		setTty(true);
+		const passwordSpy = spyOn(prompts, "password").mockResolvedValue("clawdi_existing");
+		const messageSpy = spyOn(prompts.log, "message").mockImplementation(() => {});
+		const detail =
+			"This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`.";
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/auth/me",
+				response: () =>
+					status === 200 ? profileHandler().response() : jsonResponse({ detail }, status),
+			},
+		]);
+		try {
+			await authLogin({ manual: true });
+			expect(passwordSpy.mock.calls[0]?.[0].message).toBe("Paste an existing API key");
+			const messages = messageSpy.mock.calls.map(([message]) => String(message));
+			expect(messages.join("\n")).toContain("API keys can no longer be created");
+			expect(messages.join("\n")).toContain("clawdi auth login");
+			expect(messages.join("\n")).toContain("--no-open");
+			if (status === 410) expect(messages.join("\n")).toContain(detail);
+		} finally {
+			passwordSpy.mockRestore();
+			messageSpy.mockRestore();
+			restore();
+		}
+		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
+			"GET /v1/auth/me",
+		]);
+		expect(openSpy).not.toHaveBeenCalled();
+		if (status === 200) {
+			expect(getAuth()).toMatchObject({ apiKey: "clawdi_existing", userId: "cloud-user" });
+			expect(process.exitCode).toBe(0);
+		} else {
+			expect(getAuth()).toBeNull();
+			expect(process.exitCode).toBe(1);
+		}
+	});
+
 	it("uses a real executable for browser opening on every supported platform", () => {
 		expect(browserOpenCommand("https://example.test", "darwin")).toEqual({
 			command: "open",

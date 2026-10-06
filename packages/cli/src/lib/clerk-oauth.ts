@@ -457,7 +457,7 @@ export async function fetchClerkOAuthClientConfig(
 	if (!response.ok) {
 		throw new ClerkOAuthError(
 			"oauth_not_configured",
-			"Clawdi OAuth sign-in is not configured. Use `clawdi auth login --manual` with an API key from Settings → API Keys.",
+			"Clawdi OAuth sign-in is not configured. Ask your instance administrator to enable OAuth. API keys can no longer be created; `clawdi auth login --manual` only accepts an existing key.",
 		);
 	}
 	const body = await readJson(response);
