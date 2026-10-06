@@ -784,8 +784,8 @@ describe("push — --all flag fan-out", () => {
 	it("multi-agent push skips unsupported modules without aborting supported agents", async () => {
 		setup("claude_code");
 		writeFileSync(
-			join(tmpHome, ".clawdi", "environments", "pi.json"),
-			JSON.stringify({ id: "env-pi", agentType: "pi" }),
+			join(tmpHome, ".clawdi", "environments", "opencode.json"),
+			JSON.stringify({ id: "env-opencode", agentType: "opencode" }),
 		);
 		const { captured, restore } = mockFetch([
 			okEnvironmentProbe(),
@@ -804,7 +804,7 @@ describe("push — --all flag fan-out", () => {
 		expect(captured.some((call) => call.path === "/v1/agents/env-test/skills/sync/upload")).toBe(
 			true,
 		);
-		expect(captured.some((call) => call.path === "/v1/agents/env-pi")).toBe(false);
+		expect(captured.some((call) => call.path === "/v1/agents/env-opencode")).toBe(false);
 		expect(process.exitCode).toBe(0);
 	});
 });

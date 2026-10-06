@@ -1492,8 +1492,8 @@ describe("daemon SSE routing", () => {
 	});
 });
 
-describe("Pi sessions-only daemon", () => {
-	it("uploads its real fixture without starting any Skills control plane", async () => {
+describe("Pi sessions and Skills daemon", () => {
+	it("uploads its real fixture while starting Skills sync", async () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-pi-engine-"));
 		const originalFetch = globalThis.fetch;
 		const originalHome = process.env.HOME;
@@ -1504,6 +1504,8 @@ describe("Pi sessions-only daemon", () => {
 		const originalAuthOrigin = process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
 		const requests: Request[] = [];
 		const abortController = new AbortController();
+		let sessionUploaded = false;
+		let skillsListed = false;
 		try {
 			process.env.HOME = root;
 			process.env.PI_CODING_AGENT_DIR = join(root, "pi-agent");
@@ -1524,6 +1526,25 @@ describe("Pi sessions-only daemon", () => {
 				const path = new URL(request.url).pathname;
 				if (path === "/v1/agents/agent-pi") {
 					return Response.json({ id: "agent-pi", default_project_id: "project-1" });
+				}
+				if (path === "/v1/sync/events") {
+					return new Response(": ready\n\n", {
+						headers: { "content-type": "text/event-stream" },
+					});
+				}
+				if (path === "/v1/runtime/project-skill-capability") {
+					return new Response(null, { status: 204 });
+				}
+				if (path === "/v1/runtime/project-skills") {
+					return Response.json({ agent_id: "agent-pi", skills: [] });
+				}
+				if (path === "/v1/skills") {
+					skillsListed = true;
+					if (sessionUploaded) queueMicrotask(() => abortController.abort());
+					return Response.json(
+						{ items: [], total: 0, page: 1, page_size: 200 },
+						{ headers: { ETag: '"1:project-1"' } },
+					);
 				}
 				if (path === "/v1/sessions/upload-capabilities") {
 					return new Response('{"detail":"Not found"}', { status: 404 });
@@ -1548,7 +1569,8 @@ describe("Pi sessions-only daemon", () => {
 					const form = await request.formData();
 					const expectedHash = form.get("expected_content_hash");
 					expect(typeof expectedHash).toBe("string");
-					queueMicrotask(() => abortController.abort());
+					sessionUploaded = true;
+					if (skillsListed) queueMicrotask(() => abortController.abort());
 					return Response.json({ status: "uploaded", content_hash: expectedHash });
 				}
 				if (path === "/v1/agents/agent-pi/sync-heartbeat") {
@@ -1568,8 +1590,9 @@ describe("Pi sessions-only daemon", () => {
 			const paths = requests.map((request) => new URL(request.url).pathname);
 			expect(paths).toContain("/v1/sessions/pi.fixture-session/upload");
 			expect(paths).toContain("/v1/agents/agent-pi");
-			expect(paths).not.toContain("/v1/sync/events");
-			expect(paths.some((path) => path.includes("/skills"))).toBe(false);
+			expect(paths).toContain("/v1/sync/events");
+			expect(paths).toContain("/v1/runtime/project-skills");
+			expect(paths).toContain("/v1/skills");
 			const heartbeat = requests.find((request) =>
 				new URL(request.url).pathname.endsWith("/sync-heartbeat"),
 			);

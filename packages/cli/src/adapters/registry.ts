@@ -125,7 +125,12 @@ export function agentSkillTargetDir(
 	if (agentType === "openclaw") {
 		return join(resolveOpenClawAgentWorkspace(), "skills", skillName);
 	}
-	if (agentType === "claude_code" || agentType === "codex" || agentType === "hermes") {
+	if (
+		agentType === "claude_code" ||
+		agentType === "codex" ||
+		agentType === "hermes" ||
+		agentType === "pi"
+	) {
 		return join(home, "skills", skillName);
 	}
 	return null;

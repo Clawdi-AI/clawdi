@@ -154,9 +154,11 @@ describe("setup daemon install", () => {
 		const registration = captured.find((req) => req.method === "POST" && req.path === "/v1/agents");
 		expect(registration?.body).toMatchObject({
 			agent_type: "pi",
-			adapter_modules: ["sessions"],
+			adapter_modules: ["sessions", "skills"],
 		});
-		expect(existsSync(join(home, "pi-agent", "skills"))).toBe(false);
+		const target = join(home, "pi-agent", "skills", "clawdi");
+		expect(existsSync(join(target, "SKILL.md"))).toBe(true);
+		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
 		expect(existsSync(join(home, "pi-agent", "mcp.json"))).toBe(false);
 		expect(consoleOutput.join("\n")).toContain("Run manually: pi mcp add clawdi -- clawdi mcp");
 	});

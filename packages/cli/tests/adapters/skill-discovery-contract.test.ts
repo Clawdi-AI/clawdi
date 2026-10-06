@@ -5,6 +5,7 @@ import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
 import { CodexAdapter } from "../../src/adapters/codex";
 import { HermesAdapter } from "../../src/adapters/hermes";
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
+import { PiAdapter } from "../../src/adapters/pi";
 import { tarSingleFile } from "../../src/lib/tar";
 import {
 	managedSkillReservationLedgerPath,
@@ -18,6 +19,7 @@ describe.each([
 	["codex", CodexAdapter, [".codex", "skills"], ["demo", "linked"]],
 	["hermes", HermesAdapter, [".hermes", "skills"], ["core/demo", "linked", "source/linked-source"]],
 	["openclaw", OpenClawAdapter, [".openclaw", "agents", "main", "skills"], ["demo", "linked"]],
+	["pi", PiAdapter, [".pi", "agent", "skills"], ["demo", "linked"]],
 ] as const)("%s Skill discovery contract", (agent, Adapter, rootParts, expectedKeys) => {
 	let tmpHome: string;
 	let originalEnv: NodeJS.ProcessEnv;
@@ -28,6 +30,11 @@ describe.each([
 		delete process.env.OPENCLAW_AGENT_ID;
 		tmpHome = copyFixtureToTmp(agent);
 		process.env.HOME = tmpHome;
+		if (agent === "pi") {
+			const demo = join(tmpHome, ...rootParts, "demo");
+			mkdirSync(demo, { recursive: true });
+			writeFileSync(join(demo, "SKILL.md"), "---\nname: demo\ndescription: Demo skill\n---\n");
+		}
 		if (agent === "openclaw") {
 			const bin = join(tmpHome, "bin");
 			mkdirSync(bin, { recursive: true });

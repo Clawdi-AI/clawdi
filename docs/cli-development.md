@@ -302,6 +302,10 @@ and registers `pi mcp add clawdi -- clawdi mcp`. Teardown uses
 `pi mcp remove clawdi`. Registration uses Pi's default codemode exposure.
 Older or unrecognized Pi versions show the manual-registration hint.
 
+Pi Skills are managed as directories under `$PI_CODING_AGENT_DIR/skills`
+(default `~/.pi/agent/skills`), including setup's bundled `clawdi` Skill and
+connected Project Skills. Pi's single-file `.md` skills are not managed.
+
 Skill keys preserve local directory spelling: each of up to four `/`-separated
 components starts with an ASCII letter or digit and then uses letters, digits,
 `.`, `_`, or `-`; total length is at most 200 characters. Nested keys cannot end
@@ -470,8 +474,8 @@ Shape:
 - `openclaw/` — `sessions.json` index + `<id>.jsonl` transcript (with a `model_change` event); `skills/demo` + `skills/node_modules` (SKIP_DIRS)
 - `pi/` — official JSONL v1-v4 records covering active-leaf branching,
   compaction retained tails, visible tools, attachment metadata, and
-  owner-private thinking with visible-only message projection; Pi has no Skills
-  fixture because it is sessions-only
+  owner-private thinking with visible-only message projection; Skills contract
+  tests create temporary directory bundles for Pi
 
 OpenCode's adapter test creates the consumed subset of the pinned upstream
 SQLite schema in a temporary directory. That fixture is intentionally generated

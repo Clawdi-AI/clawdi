@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
@@ -22,6 +22,7 @@ import { piMessageDrafts } from "./pi-message-drafts";
 import { type JsonObject, jsonObject, jsonString, visibleContentParts } from "./rich-event-mapping";
 import { jsonlPathsWithin, listJsonlFiles } from "./session-files";
 import { describeSessionContent, JsonlSessionSource } from "./session-source";
+import { flatSkillModule } from "./skill-dir";
 import { openSessionIndex } from "./sqlite";
 import { readCommandVersion } from "./version";
 
@@ -447,6 +448,7 @@ async function parseSession(
 
 export class PiAdapter implements AgentAdapterCore {
 	readonly agentType = "pi" as const;
+	readonly skills = flatSkillModule({ root: () => join(getPiHome(), "skills") });
 	readonly sessions = {
 		contentProtocol: async (context?: SyncReadContext) => {
 			context?.signal.throwIfAborted();
