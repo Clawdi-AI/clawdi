@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import {
 	chmodSync,
 	cpSync,
@@ -107,7 +107,12 @@ beforeEach(() => {
 	console.error = (...args: unknown[]) => {
 		consoleErrors.push(args.map(String).join(" "));
 	};
+	const stderr = spyOn(process.stderr, "write").mockImplementation((chunk) => {
+		consoleErrors.push(String(chunk));
+		return true;
+	});
 	restoreConsole = () => {
+		stderr.mockRestore();
 		console.log = originalLog;
 		console.error = originalError;
 	};
@@ -150,7 +155,11 @@ describe("setup notice", () => {
 		);
 		expect(output).toContain("Open your dashboard: https://dashboard.example.test/sessions");
 		expect(output.match(/Clawdi is on for this machine:/g)).toHaveLength(1);
-		expect(consoleErrors).toEqual([]);
+		expect(output).not.toContain("Detecting installed agents...");
+		const diagnostics = consoleErrors.join("\n");
+		expect(diagnostics).toContain("Detecting installed agents...");
+		expect(diagnostics).not.toContain("Clawdi is on for this machine:");
+		expect(diagnostics).not.toContain("Could not");
 	});
 
 	it.each(["codex", "hermes"])(
@@ -165,7 +174,7 @@ describe("setup notice", () => {
 			expect(output).toContain("Clawdi is on for this machine:");
 			expect(consoleErrors.join("\n")).toMatch(/Could not (auto-register|register) MCP server/);
 			expect(output).not.toMatch(/Could not (auto-register|register) MCP server/);
-			expect(output).toContain("Clawdi skill installed");
+			expect(consoleErrors.join("\n")).toContain("Clawdi skill installed");
 			expect(output).not.toContain("Skill and MCP tools installed for supported agents");
 			expect(consoleErrors.join("\n")).not.toContain("Clawdi is on for this machine:");
 		},
@@ -181,7 +190,7 @@ describe("setup notice", () => {
 		const output = consoleOutput.join("\n");
 		expect(output).toContain("MCP server registered in Codex (config.toml)");
 		expect(output).toContain("Skill and MCP tools installed for supported agents");
-		expect(consoleErrors).toEqual([]);
+		expect(consoleErrors.join("\n")).not.toContain("Could not");
 	});
 
 	it.each(["claude", "codex"])(
@@ -269,7 +278,7 @@ describe("setup daemon install", () => {
 			expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
 			for (const path of patchPaths) expect(readFileSync(path, "utf8")).toBe(patch);
 			expect(readFileSync(join(home, "dsh-args"), "utf8").trim()).toBe("--version");
-			expect(consoleOutput.join("\n")).toContain("configure Clawdi MCP manually");
+			expect(consoleErrors.join("\n")).toContain("configure Clawdi MCP manually");
 			expect(consoleOutput.join("\n")).not.toContain(
 				"Skill and MCP tools installed for supported agents",
 			);
@@ -287,7 +296,7 @@ describe("setup daemon install", () => {
 
 		const registration = readFileSync(join(home, "codex-mcp-register"), "utf-8").trim();
 		expect(registration).toMatch(/^mcp add clawdi -- \/.+ mcp$/);
-		expect(consoleErrors).toEqual([]);
+		expect(consoleErrors.join("\n")).not.toContain("Could not");
 	});
 
 	it("keeps a manual MCP hint for Pi before 0.99.0", async () => {
@@ -498,6 +507,7 @@ describe("setup daemon install", () => {
 		expect(consoleErrors.join("\n")).toContain("systemctl --user daemon-reload");
 		expect(output).not.toContain("systemctl activation failed");
 		expect(output).not.toContain("Singleton daemon installed");
+		expect(consoleErrors.join("\n")).not.toContain("Singleton daemon installed");
 	});
 });
 

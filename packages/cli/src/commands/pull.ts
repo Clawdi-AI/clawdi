@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { SessionListItem, SkillSummary } from "../lib/api-schemas";
 import { getClawdiDir } from "../lib/config";
 import { errMessage } from "../lib/errors";
+import { progress as p } from "../lib/progress";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import { parseModules } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
@@ -27,6 +27,7 @@ import {
 	skillCacheKey,
 	writeSkillsLock,
 } from "../lib/skills-lock";
+import { emptySessionCounts, type SyncError } from "../lib/sync-result";
 
 const DOWN_MODULES = ["skills", "sessions"] as const;
 
@@ -37,6 +38,7 @@ interface PullOpts {
 	agent?: string;
 	allAgents?: boolean;
 	all?: boolean;
+	json?: boolean;
 }
 
 /**
@@ -68,6 +70,8 @@ interface AgentPullResult {
 	skillsImported: number;
 	sessionsNew: number;
 	sessionsUpdated: number;
+	sessionsFailed: number;
+	skillsFailed: number;
 }
 
 /** Whether a scan turned up an explicit import or session mirror to apply. */
@@ -96,7 +100,10 @@ export async function pull(opts: PullOpts) {
 	// never sourced from the implicit Agent Project. Without an explicit
 	// Cloud-owned Project, pull only mirrors sessions.
 	let modules = parseModules(opts.modules, DOWN_MODULES);
-	if (!modules) return;
+	if (!modules) {
+		process.exitCode = 1;
+		return;
+	}
 	const explicitlySelectedModules = opts.modules !== undefined;
 	const strictModuleSelection = explicitlySelectedModules && targetTypes.length === 1;
 	if (!opts.project && modules.includes("skills")) {
@@ -142,7 +149,7 @@ export async function pull(opts: PullOpts) {
 
 	// Scan every agent first — one spinner, one combined summary — so a
 	// multi-agent pull reads as a single scan, matching `clawdi push`.
-	const scanSpinner = p.spinner({ output: process.stderr });
+	const scanSpinner = p.spinner();
 	scanSpinner.start(
 		`Scanning ${targetTypes.length} agent${targetTypes.length === 1 ? "" : "s"}...`,
 	);
@@ -191,6 +198,14 @@ export async function pull(opts: PullOpts) {
 	const toApply = scans.filter(scanHasWork);
 
 	if (opts.dryRun) {
+		if (opts.json) {
+			printPullResult(
+				scans.map((scan) => ({ scan, result: emptyPullResult(scan) })),
+				true,
+				[],
+			);
+			return;
+		}
 		p.outro(
 			chalk.gray(
 				toApply.length > 0
@@ -208,31 +223,47 @@ export async function pull(opts: PullOpts) {
 		sessionsUpdated: 0,
 		sessionsUnchanged: 0,
 	};
-	for (const scan of scans) {
-		// "In sync" / "unchanged" are scan facts — fold them in regardless
-		// of whether this agent goes on to download anything.
-		totals.skillsInSync += scan.skillsInSync;
-		totals.sessionsUnchanged += scan.sessionsUnchanged;
-		if (!scanHasWork(scan)) continue;
-		// Header only when more than one agent actually applies work.
-		if (toApply.length > 1) {
-			p.log.step(chalk.bold(`▶ ${adapterRegistry[scan.agentType].displayName}`));
+	const outcomes = scans.map((scan) => ({ scan, result: emptyPullResult() }));
+	const errors: SyncError[] = [];
+	let activeAgent: AgentType | null = null;
+	try {
+		for (const { scan, result } of outcomes) {
+			// "In sync" / "unchanged" are scan facts — fold them in regardless
+			// of whether this agent goes on to download anything.
+			totals.skillsInSync += scan.skillsInSync;
+			totals.sessionsUnchanged += scan.sessionsUnchanged;
+			if (!scanHasWork(scan)) continue;
+			// Header only when more than one agent actually applies work.
+			if (toApply.length > 1) {
+				p.log.step(chalk.bold(`▶ ${adapterRegistry[scan.agentType].displayName}`));
+			}
+			activeAgent = scan.agentType;
+			await applyOneAgentPull(api, scan, skillsLock, result, errors);
+			totals.skillImports += result.skillsImported;
+			totals.sessionsNew += result.sessionsNew;
+			totals.sessionsUpdated += result.sessionsUpdated;
 		}
-		const result = await applyOneAgentPull(api, scan, skillsLock);
-		totals.skillImports += result.skillsImported;
-		totals.sessionsNew += result.sessionsNew;
-		totals.sessionsUpdated += result.sessionsUpdated;
-	}
 
-	if (skillsLock) {
-		// Pull keeps a long-lived hash baseline snapshot while per-Skill
-		// authority handoffs update claims/materializations transactionally.
-		// Merge only the baselines into fresh authority state so this stale
-		// snapshot cannot resurrect a projection claim retired above.
-		const latestSkillsLock = readSkillsLock();
-		latestSkillsLock.skills = { ...latestSkillsLock.skills, ...skillsLock.skills };
-		writeSkillsLock(latestSkillsLock);
+		activeAgent = null;
+		if (skillsLock) {
+			// Pull keeps a long-lived hash baseline snapshot while per-Skill
+			// authority handoffs update claims/materializations transactionally.
+			// Merge only the baselines into fresh authority state so this stale
+			// snapshot cannot resurrect a projection claim retired above.
+			const latestSkillsLock = readSkillsLock();
+			latestSkillsLock.skills = { ...latestSkillsLock.skills, ...skillsLock.skills };
+			writeSkillsLock(latestSkillsLock);
+		}
+	} catch (error) {
+		process.exitCode = 1;
+		if (!opts.json) throw error;
+		errors.push({ agent: activeAgent, module: null, key: null, message: errMessage(error) });
+		p.log.error(errMessage(error));
+		return;
+	} finally {
+		if (opts.json) printPullResult(outcomes, false, errors);
 	}
+	if (errors.length > 0) process.exitCode = 1;
 
 	const parts: string[] = [];
 	if (modules.includes("skills")) {
@@ -253,7 +284,59 @@ export async function pull(opts: PullOpts) {
 			{ output: process.stderr },
 		);
 	}
-	p.outro(chalk.green(`✓ Pull complete — ${parts.join(", ")}`));
+	if (!opts.json) {
+		p.outro(
+			errors.length > 0
+				? chalk.red(`Pull completed with errors — ${parts.join(", ")}`)
+				: chalk.green(`✓ Pull complete — ${parts.join(", ")}`),
+		);
+	}
+}
+
+function emptyPullResult(scan?: AgentPullScan): AgentPullResult {
+	return {
+		skillsImported: scan?.skills.length ?? 0,
+		sessionsNew: scan?.sessions.filter((session) => session.reason === "new").length ?? 0,
+		sessionsUpdated: scan?.sessions.filter((session) => session.reason === "updated").length ?? 0,
+		sessionsFailed: 0,
+		skillsFailed: 0,
+	};
+}
+
+function printPullResult(
+	outcomes: { scan: AgentPullScan; result: AgentPullResult }[],
+	dryRun: boolean,
+	errors: SyncError[],
+): void {
+	const totals = {
+		sessions: emptySessionCounts(),
+		skills: { downloaded: 0, unchanged: 0, failed: 0 },
+	};
+	const agents = outcomes.map(({ scan, result }) => {
+		const sessions = {
+			new: result.sessionsNew,
+			updated: result.sessionsUpdated,
+			unchanged: scan.sessionsUnchanged,
+			failed: result.sessionsFailed,
+		};
+		const skills = {
+			downloaded: result.skillsImported,
+			unchanged: scan.skillsInSync,
+			failed: result.skillsFailed,
+		};
+		for (const key of ["new", "updated", "unchanged", "failed"] as const) {
+			totals.sessions[key] += sessions[key];
+		}
+		for (const key of ["downloaded", "unchanged", "failed"] as const) {
+			totals.skills[key] += skills[key];
+		}
+		return {
+			agent: scan.agentType,
+			...(scan.modules.includes("sessions") ? { sessions } : {}),
+			...(scan.modules.includes("skills") ? { skills } : {}),
+		};
+	});
+	console.log(JSON.stringify({ schemaVersion: "clawdi.pull.v1", dryRun, agents, totals, errors }));
 }
 
 /**
@@ -378,8 +461,9 @@ async function applyOneAgentPull(
 	api: ApiClient,
 	scan: AgentPullScan,
 	skillsLock: SkillsLock | null,
-): Promise<AgentPullResult> {
-	let skillsImported = 0;
+	result: AgentPullResult,
+	errors: SyncError[],
+): Promise<void> {
 	if (scan.skills.length > 0 && scan.skillProjectId && skillsLock) {
 		const adapter = adapterForType(scan.agentType);
 		const skills = adapter?.skills;
@@ -429,47 +513,55 @@ async function applyOneAgentPull(
 							: skills.path(skill.skill_key),
 					);
 					p.log.success(`${safeKey} → ${skillDir}/ (${tarBytes.length} bytes)`);
-					skillsImported++;
+					result.skillsImported++;
 				} catch (e) {
+					result.skillsFailed++;
+					errors.push({
+						agent: scan.agentType,
+						module: "skills",
+						key: skill.skill_key,
+						message: errMessage(e),
+					});
 					p.log.warn(`${safeKey} failed: ${errMessage(e)}`, { output: process.stderr });
 				}
 			}
 		}
 	}
 
-	let sessionsNew = 0;
-	let sessionsUpdated = 0;
 	if (scan.sessions.length > 0) {
 		const mirrorDir = sessionMirrorDir(scan.agentType);
 		mkdirSync(mirrorDir, { recursive: true });
-		const dlSpinner = p.spinner({ output: process.stderr });
+		const dlSpinner = p.spinner();
 		dlSpinner.start(`Downloading content (0/${scan.sessions.length})...`);
-		let failed = 0;
 		for (const { remote, reason } of scan.sessions) {
 			try {
 				const body = await api.getSessionContent(remote.id);
 				writeMirrorAtomic(mirrorDir, remote, body);
-				if (reason === "new") sessionsNew++;
-				else sessionsUpdated++;
+				if (reason === "new") result.sessionsNew++;
+				else result.sessionsUpdated++;
 				dlSpinner.message(
-					`Downloading content (${sessionsNew + sessionsUpdated}/${scan.sessions.length})...`,
+					`Downloading content (${result.sessionsNew + result.sessionsUpdated}/${scan.sessions.length})...`,
 				);
 			} catch (e) {
-				failed++;
+				result.sessionsFailed++;
+				errors.push({
+					agent: scan.agentType,
+					module: "sessions",
+					key: remote.local_session_id,
+					message: errMessage(e),
+				});
 				p.log.warn(`${remote.local_session_id} failed: ${errMessage(e)}`, {
 					output: process.stderr,
 				});
 			}
 		}
-		const done = sessionsNew + sessionsUpdated;
+		const done = result.sessionsNew + result.sessionsUpdated;
 		dlSpinner.stop(
-			failed > 0
-				? `Downloaded ${done}, ${failed} failed`
+			result.sessionsFailed > 0
+				? `Downloaded ${done}, ${result.sessionsFailed} failed`
 				: `Downloaded ${done} session${done === 1 ? "" : "s"}`,
 		);
 	}
-
-	return { skillsImported, sessionsNew, sessionsUpdated };
 }
 
 /** Complete an Agent-to-Project authority handoff using only exact claims.

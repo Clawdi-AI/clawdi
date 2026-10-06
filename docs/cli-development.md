@@ -282,7 +282,14 @@ login. Process-injected `CLAWDI_AUTH_TOKEN` credentials retain production Cloud
 compatibility, while custom Cloud endpoints must also set the explicit
 `CLAWDI_AUTH_TOKEN_ORIGIN` binding.
 `clawdi auth logout` asks the Cloud backend to revoke the refresh grant before
-removing local state. The legacy `--manual` API-key path remains Cloud-only.
+removing local state. The `--manual` API-key path remains Cloud-only and only
+pastes an existing key. Users can no longer create API keys; use OAuth login,
+including `clawdi auth login --no-open` on a server. `CLAWDI_AUTH_TOKEN` continues
+to accept existing and internally issued keys. Settings → API Keys only lists
+and revokes keys. Personal `POST /auth/keys` returns 410 with OAuth login
+guidance. The retired browser-approved `/cli/auth/device` and `/cli/auth/approve`
+endpoints also return 410 with CLI upgrade guidance. The CLI displays the
+server's 410 detail.
 The Clerk Public OAuth Application must allow `openid`, `profile`, `email`, and
 `offline_access`; the last scope is required for the persisted refresh grant.
 At the Clerk instance level, `oauth_jwt_access_tokens` must be enabled through
@@ -306,8 +313,10 @@ Self-hosted Clerk OAuth applications must enable **Device authorization grant**
 under Configure → OAuth applications in the Clerk Dashboard. The Backend API
 equivalent is `PATCH /v1/oauth_applications/<application_id>` with
 `{"device_authorization_grant_enabled": true}`. Keep the registered loopback
-redirect URI for older CLIs. Instances without Clerk OAuth can use
-`clawdi auth login --manual` with an API key from Settings → API Keys.
+redirect URI for older CLIs. Instances without Clerk OAuth must enable it for
+user login. For local development, the administrator can issue a key through
+`POST /v1/admin/auth/keys`; `clawdi auth login --manual` only pastes that existing
+key. See [backend local CLI setup](backend-development.md#local-admin-api).
 
 Done: `clawdi auth login` prints the link and code, then reports `Signed in as`
 after browser approval. Run `clawdi auth status --json` to check the saved

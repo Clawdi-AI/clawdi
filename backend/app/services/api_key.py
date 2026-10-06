@@ -1,17 +1,8 @@
 """ApiKey minting service.
 
-Single source of truth for ApiKey creation. The dashboard route
-`POST /v1/auth/keys` walks through `mint_api_key()`. Deploy-key
-flow (where the dashboard mints a key for an externally-hosted
-agent pod and hands it to clawdi.ai's control plane) uses the
-SAME route, with `environment_id` set on the request body —
-gated by the user's Clerk JWT, no backend-to-backend secrets.
-
-Deploy-keys differ from interactive keys only in their
-`environment_id` column. Default permissions are full account access
-just like a self-installed clawdi key; the dashboard can pass an
-explicit narrower API permission `scopes` list per use-case if it
-wants.
+Single source of truth for internal ApiKey creation. Admin and platform
+issuers apply their own scope and expiry policies. Users cannot create
+personal keys; CLI login uses OAuth.
 """
 
 from __future__ import annotations
@@ -65,14 +56,8 @@ async def mint_api_key(
 ) -> MintedKey:
     """Create a new ApiKey row.
 
-    `scopes=None` means full account access — the default for both
-    interactive keys (`clawdi auth login`) and deploy keys minted
-    by the dashboard with `environment_id` set. `scopes=[...]`
-    narrows API permissions on purpose if a caller wants a tighter
-    blast radius; the route layer doesn't impose narrowing for deploy
-    keys because the agent must do whatever the user does
-    (sessions push, skills writeback, memories update, vault
-    resolve, MCP bridge).
+    `scopes=None` means full account access for legacy/admin issuance.
+    Omitting expiry preserves existing admin/platform issuance behavior.
 
     `environment_id` binds the key to a single AgentEnvironment.
     A leaked deploy-key from pod A then can't write into pod B's

@@ -10,15 +10,19 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 from fastapi import HTTPException
 from httpx import ASGITransport
+from sqlalchemy import func, select
 
-from app.core.auth import AuthContext, require_auth_scopes
+from app.core.auth import AuthContext, get_auth, require_auth_scopes
 from app.main import app
 from app.models.api_key import ApiKey
+from app.services.api_key import mint_api_key
+from app.services.metrics import registry
 
 
 @pytest.mark.asyncio
@@ -65,30 +69,52 @@ def test_scope_enforcement_preserves_legacy_access_and_fails_closed_for_strict_r
     assert exc_info.value.detail == "missing scope: vault:read"
 
 
-@pytest.mark.asyncio
-async def test_api_key_create_returns_raw_once_and_stores_hash(
-    client: httpx.AsyncClient, db_session
+@pytest.mark.parametrize("prefix", ["/v1", "/api"])
+@pytest.mark.parametrize(
+    "body",
+    [
+        None,
+        {"label": "old-client"},
+        {"label": "scoped-client", "scopes": ["sessions:write"], "expires_in_days": 30},
+        {"environment_id": "not-a-uuid", "scopes": [], "expires_in_days": 0},
+    ],
+)
+async def test_personal_key_creation_is_retired_without_issuing_keys(db_session, prefix, body):
+    before = await db_session.scalar(select(func.count()).select_from(ApiKey))
+    # No login or database dependency is needed to report permanent retirement.
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(f"{prefix}/auth/keys", json=body)
+    assert response.status_code == 410, response.text
+    assert response.json() == {
+        "detail": "API keys can no longer be created. Run `clawdi auth login` "
+        "(use `--no-open` on a server). Existing keys keep working until revoked."
+    }
+    assert await db_session.scalar(select(func.count()).select_from(ApiKey)) == before
+
+
+@pytest.mark.parametrize("prefix", ["/v1", "/api"])
+async def test_internal_key_listing_exposes_scopes_and_expiry_but_never_secrets(
+    client: httpx.AsyncClient, db_session, seed_user, prefix
 ):
-    r = await client.post("/v1/auth/keys", json={"label": "laptop"})
-    assert r.status_code == 200, r.text
-    body = r.json()
-    raw = body["raw_key"]
+    expiry = datetime.now(UTC) + timedelta(days=30)
+    minted = await mint_api_key(
+        db_session,
+        user_id=seed_user.id,
+        label="internal",
+        scopes=["sessions:write"],
+        expires_at=expiry,
+    )
+    raw = minted.raw_key
     assert raw.startswith("clawdi_")
-    assert body["key_prefix"] == raw[:16]
-
-    # The listing endpoint must NEVER return the raw secret (only prefix/label).
-    listing = (await client.get("/v1/auth/keys")).json()
-    assert listing and all("raw_key" not in k for k in listing)
-
-    # The on-disk representation is a sha256 hash, not the raw token.
-    expected_hash = hashlib.sha256(raw.encode()).hexdigest()
-    from sqlalchemy import select
-
-    from app.models.api_key import ApiKey
-
-    rows = (await db_session.execute(select(ApiKey))).scalars().all()
-    assert any(k.key_hash == expected_hash for k in rows)
-    assert all(k.key_hash != raw for k in rows)
+    assert minted.api_key.key_prefix == raw[:16]
+    listing = await client.get(f"{prefix}/auth/keys")
+    assert listing.status_code == 200, listing.text
+    listed = next(key for key in listing.json() if key["id"] == str(minted.api_key.id))
+    assert listed["scopes"] == ["sessions:write"]
+    assert datetime.fromisoformat(listed["expires_at"]) == expiry
+    assert all("raw_key" not in key and "key_hash" not in key for key in listing.json())
+    assert minted.api_key.key_hash == hashlib.sha256(raw.encode()).hexdigest()
+    assert minted.api_key.key_hash != raw
 
 
 @pytest.mark.asyncio
@@ -325,24 +351,19 @@ async def test_me_reflects_cli_auth(cli_client: httpx.AsyncClient):
 
 @pytest.mark.asyncio
 async def test_revoke_api_key_hides_row_but_preserves_audit_record(
-    client: httpx.AsyncClient, db_session
+    client: httpx.AsyncClient, db_session, seed_user
 ):
-    from sqlalchemy import select
-
-    from app.models.api_key import ApiKey
-
-    created = (await client.post("/v1/auth/keys", json={"label": "to-revoke"})).json()
-    r = await client.delete(f"/v1/auth/keys/{created['id']}")
+    minted = await mint_api_key(db_session, user_id=seed_user.id, label="to-revoke")
+    key_id = str(minted.api_key.id)
+    r = await client.delete(f"/v1/auth/keys/{key_id}")
     assert r.status_code == 200, r.text
     assert r.json() == {"status": "revoked"}
 
     # The user-facing list is active-only, but soft revocation keeps the row for audit.
     listing = (await client.get("/v1/auth/keys")).json()
-    assert created["id"] not in {key["id"] for key in listing}
+    assert key_id not in {key["id"] for key in listing}
 
-    revoked_at = await db_session.scalar(
-        select(ApiKey.revoked_at).where(ApiKey.id == created["id"])
-    )
+    revoked_at = await db_session.scalar(select(ApiKey.revoked_at).where(ApiKey.id == key_id))
     assert revoked_at is not None
 
 
@@ -354,7 +375,7 @@ async def test_managed_api_key_is_hidden_from_user_list(
 
     from app.models.api_key import ApiKey
 
-    visible = (await client.post("/v1/auth/keys", json={"label": "visible"})).json()
+    visible = await mint_api_key(db_session, user_id=seed_user.id, label="visible")
     raw = "clawdi_managed_hidden"
     hidden = ApiKey(
         user_id=seed_user.id,
@@ -370,7 +391,7 @@ async def test_managed_api_key_is_hidden_from_user_list(
     assert listing.status_code == 200, listing.text
     labels = {item["label"] for item in listing.json()}
     assert labels == {"visible"}
-    assert visible["id"] in {item["id"] for item in listing.json()}
+    assert str(visible.api_key.id) in {item["id"] for item in listing.json()}
     assert (
         await db_session.scalar(select(ApiKey.managed).where(ApiKey.label == "platform-managed"))
         is True
@@ -402,134 +423,6 @@ async def test_user_revoke_rejects_managed_api_key(
 
     revoked_at = await db_session.scalar(select(ApiKey.revoked_at).where(ApiKey.id == key.id))
     assert revoked_at is None
-
-
-@pytest.mark.asyncio
-async def test_deploy_key_minted_with_full_access_by_default(
-    client: httpx.AsyncClient, db_session, seed_user
-):
-    """An Agent API key defaults to FULL account access — same
-    as a key the user mints for their own laptop. The hosted agent
-    pod must be able to do everything the user can.
-
-    Without this property the daemon ends up narrowed to a 3-token API permission list
-    and silently can't touch vault / memories / settings, which breaks
-    Clawdi's shared context and tools promise."""
-    from tests.conftest import create_env_with_project
-
-    env = await create_env_with_project(
-        db_session,
-        user_id=seed_user.id,
-        machine_id="m-deploy",
-        machine_name="hosted-pod",
-    )
-
-    r = await client.post(
-        "/v1/auth/keys",
-        json={"label": "hosted-pod", "environment_id": str(env.id)},
-    )
-    assert r.status_code == 200, r.text
-
-    # Verify the persisted scopes column is NULL (full API permission access),
-    # not the legacy daemon set.
-    from sqlalchemy import select
-
-    from app.models.api_key import ApiKey
-
-    rows = (
-        (await db_session.execute(select(ApiKey).where(ApiKey.user_id == seed_user.id)))
-        .scalars()
-        .all()
-    )
-    assert rows, "minting succeeded but no row found"
-    deploy_key = next(k for k in rows if k.environment_id == env.id)
-    assert deploy_key.scopes is None, (
-        f"deploy keys must default to full API permission access (scopes=None), "
-        f"got {deploy_key.scopes!r}"
-    )
-
-
-@pytest.mark.asyncio
-async def test_deploy_key_honours_explicit_narrow_scopes(
-    client: httpx.AsyncClient, db_session, seed_user
-):
-    """The default is full access, but a caller that explicitly passes
-    a narrower API permission list still gets a narrowed key — the
-    dashboard should be able to opt into narrower keys per use-case."""
-    from tests.conftest import create_env_with_project
-
-    env = await create_env_with_project(
-        db_session,
-        user_id=seed_user.id,
-        machine_id="m-narrow",
-        machine_name="narrow-pod",
-    )
-
-    r = await client.post(
-        "/v1/auth/keys",
-        json={
-            "label": "narrow-pod",
-            "environment_id": str(env.id),
-            "scopes": ["sessions:write"],
-        },
-    )
-    assert r.status_code == 200, r.text
-
-    from sqlalchemy import select
-
-    from app.models.api_key import ApiKey
-
-    deploy_key = (
-        await db_session.execute(
-            select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.environment_id == env.id)
-        )
-    ).scalar_one()
-    assert deploy_key.scopes == ["sessions:write"]
-
-
-@pytest.mark.asyncio
-async def test_deploy_key_rejects_cross_tenant_environment_id(
-    client: httpx.AsyncClient, db_session, seed_user
-):
-    """An attacker passing another user's env_id must get a 403, not a
-    silent rebind. `mint_api_key` raises ValueError on the user_id
-    mismatch and the route maps that to 403 (not 500)."""
-    import uuid as _uuid
-
-    from app.models.user import User
-    from tests.conftest import create_env_with_project
-
-    other = User(clerk_id=f"other_{_uuid.uuid4().hex[:8]}", email="o@x.dev", name="O")
-    db_session.add(other)
-    await db_session.commit()
-    await db_session.refresh(other)
-    other_env = await create_env_with_project(
-        db_session,
-        user_id=other.id,
-        machine_id="m-other",
-        machine_name="other-pod",
-    )
-
-    try:
-        r = await client.post(
-            "/v1/auth/keys",
-            json={"label": "steal", "environment_id": str(other_env.id)},
-        )
-        assert r.status_code == 403, r.text
-    finally:
-        await db_session.delete(other)
-        await db_session.commit()
-
-
-@pytest.mark.asyncio
-async def test_deploy_key_rejects_malformed_environment_id(client: httpx.AsyncClient):
-    """A malformed UUID should be 400, not 500 — sanity check on the
-    parse path."""
-    r = await client.post(
-        "/v1/auth/keys",
-        json={"label": "bad", "environment_id": "not-a-uuid"},
-    )
-    assert r.status_code == 400, r.text
 
 
 @pytest.mark.asyncio
@@ -565,3 +458,109 @@ async def test_revoke_other_users_key_is_404(client: httpx.AsyncClient, db_sessi
         await db_session.delete(key)
         await db_session.delete(victim)
         await db_session.commit()
+
+
+async def test_internal_scoped_key_allows_sync_but_rejects_account_management(
+    client, db_session, seed_user
+):
+    from app.core.api_scopes import RUNTIME_MCP_SCOPES
+
+    minted = await mint_api_key(
+        db_session, user_id=seed_user.id, label="internal-sync", scopes=list(RUNTIME_MCP_SCOPES)
+    )
+    app.dependency_overrides.pop(get_auth)
+    headers = {"Authorization": f"Bearer {minted.raw_key}"}
+    denied = await client.get("/v1/settings", headers=headers)
+    assert denied.status_code == 403, denied.text
+    vault_list = await client.get("/v1/vault", headers=headers)
+    assert vault_list.status_code == 403, vault_list.text
+    registered = await client.post(
+        "/v1/agents",
+        headers=headers,
+        json={
+            "machine_id": "scoped-sync",
+            "machine_name": "Scoped sync",
+            "os": "linux",
+            "agent_type": "claude_code",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    synced = await client.post("/v1/sessions/batch", headers=headers, json={"sessions": []})
+    assert synced.status_code == 200, synced.text
+
+
+@pytest.mark.parametrize(
+    "kind", ["personal_api_key", "env_api_key", "managed_legacy_key", "runtime_key"]
+)
+async def test_authenticated_api_key_requests_count_once_and_expired_keys_do_not(
+    db_session, seed_user, kind
+):
+    from app.core.database import get_session
+    from app.services.api_key import mint_api_key
+    from app.services.runtime_observation import provision_runtime_environment_fence
+    from tests.conftest import create_env_with_project
+
+    environment_id = None
+    deployment_id = None
+    if kind in ("env_api_key", "runtime_key"):
+        env = await create_env_with_project(
+            db_session, user_id=seed_user.id, machine_id=f"metric-{kind}", machine_name="Metrics"
+        )
+        environment_id = env.id
+    if kind == "runtime_key":
+        deployment_id = "metric-runtime-deployment"
+        await provision_runtime_environment_fence(
+            db_session,
+            environment_id=environment_id,
+            owner_id=seed_user.id,
+            deployment_id=deployment_id,
+        )
+    minted = await mint_api_key(
+        db_session,
+        user_id=seed_user.id,
+        label="metrics",
+        environment_id=environment_id,
+        runtime_deployment_id=deployment_id,
+        managed=kind in ("managed_legacy_key", "runtime_key"),
+    )
+
+    async def override_session():
+        yield db_session
+
+    app.dependency_overrides[get_session] = override_session
+    labels = {"kind": kind, "surface": "user"}
+    before = registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels) or 0
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get(
+            "/v1/auth/me", headers={"Authorization": f"Bearer {minted.raw_key}"}
+        )
+        assert response.status_code == 200, response.text
+        assert (
+            registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+            == before + 1
+        )
+        minted.api_key.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await db_session.commit()
+        expired = await ac.get("/v1/auth/me", headers={"Authorization": f"Bearer {minted.raw_key}"})
+        assert expired.status_code == 401, expired.text
+        assert (
+            registry.get_sample_value("clawdi_backend_authenticated_requests_total", labels)
+            == before + 1
+        )
+
+
+async def test_legacy_full_access_non_expiring_key_is_still_listed_and_usable(
+    client, db_session, seed_user
+):
+    from app.services.api_key import mint_api_key
+
+    minted = await mint_api_key(db_session, user_id=seed_user.id, label="legacy")
+    listed = (await client.get("/v1/auth/keys")).json()
+    legacy = next(key for key in listed if key["id"] == str(minted.api_key.id))
+    assert legacy["scopes"] is None
+    assert legacy["expires_at"] is None
+    app.dependency_overrides.pop(get_auth)
+    response = await client.get(
+        "/v1/settings", headers={"Authorization": f"Bearer {minted.raw_key}"}
+    )
+    assert response.status_code == 200, response.text

@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ApiKey } from "@/lib/api-schemas";
-import { activeApiKeys, removeApiKeyFromList, restoreApiKeyToList } from "./api-keys-panel.logic";
+import {
+	activeApiKeys,
+	describeApiKeyScopes,
+	removeApiKeyFromList,
+	restoreApiKeyToList,
+} from "./api-keys-panel.logic";
 
 function apiKey(id: string, overrides: Partial<ApiKey> = {}): ApiKey {
 	return {
@@ -11,6 +16,7 @@ function apiKey(id: string, overrides: Partial<ApiKey> = {}): ApiKey {
 		last_used_at: null,
 		expires_at: null,
 		revoked_at: null,
+		scopes: null,
 		...overrides,
 	};
 }
@@ -22,6 +28,21 @@ describe("activeApiKeys", () => {
 
 		expect(activeApiKeys([revoked, active])).toEqual([active]);
 		expect(activeApiKeys(undefined)).toEqual([]);
+	});
+});
+
+describe("API key permissions", () => {
+	test("labels legacy unscoped keys and summarizes scoped keys by group", () => {
+		expect(describeApiKeyScopes(null)).toBe("Full access (legacy)");
+		expect(
+			describeApiKeyScopes(["vault:read", "sessions:write", "sessions:read", "connectors:invoke"]),
+		).toBe("Sessions (read, write), Vault (read), Connectors (invoke)");
+	});
+
+	test("keeps scopes the dashboard does not group, such as admin-minted runtime keys", () => {
+		expect(describeApiKeyScopes(["skills:read", "runtime-observations:write"])).toBe(
+			"Skills (read), runtime-observations:write",
+		);
 	});
 });
 

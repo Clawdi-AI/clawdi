@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { Console } from "node:console";
+import chalk from "chalk";
 import { Command, Option } from "commander";
 import { AGENT_TYPE_HELP_LABEL, SKILL_AGENT_TYPE_HELP_LABEL } from "./adapters/registry.js";
 import { registerServeCommand } from "./commands/serve-cli.js";
@@ -8,6 +10,29 @@ import { getCliVersion } from "./lib/version.js";
 import { evaluateHostPolicyForCommand } from "./runtime/host-policy.js";
 
 const program = new Command();
+
+function disableColor(): void {
+	chalk.level = 0;
+	// Clack uses node:util styleText, which honors FORCE_COLOR=0.
+	process.env.FORCE_COLOR = "0";
+	// Bun's built-in console caches color support before startup. Use standard
+	// Console methods so errors, warnings, and inspected values stay plain.
+	Object.assign(
+		globalThis.console,
+		new Console({ stdout: process.stdout, stderr: process.stderr, colorMode: false }),
+	);
+}
+
+const args = process.argv.slice(2);
+const separatorIndex = args.indexOf("--");
+const cliArgs = separatorIndex === -1 ? args : args.slice(0, separatorIndex);
+if (process.env.NO_COLOR || cliArgs.includes("--no-color")) disableColor();
+// Color is process configuration, not a command option. Keep it out of
+// optsWithGlobals() and preserve arguments forwarded after `--`.
+const commandArgs = [
+	...cliArgs.filter((arg) => arg !== "--no-color"),
+	...(separatorIndex === -1 ? [] : args.slice(separatorIndex)),
+];
 
 function commandPath(command: Command): string {
 	const names: string[] = [];
@@ -39,6 +64,10 @@ program
 	)
 	.version(getCliVersion())
 	.addHelpText(
+		"afterAll",
+		"\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)",
+	)
+	.addHelpText(
 		"after",
 		`
 Examples:
@@ -63,6 +92,7 @@ Environment:
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
   CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via \`config set autoUpdate false\`)
   CLAWDI_AUTH_TOKEN        Authenticate non-interactive Cloud API requests
+  NO_COLOR                Disable color output when non-empty
   CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)
   CODEX_HOME               Custom Codex home (else ~/.codex)
   HERMES_HOME              Custom Hermes home (else ~/.hermes)
@@ -139,7 +169,10 @@ const authCmd = program.command("auth").description("Sign in to Clawdi");
 authCmd
 	.command("login")
 	.description("Sign in through your browser")
-	.option("--manual", "Skip the browser flow and paste an API key instead")
+	.option(
+		"--manual",
+		"Paste an existing API key; new keys cannot be created. Use `clawdi auth login` (`--no-open` on a server)",
+	)
 	.option("--no-open", "Print the sign-in link and code without opening a browser")
 	.addOption(new Option("--desktop").hideHelp())
 	.addOption(new Option("--force").hideHelp())
@@ -347,6 +380,7 @@ program
 	.option("--agent <type>", `Narrow to one agent (${AGENT_TYPE_HELP_LABEL})`)
 	.option("--all-agents", "Push from every registered agent on this machine (implied by --all)")
 	.option("--dry-run", "Preview without uploading")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		`
@@ -355,6 +389,7 @@ Examples:
   $ clawdi push                            Push cwd project for the registered agent (or all of them if multiple)
   $ clawdi push --modules skills           Push only skills (cwd project, registered agent(s))
   $ clawdi push --agent claude_code --dry-run
+  $ clawdi push --all --json              Output clawdi.push.v1 with per-agent counts, totals, and errors
   $ clawdi push --all --project ~/foo      Push every module / every agent for one specific project
   $ clawdi push --all --exclude-project ~/scratch`,
 	)
@@ -383,6 +418,7 @@ program
 	)
 	.option("--all-agents", "Pull for every registered agent on this machine (implied by --all)")
 	.option("--dry-run", "Preview session mirrors or explicit skill imports without writing locally")
+	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
 		`
@@ -391,6 +427,7 @@ Examples:
   $ clawdi pull                          Mirror sessions for the registered agent(s)
   $ clawdi pull --modules sessions
   $ clawdi pull --agent claude_code --dry-run
+  $ clawdi pull --all --json              Output clawdi.pull.v1 with per-agent counts, totals, and errors
   $ clawdi pull --modules skills --project @alice/engineering --agent codex`,
 	)
 	.action(async (opts) => {
@@ -1973,5 +2010,5 @@ inboxCmd
 	} catch {
 		// auto-update is opportunistic; never let it kill the CLI invocation
 	}
-	await program.parseAsync().catch(handleError);
+	await program.parseAsync(commandArgs, { from: "user" }).catch(handleError);
 })();

@@ -14,7 +14,10 @@ export interface paths {
         /** List Api Keys */
         get: operations["list_api_keys_v1_auth_keys_get"];
         put?: never;
-        /** Create Api Key */
+        /**
+         * Create Api Key
+         * @deprecated
+         */
         post: operations["create_api_key_v1_auth_keys_post"];
         delete?: never;
         options?: never;
@@ -773,7 +776,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Start Device Flow */
+        /**
+         * Start Device Flow
+         * @deprecated
+         */
         post: operations["start_device_flow_v1_cli_auth_device_post"];
         delete?: never;
         options?: never;
@@ -827,7 +833,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Approve Device Flow */
+        /**
+         * Approve Device Flow
+         * @deprecated
+         */
         post: operations["approve_device_flow_v1_cli_auth_approve_post"];
         delete?: never;
         options?: never;
@@ -4987,15 +4996,6 @@ export interface components {
             /** Ref */
             ref: string;
         };
-        /** ApiKeyCreate */
-        ApiKeyCreate: {
-            /** Label */
-            label: string;
-            /** Environment Id */
-            environment_id?: string | null;
-            /** Scopes */
-            scopes?: string[] | null;
-        };
         /**
          * ApiKeyCreated
          * @description Returned only on creation — includes the raw key (shown once).
@@ -5018,8 +5018,15 @@ export interface components {
             expires_at: string | null;
             /** Revoked At */
             revoked_at: string | null;
+            /** Scopes */
+            scopes: string[] | null;
             /** Raw Key */
             raw_key: string;
+        };
+        /** ApiKeyCreationRetiredResponse */
+        ApiKeyCreationRetiredResponse: {
+            /** Detail */
+            detail: string;
         };
         /** ApiKeyResponse */
         ApiKeyResponse: {
@@ -5040,6 +5047,8 @@ export interface components {
             expires_at: string | null;
             /** Revoked At */
             revoked_at: string | null;
+            /** Scopes */
+            scopes: string[] | null;
         };
         /** ApiKeyRevokeResponse */
         ApiKeyRevokeResponse: {
@@ -6186,6 +6195,11 @@ export interface components {
             /** User Code */
             user_code: string;
         };
+        /** DeviceFlowRetiredResponse */
+        DeviceFlowRetiredResponse: {
+            /** Detail */
+            detail: string;
+        };
         /** DeviceLookupResponse */
         DeviceLookupResponse: {
             /** User Code */
@@ -6214,11 +6228,6 @@ export interface components {
             status: "pending" | "approved" | "denied" | "expired";
             /** Api Key */
             api_key?: string | null;
-        };
-        /** DeviceStartRequest */
-        DeviceStartRequest: {
-            /** Client Label */
-            client_label?: string | null;
         };
         /** DeviceStartResponse */
         DeviceStartResponse: {
@@ -10851,28 +10860,15 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ApiKeyCreate"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiKeyCreated"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ApiKeyCreationRetiredResponse"];
                 };
             };
         };
@@ -12370,11 +12366,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DeviceStartRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -12385,13 +12377,13 @@ export interface operations {
                     "application/json": components["schemas"]["DeviceStartResponse"];
                 };
             };
-            /** @description Validation Error */
-            422: {
+            /** @description This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`. */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
                 };
             };
         };
@@ -12480,6 +12472,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeviceTerminalResponse"];
+                };
+            };
+            /** @description This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
                 };
             };
             /** @description Validation Error */

@@ -111,10 +111,8 @@ async def main(label: str, agent_type: str) -> None:
         await db.commit()
         await db.refresh(env)
 
-        # Mint a deploy key directly via the service layer. Same
-        # function the dashboard's POST /api/auth/keys handler calls,
-        # so the persisted row matches a production-minted key
-        # exactly (full account access, env-bound).
+        # Mint an internal deploy key directly via the service layer
+        # used by admin/platform issuers (full account access, env-bound).
         minted = await mint_api_key(
             db,
             user_id=user.id,

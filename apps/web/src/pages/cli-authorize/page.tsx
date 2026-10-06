@@ -2,7 +2,7 @@
 
 import type { DeviceLookupResponse } from "@clawdi/shared/api";
 import { Link } from "@tanstack/react-router";
-import { AlertCircle, CheckCircle2, Clock, Terminal, XCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, Terminal, TriangleAlert, XCircle } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { AccountDataBoundary } from "@/components/account-suspension-boundary";
@@ -51,7 +51,9 @@ function CliAuthorizeContent() {
 	const [rawCode] = useQueryState("code", parseAsString.withDefault(""));
 	const code = rawCode.toUpperCase().trim();
 	const api = useApi();
-	const [terminalState, setTerminalState] = useState<"approved" | "denied" | null>(null);
+	const [terminalState, setTerminalState] = useState<"approved" | "denied" | "unsupported" | null>(
+		null,
+	);
 	const lookupRequestRef = useRef(0);
 	const [lookup, setLookup] = useState<{
 		data: DeviceLookupResponse | null;
@@ -89,9 +91,17 @@ function CliAuthorizeContent() {
 	}, [api, code]);
 
 	const approve = useSensitiveAction(async () => {
-		const res = await api.POST("/v1/cli/auth/approve", { body: { user_code: code } });
-		unwrap(res);
-		setTerminalState("approved");
+		try {
+			unwrap(await api.POST("/v1/cli/auth/approve", { body: { user_code: code } }));
+			setTerminalState("approved");
+		} catch (error) {
+			// The browser-approval flow is retired; approval answers 410 for every code.
+			if (error instanceof ApiError && error.status === 410) {
+				setTerminalState("unsupported");
+				return;
+			}
+			throw error;
+		}
 	});
 
 	const deny = useSensitiveAction(async () => {
@@ -150,6 +160,16 @@ function CliAuthorizeContent() {
 				icon={<XCircle className="size-10 text-destructive" />}
 				title="Authorization denied"
 				body="The CLI on the other side will see this and stop polling. Re-run `clawdi auth login` to start fresh."
+			/>
+		);
+	}
+
+	if (visibleStatus === "unsupported") {
+		return (
+			<TerminalCard
+				icon={<TriangleAlert className="size-10 text-warning" />}
+				title="Update the Clawdi CLI"
+				body="This CLI version is no longer supported. Update Clawdi CLI and run `clawdi auth login`."
 			/>
 		);
 	}
@@ -245,7 +265,7 @@ function TerminalCard({
 	body: string;
 }) {
 	return (
-		<Card>
+		<Card role="status">
 			<CardContent className="flex flex-col items-center gap-3 py-10 text-center">
 				{icon}
 				<h2 className="text-lg font-semibold">{title}</h2>

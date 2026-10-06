@@ -126,6 +126,25 @@ scripts/test.sh backend tests/test_agent_profiles.py tests/test_agent_profiles_m
 Done: both test files pass, including unchanged stored content and old-client
 resolution with zero, one, and multiple matching sessions.
 
+## Personal-key issuance exception
+
+`POST /v1/auth/keys` and its `/api` alias permanently return 410. Users can no
+longer create personal API keys. The detail directs users to `clawdi auth login`
+(or `--no-open` on a server) and states that existing keys keep working until
+revoked. This is an intentional security exception to additive compatibility.
+The dashboard now offers only key listing and revocation.
+
+Legacy CLI `/cli/auth/device` and `/cli/auth/approve` also return 410 with upgrade
+guidance. OAuth login and existing keys remain supported. List and internal
+creation responses include nullable `scopes` and `expires_at`; `scopes: null`
+denotes full access for legacy/internal keys. Admin issuance still permits
+omitted scopes and expiry, with optional `expires_in_days` between 1 and 365.
+See the [backend key contract](backend-development.md#api-key-issuance) for the
+exact retirement message and retained operations.
+
+Done: `scripts/test.sh backend tests/test_auth_keys.py tests/test_cli_auth_device_flow.py tests/test_admin_endpoints.py`
+passes for canonical and legacy issuance routes.
+
 ## Generated clients
 
 OpenAPI feeds the shared TypeScript client used by both web and CLI:
