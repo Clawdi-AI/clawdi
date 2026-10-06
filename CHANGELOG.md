@@ -19,7 +19,12 @@ database migration, CI, and implementation details.
 
 - Managed OpenClaw credentials now discard obsolete files after successful
   applies, retaining current configuration, native rollback snapshots, and two
-  successful credential generations.
+  successful credential generations. Cleanup rechecks newly saved references
+  before deleting credential files.
+
+- Runtime preparation executes verified private installer and CLI archive
+  copies; CLI verification also uses a private copy so replaced paths cannot
+  change the code executed between checks.
 
 - Opt-in warm hosted agents report readiness promptly after becoming healthy
   and start without reinstalling prepared software.

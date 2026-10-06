@@ -12,7 +12,8 @@ clawdi runtime warm --runtime hermes
 ```
 
 The prepare command runs inside the eventual pool instance. Its CLI arrives as
-an exact SHA-512-verified public package, without Cloud/tenant identity.
+an exact SHA-512-verified public package authorized by a separate administrator
+approval, without Cloud/tenant identity.
 These root-only commands require empty homes and a strict
 `clawdi.runtime-preinstallation.v1` spec binding CLI integrity, architecture,
 image, runtime version/commit and pinned official installers/artifacts.
@@ -22,6 +23,73 @@ Preparation uses official installers and builds Hermes assets. OpenClaw
 is staged in the same pool instance before warm-up. A root-owned 0400 receipt
 binds software, home digest and probes to launcher/package/source identity;
 mismatches retain ordinary probes.
+
+## Preparation trust and isolation
+
+The control plane supplies the independent trust root: an administrator-approved
+allowlist of exact runtime identities, installer SHA-256 and npm archive SHA-512,
+including the CLI itself. A newly discovered digest is a review candidate and
+cannot authorize a fill. If npm registry signatures accompany an approved
+artifact, the control plane verifies them against independently pinned registry
+public keys. The CLI's strict spec validates the projection and verifies bytes;
+it does not promote upstream metadata into approval. Installer execution and
+CLI archive installation use the verified byte snapshots in a root-owned
+private directory. CLI verification commands execute a private package snapshot
+so path replacement between verification steps cannot change the executed bytes.
+Ordinary cold provisioning and tenant updates keep their existing upstream
+trust model; their release-approval model is outside this change.
+
+The control plane starts kernel default-deny ingress/egress before executing
+any installer or CLI. A separate UID runs an exact-host HTTPS artifact proxy;
+only that UID can open external HTTPS, with public-address checks, and DNS is
+restricted to the configured gateway. Fixed proxy environment settings are
+available only during anonymous preparation. Approved hosts cover official
+artifact and dependency distribution endpoints. Anonymous managed egress is
+also deny-all. The anonymous OpenClaw official LAN binding is protected by the
+kernel ingress deny. Isolation stays active through warm-up and idle reboots;
+the claim unit removes it only after verified tenant projection publishes the
+claim marker. This ordering is verified by the paired native fixture.
+
+Pool targets, TTL, global kill switch, owner claim limits and alerts are
+runtime-tunable audited control-plane settings; the CLI owns none of their
+sizing authority. Each node's maintenance tracks peak accepted creates within
+its measured refill duration over seven days, adds headroom and clamps to the
+configured min/max. Committed claims trigger immediate leased refill. Disabling
+the policy stops new claims/fills, drains idle instances and keeps tenant claim
+replay; new requests retain cold provisioning. Stale claims use ordinary driver
+fences and tenant-preservation rules. Missing node bindings leave tombstones
+and resource alerts until their drain-only connectivity is restored.
+
+Hosted owns four global settings, read through `GET /admin/settings` and updated
+through audited `PUT /admin/settings/{key}` with `value_type:"json"`:
+
+| Setting | Authority |
+| --- | --- |
+| `v2_runtime_pool_policy` | Default-off kill switch and discovery switch, per runtime/CPU/memory/disk min/max/TTL/enabled/headroom, owner limit/window and alert thresholds |
+| `v2_runtime_pool_approved_artifacts` | Independently reviewed exact runtime/CLI identities, digests, signatures and artifact hosts |
+| `v2_runtime_pool_npm_signing_keys` | Independently pinned public registry signing keys |
+| `v2_runtime_pool_artifact_candidates` | Server-managed discovery results; administrative writes are rejected |
+
+The sizing formula is `desired = clamp(min, max, ceil(peak arrivals over measured
+refill time) + headroom)`. Refill time is the largest successful fill for that
+shape over seven days, or the 40-minute timeout without measurements. Arrivals
+come from accepted v2 create operations joined to the recorded deployment shape.
+Each opted-in node applies the target within its declared remaining capacity;
+smaller targets preserve claims and in-flight fills.
+
+Enable only after releasing the paired CLI, reviewing artifacts/keys and opting
+in static node capability (architecture, fill concurrency, enabled). Then enable
+small policy targets. Three consecutive node/runtime/shape fill failures emit
+`warm_pool_fill_failure`; ready-capacity absence past the configured interval
+emits `warm_pool_empty`; stuck resources, repeated teardown failures or removed
+node bindings emit `warm_pool_resource_leak`. Claim events include CPU, memory
+and disk. Audit history is available at `GET /admin/settings-audit-log`.
+
+Rollback sets policy `enabled:false`; discovery has its own independent switch.
+Per-shape disable or node opt-out also drains idle capacity. Keep node connectivity
+until drain completes. Preserve committed claims and schema for replay; Hosted's
+migration downgrade refuses outstanding resources or claims. Cold requests retain
+ordinary provisioning. No production enablement is included in this qualification.
 
 ## First apply
 
@@ -52,7 +120,9 @@ JSON5 config (including includes), all five native `.bak` snapshots and
 not advance that history; repeated applies retain the same generations. Upgrades
 capture the pre-apply config before any candidate writes. Other
 managed files are deleted through a pinned directory. Unreadable configs or
-unsafe file identities defer cleanup. New files contain referenced credentials
+unsafe file identities defer cleanup. Each unlink re-reads current/include/rollback
+references and checks their held file identities immediately before deletion;
+newly committed references and config replacements defer removal. New files contain referenced credentials
 only, never the entire environment.
 
 ## Changes visible to existing runtimes
@@ -125,3 +195,42 @@ resolved by waiting for that fixture's cleanup, then rerunning successfully.
 Done: Docker CLI typecheck/tests, real systemd and changed-file Biome pass;
 PostgreSQL regressions cover fallback/preservation. Paired native qualification
 proves tenant-free pre-claim state, authenticated adoption and cleanup.
+
+
+## Astra follow-up qualification
+
+The prior results above describe pre-follow-up source. Current CLI source
+`f2122dc89` is rebased onto main `109a66954`. Docker verification passed:
+
+| Suite | Result |
+| --- | --- |
+| Full CLI typecheck/tests | 205 files, exit 0 |
+| Focused verified-byte and credential-GC regressions | 36 tests, 317 assertions |
+| `runtime-systemd` | 25 tests, including real service and child-OOM behavior |
+| `ci` | Exit 0, including workspace types, mobile, web build, shared and backend smoke |
+| Changed-file `cli-lint` | 7 files, no fixes |
+| `hermes-upstream-contract` | 14 tests on upstream commit `65bc6727b43c05dff410608c78fa055ec194eee0` (`0.21.5+8490.g65bc672`) |
+
+Paired Hosted source `531389a8c` passed PostgreSQL contracts (1,318 tests),
+end-to-end (94), pool (467 unit / 102 PostgreSQL), backend (6,735) and migration
+(590) verification. Gated login, generic preservation and provider-transfer
+fixtures were outside this request; the pool native case ran separately.
+The final locked native invocation passed one sample per runtime, including
+default-deny preparation, claim ACK and reboot/preservation. Claim to first
+fixture Cloud `ok` was 23.72 s for OpenClaw and 16.37 s for Hermes; full fills
+were 268.46/382.88 s. OpenClaw authenticated the tenant token and retained its
+gateway PID. Its TTL retirement/replacement took 217.54 s. The fixture exited 0
+and removed all disposable resources and work directories. These are functional
+samples, not performance SLOs or production evidence.
+
+Regression
+coverage includes installer replacement after hashing, new credential references
+after the initial GC scan, and ordinary CLI upgrade/rollback behavior. Native
+checks cover kernel default-deny isolation, permitted artifact preparation,
+authenticated adoption, preservation and TTL replacement. These fixtures use
+explicit disposable approvals; no production enablement or artifact approval
+was performed.
+
+Done: required Docker suites pass, both native runtime samples and one TTL cycle
+complete, disposable resources are removed, and the paired worktrees are committed
+and clean. Production behavior and npm provenance remain unqualified.
