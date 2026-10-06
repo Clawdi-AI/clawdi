@@ -1,9 +1,9 @@
 import { pageHeaderClasses as styles } from "@clawdi/shared/ui";
 import { cn } from "cn";
 import type { ReactNode } from "react";
-import { HeaderActionGroup } from "@/components/header-action-group";
 import { Skeleton } from "@/components/ui/skeleton";
-import { WebContent, WebText, WebView, webText, webView } from "@/components/ui/web-layout";
+import { WebContent, WebView, webText, webView } from "@/components/ui/web-layout";
+import { NativeHeader } from "@/platform/navigation/native-header";
 
 interface PageHeaderProps {
 	title: ReactNode;
@@ -36,16 +36,7 @@ export function PageHeader({
 			<WebView recipe={styles.lockup} className="w-full">
 				{icon ? <WebView recipe={styles.icon}>{icon}</WebView> : null}
 				<WebView recipe={styles.body} style={{ flex: 1, minWidth: 0 }}>
-					<WebView recipe={styles.titleRow}>
-						{typeof title === "string" || typeof title === "number" ? (
-							<WebText recipe={styles.title} accessibilityRole="header">
-								{title}
-							</WebText>
-						) : (
-							title
-						)}
-						{titleAdornment}
-					</WebView>
+					{titleAdornment}
 					{description ? (
 						<WebView recipe={styles.description}>
 							<WebContent recipe={webText(styles.description)}>{description}</WebContent>
@@ -54,7 +45,12 @@ export function PageHeader({
 					{status ? <WebView recipe={styles.status}>{status}</WebView> : null}
 				</WebView>
 			</WebView>
-			{actions ? <HeaderActionGroup>{actions}</HeaderActionGroup> : null}
+			{!hidden ? (
+				<NativeHeader
+					title={typeof title === "string" ? title : undefined}
+					contentActions={actions}
+				/>
+			) : null}
 		</WebView>
 	);
 }

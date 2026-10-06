@@ -3,9 +3,9 @@ import {
 	settingsSectionClasses as section,
 } from "@clawdi/shared/ui";
 import type { ReactNode } from "react";
-import { HeaderActionGroup } from "@/components/header-action-group";
 import { Separator } from "@/components/ui/separator";
 import { WebText, WebView } from "@/components/ui/web-layout";
+import { NativeHeader } from "@/platform/navigation/native-header";
 
 export function SettingsPanelHeader({
 	title,
@@ -19,12 +19,9 @@ export function SettingsPanelHeader({
 	return (
 		<WebView recipe={header.header}>
 			<WebView recipe={header.copy}>
-				<WebText accessibilityRole="header" recipe={header.title}>
-					{title}
-				</WebText>
 				{description ? <WebText recipe={header.description}>{description}</WebText> : null}
 			</WebView>
-			{actions ? <HeaderActionGroup>{actions}</HeaderActionGroup> : null}
+			<NativeHeader title={title} contentActions={actions} />
 		</WebView>
 	);
 }

@@ -12,19 +12,29 @@ export function useAuthAction(owner?: unknown) {
 		return () => gate.deactivate();
 	}, [gate, owner]);
 
-	const run = async (action: (isCurrent: () => boolean) => Promise<void>) => {
+	const runAction = async (
+		action: (isCurrent: () => boolean) => Promise<void>,
+		propagate = false,
+	) => {
 		const lease = gate.acquire();
 		if (!lease) return;
 		setBusy(true);
 		setError(false);
 		try {
 			await action(lease.isCurrent);
-		} catch {
+		} catch (failure) {
 			if (lease.isCurrent()) setError(true);
+			if (propagate) throw failure;
 		} finally {
 			if (lease.isCurrent()) setBusy(false);
 			lease.release();
 		}
 	};
-	return { busy, error, run, clearError: () => setError(false) };
+	return {
+		busy,
+		error,
+		run: (action: (isCurrent: () => boolean) => Promise<void>) => runAction(action),
+		runOrThrow: (action: (isCurrent: () => boolean) => Promise<void>) => runAction(action, true),
+		clearError: () => setError(false),
+	};
 }

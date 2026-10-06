@@ -2,8 +2,9 @@ import { dashboardPageClasses as page, siteHeaderClasses as styles } from "@claw
 import type { ReactNode } from "react";
 import { RefreshControl } from "react-native";
 import { AppSafeAreaView, AppScrollView } from "@/components/ui/view";
-import { WebText, WebView, webView } from "@/components/ui/web-layout";
-/** Native tabs replace the sidebar; retain the slim Web page-name header. */
+import { WebView, webView } from "@/components/ui/web-layout";
+import { NativeHeader } from "@/platform/navigation/native-header";
+/** The stack owns chrome; this scroll view owns Web sections and refresh. */
 export function TabPage({
 	title,
 	children,
@@ -18,20 +19,10 @@ export function TabPage({
 	actions?: ReactNode;
 }) {
 	return (
-		<AppSafeAreaView
-			edges={["top", "left", "right"]}
-			className={`flex-1 ${webView(styles.pageSurface)}`}
-		>
-			<WebView recipe={styles.root} style={{ height: 48 }}>
-				<WebView recipe={styles.content} className="flex-row">
-					<WebText recipe={page.connectCardTitle} className="flex-1">
-						{title}
-					</WebText>
-					{actions}
-				</WebView>
-			</WebView>
+		<AppSafeAreaView edges={["left", "right"]} className={`flex-1 ${webView(styles.pageSurface)}`}>
+			<NativeHeader title={title} contentActions={actions} />
 			<AppScrollView
-				contentInsetAdjustmentBehavior="never"
+				contentInsetAdjustmentBehavior="automatic"
 				refreshControl={
 					onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} /> : undefined
 				}

@@ -1,7 +1,9 @@
 import { detailLayoutClasses } from "@clawdi/shared/ui";
 import { type Href, router } from "expo-router";
+import { HeaderHeightContext } from "expo-router/react-navigation";
 import { ArrowLeft } from "lucide-react-native";
 import type { ReactNode } from "react";
+import { useContext } from "react";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
@@ -19,6 +21,7 @@ export function LibraryPage({
 		<SafeAreaScreen>
 			<AppScrollView
 				keyboardShouldPersistTaps="handled"
+				contentInsetAdjustmentBehavior="automatic"
 				contentContainerClassName={webView(
 					detail ? detailLayoutClasses.detailPage : detailLayoutClasses.page,
 				)}
@@ -39,6 +42,8 @@ export function DetailMeta({ children }: { children: ReactNode }) {
 	return <WebView recipe={detailLayoutClasses.meta}>{children}</WebView>;
 }
 export function DetailBackLink({ href, label }: { href: Href; label: string }) {
+	const headerHeight = useContext(HeaderHeightContext);
+	if (headerHeight) return null;
 	return (
 		<Button
 			variant="ghost"
