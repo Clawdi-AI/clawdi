@@ -196,10 +196,10 @@ describe("CLI smoke — src entry", () => {
 		}
 	});
 
-	it("hides config paths and --runtime-service while preserving both parsers", async () => {
+	it("shows config paths and hides --runtime-service while preserving both parsers", async () => {
 		const configHelp = await runCli(["config", "--help"]);
 		expect(configHelp.code).toBe(0);
-		expect(configHelp.stdout).not.toMatch(/^\s+paths(?:\s|$)/m);
+		expect(configHelp.stdout).toMatch(/^\s+paths(?:\s|$)/m);
 
 		const runHelp = await runCli(["run", "--help"]);
 		expect(runHelp.code).toBe(0);
@@ -428,6 +428,65 @@ describe("CLI smoke — src entry", () => {
 			expect(code).toBe(0);
 		} finally {
 			rmSync(fakeHome, { recursive: true, force: true });
+		}
+	});
+
+	it("config get prints the effective default value", async () => {
+		const { tmpdir } = await import("node:os");
+		const { mkdirSync, rmSync } = await import("node:fs");
+		const fakeHome = join(tmpdir(), `clawdi-smoke-cfg-get-${Date.now()}`);
+		mkdirSync(fakeHome, { recursive: true });
+
+		try {
+			const result = await runCli(["config", "get", "apiUrl"], {
+				HOME: fakeHome,
+				CLAWDI_API_URL: undefined,
+				CLAWDI_NO_AUTO_UPDATE: undefined,
+			});
+			expect(result.code).toBe(0);
+			expect(result.stdout.trim()).toBe("http://localhost:8000");
+			expect(result.stderr).toBe("");
+		} finally {
+			rmSync(fakeHome, { recursive: true, force: true });
+		}
+	});
+
+	it("config list JSON includes effective values and their sources", async () => {
+		const { tmpdir } = await import("node:os");
+		const { mkdirSync, rmSync, writeFileSync } = await import("node:fs");
+		const fakeHome = join(tmpdir(), `clawdi-smoke-cfg-list-${Date.now()}`);
+		mkdirSync(join(fakeHome, ".clawdi"), { recursive: true });
+		writeFileSync(
+			join(fakeHome, ".clawdi", "config.json"),
+			JSON.stringify({ apiUrl: "https://disk.example", autoUpdate: false }),
+		);
+
+		try {
+			const result = await runCli(["config", "list", "--json"], {
+				HOME: fakeHome,
+				CLAWDI_API_URL: "https://env.example",
+				CLAWDI_NO_AUTO_UPDATE: undefined,
+			});
+			expect(result.code).toBe(0);
+			const parsed = JSON.parse(result.stdout);
+			expect(parsed.schemaVersion).toBe("clawdi.config.v1");
+			expect(parsed.values).toMatchObject({
+				apiUrl: { value: "https://env.example", source: "CLAWDI_API_URL" },
+				autoUpdate: { value: false, source: "config.json" },
+			});
+			expect(result.stderr).toBe("");
+		} finally {
+			rmSync(fakeHome, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects malformed numeric flags before running a command", async () => {
+		for (const value of ["abc", "0", "-1", "1.5"]) {
+			const result = await runCli(["session", "search", "query", "--limit", value]);
+			expect(result.code).toBe(1);
+			expect(result.stdout).toBe("");
+			expect(result.stderr).toContain(`option '--limit <n>' argument '${value}' is invalid`);
+			expect(result.stderr).toContain("must be a positive integer");
 		}
 	});
 });

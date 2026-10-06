@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { parsePositiveInteger } from "../lib/cli-options";
 import { authedJson, projectAlias, requireProjectAuth } from "../lib/project-command-utils";
 import { listProjects, type ProjectBrief, resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -14,18 +15,12 @@ interface BindingRow {
 	created_at: string;
 }
 
-function parseOrder(raw: string, errorMessage: string): number {
-	const trimmedOrder = raw.trim();
-	const order = Number(trimmedOrder);
-	if (
-		!/^\d+$/.test(trimmedOrder) ||
-		!Number.isFinite(order) ||
-		!Number.isInteger(order) ||
-		order < 1
-	) {
+function parseOrder(raw: string | number, errorMessage: string): number {
+	try {
+		return parsePositiveInteger(raw);
+	} catch {
 		throw new Error(errorMessage);
 	}
-	return order;
 }
 
 export async function agentProjectsListCommand(
@@ -94,7 +89,7 @@ export async function agentProjectsListCommand(
 
 export async function agentProjectsAddContextCommand(
 	agentId: string,
-	opts: { project: string; order?: string },
+	opts: { project: string; order?: string | number },
 ): Promise<void> {
 	const { apiUrl, apiKey } = await requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);

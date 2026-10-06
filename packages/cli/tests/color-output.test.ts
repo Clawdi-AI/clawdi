@@ -157,7 +157,7 @@ for (const runtime of ["bun", "node"] as const) {
 		it("accepts --no-color on a nested command", async () => {
 			const result = await runCli(runtime, ["config", "list", "--no-color"]);
 			expect(result.code).toBe(0);
-			expect(result.output).toContain("no configuration set");
+			expect(result.output).toContain("apiUrl = http://127.0.0.1:0 (CLAWDI_API_URL)");
 			expect(result.output).not.toContain("unknown option");
 			expect(result.output).not.toContain(ansiEscape);
 		});
