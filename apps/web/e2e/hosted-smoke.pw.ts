@@ -489,7 +489,9 @@ test("hosted agent overview uses the modular hierarchy", async ({ page }) => {
 	await page.goto(`/agents/${railHostedEnvironmentId}/sessions`);
 	const sessionsHeading = page.getByRole("heading", { name: "Sessions", exact: true });
 	await expect(sessionsHeading).toBeVisible();
-	await expect(sessionsHeading.locator("..").getByText("Cloud Agent", { exact: true })).toHaveCount(0);
+	await expect(sessionsHeading.locator("..").getByText("Cloud Agent", { exact: true })).toHaveCount(
+		0,
+	);
 	await expect(page.getByRole("button", { name: "Chat on the web", exact: true })).toHaveCount(0);
 });
 
