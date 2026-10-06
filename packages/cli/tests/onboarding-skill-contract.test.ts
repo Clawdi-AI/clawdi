@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { CONFIG_KEYS } from "../src/lib/config";
 
 const srcEntry = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 const skillPath = new URL("../../../apps/web/src/content/get-started.md", import.meta.url);
@@ -67,6 +68,7 @@ describe("onboarding skill CLI contract", () => {
 			"Start",
 		);
 		const cliCommands = quickstartCommands(new URL("../README.md", import.meta.url), "Quickstart");
+		expect(rootCommands[0]).toBe("curl -fsSL https://clawdi.ai/install.sh | sh");
 		// Load the exported steps in the web app's normal alias and test environment.
 		const proc = Bun.spawn(
 			[
@@ -94,19 +96,31 @@ describe("onboarding skill CLI contract", () => {
 
 	test("extracts flags from inline commands, multiline code, and piped stdin", () => {
 		const commands = skillCommands(
-			"`clawdi --version`\n`clawdi\npush --all`\n`clawdi auth complete`\n`printf x | clawdi session extract <id> --json`\n```bash\nclawdi session extract <id> --json\n```",
+			"`clawdi --version`\n`clawdi\npush --all --json`\n`clawdi auth complete`\n`clawdi update --yes`\n`printf x | clawdi session extract <id> --json`\n```bash\nclawdi session extract <id> --json\n```",
 		);
 		expect([...commands.entries()].map(([path, flags]) => [path, [...flags]])).toEqual([
 			["session extract", ["--json"]],
 			["", ["--version"]],
-			["push", ["--all"]],
+			["push", ["--all", "--json"]],
 			["auth complete", []],
+			["update", ["--yes"]],
 		]);
 	});
 
-	const commands = skillCommands(readFileSync(skillPath, "utf8"));
-	test("finds executable examples in the skill", () => {
-		expect(commands.size).toBeGreaterThan(0);
+	const skill = readFileSync(skillPath, "utf8");
+	const commands = skillCommands(skill);
+	test("documents device sign-in, non-interactive updates, and JSON sync", () => {
+		expect(commands.has("auth login")).toBe(true);
+		expect(commands.has("auth complete")).toBe(true);
+		expect(commands.get("auth status")).toContain("--json");
+		expect(commands.get("update")).toContain("--yes");
+		expect(commands.get("push")).toContain("--json");
+	});
+
+	test("documents a supported project-sync opt-out", () => {
+		expect(skill).toContain("To skip a project: `clawdi config set excludeProjects <path>`");
+		expect(commands.has("config set")).toBe(true);
+		expect(CONFIG_KEYS).toContain("excludeProjects");
 	});
 
 	for (const [path, flags] of commands) {
