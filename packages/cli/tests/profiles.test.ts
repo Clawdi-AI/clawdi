@@ -416,40 +416,82 @@ for (const lostResponse of ["inventory", "rename"] as const) {
 	});
 }
 
-test("a failed rename skips PUT and isolates only that profile until the next refresh", async () => {
+test("a failed rename still PUTs complete inventory and excludes only its target from sync", async () => {
 	roster(["default", "work", "other"]);
 	const other = join(home, ".hermes", "profiles", "other");
 	mkdirSync(other);
 	cpSync(join(fixture, ".hermes", "state.db"), join(other, "state.db"));
-	let fail = true;
-	let renamed = false;
 	const calls: string[] = [];
+	const inventories: unknown[] = [];
+	const client = api(async (input) => {
+		const request = input instanceof Request ? input : new Request(input);
+		calls.push(request.method);
+		if (request.method === "POST") return response({ detail: "unavailable" }, 503);
+		if (request.method === "PUT") {
+			inventories.push(await request.json());
+			return response([row(""), row("old", "removed", 2), row("other")]);
+		}
+		return response([row(""), row("old", "active", 2), row("other")]);
+	});
+	const sync = createProfileSync(new HermesAdapter(), client, "env");
+	const first = await sync.sessions?.collect({ kind: "complete" });
+	expect(calls).toEqual(["GET", "POST", "PUT"]);
+	expect(inventories).toEqual([
+		{
+			complete: true,
+			profiles: [
+				{ upstream_key: "default", is_default: true },
+				{ upstream_key: "other", is_default: false },
+			],
+		},
+	]);
+	expect(new Set(first?.sessions.map((session) => session.profileKey))).toEqual(
+		new Set(["", "other"]),
+	);
+	expect(await sync.sessions?.resolve("work:s-modern")).toBeNull();
+	expect(sync.sessions?.watchPaths()).not.toContain(
+		join(home, ".hermes", "profiles", "work", "state.db"),
+	);
+});
+
+test("a failed rename is detected again after complete PUT marks its source removed", async () => {
+	let fail = true;
+	let known = [row(""), row("old", "active", 2)];
+	const calls: string[] = [];
+	const inventories: unknown[] = [];
 	const client = api(async (input) => {
 		const request = input instanceof Request ? input : new Request(input);
 		calls.push(request.method);
 		if (request.method === "POST") {
+			expect(new URL(request.url).pathname).toBe("/v1/agents/env/profiles/old/rename");
 			if (fail) return response({ detail: "unavailable" }, 503);
-			renamed = true;
+			known = [row(""), { ...row("work", "active", 2), id: "id-old" }];
 			return response({ sessions_moved: 2, suppressions_moved: 0 });
 		}
 		if (request.method === "PUT") {
-			expect((await request.json()).complete).toBeTrue();
-			expect(renamed).toBeTrue();
+			inventories.push(await request.json());
+			if (fail) known = [row(""), row("old", "removed", 2)];
 		}
-		return response([row(""), row(renamed ? "work" : "old"), row("other")]);
+		return response(known);
 	});
 	const sync = createProfileSync(new HermesAdapter(), client, "env");
-	const first = await sync.sessions?.collect({ kind: "complete" });
-	expect(calls).toEqual(["GET", "POST"]);
-	expect(new Set(first?.sessions.map((session) => session.profileKey))).toEqual(
-		new Set(["", "other"]),
-	);
+	await sync.refresh();
 	fail = false;
 	await sync.refresh();
 	const second = await sync.sessions?.collect({ kind: "complete" });
-	expect(calls).toEqual(["GET", "POST", "GET", "POST", "PUT"]);
+	expect(calls).toEqual(["GET", "POST", "PUT", "GET", "POST", "PUT"]);
+	expect(inventories).toEqual([
+		{ complete: true, profiles: [{ upstream_key: "default", is_default: true }] },
+		{
+			complete: true,
+			profiles: [
+				{ upstream_key: "default", is_default: true },
+				{ upstream_key: "work", is_default: false },
+			],
+		},
+	]);
 	expect(new Set(second?.sessions.map((session) => session.profileKey))).toEqual(
-		new Set(["", "work", "other"]),
+		new Set(["", "work"]),
 	);
 	expect(existsSync(join(home, ".clawdi", "profile-renames"))).toBeFalse();
 });

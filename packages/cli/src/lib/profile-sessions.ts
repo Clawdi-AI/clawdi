@@ -126,7 +126,6 @@ export function createProfileSync(
 		}
 		const known = unwrap(prior);
 		supported = true;
-		let renameFailed = false;
 		if (adapter.agentType === "hermes") {
 			const present = new Set(profiles.map((profile) => profile.profileKey));
 			for (const profile of profiles) {
@@ -169,30 +168,28 @@ export function createProfileSync(
 					source.profile_key = profile.profileKey;
 				} catch {
 					context?.signal.throwIfAborted();
-					renameFailed = true;
 					failProfile(profile.profileKey);
 				}
 			}
 		}
 		// Keep failed rename detection available on the next upstream/Cloud refresh.
 		// Inserting the destination now would hide a rename that did not commit.
-		if (!renameFailed) {
-			const inventory = await api.PUT("/v1/agents/{agent_id}/profiles", {
-				params: { path: { agent_id: environmentId } },
-				body: {
-					complete: true,
-					profiles: profiles.map((profile) => ({
-						upstream_key: profile.upstreamKey,
-						is_default: profile.isDefault,
-					})),
-				},
-			});
-			if (inventory.response.status === 404 || inventory.response.status >= 500) {
-				fallback();
-				return;
-			}
-			unwrap(inventory);
+		profiles = profiles.filter((profile) => !failed.has(profile.profileKey));
+		const inventory = await api.PUT("/v1/agents/{agent_id}/profiles", {
+			params: { path: { agent_id: environmentId } },
+			body: {
+				complete: true,
+				profiles: profiles.map((profile) => ({
+					upstream_key: profile.upstreamKey,
+					is_default: profile.isDefault,
+				})),
+			},
+		});
+		if (inventory.response.status === 404 || inventory.response.status >= 500) {
+			fallback();
+			return;
 		}
+		unwrap(inventory);
 		if (adapter.agentType === "hermes")
 			for (const profile of profiles) {
 				if (mcpSeen.has(profile.profileKey) || failed.has(profile.profileKey)) continue;
