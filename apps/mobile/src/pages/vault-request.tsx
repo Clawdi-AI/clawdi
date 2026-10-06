@@ -12,7 +12,6 @@ import { buildVaultSupplyAgentMessage, VAULT_REQUEST_COPY } from "@clawdi/shared
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import { AppState, Share } from "react-native";
-import { BackButton } from "@/components/detail/back-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
@@ -26,6 +25,7 @@ import { useI18n } from "@/lib/i18n";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { incomingVaultLink } from "@/platform/incoming-link";
+import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
@@ -181,7 +181,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 						text: t("vault.supplySave"),
 						onPress: () => {
 							if (!visible() || !pendingSupply.current) return;
-							return action.run(async (stillCurrent) => {
+							return action.runOrThrow(async (stillCurrent) => {
 								const pending = pendingSupply.current;
 								if (!visible() || !pending || token.current !== pending.token) return;
 								pendingSupply.current = null;
@@ -225,7 +225,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 				contentContainerClassName={webView(vaultRequestClasses.page)}
 				keyboardShouldPersistTaps="handled"
 			>
-				<BackButton />
+				<NativeHeader title={VAULT_REQUEST_COPY.title} />
 				<Card className={webView(vaultRequestClasses.card)}>
 					<CardHeader className={webView(vaultRequestClasses.header)}>
 						<WebText recipe={vaultRequestClasses.brandName}>Clawdi</WebText>
