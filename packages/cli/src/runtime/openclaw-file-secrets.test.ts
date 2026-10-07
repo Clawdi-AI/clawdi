@@ -235,3 +235,51 @@ test("GC re-reads references published after its initial scan before unlinking",
 		spy.mockRestore();
 	}
 });
+
+// The official writer takes this same exclusive sidecar before SecretRef
+// preflight and publication (openclaw/openclaw@3a9d69d config/write-lock.ts).
+test("GC and native reference publication exclude each other at the unlink boundary", () => {
+	const home = credentialHome();
+	const configPath = join(home, ".openclaw", "openclaw.json");
+	const lockPath = `${configPath}.lock`;
+	const current = credentialGeneration(home, "current-locked");
+	const candidate = credentialGeneration(home, "native-reference");
+	writeFileSync(configPath, current.config);
+	const original = filesystem.unlinkSync;
+	let blocked = false;
+	const spy = spyOn(filesystem, "unlinkSync").mockImplementation((path) => {
+		if (String(path).endsWith(candidate.path.split("/").at(-1) ?? "")) {
+			// Attempt precisely after the last CAS and before credential removal.
+			expect(JSON.parse(readFileSync(lockPath, "utf8")).pid).toBe(process.pid);
+			expect(() => filesystem.openSync(lockPath, "wx", 0o600)).toThrow();
+			blocked = true;
+		}
+		return original(path);
+	});
+	try {
+		gcOpenClawFileSecrets(home);
+		expect(blocked).toBe(true);
+		expect(readFileSync(configPath, "utf8")).toBe(current.config);
+		expect(existsSync(lockPath)).toBe(false);
+	} finally {
+		spy.mockRestore();
+	}
+	// In the reverse ordering the writer owns the lock, so GC must defer.
+	const published = credentialGeneration(home, "published-before-gc");
+	const writer = filesystem.openSync(lockPath, "wx", 0o600);
+	try {
+		writeFileSync(
+			writer,
+			JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
+		);
+		expect(() => gcOpenClawFileSecrets(home)).toThrow();
+		writeFileSync(configPath, published.config);
+		expect(existsSync(published.path)).toBe(true);
+	} finally {
+		filesystem.closeSync(writer);
+		filesystem.unlinkSync(lockPath);
+	}
+	gcOpenClawFileSecrets(home);
+	expect(existsSync(published.path)).toBe(true);
+	expect(existsSync(lockPath)).toBe(false);
+});

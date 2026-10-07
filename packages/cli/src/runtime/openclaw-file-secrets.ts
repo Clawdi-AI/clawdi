@@ -1,5 +1,15 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, lstatSync, readdirSync, unlinkSync } from "node:fs";
+import {
+	closeSync,
+	constants,
+	existsSync,
+	fstatSync,
+	lstatSync,
+	openSync,
+	readdirSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import { readPrivateFileEvidence, writePrivateFileAtomic } from "../lib/private-file";
 import { assertDirectoryIdentity, openTrustedDirectory } from "../lib/trusted-directory";
@@ -135,6 +145,46 @@ export function gcOpenClawFileSecrets(
 ): void {
 	const directory = join(home, ".clawdi", "runtime-credentials");
 	if (!existsSync(directory)) return;
+	// Official config/write-lock.ts -> plugin-sdk/file-lock.ts uses the
+	// exclusive openclaw.json.lock sidecar (pid + createdAt). A live pid is
+	// never stale. Match that protocol; contention defers GC without reclaiming.
+	// Source: openclaw/openclaw@3a9d69d, including root/include/native writes.
+	const configDirectory = join(home, ".openclaw");
+	const configFd = openTrustedDirectory(configDirectory);
+	const lockPath = `/proc/self/fd/${configFd}/openclaw.json.lock`;
+	let lockFd: number | undefined;
+	try {
+		lockFd = openSync(lockPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+		const identity = fstatSync(lockFd);
+		const assertLock = () => {
+			assertDirectoryIdentity(configDirectory, configFd);
+			const current = lstatSync(lockPath);
+			if (!current.isFile() || current.dev !== identity.dev || current.ino !== identity.ino)
+				throw new Error("OpenClaw config writer lock changed during credential cleanup");
+		};
+		try {
+			writeFileSync(
+				lockFd,
+				JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
+			);
+			assertLock();
+			gcOpenClawFileSecretsLocked(home, previousGeneration, assertLock);
+		} finally {
+			assertLock();
+			unlinkSync(lockPath);
+		}
+	} finally {
+		if (lockFd !== undefined) closeSync(lockFd);
+		closeSync(configFd);
+	}
+}
+
+function gcOpenClawFileSecretsLocked(
+	home: string,
+	previousGeneration: readonly string[],
+	assertLock: () => void,
+): void {
+	const directory = join(home, ".clawdi", "runtime-credentials");
 	const fd = openTrustedDirectory(directory);
 	const pinned = `/proc/self/fd/${fd}`;
 	try {
@@ -217,6 +267,7 @@ export function gcOpenClawFileSecrets(
 				if (configPaths.some((path, index) => existsSync(path) !== present[index]))
 					throw new Error("OpenClaw rollback config changed during credential cleanup");
 				assertDirectoryIdentity(directory, fd);
+				assertLock();
 				unlinkSync(join(pinned, name));
 			} finally {
 				for (const document of evidence) document.close();
