@@ -29,7 +29,20 @@ name: Account settings and fixture API keys
     id: settings-row-wallet
 - assertVisible:
     id: settings-row-compute
+- assertVisible:
+    id: settings-row-usage
 - takeScreenshot: settings-menu
+- tapOn:
+    id: settings-row-usage
+# The chart's peak label renders only once the fixture usage summary loads.
+- extendedWaitUntil:
+    visible:
+      text: "Peak .*"
+    timeout: 30000
+- assertVisible:
+    text: Spend over time
+- takeScreenshot: settings-usage
+- back
 - tapOn:
     id: settings-row-general
 - assertVisible:

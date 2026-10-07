@@ -3,6 +3,7 @@ import { EmptyState } from "@/components/empty-state";
 import { ApiKeysPanel } from "@/components/settings/api-keys-panel";
 import { SettingsShell } from "@/components/settings/shell";
 import { BillingScreen } from "@/hosted/billing/subscription/subscriptions-section";
+import { UsageScreen } from "@/hosted/billing/usage/usage-page";
 import { WalletScreen } from "@/hosted/billing/wallet/wallet-page";
 import GeneralPage from "@/pages/settings/general-page";
 
@@ -22,6 +23,8 @@ export default function SettingsPanelPage() {
 		case "compute":
 		case "billing":
 			return <BillingScreen />;
+		case "usage":
+			return <UsageScreen />;
 		default:
 			return (
 				<SettingsShell>

@@ -2,7 +2,7 @@
 
 import { settingsDialogClasses } from "@clawdi/shared/ui";
 
-import { type AgentTile, billingCopy, settingsCopy } from "@clawdi/shared/view";
+import { type AgentTile, billingCopy, settingsCopy, usageCopy } from "@clawdi/shared/view";
 import type { ShouldBlockFn } from "@tanstack/react-router";
 import {
 	BarChart3,
@@ -103,8 +103,8 @@ const SETTINGS_NAV: SettingsNavItem[] = [
 	},
 	{
 		id: "billing-usage",
-		label: "AI Usage",
-		description: "LLM spend in USD, paid from wallet",
+		label: usageCopy.nav,
+		description: usageCopy.navSummary,
 		icon: BarChart3,
 		cloudOnly: true,
 	},
