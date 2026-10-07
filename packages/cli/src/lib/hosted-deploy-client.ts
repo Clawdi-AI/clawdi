@@ -16,12 +16,11 @@ import {
 	type HostedIncludedBasicAvailability,
 	type HostedSavedAiProvider,
 	type HostedWalletBinding,
-	type paths,
 	providerRemovalHeaders,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
 import createClient, { type Client, type Middleware } from "openapi-fetch";
-import { ApiError } from "./api-client";
+import { ApiClient, ApiError, unwrap } from "./api-client";
 import {
 	canonicalApiOrigin,
 	normalizeCloudApiBaseUrl,
@@ -34,6 +33,7 @@ import {
 	HostedDeployAuthorizationError,
 	type HostedDeployAuthProvider,
 } from "./hosted-deploy-auth";
+import { parseRetryAfter } from "./retry-after";
 import { getCliVersion } from "./version";
 
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -88,12 +88,9 @@ function unwrapHosted<T>(result: HostedResult<T>): T {
 
 function checkoutRetryDelay(response: Response): number | null {
 	if (response.status !== 409 && response.status !== 503) return null;
-	const retryAfter = response.headers.get("Retry-After");
-	if (retryAfter === null) return null;
-	const seconds = Number(retryAfter);
-	if (!Number.isFinite(seconds) || seconds < 0) return null;
-	const delayMs = seconds * 1_000;
-	return delayMs <= MAX_CHECKOUT_RETRY_AFTER_MS ? delayMs : null;
+	return parseRetryAfter(response.headers.get("Retry-After"), {
+		maxMs: MAX_CHECKOUT_RETRY_AFTER_MS,
+	});
 }
 
 export type HostedDeployClientOptions = {
@@ -109,7 +106,7 @@ export type HostedDeployClientOptions = {
 /** Typed, auth-isolated adapter over the generated Hosted deploy API client. */
 export class HostedDeployClient {
 	readonly baseUrl: string;
-	private readonly cloudClient: Client<paths>;
+	private readonly cloudClient: ApiClient;
 	private readonly client: Client<DeployPaths>;
 	private readonly paidCheckoutSupported: boolean;
 	private readonly sleep: (delayMs: number) => Promise<void>;
@@ -138,10 +135,6 @@ export class HostedDeployClient {
 			baseUrl: this.baseUrl,
 			fetch: requestFetch,
 		});
-		this.cloudClient = createClient<paths>({
-			baseUrl: cloudBaseUrl,
-			fetch: requestFetch,
-		});
 		const authMiddleware = (expectedOrigin: string): Middleware => ({
 			async onRequest({ request }) {
 				if (new URL(request.url).origin !== expectedOrigin) {
@@ -159,7 +152,15 @@ export class HostedDeployClient {
 			},
 		});
 		this.client.use(authMiddleware(canonicalApiOrigin(this.baseUrl)));
-		this.cloudClient.use(authMiddleware(canonicalApiOrigin(cloudBaseUrl)));
+		this.cloudClient = new ApiClient({
+			requireAuth: false,
+			baseUrl: cloudBaseUrl,
+			fetch: requestFetch,
+			accessTokenProvider: async () =>
+				assertHostedDeployAccessToken(await auth.getAccessToken(), now()),
+			includeMachineId: false,
+			includeSkillSyncProtocol: false,
+		});
 	}
 
 	async checkAuthorization(): Promise<void> {
@@ -335,7 +336,7 @@ export class HostedDeployClient {
 	}
 
 	async getSavedAiProviders(): Promise<HostedSavedAiProvider[]> {
-		const response: components["schemas"]["AiProviderListResponse"] = unwrapHosted(
+		const response: components["schemas"]["AiProviderListResponse"] = unwrap(
 			await this.cloudClient.GET("/v1/ai-providers"),
 		);
 		return response.providers;
