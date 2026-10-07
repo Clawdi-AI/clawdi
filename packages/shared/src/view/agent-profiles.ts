@@ -1,15 +1,8 @@
-import type { AgentProfile } from "@clawdi/shared/api";
-import type { OpenApiClient } from "@/lib/api";
+import type { AgentProfile } from "../api/schemas";
 
 /** URL search key for the Agent sessions profile filter. Holds the profile id
  * because the default profile's wire key is the empty string. */
 export const AGENT_PROFILE_SEARCH_KEY = "profile";
-
-export function agentProfilesQueryOptions(api: OpenApiClient, agentId: string) {
-	return api.queryOptions("get", "/v1/agents/{agent_id}/profiles", {
-		params: { path: { agent_id: agentId } },
-	});
-}
 
 /** Profiles only add UI once an Agent has more than its default profile. */
 export function hasMultipleProfiles(

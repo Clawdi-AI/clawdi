@@ -6,6 +6,7 @@ import {
 	formatDuration,
 	formatNumber,
 	formatSessionSummary,
+	profileLabel,
 	relativeTime,
 	sessionAgentIdentityInput,
 	sessionDetailQueryKey,
@@ -49,7 +50,6 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Label } from "@/components/ui/label";
 import { useSidebar } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { profileLabel } from "@/lib/agent-profiles";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { agentSectionHref, agentSessionDetailLink } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
