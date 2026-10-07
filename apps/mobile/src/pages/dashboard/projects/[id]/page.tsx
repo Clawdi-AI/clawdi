@@ -1,6 +1,7 @@
 import { HERO_GRID_CLASS, PROJECT_STAT_TILE_TINTS, projectDetailClasses } from "@clawdi/shared/ui";
 import {
 	agentDisplayName,
+	agentOverviewCopy,
 	displayProjectName,
 	identityFor,
 	OVERVIEW_COPY,
@@ -81,10 +82,10 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 	};
 	const stats = project
 		? [
-				{ label: "Skills", value: project.skill_count, tab: "skills" },
-				{ label: "Vaults", value: project.vault_count, tab: "vaults" },
-				{ label: "People", value: project.member_count + 1, tab: "access" },
-				{ label: "Agents", value: project.agent_count, tab: "agents" },
+				{ label: t("skills.title"), value: project.skill_count, tab: "skills" },
+				{ label: t("navigation.vaults"), value: project.vault_count, tab: "vaults" },
+				{ label: t("libraryPort.people"), value: project.member_count + 1, tab: "access" },
+				{ label: t("navigation.agents"), value: project.agent_count, tab: "agents" },
 			]
 		: [];
 	const identity = identityFor(project ? displayProjectName(project) : "");
@@ -125,7 +126,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 								</WebText>
 								{agent.default_project_id === project.id ? (
 									<Badge variant="secondary">
-										<Text>Workspace</Text>
+										<Text>{agentOverviewCopy.workspace}</Text>
 									</Badge>
 								) : null}
 							</AppPressable>

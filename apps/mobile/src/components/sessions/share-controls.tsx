@@ -292,7 +292,7 @@ function SharesView({
 						>
 							{compact
 								? share.kind === "live"
-									? "Live session link"
+									? t("sessionDetailMobile.liveLink")
 									: shareLabel(share)
 								: share.session_title}
 						</WebText>
@@ -307,7 +307,12 @@ function SharesView({
 					<WebText recipe={compact ? dialogStyles.linkMeta : styles.meta}>
 						{compact
 							? shareDetail(share)
-							: `${shareScopeLabel(share)} · ${share.message_count} ${share.message_count === 1 ? "message" : "messages"} · Created ${relativeTime(share.created_at)}`}
+							: t("labels.shareDetails", {
+									scope: shareScopeLabel(share),
+									count: share.message_count,
+									unit: share.message_count === 1 ? t("labels.message") : t("labels.messages"),
+									time: relativeTime(share.created_at),
+								})}
 					</WebText>
 					{share.kind === "live" ? (
 						<WebText recipe={styles.meta}>{t("sessionDetail.liveDescription")}</WebText>

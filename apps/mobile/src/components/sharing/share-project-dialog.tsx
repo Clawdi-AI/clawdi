@@ -368,7 +368,7 @@ function SharingView({ project }: { project: Project }) {
 	];
 	return (
 		<SheetPage
-			title={`Share ${project.name}`}
+			title={t("labels.shareProject", { name: project.name })}
 			fallback="/projects"
 			busy={action.busy}
 			scroll={false}

@@ -72,7 +72,26 @@ form routes live under their parent resource URL and use native Stack sheets
 (see Native patterns below).
 Web-only DOM, desktop, Stripe checkout and v1 legacy surfaces are not ported.
 `src/lib/i18n/en.ts` owns mobile strings and reuses shared view copy where
-available; feature-specific translation files and unused keys are removed.
+available. Dynamic titles and accessibility labels use named interpolation
+values with `useI18n`; brand names and protocol examples remain identifiers.
+Unused local keys are removed only after checking static and dynamic references.
+
+Store builds show Wallet amounts and AI Usage as credits and open the official
+RevenueCat `credits` Paywall for Add credits. Hosted purchase attempts and
+settlement remain authoritative; Check pending purchases recovers an earlier
+transaction without starting another charge. Consumable credits cannot be
+restored. Customer Center management is planned for store subscriptions and is
+not wired yet. Store builds hide the approved card-only and browser-wallet
+purchase surfaces; new paid compute subscriptions remain disabled.
+
+Development galleries remain available through `/dev/ui` and `/dev/account` in
+development. Their route entrypoints use Expo's documented `__DEV__` code removal
+around `require`, so production includes redirect stubs and excludes the gallery
+implementation modules. Verify both the exported sourcemap sources and bundle
+markers; see [production export checks](../../docs/mobile-development.md#development-galleries-and-production-exports).
+Local previews reuse the shared `clawdi-dev.apk` development client with JavaScript
+from this worktree's Metro server; follow the APK directory's README and rebuild
+when native dependencies change.
 
 ## Shared Web styling
 
@@ -264,7 +283,8 @@ modifier and single-line labels; Project detail and Memory categories use it
 for their longer option sets. Single-choice Web `Tabs` in content (channel
 detail, Discord pairing path, agent setup, tool payloads) render `NativeSegments`
 and conditionally render the selected panel; `ui/tabs.tsx` remains only for
-billing surfaces pending the RevenueCat Paywalls work. `ui/checkbox.tsx` renders
+compute-plan comparisons and deployment billing-term selection. Store credit
+purchases use the official RevenueCat Paywall instead. `ui/checkbox.tsx` renders
 `@expo/ui`'s universal `Checkbox` (a SwiftUI toggle on iOS, tinted with
 `--primary`); Android uses the Compose `Checkbox` with Web's `--primary`,
 `--primary-foreground` and `--input` tokens. Captions stay Web text beside it.

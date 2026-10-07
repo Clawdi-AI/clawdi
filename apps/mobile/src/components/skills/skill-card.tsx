@@ -12,6 +12,7 @@ import { IconChip } from "@/components/icon-chip";
 import { Badge } from "@/components/ui/badge";
 import { Text } from "@/components/ui/text";
 import { webBoth, webView } from "@/components/ui/web-layout";
+import { useI18n } from "@/lib/i18n";
 export function SkillCard({
 	skill,
 	link,
@@ -27,6 +28,7 @@ export function SkillCard({
 	readOnly?: boolean;
 	provenanceLabel?: string;
 }) {
+	const t = useI18n();
 	const identity = identityFor(skill.name || skill.skill_key);
 	return (
 		<HeroCard
@@ -67,7 +69,7 @@ export function SkillCard({
 			]}
 			link={link}
 			actions={actions}
-			ariaLabel={`Open ${skill.name}`}
+			ariaLabel={t("labels.openItem", { name: skill.name })}
 		/>
 	);
 }

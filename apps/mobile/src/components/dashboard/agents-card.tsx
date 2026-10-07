@@ -21,6 +21,7 @@ import {
 import { Text } from "@/components/ui/text";
 import { AppPressable } from "@/components/ui/view";
 import { WebView, webView } from "@/components/ui/web-layout";
+import { useI18n } from "@/lib/i18n";
 
 export function AgentsCard({
 	agents,
@@ -70,13 +71,17 @@ export function AgentsCard({
 	);
 }
 export function AgentTileView({ tile }: { tile: AgentTile }) {
+	const t = useI18n();
 	const { meta, statusVisual } = agentTileCardProjection(tile);
 	return (
 		<AppPressable
 			testID={`agent-card-${tile.id}`}
 			style={{ height: "auto" }}
 			accessibilityRole="link"
-			accessibilityLabel={`Open ${tile.name}${statusVisual ? `. Status: ${statusVisual.label}` : ""}`}
+			accessibilityLabel={t("labels.openAgent", {
+				name: tile.name,
+				status: statusVisual ? t("labels.agentStatus", { status: statusVisual.label }) : "",
+			})}
 			className={cn(ENTITY_CARD_BASE, webView(styles.card))}
 			onPress={() => router.push({ pathname: "/agents/[id]", params: { id: tile.id } })}
 		>

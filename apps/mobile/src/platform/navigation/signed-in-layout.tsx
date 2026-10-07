@@ -1,3 +1,4 @@
+import { agentSectionCopy } from "@clawdi/shared/view";
 import { Redirect, Stack } from "expo-router";
 import { LoadingScreen } from "@/components/ui/feedback";
 import { useI18n } from "@/lib/i18n";
@@ -5,18 +6,18 @@ import { useAppAuth } from "@/platform/auth/auth-client";
 
 import { useNativeStackOptions } from "@/platform/navigation/native-header";
 
-const roots: Record<string, string> = {
-	index: "Overview",
-	"agents/index": "Agents",
-	"sessions/index": "Sessions",
-	library: "Library",
-	"channels/index": "Channels",
-	"ai-providers/index": "AI Providers",
-	"settings/index": "Settings",
-};
-
 export function SignedInLayout() {
 	const t = useI18n();
+	const roots: Record<string, string> = {
+		index: t("navigation.home"),
+		"agents/index": t("navigation.agents"),
+		"sessions/index": t("navigation.sessions"),
+		library: t("navigation.library"),
+		"channels/index": t("channels.title"),
+		"ai-providers/index": agentSectionCopy.ai.label,
+		"settings/index": t("settingsParity.title"),
+	};
+
 	const options = useNativeStackOptions();
 	const { isLoaded, isSignedIn } = useAppAuth();
 	if (!isLoaded) return <LoadingScreen label={t("loading.authentication")} />;

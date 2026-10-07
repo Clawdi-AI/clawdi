@@ -149,11 +149,16 @@ function ProviderRemoveForm({
 	}, []);
 	if (result)
 		return (
-			<SheetPage title="Provider removed" fallback="/ai-providers" busy={action.busy} sheet={sheet}>
+			<SheetPage
+				title={t("providers.removed")}
+				fallback="/ai-providers"
+				busy={action.busy}
+				sheet={sheet}
+			>
 				<AppText accessibilityRole="alert">
 					{result.remote_revoke_status === "pending"
-						? "Provider removed. Remote access revocation is pending."
-						: "Provider removed."}
+						? t("providers.removedPending")
+						: t("providers.removedConfirmed")}
 				</AppText>
 				{action.error ? <ApiErrorPanel error={action.error} /> : null}
 				<ActionButton
@@ -170,7 +175,7 @@ function ProviderRemoveForm({
 		);
 	return (
 		<SheetPage
-			title={`Remove ${providerLabel}?`}
+			title={t("labels.removeProvider", { name: providerLabel })}
 			description={copy.description}
 			fallback="/ai-providers"
 			busy={action.busy}

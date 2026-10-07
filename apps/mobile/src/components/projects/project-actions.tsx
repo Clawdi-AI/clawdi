@@ -50,7 +50,7 @@ export function ProjectCardActions({ project }: { project: Project }) {
 						<Button
 							size="icon-sm"
 							variant="ghost"
-							accessibilityLabel={`Actions for ${displayProjectName(project)}`}
+							accessibilityLabel={t("labels.actionsFor", { name: displayProjectName(project) })}
 						>
 							<Icon as={MoreHorizontal} />
 						</Button>

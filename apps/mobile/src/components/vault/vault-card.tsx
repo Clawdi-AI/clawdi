@@ -65,9 +65,12 @@ export function VaultCard({
 			footer={[
 				formatResourceCount(vault.item_count, "key"),
 				usedBy.length
-					? `used by ${usedBy.slice(0, 2).join(", ")}${usedBy.length > 2 ? ` +${usedBy.length - 2}` : ""}`
+					? t("labels.usedBy", {
+							names: usedBy.slice(0, 2).join(", "),
+							remaining: usedBy.length > 2 ? ` +${usedBy.length - 2}` : "",
+						})
 					: vault.project_ids.length
-						? "Linked to projects"
+						? t("vault.linkedToProjects")
 						: "not in any project yet",
 			]}
 			footerWrap
@@ -100,7 +103,7 @@ export function VaultCard({
 							},
 						},
 			}}
-			ariaLabel={`Open vault ${vault.name}`}
+			ariaLabel={t("labels.openVault", { name: vault.name })}
 		/>
 	);
 }

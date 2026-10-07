@@ -16,16 +16,13 @@ import type { RevenueCat, StoreTransactionHint } from "./revenuecat";
 import { StorePurchaseError, storePurchaseError } from "./store-error";
 import { assertStoreAccount, type StoreIdentity } from "./store-identity";
 
-export type PurchaseIntent = Pick<
-	StorePurchaseAttemptRequest,
-	"purpose" | "pending_deploy_request_id"
->;
+type PurchaseIntent = Pick<StorePurchaseAttemptRequest, "purpose" | "pending_deploy_request_id">;
 export type PurchaseOutcome = Readonly<{
 	status: "funding_applied" | "submitted" | "terminal" | "pending" | "cancelled";
 	attempt: StorePurchaseAttempt;
 }>;
 
-export function isFinishedPurchase(state: StorePurchaseAttempt["state"]): boolean {
+function isFinishedPurchase(state: StorePurchaseAttempt["state"]): boolean {
 	return (
 		state === "funding_applied" ||
 		state === "canceled" ||

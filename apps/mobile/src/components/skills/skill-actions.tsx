@@ -41,7 +41,11 @@ export function SkillCardActions({ skill, project }: { skill: Skill; project: Pr
 				<DropdownMenuTrigger
 					disabled={action.busy}
 					render={
-						<Button variant="ghost" size="icon-sm" accessibilityLabel={`Actions for ${skill.name}`}>
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							accessibilityLabel={t("labels.actionsFor", { name: skill.name })}
+						>
 							<Icon as={MoreHorizontal} />
 						</Button>
 					}

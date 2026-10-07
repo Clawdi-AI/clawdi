@@ -102,7 +102,10 @@ export function ProjectVaultCatalog({
 	});
 	const groups = attached.data
 		? [
-				{ label: `In this ${context}`, rows: rows.filter((v) => attachedIds.has(v.id)) },
+				{
+					label: t("labels.inContext", { context: context }),
+					rows: rows.filter((v) => attachedIds.has(v.id)),
+				},
 				{ label: PROJECT_VAULT_COPY.available, rows: rows.filter((v) => !attachedIds.has(v.id)) },
 			]
 		: [{ label: null, rows }];
@@ -258,14 +261,14 @@ export function ProjectVaultCatalog({
 								<ApiErrorPanel
 									error={attached.error}
 									onRetry={() => void attached.refetch()}
-									title={`Couldn't load ${context} vault links`}
+									title={t("labels.vaultLinksError", { context: context })}
 								/>
 							) : null}
 							{canAttach && catalog.error ? (
 								<ApiErrorPanel
 									error={catalog.error}
 									onRetry={() => void catalog.refetch()}
-									title="Couldn't load vault catalog"
+									title={t("vault.catalogError")}
 								/>
 							) : null}
 							{action.error ? <ApiErrorPanel error={action.error} /> : null}
@@ -290,7 +293,7 @@ export function ProjectVaultCatalog({
 											size="sm"
 											variant={linked ? "ghost" : "default"}
 											disabled={unavailable}
-											accessibilityLabel={`${linked ? "Remove" : "Add"} ${item.name} ${linked ? "from" : "to"} ${context}`}
+											accessibilityLabel={`${linked ? t("composite.remove") : t("composite.add")} ${item.name} ${linked ? t("vault.from") : t("vault.to")} ${context}`}
 											onPress={() => {
 												const visible = capture();
 												if (linked) {
@@ -303,7 +306,7 @@ export function ProjectVaultCatalog({
 													});
 											}}
 										>
-											<Text>{linked ? "Remove" : "Add"}</Text>
+											<Text>{linked ? t("composite.remove") : t("composite.add")}</Text>
 										</Button>
 									) : null
 								}
@@ -327,9 +330,12 @@ export function ProjectVaultCatalog({
 				onOpenChange={(open) => {
 					if (!open) setRemoving(null);
 				}}
-				title={`Remove ${removing?.name ?? "Vault"} from ${context}?`}
+				title={t("labels.removeFrom", {
+					name: removing?.name ?? t("vault.singular"),
+					context: context,
+				})}
 				description={PROJECT_VAULT_COPY.removeDescription}
-				confirmLabel="Remove"
+				confirmLabel={t("composite.remove")}
 				onConfirm={async () => {
 					if (removing) await update(removing, true, confirmationLease.current);
 				}}
@@ -338,12 +344,13 @@ export function ProjectVaultCatalog({
 	);
 }
 export function ProjectVaultCreateScreen() {
+	const t = useI18n();
 	const params = useLocalSearchParams<{ id?: string }>();
 	const project = useProject(routeParam(params.id));
 	return project.data && !project.isError ? (
 		<ProjectVaultCatalog project={project.data} form />
 	) : (
-		<SheetPage title="Create vault" fallback="/projects">
+		<SheetPage title={t("libraryPort.createVault")} fallback="/projects">
 			{project.isPending ? (
 				<HeroCardSkeleton />
 			) : (

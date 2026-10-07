@@ -6,7 +6,7 @@ import type { StoreTransactionHint } from "./revenuecat";
 import { type PurchaseErrorCode, StorePurchaseError } from "./store-error";
 
 /** Paywall listeners, matching `<RevenueCatUI.Paywall>` props. */
-export type PaywallListeners = Readonly<{
+type PaywallListeners = Readonly<{
 	onPurchasePackageInitiated: (event: { resume: (shouldResume: boolean) => void }) => void;
 	onPurchaseStarted: () => void;
 	onPurchaseCompleted: (event: { storeTransaction: PurchasesStoreTransaction }) => void;

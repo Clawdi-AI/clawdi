@@ -125,7 +125,7 @@ function BindingsView({ agentId }: { agentId?: string }) {
 	const headerSearch = useHeaderSearch({
 		value: search,
 		onChange: setSearch,
-		placeholder: "Search projects…",
+		placeholder: t("libraryPort.searchProjects"),
 		maxLength: 200,
 	});
 	const grouped = [true, false].flatMap((linked) =>
@@ -162,7 +162,9 @@ function BindingsView({ agentId }: { agentId?: string }) {
 								formatResourceCount(project.skill_count, "skill"),
 								formatResourceCount(project.vault_count, "vault"),
 								project.is_owner === false && (project.owner_display || project.owner_handle)
-									? `by ${project.owner_display || project.owner_handle}`
+									? t("labels.projectOwner", {
+											name: project.owner_display || project.owner_handle,
+										})
 									: null,
 							]}
 							actions={
@@ -179,13 +181,17 @@ function BindingsView({ agentId }: { agentId?: string }) {
 									{binding ? (
 										<DropdownMenu>
 											<DropdownMenuTrigger>
-												<Button variant="ghost" size="icon-sm" accessibilityLabel="Project actions">
+												<Button
+													variant="ghost"
+													size="icon-sm"
+													accessibilityLabel={t("projects.actions")}
+												>
 													<Icon as={MoreHorizontal} />
 												</Button>
 											</DropdownMenuTrigger>
 											<DropdownMenuContent>
 												<DropdownMenuItem
-													label="Move up"
+													label={t("projects.moveUp")}
 													disabled={disabled || context[0]?.id === binding.id}
 													onSelect={() =>
 														void mutate((id, signal) =>
@@ -198,7 +204,7 @@ function BindingsView({ agentId }: { agentId?: string }) {
 													}
 												/>
 												<DropdownMenuItem
-													label="Move down"
+													label={t("projects.moveDown")}
 													disabled={disabled || context[context.length - 1]?.id === binding.id}
 													onSelect={() =>
 														void mutate((id, signal) =>
@@ -221,14 +227,14 @@ function BindingsView({ agentId }: { agentId?: string }) {
 			}}
 			icon={FolderKanban}
 			navigation={agentId ? <AgentSectionNavigation agentId={agentId} section="projects" /> : null}
-			title="Projects"
-			description="Choose the projects this agent can use."
+			title={t("projects.title")}
+			description={t("projects.agentProjectsDescription")}
 		>
 			<Stack.Screen options={{ headerSearchBarOptions: headerSearch }} />
 			{failed ? (
 				<ApiErrorPanel
 					error={bindings.error ?? agent.error ?? projects.error}
-					title="Couldn't load projects"
+					title={t("projects.loadError")}
 					onRetry={() => void refresh()}
 				/>
 			) : loading ? (
@@ -238,9 +244,7 @@ function BindingsView({ agentId }: { agentId?: string }) {
 					))}
 				</WebView>
 			) : null}
-			{action.error ? (
-				<ApiErrorPanel error={action.error} title="Couldn't update project link" />
-			) : null}
+			{action.error ? <ApiErrorPanel error={action.error} title={t("projects.linkError")} /> : null}
 			{confirmationDialog.dialog}
 		</AgentCollection>
 	);

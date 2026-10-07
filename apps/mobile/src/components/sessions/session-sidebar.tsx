@@ -62,7 +62,9 @@ export function SessionSidebar({
 			{prs.length > 5 ? (
 				<WebView recipe={styles.chip}>
 					<Icon as={GitPullRequest} />
-					<WebText recipe={webText(styles.chip)}>+{prs.length - 5} more</WebText>
+					<WebText recipe={webText(styles.chip)}>
+						+{prs.length - 5} {t("sessionDetailMobile.more")}
+					</WebText>
 				</WebView>
 			) : null}
 			{repos.slice(0, 3).map((repo) => (

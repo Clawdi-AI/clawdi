@@ -9,7 +9,7 @@ export type NativeConfirmationRequest = {
 	onConfirm: () => unknown;
 	onClose: () => void;
 };
-export type ConfirmationPresenter = (
+type ConfirmationPresenter = (
 	request: NativeConfirmationRequest,
 	confirm: () => void,
 	cancel: () => void,

@@ -16,9 +16,11 @@ import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
+import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { NativeSegments } from "@/platform/navigation/segmented-control";
 export function AddAgentSetup() {
+	const t = useI18n();
 	const scope = useAccountScope(),
 		read = useAccountRead(),
 		{ cloud } = useMobileApi();
@@ -48,8 +50,8 @@ export function AddAgentSetup() {
 				value={tab}
 				onChange={setTab}
 				options={[
-					{ value: "commands", label: "Run commands" },
-					{ value: "prompt", label: "Ask your agent" },
+					{ value: "commands", label: t("agents.runCommands") },
+					{ value: "prompt", label: t("agents.askAgent") },
 				]}
 			/>
 			{tab === "commands" ? (
@@ -137,7 +139,7 @@ export function AddAgentSetup() {
 				) : (
 					<WebView recipe={styles.waiting} className="flex-row">
 						<WebView recipe={styles.waitingDot} />
-						<Text>Waiting for your agent to connect…</Text>
+						<Text>{t("agents.waitingForConnection")}</Text>
 					</WebView>
 				)}
 			</WebView>

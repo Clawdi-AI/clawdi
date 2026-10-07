@@ -4,7 +4,7 @@ import type {
 	HeaderMenuSection,
 } from "@/platform/navigation/native-header-types";
 
-export type HeaderMenuGroup =
+type HeaderMenuGroup =
 	| { id: "items"; title?: undefined; items: HeaderAction[] }
 	| HeaderMenuSection;
 

@@ -6,6 +6,7 @@ import { LibraryPage } from "@/components/detail/layout";
 import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { useMobileApi } from "@/lib/api-provider";
+import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 
 export function AgentResourceRouteGate({
@@ -19,6 +20,7 @@ export function AgentResourceRouteGate({
 	children: ReactNode | ((projectId: string) => ReactNode);
 	workspaceFallback?: boolean;
 }) {
+	const t = useI18n();
 	const agent = useCloudAgent(agentId);
 	const scope = useAccountScope(),
 		read = useAccountRead(),
@@ -62,7 +64,7 @@ export function AgentResourceRouteGate({
 			<LibraryPage>
 				<ApiErrorPanel
 					error={agent.error ?? bindings.error}
-					title="Project unavailable"
+					title={t("projects.unavailable")}
 					onRetry={() => {
 						void agent.refetch();
 						void bindings.refetch();

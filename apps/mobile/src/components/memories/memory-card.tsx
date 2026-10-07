@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
+import { useI18n } from "@/lib/i18n";
 import { useAgentRouteId } from "@/platform/navigation/use-agent-route";
 export function MemoryCard({
 	memory,
@@ -26,6 +27,7 @@ export function MemoryCard({
 	onEdit?: () => void;
 	searchQuery?: string;
 }) {
+	const t = useI18n();
 	const agentId = useAgentRouteId();
 	const visibleContent = searchQuery
 		? searchExcerpt(memory.content, searchQuery, 320)
@@ -42,7 +44,7 @@ export function MemoryCard({
 							}
 						: { pathname: "/memories/[id]", params: { id: memory.id } }
 				}
-				ariaLabel={`Open memory: ${memoryDisplayName(memory.content)}`}
+				ariaLabel={t("labels.openMemory", { name: memoryDisplayName(memory.content) })}
 			/>
 			<WebView recipe="">
 				<WebText recipe={memoriesSurfaceClasses.content} numberOfLines={8}>
@@ -79,7 +81,9 @@ export function MemoryCard({
 						className={webView(memoriesSurfaceClasses.deleteAction)}
 						onPress={onDelete}
 						onLongPress={onEdit}
-						accessibilityLabel={`Delete memory: ${memoryDisplayName(memory.content)}`}
+						accessibilityLabel={t("labels.deleteMemory", {
+							name: memoryDisplayName(memory.content),
+						})}
 					>
 						<Icon as={Trash2} className={webBoth(memoriesSurfaceClasses.deleteIcon)} />
 					</Button>

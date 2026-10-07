@@ -21,6 +21,7 @@ import { Text } from "@/components/ui/text";
 import { WebView, webBoth } from "@/components/ui/web-layout";
 import { useCloudAgents } from "@/hooks/cloud-inventory";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
+import { useI18n } from "@/lib/i18n";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export default function AgentsRoute() {
@@ -31,6 +32,7 @@ export default function AgentsRoute() {
 	);
 }
 function AgentsView({ project }: { project?: Project }) {
+	const t = useI18n();
 	const agents = useCloudAgents(project?.id);
 	const dashboard = useDashboardAgents();
 	const projects = useCloudProjects();
@@ -57,13 +59,15 @@ function AgentsView({ project }: { project?: Project }) {
 		<SafeAreaScreen>
 			<NativeHeader
 				title={agentSurfaceCopy.agents}
-				actions={[{ id: "create", label: "Create Agent", onPress: () => router.push("/deploy") }]}
+				actions={[
+					{ id: "create", label: t("agents.create"), onPress: () => router.push("/deploy") },
+				]}
 				menu={{
-					label: "Project scope",
+					label: t("projects.filter"),
 					items: [
 						{
 							id: "all",
-							label: "All projects",
+							label: t("projects.all"),
 							onPress: () => router.setParams({ projectId: undefined }),
 						},
 						...(projects.data ?? []).map((item) => ({

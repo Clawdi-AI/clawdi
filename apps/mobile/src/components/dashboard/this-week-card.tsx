@@ -5,6 +5,7 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { useI18n } from "@/lib/i18n";
 export function ThisWeekCard({
 	stats,
 	error,
@@ -14,6 +15,7 @@ export function ThisWeekCard({
 	error?: unknown;
 	onRetry?: () => void;
 }) {
+	const t = useI18n();
 	const { ready, todaySessions, topModel, manualWeek, automatedWeek, streakLabel } =
 		thisWeekModel(stats);
 	return (
@@ -34,7 +36,7 @@ export function ThisWeekCard({
 									<WebText recipe={styles.sessionCount}>{formatNumber(manualWeek)}</WebText>
 									{automatedWeek !== undefined && automatedWeek > 0 ? (
 										<WebText recipe={styles.automatedCount}>
-											+ {formatNumber(automatedWeek)} automated (cron, heartbeat)
+											+ {formatNumber(automatedWeek)} {t("home.automatedSessions")}{" "}
 										</WebText>
 									) : null}
 								</>

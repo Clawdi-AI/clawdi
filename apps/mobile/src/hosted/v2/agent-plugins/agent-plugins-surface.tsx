@@ -7,7 +7,7 @@ import {
 	pluginDisplayName,
 } from "@clawdi/shared/api";
 import { agentPluginsSurfaceClasses as styles } from "@clawdi/shared/ui";
-import { agentSurfaceCopy, identityFor } from "@clawdi/shared/view";
+import { agentSectionCopy, agentSurfaceCopy, identityFor } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
@@ -228,7 +228,7 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 									/>
 									{item.desired ? (
 										<ActionButton
-											label="Remove"
+											label={t("composite.remove")}
 											variant="ghost"
 											disabled={disabled}
 											onPress={() => remove(item.name)}
@@ -245,7 +245,7 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 			title={
 				pluginName ? pluginDisplayName(items[0] ?? { name: pluginName }) : agentSurfaceCopy.plugins
 			}
-			description="Install skills and MCP servers for this agent."
+			description={agentSectionCopy.plugins.description}
 		>
 			<Stack.Screen options={{ headerSearchBarOptions: pluginName ? undefined : headerSearch }} />
 			<ListToolbar
@@ -254,7 +254,7 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 						value={category}
 						onValueChange={setCategory}
 						options={[
-							{ value: "", label: "All categories" },
+							{ value: "", label: t("agentExtensions.allCategories") },
 							...categories.map((value) => ({ value, label: value })),
 						]}
 					/>
@@ -267,7 +267,7 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 			{inventory.isError || catalog.isError ? (
 				<ApiErrorPanel
 					error={inventory.error ?? catalog.error}
-					title="Couldn't load plugins"
+					title={t("agentExtensions.loadError")}
 					onRetry={refresh}
 				/>
 			) : inventory.isPending || catalog.isPending ? (
