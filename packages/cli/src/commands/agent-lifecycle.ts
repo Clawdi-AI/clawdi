@@ -3,7 +3,8 @@ import * as p from "@clack/prompts";
 import type { DeployComponents, HostedDeployOperation } from "@clawdi/shared/api";
 import { computeFundingMode, isComputeSubscriptionRenewing } from "@clawdi/shared/view";
 import { requireUuid } from "../lib/cli-options";
-import { mapHttpError } from "../lib/errors";
+import { isAuthorizationRequired, mapHttpError } from "../lib/errors";
+import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
 import { AuthorizationRequiredError, requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
@@ -20,6 +21,10 @@ export type AgentRemoveOptions = {
 };
 
 function cloudAgentError(error: unknown): never {
+	if (error instanceof HostedDeployAuthorizationError) {
+		const mapped = mapHttpError({ status: 0, code: error.code }, "Cloud Agent");
+		if (mapped?.exitCode === 4) throw new AuthorizationRequiredError(mapped.message);
+	}
 	if (error instanceof HostedDeployApiError) {
 		if (error.status === 0) throw error;
 		const mapped = mapHttpError(error, "Cloud Agent");
@@ -33,8 +38,7 @@ function cloudAgentError(error: unknown): never {
 			);
 		throw new Error("Could not manage the Cloud Agent. Please retry or run `clawdi doctor`.");
 	}
-	if (error instanceof Error && /\bsign[ -]in\b/i.test(error.message))
-		throw new AuthorizationRequiredError(error.message);
+	if (isAuthorizationRequired(error)) throw new AuthorizationRequiredError(error.message);
 	throw error;
 }
 

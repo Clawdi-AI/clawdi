@@ -1,9 +1,9 @@
 import type { HostedDeployWallet, HostedWalletBinding } from "@clawdi/shared/api";
 import { parsePositiveInteger } from "../lib/cli-options";
-import { mapHttpError } from "../lib/errors";
+import { isAuthorizationRequired, mapHttpError } from "../lib/errors";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
-import { requireAuth } from "../lib/require-auth";
+import { AuthorizationRequiredError, requireAuth } from "../lib/require-auth";
 import { isInteractive } from "../lib/tty";
 
 export async function walletTransactionsCommand(
@@ -55,7 +55,11 @@ async function readWalletResult<T>(load: () => Promise<T>): Promise<T> {
 	try {
 		return await load();
 	} catch (error) {
-		throw new Error(safeWalletStatusError(error).message);
+		const safe = safeWalletStatusError(error);
+		if (isAuthorizationRequired(error)) {
+			throw new AuthorizationRequiredError(safe.message);
+		}
+		throw new Error(safe.message);
 	}
 }
 
@@ -144,9 +148,13 @@ function safeWalletStatusError(error: unknown): { code: string; message: string 
 	) {
 		return { code: "not_signed_in", message: "Not signed in. Run `clawdi auth login` first." };
 	}
+	if (error instanceof HostedDeployAuthorizationError) {
+		const mapped = mapHttpError({ status: 0, code: error.code }, "Hosted Wallet");
+		if (mapped) return { code: mapped.code, message: mapped.message };
+	}
 	if (error instanceof HostedDeployApiError) {
 		const mapped = mapHttpError(error, "Hosted Wallet");
-		if (mapped) return mapped;
+		if (mapped) return { code: mapped.code, message: mapped.message };
 		return {
 			code:
 				error.status >= 500 || error.status === 0 ? "hosted_unavailable" : "hosted_wallet_error",
@@ -167,6 +175,7 @@ export async function runWalletStatusCommand(
 		await walletStatusCommand(options, dependencies);
 	} catch (error) {
 		const safe = safeWalletStatusError(error);
+		const authorizationRequired = isAuthorizationRequired(error);
 		if (options.json || !(dependencies.interactive ?? isInteractive())) {
 			(dependencies.writeStdout ?? console.log)(
 				JSON.stringify(
@@ -175,9 +184,10 @@ export async function runWalletStatusCommand(
 					2,
 				),
 			);
-			process.exitCode = 1;
+			process.exitCode = authorizationRequired ? 4 : 1;
 			return;
 		}
+		if (authorizationRequired) throw new AuthorizationRequiredError(safe.message);
 		throw new Error(safe.message);
 	}
 }

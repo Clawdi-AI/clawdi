@@ -1,18 +1,65 @@
-import { chmodSync, mkdirSync, readFileSync, type Stats, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+	closeSync,
+	existsSync,
+	fstatSync,
+	openSync,
+	readFileSync,
+	type Stats,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
+import { PRIVATE_DIR_MODE, writePrivateFileAtomic } from "./private-file";
 
 function normalizedPath(path: string, label: string): string {
 	const normalized = path.trim();
-	if (!normalized) throw new Error(`${label} must not be empty`);
+	if (!normalized || normalized.includes("\0")) throw new Error(`${label} must be a valid path`);
 	return normalized;
 }
 
-function assertOwnerOnly(path: string, label: string): void {
-	let stats: Stats;
+function windowsOwnerOnly(path: string, label: string, protect = false): void {
+	const literal = `'${path.replaceAll("'", "''")}'`;
+	const script = `
+$ErrorActionPreference = 'Stop'
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+$path = ${literal}
+${
+	protect
+		? `$acl = New-Object System.Security.AccessControl.FileSecurity
+$acl.SetOwner($sid)
+$acl.SetAccessRuleProtection($true, $false)
+$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, 'FullControl', 'Allow')))
+Set-Acl -LiteralPath $path -AclObject $acl`
+		: ""
+}
+$acl = Get-Acl -LiteralPath $path
+$owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier])
+if ($owner.Value -ne $sid.Value) { throw 'Wrong token file owner.' }
+foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+  if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -ne $sid.Value) {
+    throw 'Token file grants access to another identity.'
+  }
+}
+`;
 	try {
-		stats = statSync(path);
+		execFileSync(
+			"powershell.exe",
+			["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+			{
+				timeout: 20_000,
+				stdio: "pipe",
+			},
+		);
 	} catch {
-		throw new Error(`${label} ${path} could not be read.`);
+		throw new Error(`${label} ${path} must be accessible only by its owner.`);
+	}
+}
+
+function assertOwnerOnly(stats: Stats, path: string, label: string): void {
+	if (!stats.isFile()) throw new Error(`${label} ${path} must be a regular file.`);
+	if (process.platform === "win32") {
+		windowsOwnerOnly(path, label);
+		return;
 	}
 	if ((stats.mode & 0o077) !== 0) {
 		throw new Error(`${label} ${path} must be readable only by its owner (mode 0600).`);
@@ -25,10 +72,20 @@ function assertOwnerOnly(path: string, label: string): void {
 
 export function readAuthTokenFile(path: string, label = "--auth-token-file"): string {
 	const normalized = normalizedPath(path, label);
-	assertOwnerOnly(normalized, label);
-	const token = readFileSync(normalized, "utf-8").trim();
-	if (!token) throw new Error(`${label} ${normalized} is empty`);
-	return token;
+	let fd: number;
+	try {
+		fd = openSync(normalized, "r");
+	} catch {
+		throw new Error(`${label} ${normalized} could not be read.`);
+	}
+	try {
+		assertOwnerOnly(fstatSync(fd), normalized, label);
+		const token = readFileSync(fd, "utf-8").trim();
+		if (!token) throw new Error(`${label} ${normalized} is empty`);
+		return token;
+	} finally {
+		closeSync(fd);
+	}
 }
 
 export function loadAuthTokenFile(path: string | undefined, label = "--auth-token-file"): void {
@@ -40,24 +97,17 @@ export function loadAuthTokenFile(path: string | undefined, label = "--auth-toke
 export function persistAuthTokenFile(root: string, token: string): string {
 	const normalizedToken = token.trim();
 	if (!normalizedToken) throw new Error("CLAWDI_AUTH_TOKEN must not be empty");
-	mkdirSync(root, { recursive: true, mode: 0o700 });
 	const path = join(root, "auth-token");
-	if (statExists(path)) assertOwnerOnly(path, "daemon auth token file");
-	writeFileSync(path, `${normalizedToken}\n`, { mode: 0o600 });
-	try {
-		chmodSync(path, 0o600);
-	} catch {
-		throw new Error(`Could not set owner-only permissions on daemon auth token file ${path}.`);
+	if (existsSync(path)) readAuthTokenFile(path, "daemon auth token file");
+	if (process.platform === "win32") {
+		// POSIX mode bits do not express Windows ACLs. Secure the empty file
+		// before writing any bearer credential, then enforce the same ACL on read.
+		if (!existsSync(path)) writePrivateFileAtomic(path, "", { dirMode: PRIVATE_DIR_MODE });
+		windowsOwnerOnly(path, "daemon auth token file", true);
+		writeFileSync(path, `${normalizedToken}\n`);
+	} else {
+		writePrivateFileAtomic(path, `${normalizedToken}\n`, { dirMode: PRIVATE_DIR_MODE });
 	}
-	assertOwnerOnly(path, "daemon auth token file");
+	readAuthTokenFile(path, "daemon auth token file");
 	return path;
-}
-
-function statExists(path: string): boolean {
-	try {
-		statSync(path);
-		return true;
-	} catch {
-		return false;
-	}
 }

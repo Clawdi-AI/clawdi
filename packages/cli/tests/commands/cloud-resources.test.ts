@@ -591,7 +591,7 @@ describe("Cloud Agent lifecycle", () => {
 		const result = await runCli(["agent", "start", agentId, "--json"]);
 		expect(result.code).toBe(4);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("sign-in");
+		expect(result.stderr).toContain("CLI authorization was rejected");
 		expect(requests).toEqual([]);
 	});
 

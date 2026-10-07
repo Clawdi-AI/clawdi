@@ -9,6 +9,7 @@ const AUTH_REQUIRED_CODES = new Set([
 	"hosted_token_expired",
 	"invalid_hosted_token",
 	"invalid_hosted_token_expiry",
+	"hosted_endpoint_binding_mismatch",
 	"oauth_login_required",
 	"oauth_login_expired",
 ]);
@@ -24,18 +25,18 @@ export function mapHttpError(
 	error: { status: number; code?: string },
 	service = "Clawdi",
 ): HttpErrorMapping | null {
-	if (error.status === 401 || (error.code !== undefined && AUTH_REQUIRED_CODES.has(error.code))) {
-		return {
-			code: `${service.toLowerCase().replaceAll(" ", "_")}_auth_required`,
-			message: "CLI authorization was rejected. Run `clawdi auth login`, then try again.",
-			exitCode: 4,
-		};
-	}
 	if (error.status === 403) {
 		return {
 			code: `${service.toLowerCase().replaceAll(" ", "_")}_forbidden`,
 			message: "You don't have permission to perform this action from the CLI. Use the dashboard.",
 			exitCode: 1,
+		};
+	}
+	if (error.status === 401 || (error.code !== undefined && AUTH_REQUIRED_CODES.has(error.code))) {
+		return {
+			code: `${service.toLowerCase().replaceAll(" ", "_")}_auth_required`,
+			message: "CLI authorization was rejected. Run `clawdi auth login`, then try again.",
+			exitCode: 4,
 		};
 	}
 	return null;
@@ -65,7 +66,8 @@ export function handleError(err: unknown): never {
 		process.stderr.write("\n");
 		const mapped = mapHttpError(err);
 		console.error(chalk.red(`✗ ${mapped?.message ?? err.message}`));
-		if (err.hint && !err.message.includes(err.hint)) console.error(chalk.gray(`  ${err.hint}`));
+		if (!mapped && err.hint && !err.message.includes(err.hint))
+			console.error(chalk.gray(`  ${err.hint}`));
 		if (process.env.CLAWDI_DEBUG) {
 			if (err.status > 0) console.error(chalk.gray(`  HTTP ${err.status}`));
 			console.error(chalk.gray(err.stack ?? ""));
