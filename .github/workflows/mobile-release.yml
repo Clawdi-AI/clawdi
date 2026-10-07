@@ -1,8 +1,14 @@
-name: Mobile production build
+name: Mobile release
 
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: Build a production binary or publish an OTA update
+        type: choice
+        options: [build, update]
+        default: build
+        required: true
       platform:
         description: Platform to build
         type: choice
@@ -14,6 +20,16 @@ on:
         type: boolean
         default: false
         required: true
+      channel:
+        description: Update channel and EAS environment (update only)
+        type: choice
+        options: [preview, production]
+        default: preview
+        required: true
+      message:
+        description: Update description (required for update)
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -23,11 +39,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  preflight:
     environment: production
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
-    timeout-minutes: 120
+    timeout-minutes: 5
     steps:
+      - name: Require main or a mobile release tag
+        run: |
+          case "$GITHUB_REF" in
+            refs/heads/main|refs/tags/mobile-v*) ;;
+            *) echo "::error::Mobile releases require main or a mobile-v* tag."; exit 1 ;;
+          esac
       - uses: actions/checkout@v7
       - name: Require Expo release configuration
         env:
@@ -42,6 +64,69 @@ jobs:
             echo "::error::Configure the EAS_PROJECT_ID repository variable before dispatching a mobile release."
             exit 1
           fi
+      - name: Validate release inputs and iOS submission configuration
+        env:
+          OPERATION: ${{ inputs.operation }}
+          PLATFORM: ${{ inputs.platform }}
+          AUTO_SUBMIT: ${{ inputs.auto_submit }}
+          CHANNEL: ${{ inputs.channel }}
+          UPDATE_MESSAGE: ${{ inputs.message }}
+        run: |
+          case "$OPERATION" in
+            build)
+              case "$PLATFORM" in
+                android|ios|all) ;;
+                *) echo "::error::Invalid platform"; exit 1 ;;
+              esac
+              if [[ "$AUTO_SUBMIT" == true && "$PLATFORM" != android ]]; then
+                if ! jq -e '.submit.production.ios.ascAppId | strings | select(test("^[0-9]+$") and length <= 30)' apps/mobile/eas.json >/dev/null; then
+                  echo "::error::iOS auto-submit requires the owner's numeric App Store Connect app ID in apps/mobile/eas.json at submit.production.ios.ascAppId. Commit that non-secret value before enabling auto-submit."
+                  exit 1
+                fi
+              fi
+              ;;
+            update)
+              case "$CHANNEL" in
+                preview|production) ;;
+                *) echo "::error::Invalid update channel"; exit 1 ;;
+              esac
+              if [[ ! "$UPDATE_MESSAGE" =~ [^[:space:]] ]]; then
+                echo "::error::An update description is required."
+                exit 1
+              fi
+              ;;
+            *) echo "::error::Invalid release operation"; exit 1 ;;
+          esac
+
+  verify-mobile:
+    needs: preflight
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          node-version: "24.21.0"
+      - name: Mobile typecheck
+        run: bun run --cwd apps/mobile typecheck
+      - name: Mobile tests
+        run: bun run --cwd apps/mobile test:internal
+      - name: Export mobile bundles
+        working-directory: apps/mobile
+        run: |
+          mobile_exports=$(mktemp -d)
+          trap 'rm -rf "$mobile_exports"' EXIT
+          bunx expo export --platform ios --output-dir "$mobile_exports/ios"
+          bunx expo export --platform android --output-dir "$mobile_exports/android"
+
+  build:
+    needs: verify-mobile
+    if: inputs.operation == 'build'
+    environment: production
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-bun-ci
         with:
           node-version: "24.21.0"
@@ -67,3 +152,37 @@ jobs:
             args+=(--auto-submit)
           fi
           eas "${args[@]}"
+
+  update:
+    needs: verify-mobile
+    if: inputs.operation == 'update'
+    environment: production
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 30
+    env:
+      EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          node-version: "24.21.0"
+      - name: Set up EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: 24.8.0
+          packager: bun
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Publish OTA update
+        working-directory: apps/mobile
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          UPDATE_MESSAGE: ${{ inputs.message }}
+        run: eas update --channel "$CHANNEL" --environment "$CHANNEL" --non-interactive --message "$UPDATE_MESSAGE"
+      - name: Upload Update source maps to Sentry
+        if: env.SENTRY_AUTH_TOKEN != ''
+        working-directory: apps/mobile
+        env:
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        run: npx sentry-expo-upload-sourcemaps dist

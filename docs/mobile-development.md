@@ -829,8 +829,9 @@ In each environment, set `EAS_PROJECT_ID` to the owner's Expo project UUID with
 plaintext or sensitive visibility so both Build and Update can resolve it.
 When unset, local config/prebuild omits the project id and update URL.
 Keep Sentry upload settings env-only: `SENTRY_ORG`, `SENTRY_PROJECT` and secret
-`SENTRY_AUTH_TOKEN`. Supply the token separately to the local OTA map uploader;
-EAS secret values are unavailable during Update.
+`SENTRY_AUTH_TOKEN`. For CI updates, configure the matching `SENTRY_ORG` and
+`SENTRY_PROJECT` GitHub variables and `SENTRY_AUTH_TOKEN` secret in the production
+GitHub Environment; EAS secret values are unavailable during Update.
 
 `EXPO_PUBLIC_CLAWDI_ENV` is the sole environment source for validation and
 Sentry, including when updates are disabled and their channel is empty.
@@ -855,10 +856,22 @@ eas build --profile preview --platform android
 
 Done: the resulting APK is non-debuggable, has no release cleartext override,
 no backup and no blocked permissions. This remains an owner-run acceptance gate.
-`submit.production` contains no invented app ids or credentials. EAS does not
-interpolate environment references in `eas.json`; the owner must provide the
-ASC app id and configure Play's service account through EAS credentials before
-submission. Non-interactive ASC configuration remains an unresolved spec input.
+The owner must supply the non-secret App Store Connect app ID for
+`apps/mobile/eas.json` at `submit.production.ios.ascAppId`, then commit its numeric
+string before iOS auto-submit. [EAS Submit requires that field for CI](https://docs.expo.dev/submit/eas-json/#production-profile);
+EAS CLI 24.8.0 does not interpolate environment references in `ascAppId`.
+Configure signing credentials and Play's service account through EAS credentials.
+
+Dispatch [Mobile release](../.github/workflows/mobile-release.yml) only from
+`main` or a `mobile-v*` tag. Both `operation=build` and `operation=update` use the
+production GitHub Environment and require its `EXPO_TOKEN` secret plus the
+`EAS_PROJECT_ID` GitHub variable. Preflight rejects other refs, missing release
+configuration and iOS/all auto-submit without `ascAppId`, before EAS runs.
+Mobile typecheck, tests and separate iOS/Android exports must pass before either
+operation. `build` uses the production profile, the selected `platform` and
+optional `auto_submit`; `update` requires a `message` and a `channel` of `preview`
+or `production`, passed as both `--channel` and `--environment` to EAS CLI 24.8.0.
+Done: preflight and `verify-mobile` are green before the selected release job runs.
 
 Sentry is inactive without a DSN. When enabled, it reports root exceptions and
 samples performance at 0.1 using Sentry RN's native release/dist defaults. It
@@ -870,10 +883,11 @@ set stable between Build and Update. SDK57 fingerprinting includes resolved
 both, and do not put build-only credentials in config. Changing these public
 config values can require a new binary.
 
-After an owner-authorized `eas update --channel production --environment production`,
-upload generated maps with `bunx sentry-expo-upload-sourcemaps dist` using the
-same Sentry org/project and a locally supplied auth token. Store review precedes
-OTA; reserve OTA for compatible JavaScript fixes.
+After a successful CI Update, the workflow runs the documented
+[`npx sentry-expo-upload-sourcemaps dist`](https://docs.expo.dev/guides/using-sentry/#usage-with-eas-update)
+only when `SENTRY_AUTH_TOKEN` is configured, using the same Sentry org/project.
+Without the token, source map upload is skipped. Store review precedes OTA;
+reserve OTA for compatible JavaScript fixes.
 
 Done: a preview crash is symbolicated in Sentry, and a build without a DSN runs
 normally. These live checks, TestFlight privacy validation and store metadata
