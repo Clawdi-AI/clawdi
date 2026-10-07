@@ -288,12 +288,17 @@ and clean. Production behavior and npm provenance remain unqualified.
 
 The writer-lock regression exercises publication at the last unlink boundary
 and GC while a native writer owns the lock. Both defer conflicting work without
-removing referenced credentials. Code source `b6c5db354` passed the full Docker
-CLI/typecheck (206 files), `runtime-systemd` (33 tests), `ci`, and full `cli-lint`
-(375 files; two existing warnings in Bash fixture strings). All commands exited 0.
+removing referenced credentials. Qualification source `cf6b8635e`, rebased onto
+main `5bdb3678c`, passed the full Docker CLI/typecheck (208 files),
+`runtime-systemd` (33 tests), `ci`, and full `cli-lint`
+(376 files; two existing warnings in Bash fixture strings). All commands exited 0.
 One native pool sample per runtime also passed installation through the stricter
 artifact proxy, adoption, reboot/preservation and TTL replacement. The fixture
 exited 0 and removed its disposable resources and directories.
+
+Default native, upstream-contract and Windows gates in the CLI suite remain
+disabled; Linux systemd qualification and the paired native pool fixture run
+separately. The writer-lock source is byte-identical to native source `b6c5db354`.
 
 Done: both writer/GC interleavings, the requested OSS Docker suites and the two
 native runtime samples pass; fixture cleanup is complete.
