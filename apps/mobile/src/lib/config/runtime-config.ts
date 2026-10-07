@@ -8,6 +8,7 @@ export type MobileRuntimeConfig = Readonly<{
 	computeApiUrl?: string;
 	revenueCatAppleKey?: string;
 	revenueCatGoogleKey?: string;
+	revenueCatCustomerCenterEnabled?: boolean;
 	linkHosts?: readonly string[];
 }>;
 
@@ -21,6 +22,7 @@ type RuntimeConfigValues = Readonly<{
 	computeApiUrl?: unknown;
 	revenueCatAppleKey?: unknown;
 	revenueCatGoogleKey?: unknown;
+	revenueCatCustomerCenterEnabled?: unknown;
 	linkHosts?: unknown;
 }>;
 
@@ -49,6 +51,7 @@ export function parseMobileRuntimeConfig(
 	const computeApiUrl = requiredString(values.computeApiUrl);
 	const revenueCatAppleKey = requiredString(values.revenueCatAppleKey);
 	const revenueCatGoogleKey = requiredString(values.revenueCatGoogleKey);
+	const revenueCatCustomerCenterEnabled = values.revenueCatCustomerCenterEnabled === true;
 	// RevenueCat Test Store public SDK keys start with `test_`; never ship them to stores.
 	if (
 		environment === "production" &&
@@ -95,6 +98,7 @@ export function parseMobileRuntimeConfig(
 				...(computeApiUrl ? { computeApiUrl: readApiBaseUrl(computeApiUrl, true) } : {}),
 				...(revenueCatAppleKey ? { revenueCatAppleKey } : {}),
 				...(revenueCatGoogleKey ? { revenueCatGoogleKey } : {}),
+				...(revenueCatCustomerCenterEnabled ? { revenueCatCustomerCenterEnabled: true } : {}),
 			},
 		};
 	} catch {

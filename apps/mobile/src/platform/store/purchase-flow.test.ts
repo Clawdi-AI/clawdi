@@ -11,6 +11,7 @@ import {
 import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
 import { createAccountScope } from "@/platform/auth/account-scope";
 import { createPurchaseAttemptStore, parsePurchaseAttempt } from "./purchase-attempt-storage";
+import { StorePurchaseError } from "./store-error";
 import { isStoreBuild } from "./store-policy";
 import { recoverStoreFlow } from "./store-recovery";
 
@@ -181,6 +182,9 @@ function fixture(configOverrides: Partial<MobileRuntimeConfig> = {}, identityTim
 		initialize: () => identity.initialize(scope.signal),
 		setAttempt: (state: StorePurchaseAttempt["state"]) => {
 			attempt = { ...attempt, state };
+		},
+		setAttemptFields: (fields: Partial<StorePurchaseAttempt>) => {
+			attempt = { ...attempt, ...fields };
 		},
 		switchAccount: () => {
 			current = false;
@@ -516,6 +520,19 @@ describe("durable store attempts", () => {
 		expect(f.newKey).toHaveBeenCalledTimes(1);
 		expect(f.values.size).toBe(0);
 	});
+	test("credits recovery ignores the hosted product echo", async () => {
+		const f = fixture();
+		await f.initialize();
+		await expect(
+			f.makeFlow().purchase(intent, async () => {
+				throw new Error("App terminated after credit purchase");
+			}),
+		).rejects.toMatchObject({ code: "store_request_failed" });
+		f.setAttemptFields({ store_product_id: "ai.clawdi.app.credits.10" });
+		f.setAttempt("funding_applied");
+		expect((await f.makeFlow().recover())[0]?.status).toBe("funding_applied");
+		expect(f.values.size).toBe(0);
+	});
 	test("interrupted native result recovers without a hint and never reopens the paywall", async () => {
 		const f = fixture();
 		await f.initialize();
@@ -571,6 +588,22 @@ describe("durable store attempts", () => {
 		await f.makeFlow().purchase(intent, async () => transaction);
 		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.cancelled).toBe(false);
 		expect(f.newKey).toHaveBeenCalledTimes(1);
+	});
+	test("flow keeps native pending distinct from explicit cancellation", async () => {
+		const pending = fixture();
+		await pending.initialize();
+		await expect(
+			pending.makeFlow().purchase(intent, async () => {
+				throw new StorePurchaseError("payment_pending");
+			}),
+		).rejects.toMatchObject({ code: "payment_pending" });
+		expect(parsePurchaseAttempt(pending.values.get("journal") ?? "")?.purchaseStarted).toBe(true);
+
+		const cancelled = fixture();
+		await cancelled.initialize();
+		const outcome = await cancelled.makeFlow().purchase(intent, async () => null);
+		expect(outcome.status).toBe("cancelled");
+		expect(parsePurchaseAttempt(cancelled.values.get("journal") ?? "")?.cancelled).toBe(true);
 	});
 	test("recovery confirms expired paid evidence once, returns submitted and releases the journal", async () => {
 		const f = fixture();

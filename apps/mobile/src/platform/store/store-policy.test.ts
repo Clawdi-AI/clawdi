@@ -1,7 +1,38 @@
 import { describe, expect, test } from "bun:test";
-import { storeRecoveryAction, storeSurfaces } from "./store-policy";
+import { computePurchaseAvailable, storeRecoveryAction, storeSurfaces } from "./store-policy";
 
 describe("store build surfaces", () => {
+	test("compute purchases require the store build, server flag, and an available slot", () => {
+		const enabled = {
+			compute_subscriptions_enabled: true,
+			compute_slot: { available: true },
+		};
+		expect(computePurchaseAvailable({ environment: "production" }, enabled)).toBe(true);
+		expect(computePurchaseAvailable({ environment: "preview" }, enabled)).toBe(false);
+		expect(
+			computePurchaseAvailable(
+				{ environment: "production" },
+				{ ...enabled, compute_subscriptions_enabled: false },
+			),
+		).toBe(false);
+		expect(
+			computePurchaseAvailable(
+				{ environment: "production" },
+				{
+					...enabled,
+					compute_slot: { available: false },
+				},
+			),
+		).toBe(false);
+		expect(
+			computePurchaseAvailable(
+				{ environment: "production" },
+				{ ...enabled, compute_slot: { available: false } },
+				{ target_contract_id: "11111111-1111-4111-8111-111111111111" },
+			),
+		).toBe(true);
+	});
+
 	test("store builds hide card-only surfaces and always show credits, even when unavailable", () => {
 		for (const available of [true, false])
 			expect(storeSurfaces(true, available)).toEqual({

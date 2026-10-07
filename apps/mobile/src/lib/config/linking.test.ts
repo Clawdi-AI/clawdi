@@ -117,6 +117,7 @@ test("Clerk native passkeys associate the Frontend API encoded in the publishabl
 test("release metadata stays usable without owner credentials and enables updates when configured", () => {
 	const previous = process.env.EAS_PROJECT_ID;
 	const previousDsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
+	const previousCustomerCenter = process.env.EXPO_PUBLIC_REVENUECAT_CUSTOMER_CENTER_ENABLED;
 	const config: ExpoConfig = {
 		name: "Test",
 		slug: "test",
@@ -124,6 +125,7 @@ test("release metadata stays usable without owner credentials and enables update
 	try {
 		delete process.env.EAS_PROJECT_ID;
 		delete process.env.EXPO_PUBLIC_SENTRY_DSN;
+		delete process.env.EXPO_PUBLIC_REVENUECAT_CUSTOMER_CENTER_ENABLED;
 		const local = configure({ config });
 		expect(local.runtimeVersion).toEqual({ policy: "fingerprint" });
 		expect(local.ios?.config?.usesNonExemptEncryption).toBe(false);
@@ -138,6 +140,9 @@ test("release metadata stays usable without owner credentials and enables update
 			NSPrivacyCollectedDataTypeTracking: false,
 			NSPrivacyCollectedDataTypePurposes: ["NSPrivacyCollectedDataTypePurposeAppFunctionality"],
 		});
+		expect(local.extra?.clawdi?.revenueCatCustomerCenterEnabled).toBe(false);
+		process.env.EXPO_PUBLIC_REVENUECAT_CUSTOMER_CENTER_ENABLED = "1";
+		expect(configure({ config }).extra?.clawdi?.revenueCatCustomerCenterEnabled).toBe(true);
 		process.env.EXPO_PUBLIC_SENTRY_DSN = "https://public@example.test/1";
 		process.env.EAS_PROJECT_ID = "00000000-0000-4000-8000-000000000000";
 		const linked = configure({ config });
@@ -150,5 +155,8 @@ test("release metadata stays usable without owner credentials and enables update
 		else process.env.EAS_PROJECT_ID = previous;
 		if (previousDsn === undefined) delete process.env.EXPO_PUBLIC_SENTRY_DSN;
 		else process.env.EXPO_PUBLIC_SENTRY_DSN = previousDsn;
+		if (previousCustomerCenter === undefined)
+			delete process.env.EXPO_PUBLIC_REVENUECAT_CUSTOMER_CENTER_ENABLED;
+		else process.env.EXPO_PUBLIC_REVENUECAT_CUSTOMER_CENTER_ENABLED = previousCustomerCenter;
 	}
 });

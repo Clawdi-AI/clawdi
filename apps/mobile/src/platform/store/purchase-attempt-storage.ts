@@ -47,27 +47,58 @@ export function parsePurchaseAttempt(raw: string): SavedPurchaseAttempt | null {
 		const request = value.request;
 		if (
 			(request.platform !== "app_store" && request.platform !== "play_store") ||
-			(request.purpose !== "standalone_topup" && request.purpose !== "deploy_continuation") ||
+			(request.purpose !== "standalone_topup" &&
+				request.purpose !== "deploy_continuation" &&
+				request.purpose !== "compute_subscription") ||
 			typeof request.catalogue_revision !== "number" ||
 			!Number.isSafeInteger(request.catalogue_revision) ||
 			request.catalogue_revision < 1 ||
+			(request.store_product_id != null &&
+				(typeof request.store_product_id !== "string" ||
+					request.store_product_id.length < 1 ||
+					request.store_product_id.length > 255)) ||
+			(request.target_contract_id != null && !isUuid(request.target_contract_id)) ||
+			(request.target_deployment_id != null &&
+				(typeof request.target_deployment_id !== "string" ||
+					!/^hdep_.+/.test(request.target_deployment_id))) ||
 			(request.pending_deploy_request_id != null &&
 				(typeof request.pending_deploy_request_id !== "string" ||
 					request.pending_deploy_request_id.length < 1 ||
 					request.pending_deploy_request_id.length > 191)) ||
-			(request.purpose === "standalone_topup" && request.pending_deploy_request_id != null)
+			(request.purpose === "standalone_topup" &&
+				(request.pending_deploy_request_id != null ||
+					request.store_product_id != null ||
+					request.target_contract_id != null ||
+					request.target_deployment_id != null)) ||
+			(request.purpose === "deploy_continuation" &&
+				(request.store_product_id != null ||
+					request.target_contract_id != null ||
+					request.target_deployment_id != null)) ||
+			(request.purpose === "compute_subscription" &&
+				(!request.store_product_id ||
+					[
+						request.pending_deploy_request_id,
+						request.target_contract_id,
+						request.target_deployment_id,
+					].filter((value) => value != null).length !== 1))
 		)
 			return null;
+		const normalizedRequest: StorePurchaseAttemptRequest = {
+			platform: request.platform,
+			catalogue_revision: request.catalogue_revision,
+			purpose: request.purpose,
+			pending_deploy_request_id: request.pending_deploy_request_id ?? null,
+		};
+		if (request.purpose === "compute_subscription") {
+			normalizedRequest.store_product_id = request.store_product_id;
+			normalizedRequest.target_contract_id = request.target_contract_id ?? null;
+			normalizedRequest.target_deployment_id = request.target_deployment_id ?? null;
+		}
 		const parsed: SavedPurchaseAttempt = {
 			format: 1,
 			key: value.key,
 			appUserId: value.appUserId,
-			request: {
-				platform: request.platform,
-				catalogue_revision: request.catalogue_revision,
-				purpose: request.purpose,
-				pending_deploy_request_id: request.pending_deploy_request_id ?? null,
-			},
+			request: normalizedRequest,
 			attemptId: value.attemptId,
 			purchaseStarted: value.purchaseStarted,
 			cancelled: value.cancelled ?? false,
