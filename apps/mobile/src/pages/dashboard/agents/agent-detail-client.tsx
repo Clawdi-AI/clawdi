@@ -17,7 +17,7 @@ import { DeploymentDetailScreen } from "@/hosted/agents/hosted-agent-detail";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountScope } from "@/platform/account-lifecycle";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
-export default function AgentDetailRoute({ section }: { section?: "console" } = {}) {
+export default function AgentDetailRoute({ section }: { section?: "console" | "files" } = {}) {
 	const params = useLocalSearchParams<{ id?: string | string[] }>();
 	const cache = useQueryClient();
 	const scope = useAccountScope();

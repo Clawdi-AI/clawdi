@@ -500,6 +500,11 @@ export const en = {
 		reconnecting: "Reconnecting…",
 		disconnected: "Disconnected",
 	},
+	files: {
+		webOnlyTitle: "Files opens on the web",
+		webOnlyDescription:
+			"Browse and edit this agent's workspace files from the Clawdi web dashboard, or use Terminal now.",
+	},
 	profile: {
 		unsavedTitle: "Discard profile changes?",
 		discard: "Discard changes",

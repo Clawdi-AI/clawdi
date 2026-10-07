@@ -1898,6 +1898,7 @@ function hostedDeployment(
 		},
 		clawdi_cloud_environments: { [agentId]: agentId },
 		ai_provider_auth_kinds: { [runtime]: "managed" },
+		files_endpoint: { url: "https://files.example.test/" },
 		current_plan_slug: included ? "compute_basic" : "compute_performance",
 		upgrade_available: included,
 		upgrade_eligibility: { eligible: included, reason: null },

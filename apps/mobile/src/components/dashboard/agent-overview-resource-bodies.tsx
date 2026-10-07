@@ -14,10 +14,13 @@ import {
 } from "@clawdi/shared/ui";
 import {
 	agentOverviewSummary,
+	agentSectionCopy,
+	agentToolSectionCopy,
 	agentOverviewCopy as copy,
 	daemonStatusPresentation,
 	daemonStatusVisual,
 	deploymentFailurePresentation,
+	deploymentFilesUrl,
 	deploymentRuntimeStatusPresentation,
 	fetchAgentProjectSkills,
 	fetchAgentProjectVaults,
@@ -39,12 +42,14 @@ import {
 	Cpu,
 	CreditCard,
 	FolderKanban,
+	FolderOpen,
 	KeyRound,
 	Laptop,
 	MessagesSquare,
 	Plug,
 	Settings,
 	Sparkles,
+	TerminalSquare,
 	WalletCards,
 } from "lucide-react-native";
 import type { ReactNode } from "react";
@@ -65,6 +70,7 @@ import { WebView } from "@/components/ui/web-layout";
 import { type CloudAgent, useCloudSessions } from "@/hooks/cloud-inventory";
 import { RuntimeBrowser } from "@/hosted/agents/runtime-handoff";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -215,7 +221,7 @@ export function AgentOverview({
 	const computeCard: ReactNode =
 		deployment && compute && computeStatus ? (
 			<OverviewNavigationCard
-				title="Compute"
+				title={copy.compute}
 				description={
 					<WebView recipe={hostedStyles.computeStatus} className="flex-row">
 						<StatusDot status={computeStatus.tone} />
@@ -287,7 +293,7 @@ export function AgentOverview({
 						}
 					/>
 					<OverviewNavigationCard
-						title="AI Providers"
+						title={agentSectionCopy.ai.label}
 						description={
 							hostedCatalog.isPending ? (
 								<Skeleton className="h-4 w-32" />
@@ -374,7 +380,7 @@ export function AgentOverview({
 			<WebView recipe={styles.section}>
 				<AgentOverviewHeading>{copy.workspace}</AgentOverviewHeading>
 				<OverviewNavigationCard
-					title="Projects"
+					title={agentSectionCopy.projects.label}
 					description={summary(
 						"projects",
 						linkedAgentProjectCount(bindings.data ?? []),
@@ -392,7 +398,7 @@ export function AgentOverview({
 				/>
 				{deployment || !agent.adapter_modules || agent.adapter_modules.includes("skills") ? (
 					<OverviewNavigationCard
-						title="Skills"
+						title={agentSectionCopy.skills.label}
 						description={summary(
 							"skills",
 							new Set([
@@ -418,7 +424,7 @@ export function AgentOverview({
 					/>
 				) : null}
 				<OverviewNavigationCard
-					title="Vaults"
+					title={agentSectionCopy.vaults.label}
 					description={summary(
 						"vaults",
 						vaults.data?.length ?? 0,
@@ -436,7 +442,7 @@ export function AgentOverview({
 				/>
 				{deployment ? (
 					<OverviewNavigationCard
-						title="Plugins"
+						title={agentSectionCopy.plugins.label}
 						description={
 							pluginState.kind === "loading" ? (
 								<Skeleton className="h-4 w-32" />
@@ -460,7 +466,7 @@ export function AgentOverview({
 			<WebView recipe={styles.section}>
 				<AgentOverviewHeading>{copy.shared}</AgentOverviewHeading>
 				<OverviewNavigationCard
-					title="Memories"
+					title={agentSectionCopy.memories.label}
 					description={summary(
 						"memories",
 						memories.data?.total ?? 0,
@@ -472,7 +478,7 @@ export function AgentOverview({
 					onPress={() => router.push("/memories")}
 				/>
 				<OverviewNavigationCard
-					title="Connectors"
+					title={agentSectionCopy.connectors.label}
 					description={summary(
 						"connectors",
 						new Set(
@@ -484,6 +490,36 @@ export function AgentOverview({
 					icon={Plug}
 					tint={RESOURCE_TINT_CLASSES.connectors}
 					onPress={() => router.push("/connectors")}
+				/>
+			</WebView>
+			{deployment ? (
+				<WebView recipe={styles.section}>
+					<AgentOverviewHeading>{copy.tools}</AgentOverviewHeading>
+					{deploymentFilesUrl(deployment) ? (
+						<OverviewNavigationCard
+							title={agentToolSectionCopy.files.label}
+							description={agentToolSectionCopy.files.description}
+							icon={FolderOpen}
+							tint={hostedStyles.filesTint}
+							onPress={() => router.push(agentSectionHref(agent.id, "files"))}
+						/>
+					) : null}
+					<OverviewNavigationCard
+						title={agentToolSectionCopy.terminal.label}
+						description={agentToolSectionCopy.terminal.description}
+						icon={TerminalSquare}
+						tint={hostedStyles.terminalTint}
+						onPress={() => router.push(agentSectionHref(agent.id, "terminal"))}
+					/>
+				</WebView>
+			) : null}
+			<WebView recipe={styles.section}>
+				<OverviewNavigationCard
+					title={agentSectionCopy.settings.label}
+					description={agentSectionCopy.settings.description}
+					icon={Settings}
+					tint={hostedStyles.settingsTint}
+					onPress={() => router.push(agentSectionHref(agent.id, "settings"))}
 				/>
 			</WebView>
 		</WebView>

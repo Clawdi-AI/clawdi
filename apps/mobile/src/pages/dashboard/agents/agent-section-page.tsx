@@ -48,7 +48,7 @@ export default function AgentSectionPage() {
 		case "console":
 			return <AgentDetailPage section="console" />;
 		case "files":
-			return <AgentDetailPage />;
+			return <AgentDetailPage section="files" />;
 		default:
 			return (
 				<LibraryPage>

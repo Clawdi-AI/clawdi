@@ -1,10 +1,12 @@
-import type { HostedDeployOperation } from "@clawdi/shared/api";
+import type { DeploymentRead, HostedDeployOperation } from "@clawdi/shared/api";
 import { agentsIndexClasses } from "@clawdi/shared/ui";
 import {
+	agentFilesPresentation,
 	agentOverviewCopy,
 	agentSurfaceCopy,
 	canRetryInitialDeployment,
 	deploymentFailurePresentation,
+	deploymentFilesUrl,
 	deploymentPollingState,
 	deploymentRuntimeStatusPresentation,
 	deploymentStatusFromResource,
@@ -19,7 +21,7 @@ import {
 } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
-import { MonitorPlay, TerminalSquare } from "lucide-react-native";
+import { FolderOpen, MonitorPlay, TerminalSquare } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentOverview } from "@/components/dashboard/agent-overview-resource-bodies";
@@ -48,6 +50,7 @@ import {
 	deploymentNeedsPolling,
 	operationIdFromName,
 } from "@/hosted/deployment-status";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -62,7 +65,7 @@ export function DeploymentDetailScreen({
 }: {
 	deploymentId: string | undefined;
 	management?: boolean;
-	section?: "console";
+	section?: "console" | "files";
 }) {
 	const scope = useAccountScope();
 	return (
@@ -82,7 +85,7 @@ function DeploymentDetail({
 }: {
 	deploymentId: string | undefined;
 	management?: boolean;
-	section?: "console";
+	section?: "console" | "files";
 }) {
 	const cache = useQueryClient();
 	const [accepted, setAccepted] = useState<HostedDeployOperation | null>(null);
@@ -199,6 +202,74 @@ function DeploymentDetail({
 		await Promise.all([query.refetch(), ...(operationId ? [operation.refetch()] : [])]);
 	};
 
+	// Web's StartComputeAction: start in place, otherwise resolve funding in the compute sheet.
+	const startActions = (deployment: DeploymentRead, stopped: boolean) =>
+		deployment.start_action === "start" ? (
+			<DeploymentControls
+				section="startup"
+				startLabel={stopped ? "Start" : "Start agent"}
+				deployment={deployment}
+				deploymentId={deployment.resource.id}
+				blocked={query.isError}
+				transitioning={Boolean(activeOperation && !activeOperation.done)}
+				onAccepted={async (result) => {
+					setAccepted(result);
+					await refreshResources();
+				}}
+				onAbsent={refreshResources}
+			/>
+		) : stopped ? (
+			<ActionButton
+				label={
+					deployment.start_action === "subscribe"
+						? "Subscribe to start"
+						: deployment.start_action === "top_up"
+							? surfaces.addCredits
+								? t("store.addCreditsToStart")
+								: "Top up to start"
+							: deployment.start_action === "contact_support"
+								? "Contact support"
+								: "Pay to start"
+				}
+				onPress={() =>
+					router.push({
+						pathname: "/agents/[id]/compute",
+						params: { id: deployment.agent_id ?? "" },
+					})
+				}
+			/>
+		) : null;
+
+	// Web hides Files without an authoritative endpoint; the route then shows the overview.
+	if (section === "files" && deployment && deploymentFilesUrl(deployment)) {
+		const view = agentFilesPresentation(deployment);
+		return (
+			<SafeAreaScreen>
+				<AgentSectionNavigation agentId={deployment.agent_id ?? ""} section="files" />
+				{query.isError ? (
+					<ApiErrorPanel error={query.error} onRetry={() => void query.refetch()} />
+				) : null}
+				<EmptyState
+					// Web's StoppedAgentState keeps the default empty-state icon.
+					icon={view.state === "stopped" ? undefined : FolderOpen}
+					className="flex-1"
+					title={view.state === "running" ? t("files.webOnlyTitle") : view.title}
+					description={view.state === "running" ? t("files.webOnlyDescription") : view.description}
+					action={
+						view.state === "running" ? (
+							<ActionButton
+								label={runtimeConsoleCopy.terminal}
+								onPress={() => router.push(agentSectionHref(deployment.agent_id ?? "", "terminal"))}
+							/>
+						) : view.state === "starting" ? undefined : (
+							startActions(deployment, view.state === "stopped")
+						)
+					}
+				/>
+			</SafeAreaScreen>
+		);
+	}
+
 	if (section === "console" && deployment) {
 		const view = runtimeConsolePresentation(
 			deployment,
@@ -267,42 +338,9 @@ function DeploymentDetail({
 										onPress={() => router.push(`/agents/${deployment.agent_id}/terminal`)}
 									/>
 								) : null}
-								{(view.state === "stopped" || view.state === "not_running") &&
-								deployment.start_action === "start" ? (
-									<DeploymentControls
-										section="startup"
-										startLabel={view.state === "stopped" ? "Start" : "Start agent"}
-										deployment={deployment}
-										deploymentId={deployment.resource.id}
-										blocked={query.isError}
-										transitioning={Boolean(activeOperation && !activeOperation.done)}
-										onAccepted={async (result) => {
-											setAccepted(result);
-											await refreshResources();
-										}}
-										onAbsent={refreshResources}
-									/>
-								) : view.state === "stopped" ? (
-									<ActionButton
-										label={
-											deployment.start_action === "subscribe"
-												? "Subscribe to start"
-												: deployment.start_action === "top_up"
-													? surfaces.addCredits
-														? t("store.addCreditsToStart")
-														: "Top up to start"
-													: deployment.start_action === "contact_support"
-														? "Contact support"
-														: "Pay to start"
-										}
-										onPress={() =>
-											router.push({
-												pathname: "/agents/[id]/compute",
-												params: { id: deployment.agent_id ?? "" },
-											})
-										}
-									/>
-								) : null}
+								{view.state === "stopped" || view.state === "not_running"
+									? startActions(deployment, view.state === "stopped")
+									: null}
 								{transition === "escalated" && cancellableOperation ? (
 									<CancelOperation operation={cancellableOperation} onRequested={checkAgain} />
 								) : null}

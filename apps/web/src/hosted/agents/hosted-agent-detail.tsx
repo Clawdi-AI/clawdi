@@ -11,6 +11,8 @@ import {
 	agentChannelLinkUnavailableReason,
 	agentChannelSectionCopy,
 	agentDisplayName,
+	agentFilesPresentation,
+	agentOverviewCopy,
 	aiBindingCopy,
 	canRetryInitialDeployment,
 	computeStatusDetailsCopy,
@@ -1492,7 +1494,7 @@ function OverviewTab({
 				<AgentOverviewStatusCard
 					agentId={agentId}
 					section="settings"
-					title="Compute"
+					title={agentOverviewCopy.compute}
 					icon={Cpu}
 					tint={hostedAgentOverviewClasses.computeTint}
 					description={
@@ -1809,25 +1811,23 @@ export function ConsoleTab({
 }
 
 function FilesTab({ deployment, url }: { deployment: HostedDeployment; url: string }) {
-	const status = deploymentStatusFromResource(deployment.resource.status);
-	const isRunning = isRunningStatus(status);
-	const isStarting = isStartingStatus(status);
+	const view = agentFilesPresentation(deployment);
 
-	if (status.kind === "stopped") {
+	if (view.state === "stopped") {
 		return <StoppedAgentState deployment={deployment} />;
 	}
 
-	if (!isRunning) {
+	if (view.state !== "running") {
 		return (
 			<EmptyState
 				icon={FolderOpen}
-				title={isStarting ? startingTitle() : "Agent is not running"}
-				description={
-					isStarting
-						? "Files opens once your agent and its private workspace service are ready. This page updates automatically."
-						: `Start the agent to browse its workspace. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+				title={view.title}
+				description={view.description}
+				action={
+					canStartDeployment(deploymentStatusFromResource(deployment.resource.status)) ? (
+						<StartComputeAction deployment={deployment} />
+					) : null
 				}
-				action={canStartDeployment(status) ? <StartComputeAction deployment={deployment} /> : null}
 			/>
 		);
 	}
