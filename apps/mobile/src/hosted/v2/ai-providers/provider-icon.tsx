@@ -9,12 +9,15 @@ import { Icon } from "@/components/ui/icon";
 /** Web hosted/v2/ai-providers/ai-providers-ui.tsx. */
 export function ProviderIcon({
 	provider,
+	providers,
 	size = "md",
 }: {
 	provider: SavedAiProvider | string;
+	/** Resolves a provider id to its saved connection, as on Web. */
+	providers?: readonly SavedAiProvider[];
 	size?: "sm" | "md" | "lg";
 }) {
-	const presentation = providerPresentation(provider);
+	const presentation = providerPresentation(provider, providers);
 	return presentation.managed ? (
 		<IconChip size={size} tint={aiProvidersUiClasses.managedTint}>
 			<Icon as={BrainCircuit} />
