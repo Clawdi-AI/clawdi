@@ -1,5 +1,8 @@
 import type { StorePlatform } from "@clawdi/shared/api";
-import Purchases, { type PurchasesStoreTransaction } from "react-native-purchases";
+import Purchases, {
+	type PurchasesOffering,
+	type PurchasesStoreTransaction,
+} from "react-native-purchases";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
 import { StorePurchaseError } from "./store-error";
 
@@ -10,6 +13,22 @@ export function revenueCatKey(config: MobileRuntimeConfig, platform: StorePlatfo
 		(platform === "app_store" ? config.revenueCatAppleKey : config.revenueCatGoogleKey)?.trim() ||
 		null
 	);
+}
+
+/** RevenueCat offering presented by the credits Paywall (owner-configured). */
+export const CREDITS_OFFERING = "credits";
+
+/** The Paywall picks the package; hosted confirm binds the product from the transaction. */
+export async function loadCreditsOffering(): Promise<PurchasesOffering> {
+	let offering: PurchasesOffering | undefined;
+	try {
+		offering = (await Purchases.getOfferings()).all[CREDITS_OFFERING];
+	} catch {
+		throw new StorePurchaseError("store_offering_unavailable");
+	}
+	if (!offering?.availablePackages.length)
+		throw new StorePurchaseError("store_offering_unavailable");
+	return offering;
 }
 
 /** One instance per process. Identity changes wait for the active native paywall. */
