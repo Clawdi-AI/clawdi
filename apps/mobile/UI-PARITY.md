@@ -39,6 +39,14 @@ The five native tabs use pathless groups over Web URLs: `/`, `/agents`,
 `project-access`, `model-provider` and `channel-links` segments. Agent details
 retain nested resource URLs; Skill keys use the path rather than a query-only
 `detail` route, and Vault slugs resolve to a stable, account-scoped identity.
+The Agent overview is the section hub: its Web overview cards plus Tools
+(Files, Terminal; hosted only, Files only with an authoritative Files endpoint)
+and Settings rows reach every Web sidebar section, so the Agent header carries
+only section actions, never navigation. `/agents/:id/files` renders Web
+`FilesTab`'s stopped/starting/not-running states; while running it explains
+that Files opens on the web and offers Terminal, because the Files grant
+bootstrap needs a browser session on the dashboard origin and hosted has no
+native Files handoff yet.
 The Account tab root `/settings` is a native grouped settings menu: General,
 Account (Clerk's native `UserProfileView`), API Keys, then Wallet and Compute
 when a compute API is configured. Each row pushes a natively headed

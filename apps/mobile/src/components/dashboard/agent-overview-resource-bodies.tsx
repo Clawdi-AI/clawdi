@@ -508,6 +508,7 @@ export function AgentOverview({
 					{deploymentFilesUrl(deployment) ? (
 						<OverviewNavigationCard
 							title={agentToolSectionCopy.files.label}
+							testID="agent-section-files"
 							description={agentToolSectionCopy.files.description}
 							icon={FolderOpen}
 							tint={hostedStyles.filesTint}
@@ -516,6 +517,7 @@ export function AgentOverview({
 					) : null}
 					<OverviewNavigationCard
 						title={agentToolSectionCopy.terminal.label}
+						testID="agent-section-terminal"
 						description={agentToolSectionCopy.terminal.description}
 						icon={TerminalSquare}
 						tint={hostedStyles.terminalTint}
@@ -526,6 +528,7 @@ export function AgentOverview({
 			<WebView recipe={styles.section}>
 				<OverviewNavigationCard
 					title={agentSectionCopy.settings.label}
+					testID="agent-section-settings"
 					description={agentSectionCopy.settings.description}
 					icon={Settings}
 					tint={hostedStyles.settingsTint}
