@@ -1,12 +1,16 @@
 "use client";
 
 import { AGENT_PROFILES_PATH, type AgentProfile } from "@clawdi/shared/api";
+import { agentProfilesClasses } from "@clawdi/shared/ui";
 import {
 	AGENT_PROFILE_SEARCH_KEY,
+	AGENT_PROFILES_COPY,
+	agentProfileFilterOptions,
 	agentProfileName,
-	formatNumber,
+	agentProfileRowLabel,
+	agentProfileSessionCount,
+	agentSessionProfileSelection,
 	hasMultipleProfiles,
-	profileLabel,
 	sortAgentProfiles,
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
@@ -50,24 +54,30 @@ export function AgentProfilesOverview({
 }) {
 	if (!hasMultipleProfiles(profiles)) return null;
 	return (
-		<section aria-labelledby="agent-profiles-heading" className="flex flex-col gap-3">
+		<section aria-labelledby="agent-profiles-heading" className={agentProfilesClasses.section}>
 			<AgentOverviewSectionHeading>
-				<h2 id="agent-profiles-heading" className="text-sm font-semibold">
-					Profiles
+				<h2 id="agent-profiles-heading" className={agentProfilesClasses.title}>
+					{AGENT_PROFILES_COPY.title}
 				</h2>
 			</AgentOverviewSectionHeading>
-			<ul className="grid gap-3 @2xl/main:grid-cols-2" data-testid="agent-profile-list">
+			<ul className={agentProfilesClasses.list} data-testid="agent-profile-list">
 				{sortAgentProfiles(profiles).map((profile) => {
 					const name = agentProfileName(agentName, profile);
 					const removed = profile.state === "removed";
 					return (
-						<li key={profile.id} className="min-w-0" data-testid="agent-profile-row">
+						<li
+							key={profile.id}
+							className={agentProfilesClasses.item}
+							data-testid="agent-profile-row"
+						>
 							<EntityRow
 								icon={<AgentIcon agent={agentType} size="lg" />}
 								title={name}
-								meta={`${formatNumber(profile.session_count)} ${profile.session_count === 1 ? "session" : "sessions"}`}
+								meta={agentProfileSessionCount(profile.session_count)}
 								// Liveness belongs to the Agent; a profile is only active or removed.
-								status={removed ? <StatusBadge>Removed</StatusBadge> : undefined}
+								status={
+									removed ? <StatusBadge>{AGENT_PROFILES_COPY.removed}</StatusBadge> : undefined
+								}
 								link={
 									linkSessions
 										? agentSectionLink(agentId, "sessions", {
@@ -75,7 +85,7 @@ export function AgentProfilesOverview({
 											})
 										: undefined
 								}
-								ariaLabel={`View sessions for ${name}${removed ? ", removed" : ""}`}
+								ariaLabel={agentProfileRowLabel(name, profile)}
 							/>
 						</li>
 					);
@@ -107,33 +117,30 @@ export function useAgentSessionProfileFilter({
 		AGENT_PROFILE_SEARCH_KEY,
 		parseAsString.withOptions({ clearOnDefault: true, history: "replace" }),
 	);
+	const { unknown, pending, selected } = agentSessionProfileSelection({
+		selectedId,
+		profiles,
+		profilesLoading,
+	});
 	// A stale or mistyped `?profile=` id is dropped once the list confirms it is unknown.
-	const unknownSelection =
-		Boolean(selectedId) &&
-		profiles !== undefined &&
-		!profiles.some((profile) => profile.id === selectedId);
 	useEffect(() => {
-		if (unknownSelection) void setSelectedId(null);
-	}, [unknownSelection, setSelectedId]);
+		if (unknown) void setSelectedId(null);
+	}, [unknown, setSelectedId]);
 
 	if (!hasMultipleProfiles(profiles)) {
-		return { profileKey: undefined, pending: Boolean(selectedId) && profilesLoading, filter: null };
+		return { profileKey: undefined, pending, filter: null };
 	}
-	const selected = selectedId ? profiles.find((profile) => profile.id === selectedId) : undefined;
 	return {
 		profileKey: selected?.profile_key,
-		pending: false,
+		pending,
 		filter: (
 			<DataTableFacetedFilter
-				title="Profile"
+				title={AGENT_PROFILES_COPY.filterTitle}
 				// The page already names the Agent; options use the profile name alone.
-				options={sortAgentProfiles(profiles).map((profile) => {
-					const label = profileLabel(profile) ?? agentName;
-					return {
-						label: profile.state === "removed" ? `${label} (removed)` : label,
-						value: profile.id,
-					};
-				})}
+				options={agentProfileFilterOptions(agentName, profiles).map((option) => ({
+					label: option.label,
+					value: option.id,
+				}))}
 				selected={selected ? [selected.id] : []}
 				onChange={(ids) => {
 					void setSelectedId(ids[0] ?? null);

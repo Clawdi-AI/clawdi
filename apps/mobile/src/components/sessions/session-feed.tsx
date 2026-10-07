@@ -9,6 +9,7 @@ import {
 	agentIdentity,
 	formatNumber,
 	groupSessionsByRecency,
+	profileLabel,
 	relativeTime,
 	sessionAgentIdentityInput,
 	sessionCardModel,
@@ -109,8 +110,14 @@ export function SessionCard({
 		quietAutomated,
 	);
 	const agent = agentIdentity(sessionAgentIdentityInput(session)).primaryLabel;
+	const profile = profileLabel(session);
 	const metadata = [
-		showAgent ? { key: "agent", value: agent } : null,
+		// Default-profile sessions carry no profile label.
+		showAgent
+			? { key: "agent", value: profile ? `${agent} · ${profile}` : agent }
+			: profile
+				? { key: "profile", value: profile }
+				: null,
 		projectFolder ? { key: "project", value: projectFolder } : null,
 		{
 			key: "messages",
