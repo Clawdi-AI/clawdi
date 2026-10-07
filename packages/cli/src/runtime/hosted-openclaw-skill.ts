@@ -55,7 +55,7 @@ function commandPath(home: string): string {
 const targetDir = (workspaceRoot: string, skillId: string) =>
 	join(workspaceRoot, "skills", skillId);
 
-function commandFailureDetail(result: ReturnType<typeof spawnRuntimeUserCommand>): string {
+export function commandFailureDetail(result: ReturnType<typeof spawnRuntimeUserCommand>): string {
 	const details: string[] = [];
 	if (result.error) details.push(`spawn error: ${result.error.message}`);
 	if (result.signal) details.push(`terminated by signal ${result.signal}`);

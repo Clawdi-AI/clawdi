@@ -798,17 +798,37 @@ API; it never fetches a pasted hostname.
 Optional `EXPO_PUBLIC_CLAWDI_LINK_HOSTS` is a comma-separated list of owned DNS
 hostnames, without schemes, ports, wildcards or paths. Build and runtime use the
 same validator. Expo config adds iOS `applinks` associations and Android verified
-HTTPS filters for `/s/` and `/vault-request`, preserving existing associations.
-No configured hosts means no new HTTPS associations. For an isolated config check:
+HTTPS filters for the paths in `@clawdi/shared/linking`, preserving
+existing associations. No configured hosts means no new HTTPS associations.
+The shared module is synchronous ESM JavaScript, which Vite and Metro consume
+directly. Expo's `app.config.js` uses Node 24's native `require(ESM)` support;
+no TypeScript loader or generated CommonJS copy is needed. See
+[Expo dynamic configuration](https://docs.expo.dev/workflow/configuration/),
+[Node ESM interoperability](https://nodejs.org/api/modules.html#loading-ecmascript-modules-using-require),
+and [Vite linked dependencies](https://vite.dev/guide/dep-pre-bundling#monorepos-and-linked-dependencies).
+For an isolated config check:
 
 ```bash
 EXPO_PUBLIC_CLAWDI_LINK_HOSTS=links.example.test bunx expo config --type public
 ```
 
-Done: the generated config includes `applinks:links.example.test` and the two
-Android paths. This does not establish OS verification: the owner must supply
-native application/signing identifiers and publish matching website AASA and
-assetlinks files, then verify delivery on signed iOS/Android builds.
+Done: the generated config includes `applinks:links.example.test` and matching
+Android paths. Web serves AASA and assetlinks from `/.well-known/`, with AASA
+components using the same path source. Configure the Web server's public
+`CLAWDI_APPLE_TEAM_ID` and `CLAWDI_ANDROID_CERT_SHA256` as described in the
+[Web README](../apps/web/README.md#mobile-app-links); each endpoint returns 404
+until its signing identity is valid. OS verification still requires published
+association files and signed iOS/Android builds.
+
+Each shared link root has an exact match and a slash-delimited prefix, so `/s`
+does not capture `/skill.md` or `/sign-in`. AASA and Android 15+ Dynamic App Links
+(on devices with Google services) exclude public agent files, including
+`/skills/*/SKILL.md`, before resource matches. Older Android static filters cannot
+negate `/skills/` descendants;
+native intake opens verified-host agent files with `expo-web-browser.openBrowserAsync`
+(Android Custom Tabs with an explicit browser package; iOS SFSafariViewController).
+It never reopens these URLs with `Linking.openURL`. Warm intake preserves the
+current native screen; browser launch failure goes to manual link input.
 
 Allowed HTTPS Vault request links stay in a single-use, 60-second memory inbox;
 Router receives only a random intake reference, never the capability token.
@@ -885,6 +905,9 @@ plugins and metadata, not native compilation, signing or store acceptance.
 for development (dev client), preview (internal APK) and production (store).
 Production uses remote build numbers with auto-increment; all binaries use
 fingerprint runtime compatibility.
+Each build profile pins Node 24.21.0 (the repository's Node 24 major) and Bun 1.4.2
+so Expo's synchronous `require(ESM)` uses the same toolchain locally and on EAS.
+See [EAS build tool versions](https://docs.expo.dev/build/eas-json/#selecting-build-tool-versions).
 
 Keep all `EXPO_PUBLIC_*` values in the selected EAS environment, with plaintext
 or sensitive visibility, never in build-profile `env`. [Expo Update uses that

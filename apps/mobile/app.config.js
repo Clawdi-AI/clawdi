@@ -1,4 +1,4 @@
-const { readLinkHosts, webLinkPaths } = require("./config/linking.cjs");
+const { readLinkHosts, webLinkPaths } = require("@clawdi/shared/linking");
 // Brand red from the artwork and the shared `--background` tokens; regenerate with `bun run icons`.
 const appColors = require("./assets/app-colors.json");
 

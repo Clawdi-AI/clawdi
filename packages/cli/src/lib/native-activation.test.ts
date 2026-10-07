@@ -18,6 +18,7 @@ import * as tar from "tar";
 import {
 	activateNativeLauncherTransaction,
 	downloadAndStageNativeRelease,
+	renameNativeDirectory,
 	validateNativeArchive,
 } from "./native-activation";
 import type { NativeCompiledIdentity } from "./native-distribution";
@@ -28,6 +29,139 @@ const roots: string[] = [];
 
 afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe("native directory rename retries", () => {
+	it("retries Windows handle errors with backoff and lease checks until success", () => {
+		const codes = ["EPERM", "EACCES", "EBUSY"];
+		let attempts = 0;
+		let elapsed = 0;
+		let fences = 0;
+		const sleeps: number[] = [];
+		renameNativeDirectory(
+			"stage",
+			"final",
+			{
+				token: "test",
+				assertOwned: () => {
+					fences += 1;
+				},
+			},
+			{
+				platform: "win32",
+				now: () => elapsed,
+				sleep: (milliseconds) => {
+					sleeps.push(milliseconds);
+					elapsed += milliseconds;
+				},
+				rename: (from, to) => {
+					expect([from, to]).toEqual(["stage", "final"]);
+					expect(fences).toBe(attempts);
+					const code = codes[attempts++];
+					if (code) throw Object.assign(new Error("handle is busy"), { code });
+				},
+			},
+		);
+		expect(attempts).toBe(4);
+		expect(sleeps).toEqual([10, 20, 30]);
+	});
+
+	it("gives up after ten seconds and rethrows the last rename error", () => {
+		let elapsed = 0;
+		let attempts = 0;
+		let lastError: Error | undefined;
+		let failure: unknown;
+		try {
+			renameNativeDirectory(
+				"stage",
+				"final",
+				{ token: "test", assertOwned: () => undefined },
+				{
+					platform: "win32",
+					now: () => elapsed,
+					sleep: (milliseconds) => {
+						expect(milliseconds).toBeGreaterThan(0);
+						expect(milliseconds).toBeLessThanOrEqual(100);
+						elapsed += milliseconds;
+					},
+					rename: () => {
+						lastError = Object.assign(new Error(`blocked attempt ${++attempts}`), {
+							code: "EPERM",
+						});
+						throw lastError;
+					},
+				},
+			);
+		} catch (error) {
+			failure = error;
+		}
+		expect(failure).toBe(lastError);
+		expect(attempts).toBeGreaterThan(1);
+		expect(elapsed).toBe(10_000);
+	});
+
+	for (const [platform, code] of [
+		["win32", "ENOENT"],
+		["linux", "EPERM"],
+		["darwin", "EACCES"],
+	] as const) {
+		it(`does not retry ${code} on ${platform}`, () => {
+			let attempts = 0;
+			let sleeps = 0;
+			let fences = 0;
+			const error = Object.assign(new Error("rename failed"), { code });
+			expect(() =>
+				renameNativeDirectory(
+					"stage",
+					"final",
+					{
+						token: "test",
+						assertOwned: () => {
+							fences += 1;
+						},
+					},
+					{
+						platform,
+						rename: () => {
+							attempts += 1;
+							throw error;
+						},
+						sleep: () => {
+							sleeps += 1;
+						},
+					},
+				),
+			).toThrow(error);
+			expect(attempts).toBe(1);
+			expect(sleeps).toBe(0);
+			expect(fences).toBe(0);
+		});
+	}
+
+	it("stops before retrying when the lease is lost during backoff", () => {
+		let attempts = 0;
+		expect(() =>
+			renameNativeDirectory(
+				"stage",
+				"final",
+				{
+					token: "test",
+					assertOwned: () => {
+						throw new Error("lease lost");
+					},
+				},
+				{
+					platform: "win32",
+					sleep: () => undefined,
+					rename: () => {
+						attempts += 1;
+						throw Object.assign(new Error("handle is busy"), { code: "EBUSY" });
+					},
+				},
+			),
+		).toThrow("lease lost");
+		expect(attempts).toBe(1);
+	});
 });
 
 (process.platform === "win32" ? describe.skip : describe)("native archive safety", () => {
