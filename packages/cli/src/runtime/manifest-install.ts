@@ -15,11 +15,7 @@ import { fileURLToPath } from "node:url";
 import { runtimeContentSha256 } from "./applied-state";
 import { SYSTEM_CA_BUNDLE } from "./egress-env";
 import { hermesManagedPython } from "./hermes-python";
-import {
-	OFFICIAL_INSTALL_URLS,
-	type RuntimeInstall,
-	type RuntimeManifest,
-} from "./manifest-contract";
+import type { RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 import { preinstalledRuntimeVersion } from "./preinstalled-probes";
 import { isSupportedRuntimeName } from "./run-config";
@@ -195,28 +191,6 @@ function testInstallerEnvName(name: string): string | null {
 	if (name === "hermes") return "CLAWDI_RUNTIME_TEST_HERMES_INSTALLER";
 	return null;
 }
-// Fresh Hermes installs use the last known-good upstream release while main
-// carries the Solstice import regression (#134107/#134220; fixed by #134581)
-// and the SessionsPage type-only import regression (#134649). Remove this pin
-// only after both fixes are merged and a fresh install is verified. The pin is
-// applied when the executable is absent, outside the manifest install policy,
-// so running gateways keep their program revision and are not restarted. The
-// installer script and checkout are pinned together because newer moving
-// scripts require the package-manager layout introduced after this release;
-// --force-commit is required because the fresh clone is newer than the pin.
-export const HERMES_FRESH_INSTALL_COMMIT = "f97608f178d1ffeca59860195ab7da295f7c8e5f";
-const HERMES_FRESH_INSTALL_PIN = {
-	url: `https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_FRESH_INSTALL_COMMIT}/scripts/install.sh`,
-	args: ["--commit", HERMES_FRESH_INSTALL_COMMIT, "--force-commit"],
-};
-export function freshInstallPin(
-	name: string,
-	installerUrl: string,
-): { url: string; args: string[] } | null {
-	return name === "hermes" && installerUrl === OFFICIAL_INSTALL_URLS.hermes
-		? HERMES_FRESH_INSTALL_PIN
-		: null;
-}
 function executionInstallerUrl(name: string, officialUrl: string): string {
 	const envName = testInstallerEnvName(name);
 	const override = envName ? process.env[envName]?.trim() : undefined;
@@ -302,18 +276,10 @@ function runOfficialInstaller(
 		);
 	}
 
-	const selectedUrl = executionInstallerUrl(name, install.url);
-	const pin = freshInstallPin(name, selectedUrl);
-	const url = pin?.url ?? selectedUrl;
+	const url = executionInstallerUrl(name, install.url);
 	const materialized = materializeInstaller(name, url, paths);
 	try {
-		const execution = runtimeInstallerExecution(
-			name,
-			install,
-			materialized.path,
-			identity,
-			pin?.args,
-		);
+		const execution = runtimeInstallerExecution(name, install, materialized.path, identity);
 		const result = spawnSync(execution.command, execution.args, {
 			cwd: install.home,
 			env: execution.env,

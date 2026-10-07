@@ -49,6 +49,13 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.15.14
+
+- **Hosted Hermes:** fresh installs use the official installer's latest release
+  again. Upstream fixed the install regressions, so the temporary fresh-install
+  pin is removed. The install policy is unchanged from 0.15.9, so upgrading does
+  not restart running Hermes gateways.
+
 ### CLI 0.15.13
 
 - Hermes Skill guard refusals now report applied status without repeated error
