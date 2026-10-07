@@ -695,17 +695,22 @@ async def test_disabled_oauth_setting_fails_closed_for_access_tokens(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("authorization", [None, "Bearer retired-desktop-credential"])
+@pytest.mark.parametrize(
+    "path",
+    ["/v1/cli/auth/oauth/desktop-ticket", "/api/cli/auth/oauth/desktop-ticket"],
+)
 async def test_oauth_desktop_ticket_is_retired_without_contacting_clerk(
     raw_auth_client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
     authorization: str | None,
+    path: str,
 ):
     def unexpected_clerk_client():
         pytest.fail("Retired desktop tickets must not contact Clerk")
 
     monkeypatch.setattr(cli_auth_module, "get_clerk_backend_client", unexpected_clerk_client)
     headers = {"Authorization": authorization} if authorization else {}
-    response = await raw_auth_client.post("/v1/cli/auth/oauth/desktop-ticket", headers=headers)
+    response = await raw_auth_client.post(path, headers=headers)
 
     assert response.status_code == 410
     assert response.json() == {
