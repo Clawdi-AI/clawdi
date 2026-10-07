@@ -201,20 +201,39 @@ proves tenant-free pre-claim state, authenticated adoption and cleanup.
 ## Astra follow-up qualification
 
 The prior results above describe pre-follow-up source. Full Docker and native
-qualification tested CLI source `f2122dc89`, based on main `109a66954`. After the
-final fetch, the branch was rebased onto main `f6af1f7d3`; rebased qualification
-source is `fca2749a4`. The runtime/adapters, pool regression tests, test runners
-and locked dependencies match the tested source byte-for-byte. The new upstream
-code changes concern Windows native reinstalls. Original native runs remain
-bound to their original commits; source equivalence is not a second native run.
-Docker verification passed:
+qualification tested CLI source `f2122dc89`, based on main `109a66954`. The first
+rebase qualification source was `fca2749a4` on main `f6af1f7d3`, including Windows
+native-reinstall changes. Its runtime/adapters, pool regression tests, test
+runners and locked dependencies match the tested source byte-for-byte.
+The final branch base is main `ae5b38a42`; final qualification source is
+`0ae2166fc`. This later refresh adds mobile release/crash reporting and root
+catalog/lockfile changes. Runtime/adapters, pool regression tests, test runners
+and CLI/shared package declarations remain identical. Original native runs
+remain bound to their original commits; source equivalence is not a second
+native run, and the root package/lockfile equivalence applies to the first rebase.
 
-Post-rebase full CLI/typecheck passed all 205 files, `ci` exited 0, and `cli-lint`
+The first rebase full CLI/typecheck passed all 205 files, `ci` exited 0, and `cli-lint`
 passed nine task or upstream-touched files without modifications. Paired Hosted
 source `780b0b8d7` also passed 467 pool unit and 102 PostgreSQL tests with
 Ruff/format/types. The other full suites and native results below were not
-repeated after this final rebase; equivalent Git trees are recorded in the paired
+repeated after the later mobile refresh; Git trees are recorded in the paired
 Hosted qualification record.
+
+The final mobile-refresh full CLI/typecheck rerun passed all 205 files; `ci`
+exited 0 and nine files passed lint without modifications. The first full
+attempt exceeded an unchanged daemon-RPC fixture's 20-second deadline. Both
+unchanged cases passed focused Docker verification, then the full rerun passed
+without timeout or product changes.
+
+Paired Hosted follow-up `74d05334f` corrected npm key ID compatibility: IDs select
+independently pinned P-256 keys and are not SPKI DER fingerprints. A public
+registry signature fixture verifies while changed package identity and unknown
+key IDs fail. This branch is unused by the native fixture's explicitly approved
+unsigned packages; native evidence remains bound to its original source pair.
+The correction passed 468 pool unit tests, 102 PostgreSQL tests and 6,736 backend
+tests with one gated native-login skip, plus Ruff, format and strict/full type
+checks. Original migration, contracts, end-to-end and native checks were not
+repeated for this signature-only branch.
 
 | Suite | Result |
 | --- | --- |
@@ -222,7 +241,7 @@ Hosted qualification record.
 | Focused verified-byte and credential-GC regressions | 36 tests, 317 assertions |
 | `runtime-systemd` | 25 tests, including real service and child-OOM behavior |
 | `ci` | Exit 0, including workspace types, mobile, web build, shared and backend smoke |
-| Changed-file `cli-lint` | 7 files, no fixes |
+| Changed-file `cli-lint` | 9 task or upstream-touched files on the mobile refresh, no fixes |
 | `hermes-upstream-contract` | 14 tests on upstream commit `65bc6727b43c05dff410608c78fa055ec194eee0` (`0.21.5+8490.g65bc672`) |
 
 Paired Hosted source `531389a8c` passed PostgreSQL contracts (1,318 tests),
