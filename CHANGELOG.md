@@ -24,10 +24,6 @@ database migration, CI, and implementation details.
 
 ### CLI 0.15.6
 
-- **Hermes profiles:** Hosted daemons leave MCP ownership to the runtime
-  manifest. Local MCP failures now retain session scanning, retry on refresh,
-  and report a deduplicated profile and failure reason.
-
 - Managed OpenClaw credentials now discard obsolete files after successful
   applies, retaining current configuration, native rollback snapshots, and two
   successful credential generations. Cleanup shares OpenClaw's config writer
