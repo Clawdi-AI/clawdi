@@ -212,6 +212,7 @@ export function mutationDeploymentReadFixture(
 
 	return {
 		agent_id: fixtureAgentId(deployment),
+		provisioning_path: "standard",
 		resource: {
 			id: deployment.id,
 			name: deployment.name,
