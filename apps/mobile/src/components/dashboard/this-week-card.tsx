@@ -36,7 +36,7 @@ export function ThisWeekCard({
 									<WebText recipe={styles.sessionCount}>{formatNumber(manualWeek)}</WebText>
 									{automatedWeek !== undefined && automatedWeek > 0 ? (
 										<WebText recipe={styles.automatedCount}>
-											+ {formatNumber(automatedWeek)} {t("home.automatedSessions")}{" "}
+											+ {formatNumber(automatedWeek)} {t("home.automatedSessions")}
 										</WebText>
 									) : null}
 								</>
