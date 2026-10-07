@@ -1,6 +1,7 @@
 import {
 	type AccountApiClient,
 	type AgentExtensionsClient,
+	type AgentProfilesClient,
 	type AgentProjectClient,
 	type AgentSettingsClient,
 	type AiProviderClient,
@@ -11,6 +12,7 @@ import {
 	type ConnectorClient,
 	createAccountApiClient,
 	createAgentExtensionsClient,
+	createAgentProfilesClient,
 	createAgentProjectClient,
 	createAgentSettingsClient,
 	createAiProviderClient,
@@ -64,6 +66,7 @@ type MobileApiClients = Readonly<{
 	aiProviders: AiProviderClient;
 	sharing: ProjectSharingClient;
 	agentProjects: AgentProjectClient;
+	agentProfiles: AgentProfilesClient;
 	skills: SkillClient;
 	sessionSharing: SessionSharingClient;
 	connectors: ConnectorClient;
@@ -217,6 +220,11 @@ export function MobileApiProvider({
 				fetch: fetcher,
 			}),
 			agentProjects: createAgentProjectClient({
+				baseUrl: config.cloudApiUrl,
+				getToken: readToken,
+				fetch: fetcher,
+			}),
+			agentProfiles: createAgentProfilesClient({
 				baseUrl: config.cloudApiUrl,
 				getToken: readToken,
 				fetch: fetcher,
