@@ -26,6 +26,7 @@ import {
 	shouldShowInitialDeploymentProgress,
 	startComputeActionPresentation,
 	stoppedAgentDescription,
+	storeSubscriptionCardView,
 } from "@clawdi/shared/view";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
@@ -169,6 +170,7 @@ import {
 import {
 	computeDunningState,
 	computeSubscriptionRequiredToStart,
+	detachedStoreRecoveryTarget,
 } from "@/hosted/billing/components/compute-dunning.logic";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
 import type { DeploymentUpdateRequest, HostedDeployment } from "@/hosted/billing/contracts";
@@ -189,6 +191,7 @@ import { resolveComputeSubscriptionActions } from "@/hosted/billing/subscription
 import {
 	ComputeSubscriptionCard,
 	computeSubscriptionCardView,
+	StoreSubscriptionNotice,
 } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
 	type ComputeSubscriptionManagementResult,
@@ -3530,24 +3533,36 @@ function ComputeSettingsSections({
 			? { label: subscriptionLifecycle.badgeLabel, tone: subscriptionLifecycle.badgeTone }
 			: { label: "Unavailable", tone: "neutral" },
 	);
-	const actionRecoveryTarget = terminalRecovery?.recoveryTarget ?? computeRecovery.recoveryTarget;
+	const actionRecoveryTarget =
+		terminalRecovery?.recoveryTarget ??
+		computeRecovery.recoveryTarget ??
+		detachedStoreRecoveryTarget(deployment);
 	const canOfferStartNew = actionRecoveryTarget?.kind === "start_new";
-	const computeCardView = computeSubscriptionCardView({
-		status: computeRecovery.status,
-		planSlug: computePlanSlug ?? rawComputePlanSlug,
-		fundingSource:
-			fundingSource === "included_basic"
-				? "included"
-				: fundingSource === "stripe" || fundingSource === "wallet"
-					? fundingSource
-					: "unavailable",
-		priceCents: currentPriceCents,
-		currency: currentSubscription?.currency ?? "usd",
-		billingTermMonths: currentBillingTerm,
-		scheduleVerb: computeRecovery.schedule?.verb ?? subscriptionLifecycle?.dateVerb ?? null,
-		scheduleAt: computeRecovery.schedule?.at ?? subscriptionLifecycle?.dateAt,
-		scheduleFallback: computeRecovery.schedule?.fallback ?? undefined,
-	});
+	const storeManagement = fundingSource === "store" ? currentSubscription?.store_management : null;
+	const computeCardView =
+		fundingSource === "store"
+			? storeSubscriptionCardView({
+					planSlug: computePlanSlug ?? rawComputePlanSlug,
+					billingTermMonths: currentBillingTerm,
+					management: storeManagement,
+					fallbackStatus: computeRecovery.status,
+				})
+			: computeSubscriptionCardView({
+					status: computeRecovery.status,
+					planSlug: computePlanSlug ?? rawComputePlanSlug,
+					fundingSource:
+						fundingSource === "included_basic"
+							? "included"
+							: fundingSource === "stripe" || fundingSource === "wallet"
+								? fundingSource
+								: "unavailable",
+					priceCents: currentPriceCents,
+					currency: currentSubscription?.currency ?? "usd",
+					billingTermMonths: currentBillingTerm,
+					scheduleVerb: computeRecovery.schedule?.verb ?? subscriptionLifecycle?.dateVerb ?? null,
+					scheduleAt: computeRecovery.schedule?.at ?? subscriptionLifecycle?.dateAt,
+					scheduleFallback: computeRecovery.schedule?.fallback ?? undefined,
+				});
 	const pendingPlanCopy = pendingPlanSlug
 		? pendingPlanScheduleCopy(
 				pendingPlanSlug,
@@ -3692,8 +3707,14 @@ function ComputeSettingsSections({
 						) : null
 					}
 					notice={
-						pendingPlanCopy || computeManagementReason || createUnavailableMessage ? (
+						fundingSource === "store" ||
+						pendingPlanCopy ||
+						computeManagementReason ||
+						createUnavailableMessage ? (
 							<div className="flex flex-col gap-1 text-xs text-muted-foreground">
+								{fundingSource === "store" ? (
+									<StoreSubscriptionNotice management={storeManagement} />
+								) : null}
 								{pendingPlanCopy ? (
 									<p className="font-medium text-warning-muted-foreground">{pendingPlanCopy}</p>
 								) : null}

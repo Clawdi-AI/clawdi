@@ -98,6 +98,10 @@ export function computeSubscriptionManagement({
 		funding_source: entitlement.fundingSource,
 		price_cents: entitlement.priceCents,
 	});
+	// Store subscriptions change plans only through the store that bills them.
+	if (fundingSource === "store") {
+		return { action: "hidden", target: null, unavailableReason: null };
+	}
 	const includedBasic =
 		entitlement.subscriptionKind === "included_basic" ||
 		(entitlement.subscriptionKind === undefined && fundingSource === "included_basic");

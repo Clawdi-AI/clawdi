@@ -1,5 +1,11 @@
 import type { DeployComponents } from "../api";
 import type { StorePlatform } from "../api/store-client";
+import { billingTermLabel } from "./billing-format";
+import {
+	type ComputeSubscriptionCardView,
+	computeSubscriptionPlanLabel,
+} from "./compute-subscription-card";
+import { formatShortDate } from "./format";
 
 export type StoreManagement = DeployComponents["schemas"]["StoreManagement"];
 export type StoreManagementProvider = StoreManagement["provider"];
@@ -73,5 +79,135 @@ export function storeManagementPresentation(
 		isOnThisPlatform: isStoreManagementOnPlatform(management, platform),
 		isOnOtherStore: isStoreManagementOnOtherStore(management, platform),
 		managementUrl: storeManagementUrl(management, platform),
+	};
+}
+
+/** Read-only copy for store-billed compute; surfaces never sell or manage these rows. */
+export const storeSubscriptionCopy = {
+	providers: {
+		app_store: "App Store",
+		play_store: "Google Play",
+		test_store: "Test Store",
+	} satisfies Record<StoreManagementProvider, string>,
+	unknownProvider: "App Store or Google Play",
+	term: "Term",
+	payment: "Payment",
+	schedule: "Schedule",
+	availableInApp: "Available in the Clawdi app",
+	renewalIssue: "Update the payment method on your device to keep this subscription.",
+} as const;
+
+/** The billing store as named in running copy ("billed by the App Store"). */
+export const STORE_BILLED_THROUGH = {
+	app_store: "the App Store",
+	play_store: "Google Play",
+	test_store: "Test Store",
+} as const satisfies Record<StoreManagementProvider, string>;
+
+export function storeProviderLabel(management: StoreManagement | null | undefined): string {
+	const provider = storeManagementProvider(management);
+	return provider
+		? storeSubscriptionCopy.providers[provider]
+		: storeSubscriptionCopy.unknownProvider;
+}
+
+/**
+ * Ended store subscriptions get a past-tense line. Test Store purchases are
+ * non-production evidence and have no device management page.
+ */
+export function storeBillingNotice(management: StoreManagement | null | undefined): string {
+	const provider = storeManagementProvider(management);
+	const store = provider
+		? STORE_BILLED_THROUGH[provider]
+		: `the ${storeSubscriptionCopy.unknownProvider}`;
+	if (management && STORE_TERMINAL_STATES.has(management.state))
+		return `Was billed through ${store}.`;
+	if (provider === "test_store") return `Billed through ${store}.`;
+	return `Billed through ${store}. Manage it on your device.`;
+}
+
+export function storeAgentDeletionNotice(management: StoreManagement | null | undefined): string {
+	const notice = `Deleting this agent doesn't cancel your ${storeProviderLabel(management)} subscription.`;
+	return storeManagementProvider(management) === "test_store"
+		? notice
+		: `${notice} Manage it on your device.`;
+}
+
+type StoreSubscriptionStatus = ComputeSubscriptionCardView["status"];
+
+const STORE_SUBSCRIPTION_STATUS = new Map<string, StoreSubscriptionStatus>([
+	["active", { label: "Active", tone: "success" }],
+	["grace", { label: "Grace period", tone: "warning" }],
+	["lapsed", { label: "Billing issue", tone: "destructive" }],
+	["paused", { label: "Paused", tone: "neutral" }],
+	["canceled_pending_end", { label: "Canceling", tone: "warning" }],
+	["expired", { label: "Expired", tone: "neutral" }],
+	["revoked", { label: "Ended", tone: "neutral" }],
+	["owner_terminated", { label: "Ended", tone: "neutral" }],
+	["conflict_hold", { label: "Needs attention", tone: "warning" }],
+]);
+
+const STORE_TERMINAL_STATES = new Set(["expired", "revoked", "owner_terminated"]);
+
+/** Status from the store contract; `fallback` covers rows whose contract is not projected. */
+export function storeSubscriptionStatus(
+	management: StoreManagement | null | undefined,
+	fallback: StoreSubscriptionStatus,
+): StoreSubscriptionStatus {
+	const state = storeManagementState(management);
+	if (state === null) return fallback;
+	return STORE_SUBSCRIPTION_STATUS.get(state) ?? { label: "Unavailable", tone: "neutral" };
+}
+
+/** Grace and lapse are store billing failures; recovery happens only on the purchasing device. */
+export function storeRenewalIssue(management: StoreManagement | null | undefined): boolean {
+	const state = storeManagementState(management);
+	return state === "grace" || state === "lapsed";
+}
+
+export type StoreSubscriptionDate = { kind: "renews" | "ends" | "ended"; at: string };
+
+/** The store's next renewal or end date, when the contract state makes it meaningful. */
+export function storeSubscriptionDate(
+	management: StoreManagement | null | undefined,
+): StoreSubscriptionDate | null {
+	const at = management?.renews_or_ends_at;
+	if (!management || !at) return null;
+	const state = management.state;
+	if (STORE_TERMINAL_STATES.has(state)) return { kind: "ended", at };
+	if (state === "canceled_pending_end") return { kind: "ends", at };
+	if (state === "active" || state === "grace") {
+		return { kind: management.auto_renews ? "renews" : "ends", at };
+	}
+	return null;
+}
+
+const STORE_SCHEDULE_VERB = { renews: "Renews", ends: "Ends", ended: "Ended" } as const;
+
+export function storeSubscriptionSchedule(management: StoreManagement | null | undefined): string {
+	const date = storeSubscriptionDate(management);
+	return date ? `${STORE_SCHEDULE_VERB[date.kind]} ${formatShortDate(date.at)}` : "Unavailable";
+}
+
+/** Store prices are set per storefront, so store rows show no Clawdi price. */
+export function storeSubscriptionCardView({
+	planSlug,
+	billingTermMonths,
+	management,
+	fallbackStatus,
+}: {
+	planSlug: string;
+	billingTermMonths: number;
+	management: StoreManagement | null | undefined;
+	fallbackStatus: StoreSubscriptionStatus;
+}): ComputeSubscriptionCardView {
+	return {
+		status: storeSubscriptionStatus(management, fallbackStatus),
+		plan: computeSubscriptionPlanLabel(planSlug),
+		commercialFacts: [
+			{ label: storeSubscriptionCopy.term, value: billingTermLabel(billingTermMonths) },
+			{ label: storeSubscriptionCopy.payment, value: storeProviderLabel(management) },
+			{ label: storeSubscriptionCopy.schedule, value: storeSubscriptionSchedule(management) },
+		],
 	};
 }

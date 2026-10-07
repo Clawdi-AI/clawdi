@@ -7,6 +7,7 @@ import {
 	computeTierLabel,
 } from "./compute-subscriptions";
 import { formatMemoryMib, formatShortDate } from "./format";
+import { storeSubscriptionDate, storeSubscriptionStatus } from "./store-management";
 
 type HostedComputeSubscription = NonNullable<
 	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
@@ -31,6 +32,13 @@ function subscriptionDate(
 	recovery: ReturnType<typeof computeSubscriptionRecoveryPresentation>,
 	now: number,
 ): OverviewComputeDate | null {
+	if (funding === "store") {
+		const date = storeSubscriptionDate(subscription.store_management);
+		if (date?.kind === "renews") return displayDate("Next renewal", date.at, now);
+		if (date?.kind === "ends") return displayDate("Ends on", date.at, now);
+		if (date?.kind === "ended") return displayDate("Ended on", date.at, now, true);
+		return null;
+	}
 	const status = subscription.status.toLowerCase();
 	if (status === "canceled") return displayDate("Ended on", subscription.canceled_at, now, true);
 	if (status === "expired" || status === "incomplete_expired") {
@@ -88,6 +96,10 @@ export function overviewComputeState(deployment: DeploymentRead, now = Date.now(
 		label: lifecycle.badgeLabel,
 		tone: lifecycle.badgeTone,
 	});
+	const statusLabel =
+		funding === "store"
+			? storeSubscriptionStatus(subscription.store_management, recovery.status).label
+			: recovery.status.label;
 	const operation = activePlanChangeOperationName(deployment);
 	const pending =
 		operation !== null ||
@@ -107,7 +119,7 @@ export function overviewComputeState(deployment: DeploymentRead, now = Date.now(
 				? "Included with your plan"
 				: operation
 					? "Updating subscription"
-					: recovery.status.label,
+					: statusLabel,
 		},
 		date: pending ? null : subscriptionDate(subscription, funding, recovery, now),
 	};

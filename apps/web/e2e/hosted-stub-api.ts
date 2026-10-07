@@ -685,6 +685,56 @@ export const walletAnnualDeployment = {
 	},
 };
 
+export const appStoreManagement = {
+	provider: "app_store",
+	product_id: "ai.clawdi.app.compute.performance.monthly",
+	management_url: "https://apps.apple.com/account/subscriptions",
+	auto_renews: true,
+	renews_or_ends_at: "2099-08-12T12:00:00Z",
+	state: "active",
+} satisfies NonNullable<DeploymentComputeSubscription["store_management"]>;
+
+export const storeFundedDeployment = {
+	...paidBasicDeployment,
+	id: "hdep_store",
+	name: "App Store Performance",
+	compute_subscription: {
+		subscription_id: 77,
+		status: "active",
+		funding_source: "store",
+		payment_state: "ok",
+		billing_term_months: 1,
+		price_cents: null,
+		currency: "usd",
+		cancel_at_period_end: false,
+		actions: { cancel: null, resume: false, command_state: null },
+		current_period_end: "2099-08-12T12:00:00Z",
+		store_management: appStoreManagement,
+	},
+	config_info: {
+		...paidBasicDeployment.config_info,
+		compute_plan_slug: "compute_performance",
+	},
+} satisfies DeploymentMutationFixture;
+
+export const storeEndedDeployment = {
+	...storeFundedDeployment,
+	id: "hdep_store_ended",
+	name: "Ended App Store agent",
+	status: "stopped",
+	compute_subscription: {
+		...storeFundedDeployment.compute_subscription,
+		status: "canceled",
+		recovery_action: "start_new",
+		store_management: {
+			...appStoreManagement,
+			auto_renews: false,
+			renews_or_ends_at: "2026-09-12T12:00:00Z",
+			state: "expired",
+		},
+	},
+} satisfies DeploymentMutationFixture;
+
 export function walletSubscriptionQuote({
 	planSlug,
 	billingTermMonths,

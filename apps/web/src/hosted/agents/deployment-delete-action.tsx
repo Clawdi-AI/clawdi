@@ -1,6 +1,6 @@
 "use client";
 
-import { agentDisplayName, formatShortDate } from "@clawdi/shared/view";
+import { agentDisplayName, formatShortDate, storeAgentDeletionNotice } from "@clawdi/shared/view";
 import { useRouter } from "@tanstack/react-router";
 import { type ReactElement, useRef, useState } from "react";
 import {
@@ -20,10 +20,36 @@ import { useDeleteDeployment } from "@/hosted/agents/deployment-hooks";
 import type { DeploymentDeleteRequest, HostedDeployment } from "@/hosted/billing/contracts";
 import {
 	computeFundingMode,
+	computeFundingSource,
 	computeSubscriptionCancellationCopy,
 	isComputeSubscriptionRenewing,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { cn } from "@/lib/utils";
+
+type DeleteSubscriptionChoice = DeploymentDeleteRequest["subscription_choice"];
+
+/** Which subscription choices the delete dialog offers, and the request used without a choice. */
+export function deploymentDeleteSubscriptionPolicy(deployment: HostedDeployment): {
+	offerChoice: boolean;
+	defaultChoice: DeleteSubscriptionChoice;
+	storeNotice: string | null;
+} {
+	const subscription = deployment.commercial_display?.compute_subscription;
+	const fundingMode = computeFundingMode(deployment.current_plan_slug, subscription);
+	// Deleting never cancels store billing; the API keeps the store subscription.
+	if (computeFundingSource(deployment.current_plan_slug, subscription) === "store") {
+		return {
+			offerChoice: false,
+			defaultChoice: "keep_subscription",
+			storeNotice: storeAgentDeletionNotice(subscription?.store_management),
+		};
+	}
+	return {
+		offerChoice: fundingMode === "subscription" && isComputeSubscriptionRenewing(subscription),
+		defaultChoice: fundingMode === "included_basic" ? "cancel_subscription" : "keep_subscription",
+		storeNotice: null,
+	};
+}
 
 export function HostedDeploymentDeleteAction({
 	children,
@@ -39,16 +65,12 @@ export function HostedDeploymentDeleteAction({
 		onAccepted ?? (() => router.navigate({ href: "/", replace: true })),
 	);
 	const [open, setOpen] = useState(false);
-	const [choice, setChoice] =
-		useState<DeploymentDeleteRequest["subscription_choice"]>("cancel_subscription");
+	const [choice, setChoice] = useState<DeleteSubscriptionChoice>("cancel_subscription");
 	const [pending, setPending] = useState(false);
 	const locked = useRef(false);
 	const subscription = deployment.commercial_display?.compute_subscription;
-	const includedBasic =
-		computeFundingMode(deployment.current_plan_slug, subscription) === "included_basic";
-	const offerChoice =
-		computeFundingMode(deployment.current_plan_slug, subscription) === "subscription" &&
-		isComputeSubscriptionRenewing(subscription);
+	const { offerChoice, defaultChoice, storeNotice } =
+		deploymentDeleteSubscriptionPolicy(deployment);
 	const periodEnd = formatShortDate(subscription?.current_period_end);
 	const name = agentDisplayName({
 		name: deployment.resource.name,
@@ -65,11 +87,7 @@ export function HostedDeploymentDeleteAction({
 					id: deployment.resource.id,
 					resourceVersion: deployment.resource.metadata.resourceVersion,
 					request: {
-						subscription_choice: offerChoice
-							? choice
-							: includedBasic
-								? "cancel_subscription"
-								: "keep_subscription",
+						subscription_choice: offerChoice ? choice : defaultChoice,
 					},
 				});
 			} catch {
@@ -126,6 +144,8 @@ export function HostedDeploymentDeleteAction({
 							description={cancelDescription}
 						/>
 					</fieldset>
+				) : storeNotice ? (
+					<p className="text-sm text-muted-foreground">{storeNotice}</p>
 				) : subscription?.cancel_at_period_end ? (
 					<p className="text-sm text-muted-foreground">
 						The subscription is already scheduled to stop at period end; deleting the agent does not

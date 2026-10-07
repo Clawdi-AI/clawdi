@@ -1,6 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 import { ApiClientError } from "../api/read-transport";
 import {
+	accountDeletionStoreNotice,
+	accountDeletionStoreNoticeCopy,
 	type DeletedAccountClerk,
 	deleteAccountThenSignOut,
 	endDeletedAccountSession,
@@ -146,5 +148,90 @@ describe("deleteAccountThenSignOut", () => {
 			endSession: async () => "signed-out",
 		});
 		expect(result).toEqual({ outcome: "uncertain" });
+	});
+});
+
+describe("accountDeletionStoreNotice", () => {
+	const management = {
+		provider: "play_store",
+		product_id: "ai.clawdi.app.compute.basic.monthly",
+		management_url: null,
+		auto_renews: true,
+		renews_or_ends_at: "2026-11-07T00:00:00Z",
+		state: "active",
+	} as const;
+	const storeRow = (state: string, provider: "app_store" | "play_store" = "play_store") => ({
+		funding_source: "store" as const,
+		store_management: { ...management, provider, state },
+	});
+	const cardRow = { funding_source: "stripe" as const, store_management: null };
+
+	test("names the store while a store contract may still renew", () => {
+		for (const state of [
+			"active",
+			"grace",
+			"lapsed",
+			"paused",
+			"canceled_pending_end",
+			"conflict_hold",
+		]) {
+			expect(accountDeletionStoreNotice([cardRow, storeRow(state)], true)).toEqual({
+				kind: "store",
+				provider: "play_store",
+			});
+		}
+		// Auto-renewal is decisive even for a state this client does not list.
+		expect(
+			accountDeletionStoreNotice(
+				[
+					{
+						...storeRow("unrecognized"),
+						store_management: { ...management, state: "unrecognized", auto_renews: true },
+					},
+				],
+				true,
+			),
+		).toEqual({ kind: "store", provider: "play_store" });
+		// A renewable row is decisive even before later pages load.
+		expect(accountDeletionStoreNotice([storeRow("grace", "app_store")], false)).toEqual({
+			kind: "store",
+			provider: "app_store",
+		});
+		expect(accountDeletionStoreNoticeCopy("app_store")).toEqual({
+			title: "Cancel your App Store subscription first",
+			description:
+				"Your Clawdi compute subscription is billed by the App Store and will keep renewing after your account is deleted. Cancel it in App Store subscriptions first. Deleting your account is not a refund request.",
+		});
+		expect(accountDeletionStoreNoticeCopy("play_store").description).toContain(
+			"billed by Google Play",
+		);
+	});
+
+	test("shows no store notice once the complete list has no renewable store contract", () => {
+		expect(accountDeletionStoreNotice([], true)).toEqual({ kind: "none" });
+		const ended = (state: string) => ({
+			...storeRow(state),
+			store_management: { ...management, state, auto_renews: false },
+		});
+		expect(
+			accountDeletionStoreNotice(
+				[
+					cardRow,
+					ended("expired"),
+					ended("revoked"),
+					ended("owner_terminated"),
+					ended("unrecognized"),
+				],
+				true,
+			),
+		).toEqual({ kind: "none" });
+	});
+
+	test("keeps the generic notice when the list is unavailable, partial, or unprojected", () => {
+		expect(accountDeletionStoreNotice(null, false)).toEqual({ kind: "generic" });
+		expect(accountDeletionStoreNotice([cardRow], false)).toEqual({ kind: "generic" });
+		expect(
+			accountDeletionStoreNotice([{ funding_source: "store", store_management: null }], true),
+		).toEqual({ kind: "generic" });
 	});
 });

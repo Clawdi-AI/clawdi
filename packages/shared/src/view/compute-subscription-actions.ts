@@ -105,6 +105,13 @@ export function resolveComputeSubscriptionActions({
 		: null;
 
 	if (entitlement.actions?.command_state != null) return [];
+	if (fundingSource === "store") {
+		// Store billing is managed on the purchasing device. The only Web action is the
+		// server-offered replacement for an Agent whose store contract has ended.
+		return recoveryTarget?.kind === "start_new" && deploymentBound
+			? [{ ...recoveryAction(recoveryTarget), disabledReason: startNewUnavailableReason }]
+			: [];
+	}
 	if (hasPendingOperation) return [action("check_change")];
 
 	if (recoveryTarget?.kind === "start_new") {

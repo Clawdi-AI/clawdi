@@ -5,19 +5,22 @@ import {
 	accountDeletionCopy as copy,
 	deleteAccountThenSignOut,
 	endDeletedAccountSession,
-	STORE_SUBSCRIPTIONS_URL,
 	settingsCopy,
 } from "@clawdi/shared/view";
 import { UserProfile, useClerk } from "@clerk/tanstack-react-start";
 import { useRouter } from "@tanstack/react-router";
-import { ExternalLink, Trash2, TriangleAlert } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { DEPLOY_API_URL, isDeployApiConfigured } from "@/hosted/access/api";
+import {
+	AccountDeletionStoreNoticeAlert,
+	useAccountDeletionStoreNotice,
+} from "@/hosted/account/account-deletion-store-notice";
 import { useAuthActions, useAuthToken, useCurrentUser } from "@/lib/auth-client";
 
 /**
@@ -79,6 +82,7 @@ function DeleteAccountPage() {
 				: null,
 		[getToken],
 	);
+	const storeNotice = useAccountDeletionStoreNotice();
 	const [outcome, setOutcome] = useState<"idle" | "deleting" | "uncertain">("idle");
 	const [signingOut, setSigningOut] = useState(false);
 	const email = user?.primaryEmailAddress?.emailAddress ?? user?.id ?? "";
@@ -120,31 +124,7 @@ function DeleteAccountPage() {
 			</div>
 			<p>{copy.warning}</p>
 			<p>{copy.billing}</p>
-			<Alert variant="destructive">
-				<TriangleAlert />
-				<AlertTitle>{copy.storeNoticeTitle}</AlertTitle>
-				<AlertDescription>{copy.storeNotice}</AlertDescription>
-			</Alert>
-			<div className="flex flex-wrap gap-2">
-				<Button
-					render={<a href={STORE_SUBSCRIPTIONS_URL.appStore} target="_blank" rel="noreferrer" />}
-					nativeButton={false}
-					variant="outline"
-					size="sm"
-				>
-					<ExternalLink />
-					{copy.manageAppStore}
-				</Button>
-				<Button
-					render={<a href={STORE_SUBSCRIPTIONS_URL.googlePlay} target="_blank" rel="noreferrer" />}
-					nativeButton={false}
-					variant="outline"
-					size="sm"
-				>
-					<ExternalLink />
-					{copy.manageGooglePlay}
-				</Button>
-			</div>
+			<AccountDeletionStoreNoticeAlert notice={storeNotice} />
 			{outcome === "idle" ? (
 				compute ? (
 					<div>

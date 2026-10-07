@@ -202,4 +202,37 @@ describe("resolveComputeSubscriptionActions", () => {
 			kinds({ deploymentId: null, isOrphan: true, status: "canceling", actions: null }),
 		).toEqual([]);
 	});
+
+	test("never offers Stripe actions on store rows, only a server-offered replacement", () => {
+		const storeRow = {
+			fundingSource: "store" as const,
+			subscriptionKind: "paid" as const,
+			actions: { cancel: null, resume: false, command_state: null },
+		};
+		for (const status of ["active", "past_due", "trialing"]) {
+			expect(kinds({ ...storeRow, status })).toEqual([]);
+			expect(kinds({ ...storeRow, status }, { hasPendingOperation: true })).toEqual([]);
+		}
+		expect(
+			kinds(
+				{ ...storeRow, status: "past_due", paymentState: "past_due" },
+				{ recoveryTarget: { kind: "fix_payment", action: "fix_payment" } },
+			),
+		).toEqual([]);
+		expect(
+			kinds({ ...storeRow, pendingPlanSlug: "compute_basic", cancelAtPeriodEnd: true }),
+		).toEqual([]);
+		expect(
+			kinds(
+				{ ...storeRow, status: "canceled" },
+				{ recoveryTarget: { kind: "start_new", action: "start_new" } },
+			),
+		).toEqual(["start_new"]);
+		expect(
+			kinds(
+				{ ...storeRow, status: "canceled", deploymentId: null, isOrphan: true },
+				{ recoveryTarget: { kind: "start_new", action: "start_new" } },
+			),
+		).toEqual([]);
+	});
 });
