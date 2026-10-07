@@ -1,3 +1,4 @@
+import { emitJson } from "../lib/command-output";
 /**
  * `clawdi daemon` entry.
  *
@@ -448,7 +449,7 @@ export async function serveStatus(opts: ServeStatusOpts): Promise<void> {
 	}
 	const agents = targets.map(buildStatusReport);
 	if (opts.json) {
-		console.log(JSON.stringify({ schemaVersion: "clawdi.daemonStatus.v1", agents }));
+		emitJson({ schemaVersion: "clawdi.daemonStatus.v1", agents }, false);
 		return;
 	}
 	for (const [i, report] of agents.entries()) {
@@ -586,7 +587,7 @@ export async function serveDoctor(opts: ServeDoctorOpts): Promise<void> {
 	// programmatic callers.
 	const summary = buildDoctorReport();
 	if (opts.json) {
-		console.log(JSON.stringify(summary, null, 2));
+		emitJson(summary);
 		return;
 	}
 	console.log(`entrypoint:  ${summary.entrypoint ?? "?"}`);
@@ -688,7 +689,7 @@ export async function serveRpc(method: string, opts: ServeRpcOpts): Promise<void
 	);
 	const rpcTarget = resolveRpcClientConfig(opts);
 	const result = await callControlRpc(normalizedMethod, {}, rpcTarget);
-	console.log(JSON.stringify(result, null, 2));
+	emitJson(result);
 }
 
 function normalizeRpcMethod(method: string): string {

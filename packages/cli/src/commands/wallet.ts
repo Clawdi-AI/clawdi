@@ -1,5 +1,6 @@
 import type { HostedDeployWallet, HostedWalletBinding } from "@clawdi/shared/api";
 import { parsePositiveInteger } from "../lib/cli-options";
+import { emitJson } from "../lib/command-output";
 import { isAuthorizationRequired, mapHttpError } from "../lib/errors";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
@@ -15,7 +16,7 @@ export async function walletTransactionsCommand(
 		new HostedDeployClient().getWalletTransactions(limit),
 	);
 	if (options.json) {
-		console.log(JSON.stringify({ schemaVersion: "clawdi.walletTransactions.v1", ...result }));
+		emitJson({ schemaVersion: "clawdi.walletTransactions.v1", ...result }, false);
 		return;
 	}
 	if (result.items.length === 0) console.log("No wallet transactions.");
@@ -35,7 +36,7 @@ export async function walletUsageCommand(
 	const days = options.days === undefined ? undefined : parsePositiveInteger(options.days);
 	const result = await readWalletResult(() => new HostedDeployClient().getWalletUsage(days));
 	if (options.json) {
-		console.log(JSON.stringify({ schemaVersion: "clawdi.walletUsage.v1", ...result }));
+		emitJson({ schemaVersion: "clawdi.walletUsage.v1", ...result }, false);
 		return;
 	}
 	console.log(`Period: ${result.period_start} – ${result.period_end}`);
@@ -129,15 +130,18 @@ export async function walletStatusCommand(
 			verified_at: binding.verified_at ?? null,
 		},
 	};
-	(dependencies.writeStdout ?? console.log)(
-		options.json
-			? JSON.stringify(result, null, 2)
-			: [
-					`Wallet balance: $${wallet.balance_usd}`,
-					`USDC funding: ${fundingStatus}`,
-					`Verified wallet: ${address ?? "not bound"}`,
-				].join("\n"),
-	);
+	const writeStdout = dependencies.writeStdout ?? console.log;
+	if (options.json) {
+		emitJson(result, true, writeStdout);
+	} else {
+		writeStdout(
+			[
+				`Wallet balance: $${wallet.balance_usd}`,
+				`USDC funding: ${fundingStatus}`,
+				`Verified wallet: ${address ?? "not bound"}`,
+			].join("\n"),
+		);
+	}
 }
 
 function safeWalletStatusError(error: unknown): { code: string; message: string } {
@@ -177,12 +181,10 @@ export async function runWalletStatusCommand(
 		const safe = safeWalletStatusError(error);
 		const authorizationRequired = isAuthorizationRequired(error);
 		if (options.json || !(dependencies.interactive ?? isInteractive())) {
-			(dependencies.writeStdout ?? console.log)(
-				JSON.stringify(
-					{ schema_version: "clawdi.wallet.error.v1", status: "error", error: safe },
-					null,
-					2,
-				),
+			emitJson(
+				{ schema_version: "clawdi.wallet.error.v1", status: "error", error: safe },
+				true,
+				dependencies.writeStdout ?? console.log,
 			);
 			process.exitCode = authorizationRequired ? 4 : 1;
 			return;

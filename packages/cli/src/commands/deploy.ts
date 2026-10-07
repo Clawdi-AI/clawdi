@@ -37,6 +37,7 @@ import chalk from "chalk";
 import { openInBrowser } from "../lib/browser";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
+import { emitJson } from "../lib/command-output";
 import { isAuthorizationRequired, mapHttpError } from "../lib/errors";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import {
@@ -1372,27 +1373,25 @@ export async function deployCommand(
 						if (!interactive) writeStderr(chalk.gray(event.message));
 					},
 		});
-		if (machineOutput) writeStdout(JSON.stringify(result, null, 2));
+		if (machineOutput) emitJson(result, true, writeStdout);
 	} catch (error) {
 		const safe = safeDeployError(error);
 		const authorizationRequired = isAuthorizationRequired(error);
 		if (machineOutput) {
-			writeStdout(
-				JSON.stringify(
-					authorizationRequired
-						? {
-								schema_version: "clawdi.deploy.v1",
-								status: "authorization_required",
-								authorization: { command: "clawdi auth login" },
-							}
-						: {
-								schema_version: "clawdi.deploy.v1",
-								status: "error",
-								error: safe,
-							},
-					null,
-					2,
-				),
+			emitJson(
+				authorizationRequired
+					? {
+							schema_version: "clawdi.deploy.v1",
+							status: "authorization_required",
+							authorization: { command: "clawdi auth login" },
+						}
+					: {
+							schema_version: "clawdi.deploy.v1",
+							status: "error",
+							error: safe,
+						},
+				true,
+				writeStdout,
 			);
 			process.exitCode = authorizationRequired ? 4 : 1;
 			return;

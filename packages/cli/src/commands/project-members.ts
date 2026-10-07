@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { emitJson } from "../lib/command-output";
 
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
@@ -65,17 +66,11 @@ export async function projectMembersCommand(
 			{ method: "DELETE" },
 		);
 		if (opts.json) {
-			console.log(
-				JSON.stringify(
-					{
-						project_id: projectId,
-						removed_user_id: matches[0].user_id,
-						...removed,
-					},
-					null,
-					2,
-				),
-			);
+			emitJson({
+				project_id: projectId,
+				removed_user_id: matches[0].user_id,
+				...removed,
+			});
 			return;
 		}
 		console.log(`${chalk.green("✓")} Removed ${matches[0].user_email ?? matches[0].user_id}.`);
@@ -85,7 +80,7 @@ export async function projectMembersCommand(
 
 	const members = await fetchMembers(ctx.apiUrl, ctx.apiKey, projectId);
 	if (opts.json) {
-		console.log(JSON.stringify({ project_id: projectId, members }, null, 2));
+		emitJson({ project_id: projectId, members });
 		return;
 	}
 	if (members.length === 0) {
@@ -128,7 +123,7 @@ export async function projectLeaveCommand(
 		{ method: "POST" },
 	);
 	if (opts.json) {
-		console.log(JSON.stringify({ project_id: projectId, ...result }, null, 2));
+		emitJson({ project_id: projectId, ...result });
 		return;
 	}
 	console.log(`${chalk.green("✓")} Left ${projectArg}.`);
@@ -159,7 +154,7 @@ export async function projectUnshareCommand(
 		invitations_cancelled: number;
 	}>(ctx.apiUrl, ctx.apiKey, `/v1/projects/${projectId}/unshare`, { method: "POST" });
 	if (opts.json) {
-		console.log(JSON.stringify({ project_id: projectId, ...result }, null, 2));
+		emitJson({ project_id: projectId, ...result });
 		return;
 	}
 	console.log(`${chalk.green("✓")} Stopped project sharing for ${projectArg}.`);

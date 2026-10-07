@@ -343,11 +343,13 @@ export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<
 				signal: controller.signal,
 				timeoutMs: Date.parse(pending.expiresAt) - Date.now(),
 			});
-			console.error(
-				JSON.stringify({
+			emitJson(
+				{
 					schemaVersion: "clawdi.desktopLogin.progress.v1",
 					expiresAt: pending.expiresAt,
-				}),
+				},
+				false,
+				console.error,
 			);
 			openInBrowser(pending.authorizationUrl);
 			const callbackUrl = await loopback.callbackUrl;
@@ -361,9 +363,7 @@ export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<
 				(error instanceof ClerkOAuthError &&
 					["oauth_denied", "oauth_cancelled"].includes(error.code))
 			) {
-				console.log(
-					JSON.stringify({ schemaVersion: "clawdi.desktopLogin.v1", status: "cancelled" }),
-				);
+				emitJson({ schemaVersion: "clawdi.desktopLogin.v1", status: "cancelled" }, false);
 				return;
 			}
 			throw error;
@@ -375,12 +375,13 @@ export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<
 	}
 	const auth = getAuth();
 	if (!isClerkOAuthAuth(auth)) throw new Error("Desktop sign-in did not save an OAuth session.");
-	console.log(
-		JSON.stringify({
+	emitJson(
+		{
 			schemaVersion: "clawdi.desktopLogin.v1",
 			status: "authenticated",
 			user: { id: auth.userId, ...(auth.email ? { email: auth.email } : {}) },
-		}),
+		},
+		false,
 	);
 }
 

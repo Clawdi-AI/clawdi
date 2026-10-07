@@ -5,6 +5,7 @@ import chalk from "chalk";
 import { adapterModuleNames } from "../adapters/base";
 import { AGENT_TYPES, type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
+import { emitJson } from "../lib/command-output";
 import { getAuth } from "../lib/config";
 import { writeEnvironmentRegistration } from "../lib/environment-registration";
 import { errMessage } from "../lib/errors";
@@ -52,8 +53,8 @@ export async function agentReconnect(
 	}
 	if (opts.desktopList) {
 		const currentMachineId = readMachineId();
-		console.log(
-			JSON.stringify({
+		emitJson(
+			{
 				schemaVersion: DESKTOP_CANDIDATES_SCHEMA,
 				agents: agents.flatMap((agent) => {
 					const type = AGENT_TYPES.includes(agent.agent_type as AgentType)
@@ -72,7 +73,8 @@ export async function agentReconnect(
 						},
 					];
 				}),
-			}),
+			},
+			false,
 		);
 		return;
 	}

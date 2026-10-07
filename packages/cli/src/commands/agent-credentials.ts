@@ -8,6 +8,7 @@ import chalk from "chalk";
 import { getClaudeHome, getCodexHome, getGhConfigHome } from "../adapters/paths";
 import { ApiClient } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
+import { emitJson } from "../lib/command-output";
 import { getConfig } from "../lib/config";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { resolveProjectId } from "../lib/project-resolver";
@@ -501,24 +502,18 @@ export async function collectAgentCredentialProfilePayload(
 	if (opts.quiet) {
 		// Used by higher-level commands that need one machine-readable JSON envelope.
 	} else if (opts.json) {
-		console.log(
-			JSON.stringify(
-				{
-					tool,
-					profile,
-					source: opts.source ?? "file",
-					dry_run: Boolean(opts.dryRun),
-					files: previewPlans.map((file) => ({
-						logical_name: file.logicalName,
-						source_path: file.sourcePath,
-						target_path: file.targetPath ?? adapterTargetPath(tool, file.logicalName),
-						size: file.size ?? 0,
-					})),
-				},
-				null,
-				2,
-			),
-		);
+		emitJson({
+			tool,
+			profile,
+			source: opts.source ?? "file",
+			dry_run: Boolean(opts.dryRun),
+			files: previewPlans.map((file) => ({
+				logical_name: file.logicalName,
+				source_path: file.sourcePath,
+				target_path: file.targetPath ?? adapterTargetPath(tool, file.logicalName),
+				size: file.size ?? 0,
+			})),
+		});
 	} else {
 		p.note(preview, `Credential profile ${tool}/${profile}`, { output: process.stderr });
 	}
@@ -633,22 +628,16 @@ export async function materializeAgentCredentialProfilePayload(
 	if (opts.quiet) {
 		// Used by provider-bound wrappers that print their own result.
 	} else if (opts.json) {
-		console.log(
-			JSON.stringify(
-				{
-					tool,
-					profile,
-					dry_run: Boolean(opts.dryRun),
-					files: targets.map(({ file, targetPath }) => ({
-						logical_name: file.logicalName,
-						target_path: targetPath,
-						size: file.size,
-					})),
-				},
-				null,
-				2,
-			),
-		);
+		emitJson({
+			tool,
+			profile,
+			dry_run: Boolean(opts.dryRun),
+			files: targets.map(({ file, targetPath }) => ({
+				logical_name: file.logicalName,
+				target_path: targetPath,
+				size: file.size,
+			})),
+		});
 	} else {
 		p.note(preview, `Materialize credential profile ${tool}/${profile}`, {
 			output: process.stderr,

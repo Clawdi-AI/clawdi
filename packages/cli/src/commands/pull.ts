@@ -4,6 +4,7 @@ import chalk from "chalk";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { SessionListItem, SkillSummary } from "../lib/api-schemas";
+import { emitJson } from "../lib/command-output";
 import { getClawdiDir } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { progress as p } from "../lib/progress";
@@ -336,7 +337,7 @@ function printPullResult(
 			...(scan.modules.includes("skills") ? { skills } : {}),
 		};
 	});
-	console.log(JSON.stringify({ schemaVersion: "clawdi.pull.v1", dryRun, agents, totals, errors }));
+	emitJson({ schemaVersion: "clawdi.pull.v1", dryRun, agents, totals, errors }, false);
 }
 
 /**

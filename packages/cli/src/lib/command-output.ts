@@ -19,12 +19,16 @@ export function wantsJson(
 
 /** Emit one machine-readable result object with its schema version. */
 export function emit(schemaVersion: string, result: Record<string, unknown>): void {
-	console.log(JSON.stringify({ ...result, schemaVersion }));
+	emitJson({ ...result, schemaVersion }, false);
 }
 
 /** Emit a legacy JSON shape without changing its documented envelope. */
-export function emitJson(value: unknown, pretty = true): void {
-	console.log(JSON.stringify(value, null, pretty ? 2 : undefined));
+export function emitJson(
+	value: unknown,
+	pretty = true,
+	write: (text: string) => void = console.log,
+): void {
+	write(JSON.stringify(value, null, pretty ? 2 : undefined));
 }
 
 /** Keep human messages out of machine-readable stdout. */
