@@ -1,6 +1,6 @@
 import chalk from "chalk";
-
 import { ApiClient, ApiError, readJson } from "../lib/api-client";
+import { commandResult } from "../lib/command-output";
 import { projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 
@@ -30,7 +30,7 @@ const AMBIGUOUS_HINT = "Multiple accounts match that email. Send them a share li
 
 export async function projectInviteCommand(
 	projectArg: string,
-	opts: { email: string },
+	opts: { email: string; json?: boolean },
 ): Promise<void> {
 	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
@@ -81,6 +81,18 @@ export async function projectInviteCommand(
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 
 	const body = await readJson<InvitationResponse>(r, "create project invitation");
+	if (opts.json) {
+		console.error("✓ Invitation sent");
+		commandResult(true, "clawdi.projectInvite.v1", {
+			id: body.id,
+			project_id: body.project_id,
+			project_name: body.project_name,
+			invitee_email: body.invitee_email,
+			owner_handle: body.owner_handle,
+			created_at: body.created_at,
+		});
+		return;
+	}
 	console.log(`${chalk.green("✓")} Invitation sent to ${body.invitee_email}`);
 	console.log(
 		chalk.gray("  They will join as a viewer with read access, including CLI vault runtime reads."),

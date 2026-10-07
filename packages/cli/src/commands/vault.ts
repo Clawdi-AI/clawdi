@@ -4,6 +4,7 @@ import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
+import { commandMessage, commandResult } from "../lib/command-output";
 import { parseDotenvDetailed } from "../lib/dotenv";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -176,6 +177,7 @@ async function fetchAllVaults(api: ApiClient, projectId?: string): Promise<Vault
 }
 
 interface VaultSetOptions {
+	json?: boolean;
 	project?: string;
 	value?: string;
 	stdin?: boolean;
@@ -192,13 +194,22 @@ export async function vaultSet(key: string, opts: VaultSetOptions = {}) {
 
 	const value = await readVaultSetValue(key, opts);
 	if (value === null) {
+		commandResult(opts.json, "clawdi.vaultSet.v1", {
+			vault: vaultSlug,
+			section,
+			keys: [field],
+			status: "cancelled",
+		});
 		return;
 	}
 
 	const api = new ApiClient();
 
 	const targetProject = await resolveVaultWriteProject(api, opts.project);
-	console.log(chalk.gray(`  Target: ${formatVaultTarget(vaultSlug, section, targetProject)}`));
+	commandMessage(
+		opts.json,
+		chalk.gray(`  Target: ${formatVaultTarget(vaultSlug, section, targetProject)}`),
+	);
 
 	const vaultId = await ensureVault(api, vaultSlug, vaultSlug, targetProject.projectId);
 	await warnIfSharedVaultWrite(api, vaultSlug);
@@ -213,12 +224,21 @@ export async function vaultSet(key: string, opts: VaultSetOptions = {}) {
 		}),
 	);
 
-	console.log(chalk.green(`✓ Stored ${normalizedKey}`));
-	console.log(
+	commandMessage(opts.json, chalk.green(`✓ Stored ${normalizedKey}`));
+	commandMessage(
+		opts.json,
 		chalk.gray(
 			`  Reference: ${buildExactClawdiReference(targetProject.projectId, vaultSlug, section, field)}`,
 		),
 	);
+	commandResult(opts.json, "clawdi.vaultSet.v1", {
+		project_id: targetProject.projectId,
+		vault_id: vaultId,
+		vault: vaultSlug,
+		section,
+		keys: [field],
+		status: "stored",
+	});
 }
 
 export async function vaultList(opts: { json?: boolean; project?: string } = {}) {
@@ -330,6 +350,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 }
 
 interface VaultProjectOptions {
+	json?: boolean;
 	project?: string;
 	yes?: boolean;
 }
@@ -351,26 +372,42 @@ export async function vaultAttach(vaultSlugArg: string, opts: VaultProjectOption
 	}
 	const projectIdsBefore = vaultProjectIds(vault);
 	if (projectIdsBefore.includes(targetProject.projectId)) {
-		console.log(
+		commandMessage(
+			opts.json,
 			chalk.gray(
 				`Vault "${sanitizeMetadata(vaultSlug)}" is already available in ${formatProjectTarget(targetProject)}.`,
 			),
 		);
+		commandResult(opts.json, "clawdi.vaultAttach.v1", {
+			project_id: targetProject.projectId,
+			vault_id: vault.id,
+			vault: vaultSlug,
+			status: "already_attached",
+		});
 		return;
 	}
 
 	await ensureVault(api, vaultSlug, vaultSlug, targetProject.projectId);
 	const attachedCount = projectIdsBefore.length + 1;
-	console.log(
+	commandMessage(
+		opts.json,
 		chalk.green(
 			`✓ Attached vault "${sanitizeMetadata(vaultSlug)}" to ${formatProjectTarget(targetProject)}`,
 		),
 	);
-	console.log(
+	commandMessage(
+		opts.json,
 		chalk.gray(
 			`  Keys in this vault are now available from ${attachedCount} project${attachedCount === 1 ? "" : "s"} and remain one shared key set.`,
 		),
 	);
+	commandResult(opts.json, "clawdi.vaultAttach.v1", {
+		project_id: targetProject.projectId,
+		vault_id: vault.id,
+		vault: vaultSlug,
+		status: "attached",
+		attached_project_count: attachedCount,
+	});
 }
 
 export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOptions = {}) {
@@ -388,11 +425,18 @@ export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOption
 	}
 	const projectIdsBefore = vaultProjectIds(vault);
 	if (!projectIdsBefore.includes(targetProject.projectId)) {
-		console.log(
+		commandMessage(
+			opts.json,
 			chalk.gray(
 				`Vault "${sanitizeMetadata(vaultSlug)}" is not attached to ${formatProjectTarget(targetProject)}.`,
 			),
 		);
+		commandResult(opts.json, "clawdi.vaultDetach.v1", {
+			project_id: targetProject.projectId,
+			vault_id: vault.id,
+			vault: vaultSlug,
+			status: "not_attached",
+		});
 		return;
 	}
 	if (!opts.yes) {
@@ -404,6 +448,11 @@ export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOption
 				{ action: "detach this vault" },
 			))
 		) {
+			commandResult(opts.json, "clawdi.vaultDetach.v1", {
+				project_id: targetProject.projectId,
+				vault: vaultSlug,
+				status: "cancelled",
+			});
 			return;
 		}
 	}
@@ -417,16 +466,25 @@ export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOption
 		}),
 	);
 	const remainingCount = Math.max(projectIdsBefore.length - 1, 0);
-	console.log(
+	commandMessage(
+		opts.json,
 		chalk.green(
 			`✓ Detached vault "${sanitizeMetadata(vaultSlug)}" from ${formatProjectTarget(targetProject)}`,
 		),
 	);
-	console.log(
+	commandMessage(
+		opts.json,
 		chalk.gray(
 			`  No keys were deleted. This vault remains attached to ${remainingCount} project${remainingCount === 1 ? "" : "s"}.`,
 		),
 	);
+	commandResult(opts.json, "clawdi.vaultDetach.v1", {
+		project_id: targetProject.projectId,
+		vault_id: vault.id,
+		vault: vaultSlug,
+		status: "detached",
+		attached_project_count: remainingCount,
+	});
 }
 
 interface VaultReferenceRow {
@@ -455,6 +513,7 @@ function buildVaultReferenceRows(
 }
 
 interface VaultImportOptions {
+	json?: boolean;
 	yes?: boolean;
 	project?: string;
 	section?: string;
@@ -479,13 +538,20 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 	}
 
 	if (Object.keys(fields).length === 0) {
-		console.log(
+		commandMessage(
+			opts.json,
 			chalk.gray(
 				parsed.skippedInvalidIdentifiers.length > 0
 					? "No valid keys found in file."
 					: "No keys found in file.",
 			),
 		);
+		commandResult(opts.json, "clawdi.vaultImport.v1", {
+			vault: vaultSlug,
+			section,
+			keys: [],
+			status: "empty",
+		});
 		return;
 	}
 
@@ -504,6 +570,12 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 			action: `import these keys to ${target}`,
 		}))
 	) {
+		commandResult(opts.json, "clawdi.vaultImport.v1", {
+			vault: vaultSlug,
+			section,
+			keys: Object.keys(fields).sort(),
+			status: "cancelled",
+		});
 		return;
 	}
 
@@ -525,18 +597,31 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 		}),
 	);
 
-	console.log(chalk.green(`✓ Imported ${Object.keys(fields).length} keys to ${target}`));
-	console.log(chalk.gray("  References:"));
+	commandMessage(
+		opts.json,
+		chalk.green(`✓ Imported ${Object.keys(fields).length} keys to ${target}`),
+	);
+	commandMessage(opts.json, chalk.gray("  References:"));
 	for (const field of Object.keys(fields).sort()) {
-		console.log(
+		commandMessage(
+			opts.json,
 			chalk.gray(
 				`    ${sanitizeMetadata(field)}=${buildExactClawdiReference(targetProject.projectId, vaultSlug, section, field)}`,
 			),
 		);
 	}
+	commandResult(opts.json, "clawdi.vaultImport.v1", {
+		project_id: targetProject.projectId,
+		vault_id: vaultId,
+		vault: vaultSlug,
+		section,
+		keys: Object.keys(fields).sort(),
+		status: "imported",
+	});
 }
 
 interface VaultRmOptions {
+	json?: boolean;
 	project?: string;
 	yes?: boolean;
 	global?: boolean;
@@ -575,6 +660,12 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 		});
 		if (p.isCancel(ok) || !ok) {
 			p.cancel("Cancelled.", { output: process.stderr });
+			commandResult(opts.json, "clawdi.vaultRm.v1", {
+				vault: vaultSlug,
+				section,
+				keys: [field],
+				status: "cancelled",
+			});
 			return;
 		}
 	}
@@ -597,7 +688,15 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 		attachedProjectIds.length > 1
 			? ` globally from shared ${target} (${attachedProjectIds.length} projects attached)`
 			: ` from ${target}`;
-	console.log(chalk.green(`✓ Deleted ${normalizedKey}${suffix}`));
+	commandMessage(opts.json, chalk.green(`✓ Deleted ${normalizedKey}${suffix}`));
+	commandResult(opts.json, "clawdi.vaultRm.v1", {
+		project_id: targetProject.projectId,
+		vault_id: vault.id,
+		vault: vaultSlug,
+		section,
+		keys: [field],
+		status: "deleted",
+	});
 }
 
 async function readVaultSetValue(key: string, opts: VaultSetOptions): Promise<string | null> {
