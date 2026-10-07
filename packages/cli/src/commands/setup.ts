@@ -16,7 +16,7 @@ import {
 } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { commandResult } from "../lib/command-output";
-import { getConfig } from "../lib/config";
+import { getConfig, setConfigKey } from "../lib/config";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import {
 	assertUniqueVaultWorkspace,
@@ -38,6 +38,7 @@ import {
 	replaceManagedSkillDirectoryAtomic,
 } from "../runtime/managed-skill-reservation";
 import {
+	BackgroundServiceUnsupportedError,
 	install as installDaemonService,
 	listInstalledAgents,
 	restart as restartDaemonService,
@@ -55,6 +56,12 @@ interface SetupOpts extends LocalAgentSetupOpts {
 	agent?: string;
 	vaultWorkspace?: string;
 	vaultNativeAgent?: string;
+	excludeProject?: string[];
+}
+
+interface DaemonSetupResult {
+	installed: boolean;
+	reason?: "unsupported" | "failed";
 }
 
 export async function setup(opts: SetupOpts) {
@@ -64,13 +71,13 @@ export async function setup(opts: SetupOpts) {
 		skill_installed: boolean | null;
 		mcp_installed: boolean | null;
 	}[] = [];
-	let daemonInstalled = false;
+	let daemon: DaemonSetupResult = { installed: false };
 	let dashboardUrl: string | undefined;
 	const emitResult = (status = "completed") =>
 		commandResult(opts.json, "clawdi.setup.v1", {
 			status,
 			agents,
-			daemon: { installed: daemonInstalled },
+			daemon,
 			dashboard_url: dashboardUrl ?? null,
 		});
 	if ((opts.vaultWorkspace || opts.vaultNativeAgent) && !opts.agent) {
@@ -79,6 +86,10 @@ export async function setup(opts: SetupOpts) {
 		);
 	}
 	const auth = requireAuth();
+	if (opts.excludeProject?.length) {
+		// Use the config command's normalization, before any daemon can start.
+		setConfigKey("excludeProjects", opts.excludeProject.join(","));
+	}
 
 	let machineId: string;
 	let machineName: string;
@@ -123,12 +134,12 @@ export async function setup(opts: SetupOpts) {
 		agents.push({ id: result.id, agent_type: type, ...integrations });
 		const integrationsInstalled =
 			integrations.mcp_installed === true && integrations.skill_installed === true;
-		daemonInstalled = await maybeInstallDaemons(opts, vaultBindingChanged);
+		daemon = await prepareDaemons(opts, vaultBindingChanged);
 		dashboardUrl = result.dashboardUrl;
 		if (!opts.json)
 			printSetupNotice(
 				[adapterRegistry[type].displayName],
-				daemonInstalled,
+				daemon.installed,
 				integrationsInstalled,
 				result.dashboardUrl,
 			);
@@ -221,9 +232,9 @@ export async function setup(opts: SetupOpts) {
 			integrations.mcp_installed === true && integrations.skill_installed === true;
 	}
 	if (registeredNames.length > 0) {
-		daemonInstalled = await maybeInstallDaemons(opts, vaultBindingChanged);
+		daemon = await prepareDaemons(opts, vaultBindingChanged);
 		if (!opts.json)
-			printSetupNotice(registeredNames, daemonInstalled, integrationsInstalled, dashboardUrl);
+			printSetupNotice(registeredNames, daemon.installed, integrationsInstalled, dashboardUrl);
 	}
 	if (failedCount > 0) process.exitCode = 1;
 	emitResult(process.exitCode ? "partial" : "completed");
@@ -302,13 +313,14 @@ function printSetupNotice(
 		"To opt out later:",
 		"  • Stop all background sync:   clawdi daemon uninstall",
 		"  • Skip a project:   clawdi config set excludeProjects <path>[,<path>]",
+		"  • Exclude before the first upload:   clawdi setup --exclude-project <path>[,<path>]",
 	);
 	if (dashboardUrl) lines.push(`Open your dashboard: ${dashboardUrl}`);
 	console.log();
 	console.log(lines.join("\n"));
 }
 
-function installDaemonForAllRegisteredAgents(restartExisting: boolean): boolean {
+function installDaemonForAllRegisteredAgents(restartExisting: boolean): DaemonSetupResult {
 	try {
 		const result = installDaemonService();
 		if (restartExisting && result.replaced) restartDaemonService();
@@ -317,12 +329,20 @@ function installDaemonForAllRegisteredAgents(restartExisting: boolean): boolean 
 		progressLine(chalk.gray(`  ${result.instructions}`));
 		const failed = cleanupLegacyDaemonUnits();
 		if (failed > 0) process.exitCode = 1;
-		return true;
+		return { installed: true };
 	} catch (e) {
+		if (e instanceof BackgroundServiceUnsupportedError) {
+			console.error(
+				chalk.gray(
+					`Background service not supported here: ${e.message}; sync runs when you run \`clawdi push\`.`,
+				),
+			);
+			return { installed: false, reason: "unsupported" };
+		}
 		console.error(chalk.yellow(`⚠ Could not install daemon: ${errMessage(e)}`));
 		console.error(chalk.gray("  Run manually: clawdi daemon install"));
 		process.exitCode = 1;
-		return false;
+		return { installed: false, reason: "failed" };
 	}
 }
 
@@ -385,15 +405,22 @@ export async function maybeInstallDaemons(
 	opts: LocalAgentSetupOpts,
 	restartExisting = false,
 ): Promise<boolean> {
-	if (await shouldInstallDaemons(opts)) return installDaemonsForRegisteredAgents(restartExisting);
-	return false;
+	return (await prepareDaemons(opts, restartExisting)).installed;
 }
 
-function installDaemonsForRegisteredAgents(restartExisting: boolean): boolean {
+async function prepareDaemons(
+	opts: LocalAgentSetupOpts,
+	restartExisting: boolean,
+): Promise<DaemonSetupResult> {
+	if (await shouldInstallDaemons(opts)) return installDaemonsForRegisteredAgents(restartExisting);
+	return { installed: false };
+}
+
+function installDaemonsForRegisteredAgents(restartExisting: boolean): DaemonSetupResult {
 	const registered = listRegisteredAgentTypes();
 	if (registered.length === 0) {
 		progressLine(chalk.gray("No registered agents available for daemon install."));
-		return false;
+		return { installed: false };
 	}
 	progressLine();
 	progressLine(chalk.cyan("Installing background sync daemon..."));

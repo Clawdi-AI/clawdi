@@ -38,6 +38,7 @@ fi
 docker build --quiet "${load_args[@]}" "${build_args[@]}" --file "$fixture" --tag "$image" \
 	"$(dirname -- "$fixture")" >/dev/null
 docker run --detach --privileged \
+	--cpus=2 --memory=4g --memory-swap=4g --pids-limit=512 \
 	--name "$container" \
 	--tmpfs /run \
 	--tmpfs /run/lock \
@@ -59,7 +60,7 @@ done
 
 docker exec "$container" bash -lc \
 	'cp -a /repo/. /work/ \
-		&& bun install --frozen-lockfile \
+		&& bun install --frozen-lockfile --ignore-scripts \
 		&& bun run --cwd packages/cli build \
 		&& mkdir -p /usr/local/share/clawdi/bootstrap \
 		&& npm pack ./packages/cli --pack-destination /usr/local/share/clawdi/bootstrap --silent >/dev/null \

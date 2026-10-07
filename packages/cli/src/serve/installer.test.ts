@@ -2,11 +2,9 @@
  * Installer unit tests — assert the generated plist / systemd
  * unit content is well-formed and references the right binary.
  *
- * We intentionally do NOT exercise launchctl / systemctl here.
- * Those side effects depend on the host's user session, log
- * out / log in state, etc. — flaky in CI. The integration test
- * (running `clawdi daemon install` against a real shell) lives
- * in /tmp manual smoke tests, not in `bun test`.
+ * Supervisor commands are stubbed here. Modern launchctl argv has a
+ * separate cross-platform fixture; daemon-systemd-user.e2e.test.ts covers
+ * a real user manager in the disposable privileged systemd container.
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
@@ -386,7 +384,11 @@ describe("installer.install (Linux systemd)", () => {
 		const stubBin = join(process.env.HOME ?? tmp, "stub-bin");
 		mkdirSync(stubBin, { recursive: true });
 		const stubSystemctl = join(stubBin, "systemctl");
-		writeFileSync(stubSystemctl, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+		writeFileSync(
+			stubSystemctl,
+			'#!/bin/sh\n[ "$*" = "--user show-environment" ] && exit 0\nexit 1\n',
+			{ mode: 0o755 },
+		);
 		chmodSync(stubSystemctl, 0o755);
 		const oldPath = process.env.PATH;
 		process.env.PATH = `${stubBin}:${oldPath}`;
@@ -415,6 +417,45 @@ describe("installer.install (Linux systemd)", () => {
 			process.env.PATH = oldPath;
 		}
 	});
+
+	it.each(["no", "yes", "unknown"])(
+		"reports the linger hint only when disabled: %s",
+		async (linger) => {
+			if (process.platform !== "linux") return;
+			const stubBin = join(process.env.HOME ?? tmp, "stub-bin");
+			mkdirSync(stubBin, { recursive: true });
+			const calls = join(stubBin, "loginctl-calls");
+			writeFileSync(join(stubBin, "systemctl"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+			writeFileSync(
+				join(stubBin, "loginctl"),
+				`#!/bin/sh
+printf '%s\\n' "$*" >> '${calls}'
+${linger === "unknown" ? "exit 1" : `printf '${linger}\\n'`}
+`,
+				{ mode: 0o755 },
+			);
+			const oldPath = process.env.PATH;
+			process.env.PATH = `${stubBin}:${oldPath}`;
+			try {
+				const { install } = await import("./installer");
+				const result = install();
+				const content = readFileSync(result.unit, "utf8");
+				expect(content).not.toContain("network-online.target");
+				expect(content).toContain("Restart=always\nRestartSec=10");
+				if (linger === "no") {
+					expect(result.instructions).toContain("loginctl enable-linger $USER");
+					expect(result.instructions).toContain("Sync stops at logout");
+				} else {
+					expect(result.instructions).not.toContain("enable-linger");
+				}
+				expect(readFileSync(calls, "utf8").trim()).toBe(
+					`show-user ${process.getuid?.()} --property=Linger --value`,
+				);
+			} finally {
+				process.env.PATH = oldPath;
+			}
+		},
+	);
 });
 
 describe("installer.readHealth", () => {

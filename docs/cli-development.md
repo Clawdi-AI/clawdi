@@ -147,10 +147,19 @@ vault IDs because no target was resolved. Attach/detach report
 
 Setup's `agents` array reports each registered `id` and `agent_type`, with
 `skill_installed` and `mcp_installed` booleans (null for unsupported integrations).
-`daemon.installed` is false when installation was skipped or failed; diagnostics
-and the existing exit code distinguish failures. `dashboard_url` is null when
-unavailable. Empty detection/selection reports an empty array and an explanatory
-status. Partial setup failures retain the existing non-zero exit code.
+`daemon.installed` is false when installation was skipped, unsupported, or failed.
+`daemon.reason: "unsupported"` means no user service manager is available and setup
+exits 0; `daemon.reason: "failed"` means installation failed and setup exits 1.
+Registration failures still exit non-zero. `dashboard_url` is null when unavailable.
+Empty detection/selection reports an empty array and an explanatory status.
+
+Exclude projects before background sync's first upload:
+
+```bash
+clawdi setup --exclude-project /path/to/private-project
+```
+
+Done: `clawdi config get excludeProjects` includes the normalized project path.
 
 Teardown reports each `agent_type`, observed `registration_removed`, and `skill`
 cleanup outcome (`"removed"`, `"kept"`, `"failed"`, or `"unsupported"`). MCP
