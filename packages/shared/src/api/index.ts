@@ -107,6 +107,7 @@ export {
 export * from "./skill-content";
 export * from "./skill-policy";
 export { skillTransferTargets, transferSkill } from "./skill-transfer";
+export * from "./store-client";
 export * from "./terminal-availability";
 export * from "./terminal-client";
 export * from "./terminal-protocol";

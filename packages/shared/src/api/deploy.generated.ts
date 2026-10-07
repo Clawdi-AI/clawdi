@@ -402,6 +402,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/store/bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Store Bootstrap */
+        get: operations["get_store_bootstrap_v2_store_bootstrap_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/store/purchase-attempts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Store Purchase Attempts */
+        get: operations["list_store_purchase_attempts_v2_store_purchase_attempts_get"];
+        put?: never;
+        /** Create Store Purchase Attempt */
+        post: operations["create_store_purchase_attempt_v2_store_purchase_attempts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/store/purchase-attempts/{attempt_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Store Purchase Attempt */
+        get: operations["get_store_purchase_attempt_v2_store_purchase_attempts__attempt_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/store/purchase-attempts/{attempt_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm Store Purchase Attempt */
+        post: operations["confirm_store_purchase_attempt_v2_store_purchase_attempts__attempt_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/subscription/checkout": {
         parameters: {
             query?: never;
@@ -1629,6 +1698,115 @@ export interface components {
              * @enum {string}
              */
             current_state: "creating" | "starting" | "running" | "stopping" | "stopped" | "restarting" | "updating" | "deleting" | "deleted" | "failed";
+        };
+        /** StoreBootstrapResponse */
+        StoreBootstrapResponse: {
+            /** Purchases Enabled */
+            purchases_enabled: boolean;
+            /** Reason */
+            reason?: string | null;
+            /** App User Id */
+            app_user_id?: string | null;
+            /** Catalogue Revision */
+            catalogue_revision?: number | null;
+            /** Products */
+            products?: components["schemas"]["StoreCatalogueProductResponse"][] | null;
+            wallet?: components["schemas"]["StoreWalletResponse"] | null;
+        };
+        /** StoreCatalogueProductResponse */
+        StoreCatalogueProductResponse: {
+            /** Store Product Id */
+            store_product_id: string;
+            /** Credit Usd */
+            credit_usd: string;
+            /**
+             * Effect
+             * @constant
+             */
+            effect: "wallet_credit";
+        };
+        /** StorePurchaseAttemptRequest */
+        StorePurchaseAttemptRequest: {
+            /**
+             * Platform
+             * @enum {string}
+             */
+            platform: "app_store" | "play_store";
+            /** Catalogue Revision */
+            catalogue_revision: number;
+            /**
+             * Purpose
+             * @enum {string}
+             */
+            purpose: "standalone_topup" | "deploy_continuation";
+            /** Pending Deploy Request Id */
+            pending_deploy_request_id?: string | null;
+        };
+        /** StorePurchaseAttemptResponse */
+        StorePurchaseAttemptResponse: {
+            /**
+             * Attempt Id
+             * Format: uuid
+             */
+            attempt_id: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "prepared" | "awaiting_store_result" | "verification_pending" | "funding_applied" | "canceled" | "expired" | "rejected" | "reconciliation_required";
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Store Product Id */
+            store_product_id?: string | null;
+            /**
+             * Platform
+             * @enum {string}
+             */
+            platform: "app_store" | "play_store";
+            /**
+             * Purpose
+             * @enum {string}
+             */
+            purpose: "standalone_topup" | "deploy_continuation";
+            /** Catalogue Revision */
+            catalogue_revision: number;
+            /** Pending Deploy Request Id */
+            pending_deploy_request_id?: string | null;
+            /** Transaction Id */
+            transaction_id?: string | null;
+        };
+        /** StorePurchaseConfirmRequest */
+        StorePurchaseConfirmRequest: {
+            /** Store Transaction Id */
+            store_transaction_id?: string | null;
+        };
+        /** StorePurchaseConfirmResponse */
+        StorePurchaseConfirmResponse: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "prepared" | "awaiting_store_result" | "verification_pending" | "funding_applied" | "canceled" | "expired" | "rejected" | "reconciliation_required";
+            /** Credit Usd */
+            credit_usd?: string | null;
+            /** Wallet Balance Usd */
+            wallet_balance_usd?: string | null;
+            /** Correlation Id */
+            correlation_id: string;
+            /** Code */
+            code?: ("prepared" | "awaiting_store_result" | "verification_pending" | "funding_applied" | "canceled" | "expired" | "rejected" | "reconciliation_required") | "reconciliation_pending" | null;
+        };
+        /** StoreWalletResponse */
+        StoreWalletResponse: {
+            /** Balance Usd */
+            balance_usd: string | null;
+            /** Balance Available */
+            balance_available: boolean;
+            /** Open Debt */
+            open_debt: boolean;
         };
         /** TerminalProviderIdentity */
         TerminalProviderIdentity: {
@@ -4690,6 +4868,169 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CancelOperationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_store_bootstrap_v2_store_bootstrap_get: {
+        parameters: {
+            query: {
+                platform: "app_store" | "play_store";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoreBootstrapResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_store_purchase_attempts_v2_store_purchase_attempts_get: {
+        parameters: {
+            query?: {
+                state?: "pending" | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorePurchaseAttemptResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_store_purchase_attempt_v2_store_purchase_attempts_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorePurchaseAttemptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorePurchaseAttemptResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_store_purchase_attempt_v2_store_purchase_attempts__attempt_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorePurchaseAttemptResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_store_purchase_attempt_v2_store_purchase_attempts__attempt_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorePurchaseConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorePurchaseConfirmResponse"];
                 };
             };
             /** @description Validation Error */
