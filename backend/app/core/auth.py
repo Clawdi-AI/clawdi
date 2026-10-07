@@ -1246,13 +1246,23 @@ async def optional_web_auth(
     return ctx
 
 
-async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext:
-    """Require dashboard authentication (Clerk JWT only, not API key).
+async def require_user_session(auth: AuthContext = Depends(get_auth)) -> AuthContext:
+    """Require a Clerk web JWT or first-party CLI OAuth token, never an API key.
 
-    Used by endpoints whose intent is human-in-the-browser — e.g. the device
-    authorization approval flow. Refusing API keys here means a leaked key
-    can't be turned into a *new* API key by an attacker calling the approve
-    endpoint themselves.
+    A first-party CLI OAuth token is the user. Only credential minting and
+    management stays browser-only through `require_web_auth`. API keys remain
+    blocked so a leaked deploy key cannot manage the user's other resources.
+    """
+    if auth.is_cli:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "This endpoint is not available to API keys")
+    return auth
+
+
+async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext:
+    """Require browser authentication for credential minting and management.
+
+    Refusing API keys and CLI OAuth tokens prevents a leaked credential from
+    enumerating or revoking other credentials, or approving another device.
     """
     if auth.is_cli or auth.oauth_cli:
         raise HTTPException(

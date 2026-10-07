@@ -40,7 +40,7 @@ export const agentSurfaceCopy = {
 	noPluginsFound: "No plugins found",
 	noProvidersAdded: "No providers added",
 	noSetupRequiredUsageDrawsFromYour: "No setup required. Usage draws from your wallet.",
-	installationHint: "Windows or npm? See",
+	installationHint: "On Windows or using npm? See",
 	installationLink: "installation",
 	personalize: "Personalize",
 	plugins: "Plugins",

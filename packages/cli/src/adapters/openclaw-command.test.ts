@@ -59,7 +59,7 @@ exec "$@"
 			writeFileSync(
 				join(tenantBin, "openclaw"),
 				`#!/bin/sh
-printf '%s|%s|%s|%s|%s|%s\\n' "$CLAWDI_TEST_SETUID" "$OPENCLAW_STATE_DIR" "$OPENCLAW_CONFIG_PATH" "$HOME" "$USER" "$PATH" > "$CLAWDI_TEST_OUTPUT"
+printf '%s|%s|%s|%s|%s|%s|%s\\n' "$CLAWDI_TEST_SETUID" "$OPENCLAW_STATE_DIR" "$OPENCLAW_CONFIG_PATH" "$HOME" "$USER" "$PATH" "$(pwd)" > "$CLAWDI_TEST_OUTPUT"
 printf '{"ok":true}\\n'
 `,
 				{ mode: 0o755 },
@@ -69,7 +69,7 @@ printf '{"ok":true}\\n'
 				sdkPath,
 				`console.log("sdk stdout log");
 export function readVisibleSessionTranscriptMessageEntries() {
-  return [{ entryId: "runtime-user", message: { role: "user", content: JSON.stringify({ marker: process.env.CLAWDI_TEST_SETUID ?? null, state: process.env.OPENCLAW_STATE_DIR ?? null, config: process.env.OPENCLAW_CONFIG_PATH ?? null, path: process.env.PATH }) } }];
+  return [{ entryId: "runtime-user", message: { role: "user", content: JSON.stringify({ marker: process.env.CLAWDI_TEST_SETUID ?? null, state: process.env.OPENCLAW_STATE_DIR ?? null, config: process.env.OPENCLAW_CONFIG_PATH ?? null, path: process.env.PATH, cwd: process.cwd() }) } }];
 }
 `,
 				{ mode: 0o644 },
@@ -117,6 +117,7 @@ export function readVisibleSessionTranscriptMessageEntries() {
 					root,
 					"projection-agent",
 					systemPath,
+					root,
 				]);
 				const commandDropArgs = readFileSync(setprivArgs, "utf8");
 				expect(commandDropArgs).toContain("--reuid=65534");
@@ -136,6 +137,7 @@ export function readVisibleSessionTranscriptMessageEntries() {
 					state: inheritedState,
 					config: inheritedConfig,
 					path: systemPath,
+					cwd: root,
 				});
 				expect(readFileSync(setprivArgs, "utf8")).toContain("--reuid=65534");
 				expect(readFileSync(setprivArgs, "utf8")).toContain(
@@ -154,6 +156,7 @@ export function readVisibleSessionTranscriptMessageEntries() {
 					root,
 					"projection-agent",
 					systemPath,
+					root,
 				]);
 				const unsetEntries = JSON.parse(
 					await runOpenClawSdkCommand(
@@ -167,6 +170,7 @@ export function readVisibleSessionTranscriptMessageEntries() {
 					state: null,
 					config: null,
 					path: systemPath,
+					cwd: root,
 				});
 			} finally {
 				Object.defineProperty(process, "getuid", { configurable: true, value: originalGetuid });

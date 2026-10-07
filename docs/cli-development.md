@@ -37,6 +37,50 @@ unauthenticated) work without a backend. Anything that hits the API
 the baked-in production URL for release builds and `http://localhost:8000`
 for dev builds (`bun run dev` / `build:dev`).
 
+## Machine output
+
+New commands and new `--json` surfaces follow this contract:
+
+- Emit exactly one JSON object with a string `schemaVersion` such as
+  `"clawdi.<name>.v1"`. Lists belong in a named array inside that object.
+- Write results to stdout. Write errors, progress, and prompts to stderr so
+  stdout remains parseable JSON.
+- Exit non-zero on failure; describe the failure on stderr without exposing
+  internal errors.
+- Keep released contracts additive-only: preserve field names, types, and
+  meanings. Consumers must tolerate additional fields.
+- Human tables print full IDs accepted by the corresponding read/remove
+  commands.
+- Destructive commands use `confirmOrRequireYes`: prompt in a TTY and require
+  `-y, --yes` in a non-interactive shell.
+
+The new Cloud resource commands emit these envelopes:
+
+| Command | JSON result |
+| --- | --- |
+| `agent list --json` | `{schemaVersion: "clawdi.agentList.v1", agents: [{id, name, display_name, agent_type, machine_name, last_seen_at}]}` |
+| `agent rm <agent-id> --yes --json` | `{schemaVersion: "clawdi.agentRm.v1", id, status: "disconnected"}` |
+| `session rm <session-id> --yes --json` | `{schemaVersion: "clawdi.sessionRm.v1", id, status: "deleted"}` |
+
+Legacy shapes are frozen. Don't change them to match the new convention:
+
+| Existing surface | Keep this shape |
+| --- | --- |
+| `deploy`, `wallet` | Snake-case `schema_version` with a string version |
+| `doctor`, `session list`, `memory list` | Bare arrays, without a version envelope |
+| `project list` | Unversioned object containing project arrays and `hidden_environment_project_count` |
+| `ai-provider` catalog (`list`, `export`) | Numeric `schema_version: 1` |
+
+Existing commands that emit JSON implicitly in non-TTY mode retain that
+behavior; new commands require explicit `--json`.
+
+```bash
+scripts/test.sh cli tests/commands/cloud-resources.test.ts tests/commands/confirmation.test.ts
+```
+
+Done: the command exits 0; tests parse all three envelopes, verify their
+`schemaVersion`, and check confirmation and stdout/stderr behavior.
+
 ## Profile discovery and sync
 
 One sync engine registers all discovered profiles and reads their sessions
@@ -736,6 +780,17 @@ production and Hosted never resolve an npm dist-tag.
 A manual run is available under `workflow_dispatch` if the auto-run needs a
 nudge. If npm succeeded but GitHub Release creation failed, rerun that original
 workflow run so `GITHUB_SHA` and the artifact remain identical.
+
+### 0.16 confirmation checklist
+
+- Require `--yes` in non-TTY mode for Tier B commands that currently warn and
+  proceed: `project unshare`, `project members --remove`, `project leave`, and
+  `teardown`.
+- Require `--yes` in non-TTY mode for Tier C commands that currently confirm
+  only in a TTY: `memory rm`, `skill rm`, `ai-provider remove`,
+  `agent projects unlink`, and `inbox decline`.
+- Use `confirmOrRequireYes` without a TTY-only guard and update the focused
+  confirmation tests when shipping that behavior change.
 
 ### Smoke checks before bumping the version
 

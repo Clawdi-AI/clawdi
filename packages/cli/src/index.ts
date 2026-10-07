@@ -1322,6 +1322,17 @@ sessionCmd
 	});
 
 sessionCmd
+	.command("rm <session-id>")
+	.description("Permanently delete an uploaded session")
+	.option("-y, --yes", "Confirm permanent deletion without prompting")
+	.option("--json", "Output as JSON")
+	.addHelpText("after", "\nUse the uploaded session UUID from `clawdi session search` or `read`.")
+	.action(async (id: string, opts: { yes?: boolean; json?: boolean }) => {
+		const { sessionRm } = await import("./commands/session.js");
+		await sessionRm(id, opts);
+	});
+
+sessionCmd
 	.command("export <session-id>")
 	.description("Export an uploaded session as Markdown to stdout")
 	.option("--json", "Output as JSON")
@@ -1820,6 +1831,26 @@ projectCmd
 	});
 
 const agentCmd = program.command("agent").description("Manage agents");
+
+agentCmd
+	.command("list")
+	.description("List your agents and their last activity")
+	.option("--json", "Output as JSON")
+	.action(async (opts: { json?: boolean }) => {
+		const { agentList } = await import("./commands/agent.js");
+		await agentList(opts);
+	});
+
+agentCmd
+	.command("rm <agent-id>")
+	.description("Disconnect an agent and archive its workspace")
+	.option("-y, --yes", "Confirm disconnection without prompting")
+	.option("--json", "Output as JSON")
+	.addHelpText("after", "\nUse the agent UUID printed by `clawdi agent list`.")
+	.action(async (id: string, opts: { yes?: boolean; json?: boolean }) => {
+		const { agentRm } = await import("./commands/agent.js");
+		await agentRm(id, opts);
+	});
 
 const agentSkillsCmd = agentCmd
 	.command("skills")

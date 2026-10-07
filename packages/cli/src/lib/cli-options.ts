@@ -1,9 +1,9 @@
 import { InvalidArgumentError } from "commander";
 
-/** Validate a full UUID before sending it as a resource identifier. */
+/** Require a complete UUID before passing an identifier to the Cloud API. */
 export function requireUuid(value: string, label: string): string {
 	if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
-		throw new Error(`${label} must be a full UUID.`);
+		throw new Error(`${label} must be a valid UUID.`);
 	}
 	return value;
 }
