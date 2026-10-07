@@ -1850,7 +1850,7 @@ export function hermesTestPythonScript(compatible: boolean): string {
 	if (!venv) throw new Error("Run runtime tests through the Docker CLI test runner");
 	return `#!/usr/bin/env bash
 case "$*" in
-  *hermes-managed-env.json*) exec '${join(venv, "bin", "python")}' "$@" ;;
+  *hermes-managed-env.json*|*"from hermes_cli import profiles"*) exec '${join(venv, "bin", "python")}' "$@" ;;
 esac
 ${compatible ? "exit 0" : "printf '%s\\n' 'missing capture_signals' >&2\nexit 1"}
 `;
