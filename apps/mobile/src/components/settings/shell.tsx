@@ -1,5 +1,6 @@
 import { settingsDialogClasses as styles } from "@clawdi/shared/ui";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
+import type { RefreshControlProps } from "react-native";
 import { AppScrollView } from "@/components/ui/view";
 import { webView } from "@/components/ui/web-layout";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
@@ -8,9 +9,11 @@ import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export function SettingsShell({
 	children,
 	scroll = true,
+	refreshControl,
 }: {
 	children: ReactNode;
 	scroll?: boolean;
+	refreshControl?: ReactElement<RefreshControlProps>;
 }) {
 	return (
 		<SafeAreaScreen>
@@ -19,6 +22,7 @@ export function SettingsShell({
 					keyboardShouldPersistTaps="handled"
 					contentInsetAdjustmentBehavior="automatic"
 					contentContainerClassName={webView(styles.panel)}
+					refreshControl={refreshControl}
 				>
 					{children}
 				</AppScrollView>
