@@ -13,12 +13,15 @@ import { Icon } from "@/components/ui/icon";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { formatCreditCents } from "@/hosted/billing/store/store-presentation";
 import { useI18n } from "@/lib/i18n";
+import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 type Plan = DeployComponents["schemas"]["V2PlanResponse"];
 export function PlanComparison({ plans }: { plans: Plan[] }) {
 	const t = useI18n();
 	const [term, setTerm] = useState(1);
+	const { creditUnits } = useStoreSurfaces();
 	const {
 		basic,
 		performance,
@@ -29,7 +32,11 @@ export function PlanComparison({ plans }: { plans: Plan[] }) {
 		basicPrice,
 		performancePrice,
 		sharedPricingUnavailable,
-	} = computePlanComparisonView(plans, term);
+	} = computePlanComparisonView(
+		plans,
+		term,
+		creditUnits ? (cents) => formatCreditCents(cents, t("store.credits")) : undefined,
+	);
 
 	return (
 		<SettingsSection
@@ -75,8 +82,9 @@ export function PlanComparison({ plans }: { plans: Plan[] }) {
 				).map(({ plan, kind, icon }) => {
 					const offer = kind === "basic" ? basicOffer : performanceOffer;
 					const price = kind === "basic" ? basicPrice : performancePrice;
+					// Card trials have no store purchase equivalent.
 					const trial =
-						price && offer
+						price && offer && !creditUnits
 							? cardTrialPricePresentation(price.primary, offer.card_trial_period_days)
 							: null;
 					return (

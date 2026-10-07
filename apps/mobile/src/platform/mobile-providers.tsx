@@ -4,6 +4,7 @@ import { MobileApiProvider } from "@/lib/api-provider";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime";
 import { AccountScopeProvider } from "@/platform/account-lifecycle";
 import { AppLifecycleBridge } from "@/platform/app-lifecycle";
+import { PaywallHost } from "@/platform/store/paywall-host";
 import { StoreProvider } from "@/platform/store/store-provider";
 
 function createMobileQueryClient() {
@@ -30,7 +31,9 @@ export function MobileProviders({
 			<AccountScopeProvider>
 				<MobileApiProvider config={config}>
 					<StoreProvider config={config}>
-						<AppLifecycleBridge>{children}</AppLifecycleBridge>
+						<PaywallHost>
+							<AppLifecycleBridge>{children}</AppLifecycleBridge>
+						</PaywallHost>
 					</StoreProvider>
 				</MobileApiProvider>
 			</AccountScopeProvider>

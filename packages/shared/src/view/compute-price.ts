@@ -34,17 +34,22 @@ export function cardTrialPricePresentation(
 	};
 }
 
-function monthlyPrice(offer: BillingOffer): string {
-	return `${formatCents(offer.effective_monthly_price_cents)}/mo`;
+function monthlyPrice(
+	offer: BillingOffer,
+	format: (cents: number) => string = formatCents,
+): string {
+	return `${format(offer.effective_monthly_price_cents)}/mo`;
 }
 
+/** `format` renders an amount in minor units; mobile store builds pass a credits formatter. */
 export function computePricePresentation(
 	offer: BillingOffer,
 	offers: readonly BillingOffer[],
+	format: (cents: number) => string = formatCents,
 ): ComputePricePresentation {
 	if (offer.billing_term_months === 1) {
 		return {
-			primary: monthlyPrice(offer),
+			primary: monthlyPrice(offer, format),
 			secondary: "Billed monthly",
 			savings: null,
 		};
@@ -62,9 +67,9 @@ export function computePricePresentation(
 			? undiscountedTermPrice - offer.price_cents
 			: 0;
 	return {
-		primary: `${formatCents(offer.price_cents)}${billingTermSuffix(offer.billing_term_months)}`,
-		secondary: monthlyPrice(offer),
-		savings: savingsCents > 0 ? `save ${formatCents(savingsCents)}` : null,
+		primary: `${format(offer.price_cents)}${billingTermSuffix(offer.billing_term_months)}`,
+		secondary: monthlyPrice(offer, format),
+		savings: savingsCents > 0 ? `save ${format(savingsCents)}` : null,
 	};
 }
 

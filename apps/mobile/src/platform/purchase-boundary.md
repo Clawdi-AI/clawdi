@@ -101,6 +101,31 @@ the previous server attempt and finishes any completed state other than
 `reconciliation_required` before proceeding. Paid expired evidence is submitted
 through confirm before its journal is released.
 
+## M2 UI
+
+`PaywallHost` (mounted in `MobileProviders`) presents the official
+`<RevenueCatUI.Paywall>` for the `credits` offering inside a React Native
+`Modal`; `paywall-session.ts` turns its listeners into the `showPaywall` result
+above. `loadCreditsOffering()` reads `Purchases.getOfferings().all.credits`
+before the attempt is created; a missing, empty or failed offering surfaces
+`store_offering_unavailable` without opening the Paywall. A Paywall that cannot
+render (no native `PaywallView`) resolves null with `paywall_unavailable`.
+
+`AddCreditsAction` is the only purchase entry. It runs
+`flow.purchase({ purpose: "standalone_topup" }, …)` from the Wallet balance card,
+Wallet-rail `top_up` recovery (dunning banner and subscription details) and the
+deploy wizard's Wallet shortfall, which re-quotes after funding. Funded,
+submitted, pending and unconfirmed outcomes refresh the Wallet queries; nothing
+auto-deploys.
+
+`storeSurfaces()` (`store-policy.ts`) gates presentation. Store builds hide
+auto-reload, saved cards/card setup, Stripe receipt/invoice links, card
+`fix_payment` and card-only management copy, show Wallet amounts and compute
+prices in credits, and keep the Add credits entry visible (disabled with a
+neutral status while purchases are unavailable). Preview/development builds keep
+Web parity; they show Add credits only when a debug build has a usable store
+flow (Test Store key plus enabled hosted bootstrap).
+
 ## Recovery and official APIs
 
 `flow.recover()` reconciles the local journal and lists server attempts with

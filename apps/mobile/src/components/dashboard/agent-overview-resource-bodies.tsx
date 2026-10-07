@@ -67,6 +67,7 @@ import { RuntimeBrowser } from "@/hosted/agents/runtime-handoff";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
 import { useMobileApi } from "@/lib/api-provider";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { useStoreSurfaces } from "@/platform/store/store-provider";
 export function AgentOverview({
 	agent,
 	deployment,
@@ -188,6 +189,7 @@ export function AgentOverview({
 			hostedCatalog.data?.models ?? [],
 		),
 	);
+	const surfaces = useStoreSurfaces();
 	const compute = deployment
 		? overviewComputePresentation(deployment, {
 				canCreateCloudAgents: hostedCatalog.data?.capabilities.can_use_v2 ?? false,
@@ -226,7 +228,8 @@ export function AgentOverview({
 					{...compute}
 					resources={deployment.resource.spec.resources}
 					action={
-						compute.action ? (
+						// Store builds hide card payment recovery; Wallet top-up opens Wallet's Add credits.
+						compute.action && (surfaces.cardBilling || compute.action.kind !== "fix_payment") ? (
 							<Button
 								variant="outline"
 								size="sm"

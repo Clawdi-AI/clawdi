@@ -162,6 +162,40 @@ const connectorsEn = {
 		"Authorize in the system browser, then close it and return here. Refresh accounts to check the result; opening or closing the browser does not mean authorization succeeded.",
 	tools: "Available tools",
 } as const;
+const storeEn = {
+	addCredits: "Add credits",
+	purchasing: "Confirming purchase…",
+	credits: "credits",
+	unavailable: "Purchases aren't available right now. Your credits balance is unaffected.",
+	fundingApplied: "Credits were added to your Wallet.",
+	submitted: "Purchase submitted; credit will arrive in your wallet.",
+	processing:
+		"Your purchase is still being confirmed. Credits are added automatically when it completes.",
+	paymentPending:
+		"Your purchase is waiting for approval. Credits are added automatically after it is approved.",
+	unconfirmed:
+		"This purchase couldn't be confirmed yet. If you were charged, credits are added automatically, and trying again won't charge you twice.",
+	purchaseInProgress: "Another purchase is still being confirmed. Try again after it completes.",
+	reviewRequired:
+		"This purchase needs billing review. Contact support; buying again won't resolve it.",
+	notCompleted: "The purchase wasn't completed. No credits were added.",
+	refundDebt: "Credits can't be added while a refunded purchase is unresolved. Contact support.",
+	paywallUnavailable: "Credit packs couldn't be loaded. Try again later.",
+	accountChanged: "Your account changed during the purchase. Check your Wallet after signing in.",
+	failed: "The purchase couldn't be started. Try again.",
+	creditsNotice: "Credits bought in this app are added to your Wallet and don't expire.",
+	cardBillingStatus: "Card billing for this subscription can't be managed in this app.",
+	cardDunning:
+		"Payment for this subscription needs attention. Card payments can't be updated in this app.",
+	walletDunning:
+		"Your Wallet balance is too low to renew this subscription. Add credits; billing updates automatically after funding.",
+	walletNotice: "This subscription is paid with Wallet credits.",
+	cardSource: "Card",
+	dueNow: "Nothing due now",
+	quoteBalance: "Wallet balance after payment",
+	shortfall:
+		"Add {amount} to cover this plan. The price preview refreshes after your credits arrive.",
+} as const;
 const creationEn = {
 	savedProviderBoundary:
 		"This saved provider can be previewed here. Mobile creation currently supports Clawdi AI or configuration inside the agent; select either before deploying.",
@@ -519,6 +553,7 @@ export const en = {
 	connectors: connectorsEn,
 	billing: billingEn,
 	creation: creationEn,
+	store: storeEn,
 	deployments: deploymentsEn,
 	app: {
 		name: "Clawdi",

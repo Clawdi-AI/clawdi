@@ -7,8 +7,12 @@ import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { formatDate } from "@/hooks/cloud-inventory";
 import type { Subscription } from "@/hosted/billing/format";
 import { subscriptionPrice } from "@/hosted/billing/format";
+import { AddCreditsAction } from "@/hosted/billing/store/add-credits";
+import { creditPrice } from "@/hosted/billing/store/store-presentation";
 import { ComputeSubscriptionCard } from "@/hosted/billing/subscription/compute-subscription-card";
 import { useI18n } from "@/lib/i18n";
+import { storeRecoveryAction } from "@/platform/store/store-policy";
+import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 function BillingFact({ label, value }: { label: string; value: string }) {
 	return (
@@ -22,6 +26,7 @@ function BillingFact({ label, value }: { label: string; value: string }) {
 }
 function SubscriptionRecovery({ item }: { item: Subscription }) {
 	const t = useI18n();
+	const surfaces = useStoreSurfaces();
 	const recovery = computeSubscriptionRecoveryPresentation(
 		item,
 		{ label: item.status, tone: "neutral" },
@@ -39,6 +44,9 @@ function SubscriptionRecovery({ item }: { item: Subscription }) {
 			paymentAttention: t("billing.paymentAttention"),
 		},
 	);
+	const recoveryAction = recovery.recoveryTarget
+		? storeRecoveryAction(surfaces, recovery.recoveryTarget)
+		: null;
 	return (
 		<AppView className="gap-2">
 			{recovery.status.label !== item.status ? (
@@ -63,7 +71,14 @@ function SubscriptionRecovery({ item }: { item: Subscription }) {
 			{item.pending_plan_slug ? (
 				<BillingFact label={t("billing.pendingPlan")} value={item.pending_plan_slug} />
 			) : null}
-			{recovery.recoveryTarget ? (
+			{recoveryAction === "add_credits" ? (
+				<>
+					<Text className="text-muted-foreground">{t("store.walletDunning")}</Text>
+					<AddCreditsAction size="sm" />
+				</>
+			) : recoveryAction === "card_status" ? (
+				<Text className="text-muted-foreground">{t("store.cardDunning")}</Text>
+			) : recoveryAction ? (
 				<Text className="text-muted-foreground">{t("billing.providerRecovery")}</Text>
 			) : null}
 		</AppView>
@@ -78,6 +93,8 @@ export function SubscriptionDetails({
 	onDeployment: () => void;
 }) {
 	const t = useI18n();
+	// Store builds: credits instead of dollars, and no card management instructions.
+	const { cardBilling, creditUnits } = useStoreSurfaces();
 	return (
 		<AppView className={webView(transactionsSectionClasses.section)}>
 			<ComputeSubscriptionCard item={item} />
@@ -87,7 +104,10 @@ export function SubscriptionDetails({
 			<SubscriptionRecovery item={item} />
 			<BillingFact
 				label={t("billing.price")}
-				value={subscriptionPrice(item) ?? t("billing.unknown")}
+				value={
+					(creditUnits ? creditPrice(item, t("store.credits")) : subscriptionPrice(item)) ??
+					t("billing.unknown")
+				}
 			/>
 			<BillingFact label={t("billing.term")} value={String(item.billing_term_months)} />
 			<BillingFact
@@ -98,7 +118,7 @@ export function SubscriptionDetails({
 						: item.funding_source === "wallet"
 							? t("billing.wallet")
 							: item.funding_source === "stripe"
-								? t("billing.stripe")
+								? t(cardBilling ? "billing.stripe" : "store.cardSource")
 								: t("billing.unknown")
 				}
 			/>
@@ -106,8 +126,14 @@ export function SubscriptionDetails({
 				label={t("billing.periodEnd")}
 				value={formatDate(item.current_period_end) ?? t("billing.unknown")}
 			/>
-			{item.funding_source === "wallet" ? <Text>{t("billing.walletNotice")}</Text> : null}
-			<Text className="text-muted-foreground">{t("billing.management")}</Text>
+			{item.funding_source === "wallet" ? (
+				<Text>{t(cardBilling ? "billing.walletNotice" : "store.walletNotice")}</Text>
+			) : null}
+			{cardBilling ? (
+				<Text className="text-muted-foreground">{t("billing.management")}</Text>
+			) : item.funding_source === "stripe" ? (
+				<Text className="text-muted-foreground">{t("store.cardBillingStatus")}</Text>
+			) : null}
 			{item.deployment_id ? (
 				<DetailAction label={t("billing.deployment")} onPress={onDeployment} />
 			) : null}
