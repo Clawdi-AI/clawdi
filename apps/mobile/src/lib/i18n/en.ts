@@ -518,9 +518,16 @@ export const en = {
 		disconnected: "Disconnected",
 	},
 	files: {
-		webOnlyTitle: "Files opens on the web",
-		webOnlyDescription:
-			"Browse and edit this agent's workspace files from the Clawdi web dashboard, or use Terminal now.",
+		open: "Open Files",
+		browserWarning:
+			"Files opens in the system browser with a one-time sign-in link. The browser keeps access until you sign out of this app or reset dashboard access; closing the browser does not end it.",
+		failedTitle: "Files couldn't be opened",
+		failedChanged: "This agent changed. Try again.",
+		failedUnavailable: "Files isn't ready yet. Try again in a moment.",
+		failedSignedOut: "Your session ended. Sign in again, then retry.",
+		failedRateLimited: "Too many attempts. Wait a minute and try again.",
+		failedOffline: "Check your connection and try again.",
+		failed: "Try again. No credentials have been saved by this app.",
 	},
 	profile: {
 		unsavedTitle: "Discard profile changes?",

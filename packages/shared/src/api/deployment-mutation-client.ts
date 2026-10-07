@@ -8,7 +8,7 @@ import {
 	readApiBaseUrl,
 	readResourceId,
 } from "./read-transport";
-import { resolveRuntimeUiCredentials } from "./runtime-navigation";
+import { resolveFilesHandoff, resolveRuntimeUiCredentials } from "./runtime-navigation";
 
 export type DeploymentUpdate = DeployComponents["schemas"]["V2UpdateDeploymentRequest"];
 export type DeploymentMutation =
@@ -99,6 +99,25 @@ export function createDeploymentMutationClient(options: ApiClientOptions) {
 			const credentials = resolveRuntimeUiCredentials(result, endpoint, version);
 			if (!credentials) throw new ApiClientResponseError();
 			return credentials;
+		},
+		/** One-time Files browser handoff; never cache, persist or retry the returned URL. */
+		createFilesHandoff: async (
+			id: string,
+			version: string,
+			filesUrl: string,
+			signal?: AbortSignal,
+		) => {
+			const params = {
+				path: { deployment_id: readResourceId(id) },
+				header: { "If-Match": strongDeploymentEtag(version) },
+			};
+			const result = await transport.read(
+				(init) => api.POST("/v2/deployments/{deployment_id}/files/handoff", { ...init, params }),
+				signal,
+			);
+			const handoff = resolveFilesHandoff(result, filesUrl, version);
+			if (!handoff) throw new ApiClientResponseError();
+			return handoff;
 		},
 		cancel: async (operationName: string, key: string, signal?: AbortSignal): Promise<void> => {
 			const match = /^operations\/([A-Za-z0-9_-]{1,180})$/.exec(operationName);

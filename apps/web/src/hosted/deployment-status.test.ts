@@ -34,6 +34,8 @@ const runtimeUiEndpoint = {
 	url: "https://runtime.example/",
 	auth_mode: "openclaw_token",
 	browser_mode: "embedded_and_top_level",
+	serving_ready: true,
+	serving_reason: "Ok",
 } as const;
 
 function acceptedOperation(verb: DeploymentOperationVerb): DeploymentOperation {

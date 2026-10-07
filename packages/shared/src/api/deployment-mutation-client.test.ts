@@ -3,6 +3,7 @@ import {
 	createDeploymentMutationClient,
 	type DeploymentMutation,
 } from "./deployment-mutation-client";
+import { FilesEndpointChangedError, filesHandoffFailure } from "./runtime-navigation";
 
 test("runtime handoff issuance binds auth, version and exact published endpoint without retry", async () => {
 	const endpoint = "https://runtime.example.test/";
@@ -61,6 +62,90 @@ test("runtime handoff issuance binds auth, version and exact published endpoint 
 			client.runtimeCredentials("deployment", 'bad"version', endpoint),
 		).rejects.toHaveProperty("name", "ApiClientResponseError");
 		expect(requests).toHaveLength(3);
+	} finally {
+		server.stop(true);
+	}
+});
+
+test("Files handoff binds auth and version and accepts only a one-time code on the Files origin", async () => {
+	const files = "https://files.example.test/";
+	const redeem = "https://files.example.test/__clawdi/files/handoff?code=abc_123-XYZ";
+	let reply: () => Response = () =>
+		Response.json({
+			url: redeem,
+			expires_at: "2026-10-07T00:01:00Z",
+			deployment_resource_version: "v1",
+		});
+	const requests: unknown[] = [];
+	const server = Bun.serve({
+		hostname: "127.0.0.1",
+		port: 0,
+		fetch(request) {
+			requests.push({
+				path: new URL(request.url).pathname,
+				method: request.method,
+				auth: request.headers.get("authorization"),
+				version: request.headers.get("if-match"),
+			});
+			return reply();
+		},
+	});
+	const handoff =
+		(url: string, version = "v1") =>
+		() =>
+			Response.json({
+				url,
+				expires_at: "2026-10-07T00:01:00Z",
+				deployment_resource_version: version,
+			});
+	try {
+		const client = createDeploymentMutationClient({
+			baseUrl: server.url.href,
+			getToken: async () => "owner",
+			fetch,
+		});
+		expect((await client.createFilesHandoff("deployment", "v1", files)).url).toBe(redeem);
+		expect(requests).toEqual([
+			{
+				path: "/v2/deployments/deployment/files/handoff",
+				method: "POST",
+				auth: "Bearer owner",
+				version: '"v1"',
+			},
+		]);
+		for (const rejected of [
+			handoff(redeem, "v2"),
+			handoff("https://other.example.test/__clawdi/files/handoff?code=abc"),
+			handoff("http://files.example.test/__clawdi/files/handoff?code=abc"),
+			handoff("https://files.example.test/?code=abc"),
+			handoff("https://files.example.test/__clawdi/files/handoff?code=abc&next=/"),
+			handoff("https://files.example.test/__clawdi/files/handoff?code="),
+			handoff("https://files.example.test/__clawdi/files/handoff?code=abc#x"),
+			handoff("https://user@files.example.test/__clawdi/files/handoff?code=abc"),
+		]) {
+			reply = rejected;
+			await expect(client.createFilesHandoff("deployment", "v1", files)).rejects.toHaveProperty(
+				"name",
+				"ApiClientResponseError",
+			);
+		}
+		const failures = [];
+		for (const status of [412, 409, 401, 429, 403, 503]) {
+			reply = () => Response.json({ detail: "Files handoff is unavailable" }, { status });
+			failures.push(
+				await client.createFilesHandoff("deployment", "v1", files).catch(filesHandoffFailure),
+			);
+		}
+		expect(failures).toEqual([
+			"changed",
+			"unavailable",
+			"signed_out",
+			"rate_limited",
+			"failed",
+			"failed",
+		]);
+		expect(filesHandoffFailure(new FilesEndpointChangedError())).toBe("changed");
+		expect(requests).toHaveLength(15);
 	} finally {
 		server.stop(true);
 	}

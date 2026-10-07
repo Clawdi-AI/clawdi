@@ -43,10 +43,13 @@ The Agent overview is the section hub: its Web overview cards plus Tools
 (Files, Terminal; hosted only, Files only with an authoritative Files endpoint)
 and Settings rows reach every Web sidebar section, so the Agent header carries
 only section actions, never navigation. `/agents/:id/files` renders Web
-`FilesTab`'s stopped/starting/not-running states; while running it explains
-that Files opens on the web and offers Terminal, because the Files grant
-bootstrap needs a browser session on the dashboard origin and hosted has no
-native Files handoff yet.
+`FilesTab`'s stopped/starting/not-running states; while running it offers
+Open Files and Terminal. Open Files follows the Console handoff: after a native
+confirmation it re-reads the deployment, requires the reviewed Files endpoint,
+mints hosted's one-time Files handoff URL (same Files origin, current resource
+version) and opens it with `expo-web-browser`, where Files ForwardAuth
+exchanges it for the browser's Files grant. Web's embedded Files frame and
+grant bootstrap need the dashboard origin, so mobile never embeds Files.
 The Account tab root `/settings` is a native grouped settings menu: General,
 Account (Clerk's native `UserProfileView`), API Keys, then Wallet, Compute and
 AI Usage when a compute API is configured. Each row pushes a natively headed

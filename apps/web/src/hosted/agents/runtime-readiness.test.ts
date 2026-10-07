@@ -20,6 +20,8 @@ function readyDeployment() {
 				"https://api.example.test/v2/deployments/hdep_fixture/hermes-oidc/session",
 			access_revision: 1,
 			browser_mode: "embedded_and_top_level",
+			serving_ready: true,
+			serving_reason: "Ok",
 		},
 	});
 }

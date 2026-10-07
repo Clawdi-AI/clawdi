@@ -58,19 +58,20 @@ name: Fixture tabs and details
 - back
 
 # Agent hub: hosted overview rows reach Web's Tools and Settings sections.
-# Files renders its native state page (no in-app Files browser handoff).
+# Files offers the one-time browser handoff; CI cancels its native confirmation.
 - scrollUntilVisible:
     element:
       id: agent-card-0c1a3000-0004-4c00-8000-000000000004
     timeout: 30000
 - tapOn:
     id: agent-card-0c1a3000-0004-4c00-8000-000000000004
+# Terminal is the last Tools row; scrolling to it keeps Files clear of the tab bar.
 - scrollUntilVisible:
     element:
-      id: agent-section-files
+      id: agent-section-terminal
     timeout: 30000
 - assertVisible:
-    id: agent-section-terminal
+    id: agent-section-files
 - scrollUntilVisible:
     element:
       id: agent-section-settings
@@ -80,11 +81,24 @@ name: Fixture tabs and details
     id: agent-section-files
 - extendedWaitUntil:
     visible:
-      text: Files opens on the web
+      text: Open Files
     timeout: 30000
 - assertVisible:
     text: Use Terminal
 - takeScreenshot: agent-files
+- tapOn:
+    text: Open Files
+- extendedWaitUntil:
+    visible:
+      text: (?s)https://files\.example\.test.*
+    timeout: 10000
+- takeScreenshot: agent-files-confirmation
+- tapOn:
+    text: (?i)cancel
+- assertNotVisible:
+    text: (?s)https://files\.example\.test.*
+- assertVisible:
+    text: Open Files
 - back
 - back
 

@@ -41,6 +41,8 @@ test("current runtime degradation disables a retained endpoint", () => {
 			url: "https://runtime.example/",
 			auth_mode: "openclaw_token",
 			browser_mode: "embedded_and_top_level",
+			serving_ready: true,
+			serving_reason: "Ok",
 		},
 	});
 	if (!deployment.resource.status) throw new Error("Fixture must have a status");
@@ -74,6 +76,8 @@ function advisoryDeployment(reason: "ProviderConflict" | "RuntimeUiUnavailable")
 				"https://api.example.test/v2/deployments/hdep_fixture/hermes-oidc/session",
 			access_revision: 1,
 			browser_mode: "embedded_and_top_level",
+			serving_ready: true,
+			serving_reason: "Ok",
 		},
 		extraConditions: [
 			{

@@ -42,6 +42,7 @@ export type {
 	DeploymentRead,
 	DeployPaths,
 	DeployRequestRead,
+	FilesHandoff,
 	RuntimeUiAuthMode,
 	RuntimeUiCredentials,
 	RuntimeUiEndpointInfo,
