@@ -291,12 +291,6 @@ class Settings(BaseSettings):
     posthog_api_key: str = ""
     posthog_host: str = "https://us.i.posthog.com"
     posthog_disable_geoip: bool = True
-    posthog_timeout: int = Field(default=10, ge=1)
-    posthog_flush_at: int = Field(default=20, ge=1)
-    posthog_flush_interval: float = Field(default=0.5, gt=0)
-    posthog_max_queue_size: int = Field(default=10_000, ge=1)
-    posthog_max_retries: int = Field(default=3, ge=0)
-    posthog_sync_mode: bool = False
 
     # Admin endpoints (POST/DELETE /v1/admin/auth/keys) auth.
     # Empty string disables them entirely (returns 503). Set in

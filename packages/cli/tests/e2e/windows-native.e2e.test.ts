@@ -88,6 +88,12 @@ const enabled = process.platform === "win32" && testRoot && nativeBinary;
 					.map((entry) => `${entry}-win32-x64`)
 					.sort(),
 			);
+			// Both PowerShell and the staged CLI tolerate future targets and metadata.
+			const manifestPath = join(process.env.CLAWDI_RELEASE_BASE, "clawdi-cli-manifest-v2.txt");
+			writeFileSync(
+				manifestPath,
+				`${readFileSync(manifestPath, "utf8")}metadata\tfuture\nartifact\tfreebsd-x64\tfuture\tunknown\n`,
+			);
 			const installedVersions = readdirSync(join(nativeRoot, "versions")).sort();
 			const installedDirectory = realpathSync.native(current);
 			const reinstall = await runAsync("powershell.exe", [
@@ -114,6 +120,26 @@ const enabled = process.platform === "win32" && testRoot && nativeBinary;
 			).toBeFalse();
 			const updatedPath = powershell("[Environment]::GetEnvironmentVariable('Path', 'User')");
 			expect(updatedPath.split(";").filter((entry) => entry === current)).toHaveLength(1);
+
+			// A stale automatic request must preserve the already-installed launcher.
+			const automaticStage = join(nativeRoot, ".stage-stale-auto-update");
+			cpSync(installedDirectory, automaticStage, { recursive: true });
+			const automatic = await runAsync(join(automaticStage, "clawdi.exe"), [
+				"update",
+				"--native-activate",
+				"--native-auto-update",
+				"--native-stage",
+				automaticStage,
+				"--native-prefix",
+				prefix,
+				"--native-version",
+				version,
+				"--native-target",
+				"win32-x64",
+			]);
+			expect(automatic.code, automatic.stderr).toBe(76);
+			expect(realpathSync.native(current)).toBe(installedDirectory);
+			rmSync(automaticStage, { recursive: true, force: true });
 
 			// Missing agent executables still use the adapter's supported CODEX_HOME layout.
 			mkdirSync(process.env.CODEX_HOME, { recursive: true });

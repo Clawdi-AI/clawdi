@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
 	isNativeTarget,
+	NATIVE_PUBLISH_TARGET_CATALOG,
 	NATIVE_RELEASE_MANIFEST_NAME,
 	NATIVE_RELEASE_MANIFEST_V2_NAME,
 	nativeExecutableName,
@@ -17,9 +18,22 @@ const expectedVersion = process.argv[3] || JSON.parse(readFileSync("package.json
 const manifest = parseNativeReleaseManifest(
 	readFileSync(resolve(releaseDir, NATIVE_RELEASE_MANIFEST_NAME), "utf8"),
 );
-const manifestV2 = parseNativeReleaseManifestV2(
-	readFileSync(resolve(releaseDir, NATIVE_RELEASE_MANIFEST_V2_NAME), "utf8"),
+const manifestV2Content = readFileSync(
+	resolve(releaseDir, NATIVE_RELEASE_MANIFEST_V2_NAME),
+	"utf8",
 );
+const manifestV2 = parseNativeReleaseManifestV2(manifestV2Content);
+// Clients ignore future rows; publication must contain exactly the current matrix.
+if (
+	manifestV2Content.split("\n").filter((line) => line.length > 0).length !==
+		NATIVE_PUBLISH_TARGET_CATALOG.length + 2 ||
+	manifestV2.artifacts.length !== NATIVE_PUBLISH_TARGET_CATALOG.length ||
+	NATIVE_PUBLISH_TARGET_CATALOG.some(
+		({ target }) => !manifestV2.artifacts.some((artifact) => artifact.target === target),
+	)
+) {
+	throw new Error("native release manifest does not contain the supported target matrix");
+}
 if (manifest.version !== expectedVersion || manifestV2.version !== expectedVersion) {
 	throw new Error("native release version mismatch");
 }

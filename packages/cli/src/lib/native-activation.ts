@@ -27,6 +27,7 @@ import {
 	currentNativeCompiledIdentity,
 	type NativeCompiledIdentity,
 	nativeInstallManifestName,
+	nativeInstallManifestPath,
 	nativeVersionDirectoryName,
 	parseNativeInstallManifest,
 	validateNativeInstallIdentity,
@@ -44,7 +45,7 @@ import {
 	type PrivateDirectoryLockOptions,
 	withPrivateDirectoryLock,
 } from "./private-directory-lock";
-import { isValidSemver } from "./semver";
+import { compareSemver, isValidSemver } from "./semver";
 
 const REQUIRED_NATIVE_FILES = [
 	"egress-addon/clawdi_egress_addon.py",
@@ -144,7 +145,7 @@ export async function downloadAndStageNativeRelease(input: {
 	);
 	const fetcher = input.fetcher ?? fetch;
 	try {
-		const manifestUrl = `${input.releaseBaseUrl}/${nativeInstallManifestName(input.target)}`;
+		const manifestUrl = `${input.releaseBaseUrl}/${nativeInstallManifestName()}`;
 		const manifestResponse = await fetcher(manifestUrl, {
 			signal: downloadAbort.signal,
 			redirect: "follow",
@@ -194,7 +195,7 @@ export async function downloadAndStageNativeRelease(input: {
 			await extractNativeArchive(stageDir, archive, executableName);
 			validateStagedResources(stageDir);
 			chmodSync(join(stageDir, executableName), 0o755);
-			writeFileSync(join(stageDir, nativeInstallManifestName(input.target)), manifestText, {
+			writeFileSync(join(stageDir, nativeInstallManifestName()), manifestText, {
 				mode: 0o644,
 			});
 			return { stageDir, manifest: manifestText, version: input.version, target: input.target };
@@ -209,9 +210,15 @@ export async function downloadAndStageNativeRelease(input: {
 }
 
 export async function activateStagedNativeRelease(
-	input: { stageDir: string; prefix: string; version: string; target: NativeBuildTarget },
+	input: {
+		stageDir: string;
+		prefix: string;
+		version: string;
+		target: NativeBuildTarget;
+		automatic?: boolean;
+	},
 	lockOptions?: PrivateDirectoryLockOptions,
-): Promise<{ launcher: string; previousVersion: string | null }> {
+): Promise<{ launcher: string; previousVersion: string | null; skipped?: boolean }> {
 	if (!evaluateHostPolicyForCommand("update").allowed) {
 		throw new Error("native CLI activation is disabled inside Cloud Agents");
 	}
@@ -223,9 +230,15 @@ export async function activateStagedNativeRelease(
 }
 
 async function activateStagedNativeReleaseWithLease(
-	input: { stageDir: string; prefix: string; version: string; target: NativeBuildTarget },
+	input: {
+		stageDir: string;
+		prefix: string;
+		version: string;
+		target: NativeBuildTarget;
+		automatic?: boolean;
+	},
 	lease: PrivateDirectoryLockLease,
-): Promise<{ launcher: string; previousVersion: string | null }> {
+): Promise<{ launcher: string; previousVersion: string | null; skipped?: boolean }> {
 	if (!isAbsolute(input.prefix) || !isAbsolute(input.stageDir)) {
 		throw new Error("native activation paths must be absolute");
 	}
@@ -261,6 +274,14 @@ async function activateStagedNativeReleaseWithLease(
 	accessSync(binDir, constants.W_OK);
 	const launcher = join(binDir, windows ? "current" : executableName);
 	const previous = readOwnedLauncher(launcher, versionsRoot);
+	// Check the stable launcher while holding the same lock as manual activation.
+	if (input.automatic && previous && compareSemver(previous.version, input.version) >= 0) {
+		return {
+			launcher: windows ? join(launcher, executableName) : launcher,
+			previousVersion: previous.version,
+			skipped: true,
+		};
+	}
 
 	const finalDir = join(versionsRoot, nativeVersionDirectoryName(input.version, input.target));
 	const activeExecutable = join(finalDir, executableName);
@@ -457,7 +478,7 @@ function validateInstalledVersion(directory: string, identity: NativeCompiledIde
 }
 
 function validateVersionManifest(directory: string, identity: NativeCompiledIdentity): string {
-	const path = join(directory, nativeInstallManifestName(identity.target));
+	const path = nativeInstallManifestPath(directory, identity.target);
 	const manifestFile = lstatSync(path);
 	if (!manifestFile.isFile()) throw new Error("native version manifest is not a regular file");
 	if (manifestFile.size > MAX_NATIVE_MANIFEST_BYTES) {

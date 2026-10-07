@@ -1,6 +1,8 @@
 /** Product copy from Web settings, reused by the native translation catalog. */
 export const settingsCopy = {
+	title: "Settings",
 	general: "General",
+	generalSummary: "Account and appearance",
 	generalDescription: "Account and app preferences.",
 	account: "Account",
 	accountDescription: "Your Clawdi identity.",
@@ -12,6 +14,7 @@ export const settingsCopy = {
 	dark: "Dark",
 	system: "System",
 	apiKeys: "API Keys",
+	apiKeysSummary: "CLI and server tokens",
 	apiKeysDescription: "Review and revoke bearer tokens created for servers and automation.",
 	keysRetiredBefore:
 		"API keys can no longer be created. To connect Clawdi on your computer or a server, run ",
@@ -65,12 +68,14 @@ export const billingCopy = {
 	usdcUnavailable: "Browser-wallet USDC funding is not available for this account yet.",
 
 	compute: "Compute",
+	computeSummary: "Subscriptions and plans",
 	computeDescription: "Subscriptions, plans, and account billing for Cloud Agents.",
 	subscriptions: "Your subscriptions",
 	subscriptionsDescription: "Manage every compute subscription in one place.",
 	emptySubscriptions: "No compute subscriptions",
 	emptySubscriptionsDescription: "Subscriptions will appear here when you start a Cloud Agent.",
 	wallet: "Wallet",
+	walletSummary: "Balance, top-ups, and payment methods",
 	walletDescription: "Add funds and manage how your Clawdi usage is paid.",
 	walletBalance: "Wallet balance",
 	walletExplanation:

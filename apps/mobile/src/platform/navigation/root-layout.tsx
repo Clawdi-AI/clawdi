@@ -1,7 +1,12 @@
 import "../../../global.css";
 import { ClerkProvider } from "@clerk/expo";
 import { tokenCache } from "@clerk/expo/token-cache";
-import { type ErrorBoundaryProps, Stack, usePathname } from "expo-router";
+import {
+	type ErrorBoundaryProps,
+	Stack,
+	useNavigationContainerRef,
+	usePathname,
+} from "expo-router";
 import { useEffect, useRef } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -15,6 +20,7 @@ import { MobileProviders } from "@/platform/mobile-providers";
 import { useNativeStackOptions } from "@/platform/navigation/native-header";
 import { formSheetOptions } from "@/platform/navigation/sheet-options";
 import {
+	navigationIntegration,
 	reportRootError,
 	setObservabilityPathname,
 	wrapRootLayout,
@@ -51,6 +57,10 @@ function Navigation() {
 }
 
 function RootLayout() {
+	const navigationRef = useNavigationContainerRef();
+	useEffect(() => {
+		navigationIntegration?.registerNavigationContainer(navigationRef);
+	}, [navigationRef]);
 	const pathname = usePathname();
 	// Update before child effects can report errors or breadcrumbs for a sensitive route.
 	setObservabilityPathname(pathname);

@@ -14,6 +14,7 @@ const SAFE_PROPERTY_KEYS = new Set([
 	"$lib_version",
 	"$insert_id",
 	"$is_identified",
+	"$process_person_profile",
 	"source",
 	"schema_version",
 	"feature",
@@ -53,6 +54,7 @@ export function safeEventProperties(
 		}
 	}
 	if (safe.schema_version !== 1) delete safe.schema_version;
+	if (typeof safe.$process_person_profile !== "boolean") delete safe.$process_person_profile;
 	if (eventName === "$pageview") safe.feature = featureForPath(pathname);
 	// Keep only the hostname. URLs, credentials, ports, query strings and paths
 	// must never travel in the SDK's host property.
@@ -98,7 +100,13 @@ export function isHostedPostHogEnabled({
 	isHosted?: boolean;
 	token?: string;
 } = {}): boolean {
-	return isHosted && normalizePostHogToken(token) !== null;
+	return (
+		isHosted &&
+		normalizePostHogToken(token) !== null &&
+		typeof window !== "undefined" &&
+		window.location.protocol === "https:" &&
+		window.location.hostname === "cloud.clawdi.ai"
+	);
 }
 
 export function initHostedPostHog({
@@ -106,7 +114,7 @@ export function initHostedPostHog({
 	token = DEFAULT_POSTHOG_TOKEN,
 }: HostedPostHogOptions = {}): boolean {
 	const normalizedToken = normalizePostHogToken(token);
-	if (!isHosted || !normalizedToken) return false;
+	if (!isHostedPostHogEnabled({ isHosted, token }) || !normalizedToken) return false;
 
 	const sdk = posthog as PostHogClient;
 	if (sdk.__loaded) return false;
@@ -116,7 +124,7 @@ export function initHostedPostHog({
 		defaults: "2026-01-30",
 		person_profiles: "identified_only",
 		capture_pageview: "history_change",
-		capture_pageleave: true,
+		capture_pageleave: false,
 		autocapture: false,
 		respect_dnt: true,
 		disable_session_recording: true,
@@ -124,6 +132,7 @@ export function initHostedPostHog({
 		// Run only the bundled SDK; never load remote PostHog scripts or the toolbar.
 		disable_external_dependency_loading: true,
 		before_send: (event) => {
+			if (!isHostedPostHogEnabled({ isHosted, token })) return null;
 			const url = event?.properties?.$current_url;
 			if (
 				(typeof window !== "undefined" && window.location.pathname === "/vault-request") ||
