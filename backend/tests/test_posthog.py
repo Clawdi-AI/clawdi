@@ -164,6 +164,119 @@ async def test_connected_registration_emits_once_and_workspace_uses_no_pii(cli_c
     assert "Private Project" not in str(event)
 
 
+async def test_connector_creation_and_repeated_reads_have_identical_dedup_fields(
+    seed_user, captures, monkeypatch
+):
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from starlette.requests import Request
+
+    from app.core.auth import AuthContext
+    from app.routes import connectors
+    from app.schemas.connector import ConnectorCredentialsConnectResponse
+
+    connection_id = "ca_fixture"
+
+    async def create(*_args, **_kwargs):
+        return ConnectorCredentialsConnectResponse(id=connection_id, status="active", ok=True)
+
+    async def owned(user_id, account_id):
+        assert user_id == seed_user.clerk_id and account_id == connection_id
+        return SimpleNamespace(created_at="2026-10-01T03:04:05+02:00")
+
+    async def accounts(_user_id):
+        return [
+            {
+                "id": connection_id,
+                "app_name": "fixture",
+                "status": "ACTIVE",
+                "created_at": "2026-10-01T01:04:05Z",
+            }
+        ]
+
+    async def invalidate(_user_id):
+        pass
+
+    monkeypatch.setattr(settings, "composio_api_key", "test-provider-key")
+    monkeypatch.setattr(connectors, "connect_with_credentials", create)
+    monkeypatch.setattr(connectors, "get_owned_account", owned)
+    monkeypatch.setattr(connectors, "get_all_connected_accounts", accounts)
+    monkeypatch.setattr(connectors, "invalidate_tool_router_mcp_session", invalidate)
+    auth = AuthContext(user=seed_user)
+    result = await connectors.connect_credentials(
+        "fixture",
+        connectors.ConnectorCredentialsConnectRequest(credentials={"key": "PRIVATE"}),
+        auth,
+    )
+    assert result.model_dump() == {"id": connection_id, "status": "active", "ok": True}
+    for _ in range(2):
+        await connectors.list_connections(Request({"type": "http"}), auth)
+    assert len(captures) == 3
+    assert all(event == captures[0] for event in captures)
+    assert captures[0]["event"] == "connector_connected"
+    assert captures[0]["timestamp"] == datetime(2026, 10, 1, 1, 4, 5, tzinfo=UTC)
+    assert "PRIVATE" not in str(captures)
+
+
+@pytest.mark.parametrize("created_at", ["invalid", "2026-10-01T01:04:05", ""])
+async def test_connector_reads_skip_ambiguous_creation_timestamps(
+    seed_user, captures, monkeypatch, created_at
+):
+    from starlette.requests import Request
+
+    from app.core.auth import AuthContext
+    from app.routes import connectors
+
+    async def accounts(_user_id):
+        return [
+            {
+                "id": "ca_fixture",
+                "app_name": "fixture",
+                "status": "ACTIVE",
+                "created_at": created_at,
+            }
+        ]
+
+    async def invalidate(_user_id):
+        pass
+
+    monkeypatch.setattr(settings, "composio_api_key", "test-provider-key")
+    monkeypatch.setattr(connectors, "get_all_connected_accounts", accounts)
+    monkeypatch.setattr(connectors, "invalidate_tool_router_mcp_session", invalidate)
+    result = await connectors.list_connections(
+        Request({"type": "http"}), AuthContext(user=seed_user)
+    )
+    assert len(result) == 1
+    assert captures == []
+
+
+async def test_connector_analytics_metadata_failure_keeps_success_response(
+    seed_user, captures, monkeypatch
+):
+    from app.core.auth import AuthContext
+    from app.routes import connectors
+    from app.schemas.connector import ConnectorCredentialsConnectResponse
+    from app.services.composio import ComposioProtocolError
+
+    async def create(*_args, **_kwargs):
+        return ConnectorCredentialsConnectResponse(id="ca_fixture", status="active", ok=True)
+
+    async def owned(*_args):
+        raise ComposioProtocolError("PRIVATE")
+
+    monkeypatch.setattr(settings, "composio_api_key", "test-provider-key")
+    monkeypatch.setattr(connectors, "connect_with_credentials", create)
+    monkeypatch.setattr(connectors, "get_owned_account", owned)
+    result = await connectors.connect_credentials(
+        "fixture",
+        connectors.ConnectorCredentialsConnectRequest(credentials={"key": "PRIVATE"}),
+        AuthContext(user=seed_user),
+    )
+    assert result.ok
+    assert captures == []
+
+
 def test_sdk_errors_are_nonfatal(monkeypatch):
     class BrokenPostHog:
         def capture(self, *args, **kwargs):

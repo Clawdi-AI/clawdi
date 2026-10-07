@@ -8,11 +8,11 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.middleware.request_timing import RequestTimingMiddleware, record_content_events_stream
-from app.services.metrics import api_duration, api_requests, registry, sync_failures
+from app.services.metrics import http_request_duration, http_requests, registry
 
 
 @pytest.mark.parametrize("outcome", ["response", "exception", "stream_exception"])
-async def test_red_records_once_at_headers_and_classifies_sync(outcome, monkeypatch):
+async def test_red_records_once_at_headers_for_session_requests(outcome, monkeypatch):
     from app.middleware import request_timing
 
     records = []
@@ -43,7 +43,7 @@ async def test_red_records_once_at_headers_and_classifies_sync(outcome, monkeypa
     args, kwargs = records[0]
     assert args[:3] == ("sessions", "POST", 500 if outcome == "exception" else 422)
     assert args[3] >= 0
-    assert kwargs == {"sync": True}
+    assert kwargs == {}
     assert "private-token" not in str(records)
 
 
@@ -53,10 +53,13 @@ async def test_red_records_once_at_headers_and_classifies_sync(outcome, monkeypa
 )
 async def test_red_metric_math_and_bounded_labels(template, group):
     labels = {"route_group": group, "method": "OTHER", "status_class": "4xx"}
-    before = registry.get_sample_value("clawdi_backend_api_requests_total", labels) or 0
+    before = registry.get_sample_value("clawdi_backend_http_requests_total", labels) or 0
     duration_labels = {"route_group": group, "method": "OTHER"}
     durations = (
-        registry.get_sample_value("clawdi_backend_api_duration_seconds_count", duration_labels) or 0
+        registry.get_sample_value(
+            "clawdi_backend_http_request_duration_seconds_count", duration_labels
+        )
+        or 0
     )
     scope = _scope(path="/private-token/secret")
     scope["method"] = "private-method"
@@ -68,12 +71,14 @@ async def test_red_metric_math_and_bounded_labels(template, group):
         await send({"type": "http.response.body", "body": b""})
 
     await _collect(RequestTimingMiddleware(inner, slow_ms=750), scope)
-    assert registry.get_sample_value("clawdi_backend_api_requests_total", labels) == before + 1
+    assert registry.get_sample_value("clawdi_backend_http_requests_total", labels) == before + 1
     assert (
-        registry.get_sample_value("clawdi_backend_api_duration_seconds_count", duration_labels)
+        registry.get_sample_value(
+            "clawdi_backend_http_request_duration_seconds_count", duration_labels
+        )
         == durations + 1
     )
-    for metric in (api_requests, api_duration, sync_failures):
+    for metric in (http_requests, http_request_duration):
         for family in metric.collect():
             for sample in family.samples:
                 assert "private" not in str(sample.labels)

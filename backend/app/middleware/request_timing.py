@@ -310,9 +310,5 @@ def _record_response(scope: Scope, method: str, status_code: int, duration_ms: f
     group = group if group in _ROUTE_GROUPS else "other"
     if group == "environments":
         group = "agents"
-    sync = (
-        group == "sessions"
-        and method in {"POST", "PUT"}
-        and (template.endswith("/batch") or "/upload" in template or "/events/" in template)
-    )
-    record_api_response(group, method, status_code, duration_ms / 1000, sync=sync)
+
+    record_api_response(group, method, status_code, duration_ms / 1000)

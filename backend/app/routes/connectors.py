@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
@@ -35,6 +36,7 @@ from app.services.composio import (
     get_auth_fields,
     get_available_apps,
     get_connector_metadata,
+    get_owned_account,
     invalidate_tool_router_mcp_session,
     normalize_composio_failure,
     update_account_alias,
@@ -43,6 +45,17 @@ from app.services.metrics import record_connector_auth_failure
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/connectors", tags=["connectors"])
+
+
+def _connection_created_at(value: str) -> datetime | None:
+    """Use the provider's stable timestamp; never replace missing metadata with now."""
+    try:
+        timestamp = datetime.fromisoformat(value)
+        if timestamp.utcoffset() is None:
+            return None
+        return timestamp.astimezone(UTC)
+    except (ValueError, OverflowError):
+        return None
 
 
 def _is_composio_auth_error(exc: ComposioRouteError) -> bool:
@@ -153,11 +166,15 @@ async def list_connections(
         connections = [ConnectorConnectionResponse.model_validate(account) for account in accounts]
     for connection in connections:
         if connection.status == "ACTIVE" and not connection.is_disabled:
+            created_at = _connection_created_at(connection.created_at)
+            if created_at is None:
+                continue
             capture_event(
                 "connector_connected",
                 distinct_id=auth.user.clerk_id,
                 event_key=connection.id,
                 properties={"feature": "connectors"},
+                timestamp=created_at,
             )
     return connections
 
@@ -335,12 +352,22 @@ async def connect_credentials(
             status.HTTP_400_BAD_REQUEST,
             f"Composio returned connection status {result.status}",
         )
-    capture_event(
-        "connector_connected",
-        distinct_id=auth.user.clerk_id,
-        event_key=result.id,
-        properties={"feature": "connectors"},
-    )
+    if settings.posthog_api_key.strip():
+        try:
+            account = await get_owned_account(require_clerk_id(auth), result.id)
+            created_at = _connection_created_at(account.created_at)
+        except Exception:  # noqa: BLE001 - optional telemetry cannot fail a completed mutation.
+            # A telemetry metadata read must not change the successful mutation.
+            log.warning("Connector analytics metadata unavailable")
+        else:
+            if created_at is not None:
+                capture_event(
+                    "connector_connected",
+                    distinct_id=auth.user.clerk_id,
+                    event_key=result.id,
+                    properties={"feature": "connectors"},
+                    timestamp=created_at,
+                )
     return result
 
 
