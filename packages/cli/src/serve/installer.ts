@@ -1,5 +1,5 @@
 /**
- * Generate / load / unload `clawdi daemon` as a per-user OS
+ * Install / start / stop `clawdi daemon` as a per-user OS
  * service.
  *
  * Two backends, one shape:
@@ -59,6 +59,31 @@ interface InstallOpts {
 	rpcHost?: string;
 	rpcPort?: number;
 	rpcAllowRemote?: boolean;
+}
+
+export class BackgroundServiceUnsupportedError extends Error {}
+
+function launchdDomain(): string {
+	const uid = process.getuid?.();
+	if (uid === undefined)
+		throw new BackgroundServiceUnsupportedError("no launchd user ID available");
+	return `gui/${uid}`;
+}
+
+/** Check the manager before writing service files or persisting credentials.
+ * show-environment also succeeds for a degraded systemd user manager, unlike
+ * is-system-running. Its output is discarded because it may contain secrets. */
+function requireBackgroundServiceManager(): void {
+	const p = platform();
+	if (p === "linux" && !tryRun(["systemctl", "--user", "show-environment"])) {
+		throw new BackgroundServiceUnsupportedError("no systemd user manager available");
+	}
+	if (p === "darwin" && !tryRun(["launchctl", "print", launchdDomain()])) {
+		throw new BackgroundServiceUnsupportedError("no launchd GUI user domain available");
+	}
+	if (p !== "linux" && p !== "darwin" && p !== "win32") {
+		throw new BackgroundServiceUnsupportedError(`unsupported platform for service install: ${p}`);
+	}
 }
 
 function home(): string {
@@ -236,7 +261,7 @@ function currentDaemonInstallContext(opts: InstallOpts): DaemonInstallContext {
 	// systemd unit. After reboot, the supervisor launches that
 	// unit via the system `node` binary which can't execute raw
 	// TypeScript — daemon crashes silently in a respawn loop and
-	// the user has no idea what's wrong because `launchctl load`
+	// the user has no idea what's wrong because `launchctl bootstrap`
 	// itself succeeded. Fail loudly at install time instead.
 	if (invocation.entryPath && /\.tsx?$/.test(invocation.entryPath)) {
 		throw new Error(
@@ -257,6 +282,7 @@ export function install(opts: InstallOpts = {}): {
 	instructions: string;
 	replaced: boolean;
 } {
+	requireBackgroundServiceManager();
 	const p = platform();
 	if (p === "darwin") return installLaunchd(opts);
 	if (p === "linux") return installSystemd(opts);
@@ -322,25 +348,26 @@ function restartLaunchd(opts: InstallOpts): void {
 		throw new Error("no daemon unit installed (run `clawdi daemon install` first)");
 	}
 	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
-	const target = `gui/${process.getuid?.() ?? 501}/${label}`;
-	// Two restart shapes depending on launchd's view of the unit:
-	//   - Loaded: hot restart via `kickstart -k` (kills the running
-	//     job and lets launchd respawn it; preserves the unit's
-	//     OnDemand/KeepAlive policies).
-	//   - Unloaded but plist exists (launchd auto-ejected after
-	//     enough crash-loop exits, or user manually `bootout`'d
-	//     without removing the file): cold reload via unload+load.
-	// Pre-fix `restart` always tried kickstart and gave up with a
-	// "kickstart failed" error when the unit was ejected — the user
-	// then had to manually `launchctl load -w <path>` themselves.
-	const isLoaded = tryRunCapture(["launchctl", "list", label]) !== null;
+	const target = `${launchdDomain()}/${label}`;
+	// Hot restart a loaded job; bootstrap a stopped/ejected job from its plist.
+	const isLoaded = tryRun(["launchctl", "print", target]);
 	if (isLoaded && tryRun(["launchctl", "kickstart", "-k", target])) return;
-	tryRun(["launchctl", "unload", path]);
-	if (!tryRun(["launchctl", "load", "-w", path])) {
+	stopLaunchd(opts);
+	if (!bootstrapLaunchd(path, label)) {
 		throw new Error(
-			`launchctl could not (re)load ${label}. ` + `Try manually: launchctl load -w "${path}"`,
+			`launchctl could not (re)load ${label}. ` +
+				`Try manually: launchctl bootstrap ${launchdDomain()} "${path}"`,
 		);
 	}
+}
+
+function bootstrapLaunchd(path: string, label: string): boolean {
+	const domain = launchdDomain();
+	// Match the former load -w behavior for previously disabled services.
+	return (
+		tryRun(["launchctl", "enable", `${domain}/${label}`]) &&
+		tryRun(["launchctl", "bootstrap", domain, path])
+	);
 }
 
 function restartSystemd(opts: InstallOpts): void {
@@ -452,16 +479,13 @@ ${programArgs}
 		/* best effort — owner of the file is the only writer here */
 	}
 
-	// Best-effort load. If an old version is already loaded,
-	// unload first — `launchctl load -w` is idempotent on the
-	// label but the file path swap still requires a clean
-	// reload to pick up edits.
-	tryRun(["launchctl", "unload", path]);
-	const loaded = tryRun(["launchctl", "load", "-w", path]);
+	// Remove a loaded definition before bootstrapping the updated plist.
+	stopLaunchd(opts);
+	const loaded = bootstrapLaunchd(path, label);
 	if (!loaded) {
 		throw new Error(
 			`Wrote daemon unit to ${path}, but launchctl activation failed. ` +
-				`The unit was preserved. Try: launchctl load -w "${path}"`,
+				`The unit was preserved. Try: launchctl bootstrap ${launchdDomain()} "${path}"`,
 		);
 	}
 
@@ -472,21 +496,7 @@ ${programArgs}
 function uninstallLaunchd(opts: InstallOpts): { removed: boolean } {
 	const path = opts.agent ? plistPath(opts.agent) : singletonPlistPath();
 	if (!existsSync(path)) return { removed: false };
-	// Stop the daemon BEFORE removing the plist. Pre-fix this used a
-	// bare `tryRun(["launchctl", "unload", path])` and ignored the
-	// return code, then `unlinkSync(path)` regardless — so a
-	// failed unload (corrupt plist, label mismatch, race) left the
-	// daemon process running while the unit file was gone, with the
-	// CLI confidently reporting "✓ Removed".
-	//
-	// macOS has two stop forms:
-	//   - `launchctl unload <path>`: legacy, works for plists under
-	//     ~/Library/LaunchAgents.
-	//   - `launchctl bootout gui/<uid>/<label>`: modern (10.10+),
-	//     works regardless of whether the plist file still exists.
-	// Try bootout first; fall back to the legacy unload form. Only proceed to
-	// unlink the plist after we've confirmed the daemon is stopped
-	// (or was never loaded in the first place).
+	// Preserve the plist if stopping a loaded service fails.
 	stopLaunchd(opts);
 	unlinkSync(path);
 	return { removed: true };
@@ -498,9 +508,9 @@ function stopLaunchd(opts: InstallOpts): void {
 		throw new Error("no daemon unit installed (run `clawdi daemon install` first)");
 	}
 	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
-	if (tryRunCapture(["launchctl", "list", label]) === null) return;
-	const target = `gui/${process.getuid?.() ?? 501}/${label}`;
-	if (tryRun(["launchctl", "bootout", target]) || tryRun(["launchctl", "unload", path])) return;
+	const target = `${launchdDomain()}/${label}`;
+	if (!tryRun(["launchctl", "print", target])) return;
+	if (tryRun(["launchctl", "bootout", target])) return;
 	throw new Error(
 		`Failed to stop running daemon ${label}. Try manually: launchctl bootout gui/$(id -u)/${label}`,
 	);
@@ -603,10 +613,10 @@ function installSystemd(opts: InstallOpts): {
 	// `WantedBy=default.target` is the systemd --user equivalent
 	// of "start at user login"; requires `loginctl enable-linger
 	// <user>` to fire on boot rather than first login session.
+	// network-online.target belongs to the system manager, not the user
+	// manager. The daemon retries network requests; RestartSec backs off exits.
 	const unit = `[Unit]
 Description=clawdi daemon
-After=network-online.target
-Wants=network-online.target
 
 [Service]
 Type=simple
@@ -644,8 +654,24 @@ WantedBy=default.target
 		);
 	}
 
-	const instructions = `Enabled and started ${unitFileName(opts.agent)}. Tail logs with: journalctl --user -u ${unitFileName(opts.agent)} -f`;
+	const instructions =
+		`Enabled and started ${unitFileName(opts.agent)}. Tail logs with: journalctl --user -u ${unitFileName(opts.agent)} -f` +
+		lingerHint();
 	return { unit: path, instructions, replaced };
+}
+
+function lingerHint(): string {
+	const uid = process.getuid?.();
+	if (uid === undefined) return "";
+	const linger = tryRunCapture([
+		"loginctl",
+		"show-user",
+		String(uid),
+		"--property=Linger",
+		"--value",
+	]);
+	if (linger?.trim() !== "no") return "";
+	return "\n  Sync stops at logout without lingering. To keep syncing: loginctl enable-linger $USER (may require privileges).";
 }
 
 function uninstallSystemd(opts: InstallOpts): { removed: boolean } {

@@ -352,6 +352,12 @@ program
 	)
 	.option("-y, --yes", "Register every detected agent without prompting")
 	.option("--no-daemon", "Skip installing/starting background sync daemons")
+	.option(
+		"--exclude-project <path>",
+		"Exclude project paths before the first upload (comma-separated; repeatable)",
+		(value: string, paths: string[]) => [...paths, value],
+		[],
+	)
 	.addHelpText(
 		"after",
 		"\nExamples:\n  $ clawdi setup\n  $ clawdi setup --yes\n  $ clawdi setup --agent claude_code\n  $ clawdi setup --no-daemon",

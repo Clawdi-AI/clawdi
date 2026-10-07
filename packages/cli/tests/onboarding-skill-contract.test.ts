@@ -121,6 +121,7 @@ describe("onboarding skill CLI contract", () => {
 		expect(skill).toContain("To skip a project: `clawdi config set excludeProjects <path>`");
 		expect(commands.has("config set")).toBe(true);
 		expect(CONFIG_KEYS).toContain("excludeProjects");
+		expect(commands.get("setup")).toContain("--exclude-project");
 	});
 
 	for (const [path, flags] of commands) {

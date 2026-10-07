@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { setup } from "../../src/commands/setup";
+import { getStoredConfig, setConfigKey } from "../../src/lib/config";
 import {
 	managedSkillReservationState,
 	releaseManagedSkill,
@@ -94,6 +95,7 @@ beforeEach(() => {
 	);
 	writeExecutable(join(stubDir, "systemctl"), "#!/bin/sh\nexit 0\n");
 	writeExecutable(join(stubDir, "launchctl"), "#!/bin/sh\nexit 0\n");
+	writeExecutable(join(stubDir, "loginctl"), "#!/bin/sh\nprintf 'yes\\n'\n");
 	process.env.PATH = `${stubDir}:${envSnapshot.PATH ?? ""}`;
 
 	seedAuth();
@@ -153,6 +155,7 @@ describe("setup notice", () => {
 		expect(output).toContain(
 			"  • Skip a project:   clawdi config set excludeProjects <path>[,<path>]",
 		);
+		expect(output).toContain("clawdi setup --exclude-project <path>[,<path>]");
 		expect(output).toContain("Open your dashboard: https://dashboard.example.test/sessions");
 		expect(output.match(/Clawdi is on for this machine:/g)).toHaveLength(1);
 		expect(output).not.toContain("Detecting installed agents...");
@@ -242,6 +245,64 @@ describe("setup notice", () => {
 });
 
 describe("setup daemon install", () => {
+	it.each([false, true])(
+		"persists exclusions before service activation (explicit agent=%s)",
+		async (explicit) => {
+			installEnvironmentMock("env-exclusions");
+			mkdirSync(join(home, ".codex", "sessions"), { recursive: true });
+			const paths = [" /private/project/ ", "C:\\private\\project,, /another/project/"];
+			setConfigKey("excludeProjects", paths.join(","));
+			const expected = getStoredConfig().excludeProjects;
+			setConfigKey("excludeProjects", "/previous");
+			// Capture what the supervisor sees at the moment it starts the daemon.
+			for (const command of ["systemctl", "launchctl"]) {
+				writeExecutable(
+					join(home, "bin", command),
+					`#!/bin/sh
+case "$*" in
+  *"enable --now"*|"bootstrap "*) cp "$HOME/.clawdi/config.json" "$HOME/config-at-start.json" ;;
+esac
+exit 0
+`,
+				);
+			}
+
+			await setup({ ...(explicit ? { agent: "codex" } : {}), yes: true, excludeProject: paths });
+
+			expect(process.exitCode).toBe(0);
+			expect(
+				JSON.parse(readFileSync(join(home, "config-at-start.json"), "utf8")).excludeProjects,
+			).toEqual(expected);
+			expect(getStoredConfig().excludeProjects).toEqual(expected);
+		},
+	);
+
+	it.each(["missing", "no-manager"])(
+		"succeeds when the background supervisor is unsupported: %s",
+		async (kind) => {
+			installEnvironmentMock("env-unsupported");
+			const command = process.platform === "darwin" ? "launchctl" : "systemctl";
+			if (kind === "missing") {
+				rmSync(join(home, "bin", command));
+				process.env.PATH = join(home, "bin");
+			} else {
+				writeExecutable(join(home, "bin", command), "#!/bin/sh\nexit 1\n");
+			}
+
+			await setup({ agent: "codex", yes: true, json: true });
+
+			expect(process.exitCode).toBe(0);
+			expect(daemonUnitExists("daemon")).toBe(false);
+			expect(JSON.parse(consoleOutput.join("\n"))).toMatchObject({
+				status: "completed",
+				daemon: { installed: false, reason: "unsupported" },
+			});
+			const diagnostics = consoleErrors.join("\n");
+			expect(diagnostics).toContain("Background service not supported here:");
+			expect(diagnostics).toContain("sync runs when you run `clawdi push`");
+			expect(diagnostics).not.toContain("Could not install daemon:");
+		},
+	);
 	it.each(["default", "override"])(
 		"registers dsh Skills and preserves Cordis patches at the %s home",
 		async (source) => {
@@ -522,7 +583,10 @@ exit 0
 	it("sets a failing exit code without printing install success when service activation fails", async () => {
 		if (process.platform !== "linux") return;
 		installEnvironmentMock("env-codex");
-		writeExecutable(join(home, "bin", "systemctl"), "#!/bin/sh\nexit 1\n");
+		writeExecutable(
+			join(home, "bin", "systemctl"),
+			'#!/bin/sh\n[ "$*" = "--user show-environment" ] && exit 0\nexit 1\n',
+		);
 
 		await setup({ agent: "codex", yes: true });
 
@@ -535,6 +599,24 @@ exit 0
 		expect(output).not.toContain("systemctl activation failed");
 		expect(output).not.toContain("Singleton daemon installed");
 		expect(consoleErrors.join("\n")).not.toContain("Singleton daemon installed");
+	});
+
+	it("reports an installation failure in JSON when enable fails with an available manager", async () => {
+		if (process.platform !== "linux") return;
+		installEnvironmentMock("env-failed");
+		writeExecutable(
+			join(home, "bin", "systemctl"),
+			'#!/bin/sh\ncase "$*" in *"enable --now"*) exit 1;; esac\nexit 0\n',
+		);
+
+		await setup({ agent: "codex", yes: true, json: true });
+
+		expect(process.exitCode).toBe(1);
+		expect(JSON.parse(consoleOutput.join("\n"))).toMatchObject({
+			status: "partial",
+			daemon: { installed: false, reason: "failed" },
+		});
+		expect(consoleErrors.join("\n")).toContain("systemctl activation failed");
 	});
 });
 

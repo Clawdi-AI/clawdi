@@ -81,12 +81,16 @@ OpenClaw, Pi, OpenCode, and DeepSeek Harness (`dsh`). It installs the Clawdi ski
 into each agent that supports them, and starts background sync.
 Don't install https://clawdi.ai/skills/clawdi/SKILL.md separately.
 
+If the user already asked to exclude projects, pass them before the first upload:
+`clawdi setup --exclude-project <path>[,<path>]`. The flag is repeatable.
+
 If the output includes a "Run manually" MCP command for the agent you are running in, run that
 command yourself. Ignore manual MCP commands for other agents.
 
-If setup couldn't install the background service (for example, there's no systemd in a
-container), registration still worked. Tell the user that sync runs only when they run
-`clawdi push`. Don't start `clawdi daemon run` in your shell; it never exits.
+If a background service isn't supported (for example, there's no systemd user manager in a
+container), setup exits 0 with a reason; registration still worked. If service installation
+fails, setup exits 1 with the error. In either case, tell the user that sync runs only when
+they run `clawdi push`. Don't start `clawdi daemon run` in your shell; it never exits.
 
 ## Upload existing history
 
@@ -115,6 +119,7 @@ failures; only say background sync is on if setup installed it:
 > automatically. {N} sessions are already there: {dashboard link from setup}
 >
 > To skip a project: `clawdi config set excludeProjects <path>`.
+> To exclude projects before the first upload: `clawdi setup --exclude-project <path>[,<path>]`.
 > To stop background sync: `clawdi daemon uninstall`. You can delete uploaded sessions in the
 > dashboard.
 

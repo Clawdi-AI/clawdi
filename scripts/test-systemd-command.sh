@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+bun_version="$(node -p 'const manager = require(process.argv[1]).packageManager; if (!/^bun@\d+\.\d+\.\d+$/.test(manager)) throw new Error("Expected packageManager to be bun@X.Y.Z"); manager.slice(4)' "$repo_root/package.json")"
 fixture="$repo_root/packages/cli/tests/fixtures/runtime-official-installer-systemd/Dockerfile"
 image="clawdi-systemd-command-test:local-$$"
 container="clawdi-systemd-command-test-$$"
@@ -20,7 +21,7 @@ load_args=()
 if [[ "${DOCKER_BUILD_LOAD:-0}" == "1" ]]; then
 	load_args+=(--load)
 fi
-timeout --kill-after=15s 900s docker build --quiet --build-arg BUN_VERSION=1.4.2 "${load_args[@]}" --target systemd --tag "$image" - < "$fixture" >/dev/null
+timeout --kill-after=15s 900s docker build --quiet --build-arg "BUN_VERSION=$bun_version" "${load_args[@]}" --target systemd --tag "$image" - < "$fixture" >/dev/null
 timeout --kill-after=15s 30s docker run --detach --privileged --cgroupns=private \
 	--cpus=2 --memory=2g --pids-limit=256 --name "$container" \
 	--tmpfs /run --tmpfs /run/lock --tmpfs /tmp:exec \
@@ -48,7 +49,7 @@ timeout --kill-after=15s 930s docker exec "$container" timeout 900 bash -euo pip
 	bun install --frozen-lockfile --ignore-scripts --network-concurrency=16
 	package_root=/work/packages/cli
 	# Match the clean runner: subprocess-heavy files need separate Bun processes.
-	for test_file in packages/cli/src/runtime/systemd.test.ts packages/cli/src/runtime/oom-protection.test.ts packages/cli/src/adapters/openclaw-runtime-user.test.ts packages/cli/src/runtime/persisted-step-revisions.test.ts; do
+	for test_file in packages/cli/src/runtime/systemd.test.ts packages/cli/src/runtime/oom-protection.test.ts packages/cli/src/adapters/openclaw-runtime-user.test.ts packages/cli/src/runtime/persisted-step-revisions.test.ts packages/cli/tests/e2e/daemon-systemd-user.e2e.test.ts; do
 		CLAWDI_TEST_SYSTEMD_COMMAND=1 CLAWDI_TEST_OPENCLAW_REQUIRE_ROOT=1 timeout 60 bun test --isolate --max-concurrency=1 \
 			--timeout=15000 "$test_file"
 	done
