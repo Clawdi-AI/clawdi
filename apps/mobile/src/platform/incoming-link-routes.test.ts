@@ -136,6 +136,7 @@ test.each([
 	["api-keys", "/settings/api-keys"],
 	["wallet", "/settings/wallet"],
 	["compute", "/settings/compute"],
+	["usage", "/settings/usage"],
 	["billing", "/settings/compute"],
 	["billing-wallet", "/settings/wallet"],
 	["billing-plan", "/settings/compute"],
