@@ -758,7 +758,8 @@ export interface paths {
         put?: never;
         /**
          * Create Desktop Session Ticket
-         * @description Exchange the first-party CLI identity for a one-use browser session ticket.
+         * @deprecated
+         * @description Retain upgrade guidance for released Desktop clients for one release cycle.
          */
         post: operations["create_desktop_session_ticket_v1_cli_auth_oauth_desktop_ticket_post"];
         delete?: never;
@@ -6122,7 +6123,7 @@ export interface components {
         };
         /**
          * DesktopSessionTicketResponse
-         * @description Short-lived, one-use Clerk ticket for the first-party desktop shell.
+         * @description Legacy success shape for released clients; the retired route always returns 410.
          */
         DesktopSessionTicketResponse: {
             /** Ticket */
@@ -12234,6 +12235,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DesktopSessionTicketResponse"];
+                };
+            };
+            /** @description Desktop sign-in tickets are no longer supported. Update Clawdi Desktop and open https://cloud.clawdi.ai in your browser. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
                 };
             };
         };
