@@ -63,7 +63,7 @@ describe("Agent delete subscription policy", () => {
 			).toEqual({
 				offerChoice: false,
 				defaultChoice: "keep_subscription",
-				storeNotice: `Deleting this Agent doesn't cancel your ${store} subscription. Manage it on your device.`,
+				storeNotice: `Deleting this agent doesn't cancel your ${store} subscription. Manage it on your device.`,
 			});
 		}
 	});

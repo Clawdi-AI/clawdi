@@ -26,10 +26,7 @@ import {
 	shouldShowInitialDeploymentProgress,
 	startComputeActionPresentation,
 	stoppedAgentDescription,
-	storeBillingNotice,
-	storeRenewalIssue,
 	storeSubscriptionCardView,
-	storeSubscriptionCopy,
 } from "@clawdi/shared/view";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
@@ -194,6 +191,7 @@ import { resolveComputeSubscriptionActions } from "@/hosted/billing/subscription
 import {
 	ComputeSubscriptionCard,
 	computeSubscriptionCardView,
+	StoreSubscriptionNotice,
 } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
 	type ComputeSubscriptionManagementResult,
@@ -3714,11 +3712,8 @@ function ComputeSettingsSections({
 						computeManagementReason ||
 						createUnavailableMessage ? (
 							<div className="flex flex-col gap-1 text-xs text-muted-foreground">
-								{fundingSource === "store" ? <p>{storeBillingNotice(storeManagement)}</p> : null}
-								{storeRenewalIssue(storeManagement) ? (
-									<p className="font-medium text-warning-muted-foreground">
-										{storeSubscriptionCopy.renewalIssue}
-									</p>
+								{fundingSource === "store" ? (
+									<StoreSubscriptionNotice management={storeManagement} />
 								) : null}
 								{pendingPlanCopy ? (
 									<p className="font-medium text-warning-muted-foreground">{pendingPlanCopy}</p>

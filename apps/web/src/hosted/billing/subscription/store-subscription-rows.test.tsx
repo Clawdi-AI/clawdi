@@ -110,7 +110,6 @@ describe("store-funded subscription rows", () => {
 				"Paused",
 			],
 			[{ state: "canceled_pending_end", auto_renews: false }, { status: "canceling" }, "Canceling"],
-			[{ state: "expired" }, { status: "canceled" }, "Expired"],
 		] as const;
 		for (const [store, row, label] of cases) {
 			const markup = render(storeRow({ ...row, store_management: management(store) }));
@@ -160,6 +159,8 @@ describe("store-funded subscription rows", () => {
 		);
 		expect(markup).toContain("Expired");
 		expect(markup).toContain("Ended ");
+		expect(markup).toContain("Was billed through the App Store.");
+		expect(markup).not.toContain("Manage it on your device");
 		expect(buttonLabels(markup)).toEqual([]);
 	});
 

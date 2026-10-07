@@ -1,5 +1,11 @@
 import { computeSubscriptionCardClasses } from "@clawdi/shared/ui";
-import { billingCopy } from "@clawdi/shared/view";
+import {
+	billingCopy,
+	type StoreManagement,
+	storeBillingNotice,
+	storeRenewalIssue,
+	storeSubscriptionCopy,
+} from "@clawdi/shared/view";
 import { Link } from "@tanstack/react-router";
 import { ArrowUp, CircleCheck, Settings, UserRoundX } from "lucide-react";
 import type { ReactNode } from "react";
@@ -72,6 +78,24 @@ function SubscriptionIdentity({ identity }: { identity: ComputeSubscriptionIdent
 		</Link>
 	) : (
 		<div className={computeSubscriptionCardClasses.labelBody}>{label}</div>
+	);
+}
+
+/** Read-only store billing lines shown in a store-funded card's notice area. */
+export function StoreSubscriptionNotice({
+	management,
+}: {
+	management: StoreManagement | null | undefined;
+}) {
+	return (
+		<>
+			<p>{storeBillingNotice(management)}</p>
+			{storeRenewalIssue(management) ? (
+				<p className="font-medium text-warning-muted-foreground">
+					{storeSubscriptionCopy.renewalIssue}
+				</p>
+			) : null}
+		</>
 	);
 }
 

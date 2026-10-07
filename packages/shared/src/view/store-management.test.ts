@@ -118,12 +118,20 @@ describe("store management presentation", () => {
 		expect(storeBillingNotice(null)).toBe(
 			"Billed through the App Store or Google Play. Manage it on your device.",
 		);
+		for (const state of ["expired", "revoked", "owner_terminated"]) {
+			expect(storeBillingNotice({ ...appStoreManagement, state })).toBe(
+				"Was billed through the App Store.",
+			);
+		}
+		expect(storeBillingNotice({ ...testStore, state: "expired" })).toBe(
+			"Was billed through Test Store.",
+		);
 		expect(storeProviderLabel(testStore)).toBe("Test Store");
 		expect(storeAgentDeletionNotice(playStore)).toBe(
-			"Deleting this Agent doesn't cancel your Google Play subscription. Manage it on your device.",
+			"Deleting this agent doesn't cancel your Google Play subscription. Manage it on your device.",
 		);
 		expect(storeAgentDeletionNotice(testStore)).toBe(
-			"Deleting this Agent doesn't cancel your Test Store subscription.",
+			"Deleting this agent doesn't cancel your Test Store subscription.",
 		);
 	});
 });

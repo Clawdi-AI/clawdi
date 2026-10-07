@@ -37,14 +37,22 @@ type AccountSubscription = Pick<
 	"funding_source" | "store_management"
 >;
 
-/** Store contract states that can still renew after account deletion. */
+/**
+ * Store contract states that may still bill after account deletion. A held conflicting
+ * contract can still be billing in the store.
+ */
 const RENEWABLE_STORE_STATES = new Set([
 	"active",
 	"grace",
 	"lapsed",
 	"paused",
 	"canceled_pending_end",
+	"conflict_hold",
 ]);
+
+function mayStillBill(management: NonNullable<AccountSubscription["store_management"]>): boolean {
+	return RENEWABLE_STORE_STATES.has(management.state) || management.auto_renews === true;
+}
 
 export type AccountDeletionStoreNotice =
 	| { kind: "none" }
@@ -62,7 +70,7 @@ export function accountDeletionStoreNotice(
 ): AccountDeletionStoreNotice {
 	const storeRows = (rows ?? []).filter((row) => row.funding_source === "store");
 	const renewable = storeRows.find(
-		(row) => row.store_management && RENEWABLE_STORE_STATES.has(row.store_management.state),
+		(row) => row.store_management != null && mayStillBill(row.store_management),
 	)?.store_management;
 	if (renewable) return { kind: "store", provider: renewable.provider };
 	if (!rows || !complete || storeRows.some((row) => !row.store_management)) {
@@ -79,7 +87,7 @@ export function accountDeletionStoreNoticeCopy(provider: StoreManagementProvider
 	const store = storeSubscriptionCopy.providers[provider];
 	return {
 		title: `Cancel your ${store} subscription first`,
-		description: `Your Clawdi compute subscription is billed by ${STORE_BILLED_THROUGH[provider]} and will keep renewing after your account is deleted. Cancel it in ${store} subscriptions first.`,
+		description: `Your Clawdi compute subscription is billed by ${STORE_BILLED_THROUGH[provider]} and will keep renewing after your account is deleted. Cancel it in ${store} subscriptions first. Deleting your account is not a refund request.`,
 	};
 }
 

@@ -1,14 +1,7 @@
 "use client";
 
 import type { AgentTile } from "@clawdi/shared/view";
-import {
-	billingCopy,
-	formatShortDate,
-	storeBillingNotice,
-	storeRenewalIssue,
-	storeSubscriptionCardView,
-	storeSubscriptionCopy,
-} from "@clawdi/shared/view";
+import { billingCopy, formatShortDate, storeSubscriptionCardView } from "@clawdi/shared/view";
 import { CreditCard, History } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -28,6 +21,7 @@ import {
 	type ComputeSubscriptionIdentity,
 	computeSubscriptionCardView,
 	computeSubscriptionPlanLabel,
+	StoreSubscriptionNotice,
 } from "@/hosted/billing/subscription/compute-subscription-card";
 import {
 	type ComputeSubscriptionManagementResult,
@@ -292,11 +286,8 @@ export function SubscriptionRow({
 				notice={
 					fundingSource === "store" || recoveryNotice || pendingPlanCopy || managementReason ? (
 						<div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
-							{fundingSource === "store" ? <p>{storeBillingNotice(storeManagement)}</p> : null}
-							{storeRenewalIssue(storeManagement) ? (
-								<p className="font-medium text-warning-muted-foreground">
-									{storeSubscriptionCopy.renewalIssue}
-								</p>
+							{fundingSource === "store" ? (
+								<StoreSubscriptionNotice management={storeManagement} />
 							) : null}
 							{recoveryNotice ? <p>{recoveryNotice}</p> : null}
 							{managementReason ? <p>{managementReason}</p> : null}

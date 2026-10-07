@@ -167,12 +167,31 @@ describe("accountDeletionStoreNotice", () => {
 	const cardRow = { funding_source: "stripe" as const, store_management: null };
 
 	test("names the store while a store contract may still renew", () => {
-		for (const state of ["active", "grace", "lapsed", "paused", "canceled_pending_end"]) {
+		for (const state of [
+			"active",
+			"grace",
+			"lapsed",
+			"paused",
+			"canceled_pending_end",
+			"conflict_hold",
+		]) {
 			expect(accountDeletionStoreNotice([cardRow, storeRow(state)], true)).toEqual({
 				kind: "store",
 				provider: "play_store",
 			});
 		}
+		// Auto-renewal is decisive even for a state this client does not list.
+		expect(
+			accountDeletionStoreNotice(
+				[
+					{
+						...storeRow("unrecognized"),
+						store_management: { ...management, state: "unrecognized", auto_renews: true },
+					},
+				],
+				true,
+			),
+		).toEqual({ kind: "store", provider: "play_store" });
 		// A renewable row is decisive even before later pages load.
 		expect(accountDeletionStoreNotice([storeRow("grace", "app_store")], false)).toEqual({
 			kind: "store",
@@ -181,7 +200,7 @@ describe("accountDeletionStoreNotice", () => {
 		expect(accountDeletionStoreNoticeCopy("app_store")).toEqual({
 			title: "Cancel your App Store subscription first",
 			description:
-				"Your Clawdi compute subscription is billed by the App Store and will keep renewing after your account is deleted. Cancel it in App Store subscriptions first.",
+				"Your Clawdi compute subscription is billed by the App Store and will keep renewing after your account is deleted. Cancel it in App Store subscriptions first. Deleting your account is not a refund request.",
 		});
 		expect(accountDeletionStoreNoticeCopy("play_store").description).toContain(
 			"billed by Google Play",
@@ -190,9 +209,19 @@ describe("accountDeletionStoreNotice", () => {
 
 	test("shows no store notice once the complete list has no renewable store contract", () => {
 		expect(accountDeletionStoreNotice([], true)).toEqual({ kind: "none" });
+		const ended = (state: string) => ({
+			...storeRow(state),
+			store_management: { ...management, state, auto_renews: false },
+		});
 		expect(
 			accountDeletionStoreNotice(
-				[cardRow, storeRow("expired"), storeRow("revoked"), storeRow("owner_terminated")],
+				[
+					cardRow,
+					ended("expired"),
+					ended("revoked"),
+					ended("owner_terminated"),
+					ended("unrecognized"),
+				],
 				true,
 			),
 		).toEqual({ kind: "none" });

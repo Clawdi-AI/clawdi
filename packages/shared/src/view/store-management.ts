@@ -111,18 +111,23 @@ export function storeProviderLabel(management: StoreManagement | null | undefine
 		: storeSubscriptionCopy.unknownProvider;
 }
 
-/** Test Store purchases are non-production evidence and have no device management page. */
+/**
+ * Ended store subscriptions get a past-tense line. Test Store purchases are
+ * non-production evidence and have no device management page.
+ */
 export function storeBillingNotice(management: StoreManagement | null | undefined): string {
 	const provider = storeManagementProvider(management);
-	if (provider === "test_store") return `Billed through ${STORE_BILLED_THROUGH.test_store}.`;
 	const store = provider
 		? STORE_BILLED_THROUGH[provider]
 		: `the ${storeSubscriptionCopy.unknownProvider}`;
+	if (management && STORE_TERMINAL_STATES.has(management.state))
+		return `Was billed through ${store}.`;
+	if (provider === "test_store") return `Billed through ${store}.`;
 	return `Billed through ${store}. Manage it on your device.`;
 }
 
 export function storeAgentDeletionNotice(management: StoreManagement | null | undefined): string {
-	const notice = `Deleting this Agent doesn't cancel your ${storeProviderLabel(management)} subscription.`;
+	const notice = `Deleting this agent doesn't cancel your ${storeProviderLabel(management)} subscription.`;
 	return storeManagementProvider(management) === "test_store"
 		? notice
 		: `${notice} Manage it on your device.`;

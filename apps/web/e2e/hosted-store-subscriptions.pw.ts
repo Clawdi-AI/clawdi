@@ -191,7 +191,7 @@ test("store-funded Agent shows store billing and deletion keeps the store subscr
 	await page.getByRole("button", { name: "Delete", exact: true }).click();
 	const deleteDialog = page.getByRole("alertdialog");
 	await expect(deleteDialog).toContainText(
-		"Deleting this Agent doesn't cancel your App Store subscription. Manage it on your device.",
+		"Deleting this agent doesn't cancel your App Store subscription. Manage it on your device.",
 	);
 	await expect(deleteDialog.getByRole("radio")).toHaveCount(0);
 	await expect(deleteDialog).not.toContainText(/cancel subscription/i);
