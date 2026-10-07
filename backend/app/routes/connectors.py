@@ -164,18 +164,6 @@ async def list_connections(
         await invalidate_tool_router_mcp_session(clerk_id)
     with request_stage(request.scope, "connector_response_build_ms"):
         connections = [ConnectorConnectionResponse.model_validate(account) for account in accounts]
-    for connection in connections:
-        if connection.status == "ACTIVE" and not connection.is_disabled:
-            created_at = _connection_created_at(connection.created_at)
-            if created_at is None:
-                continue
-            capture_event(
-                "connector_connected",
-                distinct_id=auth.user.clerk_id,
-                event_key=connection.id,
-                properties={"feature": "connectors"},
-                timestamp=created_at,
-            )
     return connections
 
 

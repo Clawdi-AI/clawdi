@@ -1,17 +1,58 @@
 import { describe, expect, test } from "bun:test";
-import type { Event } from "@sentry/react-native";
+import type { Event, TransactionEvent } from "@sentry/react-native";
 import { scrubMobileBreadcrumb, scrubMobileEvent } from "./observability-scrubber";
 
 describe("mobile crash-report privacy", () => {
-	test("drops vault-request events, transactions and navigation breadcrumbs", () => {
+	test("drops vault-request events and navigation breadcrumbs", () => {
 		expect(scrubMobileEvent({ message: "Failed" }, "/vault-request")).toBeNull();
 		expect(
 			scrubMobileEvent({ request: { url: "clawdi://vault-request?token=private" } }, "/agents"),
 		).toBeNull();
-		expect(scrubMobileEvent({ type: "transaction", transaction: "/vault-request" }, "")).toBeNull();
 		expect(
 			scrubMobileBreadcrumb({ data: { from: "/vault-request", to: "/agents" } }, "/agents"),
 		).toBeNull();
+	});
+	test.each([
+		"vault-request",
+		"/vault-request",
+		"vault-request?intake=private",
+		"/vault-request#private",
+	])(
+		"drops a completed navigation transaction for %s after leaving the sensitive route",
+		(transaction) => {
+			const event: TransactionEvent = {
+				type: "transaction",
+				transaction,
+				contexts: {
+					trace: {
+						span_id: "a".repeat(16),
+						trace_id: "b".repeat(32),
+						op: "navigation",
+						origin: "auto.navigation.react_navigation",
+					},
+				},
+			};
+			expect(scrubMobileEvent(event, "/agents")).toBeNull();
+		},
+	);
+	test("retains a safe navigation transaction while scrubbing its route query", () => {
+		const event: TransactionEvent = {
+			type: "transaction",
+			transaction: "/settings/wallet?token=private",
+			contexts: {
+				trace: {
+					span_id: "a".repeat(16),
+					trace_id: "b".repeat(32),
+					op: "navigation",
+					origin: "auto.navigation.react_navigation",
+				},
+			},
+		};
+		expect(scrubMobileEvent(event, "/settings/wallet")).toMatchObject({
+			type: "transaction",
+			transaction: "/settings/wallet",
+			contexts: event.contexts,
+		});
 	});
 	test("removes bodies, identity, credentials and queries from error and performance payloads", () => {
 		const event: Event = {

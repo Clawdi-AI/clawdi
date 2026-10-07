@@ -301,6 +301,8 @@ class Session(Base, TimestampMixin):
     # by batch/list compatibility consumers to identify current content.
     content_hash: Mapped[str | None] = mapped_column(String(64))
     content_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Durable successful-sync marker; batch hash invalidation must never clear it.
+    first_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     content_protocol: Mapped[Literal["snapshot-v1", "events-v1"]] = mapped_column(
         String(20), server_default="snapshot-v1", nullable=False
     )
