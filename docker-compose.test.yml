@@ -18,6 +18,8 @@ services:
       CLAWDI_NO_UPDATE_CHECK: "1"
       BUN_INSTALL_CACHE_DIR: /var/cache/bun
       BUN_TMPDIR: /tmp/bun
+      # Keep the default; allow isolated retries to bound registry connections.
+      BUN_CONFIG_MAX_HTTP_REQUESTS: ${BUN_CONFIG_MAX_HTTP_REQUESTS:-256}
       # Parallel native TypeScript checks share the container PID budget.
       GOMAXPROCS: "2"
       TMPDIR: /tmp

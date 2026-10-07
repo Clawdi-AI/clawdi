@@ -964,3 +964,8 @@ verifies request supply/status and the REST material endpoint against isolated P
 Deployment requires migration `c92e8b3d104f`, the updated API/client/web, and a `WEB_ORIGIN`
 that points to the public dashboard. Deploy the API before clients and refresh MCP tool
 lists and packaged skills.
+
+## Anonymous installation templates
+
+See [runtime preinstallation](runtime-preinstallation.md) for the software-only
+preparation command, strict artifact contract and hermetic verification.

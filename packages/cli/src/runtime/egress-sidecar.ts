@@ -271,7 +271,9 @@ function waitForFile(path: string, timeoutMs: number, hasExited: () => boolean):
 	});
 }
 
-export function publishEgressSystemCaBundle(config: TransparentEgressEnvConfig): void {
+export function publishEgressSystemCaBundle(
+	config: Pick<TransparentEgressEnvConfig, "systemCaBundle" | "caCertPath" | "runtimeGid">,
+): void {
 	if (config.systemCaBundle === SYSTEM_CA_BUNDLE) {
 		throw new Error("CLAWDI_EGRESS_SYSTEM_CA_BUNDLE must be a runtime-managed CA projection path");
 	}

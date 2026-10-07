@@ -14,7 +14,7 @@ if [[ -z "${TEST_RUNNER_IMAGE:-}" ]]; then
 fi
 
 usage() {
-	echo "Usage: scripts/test.sh [all|ci|js|mobile|cli|cli-native|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory] [suite args...]"
+	echo "Usage: scripts/test.sh [all|ci|js|mobile|cli|cli-lint|cli-native|preinstallation-artifact|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-upstream-contract|hermes-sync-memory|session-sync-memory] [suite args...]"
 }
 
 compose() {
@@ -23,7 +23,7 @@ compose() {
 
 validate_suite() {
 	case "$1" in
-		all|backend|ci|js|mobile|cli|cli-native|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory)
+		all|backend|ci|js|mobile|cli|cli-lint|cli-native|preinstallation-artifact|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-upstream-contract|hermes-sync-memory|session-sync-memory)
 			;;
 		*)
 			echo "Unknown test suite: $1" >&2
@@ -58,6 +58,16 @@ run_on_host() {
 		fi
 		bash "$script_dir/test-systemd-command.sh"
 		return
+	fi
+	if [[ "$suite" == hermes-upstream-contract ]]; then
+		bash "$script_dir/test-hermes-upstream-contract.sh" "$@"
+		return
+	fi
+	local prewarm_output=""
+	if [[ "$suite" == preinstallation-artifact ]]; then
+		prewarm_output="$(realpath "${1:?Provide an existing empty output directory inside this checkout}")"
+		case "$prewarm_output/" in "$repo_root/"*) ;; *) echo "Artifact output must be inside this checkout" >&2; return 2;; esac
+		if [[ -n "$(ls -A "$prewarm_output")" ]]; then echo "Artifact output must be empty" >&2; return 2; fi
 	fi
 	local provider_output=""
 	if [[ "$suite" == provider-recovery-fixture ]]; then
@@ -110,6 +120,7 @@ run_on_host() {
 	fi
 
 	local run_args=(run --rm)
+	if [[ "$suite" == preinstallation-artifact ]]; then run_args+=(--volume "$prewarm_output:/prewarm-artifacts"); fi
 	if [[ "$suite" == provider-recovery-fixture ]]; then
 		run_args+=(--volume "$provider_baseline_dir:/provider-baseline:ro" --volume "$provider_output:/provider-artifacts")
 	fi
@@ -175,7 +186,7 @@ copy_repo() {
 }
 
 install_js() {
-	bun install --frozen-lockfile --ignore-scripts
+	bun install --frozen-lockfile --ignore-scripts --network-concurrency=16
 	# The disposable container disk holds Bun's cache: the mobile dependency
 	# graph exceeds the former 2 GiB tmpfs. Release the cache after installation;
 	# node_modules remains available and no cache persists between runs.
@@ -380,6 +391,16 @@ run_in_container() {
 			;;
 		cli)
 			run_cli "$@"
+			;;
+		cli-lint)
+			install_js
+			BIOME_THREADS=2 bunx --no-install biome check "${@:-packages/cli/src}"
+			;;
+		preinstallation-artifact)
+			install_js
+			# The same minified build as the published package.
+			bun run --cwd packages/cli build
+			(cd packages/cli && bun pm pack --destination /prewarm-artifacts)
 			;;
 		cli-native)
 			install_js
