@@ -15,6 +15,20 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
+### CLI 0.15.6
+
+- Managed OpenClaw credentials now discard obsolete files after successful
+  applies, retaining current configuration, native rollback snapshots, and two
+  successful credential generations. Cleanup shares OpenClaw's config writer
+  lock and rechecks newly saved references before deleting credential files.
+
+- Runtime preparation executes verified private installer and CLI archive
+  copies; CLI verification also uses a private copy so replaced paths cannot
+  change the code executed between checks.
+
+- Opt-in warm hosted agents report readiness promptly after becoming healthy
+  and start without reinstalling prepared software.
+
 ### CLI 0.15.5
 
 - **Profiles:** Hermes renames reconcile before inventory sync. Incomplete discovery and unreadable named profiles leave the Cloud inventory intact while other profiles continue syncing.

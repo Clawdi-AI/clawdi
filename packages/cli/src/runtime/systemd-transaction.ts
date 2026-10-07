@@ -4,8 +4,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../serve/log";
 import { readRuntimeAppliedState } from "./applied-state";
+import { egressSnapshotEnabled } from "./egress-snapshot";
+import { hermesWasWarmed } from "./hermes-warm-state";
 import { withoutOomProtection } from "./oom-protection";
+import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import type { getRuntimePaths } from "./paths";
+import { profileRuntimeStep } from "./profile";
 import { buildRuntimeUserCommand, runtimeUserUid } from "./runtime-user-command";
 import { managedRuntimeSystemdUnitEntries, parseSystemctlShow, systemctlPath } from "./systemd";
 import { runtimeUserName, runtimeUserSystemdEnvironment } from "./systemd-user";
@@ -216,12 +220,48 @@ export function withoutStaleSystemdUnits(
 	return { system, user, reload: { system: reloadSystem, user: reloadUser } };
 }
 
+/** Submit only a new first-apply sidecar job; final activation still proves it. */
+export function beginFirstApplyEgress(
+	paths: ReturnType<typeof getRuntimePaths>,
+	before: SystemdUnitSnapshot,
+): (() => void) | null {
+	if (
+		!egressSnapshotEnabled(paths) ||
+		!shouldApplySystemdRuntimeUpdate(paths) ||
+		readRuntimeAppliedState(paths) ||
+		before.system.has(RUNTIME_SIDECAR_SYSTEM_UNIT)
+	)
+		return null;
+	const unit = RUNTIME_SIDECAR_SYSTEM_UNIT;
+	const candidate = readSystemdUnitSnapshot(paths).system.get(unit);
+	if (!candidate) return null;
+	const state = requiredSystemdUnitState(
+		readSystemdRuntimeUnits(paths, "system", [unit]),
+		"system",
+		unit,
+	);
+	if (state.activeState !== "inactive") return null;
+	systemctl(["daemon-reload"]);
+	systemctl(systemUnitFileMutationArgs(paths, "enable", [unit]));
+	systemctl(["start", "--no-block", unit]);
+	return () => {
+		if (readSystemdUnitSnapshot(paths).system.get(unit) !== candidate)
+			throw new SystemdReobservationRequiredError(
+				"early egress candidate changed; fresh observation is required",
+			);
+		// Joining the same job preserves Type=notify readiness and command failures.
+		systemctl(["start", unit]);
+	};
+}
+
 export function applySystemdRuntimeUpdate(
 	paths: ReturnType<typeof getRuntimePaths>,
 	before: SystemdUnitSnapshot,
 	after: SystemdUnitSnapshot,
 	opts: {
 		recoverFailedUnits?: boolean;
+		/** First apply only, after anonymous egress identity and snapshot ACK. */
+		earlyFreshHermes?: boolean;
 		restartChangedUnits?: boolean;
 		invalidatedUserUnits?: readonly string[];
 		activationScope?: {
@@ -229,6 +269,8 @@ export function applySystemdRuntimeUpdate(
 			userUnits: readonly string[];
 		};
 		skipActivatedSystemUnits?: readonly string[];
+		/** Active user units whose running process already matches the candidate. */
+		adoptUserUnits?: readonly string[];
 	},
 ): {
 	applied: boolean;
@@ -391,21 +433,21 @@ export function applySystemdRuntimeUpdate(
 	if (resetFailedSystemUnits.length > 0) {
 		systemctl(["reset-failed", ...resetFailedSystemUnits]);
 	}
-	if (startSystemUnits.length > 0) {
-		systemctl(["start", ...startSystemUnits]);
-	}
-	if (restartSystemUnits.length > 0) {
-		for (const unit of restartSystemUnits) {
-			log.info("runtime.systemd_restart", {
-				scope: "system",
-				unit,
-				changed: system.changed.includes(unit),
-				pendingActivation: pendingSystemActivation.has(unit),
-			});
+	const activateSystemUnits = () => {
+		if (startSystemUnits.length > 0) systemctl(["start", ...startSystemUnits]);
+		if (restartSystemUnits.length > 0) {
+			for (const unit of restartSystemUnits) {
+				log.info("runtime.systemd_restart", {
+					scope: "system",
+					unit,
+					changed: system.changed.includes(unit),
+					pendingActivation: pendingSystemActivation.has(unit),
+				});
+			}
+			systemctl(["restart", ...restartSystemUnits]);
 		}
-		systemctl(["restart", ...restartSystemUnits]);
-	}
-
+	};
+	if (!egressSnapshotEnabled(paths) && !openClawHotApplyEnabled()) activateSystemUnits();
 	const enableUserUnits: string[] = [];
 	const resetFailedUserUnits: string[] = [];
 	const startUserUnits: string[] = [];
@@ -429,6 +471,7 @@ export function applySystemdRuntimeUpdate(
 			continue;
 		}
 		if (state.activeState !== "active") continue;
+		if (opts.adoptUserUnits?.includes(unit)) continue;
 		if (user.changed.includes(unit) || pendingUserActivation.has(unit)) {
 			restartUserUnits.push(unit);
 			userUnitsChanged.add(unit);
@@ -440,8 +483,44 @@ export function applySystemdRuntimeUpdate(
 	if (resetFailedUserUnits.length > 0) {
 		runtimeUserSystemctl(paths, ["reset-failed", ...resetFailedUserUnits]);
 	}
+	const dashboard = "clawdi-hermes-dashboard.service";
+	const gateway = "hermes-gateway.service";
+	const earlyDashboard =
+		opts.earlyFreshHermes &&
+		hermesWasWarmed(paths) &&
+		!existsSync(paths.appliedState) &&
+		startUserUnits.includes(dashboard) &&
+		startUserUnits.includes(gateway) &&
+		requiredSystemdUnitState(userStates, "user", dashboard).activeState === "inactive" &&
+		requiredSystemdUnitState(userStates, "user", gateway).activeState === "inactive";
+	if (earlyDashboard) {
+		// Verified anonymous egress is already ready. Overlap the dashboard's
+		// Python imports with platform activation, then start the gateway after
+		// HTTP readiness to avoid competing Python startup trees on two CPUs.
+		if (readSystemdComponentFingerprint(paths, "user", dashboard) !== after.user.get(dashboard))
+			throw new SystemdReobservationRequiredError("early dashboard candidate changed");
+		runtimeUserSystemctl(paths, ["start", dashboard]);
+	}
+	if (egressSnapshotEnabled(paths) || openClawHotApplyEnabled()) activateSystemUnits();
 	if (startUserUnits.length > 0) {
-		runtimeUserSystemctl(paths, ["start", ...startUserUnits]);
+		if (
+			hermesWasWarmed(paths) &&
+			!existsSync(paths.appliedState) &&
+			startUserUnits.includes(dashboard) &&
+			startUserUnits.includes(gateway)
+		) {
+			// On a small tenant shape, both Python startup trees compete for the
+			// same CPUs. Establish the interactive dashboard first; gateway and
+			// channel readiness still pass the normal observation proof afterward.
+			if (!earlyDashboard) runtimeUserSystemctl(paths, ["start", dashboard]);
+			profileRuntimeStep("systemd.hermes-dashboard-ready", waitForHermesDashboard);
+			runtimeUserSystemctl(paths, [
+				"start",
+				...startUserUnits.filter((unit) => unit !== dashboard),
+			]);
+		} else {
+			runtimeUserSystemctl(paths, ["start", ...startUserUnits]);
+		}
 	}
 	if (restartUserUnits.length > 0) {
 		for (const unit of restartUserUnits) {
@@ -491,8 +570,23 @@ export function applySystemdRuntimeUpdate(
 		};
 	}
 
+	const poolPath = egressSnapshotEnabled(paths) || openClawHotApplyEnabled();
+	const finalSystemStates = poolPath
+		? readSystemdRuntimeUnits(paths, "system", [...system.present, ...system.removed])
+		: null;
+	const finalUserStates = poolPath
+		? readSystemdRuntimeUnits(paths, "user", [...user.present, ...user.removed])
+		: null;
+	const finalState = (scope: SystemdRuntimeScope, unit: string) => {
+		const states = scope === "system" ? finalSystemStates : finalUserStates;
+		return requiredSystemdUnitState(
+			states ?? readSystemdRuntimeUnits(paths, scope, [unit]),
+			scope,
+			unit,
+		);
+	};
 	const systemConverged = system.present.every((unit) => {
-		const state = systemdUnitManagerState(paths, "system", unit);
+		const state = finalState("system", unit);
 		return (
 			state.loadState !== "not-found" &&
 			state.activeState === "active" &&
@@ -501,7 +595,7 @@ export function applySystemdRuntimeUpdate(
 		);
 	});
 	const userConverged = user.present.every((unit) => {
-		const state = systemdUnitManagerState(paths, "user", unit);
+		const state = finalState("user", unit);
 		return !(
 			state.loadState === "not-found" ||
 			state.activeState !== "active" ||
@@ -510,11 +604,11 @@ export function applySystemdRuntimeUpdate(
 		);
 	});
 	const removedSystemConverged = system.removed.every((unit) => {
-		const state = systemdUnitManagerState(paths, "system", unit);
+		const state = finalState("system", unit);
 		return systemdUnitAbsentOrInactive(state) && systemdUnitAbsentOrDisabled(state);
 	});
 	const removedUserConverged = user.removed.every((unit) => {
-		const state = systemdUnitManagerState(paths, "user", unit);
+		const state = finalState("user", unit);
 		return systemdUnitAbsentOrInactive(state) && systemdUnitAbsentOrDisabled(state);
 	});
 	const applied =
@@ -537,6 +631,21 @@ export function applySystemdRuntimeUpdate(
 			.sort(),
 		userUnitsChanged: [...userUnitsChanged].sort(),
 	};
+}
+
+function waitForHermesDashboard(): void {
+	const result = spawnSync(
+		"bash",
+		[
+			"-c",
+			"for i in $(seq 1 120); do " +
+				"code=$(curl --max-time 1 -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9119/ || true); " +
+				"case $code in 200|302|401) exit 0;; esac; sleep 0.25; done; exit 1",
+		],
+		{ stdio: "ignore", timeout: 45_000 },
+	);
+	if (result.status !== 0)
+		throw new Error("Hermes dashboard did not become ready before gateway start");
 }
 
 function readSystemdRuntimeUnits(
@@ -582,14 +691,6 @@ function requiredSystemdUnitState(
 	const state = states.get(unit);
 	if (!state) throw new Error(`systemd ${scope} unit ${unit} was not preflighted`);
 	return state;
-}
-
-function systemdUnitManagerState(
-	paths: ReturnType<typeof getRuntimePaths>,
-	scope: "system" | "user",
-	unit: string,
-): SystemdUnitManagerState {
-	return requiredSystemdUnitState(readSystemdRuntimeUnits(paths, scope, [unit]), scope, unit);
 }
 
 function parseSystemdUnitManagerState(
@@ -707,11 +808,31 @@ function systemUnitFileMutationArgs(
 }
 
 function systemctl(args: string[]): string {
-	return runCommand(systemctlPath(), args);
+	const result = systemctlResult(args);
+	assertCommandSucceeded(systemctlPath(), args, result);
+	return [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
 }
 
 function systemctlResult(args: string[]): CommandResult {
-	return runCommandResult(systemctlPath(), args);
+	return profileRuntimeStep(systemdProfileLabel("system", args), () =>
+		runCommandResult(systemctlPath(), args),
+	);
+}
+
+function systemdProfileLabel(scope: SystemdRuntimeScope, args: string[]): string {
+	const verb = args[0] ?? "";
+	const actions = [
+		"show",
+		"is-enabled",
+		"enable",
+		"disable",
+		"start",
+		"restart",
+		"stop",
+		"daemon-reload",
+		"reset-failed",
+	];
+	return `systemd.${scope}.${actions.includes(verb) ? verb : "command"}`;
 }
 
 function runtimeUserSystemctl(paths: ReturnType<typeof getRuntimePaths>, args: string[]): string {
@@ -734,9 +855,13 @@ function runtimeUserSystemctlResult(
 			["--user", ...args],
 			{ environment: runtimeUserSystemdEnvironment(uid), preserveSession: true },
 		);
-		return runCommandResult(child.command, child.args, child.env);
+		return profileRuntimeStep(systemdProfileLabel("user", args), () =>
+			runCommandResult(child.command, child.args, child.env),
+		);
 	}
-	return runCommandResult(systemctlPath(), ["--user", ...args]);
+	return profileRuntimeStep(systemdProfileLabel("user", args), () =>
+		runCommandResult(systemctlPath(), ["--user", ...args]),
+	);
 }
 
 export function assertRuntimeUserCanRead(path: string, home: string): void {

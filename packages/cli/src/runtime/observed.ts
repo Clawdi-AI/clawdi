@@ -25,13 +25,16 @@ import {
 	componentConfigurationRevision,
 	observeComponents,
 } from "./component-observation";
+import { egressSnapshotEnabled } from "./egress-snapshot";
 import { configuredHermesPlatforms, hermesChannelsAreReady } from "./hermes-channel-health";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import { installedOpenClawCommandPath } from "./hosted-openclaw-context";
 import { readHostedSkillsObservation } from "./hosted-skill-observation";
 import { providerHealthReasons } from "./manifest-providers";
 import { hostedRuntimeBundleV2Schema, loadCommittedRuntimeManifest } from "./manifest-source";
+import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
+import { profileRuntimeStep, profileRuntimeStepAsync } from "./profile";
 import { execRuntimeUserCommand, spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
 import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
@@ -88,11 +91,8 @@ export async function readHostedRuntimeObserved(
 	const activeCliVersion = getCliVersion();
 	const cliBootstrap = readRuntimeCliBootstrapStatus(paths);
 	const servingSamples = observationServingSamples(paths, appliedState);
-	const systemd = await readSystemdObserved(
-		paths,
-		appliedState,
-		boot.status?.enabledRuntimes ?? [],
-		servingSamples,
+	const systemd = await profileRuntimeStepAsync("observation.systemd", () =>
+		readSystemdObserved(paths, appliedState, boot.status?.enabledRuntimes ?? [], servingSamples),
 	);
 	const providers = readProviderObserved(paths);
 	const appliedAuthority = appliedState
@@ -152,20 +152,22 @@ export async function readHostedRuntimeObserved(
 		if (userActivity) observed.userActivity = userActivity;
 	}
 	if (appliedState && options.includeComponents) {
-		const proof = await observeComponents(
-			paths,
-			appliedState,
-			(scope, unit) => readComponentServiceState(paths, scope, unit),
-			(component) =>
-				component === "files"
-					? runtimeComponentIsReady(component, paths)
-					: servingSamples
-							.read(
-								component === "hermes-ui"
-									? "clawdi-hermes-dashboard.service"
-									: "openclaw-gateway.service",
-							)
-							.then((sample) => sample.componentReady),
+		const proof = await profileRuntimeStepAsync("observation.components", () =>
+			observeComponents(
+				paths,
+				appliedState,
+				(scope, unit) => readComponentServiceState(paths, scope, unit),
+				(component) =>
+					component === "files"
+						? runtimeComponentIsReady(component, paths)
+						: servingSamples
+								.read(
+									component === "hermes-ui"
+										? "clawdi-hermes-dashboard.service"
+										: "openclaw-gateway.service",
+								)
+								.then((sample) => sample.componentReady),
+			),
 		);
 		if (proof) {
 			observed.components = proof;
@@ -205,13 +207,25 @@ export async function readHostedRuntimeObserved(
 	// Reject the whole snapshot when its parent authority or health changed while
 	// any asynchronous probe ran. Dropping only component proof leaves a stale
 	// aggregate success available to legacy admission readers.
+	if (runtimeContentSha256(readRuntimeAppliedState(paths)) !== runtimeContentSha256(appliedState))
+		return profileRuntimeStep("observation.discard.applied-parent", () => null);
+	if (runtimeContentSha256(readRuntimeBootStatus(paths)) !== runtimeContentSha256(boot))
+		return profileRuntimeStep("observation.discard.boot-parent", () => null);
 	if (
-		runtimeContentSha256(readRuntimeAppliedState(paths)) !== runtimeContentSha256(appliedState) ||
-		runtimeContentSha256(readRuntimeBootStatus(paths)) !== runtimeContentSha256(boot) ||
-		watchStatusRevision(readJsonRecord(paths.runtimeWatchStatus)) !==
-			watchStatusRevision(watchStatus)
+		watchStatusRevision(readJsonRecord(paths.runtimeWatchStatus), appliedState, paths) !==
+		watchStatusRevision(watchStatus, appliedState, paths)
 	)
-		return null;
+		return profileRuntimeStep("observation.discard.watch-parent", () => null);
+	for (const [unit, label] of [
+		["clawdi-hermes-dashboard.service", "observation.pending.hermes-dashboard"],
+		["hermes-gateway.service", "observation.pending.hermes-gateway"],
+		["openclaw-gateway.service", "observation.pending.openclaw-gateway"],
+		["clawdi-files.service", "observation.pending.files"],
+		["clawdi-daemon.service", "observation.pending.daemon"],
+	] as const) {
+		if (observed.systemd?.units.some((entry) => entry.name === unit && entry.status !== "ok"))
+			profileRuntimeStep(label, () => null);
+	}
 
 	if (boot.error) observed.error = boot.error;
 	const convergeError = runtimeConvergeError(watchStatus);
@@ -219,9 +233,52 @@ export async function readHostedRuntimeObserved(
 	return observed;
 }
 
-function watchStatusRevision(value: JsonRecord | null): string {
+function watchStatusRevision(
+	value: JsonRecord | null,
+	applied: RuntimeAppliedState | null,
+	paths: RuntimePaths,
+): string {
 	if (value === null) return runtimeContentSha256(null);
 	const { timestamp: _timestamp, ...semantic } = value;
+	if (!egressSnapshotEnabled(paths) && !openClawHotApplyEnabled())
+		return runtimeContentSha256(semantic);
+	const event = recordValue(semantic.event);
+	// Success metadata differs between apply and an unchanged poll. Only remove
+	// that metadata after exact authority and explicit successful health checks.
+	if (
+		applied &&
+		event &&
+		["applied", "not_modified"].includes(String(event.status)) &&
+		event.instanceId === applied.instanceId &&
+		event.generation === applied.generation &&
+		event.etag === applied.etag &&
+		event.sourceRevision === applied.sourceRevision &&
+		event.sourcePath === applied.contentIdentity.sourcePath &&
+		event.selfReexec === false
+	) {
+		const {
+			status: _status,
+			enabledRuntimes: _runtimes,
+			cliUpdate,
+			systemdUnitsChanged: _units,
+			systemdApply,
+			convergence,
+			...remaining
+		} = event;
+		const outputs = recordValue(convergence);
+		const plugins = recordValue(outputs?.agentPlugins);
+		if (
+			(!cliUpdate || recordValue(cliUpdate)?.selfReexec === false) &&
+			(!systemdApply || recordValue(systemdApply)?.applied === true) &&
+			!Object.hasOwn(event, "error") &&
+			!Object.hasOwn(event, "errors") &&
+			!Object.hasOwn(event, "healthImpact") &&
+			!Object.hasOwn(event, "healthAuthority") &&
+			(!plugins || !["error", "failed"].includes(String(plugins.status))) &&
+			(!outputs || !Object.hasOwn(outputs, "errors"))
+		)
+			return runtimeContentSha256({ ...semantic, event: { ...remaining, status: "healthy" } });
+	}
 	return runtimeContentSha256(semantic);
 }
 
@@ -491,6 +548,7 @@ function observationServingSamples(paths: RuntimePaths, applied: RuntimeAppliedS
 		// A changed invocation/configuration invalidates even a successful sample;
 		// failures are also shared, never retried within this observation.
 		if (!sample.binding || bindingFor(unit) !== sample.binding) {
+			profileRuntimeStep("observation.discard.service-binding", () => null);
 			sample.binding = null;
 			sample.serviceReady = false;
 			sample.componentReady = false;
@@ -507,8 +565,10 @@ async function readSystemdObserved(
 	enabledRuntimes: readonly string[],
 	servingSamples: ReturnType<typeof observationServingSamples>,
 ): Promise<HostedRuntimeObservedSystemd | null> {
-	const systemUnits = managedSystemdUnitNames(paths.systemdSystemRoot).map((unit) =>
-		systemdUnitStatus("system", unit, paths),
+	const systemUnits = systemdUnitStatuses(
+		"system",
+		managedSystemdUnitNames(paths.systemdSystemRoot),
+		paths,
 	);
 	// The applied receipt survives missing unit files; directory discovery alone fails open.
 	const requiredUserUnits = Object.keys(appliedState?.activated ?? {}).filter((unit) =>
@@ -525,11 +585,11 @@ async function readSystemdObserved(
 			requiredUserUnits.push("hermes-gateway.service", "clawdi-hermes-dashboard.service");
 	}
 
-	const userUnits = [
-		...new Set([...managedSystemdUnitNames(paths.systemdUserRoot), ...requiredUserUnits]),
-	]
-		.sort()
-		.map((unit) => systemdUnitStatus("user", unit, paths));
+	const userUnits = systemdUnitStatuses(
+		"user",
+		[...new Set([...managedSystemdUnitNames(paths.systemdUserRoot), ...requiredUserUnits])].sort(),
+		paths,
+	);
 	await Promise.all(
 		userUnits.map(async (unit) => {
 			if (unit.status !== "ok") return;
@@ -612,6 +672,45 @@ export function readComponentInvocation(
 		: null;
 }
 
+// Manager output is joined by its explicit unit ID, never output order. A
+// failed or incomplete batch falls back to independent reads, preserving peer
+// health and missing-unit/error semantics.
+function systemdUnitStatuses(
+	scope: "system" | "user",
+	units: string[],
+	paths: RuntimePaths,
+): HostedRuntimeObservedSystemdUnit[] {
+	if ((!egressSnapshotEnabled(paths) && !openClawHotApplyEnabled()) || units.length < 2)
+		return units.map((unit) => systemdUnitStatus(scope, unit, paths));
+	const args = [
+		"show",
+		"--all",
+		...units,
+		"--property=Id",
+		"--property=ActiveState",
+		"--property=SubState",
+		"--property=Result",
+		"--property=ExecMainCode",
+		"--property=ExecMainStatus",
+	];
+	const result = scope === "system" ? runSystemctl(args) : runRuntimeUserSystemctl(paths, args);
+	const blocks = result.output
+		.split(/\r?\n\s*\r?\n/)
+		.filter(Boolean)
+		.map(parseSystemctlShow);
+	const byId = new Map(blocks.map((fields) => [fields.Id, fields]));
+	if (
+		result.exitCode !== 0 ||
+		blocks.length !== units.length ||
+		byId.size !== units.length ||
+		units.some((unit) => !byId.get(unit)?.ActiveState)
+	)
+		return units.map((unit) => systemdUnitStatus(scope, unit, paths));
+	return units.map((unit) =>
+		systemdStatusFromProperties(scope, unit, byId.get(unit) ?? {}, result),
+	);
+}
+
 function systemdUnitStatus(
 	scope: "system" | "user",
 	unit: string,
@@ -637,7 +736,15 @@ function systemdUnitStatus(
 					"--property=ExecMainCode",
 					"--property=ExecMainStatus",
 				]);
-	const parsed = parseSystemctlShow(result.output);
+	return systemdStatusFromProperties(scope, unit, parseSystemctlShow(result.output), result);
+}
+
+function systemdStatusFromProperties(
+	scope: "system" | "user",
+	unit: string,
+	parsed: Record<string, string>,
+	result: { exitCode: number | null; output: string },
+): HostedRuntimeObservedSystemdUnit {
 	const status = systemdUnitObservedStatus(parsed.ActiveState, result.exitCode);
 	return {
 		scope,
@@ -781,6 +888,7 @@ export async function runtimeServiceIsReady(
 		const status = recordValue(await probeHermesStatus());
 		const expectedProvider = hermesUiExpectedAuthProvider(paths);
 		if (!expectedProvider || !hermesUiAuthenticationIsReady(status, expectedProvider)) {
+			profileRuntimeStep("observation.pending.hermes-auth", () => null);
 			options.onFailure?.(
 				"Hermes dashboard readiness: self-hosted authentication is not established",
 			);
@@ -791,6 +899,7 @@ export async function runtimeServiceIsReady(
 		options.onComponentReady?.(ready);
 		if (!ready) options.onFailure?.("Hermes dashboard readiness: login HTML is not available");
 		if (status?.gateway_running !== true || status.gateway_state !== "running") {
+			profileRuntimeStep("observation.pending.hermes-native-gateway", () => null);
 			options.onFailure?.("Hermes service readiness: native gateway is not running");
 			return false;
 		}

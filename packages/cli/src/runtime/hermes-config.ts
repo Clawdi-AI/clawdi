@@ -4,6 +4,8 @@ import { isAbsolute } from "node:path";
 import { parseDocument } from "yaml";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { stripTerminalEscapes } from "../lib/sanitize";
+import { runtimeFileCurrentRevision } from "./manifest-install";
+import { preinstalledHermesConfigPath } from "./preinstalled-probes";
 import {
 	execRuntimeUserCommand,
 	RuntimeUserCommandTimeoutError,
@@ -86,6 +88,13 @@ export function getHermesResolvedConfigValue(
 }
 
 function hermesConfigPath(context: HermesConfigCommandContext): string {
+	const preinstalled = preinstalledHermesConfigPath(
+		context.command,
+		context.home,
+		runtimeFileCurrentRevision(context.command),
+		context.environment,
+	);
+	if (preinstalled) return preinstalled;
 	const result = runHermesConfigCommand(context, ["path"]);
 	if (result.status !== 0 || result.error) {
 		throw commandFailure("Hermes config path", result);

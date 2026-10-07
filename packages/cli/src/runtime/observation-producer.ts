@@ -7,14 +7,18 @@ import {
 	readRuntimeApplyContext,
 	runtimeApplyIdentitiesEqual,
 } from "./apply-identity";
+import { egressSnapshotEnabled, retireEgressSnapshot } from "./egress-snapshot";
 import {
 	HostedRuntimeHeartbeatSession,
 	type HostedRuntimeObservedEvent,
 } from "./heartbeat-observation";
+import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
+import { profileRuntimeStepAsync } from "./profile";
 
 const OBSERVATION_INTERVAL_MS = 60_000;
 const CONVERGENCE_OBSERVATION_INTERVAL_MS = 5_000;
+const WARM_CONVERGENCE_OBSERVATION_INTERVAL_MS = 1_000;
 const CONVERGENCE_OBSERVATION_WINDOW_MS = 90_000;
 const IDLE_RETRY_INTERVAL_MS = 1_000;
 const FAILURE_RETRY_INTERVAL_MS = 5_000;
@@ -98,12 +102,28 @@ export class HostedRuntimeObservationProducer {
 				this.session.refreshAppliedState();
 			}
 
-			buffered = await this.session.nextEvent();
+			const session = this.session;
+			buffered = await profileRuntimeStepAsync("observation.capture", () => session.nextEvent());
+			if (
+				!buffered &&
+				(openClawHotApplyEnabled() || egressSnapshotEnabled(this.paths)) &&
+				this.currentAttestedIdentityKey() === context.identityKey
+			) {
+				// Boot/watch health can settle during the first probe. Re-capture once
+				// immediately, with the same attested apply identity and all proofs intact.
+				session.refreshAppliedState();
+				buffered = await profileRuntimeStepAsync("observation.recapture", () =>
+					session.nextEvent(),
+				);
+			}
 			if (!buffered) return { outcome: "idle" };
 			if (!runtimeApplyIdentitiesEqual(buffered.event, expectedApplyIdentity)) {
 				return { outcome: "idle" };
 			}
-			const result = await this.submit(environmentId, buffered.event);
+			const event = buffered.event;
+			const result = await profileRuntimeStepAsync("observation.submit", () =>
+				this.submit(environmentId, event),
+			);
 			if (this.currentAttestedIdentityKey() !== context.identityKey) {
 				return { outcome: "sent" };
 			}
@@ -211,11 +231,14 @@ export async function runRuntimeObservationProducer(
 						if (result.outcome === "accepted") {
 							if (result.status === "ok") {
 								schedule.convergenceWindowEnd = "closed";
+								if (egressSnapshotEnabled(paths)) retireEgressSnapshot(paths);
 							} else if (schedule.convergenceWindowEnd !== "closed") {
 								schedule.convergenceWindowEnd ??= completedAt + CONVERGENCE_OBSERVATION_WINDOW_MS;
 								if (completedAt < schedule.convergenceWindowEnd) {
 									interval = Math.min(
-										CONVERGENCE_OBSERVATION_INTERVAL_MS,
+										openClawHotApplyEnabled() || egressSnapshotEnabled(paths)
+											? WARM_CONVERGENCE_OBSERVATION_INTERVAL_MS
+											: CONVERGENCE_OBSERVATION_INTERVAL_MS,
 										schedule.convergenceWindowEnd - completedAt,
 									);
 								}

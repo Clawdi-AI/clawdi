@@ -1,10 +1,11 @@
 import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { accessSync, chownSync, constants } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { withEffectiveFilesystemIdentity } from "./effective-identity";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import { clearPlatformCredentialEnv } from "./platform-credential-env";
+import { profileRuntimeStep, profileRuntimeStepAsync } from "./profile";
 import { parsePositiveLinuxId } from "./transparent-egress";
 
 const execFileAsync = promisify(execFile);
@@ -478,14 +479,16 @@ export function spawnRuntimeUserCommand(
 	} = {},
 ): ReturnType<typeof spawnSync> {
 	const child = runtimeUserCommand(command, args, home, options);
-	return spawnSync(child.command, child.args, {
-		env: child.env,
-		cwd,
-		encoding: "utf8",
-		input: options.input,
-		maxBuffer: options.maxBufferBytes,
-		timeout: options.timeoutMs,
-	});
+	return profileRuntimeStep(`command.${basename(command)}`, () =>
+		spawnSync(child.command, child.args, {
+			env: child.env,
+			cwd,
+			encoding: "utf8",
+			input: options.input,
+			maxBuffer: options.maxBufferBytes,
+			timeout: options.timeoutMs,
+		}),
+	);
 }
 
 export async function execRuntimeUserCommand(
@@ -500,15 +503,17 @@ export async function execRuntimeUserCommand(
 	},
 ): Promise<{ stdout: string; stderr: string }> {
 	const child = runtimeUserCommand(command, args, home, options);
-	return execFileAsync(child.command, child.args, {
-		env: child.env,
-		cwd,
-		encoding: "utf8",
-		maxBuffer: options.maxBufferBytes,
-		timeout: options.timeoutMs,
-		signal: options.signal,
-		killSignal: "SIGKILL",
-	});
+	return profileRuntimeStepAsync(`command.${basename(command)}`, () =>
+		execFileAsync(child.command, child.args, {
+			env: child.env,
+			cwd,
+			encoding: "utf8",
+			maxBuffer: options.maxBufferBytes,
+			timeout: options.timeoutMs,
+			signal: options.signal,
+			killSignal: "SIGKILL",
+		}),
+	);
 }
 
 export function runRuntimeUserCommand(
@@ -523,13 +528,15 @@ export function runRuntimeUserCommand(
 ): void {
 	const child = runtimeUserCommand(command, args, home, options);
 	try {
-		execFileSync(child.command, child.args, {
-			input: stdin,
-			env: child.env,
-			cwd,
-			stdio: "pipe",
-			timeout: options.timeoutMs,
-		});
+		profileRuntimeStep(`command.${basename(command)}`, () =>
+			execFileSync(child.command, child.args, {
+				input: stdin,
+				env: child.env,
+				cwd,
+				stdio: "pipe",
+				timeout: options.timeoutMs,
+			}),
+		);
 	} catch (error) {
 		if (
 			options.timeoutMs !== undefined &&

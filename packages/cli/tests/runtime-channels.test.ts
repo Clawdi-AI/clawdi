@@ -255,51 +255,59 @@ describe("runtime manifest datasource", () => {
 		]);
 	});
 
-	it("runtime init applies remote channels and caches canonical state", async () => {
-		installSuccessfulSystemctlFixture();
-		setRuntimeApplyGeneration(7, CANONICAL_TEST_CONTEXT);
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
-		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const openclawUnit = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
-		const openclawPluginInstalls = join(root, "openclaw-plugin-installs.txt");
-		const openclawPluginSource = join(home, ".openclaw", "extensions", "discord", "index.js");
-		const previousExitCode = process.exitCode;
-		const previousLog = console.log;
-		const logs: string[] = [];
-		mkdirSync(join(run, "secrets"), { recursive: true });
-		mkdirSync(join(home, ".local", "bin"), { recursive: true });
-		mkdirSync(join(home, ".openclaw"), { recursive: true });
-		mkdirSync(join(root, "etc", "clawdi"), { recursive: true });
-		writeFakeOpenClawConfigMutationSdk(home);
-		writeFileSync(
-			join(home, ".openclaw", "openclaw.json"),
-			`${JSON.stringify(
-				{
-					channels: {
-						discord: {
-							accounts: {
-								clawdi_acctdiscord1: {
-									enabled: false,
-									token: "user-token",
-									dmPolicy: "allowlist",
-									allowFrom: ["discord-user"],
-									guilds: { "discord-guild": { requireMention: true } },
+	it.each(["missing", "unhealthy", "default"])(
+		"runtime init publishes gated initial health without replacing %s watcher authority",
+		async (watchState) => {
+			const hotApply = watchState !== "default";
+			const credentialReference = (id: string) =>
+				hotApply
+					? { source: "file", provider: "clawdi-runtime", id: `/${id}` }
+					: { source: "env", provider: "default", id };
+			installSuccessfulSystemctlFixture();
+			setRuntimeApplyGeneration(7, CANONICAL_TEST_CONTEXT);
+			const home = join(root, "home", "clawdi");
+			const state = join(root, "var", "lib", "clawdi");
+			const run = join(root, "run", "clawdi");
+			const policyPath = join(root, "etc", "clawdi", "host-policy.json");
+			const openclawBin = join(home, ".local", "bin", "openclaw");
+			const openclawUnit = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
+			const openclawPluginInstalls = join(root, "openclaw-plugin-installs.txt");
+			const openclawPluginSource = join(home, ".openclaw", "extensions", "discord", "index.js");
+			const previousExitCode = process.exitCode;
+			const previousLog = console.log;
+			const previousHotApply = process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY;
+			const logs: string[] = [];
+			mkdirSync(join(run, "secrets"), { recursive: true });
+			mkdirSync(join(home, ".local", "bin"), { recursive: true });
+			mkdirSync(join(home, ".openclaw"), { recursive: true });
+			mkdirSync(join(root, "etc", "clawdi"), { recursive: true });
+			writeFakeOpenClawConfigMutationSdk(home);
+			writeFileSync(
+				join(home, ".openclaw", "openclaw.json"),
+				`${JSON.stringify(
+					{
+						channels: {
+							discord: {
+								accounts: {
+									clawdi_acctdiscord1: {
+										enabled: false,
+										token: "user-token",
+										dmPolicy: "allowlist",
+										allowFrom: ["discord-user"],
+										guilds: { "discord-guild": { requireMention: true } },
+									},
+									personal: { enabled: true, token: "personal-token" },
 								},
-								personal: { enabled: true, token: "personal-token" },
 							},
 						},
 					},
-				},
-				null,
-				2,
-			)}\n`,
-		);
-		writeFileSync(
-			openclawBin,
-			`#!/usr/bin/env bash
+					null,
+					2,
+				)}\n`,
+			);
+			writeFileSync(
+				openclawBin,
+				`#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw test-version\\n'
@@ -333,231 +341,257 @@ fi
 printf 'unexpected openclaw command: %s\\n' "$*" >&2
 exit 64
 `,
-		);
-		chmodSync(openclawBin, 0o700);
-		writeFileSync(
-			policyPath,
-			JSON.stringify({
-				schemaVersion: "clawdi.hostPolicy.v1",
-				mode: "hosted-runtime",
-				cliUpdateMode: "system-managed-npm",
-				deniedCommands: ["setup", "teardown", "update"],
-			}),
-		);
-		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_HOST_POLICY_PATH = policyPath;
-		process.exitCode = undefined;
-		console.log = (value?: unknown) => {
-			logs.push(String(value));
-		};
-		seedCurrentCliInstall(state, TEST_RUNNING_CLI_VERSION);
-		const paths = getRuntimePaths();
-		const { captured, restore } = mockFetch([
-			{
-				method: "GET",
-				path: "/v1/runtime/manifest",
-				response: () =>
-					hostedRuntimeBundleResponse(
-						{
-							manifest: {
-								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-								runtime: "openclaw",
-								deploymentId: "dep_init",
-								environmentId: "env_init",
-								...hostedRequiredState(),
-								instanceId: "iid_init",
-								generation: 7,
-								issuedAt: "2026-06-06T00:00:00Z",
-								locale: TEST_HOSTED_LOCALE,
-								system: hostedSystemFixture(home),
-								controlPlane: { cloudApiUrl: "https://cloud-api.test" },
-								clawdiCli: {
-									source: "npm:clawdi",
-									packageSpec: TEST_RUNNING_CLI_SPEC,
-									registry: "https://registry.npmjs.org",
-								},
-								runtimes: {
-									openclaw: hostedOpenClawRuntime(),
-								},
-							},
-							channelBindings: [
-								{
-									provider: "telegram",
-									accountKey: "clawdi_accttelegram",
-									agentTokenSecretRef: "secret://channels/telegram/clawdi_accttelegram/agent-token",
-									placeholderTokenSecretRef:
-										"secret://channels/telegram/clawdi_accttelegram/placeholder-token",
-								},
-								{
-									provider: "discord",
-									accountKey: "clawdi_acctdiscord1",
-									agentTokenSecretRef: "secret://channels/discord/clawdi_acctdiscord1/agent-token",
-									placeholderTokenSecretRef:
-										"secret://channels/discord/clawdi_acctdiscord1/placeholder-token",
-								},
-							],
-							secretValues: {
-								"secret://channels/telegram/clawdi_accttelegram/agent-token": "agent-token-init",
-								"secret://channels/telegram/clawdi_accttelegram/placeholder-token":
-									"999999999:00000000000000000000000000000000",
-								"secret://channels/discord/clawdi_acctdiscord1/agent-token":
-									"discord-agent-token-init",
-								"secret://channels/discord/clawdi_acctdiscord1/placeholder-token":
-									"clawdi_00000000000000000000000000000000",
-							},
-						},
-						{ etag: testBundleEtag("manifest-etag-init-7") },
-					),
-			},
-		]);
-
-		try {
-			await runtimeInit({ nonInteractive: true, json: true });
-			expect(process.exitCode).toBe(23);
-			expect(JSON.parse(logs.at(-1) ?? "{}").errors.join("\n")).toContain("ownership changed");
-			expect(readRuntimeAppliedState(paths)).toBeNull();
-			const configPath = join(home, ".openclaw", "openclaw.json");
-			const native = JSON.parse(readFileSync(configPath, "utf8"));
-			expect(native.channels.discord.accounts.clawdi_acctdiscord1.token).toBe("user-token");
-			expect(native.channels.discord.accounts.personal).toEqual({
-				enabled: true,
-				token: "personal-token",
-			});
-			// Explicit native credential selection resolves the collision; convergence must retain policies.
-			native.channels.discord.accounts.clawdi_acctdiscord1.token = {
-				source: "env",
-				provider: "default",
-				id: "CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN",
-			};
-			writeFileSync(configPath, JSON.stringify(native));
+			);
+			chmodSync(openclawBin, 0o700);
+			writeFileSync(
+				policyPath,
+				JSON.stringify({
+					schemaVersion: "clawdi.hostPolicy.v1",
+					mode: "hosted-runtime",
+					cliUpdateMode: "system-managed-npm",
+					deniedCommands: ["setup", "teardown", "update"],
+				}),
+			);
+			writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+			process.env.HOME = home;
+			process.env.CLAWDI_RUNTIME_MODE = "hosted";
+			process.env.CLAWDI_SERVICE_STATE_DIR = state;
+			process.env.CLAWDI_RUN_DIR = run;
+			process.env.CLAWDI_HOST_POLICY_PATH = policyPath;
 			process.exitCode = undefined;
-			await runtimeInit({ nonInteractive: true, json: true });
+			console.log = (value?: unknown) => {
+				logs.push(String(value));
+			};
+			seedCurrentCliInstall(state, TEST_RUNNING_CLI_VERSION);
+			const paths = getRuntimePaths();
+			const { captured, restore } = mockFetch([
+				{
+					method: "GET",
+					path: "/v1/runtime/manifest",
+					response: () =>
+						hostedRuntimeBundleResponse(
+							{
+								manifest: {
+									schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+									runtime: "openclaw",
+									deploymentId: "dep_init",
+									environmentId: "env_init",
+									...hostedRequiredState(),
+									instanceId: "iid_init",
+									generation: 7,
+									issuedAt: "2026-06-06T00:00:00Z",
+									locale: TEST_HOSTED_LOCALE,
+									system: hostedSystemFixture(home),
+									controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+									clawdiCli: {
+										source: "npm:clawdi",
+										packageSpec: TEST_RUNNING_CLI_SPEC,
+										registry: "https://registry.npmjs.org",
+									},
+									runtimes: {
+										openclaw: hostedOpenClawRuntime(),
+									},
+								},
+								channelBindings: [
+									{
+										provider: "telegram",
+										accountKey: "clawdi_accttelegram",
+										agentTokenSecretRef:
+											"secret://channels/telegram/clawdi_accttelegram/agent-token",
+										placeholderTokenSecretRef:
+											"secret://channels/telegram/clawdi_accttelegram/placeholder-token",
+									},
+									{
+										provider: "discord",
+										accountKey: "clawdi_acctdiscord1",
+										agentTokenSecretRef:
+											"secret://channels/discord/clawdi_acctdiscord1/agent-token",
+										placeholderTokenSecretRef:
+											"secret://channels/discord/clawdi_acctdiscord1/placeholder-token",
+									},
+								],
+								secretValues: {
+									"secret://channels/telegram/clawdi_accttelegram/agent-token": "agent-token-init",
+									"secret://channels/telegram/clawdi_accttelegram/placeholder-token":
+										"999999999:00000000000000000000000000000000",
+									"secret://channels/discord/clawdi_acctdiscord1/agent-token":
+										"discord-agent-token-init",
+									"secret://channels/discord/clawdi_acctdiscord1/placeholder-token":
+										"clawdi_00000000000000000000000000000000",
+								},
+							},
+							{ etag: testBundleEtag("manifest-etag-init-7") },
+						),
+				},
+			]);
 
-			if (process.exitCode !== undefined && process.exitCode !== 0) {
-				throw new Error(logs.join("\n"));
-			}
-			expect(process.exitCode).toBe(0);
-			expect(captured).toHaveLength(2);
-			expect(captured[0].path).toBe("/v1/runtime/manifest");
-			expect(readRuntimeAppliedState(paths)).toMatchObject({
-				etag: testBundleEtag("manifest-etag-init-7"),
-				generation: 7,
-			});
-			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
-			const nativeConfigText = readFileSync(configPath, "utf8");
-			const nativeConfig = JSON.parse(nativeConfigText);
-			expect(nativeConfigText).not.toContain("agent-token-init");
-			expect(nativeConfigText).not.toContain("discord-agent-token-init");
-			expect(nativeConfig.channels.telegram.accounts.clawdi_accttelegram.botToken).toEqual({
-				source: "env",
-				provider: "default",
-				id: "CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN",
-			});
-			expect(nativeConfig.secrets.providers.default).toEqual({ source: "env" });
-			expect(nativeConfig.plugins.entries).toMatchObject({
-				telegram: { enabled: true },
-				discord: { enabled: true },
-			});
-			expect(nativeConfig.session.dmScope).toBe("per-account-channel-peer");
-			expect(nativeConfig.channels).not.toHaveProperty("streaming");
-			const discordAccounts = nativeConfig.channels.discord.accounts;
-			const discordAccount = discordAccounts.clawdi_acctdiscord1;
-			expect(discordAccount).toMatchObject({
-				enabled: true,
-				token: {
+			try {
+				await runtimeInit({ nonInteractive: true, json: true });
+				expect(process.exitCode).toBe(23);
+				expect(JSON.parse(logs.at(-1) ?? "{}").errors.join("\n")).toContain("ownership changed");
+				expect(readRuntimeAppliedState(paths)).toBeNull();
+				const configPath = join(home, ".openclaw", "openclaw.json");
+				const native = JSON.parse(readFileSync(configPath, "utf8"));
+				expect(native.channels.discord.accounts.clawdi_acctdiscord1.token).toBe("user-token");
+				expect(native.channels.discord.accounts.personal).toEqual({
+					enabled: true,
+					token: "personal-token",
+				});
+				// Explicit native credential selection resolves the collision; convergence must retain policies.
+				native.channels.discord.accounts.clawdi_acctdiscord1.token = {
 					source: "env",
 					provider: "default",
 					id: "CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN",
-				},
-				dmPolicy: "allowlist",
-				allowFrom: ["discord-user"],
-				guilds: { "discord-guild": { requireMention: true } },
-			});
-			expect(Object.keys(discordAccounts).sort()).toEqual(["clawdi_acctdiscord1", "personal"]);
-			expect(discordAccounts.personal).toEqual({ enabled: true, token: "personal-token" });
-			expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
-				"plugins install @openclaw/discord --force --accept-capabilities\n",
-			);
-			const openclawRunConfig = JSON.parse(
-				readFileSync(join(getRuntimePaths().runConfigRoot, "openclaw.json"), "utf-8"),
-			);
-			expect(openclawRunConfig.secretEnv).toMatchObject({
-				CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN:
-					"secret://channels/telegram/clawdi_accttelegram/placeholder-token",
-				CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN:
-					"secret://channels/discord/clawdi_acctdiscord1/placeholder-token",
-			});
-			expect(existsSync(join(run, "secrets", "runtime-secrets.json"))).toBe(false);
-			const gatewayEnv = readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway");
-			expect(gatewayEnv).toContain("999999999:00000000000000000000000000000000");
-			expect(gatewayEnv).toContain("clawdi_00000000000000000000000000000000");
-			expect(gatewayEnv).not.toContain("agent-token-init");
-			expect(gatewayEnv).not.toContain("discord-agent-token-init");
-			const egressSecretsText = readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8");
-			expect(egressSecretsText).toContain("agent-token-init");
-			expect(egressSecretsText).toContain("discord-agent-token-init");
-			const cachedManifestText = readFileSync(paths.manifestLastGood, "utf-8");
-			const cachedManifest = JSON.parse(cachedManifestText);
-			expect(cachedManifest).toMatchObject({
-				schemaVersion: "clawdi.hosted-runtime.bundle.v2",
-				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					generation: 7,
-				},
-				channelBindings: [{ provider: "telegram" }, { provider: "discord" }],
-				secretValues: {},
-			});
-			expect(cachedManifestText).not.toContain("agent-token-init");
-			expect(cachedManifestText).not.toContain("discord-agent-token-init");
-			expect(statSync(paths.manifestLastGood).mode & 0o777).toBe(0o600);
-			const cachedSecretsText = readFileSync(paths.managedSecretCacheFile, "utf-8");
-			expect(cachedSecretsText).toContain("placeholder-token");
-			expect(cachedSecretsText).toContain("999999999:");
-			expect(cachedSecretsText).toContain("clawdi_");
-			expect(cachedSecretsText).toContain("agent-token-init");
-			expect(cachedSecretsText).toContain("discord-agent-token-init");
-			expect(statSync(paths.managedSecretCacheFile).mode & 0o777).toBe(0o600);
-			const profileBundleText = readFileSync(getRuntimePaths().egressProfileBundle, "utf-8");
-			const profileBundle = JSON.parse(profileBundleText) as {
-				profiles: Array<Record<string, unknown>>;
-			};
-			const telegramProfiles = profileBundle.profiles.filter((profile) =>
-				String(profile.id).startsWith("native-telegram-"),
-			);
-			expect(telegramProfiles).toHaveLength(2);
-			expect(telegramProfiles.map((profile) => profile.match)).toEqual(
-				expect.arrayContaining([
-					expect.objectContaining({ pathPrefix: "/bot" }),
-					expect.objectContaining({ pathPrefix: "/file/bot" }),
-				]),
-			);
-			for (const profile of telegramProfiles) {
-				const rewrite = profile.rewrite as Record<string, unknown>;
-				expect(rewrite.pathReplace).toBeUndefined();
-				expect(rewrite.setHeaders).toEqual({
-					authorization: {
-						type: "secretRef",
-						secretRef: "secret://channels/telegram/clawdi_accttelegram/agent-token",
-						prefix: "Bearer ",
-					},
+				};
+				writeFileSync(configPath, JSON.stringify(native));
+				process.exitCode = undefined;
+				const existingWatch = JSON.stringify({
+					event: { status: "error", stage: "final", errors: ["previous failure"] },
 				});
+				if (watchState === "unhealthy") writeFileSync(paths.runtimeWatchStatus, existingWatch);
+				process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = hotApply ? "1" : "0";
+				await runtimeInit({ nonInteractive: true, json: true });
+				if (watchState === "unhealthy")
+					expect(readFileSync(paths.runtimeWatchStatus, "utf8")).toBe(existingWatch);
+				else if (watchState === "default") expect(existsSync(paths.runtimeWatchStatus)).toBe(false);
+				else {
+					const applied = readRuntimeAppliedState(paths);
+					expect(JSON.parse(readFileSync(paths.runtimeWatchStatus, "utf8")).event).toMatchObject({
+						status: "applied",
+						generation: 7,
+						etag: applied?.etag,
+						sourceRevision: applied?.sourceRevision,
+						instanceId: applied?.instanceId,
+						selfReexec: false,
+					});
+				}
+
+				if (process.exitCode !== undefined && process.exitCode !== 0) {
+					throw new Error(logs.join("\n"));
+				}
+				expect(process.exitCode).toBe(0);
+				expect(captured).toHaveLength(2);
+				expect(captured[0].path).toBe("/v1/runtime/manifest");
+				expect(readRuntimeAppliedState(paths)).toMatchObject({
+					etag: testBundleEtag("manifest-etag-init-7"),
+					generation: 7,
+				});
+				expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
+				const nativeConfigText = readFileSync(configPath, "utf8");
+				const nativeConfig = JSON.parse(nativeConfigText);
+				expect(nativeConfigText).not.toContain("agent-token-init");
+				expect(nativeConfigText).not.toContain("discord-agent-token-init");
+				expect(nativeConfig.channels.telegram.accounts.clawdi_accttelegram.botToken).toEqual(
+					credentialReference("CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN"),
+				);
+				expect(nativeConfig.secrets.providers.default).toEqual({ source: "env" });
+				expect(nativeConfig.plugins.entries).toMatchObject({
+					telegram: { enabled: true },
+					discord: { enabled: true },
+				});
+				expect(nativeConfig.session.dmScope).toBe("per-account-channel-peer");
+				expect(nativeConfig.channels).not.toHaveProperty("streaming");
+				const discordAccounts = nativeConfig.channels.discord.accounts;
+				const discordAccount = discordAccounts.clawdi_acctdiscord1;
+				expect(discordAccount).toMatchObject({
+					enabled: true,
+					token: credentialReference("CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN"),
+					dmPolicy: "allowlist",
+					allowFrom: ["discord-user"],
+					guilds: { "discord-guild": { requireMention: true } },
+				});
+				expect(Object.keys(discordAccounts).sort()).toEqual(["clawdi_acctdiscord1", "personal"]);
+				expect(discordAccounts.personal).toEqual({ enabled: true, token: "personal-token" });
+				expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe(
+					"plugins install @openclaw/discord --force --accept-capabilities\n",
+				);
+				const openclawRunConfig = JSON.parse(
+					readFileSync(join(getRuntimePaths().runConfigRoot, "openclaw.json"), "utf-8"),
+				);
+				expect(openclawRunConfig.secretEnv).toMatchObject({
+					CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN:
+						"secret://channels/telegram/clawdi_accttelegram/placeholder-token",
+					CLAWDI_CHANNEL_DISCORD_CLAWDI_ACCTDISCORD1_AGENT_TOKEN:
+						"secret://channels/discord/clawdi_acctdiscord1/placeholder-token",
+				});
+				expect(existsSync(join(run, "secrets", "runtime-secrets.json"))).toBe(false);
+				const gatewayEnv = readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway");
+				for (const placeholder of [
+					"999999999:00000000000000000000000000000000",
+					"clawdi_00000000000000000000000000000000",
+				]) {
+					if (hotApply) expect(gatewayEnv).not.toContain(placeholder);
+					else expect(gatewayEnv).toContain(placeholder);
+				}
+				expect(gatewayEnv).not.toContain("agent-token-init");
+				expect(gatewayEnv).not.toContain("discord-agent-token-init");
+				const egressSecretsText = readFileSync(
+					join(run, "secrets", "egress-secrets.json"),
+					"utf-8",
+				);
+				expect(egressSecretsText).toContain("agent-token-init");
+				expect(egressSecretsText).toContain("discord-agent-token-init");
+				const cachedManifestText = readFileSync(paths.manifestLastGood, "utf-8");
+				const cachedManifest = JSON.parse(cachedManifestText);
+				expect(cachedManifest).toMatchObject({
+					schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+					manifest: {
+						schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+						generation: 7,
+					},
+					channelBindings: [{ provider: "telegram" }, { provider: "discord" }],
+					secretValues: {},
+				});
+				expect(cachedManifestText).not.toContain("agent-token-init");
+				expect(cachedManifestText).not.toContain("discord-agent-token-init");
+				expect(statSync(paths.manifestLastGood).mode & 0o777).toBe(0o600);
+				const cachedSecretsText = readFileSync(paths.managedSecretCacheFile, "utf-8");
+				expect(cachedSecretsText).toContain("placeholder-token");
+				expect(cachedSecretsText).toContain("999999999:");
+				expect(cachedSecretsText).toContain("clawdi_");
+				expect(cachedSecretsText).toContain("agent-token-init");
+				expect(cachedSecretsText).toContain("discord-agent-token-init");
+				expect(statSync(paths.managedSecretCacheFile).mode & 0o777).toBe(0o600);
+				const profileBundleText = readFileSync(getRuntimePaths().egressProfileBundle, "utf-8");
+				const profileBundle = JSON.parse(profileBundleText) as {
+					profiles: Array<Record<string, unknown>>;
+				};
+				const telegramProfiles = profileBundle.profiles.filter((profile) =>
+					String(profile.id).startsWith("native-telegram-"),
+				);
+				expect(telegramProfiles).toHaveLength(2);
+				expect(telegramProfiles.map((profile) => profile.match)).toEqual(
+					expect.arrayContaining([
+						expect.objectContaining({ pathPrefix: "/bot" }),
+						expect.objectContaining({ pathPrefix: "/file/bot" }),
+					]),
+				);
+				for (const profile of telegramProfiles) {
+					const rewrite = profile.rewrite as Record<string, unknown>;
+					expect(rewrite.pathReplace).toBeUndefined();
+					expect(rewrite.setHeaders).toEqual({
+						authorization: {
+							type: "secretRef",
+							secretRef: "secret://channels/telegram/clawdi_accttelegram/agent-token",
+							prefix: "Bearer ",
+						},
+					});
+				}
+				expect(profileBundleText).not.toContain("agent-token-init");
+				expect(profileBundleText).not.toContain("replacementSecretRef");
+				expect(profileBundleText).toContain("placeholder-token");
+				const status = JSON.parse(logs.at(-1) ?? "{}");
+				expect(status.status).toBe("ok");
+				expect(status.activeGeneration).toBe(7);
+			} finally {
+				if (previousHotApply === undefined) delete process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY;
+				else process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = previousHotApply;
+				restore();
+				console.log = previousLog;
+				process.exitCode = previousExitCode;
 			}
-			expect(profileBundleText).not.toContain("agent-token-init");
-			expect(profileBundleText).not.toContain("replacementSecretRef");
-			expect(profileBundleText).toContain("placeholder-token");
-			const status = JSON.parse(logs.at(-1) ?? "{}");
-			expect(status.status).toBe("ok");
-			expect(status.activeGeneration).toBe(7);
-		} finally {
-			restore();
-			console.log = previousLog;
-			process.exitCode = previousExitCode;
-		}
-	});
+		},
+	);
 
 	it("runtime init records malformed bundle channel references as a boot error", async () => {
 		const home = join(root, "home", "clawdi");

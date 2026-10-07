@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
 import { getCliVersion } from "../lib/version";
@@ -32,6 +33,12 @@ import {
 } from "../runtime/cli-update";
 import { persistComponentActivations } from "../runtime/component-observation";
 import { withRuntimeConvergeLockAsync } from "../runtime/converge-lock";
+import {
+	adoptableWarmEgress,
+	consumeWarmEgress,
+	egressSnapshotEnabled,
+	waitForEgressSnapshot,
+} from "../runtime/egress-snapshot";
 import { readHostPolicy } from "../runtime/host-policy";
 import { failedHostedAgentPluginsObservation } from "../runtime/hosted-agent-plugin-observation";
 import {
@@ -73,7 +80,13 @@ import {
 	runtimeSnapshotPath,
 } from "../runtime/manifest-source";
 import { readComponentServiceState } from "../runtime/observed";
+import {
+	adoptableWarmOpenClawGatewayUnits,
+	consumeWarmOpenClawGateway,
+	openClawHotApplyEnabled,
+} from "../runtime/openclaw-warm-gateway";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
+import { profileRuntimeStepAsync } from "../runtime/profile";
 import { captureRuntimeRunConfigs } from "../runtime/run-config";
 import {
 	buildRuntimeBootStatus,
@@ -89,13 +102,14 @@ import {
 	applySystemdRuntimeUpdate,
 	assertRuntimeUserCanRead,
 	assertSystemdRuntimeIdle,
+	beginFirstApplyEgress,
 	RUNTIME_SIDECAR_SYSTEM_UNIT,
 	readSystemdUnitSnapshot,
 	SystemdReobservationRequiredError,
 	withoutStaleSystemdUnits,
 } from "../runtime/systemd-transaction";
 import { syncRuntimeVaultFiles } from "../runtime/vault-files";
-import { toErrorMessage } from "../serve/log";
+import { log, toErrorMessage } from "../serve/log";
 import { consumeSse } from "../serve/sse-client";
 
 interface RuntimeInitOptions {
@@ -746,7 +760,11 @@ function finishRuntimeInitCliHandoff(input: {
 	});
 }
 
-export async function runtimeInit(opts: RuntimeInitOptions = {}) {
+export function runtimeInit(opts: RuntimeInitOptions = {}) {
+	return profileRuntimeStepAsync("runtime.init", () => runtimeInitImpl(opts));
+}
+
+async function runtimeInitImpl(opts: RuntimeInitOptions) {
 	const paths = getRuntimePaths();
 	const mode = detectRuntimeMode();
 	const bootId = randomUUID();
@@ -973,6 +991,26 @@ async function runtimeInitLocked(
 		const runtimeErrors = [...outcome.runtimeErrors, ...outcome.cliRollbackErrors];
 		const runtimeReady = runtimeErrors.length === 0;
 		const applied = runtimeAppliedStatus(paths);
+		if (
+			(egressSnapshotEnabled(paths) || openClawHotApplyEnabled()) &&
+			runtimeReady &&
+			outcome.resourceProjectionErrors.length === 0 &&
+			!outcome.selfReexec &&
+			!existsSync(paths.runtimeWatchStatus)
+		) {
+			// Publish the actual successful initial apply before final boot status.
+			// The first watcher poll can then report the same authority without a
+			// null-to-healthy parent transition invalidating a full health capture.
+			// Never replace an existing watcher result, especially a health failure.
+			const event = runtimeWatchEventForOutcome(outcome, paths);
+			if (event) {
+				try {
+					writeRuntimeWatchStatus(event, paths);
+				} catch (error) {
+					log.warn("runtime.initial_watch_status_failed", { error: toErrorMessage(error) });
+				}
+			}
+		}
 		emitRuntimeInitStatus({
 			opts,
 			paths,
@@ -1052,7 +1090,7 @@ async function convergeOnce(
 		return { kind: "cli_handoff", detail: { kind: "reconciliation", reconciliation } };
 	}
 
-	const requested = await load();
+	const requested = await profileRuntimeStepAsync("runtime.manifest", load);
 	if (requested.kind === "idle") return requested;
 	if (requested.kind === "cli_preparation") return requested;
 	if (requested.kind === "failed") {
@@ -1202,8 +1240,21 @@ async function loadRuntimeManifestForWatch(
 	}
 	const responseEtag = conditional.etag ?? manifestEtag ?? null;
 	if (retryDeferred && opts.failureBackoff?.etag === responseEtag) return { kind: "idle" };
+	// A valid datasource may return 200 for an unchanged conditional request.
+	// Reuse only exact committed input and apply authority, after full response
+	// validation and the same snapshot checks as 304. Periodic forced repair still
+	// reconverges native drift even when its manifest is unchanged.
+	const unchangedContent =
+		(egressSnapshotEnabled(paths) || openClawHotApplyEnabled()) &&
+		!opts.forceRefresh &&
+		!("notModified" in conditional) &&
+		active !== null &&
+		conditional.sourceRevision === active.sourceRevision &&
+		conditional.sourcePath === active.contentIdentity.sourcePath &&
+		runtimeAppliedContentIdentity(applyRuntimeBundleChannelsToManifestLoad(conditional)).sha256 ===
+			active.contentIdentity.sha256;
 	if (
-		"notModified" in conditional &&
+		("notModified" in conditional || unchangedContent) &&
 		active !== null &&
 		active.etag === responseEtag &&
 		runtimeApplyIdentitiesEqual(
@@ -1553,6 +1604,7 @@ async function applyRuntimeDesiredState(
 		};
 		let egressPrerequisiteApply: typeof systemdApply | null = null;
 		let egressPrerequisiteActivated = false;
+		let finishEarlyEgress: (() => void) | null = null;
 		const previousCommitted = load.applyContext
 			? loadCommittedRuntimeManifest(paths, load.applyContext)
 			: null;
@@ -1581,7 +1633,15 @@ async function applyRuntimeDesiredState(
 			},
 			systemdApply: {
 				assertIdle: () => assertSystemdRuntimeIdle(paths, previousSystemdUnits),
+				beginEgressPrerequisite: () => {
+					finishEarlyEgress = beginFirstApplyEgress(paths, previousSystemdUnits);
+				},
 				activateEgressPrerequisite: () => {
+					const warmEgress = adoptableWarmEgress(paths);
+					if (warmEgress) waitForEgressSnapshot(paths);
+					const earlyEgress = finishEarlyEgress !== null || warmEgress;
+					finishEarlyEgress?.();
+					finishEarlyEgress = null;
 					const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
 					try {
 						const prerequisite = applySystemdRuntimeUpdate(
@@ -1595,6 +1655,7 @@ async function applyRuntimeDesiredState(
 								},
 								recoverFailedUnits: opts.recoverFailedSystemdUnits,
 								restartChangedUnits: load.source === "last-good-cache",
+								skipActivatedSystemUnits: earlyEgress ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
 							},
 						);
 						if (prerequisite.applied) {
@@ -1611,6 +1672,18 @@ async function applyRuntimeDesiredState(
 					}
 				},
 				activate: ({ staleSystemUnits, staleUserUnits, invalidatedUserUnits }) => {
+					const warmEgress = adoptableWarmEgress(paths);
+					if (warmEgress) {
+						waitForEgressSnapshot(paths);
+						egressPrerequisiteActivated = true;
+						assertRuntimeUserCanRead(paths.egressSystemCaFile, paths.userHome);
+					}
+					if (finishEarlyEgress) {
+						finishEarlyEgress();
+						finishEarlyEgress = null;
+						egressPrerequisiteActivated = true;
+						assertRuntimeUserCanRead(paths.egressSystemCaFile, paths.userHome);
+					}
 					// Official installers run after the prerequisite phase and add their
 					// base units, so final reconciliation must observe a fresh rendered state.
 					const candidateSystemdUnits = readSystemdUnitSnapshot(paths);
@@ -1619,6 +1692,9 @@ async function applyRuntimeDesiredState(
 							candidateSystemdUnits,
 							staleSystemUnits,
 							staleUserUnits,
+						);
+						const adoptUserUnits = adoptableWarmOpenClawGatewayUnits(paths).filter(
+							(unit) => !invalidatedUserUnits.includes(unit),
 						);
 						const activation = applySystemdRuntimeUpdate(
 							paths,
@@ -1631,8 +1707,21 @@ async function applyRuntimeDesiredState(
 								skipActivatedSystemUnits: egressPrerequisiteActivated
 									? [RUNTIME_SIDECAR_SYSTEM_UNIT]
 									: [],
+								adoptUserUnits,
+								earlyFreshHermes: warmEgress,
 							},
 						);
+						if (activation.applied && adoptUserUnits.length > 0) {
+							consumeWarmOpenClawGateway(paths);
+						}
+						if (
+							activation.applied &&
+							activationTarget.system.has(RUNTIME_SIDECAR_SYSTEM_UNIT) &&
+							egressSnapshotEnabled(paths)
+						) {
+							waitForEgressSnapshot(paths);
+							consumeWarmEgress(paths);
+						}
 						systemdApply = {
 							applied: activation.applied && (egressPrerequisiteApply?.applied ?? true),
 							systemUnitsChanged: [

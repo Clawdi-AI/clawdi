@@ -179,6 +179,9 @@ docker build --quiet "${load_args[@]}" --file "$fixture_dir/Dockerfile" --tag "$
 
 status=0
 docker run --name "$container" \
+	--cpus "${CLAWDI_TEST_RUNNER_CPUS:-2}" \
+	--memory "${CLAWDI_TEST_RUNNER_MEMORY_LIMIT:-4g}" \
+	--memory-swap "${CLAWDI_TEST_RUNNER_MEMORY_LIMIT:-4g}" \
 	--volume "$repo_root:/repo:ro" \
 	"$image" \
 	bash /repo/scripts/test-hermes-upstream-contract.sh --in-container "$@" || status=$?

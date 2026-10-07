@@ -6,6 +6,7 @@ export function writeFakeOpenClawConfigMutationSdk(
 	options: {
 		importLog?: string;
 		mutationProbe?: { path: string; log: string };
+		writeLog?: string;
 		initialConfig?: Record<string, unknown>;
 		beforeMutation?: Record<string, unknown>;
 	} = {},
@@ -48,6 +49,7 @@ export async function readConfigFileSnapshotForWrite() {
 }
 export async function mutateConfigFile(options) {
   ${mutationProbe ? `appendFileSync(${JSON.stringify(mutationProbe.log)}, readFileSync(${JSON.stringify(mutationProbe.path)}, "utf8"));` : ""}
+  ${options.writeLog ? `writeFileSync(${JSON.stringify(options.writeLog)}, JSON.stringify(options.afterWrite) + "\\n", { flag: "a" });` : ""}
   ${options.beforeMutation ? `writeFileSync(configPath, ${JSON.stringify(JSON.stringify(options.beforeMutation))});` : ""}
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   await options.mutate(config, { snapshot: {}, previousHash: null, attempt: 1 });

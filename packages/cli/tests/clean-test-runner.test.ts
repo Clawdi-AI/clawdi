@@ -39,7 +39,7 @@ describe("clean runner suite contract", () => {
 		expect(runner).toContain(`if [[ "\${1:-}" == "--in-container" ]]`);
 		expect(runner).toContain('test-runner bash /repo/scripts/test.sh --in-container "$suite" "$@"');
 		expect(runner).toContain(
-			"all|backend|ci|js|mobile|cli|cli-native|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-sync-memory|session-sync-memory)",
+			"all|backend|ci|js|mobile|cli|cli-lint|cli-native|preinstallation-artifact|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-upstream-contract|hermes-sync-memory|session-sync-memory)",
 		);
 		expect(runnerDockerfile).not.toContain("docker/test-runner.sh");
 		expect(runnerDockerfile).not.toContain("ENTRYPOINT");
