@@ -13,6 +13,7 @@ from sqlalchemy.orm import aliased
 
 from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.database import get_session
+from app.core.posthog import stage_capture
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_invitation import ProjectInvitation
 from app.models.user import User
@@ -138,6 +139,13 @@ async def accept_invitation_for_user(
         raw_agent_ids=body.agent_ids,
     )
 
+    stage_capture(
+        db,
+        "invitation_accepted",
+        user=auth.user,
+        event_key=str(invitation_id),
+        properties={"feature": "sharing"},
+    )
     await db.execute(
         sql_delete(ProjectInvitation).where(
             ProjectInvitation.project_id == inv.project_id,

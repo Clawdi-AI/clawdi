@@ -7,6 +7,7 @@ import {
 	formatAbsoluteTooltip,
 	formatNumber,
 	groupSessionsByRecency,
+	profileLabel,
 	relativeTime,
 	sessionAgentIdentityInput,
 	sessionCardModel,
@@ -19,7 +20,6 @@ import { ENTITY_CARD_BASE } from "@/components/entity-card";
 import { SectionLabel } from "@/components/section-label";
 import { SessionSearchMatchExcerpt } from "@/components/sessions/search-match-excerpt";
 import { Skeleton } from "@/components/ui/skeleton";
-import { profileLabel } from "@/lib/agent-profiles";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { sessionDetailLink } from "@/lib/session-search-anchor";
 import { cn } from "@/lib/utils";

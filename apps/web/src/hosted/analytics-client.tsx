@@ -1,73 +1,46 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-	buildHostedPersonProperties,
-	resolveHostedAuthIdentityAction,
-} from "@/hosted/analytics-identity.logic";
-import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
+import { resolveHostedAuthIdentityAction } from "@/hosted/analytics-identity.logic";
+import { useDashboardAuth } from "@/lib/auth-client";
 
 const loadHostedPostHog = () => import("@/hosted/posthog");
 
 export function HostedAnalyticsClient() {
 	const [mounted, setMounted] = useState(false);
-
 	useEffect(() => {
 		setMounted(true);
 	}, []);
-
-	if (!mounted) return null;
-	return <HostedAnalyticsIdentity />;
+	return mounted ? <HostedAnalyticsIdentity /> : null;
 }
 
 function HostedAnalyticsIdentity() {
 	const { isSignedIn, userId } = useDashboardAuth();
-	const { user, isLoaded: isUserLoaded } = useCurrentUser();
 	const identifiedUserIdRef = useRef<string | null>(null);
 
 	useEffect(() => {
-		const transition = resolveHostedAuthIdentityAction({
-			isSignedIn: Boolean(isSignedIn),
-			userId,
-			lastIdentifiedUserId: identifiedUserIdRef.current,
-		});
-		identifiedUserIdRef.current = transition.nextIdentifiedUserId;
-
-		if (transition.action.type === "identify") {
-			const identifyUserId = transition.action.userId;
-			void loadHostedPostHog().then((mod) => {
-				mod.identifyHostedUser(identifyUserId);
+		let cancelled = false;
+		const report = async () => {
+			const sdk = await loadHostedPostHog();
+			if (cancelled) return;
+			const transition = resolveHostedAuthIdentityAction({
+				isSignedIn: Boolean(isSignedIn),
+				userId,
+				lastIdentifiedUserId: identifiedUserIdRef.current,
 			});
-			return;
-		}
-		if (transition.action.type === "reset") {
-			void loadHostedPostHog().then((mod) => {
-				mod.resetHostedPostHog();
+			if (transition.action.type === "identify") sdk.identifyHostedUser(transition.action.userId);
+			if (transition.action.type === "reset") sdk.resetHostedPostHog();
+			identifiedUserIdRef.current = transition.nextIdentifiedUserId;
+		};
+		const capture = () => {
+			void report().catch(() => {
+				/* Analytics must not interrupt navigation. */
 			});
-		}
+		};
+		capture();
+		return () => {
+			cancelled = true;
+		};
 	}, [isSignedIn, userId]);
-
-	const userEmail = user?.primaryEmailAddress?.emailAddress ?? null;
-	const userFullName = user?.fullName ?? null;
-	const userLoaded = isUserLoaded && user !== null;
-
-	useEffect(() => {
-		const personProperties = buildHostedPersonProperties({
-			isSignedIn: Boolean(isSignedIn),
-			userId,
-			user: userLoaded
-				? {
-						fullName: userFullName,
-						primaryEmailAddress: userEmail ? { emailAddress: userEmail } : null,
-					}
-				: null,
-		});
-		if (!personProperties) return;
-
-		void loadHostedPostHog().then((mod) => {
-			mod.enrichHostedUser(personProperties);
-		});
-	}, [isSignedIn, userId, userLoaded, userEmail, userFullName]);
-
 	return null;
 }

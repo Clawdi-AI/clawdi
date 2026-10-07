@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth, require_user_auth_unbound
 from app.core.database import get_session
+from app.core.posthog import stage_capture
 from app.core.project import project_ids_visible_to, resolve_default_write_project
 from app.models.agent_project_binding import AgentProjectBinding
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
@@ -342,6 +343,13 @@ async def _create_owned_project(
                 project_id=project.id,
                 raw_agent_ids=[str(agent_id)],
             )
+        stage_capture(
+            db,
+            "project_created",
+            user=auth.user,
+            event_key=str(project.id),
+            properties={"feature": "projects"},
+        )
         await notify_sync_subscriptions_changed(db, [user_id])
         await db.commit()
     except IntegrityError as exc:

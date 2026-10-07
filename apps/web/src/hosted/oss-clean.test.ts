@@ -265,10 +265,7 @@ describe("hosted implementation ownership", () => {
 		const signatures = [
 			["Deploy API schema client", /\bDeployPaths\b/],
 			["hosted capability wire fields", /\bcan_use_v[12]\b/],
-			[
-				"hosted analytics identity",
-				/\b(?:resolveHostedAuthIdentityAction|buildHostedPersonProperties)\b/,
-			],
+			["hosted analytics identity", /\bresolveHostedAuthIdentityAction\b/],
 			[
 				"Wallet return lifecycle",
 				/\b(?:WalletStripeReturnState|coordinateWallet(?:Payment|Setup)Return|walletSetupIdentityIsCanonical)\b/,

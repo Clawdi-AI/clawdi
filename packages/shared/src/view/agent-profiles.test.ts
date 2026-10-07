@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import type { AgentProfile } from "@clawdi/shared/api";
+import type { AgentProfile } from "../api/schemas";
 import {
 	agentProfileName,
 	hasMultipleProfiles,
 	profileLabel,
 	sortAgentProfiles,
-} from "@/lib/agent-profiles";
+} from "./agent-profiles";
 
 function profile(overrides: Partial<AgentProfile>): AgentProfile {
 	return {
