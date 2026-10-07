@@ -14,7 +14,7 @@ if [[ -z "${TEST_RUNNER_IMAGE:-}" ]]; then
 fi
 
 usage() {
-	echo "Usage: scripts/test.sh [all|ci|js|mobile|cli|cli-lint|cli-native|preinstallation-artifact|desktop|shared|sidecar|web|backend|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-upstream-contract|hermes-sync-memory|session-sync-memory] [suite args...]"
+	echo "Usage: scripts/test.sh [all|ci|js|mobile|cli|cli-lint|cli-native|preinstallation-artifact|desktop|shared|sidecar|web|backend|backend-lint|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-upstream-contract|hermes-sync-memory|session-sync-memory] [suite args...]"
 }
 
 compose() {
@@ -23,7 +23,7 @@ compose() {
 
 validate_suite() {
 	case "$1" in
-		all|backend|ci|js|mobile|cli|cli-lint|cli-native|preinstallation-artifact|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-upstream-contract|hermes-sync-memory|session-sync-memory)
+		all|backend|backend-lint|ci|js|mobile|cli|cli-lint|cli-native|preinstallation-artifact|desktop|shared|sidecar|web|runtime-vaults|runtime-systemd|provider-recovery-fixture|hermes-upstream-contract|hermes-sync-memory|session-sync-memory)
 			;;
 		*)
 			echo "Unknown test suite: $1" >&2
@@ -341,6 +341,16 @@ run_backend() {
 	backend_tests "$@"
 }
 
+run_backend_lint() {
+	install_backend
+	(
+		cd backend
+		uv run ruff check .
+		uv run ruff format --check "${@:-.}"
+		uv run --extra mem0 python scripts/type_governance.py owned
+	)
+}
+
 run_ci() {
 	if [[ $# -gt 0 ]]; then
 		echo "Suite 'ci' does not accept extra arguments" >&2
@@ -460,6 +470,9 @@ run_in_container() {
 			;;
 		runtime-vaults)
 			run_runtime_vaults "$@"
+			;;
+		backend-lint)
+			run_backend_lint "$@"
 			;;
 		backend)
 			run_backend "$@"
