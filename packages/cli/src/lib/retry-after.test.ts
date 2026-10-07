@@ -43,14 +43,14 @@ describe("parseRetryAfter", () => {
 		["", 0],
 		[" ", 0],
 		["0.5", 500],
-		["5", 5000],
-		["5.001", null],
+		["2", 2000],
+		["2.001", null],
 		["1e0", 1000],
 		["-1", null],
 		["Infinity", null],
 		["later", null],
 		["Sun, 06 Nov 1994 08:49:37 GMT", null],
 	])("preserves Hosted numeric checkout policy for %s", (value, expected) => {
-		expect(parseRetryAfter(value, { format: "legacy-number", maxMs: 5000 })).toBe(expected);
+		expect(parseRetryAfter(value, { format: "legacy-number", maxMs: 2000 })).toBe(expected);
 	});
 });

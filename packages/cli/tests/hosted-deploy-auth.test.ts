@@ -227,14 +227,19 @@ describe("Hosted deploy auth boundary", () => {
 		expect(await requests[0]?.text()).toBe(await requests[1]?.text());
 	});
 
-	test.each(["6", "5.001", "Sun, 06 Nov 1994 08:49:37 GMT"])(
+	test.each(["3", "2.001", "Sun, 06 Nov 1994 08:49:37 GMT"])(
 		"does not retry checkout for the unsupported Retry-After value %s",
 		async (retryAfter) => {
 			let requests = 0;
 			const delays: number[] = [];
 			const hosted = new HostedDeployClient({
 				baseUrl: "https://deploy.example.test",
-				auth: { getAccessToken: async () => ({ token: "opaque-checkout-token" }) },
+				auth: {
+					getAccessToken: async () => ({
+						token: "opaque-checkout-token",
+						expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+					}),
+				},
 				sleep: async (delay) => {
 					delays.push(delay);
 				},
