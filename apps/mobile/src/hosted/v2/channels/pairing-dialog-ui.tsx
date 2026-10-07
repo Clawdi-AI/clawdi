@@ -9,9 +9,9 @@ import { channelDetailCopy as copy, pairCodeExpiryLabel, providerMeta } from "@c
 import { useEffect, useState } from "react";
 import { ActionButton } from "@/components/dashboard/controls";
 import { QrImage } from "@/components/ui/qr-image";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webText } from "@/components/ui/web-layout";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
 
 /** Presentation only. The route controller owns validation, expiry and secret lifetime. */
 export function ChannelPairingView({
@@ -46,12 +46,14 @@ export function ChannelPairingView({
 			<Text className={webText(channelFormClasses.pairingIdentity)}>{identity}</Text>
 			<WebText recipe={channelFormClasses.pairingDescription}>{copy.pairDescription}</WebText>
 			{provider === "discord" ? (
-				<Tabs value={path} onValueChange={setPath}>
-					<TabsList>
-						<TabsTrigger value="server">{copy.server}</TabsTrigger>
-						{dm ? <TabsTrigger value="dm">{copy.directMessage}</TabsTrigger> : null}
-					</TabsList>
-				</Tabs>
+				<NativeSegments
+					value={path}
+					onChange={setPath}
+					options={[
+						{ value: "server", label: copy.server },
+						...(dm ? [{ value: "dm", label: copy.directMessage }] : []),
+					]}
+				/>
 			) : null}
 			{qr ? (
 				<WebView recipe={channelFormClasses.pairingQr}>

@@ -1,4 +1,4 @@
-import { addAgentSetupClasses as styles } from "@clawdi/shared/ui";
+import { addAgentSetupClasses as styles, tabsContentClassName } from "@clawdi/shared/ui";
 import {
 	agentDisplayName,
 	agentRegistrationDescription,
@@ -10,21 +10,20 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { Bot, Terminal } from "lucide-react-native";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Linking } from "react-native";
 import { Button } from "@/components/ui/button";
-import { Icon } from "@/components/ui/icon";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Text } from "@/components/ui/text";
-import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { WebText, WebView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
 export function AddAgentSetup() {
 	const scope = useAccountScope(),
 		read = useAccountRead(),
 		{ cloud } = useMobileApi();
 	const baseline = useRef<Set<string> | null>(null);
+	const [tab, setTab] = useState("prompt");
 	const agents = useQuery({
 		queryKey: accountQueryKey(scope, "add-agent-registration"),
 		enabled: scope.isReady,
@@ -45,22 +44,16 @@ export function AddAgentSetup() {
 	);
 	return (
 		<WebView recipe={styles.root}>
-			<Tabs defaultValue="prompt">
-				<TabsList variant="default">
-					<TabsTrigger value="commands">
-						<WebView recipe={styles.registrationHeading} className="flex-row">
-							<Icon as={Terminal} />
-							<Text>Run commands</Text>
-						</WebView>
-					</TabsTrigger>
-					<TabsTrigger value="prompt">
-						<WebView recipe={styles.registrationHeading} className="flex-row">
-							<Icon as={Bot} />
-							<Text>Ask your agent</Text>
-						</WebView>
-					</TabsTrigger>
-				</TabsList>
-				<TabsContent value="commands" className={webView(styles.commands)}>
+			<NativeSegments
+				value={tab}
+				onChange={setTab}
+				options={[
+					{ value: "commands", label: "Run commands" },
+					{ value: "prompt", label: "Ask your agent" },
+				]}
+			/>
+			{tab === "commands" ? (
+				<WebView recipe={`${tabsContentClassName} ${styles.commands}`}>
 					<WebView recipe="">
 						<WebText recipe={styles.title}>
 							{agentSurfaceCopy.runTheseCommandsInOrderOnTheMachine}
@@ -98,8 +91,9 @@ export function AddAgentSetup() {
 							</WebView>
 						))}
 					</WebView>
-				</TabsContent>
-				<TabsContent value="prompt" className={webView(styles.promptContent)}>
+				</WebView>
+			) : (
+				<WebView recipe={`${tabsContentClassName} ${styles.promptContent}`}>
 					<WebText recipe={styles.title}>{agentSurfaceCopy.askYourAgentToSetUpClawdi}</WebText>
 					<WebText recipe={styles.requirementHint}>
 						{agentSurfaceCopy.pasteThisPromptIntoClaudeCodeCodexHermesOpenClaw}
@@ -112,8 +106,8 @@ export function AddAgentSetup() {
 							{agentSetupPrompt(HOSTED_PUBLIC_SITE_ORIGIN)}
 						</WebText>
 					</WebView>
-				</TabsContent>
-			</Tabs>
+				</WebView>
+			)}
 			<WebView recipe={styles.registration}>
 				<WebText recipe={styles.title}>
 					{registered.length

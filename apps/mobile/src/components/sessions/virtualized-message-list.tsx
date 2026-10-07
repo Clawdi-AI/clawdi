@@ -11,11 +11,11 @@ import {
 	sessionTimelineViewFromCategories,
 } from "@clawdi/shared/api";
 import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/consts";
-import { checkboxClasses, sessionDetailClasses as styles } from "@clawdi/shared/ui";
+import { sessionDetailClasses as styles } from "@clawdi/shared/ui";
 import { sessionEmptyDescription, sessionTimelineFilters } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack } from "expo-router";
-import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronUp } from "lucide-react-native";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronUp } from "lucide-react-native";
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import type { FlatList } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -24,11 +24,12 @@ import { SessionSidebar } from "@/components/sessions/session-sidebar";
 import { MessagesSkeleton } from "@/components/sessions/skeleton";
 import { TimelineRow } from "@/components/sessions/timeline-row";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/ui/icon";
 import { NativeList } from "@/components/ui/native-list";
 import { Text } from "@/components/ui/text";
-import { AppPressable, AppView } from "@/components/ui/view";
-import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { AppView } from "@/components/ui/view";
+import { WebText, WebView } from "@/components/ui/web-layout";
 import { isNotFound } from "@/hooks/cloud-inventory";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
@@ -278,35 +279,34 @@ function TranscriptView({
 														const categories = sessionTimelineCategories(view);
 														const checked = categories.includes(category);
 														const disabled = checked && categories.length === 1;
+														const toggle = (next: boolean) => {
+															const nextView = sessionTimelineViewFromCategories(
+																next
+																	? [...categories, category]
+																	: categories.filter((value) => value !== category),
+															);
+															if (nextView) {
+																setView(nextView);
+																setAnchor(undefined);
+															}
+														};
 														return (
-															<AppPressable
-																key={category}
-																className={webView(styles.filter)}
-																accessibilityRole="checkbox"
-																accessibilityLabel={label}
-																accessibilityState={{ checked, disabled }}
-																hitSlop={8}
-																disabled={disabled}
-																onPress={() => {
-																	const next = sessionTimelineViewFromCategories(
-																		checked
-																			? categories.filter((value) => value !== category)
-																			: [...categories, category],
-																	);
-																	if (next) {
-																		setView(next);
-																		setAnchor(undefined);
-																	}
-																}}
-															>
-																<WebView
-																	recipe={checkboxClasses.root}
-																	state={{ "data-checked": checked }}
+															<WebView key={category} recipe={styles.filter} className="flex-row">
+																<Checkbox
+																	checked={checked}
+																	disabled={disabled}
+																	accessibilityLabel={label}
+																	onCheckedChange={toggle}
+																/>
+																<WebText
+																	recipe={styles.filterLabel}
+																	accessibilityElementsHidden
+																	importantForAccessibility="no"
+																	onPress={disabled ? undefined : () => toggle(!checked)}
 																>
-																	{checked ? <Icon as={Check} /> : null}
-																</WebView>
-																<WebText recipe={styles.filterLabel}>{label}</WebText>
-															</AppPressable>
+																	{label}
+																</WebText>
+															</WebView>
 														);
 													})}
 												</WebView>

@@ -1,40 +1,35 @@
-import { CHECKBOX_ICON_CLASS, checkboxClasses } from "@clawdi/shared/ui";
-import { cn } from "cn";
-import { Check } from "lucide-react-native";
-import { Icon } from "@/components/ui/icon";
-import { AppPressable } from "@/components/ui/view";
-import { resolveWebClasses } from "@/lib/web-classes";
-import { webBoth } from "@/components/ui/web-layout";
+import { Host, Checkbox as NativeCheckbox } from "@expo/ui";
+import { useCSSVariable, useUniwind } from "uniwind";
+import { AppView } from "@/components/ui/view";
 
+export type CheckboxProps = {
+	checked: boolean;
+	disabled?: boolean;
+	onCheckedChange: (checked: boolean) => void;
+	accessibilityLabel?: string;
+	className?: string;
+};
+/** `@expo/ui` universal Checkbox (a SwiftUI toggle on iOS); Web's primary token is the tint.
+ * Labels stay with the caller's Web copy. */
 export function Checkbox({
 	checked,
 	disabled,
 	onCheckedChange,
 	accessibilityLabel,
 	className,
-}: {
-	checked: boolean;
-	disabled?: boolean;
-	onCheckedChange: (checked: boolean) => void;
-	accessibilityLabel?: string;
-	className?: string;
-}) {
-	const classes = resolveWebClasses(checkboxClasses.root, {
-		"data-checked": checked,
-		disabled: Boolean(disabled),
-	});
+}: CheckboxProps) {
+	const { theme } = useUniwind();
+	const primary = useCSSVariable("--color-primary");
 	return (
-		<AppPressable
-			accessibilityRole="checkbox"
-			accessibilityLabel={accessibilityLabel}
-			accessibilityState={{ checked, disabled }}
-			disabled={disabled}
-			onPress={() => onCheckedChange(!checked)}
-			className={cn(classes.view, className)}
-		>
-			{checked ? (
-				<Icon as={Check} className={`${classes.text} ${webBoth(CHECKBOX_ICON_CLASS)}`} />
-			) : null}
-		</AppPressable>
+		<AppView className={className}>
+			<Host
+				matchContents
+				colorScheme={theme === "dark" ? "dark" : "light"}
+				seedColor={typeof primary === "string" ? primary : undefined}
+				accessibilityLabel={accessibilityLabel}
+			>
+				<NativeCheckbox value={checked} onValueChange={onCheckedChange} disabled={disabled} />
+			</Host>
+		</AppView>
 	);
 }
