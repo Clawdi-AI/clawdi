@@ -39,7 +39,7 @@ export type ComputeSubscriptionActionEntitlement = {
 	subscriptionKind?: "included_basic" | "paid";
 	deploymentId: string | null | undefined;
 	planSlug: string | null | undefined;
-	fundingSource: "stripe" | "wallet" | null | undefined;
+	fundingSource: "stripe" | "wallet" | "store" | null | undefined;
 	priceCents: number | null | undefined;
 	status: string;
 	paymentState: string;

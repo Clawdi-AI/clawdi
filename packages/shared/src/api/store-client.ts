@@ -14,6 +14,8 @@ export type StorePurchaseAttemptRequest = components["schemas"]["StorePurchaseAt
 export type StorePurchaseAttempt = components["schemas"]["StorePurchaseAttemptResponse"];
 export type StorePurchaseConfirmRequest = components["schemas"]["StorePurchaseConfirmRequest"];
 export type StorePurchaseConfirmation = components["schemas"]["StorePurchaseConfirmResponse"];
+export type StoreComputeReconcileResponse = components["schemas"]["StoreComputeReconcileResponse"];
+export type StoreComputeSlot = components["schemas"]["StoreComputeSlot"];
 export type StorePurchaseAttemptsQuery =
 	paths["/v2/store/purchase-attempts"]["get"]["parameters"]["query"];
 
@@ -73,8 +75,18 @@ function isAttemptState(value: unknown): boolean {
 function isPlatform(value: unknown): boolean {
 	return value === "app_store" || value === "play_store";
 }
+function isUuidOrNull(value: unknown): boolean {
+	return value == null || isUuid(value);
+}
+function normalizeUuid(value: string | null | undefined): string | null {
+	return value?.toLowerCase() ?? null;
+}
 function isPurpose(value: unknown): boolean {
-	return value === "standalone_topup" || value === "deploy_continuation";
+	return (
+		value === "standalone_topup" ||
+		value === "deploy_continuation" ||
+		value === "compute_subscription"
+	);
 }
 function isNonemptyString(value: unknown): value is string {
 	return typeof value === "string" && value.length > 0;
@@ -92,10 +104,48 @@ function isMoney(value: unknown): boolean {
 	return typeof value === "string" && /^(?![-+.]*$)[+-]?0*\d*\.?\d*$/.test(value);
 }
 
+function isStoreProvider(value: unknown): boolean {
+	return value === "app_store" || value === "play_store" || value === "test_store";
+}
+
+function isStoreManagement(
+	value: unknown,
+): value is NonNullable<StoreComputeSlot["store_management"]> {
+	if (!value || typeof value !== "object") return false;
+	const management = value as Record<string, unknown>;
+	return (
+		isStoreProvider(management.provider) &&
+		isNonemptyString(management.product_id) &&
+		(management.management_url == null || isNonemptyString(management.management_url)) &&
+		typeof management.auto_renews === "boolean" &&
+		(management.renews_or_ends_at == null ||
+			(typeof management.renews_or_ends_at === "string" &&
+				Number.isFinite(Date.parse(management.renews_or_ends_at)))) &&
+		isNonemptyString(management.state)
+	);
+}
+
+function isComputeSlot(value: unknown): value is StoreComputeSlot {
+	if (!value || typeof value !== "object") return false;
+	const slot = value as Record<string, unknown>;
+	return (
+		typeof slot.available === "boolean" &&
+		isUuidOrNull(slot.contract_id) &&
+		(slot.compute_subscription_id == null ||
+			(typeof slot.compute_subscription_id === "number" &&
+				Number.isSafeInteger(slot.compute_subscription_id) &&
+				slot.compute_subscription_id > 0)) &&
+		(slot.agent_id == null ||
+			(typeof slot.agent_id === "string" && /^hdep_.+/.test(slot.agent_id))) &&
+		(slot.store_management == null || isStoreManagement(slot.store_management))
+	);
+}
+
 function validateBootstrap(result: StoreBootstrap): StoreBootstrap {
 	if (
 		!result ||
 		typeof result.purchases_enabled !== "boolean" ||
+		typeof result.compute_subscriptions_enabled !== "boolean" ||
 		(result.reason != null && typeof result.reason !== "string") ||
 		(result.app_user_id != null && !isUuid(result.app_user_id)) ||
 		(result.catalogue_revision != null && !isRevision(result.catalogue_revision)) ||
@@ -113,6 +163,7 @@ function validateBootstrap(result: StoreBootstrap): StoreBootstrap {
 				typeof result.wallet.open_debt !== "boolean" ||
 				(result.wallet.balance_usd !== null && !isMoney(result.wallet.balance_usd)) ||
 				result.wallet.balance_available !== (result.wallet.balance_usd !== null))) ||
+		(result.compute_slot != null && !isComputeSlot(result.compute_slot)) ||
 		(result.purchases_enabled &&
 			(!isUuid(result.app_user_id) ||
 				!isRevision(result.catalogue_revision) ||
@@ -136,7 +187,42 @@ function validateAttempt(result: StorePurchaseAttempt): StorePurchaseAttempt {
 		(result.store_product_id != null && !isNonemptyString(result.store_product_id)) ||
 		(result.pending_deploy_request_id != null &&
 			!isNonemptyString(result.pending_deploy_request_id)) ||
-		(result.transaction_id != null && !isUuid(result.transaction_id))
+		(result.transaction_id != null && !isUuid(result.transaction_id)) ||
+		!isUuidOrNull(result.target_contract_id) ||
+		(result.target_deployment_id != null &&
+			(typeof result.target_deployment_id !== "string" ||
+				!/^hdep_.+/.test(result.target_deployment_id))) ||
+		(result.requested_store_product_id != null &&
+			!isNonemptyString(result.requested_store_product_id)) ||
+		(result.replacement_mode != null &&
+			result.replacement_mode !== "CHARGE_PRORATED_PRICE" &&
+			result.replacement_mode !== "CHARGE_FULL_PRICE" &&
+			result.replacement_mode !== "DEFERRED")
+	)
+		throw new ApiClientResponseError();
+	return result;
+}
+
+function validateComputeReconcile(
+	result: StoreComputeReconcileResponse,
+): StoreComputeReconcileResponse {
+	if (
+		!result ||
+		(result.code !== "reconciled" &&
+			result.code !== "reconciliation_pending" &&
+			result.code !== "owned_by_other_account") ||
+		(result.compute_slot != null && !isComputeSlot(result.compute_slot)) ||
+		(result.results != null &&
+			(!Array.isArray(result.results) ||
+				result.results.some(
+					(entry) =>
+						!entry ||
+						(entry.subscription_id != null && !isNonemptyString(entry.subscription_id)) ||
+						!isUuidOrNull(entry.contract_id) ||
+						(entry.code !== "reconciled" &&
+							entry.code !== "reconciliation_pending" &&
+							entry.code !== "owned_by_other_account"),
+				)))
 	)
 		throw new ApiClientResponseError();
 	return result;
@@ -186,6 +272,10 @@ export function createHostedStoreClient(options: ApiClientOptions) {
 				!isPlatform(body.platform) ||
 				!isPurpose(body.purpose) ||
 				!isRevision(body.catalogue_revision) ||
+				(body.store_product_id != null &&
+					(typeof body.store_product_id !== "string" ||
+						body.store_product_id.length < 1 ||
+						body.store_product_id.length > 255)) ||
 				(body.pending_deploy_request_id != null &&
 					(typeof body.pending_deploy_request_id !== "string" ||
 						body.pending_deploy_request_id.length < 1 ||
@@ -194,11 +284,34 @@ export function createHostedStoreClient(options: ApiClientOptions) {
 				throw new ApiClientError(400, "invalid_store_attempt_request");
 			if (body.purpose === "standalone_topup" && body.pending_deploy_request_id != null)
 				throw new ApiClientError(409, StoreErrorCode.pending_deploy_request_not_allowed);
+			if (body.purpose === "compute_subscription") {
+				const targetCount = [
+					body.pending_deploy_request_id,
+					body.target_deployment_id,
+					body.target_contract_id,
+				].filter((value) => value != null).length;
+				if (
+					!isNonemptyString(body.store_product_id) ||
+					!isUuidOrNull(body.target_contract_id) ||
+					(body.target_deployment_id != null &&
+						(typeof body.target_deployment_id !== "string" ||
+							!/^hdep_.+/.test(body.target_deployment_id))) ||
+					targetCount !== 1
+				)
+					throw new ApiClientError(400, "invalid_compute_subscription_attempt_request");
+			}
 			const request: StorePurchaseAttemptRequest = {
 				platform: body.platform,
 				catalogue_revision: body.catalogue_revision,
 				purpose: body.purpose,
 				pending_deploy_request_id: body.pending_deploy_request_id,
+				...(body.purpose === "compute_subscription"
+					? {
+							store_product_id: body.store_product_id,
+							target_contract_id: body.target_contract_id,
+							target_deployment_id: body.target_deployment_id,
+						}
+					: {}),
 			};
 			const result = validateAttempt(
 				await transport.read(
@@ -215,7 +328,15 @@ export function createHostedStoreClient(options: ApiClientOptions) {
 				result.platform !== request.platform ||
 				result.purpose !== request.purpose ||
 				result.catalogue_revision !== request.catalogue_revision ||
-				(result.pending_deploy_request_id ?? null) !== (request.pending_deploy_request_id ?? null)
+				(result.pending_deploy_request_id ?? null) !==
+					(request.pending_deploy_request_id ?? null) ||
+				(request.purpose === "compute_subscription" &&
+					(result.requested_store_product_id ?? result.store_product_id ?? null) !==
+						(request.store_product_id ?? null)) ||
+				(request.purpose === "compute_subscription" &&
+					normalizeUuid(result.target_contract_id) !== normalizeUuid(request.target_contract_id)) ||
+				(request.purpose === "compute_subscription" &&
+					(result.target_deployment_id ?? null) !== (request.target_deployment_id ?? null))
 			)
 				throw new ApiClientResponseError();
 			return result;
@@ -281,6 +402,15 @@ export function createHostedStoreClient(options: ApiClientOptions) {
 			if (!Array.isArray(result)) throw new ApiClientResponseError();
 			return result.map(validateAttempt);
 		},
+		reconcileComputeSubscriptions: async (
+			signal?: AbortSignal,
+		): Promise<StoreComputeReconcileResponse> =>
+			validateComputeReconcile(
+				await transport.read(
+					(init) => api.POST("/v2/store/compute-subscriptions/reconcile", init),
+					signal,
+				),
+			),
 	};
 }
 
