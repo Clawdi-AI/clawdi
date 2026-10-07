@@ -1,1 +1,1 @@
-export { default } from "@/pages/settings/general-page";
+export { default } from "@/pages/settings/menu-page";
