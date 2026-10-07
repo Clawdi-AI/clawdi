@@ -620,8 +620,18 @@ function Gallery() {
 									onCheckedChange={setChecked}
 									accessibilityLabel={t("projects.title")}
 								/>
-								<Checkbox checked={false} onCheckedChange={noop} disabled />
-								<Checkbox checked onCheckedChange={noop} disabled />
+								<Checkbox
+									checked={false}
+									onCheckedChange={noop}
+									disabled
+									accessibilityLabel={t("home.statsSkills")}
+								/>
+								<Checkbox
+									checked
+									onCheckedChange={noop}
+									disabled
+									accessibilityLabel={t("sharing.vaults")}
+								/>
 							</>
 						}
 					/>

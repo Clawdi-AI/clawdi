@@ -1,4 +1,5 @@
 import { Checkbox as NativeCheckbox, Host } from "@expo/ui/jetpack-compose";
+import { semantics } from "@expo/ui/jetpack-compose/modifiers";
 import { useCSSVariable, useUniwind } from "uniwind";
 import type { CheckboxProps } from "@/components/ui/checkbox";
 import { AppView } from "@/components/ui/view";
@@ -19,18 +20,13 @@ export function Checkbox({
 	]);
 	const color = (v: string | number | undefined) => (typeof v === "string" ? v : undefined);
 	return (
-		<AppView
-			className={className}
-			accessible={accessibilityLabel !== undefined}
-			accessibilityLabel={accessibilityLabel}
-			accessibilityRole="checkbox"
-			accessibilityState={{ checked, disabled }}
-		>
+		<AppView className={className}>
 			<Host matchContents colorScheme={theme === "dark" ? "dark" : "light"}>
 				<NativeCheckbox
 					value={checked}
 					enabled={!disabled}
 					onCheckedChange={onCheckedChange}
+					modifiers={[semantics({ contentDescription: accessibilityLabel })]}
 					colors={{
 						checkedColor: color(primary),
 						checkmarkColor: color(primaryForeground),

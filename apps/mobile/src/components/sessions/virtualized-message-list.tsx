@@ -139,6 +139,13 @@ function TranscriptView({
 	const frame = useRef<number | undefined>(undefined);
 	const jump = useRef<{ index: number; attempts: number } | undefined>(undefined);
 	const jumped = useRef<string | undefined>(undefined);
+	// Web shows "Jump to latest" only while the viewport is away from the timeline bottom.
+	const viewport = useRef({ offset: 0, height: 0, content: 0 });
+	const [atBottom, setAtBottom] = useState(false);
+	const measure = (next: Partial<typeof viewport.current>) => {
+		const metrics = Object.assign(viewport.current, next);
+		setAtBottom(metrics.offset + metrics.height >= metrics.content - 48);
+	};
 	const automaticIndex =
 		matchIndex >= 0 ? matchIndex : direction === "desc" && !effectiveQuery ? rows.length - 1 : -1;
 	const automaticTarget =
@@ -208,6 +215,16 @@ function TranscriptView({
 				}}
 				initialNumToRender={8}
 				windowSize={5}
+				scrollEventThrottle={100}
+				onScroll={({ nativeEvent }) =>
+					measure({
+						offset: nativeEvent.contentOffset.y,
+						height: nativeEvent.layoutMeasurement.height,
+						content: nativeEvent.contentSize.height,
+					})
+				}
+				onLayout={({ nativeEvent }) => measure({ height: nativeEvent.layout.height })}
+				onContentSizeChange={(_, content) => measure({ content })}
 				onScrollToIndexFailed={({ index, averageItemLength }) => {
 					const pending = jump.current;
 					if (!pending || pending.index !== index || pending.attempts >= 3) return;
@@ -429,7 +446,7 @@ function TranscriptView({
 					</WebView>
 				}
 			/>
-			{rows.length && !effectiveQuery ? (
+			{rows.length && !effectiveQuery && !atBottom && !messages.isPending ? (
 				<AppView
 					pointerEvents="box-none"
 					style={{ position: "absolute", bottom: 24, left: 0, right: 0, alignItems: "center" }}
@@ -437,6 +454,7 @@ function TranscriptView({
 					<Button
 						variant="secondary"
 						size="sm"
+						className="shadow-md"
 						onPress={() => {
 							setAnchor(undefined);
 							setQuery("");
