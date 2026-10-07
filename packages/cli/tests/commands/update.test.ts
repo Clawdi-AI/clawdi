@@ -1132,6 +1132,42 @@ describe("release age policy", () => {
 		}
 	});
 
+	it("eventually installs during a sustained burst that exceeds the history bound", async () => {
+		let now = Date.parse("2026-10-07T00:00:00Z");
+		const start = now;
+		let latest = "1.0.1";
+		const calls: string[][] = [];
+		const { restore } = mockFetch([
+			{
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest }),
+			},
+		]);
+		const options = {
+			currentVersion: "1.0.0",
+			ownership: npmOwnership,
+			now: () => now,
+			installRunner: async (_installer: string, args: string[]) => {
+				calls.push(args);
+				return 0;
+			},
+			versionReader: () => "1.0.1",
+		};
+		try {
+			for (let hour = 0; hour < 24; hour++) {
+				now = start + hour * (60 * 60 * 1000 + 1);
+				latest = `1.0.${hour + 1}`;
+				expect(await daemonAutoUpdateOnce(options)).toBe("no_update");
+				expect(readUpdateCache().firstSeen.length).toBeLessThanOrEqual(8);
+			}
+			now = start + AUTO_UPDATE_MIN_AGE_MS;
+			expect(await daemonAutoUpdateOnce(options)).toBe("installed");
+			expect(calls).toEqual([["i", "-g", "clawdi@1.0.1"]]);
+		} finally {
+			restore();
+		}
+	});
+
 	it("starts a new observation for legacy caches and ignores malformed timestamps", async () => {
 		writeFileSync(
 			join(tmpHome, ".clawdi", "update.json"),

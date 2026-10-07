@@ -158,8 +158,21 @@ function writeCache(latest: string, now: number): UpdateCache {
 	const eligible = firstSeen.find(
 		({ firstSeenAt }) => now - Date.parse(firstSeenAt) >= AUTO_UPDATE_MIN_AGE_MS,
 	);
-	const retained = firstSeen.slice(0, MAX_OBSERVED_VERSIONS);
-	if (eligible && !retained.includes(eligible)) retained.splice(-1, 1, eligible);
+	// Preserve the oldest pending observation so a sustained release burst
+	// cannot evict every version before any reaches the age threshold.
+	const pending = firstSeen
+		.filter(
+			({ version, firstSeenAt }) =>
+				(!eligible || isNewer(version, eligible.version)) &&
+				now - Date.parse(firstSeenAt) < AUTO_UPDATE_MIN_AGE_MS,
+		)
+		.sort((a, b) => Date.parse(a.firstSeenAt) - Date.parse(b.firstSeenAt))[0];
+	const anchors = firstSeen.filter((entry) => entry === eligible || entry === pending);
+	const retained = firstSeen
+		.filter((entry) => !anchors.includes(entry))
+		.slice(0, MAX_OBSERVED_VERSIONS - anchors.length)
+		.concat(anchors)
+		.sort((a, b) => compareSemver(b.version, a.version));
 	const cache = { checkedAt: new Date(now).toISOString(), latest, firstSeen: retained };
 	try {
 		writePrivateFileAtomic(cachePath(), `${JSON.stringify(cache, null, 2)}\n`, {

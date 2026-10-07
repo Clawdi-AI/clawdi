@@ -44,8 +44,8 @@ also checks hourly. Both automatic paths install the newest observed version
 that has been recorded as npm `latest` for at least 24 hours, skipping intermediate
 versions and never downgrading. This is local observation time, not npm publication
 time: a new machine starts its own 24-hour wait. `~/.clawdi/update.json` retains up
-to eight version observations, including the newest eligible version during a
-burst of releases. `clawdi update` and `clawdi update --yes` install the current
+to eight version observations, including the newest eligible version and the
+oldest pending candidate during a burst of releases. `clawdi update` and `clawdi update --yes` install the current
 `latest` immediately; `--check` only reports availability. Installer exact pins
 use `CLAWDI_VERSION`; installers resolve `latest` when no pin is supplied.
 
