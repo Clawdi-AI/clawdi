@@ -1,4 +1,4 @@
-appId: ${APP_ID}
+appId: ${MAESTRO_APP_ID}
 name: Account settings and fixture API keys
 ---
 # react-native-screens 4.26.2 writes tab testIDs to View.tag (Espresso),
@@ -8,7 +8,7 @@ name: Account settings and fixture API keys
 - tapOn:
     text: Account
     childOf:
-      id: ${APP_ID}:id/navigation_bar_item_content_container
+      id: ${MAESTRO_APP_ID}:id/navigation_bar_item_content_container
       containsDescendants:
         - text: Account
 # The Account tab root is the native settings menu; rows push `/settings/<panel>`.
