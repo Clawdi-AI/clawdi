@@ -1,6 +1,7 @@
 "use client";
 import { connectedAgentDetailClasses } from "@clawdi/shared/ui";
 import {
+	AGENT_PROFILES_COPY,
 	agentDisplayName,
 	agentSurfaceCopy,
 	daemonStatusVisual,
@@ -392,7 +393,7 @@ export function ConnectedAgentDetail({
 									emptyMessage={
 										sessionProfileFilter.profileKey === undefined
 											? "No sessions synced from this agent yet."
-											: "No sessions synced from this profile yet."
+											: AGENT_PROFILES_COPY.profileSessionsEmpty
 									}
 									showAgent={false}
 									sessionLink={(session) => scopedSessionLink(session.id)}

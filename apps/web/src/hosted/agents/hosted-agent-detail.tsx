@@ -8,6 +8,7 @@ import {
 	initialDeploymentClasses as progressClasses,
 } from "@clawdi/shared/ui";
 import {
+	AGENT_PROFILES_COPY,
 	agentChannelLinkUnavailableReason,
 	agentChannelSectionCopy,
 	agentDisplayName,
@@ -964,7 +965,7 @@ function HostedAgentSessionsTab({
 				emptyMessage={
 					profileKey === undefined
 						? HOSTED_AGENT_SESSIONS_EMPTY_MESSAGE
-						: "No sessions synced from this profile yet."
+						: AGENT_PROFILES_COPY.profileSessionsEmpty
 				}
 				showAgent={false}
 				sessionLink={(session) => agentSessionDetailLink(environmentId, session.id)}
