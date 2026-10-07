@@ -121,7 +121,12 @@ JSON5 config (including includes), all five native `.bak` snapshots and
 not advance that history; repeated applies retain the same generations. Upgrades
 capture the pre-apply config before any candidate writes. Other
 managed files are deleted through a pinned directory. Unreadable configs or
-unsafe file identities defer cleanup. Each unlink re-reads current/include/rollback
+unsafe file identities defer cleanup. GC exclusively holds the official
+`openclaw.json.lock` sidecar (live PID and creation timestamp) across scanning and
+deletion; an occupied lock defers cleanup without stale-lock reclamation. This
+matches OpenClaw's [config writer](https://github.com/openclaw/openclaw/blob/3a9d69db306cd7f081e06254cb89c4bcc14a7107/src/config/write-lock.ts)
+and [file-lock protocol](https://github.com/openclaw/openclaw/blob/3a9d69db306cd7f081e06254cb89c4bcc14a7107/src/plugin-sdk/file-lock.ts).
+Each unlink re-reads current/include/rollback
 references and checks their held file identities immediately before deletion;
 newly committed references and config replacements defer removal. New files contain referenced credentials
 only, never the entire environment.
@@ -278,3 +283,17 @@ was performed.
 Done: required Docker suites pass, both native runtime samples and one TTL cycle
 complete, disposable resources are removed, and the paired worktrees are committed
 and clean. Production behavior and npm provenance remain unqualified.
+
+## Astra re-review qualification
+
+The writer-lock regression exercises publication at the last unlink boundary
+and GC while a native writer owns the lock. Both defer conflicting work without
+removing referenced credentials. Code source `b6c5db354` passed the full Docker
+CLI/typecheck (206 files), `runtime-systemd` (33 tests), `ci`, and full `cli-lint`
+(375 files; two existing warnings in Bash fixture strings). All commands exited 0.
+One native pool sample per runtime also passed installation through the stricter
+artifact proxy, adoption, reboot/preservation and TTL replacement. The fixture
+exited 0 and removed its disposable resources and directories.
+
+Done: both writer/GC interleavings, the requested OSS Docker suites and the two
+native runtime samples pass; fixture cleanup is complete.
