@@ -153,10 +153,18 @@ describe("AI provider Cloud parity", () => {
 		handler = () => jsonResponse({ providers: [] });
 		const edited = await cli(["ai-provider", "edit", "local-only", "--label", "Local", "--json"]);
 		expect({ code: edited.code, stderr: edited.stderr }).toMatchObject({ code: 0 });
-		expect(JSON.parse(edited.stdout).provider).toMatchObject({ source: "local", label: "Local" });
+		expect(JSON.parse(edited.stdout)).toMatchObject({
+			schemaVersion: "clawdi.aiProviderEdit.v1",
+			updated: "local-only",
+			provider: { source: "local", label: "Local" },
+		});
 		const removed = await cli(["ai-provider", "remove", "local-only", "--yes", "--json"]);
 		expect({ code: removed.code, stderr: removed.stderr }).toMatchObject({ code: 0 });
-		expect(JSON.parse(removed.stdout)).toMatchObject({ removed: "local-only", source: "local" });
+		expect(JSON.parse(removed.stdout)).toMatchObject({
+			schemaVersion: "clawdi.aiProviderRemove.v1",
+			removed: "local-only",
+			source: "local",
+		});
 		expect(calls.every((call) => call.method === "GET")).toBe(true);
 	});
 
@@ -221,6 +229,7 @@ describe("AI provider Cloud parity", () => {
 		]);
 		expect({ code: result.code, stderr: result.stderr }).toMatchObject({ code: 0 });
 		expect(JSON.parse(result.stdout)).toMatchObject({
+			schemaVersion: "clawdi.aiProviderEdit.v1",
 			updated: "openai-main",
 			provider: { source: "cloud", label: "Updated" },
 		});
@@ -260,7 +269,10 @@ describe("AI provider Cloud parity", () => {
 			);
 		const result = await cli(["ai-provider", "remove", "openai-main", "--yes", "--json"]);
 		expect({ code: result.code, stderr: result.stderr }).toMatchObject({ code: 0 });
-		expect(JSON.parse(result.stdout)).toMatchObject({ removed: "openai-main" });
+		expect(JSON.parse(result.stdout)).toMatchObject({
+			schemaVersion: "clawdi.aiProviderRemove.v1",
+			removed: "openai-main",
+		});
 		const deleted = calls.find((call) => call.method === "DELETE");
 		expect(deleted?.path).toBe("/v2/ai-providers/openai-main");
 		expect(deleted?.headers.get("Impact-Revision")).toBe(impact.impact_revision);
@@ -288,6 +300,11 @@ describe("AI provider Cloud parity", () => {
 		expect(calls.find((call) => call.method === "DELETE")?.path).toBe(
 			"/v1/ai-providers/openai-main",
 		);
+		expect(JSON.parse(result.stdout)).toMatchObject({
+			schemaVersion: "clawdi.aiProviderRemove.v1",
+			removed: "openai-main",
+			source: "cloud",
+		});
 	});
 
 	test("a rejected Hosted deletion preserves the local catalog", async () => {
@@ -472,7 +489,7 @@ describe("new Cloud commands", () => {
 			"--json",
 		]);
 		expect(result.code).not.toBe(0);
-		expect(result.stderr).toContain("full UUID");
+		expect(result.stderr).toContain("valid UUID");
 		expect(calls).toHaveLength(0);
 	});
 

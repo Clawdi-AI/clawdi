@@ -300,12 +300,23 @@ export async function aiProviderEditCommand(
 			}
 		}
 		if (opts.json)
-			console.log(JSON.stringify({ updated: providerId, provider: { ...saved, source: "cloud" } }));
+			console.log(
+				JSON.stringify({
+					schemaVersion: "clawdi.aiProviderEdit.v1",
+					updated: providerId,
+					provider: { ...saved, source: "cloud" },
+				}),
+			);
 		else console.log(chalk.green(`✓ Updated Cloud AI provider ${providerId}`));
 		return;
 	}
 	writeAiProviderCatalog(applyDefault(upsertAiProvider(catalog, updated, true), updated, opts));
-	printMutationResult("updated", { ...updated, source: "local" }, opts.json);
+	printMutationResult(
+		"updated",
+		{ ...updated, source: "local" },
+		opts.json,
+		"clawdi.aiProviderEdit.v1",
+	);
 }
 
 export async function aiProviderRemoveCommand(
@@ -369,7 +380,15 @@ export async function aiProviderRemoveCommand(
 	}
 	if (opts.json) {
 		console.log(
-			JSON.stringify({ removed: providerId, source: cloud ? "cloud" : "local" }, null, 2),
+			JSON.stringify(
+				{
+					schemaVersion: "clawdi.aiProviderRemove.v1",
+					removed: providerId,
+					source: cloud ? "cloud" : "local",
+				},
+				null,
+				2,
+			),
 		);
 		return;
 	}
@@ -1702,9 +1721,16 @@ function printMutationResult(
 	action: string,
 	provider: AiProvider & { source?: string },
 	json?: boolean,
+	schemaVersion?: string,
 ): void {
 	if (json) {
-		console.log(JSON.stringify({ [action]: provider.id, provider }, null, 2));
+		console.log(
+			JSON.stringify(
+				{ ...(schemaVersion ? { schemaVersion } : {}), [action]: provider.id, provider },
+				null,
+				2,
+			),
+		);
 		return;
 	}
 	console.log(chalk.green(`✓ ${capitalize(action)} AI provider ${provider.id}`));
