@@ -2,11 +2,12 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getCliVersion } from "../src/lib/version";
 
-test("the complete Commander tree and help match the origin/main baseline", async () => {
+async function runFixture(name: string, args: string[] = []) {
 	const home = mkdtempSync(join(tmpdir(), "clawdi-command-tree-"));
 	try {
-		const process = Bun.spawn(["bun", join(import.meta.dir, "fixtures/capture-command-tree.ts")], {
+		const child = Bun.spawn(["bun", join(import.meta.dir, "fixtures", name), ...args], {
 			env: {
 				...Bun.env,
 				HOME: home,
@@ -18,14 +19,26 @@ test("the complete Commander tree and help match the origin/main baseline", asyn
 			stderr: "pipe",
 		});
 		const [stdout, stderr, code] = await Promise.all([
-			new Response(process.stdout).text(),
-			new Response(process.stderr).text(),
-			process.exited,
+			new Response(child.stdout).text(),
+			new Response(child.stderr).text(),
+			child.exited,
 		]);
-		expect(code, stderr).toBe(0);
-		expect(stderr).toBe("");
-		expect(stdout).toBe(readFileSync(join(import.meta.dir, "fixtures/command-tree.txt"), "utf8"));
+		return { stdout, stderr, code };
 	} finally {
 		rmSync(home, { recursive: true, force: true });
 	}
+}
+
+test("the complete Commander tree and help match the origin/main baseline", async () => {
+	const { stdout, stderr, code } = await runFixture("capture-command-tree.ts");
+	expect(code, stderr).toBe(0);
+	expect(stderr).toBe("");
+	expect(stdout).toBe(readFileSync(join(import.meta.dir, "fixtures/command-tree.txt"), "utf8"));
+});
+
+test("--version preserves the baseline lazy command imports", async () => {
+	const { stdout, stderr, code } = await runFixture("version-import-guard.ts", ["--version"]);
+	expect(code, stderr).toBe(0);
+	expect(stderr).toBe("");
+	expect(stdout.trim()).toBe(getCliVersion());
 });
