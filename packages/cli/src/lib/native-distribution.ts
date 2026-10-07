@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, resolve } from "node:path";
 import {
 	isNativeBuildTarget,
@@ -79,7 +79,7 @@ export function detectNativeInstall(
 		return null;
 	}
 	try {
-		const manifestPath = join(versionDir, nativeInstallManifestName(identity.target));
+		const manifestPath = nativeInstallManifestPath(versionDir, identity.target);
 		const manifestFile = lstatSync(manifestPath);
 		if (!manifestFile.isFile() || manifestFile.size > MAX_NATIVE_MANIFEST_BYTES) return null;
 		const manifest = parseNativeInstallManifest(
@@ -208,14 +208,20 @@ function parseVersionDirectoryName(
 	return null;
 }
 
-export function nativeInstallManifestName(target: NativeBuildTarget): string {
-	return target.startsWith("win32-")
-		? NATIVE_RELEASE_MANIFEST_V2_NAME
-		: NATIVE_RELEASE_MANIFEST_NAME;
+export function nativeInstallManifestName(): string {
+	return NATIVE_RELEASE_MANIFEST_V2_NAME;
+}
+
+export function nativeInstallManifestPath(directory: string, target: NativeBuildTarget): string {
+	const path = join(directory, nativeInstallManifestName());
+	// Old Unix installers and existing installations still carry frozen v1.
+	return !target.startsWith("win32-") && !existsSync(path)
+		? join(directory, NATIVE_RELEASE_MANIFEST_NAME)
+		: path;
 }
 
 export function parseNativeInstallManifest(content: string, target: NativeBuildTarget) {
-	return target.startsWith("win32-")
-		? parseNativeReleaseManifestV2(content)
-		: parseNativeReleaseManifest(content);
+	return !target.startsWith("win32-") && content.startsWith("clawdi.nativeRelease.v1\n")
+		? parseNativeReleaseManifest(content)
+		: parseNativeReleaseManifestV2(content);
 }

@@ -373,45 +373,53 @@ describe("Windows native launcher transaction", () => {
 	});
 });
 
-describe("Windows native release staging", () => {
-	it("requests v2 and extracts clawdi.exe with its exact manifest", async () => {
-		const root = fixtureRoot();
-		writeFileSync(join(root, "clawdi.exe"), "Windows native\n");
-		const archivePath = join(root, "windows.tar.gz");
-		tar.create({ file: archivePath, cwd: root, gzip: true, sync: true }, [
-			"clawdi.exe",
-			"egress-addon",
-			"skills",
-		]);
-		const archive = readFileSync(archivePath);
-		const manifest = [
-			"clawdi.nativeRelease.v2",
-			"version\t1.2.3",
-			...NATIVE_PUBLISH_TARGET_CATALOG.map(
-				({ target }) =>
-					`artifact\t${target}\t${nativeAssetName(target)}\t${new Bun.CryptoHasher("sha256").update(archive).digest("hex")}`,
-			),
-			"",
-		].join("\n");
-		const urls: string[] = [];
-		const staged = await downloadAndStageNativeRelease({
-			prefix: root,
-			version: "1.2.3",
-			target: "win32-x64",
-			releaseBaseUrl: "https://example.invalid/exact",
-			fetcher: testFetcher(async (url) => {
-				urls.push(String(url));
-				return new Response(String(url).endsWith(".txt") ? manifest : archive);
-			}),
-		});
-		expect(urls).toEqual([
-			"https://example.invalid/exact/clawdi-cli-manifest-v2.txt",
-			"https://example.invalid/exact/clawdi-cli-win32-x64.tar.gz",
-		]);
-		expect(readFileSync(join(staged.stageDir, "clawdi.exe"), "utf8")).toBe("Windows native\n");
-		expect(readFileSync(join(staged.stageDir, "clawdi-cli-manifest-v2.txt"), "utf8")).toBe(
-			manifest,
-		);
-		expect(existsSync(join(staged.stageDir, "clawdi"))).toBeFalse();
-	});
+describe("native release staging", () => {
+	it.each(["win32-x64", "linux-x64"] as const)(
+		"requests v2 for %s and tolerates future manifest rows",
+		async (target) => {
+			const executable = target.startsWith("win32-") ? "clawdi.exe" : "clawdi";
+			const root = fixtureRoot();
+			writeFileSync(join(root, executable), "native fixture\n");
+			const archivePath = join(root, "native.tar.gz");
+			tar.create({ file: archivePath, cwd: root, gzip: true, sync: true }, [
+				executable,
+				"egress-addon",
+				"skills",
+			]);
+			const archive = readFileSync(archivePath);
+			const manifest = [
+				"clawdi.nativeRelease.v2",
+				"version\t1.2.3",
+				...NATIVE_PUBLISH_TARGET_CATALOG.map(
+					({ target }) =>
+						`artifact\t${target}\t${nativeAssetName(target)}\t${new Bun.CryptoHasher("sha256").update(archive).digest("hex")}`,
+				),
+				"metadata\tfuture",
+				"artifact\tfreebsd-x64\tfuture\tunknown",
+				"",
+			].join("\n");
+			const urls: string[] = [];
+			const staged = await downloadAndStageNativeRelease({
+				prefix: root,
+				version: "1.2.3",
+				target,
+				releaseBaseUrl: "https://example.invalid/exact",
+				fetcher: testFetcher(async (url) => {
+					urls.push(String(url));
+					return new Response(String(url).endsWith(".txt") ? manifest : archive);
+				}),
+			});
+			expect(urls).toEqual([
+				"https://example.invalid/exact/clawdi-cli-manifest-v2.txt",
+				`https://example.invalid/exact/${nativeAssetName(target)}`,
+			]);
+			expect(readFileSync(join(staged.stageDir, executable), "utf8")).toBe("native fixture\n");
+			expect(readFileSync(join(staged.stageDir, "clawdi-cli-manifest-v2.txt"), "utf8")).toBe(
+				manifest,
+			);
+			expect(
+				existsSync(join(staged.stageDir, executable === "clawdi" ? "clawdi.exe" : "clawdi")),
+			).toBeFalse();
+		},
+	);
 });

@@ -27,6 +27,7 @@ import {
 	currentNativeCompiledIdentity,
 	type NativeCompiledIdentity,
 	nativeInstallManifestName,
+	nativeInstallManifestPath,
 	nativeVersionDirectoryName,
 	parseNativeInstallManifest,
 	validateNativeInstallIdentity,
@@ -144,7 +145,7 @@ export async function downloadAndStageNativeRelease(input: {
 	);
 	const fetcher = input.fetcher ?? fetch;
 	try {
-		const manifestUrl = `${input.releaseBaseUrl}/${nativeInstallManifestName(input.target)}`;
+		const manifestUrl = `${input.releaseBaseUrl}/${nativeInstallManifestName()}`;
 		const manifestResponse = await fetcher(manifestUrl, {
 			signal: downloadAbort.signal,
 			redirect: "follow",
@@ -194,7 +195,7 @@ export async function downloadAndStageNativeRelease(input: {
 			await extractNativeArchive(stageDir, archive, executableName);
 			validateStagedResources(stageDir);
 			chmodSync(join(stageDir, executableName), 0o755);
-			writeFileSync(join(stageDir, nativeInstallManifestName(input.target)), manifestText, {
+			writeFileSync(join(stageDir, nativeInstallManifestName()), manifestText, {
 				mode: 0o644,
 			});
 			return { stageDir, manifest: manifestText, version: input.version, target: input.target };
@@ -457,7 +458,7 @@ function validateInstalledVersion(directory: string, identity: NativeCompiledIde
 }
 
 function validateVersionManifest(directory: string, identity: NativeCompiledIdentity): string {
-	const path = join(directory, nativeInstallManifestName(identity.target));
+	const path = nativeInstallManifestPath(directory, identity.target);
 	const manifestFile = lstatSync(path);
 	if (!manifestFile.isFile()) throw new Error("native version manifest is not a regular file");
 	if (manifestFile.size > MAX_NATIVE_MANIFEST_BYTES) {

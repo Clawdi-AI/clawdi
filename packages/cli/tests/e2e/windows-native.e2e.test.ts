@@ -88,6 +88,12 @@ const enabled = process.platform === "win32" && testRoot && nativeBinary;
 					.map((entry) => `${entry}-win32-x64`)
 					.sort(),
 			);
+			// Both PowerShell and the staged CLI tolerate future targets and metadata.
+			const manifestPath = join(process.env.CLAWDI_RELEASE_BASE, "clawdi-cli-manifest-v2.txt");
+			writeFileSync(
+				manifestPath,
+				`${readFileSync(manifestPath, "utf8")}metadata\tfuture\nartifact\tfreebsd-x64\tfuture\tunknown\n`,
+			);
 			const installedVersions = readdirSync(join(nativeRoot, "versions")).sort();
 			const installedDirectory = realpathSync.native(current);
 			const reinstall = await runAsync("powershell.exe", [
