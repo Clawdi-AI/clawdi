@@ -1,5 +1,6 @@
 import type { HostedDeployWallet, HostedWalletBinding } from "@clawdi/shared/api";
 import { parsePositiveInteger } from "../lib/cli-options";
+import { mapHttpError } from "../lib/errors";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
 import { requireAuth } from "../lib/require-auth";
@@ -144,15 +145,8 @@ function safeWalletStatusError(error: unknown): { code: string; message: string 
 		return { code: "not_signed_in", message: "Not signed in. Run `clawdi auth login` first." };
 	}
 	if (error instanceof HostedDeployApiError) {
-		if (error.status === 401) {
-			return {
-				code: "hosted_auth_required",
-				message: "CLI authorization was rejected. Run `clawdi auth login`, then try again.",
-			};
-		}
-		if (error.status === 403) {
-			return { code: "hosted_forbidden", message: "This account can't access the wallet." };
-		}
+		const mapped = mapHttpError(error, "Hosted Wallet");
+		if (mapped) return mapped;
 		return {
 			code:
 				error.status >= 500 || error.status === 0 ? "hosted_unavailable" : "hosted_wallet_error",

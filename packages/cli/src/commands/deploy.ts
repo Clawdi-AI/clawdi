@@ -36,6 +36,7 @@ import {
 import chalk from "chalk";
 import { openInBrowser } from "../lib/browser";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
+import { mapHttpError } from "../lib/errors";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import {
 	HostedDeployApiError,
@@ -1297,15 +1298,8 @@ export function safeDeployError(error: unknown): { code: string; message: string
 					"Could not reach Clawdi. The request may still have been accepted; retry with the same --request-id.",
 			};
 		}
-		if (error.status === 401) {
-			return {
-				code: "hosted_auth_required",
-				message: "CLI authorization was rejected. Run `clawdi auth login`, then try again.",
-			};
-		}
-		if (error.status === 403) {
-			return { code: "hosted_forbidden", message: "This account can't create Cloud Agents." };
-		}
+		const mapped = mapHttpError(error, "Hosted Deploy");
+		if (mapped) return mapped;
 		if (error.status === 402) {
 			return {
 				code: "insufficient_wallet_balance",

@@ -3,6 +3,7 @@ import * as p from "@clack/prompts";
 import type { DeployComponents, HostedDeployOperation } from "@clawdi/shared/api";
 import { computeFundingMode, isComputeSubscriptionRenewing } from "@clawdi/shared/view";
 import { requireUuid } from "../lib/cli-options";
+import { mapHttpError } from "../lib/errors";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
 import { AuthorizationRequiredError, requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
@@ -21,12 +22,9 @@ export type AgentRemoveOptions = {
 function cloudAgentError(error: unknown): never {
 	if (error instanceof HostedDeployApiError) {
 		if (error.status === 0) throw error;
-		if (error.status === 401)
-			throw new AuthorizationRequiredError(
-				"Cloud Agent authorization required. Sign in with `clawdi auth login`.",
-			);
-		if (error.status === 403)
-			throw new Error("Cloud Agent authorization required. Sign in with `clawdi auth login`.");
+		const mapped = mapHttpError(error, "Cloud Agent");
+		if (mapped?.exitCode === 4) throw new AuthorizationRequiredError(mapped.message);
+		if (mapped) throw new Error(mapped.message);
 		if (error.status === 404)
 			throw new Error("Cloud Agent or operation not found. Check `clawdi agent list`.");
 		if (error.status === 409 || error.status === 412 || error.status === 428)

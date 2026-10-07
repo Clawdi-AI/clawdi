@@ -69,7 +69,7 @@ describe("actionable CLI errors", () => {
 		expect(result.status).toBe(4);
 		expect(result.stdout).toBe("");
 		expect(result.stderr).toContain(
-			"Not signed in, or your session expired. Run `clawdi auth login`.",
+			"CLI authorization was rejected. Run `clawdi auth login`, then try again.",
 		);
 		if (debug) {
 			expect(result.stderr).toContain("HTTP 401");
@@ -81,17 +81,24 @@ describe("actionable CLI errors", () => {
 		}
 	});
 
-	it("does not repeat a hint that matches the API error body", () => {
+	it("maps forbidden API errors to dashboard permission guidance", () => {
 		const result = runError(`
 			import {ApiError} from ${source("lib/api-client.ts")};
 			handleError(new ApiError({status: 403, body: "Permission denied.", hint: "Permission denied."}));
 		`);
 		expect(result.status).toBe(1);
-		expect(result.stderr.match(/Permission denied\./g)).toHaveLength(1);
+		expect(result.stderr).toContain(
+			"You don't have permission to perform this action from the CLI. Use the dashboard.",
+		);
+		expect(result.stderr).not.toContain("Permission denied.");
 	});
 
 	it.each([
-		{ status: 401, detail: "API key has expired", expected: "Your API key has expired." },
+		{
+			status: 401,
+			detail: "API key has expired",
+			expected: "CLI authorization was rejected. Run `clawdi auth login`, then try again.",
+		},
 		{
 			status: 410,
 			detail:
@@ -108,7 +115,7 @@ describe("actionable CLI errors", () => {
 			expect(result.status).toBe(status === 401 ? 4 : 1);
 			expect(result.stdout).toBe("");
 			expect(result.stderr).toContain(expected);
-			expect(result.stderr).toContain("--no-open");
+			if (status === 410) expect(result.stderr).toContain("--no-open");
 			expect(result.stderr.match(/clawdi auth login/g)).toHaveLength(1);
 		},
 	);
