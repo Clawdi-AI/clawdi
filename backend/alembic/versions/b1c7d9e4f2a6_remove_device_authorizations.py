@@ -1,7 +1,7 @@
 """remove retired device_authorizations
 
 Revision ID: b1c7d9e4f2a6
-Revises: a8c4f2d9e610
+Revises: d6f2a9c4e810
 Create Date: 2026-10-07
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b1c7d9e4f2a6"
-down_revision: str | Sequence[str] | None = "a8c4f2d9e610"
+down_revision: str | Sequence[str] | None = "d6f2a9c4e810"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
