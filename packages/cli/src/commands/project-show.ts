@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { emitJson } from "../lib/command-output";
 import { authedJson, projectAlias, projectAuthOrExit } from "../lib/project-command-utils";
 import { listProjects, type ProjectBrief, resolveProjectId } from "../lib/project-resolver";
 
@@ -101,7 +102,7 @@ export async function projectShowCommand(
 	};
 
 	if (opts.json) {
-		console.log(JSON.stringify(payload, null, 2));
+		emitJson(payload);
 		return;
 	}
 

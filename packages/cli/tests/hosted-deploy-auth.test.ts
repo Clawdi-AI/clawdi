@@ -159,6 +159,8 @@ describe("Hosted deploy auth boundary", () => {
 			fetch: async (request) => {
 				authorizations.push(request.headers.get("authorization") ?? "");
 				requestUrls.push(request.url);
+				expect(request.headers.has("X-Clawdi-Machine-ID")).toBe(false);
+				expect(request.headers.has("X-Clawdi-Skill-Sync-Protocol")).toBe(false);
 				return request.url.endsWith("/v1/ai-providers")
 					? Response.json({ providers: [] })
 					: Response.json([]);
@@ -224,4 +226,40 @@ describe("Hosted deploy auth boundary", () => {
 		]);
 		expect(await requests[0]?.text()).toBe(await requests[1]?.text());
 	});
+
+	test.each(["3", "2.001", "Sun, 06 Nov 1994 08:49:37 GMT"])(
+		"does not retry checkout for the unsupported Retry-After value %s",
+		async (retryAfter) => {
+			let requests = 0;
+			const delays: number[] = [];
+			const hosted = new HostedDeployClient({
+				baseUrl: "https://deploy.example.test",
+				auth: {
+					getAccessToken: async () => ({
+						token: "opaque-checkout-token",
+						expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+					}),
+				},
+				sleep: async (delay) => {
+					delays.push(delay);
+				},
+				fetch: async () => {
+					requests += 1;
+					return Response.json(
+						{ detail: "A billing operation is already in progress" },
+						{ status: 409, headers: { "Retry-After": retryAfter } },
+					);
+				},
+			});
+
+			await expect(
+				hosted.checkout(
+					{ plan_slug: "compute_basic", funding_source: "stripe" },
+					"checkout-stable",
+				),
+			).rejects.toMatchObject({ status: 409 });
+			expect(requests).toBe(1);
+			expect(delays).toEqual([]);
+		},
+	);
 });

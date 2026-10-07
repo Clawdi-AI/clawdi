@@ -36,6 +36,8 @@ import {
 import chalk from "chalk";
 import { openInBrowser } from "../lib/browser";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
+import { requireUuid } from "../lib/cli-options";
+import { emitJson } from "../lib/command-output";
 import { isAuthorizationRequired, mapHttpError } from "../lib/errors";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import {
@@ -102,9 +104,6 @@ export class DeployInputError extends Error {
 		this.code = code;
 	}
 }
-
-const REQUEST_ID_PATTERN =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function parseDeployCommandOptions(options: DeployCommandOptions): ParsedDeployOptions {
 	let runtime: HostedDeployRuntime | undefined;
@@ -186,8 +185,12 @@ export function parseDeployCommandOptions(options: DeployCommandOptions): Parsed
 	}
 
 	const requestId = options.requestId?.trim();
-	if (requestId && !REQUEST_ID_PATTERN.test(requestId)) {
-		throw new DeployInputError("invalid_request_id", "--request-id must be a UUID.");
+	if (requestId) {
+		try {
+			requireUuid(requestId, "--request-id", { rfc4122: true });
+		} catch {
+			throw new DeployInputError("invalid_request_id", "--request-id must be a UUID.");
+		}
 	}
 	const timezone = options.timezone;
 	if (timezone && !isValidHostedDeployTimezone(timezone)) {
@@ -1370,27 +1373,25 @@ export async function deployCommand(
 						if (!interactive) writeStderr(chalk.gray(event.message));
 					},
 		});
-		if (machineOutput) writeStdout(JSON.stringify(result, null, 2));
+		if (machineOutput) emitJson(result, true, writeStdout);
 	} catch (error) {
 		const safe = safeDeployError(error);
 		const authorizationRequired = isAuthorizationRequired(error);
 		if (machineOutput) {
-			writeStdout(
-				JSON.stringify(
-					authorizationRequired
-						? {
-								schema_version: "clawdi.deploy.v1",
-								status: "authorization_required",
-								authorization: { command: "clawdi auth login" },
-							}
-						: {
-								schema_version: "clawdi.deploy.v1",
-								status: "error",
-								error: safe,
-							},
-					null,
-					2,
-				),
+			emitJson(
+				authorizationRequired
+					? {
+							schema_version: "clawdi.deploy.v1",
+							status: "authorization_required",
+							authorization: { command: "clawdi auth login" },
+						}
+					: {
+							schema_version: "clawdi.deploy.v1",
+							status: "error",
+							error: safe,
+						},
+				true,
+				writeStdout,
 			);
 			process.exitCode = authorizationRequired ? 4 : 1;
 			return;

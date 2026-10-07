@@ -19,7 +19,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import type { SkillSummary } from "../lib/api-schemas";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
-import { commandMessage, commandResult } from "../lib/command-output";
+import { commandMessage, commandResult, emitJson, wantsJson } from "../lib/command-output";
 import { getConfig } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
@@ -185,11 +185,13 @@ export async function skillShow(
 			params: { path: { project_id: projectId, skill_key: key } },
 		}),
 	);
-	console.log(
-		opts.json
-			? JSON.stringify({ schemaVersion: "clawdi.skillShow.v1", project_id: projectId, skill })
-			: `${skill.name} (${skill.skill_key}, v${skill.version})\n${skill.content ?? "No skill content available."}`,
-	);
+	if (opts.json) {
+		emitJson({ schemaVersion: "clawdi.skillShow.v1", project_id: projectId, skill }, false);
+	} else {
+		console.log(
+			`${skill.name} (${skill.skill_key}, v${skill.version})\n${skill.content ?? "No skill content available."}`,
+		);
+	}
 }
 
 async function installGithubSkillForAgent(
@@ -261,8 +263,8 @@ export async function skillList(opts: { json?: boolean; project?: string } = {})
 	}
 	const skills = await fetchAllSkills(api, projectId);
 
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(skills, null, 2));
+	if (wantsJson(opts, { legacyImplicit: true })) {
+		emitJson(skills);
 		return;
 	}
 

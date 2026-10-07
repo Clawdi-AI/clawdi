@@ -40,6 +40,7 @@ import {
 import { ApiClient, unwrap } from "../lib/api-client";
 import { isClerkOAuthAuth } from "../lib/clerk-oauth";
 import { parsePositiveInteger } from "../lib/cli-options";
+import { emitJson } from "../lib/command-output";
 import { getAuth } from "../lib/config";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
 import { PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
@@ -194,7 +195,7 @@ export async function aiProviderListCommand(opts: AiProviderListOptions = {}): P
 			.map((provider) => ({ ...provider, source: "local" })),
 	];
 	if (opts.json) {
-		console.log(JSON.stringify({ ...catalog, providers }, null, 2));
+		emitJson({ ...catalog, providers });
 		return;
 	}
 	if (providers.length === 0) {
@@ -300,12 +301,13 @@ export async function aiProviderEditCommand(
 			}
 		}
 		if (opts.json)
-			console.log(
-				JSON.stringify({
+			emitJson(
+				{
 					schemaVersion: "clawdi.aiProviderEdit.v1",
 					updated: providerId,
 					provider: { ...saved, source: "cloud" },
-				}),
+				},
+				false,
 			);
 		else console.log(chalk.green(`✓ Updated Cloud AI provider ${providerId}`));
 		return;
@@ -379,17 +381,11 @@ export async function aiProviderRemoveCommand(
 		}
 	}
 	if (opts.json) {
-		console.log(
-			JSON.stringify(
-				{
-					schemaVersion: "clawdi.aiProviderRemove.v1",
-					removed: providerId,
-					source: cloud ? "cloud" : "local",
-				},
-				null,
-				2,
-			),
-		);
+		emitJson({
+			schemaVersion: "clawdi.aiProviderRemove.v1",
+			removed: providerId,
+			source: cloud ? "cloud" : "local",
+		});
 		return;
 	}
 	console.log(chalk.green(`✓ Removed AI provider ${providerId}`));
@@ -405,7 +401,7 @@ export async function aiProviderValidateCommand(
 		allowNoAuthPublic: Boolean(opts.allowNoAuthPublic),
 	});
 	if (opts.json) {
-		console.log(JSON.stringify(result, null, 2));
+		emitJson(result);
 	}
 	for (const warning of result.warnings) {
 		if (!opts.json) console.error(chalk.yellow(`warning: ${warning}`));
@@ -443,13 +439,12 @@ export async function aiProviderExportCommand(opts: AiProviderExportOptions = {}
 		const passphrase = readSecretExportPassphrase(opts.secretPassphraseEnv);
 		exportPayload.encrypted_secrets = encryptSecretBundle(passphrase, collectEnvSecrets(catalog));
 	}
-	const output = `${JSON.stringify(exportPayload, null, 2)}\n`;
 	if (opts.out) {
-		writePrivateFile(opts.out, output);
+		writePrivateFile(opts.out, `${JSON.stringify(exportPayload, null, 2)}\n`);
 		console.log(chalk.green(`✓ Exported AI provider catalog to ${opts.out}`));
 		return;
 	}
-	process.stdout.write(output);
+	emitJson(exportPayload);
 }
 
 export async function aiProviderImportCommand(
@@ -493,7 +488,7 @@ export async function aiProviderImportCommand(
 	writeAiProviderCatalog(next);
 	if (secretImport) writePrivateFile(secretImport.out, secretImport.content);
 	if (opts.json) {
-		console.log(JSON.stringify({ imported: incoming.providers.length }, null, 2));
+		emitJson({ imported: incoming.providers.length });
 		return;
 	}
 	console.log(chalk.green(`✓ Imported ${incoming.providers.length} AI provider(s)`));
@@ -525,7 +520,7 @@ export async function aiProviderTestCommand(
 		provider_probe: providerProbe,
 	};
 	if (opts.json) {
-		console.log(JSON.stringify(result, null, 2));
+		emitJson(result);
 		return;
 	}
 	console.log(`Provider: ${provider.id}`);
@@ -570,16 +565,10 @@ export async function aiProviderImportAuthCommand(
 	const nextProvider = await storeAgentProfileForProvider(provider, collected);
 	writeAiProviderCatalog(upsertAiProvider(catalog, nextProvider, true));
 	if (opts.json) {
-		console.log(
-			JSON.stringify(
-				{
-					provider_id: providerId,
-					auth: nextProvider.auth,
-				},
-				null,
-				2,
-			),
-		);
+		emitJson({
+			provider_id: providerId,
+			auth: nextProvider.auth,
+		});
 		return;
 	}
 	console.log(
@@ -637,7 +626,7 @@ export async function aiProviderConnectCommand(
 		dry_run: Boolean(opts.dryRun),
 	};
 	if (opts.dryRun) {
-		console.log(JSON.stringify(request, null, 2));
+		emitJson(request);
 		return;
 	}
 	try {
@@ -655,7 +644,7 @@ export async function aiProviderConnectCommand(
 			},
 		);
 		if (opts.json) {
-			console.log(JSON.stringify(started, null, 2));
+			emitJson(started);
 			return;
 		}
 		console.log(chalk.green(`✓ Started OAuth for ${providerId}`));
@@ -710,7 +699,7 @@ export async function aiProviderCompleteOAuthCommand(
 	const completion = parseOAuthCompletion(opts);
 	const updated = await completeProviderOAuth(providerId, completion);
 	if (opts.json) {
-		console.log(JSON.stringify(updated, null, 2));
+		emitJson(updated);
 		return;
 	}
 	console.log(chalk.green(`✓ Connected OAuth profile for ${providerId}`));
@@ -1724,13 +1713,7 @@ function printMutationResult(
 	schemaVersion?: string,
 ): void {
 	if (json) {
-		console.log(
-			JSON.stringify(
-				{ ...(schemaVersion ? { schemaVersion } : {}), [action]: provider.id, provider },
-				null,
-				2,
-			),
-		);
+		emitJson({ ...(schemaVersion ? { schemaVersion } : {}), [action]: provider.id, provider });
 		return;
 	}
 	console.log(chalk.green(`✓ ${capitalize(action)} AI provider ${provider.id}`));

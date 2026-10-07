@@ -125,21 +125,24 @@ Scope:
 			await vaultAttach(vault, opts);
 		});
 
-	vaultCmd
-		.command("detach <vault>")
-		.alias("unlink")
-		.description("Remove a project's access to a vault without deleting keys")
-		.requiredOption("-p, --project <id-or-slug>", "Project that should stop using this vault")
-		.option("-y, --yes", "Confirm detaching the vault")
-		.addHelpText(
-			"after",
-			"\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault unlink providers --project old-agent",
-		)
-		.option("--json", "Output as JSON")
-		.action(async (vault, opts) => {
-			const { vaultDetach } = await import("../../commands/vault.js");
-			await vaultDetach(vault, opts);
-		});
+	const registerVaultDetach = (name: string, hidden: boolean) => {
+		const command = vaultCmd.command(`${name} <vault>`, { hidden });
+		command
+			.description("Remove a project's access to a vault without deleting keys")
+			.requiredOption("-p, --project <id-or-slug>", "Project that should stop using this vault")
+			.option("-y, --yes", "Confirm detaching the vault")
+			.addHelpText(
+				"after",
+				"\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault detach providers --project old-agent",
+			)
+			.option("--json", "Output as JSON")
+			.action(async (vault, opts) => {
+				const { vaultDetach } = await import("../../commands/vault.js");
+				await vaultDetach(vault, opts);
+			});
+	};
+	registerVaultDetach("detach", false);
+	registerVaultDetach("unlink", true);
 
 	vaultCmd
 		.command("rm <key>")

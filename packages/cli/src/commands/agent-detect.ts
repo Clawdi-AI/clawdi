@@ -1,6 +1,7 @@
 import type { DesktopAgentType, DesktopDetectedAgent } from "@clawdi/shared/desktop";
 import { allAdapterEntries } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
+import { emitJson, wantsJson } from "../lib/command-output";
 import { getAuth } from "../lib/config";
 import {
 	bindEnvironmentRegistrationUser,
@@ -87,12 +88,12 @@ export async function inspectDesktopRegistration(
 }
 
 export async function agentDetectCommand(opts: { json?: boolean } = {}): Promise<void> {
-	const jsonOutput = opts.json || !process.stdout.isTTY;
+	const jsonOutput = wantsJson(opts, { legacyImplicit: true });
 	const agents = await detectLocalAgents(allAdapterEntries(), {
 		inspectRegistration: jsonOutput ? inspectDesktopRegistration : undefined,
 	});
 	if (jsonOutput) {
-		console.log(JSON.stringify({ schemaVersion: "clawdi.agentDetection.v1", agents }, null, 2));
+		emitJson({ schemaVersion: "clawdi.agentDetection.v1", agents });
 		return;
 	}
 

@@ -3,6 +3,7 @@ import * as p from "@clack/prompts";
 import type { DeployComponents, HostedDeployOperation } from "@clawdi/shared/api";
 import { computeFundingMode, isComputeSubscriptionRenewing } from "@clawdi/shared/view";
 import { requireUuid } from "../lib/cli-options";
+import { emitJson } from "../lib/command-output";
 import { isAuthorizationRequired, mapHttpError } from "../lib/errors";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
@@ -85,17 +86,22 @@ export async function agentLifecycle(
 		checkOperation(operation);
 		if (opts.wait !== false) operation = await waitForOperation(client, operation);
 		const status = operation.done ? "succeeded" : "accepted";
-		console.log(
-			opts.json
-				? JSON.stringify({
-						schemaVersion: `clawdi.agent${action[0]?.toUpperCase()}${action.slice(1)}.v1`,
-						id: agentId,
-						deployment_id: deployment.resource.id,
-						operation_name: operation.name,
-						status,
-					})
-				: `Cloud Agent ${agentId}: ${action} ${status}. Operation: ${sanitizeMetadata(operation.name)}.`,
-		);
+		if (opts.json) {
+			emitJson(
+				{
+					schemaVersion: `clawdi.agent${action[0]?.toUpperCase()}${action.slice(1)}.v1`,
+					id: agentId,
+					deployment_id: deployment.resource.id,
+					operation_name: operation.name,
+					status,
+				},
+				false,
+			);
+		} else {
+			console.log(
+				`Cloud Agent ${agentId}: ${action} ${status}. Operation: ${sanitizeMetadata(operation.name)}.`,
+			);
+		}
 	} catch (error) {
 		cloudAgentError(error);
 	}
@@ -146,20 +152,25 @@ export async function removeCloudAgent(agentId: string, opts: AgentRemoveOptions
 		const operation = "name" in result ? result : null;
 		if (operation) checkOperation(operation);
 		const status = operation && !operation.done ? "accepted" : "deleted";
-		console.log(
-			opts.json
-				? JSON.stringify({
-						schemaVersion: "clawdi.agentRm.v1",
-						id: agentId,
-						status,
-						deployment_id: deployment.resource.id,
-						operation_name: operation?.name ?? null,
-						subscription_choice: choice,
-					})
-				: status === "accepted"
+		if (opts.json) {
+			emitJson(
+				{
+					schemaVersion: "clawdi.agentRm.v1",
+					id: agentId,
+					status,
+					deployment_id: deployment.resource.id,
+					operation_name: operation?.name ?? null,
+					subscription_choice: choice,
+				},
+				false,
+			);
+		} else {
+			console.log(
+				status === "accepted"
 					? `Cloud Agent ${agentId} deletion accepted. Check \`clawdi agent list\` for completion. Operation: ${sanitizeMetadata(operation?.name ?? "")}.`
 					: `Deleted Cloud Agent ${agentId}.`,
-		);
+			);
+		}
 	} catch (error) {
 		cloudAgentError(error);
 	}

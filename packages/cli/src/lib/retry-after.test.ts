@@ -37,4 +37,20 @@ describe("parseRetryAfter", () => {
 		expect(parseRetryAfter(hugeDelta)).toBe(MAX_SAFE_RETRY_AFTER_MS);
 		expect(parseRetryAfter(hugeDelta, { maxMs: 300_000 })).toBe(300_000);
 	});
+
+	it.each([
+		[null, null],
+		["", 0],
+		[" ", 0],
+		["0.5", 500],
+		["2", 2000],
+		["2.001", null],
+		["1e0", 1000],
+		["-1", null],
+		["Infinity", null],
+		["later", null],
+		["Sun, 06 Nov 1994 08:49:37 GMT", null],
+	])("preserves Hosted numeric checkout policy for %s", (value, expected) => {
+		expect(parseRetryAfter(value, { format: "legacy-number", maxMs: 2000 })).toBe(expected);
+	});
 });

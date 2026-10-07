@@ -10,15 +10,23 @@ const HTTP_DATE_PATTERN = new RegExp(
 /** Parse RFC Retry-After (delta-seconds or HTTP-date) into milliseconds. */
 export function parseRetryAfter(
 	value: string | null,
-	options: { now?: number; maxMs?: number } = {},
+	options: { now?: number; maxMs?: number; format?: "rfc" | "legacy-number" } = {},
 ): number | null {
 	if (value === null) return null;
-	const raw = value.trim();
-	if (!raw) return null;
 	const maxMs = options.maxMs ?? MAX_SAFE_RETRY_AFTER_MS;
 	if (!Number.isSafeInteger(maxMs) || maxMs < 0) {
 		throw new RangeError("Retry-After maxMs must be a non-negative safe integer");
 	}
+	if (options.format === "legacy-number") {
+		// Hosted checkout shipped Number() parsing and rejects delays over its
+		// bound. Preserve that policy while sharing the Retry-After parser.
+		const seconds = Number(value);
+		if (!Number.isFinite(seconds) || seconds < 0) return null;
+		const delayMs = seconds * 1000;
+		return delayMs <= maxMs ? delayMs : null;
+	}
+	const raw = value.trim();
+	if (!raw) return null;
 
 	if (/^\d+$/.test(raw)) {
 		// Parse as bigint so an arbitrarily large but valid delta never becomes

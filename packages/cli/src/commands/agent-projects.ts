@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import { parsePositiveInteger } from "../lib/cli-options";
-import { commandMessage, commandResult } from "../lib/command-output";
+import { commandMessage, commandResult, emitJson } from "../lib/command-output";
 import { authedJson, projectAlias, requireProjectAuth } from "../lib/project-command-utils";
 import { listProjects, type ProjectBrief, resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -39,19 +39,13 @@ export async function agentProjectsListCommand(
 		projectsById.set(project.id, project);
 	}
 	if (opts.json) {
-		console.log(
-			JSON.stringify(
-				{
-					agent_id: agentId,
-					bindings: rows.map((row) => ({
-						...row,
-						project: projectsById.get(row.project_id) ?? null,
-					})),
-				},
-				null,
-				2,
-			),
-		);
+		emitJson({
+			agent_id: agentId,
+			bindings: rows.map((row) => ({
+				...row,
+				project: projectsById.get(row.project_id) ?? null,
+			})),
+		});
 		return;
 	}
 	const primary = rows.find((row) => row.binding_type === "primary") ?? null;

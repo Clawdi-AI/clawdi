@@ -1,9 +1,9 @@
 import chalk from "chalk";
+import { emitJson } from "../lib/command-output";
 
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
-import { isInteractive } from "../lib/tty";
 
 interface MemberRow {
 	id: string;
@@ -51,17 +51,13 @@ export async function projectMembersCommand(
 			process.exitCode = 1;
 			return;
 		}
-		if (!opts.yes) {
-			if (!isInteractive()) {
-				console.error("--yes will be required in a non-interactive shell starting in 0.16");
-			} else if (
-				!(await confirmOrRequireYes(
-					`Remove ${matches[0].user_email ?? matches[0].user_id} from ${projectArg}?`,
-					{ action: "remove this project member" },
-				))
-			) {
-				return;
-			}
+		if (
+			!(await confirmOrRequireYes(
+				`Remove ${matches[0].user_email ?? matches[0].user_id} from ${projectArg}?`,
+				{ yes: opts.yes, action: "remove this project member", legacyNonInteractive: true },
+			))
+		) {
+			return;
 		}
 		const removed = await authedJson<{ status: string }>(
 			ctx.apiUrl,
@@ -70,17 +66,11 @@ export async function projectMembersCommand(
 			{ method: "DELETE" },
 		);
 		if (opts.json) {
-			console.log(
-				JSON.stringify(
-					{
-						project_id: projectId,
-						removed_user_id: matches[0].user_id,
-						...removed,
-					},
-					null,
-					2,
-				),
-			);
+			emitJson({
+				project_id: projectId,
+				removed_user_id: matches[0].user_id,
+				...removed,
+			});
 			return;
 		}
 		console.log(`${chalk.green("✓")} Removed ${matches[0].user_email ?? matches[0].user_id}.`);
@@ -90,7 +80,7 @@ export async function projectMembersCommand(
 
 	const members = await fetchMembers(ctx.apiUrl, ctx.apiKey, projectId);
 	if (opts.json) {
-		console.log(JSON.stringify({ project_id: projectId, members }, null, 2));
+		emitJson({ project_id: projectId, members });
 		return;
 	}
 	if (members.length === 0) {
@@ -133,7 +123,7 @@ export async function projectLeaveCommand(
 		{ method: "POST" },
 	);
 	if (opts.json) {
-		console.log(JSON.stringify({ project_id: projectId, ...result }, null, 2));
+		emitJson({ project_id: projectId, ...result });
 		return;
 	}
 	console.log(`${chalk.green("✓")} Left ${projectArg}.`);
@@ -150,17 +140,13 @@ export async function projectUnshareCommand(
 	if (!ctx) return;
 
 	const projectId = await resolveProjectId(ctx.apiUrl, ctx.apiKey, projectArg);
-	if (!opts.yes) {
-		if (!isInteractive()) {
-			console.error("--yes will be required in a non-interactive shell starting in 0.16");
-		} else if (
-			!(await confirmOrRequireYes(
-				`Revoke all links, cancel all invites, and remove all viewers from ${projectArg}?`,
-				{ action: "stop sharing this project" },
-			))
-		) {
-			return;
-		}
+	if (
+		!(await confirmOrRequireYes(
+			`Revoke all links, cancel all invites, and remove all viewers from ${projectArg}?`,
+			{ yes: opts.yes, action: "stop sharing this project", legacyNonInteractive: true },
+		))
+	) {
+		return;
 	}
 	const result = await authedJson<{
 		links_revoked: number;
@@ -168,7 +154,7 @@ export async function projectUnshareCommand(
 		invitations_cancelled: number;
 	}>(ctx.apiUrl, ctx.apiKey, `/v1/projects/${projectId}/unshare`, { method: "POST" });
 	if (opts.json) {
-		console.log(JSON.stringify({ project_id: projectId, ...result }, null, 2));
+		emitJson({ project_id: projectId, ...result });
 		return;
 	}
 	console.log(`${chalk.green("✓")} Stopped project sharing for ${projectArg}.`);

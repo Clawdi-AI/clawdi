@@ -4,7 +4,6 @@ import { commandMessage, commandResult } from "../lib/command-output";
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
-import { isInteractive } from "../lib/tty";
 
 /**
  * `clawdi project share-links <project> [--revoke <id|prefix>]`
@@ -83,21 +82,19 @@ export async function projectShareLinksCommand(
 			}
 			linkId = matches[0].id;
 		}
-		if (!opts.yes) {
-			if (!isInteractive()) {
-				console.error("--yes will be required in a non-interactive shell starting in 0.16");
-			} else if (
-				!(await confirmOrRequireYes(`Revoke share link ${linkId}?`, {
-					action: "revoke this project share link",
-				}))
-			) {
-				commandResult(opts.json, "clawdi.projectShareLinks.v1", {
-					project_id: projectId,
-					id: linkId,
-					status: "cancelled",
-				});
-				return;
-			}
+		if (
+			!(await confirmOrRequireYes(`Revoke share link ${linkId}?`, {
+				yes: opts.yes,
+				action: "revoke this project share link",
+				legacyNonInteractive: true,
+			}))
+		) {
+			commandResult(opts.json, "clawdi.projectShareLinks.v1", {
+				project_id: projectId,
+				id: linkId,
+				status: "cancelled",
+			});
+			return;
 		}
 		const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
 			`/v1/projects/${projectId}/share-links/${linkId}`,

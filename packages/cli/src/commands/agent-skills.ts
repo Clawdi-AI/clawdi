@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
+import { isUuid, requireUuid } from "../lib/cli-options";
+import { emitJson, wantsJson } from "../lib/command-output";
 import { HostedDeployClient } from "../lib/hosted-deploy-client";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata, stripTerminalEscapes } from "../lib/sanitize";
-import { isInteractive } from "../lib/tty";
 
 function requireAgentId(agentId: string): void {
 	requireAuth();
-	if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(agentId)) {
+	if (!isUuid(agentId)) {
 		throw new Error("Use the full remote Cloud Agent UUID, not a local --agent type.");
 	}
 }
@@ -40,7 +41,7 @@ async function hostedWorkspace(agentId: string) {
 }
 
 function print(value: unknown): void {
-	console.log(JSON.stringify(value, null, 2));
+	emitJson(value);
 }
 
 export async function agentSkillsList(agentId: string, opts: { json?: boolean } = {}) {
@@ -51,7 +52,7 @@ export async function agentSkillsList(agentId: string, opts: { json?: boolean } 
 		Boolean(desired.removal_failures?.length) ||
 		workspace.items?.some((item) => item.status === "failed");
 	if (failed) process.exitCode = 1;
-	if (opts.json || !process.stdout.isTTY) {
+	if (wantsJson(opts, { legacyImplicit: true })) {
 		print({ ...desired, workspace });
 		return;
 	}
@@ -91,7 +92,7 @@ export async function agentSkillsRead(
 				params: { path: { project_id: skill.project_id, skill_key: skill.source_skill_key } },
 			}),
 		);
-		if (opts.json || !process.stdout.isTTY) print({ ...skill, detail });
+		if (wantsJson(opts, { legacyImplicit: true })) print({ ...skill, detail });
 		else console.log(stripTerminalEscapes(detail.content ?? "Skill content is unavailable."));
 		return;
 	}
@@ -100,7 +101,7 @@ export async function agentSkillsRead(
 	}
 	const { client, deploymentId } = await hostedWorkspace(agentId);
 	const detail = await client.getWorkspaceSkill(deploymentId, skillKey);
-	if (opts.json || !process.stdout.isTTY) print({ ...skill, detail });
+	if (wantsJson(opts, { legacyImplicit: true })) print({ ...skill, detail });
 	else console.log(stripTerminalEscapes(detail.content));
 }
 
@@ -128,7 +129,7 @@ export async function agentSkillsInstall(agentId: string, opts: InstallOptions) 
 				params: { path: { agent_id: agentId, skill_id: opts.library } },
 			}),
 		);
-		if (opts.json || !process.stdout.isTTY) print({ status: "accepted", ...result });
+		if (wantsJson(opts, { legacyImplicit: true })) print({ status: "accepted", ...result });
 		else
 			console.log(
 				`Library skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
@@ -156,16 +157,14 @@ export async function agentSkillsRemove(
 		throw new Error(
 			"This skill is managed by its linked project or runtime and cannot be removed here.",
 		);
-	if (!opts.yes) {
-		if (!isInteractive()) {
-			console.error("--yes will be required in a non-interactive shell starting in 0.16");
-		} else if (
-			!(await confirmOrRequireYes(`Remove remote skill ${sanitizeMetadata(skillKey)}?`, {
-				action: "remove this remote skill",
-			}))
-		) {
-			return;
-		}
+	if (
+		!(await confirmOrRequireYes(`Remove remote skill ${sanitizeMetadata(skillKey)}?`, {
+			yes: opts.yes,
+			action: "remove this remote skill",
+			legacyNonInteractive: true,
+		}))
+	) {
+		return;
 	}
 	if (skill?.authority === "cloud" && skill.skill_id) {
 		if (opts.requestId || opts.resourceVersion)
@@ -175,7 +174,7 @@ export async function agentSkillsRemove(
 				params: { path: { agent_id: agentId, skill_id: skill.skill_id } },
 			}),
 		);
-		if (opts.json || !process.stdout.isTTY) print({ status: "accepted", ...result });
+		if (wantsJson(opts, { legacyImplicit: true })) print({ status: "accepted", ...result });
 		else
 			console.log(
 				`Library skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
@@ -202,7 +201,9 @@ async function mutateGithubSkill(
 	json?: boolean,
 ) {
 	const requestId = requestedId ?? randomUUID();
-	if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId)) {
+	try {
+		requireUuid(requestId, "--request-id");
+	} catch {
 		throw new Error("--request-id must be a UUID; reuse it only for the same request.");
 	}
 	if (
@@ -235,7 +236,7 @@ async function mutateGithubSkill(
 		const result = source
 			? await client.installWorkspaceSkill(deploymentId, source, resourceVersion, requestId)
 			: await client.removeWorkspaceSkill(deploymentId, skillKey ?? "", resourceVersion, requestId);
-		if (json || !process.stdout.isTTY) {
+		if (wantsJson({ json }, { legacyImplicit: true })) {
 			print({
 				acceptance: "accepted",
 				request_id: requestId,

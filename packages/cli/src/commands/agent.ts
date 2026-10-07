@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
+import { emitJson } from "../lib/command-output";
 import { HostedDeployClient } from "../lib/hosted-deploy-client";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
@@ -44,16 +45,10 @@ export async function agentList(opts: { json?: boolean } = {}): Promise<void> {
 		};
 	});
 	if (opts.json) {
-		console.log(
-			JSON.stringify(
-				{
-					schemaVersion: "clawdi.agentList.v1",
-					agents: inventory,
-				},
-				null,
-				2,
-			),
-		);
+		emitJson({
+			schemaVersion: "clawdi.agentList.v1",
+			agents: inventory,
+		});
 		return;
 	}
 	if (agents.length === 0) {
@@ -120,13 +115,16 @@ export async function agentRm(agentId: string, opts: AgentRemoveOptions = {}): P
 		}
 		throw new Error("Could not remove the agent. Please retry or run `clawdi doctor`.");
 	}
-	console.log(
-		opts.json
-			? JSON.stringify({
-					schemaVersion: "clawdi.agentRm.v1",
-					id: agentId,
-					status: "disconnected",
-				})
-			: `Disconnected agent ${agentId} and archived its workspace.`,
-	);
+	if (opts.json) {
+		emitJson(
+			{
+				schemaVersion: "clawdi.agentRm.v1",
+				id: agentId,
+				status: "disconnected",
+			},
+			false,
+		);
+	} else {
+		console.log(`Disconnected agent ${agentId} and archived its workspace.`);
+	}
 }

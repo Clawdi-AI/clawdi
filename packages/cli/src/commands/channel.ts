@@ -2,6 +2,7 @@ import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { parsePositiveInteger, requireUuid } from "../lib/cli-options";
+import { emitJson } from "../lib/command-output";
 import { askYesNo, confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { isInteractive } from "../lib/tty";
@@ -77,16 +78,19 @@ export async function channelUnlinkCommand(
 			params: { path: { account_id: accountId, link_id: opts.link } },
 		}),
 	);
-	console.log(
-		opts.json
-			? JSON.stringify({
-					schemaVersion: "clawdi.channelUnlink.v1",
-					account_id: accountId,
-					link_id: opts.link,
-					status: "unlinked",
-				})
-			: `Unlinked agent link ${opts.link} from channel ${accountId}.`,
-	);
+	if (opts.json) {
+		emitJson(
+			{
+				schemaVersion: "clawdi.channelUnlink.v1",
+				account_id: accountId,
+				link_id: opts.link,
+				status: "unlinked",
+			},
+			false,
+		);
+	} else {
+		console.log(`Unlinked agent link ${opts.link} from channel ${accountId}.`);
+	}
 }
 
 export async function channelUnpairCommand(
@@ -108,16 +112,19 @@ export async function channelUnpairCommand(
 			params: { path: { account_id: accountId, binding_id: opts.binding } },
 		}),
 	);
-	console.log(
-		opts.json
-			? JSON.stringify({
-					schemaVersion: "clawdi.channelUnpair.v1",
-					account_id: accountId,
-					binding_id: opts.binding,
-					status: "unpaired",
-				})
-			: `Unpaired chat binding ${opts.binding} from channel ${accountId}.`,
-	);
+	if (opts.json) {
+		emitJson(
+			{
+				schemaVersion: "clawdi.channelUnpair.v1",
+				account_id: accountId,
+				binding_id: opts.binding,
+				status: "unpaired",
+			},
+			false,
+		);
+	} else {
+		console.log(`Unpaired chat binding ${opts.binding} from channel ${accountId}.`);
+	}
 }
 
 export async function channelListCommand(opts: JsonOption = {}): Promise<void> {
@@ -125,7 +132,7 @@ export async function channelListCommand(opts: JsonOption = {}): Promise<void> {
 	const api = new ApiClient();
 	const channels = unwrap(await api.GET("/v1/channels"));
 	if (opts.json) {
-		console.log(JSON.stringify({ channels }, null, 2));
+		emitJson({ channels });
 		return;
 	}
 	if (channels.length === 0) {
@@ -151,7 +158,7 @@ export async function channelAvailableCommand(opts: JsonOption = {}): Promise<vo
 	const api = new ApiClient();
 	const pool = unwrap(await api.GET("/v1/channels/bot-pool"));
 	if (opts.json) {
-		console.log(JSON.stringify({ bot_pool: pool }, null, 2));
+		emitJson({ bot_pool: pool });
 		return;
 	}
 	printBotPool(pool);
@@ -166,7 +173,7 @@ export async function channelGetCommand(accountId: string, opts: JsonOption = {}
 		}),
 	);
 	if (opts.json) {
-		console.log(JSON.stringify({ channel }, null, 2));
+		emitJson({ channel });
 		return;
 	}
 	printChannel(channel);
@@ -189,7 +196,7 @@ export async function channelCreateCommand(
 	};
 	const channel = unwrap(await api.POST("/v1/channels", { body }));
 	if (opts.json) {
-		console.log(JSON.stringify({ channel }, null, 2));
+		emitJson({ channel });
 		return;
 	}
 	printCreatedChannel(channel);
@@ -204,7 +211,7 @@ export async function channelLinksCommand(accountId: string, opts: JsonOption = 
 		}),
 	);
 	if (opts.json) {
-		console.log(JSON.stringify({ account_id: accountId, links }, null, 2));
+		emitJson({ account_id: accountId, links });
 		return;
 	}
 	if (links.length === 0) {
@@ -231,7 +238,7 @@ export async function channelLinkCommand(
 		}),
 	);
 	if (opts.json) {
-		console.log(JSON.stringify({ link }, null, 2));
+		emitJson({ link });
 		return;
 	}
 	printAgentLink(link);
@@ -249,7 +256,7 @@ export async function channelRotateTokenCommand(
 		}),
 	);
 	if (opts.json) {
-		console.log(JSON.stringify({ link }, null, 2));
+		emitJson({ link });
 		return;
 	}
 	printRotatedAgentLink(link);
@@ -278,7 +285,7 @@ export async function channelPairCodeCommand(
 		}),
 	);
 	if (opts.json) {
-		console.log(JSON.stringify({ pair_code: pairCode }, null, 2));
+		emitJson({ pair_code: pairCode });
 		return;
 	}
 	printPairCode(pairCode);
@@ -311,7 +318,7 @@ export async function channelSendCommand(
 		}),
 	);
 	if (opts.json) {
-		console.log(JSON.stringify({ message }, null, 2));
+		emitJson({ message });
 		return;
 	}
 	printSentMessage(message);
@@ -329,7 +336,7 @@ export async function channelBindingsCommand(
 		}),
 	);
 	if (opts.json) {
-		console.log(JSON.stringify({ account_id: accountId, bindings }, null, 2));
+		emitJson({ account_id: accountId, bindings });
 		return;
 	}
 	if (bindings.length === 0) {
@@ -364,7 +371,7 @@ export async function channelSyncCommandsCommand(
 		}),
 	);
 	if (opts.json) {
-		console.log(JSON.stringify({ sync: synced }, null, 2));
+		emitJson({ sync: synced });
 		return;
 	}
 	printSyncedCommands(synced);
@@ -394,7 +401,7 @@ export async function channelDeleteCommand(
 		}),
 	);
 	if (opts.json) {
-		console.log(JSON.stringify({ account_id: accountId, deleted: true }, null, 2));
+		emitJson({ account_id: accountId, deleted: true });
 		return;
 	}
 	console.log(`${chalk.green("✓")} Archived channel ${accountId}.`);

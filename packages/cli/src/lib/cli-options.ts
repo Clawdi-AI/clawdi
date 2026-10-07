@@ -1,8 +1,22 @@
 import { InvalidArgumentError } from "commander";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RFC4122_RE =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Return whether a value is a complete UUID. */
+export function isUuid(value: string): boolean {
+	return UUID_RE.test(value);
+}
+
 /** Require a complete UUID before passing an identifier to the Cloud API. */
-export function requireUuid(value: string, label: string): string {
-	if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+export function requireUuid(
+	value: string,
+	label: string,
+	options: { rfc4122?: boolean } = {},
+): string {
+	const valid = options.rfc4122 ? UUID_RFC4122_RE.test(value) : isUuid(value);
+	if (!valid) {
 		throw new Error(`${label} must be a valid UUID.`);
 	}
 	return value;

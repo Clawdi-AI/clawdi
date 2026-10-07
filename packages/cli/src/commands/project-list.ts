@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { emitJson } from "../lib/command-output";
 
 import { projectAlias, projectAuthOrExit } from "../lib/project-command-utils";
 import { listProjects } from "../lib/project-resolver";
@@ -57,10 +58,20 @@ export async function projectListCommand(opts: {
 			owner_display: s.owner_display ?? null,
 			owner_handle: s.owner_handle ?? null,
 		}));
-		console.log(
-			JSON.stringify(
-				{
-					projects: filteredVisibleProjects.map((s) => ({
+		emitJson({
+			projects: filteredVisibleProjects.map((s) => ({
+				id: s.id,
+				slug: s.slug,
+				name: s.name,
+				kind: s.kind,
+				is_owner: s.is_owner !== false,
+				owner_display: s.owner_display ?? null,
+				owner_handle: s.owner_handle ?? null,
+			})),
+			owned_projects: ownedProjects,
+			shared_projects: sharedProjects,
+			environment_projects: opts.includeEnvs
+				? environmentProjects.map((s) => ({
 						id: s.id,
 						slug: s.slug,
 						name: s.name,
@@ -68,26 +79,10 @@ export async function projectListCommand(opts: {
 						is_owner: s.is_owner !== false,
 						owner_display: s.owner_display ?? null,
 						owner_handle: s.owner_handle ?? null,
-					})),
-					owned_projects: ownedProjects,
-					shared_projects: sharedProjects,
-					environment_projects: opts.includeEnvs
-						? environmentProjects.map((s) => ({
-								id: s.id,
-								slug: s.slug,
-								name: s.name,
-								kind: s.kind,
-								is_owner: s.is_owner !== false,
-								owner_display: s.owner_display ?? null,
-								owner_handle: s.owner_handle ?? null,
-							}))
-						: [],
-					hidden_environment_project_count: opts.includeEnvs ? 0 : environmentProjects.length,
-				},
-				null,
-				2,
-			),
-		);
+					}))
+				: [],
+			hidden_environment_project_count: opts.includeEnvs ? 0 : environmentProjects.length,
+		});
 		return;
 	}
 

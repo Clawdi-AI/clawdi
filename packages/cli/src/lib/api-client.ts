@@ -324,6 +324,9 @@ export class ApiClient {
 	private readonly client: Client<paths>;
 	private readonly abortSignal: AbortSignal | undefined;
 	private readonly requireAuth: boolean;
+	private readonly accessTokenProvider: (() => Promise<string>) | undefined;
+	private readonly requestFetch: (request: Request) => Promise<Response>;
+	private readonly includeSkillSyncProtocol: boolean;
 	private readonly machineId: string | undefined;
 	private readonly authToken: string | undefined;
 
@@ -344,6 +347,13 @@ export class ApiClient {
 			machineId?: string;
 			authToken?: string;
 			baseUrl?: string;
+			/** Supply a shared credential provider for typed clients. */
+			accessTokenProvider?: () => Promise<string>;
+			/** Override the fetch pipeline for a transport with different retry policy. */
+			fetch?: (request: Request) => Promise<Response>;
+			/** Disable headers that are specific to Cloud Agent sync requests. */
+			includeMachineId?: boolean;
+			includeSkillSyncProtocol?: boolean;
 		} = {},
 	) {
 		const requireAuth = opts.requireAuth ?? true;
@@ -359,19 +369,29 @@ export class ApiClient {
 		const baseUrl = normalizeCloudApiBaseUrl(opts.baseUrl ?? config.apiUrl);
 		this.baseUrl = baseUrl;
 		this.requireAuth = requireAuth;
+		this.accessTokenProvider = opts.accessTokenProvider;
 		this.authToken = opts.authToken;
 		this.abortSignal = opts.abortSignal;
-		this.machineId = normalizedMachineId(
-			opts.machineId ?? (requireAuth ? (readMachineId() ?? undefined) : undefined),
-		);
+		this.machineId =
+			opts.includeMachineId === false
+				? undefined
+				: normalizedMachineId(
+						opts.machineId ?? (requireAuth ? (readMachineId() ?? undefined) : undefined),
+					);
+		const includeSkillSyncProtocol = opts.includeSkillSyncProtocol !== false;
+		this.includeSkillSyncProtocol = includeSkillSyncProtocol;
 		const machineId = this.machineId;
+		const requestFetch =
+			opts.fetch ??
+			((request: Request) => retryingFetch(request, DEFAULT_TIMEOUT_MS, this.abortSignal));
+		this.requestFetch = requestFetch;
 		this.client = createClient<paths>({
 			baseUrl: this.baseUrl,
-			fetch: (req) => retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal),
+			fetch: requestFetch,
 		});
 		this.client.use({
 			async onRequest({ request }) {
-				if (requireAuth) {
+				if (requireAuth || opts.accessTokenProvider) {
 					if (new URL(request.url).origin !== canonicalApiOrigin(baseUrl)) {
 						throw new ApiError({
 							status: 0,
@@ -379,11 +399,19 @@ export class ApiClient {
 							hint: "API request origin changed before authorization. No credential was sent.",
 						});
 					}
-					request.headers.set("Authorization", `Bearer ${await getClawdiAccessToken(baseUrl)}`);
+					const token = opts.accessTokenProvider
+						? await opts.accessTokenProvider()
+						: await getClawdiAccessToken(baseUrl);
+					request.headers.set("Authorization", `Bearer ${token}`);
 				}
 				request.headers.set("User-Agent", USER_AGENT);
 				if (machineId) request.headers.set(MACHINE_ID_HEADER, machineId);
-				request.headers.set(SKILL_SYNC_PROTOCOL_HEADER, SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1);
+				if (includeSkillSyncProtocol) {
+					request.headers.set(
+						SKILL_SYNC_PROTOCOL_HEADER,
+						SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+					);
+				}
 				// Generate a per-request correlation ID. Backend's
 				// RequestIDMiddleware accepts the header and echoes
 				// it on the response + every log line, so an oncall
@@ -408,6 +436,7 @@ export class ApiClient {
 	}
 
 	async getAccessToken(): Promise<string> {
+		if (this.accessTokenProvider) return this.accessTokenProvider();
 		return this.requireAuth ? (this.authToken ?? (await getClawdiAccessToken(this.baseUrl))) : "";
 	}
 
@@ -422,16 +451,20 @@ export class ApiClient {
 			});
 		}
 		const headers = new Headers(init.headers);
-		if (this.requireAuth) headers.set("Authorization", `Bearer ${await this.getAccessToken()}`);
+		if (this.requireAuth || this.accessTokenProvider) {
+			headers.set("Authorization", `Bearer ${await this.getAccessToken()}`);
+		}
 		headers.set("User-Agent", USER_AGENT);
 		if (this.machineId) headers.set(MACHINE_ID_HEADER, this.machineId);
-		headers.set(SKILL_SYNC_PROTOCOL_HEADER, SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1);
+		if (this.includeSkillSyncProtocol) {
+			headers.set(SKILL_SYNC_PROTOCOL_HEADER, SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1);
+		}
 		if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", randomUUID());
 		return new Request(url, { ...init, headers });
 	}
 
 	async request(path: string, init: RequestInit = {}): Promise<Response> {
-		return retryingFetch(await this.buildRequest(path, init), DEFAULT_TIMEOUT_MS, this.abortSignal);
+		return this.requestFetch(await this.buildRequest(path, init));
 	}
 
 	/** Return an unbuffered response. Retries and the default timeout cover

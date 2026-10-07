@@ -19,14 +19,14 @@ import { allAdapterEntries } from "../adapters/registry";
 import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
-import { commandMessage, commandResult } from "../lib/command-output";
+import { isUuid } from "../lib/cli-options";
+import { commandMessage, commandResult, emitJson } from "../lib/command-output";
 import { getAuth, getConfig } from "../lib/config";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { isInteractive } from "../lib/tty";
 import { addToken, findToken, listTokens, removeToken, type ShareToken } from "../share/tokens";
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RAW_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 
 /**
@@ -46,7 +46,7 @@ function normalizeAcceptArg(raw: string): string {
 }
 
 function detectAcceptArgShape(normalized: string): "uuid" | "url" | "raw_token" | "unknown" {
-	if (UUID_RE.test(normalized)) return "uuid";
+	if (isUuid(normalized)) return "uuid";
 	if (RAW_TOKEN_RE.test(normalized)) return "raw_token";
 	if (normalized.startsWith("http")) return "url";
 	return "unknown";
@@ -258,17 +258,11 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 	const items = await readJson<InvitationItem[]>(r, "/v1/me/invitations");
 
 	if (opts.json) {
-		console.log(
-			JSON.stringify(
-				{
-					invitations: items,
-					local_share_tokens: localShares.map(safeLocalShare),
-					legacy_local_share_records: legacyLocalShares.map(safeLegacyLocalShare),
-				},
-				null,
-				2,
-			),
-		);
+		emitJson({
+			invitations: items,
+			local_share_tokens: localShares.map(safeLocalShare),
+			legacy_local_share_records: legacyLocalShares.map(safeLegacyLocalShare),
+		});
 		return;
 	}
 
@@ -453,17 +447,11 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 	if (response.status === 404 || response.status === 410) {
 		await removeToken(ticket.project_id, ticket.token);
 		if (opts.json) {
-			console.log(
-				JSON.stringify(
-					{
-						status: "unavailable",
-						project_id: ticket.project_id,
-						local_ticket_removed: true,
-					},
-					null,
-					2,
-				),
-			);
+			emitJson({
+				status: "unavailable",
+				project_id: ticket.project_id,
+				local_ticket_removed: true,
+			});
 			return;
 		}
 		console.log(
@@ -479,17 +467,11 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 		if (conflict?.detail?.error === "already_owner") {
 			await removeToken(ticket.project_id, ticket.token);
 			if (opts.json) {
-				console.log(
-					JSON.stringify(
-						{
-							status: "already_owner",
-							project_id: ticket.project_id,
-							local_ticket_removed: true,
-						},
-						null,
-						2,
-					),
-				);
+				emitJson({
+					status: "already_owner",
+					project_id: ticket.project_id,
+					local_ticket_removed: true,
+				});
 				return;
 			}
 			console.log(
@@ -528,18 +510,12 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 
 	await removeToken(ticket.project_id, ticket.token);
 	if (opts.json) {
-		console.log(
-			JSON.stringify(
-				{
-					status: "joined",
-					...body,
-					local_ticket_removed: true,
-					next_command: `clawdi pull --project ${body.project_id}`,
-				},
-				null,
-				2,
-			),
-		);
+		emitJson({
+			status: "joined",
+			...body,
+			local_ticket_removed: true,
+			next_command: `clawdi pull --project ${body.project_id}`,
+		});
 		return;
 	}
 	renderJoinedSuccess(body, body.project_id, true);
@@ -592,20 +568,18 @@ export async function inboxForgetCommand(
 		process.exitCode = 1;
 		return;
 	}
-	if (!opts.yes) {
-		if (!isInteractive()) {
-			console.error("--yes will be required in a non-interactive shell starting in 0.16");
-		} else if (
-			!(await confirmOrRequireYes(`Forget local share ${projectId}?`, {
-				action: "forget this local share",
-			}))
-		) {
-			commandResult(opts.json, "clawdi.inboxForget.v1", {
-				project_id: projectId,
-				status: "cancelled",
-			});
-			return;
-		}
+	if (
+		!(await confirmOrRequireYes(`Forget local share ${projectId}?`, {
+			yes: opts.yes,
+			action: "forget this local share",
+			legacyNonInteractive: true,
+		}))
+	) {
+		commandResult(opts.json, "clawdi.inboxForget.v1", {
+			project_id: projectId,
+			status: "cancelled",
+		});
+		return;
 	}
 
 	const skillKeys = token.last_seen_skill_keys ?? [];
@@ -675,24 +649,18 @@ async function acceptAnonymousUrl(
 	if (existing?.upgraded_at) {
 		const cleanupCommand = `clawdi inbox forget ${existing.project_id}`;
 		if (opts.json) {
-			console.log(
-				JSON.stringify(
-					{
-						status: "legacy_local_share_record",
-						membership_changed: false,
-						action:
-							"This share was handled by an older CLI. Review current access, then explicitly remove the local record if it is no longer needed.",
-						local_share_record: safeLegacyLocalShare(existing),
-						next_commands: [
-							"clawdi auth login",
-							"clawdi project list --shared-with-me",
-							cleanupCommand,
-						],
-					},
-					null,
-					2,
-				),
-			);
+			emitJson({
+				status: "legacy_local_share_record",
+				membership_changed: false,
+				action:
+					"This share was handled by an older CLI. Review current access, then explicitly remove the local record if it is no longer needed.",
+				local_share_record: safeLegacyLocalShare(existing),
+				next_commands: [
+					"clawdi auth login",
+					"clawdi project list --shared-with-me",
+					cleanupCommand,
+				],
+			});
 			return;
 		}
 		console.log(
@@ -708,18 +676,12 @@ async function acceptAnonymousUrl(
 	}
 	if (existing) {
 		if (opts.json) {
-			console.log(
-				JSON.stringify(
-					{
-						status: "already_redeemed",
-						membership_changed: false,
-						local_share_token: safeLocalShare(existing),
-						next_commands: ["clawdi auth login", `clawdi inbox join ${existing.project_id}`],
-					},
-					null,
-					2,
-				),
-			);
+			emitJson({
+				status: "already_redeemed",
+				membership_changed: false,
+				local_share_token: safeLocalShare(existing),
+				next_commands: ["clawdi auth login", `clawdi inbox join ${existing.project_id}`],
+			});
 			return;
 		}
 		console.log(
@@ -758,18 +720,12 @@ async function acceptAnonymousUrl(
 	};
 	await addToken(record);
 	if (opts.json) {
-		console.log(
-			JSON.stringify(
-				{
-					status: "redeemed",
-					membership_changed: false,
-					share: body,
-					next_commands: ["clawdi auth login", `clawdi inbox join ${body.project_id}`],
-				},
-				null,
-				2,
-			),
-		);
+		emitJson({
+			status: "redeemed",
+			membership_changed: false,
+			share: body,
+			next_commands: ["clawdi auth login", `clawdi inbox join ${body.project_id}`],
+		});
 		return;
 	}
 	console.log(
@@ -840,16 +796,10 @@ async function acceptUrl(
 		if (detail.error === "already_owner") {
 			if (localTicket) await removeToken(localTicket.project_id, localTicket.token);
 			if (opts.json) {
-				console.log(
-					JSON.stringify(
-						{
-							status: "already_owner",
-							local_ticket_removed: Boolean(localTicket),
-						},
-						null,
-						2,
-					),
-				);
+				emitJson({
+					status: "already_owner",
+					local_ticket_removed: Boolean(localTicket),
+				});
 				return;
 			}
 			console.log(
@@ -879,18 +829,12 @@ async function acceptUrl(
 	}
 	if (localTicket) await removeToken(localTicket.project_id, localTicket.token);
 	if (opts.json) {
-		console.log(
-			JSON.stringify(
-				{
-					status: "joined",
-					...body,
-					local_ticket_removed: Boolean(localTicket),
-					next_command: `clawdi pull --project ${body.project_id}`,
-				},
-				null,
-				2,
-			),
-		);
+		emitJson({
+			status: "joined",
+			...body,
+			local_ticket_removed: Boolean(localTicket),
+			next_command: `clawdi pull --project ${body.project_id}`,
+		});
 		return;
 	}
 	renderJoinedSuccess(body, body.project_id, Boolean(localTicket));
@@ -922,17 +866,11 @@ async function acceptInvitation(
 
 	const body = await readJson<InvitationAcceptResponse>(r, "accept project invitation");
 	if (opts.json) {
-		console.log(
-			JSON.stringify(
-				{
-					status: "joined",
-					...body,
-					next_command: `clawdi pull --project ${body.project_id}`,
-				},
-				null,
-				2,
-			),
-		);
+		emitJson({
+			status: "joined",
+			...body,
+			next_command: `clawdi pull --project ${body.project_id}`,
+		});
 		return;
 	}
 	renderJoinedSuccess(body, body.project_id, false);

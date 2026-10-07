@@ -3,6 +3,7 @@ import type { components } from "@clawdi/shared/api";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
+import { emitJson } from "../lib/command-output";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
@@ -54,12 +55,13 @@ export async function agentPluginsList(
 		);
 		if (result.plugins.some((plugin) => plugin.convergence === "failed")) process.exitCode = 1;
 		if (opts.json) {
-			console.log(
-				JSON.stringify({
+			emitJson(
+				{
 					schemaVersion: "clawdi.agentPluginsList.v1",
 					agent_id: agentId,
 					...result,
-				}),
+				},
+				false,
 			);
 			return;
 		}
@@ -136,15 +138,20 @@ export async function agentPluginsInstall(
 				body,
 			}),
 		);
-		console.log(
-			opts.json
-				? JSON.stringify({
-						schemaVersion: "clawdi.agentPluginsInstall.v1",
-						status: "accepted",
-						...result,
-					})
-				: `Plugin ${sanitizeMetadata(result.plugin_name)} installation request accepted. Run \`clawdi agent plugins list ${agentId}\` to check application.`,
-		);
+		if (opts.json) {
+			emitJson(
+				{
+					schemaVersion: "clawdi.agentPluginsInstall.v1",
+					status: "accepted",
+					...result,
+				},
+				false,
+			);
+		} else {
+			console.log(
+				`Plugin ${sanitizeMetadata(result.plugin_name)} installation request accepted. Run \`clawdi agent plugins list ${agentId}\` to check application.`,
+			);
+		}
 		if (result.convergence === "failed") process.exitCode = 1;
 	} catch (error) {
 		pluginError(error);
@@ -171,15 +178,20 @@ export async function agentPluginsRemove(
 				params: { path: { agent_id: agentId, plugin_name: pluginName } },
 			}),
 		);
-		console.log(
-			opts.json
-				? JSON.stringify({
-						schemaVersion: "clawdi.agentPluginsRm.v1",
-						status: "accepted",
-						...result,
-					})
-				: `Plugin ${sanitizeMetadata(result.plugin_name)} removal request accepted. Run \`clawdi agent plugins list ${agentId}\` to check application.`,
-		);
+		if (opts.json) {
+			emitJson(
+				{
+					schemaVersion: "clawdi.agentPluginsRm.v1",
+					status: "accepted",
+					...result,
+				},
+				false,
+			);
+		} else {
+			console.log(
+				`Plugin ${sanitizeMetadata(result.plugin_name)} removal request accepted. Run \`clawdi agent plugins list ${agentId}\` to check application.`,
+			);
+		}
 	} catch (error) {
 		pluginError(error);
 	}
