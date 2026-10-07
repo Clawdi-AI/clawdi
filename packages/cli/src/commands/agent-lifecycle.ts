@@ -4,7 +4,7 @@ import type { DeployComponents, HostedDeployOperation } from "@clawdi/shared/api
 import { computeFundingMode, isComputeSubscriptionRenewing } from "@clawdi/shared/view";
 import { requireUuid } from "../lib/cli-options";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
-import { requireAuth } from "../lib/require-auth";
+import { AuthorizationRequiredError, requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { isInteractive } from "../lib/tty";
 
@@ -21,7 +21,11 @@ export type AgentRemoveOptions = {
 function cloudAgentError(error: unknown): never {
 	if (error instanceof HostedDeployApiError) {
 		if (error.status === 0) throw error;
-		if (error.status === 401 || error.status === 403)
+		if (error.status === 401)
+			throw new AuthorizationRequiredError(
+				"Cloud Agent authorization required. Sign in with `clawdi auth login`.",
+			);
+		if (error.status === 403)
 			throw new Error("Cloud Agent authorization required. Sign in with `clawdi auth login`.");
 		if (error.status === 404)
 			throw new Error("Cloud Agent or operation not found. Check `clawdi agent list`.");
@@ -31,6 +35,8 @@ function cloudAgentError(error: unknown): never {
 			);
 		throw new Error("Could not manage the Cloud Agent. Please retry or run `clawdi doctor`.");
 	}
+	if (error instanceof Error && /\bsign[ -]in\b/i.test(error.message))
+		throw new AuthorizationRequiredError(error.message);
 	throw error;
 }
 

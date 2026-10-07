@@ -631,7 +631,7 @@ describe("push/pull output contracts", () => {
 	it.each(["push", "pull"])("keeps stdout empty on signed-out %s --json", async (command) => {
 		rmSync(join(testHome, ".clawdi", "auth.json"));
 		const result = await runCli([command, "--json"]);
-		expect(result.exitCode).toBe(1);
+		expect(result.exitCode).toBe(4);
 		expect(result.stdout).toBe("");
 		expect(result.stderr).toContain("Not signed in");
 		expect(requests).toHaveLength(0);

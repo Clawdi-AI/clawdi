@@ -413,7 +413,7 @@ it("requires authentication for all three commands", async () => {
 		["session", "rm", sessionId, "--yes"],
 	]) {
 		const result = await runCli(args);
-		expect(result.code).toBe(1);
+		expect(result.code).toBe(4);
 		expect(result.stderr).toContain("clawdi auth login");
 		expect(result.stdout).toBe("");
 	}
@@ -567,6 +567,28 @@ describe("Cloud Agent lifecycle", () => {
 		expect(result.stdout).toBe("");
 		expect(result.stderr).not.toContain("Internal test detail");
 		expect(mutations).toHaveLength(1);
+	});
+
+	it.each([401, 403])("maps Hosted authorization HTTP %i correctly", async (code) => {
+		deploymentStatus = code;
+		const result = await runCli(["agent", "start", agentId, "--json"]);
+		expect(result.code).toBe(code === 401 ? 4 : 1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toContain("Cloud Agent authorization required");
+		expect(result.stderr).not.toContain("Internal test detail");
+		expect(mutations).toEqual([]);
+	});
+
+	it("uses authorization exit code for a Hosted sign-in error", async () => {
+		const authPath = join(taskHome, ".clawdi", "auth.json");
+		const auth = JSON.parse(readFileSync(authPath, "utf8"));
+		auth.endpointBinding.hostedApiOrigin = "http://127.0.0.1:9";
+		writeFileSync(authPath, JSON.stringify(auth));
+		const result = await runCli(["agent", "start", agentId, "--json"]);
+		expect(result.code).toBe(4);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toContain("sign-in");
+		expect(requests).toEqual([]);
 	});
 
 	it.each(["local", "deleted", "ambiguous", "projection"])(

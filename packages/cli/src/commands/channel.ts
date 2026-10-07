@@ -121,6 +121,7 @@ export async function channelUnpairCommand(
 }
 
 export async function channelListCommand(opts: JsonOption = {}): Promise<void> {
+	requireAuth();
 	const api = new ApiClient();
 	const channels = unwrap(await api.GET("/v1/channels"));
 	if (opts.json) {
@@ -136,7 +137,7 @@ export async function channelListCommand(opts: JsonOption = {}): Promise<void> {
 	printTable(
 		["ID", "PROVIDER", "VISIBILITY", "STATUS", "NAME"],
 		channels.map((channel) => [
-			shortId(channel.id),
+			channel.id,
 			channel.provider,
 			channel.visibility,
 			channel.status,
@@ -146,6 +147,7 @@ export async function channelListCommand(opts: JsonOption = {}): Promise<void> {
 }
 
 export async function channelAvailableCommand(opts: JsonOption = {}): Promise<void> {
+	requireAuth();
 	const api = new ApiClient();
 	const pool = unwrap(await api.GET("/v1/channels/bot-pool"));
 	if (opts.json) {
@@ -156,6 +158,7 @@ export async function channelAvailableCommand(opts: JsonOption = {}): Promise<vo
 }
 
 export async function channelGetCommand(accountId: string, opts: JsonOption = {}): Promise<void> {
+	requireAuth();
 	const api = new ApiClient();
 	const channel = unwrap(
 		await api.GET("/v1/channels/{account_id}", {
@@ -174,6 +177,7 @@ export async function channelCreateCommand(
 	name: string,
 	opts: ChannelCreateOptions = {},
 ): Promise<void> {
+	requireAuth();
 	const api = new ApiClient();
 	const body = {
 		provider: parseProvider(provider),
@@ -192,6 +196,7 @@ export async function channelCreateCommand(
 }
 
 export async function channelLinksCommand(accountId: string, opts: JsonOption = {}): Promise<void> {
+	requireAuth();
 	const api = new ApiClient();
 	const links = unwrap(
 		await api.GET("/v1/channels/{account_id}/agent-links", {
@@ -209,7 +214,7 @@ export async function channelLinksCommand(accountId: string, opts: JsonOption = 
 	}
 	printTable(
 		["LINK ID", "AGENT ID", "STATUS", "CREATED"],
-		links.map((link) => [shortId(link.id), shortId(link.agent_id), link.status, link.created_at]),
+		links.map((link) => [link.id, link.agent_id, link.status, link.created_at]),
 	);
 }
 
@@ -217,6 +222,7 @@ export async function channelLinkCommand(
 	accountId: string,
 	opts: ChannelLinkOptions,
 ): Promise<void> {
+	requireAuth();
 	const api = new ApiClient();
 	const link = unwrap(
 		await api.POST("/v1/channels/{account_id}/agent-links", {
@@ -235,6 +241,7 @@ export async function channelRotateTokenCommand(
 	accountId: string,
 	opts: ChannelRotateTokenOptions,
 ): Promise<void> {
+	requireAuth();
 	const api = new ApiClient();
 	const link = unwrap(
 		await api.POST("/v1/channels/{account_id}/agent-links/{link_id}/token", {
@@ -252,6 +259,7 @@ export async function channelPairCodeCommand(
 	accountId: string,
 	opts: ChannelPairCodeOptions = {},
 ): Promise<void> {
+	requireAuth();
 	if (opts.agent && opts.link) {
 		console.error(chalk.red("Pass either --agent or --link, not both."));
 		process.exitCode = 1;
@@ -280,6 +288,7 @@ export async function channelSendCommand(
 	accountId: string,
 	opts: ChannelSendOptions,
 ): Promise<void> {
+	requireAuth();
 	if (opts.binding && opts.chat) {
 		console.error(chalk.red("Pass either --binding or --chat, not both."));
 		process.exitCode = 1;
@@ -312,6 +321,7 @@ export async function channelBindingsCommand(
 	accountId: string,
 	opts: JsonOption = {},
 ): Promise<void> {
+	requireAuth();
 	const api = new ApiClient();
 	const bindings = unwrap(
 		await api.GET("/v1/channels/{account_id}/bindings", {
@@ -329,10 +339,10 @@ export async function channelBindingsCommand(
 	printTable(
 		["BINDING ID", "CHAT", "TYPE", "LINK", "STATUS"],
 		bindings.map((binding) => [
-			shortId(binding.id),
+			binding.id,
 			binding.external_chat_name ?? binding.external_chat_id,
 			binding.external_chat_type ?? "-",
-			binding.agent_link_id ? shortId(binding.agent_link_id) : "-",
+			binding.agent_link_id ?? "-",
 			binding.status,
 		]),
 	);
@@ -342,6 +352,7 @@ export async function channelSyncCommandsCommand(
 	accountId: string,
 	opts: ChannelSyncCommandsOptions = {},
 ): Promise<void> {
+	requireAuth();
 	const api = new ApiClient();
 	const synced = unwrap(
 		await api.POST("/v1/channels/{account_id}/commands/sync", {
@@ -363,6 +374,7 @@ export async function channelDeleteCommand(
 	accountId: string,
 	opts: ChannelDeleteOptions = {},
 ): Promise<void> {
+	requireAuth();
 	if (!opts.yes) {
 		if (!isInteractive()) {
 			throw new Error(
@@ -482,7 +494,7 @@ function printSyncedCommands(sync: ChannelCommandSync): void {
 function printBotPool(pool: ChannelBotPoolResponse): void {
 	const rows = Object.entries(pool.providers).flatMap(([provider, items]) =>
 		items.map((item) => [
-			shortId(item.id),
+			item.id,
 			provider,
 			item.access,
 			item.visibility,
@@ -624,10 +636,6 @@ function formatUnknown(value: unknown): string {
 	if (typeof value === "string") return value;
 	if (value === null || value === undefined) return "-";
 	return JSON.stringify(value);
-}
-
-function shortId(id: string): string {
-	return id.length > 12 ? id.slice(0, 8) : id;
 }
 
 function printTable(headers: string[], rows: string[][]): void {

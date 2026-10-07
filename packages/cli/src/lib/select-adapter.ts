@@ -8,7 +8,7 @@ import {
 	allAdapterEntries,
 	getAdapterEntry,
 } from "../adapters/registry";
-import { readJson } from "./api-client";
+import { ApiError, readJson } from "./api-client";
 import { getAuth, getClawdiDir } from "./config";
 import { readEnvironmentRegistration } from "./environment-registration";
 
@@ -41,12 +41,10 @@ export function getEnvIdByAgent(agentType: string): string | null {
 export async function fetchDefaultProjectId(
 	api: import("./api-client").ApiClient,
 ): Promise<string> {
-	const baseUrl = api.baseUrl;
-	const headers: Record<string, string> = {};
-	const accessToken = await api.getAccessToken();
-	if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-
-	const projectRes = await fetch(`${baseUrl}/v1/projects/default`, { headers });
+	const projectRes = await api.request("/v1/projects/default");
+	if (!projectRes.ok && projectRes.status === 401) {
+		throw new ApiError({ status: 401, body: await projectRes.text(), hint: "" });
+	}
 	const body: { project_id?: string } = await readJson<{ project_id?: string }>(
 		projectRes,
 		"/v1/projects/default",

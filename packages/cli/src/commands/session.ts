@@ -19,7 +19,9 @@ import {
 import { isInteractive } from "../lib/tty";
 
 interface SessionListOpts {
+	uploaded?: boolean;
 	agent?: string;
+	agentId?: string;
 	allAgents?: boolean;
 	project?: string;
 	all?: boolean;
@@ -41,6 +43,10 @@ interface ListedSession {
 }
 
 export async function sessionList(opts: SessionListOpts) {
+	if (opts.uploaded) {
+		await sessionListUploaded(opts);
+		return;
+	}
 	// Default to "all registered agents" when neither flag is given. This
 	// command is informational — restricting to a single prompted adapter
 	// would hide history the user wants to see.
@@ -197,6 +203,44 @@ interface CloudSessionOpts {
 	since?: string;
 	limit?: string | number;
 	json?: boolean;
+}
+
+async function sessionListUploaded(opts: SessionListOpts): Promise<void> {
+	requireAuth();
+	const api = new ApiClient();
+	const agentId = opts.agentId ? requireUuid(opts.agentId, "Agent ID") : undefined;
+	const page = unwrap(
+		await api.GET("/v1/sessions", {
+			params: {
+				query: {
+					agent: opts.agent || undefined,
+					environment_id: agentId,
+					since: cloudSessionSince(opts.since),
+					page_size: cloudSessionLimit(opts.limit),
+					sort: "last_activity",
+					order: "desc",
+				},
+			},
+		}),
+	);
+	if (page.items.length < page.total) {
+		console.error(`Showing ${page.items.length} of ${page.total}; pass --limit to see more.`);
+	}
+	if (opts.json || !process.stdout.isTTY) {
+		console.log(
+			JSON.stringify(
+				{ schemaVersion: "clawdi.sessionList.v1", sessions: page.items, total: page.total },
+				null,
+				2,
+			),
+		);
+		return;
+	}
+	if (page.items.length === 0) {
+		console.log(chalk.gray("No uploaded sessions found."));
+		return;
+	}
+	printCloudSessionRows(page.items, page.total);
 }
 
 function cloudSessionLimit(value?: string | number): number {

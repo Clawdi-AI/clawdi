@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	sessionExport,
+	sessionList,
 	sessionRead,
 	sessionSearch,
 	sessionShareCreate,
@@ -34,6 +35,78 @@ afterEach(() => {
 });
 
 describe("cloud session commands", () => {
+	it("lists uploaded sessions without a search query", async () => {
+		const sessionId = "00000000-0000-0000-0000-000000000125";
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/sessions",
+				response: () =>
+					jsonResponse({
+						items: [
+							{
+								id: sessionId,
+								local_session_id: "local-125",
+								project_path: "/workspace",
+								agent_type: "codex",
+								started_at: "2026-08-27T11:00:00Z",
+								ended_at: "2026-08-27T11:05:00Z",
+								last_activity_at: "2026-08-27T11:05:00Z",
+								duration_seconds: 300,
+								message_count: 4,
+								input_tokens: 10,
+								output_tokens: 20,
+								cache_read_tokens: 0,
+								model: "gpt-test",
+								models_used: ["gpt-test"],
+								summary: "Uploaded fixture",
+								tags: [],
+								status: "complete",
+								content_hash: null,
+								content_protocol: "snapshot-v1",
+								is_shared: false,
+							},
+						],
+						total: 2,
+						page: 1,
+						page_size: 1,
+					}),
+			},
+		]);
+		const output: string[] = [];
+		const errors: string[] = [];
+		const originalLog = console.log;
+		const originalError = console.error;
+		console.log = (value?: unknown) => output.push(String(value));
+		console.error = (value?: unknown) => errors.push(String(value));
+		try {
+			await sessionList({
+				uploaded: true,
+				agent: "codex",
+				agentId: "00000000-0000-0000-0000-000000000099",
+				since: "2026-08-01",
+				limit: "1",
+				json: true,
+			});
+		} finally {
+			console.log = originalLog;
+			console.error = originalError;
+			restore();
+		}
+
+		const query = new URL(captured[0]?.url ?? "").searchParams;
+		expect(query.get("q")).toBeNull();
+		expect(query.get("agent")).toBe("codex");
+		expect(query.get("environment_id")).toBe("00000000-0000-0000-0000-000000000099");
+		expect(query.get("page_size")).toBe("1");
+		expect(query.get("since")).toBe("2026-08-01T00:00:00.000Z");
+		const payload = JSON.parse(output[0] ?? "{}");
+		expect(payload.schemaVersion).toBe("clawdi.sessionList.v1");
+		expect(payload.sessions[0].id).toBe(sessionId);
+		expect(payload.total).toBe(2);
+		expect(errors).toEqual(["Showing 1 of 2; pass --limit to see more."]);
+	});
+
 	it("rejects single-character searches before making a request", async () => {
 		await expect(sessionSearch(" x ")).rejects.toThrow(
 			"Session search query must be at least 2 characters.",

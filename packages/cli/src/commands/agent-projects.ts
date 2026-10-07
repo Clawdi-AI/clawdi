@@ -192,7 +192,7 @@ function formatBindingProject(row: BindingRow, projectsById: Map<string, Project
 	const name = project?.name && project.name !== project.slug ? ` ${chalk.dim(project.name)}` : "";
 	const meta =
 		row.binding_type === "context"
-			? `id=${row.id} project=${row.project_id.slice(0, 8)}... vault_priority=${row.priority}`
-			: `project=${row.project_id.slice(0, 8)}...`;
+			? `id=${row.id} project=${row.project_id} vault_priority=${row.priority}`
+			: `project=${row.project_id}`;
 	return `${chalk.cyan(alias)} ${chalk.gray(ownership)}${name} ${chalk.gray(meta)}`;
 }

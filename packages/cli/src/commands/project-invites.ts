@@ -2,6 +2,8 @@ import chalk from "chalk";
 
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
+import { confirmOrRequireYes } from "../lib/prompts";
+import { isInteractive } from "../lib/tty";
 
 /**
  * `clawdi project invites <project> [--cancel <id>]` — owner-side view
@@ -31,7 +33,7 @@ interface InvitationItem {
 
 export async function projectInvitesCommand(
 	projectArg: string,
-	opts: { cancel?: string },
+	opts: { cancel?: string; yes?: boolean },
 ): Promise<void> {
 	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
@@ -40,6 +42,17 @@ export async function projectInvitesCommand(
 	const projectId = await resolveProjectId(apiUrl, apiKey, projectArg);
 
 	if (opts.cancel) {
+		if (!opts.yes) {
+			if (!isInteractive()) {
+				console.error("--yes will be required in a non-interactive shell starting in 0.16");
+			} else if (
+				!(await confirmOrRequireYes(`Cancel invitation ${opts.cancel}?`, {
+					action: "cancel this project invitation",
+				}))
+			) {
+				return;
+			}
+		}
 		await authedJson<{ status: string }>(
 			apiUrl,
 			apiKey,

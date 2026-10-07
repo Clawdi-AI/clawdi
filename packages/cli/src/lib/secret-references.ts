@@ -1,4 +1,4 @@
-import { readJson } from "./api-client";
+import { ApiClient, readJson } from "./api-client";
 import { getClawdiAccessToken } from "./clerk-oauth";
 import { getConfig } from "./config";
 import { resolveProjectId } from "./project-resolver";
@@ -248,9 +248,9 @@ async function requestClawdiReference<T extends VaultReferencePreview>(
 	if (opts.debug) params.set("debug", "true");
 	if (preview) params.set("preview", "true");
 
-	const response = await fetch(`${apiUrl}/v1/vault/resolve?${params.toString()}`, {
+	const api = new ApiClient({ baseUrl: apiUrl, authToken: accessToken });
+	const response = await api.request(`/v1/vault/resolve?${params.toString()}`, {
 		method: "POST",
-		headers: { Authorization: `Bearer ${accessToken}` },
 	});
 	const body = await readJson<T | { detail?: unknown }>(response, "/v1/vault/resolve");
 	if (!response.ok) {
@@ -389,12 +389,10 @@ async function requestClawdiReferenceBulk<T extends VaultReferencePreview>(
 	const results: Record<string, T> = {};
 	for (const chunk of chunkArray(references, MAX_BULK_REFERENCES)) {
 		const chunkProjectId = chunk.some((ref) => !ref.project_id) ? explicitProjectId : undefined;
-		const response = await fetch(`${apiUrl}/v1/vault/resolve/bulk`, {
+		const api = new ApiClient({ baseUrl: apiUrl, authToken: accessToken });
+		const response = await api.request("/v1/vault/resolve/bulk", {
 			method: "POST",
-			headers: {
-				Authorization: `Bearer ${accessToken}`,
-				"Content-Type": "application/json",
-			},
+			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				references: chunk,
 				project_id: chunkProjectId,
