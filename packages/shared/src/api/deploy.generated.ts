@@ -230,6 +230,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/deployments/{deployment_id}/files/handoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create V2 Files Handoff */
+        post: operations["create_v2_files_handoff_v2_deployments__deployment_id__files_handoff_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/deployments/{deployment_id}/terminal": {
         parameters: {
             query?: never;
@@ -1674,6 +1691,11 @@ export interface components {
              */
             models: string[];
         };
+        /**
+         * RuntimeUiServingReason
+         * @enum {string}
+         */
+        RuntimeUiServingReason: "RouteNotApplied" | "EdgeUnreachable" | "HttpStatus" | "AuthHandoffUnavailable" | "Ok";
         /** SecretReference */
         SecretReference: {
             /**
@@ -2485,6 +2507,15 @@ export interface components {
         };
         /** V2HermesRuntimeUiEndpointInfo */
         V2HermesRuntimeUiEndpointInfo: {
+            /**
+             * Serving Ready
+             * @default false
+             */
+            serving_ready: boolean;
+            /** Serving Checked At */
+            serving_checked_at?: string | null;
+            /** @default RouteNotApplied */
+            serving_reason: components["schemas"]["RuntimeUiServingReason"];
             /** Component Readiness */
             component_readiness?: 1 | null;
             /**
@@ -2814,6 +2845,18 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** V2HostedFilesHandoff */
+        V2HostedFilesHandoff: {
+            /** Url */
+            url: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Deployment Resource Version */
+            deployment_resource_version: string;
+        };
         /**
          * V2HostedProviderConflict
          * @description A Clawdi AI provider the runtime skipped to keep its native configuration.
@@ -2984,6 +3027,15 @@ export interface components {
         };
         /** V2OpenClawRuntimeUiEndpointInfo */
         V2OpenClawRuntimeUiEndpointInfo: {
+            /**
+             * Serving Ready
+             * @default false
+             */
+            serving_ready: boolean;
+            /** Serving Checked At */
+            serving_checked_at?: string | null;
+            /** @default RouteNotApplied */
+            serving_reason: components["schemas"]["RuntimeUiServingReason"];
             /** Component Readiness */
             component_readiness?: 1 | null;
             /**
@@ -4311,6 +4363,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EventCursorExpiredProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_v2_files_handoff_v2_deployments__deployment_id__files_handoff_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": string;
+            };
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2HostedFilesHandoff"];
                 };
             };
             /** @description Validation Error */

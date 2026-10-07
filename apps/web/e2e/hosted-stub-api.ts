@@ -295,6 +295,8 @@ export function mutationDeploymentReadFixture(
 							"https://api.example.test/v2/deployments/hdep_fixture/hermes-oidc/session",
 						access_revision: 1,
 						browser_mode: "embedded_and_top_level",
+						serving_ready: true,
+						serving_reason: "Ok",
 					}
 				: {
 						runtime,
@@ -302,6 +304,8 @@ export function mutationDeploymentReadFixture(
 						url: runtimeUiUrl,
 						auth_mode: "openclaw_token",
 						browser_mode: "embedded_and_top_level",
+						serving_ready: true,
+						serving_reason: "Ok",
 					}
 			: null,
 		accepted_operation: null,

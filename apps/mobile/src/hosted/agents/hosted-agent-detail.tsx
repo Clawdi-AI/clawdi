@@ -8,6 +8,7 @@ import {
 	agentFilesPresentation,
 	agentOverviewCopy,
 	agentSurfaceCopy,
+	agentToolSectionCopy,
 	canRetryInitialDeployment,
 	deploymentFailurePresentation,
 	deploymentFilesUrl,
@@ -49,6 +50,7 @@ import { isNotFound, useCloudAgent } from "@/hooks/cloud-inventory";
 import { ComputeStatusDetails } from "@/hosted/agents/compute-status-details";
 import { CancelOperation } from "@/hosted/agents/deployment-cancel-action";
 import { DeploymentControls } from "@/hosted/agents/deployment-controls";
+import { FilesBrowser } from "@/hosted/agents/files-handoff";
 import { InitialDeploymentPage } from "@/hosted/agents/initial-deployment-page";
 import { RuntimeBrowser } from "@/hosted/agents/runtime-handoff";
 import { StartComputeAction } from "@/hosted/agents/start-compute-action";
@@ -245,13 +247,17 @@ function DeploymentDetail({
 					// Web's StoppedAgentState keeps the default empty-state icon.
 					icon={view.state === "stopped" ? undefined : FolderOpen}
 					className="flex-1"
-					title={view.state === "running" ? t("files.webOnlyTitle") : view.title}
-					description={view.state === "running" ? t("files.webOnlyDescription") : view.description}
+					title={view.state === "running" ? agentToolSectionCopy.files.label : view.title}
+					description={
+						view.state === "running" ? agentToolSectionCopy.files.description : view.description
+					}
 					action={
 						view.state === "running" ? (
-							<ActionButton
-								label={runtimeConsoleCopy.terminal}
-								onPress={() => router.push(agentSectionHref(deployment.agent_id ?? "", "terminal"))}
+							<FilesBrowser
+								deployment={deployment}
+								onTerminal={() =>
+									router.push(agentSectionHref(deployment.agent_id ?? "", "terminal"))
+								}
 							/>
 						) : (
 							startAction(deployment, view.state === "stopped")

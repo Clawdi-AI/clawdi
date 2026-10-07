@@ -34,6 +34,7 @@ export type DeploymentEventStreamSnapshotHandoff = S["EventStreamSnapshotHandoff
 export type AiProviderRemovalImpact = S["V2AiProviderRemovalImpactResponse"];
 export type AiProviderRemovalResult = S["V2AiProviderRemovalResponse"];
 export type RuntimeUiCredentials = S["V2OpenClawRuntimeUiCredentials"];
+export type FilesHandoff = S["V2HostedFilesHandoff"];
 export type RuntimeUiAuthMode = RuntimeUiEndpointInfo["auth_mode"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
