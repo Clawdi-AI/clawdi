@@ -229,7 +229,11 @@
     },
   },
   "trustedDependencies": [
+    "electron",
     "sharp",
+    "electron-winstaller",
+    "utf-8-validate",
+    "bufferutil",
   ],
   "patchedDependencies": {
     "libsignal@6.0.0": "patches/libsignal@6.0.0.patch",

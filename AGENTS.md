@@ -35,6 +35,20 @@ Install dependencies once:
 bun install
 ```
 
+Install Git hooks once from the main checkout, after installing dependencies:
+
+```bash
+bunx lefthook install
+```
+
+Do not run that command from a worktree: all worktrees share `.git/hooks`.
+Dependency installation leaves hooks untouched; the explicit
+`trustedDependencies` list excludes lefthook's automatic postinstall.
+See [Bun lifecycle scripts](https://bun.com/docs/install/lifecycle) and
+[Lefthook installation](https://lefthook.dev/installation/node.html).
+
+Done: `bun install` in a worktree preserves the shared hook files.
+
 Terminal 1, backend:
 
 ```bash

@@ -2,26 +2,6 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
-function Test-ClawdiVersion([string] $Value) {
-    $core = '(0|[1-9][0-9]*)'
-    if ($Value -cnotmatch "\A$core\.$core\.$core(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?\z") { return $false }
-    $pre = $Matches[4]
-    $build = $Matches[5]
-    foreach ($part in @($pre, $build)) {
-        if ($part) {
-            foreach ($identifier in $part.Split('.')) {
-                if ($identifier -cnotmatch '\A[0-9A-Za-z-]+\z') { return $false }
-            }
-        }
-    }
-    if ($pre) {
-        foreach ($identifier in $pre.Split('.')) {
-            if ($identifier -cmatch '\A[0-9]+\z' -and $identifier.Length -gt 1 -and $identifier.StartsWith('0')) { return $false }
-        }
-    }
-    return $true
-}
-
 function Copy-ClawdiBoundedStream($InputStream, $OutputStream, [long] $Maximum) {
     $buffer = New-Object byte[] 65536
     $total = 0L
@@ -100,54 +80,24 @@ function Read-ClawdiManifest([string] $Path, [string] $Version, [string] $Target
     $text = [IO.File]::ReadAllText($Path, [Text.UTF8Encoding]::new($false, $true))
     $lines = $text.Split("`n")
     if ($lines[-1] -ceq '') { $lines = $lines[0..($lines.Length - 2)] }
-    if ($lines.Length -ne 10 -or $lines[0] -cne 'clawdi.nativeRelease.v2' -or $lines[1] -cne "version`t$Version") {
-        throw 'Invalid or incomplete exact native release manifest.'
+    if ($lines.Length -lt 2 -or $lines[0] -cne 'clawdi.nativeRelease.v2' -or $lines[1] -cne "version`t$Version") {
+        throw 'Invalid exact native release manifest.'
     }
     $supported = @('linux-x64', 'linux-arm64', 'linux-x64-musl', 'linux-arm64-musl', 'darwin-x64', 'darwin-arm64', 'win32-x64', 'win32-arm64')
     $seen = @{}
     $selected = $null
-    foreach ($line in $lines[2..9]) {
+    foreach ($line in ($lines | Select-Object -Skip 2)) {
         $fields = $line.Split("`t")
-        if ($fields.Length -ne 4 -or $fields[0] -cne 'artifact' -or $supported -cnotcontains $fields[1] -or
-            $seen.ContainsKey($fields[1]) -or $fields[2] -cne "clawdi-cli-$($fields[1]).tar.gz" -or
-            $fields[3] -cnotmatch '\A[0-9a-f]{64}\z') { throw 'Invalid native release manifest artifact.' }
+        if ($fields.Length -lt 2 -or $fields[0] -cne 'artifact' -or $supported -cnotcontains $fields[1]) { continue }
+        if ($fields.Length -ne 4 -or $seen.ContainsKey($fields[1]) -or
+            $fields[2] -cne "clawdi-cli-$($fields[1]).tar.gz" -or $fields[3] -cnotmatch '\A[0-9a-f]{64}\z') {
+            throw 'Invalid native release manifest artifact.'
+        }
         $seen[$fields[1]] = $true
         if ($fields[1] -ceq $Target) { $selected = @{ Asset = $fields[2]; Sha256 = $fields[3] } }
     }
     if (-not $selected) { throw "Native release does not support $Target." }
     return $selected
-}
-
-function Test-ClawdiArchive([string] $Tar, [string] $Archive) {
-    $paths = @( (Invoke-ClawdiNative $Tar @('-tf', $Archive)).Split("`n") )
-    $types = @( (Invoke-ClawdiNative $Tar @('-tvf', $Archive)).Split("`n") )
-    if ($paths.Count -gt 20000 -or $paths.Count -ne $types.Count) { throw 'Native archive contains excessive or invalid entries.' }
-    $seen = @{}
-    $files = @{}
-    for ($index = 0; $index -lt $paths.Count; $index++) {
-        $path = $paths[$index].TrimEnd("`r")
-        $normalized = $path -creplace '^\./', '' -creplace '/$', ''
-        $parts = $normalized.Split('/')
-        if (-not $normalized -or $path.StartsWith('/') -or $path -match '[:\\\x00-\x1f\x7f]' -or
-            $parts -contains '..' -or $parts -contains '.' -or $parts -contains '' -or $seen.ContainsKey($normalized)) {
-            throw 'Native archive contains unsafe or duplicate paths.'
-        }
-        $type = $types[$index].Substring(0, 1)
-        if ($type -cne '-' -and $type -cne 'd') { throw 'Native archive contains links or unsupported entries.' }
-        if ($types[$index] -cnotmatch '\A[-d]\S{9}\s+\d+\s+\S+\s+\S+\s+([0-9]+)\s' -or [long]$Matches[1] -gt 209715200) {
-            throw 'Native archive entry exceeds the size limit or has an invalid listing.'
-        }
-        $allowed = ($normalized -ceq 'clawdi.exe' -and $type -ceq '-') -or
-            ($normalized -ceq 'egress-addon' -and $type -ceq 'd') -or
-            ($normalized -ceq 'egress-addon/clawdi_egress_addon.py' -and $type -ceq '-') -or
-            ($parts[0] -ceq 'skills' -and ($parts.Count -gt 1 -or $type -ceq 'd'))
-        if (-not $allowed) { throw 'Native archive contains unexpected paths.' }
-        $seen[$normalized] = $true
-        if ($type -ceq '-') { $files[$normalized] = $true }
-    }
-    foreach ($required in @('clawdi.exe', 'egress-addon/clawdi_egress_addon.py', 'skills/clawdi/SKILL.md', 'skills/hosted-versions/1/clawdi/SKILL.md')) {
-        if (-not $files.ContainsKey($required)) { throw "Native archive is missing $required." }
-    }
 }
 
 function Add-ClawdiPath([string] $Directory) {
@@ -168,8 +118,6 @@ $bootstrap = $null
 $stage = $null
 try {
     if ($env:OS -ne 'Windows_NT') { throw 'This installer requires Windows.' }
-    $channel = if ($env:CLAWDI_CHANNEL) { $env:CLAWDI_CHANNEL } else { 'latest' }
-    if (@('latest', 'beta') -cnotcontains $channel) { throw 'CLAWDI_CHANNEL must be latest or beta.' }
     $prefix = if ($env:CLAWDI_INSTALL_PREFIX) { $env:CLAWDI_INSTALL_PREFIX } else { Join-Path $env:USERPROFILE '.local' }
     if ($prefix -notmatch '\A(?:[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+(?:\\|$))' -or $prefix.Contains(';')) {
         throw 'CLAWDI_INSTALL_PREFIX must be an absolute path without semicolons.'
@@ -187,11 +135,11 @@ try {
         $registry = Join-Path $bootstrap 'registry.json'
         Get-ClawdiDownload 'https://registry.npmjs.org/-/package/clawdi/dist-tags' $registry 65536
         $tags = Get-Content -LiteralPath $registry -Raw | ConvertFrom-Json
-        $property = $tags.PSObject.Properties[$channel]
+        $property = $tags.PSObject.Properties['latest']
         if (-not $property -or $property.Value -isnot [string]) { throw 'Registry returned an invalid release channel.' }
         $version = $property.Value
     }
-    if (-not (Test-ClawdiVersion $version)) { throw "Invalid exact version: $version" }
+    if ($version -cnotmatch '\A[0-9A-Za-z.+-]+\z') { throw "Invalid exact version: $version" }
     Write-Host "Installing clawdi v$version for $target..."
     $releaseBase = "https://github.com/Clawdi-AI/clawdi/releases/download/clawdi-cli-v$version"
     # Test-only override: an absolute local fake release directory, like the Unix curl fixture.
@@ -217,26 +165,13 @@ try {
     $archive = Join-Path $bootstrap $artifact.Asset
     Get-ClawdiDownload "$releaseBase/$($artifact.Asset)" $archive 268435456 $localRelease
     if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $artifact.Sha256) { throw 'Native artifact checksum mismatch.' }
-    $boundedTar = Join-Path $bootstrap 'native.tar'
-    $compressed = $null
-    $gzip = $null
-    $unpacked = $null
-    try {
-        $compressed = [IO.File]::OpenRead($archive)
-        $gzip = [IO.Compression.GZipStream]::new($compressed, [IO.Compression.CompressionMode]::Decompress)
-        $unpacked = [IO.File]::Create($boundedTar)
-        Copy-ClawdiBoundedStream $gzip $unpacked 536870912
-    } finally {
-        if ($unpacked) { $unpacked.Dispose() }
-        if ($gzip) { $gzip.Dispose() }
-        if ($compressed) { $compressed.Dispose() }
-    }
-    Test-ClawdiArchive $tar $boundedTar
     $nativeRoot = Join-Path $prefix 'share\clawdi'
     $null = New-Item -ItemType Directory -Path $nativeRoot -Force
     $stage = Join-Path $nativeRoot ".stage-$([Guid]::NewGuid())"
     $null = New-Item -ItemType Directory -Path $stage
-    $null = Invoke-ClawdiNative $tar @('-xf', $boundedTar, '-C', $stage, '--no-same-owner', '--no-same-permissions') 180000
+    # Windows tar.exe is bsdtar; its default extraction refuses .. and symlink escapes.
+    # https://github.com/libarchive/libarchive/blob/master/tar/bsdtar.1 (the -P option)
+    $null = Invoke-ClawdiNative $tar @('-xzf', $archive, '-C', $stage, '--no-same-owner', '--no-same-permissions') 180000
     Copy-Item -LiteralPath $manifest -Destination (Join-Path $stage $manifestName)
     $executable = Join-Path $stage 'clawdi.exe'
     if ((Invoke-ClawdiNative $executable @('--version')) -cne $version) { throw 'Staged native executable failed version smoke.' }

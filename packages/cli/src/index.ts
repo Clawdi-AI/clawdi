@@ -1580,10 +1580,9 @@ program
 	.option("--json", "Output as JSON")
 	.addOption(new Option("--background-worker").hideHelp())
 	.addOption(new Option("--current-version <version>").hideHelp())
-	.addOption(new Option("--channel <channel>").hideHelp())
-	.addOption(new Option("--latest <version>").hideHelp())
 	.addOption(new Option("--native-identity").hideHelp())
 	.addOption(new Option("--native-activate").hideHelp())
+	.addOption(new Option("--native-auto-update").hideHelp())
 	.addOption(new Option("--native-stage <path>").hideHelp())
 	.addOption(new Option("--native-prefix <path>").hideHelp())
 	.addOption(new Option("--native-version <version>").hideHelp())
@@ -1624,6 +1623,7 @@ program
 						prefix: opts.nativePrefix,
 						version: opts.nativeVersion,
 						target: opts.nativeTarget,
+						automatic: opts.nativeAutoUpdate,
 					},
 					timeoutMs === undefined ? undefined : { timeoutMs },
 				);
@@ -1637,18 +1637,20 @@ program
 				}
 				throw error;
 			}
+			if (result.skipped) {
+				process.exitCode = 76;
+				return;
+			}
 			console.log(result.launcher);
 			return;
 		}
 		const { runBackgroundUpdateWorker, update } = await import("./commands/update.js");
 		if (opts.backgroundWorker) {
-			if (!opts.currentVersion || !opts.channel) {
-				throw new Error("background update worker requires current version and channel");
+			if (!opts.currentVersion) {
+				throw new Error("background update worker requires current version");
 			}
 			const result = await runBackgroundUpdateWorker({
 				currentVersion: opts.currentVersion,
-				channel: opts.channel,
-				latest: opts.latest,
 			});
 			if (result === "failed") process.exitCode = 1;
 			return;

@@ -49,10 +49,11 @@ describe("native release manifest compatibility", () => {
 		).toBe(content);
 	});
 
-	test("rejects incomplete and duplicate v2 target matrices", () => {
-		expect(() =>
-			parseNativeReleaseManifestV2(manifest(NATIVE_RELEASE_MANIFEST_V2_SCHEMA, rows.slice(0, 7))),
-		).toThrow("supported target matrix");
+	test("accepts partial v2 matrices and rejects duplicate known targets", () => {
+		expect(
+			parseNativeReleaseManifestV2(manifest(NATIVE_RELEASE_MANIFEST_V2_SCHEMA, rows.slice(0, 7)))
+				.artifacts,
+		).toHaveLength(7);
 		const first = rows[0];
 		if (!first) throw new Error("fixture row is missing");
 		expect(() =>
@@ -62,16 +63,25 @@ describe("native release manifest compatibility", () => {
 		).toThrow("duplicate targets");
 	});
 
-	test("enforces v2 schema, semver, asset names, target allowlist and sha256", () => {
+	test("ignores future targets and metadata even when their row format is unknown", () => {
+		const content = manifest(NATIVE_RELEASE_MANIFEST_V2_SCHEMA, [
+			"metadata\tfuture format",
+			"artifact\tfreebsd-x64\tfuture",
+			...rows,
+			"extra line",
+			"artifact\twin32-ia32\tunknown-asset\tunknown-checksum",
+		]);
+		expect(parseNativeReleaseManifestV2(content).artifacts).toHaveLength(8);
+	});
+
+	test("enforces v2 schema, semver, asset names and sha256", () => {
 		const valid = manifest(NATIVE_RELEASE_MANIFEST_V2_SCHEMA, rows);
 		for (const invalid of [
 			manifest(NATIVE_RELEASE_MANIFEST_SCHEMA, rows),
 			valid.replace("version\t1.2.3", "version\tinvalid"),
 			valid.replace("clawdi-cli-win32-x64.tar.gz", "clawdi-cli-win32-x64.zip"),
-			valid.replace("artifact\twin32-x64\t", "artifact\twin32-ia32\t"),
 			valid.replace("0".repeat(64), "0".repeat(63)),
 			valid.replace("0".repeat(64), "A".repeat(64)),
-			valid.replace("artifact\tlinux-x64\t", "unknown\tlinux-x64\t"),
 		]) {
 			expect(() => parseNativeReleaseManifestV2(invalid)).toThrow();
 		}

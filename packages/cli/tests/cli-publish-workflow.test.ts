@@ -182,8 +182,8 @@ describe("CLI publish workflow contract", () => {
 		}
 		expect(publish.steps?.map((step) => step.id).filter(Boolean)).toEqual([
 			"verify_release",
-			"publish",
 			"release",
+			"publish",
 		]);
 	});
 
@@ -311,8 +311,11 @@ describe("CLI publish workflow contract", () => {
 	});
 
 	test("creates or completes only the current commit GitHub release", () => {
-		expect(workflow.indexOf("npm publish ")).toBeLessThan(
-			workflow.indexOf('release create "$tag"'),
+		expect(workflow.indexOf('release create "$tag"')).toBeLessThan(
+			workflow.indexOf("npm publish "),
+		);
+		expect(workflow.lastIndexOf('gh release edit "$tag" --draft=false')).toBeLessThan(
+			workflow.indexOf("npm publish "),
 		);
 		expect(workflow).toContain('if [ "$tag_commit" != "$GITHUB_SHA" ]; then');
 		expect(workflow).toContain("release.targetCommitish !== process.env.EXPECTED_COMMIT");

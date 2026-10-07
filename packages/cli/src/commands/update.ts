@@ -32,7 +32,6 @@ import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../
 import { terminateProcessGroup } from "../lib/process-group";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { compareSemver, isValidSemver } from "../lib/semver";
-import { timedFetch } from "../lib/timed-fetch";
 import { getCliVersion } from "../lib/version";
 import { evaluateHostPolicyForCommand } from "../runtime/host-policy";
 import { detectRuntimeMode } from "../runtime/paths";
@@ -41,12 +40,11 @@ import { isSingletonDaemonInstalled, listInstalledAgents, readHealth } from "../
 import { log } from "../serve/log";
 import { getServeStateDir } from "../serve/paths";
 
-const REGISTRY_URL = "https://registry.npmjs.org/clawdi";
-// 1 hour: short enough that a fresh release reaches users within an hour of
-// publication, long enough that we don't hammer the npm registry on every
-// CLI invocation. Originally 24h — that meant a new release could sit
-// invisible to active users for a full day, which made `--auto-update`
-// feel broken whenever a fix shipped.
+const REGISTRY_URL = "https://registry.npmjs.org/-/package/clawdi/dist-tags";
+const MAX_REGISTRY_BYTES = 64 * 1024;
+// Discovery stays hourly; automatic installs wait a day after local discovery.
+export const AUTO_UPDATE_MIN_AGE_MS = 24 * 60 * 60 * 1000;
+const MAX_OBSERVED_VERSIONS = 8;
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const DAEMON_UPDATE_INTERVAL_MS = 60 * 60 * 1000;
 const INSTALL_TIMEOUT_MS = 3 * 60_000;
@@ -63,24 +61,30 @@ export interface PackageManagerUpdateOwnership {
 
 export type UpdateOwnership = PackageManagerUpdateOwnership | NativeInstallOwnership;
 
+interface ObservedVersion {
+	version: string;
+	firstSeenAt: string;
+}
+
 interface UpdateCache {
 	checkedAt: string;
 	latest: string;
+	firstSeen: ObservedVersion[];
 }
 
 type BackgroundWorkerRequest = {
 	current: string;
-	latest?: string;
-	channel: string;
 	logFd: number;
 };
 
 type AutoUpdateRuntime = {
+	now?: () => number;
 	detectOwnership?: () => UpdateOwnership | null;
 	spawnBackgroundWorker?: (request: BackgroundWorkerRequest) => void;
 };
 
 type ForegroundUpdateRuntime = {
+	now?: () => number;
 	detectOwnership?: () => UpdateOwnership | null;
 	isDesktopManaged?: () => boolean;
 	isHomebrewManaged?: () => boolean;
@@ -98,52 +102,118 @@ interface CommandVector {
 	args: string[];
 }
 
-function cachePath(channel = "latest"): string {
-	return join(getClawdiDir(), channel === "latest" ? "update.json" : `update-${channel}.json`);
+function cachePath(): string {
+	return join(getClawdiDir(), "update.json");
 }
 
-function readCache(channel = "latest"): UpdateCache | null {
+function readCache(): UpdateCache | null {
 	try {
-		const p = cachePath(channel);
-		if (!existsSync(p)) return null;
-		const parsed = JSON.parse(readFileSync(p, "utf-8")) as Partial<UpdateCache>;
-		const latest = parsed.latest;
-		if (typeof parsed.checkedAt !== "string" || typeof latest !== "string") {
+		const parsed = JSON.parse(readFileSync(cachePath(), "utf-8")) as Partial<UpdateCache>;
+		if (
+			typeof parsed.checkedAt !== "string" ||
+			!Number.isFinite(Date.parse(parsed.checkedAt)) ||
+			typeof parsed.latest !== "string" ||
+			!isValidSemver(parsed.latest)
+		)
 			return null;
+		const firstSeen = Array.isArray(parsed.firstSeen)
+			? parsed.firstSeen.filter(
+					(entry): entry is ObservedVersion =>
+						entry !== null &&
+						typeof entry === "object" &&
+						typeof entry.version === "string" &&
+						isValidSemver(entry.version) &&
+						typeof entry.firstSeenAt === "string" &&
+						Number.isFinite(Date.parse(entry.firstSeenAt)),
+				)
+			: [];
+		return { checkedAt: parsed.checkedAt, latest: parsed.latest, firstSeen };
+	} catch {
+		return null;
+	}
+}
+
+function newestEligibleVersion(
+	cache: UpdateCache | null,
+	current: string,
+	now: number,
+): string | null {
+	return (
+		cache?.firstSeen
+			.filter(
+				({ version, firstSeenAt }) =>
+					isNewer(version, current) && now - Date.parse(firstSeenAt) >= AUTO_UPDATE_MIN_AGE_MS,
+			)
+			.sort((a, b) => compareSemver(b.version, a.version))[0]?.version ?? null
+	);
+}
+
+function writeCache(latest: string, now: number): UpdateCache {
+	const firstSeen = readCache()?.firstSeen ?? [];
+	if (!firstSeen.some((entry) => entry.version === latest)) {
+		firstSeen.push({ version: latest, firstSeenAt: new Date(now).toISOString() });
+	}
+	firstSeen.sort((a, b) => compareSemver(b.version, a.version));
+	// Keep the newest aged candidate even when many fresh releases arrive.
+	const eligible = firstSeen.find(
+		({ firstSeenAt }) => now - Date.parse(firstSeenAt) >= AUTO_UPDATE_MIN_AGE_MS,
+	);
+	// Preserve the oldest pending observation so a sustained release burst
+	// cannot evict every version before any reaches the age threshold.
+	const pending = firstSeen
+		.filter(
+			({ version, firstSeenAt }) =>
+				(!eligible || isNewer(version, eligible.version)) &&
+				now - Date.parse(firstSeenAt) < AUTO_UPDATE_MIN_AGE_MS,
+		)
+		.sort((a, b) => Date.parse(a.firstSeenAt) - Date.parse(b.firstSeenAt))[0];
+	const anchors = firstSeen.filter((entry) => entry === eligible || entry === pending);
+	const retained = firstSeen
+		.filter((entry) => !anchors.includes(entry))
+		.slice(0, MAX_OBSERVED_VERSIONS - anchors.length)
+		.concat(anchors)
+		.sort((a, b) => compareSemver(b.version, a.version));
+	const cache = { checkedAt: new Date(now).toISOString(), latest, firstSeen: retained };
+	try {
+		writePrivateFileAtomic(cachePath(), `${JSON.stringify(cache, null, 2)}\n`, {
+			mode: PRIVATE_FILE_MODE,
+			dirMode: PRIVATE_DIR_MODE,
+		});
+	} catch {
+		// Best-effort: a lost observation only delays a future automatic install.
+	}
+	return cache;
+}
+
+async function fetchLatest(timeoutMs = 3000): Promise<string | null> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const res = await fetch(REGISTRY_URL, { signal: controller.signal });
+		if (!res.ok || !res.body) return null;
+		if (Number(res.headers.get("content-length")) > MAX_REGISTRY_BYTES) return null;
+		const reader = res.body.getReader();
+		const chunks: Uint8Array[] = [];
+		let size = 0;
+		try {
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				size += value.byteLength;
+				if (size > MAX_REGISTRY_BYTES) return null;
+				chunks.push(value);
+			}
+		} finally {
+			await reader.cancel();
 		}
-		if (!isValidSemver(latest)) return null;
-		return { checkedAt: parsed.checkedAt, latest };
+		const data: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+		if (!data || typeof data !== "object" || !("latest" in data)) return null;
+		return typeof data.latest === "string" && isValidSemver(data.latest) ? data.latest : null;
 	} catch {
 		return null;
-	}
-}
-
-function writeCache(latest: string, channel = "latest"): void {
-	try {
-		writePrivateFileAtomic(
-			cachePath(channel),
-			`${JSON.stringify({ checkedAt: new Date().toISOString(), latest }, null, 2)}\n`,
-			{ mode: PRIVATE_FILE_MODE, dirMode: PRIVATE_DIR_MODE },
-		);
-	} catch {
-		// best-effort; ignore
-	}
-}
-
-function updateChannelForVersion(version: string): string {
-	if (!isValidSemver(version)) return "latest";
-	return version.split("+", 1)[0]?.includes("-") ? "beta" : "latest";
-}
-
-async function fetchLatest(timeoutMs = 3000, channel = "latest"): Promise<string | null> {
-	try {
-		const res = await timedFetch(REGISTRY_URL, {}, timeoutMs);
-		if (!res.ok) return null;
-		const data = (await res.json()) as { "dist-tags"?: Record<string, string | undefined> };
-		const resolved = data["dist-tags"]?.[channel];
-		return resolved && isValidSemver(resolved) ? resolved : null;
-	} catch {
-		return null;
+	} finally {
+		controller.abort();
+		clearTimeout(timer);
 	}
 }
 
@@ -186,8 +256,7 @@ export async function update(
 		}
 		return;
 	}
-	const channel = updateChannelForVersion(current);
-	const latest = await fetchLatest(3000, channel);
+	const latest = await fetchLatest();
 
 	if (!latest) {
 		const message = `Could not reach ${REGISTRY_URL}`;
@@ -204,7 +273,7 @@ export async function update(
 		process.exitCode = 1;
 		return;
 	}
-	writeCache(latest, channel);
+	writeCache(latest, (runtime.now ?? Date.now)());
 	const upgradeAvailable = isNewer(latest, current);
 	const report = (installed: boolean) => {
 		if (json) {
@@ -289,6 +358,11 @@ export async function update(
 		console.error(chalk.yellow("CLI updates are managed by this Cloud Agent's runtime."));
 		report(false);
 		process.exitCode = 1;
+		return;
+	}
+	if (result.status === "no_update") {
+		report(false);
+		if (!json) print(chalk.gray("A newer CLI version is already installed."));
 		return;
 	}
 	if (result.status === "failed") {
@@ -667,18 +741,19 @@ function autoUpdateDisabled(): boolean {
 	return getStoredConfig().autoUpdate === false;
 }
 
-async function latestFromCacheOrRegistry(channel = "latest"): Promise<string | null> {
-	const cached = readCache(channel);
-	const now = Date.now();
-	if (cached && now - new Date(cached.checkedAt).getTime() <= CACHE_TTL_MS) {
-		return cached.latest;
+async function latestFromCacheOrRegistry(
+	now: () => number = Date.now,
+): Promise<UpdateCache | null> {
+	const cached = readCache();
+	const age = cached ? now() - Date.parse(cached.checkedAt) : Infinity;
+	if (cached && age >= 0 && age <= CACHE_TTL_MS) {
+		// Old cache files have no observations; begin the gate conservatively.
+		return cached.firstSeen.some(({ version }) => version === cached.latest)
+			? cached
+			: writeCache(cached.latest, now());
 	}
-	const latest = await fetchLatest(3000, channel);
-	if (latest) {
-		writeCache(latest, channel);
-		return latest;
-	}
-	return cached?.latest ?? null;
+	const latest = await fetchLatest();
+	return latest ? writeCache(latest, now()) : cached;
 }
 
 type InstallerOutput = "inherit" | "stderr" | "log";
@@ -795,9 +870,11 @@ type UpdateInstallWorkerResult =
 	| { status: "failed"; exitCode: number | null; installedVersion?: undefined; reason?: string }
 	| { status: "failed"; exitCode?: undefined; installedVersion: string | null; reason?: string }
 	| { status: "locked" }
-	| { status: "disabled" };
+	| { status: "disabled" }
+	| { status: "no_update" };
 
 async function runUpdateInstallWorker(input: {
+	automatic?: boolean;
 	current: string;
 	latest: string;
 	ownership: UpdateOwnership;
@@ -826,6 +903,11 @@ async function runUpdateInstallWorker(input: {
 		return await withPrivateDirectoryLock(
 			join(getClawdiDir(), "update.lock"),
 			async (lease) => {
+				// A manual update may have completed since this worker discovered its
+				// candidate. Package installs read the current package.json on disk.
+				if (input.automatic && !isNewer(input.latest, getCliVersion())) {
+					return { status: "no_update" };
+				}
 				const exitCode = await (input.installRunner ?? runInstallerProcess)(
 					install.command,
 					install.args,
@@ -854,6 +936,7 @@ async function runUpdateInstallWorker(input: {
 }
 
 async function runNativeUpdateInstall(input: {
+	automatic?: boolean;
 	current: string;
 	latest: string;
 	ownership: NativeInstallOwnership;
@@ -884,6 +967,7 @@ async function runNativeUpdateInstall(input: {
 		const activationArgs = [
 			"update",
 			"--native-activate",
+			...(input.automatic ? ["--native-auto-update"] : []),
 			"--native-stage",
 			staged.stageDir,
 			"--native-prefix",
@@ -905,6 +989,7 @@ async function runNativeUpdateInstall(input: {
 			},
 		);
 		if (exitCode === 75) return { status: "locked" };
+		if (exitCode === 76) return { status: "no_update" };
 		if (exitCode !== 0) {
 			return {
 				status: "failed",
@@ -964,6 +1049,7 @@ type DaemonInstallRunner = (
 export async function daemonAutoUpdateOnce(
 	opts: {
 		currentVersion?: string;
+		now?: () => number;
 		ownership?: UpdateOwnership | null;
 		installRunner?: DaemonInstallRunner;
 		versionReader?: (executable: string) => string | null;
@@ -977,19 +1063,20 @@ export async function daemonAutoUpdateOnce(
 	if (opts.signal?.aborted) return "disabled";
 
 	const current = opts.currentVersion ?? getCliVersion();
-	const channel = updateChannelForVersion(current);
-	const latest = await latestFromCacheOrRegistry(channel);
+	const now = opts.now ?? Date.now;
+	const latest = newestEligibleVersion(await latestFromCacheOrRegistry(now), current, now());
 	if (!latest || !isNewer(latest, current)) return "no_update";
 
 	const ownership = opts.ownership === undefined ? detectCurrentUpdateOwnership() : opts.ownership;
 	if (!ownership) {
-		log.warn("daemon.auto_update_unsupported", { current, latest, channel });
+		log.warn("daemon.auto_update_unsupported", { current, latest });
 		return "unsupported";
 	}
 	const owner = ownership.kind === "native" ? "native" : ownership.installer;
-	log.info("daemon.auto_update_installing", { current, latest, channel, owner });
+	log.info("daemon.auto_update_installing", { current, latest, owner });
 	const installAndValidate = async (): Promise<DaemonAutoUpdateResult> => {
 		const result = await runUpdateInstallWorker({
+			automatic: true,
 			current,
 			latest,
 			ownership,
@@ -1012,6 +1099,7 @@ export async function daemonAutoUpdateOnce(
 						) ?? null
 				: undefined,
 		});
+		if (result.status === "no_update") return "no_update";
 		if (result.status === "locked") return "locked";
 		if (result.status === "disabled") return "disabled";
 		if (result.status === "failed") {
@@ -1019,7 +1107,6 @@ export async function daemonAutoUpdateOnce(
 				log.warn("daemon.auto_update_failed", {
 					current,
 					latest,
-					channel,
 					owner,
 					reason: result.reason,
 				});
@@ -1029,7 +1116,6 @@ export async function daemonAutoUpdateOnce(
 				log.warn("daemon.auto_update_validation_failed", {
 					current,
 					latest,
-					channel,
 					owner,
 					installed_version: result.installedVersion,
 				});
@@ -1037,14 +1123,13 @@ export async function daemonAutoUpdateOnce(
 				log.warn("daemon.auto_update_failed", {
 					current,
 					latest,
-					channel,
 					owner,
 					status: result.exitCode,
 				});
 			}
 			return "failed";
 		}
-		log.info("daemon.auto_update_installed", { from: current, to: latest, channel, owner });
+		log.info("daemon.auto_update_installed", { from: current, to: latest, owner });
 		return "installed";
 	};
 	return opts.restartCoordination
@@ -1089,7 +1174,7 @@ export function startDaemonAutoUpdate(opts: {
  * Default-on auto-updater. On startup:
  *   1. If the binary version differs from `last-version` on disk, print a
  *      one-line "updated to v…" notice (the previous run's spawn finished).
- *   2. If a newer release exists in the cache, install that exact version
+ *   2. If a newer release has been observed for at least 24 hours, install it
  *      in the background so the next invocation gets it.
  *
  * Opt-out: `CLAWDI_NO_AUTO_UPDATE=1` env, `clawdi config set autoUpdate
@@ -1129,7 +1214,6 @@ export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<
 		// best-effort
 	}
 	writeLastVersion(current);
-	const channel = updateChannelForVersion(current);
 
 	if (process.env.CLAWDI_NO_AUTO_UPDATE) return;
 	if (process.env.CLAWDI_NO_UPDATE_CHECK) return;
@@ -1138,11 +1222,12 @@ export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<
 
 	if (getStoredConfig().autoUpdate === false) return;
 
-	const cached = readCache(channel);
-	const now = Date.now();
-	const cacheFresh = cached !== null && now - new Date(cached.checkedAt).getTime() <= CACHE_TTL_MS;
-	if (cacheFresh && !isNewer(cached.latest, current)) return;
-	const latest = cacheFresh ? cached.latest : undefined;
+	const cached = readCache();
+	const now = (runtime.now ?? Date.now)();
+	const cacheAge = cached ? now - Date.parse(cached.checkedAt) : Infinity;
+	const cacheFresh = cacheAge >= 0 && cacheAge <= CACHE_TTL_MS;
+	const latest = newestEligibleVersion(cached, current, now);
+	if (cacheFresh && !latest) return;
 	if (!detectAutoUpdateOwnership(runtime)) return;
 
 	// Redirect installer output to a logfile so silent failures (network
@@ -1164,7 +1249,7 @@ export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<
 	}
 	try {
 		const spawner = runtime.spawnBackgroundWorker ?? spawnBackgroundUpdateWorker;
-		spawner({ current, latest, channel, logFd });
+		spawner({ current, logFd });
 	} finally {
 		if (logFd >= 0) {
 			try {
@@ -1184,9 +1269,6 @@ function spawnBackgroundUpdateWorker(request: BackgroundWorkerRequest): void {
 			"--background-worker",
 			"--current-version",
 			request.current,
-			"--channel",
-			request.channel,
-			...(request.latest ? ["--latest", request.latest] : []),
 		]);
 	} catch {
 		return;
@@ -1207,10 +1289,9 @@ function spawnBackgroundUpdateWorker(request: BackgroundWorkerRequest): void {
 export async function runBackgroundUpdateWorker(
 	opts: {
 		currentVersion: string;
-		channel: string;
-		latest?: string;
 	},
 	runtime: {
+		now?: () => number;
 		ownership?: UpdateOwnership | null;
 		installRunner?: DaemonInstallRunner;
 		versionReader?: (executable: string) => string | null;
@@ -1220,17 +1301,19 @@ export async function runBackgroundUpdateWorker(
 	if (detectRuntimeMode() === "hosted") return "disabled";
 	if (autoUpdateDisabled()) return "disabled";
 	if (!isValidSemver(opts.currentVersion)) return "failed";
-	if (opts.channel !== "latest" && opts.channel !== "beta") return "failed";
-	const latest = opts.latest ?? (await latestFromCacheOrRegistry(opts.channel));
-	if (!latest || !isValidSemver(latest) || !isNewer(latest, opts.currentVersion)) {
+	const running = getCliVersion();
+	const current = isNewer(running, opts.currentVersion) ? running : opts.currentVersion;
+	const now = runtime.now ?? Date.now;
+	const latest = newestEligibleVersion(await latestFromCacheOrRegistry(now), current, now());
+	if (!latest || !isValidSemver(latest) || !isNewer(latest, current)) {
 		return "no_update";
 	}
-	writeCache(latest, opts.channel);
 	const ownership =
 		runtime.ownership === undefined ? detectCurrentUpdateOwnership() : runtime.ownership;
 	if (!ownership) return "unsupported";
 	const result = await runUpdateInstallWorker({
-		current: opts.currentVersion,
+		automatic: true,
+		current,
 		latest,
 		ownership,
 		output: "log",
@@ -1251,13 +1334,15 @@ export async function runBackgroundUpdateWorker(
 					) ?? null
 			: undefined,
 	});
-	return result.status === "installed"
-		? "installed"
-		: result.status === "locked"
-			? "locked"
-			: result.status === "disabled"
-				? "disabled"
-				: "failed";
+	return result.status === "no_update"
+		? "no_update"
+		: result.status === "installed"
+			? "installed"
+			: result.status === "locked"
+				? "locked"
+				: result.status === "disabled"
+					? "disabled"
+					: "failed";
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

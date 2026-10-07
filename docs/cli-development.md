@@ -37,6 +37,25 @@ unauthenticated) work without a backend. Anything that hits the API
 the baked-in production URL for release builds and `http://localhost:8000`
 for dev builds (`bun run dev` / `build:dev`).
 
+## Automatic updates
+
+Interactive CLI invocations discover updates in a background worker. The daemon
+also checks hourly. Both automatic paths install the newest observed version
+that has been recorded as npm `latest` for at least 24 hours, skipping intermediate
+versions and never downgrading. This is local observation time, not npm publication
+time: a new machine starts its own 24-hour wait. `~/.clawdi/update.json` retains up
+to eight version observations, including the newest eligible version and the
+oldest pending candidate during a burst of releases. `clawdi update` and `clawdi update --yes` install the current
+`latest` immediately; `--check` only reports availability. Installer exact pins
+use `CLAWDI_VERSION`; installers resolve `latest` when no pin is supplied.
+
+Native updaters read v2 manifests and tolerate future targets and metadata.
+Existing Unix installations and `install.sh` still accept the frozen v1 manifest.
+Release checks enforce the full current target matrix.
+
+Done: `bun run --cwd packages/cli test -- tests/commands/update.test.ts` passes
+in the isolated runner.
+
 ## Machine output
 
 New commands and new `--json` surfaces follow this contract:
@@ -758,13 +777,14 @@ The build/test job may use the configured fast runner, but the protected
 publish job is fixed to GitHub-hosted `ubuntu-latest`: npm trusted publishing
 does not support self-hosted or third-party GitHub Actions runners. The publish
 job uses Node 24 and npm 12.0.2, satisfying npm 12's minimum Node 24.15
-requirement. After a fresh `npm publish --provenance` succeeds, that command plus the exact registry
-version and matching `dist.integrity` authorizes GitHub Release completion; the
-job does not wait for the eventually consistent registry attestation read API.
-If release work remains and the immutable npm version already exists, the
-workflow never republishes it and only accepts an exact integrity match. The
-GitHub Release and tag must target that run's `GITHUB_SHA`; another commit while
-completion is required fails closed.
+requirement. The job creates or completes the matching GitHub Release and
+publishes its native assets before `npm publish`, so `latest` resolves only after
+the assets are available. The GitHub Release and tag must target that run's
+`GITHUB_SHA`; another target fails closed. If npm publication fails after the
+release is complete, rerun the original workflow. An existing immutable npm
+version is never republished and must match the current artifact's registry
+`dist.integrity`; verification does not wait for the eventually consistent
+registry attestation read API.
 
 The CLI workflow neither calls nor checks out the Hosted repository. An operator
 verifies the exact package publication, then explicitly supplies the exact
@@ -837,19 +857,15 @@ releases are automatic.
 1. Bump `version` in `packages/cli/package.json` (follow semver).
 2. Merge to `main`.
 3. The workflow builds, typechecks, runs the full CLI suite, packs and installs
-   one artifact, verifies its SHA-256 in both jobs, then publishes that tarball
+   one artifact, and verifies its SHA-256 in both jobs. It creates or completes
+   `clawdi-cli-v<version>` as a draft, uploads the verified native assets and
+   installers, then publishes the GitHub release.
+4. Only after the GitHub release is complete does the job publish the npm tarball
    from GitHub-hosted `ubuntu-latest` with
    `npm publish <tarball> --access public --provenance --ignore-scripts --tag <resolved-tag>`.
-   A successful fresh publish is completed using that command result plus the
-   exact registry version and `dist.integrity`; it does not depend on immediate
-   visibility of the registry attestation query endpoint.
-   If npm already has the exact version, the workflow never republishes it and
-   compares the current run's tarball directly with npm `dist.integrity`.
-   Integrity drift requires a version bump or a rerun of the original workflow;
-   the workflow never checks out a source commit inferred from registry data.
-4. The workflow creates or completes `clawdi-cli-v<version>` as a draft,
-   uploads the verified binary assets, then finalizes the release with changelog
-   notes.
+   If npm already has the exact version, it never republishes and compares the
+   current run's tarball directly with npm `dist.integrity`. Integrity drift
+   requires a version bump or a rerun of the original workflow.
 5. Watch the Actions tab; on green,
    `npm view clawdi@<exact-version> version` reflects the new number. A
    prerelease updates `beta`; a stable release updates `latest`.
@@ -859,7 +875,7 @@ version through its Cloud manifest. The `beta` tag is publication metadata;
 production and Hosted never resolve an npm dist-tag.
 
 A manual run is available under `workflow_dispatch` if the auto-run needs a
-nudge. If npm succeeded but GitHub Release creation failed, rerun that original
+nudge. If release completion or npm publication failed, rerun that original
 workflow run so `GITHUB_SHA` and the artifact remain identical.
 
 ### 0.16 confirmation checklist
