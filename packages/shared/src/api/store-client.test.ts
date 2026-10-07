@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { ApiClientError, ApiClientResponseError } from "./read-transport";
 import {
 	createHostedStoreClient,
+	readStoreErrorCode,
 	type StoreBootstrap,
+	StoreErrorCode,
 	type StorePurchaseAttempt,
 	type StorePurchaseAttemptRequest,
 	storeIdempotencyHeaders,
@@ -139,23 +141,25 @@ describe("Hosted store client", () => {
 	});
 
 	test("creates a standalone top-up without a pending deployment or bound product", async () => {
-		const body: StorePurchaseAttemptRequest = {
+		const request: StorePurchaseAttemptRequest = {
 			platform: "play_store",
 			catalogue_revision: 1,
 			purpose: "standalone_topup",
 		};
-		const client = createHostedStoreClient({
-			...options,
-			fetch: async (incoming) => {
-				expect(await incoming.json()).toEqual(body);
-				return Response.json({ ...attempt, ...body, pending_deploy_request_id: null });
-			},
-		});
-		expect(await client.createPurchaseAttempt(body, "topup-key")).toMatchObject({
-			purpose: "standalone_topup",
-			pending_deploy_request_id: null,
-			store_product_id: null,
-		});
+		for (const body of [request, { ...request, pending_deploy_request_id: null }]) {
+			const client = createHostedStoreClient({
+				...options,
+				fetch: async (incoming) => {
+					expect(await incoming.json()).toEqual(body);
+					return Response.json({ ...attempt, ...body, pending_deploy_request_id: null });
+				},
+			});
+			expect(await client.createPurchaseAttempt(body, "topup-key")).toMatchObject({
+				purpose: "standalone_topup",
+				pending_deploy_request_id: null,
+				store_product_id: null,
+			});
+		}
 	});
 
 	test("accepts disabled bootstrap with omitted or null identity and unavailable wallet balance", async () => {
@@ -289,12 +293,65 @@ describe("Hosted store client", () => {
 				} catch (error) {
 					expect(error).toBeInstanceOf(ApiClientError);
 					expect(error).toMatchObject({ status, code, category });
+					expect(readStoreErrorCode(error)).toBe(code);
 					if (!(error instanceof ApiClientError)) throw error;
 					expect(error.message).not.toContain("private server detail");
 				}
 			}
 			expect(sends).toBe(5);
 		}
+	});
+
+	test("classifies server store errors and holds while preserving unknown and unrelated errors", () => {
+		for (const code of [
+			StoreErrorCode.store_purchases_disabled,
+			StoreErrorCode.catalogue_revision_stale,
+			StoreErrorCode.store_identity_tombstoned,
+			StoreErrorCode.store_transfer_held,
+			StoreErrorCode.store_family_share_held,
+			StoreErrorCode.store_configuration_invalid,
+		]) {
+			const error = new ApiClientError(409, code);
+			const result: StoreErrorCode | null = readStoreErrorCode(error);
+			expect(result).toBe(code);
+		}
+		for (const error of [
+			new ApiClientError(401),
+			new ApiClientError(409, "future_store_code"),
+			new ApiClientError(400, "invalid_store_platform"),
+			new ApiClientError(409, "toString"),
+			new ApiClientError(409, "__proto__"),
+			new Error("store_purchases_disabled"),
+			{ code: "store_purchases_disabled" },
+			null,
+			undefined,
+		])
+			expect(readStoreErrorCode(error)).toBeNull();
+	});
+
+	test("rejects standalone top-ups with pending deployment context before auth or network", async () => {
+		let tokens = 0;
+		let sends = 0;
+		const client = createHostedStoreClient({
+			...options,
+			getToken: async () => {
+				tokens++;
+				return "fixture";
+			},
+			fetch: async () => {
+				sends++;
+				throw new Error("Unexpected network");
+			},
+		});
+		await expect(
+			client.createPurchaseAttempt({ ...request, purpose: "standalone_topup" }, "topup-key"),
+		).rejects.toMatchObject({
+			status: 409,
+			code: StoreErrorCode.pending_deploy_request_not_allowed,
+			category: "conflict",
+		});
+		expect(tokens).toBe(0);
+		expect(sends).toBe(0);
 	});
 
 	test("rejects invalid keys and inputs before acquiring auth or sending requests", async () => {

@@ -17,6 +17,45 @@ export type StorePurchaseConfirmation = components["schemas"]["StorePurchaseConf
 export type StorePurchaseAttemptsQuery =
 	paths["/v2/store/purchase-attempts"]["get"]["parameters"]["query"];
 
+/** Hosted HTTP error codes are not advertised in OpenAPI. Sources: clawdi-hosted
+ * origin/main (verified at 1c2e07c01), grouped by their owning file below.
+ */
+export const StoreErrorCode = {
+	// backend/app/v2/store_routes.py: _problem() codes.
+	catalogue_revision_stale: "catalogue_revision_stale",
+	idempotency_key_conflict: "idempotency_key_conflict",
+	invalid_idempotency_key: "invalid_idempotency_key",
+	open_refund_debt: "open_refund_debt",
+	pending_deploy_request_not_allowed: "pending_deploy_request_not_allowed",
+	store_attempt_not_found: "store_attempt_not_found",
+	store_attempt_unavailable: "store_attempt_unavailable",
+	store_configuration_missing: "store_configuration_missing",
+	store_identity_tombstoned: "store_identity_tombstoned",
+	store_identity_unavailable: "store_identity_unavailable",
+	store_purchases_disabled: "store_purchases_disabled",
+	// backend/app/services/webhook_inbox.py: WebhookQuarantineReason.STORE_* hold reasons.
+	store_namespace_invalid: "store_namespace_invalid",
+	store_replay_conflict: "store_replay_conflict",
+	store_identity_invalid: "store_identity_invalid",
+	store_product_unapproved: "store_product_unapproved",
+	store_quantity_unsupported: "store_quantity_unsupported",
+	store_transfer_held: "store_transfer_held",
+	store_family_share_held: "store_family_share_held",
+	store_subscription_held: "store_subscription_held",
+	store_reconciliation_overdue: "store_reconciliation_overdue",
+	store_environment_held: "store_environment_held",
+	store_attempt_conflict: "store_attempt_conflict",
+	store_evidence_not_converged: "store_evidence_not_converged",
+	store_configuration_invalid: "store_configuration_invalid",
+} as const;
+export type StoreErrorCode = (typeof StoreErrorCode)[keyof typeof StoreErrorCode];
+
+/** Unknown future codes and non-API errors remain unclassified. */
+export function readStoreErrorCode(error: unknown): StoreErrorCode | null {
+	if (!(error instanceof ApiClientError)) return null;
+	return Object.values(StoreErrorCode).find((code) => code === error.code) ?? null;
+}
+
 const attemptStates = {
 	prepared: true,
 	awaiting_store_result: true,
@@ -108,7 +147,9 @@ function readAttemptId(id: string): string {
 	return id;
 }
 
-/** Retain the same key and body when explicitly recovering an uncertain creation. */
+/** M1's durable attempt journal generates and persists keys before creation.
+ * This helper only validates/serializes them; recovery retains the same key and body.
+ */
 export function storeIdempotencyHeaders(key: string) {
 	if (typeof key !== "string" || !/^[\x21-\x7e]{1,200}$/.test(key))
 		throw new ApiClientError(400, "invalid_idempotency_key");
@@ -151,6 +192,8 @@ export function createHostedStoreClient(options: ApiClientOptions) {
 						body.pending_deploy_request_id.length > 191))
 			)
 				throw new ApiClientError(400, "invalid_store_attempt_request");
+			if (body.purpose === "standalone_topup" && body.pending_deploy_request_id != null)
+				throw new ApiClientError(409, StoreErrorCode.pending_deploy_request_not_allowed);
 			const request: StorePurchaseAttemptRequest = {
 				platform: body.platform,
 				catalogue_revision: body.catalogue_revision,
