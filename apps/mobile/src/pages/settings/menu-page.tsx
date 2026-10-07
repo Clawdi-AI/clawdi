@@ -1,5 +1,12 @@
 import { type Href, useRouter } from "expo-router";
-import { CreditCard, Key, SlidersHorizontal, UserCog, WalletCards } from "lucide-react-native";
+import {
+	BarChart3,
+	CreditCard,
+	Key,
+	SlidersHorizontal,
+	UserCog,
+	WalletCards,
+} from "lucide-react-native";
 import {
 	SettingsMenu,
 	type SettingsMenuRow,
@@ -10,6 +17,7 @@ import { useI18n } from "@/lib/i18n";
 import { useCurrentUser } from "@/platform/auth/auth-client";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
+import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 /** Account tab root: Web's settings dialog sidebar as a native settings list. */
 export default function SettingsMenuPage() {
@@ -17,6 +25,7 @@ export default function SettingsMenuPage() {
 	const router = useRouter();
 	const { compute } = useMobileApi();
 	const { user } = useCurrentUser();
+	const surfaces = useStoreSurfaces();
 	const row = (
 		id: string,
 		href: Href,
@@ -24,7 +33,6 @@ export default function SettingsMenuPage() {
 		label: string,
 		description?: string,
 	): SettingsMenuRow => ({ id, icon, label, description, onPress: () => router.push(href) });
-	// AI Usage (`/settings/usage`) joins the hosted rows when its panel is ported.
 	const sections: SettingsMenuSection[] = [
 		{
 			id: "settings",
@@ -70,6 +78,13 @@ export default function SettingsMenuPage() {
 								CreditCard,
 								t("billingParity.compute"),
 								t("billingParity.computeSummary"),
+							),
+							row(
+								"usage",
+								"/settings/usage",
+								BarChart3,
+								t("usageParity.nav"),
+								t(surfaces.creditUnits ? "store.usageSummary" : "usageParity.navSummary"),
 							),
 						],
 					},
