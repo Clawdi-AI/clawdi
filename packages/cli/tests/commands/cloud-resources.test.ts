@@ -184,7 +184,7 @@ beforeEach(() => {
 			}
 			if (
 				request.method === "DELETE" &&
-				(path === `/v1/agents/${agentId}` || path === `/v1/sessions/${sessionId}`)
+				(path.toLowerCase() === `/v1/agents/${agentId}` || path === `/v1/sessions/${sessionId}`)
 			) {
 				return status === 204
 					? new Response(null, { status })
@@ -496,6 +496,13 @@ describe("Cloud Agent lifecycle", () => {
 		];
 	});
 
+	it("accepts a valid uppercase Agent UUID", async () => {
+		const result = await runCli(["agent", "restart", agentId.toUpperCase(), "--no-wait", "--json"]);
+		expect(result.code).toBe(0);
+		expect(JSON.parse(result.stdout).deployment_id).toBe(deploymentId);
+		expect(mutations).toHaveLength(1);
+	});
+
 	it.each(["start", "stop", "restart"])(
 		"%s waits for the exact accepted operation",
 		async (action) => {
@@ -601,6 +608,20 @@ describe("Cloud Agent removal", () => {
 				computeSubscription: subscription,
 			}),
 		];
+	});
+
+	it("maps an uppercase Agent UUID to the Cloud deployment", async () => {
+		const result = await runCli([
+			"agent",
+			"rm",
+			agentId.toUpperCase(),
+			"--yes",
+			"--keep-subscription",
+			"--json",
+		]);
+		expect(result.code).toBe(0);
+		expect(JSON.parse(result.stdout).deployment_id).toBe(deploymentId);
+		expect(mutations).toHaveLength(1);
 	});
 
 	for (const yes of [false, true]) {

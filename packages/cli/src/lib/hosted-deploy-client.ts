@@ -182,7 +182,9 @@ export class HostedDeployClient {
 	async getAgentDeployment(agentId: string) {
 		const deployments = await this.getDeployments();
 		const matches = deployments.filter(
-			(item) => item.agent_id === agentId && item.resource.spec.desired_lifecycle !== "deleted",
+			(item) =>
+				item.agent_id === agentId.toLowerCase() &&
+				item.resource.spec.desired_lifecycle !== "deleted",
 		);
 		if (matches.length !== 1) {
 			throw new Error(
