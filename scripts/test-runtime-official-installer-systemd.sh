@@ -35,7 +35,7 @@ load_args=()
 if [[ "${DOCKER_BUILD_LOAD:-0}" == "1" ]]; then
 	load_args+=(--load)
 fi
-docker build --quiet "${load_args[@]}" "${build_args[@]}" --file "$fixture" --tag "$image" \
+docker build --quiet --build-arg BUN_VERSION=1.4.2 "${load_args[@]}" "${build_args[@]}" --file "$fixture" --tag "$image" \
 	"$(dirname -- "$fixture")" >/dev/null
 docker run --detach --privileged \
 	--cpus=2 --memory=4g --memory-swap=4g --pids-limit=512 \
