@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, require_clerk_id, require_web_auth
+from app.core.auth import AuthContext, require_clerk_id, require_user_session
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.session import Session
@@ -29,18 +29,15 @@ _connectors_count_cache: dict[str, tuple[datetime, int]] = {}
 # counts, token usage, contribution graph, skill/vault/memory
 # counts — for sibling envs B/C/D that the resource-level routes
 # (memories.py, vault.py, skills.py) explicitly hide from it.
-# Forcing `require_web_auth` (Clerk JWT only, no api_keys at
-# all) keeps the deploy-key isolation model intact: Agent environment
-# keys can read/write within their Agent Project, but never see the
-# user-wide aggregate that would let them infer activity in
-# other envs. The dashboard is the only consumer here — no CLI
-# callsites.
+# `require_user_session` blocks all API keys, preserving deploy-key isolation.
+# Browser sessions and first-party CLI OAuth tokens represent the user and may
+# read account-wide aggregates.
 
 
 @router.get("/stats")
 async def get_stats(
     response: Response,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
     days: int = Query(default=365, ge=1, le=_DASHBOARD_DAYS_MAX),
 ) -> DashboardStatsResponse:
@@ -321,7 +318,7 @@ def _remember_connectors_count(clerk_id: str, count: int, *, now: datetime) -> N
 @router.get("/contribution")
 async def get_contribution_graph(
     response: Response,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
     days: int = Query(default=365, ge=1, le=_DASHBOARD_DAYS_MAX),
 ) -> list[ContributionDayResponse]:

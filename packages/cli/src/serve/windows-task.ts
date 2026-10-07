@@ -47,7 +47,11 @@ if ($task) {
     $enginePid = [int]$instance.EnginePID
     if ($enginePid -le 0) { throw 'Clawdi task reported an invalid engine PID.' }
     & "$env:SystemRoot\\System32\\taskkill.exe" /PID $enginePid /T /F | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Unable to stop Clawdi task process tree ($enginePid)." }
+    if ($LASTEXITCODE -ne 0) {
+      if (Get-Process -Id $enginePid -ErrorAction SilentlyContinue) {
+        throw "Unable to stop Clawdi task process tree ($enginePid)."
+      }
+    }
   }
   $deadline = [DateTime]::UtcNow.AddSeconds(20)
   while ($task.GetInstances(0).Count -gt 0) {

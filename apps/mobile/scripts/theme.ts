@@ -28,14 +28,14 @@ export const clerkThemeOutputPath = fileURLToPath(
 
 const REM_PX = 16;
 
-function block(css: string, selector: string): string {
+export function block(css: string, selector: string): string {
 	const start = css.indexOf(`${selector} {`);
 	if (start < 0) throw new Error(`Missing ${selector} block in shared theme`);
 	const end = css.indexOf("\n}", start);
 	return css.slice(start + selector.length + 2, end);
 }
 
-function declarations(body: string): Map<string, string> {
+export function declarations(body: string): Map<string, string> {
 	const result = new Map<string, string>();
 	const withoutComments = body.replace(/\/\*[\s\S]*?\*\//g, "");
 	for (const match of withoutComments.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
@@ -128,8 +128,8 @@ const CLERK_COLOR_TOKENS = {
 
 const toRgb = converter("rgb");
 
-/** Native views take sRGB hex; OKLCH tokens are gamut-mapped by chroma, as browsers do. */
-function hexColor(value: string): string {
+/** Native surfaces take sRGB hex; OKLCH tokens are gamut-mapped by chroma, as browsers do. */
+export function hexColor(value: string): string {
 	const parsed = parse(value);
 	if (!parsed) throw new Error(`Unsupported color ${value}`);
 	const rgb = toRgb(clampChroma(parsed, "oklch"));

@@ -1,5 +1,7 @@
 const { readLinkHosts, webLinkPaths } = require("@clawdi/shared/linking");
 const { parsePublishableKey } = require("@clerk/shared/keys");
+// Brand red from the artwork and the shared `--background` tokens; regenerate with `bun run icons`.
+const appColors = require("./assets/app-colors.json");
 
 function publicValue(name) {
 	const value = process.env[name]?.trim();
@@ -95,6 +97,11 @@ module.exports = ({ config }) => {
 		...config.android,
 		package: "ai.clawdi.app",
 		allowBackup: false,
+		adaptiveIcon: {
+			foregroundImage: "./assets/adaptive-icon.png",
+			monochromeImage: "./assets/adaptive-icon-monochrome.png",
+			backgroundColor: appColors.brand,
+		},
 		// App files use the system picker or app-private cache, never legacy shared storage.
 		blockedPermissions: [
 			...new Set([
@@ -114,6 +121,7 @@ module.exports = ({ config }) => {
 		scheme: "clawdi",
 		version: "0.1.0",
 		orientation: "portrait",
+		icon: "./assets/icon.png",
 		userInterfaceStyle: "automatic",
 		platforms: ["ios", "android"],
 		experiments: {
@@ -125,6 +133,16 @@ module.exports = ({ config }) => {
 			"expo-router",
 			"expo-secure-store",
 			["expo-font", fontPluginOptions()],
+			[
+				"expo-splash-screen",
+				{
+					image: "./assets/splash-icon.png",
+					// The rounded square's corners reach 92dp from center, inside Android 12's 96dp icon mask.
+					imageWidth: 150,
+					backgroundColor: appColors.light,
+					dark: { backgroundColor: appColors.dark },
+				},
+			],
 			// Keep native hooks stable for Build/Update; upload scripts read org/project/token from env.
 			"@sentry/react-native/expo",
 			["@clerk/expo", { theme: "./clerk-theme.generated.json" }],
