@@ -21,7 +21,7 @@ export type PurchaseIntent = Pick<
 	"purpose" | "pending_deploy_request_id"
 >;
 export type PurchaseOutcome = Readonly<{
-	status: "funding_applied" | "terminal" | "pending" | "cancelled";
+	status: "funding_applied" | "submitted" | "terminal" | "pending" | "cancelled";
 	attempt: StorePurchaseAttempt;
 }>;
 
@@ -124,7 +124,7 @@ export function createPurchaseFlow(options: {
 		return { saved, attempt };
 	}
 	function finished(attempt: StorePurchaseAttempt, saved: SavedPurchaseAttempt | null) {
-		// Hosted accepts late evidence for expired attempts; keep paid evidence recoverable.
+		// Expired paid attempts need one confirmation before releasing the journal.
 		return (
 			isFinishedPurchase(attempt.state) && !(attempt.state === "expired" && saved?.transactionHint)
 		);
@@ -133,14 +133,20 @@ export function createPurchaseFlow(options: {
 		attempt: StorePurchaseAttempt,
 		saved: SavedPurchaseAttempt | null,
 		signal: AbortSignal,
+		submitted = false,
 	): Promise<PurchaseOutcome> {
 		assertStoreAccount(scope, signal);
 		// A manual reconciliation hold continues blocking a second purchase.
-		if (saved && finished(attempt, saved) && attempt.state !== "reconciliation_required")
+		if (
+			saved &&
+			(submitted || finished(attempt, saved)) &&
+			attempt.state !== "reconciliation_required"
+		)
 			await journal.clearAttempt(storageKey, saved, () => current(signal));
 		return {
-			status:
-				attempt.state === "funding_applied"
+			status: submitted
+				? "submitted"
+				: attempt.state === "funding_applied"
 					? "funding_applied"
 					: finished(attempt, saved)
 						? "terminal"
@@ -168,7 +174,7 @@ export function createPurchaseFlow(options: {
 		let delay = 2_000;
 		try {
 			assertStoreAccount(scope, signal);
-			while (!finished(attempt, saved) && clock.now() < deadline) {
+			while (!isFinishedPurchase(attempt.state) && clock.now() < deadline) {
 				await clock.sleep(Math.min(delay, deadline - clock.now()), controller.signal);
 				assertStoreAccount(scope, signal);
 				if (clock.now() >= deadline) break;
@@ -183,6 +189,8 @@ export function createPurchaseFlow(options: {
 			clearTimeout(timer);
 			signal.removeEventListener("abort", abort);
 		}
+		if (attempt.state === "expired" && saved?.transactionHint)
+			return reconcile(attempt, saved, signal, deadline);
 		return finish(attempt, saved, signal);
 	}
 	async function reconcile(
@@ -191,7 +199,10 @@ export function createPurchaseFlow(options: {
 		signal: AbortSignal,
 		deadline?: number,
 	) {
-		if (finished(attempt, saved) || (deadline !== undefined && clock.now() >= deadline))
+		if (
+			finished(attempt, saved) ||
+			(deadline !== undefined && clock.now() >= deadline && attempt.state !== "expired")
+		)
 			return finish(attempt, saved, signal);
 		const ready = identity.requireReady(signal);
 		if (!saved?.transactionHint) {
@@ -216,7 +227,10 @@ export function createPurchaseFlow(options: {
 			signal,
 		);
 		assertStoreAccount(scope, signal);
-		return poll({ ...attempt, state: confirmation.state }, saved, signal, deadline);
+		const confirmed = { ...attempt, state: confirmation.state };
+		// Hosted credits the transaction independently; an expired attempt never becomes funded.
+		if (confirmation.state === "expired") return finish(confirmed, saved, signal, true);
+		return poll(confirmed, saved, signal, deadline);
 	}
 
 	return {
@@ -247,10 +261,15 @@ export function createPurchaseFlow(options: {
 						const existing = await create(saved, signal);
 						saved = existing.saved;
 						if (
-							(existing.attempt.state === "expired" || existing.attempt.state === "canceled") &&
-							finished(existing.attempt, saved)
+							isFinishedPurchase(existing.attempt.state) &&
+							existing.attempt.state !== "reconciliation_required"
 						) {
-							await journal.clearAttempt(storageKey, saved, () => current(signal));
+							const outcome = await reconcile(existing.attempt, saved, signal);
+							if (
+								outcome.status === "pending" ||
+								outcome.attempt.state === "reconciliation_required"
+							)
+								throw new StorePurchaseError("purchase_pending");
 							saved = null;
 						} else throw new StorePurchaseError("purchase_pending");
 					}

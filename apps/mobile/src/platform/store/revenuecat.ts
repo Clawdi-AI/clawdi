@@ -37,37 +37,37 @@ export function createRevenueCat(identityTimeoutMs = 300_000) {
 		work: (signal: AbortSignal) => Promise<T>,
 		signal?: AbortSignal,
 	): Promise<T> {
-		return serialize(async () => {
-			const controller = new AbortController();
-			const abort = () => controller.abort(signal?.reason);
-			if (signal?.aborted) abort();
-			else signal?.addEventListener("abort", abort, { once: true });
-			const assertActive = () => {
-				assertCurrent();
-				if (controller.signal.aborted)
-					throw controller.signal.reason ?? new StorePurchaseError("store_operation_timeout");
-			};
-			let timer: ReturnType<typeof setTimeout> | undefined;
-			const timeout = new Promise<never>((_, reject) => {
-				timer = setTimeout(() => {
+		// Caller timeout and SDK serialization have separate lifetimes. Native work
+		// must settle before another account can change the SDK identity.
+		return new Promise<T>((resolve, reject) => {
+			void serialize(async () => {
+				const controller = new AbortController();
+				const abort = () => controller.abort(signal?.reason);
+				if (signal?.aborted) abort();
+				else signal?.addEventListener("abort", abort, { once: true });
+				const assertActive = () => {
+					assertCurrent();
+					if (controller.signal.aborted)
+						throw controller.signal.reason ?? new StorePurchaseError("store_operation_timeout");
+				};
+				const timer = setTimeout(() => {
 					const error = new StorePurchaseError("store_operation_timeout");
 					controller.abort(error);
 					reject(error);
 				}, identityTimeoutMs);
-			});
-			const operation = async () => {
-				await assertIdentity(appUserId, assertActive);
-				assertActive();
-				const result = await work(controller.signal);
-				await assertIdentity(appUserId, assertActive);
-				return result;
-			};
-			try {
-				return await Promise.race([operation(), timeout]);
-			} finally {
-				clearTimeout(timer);
-				signal?.removeEventListener("abort", abort);
-			}
+				try {
+					await assertIdentity(appUserId, assertActive);
+					assertActive();
+					const result = await work(controller.signal);
+					await assertIdentity(appUserId, assertActive);
+					resolve(result);
+				} catch (error) {
+					reject(error);
+				} finally {
+					clearTimeout(timer);
+					signal?.removeEventListener("abort", abort);
+				}
+			}).catch(reject);
 		});
 	}
 	return {

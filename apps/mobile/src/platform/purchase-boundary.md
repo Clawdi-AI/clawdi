@@ -58,19 +58,27 @@ typed errors. After explicit user intent, call
    On signal abort, dismiss the UI and finish the promise within a bounded time.
    `showPaywall` must settle within five minutes; M1's `withIdentity` guards the
    whole operation with that deadline, aborts its signal and surfaces
-   `store_operation_timeout`. The identity queue then proceeds, while late
-   callbacks remain fenced. A late result cannot confirm under the next account.
+   `store_operation_timeout` to the caller. The timeout does **not** release
+   the identity lock: the queue waits until the native purchase/UI work actually
+   settles, even after reporting failure. M2 must close the UI on abort and
+   settle its promise only after native work finishes. Late results remain
+   fenced and cannot confirm under the next account.
 3. M1 saves the `transactionIdentifier` hint before
    `POST /v2/store/purchase-attempts/{attempt_id}/confirm`. Hosted verification
    binds the product and owns all financial effects.
 4. Read `GET /v2/store/purchase-attempts/{attempt_id}` using 2/4/8/16/30-second
    backoff, capped at two minutes. Return `funding_applied`,
-   `terminal`, `pending`, or `cancelled`; timeout retains the journal. A locally
-   cancelled `prepared` attempt retains its journal and cancellation status
+   `submitted`, `terminal`, `pending`, or `cancelled`; timeout retains the journal.
+   A locally cancelled `prepared` attempt retains its journal and cancellation status
    across restart; an explicit retry of that intent can reopen the Paywall.
    Funded, canceled, expired and rejected server attempts release the local
-   journal, except **expired with a transaction hint**, which still confirms
-   and remains pending until hosted resolves the paid evidence. A
+   journal. An **expired attempt with a transaction hint** confirms once; if
+   hosted still returns `expired`, M1 clears the journal and returns `submitted`.
+   Hosted credits the transaction independently and never moves that expired
+   attempt to `funding_applied`. M2 shows the localized equivalent of "Purchase
+   submitted; credit will arrive in your wallet" and refreshes the Wallet
+   balance. `submitted` does not acknowledge settlement or automatically resume
+   a deploy continuation. A
    `reconciliation_required` hold stops polling and keeps blocking another buy.
 
 `StorePurchaseError.code` uses `readStoreErrorCode` from `@clawdi/shared/api`;
@@ -82,8 +90,9 @@ was received and surfaces the original typed code. Network, 5xx and unknown
 outcomes retain the journal. Recovery errors surface through `error` while
 preserving bootstrap availability and `flow`, so a retry remains possible.
 Before blocking a different purpose/target with `purchase_pending`, M1 reads
-the previous server attempt; expired/canceled attempts release the journal,
-while expired attempts with paid evidence still block a second purchase.
+the previous server attempt and finishes any completed state other than
+`reconciliation_required` before proceeding. Paid expired evidence is submitted
+through confirm before its journal is released.
 
 ## Recovery and official APIs
 
@@ -99,6 +108,12 @@ purchase-start marker are read without sync or confirmation. Recovery shares
 one two-minute polling budget across attempts.
 Backgrounding cancels recovery; foregrounding refreshes bootstrap
 and recovers again. Foreground events during a purchase preserve its SDK identity.
+
+Accepted residual behavior (C): a different-purpose purchase remains blocked by
+a locally cancelled `prepared` attempt until the server expires it (up to 15
+minutes), despite reading its current state. Accepted residual behavior (E):
+each foreground recovery of an interrupted `prepared` attempt without a hint
+calls `syncPurchases()` again; repeated foreground refreshes can repeat the sync.
 
 Both RevenueCat packages are **10.11.0**; UI was added with
 `npx expo install react-native-purchases-ui@10.11.0 --bun`. Official installed
