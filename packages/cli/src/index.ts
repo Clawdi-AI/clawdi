@@ -365,6 +365,7 @@ program
 		"after",
 		"\nExamples:\n  $ clawdi setup\n  $ clawdi setup --yes\n  $ clawdi setup --agent claude_code\n  $ clawdi setup --no-daemon",
 	)
+	.option("--json", "Output as JSON")
 	.action(async (opts) => {
 		const { setup } = await import("./commands/setup.js");
 		await setup(opts);
@@ -388,6 +389,7 @@ Examples:
 
 Non-interactive teardown without --yes is deprecated; --yes will be required starting in 0.16.`,
 	)
+	.option("--json", "Output as JSON")
 	.action(async (opts) => {
 		const { teardown } = await import("./commands/teardown.js");
 		await teardown(opts);
@@ -1043,6 +1045,7 @@ vaultCmd
 		"after",
 		"\nExamples:\n  $ clawdi vault set OPENAI_API_KEY --prompt\n  $ clawdi vault set DEPLOY_KEY --project engineering --prompt\n  $ printf 'secret' | clawdi vault set api-service/env/DEPLOY_KEY --stdin",
 	)
+	.option("--json", "Output as JSON")
 	.action(async (key, opts) => {
 		const { vaultSet } = await import("./commands/vault.js");
 		await vaultSet(key, {
@@ -1082,6 +1085,7 @@ vaultCmd
 		"after",
 		"\nExamples:\n  $ clawdi vault import .env.production\n  $ clawdi vault import .env.staging --project engineering --yes\n  $ clawdi vault import --vault prod --section stripe --project engineering --yes .env.stripe",
 	)
+	.option("--json", "Output as JSON")
 	.action(async (file, opts) => {
 		const { vaultImport } = await import("./commands/vault.js");
 		await vaultImport(file, {
@@ -1100,9 +1104,10 @@ vaultCmd
 		"after",
 		"\nExamples:\n  $ clawdi vault attach providers --project redpill-providers",
 	)
+	.option("--json", "Output as JSON")
 	.action(async (vault, opts) => {
 		const { vaultAttach } = await import("./commands/vault.js");
-		await vaultAttach(vault, { project: opts.project });
+		await vaultAttach(vault, opts);
 	});
 
 vaultCmd
@@ -1115,9 +1120,10 @@ vaultCmd
 		"after",
 		"\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault unlink providers --project old-agent",
 	)
+	.option("--json", "Output as JSON")
 	.action(async (vault, opts) => {
 		const { vaultDetach } = await import("./commands/vault.js");
-		await vaultDetach(vault, { project: opts.project, yes: opts.yes });
+		await vaultDetach(vault, opts);
 	});
 
 vaultCmd
@@ -1137,6 +1143,7 @@ vaultCmd
 		"after",
 		"\nExamples:\n  $ clawdi vault rm OPENAI_API_KEY\n  $ clawdi vault delete prod/stripe/SECRET_KEY --project engineering --yes\n  $ clawdi vault rm OPENAI_API_KEY --project engineering --global --yes",
 	)
+	.option("--json", "Output as JSON")
 	.action(async (key, opts) => {
 		const { vaultRm } = await import("./commands/vault.js");
 		await vaultRm(key, { ...opts, project: opts.project, yes: opts.yes, global: opts.global });
@@ -1262,6 +1269,7 @@ skillCmd
 		"after",
 		"\nExamples:\n  $ clawdi skill add ./my-skill --project engineering   # Project\n  $ clawdi skill add ./my-skill --agent codex            # Agent workspace",
 	)
+	.option("--json", "Output as JSON")
 	.action(async (path, opts) => {
 		const { skillAdd } = await import("./commands/skill.js");
 		await skillAdd(path, { ...opts, project: opts.project });
@@ -1284,6 +1292,7 @@ Examples:
   $ clawdi skill install owner/repo --agent claude_code
   $ clawdi skill install owner/repo --project engineering`,
 	)
+	.option("--json", "Output as JSON")
 	.action(async (repo, opts) => {
 		const { skillInstall } = await import("./commands/skill.js");
 		await skillInstall(repo, opts);
@@ -1299,6 +1308,7 @@ skillCmd
 		"Remove from an explicit owned project (UUID, slug, or name); can't be combined with --agent",
 	)
 	.addHelpText("after", "\nExample:\n  $ clawdi skill rm my-skill --yes")
+	.option("--json", "Output as JSON")
 	.action(async (key, opts) => {
 		const { skillRm } = await import("./commands/skill.js");
 		await skillRm(key, opts);
@@ -1504,6 +1514,7 @@ memoryCmd
 		"after",
 		'\nExample:\n  $ clawdi memory add "Prefer concise release notes" --category preference',
 	)
+	.option("--json", "Output as JSON")
 	.action(async (content, opts) => {
 		const { memoryAdd } = await import("./commands/memory.js");
 		await memoryAdd(content, opts);
@@ -1527,6 +1538,7 @@ memoryCmd
 	.description("Delete a memory")
 	.option("-y, --yes", "Skip the interactive confirmation prompt")
 	.addHelpText("after", "\nExample:\n  $ clawdi memory rm <id> --yes")
+	.option("--json", "Output as JSON")
 	.action(async (id, opts) => {
 		const { memoryRm } = await import("./commands/memory.js");
 		await memoryRm(id, opts);
@@ -1842,7 +1854,8 @@ projectCmd
 	.command("share [project]")
 	.description("Create a viewer project share link")
 	.option("-l, --label <text>", "Optional label shown in the share-links list")
-	.action(async (project: string | undefined, opts: { label?: string }) => {
+	.option("--json", "Output as JSON")
+	.action(async (project: string | undefined, opts: { label?: string; json?: boolean }) => {
 		const { projectShareCommand } = await import("./commands/project-share.js");
 		await projectShareCommand(project, opts);
 	});
@@ -1852,7 +1865,8 @@ projectCmd
 	.description("List or revoke viewer project links")
 	.option("--revoke <id-or-prefix>", "Revoke a specific link")
 	.option("-y, --yes", "Confirm revoking a project share link")
-	.action(async (project: string, opts: { revoke?: string; yes?: boolean }) => {
+	.option("--json", "Output as JSON")
+	.action(async (project: string, opts: { revoke?: string; yes?: boolean; json?: boolean }) => {
 		const { projectShareLinksCommand } = await import("./commands/project-share-links.js");
 		await projectShareLinksCommand(project, opts);
 	});
@@ -1861,7 +1875,8 @@ projectCmd
 	.command("invite <project>")
 	.description("Invite a person to viewer project access")
 	.requiredOption("-e, --email <addr>", "Email address to invite")
-	.action(async (project: string, opts: { email: string }) => {
+	.option("--json", "Output as JSON")
+	.action(async (project: string, opts: { email: string; json?: boolean }) => {
 		const { projectInviteCommand } = await import("./commands/project-invite.js");
 		await projectInviteCommand(project, opts);
 	});
@@ -1876,7 +1891,8 @@ projectCmd
 		"\n  Recipient side (listing / accepting / declining invitations addressed to you)\n" +
 			"  lives under `clawdi inbox`.",
 	)
-	.action(async (project: string, opts: { cancel?: string; yes?: boolean }) => {
+	.option("--json", "Output as JSON")
+	.action(async (project: string, opts: { cancel?: string; yes?: boolean; json?: boolean }) => {
 		const { projectInvitesCommand } = await import("./commands/project-invites.js");
 		await projectInvitesCommand(project, opts);
 	});
@@ -2171,6 +2187,7 @@ agentProjectsCmd
 	.description("Link a project for vault resolution")
 	.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
 	.option("--order <n>", "Vault resolution priority (>=1)", parsePositiveInteger)
+	.option("--json", "Output as JSON")
 	.action(async (agentId, opts) => {
 		const { agentProjectsAddContextCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsAddContextCommand(agentId, opts);
@@ -2186,6 +2203,7 @@ agentProjectsCmd
 		"after",
 		"\nExample:\n  $ clawdi agent projects unlink <agent-id> --project engineering --yes",
 	)
+	.option("--json", "Output as JSON")
 	.action(async (agentId, opts) => {
 		const { agentProjectsRemoveContextCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsRemoveContextCommand(agentId, opts);
@@ -2204,6 +2222,7 @@ agentProjectsCmd
 		"after",
 		"\nExample:\n  $ clawdi agent projects move <agent-id> --item <id>:1 --item <id>:2",
 	)
+	.option("--json", "Output as JSON")
 	.action(async (agentId, opts) => {
 		const { agentProjectsReorderCommand } = await import("./commands/agent-projects.js");
 		await agentProjectsReorderCommand(agentId, opts);
@@ -2281,18 +2300,20 @@ inboxCmd
 	.description("Decline a pending invitation")
 	.option("-y, --yes", "Skip the interactive confirmation prompt")
 	.addHelpText("after", "\nExample:\n  $ clawdi inbox decline <id> --yes")
-	.action(async (id, opts) => {
+	.option("--json", "Output as JSON")
+	.action(async (id, _opts, cmd) => {
 		const { inboxDeclineCommand } = await import("./commands/inbox.js");
-		await inboxDeclineCommand(id, opts);
+		await inboxDeclineCommand(id, cmd.optsWithGlobals());
 	});
 
 inboxCmd
 	.command("forget <project-id>")
 	.description("Local-only: remove a share record and its cached files")
 	.option("-y, --yes", "Confirm removing the local share record")
-	.action(async (projectId, opts: { yes?: boolean }) => {
+	.option("--json", "Output as JSON")
+	.action(async (projectId, _opts, cmd) => {
 		const { inboxForgetCommand } = await import("./commands/inbox.js");
-		await inboxForgetCommand(projectId, opts);
+		await inboxForgetCommand(projectId, cmd.optsWithGlobals());
 	});
 
 // Keep the top-level help scannable without changing the command registry or

@@ -15,6 +15,7 @@ import {
 	builtinSkillTargetDir,
 } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
+import { commandResult } from "../lib/command-output";
 import { getConfig } from "../lib/config";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import {
@@ -50,12 +51,28 @@ export interface LocalAgentSetupOpts {
 }
 
 interface SetupOpts extends LocalAgentSetupOpts {
+	json?: boolean;
 	agent?: string;
 	vaultWorkspace?: string;
 	vaultNativeAgent?: string;
 }
 
 export async function setup(opts: SetupOpts) {
+	const agents: {
+		id: string;
+		agent_type: AgentType;
+		skill_installed: boolean | null;
+		mcp_installed: boolean | null;
+	}[] = [];
+	let daemonInstalled = false;
+	let dashboardUrl: string | undefined;
+	const emitResult = (status = "completed") =>
+		commandResult(opts.json, "clawdi.setup.v1", {
+			status,
+			agents,
+			daemon: { installed: daemonInstalled },
+			dashboard_url: dashboardUrl ?? null,
+		});
 	if ((opts.vaultWorkspace || opts.vaultNativeAgent) && !opts.agent) {
 		throw new Error(
 			"Vault workspace options require --agent; a target is never shared across detected agents.",
@@ -102,14 +119,20 @@ export async function setup(opts: SetupOpts) {
 			process.exitCode = 1;
 			return;
 		}
-		const integrationsInstalled = await reconcileAgentIntegrations(adapter);
-		const daemonInstalled = await maybeInstallDaemons(opts, vaultBindingChanged);
-		printSetupNotice(
-			[adapterRegistry[type].displayName],
-			daemonInstalled,
-			integrationsInstalled,
-			result.dashboardUrl,
-		);
+		const integrations = await reconcileAgentIntegrationResults(adapter, opts);
+		agents.push({ id: result.id, agent_type: type, ...integrations });
+		const integrationsInstalled =
+			integrations.mcp_installed === true && integrations.skill_installed === true;
+		daemonInstalled = await maybeInstallDaemons(opts, vaultBindingChanged);
+		dashboardUrl = result.dashboardUrl;
+		if (!opts.json)
+			printSetupNotice(
+				[adapterRegistry[type].displayName],
+				daemonInstalled,
+				integrationsInstalled,
+				result.dashboardUrl,
+			);
+		emitResult(process.exitCode ? "partial" : "completed");
 		return;
 	}
 
@@ -128,6 +151,7 @@ export async function setup(opts: SetupOpts) {
 	if (detected.length === 0) {
 		console.error(chalk.yellow("  No supported agents detected."));
 		console.error(chalk.gray("  Use --agent to specify manually."));
+		emitResult("no_agents_detected");
 		return;
 	}
 
@@ -157,6 +181,7 @@ export async function setup(opts: SetupOpts) {
 		});
 		if (p.isCancel(result)) {
 			p.cancel("Cancelled.", { output: process.stderr });
+			emitResult("cancelled");
 			return;
 		}
 		const picked = new Set(result as string[]);
@@ -165,12 +190,12 @@ export async function setup(opts: SetupOpts) {
 
 	if (toRegister.length === 0) {
 		progressLine(chalk.gray("No agents selected."));
+		emitResult("no_agents_selected");
 		return;
 	}
 
 	progressLine();
 	const registeredNames: string[] = [];
-	let dashboardUrl: string | undefined;
 	let integrationsInstalled = false;
 	let failedCount = 0;
 	for (const { adapter, version } of toRegister) {
@@ -190,14 +215,18 @@ export async function setup(opts: SetupOpts) {
 		}
 		registeredNames.push(adapterRegistry[adapter.agentType].displayName);
 		dashboardUrl ??= result.dashboardUrl;
-		const installed = await reconcileAgentIntegrations(adapter);
-		integrationsInstalled ||= installed;
+		const integrations = await reconcileAgentIntegrationResults(adapter, opts);
+		agents.push({ id: result.id, agent_type: adapter.agentType, ...integrations });
+		integrationsInstalled ||=
+			integrations.mcp_installed === true && integrations.skill_installed === true;
 	}
 	if (registeredNames.length > 0) {
-		const daemonInstalled = await maybeInstallDaemons(opts, vaultBindingChanged);
-		printSetupNotice(registeredNames, daemonInstalled, integrationsInstalled, dashboardUrl);
+		daemonInstalled = await maybeInstallDaemons(opts, vaultBindingChanged);
+		if (!opts.json)
+			printSetupNotice(registeredNames, daemonInstalled, integrationsInstalled, dashboardUrl);
 	}
 	if (failedCount > 0) process.exitCode = 1;
+	emitResult(process.exitCode ? "partial" : "completed");
 }
 
 async function registerEnv(
@@ -209,7 +238,7 @@ async function registerEnv(
 	userId?: string,
 	opts: SetupOpts = {},
 	onVaultBindingChange?: () => void,
-): Promise<{ ok: boolean; dashboardUrl?: string }> {
+): Promise<{ ok: true; id: string; dashboardUrl?: string } | { ok: false }> {
 	const agentType = adapter.agentType;
 	try {
 		const vaultWorkspace = await selectVaultWorkspace(agentType, opts);
@@ -249,7 +278,7 @@ async function registerEnv(
 					: `Vault file sync is disabled. Configure it with clawdi setup --agent ${agentType} --vault-workspace <path>.`,
 			),
 		);
-		return { ok: true, dashboardUrl: env.dashboard_url ?? undefined };
+		return { ok: true, id: env.id, dashboardUrl: env.dashboard_url ?? undefined };
 	} catch (e) {
 		console.error(
 			chalk.red(`  Failed to register ${adapterRegistry[agentType].displayName}: ${errMessage(e)}`),
@@ -336,12 +365,20 @@ async function shouldInstallDaemons(opts: SetupOpts): Promise<boolean> {
 	return result === true;
 }
 
-export async function reconcileAgentIntegrations(adapter: AgentAdapter): Promise<boolean> {
+async function reconcileAgentIntegrationResults(
+	adapter: AgentAdapter,
+	opts: { json?: boolean } = {},
+) {
 	const entry = adapterRegistry[adapter.agentType];
-	const mcpInstalled = (await entry.mcpLifecycle?.register()) ?? false;
+	const mcpInstalled = (await entry.mcpLifecycle?.register(opts)) ?? null;
 	if (!entry.mcpLifecycle && entry.manualMcpHint) progressLine(chalk.gray(entry.manualMcpHint));
-	const skillInstalled = adapter.skills ? await installBuiltinSkill(adapter.agentType) : false;
-	return mcpInstalled && skillInstalled;
+	const skillInstalled = adapter.skills ? await installBuiltinSkill(adapter.agentType) : null;
+	return { mcp_installed: mcpInstalled, skill_installed: skillInstalled };
+}
+
+export async function reconcileAgentIntegrations(adapter: AgentAdapter): Promise<boolean> {
+	const result = await reconcileAgentIntegrationResults(adapter);
+	return result.mcp_installed === true && result.skill_installed === true;
 }
 
 export async function maybeInstallDaemons(

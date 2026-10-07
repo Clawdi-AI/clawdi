@@ -23,8 +23,8 @@ function commandTimedOut(error: unknown): boolean {
 }
 
 export interface McpLifecycle {
-	register(): Promise<boolean>;
-	unregister(): Promise<void>;
+	register(opts?: { json?: boolean }): Promise<boolean>;
+	unregister(opts?: { json?: boolean }): Promise<void>;
 }
 
 type CommandArgv = readonly [command: string, ...args: string[]];
@@ -92,7 +92,8 @@ function commandLifecycle(input: {
 	fallbackRegisteredMessage?: string;
 }): McpLifecycle {
 	return {
-		async register() {
+		async register(opts) {
+			const log = opts?.json ? console.error : console.log;
 			const invocation = resolveCurrentCliInvocation(["mcp"]);
 			const manualRegister = input.manualRegister(invocation);
 			const reportTimeout = () => {
@@ -115,7 +116,7 @@ function commandLifecycle(input: {
 						killSignal: "SIGKILL",
 					});
 					if (input.isRegistered?.(listed) || input.registeredPattern?.test(listed)) {
-						console.log(chalk.gray(`✓ MCP server already registered in ${input.label}`));
+						log(chalk.gray(`✓ MCP server already registered in ${input.label}`));
 						return true;
 					}
 				} catch (error) {
@@ -134,7 +135,7 @@ function commandLifecycle(input: {
 					timeout: MCP_COMMAND_TIMEOUT_MS,
 					killSignal: "SIGKILL",
 				});
-				console.log(chalk.green(input.registeredMessage));
+				log(chalk.green(input.registeredMessage));
 				return true;
 			} catch (error) {
 				if (commandTimedOut(error)) {
@@ -143,7 +144,7 @@ function commandLifecycle(input: {
 				}
 				try {
 					if (input.fallbackRegister?.(invocation)) {
-						console.log(chalk.green(input.fallbackRegisteredMessage ?? input.registeredMessage));
+						log(chalk.green(input.fallbackRegisteredMessage ?? input.registeredMessage));
 						return true;
 					}
 				} catch {
@@ -154,30 +155,29 @@ function commandLifecycle(input: {
 				return false;
 			}
 		},
-		async unregister() {
+		async unregister(opts) {
+			const log = opts?.json ? console.error : console.log;
 			if (input.isSupported && !input.isSupported()) {
-				console.log(chalk.gray(`${input.label}: MCP server removal not supported`));
+				log(chalk.gray(`${input.label}: MCP server removal not supported`));
 				return;
 			}
 			const invocation = resolveCurrentCliInvocation(["mcp"]);
 			try {
 				const [command, ...args] = resolveCommand(input.unregisterCommand, invocation);
 				execFileSync(command, args, { stdio: "pipe", env: process.env });
-				console.log(chalk.green(`${input.label}: removed MCP server registration`));
+				log(chalk.green(`${input.label}: removed MCP server registration`));
 			} catch {
 				try {
 					if (input.fallbackUnregister?.(invocation)) {
-						console.log(chalk.green(`${input.label}: removed MCP server registration`));
+						log(chalk.green(`${input.label}: removed MCP server registration`));
 						return;
 					}
 				} catch {
 					// Fall through to the usual absent/manual hint.
 				}
-				console.log(
-					chalk.gray(`${input.label}: MCP server already absent (or removal not supported)`),
-				);
+				log(chalk.gray(`${input.label}: MCP server already absent (or removal not supported)`));
 				if (input.manualUnregister) {
-					console.log(chalk.gray(`  Remove manually: ${input.manualUnregister(invocation)}`));
+					log(chalk.gray(`  Remove manually: ${input.manualUnregister(invocation)}`));
 				}
 			}
 		},
@@ -289,13 +289,14 @@ export const openClawMcpLifecycle: McpLifecycle = commandLifecycle({
 });
 
 export const hermesMcpLifecycle: McpLifecycle = {
-	async register() {
+	async register(opts) {
+		const log = opts?.json ? console.error : console.log;
 		try {
 			if (!(await reconcileAllLocalHermesMcp(true))) {
-				console.log(chalk.gray("✓ MCP server already registered in Hermes"));
+				log(chalk.gray("✓ MCP server already registered in Hermes"));
 				return true;
 			}
-			console.log(chalk.green("✓ MCP server registered in Hermes"));
+			log(chalk.green("✓ MCP server registered in Hermes"));
 			return true;
 		} catch (error) {
 			console.error(
@@ -305,12 +306,13 @@ export const hermesMcpLifecycle: McpLifecycle = {
 			return false;
 		}
 	},
-	async unregister() {
+	async unregister(opts) {
+		const log = opts?.json ? console.error : console.log;
 		try {
 			if (await reconcileAllLocalHermesMcp(false)) {
-				console.log(chalk.green("Hermes: removed MCP server registration"));
+				log(chalk.green("Hermes: removed MCP server registration"));
 			} else {
-				console.log(chalk.gray("Hermes: MCP server already absent"));
+				log(chalk.gray("Hermes: MCP server already absent"));
 			}
 		} catch (error) {
 			console.error(

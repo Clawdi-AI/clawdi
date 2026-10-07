@@ -1,7 +1,7 @@
 import { buildShareAgentHandoffPrompt } from "@clawdi/shared/sharing";
 import chalk from "chalk";
-
 import { ApiClient, ApiError, readJson } from "../lib/api-client";
+import { commandResult } from "../lib/command-output";
 import { projectAuthOrExit } from "../lib/project-command-utils";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 
@@ -35,7 +35,7 @@ interface ShareLinkCreated {
 
 export async function projectShareCommand(
 	projectArg: string | undefined,
-	opts: { label?: string },
+	opts: { label?: string; json?: boolean },
 ): Promise<void> {
 	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
@@ -84,6 +84,21 @@ export async function projectShareCommand(
 		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	}
 	const body = await readJson<ShareLinkCreated>(r, "create share link");
+
+	if (opts.json) {
+		console.error("✓ Viewer project link ready");
+		commandResult(true, "clawdi.projectShare.v1", {
+			project_id: projectId,
+			id: body.id,
+			url: body.url,
+			prefix: body.prefix,
+			owner_handle: body.owner_handle,
+			label: body.label,
+			created_at: body.created_at,
+			expires_at: body.expires_at,
+		});
+		return;
+	}
 
 	console.log();
 	console.log(

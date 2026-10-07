@@ -7,6 +7,7 @@ import {
 	adapterRegistry,
 	builtinSkillTargetDir,
 } from "../adapters/registry";
+import { commandResult } from "../lib/command-output";
 import { getClawdiDir } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { progress as p } from "../lib/progress";
@@ -25,6 +26,7 @@ export async function teardown(opts: {
 	keepSkill?: boolean;
 	keepMcp?: boolean;
 	yes?: boolean;
+	json?: boolean;
 }) {
 	p.intro(chalk.bold("clawdi teardown"), { output: process.stderr });
 
@@ -36,6 +38,7 @@ export async function teardown(opts: {
 	}
 	if (targets.length === 0) {
 		p.outro(chalk.gray("Nothing to tear down."));
+		commandResult(opts.json, "clawdi.teardown.v1", { status: "nothing_to_teardown", agents: [] });
 		return;
 	}
 
@@ -48,18 +51,24 @@ export async function teardown(opts: {
 		const ok = await askYesNo("Proceed?");
 		if (!ok) {
 			p.outro(chalk.gray("Cancelled."));
+			commandResult(opts.json, "clawdi.teardown.v1", { status: "cancelled", agents: [] });
 			return;
 		}
 	}
 
+	const agents = [];
 	for (const type of targets) {
-		await teardownOne(type, {
-			keepSkill: opts.keepSkill ?? false,
-			keepMcp: opts.keepMcp ?? false,
-		});
+		agents.push(
+			await teardownOne(type, {
+				keepSkill: opts.keepSkill ?? false,
+				keepMcp: opts.keepMcp ?? false,
+				json: opts.json,
+			}),
+		);
 	}
 
 	p.outro(chalk.green("✓ Teardown complete"));
+	commandResult(opts.json, "clawdi.teardown.v1", { status: "completed", agents });
 }
 
 /**
@@ -120,9 +129,13 @@ async function resolveTargets(opts: {
 	return picked;
 }
 
-async function teardownOne(agentType: AgentType, opts: { keepSkill: boolean; keepMcp: boolean }) {
+async function teardownOne(
+	agentType: AgentType,
+	opts: { keepSkill: boolean; keepMcp: boolean; json?: boolean },
+) {
 	const label = adapterRegistry[agentType].displayName;
 	const adapter = adapterRegistry[agentType].create();
+	let skillResult = "unsupported";
 
 	// 1. Local env file
 	const envPath = join(getClawdiDir(), "environments", `${agentType}.json`);
@@ -160,17 +173,29 @@ async function teardownOne(agentType: AgentType, opts: { keepSkill: boolean; kee
 					if (!opts.keepSkill) rmSync(skillDir, { recursive: true, force: true });
 				},
 			});
+			skillResult = opts.keepSkill ? "kept" : "removed";
 			if (!opts.keepSkill) {
 				if (result === "absent") throw new Error("Skill is not owned by local setup");
 				p.log.success(`${label}: removed bundled skill (${skillDir})`);
 			}
 		} catch (e) {
+			skillResult = "failed";
 			p.log.warn(`${label}: could not remove skill (${errMessage(e)})`, { output: process.stderr });
 		}
 	}
 
 	// 4. MCP registration
 	if (!opts.keepMcp) {
-		await adapterRegistry[agentType].mcpLifecycle?.unregister();
+		await adapterRegistry[agentType].mcpLifecycle?.unregister(opts);
 	}
+	return {
+		agent_type: agentType,
+		registration_removed: !existsSync(envPath),
+		skill: skillResult,
+		mcp: opts.keepMcp
+			? "kept"
+			: adapterRegistry[agentType].mcpLifecycle
+				? "removal_attempted"
+				: "unsupported",
+	};
 }

@@ -1,6 +1,6 @@
 import chalk from "chalk";
-
 import { ApiClient, ApiError } from "../lib/api-client";
+import { commandMessage, commandResult } from "../lib/command-output";
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -54,7 +54,7 @@ function formatRow(link: ShareLinkRow): string {
 
 export async function projectShareLinksCommand(
 	projectArg: string,
-	opts: { revoke?: string; yes?: boolean },
+	opts: { revoke?: string; yes?: boolean; json?: boolean },
 ): Promise<void> {
 	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
@@ -91,6 +91,11 @@ export async function projectShareLinksCommand(
 					action: "revoke this project share link",
 				}))
 			) {
+				commandResult(opts.json, "clawdi.projectShareLinks.v1", {
+					project_id: projectId,
+					id: linkId,
+					status: "cancelled",
+				});
 				return;
 			}
 		}
@@ -106,12 +111,21 @@ export async function projectShareLinksCommand(
 			return;
 		}
 		if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-		console.log(`${chalk.green("✓")} Share link revoked.`);
-		console.log(chalk.gray("  Existing members keep access until you remove them."));
+		commandMessage(opts.json, `${chalk.green("✓")} Share link revoked.`);
+		commandMessage(opts.json, chalk.gray("  Existing members keep access until you remove them."));
+		commandResult(opts.json, "clawdi.projectShareLinks.v1", {
+			project_id: projectId,
+			id: linkId,
+			status: "revoked",
+		});
 		return;
 	}
 
 	const links = await fetchLinks(apiUrl, apiKey, projectId);
+	if (opts.json) {
+		commandResult(true, "clawdi.projectShareLinks.v1", { project_id: projectId, links });
+		return;
+	}
 	if (links.length === 0) {
 		console.log("No share links on this project yet.");
 		console.log();

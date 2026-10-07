@@ -19,6 +19,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import type { SkillSummary } from "../lib/api-schemas";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
+import { commandMessage, commandResult } from "../lib/command-output";
 import { getConfig } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
@@ -195,7 +196,8 @@ async function installGithubSkillForAgent(
 	api: ApiClient,
 	source: Extract<ParsedSource, { type: "github" }>,
 	target: SkillMutationTarget & { agentId: string; adapter: SkillCapableAdapter },
-): Promise<void> {
+	json?: boolean,
+) {
 	const downloaded = await fetchGithubSkillArchive(source);
 
 	// Local activation is authoritative and guarded by the adapter's managed
@@ -236,11 +238,13 @@ async function installGithubSkillForAgent(
 		skillKey: downloaded.skillKey,
 		hash: committedSnapshot.hash,
 	});
-	console.log(
+	commandMessage(
+		json,
 		chalk.green(
 			`✓ Installed ${sanitizeMetadata(result.name)} for ${adapterRegistry[target.adapter.agentType].displayName} (v${result.version}, ${result.file_count} files)`,
 		),
 	);
+	return result;
 }
 
 export async function skillList(opts: { json?: boolean; project?: string } = {}) {
@@ -279,7 +283,7 @@ export async function skillList(opts: { json?: boolean; project?: string } = {})
 
 export async function skillAdd(
 	path: string,
-	opts: { yes?: boolean; agent?: string; project?: string } = {},
+	opts: { yes?: boolean; agent?: string; project?: string; json?: boolean } = {},
 ) {
 	requireAuth();
 	const resolved = resolve(path);
@@ -366,7 +370,8 @@ export async function skillAdd(
 	const { data } = parseFrontmatter(skillMdSource);
 	if (!data.name || !data.description) {
 		console.error(chalk.red("SKILL.md must declare both `name` and `description` in frontmatter."));
-		console.log(
+		commandMessage(
+			opts.json,
 			chalk.gray("  Example:\n    ---\n    name: my-skill\n    description: what it does\n    ---"),
 		);
 		process.exit(1);
@@ -391,6 +396,7 @@ export async function skillAdd(
 		});
 		if (p.isCancel(ok) || !ok) {
 			p.cancel("Cancelled.", { output: process.stderr });
+			commandResult(opts.json, "clawdi.skillAdd.v1", { skill_key: skillKey, status: "cancelled" });
 			return;
 		}
 	}
@@ -442,16 +448,18 @@ export async function skillAdd(
 		);
 	}
 
-	console.log(
+	commandMessage(
+		opts.json,
 		chalk.green(
 			`✓ Uploaded ${sanitizeMetadata(result.skill_key)} (v${result.version}, ${result.file_count} files)`,
 		),
 	);
+	commandResult(opts.json, "clawdi.skillAdd.v1", { project_id: target.projectId, ...result });
 }
 
 export async function skillInstall(
 	repoInput: string,
-	opts: { agent?: string; project?: string } = {},
+	opts: { agent?: string; project?: string; json?: boolean } = {},
 ) {
 	requireAuth();
 
@@ -477,23 +485,30 @@ export async function skillInstall(
 	const api = new ApiClient();
 	const target = await resolveSkillMutationTarget(api, opts);
 	if (target.agentId && target.adapter) {
-		console.log(
+		commandMessage(
+			opts.json,
 			chalk.cyan(
 				`Fetching from ${parsed.owner}/${parsed.repo}${parsed.path ? `/${parsed.path}` : ""}...`,
 			),
 		);
-		await installGithubSkillForAgent(api, parsed, {
-			projectId: target.projectId,
-			agentId: target.agentId,
-			adapter: target.adapter,
-		});
+		const result = await installGithubSkillForAgent(
+			api,
+			parsed,
+			{
+				projectId: target.projectId,
+				agentId: target.agentId,
+				adapter: target.adapter,
+			},
+			opts.json,
+		);
+		commandResult(opts.json, "clawdi.skillInstall.v1", { project_id: target.projectId, ...result });
 		return;
 	}
 
 	const repo = `${parsed.owner}/${parsed.repo}`;
 	const path = parsed.path;
 
-	console.log(chalk.cyan(`Fetching from ${repo}${path ? `/${path}` : ""}...`));
+	commandMessage(opts.json, chalk.cyan(`Fetching from ${repo}${path ? `/${path}` : ""}...`));
 
 	const installResult = unwrap(
 		await api.POST("/v1/projects/{project_id}/skills/install", {
@@ -502,16 +517,21 @@ export async function skillInstall(
 		}),
 	);
 
-	console.log(
+	commandMessage(
+		opts.json,
 		chalk.green(
 			`\n✓ Installed ${sanitizeMetadata(installResult.name)} in cloud (v${installResult.version}, ${installResult.file_count} files)`,
 		),
 	);
+	commandResult(opts.json, "clawdi.skillInstall.v1", {
+		project_id: target.projectId,
+		...installResult,
+	});
 }
 
 export async function skillRm(
 	key: string,
-	opts: { agent?: string; project?: string; yes?: boolean } = {},
+	opts: { agent?: string; project?: string; yes?: boolean; json?: boolean } = {},
 ) {
 	requireAuth();
 	const api = new ApiClient();
@@ -523,6 +543,11 @@ export async function skillRm(
 			action: "remove this skill",
 		}))
 	) {
+		commandResult(opts.json, "clawdi.skillRm.v1", {
+			project_id: target.projectId,
+			skill_key: key,
+			status: "cancelled",
+		});
 		return;
 	}
 	if (target.agentId && target.adapter) {
@@ -546,7 +571,12 @@ export async function skillRm(
 			});
 		}
 		if (materialization && !hasAgentProjection) {
-			console.log(chalk.green(`✓ Removed ${sanitizeMetadata(key)} from agent`));
+			commandMessage(opts.json, chalk.green(`✓ Removed ${sanitizeMetadata(key)} from agent`));
+			commandResult(opts.json, "clawdi.skillRm.v1", {
+				project_id: target.projectId,
+				skill_key: key,
+				status: "removed",
+			});
 			return;
 		}
 		try {
@@ -572,7 +602,12 @@ export async function skillRm(
 			}),
 		);
 	}
-	console.log(chalk.green(`✓ Removed ${sanitizeMetadata(key)}`));
+	commandMessage(opts.json, chalk.green(`✓ Removed ${sanitizeMetadata(key)}`));
+	commandResult(opts.json, "clawdi.skillRm.v1", {
+		project_id: target.projectId,
+		skill_key: key,
+		status: "removed",
+	});
 }
 
 export function skillInit(nameArg?: string) {

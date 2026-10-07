@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { parsePositiveInteger } from "../lib/cli-options";
+import { commandMessage, commandResult } from "../lib/command-output";
 import { authedJson, projectAlias, requireProjectAuth } from "../lib/project-command-utils";
 import { listProjects, type ProjectBrief, resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -89,7 +90,7 @@ export async function agentProjectsListCommand(
 
 export async function agentProjectsAddContextCommand(
 	agentId: string,
-	opts: { project: string; order?: string | number },
+	opts: { project: string; order?: string | number; json?: boolean },
 ): Promise<void> {
 	const { apiUrl, apiKey } = await requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
@@ -97,7 +98,7 @@ export async function agentProjectsAddContextCommand(
 	if (opts.order !== undefined) {
 		priority = parseOrder(opts.order, "--order <order> must be an integer >= 1.");
 	}
-	await authedJson<BindingRow>(
+	const binding = await authedJson<BindingRow>(
 		apiUrl,
 		apiKey,
 		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings/context`,
@@ -107,13 +108,14 @@ export async function agentProjectsAddContextCommand(
 			body: JSON.stringify({ project_id: projectId, priority }),
 		},
 	);
-	console.log(`${chalk.green("✓")} Linked to ${agentId}.`);
-	console.log(chalk.gray("  Vaults resolve after the workspace."));
+	commandMessage(opts.json, `${chalk.green("✓")} Linked to ${agentId}.`);
+	commandMessage(opts.json, chalk.gray("  Vaults resolve after the workspace."));
+	commandResult(opts.json, "clawdi.agentProjectsLink.v1", { ...binding });
 }
 
 export async function agentProjectsRemoveContextCommand(
 	agentId: string,
-	opts: { project: string; yes?: boolean },
+	opts: { project: string; yes?: boolean; json?: boolean },
 ): Promise<void> {
 	const { apiUrl, apiKey } = await requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
@@ -142,6 +144,11 @@ export async function agentProjectsRemoveContextCommand(
 			action: "unlink this project",
 		}))
 	) {
+		commandResult(opts.json, "clawdi.agentProjectsUnlink.v1", {
+			agent_id: agentId,
+			project_id: projectId,
+			status: "cancelled",
+		});
 		return;
 	}
 	await authedJson<{ status: string }>(
@@ -150,13 +157,19 @@ export async function agentProjectsRemoveContextCommand(
 		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings/${encodeURIComponent(matches[0].id)}`,
 		{ method: "DELETE" },
 	);
-	console.log(`${chalk.green("✓")} Unlinked from ${agentId}.`);
-	console.log(chalk.gray("  Project membership unchanged."));
+	commandMessage(opts.json, `${chalk.green("✓")} Unlinked from ${agentId}.`);
+	commandMessage(opts.json, chalk.gray("  Project membership unchanged."));
+	commandResult(opts.json, "clawdi.agentProjectsUnlink.v1", {
+		agent_id: agentId,
+		project_id: projectId,
+		id: matches[0].id,
+		status: "unlinked",
+	});
 }
 
 export async function agentProjectsReorderCommand(
 	agentId: string,
-	opts: { item?: string[] },
+	opts: { item?: string[]; json?: boolean },
 ): Promise<void> {
 	const { apiUrl, apiKey } = await requireProjectAuth();
 	const itemError = "--item must use <id>:<order> with order >= 1.";
@@ -182,7 +195,15 @@ export async function agentProjectsReorderCommand(
 			body: JSON.stringify({ items }),
 		},
 	);
-	console.log(`${chalk.green("✓")} Updated vault resolution priority for ${agentId}.`);
+	commandMessage(
+		opts.json,
+		`${chalk.green("✓")} Updated vault resolution priority for ${agentId}.`,
+	);
+	commandResult(opts.json, "clawdi.agentProjectsMove.v1", {
+		agent_id: agentId,
+		items,
+		status: "updated",
+	});
 }
 
 function formatBindingProject(row: BindingRow, projectsById: Map<string, ProjectBrief>): string {

@@ -101,6 +101,45 @@ acceptance; use `agent plugins list` to inspect observed runtime convergence.
 Failed convergence returns a non-zero exit code. Plugin removal requires
 `confirmOrRequireYes`.
 
+Write commands also support explicit `--json`. Successful mutations emit one
+object; human messages and prompts move to stderr. `--json` preserves the
+command's existing confirmation policy and never implies `--yes`. Cancelling
+a prompt emits `status: "cancelled"` without performing the mutation.
+
+| Command | Schema version and result fields |
+| --- | --- |
+| `memory add`, `memory rm` | `clawdi.memoryAdd.v1` (`id`, `category`, `status`); `clawdi.memoryRm.v1` (`id`, `status`) |
+| `skill add`, `skill install`, `skill rm` | `clawdi.skillAdd.v1`, `clawdi.skillInstall.v1` (`project_id` and upload/install metadata); `clawdi.skillRm.v1` (`project_id`, `skill_key`, `status`) |
+| `vault set`, `vault import`, `vault rm` | `clawdi.vaultSet.v1`, `clawdi.vaultImport.v1`, `clawdi.vaultRm.v1` (`project_id`, `vault_id`, `vault`, `section`, `keys`, `status`) |
+| `vault attach`, `vault detach` | `clawdi.vaultAttach.v1`, `clawdi.vaultDetach.v1` (`project_id`, `vault_id`, `vault`, `status`, `attached_project_count` when changed) |
+| `project share`, `project invite` | `clawdi.projectShare.v1` (`project_id` and link metadata, including the one-time `url`); `clawdi.projectInvite.v1` (invitation metadata) |
+| `project share-links` | `clawdi.projectShareLinks.v1` (`project_id`, `links` for listing; `project_id`, `id`, `status: "revoked"` for revocation) |
+| `project invites` | `clawdi.projectInvites.v1` (`project_id`, `invitations` for listing; `project_id`, `id`, `status: "canceled"` for cancellation) |
+| `agent projects link`, `agent projects unlink`, `agent projects move` | `clawdi.agentProjectsLink.v1` (binding metadata); `clawdi.agentProjectsUnlink.v1` (`agent_id`, `project_id`, `id`, `status`); `clawdi.agentProjectsMove.v1` (`agent_id`, `items`, `status`) |
+| `inbox decline`, `inbox forget` | `clawdi.inboxDecline.v1` (`id`, `status`); `clawdi.inboxForget.v1` (`project_id`, `status`, `removed_skill_count`) |
+| `daemon status` | `clawdi.daemonStatus.v1` (`agents`, each containing `agent`, `state_dir`, `health`, `supervisor`) |
+| `setup` | `clawdi.setup.v1` (`status`, `agents`, `daemon: {installed}`, `dashboard_url`) |
+| `teardown` | `clawdi.teardown.v1` (`status`, `agents`) |
+
+Vault results contain key names and target metadata only, never secret values.
+An empty import reports `keys: []` and `status: "empty"`, without project or
+vault IDs because no target was resolved. Attach/detach report
+`"already_attached"` / `"not_attached"` when no mutation is needed.
+
+Setup's `agents` array reports each registered `id` and `agent_type`, with
+`skill_installed` and `mcp_installed` booleans (null for unsupported integrations).
+`daemon.installed` is false when installation was skipped or failed; diagnostics
+and the existing exit code distinguish failures. `dashboard_url` is null when
+unavailable. Empty detection/selection reports an empty array and an explanatory
+status. Partial setup failures retain the existing non-zero exit code.
+
+Teardown reports each `agent_type`, observed `registration_removed`, and `skill`
+cleanup outcome (`"removed"`, `"kept"`, `"failed"`, or `"unsupported"`). MCP
+unregistration remains best effort: `mcp` is `"removal_attempted"`, `"kept"`, or
+`"unsupported"`; an attempt does not claim verified removal. Local share tokens
+are never included in `inbox forget` output. Empty daemon status emits
+`agents: []` and writes the setup hint to stderr.
+
 Legacy shapes are frozen. Don't change them to match the new convention:
 
 | Existing surface | Keep this shape |
