@@ -108,8 +108,8 @@ behavior; new commands require explicit `--json`.
 scripts/test.sh cli tests/commands/cloud-resources.test.ts tests/commands/confirmation.test.ts
 ```
 
-Done: the command exits 0; tests parse all three envelopes, verify their
-`schemaVersion`, and check confirmation and stdout/stderr behavior.
+Done: the command exits 0; tests verify resource envelopes, lifecycle polling,
+subscription choices, plugin requests, confirmation, and stdout/stderr behavior.
 
 ## Profile discovery and sync
 
