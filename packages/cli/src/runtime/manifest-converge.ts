@@ -112,7 +112,10 @@ import {
 	writeLastGoodManifest,
 } from "./manifest-secrets";
 import type { RuntimeConvergenceResult } from "./manifest-shared";
-import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
+import {
+	type HostedSkillGuardRefusal,
+	reconcileHostedSkillProjection,
+} from "./manifest-skills-apply";
 import { loadCommittedRuntimeManifest, type RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
 import { gcOpenClawFileSecrets, openClawCredentialGeneration } from "./openclaw-file-secrets";
@@ -205,6 +208,7 @@ interface RuntimeConvergenceState {
 	installErrors: string[];
 	resourceProjectionErrors: string[];
 	providerConflicts: RuntimeProviderConflict[];
+	skillGuardRefusals: HostedSkillGuardRefusal[];
 	serviceWithdrawals: { runtime: string; service: string }[];
 	/** OpenClaw channels whose managed projection is withdrawn for this generation. */
 	withdrawnOpenClawChannels: Set<string>;
@@ -341,6 +345,7 @@ function initializeRuntimeConvergence(
 		installErrors: [],
 		resourceProjectionErrors: [],
 		providerConflicts: [],
+		skillGuardRefusals: [],
 		serviceWithdrawals: [],
 		withdrawnOpenClawChannels: new Set(),
 		projectedProviderIds: {},
@@ -965,24 +970,24 @@ function applyRuntimeResourceProjections(
 	}
 	if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
 	try {
-		state.resourceProjectionErrors.push(
-			...reconcileHostedSkillProjection({
-				manifest,
-				observations: state.observations,
-				home: projectionHome,
-				managedResourceRoot: paths.managedResourceRoot,
-				openClawWorkspaceRoot: plan.openClawWorkspaceRoot,
-				preparedSourcedSkills: preparedHostedSourcedSkills,
-				preparationFailed: !sourcedSkillsPrepared,
-				previousEvidence:
-					context.appliedState?.instanceId === manifest.instanceId
-						? context.appliedState.skillEvidence
-						: undefined,
-				onEvidence: (evidence) => {
-					state.skillEvidence = evidence;
-				},
-			}),
-		);
+		const skills = reconcileHostedSkillProjection({
+			manifest,
+			observations: state.observations,
+			home: projectionHome,
+			managedResourceRoot: paths.managedResourceRoot,
+			openClawWorkspaceRoot: plan.openClawWorkspaceRoot,
+			preparedSourcedSkills: preparedHostedSourcedSkills,
+			preparationFailed: !sourcedSkillsPrepared,
+			previousEvidence:
+				context.appliedState?.instanceId === manifest.instanceId
+					? context.appliedState.skillEvidence
+					: undefined,
+			onEvidence: (evidence) => {
+				state.skillEvidence = evidence;
+			},
+		});
+		state.resourceProjectionErrors.push(...skills.errors);
+		state.skillGuardRefusals.push(...skills.refusals);
 	} catch (error) {
 		state.resourceProjectionErrors.push(error instanceof Error ? error.message : String(error));
 	}
@@ -1406,6 +1411,7 @@ function buildRuntimeConvergenceResult(
 		resourceProjectionErrors: state.resourceProjectionErrors,
 		projectedProviderIds: state.projectedProviderIds,
 		providerConflicts: state.providerConflicts,
+		skillGuardRefusals: state.skillGuardRefusals,
 		serviceWithdrawals: runtimeServiceWithdrawals(state.serviceWithdrawals),
 		nativeCredentialProviderIds: state.nativeCredentialProviderIds,
 		agentPluginFailedNames: [...state.agentPluginFailedNames].sort(),

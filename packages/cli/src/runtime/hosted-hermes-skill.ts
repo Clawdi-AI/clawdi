@@ -1,5 +1,6 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { z } from "zod";
 import { hermesManagedPython } from "./hermes-python";
 import { hostedSkillArchiveSourceIdentity } from "./hosted-sourced-skill-archive";
 import {
@@ -110,7 +111,11 @@ def run(request):
         scan = scan_skill(quarantine, source=request["scanSource"])
         allowed, reason = should_allow_install(scan, force=False)
         if allowed is not True:
-            return {"ok": False, "error": reason}
+            return {"ok": False, "error": reason, "guard": {
+                "decision": "ask" if allowed is None else "block",
+                "verdict": scan.verdict, "trustLevel": scan.trust_level,
+                "findingCount": len(scan.findings),
+            }}
         bundle.trust_level = scan.trust_level
         checked_lock()
         target_mutation_started = True
@@ -130,6 +135,27 @@ except Exception as error:
     result = {"ok": False, "error": "Hermes native Skill operation failed (" + type(error).__name__ + ")"}
 print(json.dumps({**result, "targetMutationStarted": target_mutation_started}))
 `;
+
+const hermesSkillGuardSchema = z.object({
+	decision: z.enum(["block", "ask"]),
+	verdict: z.enum(["safe", "caution", "dangerous"]),
+	trustLevel: z.enum(["builtin", "trusted", "community", "agent-created"]),
+	findingCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+});
+type HermesSkillGuard = z.infer<typeof hermesSkillGuardSchema>;
+
+export class HermesSkillGuardRefusalError extends ManagedSkillResourceError {
+	constructor(
+		message: string,
+		readonly decision: HermesSkillGuard["decision"],
+		readonly verdict: HermesSkillGuard["verdict"],
+		readonly trustLevel: HermesSkillGuard["trustLevel"],
+		readonly findingCount: number,
+	) {
+		super(message);
+		this.targetMutationStarted = false;
+	}
+}
 
 function nativeSource(skillId: string, source: HostedSkillSource) {
 	const identifier =
@@ -200,6 +226,18 @@ function nativeOperation(
 		throw new ManagedSkillResourceError("Hermes native Skill response is invalid");
 	}
 	if (response?.ok !== true) {
+		const guard = hermesSkillGuardSchema.safeParse(response?.guard);
+		if (operation === "install" && response?.targetMutationStarted === false && guard.success) {
+			throw new HermesSkillGuardRefusalError(
+				typeof response.error === "string"
+					? response.error
+					: "Hermes Skill guard refused installation",
+				guard.data.decision,
+				guard.data.verdict,
+				guard.data.trustLevel,
+				guard.data.findingCount,
+			);
+		}
 		throw nativeSkillError(
 			typeof response?.error === "string" ? response.error : "Hermes native Skill operation failed",
 			typeof response?.targetMutationStarted === "boolean"

@@ -105,7 +105,7 @@ function setup() {
 
 test("reports verified installation, detects edited bytes, and observes actual removal", () => {
 	const { input, state, target } = setup();
-	expect(reconcileHostedSkillProjection(input)).toEqual([]);
+	expect(reconcileHostedSkillProjection(input)).toEqual({ errors: [], refusals: [] });
 	let observed = readHostedSkillsObservation(state());
 	expect(observed?.entries[0]).toMatchObject({
 		status: "installed",
@@ -119,12 +119,12 @@ test("reports verified installation, detects edited bytes, and observes actual r
 		errorCode: "evidence_mismatch",
 	});
 	input.manifest = { ...input.manifest, projection: { skills: { entries: {} } } };
-	expect(reconcileHostedSkillProjection(input)).toEqual([]);
+	expect(reconcileHostedSkillProjection(input)).toEqual({ errors: [], refusals: [] });
 	observed = readHostedSkillsObservation(state());
 	expect(observed?.entries[0]).toMatchObject({ status: "removed", desiredState: "absent" });
 	expect(
 		reconcileHostedSkillProjection({ ...input, previousEvidence: state().skillEvidence }),
-	).toEqual([]);
+	).toEqual({ errors: [], refusals: [] });
 	expect(readHostedSkillsObservation(state())?.entries[0]).toMatchObject({
 		status: "removed",
 		desiredState: "absent",
@@ -159,7 +159,7 @@ test("failed removal retains ownership evidence for retry and reinstall replaces
 	});
 	expect(
 		reconcileHostedSkillProjection({ ...input, previousEvidence: state().skillEvidence }),
-	).toEqual([]);
+	).toEqual({ errors: [], refusals: [] });
 	expect(readHostedSkillsObservation(state())?.entries[0]).toMatchObject({
 		status: "failed",
 		desiredState: "absent",
@@ -167,7 +167,7 @@ test("failed removal retains ownership evidence for retry and reinstall replaces
 	rmSync(targetDir, { recursive: true });
 	expect(
 		reconcileHostedSkillProjection({ ...input, previousEvidence: state().skillEvidence }),
-	).toEqual([]);
+	).toEqual({ errors: [], refusals: [] });
 	expect(readHostedSkillsObservation(state())?.entries[0]).toMatchObject({
 		status: "removed",
 		desiredState: "absent",
@@ -176,7 +176,7 @@ test("failed removal retains ownership evidence for retry and reinstall replaces
 		...input.manifest,
 		projection: { skills: { entries: { clawdi: { enabled: true, version: 1 } } } },
 	};
-	expect(reconcileHostedSkillProjection(input)).toEqual([]);
+	expect(reconcileHostedSkillProjection(input)).toEqual({ errors: [], refusals: [] });
 	expect(readHostedSkillsObservation(state())?.entries[0]).toMatchObject({
 		status: "installed",
 		desiredState: "present",
@@ -316,17 +316,19 @@ cp '${originFixture}' '${originPath}'
 		digest: identity.digest,
 		sourceIdentity: identity.sourceIdentity,
 	});
-	expect(reconcileHostedSkillProjection(projection)).toEqual([]);
+	expect(reconcileHostedSkillProjection(projection)).toEqual({ errors: [], refusals: [] });
 	expect(readFileSync(commandLog, "utf8")).toBe(argv());
 	expect(readHostedSkillsObservation(state())?.entries[0]?.status).toBe("installed");
-	expect(reconcileHostedSkillProjection(projection)).toEqual([]);
+	expect(reconcileHostedSkillProjection(projection)).toEqual({ errors: [], refusals: [] });
 	expect(readFileSync(commandLog, "utf8")).toBe(argv());
 
 	const ledgerBefore = readFileSync(managedSkillReservationLedgerPath());
 	writeFileSync(originPath, "{}");
 	expect(readHostedSkillsObservation(state())?.entries[0]?.status).toBe("unknown");
 	writeFileSync(join(root, "refuse"), "");
-	expect(reconcileHostedSkillProjection(projection).join("\n")).toContain("native install refused");
+	expect(reconcileHostedSkillProjection(projection).errors.join("\n")).toContain(
+		"native install refused",
+	);
 	expect(readFileSync(commandLog, "utf8")).toBe(argv().repeat(2));
 	expect(readFileSync(originPath, "utf8")).toBe("{}");
 	expect(readFileSync(managedSkillReservationLedgerPath())).toEqual(ledgerBefore);
@@ -334,7 +336,7 @@ cp '${originFixture}' '${originPath}'
 	rmSync(join(root, "refuse"));
 
 	writeFileSync(join(fixture, "references", "guide.md"), "Wrong support bytes\n");
-	expect(reconcileHostedSkillProjection(projection).join("\n")).toContain(
+	expect(reconcileHostedSkillProjection(projection).errors.join("\n")).toContain(
 		"changed exact source bytes",
 	);
 	expect(readFileSync(join(target, "references", "guide.md"), "utf8")).toBe(
@@ -343,19 +345,19 @@ cp '${originFixture}' '${originPath}'
 	expect(readFileSync(managedSkillReservationLedgerPath())).toEqual(ledgerBefore);
 	writeFileSync(join(fixture, "references", "guide.md"), "Pinned support file\n");
 	writeFileSync(originFixture, "{}");
-	expect(reconcileHostedSkillProjection(projection).join("\n")).toContain(
+	expect(reconcileHostedSkillProjection(projection).errors.join("\n")).toContain(
 		"native source provenance mismatch",
 	);
 	expect(readFileSync(commandLog, "utf8")).toBe(argv().repeat(4));
 	writeFileSync(originFixture, origin());
-	expect(reconcileHostedSkillProjection(projection)).toEqual([]);
+	expect(reconcileHostedSkillProjection(projection)).toEqual({ errors: [], refusals: [] });
 	const oldCalls = argv().repeat(5);
 
 	// A new immutable source must update native provenance even with identical bytes.
 	source.commit = "b".repeat(40);
 	identity.sourceIdentity = hostedSkillArchiveSourceIdentity("review", source);
 	writeFileSync(originFixture, origin());
-	expect(reconcileHostedSkillProjection(projection)).toEqual([]);
+	expect(reconcileHostedSkillProjection(projection)).toEqual({ errors: [], refusals: [] });
 	expect(readFileSync(commandLog, "utf8")).toBe(oldCalls + argv());
 	expect(JSON.parse(readFileSync(originPath, "utf8")).git.commit).toBe(source.commit);
 	expect(readHostedSkillsObservation(state())?.entries[0]?.status).toBe("installed");
@@ -382,7 +384,7 @@ test("Hermes heartbeat detects native provenance drift without invalidating sibl
 	};
 	input.manifest.projection = { skills: { entries: { review: { enabled: true, source } } } };
 	input.preparedSourcedSkills.set("review", { id: "review", identity, tarBytes });
-	expect(reconcileHostedSkillProjection(input)).toEqual([]);
+	expect(reconcileHostedSkillProjection(input)).toEqual({ errors: [], refusals: [] });
 	activateHostedHermesSkill({
 		home: input.home,
 		sourceDir: fixture,

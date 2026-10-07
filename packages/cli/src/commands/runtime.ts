@@ -1497,6 +1497,9 @@ export function runtimeWatchEventForOutcome(
 		systemdUnitsChanged,
 		systemdApply: outcome.systemdApply,
 		convergence: outcome.convergence.outputs,
+		...(outcome.convergence.skillGuardRefusals?.length
+			? { skillGuardRefusals: outcome.convergence.skillGuardRefusals }
+			: {}),
 	});
 }
 
