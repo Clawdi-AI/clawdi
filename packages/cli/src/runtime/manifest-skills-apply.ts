@@ -1,9 +1,11 @@
 import { existsSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { log } from "../serve/log";
 import { hostedBundledSkillIds, resolveHostedBundledSkill } from "./hosted-bundled-skill";
 import {
 	activateHostedHermesSkill,
+	HermesSkillGuardRefusalError,
 	hostedHermesSkillSourceMatches,
 	readHostedHermesSkillRecords,
 	removeHostedHermesSkill,
@@ -57,6 +59,17 @@ interface HostedSkillProjectionDriver {
 	exclude?: ReadonlySet<string>;
 }
 type HostedSkillRuntime = "hermes" | "openclaw";
+
+export interface HostedSkillGuardRefusal {
+	runtime: "hermes";
+	skillKey: string;
+	reason: "guard_blocked" | "guard_confirmation_required";
+	verdict: HermesSkillGuardRefusalError["verdict"];
+	trustLevel: HermesSkillGuardRefusalError["trustLevel"];
+	findingCount: number;
+	retainedPrevious: boolean;
+}
+const skillGuardRefusalLogged = new Map<string, string>();
 
 function withRuntimeUserSkillFiles<T>(
 	operation: () => T & (T extends PromiseLike<unknown> ? never : unknown),
@@ -328,8 +341,9 @@ function applyHostedSkills(
 	observation: RuntimeInstallObservation | undefined,
 	manifest: RuntimeManifest,
 	preparedSkills: ReadonlyMap<string, PreparedHostedSkill>,
-): string[] {
-	if (!driver.skillsRoot) return [];
+): { failures: string[]; refusals: HostedSkillGuardRefusal[] } {
+	const refusals: HostedSkillGuardRefusal[] = [];
+	if (!driver.skillsRoot) return { failures: [], refusals };
 	const failures: string[] = [];
 	const desiredEntries = manifest.projection?.skills?.entries ?? {};
 	const reservations = managedSkillReservations("hosted-manifest").filter(
@@ -415,11 +429,39 @@ function applyHostedSkills(
 				},
 			);
 		} catch (error) {
+			if (error instanceof HermesSkillGuardRefusalError) {
+				const refusal: HostedSkillGuardRefusal = {
+					runtime: "hermes",
+					skillKey: skillId,
+					reason: error.decision === "block" ? "guard_blocked" : "guard_confirmation_required",
+					verdict: error.verdict,
+					trustLevel: error.trustLevel,
+					findingCount: error.findingCount,
+					retainedPrevious:
+						reservation !== undefined && withRuntimeUserSkillFiles(() => existsSync(targetDir)),
+				};
+				refusals.push(refusal);
+				const key = `${runtime}:${skillId}`;
+				const value = `${hashSkillIdentity(reservationIdentity.sourceIdentity ?? "")}:${JSON.stringify(refusal)}`;
+				if (skillGuardRefusalLogged.get(key) !== value) {
+					skillGuardRefusalLogged.set(key, value);
+					log.warn("runtime.skill.guard_refused", {
+						runtime,
+						skill: skillId,
+						reason: refusal.reason,
+						verdict: refusal.verdict,
+						trust_level: refusal.trustLevel,
+						finding_count: refusal.findingCount,
+						retained_previous: refusal.retainedPrevious,
+					});
+				}
+				continue;
+			}
 			if (!(error instanceof ManagedSkillResourceError)) throw error;
 			failures.push(`${skillId}: ${error.message}`);
 		}
 	}
-	return failures;
+	return { failures, refusals };
 }
 function runHostedSkillProjectionStep<T>(label: string, step: () => T): T {
 	try {
@@ -437,7 +479,7 @@ function applyHostedSkillProjection(input: {
 	managedResourceRoot: string;
 	openClawWorkspaceRoot: string | null;
 	preparedSourcedSkills: ReadonlyMap<string, PreparedHostedSkill>;
-}): string[] {
+}): { errors: string[]; refusals: HostedSkillGuardRefusal[] } {
 	const {
 		manifest,
 		observations,
@@ -470,16 +512,24 @@ function applyHostedSkillProjection(input: {
 		}
 	});
 	const failures: string[] = [];
+	const refusals: HostedSkillGuardRefusal[] = [];
 	for (const [runtime, driver] of drivers) {
 		const driverFailures = runHostedSkillProjectionStep(
 			`runtime ${runtime} Skill projection failed`,
 			() => applyHostedSkills(runtime, driver, observations.get(runtime), manifest, preparedSkills),
 		);
 		failures.push(
-			...driverFailures.map((failure) => `runtime ${runtime} Skill projection failed: ${failure}`),
+			...driverFailures.failures.map(
+				(failure) => `runtime ${runtime} Skill projection failed: ${failure}`,
+			),
 		);
+		refusals.push(...driverFailures.refusals);
 	}
-	return failures;
+	const refusedKeys = new Set(refusals.map((refusal) => `${refusal.runtime}:${refusal.skillKey}`));
+	for (const key of skillGuardRefusalLogged.keys()) {
+		if (!refusedKeys.has(key)) skillGuardRefusalLogged.delete(key);
+	}
+	return { errors: failures, refusals };
 }
 
 export function reconcileHostedSkillProjection(
@@ -488,10 +538,12 @@ export function reconcileHostedSkillProjection(
 		previousEvidence?: readonly HostedSkillEvidence[];
 		onEvidence?: (evidence: HostedSkillEvidence[]) => void;
 	},
-): string[] {
+): { errors: string[]; refusals: HostedSkillGuardRefusal[] } {
 	const before = managedSkillReservations("hosted-manifest");
 	try {
-		return input.preparationFailed ? [] : applyHostedSkillProjection(input);
+		return input.preparationFailed
+			? { errors: [], refusals: [] }
+			: applyHostedSkillProjection(input);
 	} finally {
 		if (input.onEvidence) {
 			input.onEvidence(collectHostedSkillEvidence(input, before));
