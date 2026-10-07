@@ -1,0 +1,3731 @@
+{
+  "DELETE /api/admin/agents/{agent_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "DELETE /api/admin/agents/{agent_id}/runtime-state": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "DELETE /api/admin/ai-providers/{provider_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "DELETE /api/admin/auth/keys/{key_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "DELETE /api/admin/channels/{account_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/admin/environments/{environment_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "DELETE /api/admin/environments/{environment_id}/runtime-state": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "DELETE /api/agents/{agent_id}": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/agents/{agent_id}/agent-plugins/{plugin_name}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/agents/{agent_id}/avatar": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/agents/{agent_id}/project-bindings/{binding_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/agents/{agent_id}/skill-references/{skill_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/agents/{agent_id}/skills/sync/{skill_key:path}": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "DELETE /api/ai-providers/{provider_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/auth/keys/{key_id}": [
+    [
+      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/channels/discord/api/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/channels/discord/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/channels/{account_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/channels/{account_id}/agent-links/{link_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/channels/{account_id}/bindings/{binding_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/connectors/{connection_id}": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "DELETE /api/environments/{environment_id}": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/environments/{environment_id}/avatar": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/memories/{memory_id}": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/projects/{project_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/projects/{project_id}/invitations/{invitation_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/projects/{project_id}/members/{member_user_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/projects/{project_id}/share-links/{link_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/projects/{project_id}/skills/{skill_key:path}": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "DELETE /api/session-shares/{share_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/sessions/{session_id}": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/sessions/{session_id}/permissions": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/skills/{skill_key:path}": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/vault/{slug}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /api/vault/{slug}/items": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/admin/agents/{agent_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "DELETE /v1/admin/agents/{agent_id}/runtime-state": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "DELETE /v1/admin/ai-providers/{provider_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "DELETE /v1/admin/auth/keys/{key_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "DELETE /v1/admin/channels/whatsapp/pairing-sessions/{session_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/admin/channels/{account_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/admin/environments/{environment_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "DELETE /v1/admin/environments/{environment_id}/runtime-state": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "DELETE /v1/agents/{agent_id}": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/agents/{agent_id}/agent-plugins/{plugin_name}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/agents/{agent_id}/avatar": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/agents/{agent_id}/project-bindings/{binding_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/agents/{agent_id}/skill-references/{skill_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/agents/{agent_id}/skills/sync/{skill_key:path}": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "DELETE /v1/ai-providers/{provider_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/auth/keys/{key_id}": [
+    [
+      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/channels/discord/api/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/channels/discord/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/channels/{account_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/channels/{account_id}/agent-links/{link_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/channels/{account_id}/bindings/{binding_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/connectors/{connection_id}": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "DELETE /v1/environments/{environment_id}": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/environments/{environment_id}/avatar": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/memories/{memory_id}": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/platform/agents/{agent_id}": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:agents:delete\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:agents:delete\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "DELETE /v1/platform/agents/{agent_id}/runtime-state": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-state:write\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-state:write\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "DELETE /v1/platform/auth/keys/{key_id}": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:keys:revoke\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:keys:revoke\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "DELETE /v1/projects/{project_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/projects/{project_id}/invitations/{invitation_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/projects/{project_id}/members/{member_user_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/projects/{project_id}/share-links/{link_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/projects/{project_id}/skills/{skill_key:path}": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "DELETE /v1/session-shares/{share_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/sessions/{session_id}": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/sessions/{session_id}/permissions": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/skills/{skill_key:path}": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/vault/{slug}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "DELETE /v1/vault/{slug}/items": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/admin/agents/{agent_id}/runtime-state": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "GET /api/admin/ai-providers/{provider_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "GET /api/admin/ai-providers/{provider_id}/removal-authority": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "GET /api/admin/channels": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/admin/channels/{account_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/admin/platform/workload-clients/{client_id}/provider-environment-verifier": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "GET /api/admin/settings": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/admin/settings/{key}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/agents": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/agents/runtime-observed": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/agents/{agent_id}": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/agents/{agent_id}/agent-plugins": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/agents/{agent_id}/agent-plugins/{plugin_name}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/agents/{agent_id}/mcp": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/agents/{agent_id}/profiles": [
+    [
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:read\",\"sessions:write\",\"skills:read\",\"skills:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:read\",\"sessions:write\",\"skills:read\",\"skills:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/agents/{agent_id}/project-bindings": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/agents/{agent_id}/runtime-observed": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/agents/{agent_id}/skill-references/{skill_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/agents/{agent_id}/skills": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/ai-providers": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/ai-providers/{provider_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/assets/{asset_key:path}": [
+    []
+  ],
+  "GET /api/audit/events": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/auth/keys": [
+    [
+      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/auth/me": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /api/capabilities": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /api/channels": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/agent-links": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/bot-pool": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/debug/events": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/debug/health": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/discord/api/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/discord/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/health": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/telegram/bot/{routing_id}/{method}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/telegram/bot{routing_id}/{method}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/telegram/file/bot/{routing_id}/{file_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/telegram/file/bot{routing_id}/{file_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/whatsapp/onboarding/readiness": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "GET /api/channels/whatsapp/onboarding/sessions/{session_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "GET /api/channels/{account_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/{account_id}/activity": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/{account_id}/agent-links": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/channels/{account_id}/bindings": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/cli/auth/oauth/config": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/connectors": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /api/connectors/available": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /api/connectors/available/{app_name}": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /api/connectors/mcp-config": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /api/connectors/{app_name}/auth-fields": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /api/connectors/{app_name}/tools": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /api/dashboard/contribution": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/dashboard/stats": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/environments": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/environments/runtime-observed": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/environments/{environment_id}": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/environments/{environment_id}/runtime-observed": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/me/invitations": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/memories": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/memories/{memory_id}": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/plugin-catalog": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/plugin-catalog/{plugin_name}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/projects": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/projects/default": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/projects/{project_id}": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/projects/{project_id}/invitations": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/projects/{project_id}/members": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/projects/{project_id}/share-links": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/projects/{project_id}/skills/{skill_key:path}": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/projects/{project_id}/skills/{skill_key:path}/download": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/public/session-shares/{share_id}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/public/session-shares/{share_id}/export.json": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/public/session-shares/{share_id}/export.md": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/public/session-shares/{share_id}/messages": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/public/sessions/{session_id}": [
+    [
+      "app.core.auth.optional_web_auth -> app.core.database.get_session",
+      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/public/sessions/{session_id}/export.json": [
+    [
+      "app.core.auth.optional_web_auth -> app.core.database.get_session",
+      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/public/sessions/{session_id}/export.md": [
+    [
+      "app.core.auth.optional_web_auth -> app.core.database.get_session",
+      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/public/sessions/{session_id}/messages": [
+    [
+      "app.core.auth.optional_web_auth -> app.core.database.get_session",
+      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/scopes/{scope_id}/skills/{skill_key:path}": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/scopes/{scope_id}/skills/{skill_key:path}/download": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/search": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/session-shares": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/sessions": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/sessions/upload-capabilities": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /api/sessions/{local_session_id}/events/head": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/sessions/{session_id}": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/sessions/{session_id}/content": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/sessions/{session_id}/content-events": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /api/sessions/{session_id}/events": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/sessions/{session_id}/export.md": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/sessions/{session_id}/messages": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/sessions/{session_id}/permissions": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/sessions/{session_id}/shares": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/settings": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/share/{token}/preview": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/skills": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /api/skills/{skill_key:path}": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/skills/{skill_key:path}/download": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/sync/events": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /api/vault": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/vault/detail": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/vault/requests": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/vault/requests/{request_id:uuid}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /api/vault/{slug}/items": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /health": [
+    []
+  ],
+  "GET /metrics": [
+    []
+  ],
+  "GET /ready": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/admin/agents/{agent_id}/runtime-state": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "GET /v1/admin/ai-providers/{provider_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "GET /v1/admin/ai-providers/{provider_id}/removal-authority": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "GET /v1/admin/channels": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/admin/channels/whatsapp/pairing-sessions/{session_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/admin/channels/{account_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/admin/platform/workload-clients/{client_id}/provider-environment-verifier": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "GET /v1/admin/settings": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/admin/settings/{key}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/agents": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/agents/runtime-observed": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/agents/{agent_id}": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/agents/{agent_id}/agent-plugins": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/agents/{agent_id}/agent-plugins/{plugin_name}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/agents/{agent_id}/mcp": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/agents/{agent_id}/profiles": [
+    [
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:read\",\"sessions:write\",\"skills:read\",\"skills:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:read\",\"sessions:write\",\"skills:read\",\"skills:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/agents/{agent_id}/project-bindings": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/agents/{agent_id}/runtime-observed": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/agents/{agent_id}/skill-references/{skill_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/agents/{agent_id}/skills": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/ai-providers": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/ai-providers/{provider_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/assets/{asset_key:path}": [
+    []
+  ],
+  "GET /v1/audit/events": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/auth/keys": [
+    [
+      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/auth/me": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /v1/capabilities": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /v1/channels": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/agent-links": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/bot-pool": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/debug/events": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/debug/health": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/discord/api/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/discord/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/health": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/telegram/bot/{routing_id}/{method}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/telegram/bot{routing_id}/{method}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/telegram/file/bot/{routing_id}/{file_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/telegram/file/bot{routing_id}/{file_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/whatsapp/onboarding/readiness": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "GET /v1/channels/whatsapp/onboarding/sessions/{session_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "GET /v1/channels/{account_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/{account_id}/activity": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/{account_id}/agent-links": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/channels/{account_id}/bindings": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/cli/auth/oauth/config": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/connectors": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /v1/connectors/available": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /v1/connectors/available/{app_name}": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /v1/connectors/mcp-config": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /v1/connectors/{app_name}/auth-fields": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /v1/connectors/{app_name}/tools": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /v1/dashboard/contribution": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/dashboard/stats": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/environments": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/environments/runtime-observed": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/environments/{environment_id}": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/environments/{environment_id}/runtime-observed": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/me/invitations": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/memories": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/memories/{memory_id}": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/platform/agents/{agent_id}/runtime-state": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-state:write\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-state:write\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "GET /v1/platform/ai-providers/{provider_id}/credential-environment-repair": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:provider-environment:repair\"][allow_legacy_admin=false] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:provider-environment:repair\"][allow_legacy_admin=false] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "GET /v1/platform/ai-providers/{provider_id}/identity-handoff": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:provider-environment:repair\"][allow_legacy_admin=false] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:provider-environment:repair\"][allow_legacy_admin=false] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "GET /v1/platform/auth/keys/{key_id}": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:keys:revoke\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:keys:revoke\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "GET /v1/plugin-catalog": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/plugin-catalog/{plugin_name}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/projects": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/projects/default": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/projects/{project_id}": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/projects/{project_id}/invitations": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/projects/{project_id}/members": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/projects/{project_id}/share-links": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/projects/{project_id}/skills/{skill_key:path}": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/projects/{project_id}/skills/{skill_key:path}/download": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/public/session-shares/{share_id}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/public/session-shares/{share_id}/export.json": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/public/session-shares/{share_id}/export.md": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/public/session-shares/{share_id}/messages": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/public/sessions/{session_id}": [
+    [
+      "app.core.auth.optional_web_auth -> app.core.database.get_session",
+      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/public/sessions/{session_id}/export.json": [
+    [
+      "app.core.auth.optional_web_auth -> app.core.database.get_session",
+      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/public/sessions/{session_id}/export.md": [
+    [
+      "app.core.auth.optional_web_auth -> app.core.database.get_session",
+      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/public/sessions/{session_id}/messages": [
+    [
+      "app.core.auth.optional_web_auth -> app.core.database.get_session",
+      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/runtime/manifest": [
+    [
+      "app.core.database.get_runtime_manifest_sessions",
+      "app.routes.runtime._get_runtime_manifest_auth -> app.core.database.get_runtime_manifest_sessions",
+      "app.routes.runtime._get_runtime_manifest_auth -> app.routes.runtime._manifest_credential -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /v1/runtime/project-skill-archives/{agent_id}/{project_id}/{skill_id}/{content_hash}/{signature}/{skill_key}.tar.gz": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/runtime/project-skill-files/{agent_id}/{skill_id}/{content_hash}/{signature}/{file_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/runtime/project-skills": [
+    [
+      "app.core.auth.require_cli_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_cli_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/runtime/vaults": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "GET /v1/search": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/session-shares": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/sessions": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/sessions/upload-capabilities": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /v1/sessions/{local_session_id}/events/head": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/sessions/{session_id}": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/sessions/{session_id}/content": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/sessions/{session_id}/content-events": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /v1/sessions/{session_id}/events": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/sessions/{session_id}/export.md": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/sessions/{session_id}/messages": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/sessions/{session_id}/permissions": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/sessions/{session_id}/shares": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/settings": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/share/{token}/preview": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/skills": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /v1/skills/{skill_key:path}": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/skills/{skill_key:path}/download": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/sync/events": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "GET /v1/vault": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/vault/detail": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/vault/requests": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/vault/requests/{request_id:uuid}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "GET /v1/vault/{slug}/items": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/admin/channels/{account_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/agents/order": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/agents/{agent_id}": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/agents/{agent_id}/project-bindings/context/reorder": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/agents/{agent_id}/projects": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/ai-providers/{provider_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/channels/discord/api/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/channels/discord/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/connectors/{connection_id}": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "PATCH /api/environments/order": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/environments/{environment_id}": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/memories/{memory_id}": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/projects/{project_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/projects/{project_id}/agents": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /api/settings": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/admin/channels/{account_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/agents/order": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/agents/{agent_id}": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/agents/{agent_id}/project-bindings/context/reorder": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/agents/{agent_id}/projects": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/ai-providers/{provider_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/channels/discord/api/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/channels/discord/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/connectors/{connection_id}": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "PATCH /v1/environments/order": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/environments/{environment_id}": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/memories/{memory_id}": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/projects/{project_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/projects/{project_id}/agents": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PATCH /v1/settings": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/admin/agents": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "POST /api/admin/ai-providers/{provider_id}/archive": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "POST /api/admin/ai-providers/{provider_id}/cleanup": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "POST /api/admin/auth/keys": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "POST /api/admin/channels": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/admin/channels/{account_id}/commands/sync": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/admin/channels/{account_id}/webhook-secret/rotate": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/admin/environments": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "POST /api/admin/platform/signing-keys": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /api/admin/platform/workload-clients": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "POST /api/agents": [
+    [
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:write\",\"skills:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:write\",\"skills:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/agents/{agent_id}/avatar": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/agents/{agent_id}/profiles/{profile_key}/attribute-sessions": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/agents/{agent_id}/profiles/{profile_key}/rename": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/agents/{agent_id}/project-bindings/context": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/agents/{agent_id}/projects": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/agents/{agent_id}/rebind": [
+    [
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/agents/{agent_id}/skills/sync/upload": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/agents/{agent_id}/sync-heartbeat": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/ai-providers": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/ai-providers/accept": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/ai-providers/test": [
+    [
+      "app.routes.ai_providers._require_ai_provider_accept_auth -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "POST /api/ai-providers/{provider_id}/auth/api-key": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/ai-providers/{provider_id}/auth/import": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/ai-providers/{provider_id}/auth/oauth/complete": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/ai-providers/{provider_id}/auth/oauth/device/poll": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/ai-providers/{provider_id}/auth/oauth/device/start": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/ai-providers/{provider_id}/auth/oauth/start": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/ai-providers/{provider_id}/auth/resolve": [
+    [
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/ai-providers/{provider_id}/test": [
+    [
+      "app.routes.ai_providers._require_ai_provider_accept_auth -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "POST /api/ai-providers/{provider_id}/validate": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/auth/keys": [
+    []
+  ],
+  "POST /api/channels": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/channels/discord/api/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/channels/discord/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/channels/discord/{account_id}/webhook": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/channels/telegram/bot/{routing_id}/{method}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/channels/telegram/bot{routing_id}/{method}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/channels/telegram/{account_id}/webhook": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/channels/whatsapp/onboarding/accounts/{account_id}/repair": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "POST /api/channels/whatsapp/onboarding/sessions": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "POST /api/channels/whatsapp/onboarding/sessions/{session_id}/cancel": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "POST /api/channels/whatsapp/onboarding/sessions/{session_id}/pairing-code": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "POST /api/channels/whatsapp/onboarding/sessions/{session_id}/retry": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "POST /api/channels/{account_id}/agent-links": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/channels/{account_id}/agent-links/{link_id}/token": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/channels/{account_id}/commands/sync": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/channels/{account_id}/messages": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/channels/{account_id}/pair-codes": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/cli/auth/device": [
+    []
+  ],
+  "POST /api/cli/auth/oauth/desktop-ticket": [
+    [
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "POST /api/cli/auth/oauth/revoke": [
+    [
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/cli/auth/poll": [
+    []
+  ],
+  "POST /api/connectors/metadata:batchRead": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "POST /api/connectors/{app_name}/connect": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "POST /api/connectors/{app_name}/connect-credentials": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "POST /api/environments": [
+    [
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:write\",\"skills:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:write\",\"skills:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/environments/{environment_id}/avatar": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/mcp/clawdi": [
+    [
+      "app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/mcp/composio": [
+    []
+  ],
+  "POST /api/me/invitations/{invitation_id}/accept": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/me/invitations/{invitation_id}/decline": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/memories": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/memories/embed-backfill": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/projects": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/projects/for-agent/{agent_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/projects/{project_id}/agents": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/projects/{project_id}/invitations": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/projects/{project_id}/leave": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/projects/{project_id}/share-links": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/projects/{project_id}/skills": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/projects/{project_id}/skills/install": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/projects/{project_id}/skills/refresh": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/projects/{project_id}/skills/upload": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ],
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/projects/{project_id}/unshare": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/sessions/batch": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/sessions/{local_session_id}/events/append": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/sessions/{local_session_id}/events/generations": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/sessions/{local_session_id}/events/generations/{generation_id}/commit": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/sessions/{local_session_id}/extract": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/sessions/{local_session_id}/upload": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/sessions/{session_id}/permissions": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/sessions/{session_id}/shares": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/share/{token}/redeem": [
+    [
+      "app.core.auth.require_share_token -> app.core.database.get_session",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/share/{token}/upgrade": [
+    [
+      "app.core.auth.require_share_token -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/skills/install": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/skills/upload": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /api/vault": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/vault/credential-profiles": [
+    [
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/vault/credential-profiles/resolve": [
+    [
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/vault/material": [
+    [
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/vault/requests": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/vault/requests/inspect": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/vault/requests/supply": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/vault/resolve": [
+    [
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/vault/resolve/bulk": [
+    [
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/vault/{slug}/attachments/{project_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /api/vault/{slug}/items/copy": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/admin/agents": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "POST /v1/admin/ai-providers/{provider_id}/archive": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "POST /v1/admin/ai-providers/{provider_id}/cleanup": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "POST /v1/admin/auth/keys": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "POST /v1/admin/channels": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/admin/channels/whatsapp/pairing-sessions": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/admin/channels/{account_id}/commands/sync": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/admin/channels/{account_id}/webhook-secret/rotate": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/admin/environments": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "POST /v1/admin/platform/signing-keys": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v1/admin/platform/workload-clients": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "POST /v1/agents": [
+    [
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:write\",\"skills:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:write\",\"skills:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/agents/{agent_id}/avatar": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/agents/{agent_id}/profiles/{profile_key}/attribute-sessions": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/agents/{agent_id}/profiles/{profile_key}/rename": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/agents/{agent_id}/project-bindings/context": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/agents/{agent_id}/projects": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/agents/{agent_id}/rebind": [
+    [
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/agents/{agent_id}/skills/sync/upload": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/agents/{agent_id}/sync-heartbeat": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/ai-providers": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/ai-providers/accept": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/ai-providers/test": [
+    [
+      "app.routes.ai_providers._require_ai_provider_accept_auth -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "POST /v1/ai-providers/{provider_id}/auth/api-key": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/ai-providers/{provider_id}/auth/import": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/ai-providers/{provider_id}/auth/oauth/complete": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/ai-providers/{provider_id}/auth/oauth/device/poll": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/ai-providers/{provider_id}/auth/oauth/device/start": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/ai-providers/{provider_id}/auth/oauth/start": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/ai-providers/{provider_id}/auth/resolve": [
+    [
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/ai-providers/{provider_id}/test": [
+    [
+      "app.routes.ai_providers._require_ai_provider_accept_auth -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "POST /v1/ai-providers/{provider_id}/validate": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/auth/keys": [
+    []
+  ],
+  "POST /v1/channels": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/channels/discord/api/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/channels/discord/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/channels/discord/{account_id}/webhook": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/channels/telegram/bot/{routing_id}/{method}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/channels/telegram/bot{routing_id}/{method}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/channels/telegram/{account_id}/webhook": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/channels/whatsapp/onboarding/accounts/{account_id}/repair": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "POST /v1/channels/whatsapp/onboarding/sessions": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "POST /v1/channels/whatsapp/onboarding/sessions/{session_id}/cancel": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "POST /v1/channels/whatsapp/onboarding/sessions/{session_id}/pairing-code": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "POST /v1/channels/whatsapp/onboarding/sessions/{session_id}/retry": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.routes.channel_routers.whatsapp_onboarding.get_whatsapp_sidecar_clients"
+    ]
+  ],
+  "POST /v1/channels/{account_id}/agent-links": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/channels/{account_id}/agent-links/{link_id}/token": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/channels/{account_id}/commands/sync": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/channels/{account_id}/messages": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/channels/{account_id}/pair-codes": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/cli/auth/device": [
+    []
+  ],
+  "POST /v1/cli/auth/oauth/desktop-ticket": [
+    [
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "POST /v1/cli/auth/oauth/revoke": [
+    [
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/cli/auth/poll": [
+    []
+  ],
+  "POST /v1/connectors/metadata:batchRead": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "POST /v1/connectors/{app_name}/connect": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "POST /v1/connectors/{app_name}/connect-credentials": [
+    [
+      "app.core.auth.require_user_auth_short_session -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer"
+    ]
+  ],
+  "POST /v1/environments": [
+    [
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:write\",\"skills:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:write\",\"skills:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/environments/{environment_id}/avatar": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/mcp/clawdi": [
+    [
+      "app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/mcp/composio": [
+    []
+  ],
+  "POST /v1/me/invitations/{invitation_id}/accept": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/me/invitations/{invitation_id}/decline": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/memories": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/memories/embed-backfill": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/platform/agents": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:agents:create\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:agents:create\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v1/platform/ai-providers/{provider_id}/credential-environment-repair": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:provider-environment:repair\"][allow_legacy_admin=false] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:provider-environment:repair\"][allow_legacy_admin=false] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v1/platform/ai-providers/{provider_id}/credential-environment-repair/receipt": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:provider-environment:repair\"][allow_legacy_admin=false] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:provider-environment:repair\"][allow_legacy_admin=false] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v1/platform/ai-providers/{provider_id}/identity-handoff": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:provider-environment:repair\"][allow_legacy_admin=false] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:provider-environment:repair\"][allow_legacy_admin=false] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v1/platform/ai-providers/{provider_id}/identity-handoff/complete": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:provider-environment:repair\"][allow_legacy_admin=false] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:provider-environment:repair\"][allow_legacy_admin=false] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v1/platform/auth/keys": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:keys:mint\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:keys:mint\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v1/platform/oauth/token": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v1/projects": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/projects/for-agent/{agent_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/projects/{project_id}/agents": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/projects/{project_id}/invitations": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/projects/{project_id}/leave": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/projects/{project_id}/share-links": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/projects/{project_id}/skills": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/projects/{project_id}/skills/install": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/projects/{project_id}/skills/refresh": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/projects/{project_id}/skills/upload": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/projects/{project_id}/unshare": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/runtime/vaults/material": [
+    [
+      "app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/sessions/batch": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/sessions/{local_session_id}/events/append": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/sessions/{local_session_id}/events/generations": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/sessions/{local_session_id}/events/generations/{generation_id}/commit": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/sessions/{local_session_id}/extract": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"memories:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/sessions/{local_session_id}/upload": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/sessions/{session_id}/permissions": [
+    [
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/sessions/{session_id}/shares": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/share/{token}/redeem": [
+    [
+      "app.core.auth.require_share_token -> app.core.database.get_session",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/share/{token}/upgrade": [
+    [
+      "app.core.auth.require_share_token -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/skills/install": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/skills/upload": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "POST /v1/vault": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/vault/credential-profiles": [
+    [
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/vault/credential-profiles/resolve": [
+    [
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/vault/material": [
+    [
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/vault/requests": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/vault/requests/inspect": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/vault/requests/supply": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/vault/resolve": [
+    [
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/vault/resolve/bulk": [
+    [
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_cli -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/vault/{slug}/attachments/{project_id}": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/vault/{slug}/items/copy": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v1/webhooks/clerk": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "POST /v2/runtime/auth/keys": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:keys:mint\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:keys:mint\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v2/runtime/environments/drift-summary:batchRead": [
+    [
+      "app.core.database.get_runtime_observation_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-observations:consume\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-observations:consume\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v2/runtime/environments/{environment_id}/observation-consumers/ack": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-observations:consume\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-observations:consume\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v2/runtime/environments/{environment_id}/observation-consumers/register": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-observations:consume\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-observations:consume\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v2/runtime/environments/{environment_id}/observation-consumers/reset": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-observations:consume\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-observations:consume\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v2/runtime/environments/{environment_id}/observations": [
+    [
+      "app.core.database.get_session",
+      "app.routes.runtime_observation_v2.require_runtime_observation_writer -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.routes.runtime_observation_v2.require_runtime_observation_writer -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.routes.runtime_observation_v2.require_runtime_observation_writer -> app.core.database.get_session"
+    ]
+  ],
+  "POST /v2/runtime/environments/{environment_id}/observations/read": [
+    [
+      "app.core.database.get_runtime_observation_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-observations:consume\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-observations:consume\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v2/runtime/environments/{environment_id}/retire": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-environments:retire\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-environments:retire\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "POST /v2/runtime/environments/{environment_id}/runtime-state/cleanup": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-environments:retire\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-environments:retire\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "PUT /api/admin/agents/{agent_id}/runtime-state": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /api/admin/ai-providers/{provider_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /api/admin/ai-providers/{provider_id}/runtime-metadata": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /api/admin/auth/suspensions": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /api/admin/environments/{environment_id}/runtime-state": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /api/admin/platform/workload-clients/{client_id}/provider-environment-verifier": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /api/admin/platform/workload-clients/{client_id}/scopes": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /api/admin/settings/{key}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PUT /api/agents/{agent_id}/agent-plugins/{plugin_name}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PUT /api/agents/{agent_id}/profiles": [
+    [
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:write\",\"skills:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:write\",\"skills:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "PUT /api/agents/{agent_id}/skill-references/{skill_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PUT /api/channels/discord/api/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "PUT /api/channels/discord/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "PUT /api/projects/{project_id}/skills/{skill_key:path}/content": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PUT /api/sessions/{local_session_id}/events/generations/{generation_id}/chunks/{start_seq}": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "PUT /api/vault/{slug}/items": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PUT /v1/admin/agents/{agent_id}/runtime-state": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /v1/admin/ai-providers/{provider_id}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /v1/admin/ai-providers/{provider_id}/runtime-metadata": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /v1/admin/auth/suspensions": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /v1/admin/environments/{environment_id}/runtime-state": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /v1/admin/platform/workload-clients/{client_id}/provider-environment-verifier": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /v1/admin/platform/workload-clients/{client_id}/scopes": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_control_session"
+    ]
+  ],
+  "PUT /v1/admin/settings/{key}": [
+    [
+      "app.core.auth.require_admin_api_key",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PUT /v1/agents/{agent_id}/agent-plugins/{plugin_name}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PUT /v1/agents/{agent_id}/profiles": [
+    [
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:write\",\"skills:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_any_scope.<locals>._check[accepted=[\"sessions:write\",\"skills:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "PUT /v1/agents/{agent_id}/skill-references/{skill_id}": [
+    [
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PUT /v1/channels/discord/api/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "PUT /v1/channels/discord/v10/{discord_path:path}": [
+    [
+      "app.core.database.get_session"
+    ]
+  ],
+  "PUT /v1/platform/agents/{agent_id}/runtime-state": [
+    [
+      "app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-state:write\"][allow_legacy_admin=true] -> app.core.database.get_control_session",
+      "app.services.platform_workload_auth._require_platform_auth.<locals>.dependency[required_scope=\"platform:runtime-state:write\"][allow_legacy_admin=true] -> app.services.platform_workload_auth.get_platform_workload_key_resolver"
+    ]
+  ],
+  "PUT /v1/projects/{project_id}/skills/{skill_key:path}/content": [
+    [
+      "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ],
+  "PUT /v1/runtime/project-skill-capability": [
+    [
+      "app.core.auth.require_cli_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_cli_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "PUT /v1/sessions/{local_session_id}/events/generations/{generation_id}/chunks/{start_seq}": [
+    [
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session",
+      "app.services.connected_agent_fence.connected_agent_fence_headers"
+    ]
+  ],
+  "PUT /v1/vault/{slug}/items": [
+    [
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_user_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.database.get_session"
+    ]
+  ]
+}

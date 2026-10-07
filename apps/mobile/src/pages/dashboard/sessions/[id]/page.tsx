@@ -3,6 +3,7 @@ import { detailLayoutClasses, sessionDetailClasses as styles } from "@clawdi/sha
 import {
 	formatDuration,
 	formatNumber,
+	profileLabel,
 	relativeTime,
 	sessionAgentIdentityInput,
 	sessionHasLaterActivity,
@@ -52,6 +53,7 @@ export default function SessionDetailRoute() {
 				</AppScrollView>
 			</SafeAreaScreen>
 		);
+	const profile = profileLabel(session);
 	const header = (
 		<WebView recipe={styles.header}>
 			<PageHeader
@@ -61,6 +63,14 @@ export default function SessionDetailRoute() {
 				status={
 					<DetailMeta>
 						<AgentInline identity={sessionAgentIdentityInput(session)} />
+						{profile ? (
+							<>
+								<WebText recipe={detailLayoutClasses.meta}>·</WebText>
+								<WebText recipe={detailLayoutClasses.meta} numberOfLines={1}>
+									{profile}
+								</WebText>
+							</>
+						) : null}
 						{session.project_path ? (
 							<>
 								<WebText recipe={detailLayoutClasses.meta}>·</WebText>

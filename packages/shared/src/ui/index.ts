@@ -239,6 +239,7 @@ export * from "./agent-overview-capabilities";
 export * from "./agent-overview-layout";
 export * from "./agent-plugin-card";
 export * from "./agent-plugins-surface";
+export * from "./agent-profiles";
 export * from "./agent-settings-panel";
 export * from "./agent-source-badge";
 export * from "./agents-card";

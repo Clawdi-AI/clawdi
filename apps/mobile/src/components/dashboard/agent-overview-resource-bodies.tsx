@@ -13,6 +13,7 @@ import {
 	agentOverviewCapabilitiesClasses as styles,
 } from "@clawdi/shared/ui";
 import {
+	agentDisplayName,
 	agentOverviewSummary,
 	agentSectionCopy,
 	agentToolSectionCopy,
@@ -59,6 +60,7 @@ import {
 	OverviewMetadata,
 	OverviewNavigationCard,
 } from "@/components/dashboard/agent-overview-layout";
+import { AgentProfilesOverview, useAgentProfiles } from "@/components/dashboard/agent-profiles";
 import { OverviewComputeBody } from "@/components/dashboard/overview-compute-body";
 import { AgentRecentSessions } from "@/components/dashboard/recent-sessions";
 import { Button } from "@/components/ui/button";
@@ -89,6 +91,7 @@ export function AgentOverview({
 		api = useMobileApi();
 	const supportsSessions = !agent.adapter_modules || agent.adapter_modules.includes("sessions");
 	const sessions = useCloudSessions(agent.id, supportsSessions, { page_size: 3 });
+	const profiles = useAgentProfiles(agent.id, { enabled: true });
 	const bindings = useQuery({
 		queryKey: accountQueryKey(scope, "agent-overview-bindings", agent.id),
 		enabled: scope.isReady,
@@ -377,6 +380,13 @@ export function AgentOverview({
 					</OverviewNavigationCard>
 				)}
 			</WebView>
+			<AgentProfilesOverview
+				agentId={agent.id}
+				agentName={agentDisplayName(agent)}
+				agentType={agent.agent_type}
+				profiles={profiles.data}
+				linkSessions={Boolean(deployment) || supportsSessions}
+			/>
 			<WebView recipe={styles.section}>
 				<AgentOverviewHeading>{copy.workspace}</AgentOverviewHeading>
 				<OverviewNavigationCard
