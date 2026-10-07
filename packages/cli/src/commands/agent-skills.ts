@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { HostedDeployClient } from "../lib/hosted-deploy-client";
+import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata, stripTerminalEscapes } from "../lib/sanitize";
+import { isInteractive } from "../lib/tty";
 
 function requireAgentId(agentId: string): void {
 	requireAuth();
@@ -146,7 +148,7 @@ export async function agentSkillsInstall(agentId: string, opts: InstallOptions) 
 export async function agentSkillsRemove(
 	agentId: string,
 	skillKey: string,
-	opts: { requestId?: string; resourceVersion?: string; json?: boolean } = {},
+	opts: { requestId?: string; resourceVersion?: string; json?: boolean; yes?: boolean } = {},
 ) {
 	const desired = await inventory(agentId);
 	const skill = desired.skills.find((item) => item.skill_key === skillKey);
@@ -154,6 +156,17 @@ export async function agentSkillsRemove(
 		throw new Error(
 			"This skill is managed by its linked project or runtime and cannot be removed here.",
 		);
+	if (!opts.yes) {
+		if (!isInteractive()) {
+			console.error("--yes will be required in a non-interactive shell starting in 0.16");
+		} else if (
+			!(await confirmOrRequireYes(`Remove remote skill ${sanitizeMetadata(skillKey)}?`, {
+				action: "remove this remote skill",
+			}))
+		) {
+			return;
+		}
+	}
 	if (skill?.authority === "cloud" && skill.skill_id) {
 		if (opts.requestId || opts.resourceVersion)
 			throw new Error("--request-id and --resource-version apply only to GitHub removals.");

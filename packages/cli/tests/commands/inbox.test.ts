@@ -201,7 +201,7 @@ describe("inboxAcceptCommand", () => {
 		expect(legacyOutput).toContain("Old local share records — cleanup only (1)");
 		expect(legacyOutput).toContain("No automatic action occurs for these records.");
 		expect(legacyOutput).toContain('"status": "legacy_local_share_record"');
-		expect(legacyOutput).toContain('"legacy_local_share_records": [');
+		expect(legacyOutput).not.toContain('"legacy_local_share_records": [');
 		expect(legacyOutput).toContain('"cleanup_command": "clawdi inbox forget project-shared"');
 		expect(legacyOutput).not.toContain("clawdi inbox join");
 		expect(legacyOutput).not.toContain(rawToken);

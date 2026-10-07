@@ -125,7 +125,7 @@ for (const runtime of ["bun", "node"] as const) {
 		}
 
 		for (const command of ["status", "push"]) {
-			const expectedCode = command === "status" ? 0 : 1;
+			const expectedCode = command === "status" ? 0 : 4;
 			const expectedText = command === "status" ? "Clawdi Status" : "Not signed in";
 
 			it(`${command} retains FORCE_COLOR output with an empty NO_COLOR`, async () => {
@@ -242,7 +242,7 @@ for (const runtime of ["bun", "node"] as const) {
 
 		it("ignores a forwarded --no-color after the argument separator", async () => {
 			const result = await runCli(runtime, ["run", "--", "echo", "--no-color"]);
-			expect(result.code).toBe(1);
+			expect(result.code).toBe(4);
 			expect(result.output).toContain("Not signed in");
 			expect(result.output).toContain(ansiEscape);
 		});

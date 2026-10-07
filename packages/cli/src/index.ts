@@ -66,7 +66,7 @@ program
 	.version(getCliVersion())
 	.addHelpText(
 		"afterAll",
-		"\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)",
+		"\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required",
 	)
 	.addHelpText(
 		"after",
@@ -750,7 +750,7 @@ channelCmd
 	.option("--json", "Output as JSON")
 	.addHelpText(
 		"after",
-		'\nExample:\n  $ clawdi channel send <channel-id> --binding <binding-id> --text "deploy done"',
+		'\nExamples:\n  $ clawdi channel send <channel-id> --binding <binding-id> --text "deploy done"\n  $ clawdi channel send <channel-id> --chat <chat-id> --text "hello" --json',
 	)
 	.action(async (channelId: string, opts) => {
 		const { channelSendCommand } = await import("./commands/channel.js");
@@ -981,13 +981,14 @@ vaultCmd
 	.alias("unlink")
 	.description("Remove a project's access to a vault without deleting keys")
 	.requiredOption("-p, --project <id-or-slug>", "Project that should stop using this vault")
+	.option("-y, --yes", "Confirm detaching the vault")
 	.addHelpText(
 		"after",
 		"\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault unlink providers --project old-agent",
 	)
 	.action(async (vault, opts) => {
 		const { vaultDetach } = await import("./commands/vault.js");
-		await vaultDetach(vault, { project: opts.project });
+		await vaultDetach(vault, { project: opts.project, yes: opts.yes });
 	});
 
 vaultCmd
@@ -1181,8 +1182,10 @@ const sessionCmd = program
 
 sessionCmd
 	.command("list")
-	.description("List local agent sessions (use before `clawdi push` to preview)")
+	.description("List local agent sessions, or uploaded sessions with --uploaded")
+	.option("--uploaded", "List sessions already uploaded to the cloud")
 	.option("--agent <type>", `Single agent (${AGENT_TYPE_HELP_LABEL})`)
+	.option("--agent-id <uuid>", "Filter uploaded sessions by Cloud Agent UUID")
 	.option("--all-agents", "List sessions from every registered agent (default)")
 	.option("--project <path>", "Restrict to one project path")
 	.option("--all", "List sessions from all projects (default when --project not set)")
@@ -1195,7 +1198,8 @@ sessionCmd
 Examples:
   $ clawdi session list
   $ clawdi session list --json
-  $ clawdi session list --agent claude_code --project ~/work/foo`,
+  $ clawdi session list --agent claude_code --project ~/work/foo
+  $ clawdi session list --uploaded --agent-id <agent-uuid> --limit 10 --json`,
 	)
 	.action(async (opts) => {
 		const { sessionList } = await import("./commands/session.js");
@@ -1222,7 +1226,10 @@ sessionCmd
 	.command("read <session-id>")
 	.description("Read one uploaded session and its message content")
 	.option("--json", "Output as JSON")
-	.addHelpText("after", "\nUse the cloud session UUID printed by `clawdi session search`.")
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi session read <session-id>\n  $ clawdi session read <session-id> --json\n\nUse the cloud session UUID printed by `clawdi session list --uploaded`.",
+	)
 	.action(async (sessionId, opts) => {
 		const { sessionRead } = await import("./commands/session.js");
 		await sessionRead(sessionId, opts);
@@ -1233,7 +1240,10 @@ sessionCmd
 	.description("Permanently delete an uploaded session")
 	.option("-y, --yes", "Confirm permanent deletion without prompting")
 	.option("--json", "Output as JSON")
-	.addHelpText("after", "\nUse the uploaded session UUID from `clawdi session search` or `read`.")
+	.addHelpText(
+		"after",
+		"\nUse the uploaded session UUID from `clawdi session list --uploaded` or `read`.",
+	)
 	.action(async (id: string, opts: { yes?: boolean; json?: boolean }) => {
 		const { sessionRm } = await import("./commands/session.js");
 		await sessionRm(id, opts);
@@ -1255,6 +1265,10 @@ sessionCmd
 	.option("--through <position>", "Include messages through this zero-based position")
 	.option("--response <position>", "Share only the assistant response at this zero-based position")
 	.option("--json", "Output as JSON")
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi session share <session-id> --yes\n  $ clawdi session share <session-id> --through 4 --yes --json",
+	)
 	.action(async (id, opts) => {
 		const { sessionShareCreate } = await import("./commands/session.js");
 		await sessionShareCreate(id, opts);
@@ -1265,6 +1279,10 @@ sessionCmd
 	.option("--page <n>", "Page number", parsePositiveInteger, 1)
 	.option("--limit <n>", "Page size (1-100)", parsePositiveInteger, 25)
 	.option("--json", "Output as JSON")
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi session shares\n  $ clawdi session shares <session-id> --json",
+	)
 	.action(async (id, opts) => {
 		const { sessionShareList } = await import("./commands/session.js");
 		await sessionShareList(id, opts);
@@ -1311,6 +1329,10 @@ memoryCmd
 	.option("--json", "Output as JSON")
 	.option("--limit <n>", "Max number of memories", parsePositiveInteger)
 	.option("--category <cat>", "Filter by category (fact/preference/pattern/decision/context)")
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi memory list\n  $ clawdi memory list --category preference --json",
+	)
 	.action(async (opts) => {
 		const { memoryList } = await import("./commands/memory.js");
 		await memoryList(opts);
@@ -1338,6 +1360,10 @@ memoryCmd
 		"--category <cat>",
 		"One of: fact, preference, pattern, decision, context (default: fact)",
 	)
+	.addHelpText(
+		"after",
+		'\nExample:\n  $ clawdi memory add "Prefer concise release notes" --category preference',
+	)
 	.action(async (content, opts) => {
 		const { memoryAdd } = await import("./commands/memory.js");
 		await memoryAdd(content, opts);
@@ -1347,6 +1373,10 @@ memoryCmd
 	.command("update <id> <content>")
 	.description("Replace exact memory content, preserving metadata; use the full ID")
 	.option("--json", "Output as JSON")
+	.addHelpText(
+		"after",
+		'\nExample:\n  $ clawdi memory update <memory-id> "Prefer concise release notes" --json',
+	)
 	.action(async (id, content, opts) => {
 		const { memoryUpdate } = await import("./commands/memory.js");
 		await memoryUpdate(id, content, opts);
@@ -1607,6 +1637,17 @@ projectCmd
 		await projectShowCommand(project, opts);
 	});
 
+projectCmd
+	.command("rm <project>")
+	.description("Archive a project you created")
+	.option("-y, --yes", "Confirm archiving without prompting")
+	.option("--json", "Output as JSON")
+	.addHelpText("after", "\nExample:\n  $ clawdi project rm engineering --yes --json")
+	.action(async (project: string, opts: { yes?: boolean; json?: boolean }) => {
+		const { projectRmCommand } = await import("./commands/project-rm.js");
+		await projectRmCommand(project, opts);
+	});
+
 const projectFolderCmd = projectCmd
 	.command("folder")
 	.description("Link local folders to projects for automatic vault env selection");
@@ -1670,7 +1711,8 @@ projectCmd
 	.command("share-links <project>")
 	.description("List or revoke viewer project links")
 	.option("--revoke <id-or-prefix>", "Revoke a specific link")
-	.action(async (project: string, opts: { revoke?: string }) => {
+	.option("-y, --yes", "Confirm revoking a project share link")
+	.action(async (project: string, opts: { revoke?: string; yes?: boolean }) => {
 		const { projectShareLinksCommand } = await import("./commands/project-share-links.js");
 		await projectShareLinksCommand(project, opts);
 	});
@@ -1688,12 +1730,13 @@ projectCmd
 	.command("invites <project>")
 	.description("List or cancel pending project invites")
 	.option("--cancel <id>", "Cancel one of the pending invitations on this project")
+	.option("-y, --yes", "Confirm canceling a project invitation")
 	.addHelpText(
 		"after",
 		"\n  Recipient side (listing / accepting / declining invitations addressed to you)\n" +
 			"  lives under `clawdi inbox`.",
 	)
-	.action(async (project: string, opts: { cancel?: string }) => {
+	.action(async (project: string, opts: { cancel?: string; yes?: boolean }) => {
 		const { projectInvitesCommand } = await import("./commands/project-invites.js");
 		await projectInvitesCommand(project, opts);
 	});
@@ -1766,6 +1809,7 @@ agentSkillsCmd
 	.command("list <agent-id>")
 	.description("List remote desired skills, capabilities and observed convergence")
 	.option("--json", "Output as JSON")
+	.addHelpText("after", "\nExample:\n  $ clawdi agent skills list <agent-id> --json")
 	.action(async (id, opts) => {
 		const { agentSkillsList } = await import("./commands/agent-skills.js");
 		await agentSkillsList(id, opts);
@@ -1774,6 +1818,7 @@ agentSkillsCmd
 	.command("read <agent-id> <skill-key>")
 	.description("Read remote skill detail using its exact inventory key")
 	.option("--json", "Output as JSON")
+	.addHelpText("after", "\nExample:\n  $ clawdi agent skills read <agent-id> review/SKILL.md")
 	.action(async (id, key, opts) => {
 		const { agentSkillsRead } = await import("./commands/agent-skills.js");
 		await agentSkillsRead(id, key, opts);
@@ -1790,6 +1835,10 @@ agentSkillsCmd
 		"Original resource version for exact replay with --request-id",
 	)
 	.option("--json", "Output as JSON")
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi agent skills install <agent-id> --github owner/repo --path skills/review\n  $ clawdi agent skills install <agent-id> --library <skill-id>",
+	)
 	.action(async (id, opts) => {
 		const { agentSkillsInstall } = await import("./commands/agent-skills.js");
 		await agentSkillsInstall(id, opts);
@@ -1802,7 +1851,9 @@ agentSkillsCmd
 		"--resource-version <version>",
 		"Original resource version for exact replay with --request-id",
 	)
+	.option("-y, --yes", "Confirm remote skill removal without prompting")
 	.option("--json", "Output as JSON")
+	.addHelpText("after", "\nExample:\n  $ clawdi agent skills rm <agent-id> review/SKILL.md --yes")
 	.action(async (id, key, opts) => {
 		const { agentSkillsRemove } = await import("./commands/agent-skills.js");
 		await agentSkillsRemove(id, key, opts);
@@ -2028,9 +2079,10 @@ inboxCmd
 inboxCmd
 	.command("forget <project-id>")
 	.description("Local-only: remove a share record and its cached files")
-	.action(async (projectId) => {
+	.option("-y, --yes", "Confirm removing the local share record")
+	.action(async (projectId, opts: { yes?: boolean }) => {
 		const { inboxForgetCommand } = await import("./commands/inbox.js");
-		await inboxForgetCommand(projectId);
+		await inboxForgetCommand(projectId, opts);
 	});
 
 // Keep the top-level help scannable without changing the command registry or

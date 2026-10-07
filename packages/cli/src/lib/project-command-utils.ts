@@ -1,6 +1,5 @@
-import chalk from "chalk";
 import { ApiClient, ApiError, readJson } from "./api-client";
-import { ClerkOAuthError, getClawdiAccessToken } from "./clerk-oauth";
+import { getClawdiAccessToken } from "./clerk-oauth";
 import { getConfig } from "./config";
 import type { ProjectBrief } from "./project-resolver";
 import { requireAuth } from "./require-auth";
@@ -17,16 +16,7 @@ export async function requireProjectAuth(): Promise<ProjectAuthContext> {
 }
 
 export async function projectAuthOrExit(): Promise<ProjectAuthContext | null> {
-	try {
-		return await requireProjectAuth();
-	} catch (error) {
-		if (!(error instanceof ClerkOAuthError) || error.code !== "oauth_login_required") {
-			throw error;
-		}
-		console.error(chalk.red("Not signed in. Run `clawdi auth login` first."));
-		process.exitCode = 1;
-		return null;
-	}
+	return await requireProjectAuth();
 }
 
 export async function authedJson<T>(

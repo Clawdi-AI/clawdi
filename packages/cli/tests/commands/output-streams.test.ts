@@ -40,6 +40,7 @@ describe("CLI output streams", () => {
 		["skill", "list", "--json"],
 		["memory", "list", "--json"],
 		["session", "search", "query", "--json"],
+		["inbox", "--json"],
 		["vault", "list", "--json"],
 		["project", "list", "--json"],
 		["push"],
@@ -49,7 +50,7 @@ describe("CLI output streams", () => {
 		["setup"],
 	])("keeps stdout empty when signed out: %j", (...args) => {
 		const result = runCli(args);
-		expect(result.status).toBe(1);
+		expect(result.status).toBe(4);
 		expect(result.stdout).toBe("");
 		expect(result.stderr).toContain("Not signed in. Run `clawdi auth login` first.");
 	});

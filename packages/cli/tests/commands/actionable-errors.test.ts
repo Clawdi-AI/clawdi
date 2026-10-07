@@ -66,7 +66,7 @@ describe("actionable CLI errors", () => {
 			handleError(new ApiError({status: 401, body: "Not signed in. Run clawdi auth login first.", hint: "Not signed in. Run clawdi auth login first."}));`,
 			debug ? { CLAWDI_DEBUG: "1" } : {},
 		);
-		expect(result.status).toBe(1);
+		expect(result.status).toBe(4);
 		expect(result.stdout).toBe("");
 		expect(result.stderr).toContain(
 			"Not signed in, or your session expired. Run `clawdi auth login`.",
@@ -105,7 +105,7 @@ describe("actionable CLI errors", () => {
 			import {ApiError} from ${source("lib/api-client.ts")};
 			handleError(new ApiError({status: ${status}, body: ${JSON.stringify(JSON.stringify({ detail }))}, hint: ""}));
 		`);
-			expect(result.status).toBe(1);
+			expect(result.status).toBe(status === 401 ? 4 : 1);
 			expect(result.stdout).toBe("");
 			expect(result.stderr).toContain(expected);
 			expect(result.stderr).toContain("--no-open");

@@ -223,18 +223,8 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 	// but never joined or cleaned up as a side effect of opening the inbox.
 	if (!auth?.apiKey) {
 		if (opts.json) {
-			console.log(
-				JSON.stringify(
-					{
-						invitations: [],
-						local_share_tokens: localShares.map(safeLocalShare),
-						legacy_local_share_records: legacyLocalShares.map(safeLegacyLocalShare),
-						next_command: "clawdi auth login",
-					},
-					null,
-					2,
-				),
-			);
+			console.error("Not signed in. Run `clawdi auth login` first.");
+			process.exitCode = 4;
 			return;
 		}
 		if (localShares.length === 0 && legacyLocalShares.length === 0) {
@@ -589,13 +579,27 @@ export async function inboxDeclineCommand(
 // inbox forget — local-only cleanup
 // ────────────────────────────────────────────────────────────────
 
-export async function inboxForgetCommand(projectId: string): Promise<void> {
+export async function inboxForgetCommand(
+	projectId: string,
+	opts: { yes?: boolean } = {},
+): Promise<void> {
 	const token = findToken(projectId);
 	if (!token) {
 		console.error(chalk.red(`No local share record found for project '${projectId}'.`));
 		console.error(chalk.gray("Run `clawdi inbox` to list local share records on this device."));
 		process.exitCode = 1;
 		return;
+	}
+	if (!opts.yes) {
+		if (!isInteractive()) {
+			console.error("--yes will be required in a non-interactive shell starting in 0.16");
+		} else if (
+			!(await confirmOrRequireYes(`Forget local share ${projectId}?`, {
+				action: "forget this local share",
+			}))
+		) {
+			return;
+		}
 	}
 
 	const skillKeys = token.last_seen_skill_keys ?? [];

@@ -89,7 +89,7 @@ export async function projectCreateCommand(
 	console.log(
 		chalk.green("✓") +
 			` Created project ${chalk.bold(project.name)} ` +
-			chalk.gray(`(${project.slug}, ${project.id.slice(0, 8)}…)`),
+			chalk.gray(`(${project.slug}, ${project.id})`),
 	);
 	console.log(chalk.gray("Share it: ") + chalk.cyan(`clawdi project share ${project.slug}`));
 }

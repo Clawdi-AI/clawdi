@@ -47,12 +47,19 @@ New commands and new `--json` surfaces follow this contract:
   stdout remains parseable JSON.
 - Exit non-zero on failure; describe the failure on stderr without exposing
   internal errors.
+- Exit codes: `0` means success, `1` means a command or API error, `2` means
+  `session extract` is not configured, and `4` means authorization is required.
 - Keep released contracts additive-only: preserve field names, types, and
   meanings. Consumers must tolerate additional fields.
 - Human tables print full IDs accepted by the corresponding read/remove
   commands.
 - Destructive commands use `confirmOrRequireYes`: prompt in a TTY and require
   `-y, --yes` in a non-interactive shell.
+
+Tier D commands currently warn and proceed without `--yes` in a non-interactive
+shell for compatibility; `--yes` will be required starting in 0.16. This
+applies to `agent skills rm`, `project share-links --revoke`,
+`project invites --cancel`, `vault detach`, and `inbox forget`.
 
 The new Cloud resource commands emit these envelopes:
 
@@ -61,6 +68,8 @@ The new Cloud resource commands emit these envelopes:
 | `agent list --json` | `{schemaVersion: "clawdi.agentList.v1", agents: [{id, name, display_name, agent_type, machine_name, last_seen_at}]}` |
 | `agent rm <agent-id> --yes --json` | `{schemaVersion: "clawdi.agentRm.v1", id, status: "disconnected"}` |
 | `session rm <session-id> --yes --json` | `{schemaVersion: "clawdi.sessionRm.v1", id, status: "deleted"}` |
+| `session list --uploaded --json` | `{schemaVersion: "clawdi.sessionList.v1", sessions: [...], total}` |
+| `project rm <project> --yes --json` | `{schemaVersion: "clawdi.projectRm.v1", id, status: "archived"}` |
 
 Legacy shapes are frozen. Don't change them to match the new convention:
 
@@ -487,12 +496,14 @@ Done: both commands exit 0; invalid Skills do not block valid ones and equal
 local session IDs retain separate content for each Agent.
 
 These commands use the configured Cloud API and require login. `session list`
-continues to read local history; `session search`, `read`, and `export` use Cloud
-session UUIDs. Export writes owner Markdown to stdout and never creates a link.
+continues to read local history; `session list --uploaded`, `session search`,
+`read`, and `export` use Cloud session UUIDs. Export writes owner Markdown to
+stdout and never creates a link.
 `--json` exports owner metadata and messages instead.
 
 ```bash
 clawdi session search "workspace setup" --json
+clawdi session list --uploaded --limit 10 --json
 clawdi session read <cloud-session-id> --json
 clawdi session export <cloud-session-id> > session.md
 clawdi session share <cloud-session-id> --yes --json
@@ -521,6 +532,7 @@ clawdi agent skills list <agent-id> --json
 clawdi agent skills read <agent-id> <skill-key>
 clawdi agent skills install <agent-id> --github owner/repo --path skills/review
 clawdi agent skills install <agent-id> --library <skill-id>
+clawdi agent skills rm <agent-id> <skill-key> --yes
 clawdi agent skills rm <agent-id> <skill-key>
 ```
 

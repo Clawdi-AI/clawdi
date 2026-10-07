@@ -276,7 +276,7 @@ it("requires authentication for all three commands", async () => {
 		["session", "rm", sessionId, "--yes"],
 	]) {
 		const result = await runCli(args);
-		expect(result.code).toBe(1);
+		expect(result.code).toBe(4);
 		expect(result.stderr).toContain("clawdi auth login");
 		expect(result.stdout).toBe("");
 	}

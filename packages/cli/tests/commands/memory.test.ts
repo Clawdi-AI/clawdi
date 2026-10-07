@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { memoryAdd, memoryUpdate } from "../../src/commands/memory";
+import { memoryAdd, memoryList, memoryUpdate } from "../../src/commands/memory";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -75,6 +75,36 @@ describe("memoryAdd", () => {
 			source: "manual",
 		});
 	});
+});
+
+it("prints the complete memory UUID in human output", async () => {
+	const id = "00000000-0000-0000-0000-000000000abc";
+	const { restore } = mockFetch([
+		{
+			method: "GET",
+			path: "/v1/memories",
+			response: () =>
+				jsonResponse({
+					items: [{ id, content: "Use tabs", category: "preference", created_at: "2026-08-27" }],
+					total: 1,
+				}),
+		},
+	]);
+	const output: string[] = [];
+	const originalLog = console.log;
+	const ttyDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+	console.log = (value?: unknown) => output.push(String(value));
+	Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+	try {
+		await memoryList();
+	} finally {
+		console.log = originalLog;
+		if (ttyDescriptor) Object.defineProperty(process.stdout, "isTTY", ttyDescriptor);
+		else Object.defineProperty(process.stdout, "isTTY", { value: undefined, configurable: true });
+		restore();
+	}
+
+	expect(output.join("\n")).toContain(id);
 });
 
 it("updates exact content only and rejects secrets before the request", async () => {

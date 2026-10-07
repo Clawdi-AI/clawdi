@@ -251,6 +251,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 
 interface VaultProjectOptions {
 	project?: string;
+	yes?: boolean;
 }
 
 export async function vaultAttach(vaultSlugArg: string, opts: VaultProjectOptions = {}) {
@@ -313,6 +314,18 @@ export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOption
 			),
 		);
 		return;
+	}
+	if (!opts.yes) {
+		if (!isInteractive()) {
+			console.error("--yes will be required in a non-interactive shell starting in 0.16");
+		} else if (
+			!(await confirmOrRequireYes(
+				`Detach vault ${sanitizeMetadata(vaultSlug)} from ${formatProjectTarget(targetProject)}?`,
+				{ action: "detach this vault" },
+			))
+		) {
+			return;
+		}
 	}
 
 	unwrap(

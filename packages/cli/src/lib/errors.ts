@@ -1,5 +1,8 @@
 import chalk from "chalk";
 import { ApiError } from "./api-client";
+import { ClerkOAuthError } from "./clerk-oauth";
+import { HostedDeployAuthorizationError } from "./hosted-deploy-auth";
+import { AuthorizationRequiredError } from "./require-auth";
 
 /** Best-effort `String`-of an `unknown` caught from a try/catch. */
 export function errMessage(e: unknown): string {
@@ -10,6 +13,16 @@ export function errMessage(e: unknown): string {
 
 /** Top-level error handler wired into `program.parseAsync().catch(handleError)`. */
 export function handleError(err: unknown): never {
+	if (isAuthorizationRequired(err)) {
+		process.stderr.write("\n");
+		console.error(chalk.red(`✗ ${errMessage(err)}`));
+		if (process.env.CLAWDI_DEBUG) {
+			if (err instanceof ApiError && err.status > 0)
+				console.error(chalk.gray(`  HTTP ${err.status}`));
+			if (err instanceof Error) console.error(chalk.gray(err.stack ?? ""));
+		}
+		process.exit(4);
+	}
 	if (err instanceof ApiError) {
 		process.stderr.write("\n");
 		console.error(chalk.red(`✗ ${err.message}`));
@@ -35,6 +48,27 @@ export function handleError(err: unknown): never {
 	}
 	console.error(chalk.red(`✗ ${unexpectedErrorMessage(errMessage(err))}`));
 	process.exit(1);
+}
+
+function isAuthorizationRequired(err: unknown): err is Error {
+	if (err instanceof AuthorizationRequiredError) return true;
+	if (err instanceof ApiError) return err.status === 401;
+	if (err instanceof HostedDeployAuthorizationError) {
+		return (
+			err.code === "hosted_oauth_login_required" ||
+			err.code === "hosted_token_expired" ||
+			err.code === "invalid_hosted_token" ||
+			err.message.includes("sign in again")
+		);
+	}
+	if (err instanceof ClerkOAuthError) {
+		return (
+			err.code === "oauth_login_required" ||
+			err.code === "oauth_login_expired" ||
+			err.message.includes("sign in again")
+		);
+	}
+	return false;
 }
 
 function unexpectedErrorMessage(message: string): string {

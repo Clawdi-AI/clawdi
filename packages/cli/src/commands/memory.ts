@@ -28,7 +28,7 @@ function buildQuery(opts: ListOpts) {
 function printRows(memories: Memory[], short: boolean) {
 	for (const m of memories) {
 		const content = sanitizeMetadata(m.content);
-		const id = chalk.gray(m.id.slice(0, 8));
+		const id = chalk.gray(m.id);
 		if (short) {
 			console.log(`  ${id}  ${chalk.white(content.slice(0, 100))}`);
 		} else {
@@ -121,7 +121,7 @@ export async function memoryAdd(content: string, opts: { category?: string } = {
 			body: { content, category, source: "manual" },
 		}),
 	);
-	console.log(chalk.green(`✓ Added memory ${result.id.slice(0, 8)} (${category})`));
+	console.log(chalk.green(`✓ Added memory ${result.id} (${category})`));
 }
 
 export async function memoryRm(id: string, opts: { yes?: boolean } = {}) {

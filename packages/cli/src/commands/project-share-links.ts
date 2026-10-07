@@ -3,6 +3,8 @@ import chalk from "chalk";
 import { ApiClient, ApiError } from "../lib/api-client";
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
+import { confirmOrRequireYes } from "../lib/prompts";
+import { isInteractive } from "../lib/tty";
 
 /**
  * `clawdi project share-links <project> [--revoke <id|prefix>]`
@@ -52,7 +54,7 @@ function formatRow(link: ShareLinkRow): string {
 
 export async function projectShareLinksCommand(
 	projectArg: string,
-	opts: { revoke?: string },
+	opts: { revoke?: string; yes?: boolean },
 ): Promise<void> {
 	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
@@ -80,6 +82,17 @@ export async function projectShareLinksCommand(
 				return;
 			}
 			linkId = matches[0].id;
+		}
+		if (!opts.yes) {
+			if (!isInteractive()) {
+				console.error("--yes will be required in a non-interactive shell starting in 0.16");
+			} else if (
+				!(await confirmOrRequireYes(`Revoke share link ${linkId}?`, {
+					action: "revoke this project share link",
+				}))
+			) {
+				return;
+			}
 		}
 		const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
 			`/v1/projects/${projectId}/share-links/${linkId}`,
