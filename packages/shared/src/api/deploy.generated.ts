@@ -2799,6 +2799,13 @@ export interface components {
              * @description Clawdi AI providers the current runtime did not apply because its native Hermes/OpenClaw configuration already owns them. Populated only while the deployment serves with a current-generation advisory Degraded condition (reason ProviderConflict or RuntimeUiUnavailable).
              */
             provider_conflicts?: components["schemas"]["V2HostedProviderConflict"][];
+            /**
+             * Provisioning Path
+             * @description Display hint only. warm when this deployment's runtime claimed a prepared warm instance, which usually becomes ready within a minute; standard when the runtime is provisioned and installed from scratch.
+             * @default standard
+             * @enum {string}
+             */
+            provisioning_path: "warm" | "standard";
         };
         /** V2HostedFilesEndpointInfo */
         V2HostedFilesEndpointInfo: {

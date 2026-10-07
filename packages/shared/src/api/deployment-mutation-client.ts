@@ -126,9 +126,6 @@ export function createDeploymentMutationClient(options: ApiClientOptions) {
 			mutation: DeploymentMutation,
 			signal?: AbortSignal,
 		) => {
-			// Provider-specific subscription management is a separate, gated workflow.
-			if (mutation.action === "delete" && mutation.body.subscription_choice !== "keep_subscription")
-				throw new ApiClientError(400, "subscription_management_unavailable");
 			const params = {
 				path: { deployment_id: readResourceId(id) },
 				header: deploymentMutationHeaders(resourceVersion, key),
