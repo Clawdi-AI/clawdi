@@ -48,11 +48,13 @@ that Files opens on the web and offers Terminal, because the Files grant
 bootstrap needs a browser session on the dashboard origin and hosted has no
 native Files handoff yet.
 The Account tab root `/settings` is a native grouped settings menu: General,
-Account (Clerk's native `UserProfileView`), API Keys, then Wallet and Compute
-when a compute API is configured. Each row pushes a natively headed
-`/settings/{general,account,api-keys,wallet,compute}` page; AI Usage will join
-the hosted group as `/settings/usage`. Web's `?settings=<panel>` opens the
-matching `/settings/<panel>`. Because the Account row is the account entry,
+Account (Clerk's native `UserProfileView`), API Keys, then Wallet, Compute and
+AI Usage when a compute API is configured. Each row pushes a natively headed
+`/settings/{general,account,api-keys,wallet,compute,usage}` page. AI Usage is
+read-only; its Agent and time-range filters are native menus (a deleted Agent
+shows a "· Deleted" suffix instead of Web's badge), and store builds show
+amounts as credits. Web's `?settings=<panel>` opens the matching
+`/settings/<panel>`. Because the Account row is the account entry,
 mobile General shows only Appearance (mobile-only row subtitle and panel
 description; Web's General keeps its Account section). `SettingsShell` is only
 the panel screen container (`scroll` toggles the Web panel ScrollView) with no

@@ -2189,6 +2189,105 @@ const managedModels = {
 	],
 } satisfies DeployGetOk<"/v2/ai-providers/managed/models">;
 
+/**
+ * AI usage, shaped like hosted `/v2/usage`: model rows carry managed-catalogue ids with
+ * `provider: null`, totals equal the model and day sums, and a scoped read omits `by_agent`.
+ */
+const deletedUsageAgent = {
+	id: "de1e7ed0-0009-4c00-8000-000000000009",
+	name: "Old Hermes",
+	type: "hermes",
+} as const;
+const usageWeights: Record<string, number> = {
+	[AGENT.openclaw]: 3,
+	[AGENT.hermes]: 2,
+	[deletedUsageAgent.id]: 1,
+};
+const usageModels = [
+	{ model: "openai/gpt-4o-mini", share: 49, requests: 41 },
+	{ model: "anthropic/claude-sonnet-4.5", share: 46, requests: 12 },
+	{ model: "deepseek/deepseek-chat", share: 5, requests: 9 },
+] as const;
+
+function usageSummary(url: URL): DeployGetOk<"/v2/usage"> | Reply {
+	const days = Math.min(Math.max(Number(url.searchParams.get("days")) || 30, 1), 90);
+	const agentId = url.searchParams.get("agent_id");
+	const knownAgents = new Set([
+		...deployments.map((deployment) => deployment.agent_id),
+		deletedUsageAgent.id,
+	]);
+	if (agentId && !knownAgents.has(agentId)) return notFound("Agent not found");
+	const weight = agentId
+		? (usageWeights[agentId] ?? 0)
+		: Object.values(usageWeights).reduce((total, value) => total + value, 0);
+	const end = new Date(NOW);
+	end.setUTCHours(0, 0, 0, 0);
+	const start = new Date(end.valueOf() - (days - 1) * DAY);
+	const dollars = (cents: number) => (cents / 100).toFixed(2);
+	const byDay: DeploySchemas["V2HostedUsageDay"][] = [];
+	for (let index = 0; index < days; index += 1) {
+		// Quiet Sundays and a few idle days keep the chart's zero-spend state visible.
+		const date = new Date(start.valueOf() + index * DAY);
+		const activity = (index * 7 + 3) % 11;
+		const cents = weight * activity * 9;
+		if (date.getUTCDay() === 0 || activity < 2 || !cents) continue;
+		byDay.push({ date: date.toISOString().slice(0, 10), amount_usd: dollars(cents) });
+	}
+	const totalCents = byDay.reduce(
+		(total, day) => total + Math.round(Number(day.amount_usd) * 100),
+		0,
+	);
+	let remainingCents = totalCents;
+	const byModel = totalCents
+		? usageModels.map((model, index) => {
+				const cents =
+					index === usageModels.length - 1
+						? remainingCents
+						: Math.round((totalCents * model.share) / 100);
+				remainingCents -= cents;
+				return {
+					model: model.model,
+					provider: null,
+					amount_usd: dollars(cents),
+					requests: Math.round((model.requests * weight * days) / 6),
+				};
+			})
+		: [];
+	const totalRequests = byModel.reduce((total, model) => total + model.requests, 0);
+	const agentRows = deployments
+		.map((deployment) => ({
+			id: deployment.agent_id,
+			name: deployment.resource.name,
+			type: deployment.resource.spec.runtime,
+			deleted: false,
+		}))
+		.concat({ ...deletedUsageAgent, deleted: true })
+		.filter((agent) => usageWeights[agent.id]);
+	const allWeight = Object.values(usageWeights).reduce((total, value) => total + value, 0);
+	return {
+		period_start: start.toISOString(),
+		period_end: end.toISOString(),
+		availability: "complete",
+		unavailable_sections: [],
+		breakdown_limit: 100,
+		truncated_sections: [],
+		total_usd: dollars(totalCents),
+		total_requests: totalRequests,
+		by_agent: agentId
+			? []
+			: agentRows.map((agent) => ({
+					agent_id: agent.id,
+					agent_name: agent.name,
+					agent_type: agent.type,
+					agent_deleted: agent.deleted,
+					amount_usd: dollars(Math.round((totalCents * usageWeights[agent.id]) / allWeight)),
+					requests: Math.round((totalRequests * usageWeights[agent.id]) / allWeight),
+				})),
+		by_model: byModel,
+		by_day: byDay,
+	};
+}
+
 const computeGetRoutes = {
 	"/v1/me": () => hostedProfile,
 	"/v1/agent-environments": () => ({ environment_ids: [] }),
@@ -2264,6 +2363,7 @@ const computeGetRoutes = {
 	"/v2/wallet/transactions": () => walletTransactions,
 	"/v2/wallet/payment-methods": () => ({ items: [], has_more: false }),
 	"/v2/ai-providers/managed/models": () => managedModels,
+	"/v2/usage": ({ url }) => usageSummary(url),
 } satisfies { [P in DeployGetPath]?: (ctx: Ctx) => DeployGetOk<P> | Reply };
 
 for (const [template, handler] of Object.entries(computeGetRoutes)) {
