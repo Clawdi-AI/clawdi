@@ -126,8 +126,9 @@ and that a retry reopens it.
 Wallet-rail `top_up` recovery (dunning banner and subscription details) and the
 deploy wizard's Wallet shortfall, which re-quotes after funding. Funded,
 submitted, pending and unconfirmed outcomes refresh the Wallet queries; nothing
-auto-deploys. Store builds also show "Check pending purchases", which runs
-`flow.recover()` (never a Paywall or store charge) and refreshes the Wallet.
+auto-deploys. Store builds also show "Check pending purchases" (disabled while
+purchases are unavailable), which runs `flow.recover()` (never a Paywall or
+store charge) and refreshes the Wallet.
 
 `storeSurfaces()` (`store-policy.ts`) gates presentation. Store builds hide
 auto-reload, saved cards/card setup, browser-wallet USDC funding, Stripe

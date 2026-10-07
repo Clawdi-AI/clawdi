@@ -85,10 +85,14 @@ export function CheckPendingPurchasesAction() {
 			setNotice(next);
 			if (next.refresh) await refresh();
 		});
-	if (!flow) return null;
 	return (
 		<AppView className="gap-2">
-			<Button variant="outline" size="sm" disabled={action.busy} onPress={() => void check()}>
+			<Button
+				variant="outline"
+				size="sm"
+				disabled={!flow || action.busy}
+				onPress={() => void check()}
+			>
 				<Text>{t(action.busy ? "store.checkingPending" : "store.checkPending")}</Text>
 			</Button>
 			{notice ? <NoticeText notice={notice} /> : null}
