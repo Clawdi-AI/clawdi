@@ -1750,13 +1750,83 @@ agentCmd
 
 agentCmd
 	.command("rm <agent-id>")
-	.description("Disconnect an agent and archive its workspace")
-	.option("-y, --yes", "Confirm disconnection without prompting")
+	.description("Disconnect a local agent or delete a Cloud Agent and its saved data")
+	.option("-y, --yes", "Confirm removal without prompting")
+	.option("--cancel-subscription", "Cancel the Cloud Agent subscription when deleting")
+	.option("--keep-subscription", "Keep the Cloud Agent subscription for a future agent")
 	.option("--json", "Output as JSON")
-	.addHelpText("after", "\nUse the agent UUID printed by `clawdi agent list`.")
-	.action(async (id: string, opts: { yes?: boolean; json?: boolean }) => {
-		const { agentRm } = await import("./commands/agent.js");
-		await agentRm(id, opts);
+	.addHelpText(
+		"after",
+		"\nUse the agent UUID printed by `clawdi agent list`. Renewing subscriptions require a choice.\nExample: clawdi agent rm <agent-id> --yes --cancel-subscription --json",
+	)
+	.action(
+		async (
+			id: string,
+			opts: {
+				yes?: boolean;
+				json?: boolean;
+				cancelSubscription?: boolean;
+				keepSubscription?: boolean;
+			},
+		) => {
+			const { agentRm } = await import("./commands/agent.js");
+			await agentRm(id, opts);
+		},
+	);
+
+for (const action of ["start", "stop", "restart"] as const) {
+	agentCmd
+		.command(`${action} <agent-id>`)
+		.description(
+			`${action[0]?.toUpperCase()}${action.slice(1)} a Cloud Agent and wait for completion`,
+		)
+		.option("--json", "Output as JSON")
+		.option("--no-wait", "Return when the operation is accepted")
+		.addHelpText(
+			"after",
+			`\nUse the agent UUID printed by \`clawdi agent list\`.\nExample: clawdi agent ${action} <agent-id> --json`,
+		)
+		.action(async (id: string, opts: { json?: boolean; wait?: boolean }) => {
+			const { agentLifecycle } = await import("./commands/agent-lifecycle.js");
+			await agentLifecycle(action, id, opts);
+		});
+}
+
+const agentPluginsCmd = agentCmd.command("plugins").description("Manage Cloud Agent plugins");
+agentPluginsCmd
+	.command("list <agent-id>")
+	.description("List requested plugins and observed convergence")
+	.option("--json", "Output as JSON")
+	.addHelpText("after", "\nExample: clawdi agent plugins list <agent-id> --json")
+	.action(async (id: string, opts: { json?: boolean }) => {
+		const { agentPluginsList } = await import("./commands/agent-plugins.js");
+		await agentPluginsList(id, opts);
+	});
+agentPluginsCmd
+	.command("install <agent-id> [plugin-name]")
+	.description("Request a catalog plugin installation; omit the name for choices")
+	.option("--plugin-version <version>", "Exact plugin catalog version")
+	.option("--json", "Output as JSON")
+	.addHelpText("after", "\nExample: clawdi agent plugins install <agent-id> <plugin-name> --json")
+	.action(
+		async (
+			id: string,
+			name: string | undefined,
+			opts: { json?: boolean; pluginVersion?: string },
+		) => {
+			const { agentPluginsInstall } = await import("./commands/agent-plugins.js");
+			await agentPluginsInstall(id, name, opts);
+		},
+	);
+agentPluginsCmd
+	.command("rm <agent-id> <plugin-name>")
+	.description("Request removal of an agent plugin")
+	.option("-y, --yes", "Confirm removal without prompting")
+	.option("--json", "Output as JSON")
+	.addHelpText("after", "\nExample: clawdi agent plugins rm <agent-id> <plugin-name> --yes --json")
+	.action(async (id: string, name: string, opts: { json?: boolean; yes?: boolean }) => {
+		const { agentPluginsRemove } = await import("./commands/agent-plugins.js");
+		await agentPluginsRemove(id, name, opts);
 	});
 
 const agentSkillsCmd = agentCmd

@@ -58,9 +58,39 @@ The new Cloud resource commands emit these envelopes:
 
 | Command | JSON result |
 | --- | --- |
-| `agent list --json` | `{schemaVersion: "clawdi.agentList.v1", agents: [{id, name, display_name, agent_type, machine_name, last_seen_at}]}` |
+| `agent list --json` | `{schemaVersion: "clawdi.agentList.v1", agents: [{id, name, display_name, agent_type, machine_name, last_seen_at, kind, deployment_status}]}` |
 | `agent rm <agent-id> --yes --json` | `{schemaVersion: "clawdi.agentRm.v1", id, status: "disconnected"}` |
+| `agent start/stop/restart <agent-id> --json` | `{schemaVersion: "clawdi.agentStart.v1" / "clawdi.agentStop.v1" / "clawdi.agentRestart.v1", id, deployment_id, operation_name, status: "accepted" / "succeeded"}` |
+| `agent plugins list <agent-id> --json` | `{schemaVersion: "clawdi.agentPluginsList.v1", agent_id, plugins: [...]}` |
+| `agent plugins install <agent-id> <plugin-name> --json` | `{schemaVersion: "clawdi.agentPluginsInstall.v1", status: "accepted", ...desiredState}` |
+| `agent plugins rm <agent-id> <plugin-name> --yes --json` | `{schemaVersion: "clawdi.agentPluginsRm.v1", status: "accepted", ...desiredAbsence}` |
 | `session rm <session-id> --yes --json` | `{schemaVersion: "clawdi.sessionRm.v1", id, status: "deleted"}` |
+
+Cloud Agent commands accept the stable Agent UUID from `agent list`, rather than
+a deployment ID or local adapter type. `agent list` joins deployments by that UUID:
+`kind` is `"local"` or `"cloud"`, and `deployment_status` is the observed deployment
+summary state (null for local agents or an unobserved deployment). If the deployment
+API is unavailable, both new fields are null and a diagnostic is written to stderr;
+the Agent list still succeeds.
+
+Lifecycle commands wait for their operation by default; `--no-wait` reports
+acceptance without polling. They require no confirmation. Cloud Agent removal
+permanently deletes the deployment and its saved data. Its `agentRm.v1` result
+includes `deployment_id`, `operation_name` (null for converged absence), and
+`subscription_choice`; `status` is `"accepted"` while deletion is pending or
+`"deleted"` when the server confirms completion. Local removal retains the
+`"disconnected"` result. A renewing paid subscription requires
+`--cancel-subscription` or `--keep-subscription`; interactive selection defaults
+to cancel, and non-interactive removal requires `--yes` plus a subscription choice.
+Included Basic defaults to cancel; other non-renewing subscriptions default to
+keep, matching the dashboard.
+
+Plugin install reads the catalog; omitting `<plugin-name>` prompts for a choice
+in a TTY or prints available names to stderr in a non-interactive shell. Optional
+`--plugin-version` must match the catalog version. Plugin mutations report desired-state
+acceptance; use `agent plugins list` to inspect observed runtime convergence.
+Failed convergence returns a non-zero exit code. Plugin removal requires
+`confirmOrRequireYes`.
 
 Legacy shapes are frozen. Don't change them to match the new convention:
 
