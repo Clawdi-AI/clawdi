@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+bun_version="$(node -p 'const manager = require(process.argv[1]).packageManager; if (!/^bun@\d+\.\d+\.\d+$/.test(manager)) throw new Error("Expected packageManager to be bun@X.Y.Z"); manager.slice(4)' "$repo_root/package.json")"
 fixture="$repo_root/packages/cli/tests/fixtures/runtime-official-installer-systemd/Dockerfile"
 image="clawdi-systemd-command-test:local-$$"
 container="clawdi-systemd-command-test-$$"
@@ -20,7 +21,7 @@ load_args=()
 if [[ "${DOCKER_BUILD_LOAD:-0}" == "1" ]]; then
 	load_args+=(--load)
 fi
-timeout --kill-after=15s 900s docker build --quiet --build-arg BUN_VERSION=1.4.2 "${load_args[@]}" --target systemd --tag "$image" - < "$fixture" >/dev/null
+timeout --kill-after=15s 900s docker build --quiet --build-arg "BUN_VERSION=$bun_version" "${load_args[@]}" --target systemd --tag "$image" - < "$fixture" >/dev/null
 timeout --kill-after=15s 30s docker run --detach --privileged --cgroupns=private \
 	--cpus=2 --memory=2g --pids-limit=256 --name "$container" \
 	--tmpfs /run --tmpfs /run/lock --tmpfs /tmp:exec \
