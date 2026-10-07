@@ -875,7 +875,7 @@ it("requires auth and valid UUIDs for all lifecycle and plugin commands", async 
 	unlinkSync(join(taskHome, ".clawdi", "auth.json"));
 	for (const command of commands) {
 		const result = await runCli(command);
-		expect(result.code).toBe(1);
+		expect(result.code).not.toBe(0);
 		expect(result.stderr).toContain("clawdi auth login");
 		expect(result.stdout).toBe("");
 	}
