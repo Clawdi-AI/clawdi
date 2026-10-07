@@ -88,37 +88,23 @@ the desktop filename from it. Windows launchers use a UTF-8 BOM for PowerShell
 read that encoding. The native Windows lifecycle test checks a Unicode path and
 the log BOM/content.
 
-Clawdi Desktop loads the production Dashboard from `https://cloud.clawdi.ai`.
-Web deployments take effect on the next Dashboard load or View > Reload Dashboard
-without installing a new application. An active page is never forcibly reloaded.
-Server-side rollback uses the existing Web deployment workflow. This is remote
-HTTPS content in a sandbox, not downloaded JavaScript executed by the main process.
-The native wizard and failure screen remain bundled and work when the site is
-unavailable. Native shell, IPC additions, and CLI changes still require a signed
-application update; beta.1 must upgrade once to acquire remote Dashboard support.
+Clawdi Desktop opens the Dashboard in the system browser at `https://cloud.clawdi.ai`.
+Set `CLAWDI_DESKTOP_WEB_URL` to a self-hosted HTTPS dashboard URL (or an HTTP
+loopback URL for local development). Dashboard entry points never load remote
+content into Electron. Only the bundled Connect wizard has a renderer and IPC.
 
-Only the trusted main frame receives the versioned, narrow Desktop bridge.
-Web changes must preserve bridge v1 methods and feature-detect new capabilities
-before calling them. Never require a new bridge method without an app update path.
-CLI owns credentials, Agent registration, and daemon lifecycle. The production
-site's CSP and TLS rules apply; no certificate bypass is installed. Production
-documents use per-response CSP nonces through TanStack SSR and Clerk's nonce prop,
-with no script unsafe-inline/unsafe-eval and no shared document caching.
-The Web bridge adapter accepts the released unversioned beta.1 and version 1;
-unknown versions or missing v1 methods display a Desktop upgrade message.
+The bundled CLI owns credentials, Agent registration, and daemon lifecycle.
+Desktop sign-in runs authorization code + PKCE (S256) in the system browser,
+using the registered `http://127.0.0.1:18473/oauth/callback` redirect. Terminal
+`clawdi auth login` continues to use device authorization. Desktop never receives
+tokens or creates a Clerk browser session; the Dashboard uses normal browser
+sign-in independently. Signing out of Desktop uninstalls the daemon and signs the
+CLI out. It leaves the browser's Dashboard session signed in.
 
-Desktop has one Dashboard mode: the production HTTPS application. Packaged smoke
-tests exercise that same surface, including the narrow bridge, sign-in retry and
-child-window isolation. There is no bundled SPA, runtime code downloader or
-remote-to-bundled fallback. Network failures show the local recovery UI.
-
-Dashboard uses a persistent Chromium partition for Clerk's browser session.
-Startup first restores that session; only an expired or missing session requests
-a CLI-backed sign-in ticket. An HttpOnly account marker and renderer identity
-check prevent reuse under a different CLI account. Explicit sign-out/account
-replacement clears the partition; ordinary restarts and session retries do not.
-CLI credentials are never copied into renderer storage. The first launch after
-upgrading an old in-memory build will still need one new browser session.
+Native shell and CLI changes require an application update. Dashboard deployments
+take effect in the browser as normal. Packaged smoke tests verify the bundled
+wizard and remote navigation rejection without contacting the hosted Dashboard.
+Unit tests verify the system-browser handoff.
 
 ## Preview package
 

@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { ApiClient, ApiError, readJson, unwrap } from "../lib/api-client";
+import { ApiError, readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { openInBrowser } from "../lib/browser";
 import {
@@ -9,10 +9,13 @@ import {
 	captureStoredCredentialIdentity,
 	clearPendingClerkOAuthLogin,
 	commitClawdiCredential,
+	createClerkOAuthAuthorization,
 	createCredentialEndpointBinding,
 	describeCredentialEndpointBinding,
+	exchangeClerkOAuthCode,
 	fetchClerkOAuthClientConfig,
 	fetchClerkOAuthDiscovery,
+	fetchClerkOAuthPkceDiscovery,
 	isClerkOAuthAuth,
 	logoutClawdiCredentials,
 	persistClerkDeviceSlowDown,
@@ -22,6 +25,7 @@ import {
 	startClerkDeviceAuthorization,
 	verifyAndPersistClerkOAuthLogin,
 } from "../lib/clerk-oauth";
+import { startClerkOAuthLoopback } from "../lib/clerk-oauth-loopback";
 import { getAuth, getConfig, getPendingAuth, isLoggedIn, type PendingAuth } from "../lib/config";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 
@@ -314,20 +318,59 @@ export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<
 	if (!isClerkOAuthAuth(existing) || opts.force) {
 		const config = getConfig();
 		const expected = captureStoredCredentialIdentity();
-		const pending = await startOAuthLogin(config.apiUrl, config.deployApiUrl, expected);
-		await runDeviceLogin(pending, expected, {
-			open: true,
-			quiet: true,
-			progress: (pending) =>
-				console.error(
-					JSON.stringify({
-						schemaVersion: "clawdi.desktopLogin.progress.v1",
-						verificationUri: pending.verificationUriComplete ?? pending.verificationUri,
-						userCode: pending.userCode,
-						expiresAt: pending.expiresAt,
-					}),
-				),
-		});
+
+		const controller = new AbortController();
+		const cancel = () => controller.abort();
+		process.once("SIGTERM", cancel);
+		process.once("SIGINT", cancel);
+		let loopback: Awaited<ReturnType<typeof startClerkOAuthLoopback>> | undefined;
+		try {
+			const endpointBinding = createCredentialEndpointBinding(config.apiUrl, config.deployApiUrl);
+			const clientConfig = await fetchClerkOAuthClientConfig(endpointBinding.cloudApiOrigin, {
+				signal: controller.signal,
+			});
+			const discovery = await fetchClerkOAuthPkceDiscovery(clientConfig, {
+				signal: controller.signal,
+			});
+			const pending = createClerkOAuthAuthorization({
+				config: clientConfig,
+				discovery,
+				apiUrl: config.apiUrl,
+				hostedApiUrl: config.deployApiUrl,
+			});
+			loopback = await startClerkOAuthLoopback(pending.redirectUri, pending.state, {
+				signal: controller.signal,
+				timeoutMs: Date.parse(pending.expiresAt) - Date.now(),
+			});
+			console.error(
+				JSON.stringify({
+					schemaVersion: "clawdi.desktopLogin.progress.v1",
+					expiresAt: pending.expiresAt,
+				}),
+			);
+			openInBrowser(pending.authorizationUrl);
+			const callbackUrl = await loopback.callbackUrl;
+			const auth = await exchangeClerkOAuthCode(pending, callbackUrl, {
+				signal: controller.signal,
+			});
+			await verifyAndPersistClerkOAuthLogin(pending.apiUrl, auth, { expectedCredential: expected });
+		} catch (error) {
+			if (
+				controller.signal.aborted ||
+				(error instanceof ClerkOAuthError &&
+					["oauth_denied", "oauth_cancelled"].includes(error.code))
+			) {
+				console.log(
+					JSON.stringify({ schemaVersion: "clawdi.desktopLogin.v1", status: "cancelled" }),
+				);
+				return;
+			}
+			throw error;
+		} finally {
+			await loopback?.close();
+			process.off("SIGTERM", cancel);
+			process.off("SIGINT", cancel);
+		}
 	}
 	const auth = getAuth();
 	if (!isClerkOAuthAuth(auth)) throw new Error("Desktop sign-in did not save an OAuth session.");
@@ -336,23 +379,6 @@ export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<
 			schemaVersion: "clawdi.desktopLogin.v1",
 			status: "authenticated",
 			user: { id: auth.userId, ...(auth.email ? { email: auth.email } : {}) },
-		}),
-	);
-}
-
-export async function authDesktopSessionMachine(): Promise<void> {
-	const auth = getAuth();
-	if (!isClerkOAuthAuth(auth)) {
-		throw new Error("Desktop sign-in requires Clerk OAuth. Sign in again from Clawdi Desktop.");
-	}
-
-	const payload = unwrap(await new ApiClient().POST("/v1/cli/auth/oauth/desktop-ticket"));
-
-	console.log(
-		JSON.stringify({
-			schemaVersion: "clawdi.desktopSession.v1",
-			ticket: payload.ticket,
-			expiresIn: payload.expires_in,
 		}),
 	);
 }
