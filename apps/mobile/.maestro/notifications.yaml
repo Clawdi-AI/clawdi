@@ -1,4 +1,4 @@
-appId: ${APP_ID}
+appId: ${MAESTRO_APP_ID}
 name: Overview bell and notification inbox
 ---
 # Runs after the other flows: select the Overview tab root first (same tab
@@ -6,7 +6,7 @@ name: Overview bell and notification inbox
 - tapOn:
     text: Overview
     childOf:
-      id: ${APP_ID}:id/navigation_bar_item_content_container
+      id: ${MAESTRO_APP_ID}:id/navigation_bar_item_content_container
       containsDescendants:
         - text: Overview
 - assertVisible:
@@ -19,16 +19,11 @@ name: Overview bell and notification inbox
       text: Notifications, 4 new items
     timeout: 30000
 - takeScreenshot: overview-bell
-# Cold Android taps can be dropped (see tabs-fixture.yaml); bound the attempts
-# and require the inbox screen.
-- repeat:
-    times: 3
-    while:
-      notVisible:
-        id: notification-center-screen
-    commands:
-      - tapOn:
-          text: Notifications, 4 new items
+# This flow runs after the others, so the app is warm: wait for the settled
+# header, then tap once. Retried taps could push the inbox twice.
+- waitForAnimationToEnd
+- tapOn:
+    text: Notifications, 4 new items
 - extendedWaitUntil:
     visible:
       id: notification-center-screen

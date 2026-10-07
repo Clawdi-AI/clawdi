@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createCloudApiClient } from "../api";
+import { createCloudApiClient, createHostedComputeClient } from "../api";
 import {
 	createAccountSuspensionStore,
 	isAccountSuspendedProblem,
@@ -19,6 +19,18 @@ describe("account suspension contract", () => {
 		expect(isAccountSuspendedProblem(problem)).toBe(true);
 		expect(isAccountSuspendedProblem({ ...problem, code: "invalid_credentials" })).toBe(false);
 		expect(isAccountSuspendedProblem({ detail: "Account is suspended" })).toBe(false);
+		// Hosted (compute) sends the same body as 403; other statuses are not the contract.
+		expect(isAccountSuspendedProblem({ ...problem, status: 403 })).toBe(true);
+		expect(isAccountSuspendedProblem({ ...problem, status: 400 })).toBe(false);
+	});
+
+	test("the response status must match the problem body", async () => {
+		const store = createAccountSuspensionStore();
+		const mismatched = new Response(JSON.stringify(problem), { status: 403 });
+		const generic403 = Response.json({ detail: "Forbidden" }, { status: 403 });
+		expect(await store.observeResponse(mismatched)).toBe(false);
+		expect(await store.observeResponse(generic403)).toBe(false);
+		expect(store.getSnapshot()).toBe(false);
 	});
 
 	test("a late suspension response affects only its originating account scope", async () => {
@@ -75,4 +87,20 @@ describe("account suspension observation", () => {
 		await expect(other.listAgents()).rejects.toMatchObject({ status: 401 });
 		expect(expired.getSnapshot()).toBe(false);
 	});
+});
+
+test("a hosted 403 account_suspended problem suspends the account as well", async () => {
+	const store = createAccountSuspensionStore();
+	const hosted = createHostedComputeClient({
+		baseUrl: "https://compute.example.test",
+		getToken: async () => "token",
+		fetch: observeAccountSuspension(store, async () =>
+			Response.json({ ...problem, status: 403 }, { status: 403 }),
+		),
+	});
+	await expect(hosted.getWallet()).rejects.toMatchObject({
+		status: 403,
+		code: "account_suspended",
+	});
+	expect(store.getSnapshot()).toBe(true);
 });

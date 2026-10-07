@@ -45,6 +45,7 @@ import { NativeList } from "@/components/ui/native-list";
 import { Text } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
 import { WebIcon, WebText, WebView } from "@/components/ui/web-layout";
+import { usePullRefresh } from "@/hooks/use-pull-refresh";
 import {
 	type AccountNotificationSource,
 	useAccountNotificationCenter,
@@ -89,7 +90,8 @@ export function useNotificationBell(): HeaderAction {
 		label: getNotificationCenterTriggerLabel(count),
 		icon: { ios: "bell", android: bellIcon },
 		badge: notificationBadgeLabel(count),
-		onPress: () => router.push("/notifications"),
+		// `navigate` reuses the focused route, so a double tap cannot stack two inboxes.
+		onPress: () => router.navigate("/notifications"),
 	};
 }
 
@@ -125,6 +127,7 @@ function NotificationCenter() {
 	const { sharing } = useMobileApi();
 	const invitations = useReceivedInvitations();
 	const account = useAccountNotificationCenter(open);
+	const pull = usePullRefresh(() => Promise.all([account?.refresh(), invitations.refetch()]));
 	const action = useAuthAction(scope);
 	const [responding, setResponding] = useState<{ id: string; accept: boolean } | null>(null);
 	const [invitationNotice, setInvitationNotice] = useState<InvitationNotice | null>(null);
@@ -190,7 +193,7 @@ function NotificationCenter() {
 				<SourceError
 					title={copy.accountUnavailableTitle}
 					description={copy.accountUnavailableDescription}
-					onRetry={account.onRefresh}
+					onRetry={() => void account.refresh()}
 				/>
 			),
 		});
@@ -267,11 +270,8 @@ function NotificationCenter() {
 					leadingItem.kind === "section" ? null : <AppView className="h-px bg-border" />
 				}
 				contentContainerStyle={{ gap: 0, paddingHorizontal: 0 }}
-				refreshing={Boolean(account?.refreshing) || invitations.isRefetching}
-				onRefresh={() => {
-					account?.onRefresh();
-					void invitations.refetch();
-				}}
+				refreshing={pull.refreshing}
+				onRefresh={pull.onRefresh}
 				header={
 					<AppView className="gap-3 px-4 pb-3">
 						<Text className="text-sm text-muted-foreground">

@@ -11,6 +11,7 @@ import { SheetPage } from "@/components/ui/sheet-page";
 import { Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { WebText } from "@/components/ui/web-layout";
+import { usePullRefresh } from "@/hooks/use-pull-refresh";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -36,6 +37,7 @@ function InvitationsView() {
 		enabled: scope.isReady,
 		retry: false,
 	});
+	const pull = usePullRefresh(() => invitations.refetch());
 	const respond = (invitation: components["schemas"]["InvitationResponse"], accept: boolean) => {
 		const signal = scope.signal;
 		confirmationDialog.show(
@@ -66,8 +68,8 @@ function InvitationsView() {
 			<NativeList
 				data={invitations.data ?? []}
 				keyExtractor={(invitation) => invitation.id}
-				refreshing={invitations.isRefetching}
-				onRefresh={() => void invitations.refetch()}
+				refreshing={pull.refreshing}
+				onRefresh={pull.onRefresh}
 				header={
 					<>
 						<WebText recipe="text-sm text-muted-foreground">

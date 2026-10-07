@@ -48,6 +48,8 @@ function Navigation() {
 	const suspended = useAccountSuspended();
 	// Web's AccountSuspensionBoundary: a suspended account sees one full-screen state instead of
 	// any account route. Expo Router's protected routes redirect to the first available screen.
+	// Like Web's routes outside `_protected`, the token-scoped public pages (shared sessions,
+	// project share links, Vault supply requests) and sign-in stay reachable.
 	return (
 		<Stack screenOptions={{ headerShown: false }}>
 			<Stack.Protected guard={suspended}>
@@ -56,11 +58,11 @@ function Navigation() {
 			<Stack.Protected guard={!suspended}>
 				<Stack.Screen name="(tabs)" />
 				<Stack.Screen name="(sheets)" options={formSheetOptions} />
-				<Stack.Screen name="vault-request" options={{ ...options, headerShown: true }} />
 				<Stack.Screen name="terminal/[id]" />
 			</Stack.Protected>
 			<Stack.Screen name="s/[id]" options={{ ...options, headerShown: true }} />
 			<Stack.Screen name="share/[token]" options={{ ...options, headerShown: true }} />
+			<Stack.Screen name="vault-request" options={{ ...options, headerShown: true }} />
 			<Stack.Screen name="(auth)" />
 		</Stack>
 	);

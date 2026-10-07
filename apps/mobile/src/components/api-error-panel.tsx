@@ -1,5 +1,6 @@
 import { ApiClientError, ApiClientNetworkError } from "@clawdi/shared/api";
 import { apiErrorPanelClasses } from "@clawdi/shared/ui";
+import { ACCOUNT_SUSPENDED_CODE } from "@clawdi/shared/view";
 import { router } from "expo-router";
 import { AlertCircle, LogIn, type LucideIcon, RefreshCw } from "lucide-react-native";
 import { Alert } from "@/components/ui/alert";
@@ -19,7 +20,9 @@ function normalizeApiError(error: unknown, t: Translator): string {
 	if (error instanceof ApiClientNetworkError)
 		return t(error.kind === "timeout" ? "composite.timeout" : "composite.offline");
 	if (error instanceof ApiClientError) {
-		if (error.status === 401 && error.code === "account_suspended") return t("composite.suspended");
+		// Cloud answers a suspended account with 401, hosted with 403; both carry the same code.
+		if ((error.status === 401 || error.status === 403) && error.code === ACCOUNT_SUSPENDED_CODE)
+			return t("composite.suspended");
 		if (error.status === 401) return t("composite.expired");
 		if (error.status >= 500 || error.status === 429) return t("composite.serviceError");
 		return t("composite.requestError");

@@ -19,11 +19,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-export function isAccountSuspendedProblem(value: unknown): value is AccountSuspendedProblem {
+/**
+ * Cloud API answers a suspended account with 401; the hosted API answers with the same problem
+ * body as 403 (clawdi-hosted `AccountSuspendedHTTPException`).
+ */
+export type HostedAccountSuspendedProblem = Omit<AccountSuspendedProblem, "status"> & {
+	status: 403;
+};
+
+export function isAccountSuspendedProblem(
+	value: unknown,
+): value is AccountSuspendedProblem | HostedAccountSuspendedProblem {
 	return (
 		isRecord(value) &&
 		value.type === ACCOUNT_SUSPENDED_TYPE &&
-		value.status === 401 &&
+		(value.status === 401 || value.status === 403) &&
 		value.code === ACCOUNT_SUSPENDED_CODE &&
 		typeof value.detail === "string"
 	);
@@ -42,10 +52,10 @@ export function createAccountSuspensionStore() {
 			};
 		},
 		async observeResponse(response: Response): Promise<boolean> {
-			if (response.status !== 401) return false;
+			if (response.status !== 401 && response.status !== 403) return false;
 			try {
 				const body: unknown = await response.clone().json();
-				if (!isAccountSuspendedProblem(body)) return false;
+				if (!isAccountSuspendedProblem(body) || body.status !== response.status) return false;
 				suspended = true;
 				for (const listener of listeners) listener();
 				return true;

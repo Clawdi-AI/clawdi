@@ -2344,10 +2344,12 @@ let accountNotifications: DeploySchemas["AccountNotificationResponse"][] = [
 	},
 ];
 
-function notificationPage(url: URL): DeploySchemas["AccountNotificationListResponse"] {
+function notificationPage(url: URL): DeploySchemas["AccountNotificationListResponse"] | Reply {
 	const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? "50") || 50));
 	const cursor = url.searchParams.get("cursor");
-	const start = cursor ? accountNotifications.findIndex((item) => item.id === cursor) + 1 : 0;
+	const after = cursor ? accountNotifications.findIndex((item) => item.id === cursor) : -1;
+	if (cursor && after < 0) return new Reply(400, { detail: "Invalid notification cursor" });
+	const start = after + 1;
 	const items = accountNotifications.slice(start, start + limit);
 	const next = accountNotifications[start + limit] ? items.at(-1)?.id : null;
 	return {
@@ -2441,6 +2443,7 @@ for (const [template, handler] of Object.entries(computeGetRoutes)) {
 on("POST", "/v1/me/notifications/read-all", async ({ request }) => {
 	const body = await bodyObject(request);
 	const upTo = accountNotifications.findIndex((item) => item.id === body.up_to_id);
+	if (body.up_to_id != null && upTo < 0) return notFound("Notification not found");
 	const readAt = ago(0);
 	let updated = 0;
 	accountNotifications = accountNotifications.map((item, index) => {
@@ -3566,6 +3569,7 @@ function json(request: Request, status: number, body: unknown) {
 const PUBLIC_PATHS = new Set(["/health", "/ready"]);
 
 // `--account-state suspended`: every authenticated request answers like a suspended account.
+// Cloud sends 401; hosted (clawdi-hosted `AccountSuspendedHTTPException`) sends the same body as 403.
 const accountSuspended = readFlag("account-state", "active") === "suspended";
 const accountSuspendedProblem = {
 	type: "urn:clawdi:problem:account-suspended",
@@ -3574,6 +3578,17 @@ const accountSuspendedProblem = {
 	detail: "Account is suspended",
 	code: "account_suspended",
 } satisfies Schemas["AccountSuspendedProblem"];
+
+/** Hosted paths from deploy.generated.ts; cloud owns only runtime-internal `/v2/runtime/*`. */
+function isHostedPath(pathname: string): boolean {
+	return (
+		(pathname.startsWith("/v2/") && !pathname.startsWith("/v2/runtime/")) ||
+		pathname === "/v1/me" ||
+		pathname === "/v1/agent-environments" ||
+		pathname === "/v1/me/notifications" ||
+		pathname.startsWith("/v1/me/notifications/")
+	);
+}
 
 function resolve(method: string, pathname: string) {
 	for (const route of routes) {
@@ -3619,7 +3634,8 @@ const server = Bun.serve({
 			return json(request, 401, { detail: "Missing bearer token" });
 		}
 		if (accountSuspended && /^Bearer\s+\S+/i.test(authorization)) {
-			return json(request, 401, accountSuspendedProblem);
+			const status = isHostedPath(url.pathname) ? 403 : 401;
+			return json(request, status, { ...accountSuspendedProblem, status });
 		}
 		const resolved = resolve(request.method, url.pathname);
 		if (!resolved) {

@@ -35,12 +35,11 @@ export type AccountNotificationSource = {
 	hasMore: boolean;
 	loading: boolean;
 	loadingMore: boolean;
-	refreshing: boolean;
 	error: unknown;
 	notice: AccountNotificationNotice | null;
 	removingIds: ReadonlySet<string>;
 	freshIds: ReadonlySet<string>;
-	onRefresh: () => void;
+	refresh: () => Promise<unknown>;
 	onLoadMore: () => void;
 	onDelete: (notification: AccountNotification) => void;
 	onOpenAction: (notification: AccountNotification) => void;
@@ -192,13 +191,12 @@ export function useAccountNotificationCenter(open: boolean): AccountNotification
 		hasMore: notifications.hasNextPage,
 		loading: notifications.isLoading,
 		loadingMore: notifications.isFetchingNextPage,
-		refreshing: notifications.isRefetching && !notifications.isFetchingNextPage,
 		// Web keeps showing loaded items when a background refresh fails.
 		error: items.length === 0 ? notifications.error : null,
 		notice,
 		removingIds,
 		freshIds,
-		onRefresh: () => void notifications.refetch(),
+		refresh: () => notifications.refetch(),
 		onLoadMore: () => void notifications.fetchNextPage(),
 		onDelete: (notification) => deleteNotification.mutate(notification.id),
 		onOpenAction: (notification) => void openAction(notification),
