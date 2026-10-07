@@ -27,6 +27,7 @@ export function computeSubscriptionCardView({
 	scheduleAt,
 	scheduleFallback,
 	includeSchedule = true,
+	formatPrice = formatCurrencyCents,
 }: {
 	status: ComputeSubscriptionCardView["status"];
 	planSlug: string;
@@ -38,6 +39,8 @@ export function computeSubscriptionCardView({
 	scheduleAt: string | null | undefined;
 	scheduleFallback?: string;
 	includeSchedule?: boolean;
+	/** Mobile store builds pass a credits formatter. */
+	formatPrice?: (cents: number, currency: string) => string;
 }): ComputeSubscriptionCardView {
 	const included = fundingSource === "included";
 	const schedule =
@@ -55,7 +58,7 @@ export function computeSubscriptionCardView({
 						value:
 							priceCents == null
 								? "Unavailable"
-								: `${formatCurrencyCents(priceCents, currency)}${billingTermSuffix(billingTermMonths)}`,
+								: `${formatPrice(priceCents, currency)}${billingTermSuffix(billingTermMonths)}`,
 					},
 					{
 						label: "Payment",
