@@ -1,4 +1,4 @@
-appId: ${APP_ID}
+appId: ${MAESTRO_APP_ID}
 name: Fixture tabs and details
 ---
 # react-native-screens 4.26.2 writes tab testIDs to View.tag (Espresso),
@@ -32,7 +32,7 @@ name: Fixture tabs and details
 - tapOn:
     text: Overview
     childOf:
-      id: ${APP_ID}:id/navigation_bar_item_content_container
+      id: ${MAESTRO_APP_ID}:id/navigation_bar_item_content_container
       containsDescendants:
         - text: Overview
 - assertVisible:
@@ -42,7 +42,7 @@ name: Fixture tabs and details
 - tapOn:
     text: Agents
     childOf:
-      id: ${APP_ID}:id/navigation_bar_item_content_container
+      id: ${MAESTRO_APP_ID}:id/navigation_bar_item_content_container
       containsDescendants:
         - text: Agents
 - extendedWaitUntil:
@@ -106,7 +106,7 @@ name: Fixture tabs and details
 - tapOn:
     text: Sessions
     childOf:
-      id: ${APP_ID}:id/navigation_bar_item_content_container
+      id: ${MAESTRO_APP_ID}:id/navigation_bar_item_content_container
       containsDescendants:
         - text: Sessions
 - extendedWaitUntil:
@@ -133,7 +133,7 @@ name: Fixture tabs and details
 - tapOn:
     text: Library
     childOf:
-      id: ${APP_ID}:id/navigation_bar_item_content_container
+      id: ${MAESTRO_APP_ID}:id/navigation_bar_item_content_container
       containsDescendants:
         - text: Library
 - assertVisible:
