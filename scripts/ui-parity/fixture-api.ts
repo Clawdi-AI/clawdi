@@ -372,6 +372,8 @@ type SessionSeed = {
 	project: string;
 	tags?: string[];
 	automated?: boolean;
+	/** Non-default Agent profile; omitted for the default profile (`""`). */
+	profile?: string;
 };
 
 const claude = agents[0];
@@ -402,6 +404,7 @@ const sessionSeeds: SessionSeed[] = [
 	},
 	{
 		agent: claude,
+		profile: "work",
 		summary: "Design system: migrate buttons to new tokens",
 		model: "claude-sonnet-4-5",
 		ageMs: 5 * HOUR,
@@ -411,6 +414,7 @@ const sessionSeeds: SessionSeed[] = [
 	},
 	{
 		agent: hermes,
+		profile: "research",
 		summary: "Weekly competitor pricing digest",
 		model: "claude-sonnet-4-5",
 		ageMs: 9 * HOUR,
@@ -450,6 +454,7 @@ const sessionSeeds: SessionSeed[] = [
 	},
 	{
 		agent: claude,
+		profile: "work",
 		summary: "Write onboarding guide for new contributors",
 		model: "claude-sonnet-4-5",
 		ageMs: 2 * DAY + 6 * HOUR,
@@ -486,6 +491,7 @@ const sessionSeeds: SessionSeed[] = [
 	},
 	{
 		agent: claude,
+		profile: "personal",
 		summary: "Add dark mode to the marketing site",
 		model: "claude-sonnet-4-5",
 		ageMs: 5 * DAY + 1 * HOUR,
@@ -524,6 +530,7 @@ const sessionSeeds: SessionSeed[] = [
 	},
 	{
 		agent: hermes,
+		profile: "research",
 		summary: "Draft blog post on agent memory",
 		model: "claude-sonnet-4-5",
 		ageMs: 9 * DAY + 5 * HOUR,
@@ -604,7 +611,7 @@ const sessions = sessionSeeds.map((seed, index) => {
 		agent_display_name: seed.agent.display_name,
 		agent_default_name: seed.agent.default_name,
 		agent_type: seed.agent.agent_type,
-		profile_key: "",
+		profile_key: seed.profile ?? "",
 		machine_name: seed.agent.machine_name,
 		started_at: ago(startedMs),
 		ended_at: isActive ? null : ago(seed.ageMs),
@@ -631,6 +638,31 @@ const sessions = sessionSeeds.map((seed, index) => {
 }) satisfies (Schemas["SessionListItemResponse"] & { automated: boolean; agent_id: string })[];
 
 type Session = (typeof sessions)[number];
+
+/** Profiles that are no longer configured on the Agent's machine. */
+const removedProfiles: Record<string, string[]> = { [AGENT.claude]: ["personal"] };
+/** Configured profiles that have not synced a session yet. */
+const idleProfiles: Record<string, string[]> = { [AGENT.claude]: ["staging"] };
+
+/** Every Agent has its default profile; others come from its sessions or `idleProfiles`. */
+function agentProfiles(agentId: string): GetOk<"/v1/agents/{agent_id}/profiles"> {
+	const agentSessions = sessions.filter((session) => session.agent_id === agentId);
+	const keys = [
+		...new Set([
+			"",
+			...agentSessions.map((session) => session.profile_key),
+			...(idleProfiles[agentId] ?? []),
+		]),
+	];
+	const [prefix = "", segment = ""] = agentId.split("-");
+	return keys.map((key, index) => ({
+		id: `9f0f0000-${segment}-4000-8000-${prefix}${String(index + 1).padStart(4, "0")}`,
+		profile_key: key,
+		is_default: key === "",
+		state: removedProfiles[agentId]?.includes(key) ? "removed" : "active",
+		session_count: agentSessions.filter((session) => session.profile_key === key).length,
+	}));
+}
 
 function toSessionListItem(session: Session): Schemas["SessionListItemResponse"] {
 	const { automated: _automated, agent_id: _agentId, ...item } = session;
@@ -2418,6 +2450,8 @@ const getRoutes: { [P in GetPath]?: (ctx: Ctx) => GetOk<P> | Reply } = {
 		installedPlugins.find(
 			(item) => item.agent_id === params.agent_id && item.plugin_name === params.plugin_name,
 		) ?? notFound("Plugin not installed"),
+	"/v1/agents/{agent_id}/profiles": ({ params }) =>
+		findAgent(params.agent_id) ? agentProfiles(params.agent_id ?? "") : notFound("Agent not found"),
 	"/v1/agents/{agent_id}/mcp": ({ params }) => ({
 		agent_id: params.agent_id ?? "",
 		availability: "unavailable",
@@ -2432,11 +2466,13 @@ const getRoutes: { [P in GetPath]?: (ctx: Ctx) => GetOk<P> | Reply } = {
 		const agent = url.searchParams.get("agent");
 		const environmentId = url.searchParams.get("environment_id");
 		const automated = url.searchParams.get("automated");
+		const profileKey = url.searchParams.get("profile_key");
 		const filtered = sessions.filter(
 			(session) =>
 				matchesQuery(session.summary, q) &&
 				(!agent || session.agent_name === agent || session.agent_id === agent) &&
 				(!environmentId || session.agent_id === environmentId) &&
+				(profileKey === null || session.profile_key === profileKey) &&
 				(automated === null || String(session.automated) === automated),
 		);
 		return paginate(filtered.map(toSessionListItem), url);

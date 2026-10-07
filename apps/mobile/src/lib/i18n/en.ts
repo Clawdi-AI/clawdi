@@ -622,6 +622,7 @@ export const en = {
 		options: "Filters and sorting",
 		agent: "Agent type",
 		all: "All",
+		allProfiles: "All profiles",
 		type: "Session type",
 		manual: "Manual",
 		automated: "Automated (cron, heartbeat)",

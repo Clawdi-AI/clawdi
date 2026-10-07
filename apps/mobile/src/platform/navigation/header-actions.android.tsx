@@ -1,7 +1,9 @@
 import {
 	DropdownMenu,
 	DropdownMenuItem,
+	HorizontalDivider,
 	Host,
+	Icon,
 	Row,
 	Text,
 	TextButton,
@@ -10,8 +12,13 @@ import { semantics } from "@expo/ui/jetpack-compose/modifiers";
 import { Stack } from "expo-router";
 import { useState } from "react";
 import { useCSSVariable, useUniwind } from "uniwind";
+import { headerMenuGroups } from "@/platform/navigation/header-menu";
 import type { HeaderAction, HeaderMenu } from "@/platform/navigation/native-header-types";
 
+// Material "check" vector, as expo-router's Android toolbar menu marks `isOn` actions.
+const checkIcon = require("../../../assets/icons/check.xml");
+
+/** Inline sections and checked state follow expo-router's Android toolbar menu: divider, trailing check. */
 export function HeaderActions({
 	actions = [],
 	menu,
@@ -28,6 +35,26 @@ export function HeaderActions({
 	]);
 	const color = (value: string | number | undefined) =>
 		typeof value === "string" ? value : undefined;
+	const menuItem = (action: HeaderAction) => (
+		<DropdownMenuItem
+			key={action.id}
+			enabled={!action.disabled}
+			onClick={() => {
+				setExpanded(false);
+				action.onPress();
+			}}
+			elementColors={{ textColor: color(action.destructive ? destructive : foreground) }}
+		>
+			<DropdownMenuItem.Text>
+				<Text style={{ fontFamily: "Geist-Regular", fontSize: 14 }}>{action.label}</Text>
+			</DropdownMenuItem.Text>
+			{action.selected ? (
+				<DropdownMenuItem.TrailingIcon>
+					<Icon source={checkIcon} tint={color(foreground)} size={24} />
+				</DropdownMenuItem.TrailingIcon>
+			) : null}
+		</DropdownMenuItem>
+	);
 	return (
 		<Stack.Toolbar placement="right" asChild>
 			<Host matchContents colorScheme={theme === "dark" ? "dark" : "light"}>
@@ -61,25 +88,10 @@ export function HeaderActions({
 								</TextButton>
 							</DropdownMenu.Trigger>
 							<DropdownMenu.Items>
-								{menu.items.map((action) => (
-									<DropdownMenuItem
-										key={action.id}
-										enabled={!action.disabled}
-										onClick={() => {
-											setExpanded(false);
-											action.onPress();
-										}}
-										elementColors={{
-											textColor: color(action.destructive ? destructive : foreground),
-										}}
-									>
-										<DropdownMenuItem.Text>
-											<Text style={{ fontFamily: "Geist-Regular", fontSize: 14 }}>
-												{action.label}
-											</Text>
-										</DropdownMenuItem.Text>
-									</DropdownMenuItem>
-								))}
+								{headerMenuGroups(menu).flatMap((group, index) => [
+									index > 0 ? <HorizontalDivider key={`divider-${group.id}`} /> : null,
+									...group.items.map(menuItem),
+								])}
 							</DropdownMenu.Items>
 						</DropdownMenu>
 					) : null}
