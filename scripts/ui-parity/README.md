@@ -49,6 +49,11 @@ Stable IDs used by the default routes: agent `c1a0de00-0001-4c00-8000-0000000000
 (Claude Code), session `5e550000-0001-4000-8000-000000000001`, project
 `a0f1c2d3-0002-4a00-8000-000000000002` (Acme Web App), vault slug `acme-prod`.
 
+Agent profiles: Claude Code has the default profile, `work`, removed `personal`
+and an idle `staging` profile with no sessions (profile ids
+`9f0f0000-0001-4000-8000-c1a0de00000N`, N=1–4); Research Hermes has the default
+profile and `research`. `GET /v1/sessions?profile_key=` filters by profile.
+
 ### Form and flow states
 
 Use an isolated fixture process for mutation checks. Existing project, agent,

@@ -5,10 +5,11 @@ import { agentProfilesClasses } from "@clawdi/shared/ui";
 import {
 	AGENT_PROFILE_SEARCH_KEY,
 	AGENT_PROFILES_COPY,
-	agentProfileFilterLabel,
+	agentProfileFilterOptions,
 	agentProfileName,
 	agentProfileRowLabel,
 	agentProfileSessionCount,
+	agentSessionProfileSelection,
 	hasMultipleProfiles,
 	sortAgentProfiles,
 } from "@clawdi/shared/view";
@@ -116,29 +117,29 @@ export function useAgentSessionProfileFilter({
 		AGENT_PROFILE_SEARCH_KEY,
 		parseAsString.withOptions({ clearOnDefault: true, history: "replace" }),
 	);
+	const { unknown, pending, selected } = agentSessionProfileSelection({
+		selectedId,
+		profiles,
+		profilesLoading,
+	});
 	// A stale or mistyped `?profile=` id is dropped once the list confirms it is unknown.
-	const unknownSelection =
-		Boolean(selectedId) &&
-		profiles !== undefined &&
-		!profiles.some((profile) => profile.id === selectedId);
 	useEffect(() => {
-		if (unknownSelection) void setSelectedId(null);
-	}, [unknownSelection, setSelectedId]);
+		if (unknown) void setSelectedId(null);
+	}, [unknown, setSelectedId]);
 
 	if (!hasMultipleProfiles(profiles)) {
-		return { profileKey: undefined, pending: Boolean(selectedId) && profilesLoading, filter: null };
+		return { profileKey: undefined, pending, filter: null };
 	}
-	const selected = selectedId ? profiles.find((profile) => profile.id === selectedId) : undefined;
 	return {
 		profileKey: selected?.profile_key,
-		pending: false,
+		pending,
 		filter: (
 			<DataTableFacetedFilter
 				title={AGENT_PROFILES_COPY.filterTitle}
 				// The page already names the Agent; options use the profile name alone.
-				options={sortAgentProfiles(profiles).map((profile) => ({
-					label: agentProfileFilterLabel(agentName, profile),
-					value: profile.id,
+				options={agentProfileFilterOptions(agentName, profiles).map((option) => ({
+					label: option.label,
+					value: option.id,
 				}))}
 				selected={selected ? [selected.id] : []}
 				onChange={(ids) => {

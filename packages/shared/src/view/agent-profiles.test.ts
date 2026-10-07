@@ -3,6 +3,7 @@ import type { AgentProfile } from "../api/schemas";
 import {
 	agentProfileFilterLabel,
 	agentProfileName,
+	agentSessionProfileSelection,
 	hasMultipleProfiles,
 	profileLabel,
 	sortAgentProfiles,
@@ -59,5 +60,68 @@ describe("sortAgentProfiles", () => {
 			profile({}),
 		]);
 		expect(sorted.map((item) => item.profile_key)).toEqual(["", "work", "old"]);
+	});
+});
+
+describe("agentSessionProfileSelection", () => {
+	const work = profile({
+		id: "00000000-0000-4000-8000-000000000002",
+		is_default: false,
+		profile_key: "work",
+	});
+	const profiles = [profile({}), work];
+
+	test("selects a known profile and filters by its key", () => {
+		const result = agentSessionProfileSelection({
+			selectedId: work.id,
+			profiles,
+			profilesLoading: false,
+		});
+		expect(result).toEqual({ unknown: false, pending: false, selected: work });
+	});
+
+	test("flags an id the loaded list does not contain so the URL drops it", () => {
+		const result = agentSessionProfileSelection({
+			selectedId: "stale",
+			profiles,
+			profilesLoading: false,
+		});
+		expect(result).toEqual({ unknown: true, pending: false, selected: undefined });
+	});
+
+	test("holds a deep-linked id while profiles load, and only then", () => {
+		expect(
+			agentSessionProfileSelection({
+				selectedId: work.id,
+				profiles: undefined,
+				profilesLoading: true,
+			}).pending,
+		).toBe(true);
+		expect(
+			agentSessionProfileSelection({
+				selectedId: undefined,
+				profiles: undefined,
+				profilesLoading: true,
+			}).pending,
+		).toBe(false);
+		// A failed list neither blocks the sessions nor discards the URL.
+		expect(
+			agentSessionProfileSelection({
+				selectedId: work.id,
+				profiles: undefined,
+				profilesLoading: false,
+			}),
+		).toEqual({ unknown: false, pending: false, selected: undefined });
+	});
+
+	test("ignores the selection for single-profile Agents", () => {
+		const only = profile({});
+		expect(
+			agentSessionProfileSelection({
+				selectedId: only.id,
+				profiles: [only],
+				profilesLoading: false,
+			}),
+		).toEqual({ unknown: false, pending: false, selected: undefined });
 	});
 });

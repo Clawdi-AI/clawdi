@@ -641,11 +641,19 @@ type Session = (typeof sessions)[number];
 
 /** Profiles that are no longer configured on the Agent's machine. */
 const removedProfiles: Record<string, string[]> = { [AGENT.claude]: ["personal"] };
+/** Configured profiles that have not synced a session yet. */
+const idleProfiles: Record<string, string[]> = { [AGENT.claude]: ["staging"] };
 
 /** Every Agent has its default profile; others come from its sessions. */
 function agentProfiles(agentId: string): GetOk<"/v1/agents/{agent_id}/profiles"> {
 	const agentSessions = sessions.filter((session) => session.agent_id === agentId);
-	const keys = [...new Set(["", ...agentSessions.map((session) => session.profile_key)])];
+	const keys = [
+		...new Set([
+			"",
+			...agentSessions.map((session) => session.profile_key),
+			...(idleProfiles[agentId] ?? []),
+		]),
+	];
 	const [prefix = "", segment = ""] = agentId.split("-");
 	return keys.map((key, index) => ({
 		id: `9f0f0000-${segment}-4000-8000-${prefix}${String(index + 1).padStart(4, "0")}`,

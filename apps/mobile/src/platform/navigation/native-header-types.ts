@@ -10,4 +10,4 @@ export type HeaderAction = {
 };
 /** Inline menu group, e.g. a filter whose options sit below the menu's own items. */
 export type HeaderMenuSection = { id: string; title: string; items: HeaderAction[] };
-export type HeaderMenu = { label: string; items: HeaderAction[]; sections?: HeaderMenuSection[] };
+export type HeaderMenu = { label: string; items?: HeaderAction[]; sections?: HeaderMenuSection[] };

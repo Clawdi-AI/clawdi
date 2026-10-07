@@ -1,8 +1,4 @@
-import {
-	normalizeSessionListQuery,
-	SESSION_SORT_KEYS,
-	type SessionListQuery,
-} from "@clawdi/shared/api";
+import { normalizeSessionListQuery, type SessionListQuery } from "@clawdi/shared/api";
 import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/consts";
 import {
 	dataTableFacetedFilterClasses as filterStyles,
@@ -12,6 +8,7 @@ import {
 import {
 	AGENT_PROFILES_COPY,
 	agentDisplayName,
+	agentProfileFilterLabel,
 	agentTypeLabel,
 	SESSION_LIST_COPY as copy,
 	getProjectResourceDefinition,
@@ -19,7 +16,7 @@ import {
 	sessionListEmptyMessage,
 } from "@clawdi/shared/view";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { PlusCircle } from "lucide-react-native";
+import { PlusCircle, X } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
@@ -31,6 +28,7 @@ import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { SectionLabel } from "@/components/section-label";
 import { SessionCard, SessionFeed } from "@/components/sessions/session-feed";
+import { sessionsHeaderMenu } from "@/components/sessions/sessions-header-menu";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -38,6 +36,7 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Icon } from "@/components/ui/icon";
 import { NativeList } from "@/components/ui/native-list";
 import { Text } from "@/components/ui/text";
 import { WebIcon, WebText, WebView, webView } from "@/components/ui/web-layout";
@@ -70,13 +69,19 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 		router = useRouter();
 	const [draft, setDraft] = useState(() => normalizeSessionListQuery()),
 		[applied, setApplied] = useState(() => normalizeSessionListQuery());
+	// Like Web, profiles load once the Agent does, so the default profile is never unnamed.
 	const agent = useCloudAgent(agentId),
-		profiles = useAgentProfiles(agentId, { enabled: !invalid });
+		agentName = agent.data ? agentDisplayName(agent.data) : undefined,
+		profiles = useAgentProfiles(agentId, { enabled: !invalid && Boolean(agentName) });
 	const profileFilter = useAgentSessionProfileFilter({
-		agentName: agent.data ? agentDisplayName(agent.data) : "",
+		agentName,
 		profiles: profiles.data,
-		profilesLoading: profiles.isLoading,
+		profilesLoading: agent.isLoading || profiles.isLoading,
 	});
+	const profileChipLabel =
+		profileFilter.selected && agentName
+			? agentProfileFilterLabel(agentName, profileFilter.selected)
+			: null;
 	const profileKey = profileFilter.profileKey;
 	const sessions = useCloudSessions(agentId, !invalid && !profileFilter.pending, {
 			...applied,
@@ -165,25 +170,14 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 				actions={[
 					{ id: "shared", label: copy.sharedLinks, onPress: () => router.push("/sessions/shared") },
 				]}
-				menu={{
-					label: t("sessionFilters.options"),
-					items: [
-						...SESSION_SORT_KEYS.filter(
-							(key) => key !== "relevance" || (!!draft.q && isSearchQueryReady(draft.q)),
-						).map((sort) => ({
-							id: sort,
-							label: t(`sessionFilters.${sort}`),
-							onPress: () => update({ sort }),
-						})),
-						{ id: "asc", label: t("sessionFilters.asc"), onPress: () => update({ order: "asc" }) },
-						{
-							id: "desc",
-							label: t("sessionFilters.desc"),
-							onPress: () => update({ order: "desc" }),
-						},
-					],
-					sections: profileFilter.section ? [profileFilter.section] : undefined,
-				}}
+				menu={sessionsHeaderMenu({
+					t,
+					sort: draft.sort,
+					order: draft.order,
+					searchReady: !!draft.q && isSearchQueryReady(draft.q),
+					profileSection: profileFilter.section,
+					onChange: update,
+				})}
 			/>
 			<NativeList
 				data={invalid ? [] : listRows}
@@ -225,6 +219,12 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 								<ListToolbar
 									filters={
 										<>
+											{profileChipLabel ? (
+												<FilterChip active onClick={profileFilter.clear}>
+													<Text>{`${AGENT_PROFILES_COPY.filterTitle} · ${profileChipLabel}`}</Text>
+													<Icon as={X} />
+												</FilterChip>
+											) : null}
 											{agentTypes.length > 0 ? (
 												<SessionFilter
 													title={copy.agent}

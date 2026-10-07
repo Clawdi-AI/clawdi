@@ -3,10 +3,10 @@ import { agentProfilesClasses as styles } from "@clawdi/shared/ui";
 import {
 	AGENT_PROFILE_SEARCH_KEY,
 	AGENT_PROFILES_COPY,
-	agentProfileFilterLabel,
 	agentProfileName,
 	agentProfileRowLabel,
 	agentProfileSessionCount,
+	agentSessionProfileSelection,
 	hasMultipleProfiles,
 	sortAgentProfiles,
 } from "@clawdi/shared/view";
@@ -15,6 +15,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useEffect } from "react";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { AgentOverviewHeading } from "@/components/dashboard/agent-overview-layout";
+import { agentProfileMenuSection } from "@/components/dashboard/agent-profile-filter";
 import { EntityRow } from "@/components/entity-card";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Text } from "@/components/ui/text";
@@ -102,19 +103,21 @@ export function AgentProfilesOverview({
  * URL-backed profile filter for an Agent's sessions, rendered as a native
  * header-menu section. `profileKey` is undefined for "all profiles"; `pending`
  * is true while a deep-linked profile is still being resolved, so callers can
- * avoid flashing the unfiltered list.
+ * avoid flashing the unfiltered list. `agentName` stays undefined until the
+ * Agent loads, so the default profile's option is never blank.
  */
 export function useAgentSessionProfileFilter({
 	agentName,
 	profiles,
 	profilesLoading,
 }: {
-	agentName: string;
+	agentName: string | undefined;
 	profiles: readonly AgentProfile[] | undefined;
 	profilesLoading: boolean;
 }): {
 	profileKey: string | undefined;
 	pending: boolean;
+	selected: AgentProfile | undefined;
 	clear: () => void;
 	section: HeaderMenuSection | null;
 } {
@@ -122,47 +125,26 @@ export function useAgentSessionProfileFilter({
 	const params = useLocalSearchParams<{ [AGENT_PROFILE_SEARCH_KEY]?: string | string[] }>();
 	const selectedId = routeParam(params[AGENT_PROFILE_SEARCH_KEY]);
 	const select = (id: string | undefined) => router.setParams({ [AGENT_PROFILE_SEARCH_KEY]: id });
-	const clear = () => select(undefined);
+	const { unknown, pending, selected } = agentSessionProfileSelection({
+		selectedId,
+		profiles,
+		profilesLoading,
+	});
 	// A stale or mistyped `?profile=` id is dropped once the list confirms it is unknown.
-	const unknownSelection =
-		Boolean(selectedId) &&
-		profiles !== undefined &&
-		!profiles.some((profile) => profile.id === selectedId);
 	useEffect(() => {
-		if (unknownSelection) router.setParams({ [AGENT_PROFILE_SEARCH_KEY]: undefined });
-	}, [unknownSelection]);
-
-	if (!hasMultipleProfiles(profiles)) {
-		return {
-			profileKey: undefined,
-			pending: Boolean(selectedId) && profilesLoading,
-			clear,
-			section: null,
-		};
-	}
-	const selected = selectedId ? profiles.find((profile) => profile.id === selectedId) : undefined;
+		if (unknown) router.setParams({ [AGENT_PROFILE_SEARCH_KEY]: undefined });
+	}, [unknown]);
 	return {
 		profileKey: selected?.profile_key,
-		pending: false,
-		clear,
-		section: {
-			id: AGENT_PROFILE_SEARCH_KEY,
-			title: AGENT_PROFILES_COPY.filterTitle,
-			items: [
-				{
-					id: "profile-all",
-					label: t("sessionFilters.allProfiles"),
-					selected: !selected,
-					onPress: clear,
-				},
-				// The page already names the Agent; options use the profile name alone.
-				...sortAgentProfiles(profiles).map((profile) => ({
-					id: `profile-${profile.id}`,
-					label: agentProfileFilterLabel(agentName, profile),
-					selected: profile.id === selected?.id,
-					onPress: () => select(profile.id),
-				})),
-			],
-		},
+		pending,
+		selected,
+		clear: () => select(undefined),
+		section: agentProfileMenuSection({
+			agentName,
+			profiles,
+			selectedId: selected?.id,
+			allLabel: t("sessionFilters.allProfiles"),
+			onSelect: select,
+		}),
 	};
 }
