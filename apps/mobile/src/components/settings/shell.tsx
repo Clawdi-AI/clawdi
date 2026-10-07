@@ -1,65 +1,19 @@
 import { settingsDialogClasses as styles } from "@clawdi/shared/ui";
-import { useRouter } from "expo-router";
 import type { ReactNode } from "react";
-import { AppSafeAreaView, AppScrollView } from "@/components/ui/view";
-import { WebView, webView } from "@/components/ui/web-layout";
-import { useMobileApi } from "@/lib/api-provider";
-import { useI18n } from "@/lib/i18n";
-import { NativeSegments } from "@/platform/navigation/segmented-control";
+import { AppScrollView } from "@/components/ui/view";
+import { webView } from "@/components/ui/web-layout";
+import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
+/** One settings panel screen; the Account tab's settings menu owns panel navigation. */
 export function SettingsShell({
 	children,
-	active = "general",
 	scroll = true,
 }: {
 	children: ReactNode;
-	active?: "general" | "api-keys" | "wallet" | "compute";
 	scroll?: boolean;
 }) {
-	const t = useI18n();
-	const router = useRouter();
-	const { compute } = useMobileApi();
-	const items = [
-		{
-			id: "general",
-			label: t("settingsParity.general"),
-			href: "/settings",
-		},
-		{ id: "api-keys", label: t("settingsParity.apiKeys"), href: "/settings/api-keys" },
-		...(compute
-			? [
-					{
-						id: "wallet",
-						label: t("billingParity.wallet"),
-						href: "/settings/wallet" as const,
-					},
-					{
-						id: "compute",
-						label: t("billingParity.compute"),
-						href: "/settings/compute" as const,
-					},
-				]
-			: []),
-	] as const;
 	return (
-		<AppSafeAreaView edges={["left", "right"]} className="flex-1 bg-popover">
-			{/* A testID alone leaves Compose segments as siblings in Android's accessibility tree.
-			    Keep their parent without making this non-accessible View a focusable group.
-			    https://reactnative.dev/docs/accessibility#importantforaccessibility-android */}
-			<WebView
-				testID="settings-navigation"
-				importantForAccessibility="yes"
-				recipe={styles.navigation}
-			>
-				<NativeSegments
-					value={active}
-					options={items.map((item) => ({ value: item.id, label: item.label }))}
-					onChange={(value) => {
-						const item = items.find((item) => item.id === value);
-						if (item && item.id !== active) router.push(item.href);
-					}}
-				/>
-			</WebView>
+		<SafeAreaScreen>
 			{scroll ? (
 				<AppScrollView
 					keyboardShouldPersistTaps="handled"
@@ -71,6 +25,6 @@ export function SettingsShell({
 			) : (
 				children
 			)}
-		</AppSafeAreaView>
+		</SafeAreaScreen>
 	);
 }

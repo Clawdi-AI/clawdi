@@ -12,7 +12,7 @@ const roots: Record<string, string> = {
 	library: "Library",
 	"channels/index": "Channels",
 	"ai-providers/index": "AI Providers",
-	"settings/index": "General",
+	"settings/index": "Settings",
 };
 
 export function SignedInLayout() {

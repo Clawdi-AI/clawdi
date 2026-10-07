@@ -31,6 +31,19 @@ export function createVaultLinkInbox(now = Date.now) {
 
 export const incomingVaultLink = createVaultLinkInbox();
 
+/** Web's `?settings=` section ids (apps/web settings-routes) and mobile panel ids → `/settings/<panel>`. */
+const settingsPanels = new Map([
+	["general", "general"],
+	["profile", "general"],
+	["api-keys", "api-keys"],
+	["billing-wallet", "wallet"],
+	["wallet", "wallet"],
+	["billing-plan", "compute"],
+	["compute", "compute"],
+	["billing", "billing"],
+	["account", "account"],
+]);
+
 /** Only verified HTTPS machine-readable files may bypass native navigation. */
 export function mobileBrowserLink(path: string, hosts: readonly string[]): string | null {
 	if (typeof path !== "string" || path.length > 8192 || /[\r\n\\]/.test(path)) return null;
@@ -123,11 +136,8 @@ export function mobileLinkDestination(
 			return `/vault/${encodeURIComponent(slug)}${query ? `?${query}` : ""}`;
 		}
 		if (isWebPath(pathname) && url.searchParams.has("settings")) {
-			const panel = url.searchParams.get("settings");
-			return panel &&
-				["general", "api-keys", "wallet", "compute", "billing", "account"].includes(panel)
-				? `/settings/${panel}`
-				: "/settings";
+			const panel = settingsPanels.get(url.searchParams.get("settings") ?? "");
+			return panel ? `/settings/${panel}` : "/settings";
 		}
 		if (!isWebPath(pathname)) return "/open-share";
 		return `${pathname}${url.search}`;

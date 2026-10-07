@@ -39,8 +39,12 @@ The five native tabs use pathless groups over Web URLs: `/`, `/agents`,
 `project-access`, `model-provider` and `channel-links` segments. Agent details
 retain nested resource URLs; Skill keys use the path rather than a query-only
 `detail` route, and Vault slugs resolve to a stable, account-scoped identity.
-Web's `?settings=<panel>` opens `/settings/<panel>`; Clerk's native
-`UserProfileView` lives at `/settings/account`. Hosted deployments open through their Agent id.
+The Account tab root `/settings` is a native settings menu listing Web's
+settings dialog sections (General, API Keys, Wallet, Compute) and Clerk's
+"Manage account"; each row pushes `/settings/<panel>`. Web's
+`?settings=<section>` ids (`billing-wallet`, `billing-plan`, `profile`, ...)
+open the matching `/settings/<panel>`; Clerk's native `UserProfileView` lives
+at `/settings/account`. Hosted deployments open through their Agent id.
 The previous deployment inventory screen is covered by the Agents inventory.
 
 Mobile-only tab hubs, the Clerk profile route, development galleries and native
@@ -207,6 +211,14 @@ Data sheets use `SheetPage scroll={false}` so `NativeList` owns scrolling and
 refresh. Put the sheet description and form controls in the list header; the
 native sheet keeps the same close/error and busy-dismiss guards.
 
+**Settings menu** — `src/components/settings/settings-menu{,.android}.tsx`.
+iOS uses `@expo/ui`'s universal `FieldGroup` (SwiftUI `Form`/`Section`) with
+`ListItem` rows. Android uses Compose Material 3 `ListItem` rows with
+`clickable` and `testID` modifiers in a `LazyColumn`: the universal Android
+`FieldGroup.Section` wraps every row in its own non-clickable `ListItem`, so it
+cannot host full-width tappable navigation rows. Rows keep Web's sidebar
+labels, descriptions and Lucide icons; panels own their native stack titles.
+
 **Lists** — `src/components/ui/native-list.tsx`. One FlatList owns scrolling,
 RefreshControl and `onEndReached`. Keep Web sections, filters, empty/error/
 skeleton components in `header`, `empty`, `footer`; reuse entity recipes for
@@ -223,7 +235,7 @@ Sessions and Library use this pattern; bounded settings/forms use ScrollView.
 
 **Segments and insets** — `src/platform/navigation/segmented-control.tsx`
 uses SDK 57's native community segmented control on iOS and Compose
-segmented buttons with shared colors/Geist on Android for settings navigation.
+segmented buttons with shared colors/Geist on Android.
 For longer option sets, `scrollable` uses Compose's documented horizontal-scroll
 modifier and single-line labels; Project detail and Memory categories use it
 for their longer option sets. Single-choice Web `Tabs` in content (channel
