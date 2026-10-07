@@ -159,12 +159,29 @@ export function stringLiterals(source: string): string[] {
 	return literals;
 }
 
+/**
+ * `@source inline()` parses quotes, braces and parentheses: one copy token such as
+ * `project's`, `{count}` or `(BYOK)` silently drops every class after it.
+ */
+function isInlineCandidate(name: string): boolean {
+	if (!/^[\w!@*-]/.test(name) || /["'`\\{}]/.test(name)) return false;
+	let parens = 0;
+	let brackets = 0;
+	for (const char of name) {
+		if (char === "(") parens++;
+		else if (char === ")") parens--;
+		else if (char === "[") brackets++;
+		else if (char === "]") brackets--;
+		if (parens < 0 || brackets < 0) return false;
+	}
+	return parens === 0 && brackets === 0;
+}
+
 export function buildWebClassSafelist(sources: readonly string[]): string {
 	const classes = new Set<string>();
 	for (const literal of sources.flatMap(stringLiterals)) {
 		for (const name of possibleNativeClasses(literal)) {
-			// Keep the generated CSS string valid; class candidates never contain these.
-			if (!/["\\]/.test(name)) classes.add(name);
+			if (isInlineCandidate(name)) classes.add(name);
 		}
 	}
 	const sorted = [...classes].sort();
