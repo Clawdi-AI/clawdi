@@ -111,16 +111,24 @@ async function verifyInstallGate(context, desktop, output, cliLog) {
 
 async function verifyLocalRenderer(context, window) {
 	assert.equal(new URL(window.url()).protocol, "clawdi-app:");
-	const local = await window.evaluate(async () => {
-		const response = await fetch("/renderer.html");
+	await window.waitForFunction(() =>
+		Array.from(document.images).some((image) => image.complete && image.naturalWidth > 0),
+	);
+	const local = await window.evaluate(() => {
 		return {
 			hasDesktopBridge: window.clawdiDesktop !== undefined,
 			methods: Object.keys(window.clawdiConnect ?? {}).sort(),
-			assetStatus: response.status,
+			loadedLogo: Array.from(document.images).some(
+				(image) => image.complete && image.naturalWidth > 0,
+			),
+			csp: document
+				.querySelector('meta[http-equiv="Content-Security-Policy"]')
+				?.getAttribute("content"),
 		};
 	});
 	assert.equal(local.hasDesktopBridge, false);
-	assert.equal(local.assetStatus, 200);
+	assert.equal(local.loadedLogo, true);
+	assert.match(local.csp ?? "", /default-src 'none'/);
 	assert.deepEqual(local.methods, [
 		"authenticate",
 		"cancelAuthentication",
