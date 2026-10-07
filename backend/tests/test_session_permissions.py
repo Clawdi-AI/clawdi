@@ -207,9 +207,9 @@ async def test_permissions_unknown_session_404s(client: httpx.AsyncClient):
 
 @pytest.mark.asyncio
 async def test_permissions_reject_cli_apikey_auth(cli_client: httpx.AsyncClient):
-    """Permission routes are dashboard-only: a deploy key with write
+    """Permission routes reject API keys: a deploy key with write
     capability over a session must not be able to mint public-link
-    permissions for it. `require_web_auth` enforces this — the test
+    permissions for it. `require_user_session` enforces this — the test
     asserts the contract from the surface.
     """
     fake_id = "00000000-0000-0000-0000-000000000000"

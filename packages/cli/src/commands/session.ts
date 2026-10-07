@@ -5,7 +5,9 @@ import type { RawSession } from "../adapters/base";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import type { SessionDetail, SessionListItem, SessionMessage } from "../lib/api-schemas";
-import { parsePositiveInteger } from "../lib/cli-options";
+import { ClerkOAuthError } from "../lib/clerk-oauth";
+import { parsePositiveInteger, requireUuid } from "../lib/cli-options";
+import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata, stripTerminalEscapes } from "../lib/sanitize";
 import { requireSearchQuery } from "../lib/search-query";
@@ -345,6 +347,47 @@ export async function sessionExtract(sessionId: string, opts: SessionExtractOpts
 		}
 		throw e;
 	}
+}
+
+export async function sessionRm(
+	sessionId: string,
+	opts: { yes?: boolean; json?: boolean } = {},
+): Promise<void> {
+	requireAuth();
+	requireUuid(sessionId, "Uploaded session ID (from `clawdi session search`)");
+	if (
+		!(await confirmOrRequireYes(`Permanently delete uploaded session ${sessionId}?`, {
+			yes: opts.yes,
+			action: "permanently delete this uploaded session",
+		}))
+	)
+		return;
+	try {
+		unwrap(
+			await new ApiClient().DELETE("/v1/sessions/{session_id}", {
+				params: { path: { session_id: sessionId } },
+			}),
+		);
+	} catch (error) {
+		if (error instanceof ClerkOAuthError) throw error;
+		if (error instanceof ApiError) {
+			if (error.status === 404) {
+				throw new Error("Uploaded session not found. Use the UUID from `clawdi session search`.");
+			}
+			if (error.status === 403) {
+				throw new Error(
+					"You do not have permission to delete this uploaded session. API keys cannot delete sessions; sign in with `clawdi auth login`.",
+				);
+			}
+			if (error.status === 401 || error.isNetwork) throw error;
+		}
+		throw new Error("Could not delete the uploaded session. Please retry or run `clawdi doctor`.");
+	}
+	console.log(
+		opts.json
+			? JSON.stringify({ schemaVersion: "clawdi.sessionRm.v1", id: sessionId, status: "deleted" })
+			: `Permanently deleted uploaded session ${sessionId}.`,
+	);
 }
 
 export async function sessionExport(sessionId: string, opts: { json?: boolean } = {}) {
