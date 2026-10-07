@@ -1,4 +1,9 @@
-import { deleteAccountThenSignOut, STORE_SUBSCRIPTIONS_URL } from "@clawdi/shared/view";
+import {
+	type DeletedAccountSessionEnd,
+	deleteAccountThenSignOut,
+	endDeletedAccountSession,
+	STORE_SUBSCRIPTIONS_URL,
+} from "@clawdi/shared/view";
 import { useClerk, useUser } from "@clerk/expo";
 import { TriangleAlert } from "lucide-react-native";
 import { useState } from "react";
@@ -6,9 +11,9 @@ import { Linking, Platform } from "react-native";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
-import { LoadingScreen } from "@/components/ui/feedback";
+import { LoadingScreen, Spinner } from "@/components/ui/feedback";
 import { Text } from "@/components/ui/text";
-import { AppScrollView } from "@/components/ui/view";
+import { AppScrollView, AppView } from "@/components/ui/view";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -41,31 +46,38 @@ function DeleteAccount({ email }: { email: string }) {
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { compute } = useMobileApi();
-	const { signOut } = useClerk();
+	const clerk = useClerk();
 	const capture = useForegroundLease();
 	const action = useAuthAction(scope.identity);
-	const [outcome, setOutcome] = useState<"idle" | "uncertain" | "accepted">("idle");
-	const endSession = async () => {
-		if (!scope.sessionId || !scope.isCurrent()) return;
-		await signOut({ sessionId: scope.sessionId });
-	};
-	const leave = () => void action.run(endSession);
+	const [outcome, setOutcome] = useState<"idle" | "deleting" | "uncertain" | "accepted">("idle");
+	// Sign-out reaches the auth gates through the synced JS session; the native view follows.
+	const endSession = async (): Promise<DeletedAccountSessionEnd> =>
+		scope.sessionId && scope.isCurrent()
+			? endDeletedAccountSession(clerk, { sessionId: scope.sessionId })
+			: "signed-out";
+	const leave = () =>
+		void action.run(async () => {
+			if ((await endSession()) === "failed") throw new Error("sign_out_failed");
+		});
 	const confirm = () => {
 		if (!compute || outcome !== "idle" || action.busy) return;
 		const signal = scope.signal;
 		const visible = capture();
 		return action.run(async (current) => {
 			if (signal.aborted || !scope.isCurrent() || !visible()) return;
+			setOutcome("deleting");
 			// A lost response cannot prove that termination was rejected. No automatic retry.
-			setOutcome("uncertain");
 			const result = await deleteAccountThenSignOut({
 				deleteAccount: () => read((requestSignal) => compute.deleteAccount(requestSignal), signal),
-				signOut: endSession,
+				endSession,
 			});
-			if (!current() || result.outcome === "uncertain") return;
-			// A completed sign-out leaves through the auth gates (synced JS session).
+			if (!current()) return;
+			if (result.outcome === "uncertain") {
+				setOutcome("uncertain");
+				return;
+			}
 			setOutcome("accepted");
-			if (result.outcome === "accepted") throw new Error("sign_out_failed");
+			if (result.session === "failed") throw new Error("sign_out_failed");
 		});
 	};
 	return (
@@ -76,6 +88,7 @@ function DeleteAccount({ email }: { email: string }) {
 		>
 			<Text className="text-sm text-muted-foreground">{email}</Text>
 			<Text className="text-sm">{t("accountDeletion.warning")}</Text>
+			<Text className="text-sm">{t("accountDeletion.billing")}</Text>
 			<Alert
 				variant="destructive"
 				icon={TriangleAlert}
@@ -100,7 +113,7 @@ function DeleteAccount({ email }: { email: string }) {
 				) : (
 					<ConfirmAction
 						title={t("accountDeletion.confirmTitle")}
-						description={`${email}\n\n${t("accountDeletion.warning")}`}
+						description={`${email}\n\n${t("accountDeletion.warning")}\n\n${t("accountDeletion.billing")}`}
 						cancelLabel={t("accountDeletion.cancel")}
 						confirmLabel={t("accountDeletion.confirm")}
 						destructive
@@ -111,6 +124,11 @@ function DeleteAccount({ email }: { email: string }) {
 						</Button>
 					</ConfirmAction>
 				)
+			) : outcome === "deleting" ? (
+				<AppView className="flex-row items-center gap-2">
+					<Spinner label={t("accountDeletion.deleting")} />
+					<Text className="text-sm">{t("accountDeletion.deleting")}</Text>
+				</AppView>
 			) : (
 				<>
 					<Alert variant="destructive">

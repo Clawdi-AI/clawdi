@@ -4,16 +4,19 @@ import { createHostedComputeClient } from "@clawdi/shared/api";
 import {
 	accountDeletionCopy as copy,
 	deleteAccountThenSignOut,
+	endDeletedAccountSession,
 	STORE_SUBSCRIPTIONS_URL,
 	settingsCopy,
 } from "@clawdi/shared/view";
-import { UserProfile } from "@clerk/tanstack-react-start";
+import { UserProfile, useClerk } from "@clerk/tanstack-react-start";
+import { useRouter } from "@tanstack/react-router";
 import { ExternalLink, Trash2, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ui/spinner";
 import { DEPLOY_API_URL, isDeployApiConfigured } from "@/hosted/access/api";
 import { useAuthActions, useAuthToken, useCurrentUser } from "@/lib/auth-client";
 
@@ -21,6 +24,10 @@ import { useAuthActions, useAuthToken, useCurrentUser } from "@/lib/auth-client"
  * Clerk's `openUserProfile()` modal cannot host React custom pages, so the hosted
  * deletion page renders Clerk's `<UserProfile>` component with `<UserProfile.Page>`.
  * Used only while Clerk self-deletion is disabled; otherwise Web keeps the modal.
+ *
+ * Clerk's own modals (e.g. reverification) receive focus inside this modal dialog.
+ * Escape closes this dialog together with an open Clerk menu or modal (Clerk's own
+ * profile modal closes only the menu); Base UI has no option to defer to Clerk.
  */
 export function AccountProfileDialog({
 	open,
@@ -29,8 +36,14 @@ export function AccountProfileDialog({
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }) {
+	const router = useRouter();
+	// Clerk's hash routing leaves `#/…` behind; reopening must start at the profile root.
+	const clearProfileRoute = (nextOpen: boolean) => {
+		if (!nextOpen && window.location.hash.startsWith("#/"))
+			void router.navigate({ to: ".", search: true, replace: true, resetScroll: false });
+	};
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
+		<Dialog open={open} onOpenChange={onOpenChange} onOpenChangeComplete={clearProfileRoute}>
 			<DialogContent
 				data-hosted="true"
 				className="w-auto gap-0 bg-transparent p-0 ring-0 sm:max-w-fit"
@@ -54,6 +67,7 @@ function DeleteAccountPage() {
 	const { user } = useCurrentUser();
 	const { getToken } = useAuthToken();
 	const { signOut } = useAuthActions();
+	const clerk = useClerk();
 	const compute = useMemo(
 		() =>
 			isDeployApiConfigured()
@@ -65,31 +79,36 @@ function DeleteAccountPage() {
 				: null,
 		[getToken],
 	);
-	const [outcome, setOutcome] = useState<"idle" | "uncertain" | "accepted">("idle");
+	const [outcome, setOutcome] = useState<"idle" | "deleting" | "uncertain">("idle");
 	const [signingOut, setSigningOut] = useState(false);
-	const [signOutFailed, setSignOutFailed] = useState(false);
 	const email = user?.primaryEmailAddress?.emailAddress ?? user?.id ?? "";
-	const endSession = () => signOut({ redirectUrl: "/sign-in" });
+	const endSession = async () => {
+		const ended = await endDeletedAccountSession(
+			{
+				get session() {
+					return clerk.session;
+				},
+				signOut: (options) => signOut({ redirectUrl: options?.redirectUrl }),
+				handleUnauthenticated: () => clerk.handleUnauthenticated(),
+			},
+			{ redirectUrl: "/sign-in" },
+		);
+		// Clerk's sign-out navigates itself; otherwise reload into the signed-out state.
+		if (ended !== "signed-out") window.location.assign("/sign-in");
+		return ended;
+	};
 	const leave = async () => {
 		setSigningOut(true);
-		setSignOutFailed(false);
-		try {
-			await endSession();
-		} catch {
-			setSignOutFailed(true);
-		} finally {
-			setSigningOut(false);
-		}
+		await endSession();
 	};
 	const confirm = async () => {
 		if (!compute || outcome !== "idle") return;
+		setOutcome("deleting");
 		const result = await deleteAccountThenSignOut({
 			deleteAccount: () => compute.deleteAccount(),
-			signOut: endSession,
+			endSession,
 		});
-		if (result.outcome === "signed-out") return;
-		setOutcome(result.outcome);
-		if (result.outcome === "accepted") setSignOutFailed(true);
+		if (result.outcome === "uncertain") setOutcome("uncertain");
 	};
 
 	return (
@@ -99,6 +118,7 @@ function DeleteAccountPage() {
 				<p className="text-muted-foreground">{email}</p>
 			</div>
 			<p>{copy.warning}</p>
+			<p>{copy.billing}</p>
 			<Alert variant="destructive">
 				<TriangleAlert />
 				<AlertTitle>{copy.storeNoticeTitle}</AlertTitle>
@@ -133,6 +153,7 @@ function DeleteAccountPage() {
 								<>
 									<span className="block">{email}</span>
 									<span className="mt-2 block">{copy.warning}</span>
+									<span className="mt-2 block">{copy.billing}</span>
 								</>
 							}
 							cancelLabel={copy.cancel}
@@ -150,12 +171,15 @@ function DeleteAccountPage() {
 						<AlertDescription>{copy.unavailable}</AlertDescription>
 					</Alert>
 				)
+			) : outcome === "deleting" ? (
+				<p className="flex items-center gap-2">
+					<Spinner />
+					{copy.deleting}
+				</p>
 			) : (
 				<>
 					<Alert variant="destructive">
-						<AlertDescription>
-							{outcome === "accepted" ? copy.accepted : copy.uncertain}
-						</AlertDescription>
+						<AlertDescription>{copy.uncertain}</AlertDescription>
 					</Alert>
 					<div>
 						<Button variant="outline" size="sm" disabled={signingOut} onClick={() => void leave()}>
@@ -164,11 +188,6 @@ function DeleteAccountPage() {
 					</div>
 				</>
 			)}
-			{signOutFailed ? (
-				<Alert variant="destructive">
-					<AlertDescription>{copy.signOutFailed}</AlertDescription>
-				</Alert>
-			) : null}
 		</div>
 	);
 }
