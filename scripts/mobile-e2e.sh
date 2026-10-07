@@ -320,7 +320,7 @@ echo "SKIP signin-screen: Clerk native AuthView needs a live Clerk instance; no 
 echo "Running Maestro smoke (maximum 10 minutes)"
 start_process maestro.log timeout -k 20s 600s "$maestro" --device "$serial" test \
 	--format junit --output "$output/junit.xml" --test-output-dir "$output/maestro" --debug-output "$output/maestro-debug" \
-	-e APP_ID="$app_id" -e DEV_CLIENT_URL="$dev_client_url" \
+	-e MAESTRO_APP_ID="$app_id" -e MAESTRO_DEV_CLIENT_URL="$dev_client_url" \
 	"$repo_root/apps/mobile/.maestro/smoke.yaml"
 maestro_pid=$started_pid
 if wait "$maestro_pid"; then
