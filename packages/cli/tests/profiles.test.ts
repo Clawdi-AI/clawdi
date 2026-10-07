@@ -20,7 +20,7 @@ import {
 	discoverHermesProfiles,
 	profileSessionKey,
 } from "../src/adapters/profiles";
-import { reconcileAllLocalHermesMcp } from "../src/commands/hermes-mcp";
+import { classifyHermesMcpFailure, reconcileAllLocalHermesMcp } from "../src/commands/hermes-mcp";
 import { ApiClient } from "../src/lib/api-client";
 import { resolveCurrentCliInvocation } from "../src/lib/current-cli-invocation";
 import { createProfileSync, moveProfileSessionReceipts } from "../src/lib/profile-sessions";
@@ -32,6 +32,7 @@ import {
 	readSessionsLock,
 	sessionFenceKey,
 } from "../src/lib/sessions-lock";
+import { HermesConfigReadError } from "../src/runtime/hermes-config";
 import { log } from "../src/serve/log";
 import { enqueueChangedSessionsAfterStability } from "../src/serve/sync-engine";
 import { cleanupTmp, copyFixtureToTmp } from "./adapters/helpers";
@@ -47,6 +48,7 @@ const saved = {
 	CLAWDI_RUNTIME_USER: process.env.CLAWDI_RUNTIME_USER,
 	CLAWDI_RUNTIME_UID: process.env.CLAWDI_RUNTIME_UID,
 	CLAWDI_RUNTIME_GID: process.env.CLAWDI_RUNTIME_GID,
+	CLAWDI_RUNTIME_MODE: process.env.CLAWDI_RUNTIME_MODE,
 };
 let home = "";
 let fixture = "";
@@ -261,10 +263,21 @@ test("Hermes MCP setup skips a failed named profile and registers the remaining 
 				command,
 				args,
 			});
-		expect(warn.mock.calls).toEqual([["profiles.mcp_failed", { profile_key: "work" }]]);
+		expect(warn.mock.calls).toEqual([
+			["profiles.mcp_failed", { profile_key: "work", reason: "config_invalid" }],
+		]);
 	} finally {
 		warn.mockRestore();
 	}
+});
+
+test("Hermes MCP classifies execFile SIGKILL timeouts and typed config read failures", () => {
+	expect(classifyHermesMcpFailure({ killed: true, signal: "SIGKILL" })).toBe("command_timeout");
+	expect(classifyHermesMcpFailure({ code: "EACCES" })).toBe("command_unavailable");
+	expect(
+		classifyHermesMcpFailure(new HermesConfigReadError({ code: "EACCES", errno: "EACCES" })),
+	).toBe("config_invalid");
+	expect(classifyHermesMcpFailure(new Error("command not found"))).toBe("command_failed");
 });
 
 test("per-profile readers preserve duplicate imported IDs and projection bytes", async () => {
@@ -832,6 +845,81 @@ exec '${process.execPath}' '${configMock}' "$@"`,
 	expect(readFileSync(commandLog, "utf8").trim().split("\n")).toHaveLength(3);
 });
 
+test("hosted profile sync skips local Hermes MCP reconciliation", async () => {
+	process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	const reconcile = spyOn(await import("../src/commands/hermes-mcp"), "reconcileLocalHermesMcp");
+	const warn = spyOn(log, "warn");
+	const client = api(async () => response([]));
+	try {
+		const sync = createProfileSync(new HermesAdapter(), client, "env", {
+			manageLocalMcp: false,
+		});
+		await sync.refresh();
+		expect(reconcile).not.toHaveBeenCalled();
+		expect(warn.mock.calls).toEqual([]);
+	} finally {
+		reconcile.mockRestore();
+		warn.mockRestore();
+	}
+});
+
+test("MCP failures retry on refresh and deduplicate each profile and reason", async () => {
+	const reconcile = spyOn(await import("../src/commands/hermes-mcp"), "reconcileLocalHermesMcp");
+	const warn = spyOn(log, "warn");
+	const info = spyOn(log, "info");
+	let workAttempts = 0;
+	let workHealthy = false;
+	reconcile.mockImplementation(async (_enabled, profile) => {
+		if (profile !== "work") return false;
+		workAttempts++;
+		if (!workHealthy) throw new Error("Hermes exited with status 1");
+		return true;
+	});
+	const client = api(async () => response([]));
+	try {
+		const sync = createProfileSync(new HermesAdapter(), client, "env");
+		await sync.refresh();
+		await sync.refresh();
+		expect(workAttempts).toBe(2);
+		expect(warn.mock.calls).toEqual([
+			["profiles.mcp_failed", { profile_key: "work", reason: "command_failed" }],
+		]);
+		workHealthy = true;
+		await sync.refresh();
+		await sync.refresh();
+		expect(workAttempts).toBe(3);
+		expect(warn.mock.calls).toHaveLength(1);
+		expect(info.mock.calls).toEqual([["profiles.mcp_recovered", { profile_key: "work" }]]);
+	} finally {
+		reconcile.mockRestore();
+		warn.mockRestore();
+		info.mockRestore();
+	}
+});
+
+test("default MCP failures retain the empty profile key and do not skip sessions", async () => {
+	const reconcile = spyOn(await import("../src/commands/hermes-mcp"), "reconcileLocalHermesMcp");
+	const warn = spyOn(log, "warn");
+	reconcile.mockImplementation(async (_enabled, profile) => {
+		if (!profile) throw new Error("Hermes exited with status 1");
+		return false;
+	});
+	const client = api(async () => response([]));
+	try {
+		const sync = createProfileSync(new HermesAdapter(), client, "env");
+		const result = await sync.sessions?.collect({ kind: "complete" });
+		expect(result?.sessions.length).toBeGreaterThan(0);
+		expect(result?.sessions.some((session) => session.profileKey === "")).toBeTrue();
+		expect(warn.mock.calls).toContainEqual([
+			"profiles.mcp_failed",
+			{ profile_key: "", reason: "command_failed" },
+		]);
+	} finally {
+		reconcile.mockRestore();
+		warn.mockRestore();
+	}
+});
+
 test("Hermes metadata edits wait for refresh while tombstones refresh inventory immediately", async () => {
 	const reconcile = spyOn(await import("../src/commands/hermes-mcp"), "reconcileLocalHermesMcp");
 	let gets = 0;
@@ -886,7 +974,7 @@ exec python3 "$@"`,
 	}
 });
 
-test("a failed named profile leaves inventory intact and the default scanning", async () => {
+test("a failed named profile leaves inventory intact and continues scanning", async () => {
 	writeFileSync(join(home, ".hermes", "profiles", "work", "config.yaml"), "[invalid-config]");
 	const inventories: unknown[] = [];
 	const client = api(async (input) => {
@@ -900,7 +988,9 @@ test("a failed named profile leaves inventory intact and the default scanning", 
 			kind: "complete",
 		});
 		expect(result?.sessions.length).toBeGreaterThan(0);
-		expect(result?.sessions.every((session) => session.profileKey === "")).toBeTrue();
+		expect(new Set(result?.sessions.map((session) => session.profileKey))).toEqual(
+			new Set(["", "work"]),
+		);
 		expect(inventories).toEqual([
 			{
 				complete: true,
@@ -910,7 +1000,9 @@ test("a failed named profile leaves inventory intact and the default scanning", 
 				],
 			},
 		]);
-		expect(warn.mock.calls).toEqual([["profiles.sync_failed", { profile_key: "work" }]]);
+		expect(warn.mock.calls).toEqual([
+			["profiles.mcp_failed", { profile_key: "work", reason: "config_invalid" }],
+		]);
 	} finally {
 		warn.mockRestore();
 	}

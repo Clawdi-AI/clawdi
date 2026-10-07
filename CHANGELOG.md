@@ -15,6 +15,12 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
+### CLI 0.15.8
+
+- **Hermes profiles:** Hosted daemons leave MCP ownership to the runtime
+  manifest. Local MCP failures now retain session scanning, retry on refresh,
+  and report a deduplicated profile and failure reason.
+
 ### CLI 0.15.7
 
 - **Same access as the dashboard:** after `clawdi auth login`, the CLI can do what the Cloud dashboard can, except managing API keys and approving device sign-ins. New commands: `clawdi agent list`, `agent rm`, `agent start|stop|restart`, `agent plugins`, `session list --uploaded`, `session rm`, and `project rm`. Deleting a Cloud Agent with a renewing subscription asks whether to cancel or keep it (`--cancel-subscription` / `--keep-subscription`).
