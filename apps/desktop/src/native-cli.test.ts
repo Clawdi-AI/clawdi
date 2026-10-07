@@ -40,6 +40,9 @@ function serviceFixture(failFirstInstall = false) {
 		calls.push(command);
 		let result: unknown;
 		switch (command) {
+			case "auth login --desktop":
+				result = { schemaVersion: "clawdi.desktopLogin.v1", status: "cancelled" };
+				break;
 			case "agent detect --json":
 				result = {
 					agents: [
@@ -208,3 +211,9 @@ test.skipIf(process.platform !== "linux")(
 		expect(calls.filter((command) => command === "daemon install")).toHaveLength(2);
 	},
 );
+
+test("Desktop treats OAuth access denial as cancellation", async () => {
+	const { service, calls } = serviceFixture();
+	expect(await service.authenticate()).toEqual({ status: "cancelled" });
+	expect(calls).toContain("auth login --desktop");
+});

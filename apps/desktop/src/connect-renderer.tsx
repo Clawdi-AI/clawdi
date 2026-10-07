@@ -1,6 +1,5 @@
 import type {
 	ClawdiDesktopConnectBridge,
-	ClawdiDesktopShellBridge,
 	DesktopAgentConnection,
 	DesktopAgentType,
 	DesktopBootstrapState,
@@ -14,7 +13,6 @@ import {
 	CircleCheckBig,
 	FolderInput,
 	LoaderCircle,
-	LogIn,
 	RefreshCw,
 	ShieldCheck,
 	Sparkles,
@@ -29,7 +27,6 @@ import "./connect-renderer.css";
 declare global {
 	interface Window {
 		clawdiConnect?: ClawdiDesktopConnectBridge;
-		clawdiDesktop?: ClawdiDesktopShellBridge;
 	}
 }
 
@@ -602,68 +599,6 @@ function AgentSelection({
 	);
 }
 
-function DashboardFailureApp({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
-	const [pending, setPending] = useState<"retry" | "reauth" | null>(null);
-	const [failed, setFailed] = useState(false);
-
-	async function run(action: "retry" | "reauth") {
-		setPending(action);
-		setFailed(false);
-		try {
-			await (action === "retry" ? bridge.retryDashboard() : bridge.signIn());
-		} catch {
-			setFailed(true);
-		} finally {
-			setPending(null);
-		}
-	}
-
-	return (
-		<main className="app-shell">
-			<header className="titlebar dashboard-titlebar">
-				<div className="brand-mark" aria-hidden="true">
-					<img src="./clawdi-logo.png" alt="" />
-				</div>
-				<div className="titlebar-copy">
-					<p>Clawdi</p>
-					<h1>Dashboard</h1>
-				</div>
-			</header>
-			<section className="content failure-content">
-				<div className="stack">
-					<Centered
-						icon={<TriangleAlert />}
-						title={failed ? "Couldn't reconnect" : "Dashboard unavailable"}
-						description={
-							failed
-								? "Try again, or open Connect an Agent to check the local connection."
-								: "Clawdi couldn't load your dashboard. Check your connection and try again."
-						}
-					/>
-					<footer className="actions failure-actions">
-						<button
-							className="button secondary"
-							type="button"
-							disabled={pending !== null}
-							onClick={() => void run("reauth")}
-						>
-							<LogIn /> Sign in again
-						</button>
-						<button
-							className="button primary"
-							type="button"
-							disabled={pending !== null}
-							onClick={() => void run("retry")}
-						>
-							<RefreshCw className={pending === "retry" ? "spin" : undefined} /> Retry
-						</button>
-					</footer>
-				</div>
-			</section>
-		</main>
-	);
-}
-
 function Centered({
 	icon,
 	title,
@@ -686,11 +621,7 @@ function Centered({
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Clawdi connect root is missing.");
-const failureSurface = new URLSearchParams(window.location.search).get("surface");
-if (failureSurface === "dashboard-failure" && window.clawdiDesktop) {
-	document.title = "Dashboard unavailable · Clawdi";
-	createRoot(root).render(<DashboardFailureApp bridge={window.clawdiDesktop} />);
-} else if (window.clawdiConnect) {
+if (window.clawdiConnect) {
 	createRoot(root).render(<ConnectApp bridge={window.clawdiConnect} />);
 } else {
 	throw new Error("Clawdi renderer bridge is unavailable.");

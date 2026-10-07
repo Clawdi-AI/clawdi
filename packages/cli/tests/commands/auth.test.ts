@@ -29,6 +29,7 @@ let origAuthToken: string | undefined;
 let origExitCode: typeof process.exitCode;
 
 const rawToken = "a".repeat(43);
+const nativeFetch = globalThis.fetch;
 
 function oauthAccessToken(): string {
 	const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -102,7 +103,7 @@ function profileHandler() {
 	};
 }
 
-function startHandlers() {
+function startHandlers(desktop = false) {
 	return [
 		{
 			method: "GET",
@@ -112,7 +113,7 @@ function startHandlers() {
 					issuer: "https://clerk.example.test",
 					client_id: "clawdi-cli",
 					authorized_parties: ["https://accounts.clawdi.test"],
-					redirect_uri: "ignored",
+					redirect_uri: desktop ? "http://127.0.0.1:18473/oauth/callback" : "ignored",
 				}),
 		},
 		{
@@ -123,7 +124,11 @@ function startHandlers() {
 					issuer: "https://clerk.example.test",
 					device_authorization_endpoint: "https://clerk.example.test/oauth/device_authorization",
 					token_endpoint: "https://clerk.example.test/oauth/token",
-					grant_types_supported: ["urn:ietf:params:oauth:grant-type:device_code", "refresh_token"],
+					grant_types_supported: desktop
+						? ["authorization_code", "refresh_token"]
+						: ["urn:ietf:params:oauth:grant-type:device_code", "refresh_token"],
+					authorization_endpoint: "https://clerk.example.test/oauth/authorize",
+					code_challenge_methods_supported: ["S256"],
 					token_endpoint_auth_methods_supported: ["none"],
 				}),
 		},
@@ -141,6 +146,23 @@ function startHandlers() {
 				}),
 		},
 	];
+}
+
+function simulateDesktopCallback(error?: string): Promise<Response>[] {
+	const responses: Promise<Response>[] = [];
+	openSpy.mockImplementation((authorizationUrl) => {
+		const url = new URL(authorizationUrl);
+		const redirect = url.searchParams.get("redirect_uri");
+		const state = url.searchParams.get("state");
+		if (!redirect || !state) throw new Error("Expected PKCE authorization URL");
+		const callback = new URL(redirect);
+		callback.search = new URLSearchParams({
+			state,
+			...(error ? { error } : { code: "private-code" }),
+		}).toString();
+		responses.push(nativeFetch(callback));
+	});
+	return responses;
 }
 
 beforeEach(() => {
@@ -442,17 +464,20 @@ describe("authLogin authentication boundary", () => {
 		expect(stdout.join("\n")).toContain("Signed in as user@example.test");
 	});
 
-	it("Desktop opens the device link and preserves exactly one success JSON object", async () => {
+	it("Desktop opens PKCE authorization and preserves exactly one success JSON object", async () => {
+		const callbacks = simulateDesktopCallback();
 		clearAuth();
-		const { restore } = mockFetch([...startHandlers(), tokenHandler(), profileHandler()]);
+		const { restore } = mockFetch([...startHandlers(true), tokenHandler(), profileHandler()]);
 		try {
 			await authLoginDesktop();
+			await Promise.all(callbacks);
 		} finally {
 			restore();
 		}
-		expect(openSpy).toHaveBeenCalledWith(
-			"https://accounts.example.test/device?user_code=ABCD-EFGH",
-		);
+		const authorization = new URL(openSpy.mock.calls[0]?.[0] ?? "");
+		expect(authorization.origin).toBe("https://clerk.example.test");
+		expect(authorization.pathname).toBe("/oauth/authorize");
+		expect(authorization.searchParams.get("code_challenge_method")).toBe("S256");
 		expect(stdout).toHaveLength(1);
 		expect(JSON.parse(stdout[0] ?? "")).toEqual({
 			schemaVersion: "clawdi.desktopLogin.v1",
@@ -462,14 +487,25 @@ describe("authLogin authentication boundary", () => {
 		expect(stderr).toHaveLength(1);
 		expect(JSON.parse(stderr[0] ?? "")).toMatchObject({
 			schemaVersion: "clawdi.desktopLogin.progress.v1",
-			verificationUri: "https://accounts.example.test/device?user_code=ABCD-EFGH",
-			userCode: "ABCD-EFGH",
 		});
-		expect(stdout.concat(stderr).join("\n")).not.toContain("private-device-code");
+		const logs = stdout.concat(stderr).join("\n");
+		for (const value of [
+			"private-code",
+			"refresh-secret",
+			oauthAccessToken(),
+			authorization.searchParams.get("state") ?? "missing",
+		])
+			expect(logs).not.toContain(value);
+		expect(getPendingAuth()).toBeNull();
 	});
 	it("Desktop reuses an existing Clerk session unless force requests new authorization", async () => {
+		const callbacks = simulateDesktopCallback();
 		clearAuth();
-		const { captured, restore } = mockFetch([...startHandlers(), tokenHandler(), profileHandler()]);
+		const { captured, restore } = mockFetch([
+			...startHandlers(true),
+			tokenHandler(),
+			profileHandler(),
+		]);
 		try {
 			await authLoginDesktop();
 			const requestsAfterLogin = captured.length;
@@ -487,9 +523,32 @@ describe("authLogin authentication boundary", () => {
 			expect(openSpy).toHaveBeenCalledTimes(1);
 			expect(stdout).toHaveLength(1);
 			expect(stderr).toHaveLength(1);
+			await Promise.all(callbacks);
 		} finally {
 			restore();
 		}
+	});
+	it("Desktop maps access_denied to cancellation without requesting or persisting tokens", async () => {
+		clearAuth();
+		const callbacks = simulateDesktopCallback("access_denied");
+		const { captured, restore } = mockFetch(startHandlers(true));
+		try {
+			await authLoginDesktop();
+			await Promise.all(callbacks);
+		} finally {
+			restore();
+		}
+		expect(stdout).toHaveLength(1);
+		expect(JSON.parse(stdout[0] ?? "")).toEqual({
+			schemaVersion: "clawdi.desktopLogin.v1",
+			status: "cancelled",
+		});
+		expect(captured.map((request) => request.path)).toEqual([
+			"/v1/cli/auth/oauth/config",
+			"/.well-known/oauth-authorization-server",
+		]);
+		expect(getAuth()).toBeNull();
+		expect(getPendingAuth()).toBeNull();
 	});
 });
 

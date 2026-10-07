@@ -177,7 +177,7 @@ describe("Clerk public OAuth device authorization", () => {
 					redirect_uri: "http://127.0.0.1:18473/oauth/callback",
 				}),
 		});
-		expect(config).toEqual(CONFIG);
+		expect(config).toEqual({ ...CONFIG, redirectUri: "http://127.0.0.1:18473/oauth/callback" });
 	});
 
 	test.each([
