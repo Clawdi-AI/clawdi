@@ -4,6 +4,7 @@ import { MobileApiProvider } from "@/lib/api-provider";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime";
 import { AccountScopeProvider } from "@/platform/account-lifecycle";
 import { AppLifecycleBridge } from "@/platform/app-lifecycle";
+import { StoreProvider } from "@/platform/store/store-provider";
 
 function createMobileQueryClient() {
 	return new QueryClient({
@@ -28,7 +29,9 @@ export function MobileProviders({
 		<QueryClientProvider client={queryClient}>
 			<AccountScopeProvider>
 				<MobileApiProvider config={config}>
-					<AppLifecycleBridge>{children}</AppLifecycleBridge>
+					<StoreProvider config={config}>
+						<AppLifecycleBridge>{children}</AppLifecycleBridge>
+					</StoreProvider>
 				</MobileApiProvider>
 			</AccountScopeProvider>
 		</QueryClientProvider>

@@ -20,6 +20,7 @@ import {
 	createDeploymentMutationClient,
 	createHostedApiClient,
 	createHostedComputeClient,
+	createHostedStoreClient,
 	createProjectSharingClient,
 	createProviderRemovalClient,
 	createPublicSessionClient,
@@ -33,6 +34,7 @@ import {
 	type DeploymentMutationClient,
 	type HostedApiClient,
 	type HostedComputeClient,
+	type HostedStoreClient,
 	type ProjectSharingClient,
 	type ProviderRemovalClient,
 	type PublicSessionClient,
@@ -70,6 +72,7 @@ type MobileApiClients = Readonly<{
 	compute: HostedComputeClient | null;
 	providerRemoval: ProviderRemovalClient | null;
 	hosted: HostedApiClient | null;
+	store: HostedStoreClient | null;
 }>;
 
 const MobileApiContext = createContext<MobileApiClients | null>(null);
@@ -196,6 +199,13 @@ export function MobileApiProvider({
 			}),
 			compute: config.computeApiUrl
 				? createHostedComputeClient({
+						baseUrl: config.computeApiUrl,
+						getToken: readToken,
+						fetch: fetcher,
+					})
+				: null,
+			store: config.computeApiUrl
+				? createHostedStoreClient({
 						baseUrl: config.computeApiUrl,
 						getToken: readToken,
 						fetch: fetcher,
