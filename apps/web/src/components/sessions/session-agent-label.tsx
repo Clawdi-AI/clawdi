@@ -1,7 +1,7 @@
 import { type SessionAgentIdentity, sessionAgentIdentityInput } from "@clawdi/shared/view";
 import type { AgentIconSize } from "@/components/dashboard/agent-icon";
 import { AgentLabel } from "@/components/dashboard/agent-label";
-import { sessionProfileLabel } from "@/lib/agent-profiles";
+import { profileLabel } from "@/lib/agent-profiles";
 
 export function SessionAgentLabel({
 	session,
@@ -13,7 +13,7 @@ export function SessionAgentLabel({
 	className?: string;
 }) {
 	const identity = sessionAgentIdentityInput(session);
-	const profile = sessionProfileLabel(session);
+	const profile = profileLabel(session);
 	return (
 		<AgentLabel
 			name={identity.name}

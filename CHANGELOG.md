@@ -15,6 +15,10 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
+### CLI 0.15.5
+
+- **Profiles:** Hermes renames reconcile before inventory sync. Incomplete discovery and unreadable named profiles leave the Cloud inventory intact while other profiles continue syncing.
+
 ### CLI 0.15.4
 
 - **OpenClaw security:** Skills workspace discovery and installation run as the configured agent user, preventing root execution of the agent-owned CLI and root-owned installed Skills.

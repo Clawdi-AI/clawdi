@@ -49,7 +49,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Label } from "@/components/ui/label";
 import { useSidebar } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { sessionProfileLabel } from "@/lib/agent-profiles";
+import { profileLabel } from "@/lib/agent-profiles";
 import { agentDetailQueryOptions } from "@/lib/agent-queries";
 import { agentSectionHref, agentSessionDetailLink } from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
@@ -499,7 +499,7 @@ export function SessionDetailContent({
 		: null;
 	const sessionAgentIdentity = session ? sessionAgentIdentityInput(session) : null;
 	const detailAgentIdentity = sessionAgentIdentity ?? scopedAgent;
-	const sessionProfile = session ? sessionProfileLabel(session) : null;
+	const sessionProfile = session ? profileLabel(session) : null;
 	useSetBreadcrumbTitle(summaryText);
 
 	if (isSessionLoading) {

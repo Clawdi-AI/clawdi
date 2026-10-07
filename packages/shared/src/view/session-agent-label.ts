@@ -6,7 +6,6 @@ export type SessionAgentIdentity = {
 	machine_name?: string | null;
 	agent_type?: string | null;
 	profile_key?: string | null;
-	profile_display_name?: string | null;
 };
 
 export function sessionAgentIdentityInput(session: SessionAgentIdentity): AgentIdentityInput {

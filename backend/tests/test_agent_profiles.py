@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import event, select
@@ -7,10 +7,19 @@ from sqlalchemy import event, select
 from app.models.session import AgentProfile, Session, SessionSyncSuppression
 from tests.conftest import create_env_with_project
 
+REMOVED_PROFILE_FIELDS = {
+    "online",
+    "last_seen_at",
+    "display_name",
+    "upstream_key",
+    "first_seen_at",
+    "removed_at",
+}
 
-async def inventory(client, env, keys, complete=True):
+
+async def inventory(client, env, keys, complete=True, api_prefix="/v1"):
     return await client.put(
-        f"/v1/agents/{env.id}/profiles",
+        f"{api_prefix}/agents/{env.id}/profiles",
         json={
             "complete": complete,
             "profiles": [{"upstream_key": k, "is_default": k == "default"} for k in keys],
@@ -25,6 +34,66 @@ def metadata(env, lid="same"):
         "started_at": datetime.now(UTC).isoformat(),
         "summary": "initial",
     }
+
+
+@pytest.mark.parametrize(
+    "profile_key,existing,suppressed,expected",
+    [
+        (None, [], [], ""),
+        (None, ["work"], [], "work"),
+        (None, [], ["work"], "work"),
+        (None, ["work"], ["other", "deleted"], "work"),
+        ("", ["work", "other"], [], ""),
+        ("work", [], ["other", "deleted"], "work"),
+    ],
+)
+def test_old_cli_profile_resolution_preserves_explicit_keys_and_suppressions(
+    profile_key, existing, suppressed, expected
+):
+    from app.services.session_profile import resolve_profile_key
+
+    assert resolve_profile_key(profile_key, existing, suppressed) == expected
+
+
+def test_old_cli_ambiguous_suppressions_require_profile():
+    from fastapi import HTTPException
+
+    from app.services.session_profile import resolve_profile_key
+
+    with pytest.raises(HTTPException) as error:
+        resolve_profile_key(None, [], ["work", "other"])
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "profile_required"
+
+
+@pytest.mark.asyncio
+async def test_session_profile_is_only_selected_at_batch_level(client, db_session, seed_user):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=uuid.uuid4().hex,
+        machine_name="test",
+        agent_type="hermes",
+    )
+    res = await client.post(
+        "/v1/sessions/batch",
+        json={
+            "profile_key": "work",
+            "sessions": [
+                {**metadata(env, "one"), "profile_key": "ignored"},
+                {**metadata(env, "two"), "profile_key": "other"},
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["created"] == 2
+    assert set(
+        (
+            await db_session.execute(
+                select(Session.origin_profile_key).where(Session.origin_environment_id == env.id)
+            )
+        ).scalars()
+    ) == {"work"}
 
 
 @pytest.mark.asyncio
@@ -66,7 +135,11 @@ async def test_old_cli_zero_one_many_profiles(client, db_session, seed_user):
 
 
 @pytest.mark.asyncio
-async def test_inventory_removal_keeps_sessions_and_shows_offline(client, db_session, seed_user):
+@pytest.mark.parametrize("api_prefix", ["/v1", "/api"])
+@pytest.mark.parametrize("sync_age", [None, timedelta(0), timedelta(minutes=20)])
+async def test_inventory_removal_keeps_sessions_without_online_status(
+    client, db_session, seed_user, sync_age, api_prefix
+):
     env = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
@@ -74,20 +147,40 @@ async def test_inventory_removal_keeps_sessions_and_shows_offline(client, db_ses
         machine_name="test",
         agent_type="hermes",
     )
-    assert (await inventory(client, env, ["default", "work"])).status_code == 200
+    env.last_sync_at = datetime.now(UTC) - sync_age if sync_age is not None else None
+    await db_session.commit()
+    res = await inventory(client, env, ["default", "work"], api_prefix=api_prefix)
+    assert res.status_code == 200, res.text
+    assert all(REMOVED_PROFILE_FIELDS.isdisjoint(p) for p in res.json())
+    assert all(p["is_default"] == (p["profile_key"] == "") for p in res.json())
     await client.post(
         "/v1/sessions/batch", json={"profile_key": "work", "sessions": [metadata(env)]}
     )
-    res = await inventory(client, env, ["default"], complete=False)
-    assert next(p for p in res.json() if p["profile_key"] == "work")["state"] == "active"
-    res = await inventory(client, env, ["default"])
+    res = await inventory(client, env, ["default"], complete=False, api_prefix=api_prefix)
+    assert res.status_code == 200, res.text
+    active = next(p for p in res.json() if p["profile_key"] == "work")
+    assert active["state"] == "active"
+    assert REMOVED_PROFILE_FIELDS.isdisjoint(active)
+    res = await inventory(client, env, ["default"], api_prefix=api_prefix)
+    assert res.status_code == 200, res.text
     work = next(p for p in res.json() if p["profile_key"] == "work")
-    assert work["state"] == "removed" and work["online"] is False and work["session_count"] == 1
+    assert work["state"] == "removed" and work["session_count"] == 1
+    assert all(REMOVED_PROFILE_FIELDS.isdisjoint(p) for p in res.json())
+    profiles = res.json()
+    res = await client.get(f"{api_prefix}/agents/{env.id}/profiles")
+    assert res.status_code == 200, res.text
+    assert res.json() == profiles
     res = await client.get(
         "/v1/sessions", params={"environment_id": str(env.id), "profile_key": "work"}
     )
     assert res.status_code == 200, res.text
-    assert res.json()["items"][0]["profile_display_name"] == "work"
+    item = res.json()["items"][0]
+    assert item["profile_key"] == "work"
+    assert "profile_display_name" not in item
+    res = await client.get(f"{api_prefix}/sessions/{item['id']}")
+    assert res.status_code == 200, res.text
+    assert res.json()["profile_key"] == "work"
+    assert "profile_display_name" not in res.json()
 
 
 @pytest.mark.asyncio
@@ -126,7 +219,8 @@ async def test_hermes_rename_moves_metadata_in_place(client, db_session, seed_us
             )
         )
     ).scalar_one()
-    await inventory(client, env, ["default", "job"])
+    # Old CLIs publish the new inventory before requesting the rename.
+    assert (await inventory(client, env, ["default", "job"])).status_code == 200
     path = f"/v1/agents/{env.id}/profiles/work/rename"
     res = await client.post(path, json={"new_upstream_key": "job"})
     assert res.status_code == 200, res.text
@@ -139,6 +233,7 @@ async def test_hermes_rename_moves_metadata_in_place(client, db_session, seed_us
     ).scalar_one()
     assert profile.profile_key == "job" and profile.state == "active"
     assert (await client.post(path, json={"new_upstream_key": "job"})).json()["sessions_moved"] == 0
+    assert (await inventory(client, env, ["default", "job"])).status_code == 200
 
 
 @pytest.mark.asyncio
@@ -319,8 +414,9 @@ async def test_named_snapshot_content_keeps_existing_storage_paths(client, db_se
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("content", ["session", "suppression"])
 async def test_rename_rejects_occupied_target_without_partial_updates(
-    client, db_session, seed_user
+    client, db_session, seed_user, content
 ):
     env = await create_env_with_project(
         db_session,
@@ -330,14 +426,32 @@ async def test_rename_rejects_occupied_target_without_partial_updates(
         agent_type="hermes",
     )
     await inventory(client, env, ["default", "work", "job"])
-    for key in ("work", "job"):
+    for key in ("work", "job") if content == "session" else ("work",):
         await client.post(
             "/v1/sessions/batch", json={"profile_key": key, "sessions": [metadata(env, key)]}
         )
+    if content == "suppression":
+        db_session.add(
+            SessionSyncSuppression(
+                user_id=seed_user.id,
+                origin_environment_id=env.id,
+                origin_profile_key="job",
+                local_session_id="deleted",
+            )
+        )
+        await db_session.flush()
     res = await client.post(
         f"/v1/agents/{env.id}/profiles/work/rename", json={"new_upstream_key": "job"}
     )
     assert res.status_code == 409
+    assert res.json()["detail"]["code"] == "profile_conflict"
+    assert set(
+        (
+            await db_session.execute(
+                select(AgentProfile.profile_key).where(AgentProfile.environment_id == env.id)
+            )
+        ).scalars()
+    ) == {"", "work", "job"}
     rows = (
         (
             await db_session.execute(
@@ -347,7 +461,41 @@ async def test_rename_rejects_occupied_target_without_partial_updates(
         .scalars()
         .all()
     )
-    assert set(rows) == {"work", "job"}
+    assert set(rows) == ({"work", "job"} if content == "session" else {"work"})
+    if content == "suppression":
+        assert (
+            await db_session.scalar(
+                select(SessionSyncSuppression.origin_profile_key).where(
+                    SessionSyncSuppression.origin_environment_id == env.id
+                )
+            )
+        ) == "job"
+
+
+@pytest.mark.asyncio
+async def test_rename_into_empty_target_preserves_profile_uuid(client, db_session, seed_user):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=uuid.uuid4().hex,
+        machine_name="test",
+        agent_type="hermes",
+    )
+    res = await inventory(client, env, ["default", "work", "job"])
+    assert res.status_code == 200, res.text
+    original = {p["profile_key"]: p["id"] for p in res.json()}
+    res = await client.post(
+        f"/v1/agents/{env.id}/profiles/work/rename", json={"new_upstream_key": "job"}
+    )
+    assert res.status_code == 200, res.text
+    assert res.json() == {"sessions_moved": 0, "suppressions_moved": 0}
+    res = await client.get(f"/v1/agents/{env.id}/profiles")
+    assert res.status_code == 200, res.text
+    profiles = {p["profile_key"]: p for p in res.json()}
+    assert set(profiles) == {"", "job"}
+    assert profiles["job"]["id"] == original["work"]
+    assert profiles["job"]["id"] != original["job"]
+    assert profiles["job"]["state"] == "active"
 
 
 @pytest.mark.asyncio
@@ -469,14 +617,11 @@ async def test_get_profiles_synthesizes_missing_default_without_writes(
     assert first.status_code == second.status_code == 200, first.text
     assert first.json() == second.json()
     profiles = first.json()
+    assert all(REMOVED_PROFILE_FIELDS.isdisjoint(p) for p in profiles)
     assert [(p["profile_key"], p["is_default"]) for p in profiles] == [("", True), ("work", False)]
     default = profiles[0]
     assert uuid.UUID(default["id"])
-    assert default["upstream_key"] == ""
-    assert default["state"] == "active" and default["online"] is True
-    assert default["display_name"] is None and default["removed_at"] is None
-    assert datetime.fromisoformat(default["first_seen_at"]) == env.created_at
-    assert datetime.fromisoformat(default["last_seen_at"]) == (env.last_seen_at or env.created_at)
+    assert default["state"] == "active"
     assert default["session_count"] == 1 and profiles[1]["session_count"] == 0
     assert statements and not commits
     assert not any(
