@@ -10,6 +10,8 @@ container="clawdi-runtime-official-installer-systemd-test-$$"
 cleanup() {
 	local status=$?
 	if [[ "$status" -ne 0 ]]; then
+		docker exec "$container" cat /sys/fs/cgroup/memory.events /sys/fs/cgroup/pids.events || true
+		docker exec "$container" journalctl --boot --no-pager --unit=clawdi-runtime-e2e.scope --lines=20 || true
 		docker exec "$container" bash -lc '
 			while IFS= read -r -d "" log; do
 				printf "\n===== %s =====\n" "$log"
@@ -37,13 +39,14 @@ if [[ "${DOCKER_BUILD_LOAD:-0}" == "1" ]]; then
 fi
 docker build --quiet --build-arg BUN_VERSION=1.4.2 "${load_args[@]}" "${build_args[@]}" --file "$fixture" --tag "$image" \
 	"$(dirname -- "$fixture")" >/dev/null
+# Keep the checkout and dependencies on the disposable writable layer. A tmpfs
+# workspace consumes the memory budget needed by the stock runtime builds.
 docker run --detach --privileged \
 	--cpus=2 --memory=4g --memory-swap=4g --pids-limit=512 \
 	--name "$container" \
 	--tmpfs /run \
 	--tmpfs /run/lock \
 	--tmpfs /tmp:exec \
-	--tmpfs /work:exec \
 	--volume "$repo_root:/repo:ro" \
 	--workdir /work \
 	"$image" >/dev/null
@@ -70,7 +73,7 @@ docker exec "$container" bash -lc \
 # 76 tasks with --pids-limit=512. Keep the test driver and its build subprocesses
 # in a dedicated scope with the full (still container-bounded) task budget.
 docker exec --env CLAWDI_TEST_REAL_OPENCLAW_SYSTEMD=1 "$container" \
-	systemd-run --scope --quiet --property=TasksMax=512 \
+	systemd-run --scope --quiet --unit=clawdi-runtime-e2e --property=TasksMax=512 \
 	bun test --isolate --max-concurrency=1 --timeout 30000 \
 	"$@" \
 	packages/cli/tests/e2e/runtime-official-installer-systemd.e2e.test.ts
