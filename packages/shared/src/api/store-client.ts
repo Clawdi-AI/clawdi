@@ -78,6 +78,9 @@ function isPlatform(value: unknown): boolean {
 function isUuidOrNull(value: unknown): boolean {
 	return value == null || isUuid(value);
 }
+function normalizeUuid(value: string | null | undefined): string | null {
+	return value?.toLowerCase() ?? null;
+}
 function isPurpose(value: unknown): boolean {
 	return (
 		value === "standalone_topup" ||
@@ -331,7 +334,7 @@ export function createHostedStoreClient(options: ApiClientOptions) {
 					(result.requested_store_product_id ?? result.store_product_id ?? null) !==
 						(request.store_product_id ?? null)) ||
 				(request.purpose === "compute_subscription" &&
-					(result.target_contract_id ?? null) !== (request.target_contract_id ?? null)) ||
+					normalizeUuid(result.target_contract_id) !== normalizeUuid(request.target_contract_id)) ||
 				(request.purpose === "compute_subscription" &&
 					(result.target_deployment_id ?? null) !== (request.target_deployment_id ?? null))
 			)

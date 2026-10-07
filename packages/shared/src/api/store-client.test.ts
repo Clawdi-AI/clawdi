@@ -45,13 +45,15 @@ const computeAttemptRequest: StorePurchaseAttemptRequest = {
 	catalogue_revision: 7,
 	purpose: "compute_subscription",
 	store_product_id: "ai.clawdi.app.compute:performance-monthly",
-	pending_deploy_request_id: "deploy-request-7",
+	target_contract_id: attempt.attempt_id.toUpperCase(),
 };
 
 const computeAttempt: StorePurchaseAttempt = {
 	...attempt,
 	...computeAttemptRequest,
 	catalogue_revision: 7,
+	pending_deploy_request_id: null,
+	target_contract_id: attempt.attempt_id,
 	requested_store_product_id: computeAttemptRequest.store_product_id,
 	replacement_mode: "DEFERRED",
 };
@@ -204,6 +206,49 @@ describe("Hosted store client", () => {
 		]);
 	});
 
+	test("rejects compute attempts when the server echoes a different target or product", async () => {
+		const cases: {
+			body: StorePurchaseAttemptRequest;
+			response: StorePurchaseAttempt;
+		}[] = [
+			{
+				body: computeAttemptRequest,
+				response: {
+					...computeAttempt,
+					requested_store_product_id: "ai.clawdi.app.compute:basic-monthly",
+				},
+			},
+			{
+				body: computeAttemptRequest,
+				response: {
+					...computeAttempt,
+					target_contract_id: "f1fbff7e-640a-4ff1-9bc3-c0510d471f3d",
+				},
+			},
+			{
+				body: {
+					...computeAttemptRequest,
+					target_contract_id: null,
+					target_deployment_id: "hdep_target",
+				},
+				response: {
+					...computeAttempt,
+					target_contract_id: null,
+					target_deployment_id: "hdep_other",
+				},
+			},
+		];
+		for (const { body, response } of cases) {
+			const client = createHostedStoreClient({
+				...options,
+				fetch: async () => Response.json(response),
+			});
+			await expect(client.createPurchaseAttempt(body, "compute-key")).rejects.toBeInstanceOf(
+				ApiClientResponseError,
+			);
+		}
+	});
+
 	test("requires exactly one compute target before auth or network", async () => {
 		let tokens = 0;
 		const client = createHostedStoreClient({
@@ -217,10 +262,11 @@ describe("Hosted store client", () => {
 			},
 		});
 		for (const patch of [
-			{ pending_deploy_request_id: null },
+			{ pending_deploy_request_id: null, target_contract_id: null },
 			{
 				pending_deploy_request_id: "deploy-request-7",
 				target_deployment_id: "hdep_target",
+				target_contract_id: null,
 			},
 			{
 				pending_deploy_request_id: "deploy-request-7",

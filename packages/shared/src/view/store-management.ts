@@ -55,8 +55,6 @@ export function storeManagementUrl(
 	return STORE_MANAGEMENT_URLS[management.provider];
 }
 
-export const storeManagementUrlForPlatform = storeManagementUrl;
-
 export type StoreManagementPresentation = {
 	provider: StoreManagementProvider | null;
 	state: StoreManagementState | null;
