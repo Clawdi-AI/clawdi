@@ -24,10 +24,14 @@ name: Development client launch
     visible:
       id: overview-screen
     timeout: 180000
-- scrollUntilVisible:
-    element:
+# The first fixture card is on the initial viewport. Wait for data without
+# issuing a swipe while the list is loading. Maestro 2.11.0 subtracts time
+# since openLink from later visibility waits, so use the same startup budget.
+# https://github.com/mobile-dev-inc/Maestro/blob/cli-2.11.0/maestro-orchestra/src/main/java/maestro/orchestra/Orchestra.kt
+- extendedWaitUntil:
+    visible:
       id: agent-card-c1a0de00-0001-4c00-8000-000000000001
-    timeout: 30000
+    timeout: 180000
 - assertVisible:
     id: agent-card-c1a0de00-0001-4c00-8000-000000000001
 - takeScreenshot: launch

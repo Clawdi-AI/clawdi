@@ -46,7 +46,21 @@ cite the upstream limitation. The API Keys segment uses a short label scoped to
 `settings-navigation`: SDK 57 does not expose a per-segment test ID, so the
 native component stays unchanged. The navigation container uses React Native's
 documented `importantForAccessibility="yes"` to retain its parent relationship
-in Android's accessibility hierarchy. Maestro is limited to ten
+in Android's accessibility hierarchy. With only a test ID and the default
+non-accessible View, Android exported the Compose segments as siblings, and
+`childOf` failed. `accessible` remains false,
+so the container does not group its controls into one focusable element.
+The first card is on the initial viewport: the launch flow waits for its loaded
+fixture ID without scrolling during data loading. Visibility waits share the
+same startup budget because Maestro 2.11.0 deducts time since the last
+interaction from subsequent waits. The navigation flow waits for visual idle,
+then permits at most three tap attempts only while the original card remains
+visible, followed by the loaded detail header assertion. Maestro's documented
+`retryTapIfNoChange` (two attempts) also failed in a separate cold-start run. In a
+cold-start diagnostic, the first tap attempt produced no React Native touch
+or press event despite a settled screen, correct app focus, and unfrozen input
+dispatch. The underlying native cause remains unconfirmed; idle alone did not
+resolve it. No diagnostic hooks remain in product code. Maestro is limited to ten
 minutes, service readiness/install/downloads have separate bounds, and exit
 traps stop only processes started by this run, including on failure or
 interruption. The emulator receives its own shutdown signal so SDK helpers
@@ -55,9 +69,19 @@ JUnit results and screenshots remain under a unique ignored
 `test-results/mobile-e2e.*` directory; `--output`
 can select a new directory. `ANDROID_USER_HOME` is task-local before the first
 adb call. An existing shared adb server is explicitly reused and left running;
-when none exists, the script owns a foreground server and stops it after its
-clients exit. Named screenshots are inside Maestro's per-flow `takeScreenshot`
-folder. The script clears app data and waits for the resumed native
+if none exists, adb daemonizes on **5037** and is deliberately left running as
+known residue because other users may connect to it. The script never stops
+an adb server. [adb](https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/client/commandline.cpp)
+and [emulator](https://android.googlesource.com/platform/external/qemu/+/refs/heads/emu-master-dev/android/emu/adb/interface/src/android/emulation/AdbHostServer.cpp)
+support `ANDROID_ADB_SERVER_PORT`, but
+[Maestro 2.11.0's device lookup](https://github.com/mobile-dev-inc/Maestro/blob/cli-2.11.0/maestro-client/src/main/java/maestro/android/AndroidDeviceConnection.kt)
+uses [dadb 2.0.0's fixed 5037 default](https://github.com/mobile-dev-inc/dadb/blob/v2.0.0/dadb/src/main/kotlin/dadb/adbserver/AdbServer.kt)
+without reading the variable, so a task-specific port cannot be propagated
+through all three tools. Before connecting with adb, the script queries the
+shared server's protocol version over the smart socket and rejects a mismatch;
+this avoids adb's automatic restart of incompatible servers.
+Named screenshots are inside Maestro's per-flow `takeScreenshot` folder.
+The script clears app data and waits for the resumed native
 development-launcher activity before Maestro opens Metro; it does not depend
 on the launcher's display text. A delayed System UI startup ANR was still
 observed after these checks on a memory-constrained host. The launch flow waits

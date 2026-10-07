@@ -8,9 +8,13 @@ name: Fixture tabs and details
 # The label also makes the parent unique: childOf resolves one matching parent.
 
 # Home: open a loaded fixture Agent from the overview card.
-# Cold startup can leave the card visible after a tap. Retry that state at most
-# three times; require the loaded detail header afterward, not any UI change.
+# Wait for loaded fixture data and visual idle before navigation. Cold Android
+# taps still failed after these checks and with retryTapIfNoChange's one retry.
+# Bound attempts to three while the original card remains visible, then require
+# the loaded detail header; unrelated hierarchy changes cannot satisfy the test.
+# https://docs.maestro.dev/reference/commands-available/waitforanimationtoend
 # https://docs.maestro.dev/reference/commands-available/repeat
+- waitForAnimationToEnd
 - repeat:
     times: 3
     while:

@@ -91,7 +91,6 @@ output=$(realpath "$output")
 task_dir=$(mktemp -d "$repo_root/test-results/.mobile-e2e-runtime.XXXXXX")
 owned_pids=()
 emulator_pid=
-adb_server_pid=
 cleanup() {
 	local status=$? pid
 	trap - EXIT INT TERM
@@ -119,17 +118,7 @@ cleanup() {
 		fi
 		wait "$pid" 2>/dev/null || true
 	done
-	# Stop an owned foreground adb server last, after emulator clients have exited.
-	# A shared server is never shut down.
-	if [[ -n $adb_server_pid ]]; then
-		kill -TERM -- "-$adb_server_pid" 2>/dev/null || true
-		for (( attempt=0; attempt<5; attempt++ )); do
-			kill -0 -- "-$adb_server_pid" 2>/dev/null || break
-			sleep 1
-		done
-		kill -KILL -- "-$adb_server_pid" 2>/dev/null || true
-		wait "$adb_server_pid" 2>/dev/null || true
-	fi
+	# Never stop adb: even a daemon started here can acquire other users.
 	rm -rf "$task_dir"
 	echo "Artifacts: $output"
 	exit "$status"
@@ -144,6 +133,12 @@ mkdir -p "$task_dir"/{tmp,android-home,java-home}
 export TMPDIR=$task_dir/tmp
 export ANDROID_USER_HOME=$task_dir/android-home
 export ANDROID_EMULATOR_HOME=$task_dir/android-home
+# adb and emulator honor this port, but Maestro 2.11.0's dadb device lookup
+# defaults to 5037 without reading it. Reuse that shared server; never kill it.
+# https://github.com/mobile-dev-inc/Maestro/blob/cli-2.11.0/maestro-client/src/main/java/maestro/android/AndroidDeviceConnection.kt
+# https://github.com/mobile-dev-inc/dadb/blob/v2.0.0/dadb/src/main/kotlin/dadb/adbserver/AdbServer.kt
+export ANDROID_ADB_SERVER_PORT=5037
+unset ADB_SERVER_SOCKET ANDROID_ADB_SERVER_ADDRESS
 export MAESTRO_CLI_NO_ANALYTICS=true
 export MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
 export PATH=$ANDROID_SDK_ROOT/platform-tools:$PATH
@@ -162,37 +157,54 @@ run_process() {
 	return "$status"
 }
 
-# Check the default server socket without adb's implicit server startup.
-if python3 - <<'PY'
+# Probe the documented smart-socket host:version service without starting adb.
+# The client automatically kills a server with a different protocol version;
+# reject that case before invoking any adb command that connects to it.
+# https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/client/adb_client.cpp
+# https://android.googlesource.com/platform/packages/modules/adb/+/refs/heads/main/docs/dev/services.md
+python3 - "$adb_bin" <<'PY' | tee "$output/adb-ownership.log"
+import re
 import socket
+import subprocess
+import sys
+
+version = subprocess.run([sys.argv[1], "version"], check=True, capture_output=True,
+                         text=True, timeout=5).stdout
+match = re.search(r"Android Debug Bridge version 1\.0\.(\d+)", version)
+if match is None:
+    raise SystemExit("mobile-e2e: cannot determine adb client protocol version")
+expected = int(match.group(1))
+
+def read_exact(sock, size):
+    data = b""
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise SystemExit("mobile-e2e: shared adb server closed its version response")
+        data += chunk
+    return data
+
 try:
-    with socket.create_connection(("127.0.0.1", 5037), timeout=1):
-        pass
-except OSError:
-    raise SystemExit(1)
+    sock = socket.create_connection(("127.0.0.1", 5037), timeout=2)
+except ConnectionRefusedError:
+    print("No adb server on 5037; adb will daemonize. Known residue: leave it running for other users.")
+else:
+    try:
+        with sock:
+            request = b"host:version"
+            sock.sendall(f"{len(request):04x}".encode() + request)
+            if read_exact(sock, 4) != b"OKAY":
+                raise SystemExit("mobile-e2e: shared adb server rejected its version query; leave it untouched")
+            length = int(read_exact(sock, 4), 16)
+            if length != 4:
+                raise SystemExit("mobile-e2e: invalid shared adb version response; leave it untouched")
+            actual = int(read_exact(sock, length), 16)
+            if actual != expected:
+                raise SystemExit("mobile-e2e: shared adb protocol differs from this client; refuse its automatic restart")
+    except (OSError, ValueError):
+        raise SystemExit("mobile-e2e: cannot read shared adb protocol version; leave it untouched")
+    print("Reusing shared adb server on port 5037; it will remain running.")
 PY
-then
-	echo "Reusing shared adb server on port 5037; it will remain running." | tee "$output/adb-ownership.log"
-else
-	# Upstream adb supports a foreground server; retain its PID for exact cleanup.
-	setsid "$adb_bin" -L tcp:localhost:5037 server nodaemon >"$output/adb-server.log" 2>&1 &
-	adb_server_pid=$!
-	echo "Started task-owned adb server on port 5037 (PID $adb_server_pid)." | tee "$output/adb-ownership.log"
-	adb_deadline=$((SECONDS + 15))
-	until python3 - <<'PY'
-import socket
-try:
-    with socket.create_connection(("127.0.0.1", 5037), timeout=1):
-        pass
-except OSError:
-    raise SystemExit(1)
-PY
-	do
-		kill -0 "$adb_server_pid" 2>/dev/null || fail "Owned adb server exited (see adb-server.log)"
-		(( SECONDS < adb_deadline )) || fail "adb server startup exceeded 15s"
-		sleep 1
-	done
-fi
 devices=$(timeout -k 5s 15s "$adb_bin" devices)
 if awk -v serial="$serial" '$1 == serial {found=1} END {exit !found}' <<<"$devices"; then
 	fail "$serial is already registered; leave it untouched"
