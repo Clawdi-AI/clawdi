@@ -35,6 +35,7 @@ on:
       - ".github/actions/setup-bun-ci/**"
       - ".github/actions/setup-docker-hub-mirror/**"
       - ".github/workflows/client-ci.yml"
+      - ".github/workflows/mobile-release.yml"
   push:
     branches: [main]
     paths:
@@ -70,6 +71,7 @@ on:
       - ".github/actions/setup-bun-ci/**"
       - ".github/actions/setup-docker-hub-mirror/**"
       - ".github/workflows/client-ci.yml"
+      - ".github/workflows/mobile-release.yml"
   schedule:
     - cron: "17 6 * * *"
 
@@ -113,6 +115,7 @@ jobs:
           filters: |
             mobile:
               - "apps/mobile/**"
+              - ".github/workflows/mobile-release.yml"
             web:
               - "apps/web/**"
             shared:
