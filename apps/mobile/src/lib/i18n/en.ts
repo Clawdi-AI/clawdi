@@ -172,6 +172,7 @@ const storeEn = {
 	recoveryStatus: "This subscription needs attention. Its status updates here automatically.",
 	usdcInApp: "Browser-wallet USDC funding isn't available in this app.",
 	walletExplanation: "Pays for AI usage and credit-funded compute subscriptions.",
+	usageSummary: "LLM spend in credits, paid from wallet",
 	purchasing: "Confirming purchase…",
 	credits: "credits",
 	unavailable: "Purchases aren't available right now. Your credits balance is unaffected.",
@@ -470,10 +471,17 @@ const vaultEn = {
 	defaultSection: "Default section",
 } as const;
 
-import { billingCopy, LIBRARY_COPY, sessionDetailCopy, settingsCopy } from "@clawdi/shared/view";
+import {
+	billingCopy,
+	LIBRARY_COPY,
+	sessionDetailCopy,
+	settingsCopy,
+	usageCopy,
+} from "@clawdi/shared/view";
 export const en = {
 	settingsParity: settingsCopy,
 	billingParity: billingCopy,
+	usageParity: usageCopy,
 	sessionDetail: sessionDetailCopy,
 	libraryPort: LIBRARY_COPY,
 	composite: {

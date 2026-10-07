@@ -127,6 +127,7 @@ describe("Hosted compute client", () => {
 			await client.getReusableSubscriptions({ limit: 8, cursor });
 			await client.getIncludedBasicAvailability();
 			await client.getWalletTransactions({ limit: 9, cursor });
+			await client.getUsage({ days: 30, agent_id: "agent &+/1" });
 			await client.quoteSubscription(quote);
 			const key = "!".repeat(191);
 			const deploymentBody = { ...body, deploy_request_id: key };
@@ -149,6 +150,7 @@ describe("Hosted compute client", () => {
 				["GET", "/v2/subscriptions/reusable"],
 				["GET", "/v2/subscriptions/included-basic"],
 				["GET", "/v2/wallet/transactions"],
+				["GET", "/v2/usage"],
 				["POST", "/v2/subscription/quote"],
 				["POST", "/v2/deployments"],
 				["POST", "/v2/deployments"],
@@ -156,7 +158,12 @@ describe("Hosted compute client", () => {
 			for (const request of requests) {
 				expect(request.headers.get("Authorization")).toBe("Bearer owner-token");
 				const url = new URL(request.url);
-				if (url.search) {
+				if (url.pathname === "/v2/usage") {
+					expect([...url.searchParams.entries()]).toEqual([
+						["days", "30"],
+						["agent_id", "agent &+/1"],
+					]);
+				} else if (url.search) {
 					expect(url.searchParams.get("cursor")).toBe(cursor);
 					expect([...url.searchParams.keys()]).toEqual(["limit", "cursor"]);
 				}

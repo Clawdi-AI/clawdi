@@ -37,7 +37,7 @@ bun scripts/ui-parity/fixture-api.ts --port 9000 --host 127.0.0.1
   Use the same origin for both API URLs; no separate compute port is needed.
   Hosted fixtures include the original two running deployments, four additional
   deployment states, Included Basic and paid Performance subscriptions, a Wallet
-  balance/transactions, plans and managed models.
+  balance/transactions, AI usage, plans and managed models.
   Runtime infrastructure and live event streams are deliberately absent.
 - During parallel verification, keep the shared `:8787` server untouched and
   start your copy with `--port 8791`. Stop only the server you started.
