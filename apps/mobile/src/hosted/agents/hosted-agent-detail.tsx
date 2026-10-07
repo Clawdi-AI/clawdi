@@ -53,6 +53,7 @@ import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
+import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 export function DeploymentDetailScreen({
 	deploymentId,
@@ -92,6 +93,7 @@ function DeploymentDetail({
 	const read = useAccountRead();
 	const router = useRouter();
 	const t = useI18n();
+	const surfaces = useStoreSurfaces();
 	const [startedAt, setStartedAt] = useState(Date.now);
 	const trackers = useRef<ReadonlyMap<string, SettlingTracker>>(new Map());
 	const [, setPollEpoch] = useState(0);
@@ -286,7 +288,9 @@ function DeploymentDetail({
 											deployment.start_action === "subscribe"
 												? "Subscribe to start"
 												: deployment.start_action === "top_up"
-													? "Top up to start"
+													? surfaces.addCredits
+														? t("store.addCreditsToStart")
+														: "Top up to start"
 													: deployment.start_action === "contact_support"
 														? "Contact support"
 														: "Pay to start"

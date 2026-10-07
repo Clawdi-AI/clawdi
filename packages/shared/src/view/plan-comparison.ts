@@ -9,7 +9,11 @@ import {
 
 type Plan = DeployComponents["schemas"]["V2PlanResponse"];
 /** Web's comparable plans and shared billing term, independent of fetching or purchase actions. */
-export function computePlanComparisonView(plans: Plan[], term: number) {
+export function computePlanComparisonView(
+	plans: Plan[],
+	term: number,
+	formatAmount?: (cents: number) => string,
+) {
 	const basic = resolveBasicPlan(plans),
 		performance = resolvePerformancePlan(plans);
 	const basicOffers = basic ? explicitPlanOffers(basic) : [];
@@ -37,9 +41,9 @@ export function computePlanComparisonView(plans: Plan[], term: number) {
 		selectedTerm,
 		basicOffer,
 		performanceOffer,
-		basicPrice: basicOffer ? computePricePresentation(basicOffer, basicOffers) : null,
+		basicPrice: basicOffer ? computePricePresentation(basicOffer, basicOffers, formatAmount) : null,
 		performancePrice: performanceOffer
-			? computePricePresentation(performanceOffer, performanceOffers)
+			? computePricePresentation(performanceOffer, performanceOffers, formatAmount)
 			: null,
 		sharedPricingUnavailable: basic !== undefined && performance !== undefined && !selectedTerm,
 	};
