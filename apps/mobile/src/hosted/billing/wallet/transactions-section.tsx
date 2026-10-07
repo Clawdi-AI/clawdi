@@ -74,9 +74,7 @@ export function TransactionRow({ item }: { item: Transaction }) {
 						<Text>{document.label}</Text>
 						<Icon as={ExternalLink} />
 					</Button>
-				) : (
-					<WebText recipe={transactions.muted}>—</WebText>
-				)}
+				) : null}
 				{action.error ? (
 					<WebText accessibilityRole="alert" recipe={transactions.description}>
 						{t("account.actionFailed")}

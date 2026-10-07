@@ -37,9 +37,18 @@ import {
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
 
-function TransactionAction({ transaction }: { transaction: WalletTransaction }) {
+function TransactionAction({
+	transaction,
+	placeholder = false,
+}: {
+	transaction: WalletTransaction;
+	/** Only a table cell needs a dash; stacked rows simply omit the missing document. */
+	placeholder?: boolean;
+}) {
 	const action = transactionDocumentAction(transaction);
-	if (!action) return <span className={transactionsSectionClasses.muted}>—</span>;
+	if (!action) {
+		return placeholder ? <span className={transactionsSectionClasses.muted}>—</span> : null;
+	}
 	return (
 		<Button
 			render={<a href={action.url} target="_blank" rel="noopener noreferrer" />}
@@ -196,7 +205,7 @@ export function TransactionsSection() {
 												{formatShortDate(transaction.occurred_at)}
 											</TableCell>
 											<TableCell className={transactionsSectionClasses.amountColumn}>
-												<TransactionAction transaction={transaction} />
+												<TransactionAction transaction={transaction} placeholder />
 											</TableCell>
 										</TableRow>
 									))}
