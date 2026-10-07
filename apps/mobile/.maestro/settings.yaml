@@ -11,24 +11,35 @@ name: Account settings and fixture API keys
       id: ${APP_ID}:id/navigation_bar_item_content_container
       containsDescendants:
         - text: Account
+# The Account tab root is the native settings menu; rows push `/settings/<panel>`.
+# @expo/ui's Compose testID modifier exports each row's tag as a resource ID.
+# https://github.com/expo/expo/blob/sdk-57/packages/expo-ui/android/src/main/java/expo/modules/ui/Modifiers.kt
+- extendedWaitUntil:
+    visible:
+      id: settings-row-general
+    timeout: 30000
+- assertVisible:
+    id: settings-row-account
+- assertVisible:
+    text: avery@clawdi.dev
+- assertVisible:
+    id: settings-row-api-keys
+# The fixture configures a compute API, so the hosted rows are present.
+- assertVisible:
+    id: settings-row-wallet
+- assertVisible:
+    id: settings-row-compute
+- takeScreenshot: settings-menu
+- tapOn:
+    id: settings-row-general
 - assertVisible:
     id: settings-general
 - assertVisible:
-    id: settings-user-name
-    text: Avery Chen
-- assertVisible:
-    id: settings-user-email
-    text: avery@clawdi.dev
-- assertVisible:
     id: settings-appearance
 - takeScreenshot: settings
-# SDK 57's upstream SegmentedControl has no per-segment testID contract.
-# Keep its short label scoped to our container; leave the native adapter intact.
-# https://github.com/expo/expo/blob/sdk-57/packages/@expo/ui/src/community/segmented-control/SegmentedControl.android.tsx
+- back
 - tapOn:
-    text: API Keys
-    childOf:
-      id: settings-navigation
+    id: settings-row-api-keys
 - extendedWaitUntil:
     visible:
       id: api-key-a9100000-0001-4000-8000-000000000001

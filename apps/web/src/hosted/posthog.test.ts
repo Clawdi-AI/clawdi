@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import posthog from "posthog-js";
 import {
 	identifyHostedUser,
@@ -22,6 +22,14 @@ const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 const originalLoaded = Object.getOwnPropertyDescriptor(posthog, "__loaded");
 const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
 const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+const productionLocation = { protocol: "https:", hostname: "cloud.clawdi.ai", pathname: "/agents" };
+
+beforeEach(() => {
+	Object.defineProperty(globalThis, "window", {
+		configurable: true,
+		value: { location: { ...productionLocation } },
+	});
+});
 
 afterEach(() => {
 	sdk.identify = originalIdentify;
@@ -67,6 +75,61 @@ describe("isHostedPostHogEnabled", () => {
 		expect(isHostedPostHogEnabled({ isHosted: true, token: "phc_test_123" })).toBe(true);
 		expect(isHostedPostHogEnabled({ isHosted: true, token: "  phc_test_123  " })).toBe(true);
 	});
+
+	test("all SDK entry points reject local, preview and non-production hosts", () => {
+		const init = spyOn(posthog, "init").mockImplementation(() => posthog);
+		const identify = spyOn(posthog, "identify").mockImplementation(() => {});
+		const reset = spyOn(posthog, "reset").mockImplementation(() => {});
+		const capture = spyOn(posthog, "capture").mockImplementation(() => undefined);
+		const options = { isHosted: true, token: "phc_fixture" };
+		for (const hostname of [
+			"localhost",
+			"127.0.0.1",
+			"[::1]",
+			"preview.clawdi.ai",
+			"cloud-preview.clawdi.ai",
+			"preview.vercel.app",
+			"cloud.clawdi.ai.example.test",
+		]) {
+			window.location.hostname = hostname;
+			expect(isHostedPostHogEnabled(options)).toBe(false);
+			expect(initHostedPostHog(options)).toBe(false);
+			expect(identifyHostedUser("user_fixture", options)).toBe(false);
+			expect(resetHostedPostHog(options)).toBe(false);
+			expect(trackEvent({ name: "agent_setup_opened", properties: {} }, "web", options)).toBe(
+				false,
+			);
+		}
+		window.location.hostname = productionLocation.hostname;
+		window.location.protocol = "http:";
+		expect(isHostedPostHogEnabled(options)).toBe(false);
+		Reflect.deleteProperty(globalThis, "window");
+		expect(isHostedPostHogEnabled(options)).toBe(false);
+		expect(init).not.toHaveBeenCalled();
+		expect(identify).not.toHaveBeenCalled();
+		expect(reset).not.toHaveBeenCalled();
+		expect(capture).not.toHaveBeenCalled();
+	});
+
+	test("unset tokens disable init, identify, reset and capture on production", () => {
+		const init = spyOn(posthog, "init").mockImplementation(() => posthog);
+		const identify = spyOn(posthog, "identify").mockImplementation(() => {});
+		const reset = spyOn(posthog, "reset").mockImplementation(() => {});
+		const capture = spyOn(posthog, "capture").mockImplementation(() => undefined);
+		for (const token of [undefined, "", "   "]) {
+			const options = { isHosted: true, token };
+			expect(initHostedPostHog(options)).toBe(false);
+			expect(identifyHostedUser("user_fixture", options)).toBe(false);
+			expect(resetHostedPostHog(options)).toBe(false);
+			expect(trackEvent({ name: "agent_setup_opened", properties: {} }, "web", options)).toBe(
+				false,
+			);
+		}
+		expect(init).not.toHaveBeenCalled();
+		expect(identify).not.toHaveBeenCalled();
+		expect(reset).not.toHaveBeenCalled();
+		expect(capture).not.toHaveBeenCalled();
+	});
 });
 
 describe("hosted identity helpers", () => {
@@ -105,6 +168,7 @@ describe("hosted identity helpers", () => {
 describe("product analytics events", () => {
 	test("SDK pageviews own view capture, with bounded auth acquisition and no private URLs", () => {
 		const location = {
+			...productionLocation,
 			pathname: "/sign-up",
 			search: "?utm_source=github&utm_medium=referral&utm_campaign=launch",
 		};
@@ -126,8 +190,10 @@ describe("product analytics events", () => {
 		const options = init.mock.calls[0]?.[1];
 		expect(options).toMatchObject({
 			capture_pageview: "history_change",
-			capture_pageleave: true,
+			capture_pageleave: false,
 			autocapture: false,
+			person_profiles: "identified_only",
+			disable_session_recording: true,
 		});
 		const beforeSend = options?.before_send;
 		if (typeof beforeSend !== "function") throw new Error("Missing SDK boundary");
@@ -157,6 +223,9 @@ describe("product analytics events", () => {
 		expect(beforeSend(payload)?.properties.feature).toBe("deploy");
 		location.pathname = "/vault-request";
 		expect(beforeSend(payload)).toBeNull();
+		location.pathname = "/agents";
+		location.hostname = "localhost";
+		expect(beforeSend(payload)).toBeNull();
 	});
 	test("the host property never forwards URL credentials, paths or query strings", () => {
 		for (const host of [
@@ -173,7 +242,7 @@ describe("product analytics events", () => {
 	test("SDK capture honors consent and keeps the existing identity", () => {
 		Object.defineProperty(globalThis, "window", {
 			configurable: true,
-			value: { location: { pathname: "/agents" } },
+			value: { location: { ...productionLocation } },
 		});
 		Object.defineProperty(globalThis, "navigator", {
 			configurable: true,
@@ -206,6 +275,7 @@ describe("product analytics events", () => {
 					distinct_id: "user_opaque",
 					$anon_distinct_id: "anon_opaque",
 					$session_id: "session_opaque",
+					$process_person_profile: false,
 					$current_url: "https://private.test/secret",
 					$referrer: "https://private.test",
 					$ip: "127.0.0.1",
@@ -220,6 +290,7 @@ describe("product analytics events", () => {
 			distinct_id: "user_opaque",
 			$anon_distinct_id: "anon_opaque",
 			$session_id: "session_opaque",
+			$process_person_profile: false,
 			feature: "files",
 			$set: { clerk_id: "user_opaque" },
 		});

@@ -12,7 +12,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from threading import Lock
-from time import monotonic
 from typing import Protocol, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -76,8 +75,6 @@ class _PostHogOperations(Protocol):
 
 
 _posthog_client: _PostHogOperations | None = None
-_posthog_init_attempted = False
-_posthog_init_retry_at = 0.0
 _posthog_client_lock = Lock()
 
 
@@ -100,13 +97,10 @@ def _before_send(msg: dict[str, object]) -> dict[str, object] | None:
 
 
 def _get_posthog_client() -> _PostHogOperations | None:
-    global _posthog_client, _posthog_init_attempted, _posthog_init_retry_at
+    global _posthog_client
     with _posthog_client_lock:
         if _posthog_client is not None:
             return _posthog_client
-        if _posthog_init_attempted or monotonic() < _posthog_init_retry_at:
-            return None
-        _posthog_init_attempted = True
         if not settings.posthog_api_key.strip():
             return None
         try:
@@ -116,18 +110,10 @@ def _get_posthog_client() -> _PostHogOperations | None:
                 project_api_key=settings.posthog_api_key.strip(),
                 host=settings.posthog_host,
                 disable_geoip=settings.posthog_disable_geoip,
-                sync_mode=settings.posthog_sync_mode,
-                timeout=settings.posthog_timeout,
-                flush_at=settings.posthog_flush_at,
-                flush_interval=settings.posthog_flush_interval,
-                max_queue_size=settings.posthog_max_queue_size,
-                max_retries=settings.posthog_max_retries,
                 debug=settings.debug,
                 before_send=_before_send,
             )
         except Exception:
-            _posthog_init_attempted = False
-            _posthog_init_retry_at = monotonic() + 30
             logger.warning("PostHog initialization failed")
         return _posthog_client
 
@@ -341,7 +327,15 @@ async def stage_session_sync(
     message_count: int | None = None,
     projection_complete: bool = True,
 ) -> None:
-    if not settings.posthog_api_key.strip():
+    """Mark the first successful sync under the caller's Session row lock.
+
+    Persist even when capture is disabled, so enabling analytics never replays
+    old sessions. The marker and event share the content transaction's rollback.
+    """
+    if session.first_synced_at is not None:
+        return
+    session.first_synced_at = session.content_uploaded_at
+    if not settings.posthog_api_key.strip() or not user.clerk_id:
         return
     if session.content_protocol == "events-v1" and projection_complete:
         message_count = await db.scalar(
@@ -352,11 +346,6 @@ async def stage_session_sync(
         )
     if not projection_complete:
         message_count = None
-    revision = (
-        str(session.event_revision)
-        if session.content_protocol == "events-v1"
-        else session.content_hash
-    )
     properties: dict[str, object] = {
         "protocol": session.content_protocol,
         "session_id": str(session.id),
@@ -369,7 +358,7 @@ async def stage_session_sync(
         db,
         "session_synced",
         user=user,
-        event_key=f"{session.id}:{session.content_protocol}:{revision}",
+        event_key=str(session.id),
         properties=properties,
-        timestamp=session.content_uploaded_at,
+        timestamp=session.created_at,
     )

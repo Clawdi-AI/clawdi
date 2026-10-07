@@ -30,6 +30,7 @@ secret_keys=(
 	PGBACKREST_REPO1_CIPHER_PASS
 	ADMIN_API_KEY
 	METRICS_BEARER_TOKEN
+	POSTHOG_API_KEY
 	CLERK_JWT_ISSUER
 	SENTRY_DSN
 	CLERK_SECRET_KEY
@@ -149,6 +150,10 @@ web = config.role("web")
   unless role_env.secret_keys.include?("METRICS_BEARER_TOKEN") &&
       role_env.secrets["METRICS_BEARER_TOKEN"] == "fake-render-value"
     raise "#{name} lost metrics bearer protection"
+  end
+  unless role_env.secret_keys.include?("POSTHOG_API_KEY") &&
+      role_env.secrets["POSTHOG_API_KEY"] == "fake-render-value"
+    raise "#{name} lost optional PostHog configuration"
   end
 end
 expected_web_env = {

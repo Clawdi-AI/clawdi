@@ -2,7 +2,7 @@
 
 import { settingsDialogClasses } from "@clawdi/shared/ui";
 
-import type { AgentTile } from "@clawdi/shared/view";
+import { type AgentTile, billingCopy, settingsCopy } from "@clawdi/shared/view";
 import type { ShouldBlockFn } from "@tanstack/react-router";
 import {
 	BarChart3,
@@ -77,27 +77,27 @@ type SettingsNavItem = {
 const SETTINGS_NAV: SettingsNavItem[] = [
 	{
 		id: "general",
-		label: "General",
-		description: "Account and appearance",
+		label: settingsCopy.general,
+		description: settingsCopy.generalSummary,
 		icon: SlidersHorizontal,
 	},
 	{
 		id: "api-keys",
-		label: "API Keys",
-		description: "CLI and server tokens",
+		label: settingsCopy.apiKeys,
+		description: settingsCopy.apiKeysSummary,
 		icon: Key,
 	},
 	{
 		id: "billing-wallet",
-		label: "Wallet",
-		description: "Balance, top-ups, and payment methods",
+		label: billingCopy.wallet,
+		description: billingCopy.walletSummary,
 		icon: WalletCards,
 		cloudOnly: true,
 	},
 	{
 		id: "billing-plan",
-		label: "Compute",
-		description: "Subscriptions and plans",
+		label: billingCopy.compute,
+		description: billingCopy.computeSummary,
 		icon: CreditCard,
 		cloudOnly: true,
 	},
@@ -232,7 +232,9 @@ export function SettingsDialog({
 				>
 					<div className={settingsDialogClasses.shell}>
 						<DialogHeader className={settingsDialogClasses.header}>
-							<DialogTitle className={settingsDialogClasses.title}>Settings</DialogTitle>
+							<DialogTitle className={settingsDialogClasses.title}>
+								{settingsCopy.title}
+							</DialogTitle>
 							<DialogDescription className={settingsDialogClasses.screenReader}>
 								Account, billing, and application settings.
 							</DialogDescription>
