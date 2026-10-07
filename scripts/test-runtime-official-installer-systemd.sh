@@ -66,7 +66,11 @@ docker exec "$container" bash -lc \
 		&& npm pack ./packages/cli --pack-destination /usr/local/share/clawdi/bootstrap --silent >/dev/null \
 		&& mv /usr/local/share/clawdi/bootstrap/clawdi-*.tgz \
 			/usr/local/share/clawdi/bootstrap/clawdi-local.tgz'
+# DefaultTasksMax is 15% of the container's PID limit: init.scope gets only
+# 76 tasks with --pids-limit=512. Keep the test driver and its build subprocesses
+# in a dedicated scope with the full (still container-bounded) task budget.
 docker exec --env CLAWDI_TEST_REAL_OPENCLAW_SYSTEMD=1 "$container" \
+	systemd-run --scope --quiet --property=TasksMax=512 \
 	bun test --isolate --max-concurrency=1 --timeout 30000 \
 	"$@" \
 	packages/cli/tests/e2e/runtime-official-installer-systemd.e2e.test.ts
