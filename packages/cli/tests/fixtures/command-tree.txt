@@ -5757,7 +5757,7 @@
 		"hidden": false,
 		"arguments": [],
 		"options": [],
-		"help": "Usage: clawdi agent projects [options] [command]\n\nView workspace and linked projects\n\nOptions:\n  -h, --help                   display help for command\n\nCommands:\n  list [options] <agent-id>    Show workspace and linked-project vault priority\n  link [options] <agent-id>    Link a project for vault resolution\n  unlink [options] <agent-id>  Unlink a project from vault resolution\n  move [options] <agent-id>    Update vault resolution priority\n  help [command]               display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi agent projects [options] [command]\n\nView workspace and linked projects\n\nOptions:\n  -h, --help                   display help for command\n\nCommands:\n  list [options] <agent-id>    Show workspace and linked-project vault priority\n  link [options] <agent-id>    Link a project for vault resolution\n  unlink [options] <agent-id>  Unlink a project from vault resolution\n  move [options] <agent-id>    Update vault resolution priority\n  help [command]               display help for command\n\nLegacy aliases remain available: attach, detach.\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi agent projects list",

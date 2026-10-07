@@ -245,7 +245,8 @@ Examples:
 
 	const agentProjectsCmd = agentCmd
 		.command("projects")
-		.description("View workspace and linked projects");
+		.description("View workspace and linked projects")
+		.addHelpText("after", "\nLegacy aliases remain available: attach, detach.");
 
 	agentProjectsCmd
 		.command("list <agent-id>")
