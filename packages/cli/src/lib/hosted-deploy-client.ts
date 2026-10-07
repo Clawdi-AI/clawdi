@@ -90,6 +90,7 @@ function checkoutRetryDelay(response: Response): number | null {
 	if (response.status !== 409 && response.status !== 503) return null;
 	return parseRetryAfter(response.headers.get("Retry-After"), {
 		maxMs: MAX_CHECKOUT_RETRY_AFTER_MS,
+		format: "legacy-number",
 	});
 }
 
