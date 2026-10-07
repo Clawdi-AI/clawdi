@@ -81,6 +81,13 @@ typed errors. After explicit user intent, call
    a deploy continuation. A
    `reconciliation_required` hold stops polling and keeps blocking another buy.
 
+`purchase()` passes one fixed overall deadline through confirmation and polling.
+After a confirmation returns `verification_pending` (including hosted lock
+contention), polling that observes `expired` with the saved transaction hint
+returns `submitted` and clears the journal without confirming again. Each attempt
+is confirmed at most once per purchase/recovery invocation; retries after an
+uncertain failure remain idempotent.
+
 `StorePurchaseError.code` uses `readStoreErrorCode` from `@clawdi/shared/api`;
 raw SDK/server messages stay private. Uncertain native/deferred errors retain
 the purchase-start marker. Retrying reconciles without another store charge.

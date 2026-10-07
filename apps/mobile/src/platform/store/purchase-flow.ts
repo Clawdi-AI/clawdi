@@ -160,7 +160,7 @@ export function createPurchaseFlow(options: {
 		attempt: StorePurchaseAttempt,
 		saved: SavedPurchaseAttempt | null,
 		signal: AbortSignal,
-		deadline = clock.now() + 120_000,
+		deadline: number,
 	): Promise<PurchaseOutcome> {
 		if (clock.now() >= deadline) return finish(attempt, saved, signal);
 		const controller = new AbortController();
@@ -190,19 +190,16 @@ export function createPurchaseFlow(options: {
 			signal.removeEventListener("abort", abort);
 		}
 		if (attempt.state === "expired" && saved?.transactionHint)
-			return reconcile(attempt, saved, signal, deadline);
+			return finish(attempt, saved, signal, true);
 		return finish(attempt, saved, signal);
 	}
 	async function reconcile(
 		attempt: StorePurchaseAttempt,
 		saved: SavedPurchaseAttempt | null,
 		signal: AbortSignal,
-		deadline?: number,
+		deadline: number,
 	) {
-		if (
-			finished(attempt, saved) ||
-			(deadline !== undefined && clock.now() >= deadline && attempt.state !== "expired")
-		)
+		if (finished(attempt, saved) || (clock.now() >= deadline && attempt.state !== "expired"))
 			return finish(attempt, saved, signal);
 		const ready = identity.requireReady(signal);
 		if (!saved?.transactionHint) {
@@ -247,6 +244,7 @@ export function createPurchaseFlow(options: {
 			busy = true;
 			try {
 				return await run(async (signal) => {
+					const deadline = clock.now() + 120_000;
 					const ready = await checkIdentity(signal);
 					let saved = await journal.readSavedAttempt(storageKey);
 					assertStoreAccount(scope, signal);
@@ -264,7 +262,7 @@ export function createPurchaseFlow(options: {
 							isFinishedPurchase(existing.attempt.state) &&
 							existing.attempt.state !== "reconciliation_required"
 						) {
-							const outcome = await reconcile(existing.attempt, saved, signal);
+							const outcome = await reconcile(existing.attempt, saved, signal, deadline);
 							if (
 								outcome.status === "pending" ||
 								outcome.attempt.state === "reconciliation_required"
@@ -302,7 +300,7 @@ export function createPurchaseFlow(options: {
 						saved.transactionHint ||
 						created.attempt.state !== "prepared"
 					)
-						return reconcile(created.attempt, saved, signal);
+						return reconcile(created.attempt, saved, signal, deadline);
 					const started = { ...saved, purchaseStarted: true, cancelled: false };
 					await journal.replaceAttempt(storageKey, saved, started, () => current(signal));
 					saved = started;
@@ -327,7 +325,7 @@ export function createPurchaseFlow(options: {
 						throw new StorePurchaseError("invalid_store_result");
 					const purchased = { ...saved, transactionHint: hint };
 					await journal.replaceAttempt(storageKey, saved, purchased, () => current(signal));
-					return reconcile(created.attempt, purchased, signal);
+					return reconcile(created.attempt, purchased, signal, deadline);
 				});
 			} finally {
 				busy = false;

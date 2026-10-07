@@ -622,21 +622,35 @@ describe("durable store attempts", () => {
 		expect(next.status).toBe("cancelled");
 		expect(f.newKey).toHaveBeenCalledTimes(2);
 	});
-	test("paid expiry observed while polling confirms the expired attempt once and returns submitted", async () => {
+	test("55P03 becomes verification_pending then expired without a confirmation loop", async () => {
+		const f = fixture();
+		await f.initialize();
+		// Hosted maps 55P03 lock contention to this acknowledgement on every confirm.
+		f.confirmPurchaseAttempt.mockImplementation(async () => {
+			f.setAttempt("expired");
+			return {
+				state: "verification_pending",
+				code: "reconciliation_pending",
+				correlation_id: "safe-correlation",
+			};
+		});
+		expect((await f.makeFlow().purchase(intent, async () => transaction)).status).toBe("submitted");
+		expect(f.confirmPurchaseAttempt).toHaveBeenCalledTimes(1);
+		expect(f.delays).toEqual([2000]);
+		expect(f.values.size).toBe(0);
+	});
+	test("purchase confirmation and polling consume one fixed overall deadline", async () => {
 		const f = fixture();
 		await f.initialize();
 		f.confirmPurchaseAttempt.mockImplementationOnce(async () => {
-			f.setAttempt("expired");
+			f.advanceTime(60_000);
 			return { state: "verification_pending", correlation_id: "safe-correlation" };
 		});
-		f.confirmPurchaseAttempt.mockImplementationOnce(async () => ({
-			state: "expired",
-			correlation_id: "safe-correlation",
-		}));
-		expect((await f.makeFlow().purchase(intent, async () => transaction)).status).toBe("submitted");
-		expect(f.confirmPurchaseAttempt).toHaveBeenCalledTimes(2);
-		expect(f.delays).toEqual([2000]);
-		expect(f.values.size).toBe(0);
+		expect((await f.makeFlow().purchase(intent, async () => transaction)).status).toBe("pending");
+		expect(f.delays).toEqual([2000, 4000, 8000, 16000, 30000]);
+		expect(f.delays.reduce((total, delay) => total + delay, 0)).toBe(60_000);
+		expect(f.confirmPurchaseAttempt).toHaveBeenCalledTimes(1);
+		expect(f.values.size).toBe(1);
 	});
 	test("a different purpose submits the old expired paid evidence before preparing a new purchase", async () => {
 		const f = fixture();
