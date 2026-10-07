@@ -83,6 +83,14 @@ export function managedSkillTargetMatchesSource(
 	);
 }
 
+export function makeSkillStagingReadable(path: string): void {
+	const node = lstatSync(path);
+	if (node.isDirectory()) {
+		chmodSync(path, 0o755);
+		for (const entry of readdirSync(path)) makeSkillStagingReadable(join(path, entry));
+	} else chmodSync(path, node.mode & 0o111 ? 0o755 : 0o644);
+}
+
 export function withPreparedHostedSkill<T>(
 	skill: PreparedHostedSkill,
 	operation: (sourceDir: string) => T,
@@ -124,14 +132,7 @@ export function withPreparedHostedSkill<T>(
 		if (!existsSync(join(sourceDir, "SKILL.md")) || sourceTree.status !== "collected") {
 			throw new ManagedSkillResourceError(`prepared Skill archive is ${sourceTree.status}`);
 		}
-		const makeReadable = (path: string): void => {
-			const node = lstatSync(path);
-			if (node.isDirectory()) {
-				chmodSync(path, 0o755);
-				for (const entry of readdirSync(path)) makeReadable(join(path, entry));
-			} else chmodSync(path, node.mode & 0o111 ? 0o755 : 0o644);
-		};
-		makeReadable(root);
+		makeSkillStagingReadable(root);
 		operationStarted = true;
 		return operation(sourceDir);
 	} catch (error) {
