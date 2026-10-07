@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DeployComponents, DeploymentRead } from "@clawdi/shared/api";
 import { expect, type Page, type Route } from "@playwright/test";
-import type { WalletState } from "../src/hosted/billing/contracts";
+import type { WalletState, WalletTransaction } from "../src/hosted/billing/contracts";
 
 export type DeploymentComputeSubscription = NonNullable<
 	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
@@ -212,6 +212,7 @@ export function mutationDeploymentReadFixture(
 
 	return {
 		agent_id: fixtureAgentId(deployment),
+		provisioning_path: "standard",
 		resource: {
 			id: deployment.id,
 			name: deployment.name,
@@ -886,6 +887,7 @@ export type HostedApiStubOptions = {
 	topUpRequests?: string[];
 	topUpResponses?: StubResponse[];
 	walletState?: WalletState;
+	walletTransactions?: readonly WalletTransaction[];
 	onTopUpSuccess?: () => void;
 	onWalletCheckoutSuccess?: () => void;
 };
@@ -1009,7 +1011,11 @@ export async function stubHostedApi(page: Page, options: HostedApiStubOptions = 
 			return fulfillJson(r, currentWallet);
 		}
 		if (p === "/v2/wallet/transactions" && r.request().method() === "GET") {
-			return fulfillJson(r, { items: [], has_more: false, next_cursor: null });
+			return fulfillJson(r, {
+				items: options.walletTransactions ?? [],
+				has_more: false,
+				next_cursor: null,
+			});
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
 			if (new URL(r.request().url()).searchParams.get("eventStreamHandoff") === "true") {

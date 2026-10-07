@@ -16,7 +16,6 @@ import {
 	getClawdiDir,
 	getPendingAuth,
 	getStoredAuth,
-	type LegacyPendingAuth,
 	type PendingAuth,
 	setAuth,
 	setPendingAuth,
@@ -28,8 +27,6 @@ import {
 
 const REQUEST_TIMEOUT_MS = 20_000;
 const ACCESS_TOKEN_REFRESH_SKEW_MS = 60_000;
-const JWT_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
-const OAUTH_ACCESS_TOKEN_TYPES = new Set(["at+jwt", "application/at+jwt"]);
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const REQUIRED_DISCOVERY_GRANTS = [DEVICE_GRANT, "refresh_token"] as const;
 const REQUIRED_SCOPES = ["openid", "profile", "email", "offline_access"] as const;
@@ -37,8 +34,6 @@ const REQUIRED_SCOPES = ["openid", "profile", "email", "offline_access"] as cons
 export type ClerkOAuthClientConfig = {
 	issuer: string;
 	clientId: string;
-	audience: string;
-	authorizedParties: string[];
 };
 
 export type ClerkOAuthDiscovery = {
@@ -279,7 +274,7 @@ export type ClerkOAuthCloudVerification =
 export type StoredCredentialIdentity =
 	| { kind: "none" }
 	| { kind: "legacy_api_key"; digest: string }
-	| { kind: "clerk_oauth"; subject: string };
+	| { kind: "clerk_oauth"; userId: string };
 
 export type CredentialLogoutResult = {
 	loggedOut: boolean;
@@ -300,28 +295,6 @@ function nonEmptyString(value: unknown, maxLength = 8_192): string | null {
 function stringArray(value: unknown): string[] | null {
 	if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) return null;
 	return value.map((item) => item.trim()).filter(Boolean);
-}
-
-function base64UrlJson(segment: string): Record<string, unknown> | null {
-	try {
-		const decoded = Buffer.from(segment, "base64url").toString("utf8");
-		const parsed: unknown = JSON.parse(decoded);
-		return isRecord(parsed) ? parsed : null;
-	} catch {
-		return null;
-	}
-}
-
-function oauthJwtParts(token: string): {
-	header: Record<string, unknown>;
-	payload: Record<string, unknown>;
-} | null {
-	if (!JWT_PATTERN.test(token)) return null;
-	const [headerSegment, payloadSegment] = token.split(".");
-	if (!headerSegment || !payloadSegment) return null;
-	const header = base64UrlJson(headerSegment);
-	const payload = base64UrlJson(payloadSegment);
-	return header && payload ? { header, payload } : null;
 }
 
 function validCanonicalHostname(hostname: string): boolean {
@@ -381,38 +354,6 @@ function exactIssuerEndpoint(raw: string, issuer: string, label: string): string
 	return url.toString();
 }
 
-function exactAuthorizedParty(raw: string): string {
-	const trimmed = raw.trim();
-	let url: URL;
-	try {
-		url = new URL(trimmed);
-	} catch {
-		throw new ClerkOAuthError("invalid_oauth_config", "Clawdi OAuth authorized party is invalid.");
-	}
-	const loopback =
-		url.hostname === "localhost" ||
-		url.hostname === "127.0.0.1" ||
-		url.hostname === "[::1]" ||
-		url.hostname === "::1";
-	if (
-		(url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) ||
-		!validCanonicalHostname(url.hostname) ||
-		url.username ||
-		url.password ||
-		url.pathname !== "/" ||
-		url.search ||
-		url.hash ||
-		trimmed.includes("?") ||
-		trimmed.includes("#")
-	) {
-		throw new ClerkOAuthError(
-			"invalid_oauth_config",
-			"Clawdi OAuth authorized party must be a secure origin.",
-		);
-	}
-	return url.origin;
-}
-
 async function fetchWithTimeout(
 	request: Request,
 	signal?: AbortSignal,
@@ -466,18 +407,12 @@ export async function fetchClerkOAuthClientConfig(
 	}
 	const issuer = nonEmptyString(body.issuer, 2_048);
 	const clientId = nonEmptyString(body.client_id, 512);
-	const audience = typeof body.audience === "string" ? body.audience.trim() : null;
-	const authorizedParties =
-		body.authorized_parties === undefined ? [] : stringArray(body.authorized_parties);
-
-	if (!issuer || !clientId || audience === null || audience.length > 512 || !authorizedParties) {
+	if (!issuer || !clientId) {
 		throw new ClerkOAuthError("invalid_oauth_config", "Clawdi returned incomplete OAuth settings.");
 	}
 	return {
 		issuer: exactIssuer(issuer),
 		clientId,
-		audience,
-		authorizedParties: authorizedParties.map(exactAuthorizedParty),
 	};
 }
 
@@ -653,85 +588,12 @@ export async function startClerkDeviceAuthorization({
 		interval,
 		issuer: config.issuer,
 		clientId: config.clientId,
-		audience: config.audience,
-		authorizedParties: config.authorizedParties,
 		tokenEndpoint: discovery.tokenEndpoint,
 		expiresAt: new Date(now() + expiresIn * 1_000).toISOString(),
 		apiUrl: endpointBinding.cloudApiOrigin,
 		endpointBinding,
 		scopes: [...REQUIRED_SCOPES],
 	};
-}
-
-function validateOAuthAccessToken({
-	token,
-	issuer,
-	clientId,
-	audience,
-	authorizedParties,
-	now,
-}: {
-	token: string;
-	issuer: string;
-	clientId: string;
-	audience: string;
-	authorizedParties: readonly string[];
-	now: number;
-}): { expiresAt: string; userId: string } {
-	const parts = oauthJwtParts(token);
-	const headerType = parts?.header.typ;
-	const headerAlgorithm = parts?.header.alg;
-	const payload = parts?.payload;
-	const tokenAudience = payload?.aud;
-	const audienceMatches =
-		!audience ||
-		tokenAudience === undefined ||
-		(typeof tokenAudience === "string" && tokenAudience.length > 0 && tokenAudience === audience) ||
-		(Array.isArray(tokenAudience) &&
-			tokenAudience.length > 0 &&
-			tokenAudience.every((item) => typeof item === "string" && item.length > 0) &&
-			tokenAudience.some((item) => item === audience));
-	const authorizedParty = payload?.azp;
-	const authorizedPartyMatches =
-		authorizedParties.length === 0 ||
-		(typeof authorizedParty === "string" &&
-			authorizedParty.length > 0 &&
-			authorizedParties.includes(authorizedParty));
-	const issuedAt = payload?.iat;
-	const notBefore = payload?.nbf;
-	const expiresAtMs = typeof payload?.exp === "number" ? payload.exp * 1_000 : Number.NaN;
-	const expiresAtDate = new Date(expiresAtMs);
-	if (
-		!parts ||
-		typeof headerType !== "string" ||
-		!OAUTH_ACCESS_TOKEN_TYPES.has(headerType) ||
-		headerAlgorithm !== "RS256" ||
-		payload?.iss !== issuer ||
-		payload.client_id !== clientId ||
-		!audienceMatches ||
-		!authorizedPartyMatches ||
-		typeof payload.sub !== "string" ||
-		!payload.sub ||
-		typeof payload.exp !== "number" ||
-		!Number.isInteger(payload.exp) ||
-		!Number.isFinite(expiresAtMs) ||
-		Number.isNaN(expiresAtDate.getTime()) ||
-		expiresAtMs <= now + 5_000 ||
-		(issuedAt !== undefined &&
-			(typeof issuedAt !== "number" ||
-				!Number.isInteger(issuedAt) ||
-				issuedAt * 1_000 > now + 5_000)) ||
-		(notBefore !== undefined &&
-			(typeof notBefore !== "number" ||
-				!Number.isInteger(notBefore) ||
-				notBefore * 1_000 > now + 5_000))
-	) {
-		throw new ClerkOAuthError(
-			"invalid_oauth_token",
-			"Clerk returned an access token for the wrong issuer, client, audience, or authorized party.",
-		);
-	}
-	return { expiresAt: expiresAtDate.toISOString(), userId: payload.sub };
 }
 
 function tokenFormRequest(endpoint: string, body: URLSearchParams): Request {
@@ -751,10 +613,9 @@ async function tokenResponse(
 	context: {
 		issuer: string;
 		clientId: string;
-		audience: string;
-		authorizedParties: readonly string[];
 		tokenEndpoint: string;
 		now: number;
+		priorUserId?: string;
 		priorRefreshToken?: string;
 	},
 ): Promise<ClerkOAuthAuth> {
@@ -789,33 +650,31 @@ async function tokenResponse(
 	const refreshToken = nonEmptyString(body.refresh_token) ?? context.priorRefreshToken ?? null;
 	const tokenType = nonEmptyString(body.token_type, 64);
 	const scope = nonEmptyString(body.scope, 4_096) ?? REQUIRED_SCOPES.join(" ");
-	if (!accessToken || !refreshToken || tokenType?.toLowerCase() !== "bearer") {
+	const expiresIn = body.expires_in;
+	if (
+		!accessToken ||
+		!refreshToken ||
+		tokenType?.toLowerCase() !== "bearer" ||
+		typeof expiresIn !== "number" ||
+		!Number.isInteger(expiresIn) ||
+		expiresIn < 1 ||
+		expiresIn > 604_800
+	) {
 		throw new ClerkOAuthError(
 			"invalid_oauth_response",
 			"Clerk returned an incomplete token response.",
 		);
 	}
-	const validated = validateOAuthAccessToken({
-		token: accessToken,
-		issuer: context.issuer,
-		clientId: context.clientId,
-		audience: context.audience,
-		authorizedParties: context.authorizedParties,
-		now: context.now,
-	});
 	return {
 		authType: "clerk_oauth",
 		apiKey: accessToken,
 		refreshToken,
-		accessTokenExpiresAt: validated.expiresAt,
+		accessTokenExpiresAt: new Date(context.now + expiresIn * 1_000).toISOString(),
 		issuer: context.issuer,
 		clientId: context.clientId,
-		audience: context.audience,
-		authorizedParties: [...context.authorizedParties],
 		tokenEndpoint: context.tokenEndpoint,
 		scopes: scope.split(/\s+/).filter(Boolean),
-		subject: validated.userId,
-		userId: validated.userId,
+		userId: context.priorUserId ?? "",
 	};
 }
 
@@ -895,8 +754,6 @@ export async function pollClerkDeviceTokenOnce(
 	const auth = await tokenResponse(response, {
 		issuer: pending.issuer,
 		clientId: pending.clientId,
-		audience: pending.audience,
-		authorizedParties: pending.authorizedParties ?? [],
 		tokenEndpoint: endpoint,
 		now: now(),
 	});
@@ -942,7 +799,7 @@ function credentialLockPath(): string {
 
 function identityOf(auth: ReturnType<typeof getStoredAuth>): StoredCredentialIdentity {
 	if (!auth) return { kind: "none" };
-	if (isClerkOAuthAuth(auth)) return { kind: "clerk_oauth", subject: auth.subject };
+	if (isClerkOAuthAuth(auth)) return { kind: "clerk_oauth", userId: auth.userId };
 	return {
 		kind: "legacy_api_key",
 		digest: createHash("sha256").update(auth.apiKey).digest("hex"),
@@ -956,7 +813,7 @@ function sameCredentialIdentity(
 	if (left.kind !== right.kind) return false;
 	if (left.kind === "none" && right.kind === "none") return true;
 	if (left.kind === "clerk_oauth" && right.kind === "clerk_oauth") {
-		return left.subject === right.subject;
+		return left.userId === right.userId;
 	}
 	return (
 		left.kind === "legacy_api_key" &&
@@ -965,10 +822,7 @@ function sameCredentialIdentity(
 	);
 }
 
-function pendingMatches(
-	left: PendingAuth | LegacyPendingAuth | null,
-	right: PendingAuth | LegacyPendingAuth,
-): boolean {
+function pendingMatches(left: PendingAuth | null, right: PendingAuth): boolean {
 	return left?.authType === right.authType && left?.state === right.state;
 }
 
@@ -1020,7 +874,7 @@ export async function persistClerkDeviceSlowDown(pending: PendingAuth): Promise<
 }
 
 export async function clearPendingClerkOAuthLogin(
-	pending: PendingAuth | LegacyPendingAuth,
+	pending: PendingAuth,
 	lockOptions?: PrivateDirectoryLockOptions,
 ): Promise<void> {
 	if (process.env.CLAWDI_AUTH_TOKEN) return;
@@ -1131,7 +985,7 @@ async function rejectClerkOAuthGrant(
 				const current = getStoredAuth();
 				if (
 					isClerkOAuthAuth(current) &&
-					current.subject === auth.subject &&
+					current.userId === auth.userId &&
 					current.refreshToken === auth.refreshToken
 				) {
 					lease.assertOwned();
@@ -1255,14 +1109,40 @@ export async function verifyAndPersistClerkOAuthLogin(
 		);
 	}
 
-	await persistVerifiedGrant(
-		apiUrl,
-		{ ...auth, userId: profile.id, email: profile.email },
-		expected,
-		options.pending,
-		fetcher,
-		options.refreshLock,
-	);
+	try {
+		await persistVerifiedGrant(
+			apiUrl,
+			{ ...auth, userId: profile.id, email: profile.email },
+			expected,
+			options.pending,
+			fetcher,
+			options.refreshLock,
+		);
+	} catch (error) {
+		// The access token is intentionally opaque to the CLI. If another
+		// process committed the same Cloud account while this request was in
+		// flight, the profile response is the authoritative identity check.
+		const current = getStoredAuth();
+		const currentBinding = isClerkOAuthAuth(current)
+			? normalizedBinding(current.endpointBinding)
+			: null;
+		const authBinding = normalizedBinding(auth.endpointBinding);
+		if (
+			error instanceof ClerkOAuthError &&
+			error.code === "credential_state_changed" &&
+			isClerkOAuthAuth(current) &&
+			current.userId === profile.id &&
+			current.issuer === auth.issuer &&
+			current.clientId === auth.clientId &&
+			current.tokenEndpoint === auth.tokenEndpoint &&
+			currentBinding?.cloudApiOrigin === authBinding?.cloudApiOrigin &&
+			currentBinding?.hostedApiOrigin === authBinding?.hostedApiOrigin
+		) {
+			if (options.pending) await clearPendingClerkOAuthLogin(options.pending);
+			return { kind: "verified", user: profile };
+		}
+		throw error;
+	}
 	return { kind: "verified", user: profile };
 }
 
@@ -1275,14 +1155,9 @@ export function isClerkOAuthAuth(value: unknown): value is ClerkOAuthAuth {
 		typeof value.accessTokenExpiresAt === "string" &&
 		typeof value.issuer === "string" &&
 		typeof value.clientId === "string" &&
-		typeof value.audience === "string" &&
-		(value.authorizedParties === undefined ||
-			(Array.isArray(value.authorizedParties) &&
-				value.authorizedParties.every((party) => typeof party === "string"))) &&
 		typeof value.tokenEndpoint === "string" &&
 		Array.isArray(value.scopes) &&
 		value.scopes.every((scope) => typeof scope === "string") &&
-		typeof value.subject === "string" &&
 		typeof value.userId === "string"
 	);
 }
@@ -1305,18 +1180,11 @@ async function refreshClerkOAuthGrant(
 	const refreshed = await tokenResponse(await fetcher(tokenFormRequest(tokenEndpoint, form)), {
 		issuer,
 		clientId: auth.clientId,
-		audience: auth.audience,
-		authorizedParties: auth.authorizedParties ?? [],
 		tokenEndpoint,
 		now: now(),
 		priorRefreshToken: auth.refreshToken,
+		priorUserId: auth.userId,
 	});
-	if (refreshed.subject !== auth.subject) {
-		throw new ClerkOAuthError(
-			"oauth_subject_changed",
-			"Clerk returned a refreshed session for a different user. Run `clawdi auth login` again.",
-		);
-	}
 	refreshed.email = auth.email;
 	refreshed.userId = auth.userId;
 	refreshed.endpointBinding = auth.endpointBinding;
@@ -1325,7 +1193,7 @@ async function refreshClerkOAuthGrant(
 
 function sameRefreshCredential(current: ClerkOAuthAuth, failed: ClerkOAuthAuth): boolean {
 	return (
-		current.subject === failed.subject &&
+		current.userId === failed.userId &&
 		current.refreshToken === failed.refreshToken &&
 		current.issuer === failed.issuer &&
 		current.clientId === failed.clientId &&

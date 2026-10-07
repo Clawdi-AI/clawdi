@@ -37,7 +37,7 @@ bun scripts/ui-parity/fixture-api.ts --port 9000 --host 127.0.0.1
   Use the same origin for both API URLs; no separate compute port is needed.
   Hosted fixtures include the original two running deployments, four additional
   deployment states, Included Basic and paid Performance subscriptions, a Wallet
-  balance/transactions, plans and managed models.
+  balance/transactions, AI usage, plans and managed models.
   Runtime infrastructure and live event streams are deliberately absent.
 - During parallel verification, keep the shared `:8787` server untouched and
   start your copy with `--port 8791`. Stop only the server you started.
@@ -48,6 +48,11 @@ request IDs: `request-<deployment-id>`; operation IDs: `op-<deployment-id>`.
 Stable IDs used by the default routes: agent `c1a0de00-0001-4c00-8000-000000000001`
 (Claude Code), session `5e550000-0001-4000-8000-000000000001`, project
 `a0f1c2d3-0002-4a00-8000-000000000002` (Acme Web App), vault slug `acme-prod`.
+
+Agent profiles: Claude Code has the default profile, `work`, removed `personal`
+and an idle `staging` profile with no sessions (profile ids
+`9f0f0000-0001-4000-8000-c1a0de00000N`, N=1–4); Research Hermes has the default
+profile and `research`. `GET /v1/sessions?profile_key=` filters by profile.
 
 ### Form and flow states
 
@@ -107,7 +112,7 @@ Additional hosted rows:
 | Deployment | Agent ID | Subscription / state |
 | --- | --- | --- |
 | `hdep_ParityStopped` | `4e2e5000-0005-4c00-8000-000000000005` | `csub_ParityStopped`; stopped, active paid Performance |
-| `hdep_ParityFailed` | `4e2e5000-0006-4c00-8000-000000000006` | `csub_ParityFailed`; failed with RuntimeStartFailed condition |
+| `hdep_ParityFailed` | `4e2e5000-0006-4c00-8000-000000000006` | `csub_ParityFailed`; failed with RuntimeStartFailed condition, cancellation scheduled at period end |
 | `hdep_ParityStarting` | `4e2e5000-0007-4c00-8000-000000000007` | `csub_ParityStarting`; starting, operation still pending |
 | `hdep_ParityDunning` | `4e2e5000-0008-4c00-8000-000000000008` | `csub_ParityDunning`; stopped, past_due, wallet top-up recovery |
 

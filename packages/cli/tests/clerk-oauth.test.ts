@@ -31,14 +31,11 @@ import {
 } from "../src/lib/config";
 
 const NOW = Date.parse("2026-07-28T00:00:00Z");
-const AUTHORIZED_PARTY = "https://accounts.clawdi.test";
 const CLOUD_API_URL = "https://cloud.example.test";
 const HOSTED_API_URL = "https://deploy.example.test";
 const CONFIG: ClerkOAuthClientConfig = {
 	issuer: "https://clerk.example.test",
 	clientId: "clawdi-cli",
-	audience: "clawdi-api",
-	authorizedParties: [AUTHORIZED_PARTY],
 };
 const DISCOVERY: ClerkOAuthDiscovery = {
 	issuer: CONFIG.issuer,
@@ -46,21 +43,8 @@ const DISCOVERY: ClerkOAuthDiscovery = {
 	tokenEndpoint: `${CONFIG.issuer}/oauth/token`,
 };
 
-function encode(value: unknown): string {
-	return Buffer.from(JSON.stringify(value)).toString("base64url");
-}
-
-function accessToken(overrides: Record<string, unknown> = {}): string {
-	return `${encode({ alg: "RS256", typ: "at+jwt" })}.${encode({
-		iss: CONFIG.issuer,
-		client_id: CONFIG.clientId,
-		aud: CONFIG.audience,
-		azp: AUTHORIZED_PARTY,
-		sub: "user_same_sub",
-		iat: Math.floor(NOW / 1_000),
-		exp: Math.floor(NOW / 1_000) + 3_600,
-		...overrides,
-	})}.signature`;
+function accessToken(_overrides: Record<string, unknown> = {}): string {
+	return "opaque-access-token";
 }
 
 function storedOAuth(overrides: Partial<ClerkOAuthAuth> = {}): ClerkOAuthAuth {
@@ -71,10 +55,8 @@ function storedOAuth(overrides: Partial<ClerkOAuthAuth> = {}): ClerkOAuthAuth {
 		accessTokenExpiresAt: new Date(NOW - 1_000).toISOString(),
 		issuer: CONFIG.issuer,
 		clientId: CONFIG.clientId,
-		audience: CONFIG.audience,
 		tokenEndpoint: DISCOVERY.tokenEndpoint,
 		scopes: ["openid", "profile", "email"],
-		subject: "user_same_sub",
 		userId: "cloud-local-user",
 		endpointBinding: {
 			version: 1,
@@ -96,8 +78,6 @@ function pending(): PendingAuth {
 		interval: 5,
 		issuer: CONFIG.issuer,
 		clientId: CONFIG.clientId,
-		audience: CONFIG.audience,
-		authorizedParties: CONFIG.authorizedParties,
 		tokenEndpoint: DISCOVERY.tokenEndpoint,
 		expiresAt: new Date(NOW + 10 * 60_000).toISOString(),
 		apiUrl: CLOUD_API_URL,
@@ -156,6 +136,7 @@ function tokenResponse(token: string, refreshToken = "refresh-new"): Response {
 		access_token: token,
 		refresh_token: refreshToken,
 		token_type: "Bearer",
+		expires_in: 3600,
 		scope: "openid profile email offline_access",
 	});
 }
@@ -185,43 +166,18 @@ afterEach(() => {
 });
 
 describe("Clerk public OAuth device authorization", () => {
-	test("loads optional audience and independent authorized-party origins", async () => {
+	test("ignores legacy audience and authorized-party response fields", async () => {
 		const config = await fetchClerkOAuthClientConfig("https://cloud.example.test", {
 			fetch: async () =>
 				Response.json({
 					issuer: CONFIG.issuer,
 					client_id: CONFIG.clientId,
-					audience: "",
-					authorized_parties: [`${AUTHORIZED_PARTY}/`, "https://BÜCHER.example:443/"],
-					redirect_uri: "ignored-by-device-flow",
+					audience: "legacy-audience",
+					authorized_parties: ["https://legacy.example.test"],
+					redirect_uri: "http://127.0.0.1:18473/oauth/callback",
 				}),
 		});
-		expect(config).toEqual({
-			...CONFIG,
-			audience: "",
-			authorizedParties: [AUTHORIZED_PARTY, "https://xn--bcher-kva.example"],
-		});
-	});
-
-	test.each([
-		"https://bad_host.example.test",
-		"https://-bad.example.test",
-		"https://accounts.example.test.",
-		"https://accounts.example.test?",
-		"https://accounts.example.test#",
-	])("rejects an invalid authorized-party origin %s", async (authorizedParty) => {
-		await expect(
-			fetchClerkOAuthClientConfig("https://cloud.example.test", {
-				fetch: async () =>
-					Response.json({
-						issuer: CONFIG.issuer,
-						client_id: CONFIG.clientId,
-						audience: CONFIG.audience,
-						authorized_parties: [authorizedParty],
-						redirect_uri: "ignored-by-device-flow",
-					}),
-			}),
-		).rejects.toThrow("authorized party");
+		expect(config).toEqual(CONFIG);
 	});
 
 	test.each([
@@ -241,8 +197,6 @@ describe("Clerk public OAuth device authorization", () => {
 				Response.json({
 					issuer,
 					client_id: CONFIG.clientId,
-					audience: CONFIG.audience,
-					authorized_parties: CONFIG.authorizedParties,
 					redirect_uri: "ignored-by-device-flow",
 				}),
 		});
@@ -275,8 +229,6 @@ describe("Clerk public OAuth device authorization", () => {
 					Response.json({
 						issuer,
 						client_id: CONFIG.clientId,
-						audience: CONFIG.audience,
-						authorized_parties: CONFIG.authorizedParties,
 						redirect_uri: "ignored-by-device-flow",
 					}),
 			}),
@@ -403,7 +355,7 @@ describe("Clerk public OAuth device authorization", () => {
 		const sleeps: number[] = [];
 		const requests: Request[] = [];
 		const replies = ["authorization_pending", "authorization_pending", "success"];
-		const auth = await pollClerkDeviceToken(pending(), {
+		await pollClerkDeviceToken(pending(), {
 			now: () => time,
 			sleep: async (ms) => {
 				sleeps.push(ms);
@@ -418,7 +370,6 @@ describe("Clerk public OAuth device authorization", () => {
 			},
 		});
 		expect(sleeps).toEqual([5_000, 5_000, 5_000]);
-		expect(auth.subject).toBe("user_same_sub");
 		expect(Object.fromEntries(new URLSearchParams(await requests[0]?.text()))).toEqual({
 			grant_type: "urn:ietf:params:oauth:grant-type:device_code",
 			device_code: "private-device-code",
@@ -510,84 +461,14 @@ describe("Clerk public OAuth device authorization", () => {
 		expect(calls).toBe(0);
 	});
 
-	test("rejects wrong issuer, audience, client, and authorized party", async () => {
-		const cases = [
-			{ iss: "https://wrong.example.test" },
-			{ iss: `${CONFIG.issuer}/` },
-			{ aud: "wrong-audience" },
-			{ client_id: "wrong-client" },
-			{ azp: "https://wrong-origin.example.test" },
-			{ exp: Number.MAX_SAFE_INTEGER },
-		];
-		for (const claims of cases) {
-			await expect(
-				pollDevice(pending(), {
-					now: () => NOW,
-					fetch: async () => tokenResponse(accessToken(claims)),
-				}),
-			).rejects.toThrow("wrong issuer, client, audience, or authorized party");
-		}
-	});
-
-	test("accepts Clerk access tokens without an optional audience", async () => {
-		const token = accessToken({ aud: undefined });
+	test("accepts an opaque access token and uses expires_in metadata", async () => {
 		const auth = await pollDevice(pending(), {
 			now: () => NOW,
-			fetch: async () => tokenResponse(token),
+			fetch: async () => tokenResponse("opaque-token"),
 		});
-		expect(auth.subject).toBe("user_same_sub");
-	});
-
-	test("binds authorized party only when Cloud config provides an expected origin", async () => {
-		const cases = [
-			{ authorizedParties: [], azp: undefined, accepted: true },
-			{ authorizedParties: [], azp: "https://unbound-origin.example.test", accepted: true },
-			{ authorizedParties: [AUTHORIZED_PARTY], azp: undefined, accepted: false },
-			{ authorizedParties: [AUTHORIZED_PARTY], azp: AUTHORIZED_PARTY, accepted: true },
-			{
-				authorizedParties: [AUTHORIZED_PARTY],
-				azp: "https://wrong-origin.example.test",
-				accepted: false,
-			},
-		] as const;
-
-		for (const testCase of cases) {
-			const transaction = { ...pending(), authorizedParties: [...testCase.authorizedParties] };
-			const exchange = pollDevice(transaction, {
-				now: () => NOW,
-				fetch: async () => tokenResponse(accessToken({ azp: testCase.azp })),
-			});
-			if (testCase.accepted) {
-				expect((await exchange).subject).toBe("user_same_sub");
-			} else {
-				await expect(exchange).rejects.toThrow(
-					"wrong issuer, client, audience, or authorized party",
-				);
-			}
-		}
-	});
-
-	test("binds audience only when both Cloud config and token provide it", async () => {
-		const cases = [
-			{ audience: "", aud: { unexpected: "shape" }, accepted: true },
-			{ audience: CONFIG.audience, aud: undefined, accepted: true },
-			{ audience: CONFIG.audience, aud: CONFIG.audience, accepted: true },
-			{ audience: CONFIG.audience, aud: "wrong-audience", accepted: false },
-		] as const;
-
-		for (const testCase of cases) {
-			const transaction = { ...pending(), audience: testCase.audience };
-			const exchange = pollDevice(transaction, {
-				now: () => NOW,
-				fetch: async () => tokenResponse(accessToken({ aud: testCase.aud })),
-			});
-			if (testCase.accepted) expect((await exchange).subject).toBe("user_same_sub");
-			else {
-				await expect(exchange).rejects.toThrow(
-					"wrong issuer, client, audience, or authorized party",
-				);
-			}
-		}
+		expect(auth.apiKey).toBe("opaque-token");
+		expect(auth.userId).toBe("");
+		expect(auth.accessTokenExpiresAt).toBe(new Date(NOW + 3_600_000).toISOString());
 	});
 
 	test("persists the refresh grant only after Cloud accepts and enriches it", async () => {
@@ -608,7 +489,6 @@ describe("Clerk public OAuth device authorization", () => {
 			authType: "clerk_oauth",
 			refreshToken: "refresh-secret",
 			scopes: ["openid", "profile", "email", "offline_access"],
-			subject: "user_same_sub",
 			userId: "cloud-local-user",
 			email: "user@example.test",
 		});
@@ -641,7 +521,6 @@ describe("Clerk public OAuth device authorization", () => {
 			expect(getAuth()).toMatchObject({
 				authType: "clerk_oauth",
 				refreshToken: `refresh-${testCase}`,
-				subject: "user_same_sub",
 			});
 			clearAuth();
 		}
@@ -689,10 +568,8 @@ describe("Clerk public OAuth device authorization", () => {
 			accessTokenExpiresAt: new Date(NOW - 1_000).toISOString(),
 			issuer: CONFIG.issuer,
 			clientId: CONFIG.clientId,
-			audience: CONFIG.audience,
 			tokenEndpoint: DISCOVERY.tokenEndpoint,
 			scopes: ["openid", "profile", "email"],
-			subject: "user_same_sub",
 			userId: "cloud-local-user",
 			endpointBinding: {
 				version: 1,
@@ -715,7 +592,6 @@ describe("Clerk public OAuth device authorization", () => {
 		expect(getAuth()).toMatchObject({
 			refreshToken: "refresh-rotated",
 			userId: "cloud-local-user",
-			subject: "user_same_sub",
 		});
 	});
 
@@ -739,6 +615,7 @@ describe("Clerk public OAuth device authorization", () => {
 					}),
 					refresh_token: "refresh-rotated",
 					token_type: "Bearer",
+					expires_in: 3600,
 					scope: "openid profile email",
 				}),
 			);
@@ -790,36 +667,6 @@ describe("Clerk public OAuth device authorization", () => {
 		}
 	});
 
-	test("clears a refresh credential when Clerk changes the subject", async () => {
-		const expiredToken = accessToken({ exp: Math.floor(NOW / 1_000) - 1 });
-		setAuth({
-			authType: "clerk_oauth",
-			apiKey: expiredToken,
-			refreshToken: "refresh-old",
-			accessTokenExpiresAt: new Date(NOW - 1_000).toISOString(),
-			issuer: CONFIG.issuer,
-			clientId: CONFIG.clientId,
-			audience: CONFIG.audience,
-			tokenEndpoint: DISCOVERY.tokenEndpoint,
-			scopes: ["openid", "profile", "email"],
-			subject: "user_same_sub",
-			userId: "cloud-local-user",
-			endpointBinding: {
-				version: 1,
-				cloudApiOrigin: CLOUD_API_URL,
-				hostedApiOrigin: HOSTED_API_URL,
-			},
-		});
-
-		await expect(
-			getClawdiAccessToken(CLOUD_API_URL, {
-				now: () => NOW,
-				fetch: async () => tokenResponse(accessToken({ sub: "user_other" })),
-			}),
-		).rejects.toThrow("different user");
-		expect(getStoredAuth()).toBeNull();
-	});
-
 	test("preserves refresh credentials for retryable transport and HTTP failures", async () => {
 		for (const failure of ["network", 408, 425, 429, 500, 503] as const) {
 			setAuth(storedOAuth());
@@ -846,7 +693,7 @@ describe("Clerk public OAuth device authorization", () => {
 				new Response('{"error":"invalid_grant","refresh_token":"must-not-leak"}', { status: 400 }),
 			() => new Response("invalid client secret detail", { status: 401 }),
 			() => Response.json({ token_type: "Bearer" }),
-			() => tokenResponse(accessToken({ iss: "https://wrong-issuer.example.test" })),
+			() => Response.json({ access_token: "opaque-token", token_type: "Bearer" }),
 		];
 		for (const response of failures) {
 			setAuth(storedOAuth());
@@ -888,10 +735,8 @@ describe("Clerk public OAuth device authorization", () => {
 			accessTokenExpiresAt: new Date(NOW + 60 * 60_000).toISOString(),
 			issuer: CONFIG.issuer,
 			clientId: CONFIG.clientId,
-			audience: CONFIG.audience,
 			tokenEndpoint: DISCOVERY.tokenEndpoint,
 			scopes: ["openid", "profile", "email"],
-			subject: "user_same_sub",
 			userId: "cloud-local-user",
 			endpointBinding: {
 				version: 1,

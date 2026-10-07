@@ -372,6 +372,8 @@ type SessionSeed = {
 	project: string;
 	tags?: string[];
 	automated?: boolean;
+	/** Non-default Agent profile; omitted for the default profile (`""`). */
+	profile?: string;
 };
 
 const claude = agents[0];
@@ -402,6 +404,7 @@ const sessionSeeds: SessionSeed[] = [
 	},
 	{
 		agent: claude,
+		profile: "work",
 		summary: "Design system: migrate buttons to new tokens",
 		model: "claude-sonnet-4-5",
 		ageMs: 5 * HOUR,
@@ -411,6 +414,7 @@ const sessionSeeds: SessionSeed[] = [
 	},
 	{
 		agent: hermes,
+		profile: "research",
 		summary: "Weekly competitor pricing digest",
 		model: "claude-sonnet-4-5",
 		ageMs: 9 * HOUR,
@@ -450,6 +454,7 @@ const sessionSeeds: SessionSeed[] = [
 	},
 	{
 		agent: claude,
+		profile: "work",
 		summary: "Write onboarding guide for new contributors",
 		model: "claude-sonnet-4-5",
 		ageMs: 2 * DAY + 6 * HOUR,
@@ -486,6 +491,7 @@ const sessionSeeds: SessionSeed[] = [
 	},
 	{
 		agent: claude,
+		profile: "personal",
 		summary: "Add dark mode to the marketing site",
 		model: "claude-sonnet-4-5",
 		ageMs: 5 * DAY + 1 * HOUR,
@@ -524,6 +530,7 @@ const sessionSeeds: SessionSeed[] = [
 	},
 	{
 		agent: hermes,
+		profile: "research",
 		summary: "Draft blog post on agent memory",
 		model: "claude-sonnet-4-5",
 		ageMs: 9 * DAY + 5 * HOUR,
@@ -604,7 +611,7 @@ const sessions = sessionSeeds.map((seed, index) => {
 		agent_display_name: seed.agent.display_name,
 		agent_default_name: seed.agent.default_name,
 		agent_type: seed.agent.agent_type,
-		profile_key: "",
+		profile_key: seed.profile ?? "",
 		machine_name: seed.agent.machine_name,
 		started_at: ago(startedMs),
 		ended_at: isActive ? null : ago(seed.ageMs),
@@ -631,6 +638,31 @@ const sessions = sessionSeeds.map((seed, index) => {
 }) satisfies (Schemas["SessionListItemResponse"] & { automated: boolean; agent_id: string })[];
 
 type Session = (typeof sessions)[number];
+
+/** Profiles that are no longer configured on the Agent's machine. */
+const removedProfiles: Record<string, string[]> = { [AGENT.claude]: ["personal"] };
+/** Configured profiles that have not synced a session yet. */
+const idleProfiles: Record<string, string[]> = { [AGENT.claude]: ["staging"] };
+
+/** Every Agent has its default profile; others come from its sessions or `idleProfiles`. */
+function agentProfiles(agentId: string): GetOk<"/v1/agents/{agent_id}/profiles"> {
+	const agentSessions = sessions.filter((session) => session.agent_id === agentId);
+	const keys = [
+		...new Set([
+			"",
+			...agentSessions.map((session) => session.profile_key),
+			...(idleProfiles[agentId] ?? []),
+		]),
+	];
+	const [prefix = "", segment = ""] = agentId.split("-");
+	return keys.map((key, index) => ({
+		id: `9f0f0000-${segment}-4000-8000-${prefix}${String(index + 1).padStart(4, "0")}`,
+		profile_key: key,
+		is_default: key === "",
+		state: removedProfiles[agentId]?.includes(key) ? "removed" : "active",
+		session_count: agentSessions.filter((session) => session.profile_key === key).length,
+	}));
+}
 
 function toSessionListItem(session: Session): Schemas["SessionListItemResponse"] {
 	const { automated: _automated, agent_id: _agentId, ...item } = session;
@@ -1988,7 +2020,8 @@ const deployments: DeploySchemas["V2HostedDeploymentReadResponse"][] = [
 				billing_term_months: 1,
 				price_cents: 2500,
 				currency: "usd",
-				cancel_at_period_end: false,
+				// The failed row exercises a paid subscription already scheduled to stop.
+				cancel_at_period_end: seed.state === "failed",
 				current_period_end: ago(seed.payment === "past_due" ? DAY : -20 * DAY),
 				next_payment_attempt_at: seed.payment === "past_due" ? ago(-DAY) : null,
 				recovery_action: seed.payment === "past_due" ? "top_up" : null,
@@ -2043,7 +2076,8 @@ const computeSubscriptions = {
 				currency: "usd",
 				billing_term_months: 1,
 				current_period_end: ago(-20 * DAY),
-				cancel_at_period_end: false,
+				cancel_at_period_end:
+					deployment.commercial_display?.compute_subscription?.cancel_at_period_end ?? false,
 				deployment_id: deployment.resource.id,
 				agent_name: deployment.resource.name,
 				is_orphan: false,
@@ -2080,23 +2114,23 @@ const wallet = {
 const walletTransactions = {
 	items: [
 		{
-			id: "txn_parity_topup",
-			kind: "topup",
-			occurred_at: ago(2 * DAY),
-			amount: "50.00",
+			id: "wallet:parity-store-refund",
+			kind: "store_refund",
+			occurred_at: ago(HOUR),
+			amount: "10.00",
 			currency: "usd",
-			direction: "credit",
-			status: "succeeded",
-			funding: "card",
+			direction: "debit",
+			status: "applied",
+			funding: "wallet",
 		},
 		{
-			id: "txn_parity_compute",
-			kind: "compute_subscription",
+			id: "wallet:parity-compute",
+			kind: "compute_charge",
 			occurred_at: ago(DAY),
 			amount: "25.00",
 			currency: "usd",
 			direction: "debit",
-			status: "succeeded",
+			status: "applied",
 			funding: "wallet",
 			context: {
 				plan: "compute_performance",
@@ -2107,14 +2141,25 @@ const walletTransactions = {
 			},
 		},
 		{
-			id: "txn_parity_usage",
-			kind: "ai_usage",
-			occurred_at: ago(HOUR),
-			amount: "0.42",
+			id: "wallet:parity-store-topup",
+			kind: "store_topup",
+			occurred_at: ago(2 * DAY),
+			amount: "25.00",
 			currency: "usd",
-			direction: "debit",
-			status: "succeeded",
-			funding: "wallet",
+			direction: "credit",
+			status: "applied",
+			funding: "store",
+		},
+		{
+			id: "wallet:parity-topup",
+			kind: "topup",
+			occurred_at: ago(3 * DAY),
+			amount: "50.00",
+			currency: "usd",
+			direction: "credit",
+			status: "applied",
+			funding: "card",
+			receipt_url: "https://pay.stripe.com/receipts/parity",
 		},
 	],
 	has_more: false,
@@ -2144,6 +2189,105 @@ const managedModels = {
 		},
 	],
 } satisfies DeployGetOk<"/v2/ai-providers/managed/models">;
+
+/**
+ * AI usage, shaped like hosted `/v2/usage`: model rows carry managed-catalogue ids with
+ * `provider: null`, totals equal the model and day sums, and a scoped read omits `by_agent`.
+ */
+const deletedUsageAgent = {
+	id: "de1e7ed0-0009-4c00-8000-000000000009",
+	name: "Old Hermes",
+	type: "hermes",
+} as const;
+const usageWeights: Record<string, number> = {
+	[AGENT.openclaw]: 3,
+	[AGENT.hermes]: 2,
+	[deletedUsageAgent.id]: 1,
+};
+const usageModels = [
+	{ model: "openai/gpt-4o-mini", share: 49, requests: 41 },
+	{ model: "anthropic/claude-sonnet-4.5", share: 46, requests: 12 },
+	{ model: "deepseek/deepseek-chat", share: 5, requests: 9 },
+] as const;
+
+function usageSummary(url: URL): DeployGetOk<"/v2/usage"> | Reply {
+	const days = Math.min(Math.max(Number(url.searchParams.get("days")) || 30, 1), 90);
+	const agentId = url.searchParams.get("agent_id");
+	const knownAgents = new Set([
+		...deployments.map((deployment) => deployment.agent_id),
+		deletedUsageAgent.id,
+	]);
+	if (agentId && !knownAgents.has(agentId)) return notFound("Agent not found");
+	const weight = agentId
+		? (usageWeights[agentId] ?? 0)
+		: Object.values(usageWeights).reduce((total, value) => total + value, 0);
+	const end = new Date(NOW);
+	end.setUTCHours(0, 0, 0, 0);
+	const start = new Date(end.valueOf() - (days - 1) * DAY);
+	const dollars = (cents: number) => (cents / 100).toFixed(2);
+	const byDay: DeploySchemas["V2HostedUsageDay"][] = [];
+	for (let index = 0; index < days; index += 1) {
+		// Quiet Sundays and a few idle days keep the chart's zero-spend state visible.
+		const date = new Date(start.valueOf() + index * DAY);
+		const activity = (index * 7 + 3) % 11;
+		const cents = weight * activity * 9;
+		if (date.getUTCDay() === 0 || activity < 2 || !cents) continue;
+		byDay.push({ date: date.toISOString().slice(0, 10), amount_usd: dollars(cents) });
+	}
+	const totalCents = byDay.reduce(
+		(total, day) => total + Math.round(Number(day.amount_usd) * 100),
+		0,
+	);
+	let remainingCents = totalCents;
+	const byModel = totalCents
+		? usageModels.map((model, index) => {
+				const cents =
+					index === usageModels.length - 1
+						? remainingCents
+						: Math.round((totalCents * model.share) / 100);
+				remainingCents -= cents;
+				return {
+					model: model.model,
+					provider: null,
+					amount_usd: dollars(cents),
+					requests: Math.round((model.requests * weight * days) / 6),
+				};
+			})
+		: [];
+	const totalRequests = byModel.reduce((total, model) => total + model.requests, 0);
+	const agentRows = deployments
+		.map((deployment) => ({
+			id: deployment.agent_id,
+			name: deployment.resource.name,
+			type: deployment.resource.spec.runtime,
+			deleted: false,
+		}))
+		.concat({ ...deletedUsageAgent, deleted: true })
+		.filter((agent) => usageWeights[agent.id]);
+	const allWeight = Object.values(usageWeights).reduce((total, value) => total + value, 0);
+	return {
+		period_start: start.toISOString(),
+		period_end: end.toISOString(),
+		availability: "complete",
+		unavailable_sections: [],
+		breakdown_limit: 100,
+		truncated_sections: [],
+		total_usd: dollars(totalCents),
+		total_requests: totalRequests,
+		by_agent: agentId
+			? []
+			: agentRows.map((agent) => ({
+					agent_id: agent.id,
+					agent_name: agent.name,
+					agent_type: agent.type,
+					agent_deleted: agent.deleted,
+					amount_usd: dollars(Math.round((totalCents * usageWeights[agent.id]) / allWeight)),
+					requests: Math.round((totalRequests * usageWeights[agent.id]) / allWeight),
+				})),
+		by_model: byModel,
+		by_day: byDay,
+	};
+}
 
 const computeGetRoutes = {
 	"/v1/me": () => hostedProfile,
@@ -2220,6 +2364,7 @@ const computeGetRoutes = {
 	"/v2/wallet/transactions": () => walletTransactions,
 	"/v2/wallet/payment-methods": () => ({ items: [], has_more: false }),
 	"/v2/ai-providers/managed/models": () => managedModels,
+	"/v2/usage": ({ url }) => usageSummary(url),
 } satisfies { [P in DeployGetPath]?: (ctx: Ctx) => DeployGetOk<P> | Reply };
 
 for (const [template, handler] of Object.entries(computeGetRoutes)) {
@@ -2307,6 +2452,8 @@ const getRoutes: { [P in GetPath]?: (ctx: Ctx) => GetOk<P> | Reply } = {
 		installedPlugins.find(
 			(item) => item.agent_id === params.agent_id && item.plugin_name === params.plugin_name,
 		) ?? notFound("Plugin not installed"),
+	"/v1/agents/{agent_id}/profiles": ({ params }) =>
+		findAgent(params.agent_id) ? agentProfiles(params.agent_id ?? "") : notFound("Agent not found"),
 	"/v1/agents/{agent_id}/mcp": ({ params }) => ({
 		agent_id: params.agent_id ?? "",
 		availability: "unavailable",
@@ -2321,11 +2468,13 @@ const getRoutes: { [P in GetPath]?: (ctx: Ctx) => GetOk<P> | Reply } = {
 		const agent = url.searchParams.get("agent");
 		const environmentId = url.searchParams.get("environment_id");
 		const automated = url.searchParams.get("automated");
+		const profileKey = url.searchParams.get("profile_key");
 		const filtered = sessions.filter(
 			(session) =>
 				matchesQuery(session.summary, q) &&
 				(!agent || session.agent_name === agent || session.agent_id === agent) &&
 				(!environmentId || session.agent_id === environmentId) &&
+				(profileKey === null || session.profile_key === profileKey) &&
 				(automated === null || String(session.automated) === automated),
 		);
 		return paginate(filtered.map(toSessionListItem), url);

@@ -3,6 +3,8 @@ import * as p from "@clack/prompts";
 import type { DeployComponents, HostedDeployOperation } from "@clawdi/shared/api";
 import { computeFundingMode, isComputeSubscriptionRenewing } from "@clawdi/shared/view";
 import { requireUuid } from "../lib/cli-options";
+import { isAuthorizationRequired, mapHttpError } from "../lib/errors";
+import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
 import { AuthorizationRequiredError, requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
@@ -19,14 +21,15 @@ export type AgentRemoveOptions = {
 };
 
 function cloudAgentError(error: unknown): never {
+	if (error instanceof HostedDeployAuthorizationError) {
+		const mapped = mapHttpError({ status: 0, code: error.code }, "Cloud Agent");
+		if (mapped?.exitCode === 4) throw new AuthorizationRequiredError(mapped.message);
+	}
 	if (error instanceof HostedDeployApiError) {
 		if (error.status === 0) throw error;
-		if (error.status === 401)
-			throw new AuthorizationRequiredError(
-				"Cloud Agent authorization required. Sign in with `clawdi auth login`.",
-			);
-		if (error.status === 403)
-			throw new Error("Cloud Agent authorization required. Sign in with `clawdi auth login`.");
+		const mapped = mapHttpError(error, "Cloud Agent");
+		if (mapped?.exitCode === 4) throw new AuthorizationRequiredError(mapped.message);
+		if (mapped) throw new Error(mapped.message);
 		if (error.status === 404)
 			throw new Error("Cloud Agent or operation not found. Check `clawdi agent list`.");
 		if (error.status === 409 || error.status === 412 || error.status === 428)
@@ -35,8 +38,7 @@ function cloudAgentError(error: unknown): never {
 			);
 		throw new Error("Could not manage the Cloud Agent. Please retry or run `clawdi doctor`.");
 	}
-	if (error instanceof Error && /\bsign[ -]in\b/i.test(error.message))
-		throw new AuthorizationRequiredError(error.message);
+	if (isAuthorizationRequired(error)) throw new AuthorizationRequiredError(error.message);
 	throw error;
 }
 

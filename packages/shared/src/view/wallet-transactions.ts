@@ -21,6 +21,8 @@ const KIND_LABELS: Record<string, string> = {
 	grant_signup: "Grant",
 	admin_adjust: "Adjustment",
 	refund: "Refund",
+	store_topup: "In-app purchase",
+	store_refund: "In-app purchase refund",
 	compute_charge: "Compute charge",
 	compute_credit: "Compute credit",
 };
@@ -29,6 +31,7 @@ const PAYMENT_SOURCE_LABELS: Record<string, string> = {
 	wallet: "Wallet",
 	card: "Card",
 	usdc: "USDC",
+	store: "App store",
 	unknown: "Unknown",
 	multiple: "Multiple methods",
 	us_bank_account: "US bank account",

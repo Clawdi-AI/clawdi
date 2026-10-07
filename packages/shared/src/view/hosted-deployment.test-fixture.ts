@@ -55,6 +55,7 @@ export function hostedDeploymentFixture(
 
 	return {
 		agent_id: options.agentId ?? "11111111-1111-4111-8111-111111111111",
+		provisioning_path: "standard",
 		resource: {
 			id: options.id ?? "dep_test",
 			name: options.name ?? "Test deployment",

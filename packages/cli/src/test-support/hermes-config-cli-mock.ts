@@ -26,6 +26,13 @@ if (commandArgs[0] === "-p") {
 				: selectedHome;
 		process.env.HERMES_HOME = profile === "default" ? root : join(root, "profiles", profile);
 	}
+} else if (!process.env.HERMES_HOME) {
+	const root = join(process.env.HOME ?? "", ".hermes");
+	const activePath = join(root, "active_profile");
+	if (existsSync(activePath)) {
+		const active = readFileSync(activePath, "utf8").trim();
+		if (active && active !== "default") process.env.HERMES_HOME = join(root, "profiles", active);
+	}
 }
 const configPath = join(
 	process.env.HERMES_HOME?.trim() || join(process.env.HOME ?? "", ".hermes"),

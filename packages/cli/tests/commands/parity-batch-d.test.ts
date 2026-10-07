@@ -331,7 +331,9 @@ describe("wallet reads", () => {
 		const result = await cli(["wallet", "usage", "--json"]);
 		expect(result.code).not.toBe(0);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("can't access the wallet");
+		expect(result.stderr).toContain(
+			"You don't have permission to perform this action from the CLI. Use the dashboard.",
+		);
 		expect(result.stderr).not.toContain("INTERNAL_SERVER_DETAIL");
 	});
 	test("reads transactions with the web endpoint and limit", async () => {

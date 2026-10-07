@@ -172,6 +172,7 @@ const storeEn = {
 	recoveryStatus: "This subscription needs attention. Its status updates here automatically.",
 	usdcInApp: "Browser-wallet USDC funding isn't available in this app.",
 	walletExplanation: "Pays for AI usage and credit-funded compute subscriptions.",
+	usageSummary: "LLM spend in credits, paid from wallet",
 	purchasing: "Confirming purchase…",
 	credits: "credits",
 	unavailable: "Purchases aren't available right now. Your credits balance is unaffected.",
@@ -252,11 +253,20 @@ const runtimeEn = {
 	stop: "Stop runtime",
 	restart: "Restart runtime",
 	resetAccess: "Reset dashboard access",
-	deleteAgent: "Delete Agent, keep subscription",
-	deleteWarning:
-		"This permanently deletes the Agent and its saved data. This cannot be undone. Any paid subscription is kept and may continue billing; manage it separately through its original purchase provider. Only confirm if you want to delete this Agent without cancelling its subscription.",
+	deleteAgent: "Delete Agent",
+	deleteTitle: "Delete {name}?",
+	deleteWarning: "This permanently deletes the Agent and its saved data. This cannot be undone.",
+	deleteScheduledCancel:
+		"The subscription is already scheduled to stop at period end; deleting the Agent does not undo that cancellation.",
+	deleteKeepChoice: "Keep subscription",
+	deleteCancelChoice: "Cancel subscription",
+	deleteKeepDescription: "Keep subscription — it becomes available to choose for a future Agent.",
+	deleteValidThrough: "Valid through {date}.",
+	deleteKeepConfirm: "Delete Agent (keep subscription)",
+	deleteCancelConfirm: "Delete Agent and cancel subscription",
+	deleteCancelsSubscription: "This request also cancels the Agent's subscription.",
 	deleteReported:
-		"The server reports this Agent deleted for your account. Cleanup may still be in progress. This action did not request subscription cancellation.",
+		"The server reports this Agent deleted for your account. Cleanup may still be in progress.",
 	paymentRequired:
 		"Starting requires a server-approved subscription or payment action. No payment is made by these controls.",
 	uncertain:
@@ -461,10 +471,17 @@ const vaultEn = {
 	defaultSection: "Default section",
 } as const;
 
-import { billingCopy, LIBRARY_COPY, sessionDetailCopy, settingsCopy } from "@clawdi/shared/view";
+import {
+	billingCopy,
+	LIBRARY_COPY,
+	sessionDetailCopy,
+	settingsCopy,
+	usageCopy,
+} from "@clawdi/shared/view";
 export const en = {
 	settingsParity: settingsCopy,
 	billingParity: billingCopy,
+	usageParity: usageCopy,
 	sessionDetail: sessionDetailCopy,
 	libraryPort: LIBRARY_COPY,
 	composite: {
@@ -614,6 +631,7 @@ export const en = {
 		options: "Filters and sorting",
 		agent: "Agent type",
 		all: "All",
+		allProfiles: "All profiles",
 		type: "Session type",
 		manual: "Manual",
 		automated: "Automated (cron, heartbeat)",
