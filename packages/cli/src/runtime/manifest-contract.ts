@@ -25,17 +25,9 @@ export { egressEngineSchema } from "./egress-engine";
 export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v1";
 export const HOSTED_RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2";
 
-// Keep fresh Hermes installs on the last known-good upstream release while
-// main carries the Solstice import regression (#134107/#134220; fixed by
-// #134581) and the SessionsPage type-only import regression (#134649). Update
-// this pin only after both fixes are merged and a fresh install is verified.
-// The installer script and checkout are pinned together because newer moving
-// scripts require the package-manager layout introduced after this release.
-export const HERMES_INSTALL_COMMIT = "f97608f178d1ffeca59860195ab7da295f7c8e5f";
-
 export const OFFICIAL_INSTALL_URLS: Record<string, string> = {
 	openclaw: "https://openclaw.ai/install-cli.sh",
-	hermes: `https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_INSTALL_COMMIT}/scripts/install.sh`,
+	hermes: "https://hermes-agent.nousresearch.com/install.sh",
 };
 
 export const HOSTED_GATEWAY_RUN_ARGS = ["gateway", "run"] as const;
@@ -94,16 +86,7 @@ export function isHostedHermesDashboardArgs(value: unknown): boolean {
 
 const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 	openclaw: ["--json", "--no-onboard"],
-	// The pinned installer documents --force-commit alongside --commit. It is
-	// only used for fresh installs; existing tenants keep their self-update path.
-	hermes: [
-		"--commit",
-		HERMES_INSTALL_COMMIT,
-		"--force-commit",
-		"--skip-setup",
-		"--skip-browser",
-		"--non-interactive",
-	],
+	hermes: ["--skip-setup", "--skip-browser", "--non-interactive"],
 };
 
 export function officialInstallArgs(runtime: string, home: string): string[] {
