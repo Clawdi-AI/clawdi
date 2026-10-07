@@ -7,12 +7,11 @@ const settingsDestinations = new Map([
 	["api-keys", "/settings/api-keys"],
 	["wallet", "/settings/wallet"],
 	["compute", "/settings/compute"],
-	["usage", "/settings/usage"],
 	["billing", "/settings/compute"],
 	["billing-wallet", "/settings/wallet"],
 	["billing-plan", "/settings/compute"],
-	["billing-usage", "/settings/usage"],
-	["profile", "/settings"],
+	["billing-usage", "/settings"],
+	["profile", "/settings/general"],
 ]);
 
 /** One pending capability, never Router state, storage, logs or query keys. */
