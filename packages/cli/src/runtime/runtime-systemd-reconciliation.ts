@@ -15,6 +15,7 @@ import { parseEnv } from "node:util";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
+import { prepareHermesDashboardBuild } from "./hermes-dashboard-build";
 import type { RuntimeManifest } from "./manifest-contract";
 import {
 	runtimeCommandCurrentRevision,
@@ -29,6 +30,13 @@ import {
 	platformOomProtectionLines,
 	runtimeMemoryBudget,
 } from "./oom-protection";
+import { openClawFileSecretEnvironmentKeys } from "./openclaw-file-secrets";
+import {
+	forgetOpenClawPreinstalledService,
+	openClawPreinstalledServiceNeedsRefresh,
+	recordOpenClawPreinstalledService,
+} from "./openclaw-preinstalled-service";
+import { openClawConfigCanHotReload, openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import {
 	DEFAULT_RUN_ROOT,
 	DEFAULT_SERVICE_STATE_ROOT,
@@ -71,6 +79,8 @@ import {
 } from "./systemd-user";
 import { TRANSPARENT_EGRESS_PORT } from "./transparent-egress";
 
+export { HERMES_DASHBOARD_BUILD_REVISION_FILE } from "./hermes-dashboard-build";
+
 export interface RuntimeSystemdUserProgram {
 	programKind: "runtime" | "file-browser";
 	runtime: RuntimeName;
@@ -98,6 +108,7 @@ export interface OfficialRuntimeServicePlan {
 		unitName: string;
 		program: RuntimeSystemdUserProgram;
 		serviceRevision: string | null;
+		replacePreinstalledService?: boolean;
 	}>;
 	serviceRevisions: Record<string, string>;
 }
@@ -279,7 +290,7 @@ function runtimeSystemdPath(paths: RuntimePaths): string {
 	].join(":");
 }
 
-function systemdUnitFileName(name: string): string {
+export function systemdUnitFileName(name: string): string {
 	return `${systemdUnitNameSegment(name)}.service`;
 }
 
@@ -287,7 +298,7 @@ export function runtimeSystemdUserUnitName(program: RuntimeSystemdUserProgram): 
 	return systemdUnitFileName(runtimeSystemdProgramName(program));
 }
 
-function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
+export function systemdDropInFilePath(paths: RuntimePaths, unitName: string): string {
 	return join(
 		paths.systemdUserRoot,
 		`${systemdUnitFileName(unitName)}.d`,
@@ -451,6 +462,28 @@ function officialRuntimeServiceRevision(
 	return createHash("sha256").update(commandRevision).update("\0").update(contents).digest("hex");
 }
 
+/** The official writer removes retired SecretRef env keys during reinstall.
+ * Refresh only when this apply moved a managed credential to a file ref. */
+function openClawGatewayHasRetiredEnvironment(
+	paths: RuntimePaths,
+	unitName: string,
+	program: RuntimeSystemdUserProgram,
+): boolean {
+	const content = readFileSync(join(paths.systemdUserRoot, unitName), "utf8");
+	const keys = openClawFileSecretEnvironmentKeys(paths.userHome);
+	// A managed token is authored in native config; an older unit must not keep
+	// overriding it through a captured value. Native-only tokens remain user-owned.
+	if (program.resolvedSecretEnv.OPENCLAW_GATEWAY_TOKEN) keys.add("OPENCLAW_GATEWAY_TOKEN");
+	if (keys.size === 0) return false;
+	const managed = content.match(/OPENCLAW_SERVICE_MANAGED_ENV_KEYS=([^"\s]*)/);
+	return [...keys].some(
+		(key) =>
+			managed?.[1].split(",").includes(key) ||
+			content.includes(`Environment=${key}=`) ||
+			content.includes(`Environment="${key}=`),
+	);
+}
+
 export function planOfficialRuntimeServices(
 	programs: RuntimeSystemdUserProgram[],
 	paths: RuntimePaths,
@@ -464,8 +497,17 @@ export function planOfficialRuntimeServices(
 		const serviceRevision = officialRuntimeServiceRevision(program, paths);
 		if (serviceRevision) serviceRevisions[unitName] = serviceRevision;
 		// Native updaters own service refresh. Fingerprint drift alone is not a repair request.
-		if (!serviceRevision) {
-			pending.push({ unitName, program, serviceRevision });
+		const migrateCredentials =
+			program.runtime === "openclaw" &&
+			openClawHotApplyEnabled() &&
+			serviceRevision !== null &&
+			openClawGatewayHasRetiredEnvironment(paths, unitName, program);
+		const replacePreinstalledService =
+			program.runtime === "openclaw" &&
+			serviceRevision !== null &&
+			openClawPreinstalledServiceNeedsRefresh(paths, serviceRevision);
+		if (!serviceRevision || migrateCredentials || replacePreinstalledService) {
+			pending.push({ unitName, program, serviceRevision, replacePreinstalledService });
 		}
 	}
 	return { pending, serviceRevisions };
@@ -473,9 +515,6 @@ export function planOfficialRuntimeServices(
 
 const OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS = 600_000;
 const OFFICIAL_SERVICE_UNINSTALL_TIMEOUT_MS = 120_000;
-const HERMES_DASHBOARD_INSTALL_TIMEOUT_MS = 600_000;
-const HERMES_DASHBOARD_BUILD_TIMEOUT_MS = 900_000;
-export const HERMES_DASHBOARD_BUILD_REVISION_FILE = ".clawdi-runtime-revision";
 
 function writeSystemdEnvironmentFile(input: {
 	paths: RuntimePaths;
@@ -758,9 +797,6 @@ export function prepareOfficialRuntimeServiceDependencies(
 	);
 	if (!preparesHermesGateway || !hasHermesDashboard) return null;
 
-	const appRoot = join(paths.userHome, ".hermes", "hermes-agent");
-	const index = join(appRoot, "hermes_cli", "web_dist", "index.html");
-	const revisionFile = join(dirname(index), HERMES_DASHBOARD_BUILD_REVISION_FILE);
 	const descriptor = OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
 		(candidate) => candidate.runtime === "hermes" && candidate.service === "gateway",
 	);
@@ -771,48 +807,35 @@ export function prepareOfficialRuntimeServiceDependencies(
 				paths.userHome,
 			)
 		: null;
-	if (
-		commandRevision &&
-		existsSync(index) &&
-		existsSync(revisionFile) &&
-		readFileSync(revisionFile, "utf8").trim() === commandRevision
-	) {
-		return null;
-	}
-	const commands = [
-		{
-			args: ["ci", "--include=dev", "--workspace", "web"],
-			cwd: appRoot,
-			timeoutMs: HERMES_DASHBOARD_INSTALL_TIMEOUT_MS,
-		},
-		{
-			args: ["run", "build"],
-			cwd: join(appRoot, "web"),
-			timeoutMs: HERMES_DASHBOARD_BUILD_TIMEOUT_MS,
-		},
-	] as const;
-	for (const command of commands) {
-		let result: ReturnType<typeof spawnRuntimeUserCommand>;
-		try {
-			result = spawnRuntimeUserCommand("npm", [...command.args], paths.userHome, command.cwd, {
-				egressSystemCaFile,
-				maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
-				timeoutMs: command.timeoutMs,
-			});
-		} catch (error) {
-			const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", { error });
-			return `Hermes dashboard prerequisite failed; see ${logPath}`;
-		}
-		if (result.status !== 0 || result.error) {
-			const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", result);
-			return `Hermes dashboard prerequisite failed; see ${logPath}`;
-		}
-	}
-	if (!existsSync(index)) return `Hermes dashboard prerequisite did not produce ${index}`;
-	if (commandRevision) {
-		withRuntimeUserFileAccess(() =>
-			writePrivateFileAtomic(revisionFile, `${commandRevision}\n`, { mode: 0o600 }),
-		);
+	try {
+		prepareHermesDashboardBuild({
+			home: paths.userHome,
+			revision: commandRevision,
+			run(args, cwd, timeoutMs) {
+				let result: ReturnType<typeof spawnRuntimeUserCommand>;
+				try {
+					result = spawnRuntimeUserCommand("npm", args, paths.userHome, cwd, {
+						egressSystemCaFile,
+						maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
+						timeoutMs,
+					});
+				} catch (error) {
+					const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", {
+						error,
+					});
+					throw new Error(`Hermes dashboard prerequisite failed; see ${logPath}`);
+				}
+				if (result.status !== 0 || result.error) {
+					const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", result);
+					throw new Error(`Hermes dashboard prerequisite failed; see ${logPath}`);
+				}
+			},
+			writeRevision(path, contents) {
+				withRuntimeUserFileAccess(() => writePrivateFileAtomic(path, contents, { mode: 0o600 }));
+			},
+		});
+	} catch (error) {
+		return error instanceof Error ? error.message : "Hermes dashboard prerequisite failed";
 	}
 	return null;
 }
@@ -868,11 +891,94 @@ function installOfficialRuntimeUserService(
 	}
 }
 
+/**
+ * Anonymous preparation and warm-up: reuse or install OpenClaw's official gateway unit with the same
+ * arguments and environment overrides as tenant convergence, plus the Clawdi
+ * drop-in and an environment file carrying no tenant values.
+ */
+export function installAnonymousOpenClawGatewayService(
+	paths: RuntimePaths,
+	runtimeIdentity: { uid: number; gid: number },
+	env: Record<string, string>,
+): string {
+	const descriptor = OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
+		(candidate) => candidate.runtime === "openclaw",
+	);
+	if (!descriptor) throw new Error("OpenClaw official service descriptor is missing");
+	const program: RuntimeSystemdUserProgram = {
+		programKind: "runtime",
+		runtime: "openclaw",
+		service: null,
+		command: officialRuntimeServiceCommand(descriptor, paths),
+		args: ["gateway", "run"],
+		cwd: paths.userHome,
+		env: {},
+		resolvedSecretEnv: {},
+	};
+	const serviceRevision = officialRuntimeServiceRevision(program, paths);
+	const replacePreinstalledService =
+		serviceRevision !== null && openClawPreinstalledServiceNeedsRefresh(paths, serviceRevision);
+	if (replacePreinstalledService) {
+		const error = uninstallOfficialRuntimeUserService({
+			unitName: systemdUnitFileName(descriptor.programName),
+			paths,
+			workspaceRoot: paths.userHome,
+		});
+		if (error) throw new Error(error);
+	}
+	if (!serviceRevision || replacePreinstalledService) {
+		const result = spawnRuntimeUserCommand(
+			officialRuntimeServiceCommand(descriptor, paths),
+			descriptor.installArgs,
+			paths.userHome,
+			paths.userHome,
+			{
+				environmentOverrides: {
+					OPENCLAW_HOME: undefined,
+					OPENCLAW_STATE_DIR: undefined,
+					OPENCLAW_CONFIG_PATH: undefined,
+				},
+				maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
+				runtimeGid: runtimeIdentity.gid,
+				runtimeUid: runtimeIdentity.uid,
+				timeoutMs: OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS,
+			},
+		);
+		if (result.status !== 0 || result.error) {
+			throw new Error(`official OpenClaw gateway install failed (${result.status ?? "error"})`);
+		}
+		const installedRevision = officialRuntimeServiceRevision(program, paths);
+		if (!installedRevision)
+			throw new Error("anonymous OpenClaw gateway unit could not be verified");
+		recordOpenClawPreinstalledService(paths, installedRevision);
+	}
+	writeSystemdUserEnvironmentDropIn({
+		paths,
+		name: descriptor.programName,
+		env,
+		unsetEnvironment: ["CLAWDI_AUTH_TOKEN"],
+		oomProtectionLines: gatewayOomProtectionLines("openclaw", runtimeMemoryBudget()),
+	});
+	return systemdUnitFileName(descriptor.programName);
+}
+
 export function installOfficialRuntimeService(
 	item: OfficialRuntimeServicePlan["pending"][number],
 	paths: RuntimePaths,
 	runtimeIdentity: { uid: number; gid: number },
 ): string | null {
+	if (item.replacePreinstalledService) {
+		if (officialRuntimeServiceRevision(item.program, paths) !== item.serviceRevision)
+			return "preinstalled OpenClaw service changed before capacity refresh";
+		// The official installer preserves existing heap argv. Remove only our exact
+		// anonymous unit first so its install-time sizing is recomputed for this guest.
+		const error = uninstallOfficialRuntimeUserService({
+			unitName: item.unitName,
+			paths,
+			workspaceRoot: paths.userHome,
+		});
+		if (error) return error;
+	}
 	const error = installOfficialRuntimeUserService(
 		{ ...item.program, cwd: paths.userHome },
 		paths,
@@ -883,6 +989,7 @@ export function installOfficialRuntimeService(
 	if (!item.serviceRevision) {
 		return `official ${runtimeSystemdProgramName(item.program)} service install could not be verified`;
 	}
+	if (item.program.runtime === "openclaw") forgetOpenClawPreinstalledService(paths);
 	return null;
 }
 
@@ -1004,6 +1111,7 @@ export function runtimeSystemdCommonEnvironment(paths: RuntimePaths): Record<str
 		CLAWDI_HOME: paths.clawdiHome,
 		CLAWDI_RUNTIME_MODE: "hosted",
 		CLAWDI_RUNTIME_USER: "clawdi",
+		...(openClawHotApplyEnabled() ? { CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY: "1" } : {}),
 		PATH: runtimeSystemdPath(paths),
 		...(paths.serviceStateRoot === DEFAULT_SERVICE_STATE_ROOT
 			? {}
@@ -1038,6 +1146,14 @@ function runtimeSystemdUserProgramEnvironment(
 	for (const envName of installerOnlySecretEnv) {
 		delete runtimeEnv[envName];
 	}
+	const hotOpenClaw =
+		descriptor?.runtime === "openclaw" &&
+		openClawHotApplyEnabled() &&
+		openClawConfigCanHotReload(input.paths.userHome);
+	if (hotOpenClaw) {
+		for (const key of openClawFileSecretEnvironmentKeys(input.paths.userHome))
+			delete runtimeEnv[key];
+	}
 	if (descriptor) delete runtimeEnv.PATH;
 	if (descriptor || isHermesDashboard) delete runtimeEnv.CLAWDI_AUTH_TOKEN;
 	const revision = runtimeSystemdProgramRevision(
@@ -1052,7 +1168,7 @@ function runtimeSystemdUserProgramEnvironment(
 		? {
 				...(isHermesDashboard ? { HOME: input.paths.userHome } : {}),
 				...runtimeEnv,
-				CLAWDI_MANAGED_CONTENT_DIGEST: revision,
+				...(hotOpenClaw ? {} : { CLAWDI_MANAGED_CONTENT_DIGEST: revision }),
 			}
 		: {
 				...input.commonEnvironment,
@@ -1229,11 +1345,13 @@ function officialRuntimeSystemdPrograms(
 export function writeRuntimeSidecarSystemdUnit(input: {
 	program: RuntimeEgressSystemdProgram;
 	identity: RuntimeEgressIdentity;
-	manifest: RuntimeManifest;
+	manifest?: RuntimeManifest;
 	paths: RuntimePaths;
 	workspaceRoot: string;
 	commonEnvironment: Record<string, string>;
 }): string {
+	const environment = { ...input.commonEnvironment };
+	delete environment.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY;
 	return writeSystemdSystemUnit({
 		paths: input.paths,
 		name: "clawdi-runtime-sidecar",
@@ -1242,11 +1360,13 @@ export function writeRuntimeSidecarSystemdUnit(input: {
 		args: ["runtime", "sidecar"],
 		cwd: input.workspaceRoot,
 		env: {
-			...input.commonEnvironment,
+			...environment,
 			CLAWDI_AUTH_TOKEN: "",
 			CLAWDI_EGRESS_ENV_FILE: input.program.envFilePath,
 			CLAWDI_MANAGED_CONTENT_DIGEST: runtimeImpactRevision({
-				program: runtimeSidecarProgramRevision(input.manifest, input.program, input.identity),
+				program: input.manifest
+					? runtimeSidecarProgramRevision(input.manifest, input.program, input.identity)
+					: runtimeImpactRevision({ program: input.program, identity: input.identity }),
 				secretFile: input.program.secretFilePath
 					? readFileSync(input.program.secretFilePath, "utf8")
 					: null,
@@ -1428,4 +1548,35 @@ export function validateRuntimeSystemdPlan(programs: RuntimeSystemdUserProgram[]
 			systemdEnvironmentFileQuote(value);
 		}
 	}
+}
+
+/**
+ * Pool warm-up only: install Hermes' official gateway unit with the same command,
+ * arguments and environment as tenant convergence (Hermes passes no install-time
+ * secrets). Convergence later finds the official unit and does not reinstall it.
+ */
+export function installAnonymousHermesGatewayService(
+	paths: RuntimePaths,
+	runtimeIdentity: { uid: number; gid: number },
+): string {
+	const descriptor = OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
+		(candidate) => candidate.runtime === "hermes" && candidate.service === "gateway",
+	);
+	if (!descriptor) throw new Error("Hermes official service descriptor is missing");
+	const result = spawnRuntimeUserCommand(
+		officialRuntimeServiceCommand(descriptor, paths),
+		descriptor.installArgs,
+		paths.userHome,
+		paths.userHome,
+		{
+			maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
+			runtimeGid: runtimeIdentity.gid,
+			runtimeUid: runtimeIdentity.uid,
+			timeoutMs: OFFICIAL_SERVICE_INSTALL_TIMEOUT_MS,
+		},
+	);
+	if (result.status !== 0 || result.error) {
+		throw new Error(`official Hermes gateway install failed (${result.status ?? "error"})`);
+	}
+	return systemdUnitFileName(descriptor.programName);
 }

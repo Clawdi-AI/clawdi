@@ -6,17 +6,27 @@ import type { OpenClawHostedContext } from "./hosted-openclaw-context";
 import type { NativeProviderConnection } from "./hosted-provider-resolution";
 import { openClawPluginCapabilityConsentArgs } from "./openclaw-plugin-cli";
 import { openClawPluginListSchema } from "./openclaw-plugin-observation";
-import { openClawConfigPatchIsApplied } from "./openclaw-provider-config";
+import {
+	applyOpenClawContextMergePatch,
+	openClawConfigPatchIsApplied,
+} from "./openclaw-provider-config";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
 
 const nativeProviderConfigSchema = z.object({
 	baseUrl: z.string(),
 	auth: z.literal("api-key"),
-	apiKey: z.strictObject({
-		source: z.literal("env"),
-		provider: z.literal("clawdi-native"),
-		id: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
-	}),
+	apiKey: z.union([
+		z.strictObject({
+			source: z.literal("env"),
+			provider: z.literal("clawdi-native"),
+			id: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+		}),
+		z.strictObject({
+			source: z.literal("file"),
+			provider: z.literal("clawdi-runtime"),
+			id: z.string().regex(/^\/[A-Za-z_][A-Za-z0-9_]*$/),
+		}),
+	]),
 });
 
 // Exact absence reports from published OpenClaw 2026.7.1-2 and 2026.9.2.
@@ -122,7 +132,10 @@ export function discoverNativeOpenClawProviderIds(
 		if (!parsed.success) return [];
 		const routing = nativeAiProviderForRuntime("openclaw", id, parsed.data.baseUrl);
 		return routing &&
-			(routing.runtime_env_name === parsed.data.apiKey.id ||
+			(routing.runtime_env_name ===
+				(parsed.data.apiKey.source === "file"
+					? parsed.data.apiKey.id.slice(1)
+					: parsed.data.apiKey.id) ||
 				(included && parsed.data.apiKey.id === "__OPENCLAW_REDACTED__"))
 			? [id]
 			: [];
@@ -267,6 +280,10 @@ export function applyOpenClawNativeProviders(input: {
 	environment: Record<string, string>;
 }): boolean {
 	const { command, context, workspaceRoot, environment } = input;
+	if (context.configMutationState.transaction) {
+		applyOpenClawContextMergePatch(context, input.patch.config, workspaceRoot);
+		return false; // The gateway reload owns config-only credential updates.
+	}
 	if (openClawConfigPatchIsApplied(context, input.patch.config)) return false;
 	// Native credentials only: the official CLI owns merge/delete, validation and
 	// locking. Catalog replacement retains the SDK's explicit size-drop handling.

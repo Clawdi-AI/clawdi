@@ -969,6 +969,45 @@ chmod +x "$prefix/bin/clawdi"
 		},
 	);
 
+	it("does not execute a replaced CLI between version and runtime verification", () => {
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state-cli-execution-race");
+		process.env.CLAWDI_RUN_DIR = join(root, "run-cli-execution-race");
+		const paths = getRuntimePaths();
+		const identity = createVersionedCliFixture(
+			paths,
+			"1.2.3",
+			join(paths.cliNpmPrefix, "installs", "install-race"),
+		);
+		pointManagedCliAt(paths, identity);
+		const marker = join(root, "replaced-cli-executed");
+		const verified = join(root, "snapshot-cli-verified");
+		writeFileSync(
+			identity.activeTarget,
+			`#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  cat > '${identity.activeTarget}' <<'SH'
+#!/usr/bin/env bash
+touch '${marker}'
+exit 64
+SH
+  echo '1.2.3'
+  exit 0
+fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  touch '${verified}'
+  echo '{"status":"ok"}'
+  exit 0
+fi
+exit 64
+`,
+		);
+		chmodSync(identity.activeTarget, 0o700);
+		expect(() => reconcilePendingRuntimeCliUpgrade(paths)).toThrow("missing, inconsistent");
+		expect(existsSync(verified)).toBe(true);
+		expect(existsSync(marker)).toBe(false);
+	});
+
 	it("adopts a released image bootstrap receipt and re-verifies stale CLI metadata", () => {
 		const state = join(root, "state-cli-verification-cache");
 		const run = join(root, "run-cli-verification-cache");

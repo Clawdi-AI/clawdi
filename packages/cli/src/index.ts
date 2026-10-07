@@ -870,6 +870,50 @@ const runtimeCmd = program
 	.description("Managed Hosted runtime control plane");
 
 runtimeCmd
+	.command("prepare", { hidden: true })
+	.description("Prepare anonymous software-only runtime data without Cloud identity")
+	.requiredOption("--spec <path>", "Strict preinstallation specification")
+	.requiredOption("--installer <path>", "SHA256-verified official installer")
+	.requiredOption("--cli-archive <path>", "Integrity-verified npm archive of this CLI release")
+	.action(async (opts: { spec: string; installer: string; cliArchive: string }) => {
+		const { readFileSync } = await import("node:fs");
+		const { prepareRuntimePreinstallation } = await import("./runtime/preinstallation.js");
+		const { getRuntimePaths } = await import("./runtime/paths.js");
+		if (process.getuid?.() !== 0) throw new Error("anonymous preparation requires root");
+		Object.assign(process.env, {
+			CLAWDI_RUNTIME_MODE: "hosted",
+			CLAWDI_RUNTIME_USER: "clawdi",
+			CLAWDI_RUNTIME_HOME: "/home/clawdi",
+		});
+		console.log(
+			JSON.stringify(
+				prepareRuntimePreinstallation(JSON.parse(readFileSync(opts.spec, "utf8")), opts.installer, {
+					hosted: { paths: getRuntimePaths({ mode: "hosted" }), cliArchive: opts.cliArchive },
+				}),
+			),
+		);
+	});
+
+runtimeCmd
+	.command("warm", { hidden: true })
+	.description("Experimental: start tenant-independent services in an unclaimed pool instance")
+	.option("--runtime <runtime>", "openclaw or hermes", "openclaw")
+	.action(async (opts: { runtime: string }) => {
+		const { getRuntimePaths } = await import("./runtime/paths.js");
+		if (process.getuid?.() !== 0) throw new Error("runtime warm requires root");
+		const paths = getRuntimePaths({ mode: "hosted" });
+		if (opts.runtime === "hermes") {
+			const { warmHostedHermesRuntime } = await import("./runtime/runtime-warm-hermes.js");
+			await warmHostedHermesRuntime(paths);
+		} else if (opts.runtime === "openclaw") {
+			const { warmHostedOpenClawRuntime } = await import("./runtime/runtime-warm.js");
+			await warmHostedOpenClawRuntime(paths);
+		} else {
+			throw new Error(`runtime warm does not support ${opts.runtime}`);
+		}
+	});
+
+runtimeCmd
 	.command("init", { hidden: true })
 	.description("Converge a hosted runtime from controller desired state")
 	.option("--non-interactive", "Required for hosted boot; never prompt")

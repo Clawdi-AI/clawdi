@@ -169,7 +169,8 @@ export function applyHostedAiProviderProjection(
 			openClawContext.home,
 			workspaceRoot,
 			environment,
-		) || connectionChanged;
+		) ||
+		(!openClawContext.configMutationState.transaction && connectionChanged);
 	applyOpenClawGatewayHostedProjection(
 		observation.commandPath,
 		manifest,

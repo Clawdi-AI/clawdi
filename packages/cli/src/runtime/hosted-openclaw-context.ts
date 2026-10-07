@@ -16,6 +16,14 @@ import {
 import { agentTargetProjectionInput, hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { RuntimeManifest } from "./manifest-contract";
 import { runtimeFileCurrentRevision } from "./manifest-install";
+import { readPlainOpenClawConfig } from "./openclaw-config";
+import type { OpenClawConfigTransaction } from "./openclaw-provider-config";
+import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
+import {
+	openClawStepIdentity,
+	persistedStepRevision,
+	recordPersistedStepRevision,
+} from "./persisted-step-revisions";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
 import { parseSystemctlShow, systemctlPath } from "./systemd";
@@ -50,7 +58,7 @@ function openClawDoctorRepairRequired(result: ReturnType<typeof spawnRuntimeUser
 	);
 }
 
-export type OpenClawHostedContext = ReturnType<typeof createOpenClawHostedContext>;
+export type OpenClawHostedContext = ReturnType<typeof createOpenClawHostedContextForHome>;
 
 export function installedOpenClawCommandPath(home: string): string | null {
 	for (const candidate of [
@@ -82,7 +90,7 @@ function parseOfficialWorkspaceRoster(stdout: string): string {
 	return resolve(main[0].workspace);
 }
 
-export function openClawRosterConfigRevision(home: string): string {
+function defaultOpenClawRosterConfigRevision(home: string): string {
 	try {
 		const config = JSON.parse(
 			readFileSync(join(home, ".openclaw", "openclaw.json"), "utf8"),
@@ -107,6 +115,18 @@ export function openClawRosterConfigRevision(home: string): string {
 	} catch {
 		return "unavailable";
 	}
+}
+
+export function openClawRosterConfigRevision(home: string): string | null {
+	if (!openClawHotApplyEnabled()) return defaultOpenClawRosterConfigRevision(home);
+	const root = readPlainOpenClawConfig(join(home, ".openclaw", "openclaw.json"));
+	if (!root) return null;
+	const agents = recordValue(root.agents);
+	const defaults = recordValue(agents?.defaults);
+	return runtimeImpactRevision({
+		workspace: defaults?.workspace ?? null,
+		list: agents?.list ?? null,
+	});
 }
 
 function openClawGatewayIsTransitioning(home: string): boolean {
@@ -136,11 +156,25 @@ function waitForOpenClawGatewayTransition(): void {
 
 export function resolveHostedOpenClawWorkspace(home: string): string {
 	const command = commandPath(home);
-	const revision = [runtimeFileCurrentRevision(command), openClawRosterConfigRevision(home)].join(
-		"\0",
-	);
+	const rosterRevision = openClawRosterConfigRevision(home);
+	const stateRevision = () =>
+		openClawHotApplyEnabled()
+			? [
+					openClawStepIdentity(home, ["agents list --json"]),
+					runtimeFileCurrentRevision(command),
+					openClawRosterConfigRevision(home),
+				].join("\0")
+			: [runtimeFileCurrentRevision(command), openClawRosterConfigRevision(home)].join("\0");
+	const revision = stateRevision();
 	const cached = openClawWorkspaces.get(home);
-	if (cached?.revision === revision) return cached.workspace;
+	if (rosterRevision !== null && cached?.revision === revision) return cached.workspace;
+	const persistedKey = `openclaw.workspace:${home}`;
+	const persisted = persistedStepRevision(persistedKey);
+	if (rosterRevision !== null && persisted?.startsWith(`${revision}\n`)) {
+		const workspace = persisted.slice(revision.length + 1);
+		openClawWorkspaces.set(home, { revision, workspace });
+		return workspace;
+	}
 	let result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
 		timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS,
 		maxBufferBytes: 1024 * 1024,
@@ -161,7 +195,10 @@ export function resolveHostedOpenClawWorkspace(home: string): string {
 	if (openClawDoctorRepairRequired(result)) throw new OpenClawWorkspaceRosterError(true);
 	if (result.status !== 0) throw new OpenClawWorkspaceRosterError(false);
 	const workspace = parseOfficialWorkspaceRoster(String(result.stdout));
-	openClawWorkspaces.set(home, { revision, workspace });
+	if (!openClawHotApplyEnabled() || (rosterRevision !== null && stateRevision() === revision)) {
+		openClawWorkspaces.set(home, { revision, workspace });
+		recordPersistedStepRevision(persistedKey, `${revision}\n${workspace}`);
+	}
 	return workspace;
 }
 
@@ -250,13 +287,22 @@ function resolveSdkExports(
 }
 
 export function createOpenClawHostedContext(manifest: RuntimeManifest, home: string) {
+	return createOpenClawHostedContextForHome(home, hasManagedApiKeyProjection(manifest));
+}
+
+/** Context without a manifest: anonymous pool warm-up states the projection itself. */
+export function createOpenClawHostedContextForHome(home: string, managedApiKeyProjection: boolean) {
 	const stateRoot = join(home, ".openclaw");
 	const statePath = (...parts: string[]) => join(stateRoot, ...parts);
 	const configPath = statePath("openclaw.json");
 	const sdk = resolveSdkExports(home);
+	const configMutationState: { transaction: OpenClawConfigTransaction | null } = {
+		transaction: null,
+	};
 	return {
+		configMutationState,
 		home,
-		managedApiKeyProjection: hasManagedApiKeyProjection(manifest),
+		managedApiKeyProjection,
 		stateRoot,
 		configPath,
 		agentDirs: {

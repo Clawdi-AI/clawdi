@@ -17,6 +17,7 @@ import { SYSTEM_CA_BUNDLE } from "./egress-env";
 import { hermesManagedPython } from "./hermes-python";
 import type { RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
+import { preinstalledRuntimeVersion } from "./preinstalled-probes";
 import { isSupportedRuntimeName } from "./run-config";
 import {
 	buildRuntimeUserCommand,
@@ -470,12 +471,24 @@ export function runtimeCommandCurrentRevision(
 	if (!runtimeCommandVersion(command, home, cwd)) return null;
 	return runtimeCommandRevisions.get(cacheKey)?.commandRevision ?? null;
 }
+export function runtimeCommandVersionRevision(executableRevision: string, version: string): string {
+	return runtimeContentSha256({ executableRevision, version });
+}
 export function runtimeCommandVersion(command: string, home: string, cwd: string): string | null {
 	const executableRevision = runtimeFileCurrentRevision(command);
 	if (!executableRevision) return null;
 	const cacheKey = `${command}\0${home}\0${cwd}`;
 	const cached = runtimeCommandRevisions.get(cacheKey);
 	if (cached?.executableRevision === executableRevision) return cached.version;
+	const preinstalled = preinstalledRuntimeVersion(command, home, executableRevision);
+	if (preinstalled) {
+		runtimeCommandRevisions.set(cacheKey, {
+			executableRevision,
+			commandRevision: runtimeCommandVersionRevision(executableRevision, preinstalled),
+			version: preinstalled,
+		});
+		return preinstalled;
+	}
 	// Hermes --version synchronously checks updates: git fetch and the compare API
 	// each allow 10 seconds upstream. Leave room for both plus native startup.
 	const timeoutMs = command === runtimeCommandPath("hermes", home) ? 30_000 : 10_000;
@@ -499,10 +512,7 @@ export function runtimeCommandVersion(command: string, home: string, cwd: string
 			: versionResult.stderr;
 		const version = [stdout, stderr].filter(Boolean).join("\n").trim();
 		if (!version) return null;
-		const commandRevision = runtimeContentSha256({
-			executableRevision,
-			version,
-		});
+		const commandRevision = runtimeCommandVersionRevision(executableRevision, version);
 		runtimeCommandRevisions.set(cacheKey, { executableRevision, commandRevision, version });
 		return version;
 	} catch (error) {

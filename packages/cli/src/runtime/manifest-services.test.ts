@@ -29,13 +29,19 @@ import {
 	writeRuntimeInstallerLog,
 } from "./manifest-install";
 import type { RuntimeManifestLoad } from "./manifest-source";
+import {
+	adoptableWarmOpenClawGatewayUnits,
+	recordWarmOpenClawGateway,
+} from "./openclaw-warm-gateway";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import type { RuntimeRunSettings } from "./run-config";
 import {
 	HERMES_DASHBOARD_BUILD_REVISION_FILE,
+	installAnonymousOpenClawGatewayService,
 	planOfficialRuntimeServices,
 	prepareOfficialRuntimeServiceDependencies,
 	type RuntimeSystemdUserProgram,
+	writeRuntimeSystemdState,
 } from "./runtime-systemd-reconciliation";
 import { ensureRuntimeStateDirs } from "./state";
 import { RUNTIME_SYSTEMD_DROP_IN_FILE } from "./systemd";
@@ -686,6 +692,54 @@ afterEach(() => {
 });
 
 describe("runtime manifest services", () => {
+	test("keeps an anonymous OpenClaw gateway adoptable after tenant policy rendering", () => {
+		process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
+		const paths = tempRuntimePaths();
+		ensureRuntimeStateDirs(paths);
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		writeFakeGatewayCli({
+			path: command,
+			logPath: join(paths.runRoot, "official-service.log"),
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
+		const configPath = join(paths.userHome, ".openclaw", "openclaw.json");
+		mkdirSync(dirname(configPath), { recursive: true });
+		writeFileSync(configPath, '{"gateway":{"mode":"local"}}');
+		mkdirSync(dirname(paths.egressSystemCaFile), { recursive: true });
+		writeFileSync(paths.egressSystemCaFile, "fixture-ca\n");
+		const identity = { uid: TEST_PROCESS_UID, gid: TEST_PROCESS_GID };
+		installAnonymousOpenClawGatewayService(paths, identity, {});
+		recordWarmOpenClawGateway(paths);
+		expect(adoptableWarmOpenClawGatewayUnits(paths)).toEqual(["openclaw-gateway.service"]);
+		writeRuntimeSystemdState({
+			runtimePrograms: [
+				{
+					programKind: "runtime",
+					runtime: "openclaw",
+					service: null,
+					command,
+					args: ["gateway", "run"],
+					cwd: paths.userHome,
+					env: {},
+					resolvedSecretEnv: {},
+				},
+			],
+			egressProgram: null,
+			egressIdentity: null,
+			runtimeIdentity: identity,
+			manifest: installGateManifest(paths, "openclaw", command),
+			paths,
+			workspaceRoot: paths.userHome,
+			daemonAuthTokenFile: null,
+			secretValues: undefined,
+			providerProjectionRevisions: {},
+			runtimeRevision: () => "fixture-revision",
+			commonEnvironment: {},
+		});
+		expect(adoptableWarmOpenClawGatewayUnits(paths)).toEqual(["openclaw-gateway.service"]);
+	});
+
 	test("leaves legacy identity handling to native startup during warm convergence", () => {
 		const harness = officialServiceHarness("openclaw");
 		const paths = getRuntimePaths({ mode: "hosted" });

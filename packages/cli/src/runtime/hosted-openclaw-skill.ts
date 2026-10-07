@@ -10,7 +10,7 @@ import { recordValue } from "./manifest-shared";
 import { executableExists, spawnRuntimeUserCommand } from "./runtime-user-command";
 
 const OPENCLAW_AGENT_ID = "main";
-const OPENCLAW_INSTALLED_TREE_EXCLUDES = new Set([".openclaw/source-origin.json"]);
+export const OPENCLAW_INSTALLED_TREE_EXCLUDES = new Set([".openclaw/source-origin.json"]);
 
 export function hostedOpenClawSkillSourceMatches(
 	targetDir: string,

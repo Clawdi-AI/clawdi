@@ -16,6 +16,7 @@ import {
 	validateConnectionProviderEnvironments,
 } from "./connection-provider-config";
 import { buildEgressProfileBundle, hasEnabledEgressProfiles } from "./egress-profiles";
+import { egressSnapshotEnabled, publishClaimedEgressSnapshot } from "./egress-snapshot";
 import {
 	ensureFileBrowserCompanion,
 	gcFileBrowserCompanionCandidates,
@@ -41,7 +42,10 @@ import {
 	repairHostedOpenClawWorkspace,
 	resolveHostedOpenClawWorkspace,
 } from "./hosted-openclaw-context";
-import { hostedProviderConfiguration } from "./hosted-provider-resolution";
+import {
+	hostedProviderConfiguration,
+	hostedProviderEnvironment,
+} from "./hosted-provider-resolution";
 import { assertHostedRuntimeContract } from "./hosted-runtime-contract";
 import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import { reconcileManagedBaileysCompatibility } from "./managed-baileys-compat";
@@ -111,8 +115,19 @@ import type { RuntimeConvergenceResult } from "./manifest-shared";
 import { reconcileHostedSkillProjection } from "./manifest-skills-apply";
 import { loadCommittedRuntimeManifest, type RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
+import { gcOpenClawFileSecrets, openClawCredentialGeneration } from "./openclaw-file-secrets";
 import { removeLegacyManagedOpenClawProviderPlugin } from "./openclaw-legacy-provider-plugin";
+import {
+	beginOpenClawConfigTransaction,
+	commitOpenClawConfigTransaction,
+} from "./openclaw-provider-config";
+import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import type { RuntimePaths } from "./paths";
+import {
+	flushPersistedStepRevisions,
+	loadPersistedStepRevisions,
+} from "./persisted-step-revisions";
+import { profileRuntimeStep } from "./profile";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import {
 	commitProviderTransfers,
@@ -135,9 +150,11 @@ import {
 	runtimeSystemdUserUnitName,
 	uninstallStaleOfficialRuntimeServices,
 	validateRuntimeSystemdPlan,
+	writeRuntimeSidecarSystemdUnit,
 	writeRuntimeSystemdState,
 } from "./runtime-systemd-reconciliation";
 import { executableExists, withRuntimeUserFileAccess } from "./runtime-user-command";
+import { runtimeSecretValue } from "./secret-values";
 import { ensureRuntimePlatformDirectory } from "./state";
 import { SystemdReobservationRequiredError } from "./systemd-transaction";
 
@@ -175,6 +192,7 @@ interface RuntimeConvergenceContext {
 }
 
 interface RuntimeConvergenceState {
+	previousOpenClawCredentialGeneration: string[] | null;
 	skillEvidence: HostedSkillEvidence[];
 	nativeCredentialChangedRuntimes: Set<string>;
 	nativeCredentialProviderIds: Record<string, string[]>;
@@ -310,6 +328,7 @@ function initializeRuntimeConvergence(
 	const preparedHostedSourcedSkills = opts.preparedHostedSourcedSkills ?? new Map();
 	const sourcedSkillsPrepared = opts.resourcePreparationFailures?.sourcedSkills === undefined;
 	const state: RuntimeConvergenceState = {
+		previousOpenClawCredentialGeneration: null,
 		skillEvidence: [],
 		nativeCredentialChangedRuntimes: new Set(),
 		nativeCredentialProviderIds: {},
@@ -1054,7 +1073,20 @@ function applyRuntimeEntryProjections(
 				);
 			}
 		}
-		const resolved = withRuntimeUserFileAccess(() => {
+		withRuntimeUserFileAccess(() => {
+			if (name === "openclaw" && runtime.enabled && openClawHotApplyEnabled()) {
+				const providerEnv = hostedProviderEnvironment(manifest, name);
+				const environment = { ...providerEnv.placeholderEnv, ...providerEnv.configEnv };
+				for (const [key, ref] of Object.entries({
+					...providerEnv.secretEnv,
+					...runtime.run?.secretEnv,
+				})) {
+					const value = runtimeSecretValue(secretValues ?? {}, ref);
+					if (!value) throw new Error("OpenClaw credential is unavailable");
+					environment[key] = value;
+				}
+				beginOpenClawConfigTransaction(openClawContext, environment);
+			}
 			try {
 				const localeFile = applyHostedRuntimeConfigProjection(
 					name,
@@ -1123,19 +1155,27 @@ function applyRuntimeEntryProjections(
 					}`,
 				);
 			}
-			if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
-			return resolveRuntimeRunConfigs({
-				manifest,
-				paths,
-				name,
-				runtime,
-				observation,
-				workspaceRoot,
-				generatedAt,
-				secretValues,
-				egressProfileBundlePath: egressProjection.egressProfileBundlePath,
-			});
+			if (state.installErrors.length > 0) {
+				openClawContext.configMutationState.transaction = null;
+				throw new Error(state.installErrors.join("; "));
+			}
 		}, context.hostedRuntimeContract.identity);
+		if (name === "openclaw") commitOpenClawConfigTransaction(openClawContext, workspaceRoot);
+		const resolved = withRuntimeUserFileAccess(
+			() =>
+				resolveRuntimeRunConfigs({
+					manifest,
+					paths,
+					name,
+					runtime,
+					observation,
+					workspaceRoot,
+					generatedAt,
+					secretValues,
+					egressProfileBundlePath: egressProjection.egressProfileBundlePath,
+				}),
+			context.hostedRuntimeContract.identity,
+		);
 		const runConfigPath = writeRuntimeRunConfig(
 			resolved.runtime,
 			paths,
@@ -1212,6 +1252,7 @@ function prepareRuntimeActivation(
 		.filter((item) => item.program.runtime === "openclaw")
 		.map((item) => item.unitName);
 	const systemdUnits = publishSystemdUnits(deferredUnitNames);
+	if (egressProjection.egressSystemdProgram) publishClaimedEgressSnapshot(paths);
 	state.staleSystemdFiles = systemdUnits.staleFiles;
 	const staleSystemdFileErrors = removeStaleRuntimeSystemdFiles(state.staleSystemdFiles);
 	if (staleSystemdFileErrors.length > 0) throw new Error(staleSystemdFileErrors.join("; "));
@@ -1414,6 +1455,22 @@ function commitRuntimeConvergence(
 		},
 		transfers: commitProviderTransfers(context.providerOwnership.transfers),
 	});
+	if (
+		manifest.runtimes.openclaw?.enabled === true &&
+		state.previousOpenClawCredentialGeneration !== null
+	) {
+		const previousGeneration = state.previousOpenClawCredentialGeneration;
+		try {
+			withRuntimeUserFileAccess(
+				() => gcOpenClawFileSecrets(context.projectionHome, previousGeneration),
+				context.hostedRuntimeContract.identity,
+			);
+		} catch {
+			console.warn(
+				"post-commit OpenClaw credential cleanup deferred: config or file identity unavailable",
+			);
+		}
+	}
 	try {
 		gcFileBrowserCompanionCandidates(manifest, paths);
 	} catch (cleanupError) {
@@ -1469,7 +1526,10 @@ export function convergeRuntimeManifest(
 	paths: RuntimePaths,
 	opts: RuntimeConvergenceOptions = {},
 ): RuntimeConvergenceResult {
-	const { context, state } = initializeRuntimeConvergence(load, paths, opts);
+	const { context, state } = profileRuntimeStep("converge.initialize", () =>
+		initializeRuntimeConvergence(load, paths, opts),
+	);
+	loadPersistedStepRevisions(paths, openClawHotApplyEnabled() || egressSnapshotEnabled(paths));
 	try {
 		if (load.manifest.providerHandoffs?.length)
 			throw new Error(
@@ -1499,6 +1559,14 @@ export function convergeRuntimeManifest(
 		return runtimeApplyFailure(context, state, error);
 	}
 	if (context.manifest.runtimes.openclaw?.enabled === true) {
+		try {
+			state.previousOpenClawCredentialGeneration = withRuntimeUserFileAccess(
+				() => openClawCredentialGeneration(context.projectionHome),
+				context.hostedRuntimeContract.identity,
+			);
+		} catch {
+			console.warn("OpenClaw credential cleanup deferred: pre-apply config unavailable");
+		}
 		withRuntimeUserFileAccess(() => {
 			for (const path of [
 				join(context.projectionHome, ".openclaw"),
@@ -1510,23 +1578,49 @@ export function convergeRuntimeManifest(
 		}, context.hostedRuntimeContract.identity);
 	}
 	removeHostedCliPathExposure(paths);
-	const installResult = prepareRuntimeInstallStage(context, state);
+	const installResult = profileRuntimeStep("converge.install", () =>
+		prepareRuntimeInstallStage(context, state),
+	);
 	if (installResult) return installResult.result;
-	context.hermesConfig = beginRuntimeHermesConfig(context, state);
-	const planResult = prepareRuntimeConvergencePlan(context, state);
+	context.hermesConfig = profileRuntimeStep("converge.hermes-config", () =>
+		beginRuntimeHermesConfig(context, state),
+	);
+	const planResult = profileRuntimeStep("converge.plan", () =>
+		prepareRuntimeConvergencePlan(context, state),
+	);
 	if ("result" in planResult) return planResult.result;
 	const plan = planResult.plan;
 	try {
-		const codexCli = prepareRuntimeApplyDependencies(context, state);
-		const egressProjection = prepareRuntimeEgressProjection(context, state);
-		const providerProjectionRevisions = applyRuntimeResourceProjections(
-			context,
-			state,
-			plan,
-			codexCli,
+		const codexCli = profileRuntimeStep("converge.dependencies", () =>
+			prepareRuntimeApplyDependencies(context, state),
+		);
+		const egressProjection = profileRuntimeStep("converge.egress", () =>
+			prepareRuntimeEgressProjection(context, state),
+		);
+		if (
+			opts.systemdApply?.beginEgressPrerequisite &&
+			!readRuntimeAppliedState(paths) &&
+			egressProjection.egressSystemdProgram &&
+			egressProjection.egressIdentity &&
+			state.runtimeSystemdUserPrograms.length > 0
+		) {
+			writeRuntimeSidecarSystemdUnit({
+				program: egressProjection.egressSystemdProgram,
+				identity: egressProjection.egressIdentity,
+				manifest: context.manifest,
+				paths,
+				workspaceRoot: context.workspaceRoot,
+				commonEnvironment: egressProjection.commonSystemdEnvironment,
+			});
+			opts.systemdApply.beginEgressPrerequisite();
+		}
+		const providerProjectionRevisions = profileRuntimeStep("converge.resources", () =>
+			applyRuntimeResourceProjections(context, state, plan, codexCli),
 		);
 
-		applyRuntimeEntryProjections(context, state, plan, egressProjection);
+		profileRuntimeStep("converge.entries", () =>
+			applyRuntimeEntryProjections(context, state, plan, egressProjection),
+		);
 		if (context.hermesConfig) {
 			const hermesConfig = context.hermesConfig;
 			const commitResult = withRuntimeUserFileAccess(
@@ -1540,13 +1634,12 @@ export function convergeRuntimeManifest(
 				};
 			}
 		}
-		const activationPlan = prepareRuntimeActivation(
-			context,
-			state,
-			egressProjection,
-			providerProjectionRevisions,
+		const activationPlan = profileRuntimeStep("converge.activation-plan", () =>
+			prepareRuntimeActivation(context, state, egressProjection, providerProjectionRevisions),
 		);
-		const activationOutputs = activateRuntimeServices(context, state, activationPlan);
+		const activationOutputs = profileRuntimeStep("converge.activate", () =>
+			activateRuntimeServices(context, state, activationPlan),
+		);
 		const convergence = buildRuntimeConvergenceResult(
 			context,
 			state,
@@ -1554,7 +1647,10 @@ export function convergeRuntimeManifest(
 			activationPlan,
 			activationOutputs,
 		);
-		commitRuntimeConvergence(context, state, egressProjection, convergence);
+		profileRuntimeStep("converge.commit", () =>
+			commitRuntimeConvergence(context, state, egressProjection, convergence),
+		);
+		flushPersistedStepRevisions(paths);
 		return convergence;
 	} catch (error) {
 		return runtimeApplyFailure(context, state, error);

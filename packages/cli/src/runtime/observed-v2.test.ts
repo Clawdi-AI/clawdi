@@ -104,6 +104,46 @@ function healthyAppliedRuntimePaths(enabledRuntimes: string[] = []) {
 }
 
 describe("hosted runtime observed v2", () => {
+	test.each([
+		[false, true],
+		[true, true],
+		[false, false],
+	])("joins manager state with incomplete=%s and hotApply=%s", async (incomplete, hotApply) => {
+		process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = hotApply ? "1" : "0";
+		const paths = healthyAppliedRuntimePaths();
+		const first = "clawdi-batch-first.service";
+		const second = "clawdi-batch-second.service";
+		mkdirSync(paths.systemdSystemRoot);
+		for (const unit of [first, second])
+			writeFileSync(join(paths.systemdSystemRoot, unit), "[Service]\n");
+		const root = dirname(paths.systemdSystemRoot);
+		const command = join(root, "systemctl");
+		const commands = join(root, "commands");
+		writeFileSync(
+			command,
+			`#!/bin/sh
+echo "$*" >> '${commands}'
+case "$*" in
+ *--property=Id*)
+  printf 'Id=${second}\\nActiveState=inactive\\nSubState=dead\\n\\n'
+  ${incomplete ? "exit 0" : `printf 'Id=${first}\\nActiveState=active\\nSubState=running\\n'`} ;;
+ *${first}*) printf 'ActiveState=active\\nSubState=running\\n' ;;
+ *) printf 'ActiveState=inactive\\nSubState=dead\\n' ;;
+esac
+`,
+			{ mode: 0o755 },
+		);
+		process.env.CLAWDI_SYSTEMCTL_PATH = command;
+		const observed = await readHostedRuntimeObserved(paths);
+		expect(observed?.systemd?.units).toEqual([
+			expect.objectContaining({ name: first, activeState: "active", status: "ok" }),
+			expect.objectContaining({ name: second, activeState: "inactive", status: "unknown" }),
+		]);
+		expect(readFileSync(commands, "utf8").trim().split("\n")).toHaveLength(
+			hotApply ? (incomplete ? 3 : 1) : 2,
+		);
+	});
+
 	test("reports applied authority and keeps status version separate from the active process", async () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-observed-v2-"));
 		roots.push(root);
@@ -594,6 +634,67 @@ describe("hosted runtime observed v2", () => {
 				expect((await readHostedRuntimeObserved(paths))?.status).toBe("ok");
 				const parent = readRuntimeAppliedState(paths);
 				if (!parent) throw new Error("Expected applied fixture");
+				const healthyEvent = {
+					schemaVersion: "clawdi.runtimeWatchEvent.v1",
+					status: "applied",
+					instanceId: parent.instanceId,
+					generation: parent.generation,
+					etag: parent.etag,
+					sourceRevision: parent.sourceRevision,
+					sourcePath: parent.contentIdentity.sourcePath,
+					selfReexec: false,
+					systemdApply: { applied: true },
+					convergence: {},
+					cliUpdate: { selfReexec: false },
+				};
+				const successfulPoll = {
+					schemaVersion: "clawdi.runtimeWatchEvent.v1",
+					status: "not_modified",
+					instanceId: parent.instanceId,
+					generation: parent.generation,
+					etag: parent.etag,
+					sourceRevision: parent.sourceRevision,
+					sourcePath: parent.contentIdentity.sourcePath,
+					selfReexec: false,
+				};
+				writeFileSync(
+					paths.runtimeWatchStatus,
+					JSON.stringify({ ...idleWatch, event: healthyEvent }),
+				);
+				mutateParent = () =>
+					writeFileSync(
+						paths.runtimeWatchStatus,
+						JSON.stringify({ ...idleWatch, event: successfulPoll }),
+					);
+				expect(await readHostedRuntimeObserved(paths)).toBeNull();
+				process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
+				for (const extra of [
+					{},
+					{ generation: parent.generation + 1 },
+					{ etag: "changed" },
+					{ sourceRevision: "f".repeat(64) },
+					{ sourcePath: "different" },
+					{ selfReexec: true },
+					{ healthImpact: "manifest_transport" },
+					{ error: "failed" },
+					{ convergence: { agentPlugins: { status: "failed" } } },
+				]) {
+					writeFileSync(
+						paths.runtimeWatchStatus,
+						JSON.stringify({ ...idleWatch, event: healthyEvent }),
+					);
+					mutateParent = () =>
+						writeFileSync(
+							paths.runtimeWatchStatus,
+							JSON.stringify({ ...idleWatch, event: { ...successfulPoll, ...extra } }),
+						);
+					const captured = await readHostedRuntimeObserved(paths);
+					if (Object.keys(extra).length === 0) expect(captured?.status).toBe("ok");
+					else expect(captured).toBeNull();
+				}
+				delete process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY;
+				writeFileSync(paths.runtimeWatchStatus, JSON.stringify(idleWatch));
+
 				mutateParent = () =>
 					writeRuntimeAppliedState({ ...parent, appliedAt: "2026-09-12T12:00:00.000Z" }, paths);
 				expect(await readHostedRuntimeObserved(paths)).toBeNull();

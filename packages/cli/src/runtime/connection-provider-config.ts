@@ -16,6 +16,7 @@ import type { RuntimeManifest } from "./manifest-contract";
 import { type RuntimeInstallObservation, runtimeAppRoot } from "./manifest-install";
 import { canonicalJsonEqual, recordValue } from "./manifest-shared";
 import { readOpenClawProviderConfig } from "./openclaw-native-provider";
+import { applyOpenClawContextMergePatch } from "./openclaw-provider-config";
 import { runtimeImpactRevision } from "./runtime-impact-revision";
 import { spawnRuntimeUserCommand } from "./runtime-user-command";
 import { runtimeSecretValue } from "./secret-values";
@@ -191,9 +192,10 @@ function hermesPoolConflicts(
 function ownedOpenClawRef(value: unknown, envName: string): boolean {
 	const ref = recordValue(value);
 	return (
-		ref?.source === "env" &&
-		(ref.provider === "clawdi-connection" || ref.provider === "default") &&
-		ref.id === envName
+		(ref?.source === "env" &&
+			(ref.provider === "clawdi-connection" || ref.provider === "default") &&
+			ref.id === envName) ||
+		(ref?.source === "file" && ref.provider === "clawdi-runtime" && ref.id === `/${envName}`)
 	);
 }
 
@@ -552,6 +554,10 @@ export function applyConnectionProviderTransfers(input: ConnectionContext): bool
 				? { secrets: { providers: { "clawdi-connection": { source: "env" } } } }
 				: {}),
 		};
+		if (input.openClawContext.configMutationState.transaction) {
+			applyOpenClawContextMergePatch(input.openClawContext, config, input.workspaceRoot);
+			return true;
+		}
 		const result = spawnRuntimeUserCommand(
 			input.observation.commandPath,
 			["config", "patch", "--stdin"],

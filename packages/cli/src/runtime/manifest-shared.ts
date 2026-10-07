@@ -58,6 +58,8 @@ interface RuntimeSystemdApplySignal {
 }
 export interface RuntimeSystemdApplyHooks {
 	assertIdle?: () => void;
+	/** First apply may overlap the sidecar's startup with native config projection. */
+	beginEgressPrerequisite?: () => void;
 	activateEgressPrerequisite: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 }

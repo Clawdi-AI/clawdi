@@ -11,6 +11,7 @@ import {
 import { resolve } from "node:path";
 import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import type { EgressProfileBundle } from "./egress-profiles";
+import { egressSnapshotEnabled, egressSnapshotPaths } from "./egress-snapshot";
 import { makeEgressIdentityOwned } from "./manifest-secrets";
 import { writeRuntimePrivateFileAtomic } from "./manifest-shared";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
@@ -65,7 +66,10 @@ export function requireV2EgressEngineReady(
 		);
 	}
 }
-export function writeEgressProfileBundle(bundle: EgressProfileBundle, paths: RuntimePaths): string {
+export function writeEgressProfileBundle(
+	bundle: Pick<EgressProfileBundle, "schemaVersion" | "profiles">,
+	paths: RuntimePaths,
+): string {
 	// Published handoff: the egress sidecar (clawdi-egress uid) reads this
 	// bundle, so it lives under the traversable run root next to the other
 	// sidecar inputs (addon, transparent env, CA) — never under a private
@@ -119,6 +123,12 @@ export function writeTransparentEgressEnvFile(input: {
 		return null;
 	}
 	const env: Record<string, string> = {
+		...(egressSnapshotEnabled(input.paths)
+			? {
+					CLAWDI_EGRESS_SNAPSHOT_FILE: egressSnapshotPaths(input.paths).input,
+					CLAWDI_EGRESS_SNAPSHOT_ACK: egressSnapshotPaths(input.paths).ack,
+				}
+			: {}),
 		CLAWDI_RUNTIME_USER: input.runtimeUser,
 		CLAWDI_RUNTIME_UID: String(input.runtimeUid),
 		CLAWDI_RUNTIME_GID: String(input.runtimeGid),

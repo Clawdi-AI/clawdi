@@ -417,7 +417,7 @@ describe("runtime manifest datasource", () => {
 			const abort = new AbortController();
 			const previousLog = console.log;
 			const logs: string[] = [];
-			seedRuntimeWatchLocaleBaseline(home, state, run);
+			const paths = seedRuntimeWatchLocaleBaseline(home, state, run);
 			let resolveInitialWatchEvent: (() => void) | null = null;
 			const initialWatchEvent = new Promise<void>((resolveEvent) => {
 				resolveInitialWatchEvent = resolveEvent;
@@ -427,6 +427,7 @@ describe("runtime manifest datasource", () => {
 				if (logs.length === 1) resolveInitialWatchEvent?.();
 			};
 			let manifestCalls = 0;
+			let authorityBeforeDuplicate: string | null = null;
 			let subscriptionCalls = 0;
 			let resolveInitialManifestRequest: (() => void) | null = null;
 			const initialManifestRequest = new Promise<void>((resolveRequest) => {
@@ -442,6 +443,8 @@ describe("runtime manifest datasource", () => {
 							resolveInitialManifestRequest?.();
 							return new Response(null, { status: 304 });
 						}
+						if (manifestCalls === 3)
+							authorityBeforeDuplicate = readFileSync(paths.appliedState, "utf8");
 						setTimeout(() => abort.abort(), 0);
 						return hostedRuntimeBundleResponse(
 							{
@@ -489,6 +492,7 @@ describe("runtime manifest datasource", () => {
 					"applied",
 					"applied",
 				]);
+				expect(readFileSync(paths.appliedState, "utf8")).not.toBe(authorityBeforeDuplicate);
 			} finally {
 				clearTimeout(timeout);
 				restore();
@@ -1334,95 +1338,103 @@ exit 64
 		}
 	});
 
-	it("runtime watch trusts the committed v2 authority after a manifest 304", async () => {
-		installSuccessfulSystemctlFixture();
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const bin = join(root, "bin");
-		const openclawBin = join(home, ".local", "bin", "openclaw");
-		const previousExitCode = process.exitCode;
-		const previousLog = console.log;
-		const logs: string[] = [];
-		const providerSecretRef = "secret://provider.default.apiKey";
-		const channelSecretRef = "secret://channels/telegram/clawdi_accttelegram/agent-token";
-		const channelPlaceholderSecretRef =
-			"secret://channels/telegram/clawdi_accttelegram/placeholder-token";
-		const hostedPayload = {
-			schemaVersion: "clawdi.hosted-runtime.bundle.v2",
-			sourceRevision: "d".repeat(64),
-			manifest: {
-				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-				runtime: "openclaw",
-				deploymentId: "dep_watch_secret",
-				environmentId: "env_watch_secret",
-				...hostedRequiredState(),
-				instanceId: "iid_watch_secret",
-				generation: 22,
-				issuedAt: "2026-06-06T00:00:00Z",
-				locale: TEST_HOSTED_LOCALE,
-				system: hostedSystemFixture(home),
-				controlPlane: { cloudApiUrl: "https://cloud-api.test" },
-				clawdiCli: {
-					source: "npm:clawdi",
-					packageSpec: TEST_RUNNING_CLI_SPEC,
-					registry: "https://registry.npmjs.org",
-				},
-				runtimes: {
-					openclaw: hostedOpenClawRuntime({
-						provider_ids: ["clawdi-managed-v2"],
-						primary_model: {
-							provider_id: "clawdi-managed-v2",
-							model: "gpt-5.5",
+	it.each([
+		[304, false],
+		[200, true],
+		[200, false],
+	] as const)(
+		"runtime watch preserves conditional manifest %s behavior with hot apply %s",
+		async (responseStatus, hotApply) => {
+			const previousHotApply = process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY;
+			process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "0";
+			installSuccessfulSystemctlFixture();
+			const home = join(root, "home", "clawdi");
+			const state = join(root, "var", "lib", "clawdi");
+			const run = join(root, "run", "clawdi");
+			const bin = join(root, "bin");
+			const openclawBin = join(home, ".local", "bin", "openclaw");
+			const previousExitCode = process.exitCode;
+			const previousLog = console.log;
+			const logs: string[] = [];
+			const providerSecretRef = "secret://provider.default.apiKey";
+			const channelSecretRef = "secret://channels/telegram/clawdi_accttelegram/agent-token";
+			const channelPlaceholderSecretRef =
+				"secret://channels/telegram/clawdi_accttelegram/placeholder-token";
+			const hostedPayload = {
+				schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+				sourceRevision: "d".repeat(64),
+				manifest: {
+					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					runtime: "openclaw",
+					deploymentId: "dep_watch_secret",
+					environmentId: "env_watch_secret",
+					...hostedRequiredState(),
+					instanceId: "iid_watch_secret",
+					generation: 22,
+					issuedAt: "2026-06-06T00:00:00Z",
+					locale: TEST_HOSTED_LOCALE,
+					system: hostedSystemFixture(home),
+					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+					clawdiCli: {
+						source: "npm:clawdi",
+						packageSpec: TEST_RUNNING_CLI_SPEC,
+						registry: "https://registry.npmjs.org",
+					},
+					runtimes: {
+						openclaw: hostedOpenClawRuntime({
+							provider_ids: ["clawdi-managed-v2"],
+							primary_model: {
+								provider_id: "clawdi-managed-v2",
+								model: "gpt-5.5",
+							},
+						}),
+					},
+					providers: {
+						"clawdi-managed-v2": {
+							kind: "openai-compatible",
+							type: "custom_openai_compatible",
+							baseUrl: "https://sub2api.test/v1",
+							models: [{ id: "gpt-5.5" }],
+							apiMode: "openai_chat",
+							managed_by: "clawdi",
+							runtimeEnvName: "CLAWDI_AI_API_KEY",
+							apiKeySecretRef: providerSecretRef,
 						},
-					}),
-				},
-				providers: {
-					"clawdi-managed-v2": {
-						kind: "openai-compatible",
-						type: "custom_openai_compatible",
-						baseUrl: "https://sub2api.test/v1",
-						models: [{ id: "gpt-5.5" }],
-						apiMode: "openai_chat",
-						managed_by: "clawdi",
-						runtimeEnvName: "CLAWDI_AI_API_KEY",
-						apiKeySecretRef: providerSecretRef,
 					},
 				},
-			},
-			channelBindings: [
-				{
-					provider: "telegram",
-					accountKey: "clawdi_accttelegram",
-					agentTokenSecretRef: channelSecretRef,
-					placeholderTokenSecretRef: channelPlaceholderSecretRef,
+				channelBindings: [
+					{
+						provider: "telegram",
+						accountKey: "clawdi_accttelegram",
+						agentTokenSecretRef: channelSecretRef,
+						placeholderTokenSecretRef: channelPlaceholderSecretRef,
+					},
+				],
+				secretValues: {
+					...TEST_RUNTIME_SERVICE_SECRET_VALUES,
+					...TEST_HOSTED_CODEX_SECRET_VALUES,
+					[providerSecretRef]: "sk-provider-watch",
+					[channelSecretRef]: "agent-token-watch",
+					[channelPlaceholderSecretRef]: "999999999:54db03c2296520629c70cfb6e3b15f8e",
 				},
-			],
-			secretValues: {
-				...TEST_RUNTIME_SERVICE_SECRET_VALUES,
-				...TEST_HOSTED_CODEX_SECRET_VALUES,
-				[providerSecretRef]: "sk-provider-watch",
-				[channelSecretRef]: "agent-token-watch",
-				[channelPlaceholderSecretRef]: "999999999:54db03c2296520629c70cfb6e3b15f8e",
-			},
-		};
-		const stableBundleEtag = `"sha256:${hostedPayload.sourceRevision}"`;
-		const manifestResponse = () =>
-			new Response(JSON.stringify(hostedPayload), {
-				status: 200,
-				headers: {
-					"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
-					etag: stableBundleEtag,
-				},
-			});
+			};
+			const stableBundleEtag = `"sha256:${hostedPayload.sourceRevision}"`;
+			const manifestResponse = () =>
+				new Response(JSON.stringify(hostedPayload), {
+					status: 200,
+					headers: {
+						"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+						etag: stableBundleEtag,
+					},
+				});
 
-		mkdirSync(join(run, "secrets"), { recursive: true });
-		mkdirSync(bin, { recursive: true });
-		mkdirSync(dirname(openclawBin), { recursive: true });
-		writeOpenClawConfigMutationFixture(home);
-		writeFileSync(
-			openclawBin,
-			`#!/usr/bin/env bash
+			mkdirSync(join(run, "secrets"), { recursive: true });
+			mkdirSync(bin, { recursive: true });
+			mkdirSync(dirname(openclawBin), { recursive: true });
+			writeOpenClawConfigMutationFixture(home);
+			writeFileSync(
+				openclawBin,
+				`#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "--version" ]; then
   printf 'openclaw test-version\\n'
@@ -1433,173 +1445,192 @@ if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin
   cat >/dev/null
   exit 0
 fi
+if [ "$*" = "gateway install --force --json" ]; then
+  mkdir -p '${join(home, ".config", "systemd", "user")}'
+  printf '%s\\n' '[Unit]' '[Service]' 'ExecStart=${openclawBin} gateway run' > '${join(home, ".config", "systemd", "user", "openclaw-gateway.service")}'
+  printf '{"ok":true}\\n'
+  exit 0
+fi
 printf 'unexpected openclaw command: %s\\n' "$*" >&2
 exit 64
 `,
-		);
-		chmodSync(openclawBin, 0o700);
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
-		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK = writeFakeOpenClawProviderAuthSdk(
-			join(root, "watch-provider-auth"),
-			join(root, "watch-provider-auth", "calls.log"),
-		);
-		process.exitCode = undefined;
-		writeCanonicalApplyContext(
-			{
-				generation: 22,
-				manifestETag: stableBundleEtag,
-				applyReceiptId: "test-apply-receipt-0022",
-				bootNonce: "test-boot-nonce-000022",
-			},
-			CANONICAL_TEST_CONTEXT,
-		);
-		console.log = (value?: unknown) => {
-			logs.push(String(value));
-		};
-		seedCurrentCliInstall(state, TEST_RUNNING_CLI_VERSION);
-		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
-		const paths = getRuntimePaths();
-		seedMitmproxyCache(paths);
-		const initial = mockFetch([
-			{ method: "GET", path: "/v1/runtime/manifest", response: () => manifestResponse() },
-		]);
-		try {
-			const manifestLoad = await loadRemoteRuntimeManifest(paths);
-			if (!("manifest" in manifestLoad) || "notModified" in manifestLoad) {
-				throw new Error("expected initial manifest load success");
-			}
-			const projected = applyRuntimeBundleChannelsToManifestLoad(manifestLoad);
-			const initialConvergence = convergeRuntimeManifest(projected, paths);
-			cacheRuntimeLastGoodManifest(
-				projected.sourceBundle,
-				paths,
-				projected.secretValues,
-				projected.manifest,
 			);
-			expect(initialConvergence.installErrors).toEqual([]);
-			expectEgressProfileBundleUsesSecretRef(
-				initialConvergence.outputs.egressProfileBundle,
-				"secret://provider.default.apiKey",
-				"sk-provider-watch",
+			chmodSync(openclawBin, 0o700);
+			process.env.HOME = home;
+			process.env.CLAWDI_RUNTIME_MODE = "hosted";
+			process.env.CLAWDI_SERVICE_STATE_DIR = state;
+			process.env.CLAWDI_RUN_DIR = run;
+			process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+			process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK = writeFakeOpenClawProviderAuthSdk(
+				join(root, "watch-provider-auth"),
+				join(root, "watch-provider-auth", "calls.log"),
 			);
-			mkdirSync(dirname(paths.appliedState), { recursive: true });
-			writeFileSync(
-				paths.appliedState,
-				JSON.stringify({
-					schemaVersion: "clawdi.runtimeAppliedState.v2",
-					appliedAt: "2026-07-13T00:00:00.000Z",
-					instanceId: "iid_watch_secret",
-					etag: stableBundleEtag,
-					sourceRevision: "d".repeat(64),
+			process.exitCode = undefined;
+			writeCanonicalApplyContext(
+				{
 					generation: 22,
-					applyGeneration: 22,
 					manifestETag: stableBundleEtag,
 					applyReceiptId: "test-apply-receipt-0022",
 					bootNonce: "test-boot-nonce-000022",
-					contentIdentity: {
-						sourcePath: "https://runtime.test/v1/runtime/manifest",
-						sha256: runtimeAppliedContentIdentity(projected).sha256,
-					},
-					activated: {},
-					providerIds: ["clawdi-managed-v2"],
-					projectedProviderIds: { openclaw: ["clawdi-managed-v2"] },
-				}),
+				},
+				CANONICAL_TEST_CONTEXT,
 			);
-		} finally {
-			initial.restore();
-		}
-		// Emulate an upgrade from 0.14.82: only its exact legacy pair survives.
-		const legacy = legacyRuntimeManifestPaths(paths);
-		for (const [current, old] of [
-			[paths.manifestLastGood, legacy.manifestLastGood],
-			[paths.managedSecretCacheFile, legacy.managedSecretCacheFile],
-		]) {
-			copyFileSync(current, old);
-			rmSync(current);
-		}
-		rmSync(dirname(paths.manifestLastGood), { recursive: true, force: true });
-		const baselineAuthority = readFileSync(paths.appliedState, "utf8");
-		const baselineRevision = systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"));
-		const baselineMitmSecrets = JSON.parse(
-			readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8"),
-		);
-		expect(baselineMitmSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
-		expect(baselineMitmSecrets[channelSecretRef]).toBe("agent-token-watch");
-
-		const watchFetch = mockFetch([
-			{
-				method: "GET",
-				path: "/v1/runtime/manifest",
-				response: (request) =>
-					request.headers["if-none-match"]
-						? new Response(null, {
-								status: 304,
-								headers: { etag: stableBundleEtag },
-							})
-						: manifestResponse(),
-			},
-		]);
-
-		try {
-			await runtimeWatch({ once: true, json: true });
-
-			if (process.exitCode !== undefined && process.exitCode !== 0) {
-				throw new Error(logs.join("\n"));
-			}
-			expect(watchFetch.captured.map((request) => request.path)).toEqual([
-				"/v1/runtime/manifest",
-				"/v1/runtime/vaults",
+			console.log = (value?: unknown) => {
+				logs.push(String(value));
+			};
+			seedCurrentCliInstall(state, TEST_RUNNING_CLI_VERSION);
+			writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+			const paths = getRuntimePaths();
+			seedMitmproxyCache(paths);
+			const initial = mockFetch([
+				{ method: "GET", path: "/v1/runtime/manifest", response: () => manifestResponse() },
 			]);
-			expect(watchFetch.captured[0].headers["if-none-match"]).toBe(stableBundleEtag);
-			const event = JSON.parse(logs[0]);
-			expect(event.status).toBe("not_modified");
-			expect(readFileSync(paths.manifestLastGood, "utf8")).toBe(
-				readFileSync(legacy.manifestLastGood, "utf8"),
-			);
-			expect(readFileSync(paths.managedSecretCacheFile, "utf8")).toBe(
-				readFileSync(legacy.managedSecretCacheFile, "utf8"),
-			);
-			expect(readFileSync(paths.appliedState, "utf8")).toBe(baselineAuthority);
-			expect(event.generation).toBe(22);
-			expect(event.etag).toBe(stableBundleEtag);
-			expect(readRuntimeAppliedState(paths)).toMatchObject({
-				schemaVersion: "clawdi.runtimeAppliedState.v2",
-				etag: stableBundleEtag,
-				sourceRevision: "d".repeat(64),
-				generation: 22,
-				providerIds: ["clawdi-managed-v2"],
-			});
-			expect(event.systemdUnitsChanged).toBeUndefined();
-			expect(event.systemdApply).toBeUndefined();
-			const egressSecrets = JSON.parse(
+			try {
+				const manifestLoad = await loadRemoteRuntimeManifest(paths);
+				if (!("manifest" in manifestLoad) || "notModified" in manifestLoad) {
+					throw new Error("expected initial manifest load success");
+				}
+				const projected = applyRuntimeBundleChannelsToManifestLoad(manifestLoad);
+				const initialConvergence = convergeRuntimeManifest(projected, paths);
+				cacheRuntimeLastGoodManifest(
+					projected.sourceBundle,
+					paths,
+					projected.secretValues,
+					projected.manifest,
+				);
+				expect(initialConvergence.installErrors).toEqual([]);
+				expectEgressProfileBundleUsesSecretRef(
+					initialConvergence.outputs.egressProfileBundle,
+					"secret://provider.default.apiKey",
+					"sk-provider-watch",
+				);
+				mkdirSync(dirname(paths.appliedState), { recursive: true });
+				writeFileSync(
+					paths.appliedState,
+					JSON.stringify({
+						schemaVersion: "clawdi.runtimeAppliedState.v2",
+						appliedAt: "2026-07-13T00:00:00.000Z",
+						instanceId: "iid_watch_secret",
+						etag: stableBundleEtag,
+						sourceRevision: "d".repeat(64),
+						generation: 22,
+						applyGeneration: 22,
+						manifestETag: stableBundleEtag,
+						applyReceiptId: "test-apply-receipt-0022",
+						bootNonce: "test-boot-nonce-000022",
+						contentIdentity: {
+							sourcePath: "https://runtime.test/v1/runtime/manifest",
+							sha256: runtimeAppliedContentIdentity(projected).sha256,
+						},
+						activated: {},
+						providerIds: ["clawdi-managed-v2"],
+						projectedProviderIds: { openclaw: ["clawdi-managed-v2"] },
+					}),
+				);
+			} finally {
+				initial.restore();
+			}
+			// Emulate an upgrade from 0.14.82: only its exact legacy pair survives.
+			const legacy = legacyRuntimeManifestPaths(paths);
+			for (const [current, old] of [
+				[paths.manifestLastGood, legacy.manifestLastGood],
+				[paths.managedSecretCacheFile, legacy.managedSecretCacheFile],
+			]) {
+				copyFileSync(current, old);
+				rmSync(current);
+			}
+			rmSync(dirname(paths.manifestLastGood), { recursive: true, force: true });
+			const baselineAuthority = readFileSync(paths.appliedState, "utf8");
+			const baselineRevision = systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"));
+			const baselineMitmSecrets = JSON.parse(
 				readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8"),
 			);
-			expect(egressSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
-			expect(egressSecrets[channelSecretRef]).toBe("agent-token-watch");
-			expect(systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
-				baselineRevision,
-			);
-			// Re-run the same 304 with exact legacy history but a blocked durable destination.
-			rmSync(dirname(paths.manifestLastGood), { recursive: true, force: true });
-			writeFileSync(dirname(paths.manifestLastGood), "blocked", { mode: 0o600 });
-			logs.length = 0;
-			await runtimeWatch({ once: true, json: true });
-			const failed = JSON.parse(logs[0]);
-			expect(failed.status).toBe("error");
-			expect(JSON.stringify(failed)).toContain(
-				"could not persist verified committed runtime snapshot",
-			);
-			expect(readFileSync(paths.appliedState, "utf8")).toBe(baselineAuthority);
-		} finally {
-			watchFetch.restore();
-			console.log = previousLog;
-			process.exitCode = previousExitCode;
-		}
-	});
+			expect(baselineMitmSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
+			expect(baselineMitmSecrets[channelSecretRef]).toBe("agent-token-watch");
+
+			process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = hotApply ? "1" : "0";
+			const watchFetch = mockFetch([
+				{
+					method: "GET",
+					path: "/v1/runtime/manifest",
+					response: (request) =>
+						request.headers["if-none-match"] && responseStatus === 304
+							? new Response(null, {
+									status: 304,
+									headers: { etag: stableBundleEtag },
+								})
+							: manifestResponse(),
+				},
+			]);
+
+			try {
+				await runtimeWatch({ once: true, json: true });
+
+				if (process.exitCode !== undefined && process.exitCode !== 0) {
+					throw new Error(logs.join("\n"));
+				}
+				expect(watchFetch.captured.map((request) => request.path)).toEqual([
+					"/v1/runtime/manifest",
+					"/v1/runtime/vaults",
+				]);
+				expect(watchFetch.captured[0].headers["if-none-match"]).toBe(stableBundleEtag);
+				const event = JSON.parse(logs[0]);
+				expect(event.status).toBe(responseStatus === 200 && !hotApply ? "applied" : "not_modified");
+				expect(readFileSync(paths.manifestLastGood, "utf8")).toBe(
+					readFileSync(legacy.manifestLastGood, "utf8"),
+				);
+				expect(readFileSync(paths.managedSecretCacheFile, "utf8")).toBe(
+					readFileSync(legacy.managedSecretCacheFile, "utf8"),
+				);
+				if (responseStatus === 200 && !hotApply)
+					expect(readFileSync(paths.appliedState, "utf8")).not.toBe(baselineAuthority);
+				else expect(readFileSync(paths.appliedState, "utf8")).toBe(baselineAuthority);
+				expect(event.generation).toBe(22);
+				expect(event.etag).toBe(stableBundleEtag);
+				expect(readRuntimeAppliedState(paths)).toMatchObject({
+					schemaVersion: "clawdi.runtimeAppliedState.v2",
+					etag: stableBundleEtag,
+					sourceRevision: "d".repeat(64),
+					generation: 22,
+					providerIds: ["clawdi-managed-v2"],
+				});
+				if (responseStatus === 200 && !hotApply) {
+					expect(event.systemdApply?.applied).toBe(true);
+				} else {
+					expect(event.systemdUnitsChanged).toBeUndefined();
+					expect(event.systemdApply).toBeUndefined();
+				}
+				const egressSecrets = JSON.parse(
+					readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8"),
+				);
+				expect(egressSecrets["secret://provider.default.apiKey"]).toBe("sk-provider-watch");
+				expect(egressSecrets[channelSecretRef]).toBe("agent-token-watch");
+				expect(systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
+					baselineRevision,
+				);
+				// Re-run the same 304 with exact legacy history but a blocked durable destination.
+				rmSync(dirname(paths.manifestLastGood), { recursive: true, force: true });
+				writeFileSync(dirname(paths.manifestLastGood), "blocked", { mode: 0o600 });
+				logs.length = 0;
+				await runtimeWatch({ once: true, json: true });
+				const failed = JSON.parse(logs[0]);
+				expect(failed.status).toBe("error");
+				if (responseStatus !== 200 || hotApply)
+					expect(JSON.stringify(failed)).toContain(
+						"could not persist verified committed runtime snapshot",
+					);
+				if (responseStatus === 200 && !hotApply)
+					expect(readFileSync(paths.appliedState, "utf8")).not.toBe(baselineAuthority);
+				else expect(readFileSync(paths.appliedState, "utf8")).toBe(baselineAuthority);
+			} finally {
+				watchFetch.restore();
+				if (previousHotApply === undefined) delete process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY;
+				else process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = previousHotApply;
+				console.log = previousLog;
+				process.exitCode = previousExitCode;
+			}
+		},
+	);
 
 	it("runtime watch retries datasource failures and applies after recovery", async () => {
 		installSuccessfulSystemctlFixture();
