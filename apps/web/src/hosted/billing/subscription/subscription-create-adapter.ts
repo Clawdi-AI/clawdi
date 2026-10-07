@@ -39,6 +39,16 @@ export type SubscriptionSource =
 
 const NEW_SUBSCRIPTION_SOURCE: SubscriptionSource = { mode: "new" };
 
+/**
+ * Web assigns only card and Wallet subscriptions. Store subscriptions are bought and
+ * assigned in the Clawdi app; server admission selects them without a Web choice.
+ */
+export function isWebSelectableSubscription(
+	subscription: Pick<ReusableSubscription, "funding_source">,
+): boolean {
+	return subscription.funding_source === "stripe" || subscription.funding_source === "wallet";
+}
+
 export function resolveSubscriptionSource({
 	includedAvailable,
 	reusableSubscriptions,
@@ -49,17 +59,16 @@ export function resolveSubscriptionSource({
 	selected: SubscriptionSource | null;
 }): SubscriptionSource | null {
 	if (includedAvailable === undefined || reusableSubscriptions === undefined) return selected;
+	const selectable = reusableSubscriptions.filter(isWebSelectableSubscription);
 	if (selected?.mode === "included" && !includedAvailable) selected = null;
 	if (selected?.mode === "existing") {
 		const subscriptionId = selected.subscriptionId;
-		if (
-			!reusableSubscriptions.some((subscription) => subscription.subscription_id === subscriptionId)
-		) {
+		if (!selectable.some((subscription) => subscription.subscription_id === subscriptionId)) {
 			selected = null;
 		}
 	}
 	if (selected) return selected;
-	return !includedAvailable && reusableSubscriptions.length === 0 ? NEW_SUBSCRIPTION_SOURCE : null;
+	return !includedAvailable && selectable.length === 0 ? NEW_SUBSCRIPTION_SOURCE : null;
 }
 
 /** Presentation model plus the exact server assertion used at confirmation. */
@@ -154,11 +163,12 @@ export function subscriptionCreateRequest(request: SubscriptionCreateRequestView
 	return { body, idempotencyKey: request.idempotencyKey };
 }
 
+/** Null for store subscriptions, which never use the hosted checkout flow. */
 export function existingSubscriptionCreateSelection(
 	subscription: ReusableSubscription,
-): SubscriptionCreateSelection {
+): SubscriptionCreateSelection | null {
 	if (subscription.funding_source !== "stripe" && subscription.funding_source !== "wallet") {
-		throw new Error("Store-managed subscriptions cannot use the hosted card checkout flow.");
+		return null;
 	}
 	return {
 		planSlug: subscription.plan_slug,

@@ -210,4 +210,43 @@ describe("overview Compute presentation", () => {
 			action: null,
 		});
 	});
+
+	test("shows store state and dates without card recovery shortcuts", () => {
+		const management = {
+			provider: "play_store",
+			product_id: "ai.clawdi.app.compute.basic.monthly",
+			management_url: null,
+			auto_renews: true,
+			renews_or_ends_at: future,
+			state: "grace",
+		} as const;
+		const store: HostedComputeSubscription = {
+			...paid,
+			funding_source: "store",
+			price_cents: null,
+			status: "past_due",
+			payment_state: "past_due",
+			recovery_action: "manage_store_subscription",
+			actions: { cancel: null, resume: false, command_state: null },
+			store_management: management,
+		};
+		expect(view(store)).toMatchObject({
+			subscription: { label: "Subscription", value: "Grace period" },
+			date: { label: "Next renewal", value: formatShortDate(future) },
+			action: null,
+		});
+		expect(
+			view({
+				...store,
+				status: "active",
+				payment_state: "ok",
+				recovery_action: null,
+				store_management: { ...management, state: "canceled_pending_end", auto_renews: false },
+			}),
+		).toMatchObject({
+			subscription: { value: "Canceling" },
+			date: { label: "Ends on", value: formatShortDate(future) },
+			action: null,
+		});
+	});
 });

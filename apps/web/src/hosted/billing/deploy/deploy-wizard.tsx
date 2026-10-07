@@ -849,6 +849,7 @@ export function DeployWizard() {
 			if (subscriptionSource.mode === "existing") {
 				if (!selectedReusableSubscription) return;
 				const selection = existingSubscriptionCreateSelection(selectedReusableSubscription);
+				if (!selection) return;
 				const subscriptionSelection = {
 					mode: "existing",
 					subscription_id: selectedReusableSubscription.subscription_id,

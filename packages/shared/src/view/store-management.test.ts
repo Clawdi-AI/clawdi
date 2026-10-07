@@ -1,13 +1,19 @@
 import { describe, expect, test } from "bun:test";
+import { formatShortDate } from "./format";
 import {
 	isStoreManagementOnOtherStore,
 	isStoreManagementOnPlatform,
 	STORE_MANAGEMENT_URLS,
 	type StoreManagement,
+	storeAgentDeletionNotice,
+	storeBillingNotice,
 	storeManagementPresentation,
 	storeManagementProvider,
 	storeManagementState,
 	storeManagementUrl,
+	storeProviderLabel,
+	storeSubscriptionCardView,
+	storeSubscriptionStatus,
 } from "./store-management";
 
 const appStoreManagement: StoreManagement = {
@@ -53,5 +59,71 @@ describe("store management presentation", () => {
 			isOnOtherStore: false,
 			managementUrl: STORE_MANAGEMENT_URLS.app_store,
 		});
+	});
+
+	test("renders each store state read-only without falling back to card billing", () => {
+		const fallback = { label: "Past due", tone: "destructive" } as const;
+		const renewsAt = formatShortDate(appStoreManagement.renews_or_ends_at);
+		const cases = [
+			["active", "Active", "Renews"],
+			["grace", "Grace period", "Renews"],
+			["lapsed", "Billing issue", null],
+			["paused", "Paused", null],
+			["canceled_pending_end", "Canceling", "Ends"],
+			["expired", "Expired", "Ended"],
+			["revoked", "Ended", "Ended"],
+			["unexpected", "Unavailable", null],
+		] as const;
+		for (const [state, label, verb] of cases) {
+			const view = storeSubscriptionCardView({
+				planSlug: "compute_performance",
+				billingTermMonths: 12,
+				management: { ...appStoreManagement, state },
+				fallbackStatus: fallback,
+			});
+			expect(view.status.label).toBe(label);
+			expect(view.plan).toBe("Performance plan");
+			expect(view.commercialFacts.map(({ value }) => value)).toEqual([
+				"Annual",
+				"App Store",
+				verb ? `${verb} ${renewsAt}` : "Unavailable",
+			]);
+			expect(JSON.stringify(view)).not.toContain("Card");
+		}
+		expect(
+			storeSubscriptionCardView({
+				planSlug: "compute_basic",
+				billingTermMonths: 1,
+				management: { ...appStoreManagement, state: "active", auto_renews: false },
+				fallbackStatus: fallback,
+			}).commercialFacts[2]?.value,
+		).toBe(`Ends ${renewsAt}`);
+		expect(storeSubscriptionStatus(null, fallback)).toBe(fallback);
+	});
+
+	test("names the billing store in Web notices and never links Test Store", () => {
+		const playStore = { ...appStoreManagement, provider: "play_store" as const };
+		const testStore = {
+			...appStoreManagement,
+			provider: "test_store" as const,
+			management_url: null,
+		};
+		expect(storeBillingNotice(appStoreManagement)).toBe(
+			"Billed through the App Store. Manage it on your device.",
+		);
+		expect(storeBillingNotice(playStore)).toBe(
+			"Billed through Google Play. Manage it on your device.",
+		);
+		expect(storeBillingNotice(testStore)).toBe("Billed through Test Store.");
+		expect(storeBillingNotice(null)).toBe(
+			"Billed through the App Store or Google Play. Manage it on your device.",
+		);
+		expect(storeProviderLabel(testStore)).toBe("Test Store");
+		expect(storeAgentDeletionNotice(playStore)).toBe(
+			"Deleting this Agent doesn't cancel your Google Play subscription. Manage it on your device.",
+		);
+		expect(storeAgentDeletionNotice(testStore)).toBe(
+			"Deleting this Agent doesn't cancel your Test Store subscription.",
+		);
 	});
 });

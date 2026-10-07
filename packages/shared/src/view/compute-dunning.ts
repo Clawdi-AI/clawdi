@@ -261,3 +261,19 @@ export function computeDunningDescription(state: ComputeDunningState): string {
 		.filter(Boolean)
 		.join(" ");
 }
+
+/**
+ * A detached Agent whose store funding ended may start card or Wallet funding when the
+ * server offers `start_new`. Store endings have no dunning banner, so only the target is
+ * exposed here.
+ */
+export function detachedStoreRecoveryTarget(
+	deployment: Pick<HostedDeployment, "commercial_display">,
+): ComputeRecoveryTarget | null {
+	const display = deployment.commercial_display;
+	if (display?.recovery_action !== "start_new" || display.compute_subscription) return null;
+	const fact = display.latest_funding_fact;
+	return fact?.fact_kind === "funding_revoked" && fact.funding_source === "store"
+		? { kind: "start_new", action: "start_new" }
+		: null;
+}

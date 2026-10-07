@@ -1,7 +1,14 @@
 "use client";
 
 import type { AgentTile } from "@clawdi/shared/view";
-import { billingCopy, formatShortDate } from "@clawdi/shared/view";
+import {
+	billingCopy,
+	formatShortDate,
+	storeBillingNotice,
+	storeRenewalIssue,
+	storeSubscriptionCardView,
+	storeSubscriptionCopy,
+} from "@clawdi/shared/view";
 import { CreditCard, History } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -155,7 +162,7 @@ export function SubscriptionLoadMore({
 	);
 }
 
-function SubscriptionRow({
+export function SubscriptionRow({
 	subscription,
 	deployment,
 	agentTile,
@@ -233,23 +240,32 @@ function SubscriptionRow({
 	const managementReason =
 		actions.find((candidate) => candidate.kind === "upgrade" || candidate.kind === "manage")
 			?.disabledReason ?? null;
-	const view = computeSubscriptionCardView({
-		status: recovery.status,
-		planSlug: subscription.plan_slug,
-		fundingSource:
-			fundingSource === "included_basic"
-				? "included"
-				: fundingSource === "stripe" || fundingSource === "wallet"
-					? fundingSource
-					: "unavailable",
-		priceCents: subscription.price_cents,
-		currency: subscription.currency,
-		billingTermMonths: subscription.billing_term_months,
-		scheduleVerb: recovery.schedule?.verb ?? lifecycle.dateVerb,
-		scheduleAt: recovery.schedule?.at ?? lifecycle.dateAt,
-		scheduleFallback: recovery.schedule?.fallback ?? undefined,
-		includeSchedule: !isHistoricalAccountSubscription(subscription),
-	});
+	const storeManagement = fundingSource === "store" ? subscription.store_management : null;
+	const view =
+		fundingSource === "store"
+			? storeSubscriptionCardView({
+					planSlug: subscription.plan_slug,
+					billingTermMonths: subscription.billing_term_months,
+					management: storeManagement,
+					fallbackStatus: recovery.status,
+				})
+			: computeSubscriptionCardView({
+					status: recovery.status,
+					planSlug: subscription.plan_slug,
+					fundingSource:
+						fundingSource === "included_basic"
+							? "included"
+							: fundingSource === "stripe" || fundingSource === "wallet"
+								? fundingSource
+								: "unavailable",
+					priceCents: subscription.price_cents,
+					currency: subscription.currency,
+					billingTermMonths: subscription.billing_term_months,
+					scheduleVerb: recovery.schedule?.verb ?? lifecycle.dateVerb,
+					scheduleAt: recovery.schedule?.at ?? lifecycle.dateAt,
+					scheduleFallback: recovery.schedule?.fallback ?? undefined,
+					includeSchedule: !isHistoricalAccountSubscription(subscription),
+				});
 	const identity = computeSubscriptionIdentity(
 		subscription,
 		assignment,
@@ -274,8 +290,14 @@ function SubscriptionRow({
 				identity={identity}
 				className="lg:row-span-full lg:grid-rows-subgrid lg:[&>[data-slot=compute-subscription-actions]]:row-start-5"
 				notice={
-					recoveryNotice || pendingPlanCopy || managementReason ? (
+					fundingSource === "store" || recoveryNotice || pendingPlanCopy || managementReason ? (
 						<div className="flex flex-col gap-1.5 text-xs text-muted-foreground">
+							{fundingSource === "store" ? <p>{storeBillingNotice(storeManagement)}</p> : null}
+							{storeRenewalIssue(storeManagement) ? (
+								<p className="font-medium text-warning-muted-foreground">
+									{storeSubscriptionCopy.renewalIssue}
+								</p>
+							) : null}
 							{recoveryNotice ? <p>{recoveryNotice}</p> : null}
 							{managementReason ? <p>{managementReason}</p> : null}
 							{pendingPlanCopy ? (

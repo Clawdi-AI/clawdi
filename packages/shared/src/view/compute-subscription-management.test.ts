@@ -134,4 +134,15 @@ describe("computeSubscriptionManagement", () => {
 			).toEqual({ action: "hidden", target: null, unavailableReason: null });
 		}
 	});
+
+	test("hides plan management for store-billed rows", () => {
+		for (const subscriptionKind of ["paid", undefined] as const) {
+			expect(
+				computeSubscriptionManagement({
+					entitlement: entitlement({ fundingSource: "store", priceCents: null, subscriptionKind }),
+					...available,
+				}),
+			).toEqual({ action: "hidden", target: null, unavailableReason: null });
+		}
+	});
 });

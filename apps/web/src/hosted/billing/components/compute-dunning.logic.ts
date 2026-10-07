@@ -3,5 +3,6 @@ export {
 	type ComputePaymentState,
 	computeDunningState,
 	computeSubscriptionRequiredToStart,
+	detachedStoreRecoveryTarget,
 	fallbackReasonSentence,
 } from "@clawdi/shared/view";

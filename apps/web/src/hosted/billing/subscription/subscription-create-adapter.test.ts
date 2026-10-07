@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
-import type { ComputeSubscriptionQuoteResponse, DeployRequest } from "@/hosted/billing/contracts";
+import type {
+	ComputeSubscriptionQuoteResponse,
+	DeployRequest,
+	ReusableSubscription,
+} from "@/hosted/billing/contracts";
 import {
+	existingSubscriptionCreateSelection,
 	resolveSubscriptionSource,
 	type SubscriptionCreateRequestView,
 	subscriptionCreateOutcome,
@@ -210,5 +215,49 @@ describe("subscription creation adapter", () => {
 				deploy_request_id: null,
 			}),
 		).toThrow("Activation did not return an agent request.");
+	});
+});
+
+describe("store reusable subscriptions", () => {
+	const cardSubscription: ReusableSubscription = {
+		subscription_id: "csub_card",
+		plan_slug: "compute_basic",
+		billing_term_months: 1,
+		funding_source: "stripe",
+		status: "active",
+		currency: "usd",
+		price_cents: 1_000,
+		current_period_end: "2026-11-07T00:00:00Z",
+		entitled_until: "2026-11-07T00:00:00Z",
+		cancel_at_period_end: false,
+	};
+	const storeSubscription: ReusableSubscription = {
+		...cardSubscription,
+		subscription_id: "csub_store",
+		funding_source: "store",
+		price_cents: null,
+	};
+
+	test("are never Web checkout selections and do not block the new-subscription default", () => {
+		expect(existingSubscriptionCreateSelection(storeSubscription)).toBeNull();
+		expect(existingSubscriptionCreateSelection(cardSubscription)).toEqual({
+			planSlug: "compute_basic",
+			billingTermMonths: 1,
+			fundingSource: "stripe",
+		});
+		expect(
+			resolveSubscriptionSource({
+				includedAvailable: false,
+				reusableSubscriptions: [storeSubscription],
+				selected: { mode: "existing", subscriptionId: storeSubscription.subscription_id },
+			}),
+		).toEqual({ mode: "new" });
+		expect(
+			resolveSubscriptionSource({
+				includedAvailable: false,
+				reusableSubscriptions: [storeSubscription, cardSubscription],
+				selected: null,
+			}),
+		).toBeNull();
 	});
 });

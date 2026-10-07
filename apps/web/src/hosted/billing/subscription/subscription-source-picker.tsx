@@ -1,6 +1,13 @@
 import { subscriptionSourcePickerClasses as styles } from "@clawdi/shared/ui";
-import { subscriptionSourceCopy as copy, formatShortDate } from "@clawdi/shared/view";
-import { Cpu, CreditCard, Plus, WalletCards, Zap } from "lucide-react";
+import {
+	subscriptionSourceCopy as copy,
+	formatShortDate,
+	storeProviderLabel,
+	storeSubscriptionCopy,
+	storeSubscriptionDate,
+	storeSubscriptionStatus,
+} from "@clawdi/shared/view";
+import { Cpu, CreditCard, Plus, Smartphone, WalletCards, Zap } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EntityChoiceCard } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
@@ -10,7 +17,10 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import type { ReusableSubscription } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { billingTermLabel, billingTermSuffix, formatCurrencyCents } from "@/hosted/billing/format";
-import type { SubscriptionSource } from "@/hosted/billing/subscription/subscription-create-adapter";
+import {
+	isWebSelectableSubscription,
+	type SubscriptionSource,
+} from "@/hosted/billing/subscription/subscription-create-adapter";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
 
 export function SubscriptionSourcePicker({
@@ -69,7 +79,7 @@ export function SubscriptionSourcePicker({
 						selected={
 							value?.mode === "existing" && value.subscriptionId === subscription.subscription_id
 						}
-						disabled={paidDisabled}
+						disabled={paidDisabled || !isWebSelectableSubscription(subscription)}
 						onSelect={() =>
 							onChange({ mode: "existing", subscriptionId: subscription.subscription_id })
 						}
@@ -116,20 +126,41 @@ function ExistingSubscriptionChoice({
 	selected: boolean;
 	subscription: ReusableSubscription;
 }) {
-	const paymentLabel = subscription.funding_source === "wallet" ? "Wallet" : "Card";
+	const store = subscription.funding_source === "store";
+	const storeManagement = store ? subscription.store_management : null;
+	const paymentLabel = store
+		? storeProviderLabel(storeManagement)
+		: subscription.funding_source === "wallet"
+			? "Wallet"
+			: "Card";
+	const PaymentIcon = store
+		? Smartphone
+		: subscription.funding_source === "wallet"
+			? WalletCards
+			: CreditCard;
 	const canceling = subscription.status === "canceling" || subscription.cancel_at_period_end;
-	const dateLabel = formatShortDate(subscription.current_period_end ?? subscription.entitled_until);
+	const storeDate = storeSubscriptionDate(storeManagement);
+	const dateLabel = formatShortDate(
+		storeDate?.at ?? subscription.current_period_end ?? subscription.entitled_until,
+	);
+	const dateTitle = store
+		? storeDate?.kind === "renews"
+			? "Renews"
+			: "Ends"
+		: canceling
+			? "Ends"
+			: "Renews";
+	// Store prices are set per storefront; Web shows no Clawdi price for them.
 	const priceLabel =
-		subscription.price_cents == null
+		store || subscription.price_cents == null
 			? null
 			: `${formatCurrencyCents(subscription.price_cents, subscription.currency)}${billingTermSuffix(subscription.billing_term_months)}`;
-	const statusBadge = canceling ? (
-		<StatusBadge status="warning">Canceling</StatusBadge>
-	) : subscription.status === "trialing" ? (
-		<StatusBadge status="info">Trial</StatusBadge>
-	) : (
-		<StatusBadge status="success">Active</StatusBadge>
-	);
+	const fallbackStatus = canceling
+		? ({ label: "Canceling", tone: "warning" } as const)
+		: subscription.status === "trialing"
+			? ({ label: "Trial", tone: "info" } as const)
+			: ({ label: "Active", tone: "success" } as const);
+	const status = store ? storeSubscriptionStatus(storeManagement, fallbackStatus) : fallbackStatus;
 	return (
 		<EntityChoiceCard
 			selected={selected}
@@ -148,8 +179,8 @@ function ExistingSubscriptionChoice({
 				</IconChip>
 			}
 			title={computeTierLabel(subscription.plan_slug)}
-			description={copy.dueNow}
-			badge={statusBadge}
+			description={store ? storeSubscriptionCopy.availableInApp : copy.dueNow}
+			badge={<StatusBadge status={status.tone}>{status.label}</StatusBadge>}
 			detailsPlacement="responsive"
 			details={
 				<dl className={styles.existingFacts}>
@@ -162,16 +193,12 @@ function ExistingSubscriptionChoice({
 					<div className={styles.fact}>
 						<dt className={styles.factLabel}>Payment</dt>
 						<dd className={styles.payment}>
-							{subscription.funding_source === "wallet" ? (
-								<WalletCards className={styles.paymentIcon} />
-							) : (
-								<CreditCard className={styles.paymentIcon} />
-							)}
+							<PaymentIcon className={styles.paymentIcon} />
 							<span className={styles.price}>{paymentLabel}</span>
 						</dd>
 					</div>
 					<div className={styles.fact}>
-						<dt className={styles.factLabel}>{canceling ? "Ends" : "Renews"}</dt>
+						<dt className={styles.factLabel}>{dateTitle}</dt>
 						<dd className={styles.factValue}>{dateLabel}</dd>
 					</div>
 					{priceLabel ? (

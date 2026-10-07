@@ -11,6 +11,7 @@ type HostedFundingFact = DeployComponents["schemas"]["V2HostedCommercialFundingF
 import {
 	computeDunningState,
 	computeSubscriptionRequiredToStart,
+	detachedStoreRecoveryTarget,
 	fallbackReasonSentence,
 } from "./compute-dunning";
 import { hostedDeploymentFixture } from "./hosted-deployment.test-fixture";
@@ -337,4 +338,31 @@ test("power controls use the backend start decision", () => {
 	] as const) {
 		expect(computeSubscriptionRequiredToStart({ start_action })).toBe(false);
 	}
+});
+
+describe("detachedStoreRecoveryTarget", () => {
+	test("offers the server's replacement for an ended store Agent without a dunning banner", () => {
+		const ended = deployment({
+			factKind: "funding_revoked",
+			fundingSource: "store",
+			status: "stopped",
+		});
+		expect(computeDunningState(ended)).toBeNull();
+		expect(detachedStoreRecoveryTarget(ended)).toEqual({ kind: "start_new", action: "start_new" });
+		expect(
+			detachedStoreRecoveryTarget(
+				deployment({ factKind: "funding_revoked", fundingSource: "stripe" }),
+			),
+		).toBeNull();
+		expect(
+			detachedStoreRecoveryTarget(
+				deployment({
+					factKind: "funding_revoked",
+					fundingSource: "store",
+					computeSubscription: subscription({ funding_source: "store" }),
+				}),
+			),
+		).toBeNull();
+		expect(detachedStoreRecoveryTarget(deployment())).toBeNull();
+	});
 });

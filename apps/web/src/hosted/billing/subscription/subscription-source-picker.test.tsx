@@ -34,4 +34,41 @@ describe("SubscriptionSourcePicker", () => {
 		expect(markup).toContain("Plan price");
 		expect(markup).toContain("Included");
 	});
+
+	test("shows store subscriptions as unavailable on Web without card or price details", () => {
+		const storeSubscription: ReusableSubscription = {
+			...reusableSubscription,
+			subscription_id: "csub_store",
+			funding_source: "store",
+			price_cents: null,
+			store_management: {
+				provider: "play_store",
+				product_id: "ai.clawdi.app.compute.basic.monthly",
+				management_url: null,
+				auto_renews: true,
+				renews_or_ends_at: "2026-10-17T00:00:00Z",
+				state: "grace",
+			},
+		};
+		const markup = renderToStaticMarkup(
+			<SubscriptionSourcePicker
+				value={null}
+				onChange={() => undefined}
+				reusableSubscriptions={[storeSubscription]}
+				isLoading={false}
+				error={null}
+				onRetry={() => undefined}
+			/>,
+		);
+
+		expect(markup).toContain("Available in the Clawdi app");
+		expect(markup).toContain("Google Play");
+		expect(markup).toContain("Grace period");
+		// Disabled choices render without a button; only "New paid subscription" is selectable.
+		expect(markup.match(/<button/g)).toHaveLength(1);
+		expect(markup).toContain("pointer-events-none opacity-60");
+		expect(markup).not.toContain("Card");
+		expect(markup).not.toContain("Plan price");
+		expect(markup).not.toContain("$0 due now");
+	});
 });
