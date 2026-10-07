@@ -4,7 +4,6 @@ import { commandMessage, commandResult } from "../lib/command-output";
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
-import { isInteractive } from "../lib/tty";
 
 /**
  * `clawdi project invites <project> [--cancel <id>]` — owner-side view
@@ -43,21 +42,19 @@ export async function projectInvitesCommand(
 	const projectId = await resolveProjectId(apiUrl, apiKey, projectArg);
 
 	if (opts.cancel) {
-		if (!opts.yes) {
-			if (!isInteractive()) {
-				console.error("--yes will be required in a non-interactive shell starting in 0.16");
-			} else if (
-				!(await confirmOrRequireYes(`Cancel invitation ${opts.cancel}?`, {
-					action: "cancel this project invitation",
-				}))
-			) {
-				commandResult(opts.json, "clawdi.projectInvites.v1", {
-					project_id: projectId,
-					id: opts.cancel,
-					status: "cancelled",
-				});
-				return;
-			}
+		if (
+			!(await confirmOrRequireYes(`Cancel invitation ${opts.cancel}?`, {
+				yes: opts.yes,
+				action: "cancel this project invitation",
+				legacyNonInteractive: true,
+			}))
+		) {
+			commandResult(opts.json, "clawdi.projectInvites.v1", {
+				project_id: projectId,
+				id: opts.cancel,
+				status: "cancelled",
+			});
+			return;
 		}
 		await authedJson<{ status: string }>(
 			apiUrl,

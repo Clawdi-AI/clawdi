@@ -1,5 +1,6 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import chalk from "chalk";
+import { emitJson, wantsJson } from "../lib/command-output";
 import { getCliVersion } from "../lib/version";
 import { readRuntimeApplyContext } from "../runtime/apply-identity";
 import { readHostPolicy } from "../runtime/host-policy";
@@ -68,8 +69,8 @@ export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
 		},
 		errors,
 	};
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(result, null, 2));
+	if (wantsJson(opts, { legacyImplicit: true })) {
+		emitJson(result);
 	} else if (errors.length === 0) {
 		console.log(
 			storage === "legacy"
@@ -99,8 +100,8 @@ export async function runtimeStatus(opts: { json?: boolean } = {}) {
 	};
 	if (read.error || read.status?.status === "error") process.exitCode = 1;
 
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(payload, null, 2));
+	if (wantsJson(opts, { legacyImplicit: true })) {
+		emitJson(payload);
 		return;
 	}
 
@@ -215,8 +216,8 @@ export async function runtimeDoctor(opts: { json?: boolean } = {}) {
 	];
 	const failed = checks.filter((check) => !check.ok).length;
 
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(checks, null, 2));
+	if (wantsJson(opts, { legacyImplicit: true })) {
+		emitJson(checks);
 		if (failed > 0) process.exitCode = 1;
 		return;
 	}

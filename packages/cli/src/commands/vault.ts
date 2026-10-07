@@ -4,7 +4,7 @@ import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
-import { commandMessage, commandResult } from "../lib/command-output";
+import { commandMessage, commandResult, emitJson, wantsJson } from "../lib/command-output";
 import { parseDotenvDetailed } from "../lib/dotenv";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -84,7 +84,7 @@ export async function vaultRequest(
 			status = polled.status;
 		}
 	}
-	if (opts.json) console.log(JSON.stringify(result()));
+	if (opts.json) emitJson(result(), false);
 	else console.log(`Status: ${status}`);
 	if (opts.wait && status !== "supplied") {
 		throw new Error(
@@ -268,7 +268,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 			})
 			.then(unwrap);
 
-	if (opts.json || !process.stdout.isTTY) {
+	if (wantsJson(opts, { legacyImplicit: true })) {
 		// Emit an array so tooling can inspect each vault with its
 		// attached Projects. Keys belong to the vault; project_ids are
 		// where that vault is available.
@@ -296,7 +296,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 					: [],
 			});
 		}
-		console.log(JSON.stringify(out, null, 2));
+		emitJson(out);
 		return;
 	}
 
@@ -439,22 +439,18 @@ export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOption
 		});
 		return;
 	}
-	if (!opts.yes) {
-		if (!isInteractive()) {
-			console.error("--yes will be required in a non-interactive shell starting in 0.16");
-		} else if (
-			!(await confirmOrRequireYes(
-				`Detach vault ${sanitizeMetadata(vaultSlug)} from ${formatProjectTarget(targetProject)}?`,
-				{ action: "detach this vault" },
-			))
-		) {
-			commandResult(opts.json, "clawdi.vaultDetach.v1", {
-				project_id: targetProject.projectId,
-				vault: vaultSlug,
-				status: "cancelled",
-			});
-			return;
-		}
+	if (
+		!(await confirmOrRequireYes(
+			`Detach vault ${sanitizeMetadata(vaultSlug)} from ${formatProjectTarget(targetProject)}?`,
+			{ yes: opts.yes, action: "detach this vault", legacyNonInteractive: true },
+		))
+	) {
+		commandResult(opts.json, "clawdi.vaultDetach.v1", {
+			project_id: targetProject.projectId,
+			vault: vaultSlug,
+			status: "cancelled",
+		});
+		return;
 	}
 
 	unwrap(

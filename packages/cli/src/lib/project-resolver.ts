@@ -1,4 +1,5 @@
 import { ApiClient, ApiError, readJson } from "./api-client";
+import { isUuid } from "./cli-options";
 
 /**
  * Resolve a user-supplied `<project>` argument to a backend project UUID.
@@ -16,8 +17,6 @@ import { ApiClient, ApiError, readJson } from "./api-client";
  * `ApiClient` instance because this helper is also used in early
  * bootstrap flows before typed clients are available.
  */
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface ProjectBrief {
 	id: string;
@@ -43,7 +42,7 @@ export async function resolveProjectId(
 		const def = await readJson<{ project_id: string }>(r, "/v1/projects/default");
 		return def.project_id;
 	}
-	if (UUID_RE.test(input)) return input;
+	if (isUuid(input)) return input;
 
 	const projects = await listProjects(apiUrl, bearer);
 	const ownerQualified = parseOwnerQualifiedProject(input);

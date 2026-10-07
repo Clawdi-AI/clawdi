@@ -4,6 +4,7 @@ import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
 import { adapterRegistry, allAdapterEntries } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
+import { emitJson, wantsJson } from "../lib/command-output";
 import { getAuth, getClawdiDir, getConfig, isLoggedIn } from "../lib/config";
 
 interface Check {
@@ -173,8 +174,8 @@ export async function doctor(opts: { json?: boolean } = {}) {
 
 	const failed = checks.filter((c) => !c.ok).length;
 
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(checks, null, 2));
+	if (wantsJson(opts, { legacyImplicit: true })) {
+		emitJson(checks);
 		if (failed > 0) process.exitCode = 1;
 		return;
 	}

@@ -19,6 +19,7 @@ import { allAdapterEntries } from "../adapters/registry";
 import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
+import { isUuid } from "../lib/cli-options";
 import { commandMessage, commandResult } from "../lib/command-output";
 import { getAuth, getConfig } from "../lib/config";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -26,7 +27,6 @@ import { requireAuth } from "../lib/require-auth";
 import { isInteractive } from "../lib/tty";
 import { addToken, findToken, listTokens, removeToken, type ShareToken } from "../share/tokens";
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RAW_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 
 /**
@@ -46,7 +46,7 @@ function normalizeAcceptArg(raw: string): string {
 }
 
 function detectAcceptArgShape(normalized: string): "uuid" | "url" | "raw_token" | "unknown" {
-	if (UUID_RE.test(normalized)) return "uuid";
+	if (isUuid(normalized)) return "uuid";
 	if (RAW_TOKEN_RE.test(normalized)) return "raw_token";
 	if (normalized.startsWith("http")) return "url";
 	return "unknown";
@@ -592,20 +592,18 @@ export async function inboxForgetCommand(
 		process.exitCode = 1;
 		return;
 	}
-	if (!opts.yes) {
-		if (!isInteractive()) {
-			console.error("--yes will be required in a non-interactive shell starting in 0.16");
-		} else if (
-			!(await confirmOrRequireYes(`Forget local share ${projectId}?`, {
-				action: "forget this local share",
-			}))
-		) {
-			commandResult(opts.json, "clawdi.inboxForget.v1", {
-				project_id: projectId,
-				status: "cancelled",
-			});
-			return;
-		}
+	if (
+		!(await confirmOrRequireYes(`Forget local share ${projectId}?`, {
+			yes: opts.yes,
+			action: "forget this local share",
+			legacyNonInteractive: true,
+		}))
+	) {
+		commandResult(opts.json, "clawdi.inboxForget.v1", {
+			project_id: projectId,
+			status: "cancelled",
+		});
+		return;
 	}
 
 	const skillKeys = token.last_seen_skill_keys ?? [];

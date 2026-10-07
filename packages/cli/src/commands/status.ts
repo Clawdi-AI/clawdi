@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { emitJson, wantsJson } from "../lib/command-output";
 import { getAuth, getConfig, isLoggedIn } from "../lib/config";
 import { type ModuleState, readModuleState } from "../lib/state";
 
@@ -35,8 +36,8 @@ function buildStatus(): StatusJson {
 export async function status(opts: { json?: boolean } = {}) {
 	const s = buildStatus();
 
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(s, null, 2));
+	if (wantsJson(opts, { legacyImplicit: true })) {
+		emitJson(s);
 		return;
 	}
 

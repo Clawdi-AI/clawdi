@@ -36,6 +36,7 @@ import {
 import chalk from "chalk";
 import { openInBrowser } from "../lib/browser";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
+import { requireUuid } from "../lib/cli-options";
 import { isAuthorizationRequired, mapHttpError } from "../lib/errors";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import {
@@ -102,9 +103,6 @@ export class DeployInputError extends Error {
 		this.code = code;
 	}
 }
-
-const REQUEST_ID_PATTERN =
-	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function parseDeployCommandOptions(options: DeployCommandOptions): ParsedDeployOptions {
 	let runtime: HostedDeployRuntime | undefined;
@@ -186,8 +184,12 @@ export function parseDeployCommandOptions(options: DeployCommandOptions): Parsed
 	}
 
 	const requestId = options.requestId?.trim();
-	if (requestId && !REQUEST_ID_PATTERN.test(requestId)) {
-		throw new DeployInputError("invalid_request_id", "--request-id must be a UUID.");
+	if (requestId) {
+		try {
+			requireUuid(requestId, "--request-id", { rfc4122: true });
+		} catch {
+			throw new DeployInputError("invalid_request_id", "--request-id must be a UUID.");
+		}
 	}
 	const timezone = options.timezone;
 	if (timezone && !isValidHostedDeployTimezone(timezone)) {

@@ -3,7 +3,6 @@ import chalk from "chalk";
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
-import { isInteractive } from "../lib/tty";
 
 interface MemberRow {
 	id: string;
@@ -51,17 +50,13 @@ export async function projectMembersCommand(
 			process.exitCode = 1;
 			return;
 		}
-		if (!opts.yes) {
-			if (!isInteractive()) {
-				console.error("--yes will be required in a non-interactive shell starting in 0.16");
-			} else if (
-				!(await confirmOrRequireYes(
-					`Remove ${matches[0].user_email ?? matches[0].user_id} from ${projectArg}?`,
-					{ action: "remove this project member" },
-				))
-			) {
-				return;
-			}
+		if (
+			!(await confirmOrRequireYes(
+				`Remove ${matches[0].user_email ?? matches[0].user_id} from ${projectArg}?`,
+				{ yes: opts.yes, action: "remove this project member", legacyNonInteractive: true },
+			))
+		) {
+			return;
 		}
 		const removed = await authedJson<{ status: string }>(
 			ctx.apiUrl,
@@ -150,17 +145,13 @@ export async function projectUnshareCommand(
 	if (!ctx) return;
 
 	const projectId = await resolveProjectId(ctx.apiUrl, ctx.apiKey, projectArg);
-	if (!opts.yes) {
-		if (!isInteractive()) {
-			console.error("--yes will be required in a non-interactive shell starting in 0.16");
-		} else if (
-			!(await confirmOrRequireYes(
-				`Revoke all links, cancel all invites, and remove all viewers from ${projectArg}?`,
-				{ action: "stop sharing this project" },
-			))
-		) {
-			return;
-		}
+	if (
+		!(await confirmOrRequireYes(
+			`Revoke all links, cancel all invites, and remove all viewers from ${projectArg}?`,
+			{ yes: opts.yes, action: "stop sharing this project", legacyNonInteractive: true },
+		))
+	) {
+		return;
 	}
 	const result = await authedJson<{
 		links_revoked: number;

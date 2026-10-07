@@ -26,6 +26,7 @@ import {
 	verifyAndPersistClerkOAuthLogin,
 } from "../lib/clerk-oauth";
 import { startClerkOAuthLoopback } from "../lib/clerk-oauth-loopback";
+import { emitJson, wantsJson } from "../lib/command-output";
 import { getAuth, getConfig, getPendingAuth, isLoggedIn, type PendingAuth } from "../lib/config";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 
@@ -480,8 +481,8 @@ export async function authStatus(opts: { json?: boolean } = {}) {
 		},
 	};
 
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(payload, null, 2));
+	if (wantsJson(opts, { legacyImplicit: true })) {
+		emitJson(payload);
 		return;
 	}
 

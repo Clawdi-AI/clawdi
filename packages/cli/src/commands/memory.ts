@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { Memory } from "../lib/api-schemas";
 import { parsePositiveInteger } from "../lib/cli-options";
-import { commandMessage, commandResult } from "../lib/command-output";
+import { commandMessage, commandResult, emitJson, wantsJson } from "../lib/command-output";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
@@ -51,8 +51,8 @@ export async function memoryList(opts: ListOpts = {}) {
 		console.error(`Showing ${memories.length} of ${page.total}; pass --limit to see more.`);
 	}
 
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(memories, null, 2));
+	if (wantsJson(opts, { legacyImplicit: true })) {
+		emitJson(memories);
 		return;
 	}
 
@@ -77,8 +77,8 @@ export async function memorySearch(query: string, opts: ListOpts = {}) {
 		console.error(`Showing ${memories.length} of ${page.total}; pass --limit to see more.`);
 	}
 
-	if (opts.json || !process.stdout.isTTY) {
-		console.log(JSON.stringify(memories, null, 2));
+	if (wantsJson(opts, { legacyImplicit: true })) {
+		emitJson(memories);
 		return;
 	}
 
@@ -157,9 +157,9 @@ export async function memoryUpdate(id: string, content: string, opts: { json?: b
 			body: { content },
 		}),
 	);
-	console.log(
-		opts.json || !process.stdout.isTTY
-			? JSON.stringify(result)
-			: `Updated memory ${sanitizeMetadata(result.memory_id)}; metadata preserved.`,
-	);
+	if (wantsJson(opts, { legacyImplicit: true })) {
+		emitJson(result, false);
+	} else {
+		console.log(`Updated memory ${sanitizeMetadata(result.memory_id)}; metadata preserved.`);
+	}
 }

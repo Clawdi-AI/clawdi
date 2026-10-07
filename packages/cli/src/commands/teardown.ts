@@ -11,7 +11,7 @@ import { commandResult } from "../lib/command-output";
 import { getClawdiDir } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { progress as p } from "../lib/progress";
-import { askMulti, askYesNo } from "../lib/prompts";
+import { askMulti, askYesNo, warnNonInteractiveYesRequired } from "../lib/prompts";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
@@ -43,9 +43,7 @@ export async function teardown(opts: {
 	}
 
 	if (!opts.yes) {
-		if (!isInteractive()) {
-			console.error("--yes will be required in a non-interactive shell starting in 0.16");
-		}
+		if (!isInteractive()) warnNonInteractiveYesRequired();
 		const labels = targets.map((t) => adapterRegistry[t].displayName).join(", ");
 		p.log.info(`Will tear down: ${labels}`, { output: process.stderr });
 		const ok = await askYesNo("Proceed?");
