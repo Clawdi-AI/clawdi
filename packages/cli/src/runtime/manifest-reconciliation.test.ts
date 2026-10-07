@@ -70,6 +70,7 @@ import { openClawManagedChannelsPatch } from "./manifest-channels";
 import {
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
 	fileBrowserCompanionSchema,
+	HERMES_INSTALL_COMMIT,
 	type HostedRuntimeBundleV2Manifest,
 	hostedRuntimeBundleV2ManifestSchema,
 	OFFICIAL_INSTALL_URLS,
@@ -1009,6 +1010,13 @@ afterEach(() => {
 });
 
 describe("runtime manifest reconciliation invariants", () => {
+	test("cold Hermes manifests use the pinned official installer policy", () => {
+		const parsed = hostedRuntimeBundleV2ManifestSchema.parse(hostedHermesManifestFixture());
+		const install = parsed.runtimes.hermes.install;
+		expect(install?.args).toEqual(officialInstallArgs("hermes", install?.home ?? ""));
+		expect(parsed.runtimes.hermes.install?.args).toContain(HERMES_INSTALL_COMMIT);
+	});
+
 	test.each([
 		["OpenClaw", hostedOpenClawV2ManifestFixture()],
 		["Hermes", hostedHermesManifestFixture()],

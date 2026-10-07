@@ -583,24 +583,6 @@ function exactNpmPackageVersion(packageSpec: string): string | null {
 	return packageSpec.slice("clawdi@".length);
 }
 
-/**
- * Install one exact CLI release from an integrity-verified local npm archive into
- * the managed layout. Used only by anonymous preinstallation; tenant convergence
- * then observes the same receipt as a registry install and performs no npm work.
- */
-export function installRuntimeCliArchive(
-	paths: RuntimePaths,
-	packageSpec: string,
-	archivePath: string,
-): void {
-	if (readCliState(paths) || activeLinkTarget(paths.cliManagedBin)) {
-		throw new Error("managed clawdi CLI archive install requires an empty managed CLI root");
-	}
-	const installed = installCliPackage(paths, packageSpec, archivePath);
-	swapActiveCli(paths.cliManagedBin, installed.activeTarget);
-	writeCliState(paths, installed, null, null);
-}
-
 function installCliPackage(
 	paths: RuntimePaths,
 	packageSpec: string,
