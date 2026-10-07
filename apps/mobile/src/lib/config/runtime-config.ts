@@ -1,5 +1,5 @@
 import { readApiBaseUrl } from "@clawdi/shared/api";
-import { readLinkHosts } from "../../../config/linking.cjs";
+import { readLinkHosts } from "@clawdi/shared/linking";
 
 export type MobileRuntimeConfig = Readonly<{
 	cloudApiUrl: string;

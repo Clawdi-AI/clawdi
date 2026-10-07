@@ -117,6 +117,7 @@ for (const hosted of [false, true]) {
 			}
 			expect(llms.body).toContain("https://docs.clawdi.ai/llms.txt");
 			expect(llms.body).toContain("https://clawdi.ai/install.sh");
+			expect(llms.body).toContain("[CLI installer for Windows](https://clawdi.ai/install.ps1)");
 			expect(llms.body).toContain(`[Dashboard](${instanceOrigin}/)`);
 			expect(llms.body).not.toContain("/skill.md");
 		});

@@ -15,6 +15,10 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
+### CLI 0.15.4
+
+- **OpenClaw security:** Skills workspace discovery and installation run as the configured agent user, preventing root execution of the agent-owned CLI and root-owned installed Skills.
+
 ### CLI 0.15.3
 
 - **Hermes:** Named profiles sync on Hermes builds that predate `hermes_cli.profiles.list_profile_names` using their upstream profile API. Incomplete profile discovery reports a fixed failure reason without exposing local paths or subprocess output.
@@ -22,6 +26,7 @@ database migration, CI, and implementation details.
 ### CLI 0.15.2
 
 - **OpenClaw:** Profile discovery, session reads, and Skills workspace resolution find the installed CLI when running as the agent user with a restricted PATH. Transcript SDK reads also use an absolute runtime executable.
+- **Windows:** native install with `irm https://clawdi.ai/install.ps1 | iex` (no Node.js needed); `clawdi update` updates it in place.
 
 ### CLI 0.15.1
 

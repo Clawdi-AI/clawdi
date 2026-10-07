@@ -9,6 +9,7 @@ export function llmsTxt(publicOrigin: string, instanceOrigin: string): string {
 - [Clawdi skill](${publicOrigin}${AGENT_FILES.skill.path}): The bundled Agent Skill, installed by clawdi setup for supported agents.
 - [Skill discovery index](${publicOrigin}${AGENT_FILES.discoveryIndex.path}): Agent Skills Discovery RFC v0.2.0 metadata and integrity digest.
 - [CLI installer](https://clawdi.ai/install.sh): Install the Clawdi CLI on macOS or Linux.
+- [CLI installer for Windows](https://clawdi.ai/install.ps1): Install the Clawdi CLI on Windows with PowerShell.
 
 ## Documentation
 - [Documentation index](https://docs.clawdi.ai/llms.txt): Discover the full product documentation.

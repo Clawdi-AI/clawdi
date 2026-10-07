@@ -1,4 +1,4 @@
-const { readLinkHosts, webLinkPaths } = require("./config/linking.cjs");
+const { readLinkHosts, webLinkPaths } = require("@clawdi/shared/linking");
 const { parsePublishableKey } = require("@clerk/shared/keys");
 
 function publicValue(name) {

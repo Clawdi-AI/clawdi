@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { mobileLinkDestination } from "@/platform/incoming-link";
+import { agentFilePaths } from "@clawdi/shared/linking";
+import {
+	mobileBrowserLink,
+	mobileLinkDestination,
+	routeMobileIncomingLink,
+} from "@/platform/incoming-link";
 
 const paths = [
 	"/",
@@ -115,7 +120,111 @@ test("resource links reject unverified hosts and unsupported or malformed routes
 		"clawdi://ai-providers/provider-id/unknown",
 		"clawdi://channels/channel-id/unknown",
 		"clawdi://dev/account?panel=profile",
+		"https://links.example.test/skill.md",
+		"https://links.example.test/skills/clawdi/SKILL.md",
+		"https://links.example.test/skills/owner/repository/SKILL.md",
+		"https://links.example.test/skills/%53KILL.md/SKILL.md",
+		"https://links.example.test/skills.md",
+		"https://links.example.test/silly",
+		"https://links.example.test/sign-in-extra",
+		"https://links.example.test/vault-request-extra",
+		"https://links.example.test/vaults-extra",
+		"https://links.example.test/shareholder",
 	]) {
 		expect(mobileLinkDestination(path, ["links.example.test"], () => "")).toBe("/open-share");
+	}
+});
+
+test("machine-readable HTTPS links open once in the browser without native navigation or capability intake", async () => {
+	const hosts = ["links.example.test"];
+	const stage = () => {
+		throw new Error("Browser links must not stage capabilities");
+	};
+	for (const path of [
+		...Object.values(agentFilePaths),
+		"/skills/another/SKILL.md",
+		"/skills/owner/repository/SKILL.md",
+		"/skills/clawdi/%53KILL.md",
+	]) {
+		for (const initial of [false, true]) {
+			const opened: string[] = [];
+			const link = `https://links.example.test${path}?format=raw`;
+			expect(
+				await routeMobileIncomingLink(
+					link,
+					hosts,
+					stage,
+					async (url) => {
+						opened.push(url);
+					},
+					initial,
+				),
+			).toBe(initial ? "/" : null);
+			expect(opened).toEqual([link]);
+		}
+	}
+	for (const path of ["/sign-in", "/vaults/example", "/skills/owner%2Frepository%2Fskill"]) {
+		expect(
+			await routeMobileIncomingLink(
+				`https://links.example.test${path}`,
+				hosts,
+				stage,
+				async () => {
+					throw new Error("Native resources must not open the browser");
+				},
+				false,
+			),
+		).toBe(path);
+	}
+});
+
+test("browser fallback rejects unverified or malformed URLs and handles launch failure", async () => {
+	const hosts = ["links.example.test"];
+	const stage = () => {
+		throw new Error("Invalid links must not stage capabilities");
+	};
+	for (const path of [
+		"https://evil.test/skills/clawdi/SKILL.md",
+		"http://links.example.test/skills/clawdi/SKILL.md",
+		"https://user@links.example.test/skills/clawdi/SKILL.md",
+		"https://links.example.test:444/skills/clawdi/SKILL.md",
+		"https://links.example.test/skills/%/SKILL.md",
+		"https://links.example.test/skills/\\clawdi/SKILL.md",
+		"https://links.example.test/skills/clawdi/SKILL.md\n",
+		"clawdi://skills/clawdi/SKILL.md",
+		"/skills/clawdi/SKILL.md",
+	]) {
+		const opened: string[] = [];
+		expect(mobileBrowserLink(path, hosts)).toBeNull();
+		expect(
+			await routeMobileIncomingLink(
+				path,
+				hosts,
+				stage,
+				async (url) => {
+					opened.push(url);
+				},
+				false,
+			),
+		).toBe("/open-share");
+		expect(opened).toEqual([]);
+	}
+	const link = "https://links.example.test/skills/clawdi/SKILL.md";
+	expect(mobileBrowserLink(link, [])).toBeNull();
+	for (const initial of [false, true]) {
+		let attempts = 0;
+		expect(
+			await routeMobileIncomingLink(
+				link,
+				hosts,
+				stage,
+				async () => {
+					attempts++;
+					throw new Error("Browser unavailable");
+				},
+				initial,
+			),
+		).toBe("/open-share");
+		expect(attempts).toBe(1);
 	}
 });
