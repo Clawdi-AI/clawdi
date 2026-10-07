@@ -121,6 +121,26 @@ const enabled = process.platform === "win32" && testRoot && nativeBinary;
 			const updatedPath = powershell("[Environment]::GetEnvironmentVariable('Path', 'User')");
 			expect(updatedPath.split(";").filter((entry) => entry === current)).toHaveLength(1);
 
+			// A stale automatic request must preserve the already-installed launcher.
+			const automaticStage = join(nativeRoot, ".stage-stale-auto-update");
+			cpSync(installedDirectory, automaticStage, { recursive: true });
+			const automatic = await runAsync(join(automaticStage, "clawdi.exe"), [
+				"update",
+				"--native-activate",
+				"--native-auto-update",
+				"--native-stage",
+				automaticStage,
+				"--native-prefix",
+				prefix,
+				"--native-version",
+				version,
+				"--native-target",
+				"win32-x64",
+			]);
+			expect(automatic.code, automatic.stderr).toBe(76);
+			expect(realpathSync.native(current)).toBe(installedDirectory);
+			rmSync(automaticStage, { recursive: true, force: true });
+
 			// Missing agent executables still use the adapter's supported CODEX_HOME layout.
 			mkdirSync(process.env.CODEX_HOME, { recursive: true });
 			const setup = await runAsync(launcher, ["setup", "--agent", "codex", "--no-daemon"]);

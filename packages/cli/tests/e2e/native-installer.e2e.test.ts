@@ -19,6 +19,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
+import { compareSemver } from "../../src/lib/semver";
 import {
 	configuredNativeBinary,
 	createNativeReleaseFixture,
@@ -330,6 +331,74 @@ afterEach(() => {
 		]);
 		expect(readdirSync(nativeRoot).filter((entry) => entry.startsWith(".stage-"))).toEqual([]);
 	}, 120_000);
+
+	it("automatic activation preserves a newer version installed after discovery", () => {
+		if (!nativeBinary) throw new Error("native binary is required");
+		const root = fixtureRoot();
+		const home = join(root, "home");
+		const clawdiHome = join(root, "clawdi-home");
+		const prefix = join(root, "prefix");
+		mkdirSync(home);
+		mkdirSync(clawdiHome);
+		const base = createNativeReleaseFixture({
+			root,
+			binary: nativeBinary,
+			resourceRoot: dirname(nativeBinary),
+		});
+		const version = derivedNativeFixtureVersions(base.version, 1)[0];
+		if (!version) throw new Error("derived version is required");
+		const binary = join(root, "derived-clawdi");
+		deriveNativeVersion(nativeBinary, binary, version);
+		const derived = createNativeReleaseFixture({
+			root,
+			binary,
+			resourceRoot: dirname(nativeBinary),
+		});
+		const [older, newer] = [base, derived].sort((a, b) => compareSemver(a.version, b.version));
+		if (!older || !newer) throw new Error("two releases are required");
+		const installed = runNativeInstaller({
+			fixture: newer,
+			prefix,
+			home,
+			clawdiHome,
+			testRoot: root,
+		});
+		expect(installed.code, installed.stderr).toBe(0);
+		const launcher = join(prefix, "bin", "clawdi");
+		const activeTarget = readlinkSync(launcher);
+		const stage = join(prefix, "share", "clawdi", ".stage-stale-auto-update");
+		cpSync(join(older.directory, "payload"), stage, { recursive: true });
+		cpSync(
+			join(older.directory, "clawdi-cli-manifest.txt"),
+			join(stage, "clawdi-cli-manifest.txt"),
+		);
+		const result = command(
+			join(stage, "clawdi"),
+			[
+				"update",
+				"--native-activate",
+				"--native-auto-update",
+				"--native-stage",
+				stage,
+				"--native-prefix",
+				prefix,
+				"--native-version",
+				older.version,
+				"--native-target",
+				older.target,
+			],
+			{
+				...process.env,
+				HOME: home,
+				CLAWDI_HOME: clawdiHome,
+				CLAWDI_NO_AUTO_UPDATE: "1",
+				CLAWDI_NO_UPDATE_CHECK: "1",
+			},
+		);
+		expect(result.code, result.stderr).toBe(76);
+		expect(readlinkSync(launcher)).toBe(activeTarget);
+		expect(command(launcher, ["--version"]).stdout.trim()).toBe(newer.version);
+	}, 60_000);
 
 	it("fails closed for damaged archives and unowned launchers", () => {
 		if (!nativeBinary) throw new Error("native binary is required");

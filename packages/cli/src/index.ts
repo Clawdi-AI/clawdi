@@ -1582,6 +1582,7 @@ program
 	.addOption(new Option("--current-version <version>").hideHelp())
 	.addOption(new Option("--native-identity").hideHelp())
 	.addOption(new Option("--native-activate").hideHelp())
+	.addOption(new Option("--native-auto-update").hideHelp())
 	.addOption(new Option("--native-stage <path>").hideHelp())
 	.addOption(new Option("--native-prefix <path>").hideHelp())
 	.addOption(new Option("--native-version <version>").hideHelp())
@@ -1622,6 +1623,7 @@ program
 						prefix: opts.nativePrefix,
 						version: opts.nativeVersion,
 						target: opts.nativeTarget,
+						automatic: opts.nativeAutoUpdate,
 					},
 					timeoutMs === undefined ? undefined : { timeoutMs },
 				);
@@ -1634,6 +1636,10 @@ program
 					return;
 				}
 				throw error;
+			}
+			if (result.skipped) {
+				process.exitCode = 76;
+				return;
 			}
 			console.log(result.launcher);
 			return;

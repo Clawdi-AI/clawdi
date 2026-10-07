@@ -1070,6 +1070,30 @@ describe("release age policy", () => {
 		},
 	);
 
+	it("ignores stale process versions when the installed CLI is already newer", async () => {
+		seedObservedVersions("0.1.0", [{ version: "0.1.0", age: AUTO_UPDATE_MIN_AGE_MS }]);
+		const { restore } = mockFetch([
+			{
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "0.1.0" }),
+			},
+		]);
+		const runtime = {
+			ownership: npmOwnership,
+			installRunner: async () => {
+				throw new Error("must preserve the newer installed CLI");
+			},
+		};
+		try {
+			expect(await runBackgroundUpdateWorker({ currentVersion: "0.0.1" }, runtime)).toBe(
+				"no_update",
+			);
+			expect(await daemonAutoUpdateOnce({ currentVersion: "0.0.1", ...runtime })).toBe("no_update");
+		} finally {
+			restore();
+		}
+	});
+
 	it("manual --yes installs latest immediately and records its first observation", async () => {
 		const now = Date.now();
 		const calls: string[][] = [];

@@ -360,6 +360,11 @@ export async function update(
 		process.exitCode = 1;
 		return;
 	}
+	if (result.status === "no_update") {
+		report(false);
+		if (!json) print(chalk.gray("A newer CLI version is already installed."));
+		return;
+	}
 	if (result.status === "failed") {
 		process.stderr.write("\n");
 		console.error(
@@ -865,9 +870,11 @@ type UpdateInstallWorkerResult =
 	| { status: "failed"; exitCode: number | null; installedVersion?: undefined; reason?: string }
 	| { status: "failed"; exitCode?: undefined; installedVersion: string | null; reason?: string }
 	| { status: "locked" }
-	| { status: "disabled" };
+	| { status: "disabled" }
+	| { status: "no_update" };
 
 async function runUpdateInstallWorker(input: {
+	automatic?: boolean;
 	current: string;
 	latest: string;
 	ownership: UpdateOwnership;
@@ -896,6 +903,11 @@ async function runUpdateInstallWorker(input: {
 		return await withPrivateDirectoryLock(
 			join(getClawdiDir(), "update.lock"),
 			async (lease) => {
+				// A manual update may have completed since this worker discovered its
+				// candidate. Package installs read the current package.json on disk.
+				if (input.automatic && !isNewer(input.latest, getCliVersion())) {
+					return { status: "no_update" };
+				}
 				const exitCode = await (input.installRunner ?? runInstallerProcess)(
 					install.command,
 					install.args,
@@ -924,6 +936,7 @@ async function runUpdateInstallWorker(input: {
 }
 
 async function runNativeUpdateInstall(input: {
+	automatic?: boolean;
 	current: string;
 	latest: string;
 	ownership: NativeInstallOwnership;
@@ -954,6 +967,7 @@ async function runNativeUpdateInstall(input: {
 		const activationArgs = [
 			"update",
 			"--native-activate",
+			...(input.automatic ? ["--native-auto-update"] : []),
 			"--native-stage",
 			staged.stageDir,
 			"--native-prefix",
@@ -975,6 +989,7 @@ async function runNativeUpdateInstall(input: {
 			},
 		);
 		if (exitCode === 75) return { status: "locked" };
+		if (exitCode === 76) return { status: "no_update" };
 		if (exitCode !== 0) {
 			return {
 				status: "failed",
@@ -1061,6 +1076,7 @@ export async function daemonAutoUpdateOnce(
 	log.info("daemon.auto_update_installing", { current, latest, owner });
 	const installAndValidate = async (): Promise<DaemonAutoUpdateResult> => {
 		const result = await runUpdateInstallWorker({
+			automatic: true,
 			current,
 			latest,
 			ownership,
@@ -1083,6 +1099,7 @@ export async function daemonAutoUpdateOnce(
 						) ?? null
 				: undefined,
 		});
+		if (result.status === "no_update") return "no_update";
 		if (result.status === "locked") return "locked";
 		if (result.status === "disabled") return "disabled";
 		if (result.status === "failed") {
@@ -1284,20 +1301,19 @@ export async function runBackgroundUpdateWorker(
 	if (detectRuntimeMode() === "hosted") return "disabled";
 	if (autoUpdateDisabled()) return "disabled";
 	if (!isValidSemver(opts.currentVersion)) return "failed";
+	const running = getCliVersion();
+	const current = isNewer(running, opts.currentVersion) ? running : opts.currentVersion;
 	const now = runtime.now ?? Date.now;
-	const latest = newestEligibleVersion(
-		await latestFromCacheOrRegistry(now),
-		opts.currentVersion,
-		now(),
-	);
-	if (!latest || !isValidSemver(latest) || !isNewer(latest, opts.currentVersion)) {
+	const latest = newestEligibleVersion(await latestFromCacheOrRegistry(now), current, now());
+	if (!latest || !isValidSemver(latest) || !isNewer(latest, current)) {
 		return "no_update";
 	}
 	const ownership =
 		runtime.ownership === undefined ? detectCurrentUpdateOwnership() : runtime.ownership;
 	if (!ownership) return "unsupported";
 	const result = await runUpdateInstallWorker({
-		current: opts.currentVersion,
+		automatic: true,
+		current,
 		latest,
 		ownership,
 		output: "log",
@@ -1318,13 +1334,15 @@ export async function runBackgroundUpdateWorker(
 					) ?? null
 			: undefined,
 	});
-	return result.status === "installed"
-		? "installed"
-		: result.status === "locked"
-			? "locked"
-			: result.status === "disabled"
-				? "disabled"
-				: "failed";
+	return result.status === "no_update"
+		? "no_update"
+		: result.status === "installed"
+			? "installed"
+			: result.status === "locked"
+				? "locked"
+				: result.status === "disabled"
+					? "disabled"
+					: "failed";
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
