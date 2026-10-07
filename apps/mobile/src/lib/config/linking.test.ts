@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { buildPublishableKey } from "@clerk/shared/keys";
 import type { ExpoConfig } from "expo/config";
 import { parseMobileRuntimeConfig } from "@/lib/config/runtime-config";
 import { readLinkHosts, webLinkPaths } from "../../../config/linking.cjs";
@@ -58,6 +59,22 @@ test("native associations and runtime routing share the same explicit hostname c
 	} finally {
 		if (previous === undefined) delete process.env.EXPO_PUBLIC_CLAWDI_LINK_HOSTS;
 		else process.env.EXPO_PUBLIC_CLAWDI_LINK_HOSTS = previous;
+	}
+});
+
+test("Clerk native passkeys associate the Frontend API encoded in the publishable key", () => {
+	const previous = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+	const config: ExpoConfig = { name: "Test", slug: "test" };
+	try {
+		delete process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+		expect(configure({ config }).ios?.associatedDomains).toBeUndefined();
+		process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY = buildPublishableKey("clerk.example.test");
+		expect(configure({ config }).ios?.associatedDomains).toEqual([
+			"webcredentials:clerk.example.test",
+		]);
+	} finally {
+		if (previous === undefined) delete process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
+		else process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY = previous;
 	}
 });
 

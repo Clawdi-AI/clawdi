@@ -1,5 +1,4 @@
 import { publicSessionId, publicSessionInput, vaultRequestToken } from "@clawdi/shared/api";
-import { accountOAuthNavigation } from "@/platform/auth/account-oauth";
 
 /** One pending capability, never Router state, storage, logs or query keys. */
 export function createVaultLinkInbox(now = Date.now) {
@@ -31,7 +30,7 @@ export function createVaultLinkInbox(now = Date.now) {
 
 export const incomingVaultLink = createVaultLinkInbox();
 
-/** Explicit external-link allowlist; callback credentials never enter Router state. */
+/** Explicit external-link allowlist; capability tokens never enter Router state. */
 export function mobileLinkDestination(
 	path: string,
 	hosts: readonly string[],
@@ -44,8 +43,6 @@ export function mobileLinkDestination(
 		path.startsWith("//")
 	)
 		return "/open-share";
-	const oauth = accountOAuthNavigation(path);
-	if (oauth !== path) return oauth;
 	try {
 		const url = new URL(path, "clawdi:///");
 		if (url.username || url.password || url.port) return "/open-share";

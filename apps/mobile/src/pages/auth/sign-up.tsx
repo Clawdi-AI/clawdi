@@ -1,1 +1,5 @@
-export { SignUpScreen as default } from "@/platform/auth/auth-screen";
+import { AuthView } from "@clerk/expo/native";
+
+export default function SignUpPage() {
+	return <AuthView mode="signUp" isDismissible={false} />;
+}

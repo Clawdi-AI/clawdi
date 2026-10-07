@@ -1,6 +1,4 @@
 import { readApiBaseUrl } from "@clawdi/shared/api";
-import type { OAuthProvider } from "@clerk/expo/types";
-import { readOAuthProviders } from "@/platform/auth/oauth-providers";
 import { readLinkHosts } from "../../../config/linking.cjs";
 
 export type MobileRuntimeConfig = Readonly<{
@@ -9,7 +7,6 @@ export type MobileRuntimeConfig = Readonly<{
 	computeApiUrl?: string;
 	revenueCatAppleKey?: string;
 	revenueCatGoogleKey?: string;
-	clerkOauthProviders?: readonly OAuthProvider[];
 	linkHosts?: readonly string[];
 }>;
 
@@ -23,7 +20,6 @@ type RuntimeConfigValues = Readonly<{
 	computeApiUrl?: unknown;
 	revenueCatAppleKey?: unknown;
 	revenueCatGoogleKey?: unknown;
-	clerkOauthProviders?: unknown;
 	linkHosts?: unknown;
 }>;
 
@@ -81,14 +77,12 @@ export function parseMobileRuntimeConfig(
 				(computeApiUrl && new URL(computeApiUrl).protocol !== "https:"))
 		)
 			return { ok: false, reason: "invalid" };
-		const clerkOauthProviders = readOAuthProviders(values.clerkOauthProviders);
 		const linkHosts = readLinkHosts(values.linkHosts);
 		return {
 			ok: true,
 			value: {
 				cloudApiUrl: readApiBaseUrl(cloudApiUrl),
 				clerkPublishableKey: clerkPublishableKey ?? "",
-				...(clerkOauthProviders.length ? { clerkOauthProviders } : {}),
 				...(linkHosts.length ? { linkHosts } : {}),
 				...(computeApiUrl ? { computeApiUrl: readApiBaseUrl(computeApiUrl, true) } : {}),
 				...(revenueCatAppleKey ? { revenueCatAppleKey } : {}),

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import {
 	CONSOLE_NAVIGATION_ITEMS,
 	daemonStatusVisual,
@@ -10,8 +11,10 @@ import {
 } from "@clawdi/shared/view";
 import { possibleNativeClasses } from "@/lib/web-classes";
 import {
+	buildClerkTheme,
 	buildMobileTheme,
 	buildWebClassSafelist,
+	clerkThemeOutputPath,
 	outputPath,
 	readSharedTheme,
 	readWebClassSources,
@@ -21,6 +24,21 @@ import {
 
 test("mobile theme is generated from the current shared Web tokens", () => {
 	expect(readFileSync(outputPath, "utf8")).toBe(buildMobileTheme(readSharedTheme()));
+});
+
+test("Clerk native theme is generated from the current shared Web tokens", () => {
+	expect(readFileSync(clerkThemeOutputPath, "utf8")).toBe(buildClerkTheme(readSharedTheme()));
+});
+
+test("Clerk native theme passes the config plugin's prebuild validation for every color key", () => {
+	const plugin: {
+		_testing: { validateThemeJson: (theme: unknown) => void; VALID_COLOR_KEYS: string[] };
+	} = createRequire(import.meta.url)("@clerk/expo/app.plugin.js");
+	const theme = JSON.parse(readFileSync(clerkThemeOutputPath, "utf8"));
+	expect(() => plugin._testing.validateThemeJson(theme)).not.toThrow();
+	const keys = [...plugin._testing.VALID_COLOR_KEYS].sort();
+	expect(Object.keys(theme.colors).sort()).toEqual(keys);
+	expect(Object.keys(theme.darkColors).sort()).toEqual(keys);
 });
 
 test("Web class safelist covers the current shared Web class strings", () => {

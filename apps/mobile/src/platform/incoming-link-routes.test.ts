@@ -73,7 +73,7 @@ const paths = [
 	"/sign-in",
 	"/sign-up",
 	"/settings/api-keys",
-	"/settings/account/profile",
+	"/settings/account",
 ];
 test("Web paths resolve identically for custom scheme and verified universal links", () => {
 	for (const path of paths) {

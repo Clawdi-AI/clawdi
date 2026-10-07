@@ -1,6 +1,6 @@
 /**
- * Builds the Uniwind theme from the Web design tokens so mobile and Web share
- * one source of truth: packages/shared/src/style/theme.css.
+ * Builds the Uniwind theme and the Clerk native theme from the Web design tokens
+ * so mobile and Web share one source of truth: packages/shared/src/style/theme.css.
  *
  * Run `bun run theme` after changing the shared tokens; `theme.test.ts` fails
  * when the committed output is stale.
@@ -8,6 +8,7 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { clampChroma, converter, formatHex, formatHex8, parse } from "culori";
 import { possibleNativeClasses } from "@/lib/web-classes";
 
 const sourcePath = fileURLToPath(
@@ -20,6 +21,9 @@ const webClassSourceDirs = ["ui", "view"].map((dir) =>
 );
 export const webClassesOutputPath = fileURLToPath(
 	new URL("../web-classes.generated.css", import.meta.url),
+);
+export const clerkThemeOutputPath = fileURLToPath(
+	new URL("../clerk-theme.generated.json", import.meta.url),
 );
 
 const REM_PX = 16;
@@ -100,6 +104,60 @@ ${themeVariant(dark, tokens, "\t\t\t")}
 ${text}
 }
 `;
+}
+
+/** Clerk native color keys mapped to the shared Web tokens they mirror. */
+const CLERK_COLOR_TOKENS = {
+	primary: "primary",
+	primaryForeground: "primary-foreground",
+	background: "background",
+	foreground: "foreground",
+	muted: "muted",
+	mutedForeground: "muted-foreground",
+	input: "card",
+	inputForeground: "foreground",
+	border: "border",
+	ring: "ring",
+	danger: "destructive",
+	success: "success",
+	warning: "warning",
+	neutral: "secondary-foreground",
+	secondaryButtonBackground: "secondary",
+	secondaryButtonForeground: "secondary-foreground",
+} as const;
+
+const toRgb = converter("rgb");
+
+/** Native views take sRGB hex; OKLCH tokens are gamut-mapped by chroma, as browsers do. */
+function hexColor(value: string): string {
+	const parsed = parse(value);
+	if (!parsed) throw new Error(`Unsupported color ${value}`);
+	const rgb = toRgb(clampChroma(parsed, "oklch"));
+	return rgb.alpha !== undefined && rgb.alpha < 1 ? formatHex8(rgb) : formatHex(rgb);
+}
+
+function clerkColors(values: Map<string, string>) {
+	const colors: Record<string, string> = {};
+	for (const [key, token] of Object.entries(CLERK_COLOR_TOKENS)) {
+		const value = values.get(`--${token}`);
+		if (!value) throw new Error(`Shared theme is missing --${token}`);
+		colors[key] = hexColor(value);
+	}
+	// Design rule: hairline borders, no shadows.
+	colors.shadow = "#00000000";
+	return colors;
+}
+
+/** Theme for the `@clerk/expo` config plugin; `fontFamily` applies on iOS only. */
+export function buildClerkTheme(css: string): string {
+	const light = declarations(block(css, ":root"));
+	const dark = declarations(block(css, ".dark"));
+	const theme = {
+		colors: clerkColors(light),
+		darkColors: clerkColors(dark),
+		design: { fontFamily: "Geist", borderRadius: remToPx(light.get("--radius") ?? "") },
+	};
+	return `${JSON.stringify(theme, null, "\t")}\n`;
 }
 
 /**
@@ -201,6 +259,7 @@ export function readWebClassSources(): string[] {
 if (import.meta.main) {
 	writeFileSync(outputPath, buildMobileTheme(readFileSync(sourcePath, "utf8")));
 	writeFileSync(webClassesOutputPath, buildWebClassSafelist(readWebClassSources()));
+	writeFileSync(clerkThemeOutputPath, buildClerkTheme(readFileSync(sourcePath, "utf8")));
 }
 
 export function readSharedTheme() {
