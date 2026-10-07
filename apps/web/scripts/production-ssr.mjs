@@ -7,7 +7,9 @@ import { AGENT_FILES } from "../src/lib/agent-files.ts";
 // Exercise the deployed bundle graph with real Clerk middleware and providers.
 // These syntactically valid fixture keys do not belong to a Clerk tenant.
 for (const key of Object.keys(process.env)) {
-	if (/^(VITE_|CLERK_|SENTRY_|VERCEL(?:_|$))/.test(key)) delete process.env[key];
+	if (/^(VITE_|CLERK_|SENTRY_|VERCEL(?:_|$)|CLAWDI_APPLE_|CLAWDI_ANDROID_CERT_)/.test(key)) {
+		delete process.env[key];
+	}
 }
 Object.assign(process.env, {
 	NODE_ENV: "production",
@@ -63,6 +65,44 @@ function authenticatedRequest(path) {
 	const authenticated = request(path);
 	authenticated.headers.set("authorization", `Bearer ${token}`);
 	return authenticated;
+}
+
+for (const [path, envKey, value] of [
+	["/.well-known/apple-app-site-association", "CLAWDI_APPLE_TEAM_ID", "ABCDE12345"],
+	["/.well-known/assetlinks.json", "CLAWDI_ANDROID_CERT_SHA256", Array(32).fill("AB").join(":")],
+]) {
+	for (const method of ["GET", "HEAD"]) {
+		for (const configured of [false, true]) {
+			test(`production ${method} ${path} bypasses auth (${configured ? "configured" : "unset"})`, async () => {
+				try {
+					if (configured) process.env[envKey] = value;
+					else delete process.env[envKey];
+					const input = new Request(request(path), { method });
+					// A stale credential must not start Clerk's authentication/handshake flow.
+					input.headers.set("authorization", "Bearer expired-session");
+					input.headers.set("cookie", "__session=expired-session");
+					const response = await server.fetch(input);
+					assert.equal(response.status, configured ? 200 : 404);
+					assert.equal(response.headers.get("location"), null);
+					assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+					assert.equal(response.headers.get("content-security-policy"), null);
+					assert.equal(response.headers.get("set-cookie"), null);
+					assert.equal(response.headers.get("x-clerk-auth-status"), null);
+					assert.equal(
+						response.headers.get("cache-control"),
+						configured
+							? "public, max-age=300, s-maxage=300, stale-while-revalidate=86400"
+							: "no-store",
+					);
+					if (configured && method === "GET") {
+						assert.match(await response.text(), /ai\.clawdi\.app/);
+					} else assert.equal(await response.text(), "");
+				} finally {
+					delete process.env[envKey];
+				}
+			});
+		}
+	}
 }
 
 test("production documents use fresh CSP nonces on every executable script", async () => {
@@ -165,6 +205,62 @@ for (const path of [
 		);
 		assert.equal(response.headers.get("cache-control"), "private, no-store");
 		assert.equal(await response.text(), "");
+	});
+}
+
+test("only association files bypass Clerk while consecutive dashboard requests retain authentication", async () => {
+	try {
+		process.env.CLAWDI_APPLE_TEAM_ID = "ABCDE12345";
+		for (const path of [
+			"/.well-known/apple-app-site-association",
+			"/dashboard",
+			"/.well-known/apple-app-site-association",
+			"/dashboard",
+		]) {
+			const response = await server.fetch(authenticatedRequest(path));
+			if (path === "/dashboard") {
+				// Only Clerk's authenticated context can admit the protected alias.
+				assert.equal(response.status, 307);
+				assert.equal(response.headers.get("location"), "/");
+				assert.equal(await response.text(), "");
+			} else {
+				assert.equal(response.status, 200);
+				assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+				assert.equal(response.headers.get("location"), null);
+				assert.equal(response.headers.get("set-cookie"), null);
+				assert.equal(response.headers.get("x-clerk-auth-status"), null);
+				assert.equal(response.headers.get("content-security-policy"), null);
+				assert.match(await response.text(), /ABCDE12345\.ai\.clawdi\.app/);
+			}
+		}
+	} finally {
+		delete process.env.CLAWDI_APPLE_TEAM_ID;
+	}
+});
+
+test("agent-skills discovery retains Clerk and main's public-file nonce exemption", async () => {
+	const response = await server.fetch(request("/.well-known/agent-skills/index.json"));
+	assert.equal(response.status, 200);
+	assert.equal(response.headers.get("x-clerk-auth-status"), "signed-out");
+	assert.equal(response.headers.get("content-security-policy"), null);
+	assert.ok((await response.json()).skills.length > 0);
+});
+
+for (const path of ["/.well-known/unknown", "/.well-known/assetlinks.json/extra"]) {
+	test(`unknown association path ${path} retains Clerk and a document nonce`, async () => {
+		const response = await server.fetch(request(path));
+		assert.equal(response.status, 404);
+		assert.equal(response.headers.get("x-clerk-auth-status"), "signed-out");
+		assert.match(response.headers.get("content-type") ?? "", /text\/html/);
+		// Start's unmatched-route 404 drops contextual response headers, as on main.
+		// The rendered nonce proves security middleware still ran for this request.
+		const html = await response.text();
+		const nonce = html.match(/<meta name="csp-nonce" content="([^"]+)"/)?.[1];
+		assert.ok(nonce);
+		for (const [tag] of html.matchAll(/<script\b[^>]*>/g)) {
+			if (/type="(?:application\/json|application\/ld\+json)"/.test(tag)) continue;
+			assert.ok(tag.includes(`nonce="${nonce}"`), `Script without matching nonce: ${tag}`);
+		}
 	});
 }
 
