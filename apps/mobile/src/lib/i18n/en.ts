@@ -252,11 +252,20 @@ const runtimeEn = {
 	stop: "Stop runtime",
 	restart: "Restart runtime",
 	resetAccess: "Reset dashboard access",
-	deleteAgent: "Delete Agent, keep subscription",
-	deleteWarning:
-		"This permanently deletes the Agent and its saved data. This cannot be undone. Any paid subscription is kept and may continue billing; manage it separately through its original purchase provider. Only confirm if you want to delete this Agent without cancelling its subscription.",
+	deleteAgent: "Delete Agent",
+	deleteTitle: "Delete {name}?",
+	deleteWarning: "This permanently deletes the Agent and its saved data. This cannot be undone.",
+	deleteScheduledCancel:
+		"The subscription is already scheduled to stop at period end; deleting the Agent does not undo that cancellation.",
+	deleteKeepChoice: "Keep subscription",
+	deleteCancelChoice: "Cancel subscription",
+	deleteKeepDescription: "Keep subscription — it becomes available to choose for a future Agent.",
+	deleteValidThrough: "Valid through {date}.",
+	deleteKeepConfirm: "Delete Agent (keep subscription)",
+	deleteCancelConfirm: "Delete Agent and cancel subscription",
+	deleteCancelsSubscription: "This request also cancels the Agent's subscription.",
 	deleteReported:
-		"The server reports this Agent deleted for your account. Cleanup may still be in progress. This action did not request subscription cancellation.",
+		"The server reports this Agent deleted for your account. Cleanup may still be in progress.",
 	paymentRequired:
 		"Starting requires a server-approved subscription or payment action. No payment is made by these controls.",
 	uncertain:

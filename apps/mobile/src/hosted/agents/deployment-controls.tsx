@@ -15,8 +15,12 @@ import {
 import {
 	agentSurfaceCopy,
 	aiBindingCopy,
+	computeFundingMode,
+	computeSubscriptionCancellationCopy,
 	firstModelForProvider,
+	formatShortDate,
 	initialDeploymentCopy,
+	isComputeSubscriptionRenewing,
 	isManagedProviderId,
 	primaryModelValue,
 } from "@clawdi/shared/view";
@@ -26,6 +30,7 @@ import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { ActionButton, ChoiceSelect as NativePicker } from "@/components/dashboard/controls";
 import { EntityAddCard } from "@/components/entity-card";
+import { RichConfirmAction } from "@/components/ui/confirm-action";
 import { Input as AppTextInput } from "@/components/ui/input";
 import { Text as AppText } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
@@ -36,9 +41,15 @@ import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
 import type { RuntimeAttempt } from "@/platform/runtime-attempt";
 import { runtimeAttempts } from "@/platform/runtime-attempt-storage";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
+
+type SubscriptionChoice = Extract<
+	DeploymentMutation,
+	{ action: "delete" }
+>["body"]["subscription_choice"];
 
 export function DeploymentControls({
 	deployment,
@@ -169,39 +180,62 @@ export function DeploymentControls({
 				throw error;
 			}
 		});
+	// Mirrors Web's delete action: included Basic is released with the Agent, a renewing
+	// paid subscription is the owner's choice (default cancel), and anything else is kept.
+	const subscription = deployment?.commercial_display?.compute_subscription;
+	const fundingMode = computeFundingMode(deployment?.current_plan_slug, subscription);
+	const offerChoice = fundingMode === "subscription" && isComputeSubscriptionRenewing(subscription);
+	const periodEnd = formatShortDate(subscription?.current_period_end);
+	const periodEndLabel = periodEnd === "—" ? null : periodEnd;
+	const [deleteChoice, setDeleteChoice] = useState<{
+		choice: SubscriptionChoice;
+		confirm: (choice: SubscriptionChoice) => unknown;
+	} | null>(null);
 	const confirm = (mutation: DeploymentMutation) => {
 		if ((mutation.action === "delete" ? writeBlocked : busy) || !deploymentMutations || !deployment)
 			return;
 		const visible = capture();
-		const saved: RuntimeAttempt = {
+		const prepared = (next: DeploymentMutation): RuntimeAttempt => ({
 			format: 1,
 			deploymentId: deployment.resource.id,
 			key: randomUUID(),
 			version: deployment.resource.metadata.resourceVersion,
-			mutation,
+			mutation: next,
 			status: "prepared",
-		};
+		});
 		const ticket = ++confirmation.current;
+		const run = (next: DeploymentMutation) => {
+			if (
+				confirmation.current === ticket &&
+				scope.isCurrent() &&
+				!scope.signal.aborted &&
+				visible()
+			) {
+				return submit(prepared(next), true, true);
+			}
+		};
+		if (mutation.action === "delete" && offerChoice) {
+			setDeleteChoice({
+				choice: "cancel_subscription",
+				confirm: (subscription_choice) => run({ action: "delete", body: { subscription_choice } }),
+			});
+			return;
+		}
 		nativeConfirmation.show(
-			t(mutation.action === "delete" ? "runtime.deleteAgent" : "runtime.confirm"),
 			mutation.action === "delete"
-				? `${deployment.resource.name}\n\n${t("runtime.deleteWarning")}`
+				? t("runtime.deleteTitle").replace("{name}", deployment.resource.name)
+				: t("runtime.confirm"),
+			mutation.action === "delete"
+				? subscription?.cancel_at_period_end
+					? `${t("runtime.deleteWarning")}\n\n${t("runtime.deleteScheduledCancel")}`
+					: t("runtime.deleteWarning")
 				: t("runtime.warning"),
 			[
 				{ text: t("account.cancel"), style: "cancel" },
 				{
 					text: t(mutation.action === "delete" ? "runtime.deleteAgent" : "runtime.apply"),
 					style: mutation.action === "delete" ? "destructive" : "default",
-					onPress: () => {
-						if (
-							confirmation.current === ticket &&
-							scope.isCurrent() &&
-							!scope.signal.aborted &&
-							visible()
-						) {
-							return submit(saved, true, true);
-						}
-					},
+					onPress: () => run(mutation),
 				},
 			],
 		);
@@ -210,6 +244,54 @@ export function DeploymentControls({
 	return (
 		<AppView className="gap-3">
 			{nativeConfirmation.dialog}
+			{section === "all" && deployment ? (
+				<RichConfirmAction
+					open={deleteChoice !== null}
+					onOpenChange={(open) => {
+						if (!open) {
+							confirmation.current++;
+							setDeleteChoice(null);
+						}
+					}}
+					title={t("runtime.deleteTitle").replace("{name}", deployment.resource.name)}
+					description={
+						<AppView className="gap-3">
+							<AppText>{t("runtime.deleteWarning")}</AppText>
+							<NativeSegments
+								value={deleteChoice?.choice ?? "cancel_subscription"}
+								disabled={action.busy}
+								options={[
+									{ value: "keep_subscription", label: t("runtime.deleteKeepChoice") },
+									{ value: "cancel_subscription", label: t("runtime.deleteCancelChoice") },
+								]}
+								onChange={(value) => {
+									if (value === "keep_subscription" || value === "cancel_subscription")
+										setDeleteChoice((current) => current && { ...current, choice: value });
+								}}
+							/>
+							<AppText>
+								{deleteChoice?.choice === "keep_subscription"
+									? periodEndLabel
+										? `${t("runtime.deleteKeepDescription")} ${t("runtime.deleteValidThrough").replace("{date}", periodEndLabel)}`
+										: t("runtime.deleteKeepDescription")
+									: computeSubscriptionCancellationCopy({
+											isTrial: subscription?.status === "trialing",
+											periodEndLabel,
+											hasRetainedDeployment: false,
+										}).description}
+							</AppText>
+						</AppView>
+					}
+					cancelLabel={t("account.cancel")}
+					confirmLabel={t(
+						deleteChoice?.choice === "keep_subscription"
+							? "runtime.deleteKeepConfirm"
+							: "runtime.deleteCancelConfirm",
+					)}
+					destructive
+					onConfirm={() => deleteChoice?.confirm(deleteChoice.choice)}
+				/>
+			) : null}
 			{section === "all" ? (
 				<>
 					<AppText accessibilityRole="header" className="text-xl font-semibold text-foreground">
@@ -304,12 +386,23 @@ export function DeploymentControls({
 					label={t("runtime.deleteAgent")}
 					disabled={writeBlocked}
 					onPress={() =>
-						confirm({ action: "delete", body: { subscription_choice: "keep_subscription" } })
+						confirm({
+							action: "delete",
+							body: {
+								subscription_choice:
+									fundingMode === "included_basic" ? "cancel_subscription" : "keep_subscription",
+							},
+						})
 					}
 				/>
 			) : null}
 			{attempt?.mutation.action === "delete" ? (
-				<AppText accessibilityRole="alert">{t("runtime.deleteWarning")}</AppText>
+				<AppText accessibilityRole="alert">
+					{attempt.mutation.body.subscription_choice === "cancel_subscription" &&
+					fundingMode !== "included_basic"
+						? `${t("runtime.deleteWarning")} ${t("runtime.deleteCancelsSubscription")}`
+						: t("runtime.deleteWarning")}
+				</AppText>
 			) : null}
 			{deployment && section !== "startup" ? (
 				<>

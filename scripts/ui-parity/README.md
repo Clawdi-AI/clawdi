@@ -107,7 +107,7 @@ Additional hosted rows:
 | Deployment | Agent ID | Subscription / state |
 | --- | --- | --- |
 | `hdep_ParityStopped` | `4e2e5000-0005-4c00-8000-000000000005` | `csub_ParityStopped`; stopped, active paid Performance |
-| `hdep_ParityFailed` | `4e2e5000-0006-4c00-8000-000000000006` | `csub_ParityFailed`; failed with RuntimeStartFailed condition |
+| `hdep_ParityFailed` | `4e2e5000-0006-4c00-8000-000000000006` | `csub_ParityFailed`; failed with RuntimeStartFailed condition, cancellation scheduled at period end |
 | `hdep_ParityStarting` | `4e2e5000-0007-4c00-8000-000000000007` | `csub_ParityStarting`; starting, operation still pending |
 | `hdep_ParityDunning` | `4e2e5000-0008-4c00-8000-000000000008` | `csub_ParityDunning`; stopped, past_due, wallet top-up recovery |
 

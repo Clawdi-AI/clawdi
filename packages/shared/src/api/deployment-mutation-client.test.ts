@@ -128,23 +128,24 @@ test("delete keeps subscriptions and distinguishes admission from server-confirm
 	}
 });
 
-test("delete never crosses the native subscription boundary or accepts a foreign absence receipt", async () => {
-	let tokens = 0;
+test("delete sends the confirmed subscription choice and rejects a foreign absence receipt", async () => {
+	const bodies: unknown[] = [];
 	const client = createDeploymentMutationClient({
 		baseUrl: "https://hosted.example",
-		getToken: async () => {
-			tokens++;
-			return "fixture";
+		getToken: async () => "fixture",
+		fetch: async (input, init) => {
+			const request = new Request(input, init);
+			if (request.method === "DELETE") bodies.push(await request.json());
+			return Response.json({ status: "absent", deployment_id: "other" });
 		},
-		fetch: async () => Response.json({ status: "absent", deployment_id: "other" }),
 	});
 	await expect(
 		client.apply("deployment", "v1", "key", {
 			action: "delete",
 			body: { subscription_choice: "cancel_subscription" },
 		}),
-	).rejects.toMatchObject({ status: 400, code: "subscription_management_unavailable" });
-	expect(tokens).toBe(0);
+	).rejects.toThrow("API response could not be read");
+	expect(bodies).toEqual([{ subscription_choice: "cancel_subscription" }]);
 	await expect(
 		client.apply("deployment", "v1", "key", {
 			action: "delete",

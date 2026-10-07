@@ -1988,7 +1988,8 @@ const deployments: DeploySchemas["V2HostedDeploymentReadResponse"][] = [
 				billing_term_months: 1,
 				price_cents: 2500,
 				currency: "usd",
-				cancel_at_period_end: false,
+				// The failed row exercises a paid subscription already scheduled to stop.
+				cancel_at_period_end: seed.state === "failed",
 				current_period_end: ago(seed.payment === "past_due" ? DAY : -20 * DAY),
 				next_payment_attempt_at: seed.payment === "past_due" ? ago(-DAY) : null,
 				recovery_action: seed.payment === "past_due" ? "top_up" : null,
@@ -2043,7 +2044,8 @@ const computeSubscriptions = {
 				currency: "usd",
 				billing_term_months: 1,
 				current_period_end: ago(-20 * DAY),
-				cancel_at_period_end: false,
+				cancel_at_period_end:
+					deployment.commercial_display?.compute_subscription?.cancel_at_period_end ?? false,
 				deployment_id: deployment.resource.id,
 				agent_name: deployment.resource.name,
 				is_orphan: false,
