@@ -49,6 +49,31 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.15.11
+
+- **Automatic updates (since 0.15.10):** daemon and background updates wait
+  at least 24 hours after this machine first sees a version as npm `latest`,
+  then skip to the newest eligible version. `clawdi update` can still install
+  the latest immediately. Update checks use less data, and native installers
+  are available on GitHub before npm publication.
+- **Credentials (since 0.15.10):** background services use a private token
+  file instead of storing credentials in the service definition. Existing
+  services migrate on the next `clawdi daemon install` or `clawdi setup`.
+  Sign-in-required errors consistently exit 4; permission errors no longer
+  ask you to sign in again. The legacy device-approval sign-in is retired.
+- **Setup (since 0.15.10):** `clawdi setup --exclude-project <path>` excludes
+  projects before the first upload. Unsupported background-service hosts
+  get a reason and exit 0; real failures exit 1. Linux shows the
+  `loginctl enable-linger` hint when needed, including on headless machines;
+  macOS uses `launchctl bootstrap/bootout` for background services.
+- **Desktop (since 0.15.10):** Clawdi Desktop signs in through the system
+  browser with OAuth PKCE and opens the dashboard in your browser.
+  `clawdi auth login --desktop` uses PKCE; terminal `clawdi auth login`
+  keeps the device-code flow.
+- **Command names:** use `clawdi vault detach` and
+  `clawdi agent projects unlink`. The old `vault unlink` and
+  `agent projects detach` aliases still work.
+
 ### CLI 0.15.10
 
 - Warm runtime preparation now uses the ordinary exact npm CLI selector and
