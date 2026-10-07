@@ -76,7 +76,7 @@ import {
 	type RuntimeInstallObservation,
 	runtimeCommandPath,
 } from "./manifest-install";
-import { applyHostedMcpProjections } from "./manifest-mcp";
+import { applyHostedMcpProjections, reconcileHostedHermesProfileMcp } from "./manifest-mcp";
 import {
 	discoverOpenClawManagedProviderAuthAgentDirs,
 	ensureHostedOpenClawProviderAuthCapability,
@@ -1634,6 +1634,18 @@ export function convergeRuntimeManifest(
 				};
 			}
 		}
+		state.resourceProjectionErrors.push(
+			...profileRuntimeStep("converge.hermes-profile-mcp", () =>
+				reconcileHostedHermesProfileMcp(
+					context.manifest,
+					context.projectionHome,
+					state.observations.get("hermes")?.commandPath ??
+						runtimeCommandPath("hermes", context.projectionHome),
+					context.hermesConfig,
+					context.hostedRuntimeContract.identity,
+				),
+			),
+		);
 		const activationPlan = profileRuntimeStep("converge.activation-plan", () =>
 			prepareRuntimeActivation(context, state, egressProjection, providerProjectionRevisions),
 		);

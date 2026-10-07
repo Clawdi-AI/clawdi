@@ -138,12 +138,14 @@ export function getHermesResolvedConfigValue(
 }
 
 function hermesConfigPath(context: HermesConfigCommandContext): string {
-	const preinstalled = preinstalledHermesConfigPath(
-		context.command,
-		context.home,
-		runtimeFileCurrentRevision(context.command),
-		context.environment,
-	);
+	const preinstalled =
+		!context.profile &&
+		preinstalledHermesConfigPath(
+			context.command,
+			context.home,
+			runtimeFileCurrentRevision(context.command),
+			context.environment,
+		);
 	if (preinstalled) return preinstalled;
 	const result = runHermesConfigCommand(context, ["path"]);
 	if (result.status !== 0 || result.error) {

@@ -1,10 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+	beginHermesConfigTransaction,
+	commitHermesConfigTransaction,
 	getHermesRawConfigValue,
 	type HermesConfigTransaction,
 	reconcileHermesConfigValue,
 } from "./hermes-config";
+import { listHermesProfileNames } from "./hermes-profiles";
 import { managedMcpHeaderPlaceholder } from "./hosted-egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 import { type RuntimeInstallObservation, runtimeCommandPath } from "./manifest-install";
@@ -16,7 +19,12 @@ import { canonicalJsonEqual, isPlainRecord } from "./manifest-shared";
 import type { RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
 import type { RuntimeName } from "./run-config";
-import { executableExists, runRuntimeUserCommand } from "./runtime-user-command";
+import {
+	executableExists,
+	type RuntimeUserIdentity,
+	runRuntimeUserCommand,
+	withRuntimeUserFileAccess,
+} from "./runtime-user-command";
 
 export function hostedMcpProjectionDeclared(manifest: RuntimeManifest): boolean {
 	return manifest.projection?.mcp !== undefined;
@@ -49,16 +57,7 @@ export function applyHostedMcpProjections(
 			if (!runtime.commandPath || !executableExists(runtime.commandPath) || !hermesConfig) {
 				throw new Error("could not mutate managed Hermes MCP servers: runtime is unavailable");
 			}
-			const nextServers = { ...runtime.native.servers };
-			for (const mutation of runtime.mutations) {
-				if (mutation.kind === "remove") delete nextServers[mutation.serverName];
-				else nextServers[mutation.serverName] = mutation.server;
-			}
-			reconcileHermesConfigValue(
-				hermesConfig,
-				"mcp_servers",
-				Object.keys(nextServers).length > 0 ? nextServers : undefined,
-			);
+			applyHermesMcpMutations(hermesConfig, runtime.native.servers, runtime.mutations);
 			continue;
 		}
 		if (!runtime.commandPath || !executableExists(runtime.commandPath)) {
@@ -111,30 +110,7 @@ function buildHostedMcpReconciliationPlan(
 			name === "openclaw" || runtimeAvailable
 				? readHostedMcpNativeState(name, home, commandPath, hermesConfig)
 				: { servers: {} };
-		const managedServerNames = new Set(
-			Object.entries(native.servers).flatMap(([serverName, server]) =>
-				hostedMcpNativeServerIsManaged(serverName, server) ? [serverName] : [],
-			),
-		);
-		for (const serverName of Object.keys(desiredServers).sort()) {
-			if (Object.hasOwn(native.servers, serverName) && !managedServerNames.has(serverName)) {
-				throw new Error(`refusing to replace unmanaged ${name} MCP server ${serverName}`);
-			}
-		}
-		const mutations: HostedMcpMutation[] = [];
-		for (const serverName of [...managedServerNames].sort()) {
-			if (!Object.hasOwn(desiredServers, serverName) && Object.hasOwn(native.servers, serverName)) {
-				mutations.push({ kind: "remove", serverName });
-			}
-		}
-		for (const [serverName, desired] of Object.entries(desiredServers).sort(([a], [b]) =>
-			a.localeCompare(b),
-		)) {
-			const server = hostedMcpNativeServerConfig(name, serverName, desired);
-			if (!canonicalJsonEqual(native.servers[serverName], server)) {
-				mutations.push({ kind: "set", serverName, server });
-			}
-		}
+		const mutations = planHostedMcpMutations(name, native.servers, desiredServers);
 		const hasSet = mutations.some((mutation) => mutation.kind === "set");
 		if (hasSet && (!observation?.enabled || observation.status === "install_failed")) {
 			throw new Error(`could not apply managed ${name} MCP servers: runtime is unavailable`);
@@ -143,6 +119,102 @@ function buildHostedMcpReconciliationPlan(
 	});
 	return { home, runtimes };
 }
+class HostedMcpOwnershipError extends Error {}
+function planHostedMcpMutations(
+	name: HostedMcpTarget,
+	servers: Record<string, unknown>,
+	desiredServers: Record<string, HostedMcpServerDesiredState>,
+): HostedMcpMutation[] {
+	const managedServerNames = new Set(
+		Object.entries(servers).flatMap(([serverName, server]) =>
+			hostedMcpNativeServerIsManaged(serverName, server) ? [serverName] : [],
+		),
+	);
+	for (const serverName of Object.keys(desiredServers).sort()) {
+		if (Object.hasOwn(servers, serverName) && !managedServerNames.has(serverName)) {
+			throw new HostedMcpOwnershipError(
+				`refusing to replace unmanaged ${name} MCP server ${serverName}`,
+			);
+		}
+	}
+	const mutations: HostedMcpMutation[] = [];
+	for (const serverName of [...managedServerNames].sort()) {
+		if (!Object.hasOwn(desiredServers, serverName) && Object.hasOwn(servers, serverName)) {
+			mutations.push({ kind: "remove", serverName });
+		}
+	}
+	for (const [serverName, desired] of Object.entries(desiredServers).sort(([a], [b]) =>
+		a.localeCompare(b),
+	)) {
+		const server = hostedMcpNativeServerConfig(name, serverName, desired);
+		if (!canonicalJsonEqual(servers[serverName], server)) {
+			mutations.push({ kind: "set", serverName, server });
+		}
+	}
+	return mutations;
+}
+function applyHermesMcpMutations(
+	transaction: HermesConfigTransaction,
+	servers: Record<string, unknown>,
+	mutations: HostedMcpMutation[],
+): void {
+	if (mutations.length === 0) return;
+	const nextServers = { ...servers };
+	for (const mutation of mutations) {
+		if (mutation.kind === "remove") delete nextServers[mutation.serverName];
+		else nextServers[mutation.serverName] = mutation.server;
+	}
+	reconcileHermesConfigValue(
+		transaction,
+		"mcp_servers",
+		Object.keys(nextServers).length > 0 ? nextServers : undefined,
+	);
+}
+export function reconcileHostedHermesProfileMcp(
+	manifest: RuntimeManifest,
+	home: string,
+	command: string | null,
+	defaultConfig: HermesConfigTransaction | null,
+	identity: RuntimeUserIdentity,
+): string[] {
+	if (!command || !executableExists(command)) return [];
+	let names: string[];
+	try {
+		names = listHermesProfileNames(home);
+	} catch {
+		return ["Hermes profile MCP projection failed: profile_discovery_failed"];
+	}
+	if (names.length === 1 && names[0] === "default") return [];
+	const desired =
+		manifest.runtimes.hermes?.enabled === true ? hostedMcpIntent(manifest).servers : {};
+	const errors: string[] = [];
+	const seenPaths = new Set(defaultConfig ? [defaultConfig.path] : []);
+	for (const profile of names) {
+		let reason = "config_path_or_read_failed";
+		try {
+			const transaction = beginHermesConfigTransaction({ command, profile, home, cwd: home });
+			if (seenPaths.has(transaction.path)) continue;
+			seenPaths.add(transaction.path);
+			reason = "config_invalid";
+			const native = readHostedMcpNativeState("hermes", home, command, transaction);
+			const mutations = planHostedMcpMutations("hermes", native.servers, desired);
+			applyHermesMcpMutations(transaction, native.servers, mutations);
+			reason = "config_commit_failed";
+			const result = withRuntimeUserFileAccess(
+				() => commitHermesConfigTransaction(transaction),
+				identity,
+			);
+			if (result === "conflict")
+				errors.push(`Hermes profile MCP projection failed (profile ${profile}): config_conflict`);
+		} catch (error) {
+			errors.push(
+				`Hermes profile MCP projection failed (profile ${profile}): ${error instanceof HostedMcpOwnershipError ? error.message : reason}`,
+			);
+		}
+	}
+	return errors;
+}
+
 function hostedMcpNativeServerIsManaged(serverName: string, server: unknown): boolean {
 	if (!isPlainRecord(server) || !isPlainRecord(server.headers)) return false;
 	return Object.entries(server.headers).some(
