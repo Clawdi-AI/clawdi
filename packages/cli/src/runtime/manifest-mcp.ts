@@ -1,10 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { log } from "../serve/log";
 import {
 	beginHermesConfigTransaction,
 	commitHermesConfigTransaction,
 	getHermesRawConfigValue,
 	type HermesConfigTransaction,
+	HermesConfigYamlInvalidError,
 	reconcileHermesConfigValue,
 } from "./hermes-config";
 import { listHermesProfileNames } from "./hermes-profiles";
@@ -170,6 +172,7 @@ function applyHermesMcpMutations(
 		Object.keys(nextServers).length > 0 ? nextServers : undefined,
 	);
 }
+let profileDiscoveryWarningLogged = false;
 export function reconcileHostedHermesProfileMcp(
 	manifest: RuntimeManifest,
 	home: string,
@@ -180,9 +183,16 @@ export function reconcileHostedHermesProfileMcp(
 	if (!command || !executableExists(command)) return [];
 	let names: string[];
 	try {
+		// Upstream _get_profiles_root() anchors profiles to the same root used by discovery.
+		const profilesRoot = join(home, ".hermes", "profiles");
+		if (!existsSync(profilesRoot) || readdirSync(profilesRoot).length === 0) return [];
 		names = listHermesProfileNames(home);
 	} catch {
-		return ["Hermes profile MCP projection failed: profile_discovery_failed"];
+		if (!profileDiscoveryWarningLogged) {
+			profileDiscoveryWarningLogged = true;
+			log.warn("runtime.hermes-profile-mcp.skipped", { reason: "profile_discovery_failed" });
+		}
+		return [];
 	}
 	if (names.length === 1 && names[0] === "default") return [];
 	const desired =
@@ -207,6 +217,7 @@ export function reconcileHostedHermesProfileMcp(
 			if (result === "conflict")
 				errors.push(`Hermes profile MCP projection failed (profile ${profile}): config_conflict`);
 		} catch (error) {
+			if (error instanceof HermesConfigYamlInvalidError) reason = "config_invalid";
 			errors.push(
 				`Hermes profile MCP projection failed (profile ${profile}): ${error instanceof HostedMcpOwnershipError ? error.message : reason}`,
 			);

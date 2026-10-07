@@ -53,6 +53,8 @@ export class HermesConfigInvalidError extends Error {
 	}
 }
 
+export class HermesConfigYamlInvalidError extends HermesConfigInvalidError {}
+
 export class HermesConfigConflictError extends Error {
 	constructor(message = "Hermes config changed during reconciliation") {
 		super(message);
@@ -179,7 +181,7 @@ function readHermesConfigDocumentAtPath(path: string): {
 	const content = readHermesConfigContentAtPath(path);
 	const document = parseDocument(content);
 	if (document.errors.length > 0)
-		throw new HermesConfigInvalidError("Hermes config is invalid YAML");
+		throw new HermesConfigYamlInvalidError("Hermes config is invalid YAML");
 	const parsed = document.toJS() as unknown;
 	if (parsed === null || parsed === undefined) return { path, content, document, root: {} };
 	if (!isConfigRecord(parsed))
