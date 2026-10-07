@@ -148,14 +148,14 @@ export function parseNativeReleaseManifestV2(content: string): NativeReleaseMani
 	}
 	const version = versionFields[1];
 	if (!version) throw new Error("native release manifest has an invalid version");
-	const artifacts = lines.slice(2).map((line): NativeReleaseArtifactV2 => {
+	const artifacts: NativeReleaseArtifactV2[] = [];
+	for (const line of lines.slice(2)) {
 		const fields = line.split("\t");
 		const [recordType, target, asset, sha256] = fields;
+		// Future targets and metadata do not affect this client's download.
+		if (recordType !== "artifact" || !target || !isNativeBuildTarget(target)) continue;
 		if (
 			fields.length !== 4 ||
-			recordType !== "artifact" ||
-			!target ||
-			!isNativeBuildTarget(target) ||
 			asset === undefined ||
 			sha256 === undefined ||
 			!/^[0-9a-f]{64}$/.test(sha256)
@@ -165,18 +165,10 @@ export function parseNativeReleaseManifestV2(content: string): NativeReleaseMani
 		if (asset !== nativeAssetName(target)) {
 			throw new Error("native release manifest target and asset do not match");
 		}
-		return { target, asset, sha256 };
-	});
-	if (artifacts.length !== NATIVE_PUBLISH_TARGET_CATALOG.length) {
-		throw new Error("native release manifest does not contain the supported target matrix");
-	}
-	if (new Set(artifacts.map((artifact) => artifact.target)).size !== artifacts.length) {
-		throw new Error("native release manifest contains duplicate targets");
-	}
-	for (const { target } of NATIVE_PUBLISH_TARGET_CATALOG) {
-		if (!artifacts.some((artifact) => artifact.target === target)) {
-			throw new Error(`native release manifest is missing ${target}`);
+		if (artifacts.some((artifact) => artifact.target === target)) {
+			throw new Error("native release manifest contains duplicate targets");
 		}
+		artifacts.push({ target, asset, sha256 });
 	}
 	return { schemaVersion: NATIVE_RELEASE_MANIFEST_V2_SCHEMA, version, artifacts };
 }

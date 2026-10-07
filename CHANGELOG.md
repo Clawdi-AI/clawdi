@@ -43,6 +43,13 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.15.9
+
+- **Hosted Hermes profiles:** managed Clawdi MCP now converges in every profile,
+  including newly created profiles on the existing five-minute repair cycle.
+  User-authored entries remain intact; named profile failures are reported
+  without blocking convergence or restarting the gateway.
+
 ### CLI 0.15.8
 
 - **Hermes profiles:** Hosted daemons leave MCP ownership to the runtime

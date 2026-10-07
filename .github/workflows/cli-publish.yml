@@ -213,40 +213,6 @@ jobs:
             release/clawdi-cli-manifest.txt
             release/clawdi-cli-manifest-v2.txt
 
-      - name: Publish or verify immutable tarball
-        id: publish
-        env:
-          CLI_TARBALL_FILENAME: ${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}
-          NPM_TAG: ${{ needs['build-immutable-artifact'].outputs.npm_tag }}
-          VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
-        run: |
-          local_integrity=$(node -e 'const { createHash }=require("node:crypto"); const { readFileSync }=require("node:fs"); console.log(`sha512-${createHash("sha512").update(readFileSync(process.argv[1])).digest("base64")}`)' "./release/$CLI_TARBALL_FILENAME")
-          npm_release_visible() {
-            test "$(npm view "clawdi@$VERSION" version 2>/dev/null)" = "$VERSION"
-          }
-          if ! npm_release_visible; then
-            npm publish "./release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"
-            registry_visible=false
-            for attempt in $(seq 1 60); do
-              if npm_release_visible; then
-                registry_visible=true
-                break
-              fi
-              if [ "$attempt" -lt 60 ]; then sleep 10; fi
-            done
-            if [ "$registry_visible" != "true" ]; then
-              echo "clawdi@$VERSION was not visible in the npm registry after 10 minutes" >&2
-              exit 69
-            fi
-          fi
-          registry_version=$(npm view "clawdi@$VERSION" version)
-          test "$registry_version" = "$VERSION"
-          published_integrity=$(npm view "clawdi@$VERSION" dist.integrity)
-          if [ "$published_integrity" != "$local_integrity" ]; then
-            echo "clawdi@$VERSION registry integrity does not match this workflow artifact" >&2
-            exit 65
-          fi
-
       - name: Create or complete GitHub release
         id: release
         env:
@@ -366,3 +332,36 @@ jobs:
           fi
           gh "${args[@]}"
           gh release edit "$tag" --draft=false
+      - name: Publish or verify immutable tarball
+        id: publish
+        env:
+          CLI_TARBALL_FILENAME: ${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}
+          NPM_TAG: ${{ needs['build-immutable-artifact'].outputs.npm_tag }}
+          VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
+        run: |
+          local_integrity=$(node -e 'const { createHash }=require("node:crypto"); const { readFileSync }=require("node:fs"); console.log(`sha512-${createHash("sha512").update(readFileSync(process.argv[1])).digest("base64")}`)' "./release/$CLI_TARBALL_FILENAME")
+          npm_release_visible() {
+            test "$(npm view "clawdi@$VERSION" version 2>/dev/null)" = "$VERSION"
+          }
+          if ! npm_release_visible; then
+            npm publish "./release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"
+            registry_visible=false
+            for attempt in $(seq 1 60); do
+              if npm_release_visible; then
+                registry_visible=true
+                break
+              fi
+              if [ "$attempt" -lt 60 ]; then sleep 10; fi
+            done
+            if [ "$registry_visible" != "true" ]; then
+              echo "clawdi@$VERSION was not visible in the npm registry after 10 minutes" >&2
+              exit 69
+            fi
+          fi
+          registry_version=$(npm view "clawdi@$VERSION" version)
+          test "$registry_version" = "$VERSION"
+          published_integrity=$(npm view "clawdi@$VERSION" dist.integrity)
+          if [ "$published_integrity" != "$local_integrity" ]; then
+            echo "clawdi@$VERSION registry integrity does not match this workflow artifact" >&2
+            exit 65
+          fi

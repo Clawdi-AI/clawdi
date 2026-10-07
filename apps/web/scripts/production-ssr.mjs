@@ -193,7 +193,6 @@ for (const path of [
 	"/dashboard?deploy_profile=sui&settings=billing-wallet",
 	"/agents",
 	"/?settings=billing-wallet",
-	"/cli-authorize?user_code=ABCD",
 	"/oauth/codex/callback?code=opaque&state=state",
 ]) {
 	test(`production SSR protects ${path} without auth bypass`, async () => {

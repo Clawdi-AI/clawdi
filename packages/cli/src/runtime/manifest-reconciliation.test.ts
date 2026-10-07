@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -17,11 +17,13 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { commitRuntimeAppliedState } from "../commands/runtime";
+import * as privateFile from "../lib/private-file";
+import { log } from "../serve/log";
 import { installHermesNativeFixture } from "../test-support/hermes-native-fixture";
 import { writeFakeOpenClawConfigMutationSdk } from "../test-support/openclaw-config-mutation";
 import {
@@ -36,12 +38,14 @@ import {
 	persistComponentActivations,
 } from "./component-observation";
 import { gcFileBrowserCompanionCandidates } from "./file-browser-companion";
+import * as hermesConfig from "./hermes-config";
 import type {
 	PreparedHostedAgentPlugin,
 	PreparedHostedAgentPlugins,
 } from "./hosted-agent-plugin-package";
 import type { HostedAgentPluginCommandRunner } from "./hosted-agent-plugin-runtime";
 import { resolveHostedBundledSkill } from "./hosted-bundled-skill";
+import { managedMcpHeaderPlaceholder } from "./hosted-egress-profiles";
 import { hostedHermesSkillSourceMatches } from "./hosted-hermes-skill";
 import {
 	createOpenClawHostedContext,
@@ -72,6 +76,7 @@ import {
 	officialInstallArgs,
 } from "./manifest-contract";
 import { runtimeCommandCurrentRevision } from "./manifest-install";
+import { reconcileHostedHermesProfileMcp } from "./manifest-mcp";
 import { removeOpenClawManagedProviderAuthProfiles } from "./manifest-oauth";
 import { openClawGatewayHostedPatch } from "./manifest-providers";
 import {
@@ -79,6 +84,7 @@ import {
 	type HostedAgentPluginsDesiredState,
 	type HostedSkillSource,
 } from "./manifest-resources";
+import { runtimeProgramRevisionForManifest } from "./manifest-runtime-state";
 import { parseHostedRuntimeBundleV2, type RuntimeManifestLoad } from "./manifest-source";
 import { gcOpenClawFileSecrets, projectOpenClawProviderFileSecrets } from "./openclaw-file-secrets";
 import { preinstallOpenClawBundledSkill } from "./openclaw-preinstallation";
@@ -99,6 +105,7 @@ import {
 	planOfficialRuntimeServices,
 	runtimeSystemdCommonEnvironment,
 } from "./runtime-systemd-reconciliation";
+import * as runtimeUserCommand from "./runtime-user-command";
 import {
 	canonicalSecretRefSchema,
 	normalizeSecretValues,
@@ -749,7 +756,7 @@ function writeFakeGatewayCli(input: {
 		input.path,
 		`#!/usr/bin/env bash
 set -euo pipefail
-${input.commandLog ? `printf '%s\\n' "$*" >> '${input.commandLog}'` : ""}
+${input.commandLog ? `printf '%s\\n' "$*" >> '${input.commandLog}'\nprintf '%s\\n' "$0" >> '${input.commandLog}.executable'` : ""}
 case "$*" in
 	"--version")
 		printf '%s\\n' '${input.runtime === "openclaw" ? "OpenClaw test-version" : "Hermes test-version"}'
@@ -757,7 +764,7 @@ case "$*" in
 	"config patch --stdin"*)
 		${input.configPatchPath ? `cat > '${input.configPatchPath}'` : "cat >/dev/null"}
 		;;
-	"config path"|"config get "*|"config set "*|"config unset "*)
+	"config path"|"config get "*|"config set "*|"config unset "*|"-p "*)
 		HOME='${home}' exec '${process.execPath}' '${HERMES_CONFIG_CLI_MOCK}' "$@"
 		;;
 	"config schema")
@@ -893,6 +900,77 @@ function writeFakeHermesCli(paths: RuntimePaths): string {
 		unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
 	});
 	return path;
+}
+
+function hermesProfileMcpFixture(names = ["default", "work"]) {
+	const paths = tempRuntimePaths();
+	installHermesNativeFixture(paths.userHome);
+	const root = join(paths.userHome, ".hermes");
+	const source = join(root, "hermes-agent", "hermes_cli");
+	mkdirSync(source, { recursive: true });
+	writeFileSync(join(source, "__init__.py"), "");
+	writeFileSync(
+		join(source, "profiles.py"),
+		`
+import json, os
+from pathlib import Path
+root = Path(os.environ['HOME']) / '.hermes'
+def get_profile_dir(name):
+    return root if name == 'default' else root / 'profiles' / name
+def list_profile_names():
+    assert os.environ['HERMES_HOME'] == str(root)
+    assert not os.environ.get('HERMES_PROFILE')
+    assert not os.environ.get('HERMES_PROFILE_NAME')
+    if (root / 'discovery-failure').exists(): raise RuntimeError('private fixture stderr')
+    return json.loads((root / 'official-roster.json').read_text())
+`,
+	);
+	const rosterPath = join(root, "official-roster.json");
+	writeFileSync(rosterPath, JSON.stringify(names));
+	const configPaths = [
+		join(root, "config.yaml"),
+		...[...new Set(["work", ...names.filter((name) => name !== "default")])].map((name) =>
+			join(root, "profiles", name, "config.yaml"),
+		),
+	];
+	for (const path of configPaths) {
+		mkdirSync(dirname(path), { recursive: true });
+		writeFileSync(path, "# user comment\nmcp_servers:\n  user.server:\n    command: user-owned\n");
+	}
+	const command = join(paths.userHome, ".local", "bin", "hermes");
+	const commandLog = join(root, "commands.log");
+	writeFakeGatewayCli({
+		path: command,
+		runtime: "hermes",
+		unitPath: join(paths.systemdUserRoot, "hermes-gateway.service"),
+		commandLog,
+	});
+	const manifest = baseManifest(
+		paths,
+		{
+			hermes: { enabled: true, run: runSettings(command, ["gateway", "run"]), services: {} },
+		},
+		{
+			projection: {
+				mcp: {
+					servers: {
+						clawdi: {
+							url: "https://mcp.example.test/clawdi",
+							transport: "streamable-http",
+							headers: {
+								Authorization: { secretRef: "secret://clawdi/auth-token", prefix: "Bearer " },
+							},
+						},
+					},
+				},
+			},
+		},
+	);
+	const converge = (desired = manifest, options: RuntimeConvergenceOptions = {}) =>
+		convergeRuntimeManifest(manifestLoad(desired, "hermes-profile-mcp"), paths, options);
+	const configs = () =>
+		configPaths.map((path) => parseYaml(readFileSync(path, "utf8")) as Record<string, unknown>);
+	return { paths, root, command, commandLog, manifest, converge, configs, configPaths, rosterPath };
 }
 
 function fileBrowserManifestLoad(manifest: RuntimeManifest): RuntimeManifestLoad {
@@ -5512,6 +5590,333 @@ esac
 			0, 0,
 		]);
 		expect(statSync(paths.daemonAuthToken).mode & 0o777).toBe(0o600);
+	});
+
+	test.each(["current", "legacy"])(
+		"projects identical Hosted MCP entries through official per-profile paths (%s)",
+		(upstream) => {
+			const fixture = hermesProfileMcpFixture();
+			if (upstream === "legacy")
+				appendFileSync(
+					join(fixture.root, "hermes-agent", "hermes_cli", "profiles.py"),
+					`
+from types import SimpleNamespace
+names = list_profile_names
+def list_profiles():
+    return [SimpleNamespace(name=name) for name in names()]
+del list_profile_names
+`,
+				);
+			process.env.HERMES_PROFILE = "ignored";
+			process.env.HERMES_PROFILE_NAME = "ignored";
+			const result = fixture.converge();
+			expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+			const expected = {
+				"user.server": { command: "user-owned" },
+				clawdi: {
+					url: "https://mcp.example.test/clawdi",
+					transport: "streamable-http",
+					headers: {
+						Authorization: `Bearer ${managedMcpHeaderPlaceholder("clawdi", "Authorization")}`,
+					},
+				},
+			};
+			for (const config of fixture.configs()) expect(config.mcp_servers).toEqual(expected);
+			expect(isAbsolute(fixture.command)).toBe(true);
+			const calls = readFileSync(fixture.commandLog, "utf8")
+				.trim()
+				.split("\n")
+				.map((line) => line.split(" "));
+			expect(
+				calls.some(
+					(args) =>
+						args.includes("-p") &&
+						args.includes("work") &&
+						args.includes("config") &&
+						args.includes("path"),
+				),
+			).toBe(true);
+			expect(
+				readFileSync(`${fixture.commandLog}.executable`, "utf8")
+					.trim()
+					.split("\n")
+					.every((path) => path === fixture.command && isAbsolute(path)),
+			).toBe(true);
+		},
+	);
+
+	test("keeps profile MCP bytes and mtimes unchanged on repeated convergence", () => {
+		const fixture = hermesProfileMcpFixture();
+		expect(fixture.converge().installErrors).toEqual([]);
+		const snapshots = fixture.configPaths.map((path) => ({
+			bytes: readFileSync(path),
+			mtime: statSync(path).mtimeMs,
+		}));
+		const result = fixture.converge();
+		expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+		fixture.configPaths.forEach((path, index) => {
+			expect(readFileSync(path)).toEqual(snapshots[index]?.bytes);
+			expect(statSync(path).mtimeMs).toBe(snapshots[index]?.mtime);
+		});
+	});
+
+	test.each(["mcp-disabled", "runtime-disabled"])(
+		"removes managed profile MCP entries when %s and preserves user servers",
+		(mode) => {
+			const fixture = hermesProfileMcpFixture();
+			expect(fixture.converge().installErrors).toEqual([]);
+			const desired = structuredClone(fixture.manifest);
+			if (mode === "mcp-disabled") desired.projection = { mcp: { servers: {} } };
+			else desired.runtimes = { hermes: { enabled: false, services: {} } };
+			const result = fixture.converge(desired);
+			expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+			for (const config of fixture.configs())
+				expect(config.mcp_servers).toEqual({ "user.server": { command: "user-owned" } });
+		},
+	);
+
+	test("isolates unmanaged named-profile MCP conflicts and retains user entries", () => {
+		const fixture = hermesProfileMcpFixture();
+		const workPath = fixture.configPaths[1];
+		if (!workPath) throw new Error("work profile config is missing");
+		const userConfig = "# private user config\nmcp_servers:\n  clawdi:\n    command: user-owned\n";
+		writeFileSync(workPath, userConfig);
+		let committed = false;
+		const result = fixture.converge(fixture.manifest, {
+			commitAuthority: () => {
+				committed = true;
+			},
+		});
+		expect(committed).toBe(true);
+		expect(result.installErrors).toEqual([]);
+		expect(result.deferredReason).toBeUndefined();
+		expect(result.resourceProjectionErrors).toEqual([
+			"Hermes profile MCP projection failed (profile work): refusing to replace unmanaged hermes MCP server clawdi",
+		]);
+		expect(readFileSync(workPath, "utf8")).toBe(userConfig);
+		expect(fixture.configs()[0]?.mcp_servers).toHaveProperty("clawdi");
+		const desired = structuredClone(fixture.manifest);
+		desired.projection = { mcp: { servers: {} } };
+		expect(fixture.converge(desired).resourceProjectionErrors).toEqual([]);
+		expect(readFileSync(workPath, "utf8")).toBe(userConfig);
+	});
+
+	test("deduplicates sticky active-profile paths and also projects the root default", () => {
+		const fixture = hermesProfileMcpFixture();
+		writeFileSync(join(fixture.root, "active_profile"), "work\n");
+		const write = spyOn(privateFile, "writePrivateFileAtomic");
+		try {
+			const result = fixture.converge();
+			expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+			expect(result.deferredReason).toBeUndefined();
+			for (const path of fixture.configPaths)
+				expect(write.mock.calls.filter(([target]) => target === path)).toHaveLength(1);
+			for (const config of fixture.configs()) expect(config.mcp_servers).toHaveProperty("clawdi");
+		} finally {
+			write.mockRestore();
+		}
+	});
+
+	test("skips per-profile config-path commands for a default-only roster", () => {
+		const fixture = hermesProfileMcpFixture(["default"]);
+		const result = fixture.converge();
+		expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+		expect(
+			readFileSync(fixture.commandLog, "utf8")
+				.split("\n")
+				.filter((command) => command.startsWith("-p ")),
+		).toEqual([]);
+		expect(fixture.configs()[0]?.mcp_servers).toHaveProperty("clawdi");
+		expect(fixture.configs()[1]?.mcp_servers).not.toHaveProperty("clawdi");
+	});
+
+	test.each(["absent", "missing"])(
+		"skips profile MCP without spawning when the Hermes command is %s",
+		(mode) => {
+			const fixture = hermesProfileMcpFixture();
+			const spawn = spyOn(runtimeUserCommand, "spawnRuntimeUserCommand");
+			try {
+				expect(
+					reconcileHostedHermesProfileMcp(
+						fixture.manifest,
+						fixture.paths.userHome,
+						mode === "absent" ? null : join(fixture.root, "missing-hermes"),
+						null,
+						{ uid: TEST_PROCESS_UID, gid: TEST_PROCESS_GID },
+					),
+				).toEqual([]);
+				expect(spawn).not.toHaveBeenCalled();
+			} finally {
+				spawn.mockRestore();
+			}
+		},
+	);
+
+	test.each(["missing", "empty"])(
+		"skips discovery without spawning or warning when the profiles directory is %s",
+		(mode) => {
+			const fixture = hermesProfileMcpFixture();
+			const profilesRoot = join(fixture.root, "profiles");
+			rmSync(profilesRoot, { recursive: true });
+			if (mode === "empty") mkdirSync(profilesRoot);
+			const spawn = spyOn(runtimeUserCommand, "spawnRuntimeUserCommand");
+			const warning = spyOn(log, "warn");
+			try {
+				expect(
+					reconcileHostedHermesProfileMcp(
+						fixture.manifest,
+						fixture.paths.userHome,
+						fixture.command,
+						null,
+						{ uid: TEST_PROCESS_UID, gid: TEST_PROCESS_GID },
+					),
+				).toEqual([]);
+				expect(spawn).not.toHaveBeenCalled();
+				expect(warning).not.toHaveBeenCalled();
+			} finally {
+				spawn.mockRestore();
+				warning.mockRestore();
+			}
+		},
+	);
+
+	test("warns once on failed discovery without projection errors or blocking default commit", () => {
+		const fixture = hermesProfileMcpFixture();
+		writeFileSync(join(fixture.root, "discovery-failure"), "");
+		const warning = spyOn(log, "warn").mockImplementation(() => {});
+		try {
+			for (let attempt = 0; attempt < 2; attempt++) {
+				let committed = false;
+				const result = fixture.converge(fixture.manifest, {
+					commitAuthority: () => {
+						committed = true;
+					},
+				});
+				expect(committed).toBe(true);
+				expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+				expect(result.deferredReason).toBeUndefined();
+				expect(fixture.configs()[0]?.mcp_servers).toHaveProperty("clawdi");
+				expect(fixture.configs()[1]?.mcp_servers).not.toHaveProperty("clawdi");
+			}
+			expect(warning.mock.calls).toEqual([
+				["runtime.hermes-profile-mcp.skipped", { reason: "profile_discovery_failed" }],
+			]);
+		} finally {
+			warning.mockRestore();
+		}
+	});
+
+	test("continues profile MCP projection after one official config-path command fails", () => {
+		const fixture = hermesProfileMcpFixture(["default", "broken", "work"]);
+		const brokenPath = join(fixture.root, "profiles", "broken", "config.yaml");
+		const before = readFileSync(brokenPath);
+		writeFileSync(
+			fixture.command,
+			readFileSync(fixture.command, "utf8").replace(
+				'case "$*" in',
+				'if [[ "$*" == "-p broken config path" ]]; then echo "private fixture stderr" >&2; exit 41; fi\ncase "$*" in',
+			),
+		);
+		const result = fixture.converge();
+		expect(result.installErrors).toEqual([]);
+		expect(result.deferredReason).toBeUndefined();
+		expect(result.resourceProjectionErrors).toEqual([
+			"Hermes profile MCP projection failed (profile broken): config_path_or_read_failed",
+		]);
+		expect(readFileSync(brokenPath)).toEqual(before);
+		for (const config of fixture.configs().slice(0, 2))
+			expect(config.mcp_servers).toHaveProperty("clawdi");
+	});
+
+	test("reports profile commit conflicts while retaining concurrent edits and continuing", () => {
+		const fixture = hermesProfileMcpFixture(["default", "work", "other"]);
+		const workPath = join(fixture.root, "profiles", "work", "config.yaml");
+		const edited = `${readFileSync(workPath, "utf8")}# concurrent user edit\n`;
+		const commit = hermesConfig.commitHermesConfigTransaction;
+		const commitSpy = spyOn(hermesConfig, "commitHermesConfigTransaction").mockImplementation(
+			(transaction) => {
+				if (transaction.context.profile === "work") writeFileSync(workPath, edited);
+				return commit(transaction);
+			},
+		);
+		try {
+			let committed = false;
+			const result = fixture.converge(fixture.manifest, {
+				commitAuthority: () => {
+					committed = true;
+				},
+			});
+			expect(committed).toBe(true);
+			expect(result.installErrors).toEqual([]);
+			expect(result.deferredReason).toBeUndefined();
+			expect(result.resourceProjectionErrors).toEqual([
+				"Hermes profile MCP projection failed (profile work): config_conflict",
+			]);
+			expect(readFileSync(workPath, "utf8")).toBe(edited);
+			const configs = fixture.configs();
+			expect(configs[0]?.mcp_servers).toHaveProperty("clawdi");
+			expect(configs[1]?.mcp_servers).not.toHaveProperty("clawdi");
+			expect(configs[2]?.mcp_servers).toHaveProperty("clawdi");
+		} finally {
+			commitSpy.mockRestore();
+		}
+	});
+
+	test("classifies invalid profile YAML without blocking other profile commits", () => {
+		const fixture = hermesProfileMcpFixture(["default", "broken", "work"]);
+		const brokenPath = join(fixture.root, "profiles", "broken", "config.yaml");
+		const invalid = "mcp_servers: [\n";
+		writeFileSync(brokenPath, invalid);
+		const result = fixture.converge();
+		expect(result.installErrors).toEqual([]);
+		expect(result.deferredReason).toBeUndefined();
+		expect(result.resourceProjectionErrors).toEqual([
+			"Hermes profile MCP projection failed (profile broken): config_invalid",
+		]);
+		expect(readFileSync(brokenPath, "utf8")).toBe(invalid);
+		for (const path of fixture.configPaths.slice(0, 2))
+			expect(parseYaml(readFileSync(path, "utf8")).mcp_servers).toHaveProperty("clawdi");
+	});
+
+	test("repairs new profile MCP without changing Hermes restart decisions", () => {
+		const fixture = hermesProfileMcpFixture(["default"]);
+		let invalidated: string[] = [];
+		const options: RuntimeConvergenceOptions = {
+			commitAuthority: (convergence, authority) =>
+				commitTestRuntimeAuthority(
+					manifestLoad(fixture.manifest, "hermes-profile-mcp"),
+					fixture.paths,
+					convergence,
+					authority,
+				),
+			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
+				activate: (signal) => {
+					invalidated = signal.invalidatedUserUnits;
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+			},
+		};
+		expect(fixture.converge(fixture.manifest, options).installErrors).toEqual([]);
+		const unitPath = join(fixture.paths.systemdUserRoot, "hermes-gateway.service");
+		const unit = readFileSync(unitPath);
+		const revision = () =>
+			runtimeProgramRevisionForManifest(
+				fixture.manifest,
+				"hermes",
+				TEST_HOSTED_SECRET_VALUES,
+				null,
+				null,
+				false,
+			);
+		const before = revision();
+		writeFileSync(fixture.rosterPath, JSON.stringify(["default", "work"]));
+		const result = fixture.converge(fixture.manifest, options);
+		expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+		expect(fixture.configs()[1]?.mcp_servers).toHaveProperty("clawdi");
+		expect(revision()).toBe(before);
+		expect(invalidated).toEqual([]);
+		expect(readFileSync(unitPath)).toEqual(unit);
 	});
 
 	test("rejects a malformed Hermes MCP patch before Apply", () => {

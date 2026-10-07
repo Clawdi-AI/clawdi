@@ -36,12 +36,14 @@ import {
 import chalk from "chalk";
 import { openInBrowser } from "../lib/browser";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
+import { isAuthorizationRequired, mapHttpError } from "../lib/errors";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import {
 	HostedDeployApiError,
 	type HostedDeployCheckoutOperationResult,
 	HostedDeployClient,
 } from "../lib/hosted-deploy-client";
+import { AuthorizationRequiredError } from "../lib/require-auth";
 import { isInteractive } from "../lib/tty";
 
 export type DeployCommandOptions = {
@@ -1281,6 +1283,8 @@ export function safeDeployError(error: unknown): { code: string; message: string
 	if (error instanceof PublicDeployFailure) return { code: error.code, message: error.message };
 	if (error instanceof DeployCancelledError) return { code: "cancelled", message: error.message };
 	if (error instanceof HostedDeployAuthorizationError) {
+		const mapped = mapHttpError({ status: 0, code: error.code }, "Hosted Deploy");
+		if (mapped) return { code: mapped.code, message: mapped.message };
 		return { code: error.code, message: error.message };
 	}
 	if (error instanceof ClerkOAuthError) {
@@ -1297,15 +1301,8 @@ export function safeDeployError(error: unknown): { code: string; message: string
 					"Could not reach Clawdi. The request may still have been accepted; retry with the same --request-id.",
 			};
 		}
-		if (error.status === 401) {
-			return {
-				code: "hosted_auth_required",
-				message: "CLI authorization was rejected. Run `clawdi auth login`, then try again.",
-			};
-		}
-		if (error.status === 403) {
-			return { code: "hosted_forbidden", message: "This account can't create Cloud Agents." };
-		}
+		const mapped = mapHttpError(error, "Hosted Deploy");
+		if (mapped) return { code: mapped.code, message: mapped.message };
 		if (error.status === 402) {
 			return {
 				code: "insufficient_wallet_balance",
@@ -1376,9 +1373,8 @@ export async function deployCommand(
 		if (machineOutput) writeStdout(JSON.stringify(result, null, 2));
 	} catch (error) {
 		const safe = safeDeployError(error);
+		const authorizationRequired = isAuthorizationRequired(error);
 		if (machineOutput) {
-			const authorizationRequired =
-				safe.code === "hosted_oauth_login_required" || safe.code === "oauth_login_required";
 			writeStdout(
 				JSON.stringify(
 					authorizationRequired
@@ -1396,9 +1392,10 @@ export async function deployCommand(
 					2,
 				),
 			);
-			process.exitCode = 1;
+			process.exitCode = authorizationRequired ? 4 : 1;
 			return;
 		}
+		if (authorizationRequired) throw new AuthorizationRequiredError(safe.message);
 		throw new Error(safe.message);
 	}
 }

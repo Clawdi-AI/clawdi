@@ -69,7 +69,7 @@ describe("actionable CLI errors", () => {
 		expect(result.status).toBe(4);
 		expect(result.stdout).toBe("");
 		expect(result.stderr).toContain(
-			"Not signed in, or your session expired. Run `clawdi auth login`.",
+			"CLI authorization was rejected. Run `clawdi auth login`, then try again.",
 		);
 		if (debug) {
 			expect(result.stderr).toContain("HTTP 401");
@@ -81,17 +81,24 @@ describe("actionable CLI errors", () => {
 		}
 	});
 
-	it("does not repeat a hint that matches the API error body", () => {
+	it("maps forbidden API errors to dashboard permission guidance", () => {
 		const result = runError(`
 			import {ApiError} from ${source("lib/api-client.ts")};
 			handleError(new ApiError({status: 403, body: "Permission denied.", hint: "Permission denied."}));
 		`);
 		expect(result.status).toBe(1);
-		expect(result.stderr.match(/Permission denied\./g)).toHaveLength(1);
+		expect(result.stderr).toContain(
+			"You don't have permission to perform this action from the CLI. Use the dashboard.",
+		);
+		expect(result.stderr).not.toContain("Permission denied.");
 	});
 
 	it.each([
-		{ status: 401, detail: "API key has expired", expected: "Your API key has expired." },
+		{
+			status: 401,
+			detail: "API key has expired",
+			expected: "CLI authorization was rejected. Run `clawdi auth login`, then try again.",
+		},
 		{
 			status: 410,
 			detail:
@@ -108,7 +115,7 @@ describe("actionable CLI errors", () => {
 			expect(result.status).toBe(status === 401 ? 4 : 1);
 			expect(result.stdout).toBe("");
 			expect(result.stderr).toContain(expected);
-			expect(result.stderr).toContain("--no-open");
+			if (status === 410) expect(result.stderr).toContain("--no-open");
 			expect(result.stderr.match(/clawdi auth login/g)).toHaveLength(1);
 		},
 	);
@@ -137,7 +144,7 @@ describe("actionable CLI errors", () => {
 
 	it("returns a useful signed-out wallet JSON error", () => {
 		const result = run([entry, "wallet", "status", "--json"]);
-		expect(result.status).toBe(1);
+		expect(result.status).toBe(4);
 		expect(JSON.parse(result.stdout)).toMatchObject({
 			schema_version: "clawdi.wallet.error.v1",
 			status: "error",
@@ -150,7 +157,7 @@ describe("actionable CLI errors", () => {
 			import {runWalletStatusCommand} from ${source("commands/wallet.ts")};
 			await runWalletStatusCommand({}, {interactive: true}).catch(handleError);
 		`);
-		expect(result.status).toBe(1);
+		expect(result.status).toBe(4);
 		expect(result.stdout).toBe("");
 		expect(result.stderr).toContain("Not signed in. Run `clawdi auth login` first.");
 	});
@@ -165,10 +172,10 @@ describe("actionable CLI errors", () => {
 			globalThis.fetch = async () => { throw new Error("Metadata must not be loaded before auth"); };
 			await deployCommand({}, {interactive: true}).catch(handleError);
 		`);
-			expect(result.status).toBe(1);
+			expect(result.status).toBe(4);
 			expect(result.stdout).toBe("");
 			expect(result.stderr).toContain(
-				"Deploying a Cloud Agent needs a browser sign-in. Run `clawdi auth login` (not --manual).",
+				"CLI authorization was rejected. Run `clawdi auth login`, then try again.",
 			);
 			expect(result.stderr).not.toMatch(/Saved providers|Loading plans|Clerk|Metadata must/);
 		},
@@ -176,7 +183,7 @@ describe("actionable CLI errors", () => {
 
 	it("preserves the deploy authorization JSON envelope", () => {
 		const result = run([entry, "deploy", "--json"]);
-		expect(result.status).toBe(1);
+		expect(result.status).toBe(4);
 		expect(JSON.parse(result.stdout)).toEqual({
 			schema_version: "clawdi.deploy.v1",
 			status: "authorization_required",

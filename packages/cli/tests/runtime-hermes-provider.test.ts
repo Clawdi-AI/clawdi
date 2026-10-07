@@ -22,6 +22,7 @@ import {
 	expectRecord,
 	fakeSystemdStatePath,
 	hermesModelProviderPluginDir,
+	hermesTestPythonScript,
 	hostedHermesProviderLoad,
 	hostedSingleProviderModeLoad,
 	installRuntimeTestHooks,
@@ -88,7 +89,14 @@ describe("runtime manifest datasource", () => {
 		);
 		writeFileSync(
 			join(app, "venv", "bin", "python"),
-			'#!/usr/bin/env bash\ncase "$*" in *uvicorn*) exit 0 ;; esac\nexec python3 "$@"\n',
+			`#!/usr/bin/env bash
+case "$*" in
+  *uvicorn*|*"from hermes_cli import profiles"*)
+${hermesTestPythonScript(true)}
+    ;;
+esac
+exec python3 "$@"
+`,
 		);
 		const loaded = hostedHermesProviderLoad(home);
 		const providers = loaded.manifest.projection?.providers;
