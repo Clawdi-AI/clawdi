@@ -1,6 +1,7 @@
 "use client";
 
 import { type components, extractApiDetail, type paths } from "@clawdi/shared/api";
+import { observeAccountSuspension } from "@clawdi/shared/view";
 import createClient from "openapi-fetch";
 import createQueryClient from "openapi-react-query";
 import { useCallback, useMemo } from "react";
@@ -76,14 +77,7 @@ function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Respons
 
 function useAccountFetch() {
 	const suspension = useAccountSuspension();
-	return useCallback(
-		async (request: Request, init?: RequestInit) => {
-			const response = await fetchWithTimeout(request, init);
-			await suspension.observeResponse(response);
-			return response;
-		},
-		[suspension],
-	);
+	return useMemo(() => observeAccountSuspension(suspension, fetchWithTimeout), [suspension]);
 }
 
 /**

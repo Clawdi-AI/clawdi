@@ -11,6 +11,7 @@ import {
 	ApiClientResponseError,
 	createReadTransport,
 	readApiBaseUrl,
+	readResourceId,
 } from "./read-transport";
 
 export type ComputeSubscriptionsQuery =
@@ -20,6 +21,9 @@ export type ComputeReusableSubscriptionsQuery =
 export type ComputeWalletTransactionsQuery =
 	DeployPaths["/v2/wallet/transactions"]["get"]["parameters"]["query"];
 export type ComputeUsageQuery = DeployPaths["/v2/usage"]["get"]["parameters"]["query"];
+export type AccountNotificationsQuery = NonNullable<
+	DeployPaths["/v1/me/notifications"]["get"]["parameters"]["query"]
+>;
 
 export function createHostedComputeClient(options: ApiClientOptions) {
 	const transport = createReadTransport(options);
@@ -125,6 +129,29 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 			),
 		getUsage: (query?: ComputeUsageQuery, signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v2/usage", { ...init, params: { query } }), signal),
+		listNotifications: (query: AccountNotificationsQuery, signal?: AbortSignal) =>
+			transport.read(
+				(init) => api.GET("/v1/me/notifications", { ...init, params: { query } }),
+				signal,
+			),
+		/** Marks every notification up to and including `upToId` read. */
+		markNotificationsRead: (upToId: string, signal?: AbortSignal) =>
+			transport.read(
+				(init) =>
+					api.POST("/v1/me/notifications/read-all", {
+						...init,
+						body: { up_to_id: readResourceId(upToId) },
+					}),
+				signal,
+			),
+		deleteNotification: (id: string, signal?: AbortSignal): Promise<null> =>
+			transport.read(async (init) => {
+				const result = await api.DELETE("/v1/me/notifications/{notification_id}", {
+					...init,
+					params: { path: { notification_id: readResourceId(id) } },
+				});
+				return { ...result, data: result.response.ok ? null : undefined };
+			}, signal),
 		/**
 		 * Explicitly requested preview: no purchase or debit. The server may initialize
 		 * customer/wallet profiles and commit, so this is not a pure read operation.

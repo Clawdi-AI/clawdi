@@ -1,6 +1,6 @@
 # Clean host for the upstream Hermes adapter contract. Hermes itself is never
-# baked into this image: the contract installs whatever the official, unpinned
-# installer ships at run time, exactly like a new Hosted Agent.
+# baked into this image: the contract installs it at run time with the CLI's
+# official installer policy, exactly like a new Hosted Agent.
 ARG BUN_VERSION=1.4.0
 ARG NODE_VERSION=24.19.0
 ARG UBUNTU_VERSION=24.04
@@ -10,8 +10,11 @@ FROM node:${NODE_VERSION}-bookworm-slim AS node
 
 FROM ubuntu:${UBUNTU_VERSION}
 
+# build-essential matches the Hosted tenant image, where official installers
+# build native Node modules.
 RUN apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+		build-essential \
 		ca-certificates \
 		curl \
 		git \

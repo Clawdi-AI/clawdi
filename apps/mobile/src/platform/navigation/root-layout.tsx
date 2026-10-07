@@ -12,6 +12,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ConfigurationErrorScreen, ErrorState } from "@/components/ui/feedback";
 import { AppView } from "@/components/ui/view";
+import { useAccountSuspended } from "@/lib/api-provider";
 import { loadMobileRuntimeConfig, RuntimeConfigProvider } from "@/lib/config/runtime";
 import { I18nProvider } from "@/lib/i18n";
 import { AppearanceProvider } from "@/platform/appearance-provider";
@@ -44,14 +45,25 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
 
 function Navigation() {
 	const options = useNativeStackOptions();
+	const suspended = useAccountSuspended();
+	// Web's AccountSuspensionBoundary: a suspended account sees one full-screen state instead of
+	// any account route. Expo Router's protected routes redirect to the first available screen.
+	// Like Web's routes outside `_protected`, the token-scoped public pages (shared sessions,
+	// project share links, Vault supply requests) and sign-in stay reachable.
 	return (
 		<Stack screenOptions={{ headerShown: false }}>
+			<Stack.Protected guard={suspended}>
+				<Stack.Screen name="account-suspended" options={{ gestureEnabled: false }} />
+			</Stack.Protected>
+			<Stack.Protected guard={!suspended}>
+				<Stack.Screen name="(tabs)" />
+				<Stack.Screen name="(sheets)" options={formSheetOptions} />
+				<Stack.Screen name="terminal/[id]" />
+			</Stack.Protected>
 			<Stack.Screen name="s/[id]" options={{ ...options, headerShown: true }} />
 			<Stack.Screen name="share/[token]" options={{ ...options, headerShown: true }} />
 			<Stack.Screen name="vault-request" options={{ ...options, headerShown: true }} />
 			<Stack.Screen name="(auth)" />
-			<Stack.Screen name="(tabs)" />
-			<Stack.Screen name="(sheets)" options={formSheetOptions} />
 		</Stack>
 	);
 }

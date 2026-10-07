@@ -66,6 +66,21 @@ section navigation. Pushed settings pages use the native screen background
 `bg-popover` surface. Hosted deployments open through their Agent id.
 The previous deployment inventory screen is covered by the Agents inventory.
 
+Web's `AccountSuspensionBoundary` maps to the root Stack: the shared API fetch
+feeds every response to a per-account-scope suspension store, and once any read
+returns the `account_suspended` problem (cloud answers 401, hosted the same body
+as 403), Expo Router `Stack.Protected` swaps every account route (tabs, sheets,
+Terminal) for the full-screen `/account-suspended` state (Web's copy, Contact
+support and Sign out). Like Web's routes outside `_protected`, the token-scoped
+public pages (`/s/:id`, `/share/:token`, `/vault-request`) and sign-in stay
+reachable on purpose. Web observes only cloud responses today; both cloud and
+hosted reads on mobile share one fetch, so either shape triggers the state. Web's header notification popover becomes
+the Overview header bell (an icon action with the platform badge) pushing
+`/notifications`; screen focus is Web's "open", so opening marks every account
+update up to the newest read, and items stay highlighted until it closes.
+Action links route through the incoming-link table; other allowlisted Clawdi
+pages open in the browser.
+
 Mobile-only tab hubs, the Clerk profile route, development galleries and native
 form entry pages have no Web page counterpart. They reuse feature components;
 form routes live under their parent resource URL and use native Stack sheets

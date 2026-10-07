@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Upstream Hermes adapter contract.
 #
-# Installs the latest Hermes from the official, unpinned installer exactly as a
+# Installs Hermes with the CLI's official installer policy exactly as a
 # new Hosted Agent does, as the non-root runtime user, inside a disposable
 # container, then runs the CLI adapter contract against that install.
 #

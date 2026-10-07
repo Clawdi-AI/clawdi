@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — Use the normal cold install for warm pools
+
+Warm preinstallation now uses npm's exact global CLI selector and the CLI's official runtime installer path, matching cold bootstrap. Removed pinned runtime preparation requirements and pool-only supply-chain and egress machinery while retaining tenant-free warm-up and single-use adoption.
+
+
+
 This changelog tracks notable user-facing Clawdi releases. It is written for
 people using or upgrading Clawdi, so it intentionally omits internal deployment,
 database migration, CI, and implementation details.
@@ -42,6 +48,16 @@ not removed. `$host` is retained only as a hostname; URL/path fields stay
 filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
+
+### CLI 0.15.10
+
+- Warm runtime preparation now uses the ordinary exact npm CLI selector and
+  official runtime installers, so pool fills follow the same install path as
+  fresh deployments.
+- Fresh Hermes installs use the verified upstream v2026.9.24 (0.21.5) commit
+  until the documented upstream regressions are fixed and a fresh install is
+  verified again. Existing tenants keep their normal self-update behavior.
+
 
 ### CLI 0.15.9
 

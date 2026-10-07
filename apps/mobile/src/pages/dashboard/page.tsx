@@ -12,6 +12,7 @@ import {
 import { ConnectAnotherCard, OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
+import { useNotificationBell } from "@/components/notification-center";
 import { SessionCard, SessionFeed } from "@/components/sessions/session-feed";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -54,12 +55,13 @@ export default function HomeRoute() {
 		!hostedStatus?.error &&
 		tiles.length === 0;
 	const wallet = useHeaderWalletBalance();
+	const notifications = useNotificationBell();
 	const recent = sessions.data?.pages[0]?.items.slice(0, 15) ?? [];
 	return (
 		<SafeAreaScreen testID="overview-screen">
 			<NativeHeader
 				title={OVERVIEW_COPY.title}
-				actions={wallet ? [wallet] : []}
+				actions={wallet ? [wallet, notifications] : [notifications]}
 				menu={{
 					label: t("sessionFilters.options"),
 					items: [
