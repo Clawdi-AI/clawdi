@@ -70,6 +70,7 @@ export function FilesBrowser({
 							return;
 						return action.runOrThrow(async (active) => {
 							const current = () => active() && visible() && !signal.aborted && scope.isCurrent();
+							setFailure("failed");
 							try {
 								if (!current()) return;
 								const fresh = await read((s) => hosted.getDeployment(id, s), signal);
@@ -92,7 +93,7 @@ export function FilesBrowser({
 								await WebBrowser.openBrowserAsync(handoff.url);
 								// Browser dismissal is not proof that the Files session was established.
 							} catch (error) {
-								if (current()) setFailure(filesHandoffFailure(error));
+								setFailure(filesHandoffFailure(error));
 								throw error;
 							}
 						});
@@ -114,9 +115,10 @@ export function FilesBrowser({
 				<ActionButton label={runtimeConsoleCopy.terminal} onPress={onTerminal} />
 			</WebView>
 			{action.error ? (
-				<AppText accessibilityRole="alert">
-					{`${t("files.failedTitle")}. ${t(failureMessage[failure])}`}
-				</AppText>
+				<WebView recipe="flex flex-col items-center gap-1" accessibilityRole="alert">
+					<AppText className="font-medium">{t("files.failedTitle")}</AppText>
+					<AppText>{t(failureMessage[failure])}</AppText>
+				</WebView>
 			) : null}
 		</>
 	);

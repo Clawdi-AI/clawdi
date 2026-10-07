@@ -109,6 +109,8 @@ export function resolveFilesHandoff(
 		const target = new URL(url);
 		const files = new URL(filesUrl);
 		if (
+			// Canonical form only: URL parsing would otherwise resolve dot segments to the redeem path.
+			target.href !== url ||
 			files.protocol !== "https:" ||
 			target.protocol !== "https:" ||
 			target.origin !== files.origin ||
@@ -145,9 +147,10 @@ export function filesHandoffFailure(error: unknown): FilesHandoffFailure {
 	if (error instanceof FilesEndpointChangedError) return "changed";
 	if (error instanceof ApiClientNetworkError) return "offline";
 	if (!(error instanceof ApiClientError)) return "failed";
-	// Hosted: 412 stale If-Match, 409 Files not ready or stopped, 401 inactive Clerk session.
+	// Hosted: 412 stale If-Match, 409 Files not ready or stopped, 503 code issuance failed,
+	// 401 inactive Clerk session.
 	if (error.status === 412) return "changed";
-	if (error.status === 409) return "unavailable";
+	if (error.status === 409 || error.status === 503) return "unavailable";
 	if (error.status === 401) return "signed_out";
 	if (error.status === 429) return "rate_limited";
 	return "failed";

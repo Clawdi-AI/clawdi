@@ -529,7 +529,7 @@ export const en = {
 		failedSignedOut: "Your session ended. Sign in again, then retry.",
 		failedRateLimited: "Too many attempts. Wait a minute and try again.",
 		failedOffline: "Check your connection and try again.",
-		failed: "Try again. No credentials have been saved by this app.",
+		failed: "Something went wrong. Try again.",
 	},
 	profile: {
 		unsavedTitle: "Discard profile changes?",

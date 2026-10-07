@@ -120,6 +120,9 @@ test("Files handoff binds auth and version and accepts only a one-time code on t
 			handoff("https://files.example.test/?code=abc"),
 			handoff("https://files.example.test/__clawdi/files/handoff?code=abc&next=/"),
 			handoff("https://files.example.test/__clawdi/files/handoff?code="),
+			handoff("https://files.example.test/__clawdi/files/handoff?code=abc&code=def"),
+			handoff("https://files.example.test/__clawdi/x/../files/handoff?code=abc"),
+			handoff("https://files.example.test/__clawdi/files/handoff/..?code=abc"),
 			handoff("https://files.example.test/__clawdi/files/handoff?code=abc#x"),
 			handoff("https://user@files.example.test/__clawdi/files/handoff?code=abc"),
 		]) {
@@ -142,10 +145,10 @@ test("Files handoff binds auth and version and accepts only a one-time code on t
 			"signed_out",
 			"rate_limited",
 			"failed",
-			"failed",
+			"unavailable",
 		]);
 		expect(filesHandoffFailure(new FilesEndpointChangedError())).toBe("changed");
-		expect(requests).toHaveLength(15);
+		expect(requests).toHaveLength(18);
 	} finally {
 		server.stop(true);
 	}
