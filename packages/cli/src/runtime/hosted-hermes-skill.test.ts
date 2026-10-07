@@ -338,6 +338,11 @@ describe("Hermes public native Skill pipeline", () => {
 					manager: "hosted-manifest",
 					sourceIdentity: hostedSkillArchiveSourceIdentity("review", github),
 				});
+				// Establish Hub state before snapshotting; native quarantine initializes it on first use.
+				nativePython(
+					home,
+					"from tools.skills_hub import HubLockFile; lock = HubLockFile(); lock.save(lock.load())",
+				);
 			}
 			writeFileSync(
 				join(target, "SKILL.md"),
