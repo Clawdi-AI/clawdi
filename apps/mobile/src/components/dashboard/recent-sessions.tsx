@@ -6,6 +6,7 @@ import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { EntityCardSkeleton } from "@/components/entity-card";
 import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { useI18n } from "@/lib/i18n";
 import { useAgentRouteId } from "@/platform/navigation/use-agent-route";
 export function AgentRecentSessions({
 	sessions,
@@ -16,6 +17,7 @@ export function AgentRecentSessions({
 	loading: boolean;
 	emptyMessage: string;
 }) {
+	const t = useI18n();
 	const agentId = useAgentRouteId();
 	if (loading)
 		return (
@@ -35,7 +37,7 @@ export function AgentRecentSessions({
 					<AppPressable
 						key={session.id}
 						accessibilityRole="link"
-						accessibilityLabel={`Open session ${model.title}`}
+						accessibilityLabel={t("labels.openSession", { title: model.title })}
 						className={`${webView(`${ENTITY_CARD_BASE} ${styles.card}`)} flex-row`}
 						style={{ minHeight: 80 }}
 						onPress={() =>
@@ -59,8 +61,10 @@ export function AgentRecentSessions({
 								{model.projectFolder ? (
 									<WebText recipe={styles.project}>{model.projectFolder} · </WebText>
 								) : null}
-								{session.message_count} {session.message_count === 1 ? "message" : "messages"} ·{" "}
-								{formatNumber(model.totalTokens)} tokens · {relativeTime(session.last_activity_at)}
+								{session.message_count}{" "}
+								{session.message_count === 1 ? t("labels.message") : t("labels.messages")} ·{" "}
+								{formatNumber(model.totalTokens)} {t("timeline.tokensSeparator")}{" "}
+								{relativeTime(session.last_activity_at)}
 							</WebText>
 						</WebView>
 					</AppPressable>

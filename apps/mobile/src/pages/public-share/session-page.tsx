@@ -308,7 +308,8 @@ function PublicSession({ id }: { id: string | null }) {
 										/>
 										<WebText recipe={detailLayoutClasses.meta}>·</WebText>
 										<WebText recipe={detailLayoutClasses.meta}>
-											Started {relativeTime(currentView.metadata.detail.started_at)}
+											{t("sessionFilters.started_at")}{" "}
+											{relativeTime(currentView.metadata.detail.started_at)}
 										</WebText>
 										<WebText recipe={detailLayoutClasses.meta}>·</WebText>
 										<WebText recipe={detailLayoutClasses.meta}>
@@ -325,12 +326,16 @@ function PublicSession({ id }: { id: string | null }) {
 								<ModelBadge modelId={currentView.metadata.detail.model} />
 								<Stat
 									icon={MessageSquare}
-									label={`${currentView.metadata.detail.message_count} messages`}
+									label={t("labels.messageCount", {
+										count: currentView.metadata.detail.message_count,
+									})}
 								/>
 								{currentView.metadata.source === "snapshot" ? (
 									<Stat
 										icon={Clock}
-										label={`Shared ${relativeTime(currentView.metadata.detail.created_at)}`}
+										label={t("labels.sharedTime", {
+											time: relativeTime(currentView.metadata.detail.created_at),
+										})}
 									/>
 								) : null}
 							</DetailStats>

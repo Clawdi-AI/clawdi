@@ -37,13 +37,14 @@ import { useSheet } from "@/platform/navigation/use-sheet";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function ManageProjectAgentsScreen() {
+	const t = useI18n();
 	const params = useLocalSearchParams<{ id?: string }>();
 	const id = routeParam(params.id);
 	const query = useProject(id);
 	const agents = useCloudAgents(id);
 	if (!query.data || query.isError)
 		return (
-			<SheetPage title="Manage agents" fallback="/projects">
+			<SheetPage title={t("libraryPort.manageAgents")} fallback="/projects">
 				<ResourceError missing={!query.isError} onRetry={() => void query.refetch()} />
 			</SheetPage>
 		);

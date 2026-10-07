@@ -204,7 +204,7 @@ function ProviderEditForm({
 		});
 	return (
 		<SheetPage
-			title={`Edit ${providerPresentation(provider).label}`}
+			title={t("labels.editProvider", { name: providerPresentation(provider).label })}
 			fallback="/ai-providers"
 			busy={action.busy || oauthBusy}
 			sheet={sheet}

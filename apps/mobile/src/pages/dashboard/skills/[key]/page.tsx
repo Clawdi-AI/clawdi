@@ -345,7 +345,7 @@ function SkillEditor({
 				</WebText>
 			</WebView>
 			<Badge variant="outline">
-				<Text>{canWrite ? "Editable" : "Read-only"}</Text>
+				<Text>{canWrite ? t("labels.editable") : t("labels.readOnly")}</Text>
 			</Badge>
 			{project ? (
 				<WebView recipe={projectIdentityClasses.root}>
@@ -531,7 +531,9 @@ function SkillEditor({
 							<Icon as={Tag} />
 							<Text>v{detail.data?.version}</Text>
 							<Icon as={FileText} />
-							<Text>{detail.data?.file_count} files</Text>
+							<Text>
+								{detail.data?.file_count} {t("skills.files")}
+							</Text>
 						</DetailMeta>
 						{projectPanel}
 						<DetailPanel className={webView(skillDetailClasses.instructionPanel)}>
@@ -557,8 +559,8 @@ function SkillEditor({
 							status={
 								<DetailMeta>
 									<Text>
-										Project Skill · in {project?.name ?? detail.data.project_name} · added{" "}
-										{relativeTime(detail.data.created_at)}
+										{t("skills.projectContext")} {project?.name ?? detail.data.project_name}{" "}
+										{t("skills.addedSeparator")} {relativeTime(detail.data.created_at)}
 									</Text>
 								</DetailMeta>
 							}
@@ -609,7 +611,9 @@ function SkillEditor({
 							<Icon as={Tag} />
 							<Text>v{detail.data.version}</Text>
 							<Icon as={FileText} />
-							<Text>{detail.data.file_count} files</Text>
+							<Text>
+								{detail.data.file_count} {t("skills.files")}
+							</Text>
 						</DetailMeta>
 						{projectPanel}
 						<DetailPanel className={webView(skillDetailClasses.instructionPanel)}>
@@ -625,7 +629,9 @@ function SkillEditor({
 								</WebText>
 							</WebView>
 							<Badge variant="secondary">
-								<Text>{detail.data.file_count} files</Text>
+								<Text>
+									{detail.data.file_count} {t("skills.files")}
+								</Text>
 							</Badge>
 							{detail.data.content !== null ? (
 								<Markdown content={stripFrontmatter(detail.data.content)} />

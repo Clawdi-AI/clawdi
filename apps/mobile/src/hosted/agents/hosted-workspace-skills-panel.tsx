@@ -351,8 +351,8 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 		);
 	return (
 		<AgentCollection
-			title="Skills"
-			description="Skills available in this Agent's Workspace."
+			title={t("skills.title")}
+			description={t("workspaceSkills.inventoryDescription")}
 			data={
 				inventory.isError || deployment.isError || inventory.isPending
 					? []
@@ -380,11 +380,11 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 			}
 		>
 			<NativeHeader
-				title="Skills"
+				title={t("skills.title")}
 				actions={[
 					{
 						id: "install",
-						label: "Install skill",
+						label: agentSurfaceCopy.installSkill,
 						disabled: !deployment.data?.agent_id,
 						onPress: () => {
 							if (deployment.data?.agent_id)
@@ -401,7 +401,7 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 			{inventory.isError || deployment.isError ? (
 				<ApiErrorPanel
 					error={inventory.error ?? deployment.error}
-					title="Couldn't load Skills"
+					title={t("workspaceSkills.loadError")}
 					onRetry={() => {
 						setStartedAt(Date.now());
 						void inventory.refetch();
@@ -415,7 +415,7 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 					))}
 				</WebView>
 			) : !inventory.data?.items?.length ? (
-				<EmptyState variant="inset" description="No Skills have synced from this Agent yet." />
+				<EmptyState variant="inset" description={t("workspaceSkills.inventoryEmpty")} />
 			) : null}
 			{confirmationDialog.dialog}
 		</AgentCollection>
@@ -457,7 +457,7 @@ function WorkspaceSkillItem({
 						}
 					/>
 					<ActionButton
-						label="Uninstall"
+						label={t("workspaceSkills.uninstallAction")}
 						disabled={disabled || item.skill_key === "clawdi"}
 						onPress={onRemove}
 					/>
@@ -467,6 +467,7 @@ function WorkspaceSkillItem({
 	);
 }
 export function WorkspaceSkillDetailScreen() {
+	const t = useI18n();
 	const params = useLocalSearchParams<{ id?: string | string[]; key?: string | string[] }>();
 	const id = routeParam(params.id),
 		key = routeParam(params.key);
@@ -500,7 +501,7 @@ export function WorkspaceSkillDetailScreen() {
 	});
 	return (
 		<SheetPage
-			title={key ?? "Skill"}
+			title={key ?? t("skills.singular")}
 			fallback={id ? `/agents/${id}/skills?tab=workspace` : "/agents"}
 		>
 			{detail.isError ? (

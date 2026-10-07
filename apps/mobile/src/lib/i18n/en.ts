@@ -1,4 +1,6 @@
 const agentExtensionsEn = {
+	allCategories: "All categories",
+	loadError: "Couldn't load plugins",
 	pluginRemove: "Remove plugin",
 	pluginRemoveWarning:
 		"Remove this plugin and its Skills and MCP servers from the Agent? Runtime cleanup may finish later.",
@@ -8,8 +10,6 @@ const agentExtensionsEn = {
 		"Remove this reference from the Agent? The original Library Skill is preserved. Runtime cleanup may finish later.",
 	accepted:
 		"Desired-state request accepted. Refresh to check runtime observation. Removal can remain pending after disappearing from this list.",
-	failed:
-		"The outcome was not confirmed. Refresh before explicitly trying again; a network error does not mean the request was rejected.",
 	installed: "Observed installed",
 	not_observed: "Not yet observed",
 	failedState: "Runtime reported a failure",
@@ -17,16 +17,21 @@ const agentExtensionsEn = {
 	view: "View Library Skill",
 };
 const agentSettingsEn = {
+	defaultName: "Default:",
+	useDefaultName: "Use default name",
+	uploadImage: "Upload image",
+	title: "Agent settings",
 	name: "Agent display name",
 	unsavedTitle: "Discard unsaved name?",
 	unsavedMessage: "Your Agent name changes have not been saved.",
 	discard: "Discard changes",
-	uploadAvatar: "Choose avatar file",
-	clearAvatar: "Restore default avatar",
 	failed:
 		"The change was not confirmed. Refresh before making another change: an earlier request may already have succeeded. Check permissions and the file format/size if uploading an avatar.",
 };
 const billingEn = {
+	cpuSeparator: "vCPU ·",
+	ramSeparator: "GB RAM ·",
+	gb: "GB",
 	updating: "Updating subscription",
 	processing: "Your request is still processing",
 	unpaid: "Unpaid",
@@ -66,6 +71,12 @@ const billingEn = {
 		"This subscription was not on the loaded pages. Load more before concluding it is unavailable.",
 } as const;
 const channelsEn = {
+	singular: "Channel",
+	pairAction: "Pair",
+	unlinkAction: "Unlink",
+	linkAction: "Link",
+	deleteAction: "Delete channel",
+	configure: "Configure",
 	create: "Add Custom bot",
 	name: "Bot name",
 	token: "Bot token",
@@ -128,7 +139,6 @@ const whatsappEn = {
 	leaving:
 		"Switching apps hides pairing secrets and pauses checking. Return to this screen to resume. Leaving this screen does not cancel an already sent request; use Cancel connection to stop it explicitly. Unfinished sessions expire on the server.",
 	approve: "I own this WhatsApp account and approve linking this device.",
-	start: "Generate linked-device QR",
 	retryStart: "Recover previous start request",
 	uncertain:
 		"The previous request may have started. Recovery reuses its original identity; it does not create a fresh request.",
@@ -150,17 +160,16 @@ const whatsappEn = {
 		"Connection status or the last action was not confirmed. Check status before retrying. Sensitive details are not included in this error.",
 };
 const connectorsEn = {
+	availableCount: "available",
+	activeCount: "active",
 	title: "Connectors",
-	catalog: "Browse apps",
 	noAccounts: "No accounts connected to this app.",
-	connect: "Connect account",
 	disconnect: "Disconnect account",
 	ready: "This app needs no credentials and is ready to use.",
 	unavailable:
 		"This authentication method is unavailable. Additional server configuration may be required.",
 	oauth:
 		"Authorize in the system browser, then close it and return here. Refresh accounts to check the result; opening or closing the browser does not mean authorization succeeded.",
-	tools: "Available tools",
 } as const;
 const storeEn = {
 	addCredits: "Add credits",
@@ -243,6 +252,7 @@ const creationEn = {
 		"Saved creation data is unavailable or invalid. Creation is paused to avoid duplicating a request.",
 } as const;
 const runtimeEn = {
+	stoppedLabel: "Stopped",
 	title: "Agent runtime and settings",
 	confirm: "Apply Agent change?",
 	warning:
@@ -288,11 +298,9 @@ const runtimeEn = {
 	invalidLocale:
 		"Choose a supported language and valid timezone, or leave them at the Agent default.",
 	saveLocale: "Review language and timezone change",
-	model: "AI provider and model",
 	modelId: "Model ID",
 	modelsInAgent:
 		"This connection's models are configured inside the Agent. Applying it will not overwrite its model catalog.",
-	unmanaged: "Configured inside Agent",
 	unmanagedWarning:
 		"This removes Clawdi's provider binding and keeps the Agent's own settings. It does not revoke the saved provider account.",
 	providerConflict:
@@ -325,6 +333,17 @@ const deploymentsEn = {
 	failed: "Deployment failed",
 } as const;
 const workspaceSkillsEn = {
+	commandDescription:
+		"Enter a GitHub skill path, then run the generated command on the agent machine.",
+	syncedDescription:
+		"Skills available in this agent's workspace. Skills synced from the agent are read-only.",
+	search: "Search Skills…",
+	updateError: "Couldn't update Skill",
+	noMatches: "No Skills found",
+	uninstallAction: "Uninstall",
+	inventoryDescription: "Skills available in this Agent's Workspace.",
+	loadError: "Couldn't load Skills",
+	inventoryEmpty: "No Skills have synced from this Agent yet.",
 	title: "Workspace GitHub Skills",
 	description:
 		"Manage GitHub Skills requested for this hosted Agent. Library references and runtime plugins are not managed on this screen.",
@@ -385,6 +404,15 @@ const skillArchiveEn = {
 	cleared: "Cached exports cleared.",
 };
 const vaultEn = {
+	singular: "Vault",
+	from: "from",
+	to: "to",
+	linkedToProjects: "Linked to projects",
+	allVaults: "All vaults",
+	destinationsError: "Couldn't load destinations",
+	existingKeysError: "Couldn't check existing keys",
+	catalogError: "Couldn't load vault catalog",
+	sectionLabel: "Section:",
 	splitTitle: "Split by app prefix",
 	splitSlug: "Destination slug",
 	splitComplete: "Complete",
@@ -433,9 +461,6 @@ const vaultEn = {
 	requestFiveMinutes: "Expires in 5 minutes",
 	requestHour: "Expires in 1 hour",
 	requestDay: "Expires in 24 hours",
-	name: "Vault name",
-	slug: "Vault slug",
-	create: "Create Vault",
 	open: "Open Vault",
 	refresh: "Refresh",
 	keys: "Keys",
@@ -449,7 +474,6 @@ const vaultEn = {
 	clear: "Clear pasted secrets",
 	failed: "The operation could not be confirmed. Refresh before trying again.",
 	saved: "Operation completed.",
-	remove: "Delete Vault",
 	deleteKey: "Delete key",
 	detach: "Detach Project",
 	attach: "Attach to Project",
@@ -480,6 +504,50 @@ import {
 	usageCopy,
 } from "@clawdi/shared/view";
 export const en = {
+	labels: {
+		tokenCount: "{count} tokens",
+		free: "Free",
+		messageCount: "{count} messages",
+		sharedTime: "Shared {time}",
+		usedBy: "used by {names}{remaining}",
+		openVault: "Open vault {name}",
+		inContext: "In this {context}",
+		vaultLinksError: "Couldn't load {context} vault links",
+		removeFrom: "Remove {name} from {context}?",
+		hide: "Hide",
+		show: "Show",
+		sessionsOnDate: "{count} sessions on {date}",
+		projectOwner: "by {name}",
+		uninstallSkill: "Uninstall {name} from agent",
+		openAgent: "Open {name}{status}",
+		agentStatus: ". Status: {status}",
+		defaultAgent: "{type} default",
+		openSession: "Open session {title}",
+		message: "message",
+		messages: "messages",
+		shareProject: "Share {name}",
+		characterCount: " ({count} chars)",
+		shareDetails: "{scope} · {count} {unit} · Created {time}",
+		openMemory: "Open memory: {name}",
+		deleteMemory: "Delete memory: {name}",
+		openItem: "Open {name}",
+		actionsFor: "Actions for {name}",
+		connected: "Connected",
+		connectorAccount: "Account {id}",
+		pairChannel: "Pair {provider}",
+		pairingCode: "{provider} pairing QR code",
+		learnedOn: "Learned on {machine}",
+		editProvider: "Edit {name}",
+		setupProvider: "Set up {name}",
+		removeProvider: "Remove {name}?",
+		editable: "Editable",
+		readOnly: "Read-only",
+	},
+	sessionDetailMobile: {
+		currentSearchMatch: "Current search match",
+		liveLink: "Live session link",
+		more: "more",
+	},
 	settingsParity: settingsCopy,
 	billingParity: billingCopy,
 	usageParity: usageCopy,
@@ -487,8 +555,10 @@ export const en = {
 	sessionDetail: sessionDetailCopy,
 	libraryPort: LIBRARY_COPY,
 	composite: {
+		remove: "Remove",
+		save: "Save",
+		add: "Add",
 		open: "Open",
-		close: "Close",
 		confirm: "Confirm",
 		cancel: "Cancel",
 		errorTitle: "Couldn't load this",
@@ -540,6 +610,7 @@ export const en = {
 		retry: "Retry loading appearance",
 	},
 	settingsMenu: {
+		unavailable: "Settings unavailable",
 		generalSummary: "Appearance",
 		generalDescription: "Appearance preferences for this device.",
 	},
@@ -570,6 +641,11 @@ export const en = {
 	channels: channelsEn,
 	whatsapp: whatsappEn,
 	providers: {
+		ready: "Ready",
+		removedPending: "Provider removed. Remote access revocation is pending.",
+		removedConfirmed: "Provider removed.",
+		setupRequired: "Setup required",
+		removed: "Provider removed",
 		removalUnavailable: "Provider removal requires a configured Hosted API.",
 		reviewRemoval: "Review provider removal",
 		reviewCurrentImpact: "Review current impact again",
@@ -598,10 +674,8 @@ export const en = {
 	creation: creationEn,
 	store: storeEn,
 	deployments: deploymentsEn,
-	app: {
-		name: "Clawdi",
-	},
 	navigation: {
+		backTo: "Back to",
 		home: "Overview",
 		agents: "Agents",
 		sessions: "Sessions",
@@ -627,6 +701,7 @@ export const en = {
 			"Sign in with your Clerk account to manage your profile and security settings.",
 	},
 	home: {
+		automatedSessions: "automated (cron, heartbeat)",
 		statsSkills: "Skills",
 	},
 	inventory: {
@@ -637,6 +712,15 @@ export const en = {
 		viewDetails: "Details",
 	},
 	agents: {
+		unavailable: "Agent unavailable",
+		add: "Add an agent",
+		runCommands: "Run commands",
+		askAgent: "Ask your agent",
+		waitingForConnection: "Waiting for your agent to connect…",
+		loadError: "Couldn't load Agent",
+		connect: "Connect an Agent",
+		create: "Create Agent",
+		sectionUnavailable: "Agent section unavailable",
 		title: "Cloud Agents",
 	},
 	sessionFilters: {
@@ -669,26 +753,27 @@ export const en = {
 		empty: "No Sessions match the current search and filters.",
 	},
 	timeline: {
+		tokensSeparator: "tokens ·",
 		earlier: "Load earlier activity",
 		later: "Load later activity",
 		moreText: "Show more text",
 	},
 	sessions: {
-		filter: "Sessions for this Agent",
 		clearFilter: "Show all Sessions",
 		noMessages: "No message transcript is available yet.",
 		revisionChanged: "The transcript changed. Refresh to load its current version.",
 		filterInvalid: "The Agent filter is invalid.",
 	},
 	skills: {
+		singular: "Skill",
+		files: "files",
+		projectContext: "Project Skill · in",
+		addedSeparator: "· added",
 		chooseProject:
 			"This Library link is read-only. Open the Skill from its Project to edit or manage that exact copy.",
 		saved: "Skill saved. You can return to the Skills list.",
 		project: "Project",
-		create: "Create or import a Skill",
-		save: "Save Skill",
 		description: "Description",
-		remove: "Delete Skill",
 		discard: "Discard draft and reload",
 		discardWarning: "Your unsaved changes will be lost.",
 		readOnly:
@@ -703,6 +788,11 @@ export const en = {
 		empty: "No skills are available for this account.",
 	},
 	memories: {
+		neverRecalled: "Never recalled yet",
+		learnedFromSession: "Learned from a session",
+		savedSeparator: "· Saved",
+		tags: "Tags:",
+		viewSession: "View session",
 		edit: "Edit memory",
 		builtin: "Built-in",
 		title: "Memories",
@@ -713,6 +803,14 @@ export const en = {
 			"Remove this project's context and key access from this Agent? The project itself will not be deleted.",
 	},
 	projects: {
+		unavailable: "Project unavailable",
+		actions: "Project actions",
+		moveUp: "Move up",
+		moveDown: "Move down",
+		agentProjectsDescription: "Choose the projects this agent can use.",
+		loadError: "Couldn't load projects",
+		linkError: "Couldn't update project link",
+		viewer: "Viewer",
 		open: "Open project",
 		filter: "Project scope",
 		agentsScope: "Your Agents linked to this Project. Other members' Agents are not listed.",
@@ -723,7 +821,6 @@ export const en = {
 		create: "New project",
 		edit: "Edit project",
 		name: "Project name",
-		save: "Save project",
 		archive: "Archive project",
 		archiveWarning:
 			"Archive this project and unlink its Agents? Shared members will also lose access.",
@@ -740,7 +837,6 @@ export const en = {
 		pasteLink: "Invite link",
 		invalidLink: "Enter a valid HTTPS project invite link.",
 		preview: "Preview project",
-		join: "Join this project",
 		joined: "Joined. The project is now available in your project list.",
 		joinFailed:
 			"This link may be invalid, expired, revoked, or belong to your own project. Check your project list before retrying a join.",
@@ -754,23 +850,20 @@ export const en = {
 		responseFailed: "The invitation may have changed or expired. Refresh before trying again.",
 		unavailable: "Only the owner of an active user-created project can manage sharing.",
 		email: "Existing account email",
-		invite: "Invite account",
 		label: "Link label (optional)",
-		createLink: "Create invite link",
 		shareLink: "Share invite link",
 		once: "This link grants access to the project. It is shown once and hidden when you leave this screen or background the app.",
 		dismiss: "Hide link",
 		failed:
 			"The change could not be confirmed. Refresh before retrying. Invitations require an existing account and sharing requires a profile display name.",
-		stop: "Stop all sharing",
 		active: "Active",
 		inactive: "Expired or revoked",
 		redemptions: "redemptions",
 		revoke: "Revoke link",
 		cancelInvite: "Cancel invitation",
-		removeMember: "Remove member",
 	},
 	account: {
+		apiKey: "API key",
 		cancel: "Cancel",
 		actionFailed: "The action could not be confirmed. Refresh the key list before trying again.",
 	},

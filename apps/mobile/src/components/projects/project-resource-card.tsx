@@ -13,6 +13,7 @@ import { IconChip } from "@/components/icon-chip";
 import { Badge } from "@/components/ui/badge";
 import { Text } from "@/components/ui/text";
 import { webBoth } from "@/components/ui/web-layout";
+import { useI18n } from "@/lib/i18n";
 export function ProjectResourceCard({
 	project,
 	footer,
@@ -26,6 +27,7 @@ export function ProjectResourceCard({
 	link?: EntityCardLinkOptions;
 	searchQuery?: string;
 }) {
+	const t = useI18n();
 	const name = displayProjectName(project),
 		identity = identityFor(name);
 	return (
@@ -43,7 +45,7 @@ export function ProjectResourceCard({
 			badges={
 				!isProjectOwner(project) ? (
 					<Badge variant="outline">
-						<Text>Viewer</Text>
+						<Text>{t("projects.viewer")}</Text>
 					</Badge>
 				) : undefined
 			}
@@ -61,7 +63,7 @@ export function ProjectResourceCard({
 					? { to: { pathname: "/projects/[id]", params: { id: project.id } } }
 					: undefined)
 			}
-			ariaLabel={`Open ${name}`}
+			ariaLabel={t("labels.openItem", { name: name })}
 		/>
 	);
 }

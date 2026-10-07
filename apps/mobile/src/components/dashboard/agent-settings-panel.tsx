@@ -8,6 +8,7 @@ import { agentsIndexClasses, agentSettingsPanelClasses as styles } from "@clawdi
 import {
 	agentDisconnectConfirmationCopy,
 	agentDisplayName,
+	agentSectionCopy,
 	agentSurfaceCopy,
 	agentTypeLabel,
 } from "@clawdi/shared/view";
@@ -171,8 +172,8 @@ function Settings({ id }: { id: string | undefined }) {
 				{id ? <AgentSectionNavigation agentId={id} section="settings" /> : null}
 				<PageHeader
 					icon={<Icon as={SettingsIcon} />}
-					title="Settings"
-					description="Name, preferences, and agent controls."
+					title={t("settingsParity.title")}
+					description={agentSectionCopy.settings.description}
 				/>
 				{!id || agent.isError ? <ResourceError missing={!id || isNotFound(agent.error)} /> : null}
 				{agent.data && agent.data.id === id ? (
@@ -208,7 +209,7 @@ function Settings({ id }: { id: string | undefined }) {
 								/>
 
 								<ActionButton
-									label="Save"
+									label={t("composite.save")}
 									variant={normalized !== (agent.data.display_name ?? null) ? "default" : "outline"}
 									icon={<Icon as={Save} />}
 									disabled={
@@ -227,10 +228,11 @@ function Settings({ id }: { id: string | undefined }) {
 									}
 								/>
 								<WebText recipe={styles.avatarHint}>
-									Default: {agentDisplayName({ ...agent.data, display_name: null })}
+									{t("agentSettings.defaultName")}{" "}
+									{agentDisplayName({ ...agent.data, display_name: null })}
 								</WebText>
 								<ActionButton
-									label="Use default name"
+									label={t("agentSettings.useDefaultName")}
 									className={webView(styles.resetName)}
 									icon={<Icon as={RotateCcw} />}
 									variant="ghost"
@@ -262,14 +264,14 @@ function Settings({ id }: { id: string | undefined }) {
 										<WebText recipe={styles.avatarLabel}>
 											{agent.data.avatar_url
 												? agentSurfaceCopy.customUpload
-												: `${agentTypeLabel(agent.data.agent_type)} default`}
+												: t("labels.defaultAgent", { type: agentTypeLabel(agent.data.agent_type) })}
 										</WebText>
 										<WebText recipe={styles.avatarHint}>{agentSurfaceCopy.imageUpTo2Mb}</WebText>
 									</WebView>
 								</WebView>
 								<WebView recipe={styles.avatarActions} className="flex-row">
 									<ActionButton
-										label="Upload image"
+										label={t("agentSettings.uploadImage")}
 										icon={<Icon as={Upload} />}
 										disabled={unavailable}
 										onPress={() =>
@@ -290,7 +292,7 @@ function Settings({ id }: { id: string | undefined }) {
 										}
 									/>
 									<ActionButton
-										label="Remove"
+										label={t("composite.remove")}
 										icon={<Icon as={Trash2} />}
 										variant="ghost"
 										disabled={unavailable || !agent.data.avatar_url}

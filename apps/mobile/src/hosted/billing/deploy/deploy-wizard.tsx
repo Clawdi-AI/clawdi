@@ -109,19 +109,20 @@ const initialDraft: HostedDeployWizardDraft = {
 };
 
 export function CreateAgentScreen() {
+	const t = useI18n();
 	const scope = useAccountScope();
 	const params = useLocalSearchParams<{ tab?: string }>();
 	const [tab, setTab] = useState(params.tab === "connect" ? "connect" : "deploy");
 	return (
 		<SafeAreaScreen>
 			<WebView recipe={agentsIndexClasses.page}>
-				<PageHeader title={tab === "deploy" ? agentSurfaceCopy.deployAnAgent : "Add an agent"} />
+				<PageHeader title={tab === "deploy" ? agentSurfaceCopy.deployAnAgent : t("agents.add")} />
 				<NativeSegments
 					value={tab}
 					onChange={setTab}
 					options={[
 						{ value: "deploy", label: agentSurfaceCopy.deployAnAgent },
-						{ value: "connect", label: "Connect an Agent" },
+						{ value: "connect", label: t("agents.connect") },
 					]}
 				/>
 			</WebView>
@@ -694,7 +695,11 @@ function CreationForm() {
 													selected={draft.computePlanSlug === slug}
 													disabled={locked || !plan || !price}
 													className={webView(styles.computeChoice)}
-													title={slug === "compute_basic" ? "Basic" : agentSurfaceCopy.performance}
+													title={
+														slug === "compute_basic"
+															? t("billingParity.basic")
+															: agentSurfaceCopy.performance
+													}
 													icon={
 														<IconChip
 															size="sm"
@@ -944,7 +949,7 @@ function CreationForm() {
 										.join(" · "),
 							draft.computePlanSlug === "compute_performance"
 								? agentSurfaceCopy.performance
-								: "Basic",
+								: t("billingParity.basic"),
 						)}
 					</WebText>
 
@@ -959,7 +964,7 @@ function CreationForm() {
 					{source === "included" || source === "existing" ? (
 						<WebText recipe={styles.amountValue}>
 							{source === "included"
-								? "Free"
+								? t("labels.free")
 								: surfaces.creditUnits
 									? t("store.dueNow")
 									: subscriptionSourceCopy.dueNow}

@@ -183,14 +183,14 @@ export function AddKeysScreen() {
 						<ApiErrorPanel
 							error={catalog.error}
 							onRetry={() => void catalog.refetch()}
-							title="Couldn't load destinations"
+							title={t("vault.destinationsError")}
 						/>
 					) : null}
 					{!newVault && sections.error ? (
 						<ApiErrorPanel
 							error={sections.error}
 							onRetry={() => void sections.refetch()}
-							title="Couldn't check existing keys"
+							title={t("vault.existingKeysError")}
 						/>
 					) : null}
 					{preview.parsed.errors.length ? (

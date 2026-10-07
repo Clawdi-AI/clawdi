@@ -79,21 +79,26 @@ export default function SessionDetailRoute() {
 						) : null}
 						<WebText recipe={detailLayoutClasses.meta}>·</WebText>
 						<WebText recipe={detailLayoutClasses.meta}>
-							Started {relativeTime(session.started_at)}
+							{t("sessionFilters.started_at")} {relativeTime(session.started_at)}
 						</WebText>
 						{sessionHasLaterActivity(session.started_at, session.last_activity_at) ? (
 							<>
 								<WebText recipe={detailLayoutClasses.meta}>·</WebText>
 								<WebText recipe={detailLayoutClasses.meta}>
-									Last activity {relativeTime(session.last_activity_at)}
+									{t("sessionFilters.last_activity_at")} {relativeTime(session.last_activity_at)}
 								</WebText>
 							</>
 						) : null}
 						<ModelBadge modelId={session.model} />
-						<Stat icon={MessageSquare} label={`${session.message_count} messages`} />
+						<Stat
+							icon={MessageSquare}
+							label={t("labels.messageCount", { count: session.message_count })}
+						/>
 						<Stat
 							icon={Zap}
-							label={`${formatNumber((session.input_tokens ?? 0) + (session.output_tokens ?? 0))} tokens`}
+							label={t("labels.tokenCount", {
+								count: formatNumber((session.input_tokens ?? 0) + (session.output_tokens ?? 0)),
+							})}
 						/>
 						{session.duration_seconds ? (
 							<Stat icon={Clock} label={formatDuration(session.duration_seconds)} />

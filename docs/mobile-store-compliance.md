@@ -20,7 +20,7 @@ declares UserDefaults CA92.1 and purchase history for app functionality.
 | File timestamps | C617.1, 0A2A.1, 3B52.1 | RN core/cxxreact/Folly/boost/glog, Expo Application and File System, Sentry Cocoa |
 | System boot time | 35F9.1 | RN timing/boost, Sentry Cocoa |
 | Disk space | E174.1, 85F4.1 | Expo File System |
-| UserDefaults | CA92.1 | RN core, Expo Constants/Localization/System UI/EAS Client, Sentry Cocoa, RevenueCat |
+| UserDefaults | CA92.1 | RN core, Expo Constants/System UI/EAS Client, Sentry Cocoa, RevenueCat |
 
 Sources under `apps/mobile/node_modules`: `react-native/**/PrivacyInfo.xcprivacy`
 and `expo-*/ios/PrivacyInfo.xcprivacy`; EAS Client is a transitive Updates
@@ -63,8 +63,10 @@ HTTPS). Account deletion can be requested in the app. Confirm whether Clerk,
 Sentry and other processors qualify for Play's service-provider sharing exception
 against the owner's contracts; do not infer a blanket "no sharing" answer.
 
-The approved release plan uses store in-app purchases through RevenueCat. Keep the purchase-history
-declaration even before IAP wiring is complete. Purchase history is linked to the
+Store builds use RevenueCat Paywalls for consumable Clawdi Credits and Customer
+Center is planned for store subscriptions but is not wired yet. Consumable
+credits cannot be restored; pending purchases use explicit recovery. Keep the
+purchase-history declaration. Purchase history is linked to the
 Clawdi account through RevenueCat appUserID and credits funding the hosted Wallet;
 the app manifest therefore declares `NSPrivacyCollectedDataTypeLinked: true`.
 Confirm payment data handled exclusively by Apple/Google versus data received by
@@ -73,9 +75,10 @@ the app or RevenueCat; do not claim the app collects card details without eviden
 This is the approved identity/purchase/diagnostics inventory, not a complete certification
 of all product content. Before submission, reconcile user-created messages,
 files, Vault data, optional avatar/phone/profile fields, connected runtime content,
-and all remaining SDKs with backend retention and processing practices. WP3 owns
-IAP behavior and entitlement integration. Recheck the native manifests and actual
-purchase-data/account linkage when that work is integrated. Analytics,
+and all remaining SDKs with backend retention and processing practices. The
+hosted store client owns purchase attempts and Wallet settlement. Recheck the
+native manifests and actual purchase-data/account linkage before submission.
+Analytics,
 push notifications and session replay are deferred.
 
 ## Permissions and encryption
@@ -97,6 +100,7 @@ release APK, including dependency permissions, before submission.
 | Support URL | Owner must supply a public support URL |
 | Play account-deletion web URL | Owner must confirm an existing public deletion-request page or provide one; no page is assumed to exist |
 | In-app deletion | Settings > Account > Delete account: Clerk's built-in delete while self-delete is enabled; once the owner disables it, a custom profile page shows the store-billing notice and calls hosted `DELETE /v1/me` (release config requires compute URL) |
+| Files access | Agent > Files opens a hosted one-time handoff in the system browser; the browser grant persists until app sign-out or dashboard-access reset |
 | App Review access | Owner supplies a working review account without MFA friction |
 | Accounts and credentials | Apple team/ASC app record, Play app/service account, Expo project/token, Clerk production/native registration, optional Sentry project/DSN/token |
 | Store listing | Owner supplies listing copy and device screenshots |

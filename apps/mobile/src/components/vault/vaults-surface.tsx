@@ -256,7 +256,9 @@ function VaultCatalog({
 											active={!project}
 											onClick={() => router.setParams({ projectId: undefined })}
 										>
-											<Text>All vaults {items.length}</Text>
+											<Text>
+												{t("vault.allVaults")} {items.length}
+											</Text>
 										</FilterChip>
 										{filterableProjects.map((p) => (
 											<FilterChip

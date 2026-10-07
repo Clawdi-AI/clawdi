@@ -16,7 +16,7 @@ export function revenueCatKey(config: MobileRuntimeConfig, platform: StorePlatfo
 }
 
 /** RevenueCat offering presented by the credits Paywall (owner-configured). */
-export const CREDITS_OFFERING = "credits";
+const CREDITS_OFFERING = "credits";
 
 /** The Paywall picks the package; hosted confirm binds the product from the transaction. */
 export async function loadCreditsOffering(): Promise<PurchasesOffering> {

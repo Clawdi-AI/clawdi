@@ -85,7 +85,9 @@ export function SessionTimelineRowView({
 					<WebView
 						testID={position !== null ? `session-message-${position}` : undefined}
 						recipe={`${styles.messageRow} ${highlighted ? styles.highlighted : ""}`}
-						accessibilityLabel={highlighted ? "Current search match" : undefined}
+						accessibilityLabel={
+							highlighted ? t("sessionDetailMobile.currentSearchMatch") : undefined
+						}
 					>
 						<WebView recipe={styles.avatarColumn}>
 							{isGroupStart ? (
@@ -148,7 +150,11 @@ export function SessionTimelineRowView({
 											<Icon as={ChevronRight} />
 											<WebText recipe={styles.skillTrigger}>
 												{t("sessionDetail.skill")}
-												{!skillVisible ? ` (${message.content.length.toLocaleString()} chars)` : ""}
+												{!skillVisible
+													? t("labels.characterCount", {
+															count: message.content.length.toLocaleString(),
+														})
+													: ""}
 											</WebText>
 										</Button>
 										{skillVisible ? (

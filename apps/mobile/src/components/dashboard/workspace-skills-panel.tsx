@@ -22,6 +22,7 @@ import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { WorkspaceSkillsScreen } from "@/hosted/agents/hosted-workspace-skills-panel";
 import { HostedAgentLibrarySkillsScreen } from "@/hosted/agents/library-skill-picker";
 import { useMobileApi } from "@/lib/api-provider";
+import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 export function AgentLibrarySkillsScreen() {
@@ -37,6 +38,7 @@ export function AgentLibrarySkillsScreen() {
 	);
 }
 function WorkspaceSkills({ id, workspaceTab }: { id?: string; workspaceTab?: boolean }) {
+	const t = useI18n();
 	const scope = useAccountScope(),
 		read = useAccountRead(),
 		api = useMobileApi(),
@@ -117,7 +119,7 @@ function WorkspaceSkills({ id, workspaceTab }: { id?: string; workspaceTab?: boo
 							variant="ghost"
 							size="icon-sm"
 							className={webView(panel.removeAction)}
-							accessibilityLabel={`Uninstall ${skill.name} from agent`}
+							accessibilityLabel={t("labels.uninstallSkill", { name: skill.name })}
 							onPress={() =>
 								router.push({
 									pathname: "/agents/[id]/skills/uninstall",
@@ -132,8 +134,8 @@ function WorkspaceSkills({ id, workspaceTab }: { id?: string; workspaceTab?: boo
 			)}
 			icon={Sparkles}
 			iconTint={RESOURCE_TINT_CLASSES.skills}
-			title="Skills"
-			description="Skills available in this agent's workspace. Skills synced from the agent are read-only."
+			title={t("skills.title")}
+			description={t("workspaceSkills.syncedDescription")}
 			navigation={id ? <AgentSectionNavigation agentId={id} section="skills" /> : null}
 		>
 			<Alert title={agentSurfaceCopy.installOnTheAgent}>

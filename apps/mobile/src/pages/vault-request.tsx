@@ -228,7 +228,7 @@ function VaultSupply({ intake }: { intake: string | null }) {
 				<NativeHeader title={VAULT_REQUEST_COPY.title} />
 				<Card className={webView(vaultRequestClasses.card)}>
 					<CardHeader className={webView(vaultRequestClasses.header)}>
-						<WebText recipe={vaultRequestClasses.brandName}>Clawdi</WebText>
+						<WebText recipe={vaultRequestClasses.brandName}>{t("sessionDetail.brand")}</WebText>
 						<CardTitle className={webBoth(vaultRequestClasses.title)}>
 							{phase === "done"
 								? VAULT_REQUEST_COPY.saved
@@ -276,11 +276,11 @@ function VaultSupply({ intake }: { intake: string | null }) {
 										</WebText>
 										{context.section ? (
 											<WebText recipe={vaultRequestClasses.wrap}>
-												Section: {context.section}
+												{t("vault.sectionLabel")} {context.section}
 											</WebText>
 										) : null}
 										<WebText recipe={vaultRequestClasses.muted}>
-											Expires {new Date(context.expires_at).toLocaleString()}
+											{t("settingsParity.expires")} {new Date(context.expires_at).toLocaleString()}
 										</WebText>
 									</WebView>
 									<WebText recipe={vaultRequestClasses.loading}>

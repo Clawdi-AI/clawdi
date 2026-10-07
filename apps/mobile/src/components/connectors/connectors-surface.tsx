@@ -211,10 +211,14 @@ function Catalog() {
 							status={
 								<WebView recipe={connectorsSurfaceClasses.filters}>
 									<Badge variant="secondary">
-										<Text>{total} available</Text>
+										<Text>
+											{total} {t("connectors.availableCount")}
+										</Text>
 									</Badge>
 									<Badge>
-										<Text>{connectedNames.length} active</Text>
+										<Text>
+											{connectedNames.length} {t("connectors.activeCount")}
+										</Text>
 									</Badge>
 								</WebView>
 							}
@@ -483,7 +487,7 @@ function Detail({ name, form }: { name?: string; form: boolean }) {
 								ready ? (
 									<Badge variant="secondary">
 										<Icon as={Check} />
-										<Text>{flow === "no_auth" ? "Ready" : "Connected"}</Text>
+										<Text>{flow === "no_auth" ? t("providers.ready") : t("labels.connected")}</Text>
 									</Badge>
 								) : undefined
 							}
@@ -575,7 +579,7 @@ function Account({ connection }: { connection: Connection }) {
 					{connection.alias || connection.account_display || connection.id}
 				</WebText>
 				<WebText recipe={connectorDetailClasses.subtitle}>
-					{isActiveConnection(connection) ? "Connected" : connection.status}
+					{isActiveConnection(connection) ? t("labels.connected") : connection.status}
 				</WebText>
 			</WebView>
 			<WebView recipe={connectorDetailClasses.hint}>
@@ -589,7 +593,7 @@ function Account({ connection }: { connection: Connection }) {
 						})
 					}
 				>
-					<Text>Rename</Text>
+					<Text>{copy.rename}</Text>
 				</Button>
 				<Button
 					variant="ghost"
@@ -659,6 +663,7 @@ export function ConnectorRenamePage() {
 	);
 }
 function ConnectorRename({ connection }: { connection: Connection }) {
+	const t = useI18n();
 	const scope = useAccountScope(),
 		read = useAccountRead(),
 		capture = useForegroundLease();
@@ -688,7 +693,7 @@ function ConnectorRename({ connection }: { connection: Connection }) {
 			description={
 				connection.account_display && connection.account_display !== connection.alias
 					? connection.account_display
-					: `Account ${connection.id}`
+					: t("labels.connectorAccount", { id: connection.id })
 			}
 			fallback="/connectors"
 			busy={action.busy}

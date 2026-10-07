@@ -1,7 +1,7 @@
 import { billingPageClass } from "@clawdi/shared/ui";
 import { useRouter } from "expo-router";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { ClerkAction as DetailAction } from "@/components/auth/clerk-form";
+import { DetailAction } from "@/components/detail/detail-action";
 import { EmptyState } from "@/components/empty-state";
 import { ResourceError } from "@/components/resource-error";
 import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";

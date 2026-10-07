@@ -5,9 +5,11 @@ import { SettingsShell } from "@/components/settings/shell";
 import { BillingScreen } from "@/hosted/billing/subscription/subscriptions-section";
 import { UsageScreen } from "@/hosted/billing/usage/usage-page";
 import { WalletScreen } from "@/hosted/billing/wallet/wallet-page";
+import { useI18n } from "@/lib/i18n";
 import GeneralPage from "@/pages/settings/general-page";
 
 export default function SettingsPanelPage() {
+	const t = useI18n();
 	const { panel } = useLocalSearchParams<{ panel?: string }>();
 	switch (panel) {
 		case "general":
@@ -28,7 +30,7 @@ export default function SettingsPanelPage() {
 		default:
 			return (
 				<SettingsShell>
-					<EmptyState title="Settings unavailable" />
+					<EmptyState title={t("settingsMenu.unavailable")} />
 				</SettingsShell>
 			);
 	}

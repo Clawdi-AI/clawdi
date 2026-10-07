@@ -6,9 +6,12 @@ import {
 	aiProvidersPageClasses as styles,
 } from "@clawdi/shared/ui";
 import {
+	agentSectionCopy,
 	agentSurfaceCopy,
+	aiBindingCopy,
 	MANAGED_PROVIDER_LABEL,
 	providerAuthLabel,
+	providerFieldsFormCopy,
 	providerPresentation,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -74,7 +77,7 @@ function ProvidersView() {
 				actions={[
 					{
 						id: "add",
-						label: "Add provider",
+						label: providerFieldsFormCopy.add,
 						disabled: !providers.data || !scope.isReady,
 						onPress: () => router.push("/ai-providers/new"),
 					},
@@ -170,7 +173,7 @@ function ProviderCard({ provider }: { provider: SavedAiProvider }) {
 							<Text>{providerAuthLabel(provider.auth.type)}</Text>
 						</Badge>
 						<StatusBadge status={ready ? "success" : "warning"} withDot>
-							<Text>{ready ? "Ready" : "Setup required"}</Text>
+							<Text>{ready ? t("providers.ready") : t("providers.setupRequired")}</Text>
 						</StatusBadge>
 					</WebView>
 				}
@@ -218,6 +221,7 @@ function ProviderCard({ provider }: { provider: SavedAiProvider }) {
 }
 
 function AgentProviders({ agentId }: { agentId: string }) {
+	const t = useI18n();
 	const scope = useAccountScope(),
 		read = useAccountRead(),
 		{ hosted } = useMobileApi(),
@@ -236,13 +240,13 @@ function AgentProviders({ agentId }: { agentId: string }) {
 	return (
 		<AgentCollection
 			title={agentSurfaceCopy.aIProviders}
-			description="AI provider and primary model used by this agent."
+			description={agentSectionCopy.ai.description}
 			navigation={<AgentSectionNavigation agentId={agentId} section="ai" />}
 		>
 			{inventory.isError ? (
 				<ApiErrorPanel
 					error={inventory.error}
-					title="Couldn't load Agent"
+					title={t("agents.loadError")}
 					onRetry={() => void inventory.refetch()}
 				/>
 			) : inventory.isLoading ? (
@@ -264,7 +268,7 @@ function AgentProviders({ agentId }: { agentId: string }) {
 					}}
 				/>
 			) : (
-				<EmptyState description="Configure model access inside the agent." />
+				<EmptyState description={aiBindingCopy.unmanagedDescription} />
 			)}
 		</AgentCollection>
 	);

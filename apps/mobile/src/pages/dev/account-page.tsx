@@ -44,7 +44,6 @@ const subscriptionFixture = {
 
 /** Read-only stories render production presentation components without mounting Clerk hooks. */
 export default function AccountStoriesRoute() {
-	if (!__DEV__) return <Redirect href="/" />;
 	return <AccountStories />;
 }
 function AccountStories() {
