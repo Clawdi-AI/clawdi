@@ -54,6 +54,7 @@ only renames unmerged PR series and never-emitted definitions. See
 - Hermes Skill guard refusals now report applied status without repeated error
   retries. Refusals never delete existing copies: locally modified Skills,
   ownership receipts, and Hermes Hub records remain unchanged.
+- **Sign-in:** the device code flow is the only interactive sign-in. Clawdi Desktop opens the approval page with the code filled in and shows the code so you can check it; the browser sign-in with a local callback used in 0.15.10–0.15.12 is removed. Desktop and the CLI share the same sign-in on a machine.
 
 ### CLI 0.15.12
 
