@@ -35,6 +35,7 @@ import {
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { AGENT_TYPES, type AgentType } from "../adapters/agent-types";
+import { persistAuthTokenFile } from "../lib/auth-token-file";
 import {
 	type CurrentCliInvocation,
 	detectDesktopManagedNativeLayout,
@@ -83,9 +84,9 @@ function unitName(): string {
 	return "ai.clawdi.serve";
 }
 
-function daemonProgramArgs(opts: InstallOpts): string[] {
-	if (opts.agent) return ["daemon", "run", "--agent", opts.agent];
-	return ["daemon", "run"];
+function daemonProgramArgs(opts: InstallOpts, authTokenFile?: string): string[] {
+	const args = opts.agent ? ["daemon", "run", "--agent", opts.agent] : ["daemon", "run"];
+	return authTokenFile ? [...args, "--auth-token-file", authTokenFile] : args;
 }
 
 /** CLAWDI_* env vars that need to be baked into the supervisor
@@ -98,7 +99,7 @@ function daemonProgramArgs(opts: InstallOpts): string[] {
  * shell env and `~/.clawdi/auth.json` was never written.
  *
  * Whitelist deliberately narrow:
- *   - CLAWDI_AUTH_TOKEN / CLAWDI_AUTH_TOKEN_ORIGIN / CLAWDI_API_URL: auth + endpoint
+ *   - CLAWDI_AUTH_TOKEN_ORIGIN / CLAWDI_API_URL: auth + endpoint
  *   - CLAWDI_STATE_DIR: state dir override
  *   - CLAWDI_NO_AUTO_UPDATE: keep an embedding application in charge of updates
  *   - CLAWDI_DAEMON_RPC_HOST / CLAWDI_DAEMON_RPC_PORT /
@@ -119,7 +120,6 @@ function daemonProgramArgs(opts: InstallOpts): string[] {
  * multiple engines.
  */
 const PERSISTED_ENV_KEYS = [
-	"CLAWDI_AUTH_TOKEN",
 	"CLAWDI_AUTH_TOKEN_ORIGIN",
 	"CLAWDI_API_URL",
 	"CLAWDI_STATE_DIR",
@@ -218,7 +218,10 @@ function currentDaemonInstallContext(opts: InstallOpts): DaemonInstallContext {
 				"an unowned native executable cannot install a daemon; install through Homebrew, the native distribution, or Clawdi Desktop",
 			);
 		}
-		invocation = resolveCurrentCliInvocation(daemonProgramArgs(opts));
+		const authTokenFile = process.env.CLAWDI_AUTH_TOKEN
+			? persistAuthTokenFile(clawdiRoot(), process.env.CLAWDI_AUTH_TOKEN)
+			: undefined;
+		invocation = resolveCurrentCliInvocation(daemonProgramArgs(opts, authTokenFile));
 		if (homebrewRuntime) invocation.command = homebrewRuntime.activationPath;
 	} catch (error) {
 		throw new Error(
@@ -432,15 +435,16 @@ ${programArgs}
 	// whether this install was a fresh write or replacing an
 	// existing unit.
 	const replaced = existsSync(path);
-	// 0600: the plist body inlines `CLAWDI_AUTH_TOKEN` and any
-	// other captured shell env vars under `<key>EnvironmentVariables</key>`.
-	// World-readable mode would let any other local user on a
-	// multi-user host read the API token. launchd reads the file
-	// as the owning user, so 0600 still loads correctly. The
+	// 0600 keeps captured configuration private. Bearer credentials
+	// are passed through the owner-only auth-token file in ProgramArguments,
+	// never through EnvironmentVariables. The
 	// `writeFileSync({ mode })` option only fires at create time
 	// — explicit chmodSync covers the overwrite case
 	// (re-running install on top of a 0644 leftover from older
 	// builds).
+	// World-readable mode would let any other local user read the
+	// captured configuration. launchd reads the file as the owning user,
+	// so 0600 still loads correctly. The
 	writeFileSync(path, plist, { mode: 0o600 });
 	try {
 		chmodSync(path, 0o600);
@@ -618,11 +622,10 @@ ${envLines.join("\n")}
 WantedBy=default.target
 `;
 
-	// 0600: same reasoning as the macOS plist above — the unit's
-	// `Environment="CLAWDI_AUTH_TOKEN=…"` line carries the API
-	// token, so any other local user with read access to
-	// `~/.config/systemd/user/` would otherwise lift it. systemd
-	// --user reads as the owning user, so 0600 still loads.
+	// systemd.exec(5) says environment variables are not suitable for
+	// passing secrets because they are exposed to unprivileged clients via
+	// D-Bus; use the owner-only auth-token file instead. Keep the unit at
+	// 0600 for captured non-secret configuration.
 	writeFileSync(path, unit, { mode: 0o600 });
 	try {
 		chmodSync(path, 0o600);

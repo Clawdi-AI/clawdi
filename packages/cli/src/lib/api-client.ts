@@ -55,6 +55,7 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 /** Error thrown by ApiClient. Carries HTTP status and a human-facing hint. */
 export class ApiError extends Error {
 	readonly status: number;
+	readonly code: string | undefined;
 	readonly hint: string;
 	readonly body: string;
 	readonly isNetwork: boolean;
@@ -66,6 +67,7 @@ export class ApiError extends Error {
 		hint: string;
 		isNetwork?: boolean;
 		isTimeout?: boolean;
+		code?: string;
 		url?: string;
 	}) {
 		const detail = apiResponseDetail(opts.body);
@@ -87,6 +89,7 @@ export class ApiError extends Error {
 		super(message);
 		this.name = "ApiError";
 		this.status = opts.status;
+		this.code = opts.code;
 		this.body = opts.body;
 		this.hint =
 			opts.status === 410 || expiredApiKey

@@ -4,6 +4,44 @@ import { ClerkOAuthError } from "./clerk-oauth";
 import { HostedDeployAuthorizationError } from "./hosted-deploy-auth";
 import { AuthorizationRequiredError } from "./require-auth";
 
+const AUTH_REQUIRED_CODES = new Set([
+	"hosted_oauth_login_required",
+	"hosted_token_expired",
+	"invalid_hosted_token",
+	"invalid_hosted_token_expiry",
+	"hosted_endpoint_binding_mismatch",
+	"oauth_login_required",
+	"oauth_login_expired",
+]);
+
+export type HttpErrorMapping = {
+	code: string;
+	message: string;
+	exitCode: 1 | 4;
+};
+
+/** Map authenticated HTTP failures without classifying by response text. */
+export function mapHttpError(
+	error: { status: number; code?: string },
+	service = "Clawdi",
+): HttpErrorMapping | null {
+	if (error.status === 403) {
+		return {
+			code: `${service.toLowerCase().replaceAll(" ", "_")}_forbidden`,
+			message: "You don't have permission to perform this action from the CLI. Use the dashboard.",
+			exitCode: 1,
+		};
+	}
+	if (error.status === 401 || (error.code !== undefined && AUTH_REQUIRED_CODES.has(error.code))) {
+		return {
+			code: `${service.toLowerCase().replaceAll(" ", "_")}_auth_required`,
+			message: "CLI authorization was rejected. Run `clawdi auth login`, then try again.",
+			exitCode: 4,
+		};
+	}
+	return null;
+}
+
 /** Best-effort `String`-of an `unknown` caught from a try/catch. */
 export function errMessage(e: unknown): string {
 	if (e instanceof Error) return e.message;
@@ -15,7 +53,8 @@ export function errMessage(e: unknown): string {
 export function handleError(err: unknown): never {
 	if (isAuthorizationRequired(err)) {
 		process.stderr.write("\n");
-		console.error(chalk.red(`✗ ${errMessage(err)}`));
+		const mapped = err instanceof ApiError ? mapHttpError(err) : null;
+		console.error(chalk.red(`✗ ${mapped?.message ?? errMessage(err)}`));
 		if (process.env.CLAWDI_DEBUG) {
 			if (err instanceof ApiError && err.status > 0)
 				console.error(chalk.gray(`  HTTP ${err.status}`));
@@ -25,8 +64,10 @@ export function handleError(err: unknown): never {
 	}
 	if (err instanceof ApiError) {
 		process.stderr.write("\n");
-		console.error(chalk.red(`✗ ${err.message}`));
-		if (err.hint && !err.message.includes(err.hint)) console.error(chalk.gray(`  ${err.hint}`));
+		const mapped = mapHttpError(err);
+		console.error(chalk.red(`✗ ${mapped?.message ?? err.message}`));
+		if (!mapped && err.hint && !err.message.includes(err.hint))
+			console.error(chalk.gray(`  ${err.hint}`));
 		if (process.env.CLAWDI_DEBUG) {
 			if (err.status > 0) console.error(chalk.gray(`  HTTP ${err.status}`));
 			console.error(chalk.gray(err.stack ?? ""));
@@ -50,24 +91,13 @@ export function handleError(err: unknown): never {
 	process.exit(1);
 }
 
-function isAuthorizationRequired(err: unknown): err is Error {
+export function isAuthorizationRequired(err: unknown): err is Error {
 	if (err instanceof AuthorizationRequiredError) return true;
-	if (err instanceof ApiError) return err.status === 401;
-	if (err instanceof HostedDeployAuthorizationError) {
-		return (
-			err.code === "hosted_oauth_login_required" ||
-			err.code === "hosted_token_expired" ||
-			err.code === "invalid_hosted_token" ||
-			err.message.includes("sign in again")
-		);
-	}
-	if (err instanceof ClerkOAuthError) {
-		return (
-			err.code === "oauth_login_required" ||
-			err.code === "oauth_login_expired" ||
-			err.message.includes("sign in again")
-		);
-	}
+	if (err instanceof ApiError) return mapHttpError(err)?.exitCode === 4;
+	if (err instanceof HostedDeployAuthorizationError)
+		return mapHttpError({ status: 0, code: err.code })?.exitCode === 4;
+	if (err instanceof ClerkOAuthError)
+		return mapHttpError({ status: 0, code: err.code })?.exitCode === 4;
 	return false;
 }
 

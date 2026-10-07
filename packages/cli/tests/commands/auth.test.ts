@@ -53,8 +53,6 @@ function oauthPending(): PendingAuth {
 		interval: 1,
 		issuer: "https://clerk.example.test",
 		clientId: "clawdi-cli",
-		audience: "clawdi-api",
-		authorizedParties: ["https://accounts.clawdi.test"],
 		tokenEndpoint: "https://clerk.example.test/oauth/token",
 		expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
 		apiUrl: "https://api.test",
@@ -90,6 +88,7 @@ function tokenHandler() {
 				access_token: oauthAccessToken(),
 				refresh_token: "refresh-secret",
 				token_type: "Bearer",
+				expires_in: 3600,
 				scope: "openid profile email offline_access",
 			}),
 	};
@@ -112,7 +111,6 @@ function startHandlers() {
 				jsonResponse({
 					issuer: "https://clerk.example.test",
 					client_id: "clawdi-cli",
-					audience: "clawdi-api",
 					authorized_parties: ["https://accounts.clawdi.test"],
 					redirect_uri: "ignored",
 				}),
@@ -364,24 +362,6 @@ describe("authLogin authentication boundary", () => {
 		expect(openSpy).not.toHaveBeenCalled();
 	});
 
-	it("clears stale pending PKCE state with instructions to start again", async () => {
-		clearAuth();
-		writeFileSync(
-			join(tmpHome, ".clawdi", "pending-auth.json"),
-			JSON.stringify({
-				authType: "clerk_oauth_pkce",
-				state: "old",
-				expiresAt: new Date(Date.now() + 60_000).toISOString(),
-				codeVerifier: "old-secret",
-			}),
-		);
-		await authComplete();
-		expect(getPendingAuth()).toBeNull();
-		expect(process.exitCode).toBe(1);
-		expect(stderr.join("\n")).toContain("older Clawdi CLI");
-		expect(stderr.join("\n")).not.toContain("old-secret");
-	});
-
 	it("reports missing and expired device authorization", async () => {
 		clearAuth();
 		await authComplete();
@@ -420,7 +400,7 @@ describe("authLogin authentication boundary", () => {
 		expect(stdout.concat(stderr).join("\n")).not.toContain("private-device-code");
 	});
 
-	it("reports success when a concurrent device poll already committed the same Clerk subject", async () => {
+	it("reports success when a concurrent device poll already committed the same Cloud account", async () => {
 		clearAuth();
 		setPendingAuth(oauthPending());
 		const pending = oauthPending();
@@ -437,11 +417,8 @@ describe("authLogin authentication boundary", () => {
 						accessTokenExpiresAt: new Date(Date.now() + 3_600_000).toISOString(),
 						issuer: pending.issuer,
 						clientId: pending.clientId,
-						audience: pending.audience,
-						authorizedParties: pending.authorizedParties,
 						tokenEndpoint: pending.tokenEndpoint,
 						scopes: pending.scopes,
-						subject: "oauth-user",
 						userId: "cloud-user",
 						email: "user@example.test",
 						endpointBinding: pending.endpointBinding,
@@ -540,6 +517,7 @@ describe("interactive OAuth Cloud verification boundary", () => {
 							access_token: oauthAccessToken(),
 							refresh_token: `refresh-${cloudCase}`,
 							token_type: "Bearer",
+							expires_in: 3600,
 							scope: "openid profile email offline_access",
 						}),
 				},
@@ -571,7 +549,7 @@ describe("interactive OAuth Cloud verification boundary", () => {
 							userId: "cloud-user",
 							email: "user@example.test",
 						}
-					: { refreshToken: `refresh-${cloudCase}`, userId: "oauth-user" },
+					: { refreshToken: `refresh-${cloudCase}`, userId: "" },
 			);
 			expect(getAuth()?.endpointBinding).toEqual(pending.endpointBinding);
 			expect(getPendingAuth()).toBeNull();
@@ -599,6 +577,7 @@ describe("interactive OAuth Cloud verification boundary", () => {
 							access_token: oauthAccessToken(),
 							refresh_token: `refresh-${cloudCase}`,
 							token_type: "Bearer",
+							expires_in: 3600,
 							scope: "openid profile email offline_access",
 						}),
 				},

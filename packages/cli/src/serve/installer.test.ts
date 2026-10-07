@@ -120,7 +120,7 @@ describe("installer.install (macOS plist)", () => {
 	});
 
 	it.each(["https://example.test", undefined])(
-		"captures daemon credentials, endpoint, and update ownership with token origin %s",
+		"stores daemon credentials in an owner-only file and captures endpoint with token origin %s",
 		async (origin) => {
 			const os = await import("node:os");
 			if (os.platform() !== "darwin") return;
@@ -149,10 +149,12 @@ describe("installer.install (macOS plist)", () => {
 				const { install } = await import("./installer");
 				const result = install();
 				const content = readFileSync(result.unit, "utf-8");
-				// Credentials and their origin binding must survive launchd's
-				// environment filtering after the next login.
-				expect(content).toContain("<key>CLAWDI_AUTH_TOKEN</key>");
-				expect(content).toContain("clawdi_test_capture_token_value");
+				const tokenFile = join(process.env.HOME ?? tmp, ".clawdi", "auth-token");
+				expect(content).toContain("<string>--auth-token-file</string>");
+				expect(content).toContain(tokenFile);
+				expect(content).not.toContain("clawdi_test_capture_token_value");
+				expect(readFileSync(tokenFile, "utf-8").trim()).toBe("clawdi_test_capture_token_value");
+				expect(statSync(tokenFile).mode & 0o777).toBe(0o600);
 				if (origin === undefined) {
 					expect(content).not.toContain("<key>CLAWDI_AUTH_TOKEN_ORIGIN</key>");
 				} else {
@@ -217,13 +219,7 @@ describe("installer.install (macOS plist)", () => {
 		}
 	});
 
-	it("writes the plist with 0o600 (owner-only) since it inlines CLAWDI_AUTH_TOKEN", async () => {
-		// Round-40 P2 regression: launchd plist contains
-		// `<key>CLAWDI_AUTH_TOKEN</key>` under
-		// EnvironmentVariables. Pre-fix the file was 0o644 so any
-		// other local user on a multi-user host could read the
-		// API token. launchd reads the file as the owner, so
-		// 0o600 still loads correctly.
+	it("writes the plist and token file with owner-only permissions", async () => {
 		const os = await import("node:os");
 		if (os.platform() !== "darwin") return;
 
@@ -274,7 +270,7 @@ describe("installer.install (macOS plist)", () => {
 
 describe("installer.install (Linux systemd)", () => {
 	it.each(["https://example.test", undefined])(
-		"captures daemon credentials and endpoint with token origin %s",
+		"stores daemon credentials in an owner-only file and captures endpoint with token origin %s",
 		async (origin) => {
 			const os = await import("node:os");
 			if (os.platform() !== "linux") return;
@@ -298,9 +294,12 @@ describe("installer.install (Linux systemd)", () => {
 				const { install } = await import("./installer");
 				const result = install();
 				const content = readFileSync(result.unit, "utf-8");
-				expect(content).toContain(
-					'Environment="CLAWDI_AUTH_TOKEN=clawdi_test_capture_token_value"',
-				);
+				const tokenFile = join(process.env.HOME ?? tmp, ".clawdi", "auth-token");
+				expect(content).toContain("--auth-token-file");
+				expect(content).toContain(tokenFile);
+				expect(content).not.toContain("clawdi_test_capture_token_value");
+				expect(readFileSync(tokenFile, "utf-8").trim()).toBe("clawdi_test_capture_token_value");
+				expect(statSync(tokenFile).mode & 0o777).toBe(0o600);
 				if (origin === undefined) {
 					expect(content).not.toContain("CLAWDI_AUTH_TOKEN_ORIGIN=");
 				} else {
