@@ -28,6 +28,7 @@ from app.core.database import (
     get_session,
 )
 from app.core.logging_config import configure_application_logging
+from app.core.posthog import shutdown_posthog
 from app.core.sentry import init_sentry
 from app.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
@@ -173,6 +174,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         yield
     finally:
+        await asyncio.to_thread(shutdown_posthog)
         try:
             await finish_cleanup(discord_locks.close)
         finally:

@@ -19,6 +19,57 @@ from prometheus_client.exposition import generate_latest
 registry = CollectorRegistry()
 logger = logging.getLogger(__name__)
 
+api_requests = Counter(
+    "clawdi_backend_api_requests_total",
+    "API requests by bounded route group and response class",
+    ["route_group", "method", "status_class"],
+    registry=registry,
+)
+api_duration = Histogram(
+    "clawdi_backend_api_duration_seconds",
+    "Time to response headers (streams exclude stream lifetime)",
+    ["route_group", "method"],
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30),
+    registry=registry,
+)
+sync_failures = Counter(
+    "clawdi_backend_sync_failures_total",
+    "Failed session sync requests by response class",
+    ["status_class"],
+    registry=registry,
+)
+connector_auth_failures = Counter(
+    "clawdi_backend_connector_auth_failures_total",
+    "Connector provider authentication failures, including degraded reads",
+    registry=registry,
+)
+
+
+def record_connector_auth_failure() -> None:
+    try:
+        connector_auth_failures.inc()
+    except Exception:
+        logger.warning("Connector authentication metric capture failed")
+
+
+def record_api_response(
+    route_group: str, method: str, status_code: int, duration: float, *, sync: bool = False
+) -> None:
+    try:
+        method = (
+            method
+            if method in {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+            else "OTHER"
+        )
+        status_class = f"{status_code // 100}xx" if 100 <= status_code < 600 else "other"
+        api_requests.labels(route_group=route_group, method=method, status_class=status_class).inc()
+        api_duration.labels(route_group=route_group, method=method).observe(duration)
+        if sync and status_code >= 400:
+            sync_failures.labels(status_class=status_class).inc()
+    except Exception:
+        logger.warning("API metric capture failed")
+
+
 authenticated_requests = Counter(
     "clawdi_backend_authenticated_requests_total",
     "Authenticated requests by credential kind",

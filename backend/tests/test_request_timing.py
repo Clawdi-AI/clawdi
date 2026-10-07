@@ -1,12 +1,82 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
 import pytest
 from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.middleware.request_timing import RequestTimingMiddleware, record_content_events_stream
+from app.services.metrics import api_duration, api_requests, registry, sync_failures
+
+
+@pytest.mark.parametrize("outcome", ["response", "exception", "stream_exception"])
+async def test_red_records_once_at_headers_and_classifies_sync(outcome, monkeypatch):
+    from app.middleware import request_timing
+
+    records = []
+    monkeypatch.setattr(
+        request_timing,
+        "record_api_response",
+        lambda *args, **kwargs: records.append((args, kwargs)),
+    )
+    scope = _scope(path="/v1/sessions/private-token/events/append")
+    scope["method"] = "POST"
+    scope["route"] = SimpleNamespace(path="/v1/sessions/{session_id}/events/append")
+
+    async def inner(_scope, _receive, send):
+        if outcome == "exception":
+            raise RuntimeError("synthetic")
+        await send({"type": "http.response.start", "status": 422, "headers": []})
+        if outcome == "stream_exception":
+            raise RuntimeError("synthetic")
+        await send({"type": "http.response.body", "body": b""})
+
+    middleware = RequestTimingMiddleware(inner, slow_ms=750)
+    if outcome == "response":
+        await _collect(middleware, scope)
+    else:
+        with pytest.raises(RuntimeError, match="synthetic"):
+            await _collect(middleware, scope)
+    assert len(records) == 1
+    args, kwargs = records[0]
+    assert args[:3] == ("sessions", "POST", 500 if outcome == "exception" else 422)
+    assert args[3] >= 0
+    assert kwargs == {"sync": True}
+    assert "private-token" not in str(records)
+
+
+@pytest.mark.parametrize(
+    "template,group",
+    [(None, "other"), ("/v1/private-token/{id}", "other"), ("/api/environments/{id}", "agents")],
+)
+async def test_red_metric_math_and_bounded_labels(template, group):
+    labels = {"route_group": group, "method": "OTHER", "status_class": "4xx"}
+    before = registry.get_sample_value("clawdi_backend_api_requests_total", labels) or 0
+    duration_labels = {"route_group": group, "method": "OTHER"}
+    durations = (
+        registry.get_sample_value("clawdi_backend_api_duration_seconds_count", duration_labels) or 0
+    )
+    scope = _scope(path="/private-token/secret")
+    scope["method"] = "private-method"
+    if template:
+        scope["route"] = SimpleNamespace(path=template)
+
+    async def inner(_scope, _receive, send):
+        await send({"type": "http.response.start", "status": 404, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    await _collect(RequestTimingMiddleware(inner, slow_ms=750), scope)
+    assert registry.get_sample_value("clawdi_backend_api_requests_total", labels) == before + 1
+    assert (
+        registry.get_sample_value("clawdi_backend_api_duration_seconds_count", duration_labels)
+        == durations + 1
+    )
+    for metric in (api_requests, api_duration, sync_failures):
+        for family in metric.collect():
+            for sample in family.samples:
+                assert "private" not in str(sample.labels)
 
 
 def _scope(*, path: str = "/v1/sessions", query_string: bytes = b"secret=value") -> Scope:

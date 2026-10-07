@@ -28,6 +28,7 @@ SDK_IMPORT_OWNERS: dict[str, str] = {
     "httpx2": "app/services/composio.py",
     "mcp": "app/services/composio.py",
     "mem0": "app/services/memory_provider_mem0.py",
+    "posthog": "app/core/posthog.py",
     "sentry_sdk": "app/core/sentry.py",
 }
 
@@ -53,6 +54,7 @@ EXPECTED_THIRD_PARTY_IMPORT_ROOTS = frozenset(
         "mypy_boto3_s3",
         "openai",
         "pgvector",
+        "posthog",
         "prometheus_client",
         "pydantic",
         "pydantic_settings",

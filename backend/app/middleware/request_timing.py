@@ -18,6 +18,7 @@ from typing import Literal, cast
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.logging_config import TELEGRAM_BOT_API_PATH_RE, redact_request_path
+from app.services.metrics import record_api_response
 
 logger = logging.getLogger(__name__)
 _PROCESS_TIME_HEADER = b"x-process-time-ms"
@@ -174,12 +175,16 @@ class RequestTimingMiddleware:
         raw_path = raw_path_value if isinstance(raw_path_value, str) else ""
         path = redact_request_path(raw_path)
         status_code = 500
+        response_recorded = False
 
         async def timed_send(message: Message) -> None:
-            nonlocal status_code
+            nonlocal status_code, response_recorded
             if message["type"] == "http.response.start":
                 status_code = int(message["status"])
                 duration_ms = _elapsed_ms(started)
+                if not response_recorded:
+                    _record_response(scope, method, status_code, duration_ms)
+                    response_recorded = True
                 headers = list(message.get("headers", []))
                 if not any(name.lower() == _PROCESS_TIME_HEADER for name, _ in headers):
                     headers.append((_PROCESS_TIME_HEADER, f"{duration_ms:.1f}".encode("ascii")))
@@ -190,6 +195,8 @@ class RequestTimingMiddleware:
             await self.app(scope, receive, timed_send)
         except Exception:
             duration_ms = _elapsed_ms(started)
+            if not response_recorded:
+                _record_response(scope, method, 500, duration_ms)
             logger.exception(
                 "request_failed method=%s path=%s status=500 duration_ms=%.1f request_id=%s%s",
                 method,
@@ -261,3 +268,51 @@ def _request_id(scope: Scope) -> str:
         case _:
             pass
     return "-"
+
+
+_ROUTE_GROUPS = frozenset(
+    (
+        "agents",
+        "environments",
+        "sessions",
+        "projects",
+        "skills",
+        "vault",
+        "channels",
+        "connectors",
+        "auth",
+        "me",
+        "settings",
+        "memories",
+        "search",
+        "runtime",
+        "sync",
+        "ai-providers",
+        "mcp",
+        "share",
+        "public",
+        "analytics",
+        "admin",
+        "platform",
+    )
+)
+
+
+def _record_response(scope: Scope, method: str, status_code: int, duration_ms: float) -> None:
+    # Only router templates are classified; arbitrary paths, IDs and tokens
+    # never become labels. Unmatched requests share one bounded label.
+    route = scope.get("route")
+    template = getattr(route, "path", "")
+    if template == "/metrics":
+        return
+    parts = template.strip("/").split("/") if isinstance(template, str) else []
+    group = parts[1] if len(parts) > 1 and parts[0] in {"v1", "v2", "api"} else "other"
+    group = group if group in _ROUTE_GROUPS else "other"
+    if group == "environments":
+        group = "agents"
+    sync = (
+        group == "sessions"
+        and method in {"POST", "PUT"}
+        and (template.endswith("/batch") or "/upload" in template or "/events/" in template)
+    )
+    record_api_response(group, method, status_code, duration_ms / 1000, sync=sync)

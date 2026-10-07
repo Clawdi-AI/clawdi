@@ -27,6 +27,7 @@ from sqlalchemy.orm import aliased
 
 from app.core.auth import AuthContext, require_scope_short_session
 from app.core.database import async_session_factory, get_session
+from app.core.posthog import stage_user_capture
 from app.core.project import (
     project_ids_visible_to,
     resolve_default_write_project,
@@ -2859,4 +2860,11 @@ async def _upsert_skill(
         content_hash=content_hash,
     )
     await db.flush()
+    await stage_user_capture(
+        db,
+        "skill_saved",
+        user_id=user_id,
+        event_key=f"{skill.id}:{skill.version}",
+        properties={"feature": "skills"},
+    )
     return skill
