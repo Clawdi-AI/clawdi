@@ -18,7 +18,6 @@ export type CurrentUser = Schemas["CurrentUserResponse"];
 export type AccountSuspendedProblem = Schemas["AccountSuspendedProblem"];
 export type ApiKey = Schemas["ApiKeyResponse"];
 export type ApiKeyCreated = Schemas["ApiKeyCreated"];
-export type DeviceLookupResponse = Schemas["DeviceLookupResponse"];
 
 // ── Dashboard ────────────────────────────────────────────────────────────
 export type DashboardStats = Schemas["DashboardStatsResponse"];

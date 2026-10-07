@@ -574,7 +574,11 @@ describe("Cloud Agent lifecycle", () => {
 		const result = await runCli(["agent", "start", agentId, "--json"]);
 		expect(result.code).toBe(code === 401 ? 4 : 1);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("Cloud Agent authorization required");
+		expect(result.stderr).toContain(
+			code === 401
+				? "CLI authorization was rejected. Run `clawdi auth login`, then try again."
+				: "You don't have permission to perform this action from the CLI. Use the dashboard.",
+		);
 		expect(result.stderr).not.toContain("Internal test detail");
 		expect(mutations).toEqual([]);
 	});
@@ -587,7 +591,7 @@ describe("Cloud Agent lifecycle", () => {
 		const result = await runCli(["agent", "start", agentId, "--json"]);
 		expect(result.code).toBe(4);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("sign-in");
+		expect(result.stderr).toContain("CLI authorization was rejected");
 		expect(requests).toEqual([]);
 	});
 

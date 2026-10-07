@@ -916,13 +916,6 @@ async function authCompleteRpc(
 		return { status: "logged_in", user: { email: existing.email, id: existing.userId } };
 	const pending = getPendingAuth();
 	if (!pending) return { status: "no_pending_auth" };
-	if (pending.authType === "clerk_oauth_pkce") {
-		await clearPendingClerkOAuthLogin(pending);
-		return {
-			status: "no_pending_auth",
-			message: "This sign-in was started by an older Clawdi CLI. Run `clawdi auth login` again.",
-		};
-	}
 	if (
 		!Number.isFinite(Date.parse(pending.expiresAt)) ||
 		Date.parse(pending.expiresAt) <= Date.now()
@@ -961,7 +954,7 @@ async function authCompleteRpc(
 				error instanceof ClerkOAuthError &&
 				error.code === "credential_state_changed" &&
 				isClerkOAuthAuth(current) &&
-				current.subject === result.auth.subject
+				current.userId === result.auth.userId
 			) {
 				return { status: "logged_in", user: { id: current.userId, email: current.email } };
 			}

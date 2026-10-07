@@ -796,65 +796,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Poll Device Flow */
-        post: operations["poll_device_flow_v1_cli_auth_poll_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/cli/auth/lookup": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
         /**
-         * Lookup Device Flow
-         * @description Web dashboard reads this to render the approve screen.
-         */
-        get: operations["lookup_device_flow_v1_cli_auth_lookup_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/cli/auth/approve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Approve Device Flow
+         * Poll Device Flow
          * @deprecated
          */
-        post: operations["approve_device_flow_v1_cli_auth_approve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/cli/auth/deny": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Deny Device Flow */
-        post: operations["deny_device_flow_v1_cli_auth_deny_post"];
+        post: operations["poll_device_flow_v1_cli_auth_poll_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6184,70 +6130,10 @@ export interface components {
             /** Expires In */
             expires_in: number;
         };
-        /** DeviceApproveRequest */
-        DeviceApproveRequest: {
-            /** User Code */
-            user_code: string;
-        };
-        /** DeviceDenyRequest */
-        DeviceDenyRequest: {
-            /** User Code */
-            user_code: string;
-        };
         /** DeviceFlowRetiredResponse */
         DeviceFlowRetiredResponse: {
             /** Detail */
             detail: string;
-        };
-        /** DeviceLookupResponse */
-        DeviceLookupResponse: {
-            /** User Code */
-            user_code: string;
-            /** Client Label */
-            client_label: string | null;
-            /** Status */
-            status: string;
-            /**
-             * Expires At
-             * Format: date-time
-             */
-            expires_at: string;
-        };
-        /** DevicePollRequest */
-        DevicePollRequest: {
-            /** Device Code */
-            device_code: string;
-        };
-        /** DevicePollResponse */
-        DevicePollResponse: {
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "pending" | "approved" | "denied" | "expired";
-            /** Api Key */
-            api_key?: string | null;
-        };
-        /** DeviceStartResponse */
-        DeviceStartResponse: {
-            /** Device Code */
-            device_code: string;
-            /** User Code */
-            user_code: string;
-            /** Verification Uri */
-            verification_uri: string;
-            /** Expires In */
-            expires_in: number;
-            /** Interval */
-            interval: number;
-        };
-        /** DeviceTerminalResponse */
-        DeviceTerminalResponse: {
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "approved" | "denied";
         };
         /** EmbedBackfillResponse */
         EmbedBackfillResponse: {
@@ -12367,7 +12253,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeviceStartResponse"];
+                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
                 };
             };
             /** @description This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`. */
@@ -12388,41 +12274,6 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DevicePollRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DevicePollResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    lookup_device_flow_v1_cli_auth_lookup_get: {
-        parameters: {
-            query: {
-                code: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
         requestBody?: never;
         responses: {
             /** @description Successful Response */
@@ -12431,40 +12282,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeviceLookupResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    approve_device_flow_v1_cli_auth_approve_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DeviceApproveRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeviceTerminalResponse"];
+                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
                 };
             };
             /** @description This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`. */
@@ -12474,48 +12292,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    deny_device_flow_v1_cli_auth_deny_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DeviceDenyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeviceTerminalResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

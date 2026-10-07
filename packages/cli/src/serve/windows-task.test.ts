@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
 	installWindowsTask,
 	powershellLiteral,
+	renderWindowsTaskLauncher,
 	restartWindowsTask,
 	stopWindowsTask,
 	uninstallWindowsTask,
@@ -22,6 +23,31 @@ test("PowerShell task values remain literal", () => {
 		"'C:\\User''s files\\$(whoami) & test'",
 	);
 	expect(() => powershellLiteral("bad\0value")).toThrow();
+});
+
+test("Windows task launcher carries only the token-file path", () => {
+	const launcher = renderWindowsTaskLauncher(
+		{
+			command: "clawdi",
+			args: ["daemon", "run", "--auth-token-file", "C:\\Users\\test\\.clawdi\\auth-token"],
+			entryPath: "C:\\Program Files\\Clawdi\\clawdi.exe",
+		},
+		[{ key: "CLAWDI_AUTH_TOKEN_ORIGIN", value: "https://cloud.example.test" }],
+		"C:\\Users\\test\\.clawdi\\serve\\windows-task\\daemon.log",
+	);
+	expect(launcher).toContain("--auth-token-file");
+	expect(launcher).not.toContain("bearer-secret");
+	expect(() =>
+		renderWindowsTaskLauncher(
+			{
+				command: "clawdi",
+				args: ["daemon", "run"],
+				entryPath: "C:\\Program Files\\Clawdi\\clawdi.exe",
+			},
+			[{ key: "CLAWDI_AUTH_TOKEN", value: "bearer-secret" }],
+			"C:\\daemon.log",
+		),
+	).toThrow("cannot contain CLAWDI_AUTH_TOKEN");
 });
 
 test.skipIf(process.platform !== "win32" || process.env.CLAWDI_WINDOWS_TASK_TEST !== "1")(

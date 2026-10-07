@@ -21,6 +21,7 @@ import {
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
 import createClient, { type Client, type Middleware } from "openapi-fetch";
+import { ApiError } from "./api-client";
 import {
 	canonicalApiOrigin,
 	normalizeCloudApiBaseUrl,
@@ -42,14 +43,12 @@ const USER_AGENT = `clawdi-cli/${getCliVersion()}`;
 
 type HostedResult<T> = { data?: T; error?: unknown; response: Response };
 
-export class HostedDeployApiError extends Error {
-	readonly status: number;
+export class HostedDeployApiError extends ApiError {
 	readonly detail: string;
 
-	constructor(status: number, detail: string) {
-		super(detail || `Deploy API request failed (${status}).`);
+	constructor(status: number, detail: string, code?: string) {
+		super({ status, body: detail, hint: "", code });
 		this.name = "HostedDeployApiError";
-		this.status = status;
 		this.detail = detail;
 	}
 }

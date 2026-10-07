@@ -28,7 +28,6 @@ from app.models.channel import (
     ChannelPairCode,
     ChannelWhatsAppOnboardingSession,
 )
-from app.models.device_authorization import DeviceAuthorization
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.principal_lifecycle import (
     ClerkPrincipalAuthority,
@@ -988,15 +987,6 @@ async def complete_principal_cleanup(
             )
         ).all()
     )
-    await db.execute(
-        update(DeviceAuthorization)
-        .where(
-            DeviceAuthorization.user_id == user.id,
-            DeviceAuthorization.status.in_(("pending", "approved")),
-        )
-        .values(status="denied", api_key_raw=None)
-    )
-
     providers = list(
         (
             await db.scalars(
