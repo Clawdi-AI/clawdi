@@ -844,11 +844,21 @@ rejects complete fixture identity/token literals; Clerk itself also ships
 
 Owner's first-build checklist:
 
-1. **Without Sentry credentials, set `SENTRY_DISABLE_AUTO_UPLOAD=true` in the
+1. **Before any CI release, enable the required repository settings.** In
+   **Settings → Environments → production**, choose **Selected branches and tags**:
+   allow only the branch `main` and tags matching `mobile-v*`. Enable **Required
+   reviewers** for the release owners and keep release tokens in this Environment.
+   In **Settings → Rules → Rulesets**, enable an **Active** tag ruleset targeting
+   `mobile-v*` with **Restrict creations**; limit its bypass actors to authorized
+   release maintainers. The workflow's ref check is only a fast-fail; these
+   [Environment protections](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
+   and [tag creation restrictions](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#restrict-creations)
+   enforce who can release and create release tags.
+2. **Without Sentry credentials, set `SENTRY_DISABLE_AUTO_UPLOAD=true` in the
    selected EAS environment before the first build.** The plugin always installs
    native upload hooks; omitting the DSN disables reporting, not those hooks.
-2. Configure the public values above and `EAS_PROJECT_ID` in that same environment.
-3. Supply Expo/signing credentials, then run from `apps/mobile`:
+3. Configure the public values above and `EAS_PROJECT_ID` in that same environment.
+4. Supply Expo/signing credentials, then run from `apps/mobile`:
 
 ```bash
 eas build --profile preview --platform android
@@ -865,10 +875,14 @@ Configure signing credentials and Play's service account through EAS credentials
 Dispatch [Mobile release](../.github/workflows/mobile-release.yml) only from
 `main` or a `mobile-v*` tag. Both `operation=build` and `operation=update` use the
 production GitHub Environment and require its `EXPO_TOKEN` secret plus the
-`EAS_PROJECT_ID` GitHub variable. Preflight rejects other refs, missing release
-configuration and iOS/all auto-submit without `ascAppId`, before EAS runs.
-Mobile typecheck, tests and separate iOS/Android exports must pass before either
-operation. `build` uses the production profile, the selected `platform` and
+`EAS_PROJECT_ID` GitHub variable. Preflight also uses that Environment to check
+release configuration and Sentry token presence: **preflight and the selected
+build/update job each request production approval**. Preflight rejects other
+refs, missing release configuration, iOS/all auto-submit without `ascAppId`, and
+updates with a Sentry token but missing `SENTRY_ORG`/`SENTRY_PROJECT`, before EAS runs.
+Biome, mobile typecheck, tests, separate iOS/Android exports and a production
+export that requests dev auth bypass and rejects fixture markers must pass before
+either operation. `build` uses the production profile, the selected `platform` and
 optional `auto_submit`; `update` requires a `message` and a `channel` of `preview`
 or `production`, passed as both `--channel` and `--environment` to EAS CLI 24.8.0.
 Done: preflight and `verify-mobile` are green before the selected release job runs.
@@ -886,8 +900,9 @@ config values can require a new binary.
 After a successful CI Update, the workflow runs the documented
 [`npx sentry-expo-upload-sourcemaps dist`](https://docs.expo.dev/guides/using-sentry/#usage-with-eas-update)
 only when `SENTRY_AUTH_TOKEN` is configured, using the same Sentry org/project.
-Without the token, source map upload is skipped. Store review precedes OTA;
-reserve OTA for compatible JavaScript fixes.
+The token is scoped to that upload step; preflight receives only its presence
+flag. Without the token, source map upload is skipped with a GitHub warning.
+Store review precedes OTA; reserve OTA for compatible JavaScript fixes.
 
 Done: a preview crash is symbolicated in Sentry, and a build without a DSN runs
 normally. These live checks, TestFlight privacy validation and store metadata

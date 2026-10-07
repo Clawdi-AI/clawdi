@@ -98,6 +98,20 @@ jobs:
             *) echo "::error::Invalid release operation"; exit 1 ;;
           esac
 
+      - name: Require Sentry Update upload configuration
+        if: inputs.operation == 'update'
+        env:
+          SENTRY_UPLOAD_CONFIGURED: ${{ secrets.SENTRY_AUTH_TOKEN != '' }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        run: |
+          if [[ "$SENTRY_UPLOAD_CONFIGURED" == true ]]; then
+            if [[ -z "$SENTRY_ORG" || -z "$SENTRY_PROJECT" ]]; then
+              echo "::error::Configure SENTRY_ORG and SENTRY_PROJECT in the production GitHub Environment before publishing an update with SENTRY_AUTH_TOKEN."
+              exit 1
+            fi
+          fi
+
   verify-mobile:
     needs: preflight
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
@@ -107,6 +121,8 @@ jobs:
       - uses: ./.github/actions/setup-bun-ci
         with:
           node-version: "24.21.0"
+      - name: Biome check
+        run: bun run check
       - name: Mobile typecheck
         run: bun run --cwd apps/mobile typecheck
       - name: Mobile tests
@@ -118,6 +134,26 @@ jobs:
           trap 'rm -rf "$mobile_exports"' EXIT
           bunx expo export --platform ios --output-dir "$mobile_exports/ios"
           bunx expo export --platform android --output-dir "$mobile_exports/android"
+      - name: Production mobile bundles exclude development authentication
+        working-directory: apps/mobile
+        env:
+          EXPO_PUBLIC_DEV_AUTH_BYPASS: "1"
+          EXPO_PUBLIC_CLAWDI_ENV: production
+          EXPO_PUBLIC_CLAWDI_API_URL: https://cloud-api.clawdi.ai
+          EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL: https://api.clawdi.ai
+          EXPO_PUBLIC_CLAWDI_LINK_HOSTS: cloud.clawdi.ai
+        run: |
+          mobile_exports=$(mktemp -d)
+          trap 'rm -rf "$mobile_exports"' EXIT
+          bunx expo export --platform all --no-bytecode --output-dir "$mobile_exports"
+          # Match fixture literals; Clerk also ships /dev_browser and dev_browser_unauthenticated.
+          if grep -R -a -l -E "[\"'](dev_browser(_session)?|dev-bypass|avery@clawdi\.dev)[\"']" "$mobile_exports"; then
+            echo 'Production export contains development authentication fixtures' >&2
+            exit 1
+          else
+            status=$?
+            [[ "$status" == 1 ]] || exit "$status"
+          fi
 
   build:
     needs: verify-mobile
@@ -161,7 +197,6 @@ jobs:
     timeout-minutes: 30
     env:
       EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
-      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-bun-ci
@@ -178,11 +213,16 @@ jobs:
         env:
           CHANNEL: ${{ inputs.channel }}
           UPDATE_MESSAGE: ${{ inputs.message }}
-        run: eas update --channel "$CHANNEL" --environment "$CHANNEL" --non-interactive --message "$UPDATE_MESSAGE"
+        run: eas update --channel "$CHANNEL" --environment "$CHANNEL" --non-interactive --message="$UPDATE_MESSAGE"
       - name: Upload Update source maps to Sentry
-        if: env.SENTRY_AUTH_TOKEN != ''
         working-directory: apps/mobile
         env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           SENTRY_ORG: ${{ vars.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
-        run: npx sentry-expo-upload-sourcemaps dist
+        run: |
+          if [[ -z "$SENTRY_AUTH_TOKEN" ]]; then
+            echo "::warning::SENTRY_AUTH_TOKEN is unset; skipping Update source map upload."
+            exit 0
+          fi
+          npx sentry-expo-upload-sourcemaps dist
