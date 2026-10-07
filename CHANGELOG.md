@@ -49,6 +49,10 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.15.13
+
+- **Sign-in:** the device code flow is the only interactive sign-in. Clawdi Desktop opens the approval page with the code filled in and shows the code so you can check it; the browser sign-in used in 0.15.10–0.15.12 (OAuth PKCE with a local callback) is removed. Desktop and the CLI share the same sign-in on a machine.
+
 ### CLI 0.15.12
 
 - **Hosted Hermes:** the fresh-install pin now applies only when the CLI runs
