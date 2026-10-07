@@ -1,3 +1,12 @@
+"""Classify authenticated credentials once, then gate routes by principal.
+
+Web sessions and first-party CLI OAuth represent the same user; credential
+management uses the browser-only `require_web_auth` gate. API keys retain their
+scope and Agent fences, including legacy NULL-scope compatibility. Runtime keys
+still require scopes at HTTP/MCP boundaries, even when their scope list is NULL.
+Platform workload OAuth uses its separate PlatformMutationAuth context.
+"""
+
 from __future__ import annotations
 
 # The module-level httpx name remains a patch seam for transport tests.
@@ -8,6 +17,7 @@ import hmac
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from uuid import UUID
 
 import httpx  # noqa: F401 - retained as a patch seam for Clerk transport tests
@@ -157,6 +167,98 @@ async def _assert_active_user_or_401(db: AsyncSession, user_id: UUID) -> None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account has been terminated") from None
 
 
+class AuthPrincipal(StrEnum):
+    """Credential authority, distinct from the persisted User.principal_kind.
+
+    Keep scope presence and Agent binding explicit: legacy NULL-scope runtime
+    keys pass user gates today but do not bypass scope gates. Managed unbound
+    keys are also distinct from connected self-managed CLI credentials.
+    """
+
+    WEB_SESSION = "web_session"
+    CLI_OAUTH = "cli_oauth"
+    DEV_BYPASS = "dev_bypass"
+    API_KEY_LEGACY = "api_key_legacy"
+    API_KEY_SCOPED = "api_key_scoped"
+    API_KEY_ENV_LEGACY = "api_key_env_legacy"
+    API_KEY_ENV_SCOPED = "api_key_env_scoped"
+    API_KEY_MANAGED_LEGACY = "api_key_managed_legacy"
+    API_KEY_MANAGED_SCOPED = "api_key_managed_scoped"
+    API_KEY_MANAGED_ENV_LEGACY = "api_key_managed_env_legacy"
+    API_KEY_MANAGED_ENV_SCOPED = "api_key_managed_env_scoped"
+    API_KEY_RUNTIME_LEGACY = "api_key_runtime_legacy"
+    API_KEY_RUNTIME_SCOPED = "api_key_runtime_scoped"
+
+
+_USER_PRINCIPALS = frozenset(
+    {AuthPrincipal.WEB_SESSION, AuthPrincipal.CLI_OAUTH, AuthPrincipal.DEV_BYPASS}
+)
+_SCOPED_API_KEY_PRINCIPALS = frozenset(
+    {
+        AuthPrincipal.API_KEY_SCOPED,
+        AuthPrincipal.API_KEY_ENV_SCOPED,
+        AuthPrincipal.API_KEY_MANAGED_SCOPED,
+        AuthPrincipal.API_KEY_MANAGED_ENV_SCOPED,
+        AuthPrincipal.API_KEY_RUNTIME_SCOPED,
+    }
+)
+_ENV_BOUND_API_KEY_PRINCIPALS = frozenset(
+    {
+        AuthPrincipal.API_KEY_ENV_LEGACY,
+        AuthPrincipal.API_KEY_ENV_SCOPED,
+        AuthPrincipal.API_KEY_MANAGED_ENV_LEGACY,
+        AuthPrincipal.API_KEY_MANAGED_ENV_SCOPED,
+        AuthPrincipal.API_KEY_RUNTIME_LEGACY,
+        AuthPrincipal.API_KEY_RUNTIME_SCOPED,
+    }
+)
+_RUNTIME_PRINCIPALS = frozenset(
+    {AuthPrincipal.API_KEY_RUNTIME_LEGACY, AuthPrincipal.API_KEY_RUNTIME_SCOPED}
+)
+_MANAGED_LEGACY_PRINCIPALS = frozenset(
+    {
+        AuthPrincipal.API_KEY_MANAGED_LEGACY,
+        AuthPrincipal.API_KEY_MANAGED_SCOPED,
+        AuthPrincipal.API_KEY_MANAGED_ENV_LEGACY,
+        AuthPrincipal.API_KEY_MANAGED_ENV_SCOPED,
+    }
+)
+_CONNECTED_AGENT_PRINCIPALS = frozenset(
+    {AuthPrincipal.CLI_OAUTH, AuthPrincipal.API_KEY_LEGACY, AuthPrincipal.API_KEY_SCOPED}
+)
+
+
+def _resolve_principal(
+    api_key: ApiKey | None, *, oauth_cli: bool, dev_bypass: bool
+) -> AuthPrincipal:
+    if api_key is not None:
+        scoped = api_key.scopes is not None
+        if api_key.managed:
+            if api_key.environment_id is not None:
+                if api_key.runtime_deployment_id:
+                    return (
+                        AuthPrincipal.API_KEY_RUNTIME_SCOPED
+                        if scoped
+                        else AuthPrincipal.API_KEY_RUNTIME_LEGACY
+                    )
+                return (
+                    AuthPrincipal.API_KEY_MANAGED_ENV_SCOPED
+                    if scoped
+                    else AuthPrincipal.API_KEY_MANAGED_ENV_LEGACY
+                )
+            return (
+                AuthPrincipal.API_KEY_MANAGED_SCOPED
+                if scoped
+                else AuthPrincipal.API_KEY_MANAGED_LEGACY
+            )
+        if api_key.environment_id is not None:
+            return AuthPrincipal.API_KEY_ENV_SCOPED if scoped else AuthPrincipal.API_KEY_ENV_LEGACY
+        return AuthPrincipal.API_KEY_SCOPED if scoped else AuthPrincipal.API_KEY_LEGACY
+    if dev_bypass:
+        return AuthPrincipal.DEV_BYPASS
+    return AuthPrincipal.CLI_OAUTH if oauth_cli else AuthPrincipal.WEB_SESSION
+
+
 class AuthContext:
     def __init__(
         self,
@@ -170,6 +272,9 @@ class AuthContext:
     ):
         self.user = user
         self.api_key = api_key
+        # Both get_auth variants (and direct credential revalidation) construct
+        # this once from validated credentials before any permission gate runs.
+        self.principal = _resolve_principal(api_key, oauth_cli=oauth_cli, dev_bypass=dev_bypass)
         # Keep `is_cli` API-key-only for compatibility with the existing
         # scope and capability gates. OAuth CLI access tokens carry this
         # separate marker so routes can explicitly opt into that identity.
@@ -203,17 +308,18 @@ class AuthContext:
 
 
 def _credential_kind(ctx: AuthContext) -> str:
+    """Preserve the existing metric labels independently of permission kinds."""
     if is_runtime_deployment_principal(ctx):
         return "runtime_key"
-    if ctx.api_key is not None:
-        if ctx.api_key.managed:
-            return "managed_legacy_key"
-        if ctx.api_key.environment_id is not None:
-            return "env_api_key"
+    if ctx.principal in _MANAGED_LEGACY_PRINCIPALS:
+        return "managed_legacy_key"
+    if is_env_bound_api_key(ctx):
+        return "env_api_key"
+    if ctx.principal not in _USER_PRINCIPALS:
         return "personal_api_key"
-    if ctx.dev_bypass:
+    if ctx.principal == AuthPrincipal.DEV_BYPASS:
         return "dev_bypass"
-    return "clerk_oauth_cli" if ctx.oauth_cli else "clerk_session"
+    return "clerk_oauth_cli" if ctx.principal == AuthPrincipal.CLI_OAUTH else "clerk_session"
 
 
 async def _auth_via_api_key(token: str, db: AsyncSession) -> AuthContext | None:
@@ -1002,11 +1108,11 @@ async def get_auth_short_session(
 
 def require_auth_scopes(auth: AuthContext, *needed: str) -> None:
     """Enforce API-key scopes consistently across HTTP and MCP boundaries."""
-    if not auth.is_cli or auth.api_key is None:
+    if not is_scoped_api_key(auth) and not is_runtime_deployment_principal(auth):
+        return
+    if auth.api_key is None:
         return
     scopes = auth.api_key.scopes
-    if scopes is None and not is_runtime_deployment_principal(auth):
-        return
     missing = list(needed) if scopes is None else [scope for scope in needed if scope not in scopes]
     if missing:
         raise HTTPException(
@@ -1030,10 +1136,8 @@ def require_scope_short_session(*needed: str):
 
 def require_scope(*needed: str):
     """Build a FastAPI dependency that gates a route on `auth.api_key`
-    holding all of the given scope strings. Clerk-JWT auth (`is_cli =
-    False`) bypasses the check — interactive dashboard sessions
-    have implicit full access for now; tightening that comes with
-    the authz overhaul, not v1.
+    holding all of the given scope strings. Web sessions and CLI OAuth
+    bypass the check because both represent the user.
 
     API keys with `scopes=NULL` keep wide access for legacy
     compatibility. Strict-v2 runtime deployment keys instead carry
@@ -1051,11 +1155,11 @@ def require_any_scope(*accepted: str):
     """Require at least one accepted scope for scoped CLI keys."""
 
     async def _check(auth: AuthContext = Depends(get_auth)) -> AuthContext:
-        if not auth.is_cli or auth.api_key is None:
+        if not is_scoped_api_key(auth) and not is_runtime_deployment_principal(auth):
+            return auth
+        if auth.api_key is None:
             return auth
         scopes = auth.api_key.scopes
-        if scopes is None and not is_runtime_deployment_principal(auth):
-            return auth
         if scopes is not None and any(scope in scopes for scope in accepted):
             return auth
         raise HTTPException(
@@ -1068,14 +1172,14 @@ def require_any_scope(*accepted: str):
 
 async def require_cli_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext:
     """Require a legacy API key or the first-party OAuth CLI identity."""
-    if not auth.is_cli and not auth.oauth_cli:
+    if auth.principal in {AuthPrincipal.WEB_SESSION, AuthPrincipal.DEV_BYPASS}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This endpoint requires CLI authentication")
     return auth
 
 
 async def require_oauth_cli_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext:
     """Require a validated Clerk Public OAuth App CLI access token."""
-    if not auth.oauth_cli:
+    if auth.principal != AuthPrincipal.CLI_OAUTH:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "This endpoint requires OAuth CLI authentication",
@@ -1087,32 +1191,17 @@ def is_scoped_api_key(auth: AuthContext) -> bool:
     """Any api_key with an explicit scope list is treated as
     "narrow capability" and rejected from user-only routes, whether
     or not the internal issuer supplied an environment binding."""
-    return auth.is_cli and auth.api_key is not None and auth.api_key.scopes is not None
+    return auth.principal in _SCOPED_API_KEY_PRINCIPALS
 
 
 def is_runtime_deployment_principal(auth: AuthContext) -> bool:
     """Identify one fenced strict-v2 workload independently of its permissions."""
-    key = auth.api_key
-    return bool(
-        auth.is_cli
-        and key is not None
-        and key.managed
-        and key.environment_id is not None
-        and key.runtime_deployment_id
-    )
+    return auth.principal in _RUNTIME_PRINCIPALS
 
 
 def is_connected_agent_principal(auth: AuthContext) -> bool:
     """Identify a current self-managed CLI, never a deployment-bound workload."""
-    if auth.oauth_cli:
-        return auth.api_key is None
-    key = auth.api_key
-    return bool(
-        key is not None
-        and not key.managed
-        and key.environment_id is None
-        and key.runtime_deployment_id is None
-    )
+    return auth.principal in _CONNECTED_AGENT_PRINCIPALS
 
 
 def is_env_bound_api_key(auth: AuthContext) -> bool:
@@ -1129,7 +1218,7 @@ def is_env_bound_api_key(auth: AuthContext) -> bool:
     Distinct from `is_scoped_api_key`: the latter is about
     capability narrowing (used to reject from user-only routes);
     this one is about env-project identity and visibility."""
-    return auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None
+    return auth.principal in _ENV_BOUND_API_KEY_PRINCIPALS
 
 
 async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext:
@@ -1185,7 +1274,7 @@ async def require_user_auth_unbound(
     additional rejection: api_keys bound to a specific environment
     cannot invoke sharing operations.
     """
-    if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
+    if is_env_bound_api_key(auth):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "user-level auth is required (Agent API keys cannot manage account resources)",
@@ -1202,8 +1291,7 @@ async def require_user_cli(auth: AuthContext = Depends(get_auth)) -> AuthContext
     as `require_user_auth` — `clawdi run` from a hosted agent pod
     must resolve vault plaintext for the env it's bound to.
     Per-env data filtering is enforced inside the resolve handler."""
-    if not auth.is_cli and not auth.oauth_cli:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "This endpoint requires CLI authentication")
+    await require_cli_auth(auth)
     if is_scoped_api_key(auth):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -1240,7 +1328,7 @@ async def optional_web_auth(
         # public access permissions. We deliberately do NOT fall back to
         # API-key auth here (see docstring).
         return None
-    if ctx is None or ctx.oauth_cli:
+    if ctx is None or ctx.principal == AuthPrincipal.CLI_OAUTH:
         return None
     record_authenticated_request(_credential_kind(ctx), "user")
     return ctx
@@ -1253,7 +1341,7 @@ async def require_user_session(auth: AuthContext = Depends(get_auth)) -> AuthCon
     management stays browser-only through `require_web_auth`. API keys remain
     blocked so a leaked deploy key cannot manage the user's other resources.
     """
-    if auth.is_cli:
+    if auth.principal not in _USER_PRINCIPALS:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This endpoint is not available to API keys")
     return auth
 
@@ -1264,7 +1352,7 @@ async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext
     Refusing API keys and CLI OAuth tokens prevents a leaked credential from
     enumerating or revoking other credentials, or approving another device.
     """
-    if auth.is_cli or auth.oauth_cli:
+    if auth.principal not in {AuthPrincipal.WEB_SESSION, AuthPrincipal.DEV_BYPASS}:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "This endpoint requires dashboard authentication"
         )
