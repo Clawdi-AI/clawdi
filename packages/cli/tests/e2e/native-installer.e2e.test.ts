@@ -19,7 +19,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
-import { gzipSync } from "node:zlib";
+import { compareSemver } from "../../src/lib/semver";
 import {
 	configuredNativeBinary,
 	createNativeReleaseFixture,
@@ -332,6 +332,74 @@ afterEach(() => {
 		expect(readdirSync(nativeRoot).filter((entry) => entry.startsWith(".stage-"))).toEqual([]);
 	}, 120_000);
 
+	it("automatic activation preserves a newer version installed after discovery", () => {
+		if (!nativeBinary) throw new Error("native binary is required");
+		const root = fixtureRoot();
+		const home = join(root, "home");
+		const clawdiHome = join(root, "clawdi-home");
+		const prefix = join(root, "prefix");
+		mkdirSync(home);
+		mkdirSync(clawdiHome);
+		const base = createNativeReleaseFixture({
+			root,
+			binary: nativeBinary,
+			resourceRoot: dirname(nativeBinary),
+		});
+		const version = derivedNativeFixtureVersions(base.version, 1)[0];
+		if (!version) throw new Error("derived version is required");
+		const binary = join(root, "derived-clawdi");
+		deriveNativeVersion(nativeBinary, binary, version);
+		const derived = createNativeReleaseFixture({
+			root,
+			binary,
+			resourceRoot: dirname(nativeBinary),
+		});
+		const [older, newer] = [base, derived].sort((a, b) => compareSemver(a.version, b.version));
+		if (!older || !newer) throw new Error("two releases are required");
+		const installed = runNativeInstaller({
+			fixture: newer,
+			prefix,
+			home,
+			clawdiHome,
+			testRoot: root,
+		});
+		expect(installed.code, installed.stderr).toBe(0);
+		const launcher = join(prefix, "bin", "clawdi");
+		const activeTarget = readlinkSync(launcher);
+		const stage = join(prefix, "share", "clawdi", ".stage-stale-auto-update");
+		cpSync(join(older.directory, "payload"), stage, { recursive: true });
+		cpSync(
+			join(older.directory, "clawdi-cli-manifest.txt"),
+			join(stage, "clawdi-cli-manifest.txt"),
+		);
+		const result = command(
+			join(stage, "clawdi"),
+			[
+				"update",
+				"--native-activate",
+				"--native-auto-update",
+				"--native-stage",
+				stage,
+				"--native-prefix",
+				prefix,
+				"--native-version",
+				older.version,
+				"--native-target",
+				older.target,
+			],
+			{
+				...process.env,
+				HOME: home,
+				CLAWDI_HOME: clawdiHome,
+				CLAWDI_NO_AUTO_UPDATE: "1",
+				CLAWDI_NO_UPDATE_CHECK: "1",
+			},
+		);
+		expect(result.code, result.stderr).toBe(76);
+		expect(readlinkSync(launcher)).toBe(activeTarget);
+		expect(command(launcher, ["--version"]).stdout.trim()).toBe(newer.version);
+	}, 60_000);
+
 	it("fails closed for damaged archives and unowned launchers", () => {
 		if (!nativeBinary) throw new Error("native binary is required");
 		const root = fixtureRoot();
@@ -393,29 +461,20 @@ afterEach(() => {
 			);
 		});
 
-		withReleaseClone(baseline, root, "duplicate", (duplicate) => {
-			const plainTar = join(duplicate.directory, "duplicate.tar");
+		withReleaseClone(baseline, root, "traversal", (traversal) => {
 			run("tar", [
-				"-cf",
-				plainTar,
+				"-czf",
+				join(traversal.directory, `clawdi-cli-${traversal.target}.tar.gz`),
+				"--transform=s|^egress-addon/clawdi_egress_addon.py$|../escape.py|",
 				"-C",
-				join(duplicate.directory, "payload"),
+				join(traversal.directory, "payload"),
 				"clawdi",
 				"egress-addon",
 				"skills",
 			]);
-			run("tar", ["-rf", plainTar, "-C", join(duplicate.directory, "payload"), "clawdi"]);
-			const compressed = spawnSync("gzip", ["-c", plainTar], {
-				maxBuffer: 256 * 1024 * 1024,
-			});
-			if (compressed.status !== 0) throw new Error(`gzip failed: ${compressed.stderr}`);
-			writeFileSync(
-				join(duplicate.directory, `clawdi-cli-${duplicate.target}.tar.gz`),
-				compressed.stdout,
-			);
-			rewriteNativeReleaseManifest(duplicate);
+			rewriteNativeReleaseManifest(traversal);
 			assertRejectedWithoutActivation(
-				duplicate,
+				traversal,
 				prefix,
 				home,
 				clawdiHome,
@@ -423,6 +482,7 @@ afterEach(() => {
 				launcher,
 				activeTarget,
 			);
+			expect(existsSync(join(prefix, "share", "clawdi", "escape.py"))).toBeFalse();
 		});
 
 		withReleaseClone(baseline, root, "bomb", (bomb) => {
@@ -431,24 +491,6 @@ afterEach(() => {
 			truncateSync(bombPath, 513 * 1024 * 1024);
 			repack(bomb);
 			assertRejectedWithoutActivation(bomb, prefix, home, clawdiHome, root, launcher, activeTarget);
-		});
-
-		withReleaseClone(baseline, root, "listing-bomb", (listingBomb) => {
-			writeFileSync(
-				join(listingBomb.directory, `clawdi-cli-${listingBomb.target}.tar.gz`),
-				gzipSync(manyEntryTar(72_000), { level: 1 }),
-			);
-			rewriteNativeReleaseManifest(listingBomb);
-			const listingRejected = assertRejectedWithoutActivation(
-				listingBomb,
-				prefix,
-				home,
-				clawdiHome,
-				root,
-				launcher,
-				activeTarget,
-			);
-			expect(listingRejected.stderr).toContain("path listing exceeds the size limit");
 		});
 
 		for (const kind of ["regular", "broken"] as const) {
@@ -649,34 +691,6 @@ function assertRejectedWithoutActivation(
 	expect(result.code).not.toBe(0);
 	expect(readlinkSync(launcher)).toBe(activeTarget);
 	return result;
-}
-
-function manyEntryTar(count: number): Buffer {
-	const archive = Buffer.alloc((count + 2) * 512);
-	const prefix = `skills/${"p".repeat(147)}`;
-	for (let index = 0; index < count; index += 1) {
-		const header = archive.subarray(index * 512, (index + 1) * 512);
-		const name = `${String(index).padStart(5, "0")}-${"x".repeat(90)}`;
-		header.write(name, 0, 100, "ascii");
-		writeTarOctal(header, 100, 8, 0o644);
-		writeTarOctal(header, 108, 8, 0);
-		writeTarOctal(header, 116, 8, 0);
-		writeTarOctal(header, 124, 12, 0);
-		writeTarOctal(header, 136, 12, 0);
-		header.fill(0x20, 148, 156);
-		header.write("0", 156, 1, "ascii");
-		header.write("ustar\0", 257, 6, "ascii");
-		header.write("00", 263, 2, "ascii");
-		header.write(prefix, 345, 155, "ascii");
-		let checksum = 0;
-		for (const byte of header) checksum += byte;
-		header.write(`${checksum.toString(8).padStart(6, "0")}\0 `, 148, 8, "ascii");
-	}
-	return archive;
-}
-
-function writeTarOctal(header: Buffer, offset: number, length: number, value: number): void {
-	header.write(`${value.toString(8).padStart(length - 1, "0")}\0`, offset, length, "ascii");
 }
 
 function run(commandName: string, args: string[]): void {

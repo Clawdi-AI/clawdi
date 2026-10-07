@@ -23,6 +23,9 @@ export function writeNativeReleaseManifests(releaseDir, version) {
 			.digest("hex");
 		return { target, row: `artifact\t${target}\t${asset}\t${sha256}` };
 	});
+	// TODO (2026-10-07): stop generating frozen v1 after 2027-01-05, once a
+	// release with lenient v2 readers is the oldest supported auto-update path
+	// for 90 days. Keep v1 bytes unchanged until that migration is complete.
 	const v1 = [
 		NATIVE_RELEASE_MANIFEST_SCHEMA,
 		`version\t${version}`,
