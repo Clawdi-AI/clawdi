@@ -1,4 +1,4 @@
-import type { ComputeRecoveryTarget } from "@clawdi/shared/api";
+import type { ComputeRecoveryTarget, StoreBootstrap } from "@clawdi/shared/api";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
 
 /** M2 uses this policy for card-only surfaces, independently of IAP availability. */
@@ -26,6 +26,18 @@ export function storeSurfaces(storeBuild: boolean, purchasesAvailable: boolean):
 		addCredits: storeBuild || purchasesAvailable,
 		creditUnits: storeBuild,
 	};
+}
+
+/** Compute subscriptions require every independent release and server gate. */
+export function computePurchaseAvailable(
+	config: Pick<MobileRuntimeConfig, "environment">,
+	bootstrap: Pick<StoreBootstrap, "compute_subscriptions_enabled" | "compute_slot"> | null,
+): boolean {
+	return Boolean(
+		isStoreBuild(config) &&
+			bootstrap?.compute_subscriptions_enabled &&
+			bootstrap.compute_slot?.available,
+	);
 }
 
 /** Wallet-rail `top_up` recovery opens the Paywall; card recovery becomes a neutral status. */

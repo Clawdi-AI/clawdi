@@ -1,18 +1,37 @@
+import type {
+	StoreBootstrap,
+	StoreComputeReconcileResponse,
+	StoreComputeSlot,
+} from "@clawdi/shared/api";
 import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { AppState, Platform } from "react-native";
+import type { PurchasesOffering } from "react-native-purchases";
 import { useMobileApi } from "@/lib/api-provider";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import type { AccountScope } from "@/platform/auth/account-scope";
+import {
+	type ComputeProduct,
+	type ComputeProductSelection,
+	createComputeSubscriptionPurchase,
+	loadComputeOfferingForIdentity,
+	loadComputeProductsForIdentity,
+} from "./compute-subscription";
 import { createPurchaseAttemptStore } from "./purchase-attempt-storage";
 import { createPurchaseFlow, type PurchaseFlow, type PurchaseOutcome } from "./purchase-flow";
 import { revenueCat } from "./revenuecat";
-import { type StorePurchaseError, storePurchaseError } from "./store-error";
+import { StorePurchaseError, storePurchaseError } from "./store-error";
 import { createStoreIdentity, type StoreAvailability } from "./store-identity";
-import { isStoreBuild, type StoreSurfaces, storeSurfaces } from "./store-policy";
+import {
+	computePurchaseAvailable,
+	isStoreBuild,
+	type StoreSurfaces,
+	storeSurfaces,
+} from "./store-policy";
 import { recoverStoreFlow } from "./store-recovery";
+import { restoreStorePurchases } from "./store-restore";
 
 const journal = createPurchaseAttemptStore(SecureStore);
 type MobileStore = Readonly<{
@@ -20,13 +39,46 @@ type MobileStore = Readonly<{
 	flow: PurchaseFlow | null;
 	recovery: readonly PurchaseOutcome[];
 	error: StorePurchaseError | null;
+	bootstrap: StoreBootstrap | null;
+	computeSubscriptionsEnabled: boolean;
+	computeSlot: StoreComputeSlot | null;
+	computeProducts: readonly ComputeProduct[];
+	computeOffering: PurchasesOffering | null;
+	purchaseComputeSubscription: (
+		request: ComputeSubscriptionPurchaseRequest,
+		signal?: AbortSignal,
+	) => Promise<PurchaseOutcome>;
+	restorePurchases: (signal?: AbortSignal) => Promise<StoreComputeReconcileResponse>;
 }>;
 type MobileStoreContext = MobileStore & Readonly<{ storeBuild: boolean }>;
+
+export type ComputeSubscriptionPurchaseRequest = Readonly<{
+	store_product_id: string;
+	pending_deploy_request_id?: string | null;
+	target_contract_id?: string | null;
+	target_deployment_id?: string | null;
+	selection: ComputeProductSelection;
+	oldProductIdentifier?: string | null;
+}>;
+
+const unavailablePurchase = async (): Promise<PurchaseOutcome> => {
+	throw new StorePurchaseError("store_purchases_disabled");
+};
+const unavailableRestore = async (): Promise<StoreComputeReconcileResponse> => {
+	throw new StorePurchaseError("store_purchases_disabled");
+};
 const unavailable: MobileStore = {
 	availability: { available: false, reason: "store_purchases_disabled" },
 	flow: null,
 	recovery: [],
 	error: null,
+	bootstrap: null,
+	computeSubscriptionsEnabled: false,
+	computeSlot: null,
+	computeProducts: [],
+	computeOffering: null,
+	purchaseComputeSubscription: unavailablePurchase,
+	restorePurchases: unavailableRestore,
 };
 const StoreContext = createContext<MobileStoreContext>({ ...unavailable, storeBuild: false });
 
@@ -77,6 +129,8 @@ export function StoreProvider({
 					update({ ...unavailable, availability });
 					return;
 				}
+				const bootstrap = availability.bootstrap;
+				let latestBootstrap = bootstrap;
 				if (!flow) {
 					const digest = await Crypto.digestStringAsync(
 						Crypto.CryptoDigestAlgorithm.SHA256,
@@ -94,9 +148,116 @@ export function StoreProvider({
 						newKey: Crypto.randomUUID,
 					});
 				}
-				update({ availability, flow, recovery: [], error: null });
+				let computeProducts: readonly ComputeProduct[] = [];
+				let computeOffering: PurchasesOffering | null = null;
+				if (isStoreBuild(config) && bootstrap.compute_subscriptions_enabled) {
+					try {
+						computeProducts = await loadComputeProductsForIdentity({
+							scope,
+							identity,
+							sdk: revenueCat,
+							signal: controller.signal,
+						});
+					} catch {
+						computeProducts = [];
+					}
+					try {
+						computeOffering = await loadComputeOfferingForIdentity({
+							scope,
+							identity,
+							sdk: revenueCat,
+							signal: controller.signal,
+						});
+					} catch {
+						computeOffering = null;
+					}
+				}
+				const computePurchase = createComputeSubscriptionPurchase({
+					scope,
+					identity,
+					sdk: revenueCat,
+					platform,
+				});
+				const purchaseComputeSubscription = async (
+					request: ComputeSubscriptionPurchaseRequest,
+					callerSignal?: AbortSignal,
+				): Promise<PurchaseOutcome> => {
+					if (!computePurchaseAvailable(config, latestBootstrap))
+						throw new StorePurchaseError("store_purchases_disabled");
+					if (!flow) throw new StorePurchaseError("store_purchases_disabled");
+					return flow.purchase(
+						{
+							purpose: "compute_subscription",
+							store_product_id: request.store_product_id,
+							pending_deploy_request_id: request.pending_deploy_request_id ?? null,
+							target_contract_id: request.target_contract_id ?? null,
+							target_deployment_id: request.target_deployment_id ?? null,
+						},
+						(signal, attempt) =>
+							computePurchase(
+								attempt,
+								request.selection,
+								request.oldProductIdentifier ?? null,
+								signal,
+							),
+						callerSignal,
+						{ nativeOperationManagesIdentity: true },
+					);
+				};
+				const restorePurchases = async (callerSignal?: AbortSignal) => {
+					const result = await restoreStorePurchases({
+						scope,
+						identity,
+						sdk: revenueCat,
+						client,
+						signal: callerSignal,
+					});
+					latestBootstrap = { ...latestBootstrap, compute_slot: result.compute_slot ?? null };
+					if (current())
+						update({
+							availability: {
+								available: true,
+								bootstrap: latestBootstrap,
+							},
+							flow,
+							recovery: [],
+							error: null,
+							bootstrap: latestBootstrap,
+							computeSubscriptionsEnabled: latestBootstrap.compute_subscriptions_enabled,
+							computeSlot: result.compute_slot ?? null,
+							computeProducts,
+							computeOffering,
+							purchaseComputeSubscription,
+							restorePurchases,
+						});
+					return result;
+				};
+				update({
+					availability,
+					flow,
+					recovery: [],
+					error: null,
+					bootstrap,
+					computeSubscriptionsEnabled: bootstrap.compute_subscriptions_enabled,
+					computeSlot: bootstrap.compute_slot ?? null,
+					computeProducts,
+					computeOffering,
+					purchaseComputeSubscription,
+					restorePurchases,
+				});
 				const recovered = await recoverStoreFlow(flow, controller.signal);
-				if (!controller.signal.aborted) update({ availability, ...recovered });
+				if (!controller.signal.aborted)
+					update({
+						availability,
+						...recovered,
+						bootstrap,
+						computeSubscriptionsEnabled: bootstrap.compute_subscriptions_enabled,
+						computeSlot: bootstrap.compute_slot ?? null,
+						computeProducts,
+						computeOffering,
+						purchaseComputeSubscription,
+						restorePurchases,
+					});
 			} catch (error) {
 				if (!controller.signal.aborted)
 					update({ ...unavailable, error: storePurchaseError(error) });

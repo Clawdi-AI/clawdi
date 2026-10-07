@@ -1,7 +1,12 @@
 import type { StorePlatform } from "@clawdi/shared/api";
 import Purchases, {
+	type CustomerInfo,
+	type MakePurchaseResult,
 	type PurchasesOffering,
+	type PurchasesPackage,
+	type PurchasesStoreProduct,
 	type PurchasesStoreTransaction,
+	type StoreProductChangeInfo,
 } from "react-native-purchases";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
 import { StorePurchaseError } from "./store-error";
@@ -105,6 +110,59 @@ export function createRevenueCat(identityTimeoutMs = 300_000) {
 				await assertIdentity(appUserId, assertCurrent);
 			}),
 		withIdentity,
+		getProducts: (
+			appUserId: string,
+			assertCurrent: () => void,
+			productIdentifiers: readonly string[],
+			signal: AbortSignal,
+		) =>
+			withIdentity(
+				appUserId,
+				assertCurrent,
+				() =>
+					Purchases.getProducts([...productIdentifiers], Purchases.PRODUCT_CATEGORY.SUBSCRIPTION),
+				signal,
+			),
+		getOfferings: (appUserId: string, assertCurrent: () => void, signal: AbortSignal) =>
+			withIdentity(appUserId, assertCurrent, () => Purchases.getOfferings(), signal),
+		purchaseStoreProduct: (
+			appUserId: string,
+			assertCurrent: () => void,
+			product: PurchasesStoreProduct,
+			changeInfo: StoreProductChangeInfo | null,
+			signal: AbortSignal,
+		): Promise<MakePurchaseResult> =>
+			withIdentity(
+				appUserId,
+				assertCurrent,
+				() => Purchases.purchaseStoreProduct(product, changeInfo),
+				signal,
+			),
+		purchasePackage: (
+			appUserId: string,
+			assertCurrent: () => void,
+			pkg: PurchasesPackage,
+			changeInfo: StoreProductChangeInfo | null,
+			signal: AbortSignal,
+		): Promise<MakePurchaseResult> =>
+			withIdentity(
+				appUserId,
+				assertCurrent,
+				() => Purchases.purchasePackage(pkg, null, changeInfo),
+				signal,
+			),
+		restorePurchases: (
+			appUserId: string,
+			assertCurrent: () => void,
+			signal: AbortSignal,
+		): Promise<CustomerInfo> =>
+			withIdentity(appUserId, assertCurrent, () => Purchases.restorePurchases(), signal),
+		showManageSubscriptions: (
+			appUserId: string,
+			assertCurrent: () => void,
+			signal: AbortSignal,
+		): Promise<void> =>
+			withIdentity(appUserId, assertCurrent, () => Purchases.showManageSubscriptions(), signal),
 		syncPurchases: (appUserId: string, assertCurrent: () => void, signal: AbortSignal) =>
 			withIdentity(appUserId, assertCurrent, () => Purchases.syncPurchases(), signal),
 	};

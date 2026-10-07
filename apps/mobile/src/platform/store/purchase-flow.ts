@@ -16,7 +16,28 @@ import type { RevenueCat, StoreTransactionHint } from "./revenuecat";
 import { StorePurchaseError, storePurchaseError } from "./store-error";
 import { assertStoreAccount, type StoreIdentity } from "./store-identity";
 
-type PurchaseIntent = Pick<StorePurchaseAttemptRequest, "purpose" | "pending_deploy_request_id">;
+export type PurchaseIntent = Pick<
+	StorePurchaseAttemptRequest,
+	| "purpose"
+	| "pending_deploy_request_id"
+	| "store_product_id"
+	| "target_contract_id"
+	| "target_deployment_id"
+>;
+
+function sameOptionalUuid(
+	left: string | null | undefined,
+	right: string | null | undefined,
+): boolean {
+	if (left === right) return true;
+	return (
+		typeof left === "string" &&
+		typeof right === "string" &&
+		/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(left) &&
+		/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(right) &&
+		left.toLowerCase() === right.toLowerCase()
+	);
+}
 export type PurchaseOutcome = Readonly<{
 	status: "funding_applied" | "submitted" | "terminal" | "pending" | "cancelled";
 	attempt: StorePurchaseAttempt;
@@ -110,7 +131,11 @@ export function createPurchaseFlow(options: {
 			attempt.purpose !== saved.request.purpose ||
 			attempt.catalogue_revision !== saved.request.catalogue_revision ||
 			(attempt.pending_deploy_request_id ?? null) !==
-				(saved.request.pending_deploy_request_id ?? null)
+				(saved.request.pending_deploy_request_id ?? null) ||
+			(attempt.requested_store_product_id ?? attempt.store_product_id ?? null) !==
+				(saved.request.store_product_id ?? null) ||
+			!sameOptionalUuid(attempt.target_contract_id, saved.request.target_contract_id) ||
+			(attempt.target_deployment_id ?? null) !== (saved.request.target_deployment_id ?? null)
 		)
 			throw new StorePurchaseError("store_attempt_conflict");
 		if (!saved.attemptId) {
@@ -235,7 +260,12 @@ export function createPurchaseFlow(options: {
 		 */
 		purchase: async (
 			intent: PurchaseIntent,
-			showPaywall: (signal: AbortSignal) => Promise<StoreTransactionHint | null>,
+			showPaywall: (
+				signal: AbortSignal,
+				attempt: StorePurchaseAttempt,
+			) => Promise<StoreTransactionHint | null>,
+			callerSignal?: AbortSignal,
+			options?: Readonly<{ nativeOperationManagesIdentity?: boolean }>,
 		): Promise<PurchaseOutcome> => {
 			if (busy) throw new StorePurchaseError("purchase_pending");
 			busy = true;
@@ -251,7 +281,11 @@ export function createPurchaseFlow(options: {
 						saved &&
 						(saved.request.purpose !== intent.purpose ||
 							(saved.request.pending_deploy_request_id ?? null) !==
-								(intent.pending_deploy_request_id ?? null))
+								(intent.pending_deploy_request_id ?? null) ||
+							(saved.request.store_product_id ?? null) !== (intent.store_product_id ?? null) ||
+							!sameOptionalUuid(saved.request.target_contract_id, intent.target_contract_id) ||
+							(saved.request.target_deployment_id ?? null) !==
+								(intent.target_deployment_id ?? null))
 					) {
 						const existing = await create(saved, signal);
 						saved = existing.saved;
@@ -269,16 +303,22 @@ export function createPurchaseFlow(options: {
 						} else throw new StorePurchaseError("purchase_pending");
 					}
 					if (!saved) {
+						const request: StorePurchaseAttemptRequest = {
+							platform,
+							catalogue_revision: ready.catalogueRevision,
+							purpose: intent.purpose,
+							pending_deploy_request_id: intent.pending_deploy_request_id ?? null,
+						};
+						if (intent.purpose === "compute_subscription") {
+							request.store_product_id = intent.store_product_id;
+							request.target_contract_id = intent.target_contract_id ?? null;
+							request.target_deployment_id = intent.target_deployment_id ?? null;
+						}
 						saved = {
 							format: 1,
 							key: newKey(),
 							appUserId: ready.appUserId,
-							request: {
-								platform,
-								catalogue_revision: ready.catalogueRevision,
-								purpose: intent.purpose,
-								pending_deploy_request_id: intent.pending_deploy_request_id ?? null,
-							},
+							request,
 							attemptId: null,
 							purchaseStarted: false,
 							cancelled: false,
@@ -301,12 +341,14 @@ export function createPurchaseFlow(options: {
 					const started = { ...saved, purchaseStarted: true, cancelled: false };
 					await journal.replaceAttempt(storageKey, saved, started, () => current(signal));
 					saved = started;
-					const transaction = await sdk.withIdentity(
-						ready.appUserId,
-						() => assertStoreAccount(scope, signal),
-						showPaywall,
-						signal,
-					);
+					const transaction = options?.nativeOperationManagesIdentity
+						? await showPaywall(signal, created.attempt)
+						: await sdk.withIdentity(
+								ready.appUserId,
+								() => assertStoreAccount(scope, signal),
+								(operationSignal) => showPaywall(operationSignal, created.attempt),
+								signal,
+							);
 					assertStoreAccount(scope, signal);
 					if (!transaction) {
 						await journal.replaceAttempt(
@@ -323,7 +365,7 @@ export function createPurchaseFlow(options: {
 					const purchased = { ...saved, transactionHint: hint };
 					await journal.replaceAttempt(storageKey, saved, purchased, () => current(signal));
 					return reconcile(created.attempt, purchased, signal, deadline);
-				});
+				}, callerSignal);
 			} finally {
 				busy = false;
 			}
