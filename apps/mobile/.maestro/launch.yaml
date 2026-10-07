@@ -1,0 +1,28 @@
+appId: ${APP_ID}
+name: Development client launch
+---
+# A slow read-only AVD cold boot may show this Android startup dialog.
+# Allow System UI to finish; app ANRs still fail the smoke.
+- runFlow:
+    when:
+      visible: "System UI isn't responding"
+    commands:
+      - tapOn: "Wait"
+- launchApp:
+    clearState: true
+    permissions: {}
+- extendedWaitUntil:
+    visible: "Development Build"
+    timeout: 120000
+- openLink:
+    link: ${DEV_CLIENT_URL}
+    autoVerify: false
+- extendedWaitUntil:
+    visible: "Overview"
+    timeout: 180000
+- assertVisible: ".*Avery.*"
+- scrollUntilVisible:
+    element: "Open Claude Code.*"
+    timeout: 30000
+- assertVisible: "Open Claude Code.*"
+- takeScreenshot: launch

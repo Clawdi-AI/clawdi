@@ -1,0 +1,48 @@
+appId: ${APP_ID}
+name: Fixture tabs and details
+---
+# Home: open a fixture Agent from the overview card.
+- tapOn: "Open Claude Code.*"
+- assertVisible: "Claude Code"
+- assertVisible: "Status, resources, and recent activity for this agent."
+- takeScreenshot: home-detail
+- back
+
+# Agents: inventory and a different fixture Agent detail.
+- tapOn: "Agents"
+- extendedWaitUntil:
+    visible: "Open Codex.*"
+    timeout: 30000
+- takeScreenshot: agents
+- tapOn: "Open Codex.*"
+- assertVisible: "Codex"
+- assertVisible: "Status, resources, and recent activity for this agent."
+- takeScreenshot: agent-detail
+- back
+
+# Sessions: fixture inventory and the rendered transcript, not just a title.
+- tapOn: "Sessions"
+- extendedWaitUntil:
+    visible: ".*Refactor billing webhooks into an idempotent queue.*"
+    timeout: 30000
+- takeScreenshot: sessions
+- tapOn: ".*Refactor billing webhooks into an idempotent queue.*"
+- assertVisible: ".*Refactor billing webhooks into an idempotent queue.*"
+- scrollUntilVisible:
+    element: ".*Start by looking at the relevant files and propose a plan before changing anything.*"
+    timeout: 30000
+- assertVisible: ".*Start by looking at the relevant files and propose a plan before changing anything.*"
+- takeScreenshot: session-detail
+- back
+
+# Library: projects list and fixture project bundle.
+- tapOn: "Library"
+- assertVisible: "Projects.*"
+- takeScreenshot: library
+- tapOn: "Projects.*"
+- extendedWaitUntil:
+    visible: "Open Acme Web App"
+    timeout: 30000
+- tapOn: "Open Acme Web App"
+- assertVisible: ".*Customer-facing dashboard, marketing site and design system.*"
+- takeScreenshot: project-detail

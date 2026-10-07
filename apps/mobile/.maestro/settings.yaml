@@ -1,0 +1,14 @@
+appId: ${APP_ID}
+name: Account settings and fixture API keys
+---
+- tapOn: "Account"
+- assertVisible: "Avery Chen"
+- assertVisible: "avery@clawdi.dev"
+- assertVisible: "Appearance"
+- takeScreenshot: settings
+- tapOn: "API Keys"
+- extendedWaitUntil:
+    visible: ".*clawdi_mbp4.*"
+    timeout: 30000
+- assertVisible: ".*clawdi_dvb1.*"
+- takeScreenshot: api-keys

@@ -94,6 +94,14 @@ and its account/session request fencing remain in use for production builds.
 Done: with the fixture API running, the Android development build opens the
 real Home tab without Clerk sign-in and loads fixture data through the Cloud API.
 
+For bounded Android automation, run `scripts/mobile-e2e.sh --apk <development.apk>`
+from the repository root. The APK must contain `expo-dev-client`; the script
+loads the current worktree from Metro with fixture authentication. It uses an
+existing read-only AVD on port 5564, fixture API 8796 and one Metro worker on
+8096, and cleans up its processes on exit. See the
+[Maestro smoke guide](../apps/mobile/.maestro/README.md) for prerequisites,
+coverage, artifacts, the skipped live Clerk check and manual release CI.
+
 ### Clerk native authentication
 
 Sign-in, sign-up and account management use Clerk's prebuilt native components
