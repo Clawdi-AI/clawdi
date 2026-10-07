@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, require_scope
 from app.core.database import get_session
+from app.core.posthog import stage_session_sync
 from app.models.session import (
     Session,
     SessionEventAppendReceipt,
@@ -572,12 +573,14 @@ async def commit_session_event_generation(
     session.event_count = body.final_count
     session.event_head_hash = body.final_head_hash
     generation.status = "committed"
+    projection_complete = all(chunk.search_indexed_at is not None for chunk in chunks)
     await finalize_event_search_index(
         db,
         session,
         generation_id,
-        projection_complete=all(chunk.search_indexed_at is not None for chunk in chunks),
+        projection_complete=projection_complete,
     )
+    await stage_session_sync(db, session, user=auth.user, projection_complete=projection_complete)
     await notify_session_content_changed(db, session.id)
     await db.commit()
     return SessionEventAppendResponse(
@@ -773,6 +776,7 @@ async def append_session_events(
         generation,
         projection_complete=projection_complete,
     )
+    await stage_session_sync(db, session, user=auth.user, projection_complete=projection_complete)
     await notify_session_content_changed(db, session.id)
     await db.commit()
     return SessionEventAppendResponse(

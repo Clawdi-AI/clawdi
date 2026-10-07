@@ -28,6 +28,7 @@ from sqlalchemy.sql.selectable import Select, Subquery
 
 from app.core.cleanup import finish_cleanup
 from app.core.config import settings
+from app.core.posthog import stage_user_capture
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
     BINDING_STATUS_ARCHIVED,
@@ -809,6 +810,13 @@ async def get_or_create_bot_agent_link(
     store_agent_link_token(link, raw_token)
     db.add(link)
     await db.flush()
+    await stage_user_capture(
+        db,
+        "channel_connected",
+        user_id=link_user_id,
+        event_key=str(link.id),
+        properties={"feature": "channels"},
+    )
     return link, raw_token
 
 

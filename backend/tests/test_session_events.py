@@ -287,6 +287,54 @@ async def _commit_generation(
     return generation, final_head, append_id
 
 
+async def test_product_sync_capture_counts_messages_and_skips_commit_replay(
+    client, db_session, monkeypatch
+):
+    from app.core import posthog
+    from app.core.config import settings
+
+    captures = []
+    monkeypatch.setattr(settings, "posthog_api_key", "test-project-key")
+    monkeypatch.setattr(
+        posthog,
+        "capture_event",
+        lambda name, **kwargs: captures.append({"event": name, **kwargs}) or True,
+    )
+    local_id = "analytics-events-session"
+    agent_id, _ = await _register_session(client, db_session, local_session_id=local_id)
+    # One long message has several search chunks; those must count as one.
+    events = [
+        _event(
+            0, "message", "user", role="user", parts=[{"type": "text", "text": "PRIVATE " * 4000}]
+        )
+    ]
+    generation, head, append_id = await _commit_generation(
+        client,
+        environment_id=agent_id,
+        local_session_id=local_id,
+        events=events,
+    )
+    replay = await client.post(
+        f"/v1/sessions/{local_id}/events/generations/{generation}/commit",
+        json={
+            "append_id": append_id,
+            "base_generation": None,
+            "base_revision": 0,
+            "base_count": 0,
+            "base_head_hash": EMPTY_EVENT_HEAD,
+            "final_count": 1,
+            "final_head_hash": head,
+        },
+    )
+    assert replay.status_code == 200, replay.text
+    syncs = [capture for capture in captures if capture["event"] == "session_synced"]
+    assert len(syncs) == 1
+    assert syncs[0]["properties"]["message_count"] == 1
+    assert syncs[0]["properties"]["has_messages"] is True
+    assert syncs[0]["properties"]["protocol"] == "events-v1"
+    assert "PRIVATE" not in str(syncs)
+
+
 @pytest.mark.asyncio
 async def test_staging_uploads_and_retries_refresh_retention_activity(
     client: httpx.AsyncClient,

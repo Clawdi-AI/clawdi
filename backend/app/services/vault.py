@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.core.auth import AuthContext, is_env_bound_api_key
+from app.core.posthog import stage_capture
 from app.core.project import (
     project_ids_owned_by_user,
     resolve_default_write_project,
@@ -81,6 +82,13 @@ async def create_account_vault(
         vault = Vault(user_id=auth.user_id, slug=body.slug, name=body.name)
         db.add(vault)
         await db.flush()
+        stage_capture(
+            db,
+            "vault_created",
+            user=auth.user,
+            event_key=str(vault.id),
+            properties={"feature": "vault"},
+        )
 
     if selected_project_id is not None:
         await _ensure_vault_attached(db, vault.id, selected_project_id)
