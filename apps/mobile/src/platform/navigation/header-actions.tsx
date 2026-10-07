@@ -29,18 +29,28 @@ export function HeaderActions({
 			{menu ? (
 				<Stack.Toolbar.Menu accessibilityLabel={menu.label} icon="ellipsis">
 					<Stack.Toolbar.Label>{menu.label}</Stack.Toolbar.Label>
-					{menu.items.map((action) => (
-						<Stack.Toolbar.MenuAction
-							key={action.id}
-							disabled={action.disabled}
-							destructive={action.destructive}
-							onPress={action.onPress}
-						>
-							{action.label}
-						</Stack.Toolbar.MenuAction>
+					{menu.items.map(menuAction)}
+					{menu.sections?.map((section) => (
+						<Stack.Toolbar.Menu key={section.id} inline title={section.title}>
+							{section.items.map(menuAction)}
+						</Stack.Toolbar.Menu>
 					))}
 				</Stack.Toolbar.Menu>
 			) : null}
 		</Stack.Toolbar>
+	);
+}
+
+function menuAction(action: HeaderAction) {
+	return (
+		<Stack.Toolbar.MenuAction
+			key={action.id}
+			disabled={action.disabled}
+			destructive={action.destructive}
+			isOn={action.selected}
+			onPress={action.onPress}
+		>
+			{action.label}
+		</Stack.Toolbar.MenuAction>
 	);
 }

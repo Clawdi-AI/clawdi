@@ -1,4 +1,13 @@
 import type { AgentProfile } from "../api/schemas";
+import { formatNumber } from "./utils";
+
+/** Web copy for Agent profiles (apps/web/src/components/dashboard/agent-profiles.tsx). */
+export const AGENT_PROFILES_COPY = {
+	title: "Profiles",
+	filterTitle: "Profile",
+	removed: "Removed",
+	profileSessionsEmpty: "No sessions synced from this profile yet.",
+} as const;
 
 /** URL search key for the Agent sessions profile filter. Holds the profile id
  * because the default profile's wire key is the empty string. */
@@ -30,4 +39,23 @@ export function agentProfileName(
 ): string {
 	const label = profileLabel(profile);
 	return label ? `${agentName} · ${label}` : agentName;
+}
+
+/** Overview row meta: "3 sessions". */
+export function agentProfileSessionCount(count: number): string {
+	return `${formatNumber(count)} ${count === 1 ? "session" : "sessions"}`;
+}
+
+/** Overview row accessible name: "View sessions for Agent · work, removed". */
+export function agentProfileRowLabel(name: string, profile: Pick<AgentProfile, "state">): string {
+	return `View sessions for ${name}${profile.state === "removed" ? ", removed" : ""}`;
+}
+
+/** Session filter option inside an Agent page, which already names the Agent: "work (removed)". */
+export function agentProfileFilterLabel(
+	agentName: string,
+	profile: Pick<AgentProfile, "profile_key" | "state">,
+): string {
+	const label = profileLabel(profile) ?? agentName;
+	return profile.state === "removed" ? `${label} (removed)` : label;
 }

@@ -1,6 +1,7 @@
 import {
 	DropdownMenu,
 	DropdownMenuItem,
+	HorizontalDivider,
 	Host,
 	Row,
 	Text,
@@ -12,6 +13,7 @@ import { useState } from "react";
 import { useCSSVariable, useUniwind } from "uniwind";
 import type { HeaderAction, HeaderMenu } from "@/platform/navigation/native-header-types";
 
+/** Inline sections and checked state follow @expo/ui's Android MenuView: divider, trailing ✓. */
 export function HeaderActions({
 	actions = [],
 	menu,
@@ -28,6 +30,29 @@ export function HeaderActions({
 	]);
 	const color = (value: string | number | undefined) =>
 		typeof value === "string" ? value : undefined;
+	const menuItem = (action: HeaderAction) => (
+		<DropdownMenuItem
+			key={action.id}
+			enabled={!action.disabled}
+			onClick={() => {
+				setExpanded(false);
+				action.onPress();
+			}}
+			elementColors={{
+				textColor: color(action.destructive ? destructive : foreground),
+				trailingIconColor: color(foreground),
+			}}
+		>
+			<DropdownMenuItem.Text>
+				<Text style={{ fontFamily: "Geist-Regular", fontSize: 14 }}>{action.label}</Text>
+			</DropdownMenuItem.Text>
+			{action.selected ? (
+				<DropdownMenuItem.TrailingIcon>
+					<Text style={{ fontFamily: "Geist-Regular", fontSize: 14 }}>✓</Text>
+				</DropdownMenuItem.TrailingIcon>
+			) : null}
+		</DropdownMenuItem>
+	);
 	return (
 		<Stack.Toolbar placement="right" asChild>
 			<Host matchContents colorScheme={theme === "dark" ? "dark" : "light"}>
@@ -61,25 +86,11 @@ export function HeaderActions({
 								</TextButton>
 							</DropdownMenu.Trigger>
 							<DropdownMenu.Items>
-								{menu.items.map((action) => (
-									<DropdownMenuItem
-										key={action.id}
-										enabled={!action.disabled}
-										onClick={() => {
-											setExpanded(false);
-											action.onPress();
-										}}
-										elementColors={{
-											textColor: color(action.destructive ? destructive : foreground),
-										}}
-									>
-										<DropdownMenuItem.Text>
-											<Text style={{ fontFamily: "Geist-Regular", fontSize: 14 }}>
-												{action.label}
-											</Text>
-										</DropdownMenuItem.Text>
-									</DropdownMenuItem>
-								))}
+								{menu.items.map(menuItem)}
+								{menu.sections?.flatMap((section) => [
+									<HorizontalDivider key={section.id} />,
+									...section.items.map(menuItem),
+								])}
 							</DropdownMenu.Items>
 						</DropdownMenu>
 					) : null}

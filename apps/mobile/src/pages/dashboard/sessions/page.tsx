@@ -10,6 +10,8 @@ import {
 	sessionsPageClasses as styles,
 } from "@clawdi/shared/ui";
 import {
+	AGENT_PROFILES_COPY,
+	agentDisplayName,
 	agentTypeLabel,
 	SESSION_LIST_COPY as copy,
 	getProjectResourceDefinition,
@@ -20,6 +22,10 @@ import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { PlusCircle } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import {
+	useAgentProfiles,
+	useAgentSessionProfileFilter,
+} from "@/components/dashboard/agent-profiles";
 import { FilterChip } from "@/components/filter-chip";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
@@ -35,7 +41,7 @@ import {
 import { NativeList } from "@/components/ui/native-list";
 import { Text } from "@/components/ui/text";
 import { WebIcon, WebText, WebView, webView } from "@/components/ui/web-layout";
-import { useCloudAgents, useCloudSessions } from "@/hooks/cloud-inventory";
+import { useCloudAgent, useCloudAgents, useCloudSessions } from "@/hooks/cloud-inventory";
 import { useI18n } from "@/lib/i18n";
 import { routeParam, uniqueSessions } from "@/lib/route-params";
 import { useAccountScope } from "@/platform/account-lifecycle";
@@ -64,8 +70,23 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 		router = useRouter();
 	const [draft, setDraft] = useState(() => normalizeSessionListQuery()),
 		[applied, setApplied] = useState(() => normalizeSessionListQuery());
-	const sessions = useCloudSessions(agentId, !invalid, applied),
+	const agent = useCloudAgent(agentId),
+		profiles = useAgentProfiles(agentId, { enabled: !invalid });
+	const profileFilter = useAgentSessionProfileFilter({
+		agentName: agent.data ? agentDisplayName(agent.data) : "",
+		profiles: profiles.data,
+		profilesLoading: profiles.isLoading,
+	});
+	const profileKey = profileFilter.profileKey;
+	const sessions = useCloudSessions(agentId, !invalid && !profileFilter.pending, {
+			...applied,
+			profile_key: profileKey,
+		}),
 		agents = useCloudAgents();
+	useEffect(() => {
+		requestRevision.current++;
+		setPaginationError(undefined);
+	}, [profileKey]);
 	const searchValid = !draft.q?.trim() || isSearchQueryReady(draft.q);
 	useEffect(() => {
 		if (!searchValid) return;
@@ -82,6 +103,7 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 		setPaginationError(undefined);
 		setDraft(normalizeSessionListQuery());
 		setApplied(normalizeSessionListQuery());
+		if (profileKey !== undefined) profileFilter.clear();
 	};
 	const agentTypes = [
 		...new Set([
@@ -89,9 +111,10 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 			...(draft.agent ? [draft.agent] : []),
 		]),
 	].sort();
-	const filtered = Boolean(
+	const listFiltered = Boolean(
 		draft.q?.trim() || draft.agent || draft.has_pr != null || draft.automated != null,
 	);
+	const filtered = listFiltered || profileKey !== undefined;
 	const total = sessions.data?.pages[0]?.total ?? 0;
 	const rows = uniqueSessions(sessions.data?.pages ?? []);
 	const grouped = applied.sort === "last_activity_at" || applied.sort === "started_at";
@@ -159,6 +182,7 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 							onPress: () => update({ order: "desc" }),
 						},
 					],
+					sections: profileFilter.section ? [profileFilter.section] : undefined,
 				}}
 			/>
 			<NativeList
@@ -169,6 +193,7 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 						{item.label ? <SectionLabel>{item.label}</SectionLabel> : null}
 						<SessionCard
 							session={item.session}
+							showAgent={!agentId}
 							quietAutomated={!applied.q}
 							searchQuery={applied.q ?? ""}
 						/>
@@ -285,7 +310,11 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 						<SessionFeed
 							sessions={[]}
 							isLoading={sessions.isPending}
-							emptyMessage={sessionListEmptyMessage(applied.q ?? "", filtered)}
+							emptyMessage={
+								profileKey !== undefined && !listFiltered
+									? AGENT_PROFILES_COPY.profileSessionsEmpty
+									: sessionListEmptyMessage(applied.q ?? "", filtered)
+							}
 						/>
 					) : null
 				}

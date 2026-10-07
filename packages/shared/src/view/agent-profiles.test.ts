@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentProfile } from "../api/schemas";
 import {
+	agentProfileFilterLabel,
 	agentProfileName,
 	hasMultipleProfiles,
 	profileLabel,
@@ -26,6 +27,13 @@ describe("agent profile naming", () => {
 	test("names other profiles 'Agent · profile_key'", () => {
 		const work = profile({ is_default: false, profile_key: "work" });
 		expect(agentProfileName("Hermes", work)).toBe("Hermes · work");
+	});
+
+	test("names filter options by profile, falling back to the Agent for the default", () => {
+		expect(agentProfileFilterLabel("Hermes", profile({}))).toBe("Hermes");
+		expect(
+			agentProfileFilterLabel("Hermes", profile({ profile_key: "old", state: "removed" })),
+		).toBe("old (removed)");
 	});
 
 	test("labels only non-default session profiles", () => {
