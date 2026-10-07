@@ -2,6 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import type { DesktopAuthenticationProgress } from "@clawdi/shared/desktop";
 import type { runCommand } from "./command-runner";
 import { DesktopCliService } from "./native-cli";
 
@@ -13,7 +14,7 @@ afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function serviceFixture(failFirstInstall = false) {
+function serviceFixture(failFirstInstall = false, loginProgress?: unknown) {
 	const root = mkdtempSync(join(tmpdir(), "desktop-cli-runtime-"));
 	roots.push(root);
 	process.env.APPIMAGE = join(root, "Clawdi.AppImage");
@@ -35,13 +36,18 @@ function serviceFixture(failFirstInstall = false) {
 		live: false,
 		executable: join(root, "resources/native", cliName),
 	};
-	const execute: typeof runCommand = async (_command, args) => {
+	const execute: typeof runCommand = async (_command, args, options) => {
 		const command = args.join(" ");
 		calls.push(command);
 		let result: unknown;
 		switch (command) {
 			case "auth login --desktop":
-				result = { schemaVersion: "clawdi.desktopLogin.v1", status: "cancelled" };
+				if (loginProgress) options?.onStderrLine?.(JSON.stringify(loginProgress));
+				result = {
+					schemaVersion: "clawdi.desktopLogin.v1",
+					status: loginProgress ? "authenticated" : "cancelled",
+					user: { id: "fixture" },
+				};
 				break;
 			case "agent detect --json":
 				result = {
@@ -216,4 +222,44 @@ test("Desktop treats OAuth access denial as cancellation", async () => {
 	const { service, calls } = serviceFixture();
 	expect(await service.authenticate()).toEqual({ status: "cancelled" });
 	expect(calls).toContain("auth login --desktop");
+});
+
+const deviceProgress = {
+	schemaVersion: "clawdi.desktopLogin.progress.v1",
+	verificationUri: "https://accounts.example.test/device?user_code=ABCD-EFGH",
+	userCode: "ABCD-EFGH",
+	expiresAt: "2026-10-07T22:00:00.000Z",
+};
+
+test("Desktop forwards device code progress to the UI while the CLI owns sign-in", async () => {
+	const { service, calls } = serviceFixture(false, {
+		...deviceProgress,
+		access_token: "must-not-reach-renderer",
+	});
+	const progress: DesktopAuthenticationProgress[] = [];
+	expect(await service.authenticate(false, (event) => progress.push(event))).toEqual({
+		status: "authenticated",
+		user: { id: "fixture" },
+	});
+	expect(calls).toEqual(["auth login --desktop"]);
+	expect(progress).toEqual([
+		{
+			verificationUri: deviceProgress.verificationUri,
+			userCode: deviceProgress.userCode,
+			expiresAt: deviceProgress.expiresAt,
+		},
+	]);
+});
+
+test.each([
+	{ userCode: "" },
+	{ userCode: "a".repeat(513) },
+	{ expiresAt: "invalid" },
+	{ verificationUri: "http://accounts.example.test/device" },
+	{ verificationUri: "https://user:password@accounts.example.test/device" },
+])("Desktop rejects invalid device progress %j", async (overrides) => {
+	const { service } = serviceFixture(false, { ...deviceProgress, ...overrides });
+	const progress: DesktopAuthenticationProgress[] = [];
+	await expect(service.authenticate(false, (event) => progress.push(event))).rejects.toThrow();
+	expect(progress).toEqual([]);
 });

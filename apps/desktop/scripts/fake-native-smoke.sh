@@ -12,6 +12,11 @@ case "$1 ${2:-}" in
 	"auth status")
         printf '%s\n' '{"authenticated":false,"source":"none"}'
         ;;
+	"auth login")
+		printf '%s\n' '{"schemaVersion":"clawdi.desktopLogin.progress.v1","verificationUri":"https://accounts.example.test/device?user_code=ABCD-EFGH","userCode":"ABCD-EFGH","expiresAt":"2099-01-01T00:00:00.000Z"}' >&2
+		trap 'exit 0' TERM INT
+		while :; do sleep 1; done
+		;;
 	"daemon doctor")
 		# An authenticated Desktop must still open Dashboard when sync is intentionally stopped.
 		printf '%s\n' '{"cli_version":"0.0.0-smoke","singleton_unit_installed":false,"singleton_unit_running":false,"agents":[]}'

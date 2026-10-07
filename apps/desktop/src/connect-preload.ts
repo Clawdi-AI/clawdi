@@ -1,4 +1,8 @@
-import type { ClawdiDesktopConnectBridge, DesktopAgentConnection } from "@clawdi/shared/desktop";
+import type {
+	ClawdiDesktopConnectBridge,
+	DesktopAgentConnection,
+	DesktopAuthenticationProgress,
+} from "@clawdi/shared/desktop";
 import { contextBridge, ipcRenderer } from "electron";
 import { DESKTOP_IPC } from "./ipc";
 
@@ -6,6 +10,12 @@ const bridge: ClawdiDesktopConnectBridge = {
 	getBootstrapState: () => ipcRenderer.invoke(DESKTOP_IPC.bootstrapState),
 	getInstallationState: () => ipcRenderer.invoke(DESKTOP_IPC.installationState),
 	authenticate: () => ipcRenderer.invoke(DESKTOP_IPC.authenticate),
+	onAuthenticationProgress: (listener) => {
+		const handle = (_event: Electron.IpcRendererEvent, progress: DesktopAuthenticationProgress) =>
+			listener(progress);
+		ipcRenderer.on(DESKTOP_IPC.authenticationProgress, handle);
+		return () => ipcRenderer.removeListener(DESKTOP_IPC.authenticationProgress, handle);
+	},
 	cancelAuthentication: () => ipcRenderer.invoke(DESKTOP_IPC.cancelAuthentication),
 	detectAgents: () => ipcRenderer.invoke(DESKTOP_IPC.detectAgents),
 	listReconnectableAgents: () => ipcRenderer.invoke(DESKTOP_IPC.listReconnectableAgents),

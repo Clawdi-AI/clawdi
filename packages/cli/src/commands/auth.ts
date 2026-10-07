@@ -9,13 +9,10 @@ import {
 	captureStoredCredentialIdentity,
 	clearPendingClerkOAuthLogin,
 	commitClawdiCredential,
-	createClerkOAuthAuthorization,
 	createCredentialEndpointBinding,
 	describeCredentialEndpointBinding,
-	exchangeClerkOAuthCode,
 	fetchClerkOAuthClientConfig,
 	fetchClerkOAuthDiscovery,
-	fetchClerkOAuthPkceDiscovery,
 	isClerkOAuthAuth,
 	logoutClawdiCredentials,
 	persistClerkDeviceSlowDown,
@@ -25,7 +22,6 @@ import {
 	startClerkDeviceAuthorization,
 	verifyAndPersistClerkOAuthLogin,
 } from "../lib/clerk-oauth";
-import { startClerkOAuthLoopback } from "../lib/clerk-oauth-loopback";
 import { emitJson, wantsJson } from "../lib/command-output";
 import { getAuth, getConfig, getPendingAuth, isLoggedIn, type PendingAuth } from "../lib/config";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
@@ -149,6 +145,7 @@ async function startOAuthLogin(
 	apiUrl: string,
 	hostedApiUrl: string,
 	expectedCredential: StoredCredentialIdentity,
+	signal?: AbortSignal,
 ): Promise<PendingAuth> {
 	const endpointBinding = createCredentialEndpointBinding(apiUrl, hostedApiUrl);
 	if (!endpointBinding.hostedApiOrigin) {
@@ -157,15 +154,22 @@ async function startOAuthLogin(
 			"OAuth sign-in requires a CLAWDI_DEPLOY_API_URL binding.",
 		);
 	}
-	const clientConfig = await fetchClerkOAuthClientConfig(endpointBinding.cloudApiOrigin);
-	const discovery = await fetchClerkOAuthDiscovery(clientConfig);
+	const clientConfig = await fetchClerkOAuthClientConfig(endpointBinding.cloudApiOrigin, {
+		signal,
+	});
+	const discovery = await fetchClerkOAuthDiscovery(clientConfig, { signal });
 	const pending = await startClerkDeviceAuthorization({
 		config: clientConfig,
 		discovery,
 		apiUrl: endpointBinding.cloudApiOrigin,
 		hostedApiUrl: endpointBinding.hostedApiOrigin,
+		signal,
 	});
 	await persistPendingClerkOAuthLogin(pending, expectedCredential);
+	if (signal?.aborted) {
+		await clearPendingClerkOAuthLogin(pending);
+		throw new ClerkOAuthError("oauth_cancelled", "Clawdi sign-in was cancelled.");
+	}
 	return pending;
 }
 
@@ -184,14 +188,22 @@ function printDeviceInstructions(pending: PendingAuth): void {
 async function runDeviceLogin(
 	pending: PendingAuth,
 	expected: StoredCredentialIdentity,
-	ui: { open: boolean; quiet: boolean; progress?: (pending: PendingAuth) => void },
+	ui: {
+		open: boolean;
+		quiet: boolean;
+		signal?: AbortSignal;
+		progress?: (pending: PendingAuth) => void;
+	},
 ): Promise<void> {
 	if (!ui.quiet) printDeviceInstructions(pending);
 	ui.progress?.(pending);
 	if (ui.open) openInBrowser(pending.verificationUriComplete ?? pending.verificationUri);
 	let auth: Awaited<ReturnType<typeof pollClerkDeviceToken>>;
 	try {
-		auth = await pollClerkDeviceToken(pending, { onSlowDown: persistClerkDeviceSlowDown });
+		auth = await pollClerkDeviceToken(pending, {
+			onSlowDown: persistClerkDeviceSlowDown,
+			signal: ui.signal,
+		});
 	} catch (error) {
 		await clearPendingClerkOAuthLogin(pending);
 		throw error;
@@ -324,39 +336,29 @@ export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<
 		const cancel = () => controller.abort();
 		process.once("SIGTERM", cancel);
 		process.once("SIGINT", cancel);
-		let loopback: Awaited<ReturnType<typeof startClerkOAuthLoopback>> | undefined;
 		try {
-			const endpointBinding = createCredentialEndpointBinding(config.apiUrl, config.deployApiUrl);
-			const clientConfig = await fetchClerkOAuthClientConfig(endpointBinding.cloudApiOrigin, {
-				signal: controller.signal,
-			});
-			const discovery = await fetchClerkOAuthPkceDiscovery(clientConfig, {
-				signal: controller.signal,
-			});
-			const pending = createClerkOAuthAuthorization({
-				config: clientConfig,
-				discovery,
-				apiUrl: config.apiUrl,
-				hostedApiUrl: config.deployApiUrl,
-			});
-			loopback = await startClerkOAuthLoopback(pending.redirectUri, pending.state, {
-				signal: controller.signal,
-				timeoutMs: Date.parse(pending.expiresAt) - Date.now(),
-			});
-			emitJson(
-				{
-					schemaVersion: "clawdi.desktopLogin.progress.v1",
-					expiresAt: pending.expiresAt,
-				},
-				false,
-				console.error,
+			const pending = await startOAuthLogin(
+				config.apiUrl,
+				config.deployApiUrl,
+				expected,
+				controller.signal,
 			);
-			openInBrowser(pending.authorizationUrl);
-			const callbackUrl = await loopback.callbackUrl;
-			const auth = await exchangeClerkOAuthCode(pending, callbackUrl, {
+			await runDeviceLogin(pending, expected, {
+				open: true,
+				quiet: true,
 				signal: controller.signal,
+				progress: (pending) =>
+					emitJson(
+						{
+							schemaVersion: "clawdi.desktopLogin.progress.v1",
+							verificationUri: pending.verificationUriComplete ?? pending.verificationUri,
+							userCode: pending.userCode,
+							expiresAt: pending.expiresAt,
+						},
+						false,
+						console.error,
+					),
 			});
-			await verifyAndPersistClerkOAuthLogin(pending.apiUrl, auth, { expectedCredential: expected });
 		} catch (error) {
 			if (
 				controller.signal.aborted ||
@@ -368,7 +370,6 @@ export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<
 			}
 			throw error;
 		} finally {
-			await loopback?.close();
 			process.off("SIGTERM", cancel);
 			process.off("SIGINT", cancel);
 		}

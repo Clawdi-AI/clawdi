@@ -2,6 +2,7 @@ import type {
 	ClawdiDesktopConnectBridge,
 	DesktopAgentConnection,
 	DesktopAgentType,
+	DesktopAuthenticationProgress,
 	DesktopBootstrapState,
 	DesktopDetectedAgent,
 	DesktopInstallationState,
@@ -53,6 +54,9 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 	const [connectionModes, setConnectionModes] = useState<Map<DesktopAgentType, string>>(new Map());
 	const [failure, setFailure] = useState<string | null>(null);
 	const [cancellingAuth, setCancellingAuth] = useState(false);
+	const [authProgress, setAuthProgress] = useState<DesktopAuthenticationProgress | null>(null);
+
+	useEffect(() => bridge.onAuthenticationProgress(setAuthProgress), [bridge]);
 
 	const fail = useCallback((error: unknown) => {
 		setFailure(error instanceof Error ? error.message : "Setup couldn't be completed.");
@@ -124,6 +128,7 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 	}, [load]);
 
 	async function authenticate() {
+		setAuthProgress(null);
 		setStage("authenticating");
 		setFailure(null);
 		try {
@@ -260,8 +265,15 @@ function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 						<Centered
 							icon={<LoaderCircle className="spin" />}
 							title="Finish signing in in your browser"
-							description="Clawdi is waiting for the secure browser authorization to finish."
+							description="Confirm the browser shows the same code, then approve the sign-in you just started."
 						/>
+						{authProgress ? (
+							<div className="device-code" role="status">
+								<p>Sign-in code</p>
+								<strong>{authProgress.userCode}</strong>
+								<p>Waiting for your approval in the browser…</p>
+							</div>
+						) : null}
 						<footer className="actions">
 							<button
 								className="button secondary"

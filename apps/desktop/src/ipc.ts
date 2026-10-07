@@ -1,6 +1,7 @@
 export const DESKTOP_IPC = {
 	bootstrapState: "clawdi:bootstrap-state",
 	authenticate: "clawdi:authenticate",
+	authenticationProgress: "clawdi:authentication-progress",
 	cancelAuthentication: "clawdi:cancel-authentication",
 	detectAgents: "clawdi:detect-agents",
 	listReconnectableAgents: "clawdi:list-reconnectable-agents",

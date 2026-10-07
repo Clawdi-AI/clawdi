@@ -3,6 +3,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import type {
 	DesktopAgentConnection,
 	DesktopAgentType,
+	DesktopAuthenticationProgress,
 	DesktopBootstrapState,
 	DesktopConnectResult,
 	DesktopDetectedAgent,
@@ -105,13 +106,16 @@ export class DesktopCliService {
 		return this.authState(this.cli());
 	}
 
-	async authenticate(force = false): Promise<AuthenticationResult> {
+	async authenticate(
+		force = false,
+		onProgress?: (progress: DesktopAuthenticationProgress) => void,
+	): Promise<AuthenticationResult> {
 		if (this.authentication) return this.authentication.completion;
 
 		const controller = new AbortController();
 		const operation: AuthenticationOperation = {
 			controller,
-			completion: this.performAuthentication(controller.signal, force),
+			completion: this.performAuthentication(controller.signal, force, onProgress),
 		};
 		this.authentication = operation;
 		try {
@@ -255,6 +259,7 @@ export class DesktopCliService {
 	private async performAuthentication(
 		signal: AbortSignal,
 		force: boolean,
+		onProgress?: (progress: DesktopAuthenticationProgress) => void,
 	): Promise<AuthenticationResult> {
 		try {
 			const args = ["auth", "login", "--desktop"];
@@ -262,6 +267,31 @@ export class DesktopCliService {
 			const result = await this.runJson(this.cli(), args, {
 				signal,
 				timeoutMs: OAUTH_TIMEOUT_MS,
+				onStderrLine: (line) => {
+					let value: unknown;
+					try {
+						value = JSON.parse(line);
+					} catch {
+						return;
+					}
+					if (!isRecord(value) || value.schemaVersion !== "clawdi.desktopLogin.progress.v1") return;
+					const verificationUri = readString(value.verificationUri);
+					const userCode = readString(value.userCode);
+					const expiresAt = readString(value.expiresAt);
+					if (
+						!verificationUri ||
+						verificationUri.length > 2_048 ||
+						!userCode ||
+						userCode.length > 512 ||
+						!expiresAt ||
+						!Number.isFinite(Date.parse(expiresAt))
+					)
+						throw new Error("Clawdi returned invalid sign-in progress.");
+					const uri = new URL(verificationUri);
+					if (uri.protocol !== "https:" || uri.username || uri.password || uri.hash)
+						throw new Error("Clawdi returned an invalid verification page.");
+					onProgress?.({ verificationUri, userCode, expiresAt });
+				},
 			});
 			if (result.schemaVersion === "clawdi.desktopLogin.v1" && result.status === "cancelled") {
 				return { status: "cancelled" };

@@ -94,9 +94,12 @@ loopback URL for local development). Dashboard entry points never load remote
 content into Electron. Only the bundled Connect wizard has a renderer and IPC.
 
 The bundled CLI owns credentials, Agent registration, and daemon lifecycle.
-Desktop sign-in runs authorization code + PKCE (S256) in the system browser,
-using the registered `http://127.0.0.1:18473/oauth/callback` redirect. Terminal
-`clawdi auth login` continues to use device authorization. Desktop never receives
+Desktop sign-in runs the CLI's device authorization flow through
+`clawdi auth login --desktop`. The CLI opens the prefilled verification page
+(`verification_uri_complete`, falling back to `verification_uri`) in the system
+browser. Desktop shows the short-lived code so the user can confirm it matches
+the browser before approving. The CLI completes and saves its credentials on
+approval; no local callback listener is used. Desktop never receives
 tokens or creates a Clerk browser session; the Dashboard uses normal browser
 sign-in independently. Signing out of Desktop uninstalls the daemon and signs the
 CLI out. It leaves the browser's Dashboard session signed in.

@@ -462,10 +462,14 @@ cleared with instructions to start again.
 Self-hosted Clerk OAuth applications must enable **Device authorization grant**
 under Configure → OAuth applications in the Clerk Dashboard. The Backend API
 equivalent is `PATCH /v1/oauth_applications/<application_id>` with
-`{"device_authorization_grant_enabled": true}`. Keep the registered loopback
-redirect URI `http://127.0.0.1:18473/oauth/callback`: Desktop's bundled CLI uses
-authorization code + PKCE (S256) through the system browser on that callback.
-Only `clawdi auth login --desktop` uses loopback; terminal login stays device flow.
+`{"device_authorization_grant_enabled": true}`. Desktop uses the same device
+authorization flow through `clawdi auth login --desktop`. This machine mode
+opens `verification_uri_complete` (or `verification_uri` when unavailable) in the
+system browser and emits `clawdi.desktopLogin.progress.v1` on stderr with
+`verificationUri`, `userCode`, and `expiresAt`, so Desktop can display the code
+for confirmation. Approval completes the CLI command, which emits one
+`clawdi.desktopLogin.v1` result on stdout without tokens. No local callback
+listener is used.
 Desktop opens the Dashboard in the system browser independently of CLI sign-in;
 see the [Desktop browser architecture](../apps/desktop/README.md). Instances without Clerk OAuth must enable it for
 user login. For local development, the administrator can issue a key through

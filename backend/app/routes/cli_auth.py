@@ -68,8 +68,8 @@ async def _oauth_public_config_or_503(db: AsyncSession) -> OAuthConfigResponse:
         client_id=oauth_setting.client_id,
         audience=oauth_setting.audience,
         authorized_parties=oauth_setting.authorized_parties,
-        # Keep this registered loopback callback for Desktop's upcoming
-        # authorization-code + PKCE flow.
+        # 2026-10-07: Keep redirect_uri for released 0.14 CLIs; no CLI >=0.15 uses it.
+        # Remove after 2026-11-06 with any server-side loopback assumptions.
         redirect_uri=oauth_setting.redirect_uri,
     )
 
