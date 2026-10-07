@@ -19,6 +19,7 @@ import {
 	setObservabilityPathname,
 	wrapRootLayout,
 } from "@/platform/observability";
+import { AppSplash, HideSplash } from "@/platform/splash";
 
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
 	const pathname = usePathname();
@@ -27,6 +28,7 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
 	useEffect(() => reportRootError(error, pathnameRef.current), [error]);
 	return (
 		<I18nProvider>
+			<HideSplash ready />
 			<AppView className="flex-1 justify-center bg-background p-6">
 				<ErrorState onRetry={() => void retry().catch(() => undefined)} />
 			</AppView>
@@ -64,6 +66,7 @@ function RootLayout() {
 				<GestureHandlerRootView style={{ flex: 1 }}>
 					<SafeAreaProvider>
 						<AppearanceProvider>
+							<AppSplash />
 							{runtime.ok ? (
 								isDevAuthBypass() ? (
 									app

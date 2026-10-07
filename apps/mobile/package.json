@@ -9,7 +9,8 @@
 		"lint": "biome check .",
 		"test": "../../scripts/test.sh mobile",
 		"test:internal": "bun test src",
-		"theme": "bun scripts/theme.ts"
+		"theme": "bun scripts/theme.ts",
+		"icons": "bun scripts/app-icons.ts"
 	},
 	"dependencies": {
 		"@clawdi/shared": "workspace:*",
@@ -37,6 +38,7 @@
 		"expo-router": "catalog:expo57",
 		"expo-secure-store": "57.0.4",
 		"expo-sharing": "catalog:expo57",
+		"expo-splash-screen": "57.0.9",
 		"expo-status-bar": "57.0.1",
 		"expo-system-ui": "catalog:expo57",
 		"expo-updates": "catalog:expo57",
@@ -63,6 +65,7 @@
 		"@types/bun": "catalog:",
 		"@types/react": "catalog:expo57",
 		"babel-preset-expo": "57.0.13",
+		"sharp": "0.34.5",
 		"typescript": "catalog:"
 	}
 }
