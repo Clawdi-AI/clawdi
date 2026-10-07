@@ -2676,7 +2676,7 @@
 		"hidden": false,
 		"arguments": [],
 		"options": [],
-		"help": "Usage: clawdi vault [options] [command]\n\nManage secrets\n\nOptions:\n  -h, --help                       display help for command\n\nCommands:\n  request [options] <key>          Request a secret through the browser without\n                                   reading its value\n  materialize|pull [options]       Bind one vault to a local dotenv file, or\n                                   pull its saved binding\n  set [options] <key>              Store a secret\n  list [options]                   List stored keys and exact references\n  import [options] <file>          Import from .env file\n  attach [options] <vault>         Make an existing vault available in a project\n  detach|unlink [options] <vault>  Remove a project's access to a vault without\n                                   deleting keys\n  rm|delete [options] <key>        Delete a key from a vault\n  resolve [options] <key>          Resolve one vault key\n  help [command]                   display help for command\n\nScope:\n  Vaults are account-level key bundles. Projects attach to a vault to use the\n  same shared key set. set/import update the vault for every attached project.\n  rm deletes a key from the vault; detach only removes one project's access.\n  Key paths are KEY, vault/KEY, or vault/section/KEY.\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi vault [options] [command]\n\nManage secrets\n\nOptions:\n  -h, --help                  display help for command\n\nCommands:\n  request [options] <key>     Request a secret through the browser without\n                              reading its value\n  materialize|pull [options]  Bind one vault to a local dotenv file, or pull its\n                              saved binding\n  set [options] <key>         Store a secret\n  list [options]              List stored keys and exact references\n  import [options] <file>     Import from .env file\n  attach [options] <vault>    Make an existing vault available in a project\n  detach [options] <vault>    Remove a project's access to a vault without\n                              deleting keys\n  rm|delete [options] <key>   Delete a key from a vault\n  resolve [options] <key>     Resolve one vault key\n  help [command]              display help for command\n\nScope:\n  Vaults are account-level key bundles. Projects attach to a vault to use the\n  same shared key set. set/import update the vault for every attached project.\n  rm deletes a key from the vault; detach only removes one project's access.\n  Key paths are KEY, vault/KEY, or vault/section/KEY.\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi vault request",
@@ -2970,9 +2970,7 @@
 	},
 	{
 		"path": "clawdi vault detach",
-		"aliases": [
-			"unlink"
-		],
+		"aliases": [],
 		"description": "Remove a project's access to a vault without deleting keys",
 		"hidden": false,
 		"arguments": [
@@ -3012,7 +3010,51 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi vault detach|unlink [options] <vault>\n\nRemove a project's access to a vault without deleting keys\n\nOptions:\n  -p, --project <id-or-slug>  Project that should stop using this vault\n  -y, --yes                   Confirm detaching the vault\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault unlink providers --project old-agent\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi vault detach [options] <vault>\n\nRemove a project's access to a vault without deleting keys\n\nOptions:\n  -p, --project <id-or-slug>  Project that should stop using this vault\n  -y, --yes                   Confirm detaching the vault\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault unlink providers --project old-agent\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+	},
+	{
+		"path": "clawdi vault unlink",
+		"aliases": [],
+		"description": "Remove a project's access to a vault without deleting keys",
+		"hidden": true,
+		"arguments": [
+			{
+				"name": "vault",
+				"description": "",
+				"required": true,
+				"variadic": false
+			}
+		],
+		"options": [
+			{
+				"flags": "-p, --project <id-or-slug>",
+				"description": "Project that should stop using this vault",
+				"hidden": false,
+				"required": true,
+				"optional": false,
+				"mandatory": true,
+				"variadic": false
+			},
+			{
+				"flags": "-y, --yes",
+				"description": "Confirm detaching the vault",
+				"hidden": false,
+				"required": false,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			},
+			{
+				"flags": "--json",
+				"description": "Output as JSON",
+				"hidden": false,
+				"required": false,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			}
+		],
+		"help": "Usage: clawdi vault unlink [options] <vault>\n\nRemove a project's access to a vault without deleting keys\n\nOptions:\n  -p, --project <id-or-slug>  Project that should stop using this vault\n  -y, --yes                   Confirm detaching the vault\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault unlink providers --project old-agent\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi vault rm",
@@ -5715,7 +5757,7 @@
 		"hidden": false,
 		"arguments": [],
 		"options": [],
-		"help": "Usage: clawdi agent projects [options] [command]\n\nView workspace and linked projects\n\nOptions:\n  -h, --help                          display help for command\n\nCommands:\n  list [options] <agent-id>           Show workspace and linked-project vault\n                                      priority\n  link|attach [options] <agent-id>    Link a project for vault resolution\n  unlink|detach [options] <agent-id>  Unlink a project from vault resolution\n  move [options] <agent-id>           Update vault resolution priority\n  help [command]                      display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi agent projects [options] [command]\n\nView workspace and linked projects\n\nOptions:\n  -h, --help                   display help for command\n\nCommands:\n  list [options] <agent-id>    Show workspace and linked-project vault priority\n  link [options] <agent-id>    Link a project for vault resolution\n  unlink [options] <agent-id>  Unlink a project from vault resolution\n  move [options] <agent-id>    Update vault resolution priority\n  help [command]               display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi agent projects list",
@@ -5745,9 +5787,7 @@
 	},
 	{
 		"path": "clawdi agent projects link",
-		"aliases": [
-			"attach"
-		],
+		"aliases": [],
 		"description": "Link a project for vault resolution",
 		"hidden": false,
 		"arguments": [
@@ -5787,13 +5827,55 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi agent projects link|attach [options] <agent-id>\n\nLink a project for vault resolution\n\nOptions:\n  -p, --project <id-or-slug>  Project UUID, slug, name, or @owner/slug\n  --order <n>                 Vault resolution priority (>=1)\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi agent projects link [options] <agent-id>\n\nLink a project for vault resolution\n\nOptions:\n  -p, --project <id-or-slug>  Project UUID, slug, name, or @owner/slug\n  --order <n>                 Vault resolution priority (>=1)\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+	},
+	{
+		"path": "clawdi agent projects attach",
+		"aliases": [],
+		"description": "Link a project for vault resolution",
+		"hidden": true,
+		"arguments": [
+			{
+				"name": "agent-id",
+				"description": "",
+				"required": true,
+				"variadic": false
+			}
+		],
+		"options": [
+			{
+				"flags": "-p, --project <id-or-slug>",
+				"description": "Project UUID, slug, name, or @owner/slug",
+				"hidden": false,
+				"required": true,
+				"optional": false,
+				"mandatory": true,
+				"variadic": false
+			},
+			{
+				"flags": "--order <n>",
+				"description": "Vault resolution priority (>=1)",
+				"hidden": false,
+				"required": true,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			},
+			{
+				"flags": "--json",
+				"description": "Output as JSON",
+				"hidden": false,
+				"required": false,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			}
+		],
+		"help": "Usage: clawdi agent projects attach [options] <agent-id>\n\nLink a project for vault resolution\n\nOptions:\n  -p, --project <id-or-slug>  Project UUID, slug, name, or @owner/slug\n  --order <n>                 Vault resolution priority (>=1)\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi agent projects unlink",
-		"aliases": [
-			"detach"
-		],
+		"aliases": [],
 		"description": "Unlink a project from vault resolution",
 		"hidden": false,
 		"arguments": [
@@ -5833,7 +5915,51 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi agent projects unlink|detach [options] <agent-id>\n\nUnlink a project from vault resolution\n\nOptions:\n  -p, --project <id-or-slug>  Project UUID, slug, name, or @owner/slug\n  -y, --yes                   Skip the interactive confirmation prompt\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nExample:\n  $ clawdi agent projects unlink <agent-id> --project engineering --yes\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi agent projects unlink [options] <agent-id>\n\nUnlink a project from vault resolution\n\nOptions:\n  -p, --project <id-or-slug>  Project UUID, slug, name, or @owner/slug\n  -y, --yes                   Skip the interactive confirmation prompt\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nExample:\n  $ clawdi agent projects unlink <agent-id> --project engineering --yes\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+	},
+	{
+		"path": "clawdi agent projects detach",
+		"aliases": [],
+		"description": "Unlink a project from vault resolution",
+		"hidden": true,
+		"arguments": [
+			{
+				"name": "agent-id",
+				"description": "",
+				"required": true,
+				"variadic": false
+			}
+		],
+		"options": [
+			{
+				"flags": "-p, --project <id-or-slug>",
+				"description": "Project UUID, slug, name, or @owner/slug",
+				"hidden": false,
+				"required": true,
+				"optional": false,
+				"mandatory": true,
+				"variadic": false
+			},
+			{
+				"flags": "-y, --yes",
+				"description": "Skip the interactive confirmation prompt",
+				"hidden": false,
+				"required": false,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			},
+			{
+				"flags": "--json",
+				"description": "Output as JSON",
+				"hidden": false,
+				"required": false,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			}
+		],
+		"help": "Usage: clawdi agent projects detach [options] <agent-id>\n\nUnlink a project from vault resolution\n\nOptions:\n  -p, --project <id-or-slug>  Project UUID, slug, name, or @owner/slug\n  -y, --yes                   Skip the interactive confirmation prompt\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nExample:\n  $ clawdi agent projects unlink <agent-id> --project engineering --yes\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi agent projects move",

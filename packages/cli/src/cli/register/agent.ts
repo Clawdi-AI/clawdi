@@ -256,35 +256,41 @@ Examples:
 			await agentProjectsListCommand(agentId, opts);
 		});
 
-	agentProjectsCmd
-		.command("link <agent-id>")
-		.alias("attach")
-		.description("Link a project for vault resolution")
-		.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
-		.option("--order <n>", "Vault resolution priority (>=1)", parsePositiveInteger)
-		.option("--json", "Output as JSON")
-		.action(async (agentId, opts) => {
-			const { agentProjectsAddContextCommand } = await import("../../commands/agent-projects.js");
-			await agentProjectsAddContextCommand(agentId, opts);
-		});
+	const registerProjectLink = (name: string, hidden: boolean) => {
+		const command = agentProjectsCmd.command(`${name} <agent-id>`, { hidden });
+		command
+			.description("Link a project for vault resolution")
+			.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
+			.option("--order <n>", "Vault resolution priority (>=1)", parsePositiveInteger)
+			.option("--json", "Output as JSON")
+			.action(async (agentId, opts) => {
+				const { agentProjectsAddContextCommand } = await import("../../commands/agent-projects.js");
+				await agentProjectsAddContextCommand(agentId, opts);
+			});
+	};
+	registerProjectLink("link", false);
+	registerProjectLink("attach", true);
 
-	agentProjectsCmd
-		.command("unlink <agent-id>")
-		.alias("detach")
-		.description("Unlink a project from vault resolution")
-		.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
-		.option("-y, --yes", "Skip the interactive confirmation prompt")
-		.addHelpText(
-			"after",
-			"\nExample:\n  $ clawdi agent projects unlink <agent-id> --project engineering --yes",
-		)
-		.option("--json", "Output as JSON")
-		.action(async (agentId, opts) => {
-			const { agentProjectsRemoveContextCommand } = await import(
-				"../../commands/agent-projects.js"
-			);
-			await agentProjectsRemoveContextCommand(agentId, opts);
-		});
+	const registerProjectUnlink = (name: string, hidden: boolean) => {
+		const command = agentProjectsCmd.command(`${name} <agent-id>`, { hidden });
+		command
+			.description("Unlink a project from vault resolution")
+			.requiredOption("-p, --project <id-or-slug>", "Project UUID, slug, name, or @owner/slug")
+			.option("-y, --yes", "Skip the interactive confirmation prompt")
+			.addHelpText(
+				"after",
+				"\nExample:\n  $ clawdi agent projects unlink <agent-id> --project engineering --yes",
+			)
+			.option("--json", "Output as JSON")
+			.action(async (agentId, opts) => {
+				const { agentProjectsRemoveContextCommand } = await import(
+					"../../commands/agent-projects.js"
+				);
+				await agentProjectsRemoveContextCommand(agentId, opts);
+			});
+	};
+	registerProjectUnlink("unlink", false);
+	registerProjectUnlink("detach", true);
 
 	agentProjectsCmd
 		.command("move <agent-id>")
