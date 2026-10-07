@@ -1,8 +1,8 @@
 import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
-import { parsePositiveInteger } from "../lib/cli-options";
-import { askYesNo } from "../lib/prompts";
+import { parsePositiveInteger, requireUuid } from "../lib/cli-options";
+import { askYesNo, confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { isInteractive } from "../lib/tty";
 
@@ -56,6 +56,68 @@ interface ChannelSyncCommandsOptions extends JsonOption {
 
 interface ChannelDeleteOptions extends JsonOption {
 	yes?: boolean;
+}
+
+export async function channelUnlinkCommand(
+	accountId: string,
+	opts: { link: string; yes?: boolean; json?: boolean },
+): Promise<void> {
+	requireAuth();
+	requireUuid(accountId, "Channel ID");
+	requireUuid(opts.link, "Link ID");
+	if (
+		!(await confirmOrRequireYes(`Unlink agent link ${opts.link}?`, {
+			yes: opts.yes,
+			action: "unlink this agent from the channel",
+		}))
+	)
+		return;
+	unwrap(
+		await new ApiClient().DELETE("/v1/channels/{account_id}/agent-links/{link_id}", {
+			params: { path: { account_id: accountId, link_id: opts.link } },
+		}),
+	);
+	console.log(
+		opts.json
+			? JSON.stringify({
+					schemaVersion: "clawdi.channelUnlink.v1",
+					account_id: accountId,
+					link_id: opts.link,
+					status: "unlinked",
+				})
+			: `Unlinked agent link ${opts.link} from channel ${accountId}.`,
+	);
+}
+
+export async function channelUnpairCommand(
+	accountId: string,
+	opts: { binding: string; yes?: boolean; json?: boolean },
+): Promise<void> {
+	requireAuth();
+	requireUuid(accountId, "Channel ID");
+	requireUuid(opts.binding, "Binding ID");
+	if (
+		!(await confirmOrRequireYes(`Unpair chat binding ${opts.binding}?`, {
+			yes: opts.yes,
+			action: "unpair this chat from the channel",
+		}))
+	)
+		return;
+	unwrap(
+		await new ApiClient().DELETE("/v1/channels/{account_id}/bindings/{binding_id}", {
+			params: { path: { account_id: accountId, binding_id: opts.binding } },
+		}),
+	);
+	console.log(
+		opts.json
+			? JSON.stringify({
+					schemaVersion: "clawdi.channelUnpair.v1",
+					account_id: accountId,
+					binding_id: opts.binding,
+					status: "unpaired",
+				})
+			: `Unpaired chat binding ${opts.binding} from channel ${accountId}.`,
+	);
 }
 
 export async function channelListCommand(opts: JsonOption = {}): Promise<void> {
