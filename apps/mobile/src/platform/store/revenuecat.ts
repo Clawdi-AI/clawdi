@@ -13,7 +13,7 @@ export function revenueCatKey(config: MobileRuntimeConfig, platform: StorePlatfo
 }
 
 /** One instance per process. Identity changes wait for the active native paywall. */
-export function createRevenueCat() {
+export function createRevenueCat(identityTimeoutMs = 300_000) {
 	let configuredKey: string | null = null;
 	let pending: Promise<void> = Promise.resolve();
 	function serialize<T>(work: () => Promise<T>): Promise<T> {
@@ -31,6 +31,45 @@ export function createRevenueCat() {
 		assertCurrent();
 		if (actual !== appUserId) throw new StorePurchaseError("identity_mismatch");
 	}
+	function withIdentity<T>(
+		appUserId: string,
+		assertCurrent: () => void,
+		work: (signal: AbortSignal) => Promise<T>,
+		signal?: AbortSignal,
+	): Promise<T> {
+		return serialize(async () => {
+			const controller = new AbortController();
+			const abort = () => controller.abort(signal?.reason);
+			if (signal?.aborted) abort();
+			else signal?.addEventListener("abort", abort, { once: true });
+			const assertActive = () => {
+				assertCurrent();
+				if (controller.signal.aborted)
+					throw controller.signal.reason ?? new StorePurchaseError("store_operation_timeout");
+			};
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const timeout = new Promise<never>((_, reject) => {
+				timer = setTimeout(() => {
+					const error = new StorePurchaseError("store_operation_timeout");
+					controller.abort(error);
+					reject(error);
+				}, identityTimeoutMs);
+			});
+			const operation = async () => {
+				await assertIdentity(appUserId, assertActive);
+				assertActive();
+				const result = await work(controller.signal);
+				await assertIdentity(appUserId, assertActive);
+				return result;
+			};
+			try {
+				return await Promise.race([operation(), timeout]);
+			} finally {
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", abort);
+			}
+		});
+	}
 	return {
 		logIn: (apiKey: string, appUserId: string, assertCurrent: () => void) =>
 			serialize(async () => {
@@ -46,17 +85,9 @@ export function createRevenueCat() {
 				await Purchases.logIn(appUserId);
 				await assertIdentity(appUserId, assertCurrent);
 			}),
-		logOut: () =>
-			serialize(async () => {
-				if (configuredKey && !(await Purchases.isAnonymous())) await Purchases.logOut();
-			}),
-		withIdentity: <T>(appUserId: string, assertCurrent: () => void, work: () => Promise<T>) =>
-			serialize(async () => {
-				await assertIdentity(appUserId, assertCurrent);
-				const result = await work();
-				await assertIdentity(appUserId, assertCurrent);
-				return result;
-			}),
+		withIdentity,
+		syncPurchases: (appUserId: string, assertCurrent: () => void, signal: AbortSignal) =>
+			withIdentity(appUserId, assertCurrent, () => Purchases.syncPurchases(), signal),
 	};
 }
 

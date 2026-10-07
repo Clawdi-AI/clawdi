@@ -11,6 +11,7 @@ import { createPurchaseFlow, type PurchaseFlow, type PurchaseOutcome } from "./p
 import { revenueCat } from "./revenuecat";
 import { type StorePurchaseError, storePurchaseError } from "./store-error";
 import { createStoreIdentity, type StoreAvailability } from "./store-identity";
+import { recoverStoreFlow } from "./store-recovery";
 
 const journal = createPurchaseAttemptStore(SecureStore);
 type MobileStore = Readonly<{
@@ -47,9 +48,7 @@ export function StoreProvider({
 			if (current()) setState({ scope, value });
 		};
 		if (!scope.isReady) {
-			void revenueCat.logOut().catch((error: unknown) => {
-				update({ ...unavailable, error: storePurchaseError(error) });
-			});
+			// Keep the SDK identity: RevenueCat logout would create an anonymous customer.
 			return () => {
 				mounted = false;
 			};
@@ -94,8 +93,8 @@ export function StoreProvider({
 					});
 				}
 				update({ availability, flow, recovery: [], error: null });
-				const recovery = await flow.recover(controller.signal);
-				if (!controller.signal.aborted) update({ availability, flow, recovery, error: null });
+				const recovered = await recoverStoreFlow(flow, controller.signal);
+				if (!controller.signal.aborted) update({ availability, ...recovered });
 			} catch (error) {
 				if (!controller.signal.aborted)
 					update({ ...unavailable, error: storePurchaseError(error) });

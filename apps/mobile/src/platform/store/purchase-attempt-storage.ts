@@ -8,6 +8,7 @@ export type SavedPurchaseAttempt = Readonly<{
 	request: StorePurchaseAttemptRequest;
 	attemptId: string | null;
 	purchaseStarted: boolean;
+	cancelled: boolean;
 	transactionHint: string | null;
 }>;
 
@@ -32,6 +33,8 @@ export function parsePurchaseAttempt(raw: string): SavedPurchaseAttempt | null {
 			!isRecord(value.request) ||
 			(value.attemptId !== null && !isUuid(value.attemptId)) ||
 			typeof value.purchaseStarted !== "boolean" ||
+			(value.cancelled !== undefined && typeof value.cancelled !== "boolean") ||
+			(value.cancelled === true && (!value.attemptId || value.purchaseStarted)) ||
 			(value.transactionHint !== null &&
 				(typeof value.transactionHint !== "string" ||
 					value.transactionHint.length < 1 ||
@@ -67,6 +70,7 @@ export function parsePurchaseAttempt(raw: string): SavedPurchaseAttempt | null {
 			},
 			attemptId: value.attemptId,
 			purchaseStarted: value.purchaseStarted,
+			cancelled: value.cancelled ?? false,
 			transactionHint: value.transactionHint,
 		};
 		// No unknown fields or client-selected product may enter a recovered request.

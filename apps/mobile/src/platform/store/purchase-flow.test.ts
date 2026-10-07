@@ -5,38 +5,38 @@ import {
 	StoreErrorCode,
 	type StorePurchaseAttempt,
 	type StorePurchaseAttemptRequest,
+	type StorePurchaseConfirmation,
 } from "@clawdi/shared/api";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
 import { createAccountScope } from "@/platform/auth/account-scope";
 import { createPurchaseAttemptStore, parsePurchaseAttempt } from "./purchase-attempt-storage";
 import { isStoreBuild } from "./store-policy";
+import { recoverStoreFlow } from "./store-recovery";
 
 const appUserId = "11111111-1111-4111-8111-111111111111";
 const otherAppUserId = "22222222-2222-4222-8222-222222222222";
 const attemptId = "33333333-3333-4333-8333-333333333333";
 let sdkUserId = appUserId;
-let anonymous = false;
 const configure = mock((options: { appUserID: string }) => {
 	sdkUserId = options.appUserID;
 });
 const logIn = mock(async (id: string) => {
 	sdkUserId = id;
-	anonymous = false;
 	return {};
 });
 const logOut = mock(async () => {
 	sdkUserId = "$RCAnonymousID:test";
-	anonymous = true;
 	return {};
 });
 const getAppUserID = mock(async () => sdkUserId);
+const syncPurchases = mock(async () => {});
 mock.module("react-native-purchases", () => ({
 	default: {
 		configure,
 		logIn,
 		logOut,
 		getAppUserID,
-		isAnonymous: async () => anonymous,
+		syncPurchases,
 	},
 }));
 const { createRevenueCat, revenueCatKey } = await import("./revenuecat");
@@ -45,8 +45,7 @@ const { createPurchaseFlow } = await import("./purchase-flow");
 
 beforeEach(() => {
 	sdkUserId = appUserId;
-	anonymous = false;
-	for (const fn of [configure, logIn, logOut, getAppUserID]) fn.mockClear();
+	for (const fn of [configure, logIn, logOut, getAppUserID, syncPurchases]) fn.mockClear();
 });
 
 function deferred<T>() {
@@ -59,7 +58,7 @@ function deferred<T>() {
 	return { promise, resolve };
 }
 
-function fixture(configOverrides: Partial<MobileRuntimeConfig> = {}) {
+function fixture(configOverrides: Partial<MobileRuntimeConfig> = {}, identityTimeoutMs = 300_000) {
 	let current = true;
 	const scope = createAccountScope("account:session", "account", "session", 0, () => current);
 	const config: MobileRuntimeConfig = {
@@ -105,7 +104,10 @@ function fixture(configOverrides: Partial<MobileRuntimeConfig> = {}) {
 		return attempt;
 	});
 	const confirmPurchaseAttempt = mock(
-		async (id: string, _body: { store_transaction_id?: string | null } = {}) => {
+		async (
+			id: string,
+			_body: { store_transaction_id?: string | null } = {},
+		): Promise<StorePurchaseConfirmation> => {
 			expect(id).toBe(attemptId);
 			return { state: "verification_pending" as const, correlation_id: "safe-correlation" };
 		},
@@ -128,7 +130,7 @@ function fixture(configOverrides: Partial<MobileRuntimeConfig> = {}) {
 			time += ms;
 		},
 	};
-	const sdk = createRevenueCat();
+	const sdk = createRevenueCat(identityTimeoutMs);
 	const identity = createStoreIdentity({ scope, client, sdk, config, platform: "app_store" });
 	const newKey = mock(() => "persisted-idempotency-key");
 	const makeFlow = (processSdk = sdk, processIdentity = identity) =>
@@ -173,16 +175,18 @@ const intent = { purpose: "standalone_topup" } as const;
 const transaction = { transactionIdentifier: "store-transaction-1" };
 
 describe("store account identity", () => {
-	test("configures once, logs in with bootstrap identity, and logs out on sign-out", async () => {
+	test("sign-out fences purchases while preserving SDK identity until the next bootstrap", async () => {
 		const f = fixture();
 		expect((await f.initialize()).available).toBe(true);
 		await f.initialize();
 		expect(configure).toHaveBeenCalledTimes(1);
 		expect(logIn).toHaveBeenCalledWith(appUserId);
 		f.switchAccount();
-		await f.sdk.logOut();
-		await f.sdk.logOut();
-		expect(logOut).toHaveBeenCalledTimes(1);
+		await expect(f.makeFlow().purchase(intent, async () => transaction)).rejects.toMatchObject({
+			code: "account_changed",
+		});
+		expect(logOut).not.toHaveBeenCalled();
+		expect(sdkUserId).toBe(appUserId);
 	});
 	test("disabled bootstrap with null identity never touches SDK or opens a paywall", async () => {
 		const f = fixture();
@@ -198,6 +202,7 @@ describe("store account identity", () => {
 		});
 		expect(configure).not.toHaveBeenCalled();
 		expect(logIn).not.toHaveBeenCalled();
+		expect(logOut).not.toHaveBeenCalled();
 		expect(paywall).not.toHaveBeenCalled();
 		expect(f.createPurchaseAttempt).not.toHaveBeenCalled();
 	});
@@ -271,6 +276,60 @@ describe("store account identity", () => {
 		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
 		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.purchaseStarted).toBe(true);
 	});
+	test("a stuck paywall times out, gates resume, releases the next login and fences late completion", async () => {
+		const f = fixture({}, 30);
+		await f.initialize();
+		const opened = deferred<AbortSignal>();
+		const result = deferred<typeof transaction>();
+		const pending = f.makeFlow().purchase(intent, async (signal) => {
+			opened.resolve(signal);
+			return result.promise;
+		});
+		const paywallSignal = await opened.promise;
+		f.switchAccount();
+		expect(paywallSignal.aborted).toBe(true);
+		const nextLogin = f.sdk.logIn("public-sdk-key", otherAppUserId, () => {});
+		await expect(pending).rejects.toMatchObject({ code: "account_changed" });
+		await nextLogin;
+		expect(sdkUserId).toBe(otherAppUserId);
+		result.resolve(transaction);
+		await Promise.resolve();
+		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
+		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.transactionHint).toBeNull();
+	});
+	test("paywall timeout aborts M2's signal and keeps uncertain purchase evidence", async () => {
+		const f = fixture({}, 30);
+		await f.initialize();
+		const opened = deferred<AbortSignal>();
+		const result = deferred<typeof transaction>();
+		const flow = f.makeFlow();
+		const pending = flow.purchase(intent, async (signal) => {
+			opened.resolve(signal);
+			return result.promise;
+		});
+		const signal = await opened.promise;
+		await expect(pending).rejects.toMatchObject({ code: "store_operation_timeout" });
+		expect(signal.aborted).toBe(true);
+		expect(flow.isBusy()).toBe(false);
+		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.purchaseStarted).toBe(true);
+		result.resolve(transaction);
+		await Promise.resolve();
+		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
+	});
+	test("a late SDK identity check cannot open a paywall after its timeout", async () => {
+		const f = fixture({}, 30);
+		await f.initialize();
+		const checked = deferred<string>();
+		getAppUserID.mockImplementationOnce(async () => checked.promise);
+		const paywall = mock(async () => transaction);
+		await expect(f.sdk.withIdentity(appUserId, () => {}, paywall)).rejects.toMatchObject({
+			code: "store_operation_timeout",
+		});
+		await f.sdk.logIn("public-sdk-key", otherAppUserId, () => {});
+		checked.resolve(appUserId);
+		await Promise.resolve();
+		expect(paywall).not.toHaveBeenCalled();
+	});
 });
 
 describe("durable store attempts", () => {
@@ -292,7 +351,7 @@ describe("durable store attempts", () => {
 		const results = await f.makeFlow().recover();
 		expect(results.map((result) => result.status)).toEqual(["pending", "pending"]);
 		expect(f.delays.reduce((total, delay) => total + delay, 0)).toBe(120_000);
-		expect(f.confirmPurchaseAttempt).toHaveBeenCalledTimes(1);
+		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
 	});
 	test("recovery finds server pending attempts when no local journal remains", async () => {
 		const f = fixture();
@@ -309,7 +368,7 @@ describe("durable store attempts", () => {
 		}));
 		f.setAttempt("funding_applied");
 		expect((await f.makeFlow().recover())[0]?.status).toBe("funding_applied");
-		expect(f.confirmPurchaseAttempt).toHaveBeenCalledTimes(1);
+		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
 		expect(f.createPurchaseAttempt).not.toHaveBeenCalled();
 		expect(f.newKey).not.toHaveBeenCalled();
 	});
@@ -330,7 +389,7 @@ describe("durable store attempts", () => {
 		const previous = parsePurchaseAttempt(f.values.get("journal") ?? "");
 		if (!previous) throw new Error("Missing journal fixture");
 		const journal = createPurchaseAttemptStore(f.store);
-		const next = { ...previous, purchaseStarted: true };
+		const next = { ...previous, purchaseStarted: true, cancelled: false };
 		await journal.replaceAttempt("journal", previous, next, () => true);
 		await expect(journal.clearAttempt("journal", previous, () => true)).rejects.toThrow(
 			"Saved request changed",
@@ -442,9 +501,127 @@ describe("durable store attempts", () => {
 		const result = await f.makeFlow().purchase(intent, secondPaywall);
 		expect(result.status).toBe("pending");
 		expect(secondPaywall).not.toHaveBeenCalled();
-		expect(f.confirmPurchaseAttempt.mock.calls[0]?.[1]).toEqual({ store_transaction_id: null });
+		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
+		expect(syncPurchases).toHaveBeenCalledTimes(1);
 		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.purchaseStarted).toBe(true);
 	});
+	test("restart syncs an interrupted prepared purchase and only reads until the unpaid attempt expires", async () => {
+		const f = fixture();
+		await f.initialize();
+		await expect(
+			f.makeFlow().purchase(intent, async () => {
+				throw new Error("App stopped during the paywall");
+			}),
+		).rejects.toMatchObject({ code: "store_request_failed" });
+		syncPurchases.mockImplementationOnce(async () => f.setAttempt("expired"));
+		expect((await f.makeFlow().recover())[0]?.status).toBe("terminal");
+		expect(syncPurchases).toHaveBeenCalledTimes(1);
+		expect(f.getPurchaseAttempt).toHaveBeenCalledTimes(2);
+		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
+		expect(f.values.size).toBe(0);
+	});
+	test("sync can discover a real purchase claimed by the server without client confirmation", async () => {
+		const f = fixture();
+		await f.initialize();
+		await expect(
+			f.makeFlow().purchase(intent, async () => {
+				throw new Error("Deferred purchase");
+			}),
+		).rejects.toMatchObject({ code: "store_request_failed" });
+		syncPurchases.mockImplementationOnce(async () => f.setAttempt("funding_applied"));
+		expect((await f.makeFlow().recover())[0]?.status).toBe("funding_applied");
+		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
+		expect(f.values.size).toBe(0);
+	});
+	test("recovery preserves cancelled prepared status across restart and retries the same intent", async () => {
+		const f = fixture();
+		await f.initialize();
+		await f.makeFlow().purchase(intent, async () => null);
+		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.cancelled).toBe(true);
+		expect((await f.makeFlow().recover())[0]?.status).toBe("cancelled");
+		expect(syncPurchases).not.toHaveBeenCalled();
+		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
+		await f.makeFlow().purchase(intent, async () => transaction);
+		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.cancelled).toBe(false);
+		expect(f.newKey).toHaveBeenCalledTimes(1);
+	});
+	test("expired attempts with saved paid evidence still confirm and can reach funding_applied", async () => {
+		const f = fixture();
+		await f.initialize();
+		f.confirmPurchaseAttempt.mockImplementationOnce(async () => {
+			throw new Error("Lost confirmation");
+		});
+		await expect(f.makeFlow().purchase(intent, async () => transaction)).rejects.toMatchObject({
+			code: "store_request_failed",
+		});
+		f.setAttempt("expired");
+		f.confirmPurchaseAttempt.mockImplementationOnce(async () => {
+			f.setAttempt("funding_applied");
+			return { state: "verification_pending", correlation_id: "safe-correlation" };
+		});
+		expect((await f.makeFlow().recover())[0]?.status).toBe("funding_applied");
+		expect(f.confirmPurchaseAttempt.mock.calls[1]?.[1]).toEqual({
+			store_transaction_id: transaction.transactionIdentifier,
+		});
+		expect(f.values.size).toBe(0);
+	});
+	test("an expired paid attempt stays pending with its evidence if confirmation has not converged", async () => {
+		const f = fixture();
+		await f.initialize();
+		f.confirmPurchaseAttempt.mockImplementation(async () => ({
+			state: "expired",
+			correlation_id: "safe-correlation",
+		}));
+		// Save paid evidence while the server expires the prepared attempt during the paywall.
+		f.setAttempt("prepared");
+		const paywall = async () => {
+			f.setAttempt("expired");
+			return transaction;
+		};
+		expect((await f.makeFlow().purchase(intent, paywall)).status).toBe("pending");
+		const saved = f.values.get("journal");
+		expect((await f.makeFlow().recover())[0]?.status).toBe("pending");
+		expect(f.confirmPurchaseAttempt).toHaveBeenCalledTimes(2);
+		expect(f.values.get("journal")).toBe(saved);
+		await expect(
+			f
+				.makeFlow()
+				.purchase(
+					{ purpose: "deploy_continuation", pending_deploy_request_id: "target" },
+					async () => null,
+				),
+		).rejects.toMatchObject({ code: "purchase_pending" });
+		expect(f.values.get("journal")).toBe(saved);
+	});
+	for (const state of ["expired", "canceled", "prepared"] as const) {
+		test(`a different purpose reads the ${state} attempt before ${state === "prepared" ? "blocking" : "releasing the journal"}`, async () => {
+			const f = fixture();
+			await f.initialize();
+			await f.makeFlow().purchase(intent, async () => null);
+			f.setAttempt(state);
+			f.newKey.mockReturnValueOnce("new-purpose-key");
+			f.createPurchaseAttempt.mockImplementationOnce(async (body) => ({
+				...body,
+				attempt_id: otherAppUserId,
+				state: "prepared",
+				expires_at: "2099-01-01T00:00:00Z",
+			}));
+			const paywall = mock(async () => null);
+			const purchase = f
+				.makeFlow()
+				.purchase({ purpose: "deploy_continuation", pending_deploy_request_id: "target" }, paywall);
+			if (state === "prepared") {
+				await expect(purchase).rejects.toMatchObject({ code: "purchase_pending" });
+				expect(paywall).not.toHaveBeenCalled();
+				expect(f.newKey).toHaveBeenCalledTimes(1);
+			} else {
+				expect((await purchase).status).toBe("cancelled");
+				expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.key).toBe("new-purpose-key");
+				expect(paywall).toHaveBeenCalledTimes(1);
+			}
+			expect(f.getPurchaseAttempt).toHaveBeenCalledTimes(1);
+		});
+	}
 	test("pending settlement times out after bounded backoff and is retained for foreground recovery", async () => {
 		const f = fixture();
 		await f.initialize();
@@ -512,6 +689,9 @@ describe("durable store attempts", () => {
 
 describe("store errors and build policy", () => {
 	for (const code of [
+		StoreErrorCode.catalogue_revision_stale,
+		StoreErrorCode.open_refund_debt,
+		StoreErrorCode.store_identity_tombstoned,
 		StoreErrorCode.idempotency_key_conflict,
 		StoreErrorCode.store_purchases_disabled,
 		StoreErrorCode.store_environment_held,
@@ -527,8 +707,76 @@ describe("store errors and build policy", () => {
 				code,
 				message: "The store purchase could not be completed",
 			});
+			expect(f.values.size).toBe(0);
+			expect((await f.makeFlow().purchase(intent, async () => null)).status).toBe("cancelled");
+			expect(f.newKey).toHaveBeenCalledTimes(2);
+		});
+		test(`recovering an explicit ${code} create rejection clears the journal and leaves the flow usable`, async () => {
+			const f = fixture();
+			await f.initialize();
+			const flow = f.makeFlow();
+			f.createPurchaseAttempt.mockImplementationOnce(async () => {
+				throw new Error("Lost create response");
+			});
+			await expect(flow.purchase(intent, async () => null)).rejects.toMatchObject({
+				code: "store_request_failed",
+			});
+			f.createPurchaseAttempt.mockImplementationOnce(async () => {
+				throw new ApiClientError(409, code);
+			});
+			const recovered = await recoverStoreFlow(flow, f.scope.signal);
+			expect(recovered.flow).toBe(flow);
+			expect(recovered.error?.code).toBe(code);
+			expect(f.values.size).toBe(0);
+			expect((await recovered.flow.purchase(intent, async () => null)).status).toBe("cancelled");
+			expect(f.newKey).toHaveBeenCalledTimes(2);
 		});
 	}
+	for (const [label, error] of [
+		["network", new Error("Connection lost")],
+		["5xx with a typed code", new ApiClientError(503, StoreErrorCode.store_purchases_disabled)],
+		["unknown 4xx", new ApiClientError(409, "future_private_code")],
+	] as const) {
+		test(`uncertain ${label} create failure retains the original key through recovery and retry`, async () => {
+			const f = fixture();
+			await f.initialize();
+			const flow = f.makeFlow();
+			f.createPurchaseAttempt.mockImplementationOnce(async () => {
+				throw error;
+			});
+			await expect(flow.purchase(intent, async () => null)).rejects.toBeDefined();
+			const saved = f.values.get("journal");
+			f.createPurchaseAttempt.mockImplementationOnce(async () => {
+				throw error;
+			});
+			const recovered = await recoverStoreFlow(flow, f.scope.signal);
+			expect(recovered.flow).toBe(flow);
+			expect(recovered.error).not.toBeNull();
+			expect(f.values.get("journal")).toBe(saved);
+			expect((await recovered.flow.purchase(intent, async () => null)).status).toBe("cancelled");
+			expect(f.newKey).toHaveBeenCalledTimes(1);
+			expect(f.createPurchaseAttempt.mock.calls.map((call) => call[1])).toEqual([
+				"persisted-idempotency-key",
+				"persisted-idempotency-key",
+				"persisted-idempotency-key",
+			]);
+		});
+	}
+	test("a typed read failure for an already-created attempt preserves the journal and flow", async () => {
+		const f = fixture();
+		await f.initialize();
+		const flow = f.makeFlow();
+		await flow.purchase(intent, async () => null);
+		const saved = f.values.get("journal");
+		f.getPurchaseAttempt.mockImplementationOnce(async () => {
+			throw new ApiClientError(409, StoreErrorCode.store_attempt_unavailable);
+		});
+		const recovered = await recoverStoreFlow(flow, f.scope.signal);
+		expect(recovered.flow).toBe(flow);
+		expect(recovered.error?.code).toBe(StoreErrorCode.store_attempt_unavailable);
+		expect(f.values.get("journal")).toBe(saved);
+		expect((await recovered.flow.purchase(intent, async () => null)).status).toBe("cancelled");
+	});
 	test("future API codes and native error messages remain private", async () => {
 		const f = fixture();
 		await f.initialize();

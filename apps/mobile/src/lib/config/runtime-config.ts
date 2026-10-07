@@ -49,6 +49,12 @@ export function parseMobileRuntimeConfig(
 	const computeApiUrl = requiredString(values.computeApiUrl);
 	const revenueCatAppleKey = requiredString(values.revenueCatAppleKey);
 	const revenueCatGoogleKey = requiredString(values.revenueCatGoogleKey);
+	// RevenueCat Test Store public SDK keys start with `test_`; never ship them to stores.
+	if (
+		environment === "production" &&
+		[revenueCatAppleKey, revenueCatGoogleKey].some((key) => key?.startsWith("test_"))
+	)
+		return { ok: false, reason: "invalid" };
 	if (
 		!isDevelopment &&
 		(!requireClerk || (environment !== "preview" && environment !== "production"))

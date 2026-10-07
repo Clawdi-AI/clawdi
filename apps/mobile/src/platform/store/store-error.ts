@@ -8,6 +8,7 @@ export type PurchaseErrorCode =
 	| "purchase_pending"
 	| "invalid_store_result"
 	| "invalid_purchase_request"
+	| "store_operation_timeout"
 	| "store_request_failed";
 
 export class StorePurchaseError extends Error {

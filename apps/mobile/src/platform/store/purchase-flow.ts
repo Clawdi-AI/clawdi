@@ -1,8 +1,10 @@
-import type {
-	HostedStoreClient,
-	StorePlatform,
-	StorePurchaseAttempt,
-	StorePurchaseAttemptRequest,
+import {
+	ApiClientError,
+	type HostedStoreClient,
+	readStoreErrorCode,
+	type StorePlatform,
+	type StorePurchaseAttempt,
+	type StorePurchaseAttemptRequest,
 } from "@clawdi/shared/api";
 import { type AccountScope, readInAccountScope } from "@/platform/auth/account-scope";
 import {
@@ -87,9 +89,24 @@ export function createPurchaseFlow(options: {
 	}
 	async function create(saved: SavedPurchaseAttempt, signal: AbortSignal) {
 		assertStoreAccount(scope, signal);
-		const attempt = saved.attemptId
-			? await client.getPurchaseAttempt(saved.attemptId, signal)
-			: await client.createPurchaseAttempt(saved.request, saved.key, signal);
+		let attempt: StorePurchaseAttempt;
+		try {
+			attempt = saved.attemptId
+				? await client.getPurchaseAttempt(saved.attemptId, signal)
+				: await client.createPurchaseAttempt(saved.request, saved.key, signal);
+		} catch (error) {
+			assertStoreAccount(scope, signal);
+			// Only an explicit typed rejection proves that creation did not succeed.
+			if (
+				!saved.attemptId &&
+				error instanceof ApiClientError &&
+				error.status >= 400 &&
+				error.status < 500 &&
+				readStoreErrorCode(error)
+			)
+				await journal.clearAttempt(storageKey, saved, () => current(signal));
+			throw error;
+		}
 		assertStoreAccount(scope, signal);
 		if (
 			attempt.platform !== saved.request.platform ||
@@ -106,6 +123,12 @@ export function createPurchaseFlow(options: {
 		}
 		return { saved, attempt };
 	}
+	function finished(attempt: StorePurchaseAttempt, saved: SavedPurchaseAttempt | null) {
+		// Hosted accepts late evidence for expired attempts; keep paid evidence recoverable.
+		return (
+			isFinishedPurchase(attempt.state) && !(attempt.state === "expired" && saved?.transactionHint)
+		);
+	}
 	async function finish(
 		attempt: StorePurchaseAttempt,
 		saved: SavedPurchaseAttempt | null,
@@ -113,15 +136,17 @@ export function createPurchaseFlow(options: {
 	): Promise<PurchaseOutcome> {
 		assertStoreAccount(scope, signal);
 		// A manual reconciliation hold continues blocking a second purchase.
-		if (saved && isFinishedPurchase(attempt.state) && attempt.state !== "reconciliation_required")
+		if (saved && finished(attempt, saved) && attempt.state !== "reconciliation_required")
 			await journal.clearAttempt(storageKey, saved, () => current(signal));
 		return {
 			status:
 				attempt.state === "funding_applied"
 					? "funding_applied"
-					: isFinishedPurchase(attempt.state)
+					: finished(attempt, saved)
 						? "terminal"
-						: "pending",
+						: attempt.state === "prepared" && saved?.cancelled
+							? "cancelled"
+							: "pending",
 			attempt,
 		};
 	}
@@ -143,7 +168,7 @@ export function createPurchaseFlow(options: {
 		let delay = 2_000;
 		try {
 			assertStoreAccount(scope, signal);
-			while (!isFinishedPurchase(attempt.state) && clock.now() < deadline) {
+			while (!finished(attempt, saved) && clock.now() < deadline) {
 				await clock.sleep(Math.min(delay, deadline - clock.now()), controller.signal);
 				assertStoreAccount(scope, signal);
 				if (clock.now() >= deadline) break;
@@ -166,18 +191,29 @@ export function createPurchaseFlow(options: {
 		signal: AbortSignal,
 		deadline?: number,
 	) {
-		if (isFinishedPurchase(attempt.state) || (deadline !== undefined && clock.now() >= deadline))
+		if (finished(attempt, saved) || (deadline !== undefined && clock.now() >= deadline))
 			return finish(attempt, saved, signal);
 		const ready = identity.requireReady(signal);
+		if (!saved?.transactionHint) {
+			if (attempt.state === "prepared") {
+				if (!saved?.purchaseStarted) return finish(attempt, saved, signal);
+				await sdk.syncPurchases(ready.appUserId, () => assertStoreAccount(scope, signal), signal);
+				attempt = await client.getPurchaseAttempt(attempt.attempt_id, signal);
+				assertStoreAccount(scope, signal);
+			}
+			// Sync is not purchase evidence. Webhooks/workers claim purchases; unpaid attempts expire.
+			return poll(attempt, saved, signal, deadline);
+		}
 		const confirmation = await sdk.withIdentity(
 			ready.appUserId,
 			() => assertStoreAccount(scope, signal),
-			() =>
+			(operationSignal) =>
 				client.confirmPurchaseAttempt(
 					attempt.attempt_id,
-					{ store_transaction_id: saved?.transactionHint },
-					signal,
+					{ store_transaction_id: saved.transactionHint },
+					operationSignal,
 				),
+			signal,
 		);
 		assertStoreAccount(scope, signal);
 		return poll({ ...attempt, state: confirmation.state }, saved, signal, deadline);
@@ -185,9 +221,9 @@ export function createPurchaseFlow(options: {
 
 	return {
 		isBusy: () => busy,
-		/** After dismissing the UI, resolve with Paywall.onPurchaseCompleted's storeTransaction,
-		 * or null if dismissed without purchasing. Keep the promise pending until the native sheet
-		 * actually finishes, even if the scope changes; onPurchaseCancelled alone does not dismiss it.
+		/** Resolve within five minutes, after UI dismissal, with onPurchaseCompleted's transaction.
+		 * Null means definitively dismissed/cancelled without purchase; deferred purchases must throw.
+		 * Gate onPurchasePackageInitiated's resume with the signal, and dismiss on abort.
 		 */
 		purchase: async (
 			intent: PurchaseIntent,
@@ -207,8 +243,17 @@ export function createPurchaseFlow(options: {
 						(saved.request.purpose !== intent.purpose ||
 							(saved.request.pending_deploy_request_id ?? null) !==
 								(intent.pending_deploy_request_id ?? null))
-					)
-						throw new StorePurchaseError("purchase_pending");
+					) {
+						const existing = await create(saved, signal);
+						saved = existing.saved;
+						if (
+							(existing.attempt.state === "expired" || existing.attempt.state === "canceled") &&
+							finished(existing.attempt, saved)
+						) {
+							await journal.clearAttempt(storageKey, saved, () => current(signal));
+							saved = null;
+						} else throw new StorePurchaseError("purchase_pending");
+					}
 					if (!saved) {
 						saved = {
 							format: 1,
@@ -222,6 +267,7 @@ export function createPurchaseFlow(options: {
 							},
 							attemptId: null,
 							purchaseStarted: false,
+							cancelled: false,
 							transactionHint: null,
 						};
 						// Failure here must prevent both POST and opening the native sheet.
@@ -231,24 +277,28 @@ export function createPurchaseFlow(options: {
 					}
 					const created = await create(saved, signal);
 					saved = created.saved;
-					if (isFinishedPurchase(created.attempt.state))
-						return finish(created.attempt, saved, signal);
-					if (saved.purchaseStarted || created.attempt.state !== "prepared")
+					if (finished(created.attempt, saved)) return finish(created.attempt, saved, signal);
+					if (
+						saved.purchaseStarted ||
+						saved.transactionHint ||
+						created.attempt.state !== "prepared"
+					)
 						return reconcile(created.attempt, saved, signal);
-					const started = { ...saved, purchaseStarted: true };
+					const started = { ...saved, purchaseStarted: true, cancelled: false };
 					await journal.replaceAttempt(storageKey, saved, started, () => current(signal));
 					saved = started;
 					const transaction = await sdk.withIdentity(
 						ready.appUserId,
 						() => assertStoreAccount(scope, signal),
-						() => showPaywall(signal),
+						showPaywall,
+						signal,
 					);
 					assertStoreAccount(scope, signal);
 					if (!transaction) {
 						await journal.replaceAttempt(
 							storageKey,
 							saved,
-							{ ...saved, purchaseStarted: false },
+							{ ...saved, purchaseStarted: false, cancelled: true },
 							() => current(signal),
 						);
 						return { status: "cancelled", attempt: created.attempt };
