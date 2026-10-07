@@ -837,7 +837,7 @@ Fresh Hermes installs use the verified upstream commit
 The pin remains until the documented upstream regressions are fixed and a fresh
 install is verified again. The
 [Hermes Upstream Contract](../.github/workflows/hermes-upstream-contract.yml)
-workflow still installs the current official Hermes every three hours as UID 10001
+workflow installs Hermes with that same policy every three hours as UID 10001
 in a clean Ubuntu container and drives the CLI's own Hermes adapter code
 against it: interpreter resolution, command-line surfaces, config, Skill,
 credential-pool, Codex OAuth, and Agent Plugin helpers, the dashboard cold
