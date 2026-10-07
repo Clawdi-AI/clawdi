@@ -72,6 +72,12 @@ export interface DesktopAuthenticationCancellationResult {
 	status: "cancelled" | "not-active";
 }
 
+export interface DesktopAuthenticationProgress {
+	verificationUri: string;
+	userCode: string;
+	expiresAt: string;
+}
+
 export interface DesktopShellAuthenticationResult {
 	status: "authenticated" | "cancelled";
 }
@@ -84,6 +90,7 @@ export interface ClawdiDesktopConnectBridge {
 	getBootstrapState(): Promise<DesktopBootstrapState>;
 	getInstallationState(): Promise<DesktopInstallationState>;
 	authenticate(): Promise<DesktopAuthenticationResult>;
+	onAuthenticationProgress(listener: (progress: DesktopAuthenticationProgress) => void): () => void;
 	cancelAuthentication(): Promise<DesktopAuthenticationCancellationResult>;
 	detectAgents(): Promise<DesktopDetectedAgent[]>;
 	listReconnectableAgents(): Promise<DesktopReconnectCandidate[]>;

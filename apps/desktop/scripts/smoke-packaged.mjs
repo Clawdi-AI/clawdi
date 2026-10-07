@@ -138,8 +138,15 @@ async function verifyLocalRenderer(context, window) {
 		"getInstallationState",
 		"listReconnectableAgents",
 		"moveToApplicationsFolder",
+		"onAuthenticationProgress",
 		"openDashboard",
 	]);
+	await window.getByRole("button", { name: "Sign in to continue" }).click();
+	await window.getByRole("status").getByText("ABCD-EFGH", { exact: true }).waitFor();
+	assert.match(await window.locator("body").innerText(), /Confirm the browser shows the same code/);
+	assert.match(readFileSync(cliLog, "utf8"), /^auth login --desktop$/m);
+	await window.getByRole("button", { name: "Cancel sign-in", exact: true }).click();
+	await window.getByRole("heading", { name: "Welcome to Clawdi" }).waitFor();
 	const originalUrl = window.url();
 	await window.evaluate(() => {
 		window.location.href = "https://cloud.clawdi.ai/";

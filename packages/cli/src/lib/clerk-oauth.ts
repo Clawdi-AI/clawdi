@@ -34,7 +34,6 @@ const REQUIRED_SCOPES = ["openid", "profile", "email", "offline_access"] as cons
 export type ClerkOAuthClientConfig = {
 	issuer: string;
 	clientId: string;
-	redirectUri?: string;
 };
 
 export type ClerkOAuthDiscovery = {
@@ -415,7 +414,6 @@ export async function fetchClerkOAuthClientConfig(
 	return {
 		issuer: exactIssuer(issuer),
 		clientId,
-		redirectUri: nonEmptyString(body.redirect_uri, 2_048) ?? undefined,
 	};
 }
 
@@ -485,213 +483,6 @@ async function fetchClerkOAuthDiscoveryDocument(
 	return body;
 }
 
-export type ClerkOAuthPkceDiscovery = {
-	issuer: string;
-	authorizationEndpoint: string;
-	tokenEndpoint: string;
-};
-
-export async function fetchClerkOAuthPkceDiscovery(
-	config: ClerkOAuthClientConfig,
-	options: ClerkOAuthNetworkOptions = {},
-): Promise<ClerkOAuthPkceDiscovery> {
-	const body = await fetchClerkOAuthDiscoveryDocument(config, options);
-	const issuer = nonEmptyString(body.issuer, 2_048);
-	const authorizationEndpoint = nonEmptyString(body.authorization_endpoint, 2_048);
-	const tokenEndpoint = nonEmptyString(body.token_endpoint, 2_048);
-	const grants = stringArray(body.grant_types_supported);
-	if (
-		!issuer ||
-		exactIssuer(issuer) !== config.issuer ||
-		!authorizationEndpoint ||
-		!tokenEndpoint ||
-		!grants?.includes("authorization_code") ||
-		!grants.includes("refresh_token") ||
-		!stringArray(body.code_challenge_methods_supported)?.includes("S256") ||
-		!stringArray(body.token_endpoint_auth_methods_supported)?.includes("none")
-	) {
-		throw new ClerkOAuthError(
-			"invalid_oauth_discovery",
-			"Clerk OAuth discovery does not support the required public-client PKCE contract.",
-		);
-	}
-	return {
-		issuer: config.issuer,
-		authorizationEndpoint: exactIssuerEndpoint(
-			authorizationEndpoint,
-			config.issuer,
-			"authorization endpoint",
-		),
-		tokenEndpoint: exactIssuerEndpoint(tokenEndpoint, config.issuer, "token endpoint"),
-	};
-}
-
-export function exactLoopbackRedirectUri(raw: string | undefined): string {
-	// Keep the registered fixed port until the provider's any-port support is verified.
-	const registered = "http://127.0.0.1:18473/oauth/callback";
-	if (raw !== registered) {
-		throw new ClerkOAuthError(
-			"invalid_oauth_config",
-			"Clawdi Desktop requires the registered OAuth redirect http://127.0.0.1:18473/oauth/callback.",
-		);
-	}
-	return registered;
-}
-
-/** Desktop transactions stay in memory; only the verified grant is persisted. */
-export type ClerkOAuthPkceAuthorization = {
-	state: string;
-	codeVerifier: string;
-	authorizationUrl: string;
-	redirectUri: string;
-	issuer: string;
-	clientId: string;
-	tokenEndpoint: string;
-	apiUrl: string;
-	endpointBinding: CredentialEndpointBinding;
-	expiresAt: string;
-};
-
-export function createClerkOAuthAuthorization({
-	config,
-	discovery,
-	apiUrl,
-	hostedApiUrl,
-	now = Date.now,
-}: {
-	config: ClerkOAuthClientConfig;
-	discovery: ClerkOAuthPkceDiscovery;
-	apiUrl: string;
-	hostedApiUrl: string;
-	now?: () => number;
-}): ClerkOAuthPkceAuthorization {
-	const redirectUri = exactLoopbackRedirectUri(config.redirectUri);
-	const endpointBinding = createCredentialEndpointBinding(apiUrl, hostedApiUrl);
-	const issuer = exactIssuer(config.issuer);
-	const state = randomBytes(32).toString("base64url");
-	const codeVerifier = randomBytes(48).toString("base64url");
-	const challenge = createHash("sha256").update(codeVerifier).digest("base64url");
-	const authorizationUrl = new URL(
-		exactIssuerEndpoint(discovery.authorizationEndpoint, issuer, "authorization endpoint"),
-	);
-	authorizationUrl.searchParams.set("response_type", "code");
-	authorizationUrl.searchParams.set("client_id", config.clientId);
-	authorizationUrl.searchParams.set("redirect_uri", redirectUri);
-	authorizationUrl.searchParams.set("scope", REQUIRED_SCOPES.join(" "));
-	authorizationUrl.searchParams.set("state", state);
-	authorizationUrl.searchParams.set("code_challenge", challenge);
-	authorizationUrl.searchParams.set("code_challenge_method", "S256");
-	return {
-		state,
-		codeVerifier,
-		redirectUri,
-		issuer,
-		clientId: config.clientId,
-		authorizationUrl: authorizationUrl.toString(),
-		tokenEndpoint: exactIssuerEndpoint(discovery.tokenEndpoint, issuer, "token endpoint"),
-		expiresAt: new Date(now() + 5 * 60_000).toISOString(),
-		apiUrl: endpointBinding.cloudApiOrigin,
-		endpointBinding,
-	};
-}
-
-export function parseClerkOAuthCallback(pending: ClerkOAuthPkceAuthorization, raw: string): string {
-	let callback: URL;
-	try {
-		callback = new URL(raw);
-	} catch {
-		throw new ClerkOAuthError(
-			"invalid_oauth_callback",
-			"Clawdi OAuth callback is invalid. Start sign-in again.",
-		);
-	}
-	const expected = new URL(exactLoopbackRedirectUri(pending.redirectUri));
-	if (
-		callback.origin !== expected.origin ||
-		callback.pathname !== expected.pathname ||
-		callback.username ||
-		callback.password ||
-		callback.hash ||
-		callback.searchParams.getAll("state").length !== 1 ||
-		callback.searchParams.get("state") !== pending.state ||
-		callback.searchParams.getAll("code").length > 1 ||
-		callback.searchParams.getAll("error").length > 1 ||
-		(callback.searchParams.has("code") && callback.searchParams.has("error"))
-	) {
-		throw new ClerkOAuthError(
-			"invalid_oauth_callback",
-			"Clawdi OAuth callback validation failed. Start sign-in again.",
-		);
-	}
-	if (callback.searchParams.has("error")) {
-		if (callback.searchParams.get("error") === "access_denied") {
-			throw new ClerkOAuthError("oauth_denied", "Clawdi sign-in was cancelled.");
-		}
-		throw deviceLoginFailed();
-	}
-	const code = nonEmptyString(callback.searchParams.get("code"));
-	if (!code)
-		throw new ClerkOAuthError(
-			"invalid_oauth_callback",
-			"Clawdi OAuth callback is missing its authorization code.",
-		);
-	return code;
-}
-
-export async function exchangeClerkOAuthCode(
-	pending: ClerkOAuthPkceAuthorization,
-	callbackUrl: string,
-	options: ClerkOAuthNetworkOptions & { signal?: AbortSignal } = {},
-): Promise<ClerkOAuthAuth> {
-	const now = options.now ?? Date.now;
-	const expiresAt = Date.parse(pending.expiresAt);
-	if (!Number.isFinite(expiresAt) || expiresAt <= now()) throw deviceLoginExpired();
-	if (options.signal?.aborted)
-		throw new ClerkOAuthError("oauth_cancelled", "Clawdi sign-in was cancelled.");
-	const endpointBinding = normalizedBinding(pending.endpointBinding);
-	if (
-		!endpointBinding?.hostedApiOrigin ||
-		endpointBinding.cloudApiOrigin !== canonicalApiOrigin(normalizeCloudApiBaseUrl(pending.apiUrl))
-	) {
-		throw new ClerkOAuthError(
-			"invalid_credential_endpoint_binding",
-			"The sign-in endpoint binding is invalid. Start sign-in again.",
-		);
-	}
-	if (
-		!/^[A-Za-z0-9_-]{43,128}$/.test(pending.codeVerifier) ||
-		!/^[A-Za-z0-9_-]{43}$/.test(pending.state)
-	) {
-		throw new ClerkOAuthError(
-			"invalid_oauth_callback",
-			"Clawdi OAuth transaction is invalid. Start sign-in again.",
-		);
-	}
-	const code = parseClerkOAuthCallback(pending, callbackUrl);
-	const endpoint = exactIssuerEndpoint(
-		pending.tokenEndpoint,
-		exactIssuer(pending.issuer),
-		"token endpoint",
-	);
-	const form = new URLSearchParams({
-		grant_type: "authorization_code",
-		client_id: pending.clientId,
-		redirect_uri: pending.redirectUri,
-		code,
-		code_verifier: pending.codeVerifier,
-	});
-	const response = await (
-		options.fetch ?? ((request) => fetchWithTimeout(request, options.signal))
-	)(tokenFormRequest(endpoint, form));
-	const auth = await tokenResponse(response, {
-		issuer: pending.issuer,
-		clientId: pending.clientId,
-		tokenEndpoint: endpoint,
-		now: now(),
-	});
-	return { ...auth, endpointBinding };
-}
-
 function deviceGrantUnavailable(): ClerkOAuthError {
 	return new ClerkOAuthError(
 		"oauth_device_grant_unavailable",
@@ -731,7 +522,8 @@ export async function startClerkDeviceAuthorization({
 	discovery,
 	apiUrl,
 	hostedApiUrl,
-	fetch: fetcher = fetchWithTimeout,
+	fetch: fetcher,
+	signal,
 	now = Date.now,
 }: {
 	config: ClerkOAuthClientConfig;
@@ -739,12 +531,13 @@ export async function startClerkDeviceAuthorization({
 	apiUrl: string;
 	hostedApiUrl: string;
 	fetch?: FetchLike;
+	signal?: AbortSignal;
 	now?: () => number;
 }): Promise<PendingAuth> {
 	const endpointBinding = createCredentialEndpointBinding(apiUrl, hostedApiUrl);
 	let response: Response;
 	try {
-		response = await fetcher(
+		response = await (fetcher ?? ((request) => fetchWithTimeout(request, signal)))(
 			tokenFormRequest(
 				discovery.deviceAuthorizationEndpoint,
 				new URLSearchParams({ client_id: config.clientId, scope: REQUIRED_SCOPES.join(" ") }),

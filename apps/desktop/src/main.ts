@@ -369,7 +369,11 @@ async function authenticateAndResumeSync(force = false): Promise<DesktopAuthenti
 		{
 			bootstrapState: () => cli.bootstrapState(),
 			getAuthState: () => cli.getAuthState(),
-			authenticate: (forceAuthentication) => cli.authenticate(forceAuthentication),
+			authenticate: (forceAuthentication) =>
+				cli.authenticate(forceAuthentication, (progress) => {
+					if (connectWindow && !connectWindow.isDestroyed())
+						connectWindow.webContents.send(DESKTOP_IPC.authenticationProgress, progress);
+				}),
 			stopDaemon: () => withCriticalOperation(() => cli.stopDaemon()),
 			restartDaemon: () => withCriticalOperation(() => cli.restartDaemon()),
 		},

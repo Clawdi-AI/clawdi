@@ -166,7 +166,7 @@ afterEach(() => {
 });
 
 describe("Clerk public OAuth device authorization", () => {
-	test("ignores legacy audience and authorized-party response fields", async () => {
+	test("ignores legacy audience, authorized-party and redirect response fields", async () => {
 		const config = await fetchClerkOAuthClientConfig("https://cloud.example.test", {
 			fetch: async () =>
 				Response.json({
@@ -177,7 +177,7 @@ describe("Clerk public OAuth device authorization", () => {
 					redirect_uri: "http://127.0.0.1:18473/oauth/callback",
 				}),
 		});
-		expect(config).toEqual({ ...CONFIG, redirectUri: "http://127.0.0.1:18473/oauth/callback" });
+		expect(config).toEqual(CONFIG);
 	});
 
 	test.each([

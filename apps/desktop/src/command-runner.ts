@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const FORCE_KILL_DELAY_MS = 2_000;
@@ -14,6 +15,7 @@ export interface CommandOptions {
 	signal?: AbortSignal;
 	stdin?: string;
 	timeoutMs?: number;
+	onStderrLine?: (line: string) => void;
 }
 
 export class CommandCancelledError extends Error {}
@@ -35,6 +37,8 @@ export function runCommand(
 		});
 		let stdout = "";
 		let stderr = "";
+		const stderrDecoder = new StringDecoder("utf8");
+		let stderrLine = "";
 		let settled = false;
 		let terminationError: Error | null = null;
 		let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
@@ -67,8 +71,8 @@ export function runCommand(
 			terminate(new CommandCancelledError("Clawdi sign-in was cancelled."), "SIGTERM");
 		}
 
-		const append = (current: string, chunk: Buffer) => {
-			const next = current + chunk.toString("utf8");
+		const append = (current: string, chunk: string) => {
+			const next = current + chunk;
 			if (Buffer.byteLength(next) > MAX_OUTPUT_BYTES) {
 				terminate(new Error("Clawdi produced too much output."), "SIGKILL");
 				return current;
@@ -76,15 +80,32 @@ export function runCommand(
 			return next;
 		};
 
+		const consumeStderr = (chunk: string) => {
+			stderr = append(stderr, chunk);
+			if (!opts.onStderrLine || terminationError) return;
+			stderrLine += chunk;
+			try {
+				let newline = stderrLine.indexOf("\n");
+				while (newline !== -1) {
+					opts.onStderrLine(stderrLine.slice(0, newline));
+					stderrLine = stderrLine.slice(newline + 1);
+					newline = stderrLine.indexOf("\n");
+				}
+			} catch {
+				terminate(new Error("Clawdi returned invalid progress output."), "SIGKILL");
+			}
+		};
+
 		child.stdout.on("data", (chunk: Buffer) => {
-			stdout = append(stdout, chunk);
+			stdout = append(stdout, chunk.toString("utf8"));
 		});
 		child.stderr.on("data", (chunk: Buffer) => {
-			stderr = append(stderr, chunk);
+			consumeStderr(stderrDecoder.write(chunk));
 		});
 		child.stdin.on("error", () => {});
 		child.on("error", (error) => finish(error));
 		child.on("close", (code, signal) => {
+			consumeStderr(stderrDecoder.end());
 			if (terminationError) {
 				finish(terminationError);
 				return;
