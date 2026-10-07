@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Text as AppText, Text } from "@/components/ui/text";
+import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
 
@@ -116,43 +117,64 @@ export function VaultSplit({
 				</WebView>
 			) : (
 				<>
-					{groups.map((g) => (
-						<WebView key={g.prefix} recipe={styles.group} className="flex-row">
-							<WebView recipe={styles.checkRow} className="flex-row flex-1">
-								<Checkbox
-									checked={!excluded.has(g.prefix)}
-									disabled={disabled}
-									onCheckedChange={(value) =>
-										setExcluded((current) => {
-											const next = new Set(current);
-											if (value) next.delete(g.prefix);
-											else next.add(g.prefix);
-											return next;
-										})
-									}
+					{groups.map((g) => {
+						const included = !excluded.has(g.prefix);
+						const toggle = (value: boolean) =>
+							setExcluded((current) => {
+								const next = new Set(current);
+								if (value) next.delete(g.prefix);
+								else next.add(g.prefix);
+								return next;
+							});
+						return (
+							<WebView key={g.prefix} recipe={styles.group} className="flex-row">
+								<WebView recipe={styles.checkRow} className="flex-row flex-1">
+									<Checkbox
+										checked={included}
+										disabled={disabled}
+										accessibilityLabel={`${g.prefix}, ${g.keys.length} keys`}
+										onCheckedChange={toggle}
+									/>
+									{/* Web's <label>: the caption toggles the named checkbox. */}
+									<AppPressable
+										accessibilityElementsHidden
+										importantForAccessibility="no-hide-descendants"
+										disabled={disabled}
+										onPress={() => toggle(!included)}
+										className="flex-1 flex-row items-center gap-2"
+									>
+										<WebText recipe={styles.prefix}>{g.prefix}</WebText>
+										<WebText recipe={styles.count}>{`${g.keys.length} keys →`}</WebText>
+									</AppPressable>
+								</WebView>
+								<Input
+									className="flex-1"
+									accessibilityLabel={`${t("vault.splitSlug")}: ${g.prefix}`}
+									value={slugs[g.prefix] ?? g.slug}
+									onChangeText={(slug) => setSlugs({ ...slugs, [g.prefix]: slug })}
+									editable={!disabled && !excluded.has(g.prefix)}
+									maxLength={200}
+									autoCapitalize="none"
+									autoCorrect={false}
 								/>
-								<WebText recipe={styles.prefix}>{g.prefix}</WebText>
-								<WebText recipe={styles.count}>{`${g.keys.length} keys →`}</WebText>
 							</WebView>
-							<Input
-								className="flex-1"
-								accessibilityLabel={`${t("vault.splitSlug")}: ${g.prefix}`}
-								value={slugs[g.prefix] ?? g.slug}
-								onChangeText={(slug) => setSlugs({ ...slugs, [g.prefix]: slug })}
-								editable={!disabled && !excluded.has(g.prefix)}
-								maxLength={200}
-								autoCapitalize="none"
-								autoCorrect={false}
-							/>
-						</WebView>
-					))}
+						);
+					})}
 					<WebView recipe={styles.checkRow} className="flex-row">
 						<Checkbox
 							checked={removeOriginals}
 							onCheckedChange={setRemoveOriginals}
 							disabled={disabled}
+							accessibilityLabel={splitVaultRemoveLabel(sourceName)}
 						/>
-						<Text>{splitVaultRemoveLabel(sourceName)}</Text>
+						<Text
+							className="flex-1"
+							accessibilityElementsHidden
+							importantForAccessibility="no"
+							onPress={disabled ? undefined : () => setRemoveOriginals(!removeOriginals)}
+						>
+							{splitVaultRemoveLabel(sourceName)}
+						</Text>
 					</WebView>
 					{!valid ? <AppText accessibilityRole="alert">{copy.invalid}</AppText> : null}
 					<Button

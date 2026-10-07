@@ -12,6 +12,7 @@ import {
 	channelFormClasses,
 	ENTITY_CARD_BASE,
 	channelDetailPageClasses as styles,
+	tabsContentClassName,
 } from "@clawdi/shared/ui";
 import {
 	agentDisplayName,
@@ -49,7 +50,6 @@ import { Label } from "@/components/ui/input";
 import { NativeList } from "@/components/ui/native-list";
 import { SheetPage } from "@/components/ui/sheet-page";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Text as AppText } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppView } from "@/components/ui/view";
@@ -67,6 +67,7 @@ import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { NativeHeader } from "@/platform/navigation/native-header";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
@@ -594,13 +595,15 @@ function ChannelDetail({
 				]
 			: []),
 		<AppView key="tab-selector">
-			<Tabs value={tab} onValueChange={setTab}>
-				<TabsList variant="default">
-					<TabsTrigger value="activity">{agentSurfaceCopy.activity}</TabsTrigger>
-					<TabsTrigger value="health">{agentSurfaceCopy.health}</TabsTrigger>
-					<TabsTrigger value="commands">{agentSurfaceCopy.commands}</TabsTrigger>
-				</TabsList>
-			</Tabs>
+			<NativeSegments
+				value={tab}
+				onChange={setTab}
+				options={[
+					{ value: "activity", label: agentSurfaceCopy.activity },
+					{ value: "health", label: agentSurfaceCopy.health },
+					{ value: "commands", label: agentSurfaceCopy.commands },
+				]}
+			/>
 		</AppView>,
 		...eventCards,
 	];
@@ -705,13 +708,15 @@ function ChannelDetail({
 				}
 				footer={
 					<AppView>
-						<Tabs value={tab} onValueChange={setTab}>
-							<TabsContent value="activity">
+						{tab === "activity" ? (
+							<WebView recipe={tabsContentClassName}>
 								{!activity.isPending && !activity.isError && !activity.data?.items.length ? (
 									<EmptyState title={copy.noActivity} description={copy.noActivityDescription} />
 								) : null}
-							</TabsContent>
-							<TabsContent value="health">
+							</WebView>
+						) : null}
+						{tab === "health" ? (
+							<WebView recipe={tabsContentClassName}>
 								{health.isPending ? (
 									<Skeleton className={webView(styles.activitySkeleton)} />
 								) : health.isError ? (
@@ -725,8 +730,10 @@ function ChannelDetail({
 										health={health.data?.items.find((item) => item.account_id === id)}
 									/>
 								)}
-							</TabsContent>
-							<TabsContent value="commands">
+							</WebView>
+						) : null}
+						{tab === "commands" ? (
+							<WebView recipe={tabsContentClassName}>
 								<WebView recipe={styles.skeletonContent}>
 									<ChannelInfoCard icon={KeyRound} title={copy.pairingCommands}>
 										{pairingCommandsDescription(
@@ -775,8 +782,8 @@ function ChannelDetail({
 										<EmptyState variant="inset" description={copy.noCommands} />
 									) : null}
 								</WebView>
-							</TabsContent>
-						</Tabs>
+							</WebView>
+						) : null}
 					</AppView>
 				}
 			/>

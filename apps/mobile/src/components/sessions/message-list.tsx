@@ -27,10 +27,10 @@ import { Markdown } from "@/components/markdown";
 import { ModelBadge } from "@/components/sessions/meta";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AppPressable, AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webText, webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
 
 export function SessionTimelineRowView({
 	row,
@@ -213,6 +213,7 @@ export function SessionTimelineRowView({
 function ToolActivity({ row }: { row: Extract<SessionTimelineRow, { kind: "tool" }> }) {
 	const t = useI18n();
 	const [open, setOpen] = useState(false);
+	const [payloadKey, setPayloadKey] = useState<string>();
 	const payloads = [
 		row.call?.arguments_json
 			? { key: "arguments", value: row.call.arguments_json, label: t("sessionDetail.arguments") }
@@ -225,6 +226,7 @@ function ToolActivity({ row }: { row: Extract<SessionTimelineRow, { kind: "tool"
 			: null,
 	].filter((p) => p !== null);
 	const first = payloads[0];
+	const active = payloads.find((payload) => payload.key === payloadKey) ?? first;
 	const timestamp = row.firstTimestamp ?? row.call?.timestamp ?? row.result?.timestamp;
 	const isError = row.result?.status === "error";
 	return (
@@ -269,30 +271,20 @@ function ToolActivity({ row }: { row: Extract<SessionTimelineRow, { kind: "tool"
 					) : null}
 					{first ? <Icon as={ChevronRight} /> : null}
 				</AppPressable>
-				{open && first ? (
+				{open && active ? (
 					<WebView recipe={styles.toolDetails}>
-						<Tabs defaultValue={first.key} className={webView(styles.tabs)}>
+						<WebView recipe={styles.tabs}>
 							{payloads.length > 1 ? (
-								<TabsList variant="line" className={webView(styles.tabList)}>
-									{payloads.map((payload) => (
-										<TabsTrigger
-											key={payload.key}
-											value={payload.key}
-											className={webView(styles.tab)}
-										>
-											<WebText recipe={styles.tab}>{payload.label}</WebText>
-										</TabsTrigger>
-									))}
-								</TabsList>
+								<NativeSegments
+									value={active.key}
+									onChange={setPayloadKey}
+									options={payloads.map(({ key, label }) => ({ value: key, label }))}
+								/>
 							) : (
-								<WebText recipe={styles.payloadLabel}>{first.label}</WebText>
+								<WebText recipe={styles.payloadLabel}>{active.label}</WebText>
 							)}
-							{payloads.map((payload) => (
-								<TabsContent key={payload.key} value={payload.key}>
-									<ToolPayload value={payload.value} />
-								</TabsContent>
-							))}
-						</Tabs>
+							<ToolPayload key={active.key} value={active.value} />
+						</WebView>
 					</WebView>
 				) : null}
 			</WebView>

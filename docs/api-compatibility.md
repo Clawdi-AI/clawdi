@@ -86,8 +86,10 @@ payload before changing the handler.
 `GET/PUT /v1/agents/{agent_id}/profiles` reads and reconciles an Agent's
 profile inventory. PUT accepts `{complete, profiles: [{upstream_key, is_default}]}`;
 only a complete inventory marks missing profiles `removed`. Removed profiles
-retain their sessions and return `online: false`. Responses include stable
-profile UUIDs, keys, display names, timestamps, state, and session counts.
+retain their sessions. Responses include stable profile UUIDs, keys, derived
+`is_default`, state, and session counts. By owner decision, profile responses omit
+`online`, `last_seen_at`, `display_name`, `upstream_key`, `first_seen_at`, and
+`removed_at`; profile identity and labels come from `profile_key`.
 Profile writes require `sessions:write` or `skills:write` and the existing
 Agent credential and machine fences. The v1 heartbeat contract is unchanged.
 
@@ -100,14 +102,18 @@ Batches report ambiguous IDs in the per-item `rejected` list; unaffected items
 continue. Generation commits address their generation's Session directly.
 Deleted attributed
 sessions still resolve their suppression profile for older clients. Session
-lists accept `profile_key` and expose `profile_display_name` for the UI.
+lists accept and expose `profile_key`; responses omit `profile_display_name`.
+Session batches select profiles only at batch level, not on individual items.
 
 `POST /v1/agents/{agent_id}/profiles/{profile_key}/attribute-sessions` moves
 OpenClaw default-profile metadata and suppressions for up to 1,000 local IDs.
 The Hermes sibling `/rename` accepts `{new_upstream_key}` and preserves the
 source profile UUID while moving sessions and suppressions in place. Both
 operations preserve content bytes, object references, hashes, and session UUIDs;
-an occupied rename destination returns HTTP 409 `profile_conflict`. Both metadata
+an existing rename destination returns HTTP 409 `profile_conflict` if it contains
+sessions or suppressions. Empty destinations are replaced to support older CLIs
+that PUT inventory before rename; keep this branch until the CLI floor reaches
+0.15.5. New CLI reconciliation renames before PUT inventory. Both metadata
 move operations require `sessions:write`; `skills:write` alone is insufficient.
 
 The migration adds defaulted profile columns without session backfill and builds

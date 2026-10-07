@@ -20,22 +20,23 @@ editing recipes, run `bun run --cwd apps/mobile theme` and commit
   `bun apps/mobile/src/platform/generate-brand-assets.mjs` from the repository root
   to regenerate them. Channels use the same public PNG URLs as Web. Failed
   images fall back to the same monogram/device treatment.
-- `Tabs` uses string values; `TabsList` supports `default` and `line` (native
-  default is `line`). `ToggleGroup` uses Web's string-array value contract and
-  `multiple` prop. `Switch` keeps native geometry with shared theme tints.
+- Single-choice Web `Tabs`/`ToggleGroup` in content render `NativeSegments`
+  (`@expo/ui` segmented control) and conditionally render the selected panel.
+  `Tabs` remains only for billing surfaces. `Checkbox` is `@expo/ui`'s native
+  checkbox; give it an `accessibilityLabel` and let the adjacent caption toggle
+  it like Web's `<label>`. `Switch` keeps native geometry with shared theme tints.
 - `Select` and `DropdownMenu` accept direct Item/Group/Fragment descriptor
   children. System menus own popup geometry, typography, separators and
   scrolling. Custom components that hide descriptors are not evaluated;
   pass an item's plain `label` when its children are not plain text. Trigger
   appearance uses shared Web recipes. `render` accepts a native element.
   On iOS, menu open/close observation is unavailable; selection still works.
-- `Dialog`, `Sheet`, and `AlertDialog` use native `Modal` with shared surfaces.
-  Portal/Overlay slots are compatibility slots: Content owns those layers.
-  A trigger/close `render` accepts a native Pressable/Button and uses `onPress`.
-  Alert dialogs dismiss through their Cancel button or controlled `open`;
-  an Action button does not close automatically. `ConfirmAction` keeps async
-  actions visible, fences stale completions with the existing action gate,
-  and shows safe inline errors on rejection.
+- Web dialogs are native containers: forms are Expo Router `formSheet` routes
+  (`SheetPage`), string confirmations use `Alert.alert`, and rich
+  confirmations use `ConfirmAction`'s `@expo/ui` BottomSheet with the shared
+  `AlertDialog*` content slots. `ConfirmAction` keeps async actions visible,
+  fences stale completions with the existing action gate, and shows safe
+  inline errors on rejection.
 - `ApiErrorPanel` understands shared API/network errors. Domain callers may
   provide the same `normalizer` interface as Web. Auth expiry routes to sign-in
   or calls `onReauthenticate`; Desktop reconnect is omitted. `ErrorState` is a

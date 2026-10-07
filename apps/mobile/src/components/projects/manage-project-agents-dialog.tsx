@@ -24,6 +24,7 @@ import { Separator } from "@/components/ui/separator";
 import { SheetPage } from "@/components/ui/sheet-page";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Text } from "@/components/ui/text";
+import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { type CloudAgent, useCloudAgents } from "@/hooks/cloud-inventory";
 import { useAgentOwnership } from "@/hooks/use-agent-ownership";
@@ -125,7 +126,6 @@ function ManageProjectAgents({
 	return (
 		<SheetPage
 			title={t("libraryPort.manageAgents")}
-			description={t("libraryPort.chooseAgents")}
 			fallback="/projects"
 			busy={action.busy}
 			sheet={sheet}
@@ -175,6 +175,13 @@ function ManageProjectAgents({
 				}
 				renderItem={({ item: agent, index }) => {
 					const identity = agentIdentity(agent);
+					const toggle = (checked: boolean) =>
+						setSelected((current) => {
+							const next = new Set(current);
+							if (checked) next.add(agent.id);
+							else next.delete(agent.id);
+							return next;
+						});
 					return (
 						<Fragment key={agent.id}>
 							<WebView recipe={projectDetailClasses.agentChoice}>
@@ -182,16 +189,17 @@ function ManageProjectAgents({
 									checked={selected.has(agent.id)}
 									disabled={disabled}
 									accessibilityLabel={`${identity.primaryLabel} access`}
-									onCheckedChange={(checked) =>
-										setSelected((current) => {
-											const next = new Set(current);
-											if (checked) next.add(agent.id);
-											else next.delete(agent.id);
-											return next;
-										})
-									}
+									onCheckedChange={toggle}
 								/>
-								<WebView recipe={`${agentLabelClasses.root} ${projectDetailClasses.agentIdentity}`}>
+								{/* Web's <label>: the identity toggles the checkbox; its text stays readable. */}
+								<AppPressable
+									accessible={false}
+									disabled={disabled}
+									onPress={() => toggle(!selected.has(agent.id))}
+									className={webView(
+										`${agentLabelClasses.root} ${projectDetailClasses.agentIdentity}`,
+									)}
+								>
 									<AgentIcon agent={agent.agent_type} avatarUrl={agent.avatar_url} size="sm" />
 									<WebView recipe={agentLabelClasses.copy}>
 										<WebView recipe={agentLabelClasses.heading}>
@@ -222,7 +230,7 @@ function ManageProjectAgents({
 											</WebText>
 										</WebView>
 									</WebView>
-								</WebView>
+								</AppPressable>
 							</WebView>
 							{index < ordered.length - 1 ? <Separator /> : null}
 						</Fragment>

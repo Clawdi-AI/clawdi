@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import { Console } from "node:console";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import chalk from "chalk";
 import { Command, Help, Option } from "commander";
 import { AGENT_TYPE_HELP_LABEL, SKILL_AGENT_TYPE_HELP_LABEL } from "./adapters/registry.js";
 import { registerServeCommand } from "./commands/serve-cli.js";
 import { loadAuthTokenFile } from "./lib/auth-token-file.js";
 import { parsePositiveInteger } from "./lib/cli-options.js";
+import { getClawdiDir } from "./lib/config.js";
 import { handleError } from "./lib/errors.js";
 import { getCliVersion } from "./lib/version.js";
 import { evaluateHostPolicyForCommand } from "./runtime/host-policy.js";
@@ -2221,6 +2224,11 @@ for (const [heading, commandNames] of Object.entries(TOP_LEVEL_HELP_GROUPS)) {
 // run's background install, and (when due) kicks off another detached
 // install. Best-effort and fully off-the-hot-path — see commands/update.ts.
 (async () => {
+	try {
+		await rm(join(getClawdiDir(), "profile-renames"), { recursive: true, force: true });
+	} catch {
+		// Obsolete journal cleanup must not prevent the CLI from running.
+	}
 	try {
 		const { maybeAutoUpdate } = await import("./commands/update.js");
 		await maybeAutoUpdate();

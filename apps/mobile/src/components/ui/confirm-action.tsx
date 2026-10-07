@@ -126,7 +126,7 @@ function NativeConfirmAction({
 		: null;
 }
 
-/** Web confirmation lifecycle on a native Modal: lock duplicate presses, retain on failure. */
+/** Web confirmation lifecycle on a native bottom sheet: lock duplicate presses, retain on failure. */
 export function RichConfirmAction({
 	children,
 	title,

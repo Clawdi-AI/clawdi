@@ -1,3 +1,4 @@
+from collections.abc import Iterable, Sequence
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -15,6 +16,37 @@ def profile_required() -> HTTPException:
             "message": "Ambiguous session profile; send profile_key or upgrade Clawdi CLI.",
         },
     )
+
+
+def resolve_profile_key(
+    profile_key: str | None,
+    existing_keys: Iterable[str],
+    suppressed_keys: Iterable[str] = (),
+) -> str:
+    """Keep omitted old-CLI keys bound to their one existing or suppressed profile."""
+    if profile_key is not None:
+        return profile_key
+    keys = set(existing_keys) or set(suppressed_keys)
+    if len(keys) > 1:
+        raise profile_required()
+    return next(iter(keys), "")
+
+
+def require_session_match(
+    matches: Sequence[Session],
+    profile_key: str | None,
+    *,
+    origin_required_message: str,
+) -> Session:
+    if not matches:
+        raise HTTPException(404, "Session not found")
+    if len({row.origin_environment_id for row in matches}) > 1:
+        raise HTTPException(
+            409,
+            detail={"code": "session_origin_required", "message": origin_required_message},
+        )
+    resolve_profile_key(profile_key, (row.origin_profile_key for row in matches))
+    return matches[0]
 
 
 async def resolve_session_profile(
@@ -50,6 +82,4 @@ async def resolve_session_profile(
                 )
             ).scalars()
         )
-    if len(keys) > 1:
-        raise profile_required()
-    return next(iter(keys), "")
+    return resolve_profile_key(profile_key, keys)

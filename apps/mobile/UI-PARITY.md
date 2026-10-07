@@ -127,7 +127,7 @@ return <><NativeHeader title={copy.title} actions={actions}
 **Search** — `useHeaderSearch` in `native-header.tsx`; pilot:
 `src/pages/dashboard/sessions/page.tsx`. Keep the existing validation,
 debounce, filters and account-scoped query. The hook syncs native text edits
-and programmatic resets; do not retain an in-content `SearchInput`.
+and programmatic resets; there is no in-content search field.
 
 ```tsx
 const search = useHeaderSearch({ value: query, onChange: setQuery,
@@ -226,7 +226,13 @@ uses SDK 57's native community segmented control on iOS and Compose
 segmented buttons with shared colors/Geist on Android for settings navigation.
 For longer option sets, `scrollable` uses Compose's documented horizontal-scroll
 modifier and single-line labels; Project detail and Memory categories use it
-for their longer option sets.
+for their longer option sets. Single-choice Web `Tabs` in content (channel
+detail, Discord pairing path, agent setup, tool payloads) render `NativeSegments`
+and conditionally render the selected panel; `ui/tabs.tsx` remains only for
+billing surfaces pending the RevenueCat Paywalls work. `ui/checkbox.tsx` renders
+`@expo/ui`'s universal `Checkbox` (a SwiftUI toggle on iOS, tinted with
+`--primary`); Android uses the Compose `Checkbox` with Web's `--primary`,
+`--primary-foreground` and `--input` tokens. Captions stay Web text beside it.
 NativeTabs retains its default content-inset behavior (including Android's
 bottom safe area). `SafeAreaScreen` leaves top/bottom ownership to a visible
 stack header; native scroll views use `contentInsetAdjustmentBehavior="automatic"`
