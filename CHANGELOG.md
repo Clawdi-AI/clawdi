@@ -52,8 +52,8 @@ only renames unmerged PR series and never-emitted definitions. See
 ### CLI 0.15.13
 
 - Hermes Skill guard refusals now report applied status without repeated error
-  retries. Refused updates retract the previous Clawdi-managed copy; user-owned
-  Skills remain untouched.
+  retries. Refusals never delete existing copies: locally modified Skills,
+  ownership receipts, and Hermes Hub records remain unchanged.
 
 ### CLI 0.15.12
 

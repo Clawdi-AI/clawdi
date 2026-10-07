@@ -430,18 +430,6 @@ function applyHostedSkills(
 			);
 		} catch (error) {
 			if (error instanceof HermesSkillGuardRefusalError) {
-				try {
-					if (reservation)
-						releaseManagedSkill({
-							targetDir,
-							id: skillId,
-							manager: "hosted-manifest",
-							removeTarget: () => removeReservedHostedSkill(driver, reservation),
-						});
-				} catch (removalError) {
-					if (!(removalError instanceof ManagedSkillResourceError)) throw removalError;
-					failures.push(`${skillId}: ${removalError.message}`);
-				}
 				const refusal: HostedSkillGuardRefusal = {
 					runtime: "hermes",
 					skillKey: skillId,

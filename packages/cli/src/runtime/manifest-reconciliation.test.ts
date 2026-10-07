@@ -54,6 +54,7 @@ import {
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
 import { MANAGED_BAILEYS_STATIC_PATCH_TARGETS } from "./managed-baileys-compat";
+import { collectManagedSkillTree } from "./managed-skill-delivery";
 import {
 	managedSkillReservationLedgerPath,
 	managedSkillReservationState,
@@ -5191,7 +5192,7 @@ installReservedManagedSkill(${JSON.stringify({
 		},
 	);
 
-	test("refused updates retract managed Skills and unlinking reports removal", () => {
+	test("refused updates preserve locally modified managed Skills and unlinking reports removal", () => {
 		const paths = tempRuntimePaths();
 		const command = writeFakeHermesCli(paths);
 		const skillId = "review";
@@ -5220,6 +5221,11 @@ installReservedManagedSkill(${JSON.stringify({
 				.resourceProjectionErrors,
 		).toEqual([]);
 		expect(managedSkillReservationState(target, skillId)).toBe("reserved");
+		writeFileSync(join(target, "SKILL.md"), "# Locally evolved Review\n");
+		writeFileSync(join(target, "local-workflow.bin"), Buffer.from([0, 255, 128, 17]));
+		const before = collectManagedSkillTree(target);
+		expect(before.status).toBe("collected");
+		const ledger = readFileSync(managedSkillReservationLedgerPath());
 		const refusedSource = { ...source, commit: "b".repeat(40) };
 		const refusedManifest = {
 			...manifest,
@@ -5236,16 +5242,19 @@ installReservedManagedSkill(${JSON.stringify({
 		);
 		expect([...refused.installErrors, ...refused.resourceProjectionErrors]).toEqual([]);
 		expect(refused.skillGuardRefusals).toMatchObject([
-			{ skillKey: skillId, retainedPrevious: false },
+			{ skillKey: skillId, reason: "guard_blocked", retainedPrevious: true },
 		]);
-		expect(existsSync(target)).toBe(false);
-		expect(managedSkillReservationState(target, skillId)).toBe("unreserved");
+		expect(collectManagedSkillTree(target)).toEqual(before);
+		expect(readFileSync(managedSkillReservationLedgerPath())).toEqual(ledger);
+		expect(managedSkillReservationState(target, skillId)).toBe("reserved");
 		expect(readRuntimeAppliedState(paths)?.skillEvidence).toMatchObject([
 			{ skillKey: skillId, status: "failed" },
 		]);
 		const removed = apply({ ...manifest, generation: 3, projection: { skills: { entries: {} } } });
 		expect([...removed.installErrors, ...removed.resourceProjectionErrors]).toEqual([]);
 		expect(removed.skillGuardRefusals).toEqual([]);
+		expect(existsSync(target)).toBe(false);
+		expect(managedSkillReservationState(target, skillId)).toBe("unreserved");
 		expect(readRuntimeAppliedState(paths)?.skillEvidence).toMatchObject([
 			{ skillKey: skillId, status: "removed", desiredState: "absent" },
 		]);

@@ -27,6 +27,7 @@ import {
 	type PreparedHostedSkill,
 } from "./hosted-sourced-skill-archive";
 import {
+	collectManagedSkillTree,
 	ManagedSkillResourceError,
 	managedSkillTargetMatchesSource,
 } from "./managed-skill-delivery";
@@ -322,31 +323,84 @@ describe("Hermes public native Skill pipeline", () => {
 		expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(0);
 	});
 
-	test.each(["hub", "legacy"])("refused updates retract the receipt-owned %s copy", (kind) => {
-		const { home, target } = setup();
-		const sourceDir = skill();
-		if (kind === "hub")
-			expect(projection(home, prepared(sourceDir, github))).toEqual({ errors: [], refusals: [] });
-		else {
-			cpSync(sourceDir, target, { recursive: true });
-			reserveManagedSkill({
-				targetDir: target,
-				id: "review",
-				manager: "hosted-manifest",
-				sourceIdentity: hostedSkillArchiveSourceIdentity("review", github),
+	test.each(["hub", "legacy"])(
+		"refused updates preserve every byte of a locally modified receipt-owned %s copy",
+		(kind) => {
+			const { home, target, lock } = setup();
+			const sourceDir = skill();
+			if (kind === "hub")
+				expect(projection(home, prepared(sourceDir, github))).toEqual({ errors: [], refusals: [] });
+			else {
+				cpSync(sourceDir, target, { recursive: true });
+				reserveManagedSkill({
+					targetDir: target,
+					id: "review",
+					manager: "hosted-manifest",
+					sourceIdentity: hostedSkillArchiveSourceIdentity("review", github),
+				});
+			}
+			writeFileSync(
+				join(target, "SKILL.md"),
+				"# Locally evolved Review\nKeep the cron workflow.\n",
+			);
+			writeFileSync(join(target, "references", "guide.md"), "Locally updated instructions.\n");
+			writeFileSync(join(target, "assets", "sample.png"), Buffer.from([0, 255, 17, 128, 0]));
+			mkdirSync(join(target, "scripts"));
+			writeFileSync(join(target, "scripts", "cron.py"), "print('local workflow')\n");
+			const before = collectManagedSkillTree(target);
+			expect(before.status).toBe("collected");
+			const ledger = readFileSync(managedSkillReservationLedgerPath());
+			const hubLock = existsSync(lock) ? readFileSync(lock) : null;
+			expect(projection(home, prepared(skill(dangerousFiles, "refused"), project))).toMatchObject({
+				errors: [],
+				refusals: [{ skillKey: "review", reason: "guard_blocked", retainedPrevious: true }],
 			});
-		}
-		expect(projection(home, prepared(skill(dangerousFiles, "refused"), project))).toMatchObject({
-			errors: [],
-			refusals: [{ skillKey: "review", retainedPrevious: false }],
+			expect(collectManagedSkillTree(target)).toEqual(before);
+			expect(readFileSync(managedSkillReservationLedgerPath())).toEqual(ledger);
+			expect(existsSync(lock) ? readFileSync(lock) : null).toEqual(hubLock);
+			expect(shouldIgnoreUserSkill(target)).toBe(true);
+			expect(projection(home)).toEqual({ errors: [], refusals: [] });
+			expect(existsSync(target)).toBe(false);
+			expect(readHostedHermesSkillRecords(home).review).toBeUndefined();
+			expect(shouldIgnoreUserSkill(target)).toBe(false);
+		},
+	);
+
+	test("confirmation refusal preserves a locally modified managed copy and its receipts", () => {
+		const { home, target, lock } = setup();
+		expect(projection(home, prepared(skill(), github))).toEqual({ errors: [], refusals: [] });
+		writeFileSync(join(target, "SKILL.md"), "# Locally evolved Review\n");
+		writeFileSync(join(target, "assets", "sample.png"), Buffer.from([255, 0, 128]));
+		const before = collectManagedSkillTree(target);
+		expect(before.status).toBe("collected");
+		const ledger = readFileSync(managedSkillReservationLedgerPath());
+		const hubLock = readFileSync(lock);
+		nativeResponse(home, {
+			ok: false,
+			error: "Confirmation needed",
+			targetMutationStarted: false,
+			guard: { decision: "ask", verdict: "caution", trustLevel: "trusted", findingCount: 2 },
 		});
-		expect(existsSync(target)).toBe(false);
-		expect(readHostedHermesSkillRecords(home).review).toBeUndefined();
-		expect(shouldIgnoreUserSkill(target)).toBe(false);
-		expect(projection(home)).toEqual({ errors: [], refusals: [] });
+		expect(projection(home, prepared(skill(safeFiles, "ask-update"), project))).toEqual({
+			errors: [],
+			refusals: [
+				{
+					runtime: "hermes",
+					skillKey: "review",
+					reason: "guard_confirmation_required",
+					verdict: "caution",
+					trustLevel: "trusted",
+					findingCount: 2,
+					retainedPrevious: true,
+				},
+			],
+		});
+		expect(collectManagedSkillTree(target)).toEqual(before);
+		expect(readFileSync(managedSkillReservationLedgerPath())).toEqual(ledger);
+		expect(readFileSync(lock)).toEqual(hubLock);
 	});
 
-	test("failed retraction keeps receipt ownership and reports a resource failure", () => {
+	test("guard refusal leaves pinned legacy Skills alone and unlink still respects pinning", () => {
 		const { home, target } = setup();
 		cpSync(skill(), target, { recursive: true });
 		reserveManagedSkill({
@@ -357,10 +411,12 @@ describe("Hermes public native Skill pipeline", () => {
 		});
 		nativePython(home, 'from tools.skill_usage import set_pinned; set_pinned("review", True)');
 		const result = projection(home, prepared(skill(dangerousFiles, "refused"), project));
-		expect(result.errors.join("\n")).toContain("pinned");
+		expect(result.errors).toEqual([]);
 		expect(result.refusals).toMatchObject([{ skillKey: "review", retainedPrevious: true }]);
 		expect(existsSync(target)).toBe(true);
 		expect(shouldIgnoreUserSkill(target)).toBe(true);
+		expect(projection(home).errors.join("\n")).toContain("pinned");
+		expect(existsSync(target)).toBe(true);
 		nativePython(home, 'from tools.skill_usage import set_pinned; set_pinned("review", False)');
 		expect(projection(home)).toEqual({ errors: [], refusals: [] });
 		expect(existsSync(target)).toBe(false);
@@ -393,13 +449,19 @@ describe("Hermes public native Skill pipeline", () => {
 				},
 			),
 		).toThrow("interrupted native install");
+		const before = collectManagedSkillTree(target);
+		expect(before.status).toBe("collected");
+		const ledger = readFileSync(managedSkillReservationLedgerPath());
 		expect(projection(home, next)).toMatchObject({
 			errors: [],
-			refusals: [{ retainedPrevious: false }],
+			refusals: [{ retainedPrevious: true }],
 		});
-		expect(existsSync(target)).toBe(false);
+		expect(collectManagedSkillTree(target)).toEqual(before);
+		expect(readFileSync(managedSkillReservationLedgerPath())).toEqual(ledger);
 		expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(1);
 		expect(projection(home)).toEqual({ errors: [], refusals: [] });
+		expect(existsSync(target)).toBe(false);
+		expect(shouldIgnoreUserSkill(target)).toBe(false);
 		expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(0);
 	});
 
