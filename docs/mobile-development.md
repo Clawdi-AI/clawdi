@@ -11,11 +11,13 @@ native menu that pushes General, Account, API Keys, Wallet, Compute and AI Usage
 (the last three require a compute API). RevenueCat Paywalls sell consumable
 Clawdi Credits into the hosted Wallet; pending purchases have explicit recovery.
 Consumable credits cannot be restored. Customer Center management is planned
-for store subscriptions and is not wired in the current app. New paid compute subscriptions remain unavailable in the deployment
-wizard. Agent overview rows reach every section; Files opens through the hosted
-one-time browser handoff, while Terminal uses Expo DOM. See
+for store subscriptions and is not wired in the current app. New paid compute
+subscriptions remain unavailable in the deployment wizard. Agent overview rows
+reach every section; Files opens through the hosted one-time browser handoff,
+while Terminal uses Expo DOM. See
 [UI parity](../apps/mobile/UI-PARITY.md) and
-[store compliance](mobile-store-compliance.md) for platform boundaries and gates.
+[store compliance](mobile-store-compliance.md) for platform boundaries and
+gates.
 
 Hosted v1 configuration is not required. The compatibility fixture at the end
 is historical V0 evidence, not a native-build or real-device acceptance claim.
@@ -68,12 +70,13 @@ bun run --cwd apps/mobile dev
 ```
 
 Use a development build containing the project's native modules; Metro export
-success does not establish Expo Go support. Done: Expo starts and the app shows sign-in; missing or invalid configuration
-shows a safe configuration screen instead. Use a reachable Cloud API URL on
-physical devices, not the development computer's `localhost`. These public
-values are embedded in the app; never put private credentials in them. Sign-in
-methods, verification and second factors are Clerk Dashboard settings owned by
-the account owner (see [Clerk native authentication](#clerk-native-authentication)).
+success does not establish Expo Go support. Done: Expo starts and the app shows
+sign-in; missing or invalid configuration shows a safe configuration screen
+instead. Use a reachable Cloud API URL on physical devices, not the development
+computer's `localhost`. These public values are embedded in the app; never put
+private credentials in them. Sign-in methods, verification and second factors
+are Clerk Dashboard settings owned by the account owner (see
+[Clerk native authentication](#clerk-native-authentication)).
 This work does not change Clerk settings.
 
 ### Local fixture authentication
@@ -96,7 +99,8 @@ Optional `EXPO_PUBLIC_DEV_AUTH_NAME`, `EXPO_PUBLIC_DEV_AUTH_EMAIL` and
 `dev-bypass`. These are public fixture values, not credentials for a live API.
 
 The fixed fixture identity cannot sign out. Clerk's native sign-in/sign-up and
-account management views need `ClerkProvider`, so they show an EmptyState. Restart Metro when changing public environment values.
+account management views need `ClerkProvider`, so they show an EmptyState.
+Restart Metro when changing public environment values.
 The flag requires `__DEV__`; production exports remove the bypass identity and
 token even when `EXPO_PUBLIC_DEV_AUTH_BYPASS=1` is set. Real Clerk authentication
 and its account/session request fencing remain in use for production builds.
@@ -112,10 +116,10 @@ scripts/mobile-e2e.sh --apk "$CLAWDI_ANDROID_DEV_APK"
 ```
 
 Read the APK directory's `README.md` before using it. The APK contains native
-modules and loads JavaScript from the current worktree's Metro server; no fixture
-API is baked into it. Rebuild it when native modules change, not for JS or copy
-edits. The smoke script checks the app identity and dev-client manifest before
-installing.
+modules and loads JavaScript from the current worktree's Metro server; no
+fixture API is baked into it. Rebuild it when native modules change, not for JS
+or copy edits. The smoke script checks the app identity and dev-client manifest
+before installing.
 
 For bounded Android automation, run `scripts/mobile-e2e.sh --apk <development.apk>`
 from the repository root. The APK must contain `expo-dev-client`; the script
@@ -131,8 +135,9 @@ coverage, artifacts, the skipped live Clerk check and manual release CI.
 `__DEV__` conditional `require`. Expo's documented
 [development-code removal](https://docs.expo.dev/guides/tree-shaking/#remove-development-only-code)
 folds that condition before collecting dependencies in SDK 57. Production keeps
-only redirect route stubs; `src/pages/dev/` and its gallery-only imports are absent
-from the bundle graph. A layout or page redirect alone does not exclude imports.
+only redirect route stubs; `src/pages/dev/` and its gallery-only imports are
+absent from the bundle graph. A layout or page redirect alone does not exclude
+imports.
 
 From `apps/mobile`, verify the exported graph and gallery markers:
 
@@ -315,11 +320,12 @@ Subscription quotes are explicitly requested previews, not payments. They may
 initialize and commit customer, enrollment and Wallet profiles. They do not
 purchase or debit Wallet funds and must not be described as strictly read-only.
 Current catalog prices and Stripe/Wallet quotes are not App Store/Play purchase
-offers. Store builds add credits through the official RevenueCat Paywall. The hosted
-purchase attempt is created before opening the Paywall, and Hosted confirms the
-completed transaction before applying funding. Pending purchases can be checked
-explicitly. Consumable credits cannot be restored; Customer Center subscription
-management is not wired yet. Store sandbox acceptance remains a release gate. Wallet-funded compute still uses Stripe invoice
+offers. Store builds add credits through the official RevenueCat Paywall. The
+hosted purchase attempt is created before opening the Paywall, and Hosted
+confirms the completed transaction before applying funding. Pending purchases
+can be checked explicitly. Consumable credits cannot be restored; Customer
+Center subscription management is not wired yet. Store sandbox acceptance
+remains a release gate. Wallet-funded compute still uses Stripe invoice
 orchestration; it is not a store-independent funding rail.
 
 Run the isolated product suite from the repository root:
@@ -339,8 +345,9 @@ Agent-to-Sessions navigation uses the generated `environment_id` filter.
 Session responses do not expose a stable Agent id, so no reverse link is
 invented. Transcripts pin subsequent pages to the first response's content
 revision, offer an explicit reset on a revision conflict, and distinguish
-unuploaded content from a network error. Messages remain read-only and render native Markdown. The app does not send
-messages; Terminal uses an Expo DOM view, and Files opens in the system browser.
+unuploaded content from a network error. Messages remain read-only and render
+native Markdown. The app does not send messages; Terminal uses an Expo DOM
+view, and Files opens in the system browser.
 
 After independent review corrected the Expo UI hosting contract, one bounded
 Docker run passed the exact foundation's Mobile/Shared TypeScript 7, Biome
@@ -381,11 +388,12 @@ destructive confirmations retain the captured account scope. Raw API keys and
 Mem0 input are transient and cleared on backgrounding. Dashboard statistics now
 participate in pull-to-refresh and expose loading/error states.
 
-[Project sharing](../apps/mobile/src/components/sharing/share-project-dialog.tsx) now includes
-owner-managed links, invitations and members, stop-sharing, recipient accept/decline,
-manual link preview/join, and leaving a shared project. Joining does not
-automatically bind an Agent. Newly created links remain out of query
-caches and persistence, are cleared on blur/background/account retirement, and
+[Project sharing](../apps/mobile/src/components/sharing/share-project-dialog.tsx)
+now includes owner-managed links, invitations and members, stop-sharing,
+recipient accept/decline, manual link preview/join, and leaving a shared
+project. Joining does not automatically bind an Agent. Newly created links
+remain out of query caches and persistence, are cleared on
+blur/background/account retirement, and
 can be explicitly sent through the native share sheet. Removing a member and
 revoking an invite link are distinct actions with distinct confirmation copy.
 

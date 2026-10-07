@@ -536,7 +536,7 @@ export const en = {
 		connectorAccount: "Account {id}",
 		pairChannel: "Pair {provider}",
 		pairingCode: "{provider} pairing QR code",
-		learnedDate: "Learned on {date}",
+		learnedOn: "Learned on {machine}",
 		editProvider: "Edit {name}",
 		setupProvider: "Set up {name}",
 		removeProvider: "Remove {name}?",

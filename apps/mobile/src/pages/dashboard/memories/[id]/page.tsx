@@ -149,7 +149,7 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 								<Icon as={Laptop} className={webBoth(memoryDetailClasses.sourceIcon)} />
 								<Text>
 									{memory.source_machine_name
-										? t("labels.learnedDate", { date: memory.source_machine_name })
+										? t("labels.learnedOn", { machine: memory.source_machine_name })
 										: t("memories.learnedFromSession")}
 								</Text>
 								{memory.source_session_id ? (
