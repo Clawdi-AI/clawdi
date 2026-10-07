@@ -146,7 +146,7 @@ nativeDescribe("native daemon invocation smoke", () => {
 				{ ...env, CLAWDI_AUTH_TOKEN: "", NO_COLOR: "", FORCE_COLOR: "1" },
 				root,
 			);
-			expect(signedOut.code).toBe(1);
+			expect(signedOut.code).toBe(4);
 			expect(signedOut.stdout).toBe("");
 			expect(signedOut.stderr).toContain("Not signed in");
 			expect(signedOut.stderr).not.toContain(String.fromCharCode(27));
