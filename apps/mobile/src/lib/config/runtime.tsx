@@ -24,7 +24,6 @@ export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
 			computeApiUrl: configuredValue("computeApiUrl"),
 			revenueCatAppleKey: configuredValue("revenueCatAppleKey"),
 			revenueCatGoogleKey: configuredValue("revenueCatGoogleKey"),
-			clerkOauthProviders: configuredValue("clerkOauthProviders"),
 			linkHosts: configuredValue("linkHosts"),
 		},
 		{

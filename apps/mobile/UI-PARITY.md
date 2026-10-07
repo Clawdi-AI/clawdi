@@ -39,11 +39,11 @@ The five native tabs use pathless groups over Web URLs: `/`, `/agents`,
 `project-access`, `model-provider` and `channel-links` segments. Agent details
 retain nested resource URLs; Skill keys use the path rather than a query-only
 `detail` route, and Vault slugs resolve to a stable, account-scoped identity.
-Web's `?settings=<panel>` opens `/settings/<panel>`; Clerk management lives
-under `/settings/account/*`. Hosted deployments open through their Agent id.
+Web's `?settings=<panel>` opens `/settings/<panel>`; Clerk's native
+`UserProfileView` lives at `/settings/account`. Hosted deployments open through their Agent id.
 The previous deployment inventory screen is covered by the Agents inventory.
 
-Mobile-only tab hubs, Clerk management pages, development galleries and native
+Mobile-only tab hubs, the Clerk profile route, development galleries and native
 form entry pages have no Web page counterpart. They reuse feature components;
 form routes live under their parent resource URL and use native Stack sheets
 (see Native patterns below).
@@ -253,7 +253,7 @@ the shared fixture and exercise header search, sheet swipe dismissal, native
 confirmation and pull-to-refresh; iOS large-title behavior requires iOS runtime
 verification in addition to the checked SDK contract.
 
-Read-only account, auth, OAuth, WhatsApp and chat-pairing
+Read-only billing, provider OAuth, WhatsApp and chat-pairing
 stories live at `/dev/account?panel=...`; `+native-intent` admits this exact
 development-only shape. Production Clerk/account controllers and external
 link allowlists remain guarded. Stories reuse presentation components and

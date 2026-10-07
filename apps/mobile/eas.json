@@ -6,6 +6,7 @@
 			"distribution": "internal",
 			"channel": "development",
 			"environment": "development",
+			"node": "24.21.0",
 			"bun": "1.4.2"
 		},
 		"preview": {
@@ -13,6 +14,7 @@
 			"android": { "buildType": "apk" },
 			"channel": "preview",
 			"environment": "preview",
+			"node": "24.21.0",
 			"bun": "1.4.2"
 		},
 		"production": {
@@ -20,6 +22,7 @@
 			"autoIncrement": true,
 			"channel": "production",
 			"environment": "production",
+			"node": "24.21.0",
 			"bun": "1.4.2"
 		}
 	},

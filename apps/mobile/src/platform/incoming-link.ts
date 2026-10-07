@@ -1,5 +1,5 @@
 import { publicSessionId, publicSessionInput, vaultRequestToken } from "@clawdi/shared/api";
-import { accountOAuthNavigation } from "@/platform/auth/account-oauth";
+import { isBrowserLinkPath } from "@clawdi/shared/linking";
 
 /** One pending capability, never Router state, storage, logs or query keys. */
 export function createVaultLinkInbox(now = Date.now) {
@@ -31,7 +31,48 @@ export function createVaultLinkInbox(now = Date.now) {
 
 export const incomingVaultLink = createVaultLinkInbox();
 
-/** Explicit external-link allowlist; callback credentials never enter Router state. */
+/** Only verified HTTPS machine-readable files may bypass native navigation. */
+export function mobileBrowserLink(path: string, hosts: readonly string[]): string | null {
+	if (typeof path !== "string" || path.length > 8192 || /[\r\n\\]/.test(path)) return null;
+	try {
+		const url = new URL(path);
+		if (
+			url.protocol !== "https:" ||
+			!hosts.includes(url.hostname) ||
+			url.username ||
+			url.password ||
+			url.port ||
+			!isBrowserLinkPath(decodeURIComponent(url.pathname))
+		)
+			return null;
+		return url.href;
+	} catch {
+		return null;
+	}
+}
+
+/** Browser injection keeps the native SDK out of link boundary tests. */
+export async function routeMobileIncomingLink(
+	path: string,
+	hosts: readonly string[],
+	stageVault: (link: string) => string,
+	openBrowser: (url: string) => Promise<unknown>,
+	initial: boolean,
+): Promise<string | null> {
+	const browserUrl = mobileBrowserLink(path, hosts);
+	if (browserUrl) {
+		try {
+			await openBrowser(browserUrl);
+			// A warm link must not replace the screen underneath the browser.
+			return initial ? "/" : null;
+		} catch {
+			return "/open-share";
+		}
+	}
+	return mobileLinkDestination(path, hosts, stageVault);
+}
+
+/** Explicit external-link allowlist; capability tokens never enter Router state. */
 export function mobileLinkDestination(
 	path: string,
 	hosts: readonly string[],
@@ -44,8 +85,6 @@ export function mobileLinkDestination(
 		path.startsWith("//")
 	)
 		return "/open-share";
-	const oauth = accountOAuthNavigation(path);
-	if (oauth !== path) return oauth;
 	try {
 		const url = new URL(path, "clawdi:///");
 		if (url.username || url.password || url.port) return "/open-share";
@@ -54,6 +93,7 @@ export function mobileLinkDestination(
 			return "/open-share";
 		const pathname =
 			(custom && url.hostname ? `/${url.hostname}${url.pathname}` : url.pathname) || "/";
+		if (isBrowserLinkPath(decodeURIComponent(pathname))) return "/open-share";
 		if (pathname === "/vault-request" || pathname === "/vault-supply") {
 			if (!custom && vaultRequestToken(path)) {
 				const id = stageVault(path);

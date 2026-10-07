@@ -33,13 +33,6 @@ test("verified-host links use existing Session and Vault contracts without routi
 	expect(
 		mobileLinkDestination(`clawdi://vault-request?token=${token}&intake=${id}`, hosts, stage),
 	).toBe(`/vault-request?intake=${id}`);
-	expect(
-		mobileLinkDestination(
-			`clawdi://sign-in-oauth?rotating_token_nonce=secret&publicShareId=${id}`,
-			hosts,
-			stage,
-		),
-	).toBe(`/sign-in?publicShareId=${id}`);
 	expect(mobileLinkDestination("javascript:alert(1)", hosts, stage)).toBe("/open-share");
 });
 

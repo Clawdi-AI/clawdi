@@ -17,6 +17,8 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as SkillDotmdRouteImport } from './routes/skill[.]md'
 import { Route as VaultRequestRouteImport } from './routes/vault-request'
+import { Route as DotwellKnownAppleAppSiteAssociationRouteImport } from './routes/[.]well-known/apple-app-site-association'
+import { Route as DotwellKnownAssetlinksDotjsonRouteImport } from './routes/[.]well-known/assetlinks[.]json'
 import { Route as ProtectedDashboardRouteImport } from './routes/_protected/_dashboard'
 import { Route as ProtectedCliAuthorizeRouteImport } from './routes/_protected/cli-authorize'
 import { Route as ProtectedRuntimeHandoffRouteImport } from './routes/_protected/runtime-handoff'
@@ -106,6 +108,18 @@ const VaultRequestRoute = VaultRequestRouteImport.update({
   path: '/vault-request',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DotwellKnownAppleAppSiteAssociationRoute =
+  DotwellKnownAppleAppSiteAssociationRouteImport.update({
+    id: '/.well-known/apple-app-site-association',
+    path: '/.well-known/apple-app-site-association',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const DotwellKnownAssetlinksDotjsonRoute =
+  DotwellKnownAssetlinksDotjsonRouteImport.update({
+    id: '/.well-known/assetlinks.json',
+    path: '/.well-known/assetlinks.json',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ProtectedDashboardRoute = ProtectedDashboardRouteImport.update({
   id: '/_dashboard',
   getParentRoute: () => ProtectedRoute,
@@ -398,6 +412,8 @@ export interface FileRoutesByFullPath {
   '/sign-up': typeof SignUpRouteWithChildren
   '/skill.md': typeof SkillDotmdRoute
   '/vault-request': typeof VaultRequestRoute
+  '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
+  '/.well-known/assetlinks.json': typeof DotwellKnownAssetlinksDotjsonRoute
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
   '/s/$id': typeof SIdRoute
@@ -455,6 +471,8 @@ export interface FileRoutesByTo {
   '/sign-up': typeof SignUpRouteWithChildren
   '/skill.md': typeof SkillDotmdRoute
   '/vault-request': typeof VaultRequestRoute
+  '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
+  '/.well-known/assetlinks.json': typeof DotwellKnownAssetlinksDotjsonRoute
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
   '/s/$id': typeof SIdRoute
@@ -511,6 +529,8 @@ export interface FileRoutesById {
   '/sign-up': typeof SignUpRouteWithChildren
   '/skill.md': typeof SkillDotmdRoute
   '/vault-request': typeof VaultRequestRoute
+  '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
+  '/.well-known/assetlinks.json': typeof DotwellKnownAssetlinksDotjsonRoute
   '/_protected/_dashboard': typeof ProtectedDashboardRouteWithChildren
   '/_protected/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/_protected/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
@@ -572,6 +592,8 @@ export interface FileRouteTypes {
     | '/sign-up'
     | '/skill.md'
     | '/vault-request'
+    | '/.well-known/apple-app-site-association'
+    | '/.well-known/assetlinks.json'
     | '/cli-authorize'
     | '/runtime-handoff'
     | '/s/$id'
@@ -629,6 +651,8 @@ export interface FileRouteTypes {
     | '/sign-up'
     | '/skill.md'
     | '/vault-request'
+    | '/.well-known/apple-app-site-association'
+    | '/.well-known/assetlinks.json'
     | '/cli-authorize'
     | '/runtime-handoff'
     | '/s/$id'
@@ -684,6 +708,8 @@ export interface FileRouteTypes {
     | '/sign-up'
     | '/skill.md'
     | '/vault-request'
+    | '/.well-known/apple-app-site-association'
+    | '/.well-known/assetlinks.json'
     | '/_protected/_dashboard'
     | '/_protected/cli-authorize'
     | '/_protected/runtime-handoff'
@@ -744,6 +770,8 @@ export interface RootRouteChildren {
   SignUpRoute: typeof SignUpRouteWithChildren
   SkillDotmdRoute: typeof SkillDotmdRoute
   VaultRequestRoute: typeof VaultRequestRoute
+  DotwellKnownAppleAppSiteAssociationRoute: typeof DotwellKnownAppleAppSiteAssociationRoute
+  DotwellKnownAssetlinksDotjsonRoute: typeof DotwellKnownAssetlinksDotjsonRoute
   SIdRoute: typeof SIdRoute
   SChar123idChar125DotjsonRoute: typeof SChar123idChar125DotjsonRoute
   SChar123idChar125DotmdRoute: typeof SChar123idChar125DotmdRoute
@@ -808,6 +836,20 @@ declare module '@tanstack/react-router' {
       path: '/vault-request'
       fullPath: '/vault-request'
       preLoaderRoute: typeof VaultRequestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/.well-known/apple-app-site-association': {
+      id: '/.well-known/apple-app-site-association'
+      path: '/.well-known/apple-app-site-association'
+      fullPath: '/.well-known/apple-app-site-association'
+      preLoaderRoute: typeof DotwellKnownAppleAppSiteAssociationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/.well-known/assetlinks.json': {
+      id: '/.well-known/assetlinks.json'
+      path: '/.well-known/assetlinks.json'
+      fullPath: '/.well-known/assetlinks.json'
+      preLoaderRoute: typeof DotwellKnownAssetlinksDotjsonRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_protected/_dashboard': {
@@ -1325,6 +1367,9 @@ const rootRouteChildren: RootRouteChildren = {
   SignUpRoute: SignUpRouteWithChildren,
   SkillDotmdRoute: SkillDotmdRoute,
   VaultRequestRoute: VaultRequestRoute,
+  DotwellKnownAppleAppSiteAssociationRoute:
+    DotwellKnownAppleAppSiteAssociationRoute,
+  DotwellKnownAssetlinksDotjsonRoute: DotwellKnownAssetlinksDotjsonRoute,
   SIdRoute: SIdRoute,
   SChar123idChar125DotjsonRoute: SChar123idChar125DotjsonRoute,
   SChar123idChar125DotmdRoute: SChar123idChar125DotmdRoute,

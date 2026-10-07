@@ -58,6 +58,51 @@ const MAX_NATIVE_UNPACKED_BYTES = 512 * 1024 * 1024;
 const NATIVE_SMOKE_TIMEOUT_MS = 20_000;
 const NATIVE_DOWNLOAD_TIMEOUT_MS = 3 * 60_000;
 const NATIVE_STAGE_STALE_MS = 24 * 60 * 60 * 1000;
+const NATIVE_RENAME_RETRY_MS = 10_000;
+
+export function renameNativeDirectory(
+	from: string,
+	to: string,
+	lease: PrivateDirectoryLockLease,
+	runtime: {
+		platform?: NodeJS.Platform;
+		rename?: (from: string, to: string) => void;
+		now?: () => number;
+		sleep?: (milliseconds: number) => void;
+	} = {},
+): void {
+	const rename = runtime.rename ?? renameSync;
+	if ((runtime.platform ?? process.platform) !== "win32") {
+		rename(from, to);
+		return;
+	}
+	const now = runtime.now ?? (() => performance.now());
+	const deadline = now() + NATIVE_RENAME_RETRY_MS;
+	const sleep =
+		runtime.sleep ??
+		((milliseconds: number) =>
+			Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds));
+	let backoff = 10;
+	for (;;) {
+		try {
+			rename(from, to);
+			return;
+		} catch (error) {
+			const remaining = deadline - now();
+			if (
+				!(error instanceof Error) ||
+				!("code" in error) ||
+				(error.code !== "EPERM" && error.code !== "EACCES" && error.code !== "EBUSY") ||
+				remaining <= 0
+			) {
+				throw error;
+			}
+			sleep(Math.min(backoff, remaining));
+			lease.assertOwned();
+			backoff = Math.min(backoff + 10, 100);
+		}
+	}
+}
 
 export interface StagedNativeRelease {
 	stageDir: string;
@@ -230,7 +275,7 @@ async function activateStagedNativeReleaseWithLease(
 		}
 	} else {
 		lease.assertOwned();
-		renameSync(stageDir, finalDir);
+		renameNativeDirectory(stageDir, finalDir, lease);
 		installedNewDirectory = true;
 	}
 
@@ -319,7 +364,7 @@ function activateWindowsLauncherTransaction(
 	let created = false;
 	lease.assertOwned();
 	if (input.previous) {
-		renameSync(input.launcher, backup);
+		renameNativeDirectory(input.launcher, backup, lease);
 		backedUp = true;
 	}
 	try {
@@ -334,7 +379,7 @@ function activateWindowsLauncherTransaction(
 		lease.assertOwned();
 		if (created) removeLauncherJunction(input.launcher);
 		if (backedUp && input.previous) {
-			renameSync(backup, input.launcher);
+			renameNativeDirectory(backup, input.launcher, lease);
 			const restored = readIdentity(join(input.launcher, "clawdi.exe"));
 			if (
 				restored?.version !== input.previous.version ||

@@ -16,12 +16,15 @@ import {
 import { durationSecondsBetween } from "../lib/session-duration";
 import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-events";
 import { extractTarGz } from "../lib/tar";
+import { commandFailureDetail } from "../runtime/hosted-openclaw-skill";
 import {
 	collectManagedSkillTree,
+	makeSkillStagingReadable,
 	managedSkillTreesEqual,
 	withManagedTargetRollback,
 } from "../runtime/managed-skill-delivery";
 import { mutateUserSkillTarget } from "../runtime/managed-skill-reservation";
+import { spawnRuntimeUserCommand } from "../runtime/runtime-user-command";
 import { log } from "../serve/log";
 import {
 	type AgentAdapterCore,
@@ -38,6 +41,7 @@ import {
 	type SyncReadContext,
 } from "./base";
 import {
+	inheritedOpenClawEnvironment,
 	OpenClawSdkExitError,
 	resolveOpenClawCommandPath,
 	runOpenClawCommand,
@@ -1369,6 +1373,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		installedSlug: string,
 		tarGzBytes: Buffer,
 	): Promise<void> {
+		const home = process.env.HOME ?? homedir();
 		const workspace = activeAgentWorkspace();
 		const targetDir = join(workspace, "skills", installedSlug);
 		const stagingRoot = mkdtempSync(join(tmpdir(), "clawdi-openclaw-install-"));
@@ -1377,32 +1382,40 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			const sourceDir = join(stagingRoot, archiveKey);
 			if (!existsSync(join(sourceDir, "SKILL.md")))
 				throw new Error("Skill archive is missing SKILL.md");
+			const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
+			if (runtimeUser && runtimeUser !== "root") {
+				makeSkillStagingReadable(stagingRoot);
+			}
 			mutateUserSkillTarget(targetDir, installedSlug, () =>
 				withManagedTargetRollback({
 					target: targetDir,
 					operation: () => {
-						const result = spawnSync(
-							"openclaw",
-							[
-								"skills",
-								"install",
-								sourceDir,
-								"--agent",
-								agentId(),
-								"--as",
-								installedSlug,
-								"--force",
-							],
-							{
-								encoding: "utf8",
-								env: process.env,
-								maxBuffer: 1024 * 1024,
-								timeout: 120_000,
-							},
-						);
+						const args = [
+							"skills",
+							"install",
+							sourceDir,
+							"--agent",
+							agentId(),
+							"--as",
+							installedSlug,
+							"--force",
+						];
+						const result =
+							runtimeUser && runtimeUser !== "root"
+								? spawnRuntimeUserCommand(resolveOpenClawCommandPath(home), args, home, home, {
+										environmentOverrides: inheritedOpenClawEnvironment(),
+										maxBufferBytes: 1024 * 1024,
+										timeoutMs: 120_000,
+									})
+								: spawnSync("openclaw", args, {
+										encoding: "utf8",
+										env: process.env,
+										maxBuffer: 1024 * 1024,
+										timeout: 120_000,
+									});
 						if (result.status !== 0) {
 							throw new Error(
-								`OpenClaw official Skill install failed: ${(result.stderr || result.stdout).trim() || "unknown error"}`,
+								`OpenClaw official Skill install failed: ${commandFailureDetail(result)}`,
 							);
 						}
 						if (activeAgentWorkspace() !== workspace) {

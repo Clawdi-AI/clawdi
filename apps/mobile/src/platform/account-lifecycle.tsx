@@ -16,7 +16,7 @@ import {
 } from "@/platform/auth/account-scope";
 import { useAppAuth } from "@/platform/auth/auth-client";
 
-export { accountQueryKey, clearAccountScope } from "@/platform/auth/account-scope";
+export { accountQueryKey } from "@/platform/auth/account-scope";
 
 const AccountScopeContext = createContext<AccountScope | null>(null);
 

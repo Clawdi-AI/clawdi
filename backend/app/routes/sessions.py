@@ -36,7 +36,7 @@ from app.core.auth import (
     require_any_scope,
     require_oauth_cli_auth,
     require_scope,
-    require_web_auth,
+    require_user_session,
 )
 from app.core.config import settings
 from app.core.database import get_session
@@ -904,7 +904,7 @@ async def _reorder_agent_identities(
 @router.patch("/agents/order", response_model=list[AgentResponse])
 async def reorder_agents(
     body: AgentReorderRequest,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> list[AgentResponse]:
     return await _reorder_agent_identities(body.agent_ids, auth, db, agent_response=True)
@@ -913,7 +913,7 @@ async def reorder_agents(
 @router.patch("/environments/order", response_model=list[EnvironmentResponse], deprecated=True)
 async def reorder_environments(
     body: EnvironmentReorderRequest,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> list[EnvironmentResponse]:
     return await _reorder_agent_identities(
@@ -1030,7 +1030,7 @@ async def _update_agent_identity(
 async def update_agent(
     agent_id: UUID,
     body: EnvironmentUpdate,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> AgentResponse:
     return await _update_agent_identity(agent_id, body, auth, db, agent_response=True)
@@ -1044,7 +1044,7 @@ async def update_agent(
 async def update_environment(
     environment_id: UUID,
     body: EnvironmentUpdate,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentResponse:
     return await _update_agent_identity(environment_id, body, auth, db, agent_response=False)
@@ -1100,7 +1100,7 @@ async def _clear_agent_avatar(
 @router.delete("/agents/{agent_id}/avatar", response_model=AgentResponse)
 async def clear_agent_avatar(
     agent_id: UUID,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> AgentResponse:
     return await _clear_agent_avatar(agent_id, auth, db, agent_response=True)
@@ -1113,7 +1113,7 @@ async def clear_agent_avatar(
 )
 async def clear_environment_avatar(
     environment_id: UUID,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentResponse:
     return await _clear_agent_avatar(environment_id, auth, db, agent_response=False)
@@ -1198,7 +1198,7 @@ async def _upload_agent_avatar(
 async def upload_agent_avatar(
     agent_id: UUID,
     file: UploadFile = File(...),
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> AgentResponse:
     return await _upload_agent_avatar(agent_id, file, auth, db, agent_response=True)
@@ -1212,7 +1212,7 @@ async def upload_agent_avatar(
 async def upload_environment_avatar(
     environment_id: UUID,
     file: UploadFile = File(...),
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> EnvironmentResponse:
     return await _upload_agent_avatar(environment_id, file, auth, db, agent_response=False)
@@ -1331,7 +1331,7 @@ async def get_agent_runtime_observed(
 )
 async def get_agent_mcp_inventory(
     agent_id: UUID,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> AgentMcpInventoryResponse:
     """Return only MCP inventory with proven user-declaration provenance."""
@@ -1977,11 +1977,10 @@ async def _delete_agent_identity(
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent(
     agent_id: UUID,
-    # Dashboard-only: a leaked deploy-key would otherwise be able
-    # to delete its own agent (de-registering the machine on the
-    # owner's dashboard) or sibling agents under the same user.
-    # Mirrors the lockdown applied to /v1/auth/keys in round 6.
-    auth: AuthContext = Depends(require_web_auth),
+    # API keys stay blocked: a leaked deploy key must not disconnect its own
+    # or sibling agents. Browser sessions and first-party CLI OAuth tokens
+    # represent the user and can manage their Agents.
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> None:
     await _delete_agent_identity(agent_id, auth, db)
@@ -1994,7 +1993,7 @@ async def delete_agent(
 )
 async def delete_environment(
     environment_id: UUID,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> None:
     await _delete_agent_identity(environment_id, auth, db)
@@ -3128,7 +3127,7 @@ async def get_session_detail(
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(
     session_id: UUID,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> None:
     session = (
@@ -3766,10 +3765,9 @@ async def extract_session_memories(
 # — it serves both the dashboard and the MCP `session_get` tool's UUID
 # branch (which authenticates as the CLI api-key user).
 #
-# The `/permissions` routes use `require_web_auth`, rejecting bound
-# deploy keys outright: a leaked write-scoped daemon key has no
-# legitimate business minting / revoking visibility grants on
-# arbitrary sessions, so the gate stays on Clerk JWT.
+# The `/permissions` routes use `require_user_session`: browser sessions and
+# first-party CLI OAuth tokens can manage visibility grants on their own data.
+# API keys stay blocked so leaked daemon keys cannot grant or revoke access.
 
 
 @router.get("/sessions/{session_id}/export.md")
@@ -3838,7 +3836,7 @@ async def export_owned_session_markdown(
 @router.get("/sessions/{session_id}/permissions")
 async def list_session_permissions(
     session_id: UUID,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> SessionPermissionsResponse:
     """List active permissions for a session — drives the Share popover.
@@ -3870,7 +3868,7 @@ async def list_session_permissions(
 async def create_session_permission(
     session_id: UUID,
     body: SessionPermissionCreate,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> SessionPermissionResponse:
     """Idempotent permission grant.
@@ -3931,7 +3929,7 @@ async def revoke_session_permission(
     kind: str,
     user_id: UUID | None = None,
     email: str | None = None,
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_user_session),
     db: AsyncSession = Depends(get_session),
 ) -> None:
     """Revoke the active permission matching the composite key.
