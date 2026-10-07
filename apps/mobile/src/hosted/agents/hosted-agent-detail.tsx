@@ -1,4 +1,8 @@
-import type { DeploymentRead, HostedDeployOperation } from "@clawdi/shared/api";
+import {
+	type DeploymentRead,
+	deploymentLifecycleAvailable,
+	type HostedDeployOperation,
+} from "@clawdi/shared/api";
 import { agentsIndexClasses } from "@clawdi/shared/ui";
 import {
 	agentFilesPresentation,
@@ -20,7 +24,7 @@ import {
 	stoppedAgentDescription,
 } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
+import { Redirect, useRouter } from "expo-router";
 import { FolderOpen, MonitorPlay, TerminalSquare } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -29,10 +33,12 @@ import { AgentSourceBadge } from "@/components/dashboard/agent-section-source-ba
 import { ActionButton } from "@/components/dashboard/controls";
 import { AgentSectionNavigation } from "@/components/dashboard/navigation";
 import { BackButton } from "@/components/detail/back-link";
+import { LibraryPage } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { EntityCardSkeleton } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { ResourceError } from "@/components/resource-error";
+import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { SheetPage } from "@/components/ui/sheet-page";
@@ -45,6 +51,7 @@ import { CancelOperation } from "@/hosted/agents/deployment-cancel-action";
 import { DeploymentControls } from "@/hosted/agents/deployment-controls";
 import { InitialDeploymentPage } from "@/hosted/agents/initial-deployment-page";
 import { RuntimeBrowser } from "@/hosted/agents/runtime-handoff";
+import { StartComputeAction } from "@/hosted/agents/start-compute-action";
 import {
 	DEPLOYMENT_POLL_WINDOW_MS,
 	deploymentNeedsPolling,
@@ -56,7 +63,6 @@ import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
-import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 export function DeploymentDetailScreen({
 	deploymentId,
@@ -96,7 +102,6 @@ function DeploymentDetail({
 	const read = useAccountRead();
 	const router = useRouter();
 	const t = useI18n();
-	const surfaces = useStoreSurfaces();
 	const [startedAt, setStartedAt] = useState(Date.now);
 	const trackers = useRef<ReadonlyMap<string, SettlingTracker>>(new Map());
 	const [, setPollEpoch] = useState(0);
@@ -202,14 +207,12 @@ function DeploymentDetail({
 		await Promise.all([query.refetch(), ...(operationId ? [operation.refetch()] : [])]);
 	};
 
-	// Web's StartComputeAction: start in place, otherwise resolve funding in the compute sheet.
-	const startActions = (deployment: DeploymentRead, stopped: boolean) =>
-		deployment.start_action === "start" ? (
-			<DeploymentControls
-				section="startup"
-				startLabel={stopped ? "Start" : "Start agent"}
+	// Web shows the start control when stopped, and otherwise only while start is available.
+	const startAction = (deployment: DeploymentRead, stopped: boolean) =>
+		stopped || deploymentLifecycleAvailable("start", status.kind) ? (
+			<StartComputeAction
 				deployment={deployment}
-				deploymentId={deployment.resource.id}
+				startLabel={stopped ? "Start" : undefined}
 				blocked={query.isError}
 				transitioning={Boolean(activeOperation && !activeOperation.done)}
 				onAccepted={async (result) => {
@@ -217,31 +220,20 @@ function DeploymentDetail({
 					await refreshResources();
 				}}
 				onAbsent={refreshResources}
-			/>
-		) : stopped ? (
-			<ActionButton
-				label={
-					deployment.start_action === "subscribe"
-						? "Subscribe to start"
-						: deployment.start_action === "top_up"
-							? surfaces.addCredits
-								? t("store.addCreditsToStart")
-								: "Top up to start"
-							: deployment.start_action === "contact_support"
-								? "Contact support"
-								: "Pay to start"
-				}
-				onPress={() =>
-					router.push({
-						pathname: "/agents/[id]/compute",
-						params: { id: deployment.agent_id ?? "" },
-					})
-				}
+				onFunded={() => void refreshResources()}
 			/>
 		) : null;
 
-	// Web hides Files without an authoritative endpoint; the route then shows the overview.
-	if (section === "files" && deployment && deploymentFilesUrl(deployment)) {
+	if (section === "files" && !deployment && query.isPending)
+		return (
+			<LibraryPage>
+				<RouteLoadingSkeleton />
+			</LibraryPage>
+		);
+	// Web hides Files without an authoritative endpoint and falls back to the overview.
+	if (section === "files" && deployment?.agent_id && !deploymentFilesUrl(deployment))
+		return <Redirect href={agentSectionHref(deployment.agent_id)} />;
+	if (section === "files" && deployment) {
 		const view = agentFilesPresentation(deployment);
 		return (
 			<SafeAreaScreen>
@@ -261,8 +253,8 @@ function DeploymentDetail({
 								label={runtimeConsoleCopy.terminal}
 								onPress={() => router.push(agentSectionHref(deployment.agent_id ?? "", "terminal"))}
 							/>
-						) : view.state === "starting" ? undefined : (
-							startActions(deployment, view.state === "stopped")
+						) : (
+							startAction(deployment, view.state === "stopped")
 						)
 					}
 				/>
@@ -339,7 +331,7 @@ function DeploymentDetail({
 									/>
 								) : null}
 								{view.state === "stopped" || view.state === "not_running"
-									? startActions(deployment, view.state === "stopped")
+									? startAction(deployment, view.state === "stopped")
 									: null}
 								{transition === "escalated" && cancellableOperation ? (
 									<CancelOperation operation={cancellableOperation} onRequested={checkAgain} />
