@@ -6,6 +6,7 @@ export * from "./agent-channel-section";
 export * from "./agent-label";
 export * from "./agent-navigation";
 export * from "./agent-overview";
+export * from "./agent-profiles";
 export * from "./agent-registration-status";
 export * from "./agent-skill-inventory";
 export * from "./agent-surfaces";

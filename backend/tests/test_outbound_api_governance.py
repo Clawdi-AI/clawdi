@@ -15,6 +15,7 @@ def test_current_external_import_inventory_is_exact() -> None:
         "externalImportFamilies": len(outbound_api_governance.EXPECTED_EXTERNAL_IMPORTS),
         "productionFiles": len(outbound_api_governance.parse_production_sources()),
         "reviewedBoundaryOwners": [
+            "app/core/posthog.py",
             "app/core/sentry.py",
             "app/services/composio.py",
             "app/services/file_store_s3.py",

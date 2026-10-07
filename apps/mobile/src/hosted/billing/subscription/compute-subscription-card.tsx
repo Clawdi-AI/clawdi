@@ -18,7 +18,9 @@ import { Text } from "@/components/ui/text";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
 import type { Subscription } from "@/hosted/billing/format";
+import { creditPrice } from "@/hosted/billing/store/store-presentation";
 import { useI18n } from "@/lib/i18n";
+import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 export function ComputeSubscriptionCard({
 	item,
@@ -30,6 +32,7 @@ export function ComputeSubscriptionCard({
 	notice?: ReactNode;
 }) {
 	const t = useI18n();
+	const { creditUnits } = useStoreSurfaces();
 	const inventory = useDashboardAgents();
 	const deployment = inventory.inventory.data?.find(
 		(entry) => entry.resource.id === item.deployment_id,
@@ -49,6 +52,13 @@ export function ComputeSubscriptionCard({
 		billingTermMonths: item.billing_term_months,
 		scheduleVerb: lifecycle.dateVerb,
 		scheduleAt: lifecycle.dateAt,
+		...(creditUnits
+			? {
+					formatPrice: (cents: number, currency: string) =>
+						creditPrice({ price_cents: cents, currency }, t("store.credits")) ??
+						t("billing.unknown"),
+				}
+			: {}),
 	});
 	return (
 		<EntityCardChassis variant="compact" className={webView(styles.notices)}>

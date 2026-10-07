@@ -1,7 +1,14 @@
 "use client";
 
-import type { AgentProfile } from "@clawdi/shared/api";
-import { formatNumber } from "@clawdi/shared/view";
+import { AGENT_PROFILES_PATH, type AgentProfile } from "@clawdi/shared/api";
+import {
+	AGENT_PROFILE_SEARCH_KEY,
+	agentProfileName,
+	formatNumber,
+	hasMultipleProfiles,
+	profileLabel,
+	sortAgentProfiles,
+} from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, useEffect } from "react";
@@ -10,20 +17,17 @@ import { AgentOverviewSectionHeading } from "@/components/dashboard/agent-overvi
 import { EntityRow } from "@/components/entity-card";
 import { DataTableFacetedFilter } from "@/components/ui/data-table-faceted-filter";
 import { StatusBadge } from "@/components/ui/status-badge";
-import {
-	AGENT_PROFILE_SEARCH_KEY,
-	agentProfileName,
-	agentProfilesQueryOptions,
-	hasMultipleProfiles,
-	profileLabel,
-	sortAgentProfiles,
-} from "@/lib/agent-profiles";
 import { agentSectionLink } from "@/lib/agent-routes";
 import { useOpenApi } from "@/lib/api";
 
 export function useAgentProfiles(agentId: string, { enabled }: { enabled: boolean }) {
 	const $api = useOpenApi();
-	return useQuery({ ...agentProfilesQueryOptions($api, agentId), enabled });
+	return useQuery({
+		...$api.queryOptions("get", AGENT_PROFILES_PATH, {
+			params: { path: { agent_id: agentId } },
+		}),
+		enabled,
+	});
 }
 
 /**

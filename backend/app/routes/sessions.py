@@ -40,6 +40,7 @@ from app.core.auth import (
 )
 from app.core.config import settings
 from app.core.database import get_session
+from app.core.posthog import stage_capture, stage_session_sync
 from app.core.query_utils import SearchQuery
 from app.middleware.request_timing import record_pre_handler, request_stage
 from app.models.agent_project_binding import AgentProjectBinding
@@ -338,6 +339,8 @@ async def _register_agent_identity(
         # This durable origin evidence authorizes Connected-only runtime APIs.
         # Existing Hosted V2 state or a Legacy V1 environment-bound key prevents
         # an account-level CLI token from reclassifying that Agent identity.
+        if registered.env.connected_agent_registered_at is None:
+            stage_capture(db, "agent_connected", user=auth.user, event_key=str(registered.env.id))
         registered.env.connected_agent_registered_at = datetime.now(UTC)
         registered.env.adapter_modules = body.adapter_modules
         if enable_machine_fence:
@@ -3336,6 +3339,13 @@ async def upload_session_content(
         )
 
     with request_stage(request.scope, "upload_commit_ms"):
+        await stage_session_sync(
+            db,
+            session,
+            user=auth.user,
+            message_count=len(analysis.search_messages),
+            projection_complete=analysis.parse_error is None,
+        )
         await notify_session_content_changed(db, session.id)
         await db.commit()
 

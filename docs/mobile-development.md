@@ -829,8 +829,9 @@ In each environment, set `EAS_PROJECT_ID` to the owner's Expo project UUID with
 plaintext or sensitive visibility so both Build and Update can resolve it.
 When unset, local config/prebuild omits the project id and update URL.
 Keep Sentry upload settings env-only: `SENTRY_ORG`, `SENTRY_PROJECT` and secret
-`SENTRY_AUTH_TOKEN`. Supply the token separately to the local OTA map uploader;
-EAS secret values are unavailable during Update.
+`SENTRY_AUTH_TOKEN`. For CI updates, configure the matching `SENTRY_ORG` and
+`SENTRY_PROJECT` GitHub variables and `SENTRY_AUTH_TOKEN` secret in the production
+GitHub Environment; EAS secret values are unavailable during Update.
 
 `EXPO_PUBLIC_CLAWDI_ENV` is the sole environment source for validation and
 Sentry, including when updates are disabled and their channel is empty.
@@ -843,11 +844,21 @@ rejects complete fixture identity/token literals; Clerk itself also ships
 
 Owner's first-build checklist:
 
-1. **Without Sentry credentials, set `SENTRY_DISABLE_AUTO_UPLOAD=true` in the
+1. **Before any CI release, enable the required repository settings.** In
+   **Settings → Environments → production**, choose **Selected branches and tags**:
+   allow only the branch `main` and tags matching `mobile-v*`. Enable **Required
+   reviewers** for the release owners and keep release tokens in this Environment.
+   In **Settings → Rules → Rulesets**, enable an **Active** tag ruleset targeting
+   `mobile-v*` with **Restrict creations**; limit its bypass actors to authorized
+   release maintainers. The workflow's ref check is only a fast-fail; these
+   [Environment protections](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
+   and [tag creation restrictions](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#restrict-creations)
+   enforce who can release and create release tags.
+2. **Without Sentry credentials, set `SENTRY_DISABLE_AUTO_UPLOAD=true` in the
    selected EAS environment before the first build.** The plugin always installs
    native upload hooks; omitting the DSN disables reporting, not those hooks.
-2. Configure the public values above and `EAS_PROJECT_ID` in that same environment.
-3. Supply Expo/signing credentials, then run from `apps/mobile`:
+3. Configure the public values above and `EAS_PROJECT_ID` in that same environment.
+4. Supply Expo/signing credentials, then run from `apps/mobile`:
 
 ```bash
 eas build --profile preview --platform android
@@ -855,10 +866,26 @@ eas build --profile preview --platform android
 
 Done: the resulting APK is non-debuggable, has no release cleartext override,
 no backup and no blocked permissions. This remains an owner-run acceptance gate.
-`submit.production` contains no invented app ids or credentials. EAS does not
-interpolate environment references in `eas.json`; the owner must provide the
-ASC app id and configure Play's service account through EAS credentials before
-submission. Non-interactive ASC configuration remains an unresolved spec input.
+The owner must supply the non-secret App Store Connect app ID for
+`apps/mobile/eas.json` at `submit.production.ios.ascAppId`, then commit its numeric
+string before iOS auto-submit. [EAS Submit requires that field for CI](https://docs.expo.dev/submit/eas-json/#production-profile);
+EAS CLI 24.8.0 does not interpolate environment references in `ascAppId`.
+Configure signing credentials and Play's service account through EAS credentials.
+
+Dispatch [Mobile release](../.github/workflows/mobile-release.yml) only from
+`main` or a `mobile-v*` tag. Both `operation=build` and `operation=update` use the
+production GitHub Environment and require its `EXPO_TOKEN` secret plus the
+`EAS_PROJECT_ID` GitHub variable. Preflight also uses that Environment to check
+release configuration and Sentry token presence: **preflight and the selected
+build/update job each request production approval**. Preflight rejects other
+refs, missing release configuration, iOS/all auto-submit without `ascAppId`, and
+updates with a Sentry token but missing `SENTRY_ORG`/`SENTRY_PROJECT`, before EAS runs.
+Biome, mobile typecheck, tests, separate iOS/Android exports and a production
+export that requests dev auth bypass and rejects fixture markers must pass before
+either operation. `build` uses the production profile, the selected `platform` and
+optional `auto_submit`; `update` requires a `message` and a `channel` of `preview`
+or `production`, passed as both `--channel` and `--environment` to EAS CLI 24.8.0.
+Done: preflight and `verify-mobile` are green before the selected release job runs.
 
 Sentry is inactive without a DSN. When enabled, it reports root exceptions and
 samples performance at 0.1 using Sentry RN's native release/dist defaults. It
@@ -870,10 +897,12 @@ set stable between Build and Update. SDK57 fingerprinting includes resolved
 both, and do not put build-only credentials in config. Changing these public
 config values can require a new binary.
 
-After an owner-authorized `eas update --channel production --environment production`,
-upload generated maps with `bunx sentry-expo-upload-sourcemaps dist` using the
-same Sentry org/project and a locally supplied auth token. Store review precedes
-OTA; reserve OTA for compatible JavaScript fixes.
+After a successful CI Update, the workflow runs the documented
+[`npx sentry-expo-upload-sourcemaps dist`](https://docs.expo.dev/guides/using-sentry/#usage-with-eas-update)
+only when `SENTRY_AUTH_TOKEN` is configured, using the same Sentry org/project.
+The token is scoped to that upload step; preflight receives only its presence
+flag. Without the token, source map upload is skipped with a GitHub warning.
+Store review precedes OTA; reserve OTA for compatible JavaScript fixes.
 
 Done: a preview crash is symbolicated in Sentry, and a build without a DSN runs
 normally. These live checks, TestFlight privacy validation and store metadata

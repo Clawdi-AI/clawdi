@@ -20,6 +20,7 @@ import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 type Wallet = DeployComponents["schemas"]["V2WalletResponse"];
 export function WalletSettingsSections({
@@ -38,9 +39,10 @@ export function WalletSettingsSections({
 	const { compute } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
+	const { cardBilling, addCredits } = useStoreSurfaces();
 	const methods = useQuery({
 		queryKey: accountQueryKey(scope, "billing-payment-methods"),
-		enabled: scope.isReady && Boolean(compute),
+		enabled: cardBilling && scope.isReady && Boolean(compute),
 		retry: false,
 		queryFn: ({ signal }) =>
 			read((lease) => {
@@ -48,6 +50,8 @@ export function WalletSettingsSections({
 				return compute.getWalletPaymentMethods(lease);
 			}, signal),
 	});
+	// Store builds hide saved cards, card setup, auto-reload and USDC funding (owner-approved).
+	if (!cardBilling) return null;
 	return (
 		<>
 			<SettingsSection
@@ -164,7 +168,11 @@ export function WalletSettingsSections({
 					</WebView>
 				}
 				description={
-					wallet.x402_enabled ? t("billing.noStore") : t("billingParity.usdcUnavailable")
+					!wallet.x402_enabled
+						? t("billingParity.usdcUnavailable")
+						: addCredits
+							? t("store.usdcInApp")
+							: t("billing.noStore")
 				}
 			/>
 		</>

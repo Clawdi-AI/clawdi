@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, require_user_auth_unbound
 from app.core.config import settings
 from app.core.database import get_session
+from app.core.posthog import stage_capture
 from app.models.project import PROJECT_KIND_WORKSPACE, Project
 from app.models.project_invitation import ProjectInvitation
 from app.models.project_membership import ProjectMembership
@@ -129,6 +130,14 @@ async def create_share_link(
         expires_at=body.expires_at,
     )
     db.add(link)
+    await db.flush()
+    stage_capture(
+        db,
+        "share_created",
+        user=auth.user,
+        event_key=str(link.id),
+        properties={"feature": "sharing", "resource_type": "project"},
+    )
     await db.commit()
     await db.refresh(link)
 
@@ -288,6 +297,14 @@ async def create_invitation(
     )
     db.add(invitation)
     try:
+        await db.flush()
+        stage_capture(
+            db,
+            "invitation_created",
+            user=auth.user,
+            event_key=str(invitation.id),
+            properties={"feature": "sharing"},
+        )
         await db.commit()
     except IntegrityError:
         await db.rollback()

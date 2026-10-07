@@ -66,7 +66,9 @@ import { type CloudAgent, useCloudSessions } from "@/hooks/cloud-inventory";
 import { RuntimeBrowser } from "@/hosted/agents/runtime-handoff";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
 import { useMobileApi } from "@/lib/api-provider";
+import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { useStoreSurfaces } from "@/platform/store/store-provider";
 export function AgentOverview({
 	agent,
 	deployment,
@@ -188,6 +190,8 @@ export function AgentOverview({
 			hostedCatalog.data?.models ?? [],
 		),
 	);
+	const t = useI18n();
+	const surfaces = useStoreSurfaces();
 	const compute = deployment
 		? overviewComputePresentation(deployment, {
 				canCreateCloudAgents: hostedCatalog.data?.capabilities.can_use_v2 ?? false,
@@ -226,7 +230,8 @@ export function AgentOverview({
 					{...compute}
 					resources={deployment.resource.spec.resources}
 					action={
-						compute.action ? (
+						// Store builds hide card payment recovery; Wallet top-up opens Wallet's Add credits.
+						compute.action && (surfaces.cardBilling || compute.action.kind !== "fix_payment") ? (
 							<Button
 								variant="outline"
 								size="sm"
@@ -237,7 +242,11 @@ export function AgentOverview({
 								}
 							>
 								<Icon as={ComputeActionIcon} />
-								<Text>{compute.action.label}</Text>
+								<Text>
+									{compute.action.kind === "top_up" && surfaces.addCredits
+										? t("store.addCredits")
+										: compute.action.label}
+								</Text>
 							</Button>
 						) : undefined
 					}

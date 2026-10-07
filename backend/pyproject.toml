@@ -36,6 +36,8 @@ dependencies = [
     # Official Streamable HTTP client lifecycle for Composio Tool Router.
     "mcp==2.2.0",
     "prometheus-client>=0.25.0",
+    # Same official SDK version already resolved by the optional Mem0 integration.
+    "posthog==7.39.2",
     # Keep the runtime and generated typing distributions on their latest
     # common public patch. https://pypi.org/pypi/boto3/1.43.67/json
     "boto3==1.43.67",
@@ -130,6 +132,7 @@ strict = [
     "app/core/config.py",
     "app/core/database.py",
     "app/core/logging_config.py",
+    "app/core/posthog.py",
     "app/core/project.py",
     "app/core/query_utils.py",
     "app/core/sentry.py",

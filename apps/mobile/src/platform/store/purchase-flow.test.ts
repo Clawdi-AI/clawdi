@@ -30,6 +30,8 @@ const logOut = mock(async () => {
 });
 const getAppUserID = mock(async () => sdkUserId);
 const syncPurchases = mock(async () => {});
+const getOfferings = mock(async (): Promise<unknown> => ({ all: {}, current: null }));
+// Shared shape: Bun keeps one module mock for every store test file.
 mock.module("react-native-purchases", () => ({
 	default: {
 		configure,
@@ -37,9 +39,11 @@ mock.module("react-native-purchases", () => ({
 		logOut,
 		getAppUserID,
 		syncPurchases,
+		getOfferings,
+		PURCHASES_ERROR_CODE: { PURCHASE_CANCELLED_ERROR: "1", PAYMENT_PENDING_ERROR: "20" },
 	},
 }));
-const { createRevenueCat, revenueCatKey } = await import("./revenuecat");
+const { createRevenueCat, loadCreditsOffering, revenueCatKey } = await import("./revenuecat");
 const { createStoreIdentity } = await import("./store-identity");
 const { createPurchaseFlow } = await import("./purchase-flow");
 
@@ -890,6 +894,29 @@ describe("store errors and build policy", () => {
 			code: "store_request_failed",
 			message: "The store purchase could not be completed",
 		});
+	});
+	test("the credits offering must exist with packages", async () => {
+		const offering = (packages: number) => ({
+			identifier: "credits",
+			availablePackages: Array.from({ length: packages }, () => ({})),
+		});
+		getOfferings.mockImplementationOnce(async () => ({
+			all: { credits: offering(4) },
+			current: null,
+		}));
+		expect((await loadCreditsOffering()).identifier).toBe("credits");
+		for (const result of [
+			async () => ({ all: {}, current: null }),
+			async () => ({ all: { credits: offering(0) }, current: null }),
+			async () => {
+				throw new Error("There is an issue with your configuration");
+			},
+		]) {
+			getOfferings.mockImplementationOnce(result);
+			await expect(loadCreditsOffering()).rejects.toMatchObject({
+				code: "store_offering_unavailable",
+			});
+		}
 	});
 	test("production hides card-only surfaces even when keys are unset; preview/development retain Web parity", () => {
 		expect(

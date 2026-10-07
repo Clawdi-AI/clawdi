@@ -182,11 +182,12 @@ invariant. Every first-party production module is clean in its owned gate.
 The strict-equivalent production audit reports 38 diagnostics across one
 retained standard-mode adapter and one runtime-observation compatibility
 module with byte-frozen symbols; the other 207 production files are
-strict-clean. The five reviewed SDK boundary owners have these exact gates:
+strict-clean. The six reviewed SDK boundary owners have these exact gates:
 
 | SDK boundary | Gate / diagnostics | Locked upstream and first-party normalization |
 | --- | --- | --- |
 | `core/sentry.py` | strict / 0 | `sentry-sdk==2.68.0`; typed `Event`/`Hint` enter one recursive object boundary, credential-shaped keys are redacted, and no SDK response enters application state. |
+| `core/posthog.py` | strict / 0 | `posthog==7.39.2`; typed, content-free captures use deterministic UUIDs and a final property allowlist; SDK delivery never changes business state. |
 | `services/composio.py` | strict / 0 | `composio==0.21.1`, `composio-client==1.43.0`, `mcp==2.0.0`; generated request types and exact first-party Pydantic wire models cover every consumed SDK/MCP result, while SDK error families map to sanitized domain failures. |
 | `services/file_store_s3.py` | strict / 0 | `boto3==1.43.67`, `botocore==1.43.67`, `boto3-stubs==1.43.67`, `boto3-stubs-full==1.43.67`, and `botocore-stubs==1.43.67`; the all-in-one generated service bundle resolves the complete public `boto3.client` overload while the S3 literal overload returns the generated `S3Client`. The runtime construction call is unchanged, and the adapter validates operation metadata, error payloads, `StreamingBody`, and bytes before returning. |
 | `services/memory_provider_mem0.py` | standard / 23 | Optional `mem0ai==2.0.18` publishes no `py.typed`; strict-mode missing-stub and Unknown diagnostics stay localized to the two official lazy import blocks and the six public operation callables. Construction uses the public `MemoryClient` path, each consumed operation is checked for existence and callability, and strict Pydantic wire models validate add/search/list/count/get/update/delete results before domain conversion. The official backend image installs the extra, while source deployments may omit it and retain builtin memory. See the [official export](https://github.com/mem0ai/mem0/blob/v2.0.18/mem0/__init__.py) and [client source](https://github.com/mem0ai/mem0/blob/v2.0.18/mem0/client/main.py). |
@@ -254,7 +255,7 @@ strict debt above; `inventory` reports all four areas above.
 `scripts/outbound_api_governance.py` mechanically parses import statements in
 all 209 production modules. It requires exact equality for the 27 third-party
 import roots and 14 reviewed external/network import families, and confines
-SDKs with dynamic or incomplete upstream typing to five first-party boundary
+SDKs with dynamic or incomplete upstream typing to six first-party boundary
 owners. A new or stale root or owner fails until it is explicitly reviewed.
 Unreviewed stacks including `requests`, `aiohttp`, `urllib3`,
 `urllib.request`, `http.client`, `grpc`, `ftplib`, `imaplib`, `poplib`,
@@ -1002,3 +1003,115 @@ the timer, response serialization/sending and dependency cleanup are not all
 attributed. Existing slow/error-only logging, credential redaction and expected
 long-poll suppression remain in effect. Instrumentation establishes attribution,
 not a performance gain.
+
+## Product analytics and operational metrics
+
+Cloud, Hosted and web are producers for **one PostHog project**. Cloud follows
+Hosted's canonical `docs/v2/2026-08-29-posthog-event-registry.md`: snake_case
+`object_action` events, shared Clerk `distinct_id`, bounded properties and no
+PII, tokens, content, paths or free-text errors. Configure the same
+`POSTHOG_API_KEY` and `POSTHOG_HOST` as Hosted; an unset key is a no-op. Cloud
+uses the official Python SDK version already resolved by optional Mem0. No new
+analytics store, pipeline or Cloud admin analytics API is introduced.
+
+| Metric / prior gap | Existing component extended |
+| --- | --- |
+| Connected activation and successful feature mutations | Cloud `core/posthog.py`, committed route/service producers. |
+| Human activity, feature views and acquisition | Existing web `hosted/posthog.ts` SDK pageviews and identity bridge; no parallel view events. |
+| CLI traffic | Existing server `authenticated_requests_total{kind="clerk_oauth_cli"}` and HTTP RED; the CLI has no analytics producer. |
+| Request latency/errors and degraded connector authentication | Existing `services/metrics.py`, request timing middleware and connector failure mapping. |
+| Cohorts, funnels and product aggregates | Existing PostHog insights; Hosted owns deployment, provisioning and revenue reporting. |
+
+Cloud never labels lazy local user creation as signup: Hosted's verified Clerk
+creation time owns `signed_up_at`. Connected registration is distinct from
+Hosted deployment. Human engagement uses identified browser/desktop `$pageview`
+activity by bounded `feature`, not daemon polling or AI traffic. The web SDK
+owns history-change pageviews and pageleave; it does not use DOM autocapture or
+session recording. A browser left open without navigation does not produce a
+new daily activity event.
+
+Cloud events have `source=cloud` and integer `schema_version=1`. Business
+mutations stage capture on their owning transaction: commit enqueues, rollback
+discards, and nested savepoint commits wait for their parent. Event UUIDs and
+`$insert_id` bind the event name, Clerk subject and stable business key/revision.
+Capture is best effort; a crash or full SDK queue can lose an event.
+
+[PostHog event deduplication](https://posthog.com/docs/data/events#event-deduplication)
+requires the same **UUID, event name, timestamp and distinct ID**, and occurs
+eventually during storage merges. A repeated `$insert_id` alone is insufficient.
+Connector observations normalize the provider's timezone-aware `created_at` to
+UTC; credentials success and repeated enabled-ACTIVE reads send the same four
+fields and all properties. Missing, invalid or timezone-less timestamps skip
+capture. With analytics enabled, credentials success reuses `get_owned_account`
+for this metadata; a read failure skips telemetry without changing the success
+response. Duplicate records can remain visible before PostHog merges them.
+
+| Event | Trigger | Properties (types) | Owner |
+| --- | --- | --- | --- |
+| `user_enrolled` | First committed Cloud user mirror, not Clerk signup | common properties only | Cloud auth |
+| `agent_connected` | First positive Connected registration evidence; excludes Hosted identities | common properties only | Cloud agents |
+| `session_synced` | Committed snapshot content or event generation/append | `protocol: snapshot-v1\|events-v1`, `session_id: opaque UUID`, optional `agent_id: opaque UUID`, `has_messages: bool\|null`, `message_count: int\|null` | Cloud sessions |
+| `project_created` | Committed user-created Project | `feature: projects` | Cloud projects |
+| `skill_saved` | Committed new/changed skill revision; unchanged replays skipped | `feature: skills` | Cloud skills |
+| `vault_created` | Committed new Vault | `feature: vault` | Cloud vault |
+| `channel_connected` | Committed new bot-agent link | `feature: channels` | Cloud channels |
+| `share_created` | Committed Project or Session share | `feature: sharing`, `resource_type: project\|session` | Cloud sharing |
+| `invitation_created`, `invitation_accepted` | Committed invitation creation / acceptance | `feature: sharing` | Cloud sharing |
+| `connector_connection_started` | Provider successfully creates an OAuth attempt | `feature: connectors` | Cloud connectors |
+| `connector_connected` | Successful credentials or an enabled ACTIVE provider read with a stable creation timestamp | `feature: connectors` | Cloud connectors |
+| `$pageview` | Existing SDK initial/history-change view | `feature: bounded surface enum\|null`, `$host: hostname`, `source: web\|desktop`, `schema_version: int 1`; auth features also have bounded acquisition categories | Web/desktop |
+| `$pageleave` | Existing SDK pageleave | SDK identity/session fields and bounded properties only | Web/desktop |
+| `agent_setup_opened` | Add Agent dialog becomes visible | `source: web\|desktop`, `schema_version: int 1` | Web/desktop |
+
+Web honors its existing Hosted gate, DNT and SDK opt-out. Existing `identify`
+links anonymous history to the Clerk subject, and sign-out resets it. The Vault
+request page is excluded. Final SDK filtering removes URLs, pathnames, raw
+referrers, DOM text, IPs and arbitrary properties. `$host` is a hostname only;
+`feature` adds `sign_up`, `sign_in`, `deploy` to the existing product surfaces.
+Person identity retains only `clerk_id`; backend Hosted owns profile enrichment.
+
+Sign-up/sign-in pageviews receive bounded acquisition source and UTM/referrer
+categories. Source is `direct`, `google`, `bing`, `github`, `x`, `linkedin`,
+`newsletter`, `referral`, `other`; medium is `none`, `organic`, `cpc`, `social`,
+`email`, `referral`, `other`; campaign is `none`, `launch`, `onboarding`,
+`newsletter`, `other`. Unknown input becomes `other`. Marketing landing capture
+belongs to Hosted; Cloud auth-entry views do not count as marketing landing
+visits.
+
+The shared PostHog project must enable **Discard client IP data**; outbound
+filtering does not stop ingestion-side IP fallback. See
+[PostHog's privacy guidance](https://posthog.com/tutorials/web-redact-properties#hiding-customer-ip-address).
+The deprecated JS `ip` option has no effect. The Hosted owner must verify the
+existing project setting before enabling Cloud producers. No project settings
+or live telemetry APIs were read or changed during implementation.
+
+Recommended PostHog insights (UTC, display observation coverage):
+
+| Insight / dashboard | Definition and query |
+| --- | --- |
+| North Star | Weekly distinct users with `session_synced,has_messages=true`; chart beside human WAU. |
+| Acquisition | Hosted landing → `$pageview{feature=sign_up}`; use Hosted person `signed_up_at` for completed signup conversion and bounded UTM/referrer breakdown. A person timestamp is not a funnel event; local enrollment is not signup. |
+| Activation | HogQL joins `person.properties.signed_up_at` to earliest `agent_connected`, Hosted `v2_deployment_succeeded`, or nonempty `session_synced`. Show independent milestones, median/P95 elapsed time and mature 24h/7d cohorts only. Successful sync does not prove a successful AI response. |
+| Engagement | Distinct identified people with `$pageview` on product features in trailing 1/7/30 days; DAU/MAU stickiness. Exclude auth features and anonymous views. Browser sessions count distinct `$session_id`. Distinct synchronized `session_id`/`agent_id` per person separately measure agent usage. CLI traffic is operational request volume, not human DAU. |
+| Messages | Latest `message_count` per session (`argMax(message_count,timestamp)` in HogQL); never sum repeated snapshots. This measures synchronized inventory, not messages authored in the report window. Null means projection unavailable. |
+| Feature adoption | Unique people with successful Cloud feature events; separately show `$pageview` by `feature` and `source=web\|desktop`. Files have view coverage. Dialog intent → successful agent connection is a funnel; a view does not prove use. |
+| Retention | Signup-week cohorts from `signed_up_at`; exact D1/D7/D30 activity retention using identified product pageviews, divided by mature cohort size. Suppress immature cells; also show first-human-activity cohorts. One completed inactive week marks churn; activity after an inactive week marks resurrection. |
+| Referral | Shares/invitations created → accepted invitations by person; share creation alone is not acquisition. |
+| Revenue | Hosted existing checkout/subscription/compute/revenue insights and admin analytics. |
+| Reliability | Prometheus request RED and connector auth failures; Sentry and sparse slow/error stage logs remain unchanged diagnostics. No ClickHouse telemetry exists in this repository. |
+
+Operational aggregates remain in authenticated Prometheus `/metrics`:
+
+- Rate: `sum by (route_group) (rate(clawdi_backend_http_requests_total[5m]))`.
+- Server error ratio: `sum by (route_group) (rate(clawdi_backend_http_requests_total{status_class="5xx"}[5m])) / sum by (route_group) (rate(clawdi_backend_http_requests_total[5m]))`; chart `4xx` separately.
+- P95 response-header latency: `histogram_quantile(0.95, sum by (le,route_group) (rate(clawdi_backend_http_request_duration_seconds_bucket[5m])))`. Streams exclude stream lifetime.
+- Session-route failure requests: `sum(rate(clawdi_backend_http_requests_total{route_group="sessions",status_class=~"4xx|5xx"}[5m]))`. This includes all session-route errors, not only sync writes.
+- Connector authentication failures, including degraded 200 reads: `rate(clawdi_backend_connector_auth_failures_total[5m])`.
+
+Labels use fixed route groups, HTTP method enums and status classes, without
+entity IDs or raw paths. Existing channel, database and embedding series keep
+their legacy names and semantics. The before/after inventory is recorded in the
+[unreleased analytics changelog](../CHANGELOG.md#analytics) so retired names have
+one migration reference.
+
+Done: `bash scripts/test.sh backend tests/test_posthog.py tests/test_connectors.py tests/test_request_timing.py tests/test_metrics.py`, full backend, web, CLI, CI and lint suites pass in isolated Docker without calling PostHog. `backend-lint` runs Ruff and the owned type gate; backend-relative arguments can restrict the format check. No live verification or dashboard creation is implied.
