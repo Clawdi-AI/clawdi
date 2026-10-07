@@ -63,6 +63,7 @@ KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v2/deployments/by-request/{deploy_request_id}": {"get"},
     "/v2/deployments/{deployment_id}": {"get", "delete", "patch"},
     "/v2/deployments/{deployment_id}/events": {"get"},
+    "/v2/deployments/{deployment_id}/files/handoff": {"post"},
     "/v2/deployments/{deployment_id}/terminal": {"post"},
     "/v2/deployments/{deployment_id}/runtime-ui/access/reset": {"post"},
     "/v2/deployments/{deployment_id}/runtime-ui/credentials": {"post"},

@@ -1931,6 +1931,7 @@ function hostedDeployment(
 		clawdi_cloud_environments: { [agentId]: agentId },
 		ai_provider_auth_kinds: { [runtime]: "managed" },
 		files_endpoint: { url: "https://files.example.test/" },
+		provisioning_path: "standard",
 		current_plan_slug: included ? "compute_basic" : "compute_performance",
 		upgrade_available: included,
 		upgrade_eligibility: { eligible: included, reason: null },
@@ -2373,6 +2374,18 @@ for (const [template, handler] of Object.entries(computeGetRoutes)) {
 }
 // No live hosted stream or runtime infrastructure is simulated.
 on("GET", "/v2/events", () => new Reply(204, null));
+// One-time Files handoff stub; the fixture never serves the Files host itself.
+on("POST", "/v2/deployments/{deployment_id}/files/handoff", ({ params, request }) => {
+	const deployment = deployments.find((item) => item.resource.id === params.deployment_id);
+	if (!deployment?.files_endpoint) return notFound("Deployment not found");
+	if (request.headers.get("if-match") !== `"${deployment.resource.metadata.resourceVersion}"`)
+		return new Reply(412, { detail: "Files handoff does not match the current deployment" });
+	return {
+		url: new URL("/__clawdi/files/handoff?code=fixture", deployment.files_endpoint.url).href,
+		expires_at: new Date(Date.now() + 60_000).toISOString(),
+		deployment_resource_version: deployment.resource.metadata.resourceVersion,
+	} satisfies DeploySchemas["V2HostedFilesHandoff"];
+});
 on("POST", "/v2/subscription/quote", async ({ request }) => {
 	let body: unknown;
 	try {

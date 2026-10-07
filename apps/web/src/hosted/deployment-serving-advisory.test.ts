@@ -41,6 +41,8 @@ function servingDeployment(reason: string, observedGeneration = 1) {
 				"https://api.example.test/v2/deployments/hdep_fixture/hermes-oidc/session",
 			access_revision: 1,
 			browser_mode: "embedded_and_top_level",
+			serving_ready: true,
+			serving_reason: "Ok",
 			component_readiness: 1,
 		},
 		extraConditions: [degraded(reason, observedGeneration)],
