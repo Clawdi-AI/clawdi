@@ -151,7 +151,6 @@ strict = [
     "app/models/audit.py",
     "app/models/base.py",
     "app/models/channel.py",
-    "app/models/device_authorization.py",
     "app/models/distributed_state.py",
     "app/models/hosted_runtime.py",
     "app/models/memory.py",

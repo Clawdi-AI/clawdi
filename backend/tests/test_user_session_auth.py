@@ -94,9 +94,6 @@ async def test_api_key_cannot_delete_session(
     [
         ("GET", "/auth/keys"),
         ("DELETE", "/auth/keys/test-key"),
-        ("GET", "/cli/auth/lookup"),
-        ("POST", "/cli/auth/approve"),
-        ("POST", "/cli/auth/deny"),
     ],
 )
 async def test_oauth_cli_cannot_manage_credentials(
@@ -129,9 +126,6 @@ def test_only_credential_and_device_routes_require_browser_auth() -> None:
         for method, path in (
             ("GET", "/auth/keys"),
             ("DELETE", "/auth/keys/{key_id}"),
-            ("GET", "/cli/auth/lookup"),
-            ("POST", "/cli/auth/approve"),
-            ("POST", "/cli/auth/deny"),
         )
     }
     actual = {
