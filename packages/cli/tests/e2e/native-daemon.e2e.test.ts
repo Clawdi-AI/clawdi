@@ -170,7 +170,10 @@ nativeDescribe("native daemon invocation smoke", () => {
 			const unitPath = join(home, ".config", "systemd", "user", "clawdi-serve.service");
 			expect(existsSync(unitPath)).toBe(true);
 			const execStart = readFileSync(unitPath, "utf-8").match(/^ExecStart=(.+)$/m)?.[1];
-			expect(execStart).toBe(`${stableLauncher} daemon run`);
+			expect(execStart).toBe(
+				`${stableLauncher} daemon run --auth-token-file ${join(clawdiHome, "auth-token")}`,
+			);
+			expect(readFileSync(unitPath, "utf-8")).not.toContain(API_KEY);
 			// Desktop uses the first argv verbatim. The second also checks that
 			// process-wide color configuration never reaches daemon option validation.
 			for (const args of [

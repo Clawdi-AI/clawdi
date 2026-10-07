@@ -644,7 +644,7 @@ const removedProfiles: Record<string, string[]> = { [AGENT.claude]: ["personal"]
 /** Configured profiles that have not synced a session yet. */
 const idleProfiles: Record<string, string[]> = { [AGENT.claude]: ["staging"] };
 
-/** Every Agent has its default profile; others come from its sessions. */
+/** Every Agent has its default profile; others come from its sessions or `idleProfiles`. */
 function agentProfiles(agentId: string): GetOk<"/v1/agents/{agent_id}/profiles"> {
 	const agentSessions = sessions.filter((session) => session.agent_id === agentId);
 	const keys = [
@@ -2112,23 +2112,23 @@ const wallet = {
 const walletTransactions = {
 	items: [
 		{
-			id: "txn_parity_topup",
-			kind: "topup",
-			occurred_at: ago(2 * DAY),
-			amount: "50.00",
+			id: "wallet:parity-store-refund",
+			kind: "store_refund",
+			occurred_at: ago(HOUR),
+			amount: "10.00",
 			currency: "usd",
-			direction: "credit",
-			status: "succeeded",
-			funding: "card",
+			direction: "debit",
+			status: "applied",
+			funding: "wallet",
 		},
 		{
-			id: "txn_parity_compute",
-			kind: "compute_subscription",
+			id: "wallet:parity-compute",
+			kind: "compute_charge",
 			occurred_at: ago(DAY),
 			amount: "25.00",
 			currency: "usd",
 			direction: "debit",
-			status: "succeeded",
+			status: "applied",
 			funding: "wallet",
 			context: {
 				plan: "compute_performance",
@@ -2139,14 +2139,25 @@ const walletTransactions = {
 			},
 		},
 		{
-			id: "txn_parity_usage",
-			kind: "ai_usage",
-			occurred_at: ago(HOUR),
-			amount: "0.42",
+			id: "wallet:parity-store-topup",
+			kind: "store_topup",
+			occurred_at: ago(2 * DAY),
+			amount: "25.00",
 			currency: "usd",
-			direction: "debit",
-			status: "succeeded",
-			funding: "wallet",
+			direction: "credit",
+			status: "applied",
+			funding: "store",
+		},
+		{
+			id: "wallet:parity-topup",
+			kind: "topup",
+			occurred_at: ago(3 * DAY),
+			amount: "50.00",
+			currency: "usd",
+			direction: "credit",
+			status: "applied",
+			funding: "card",
+			receipt_url: "https://pay.stripe.com/receipts/parity",
 		},
 	],
 	has_more: false,

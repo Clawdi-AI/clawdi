@@ -15,14 +15,7 @@ import {
 } from "../src/lib/hosted-deploy-client";
 
 function oauthToken(exp: number): string {
-	const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
-	return `${encode({ alg: "RS256", typ: "at+jwt" })}.${encode({
-		iss: "https://clerk.example.test",
-		client_id: "clawdi-cli",
-		aud: "clawdi-api",
-		sub: "user_same_sub",
-		exp,
-	})}.signature`;
+	return `opaque-token-${exp}`;
 }
 
 let priorClawdiHome: string | undefined;
@@ -81,8 +74,7 @@ describe("Hosted deploy auth boundary", () => {
 	test.each([
 		{
 			credential: { token: "invalid", expiresAt: "invalid" },
-			message:
-				"Deploying a Cloud Agent needs a browser sign-in. Run `clawdi auth login` (not --manual).",
+			message: "Your sign-in has an invalid expiry. Run `clawdi auth login` again.",
 		},
 		{
 			credential: { token: oauthToken(2_000_000_000), expiresAt: "invalid" },
@@ -127,10 +119,8 @@ describe("Hosted deploy auth boundary", () => {
 			accessTokenExpiresAt: new Date(now - 60_000).toISOString(),
 			issuer: "https://clerk.example.test",
 			clientId: "clawdi-cli",
-			audience: "clawdi-api",
 			tokenEndpoint: "https://clerk.example.test/oauth/token",
 			scopes: ["openid", "profile", "email"],
-			subject: "user_same_sub",
 			userId: "cloud-local-user",
 			endpointBinding: {
 				version: 1,
@@ -149,6 +139,7 @@ describe("Hosted deploy auth boundary", () => {
 					access_token: token,
 					refresh_token: "refresh-rotated",
 					token_type: "Bearer",
+					expires_in: 3600,
 					scope: "openid profile email",
 				});
 			}
