@@ -19,6 +19,49 @@ from prometheus_client.exposition import generate_latest
 registry = CollectorRegistry()
 logger = logging.getLogger(__name__)
 
+http_requests = Counter(
+    "clawdi_backend_http_requests_total",
+    "API requests by bounded route group and response class",
+    ["route_group", "method", "status_class"],
+    registry=registry,
+)
+http_request_duration = Histogram(
+    "clawdi_backend_http_request_duration_seconds",
+    "Time to response headers (streams exclude stream lifetime)",
+    ["route_group", "method"],
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30),
+    registry=registry,
+)
+connector_auth_failures = Counter(
+    "clawdi_backend_connector_auth_failures_total",
+    "Connector provider authentication failures, including degraded reads",
+    registry=registry,
+)
+
+
+def record_connector_auth_failure() -> None:
+    try:
+        connector_auth_failures.inc()
+    except Exception:
+        logger.warning("Connector authentication metric capture failed")
+
+
+def record_api_response(route_group: str, method: str, status_code: int, duration: float) -> None:
+    try:
+        method = (
+            method
+            if method in {"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"}
+            else "OTHER"
+        )
+        status_class = f"{status_code // 100}xx" if 100 <= status_code < 600 else "other"
+        http_requests.labels(
+            route_group=route_group, method=method, status_class=status_class
+        ).inc()
+        http_request_duration.labels(route_group=route_group, method=method).observe(duration)
+    except Exception:
+        logger.warning("API metric capture failed")
+
+
 authenticated_requests = Counter(
     "clawdi_backend_authenticated_requests_total",
     "Authenticated requests by credential kind",
@@ -58,22 +101,10 @@ outbound_errors = Counter(
     ["channel", "method"],
     registry=registry,
 )
-discord_command_fanout_runs = Counter(
-    "msg_router_discord_command_fanout_runs_total",
-    "Discord application command fan-out replay runs by outcome",
-    ["outcome"],
-    registry=registry,
-)
 rate_limit_rejects = Counter(
     "msg_router_rate_limit_rejects_total",
     "Total outbound requests rejected by rate limiter",
     ["channel", "scope"],
-    registry=registry,
-)
-ingress_errors = Counter(
-    "msg_router_ingress_errors_total",
-    "Total ingress poll errors",
-    ["channel", "bot_id"],
     registry=registry,
 )
 provider_ingress_terminal_events = Counter(
@@ -87,13 +118,6 @@ proxy_latency = Histogram(
     "Outbound proxy request latency in seconds",
     ["channel", "method"],
     buckets=(0.05, 0.1, 0.25, 0.5, 1, 2.5, 5),
-    registry=registry,
-)
-active_polls = Gauge(
-    "msg_router_active_polls",
-    "Number of active ingress poll loops",
-    ["channel"],
-    multiprocess_mode="livesum",
     registry=registry,
 )
 webhook_deliveries = Counter(

@@ -342,6 +342,7 @@ jobs:
           KAMAL_SECRETS: ${{ secrets.KAMAL_SECRETS }}
           CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: ${{ secrets.CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN }}
           METRICS_BEARER_TOKEN: ${{ secrets.METRICS_BEARER_TOKEN }}
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
           TS_AUTHKEY: ${{ secrets.WHATSAPP_TAILSCALE_AUTHKEY }}
           WHATSAPP_TAILSCALE_EGRESS_ENABLED: ${{ vars.WHATSAPP_TAILSCALE_EGRESS_ENABLED }}
         run: |
@@ -357,12 +358,21 @@ jobs:
           esac
           test "${#METRICS_BEARER_TOKEN}" -ge 43
           test "${#METRICS_BEARER_TOKEN}" -le 128
+          if [ -n "$POSTHOG_API_KEY" ]; then
+            case "$POSTHOG_API_KEY" in
+              phc_?*) ;;
+              *) echo "POSTHOG_API_KEY has an invalid format" >&2; exit 1 ;;
+            esac
+            case "$POSTHOG_API_KEY" in
+              *[!A-Za-z0-9_-]*) echo "POSTHOG_API_KEY has an invalid format" >&2; exit 1 ;;
+            esac
+          fi
           install -d -m 700 .kamal
           printf '%s\n' "$KAMAL_SECRETS" > .kamal/secrets
           secrets_tmp="$(mktemp)"
           trap 'rm -f "$secrets_tmp"' EXIT
           awk '
-            !/^CLOUDFLARE_ORIGIN_CERT=/ && !/^CLOUDFLARE_ORIGIN_KEY=/ && !/^METRICS_BEARER_TOKEN=/ { print }
+            !/^CLOUDFLARE_ORIGIN_CERT=/ && !/^CLOUDFLARE_ORIGIN_KEY=/ && !/^METRICS_BEARER_TOKEN=/ && !/^POSTHOG_API_KEY=/ { print }
             END {
               print "CLOUDFLARE_ORIGIN_CERT=$CLOUDFLARE_ORIGIN_CERT"
               print "CLOUDFLARE_ORIGIN_KEY=$CLOUDFLARE_ORIGIN_KEY"
@@ -372,6 +382,7 @@ jobs:
           printf 'CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN=%s\n' \
             "$CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN" >> .kamal/secrets
           printf 'METRICS_BEARER_TOKEN=%s\n' "$METRICS_BEARER_TOKEN" >> .kamal/secrets
+          printf 'POSTHOG_API_KEY=%s\n' "$POSTHOG_API_KEY" >> .kamal/secrets
           if [ "$WHATSAPP_TAILSCALE_EGRESS_ENABLED" = true ]; then
             case "$TS_AUTHKEY" in
               *[!A-Za-z0-9_-]*|"")

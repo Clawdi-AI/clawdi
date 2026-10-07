@@ -12,6 +12,7 @@ from sqlalchemy import func, literal, or_, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.posthog import stage_user_capture
 from app.models.session import Session
 from app.models.session_permission import PERMISSION_KIND_LINK, SessionPermission
 from app.models.session_share import SessionShare
@@ -350,6 +351,14 @@ async def create_session_share(
         public_metadata=metadata,
     )
     db.add(share)
+    await db.flush()
+    await stage_user_capture(
+        db,
+        "share_created",
+        user_id=created_by,
+        event_key=str(share.id),
+        properties={"feature": "sharing", "resource_type": "session"},
+    )
     await db.commit()
     await db.refresh(share)
     return share

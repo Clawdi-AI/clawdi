@@ -17,6 +17,7 @@ import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { useStoreSurfaces } from "@/platform/store/store-provider";
 export function BillingScreen() {
 	const scope = useAccountScope();
 	return <BillingView key={`${scope.accountKey}:${scope.generation}`} />;
@@ -27,6 +28,7 @@ function BillingView() {
 	const { compute } = useMobileApi();
 	const read = useAccountRead();
 	const router = useRouter();
+	const surfaces = useStoreSurfaces();
 	const subscriptions = useSubscriptions();
 	const plans = useQuery({
 		queryKey: accountQueryKey(scope, "billing-plans"),
@@ -43,7 +45,7 @@ function BillingView() {
 		(item) => item.subscription_id,
 	);
 	return (
-		<SettingsShell active="compute" scroll={false}>
+		<SettingsShell scroll={false}>
 			<NativeList
 				data={items}
 				keyExtractor={(item) => item.subscription_id}
@@ -121,7 +123,7 @@ function BillingView() {
 							)
 						) : null}
 						<WebText recipe={transactionsSectionClasses.description}>
-							{t("billing.noStore")}
+							{t(surfaces.addCredits ? "store.creditsNotice" : "billing.noStore")}
 						</WebText>
 					</WebView>
 				}

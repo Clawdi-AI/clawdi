@@ -1,7 +1,10 @@
-import { type SessionAgentIdentity, sessionAgentIdentityInput } from "@clawdi/shared/view";
+import {
+	profileLabel,
+	type SessionAgentIdentity,
+	sessionAgentIdentityInput,
+} from "@clawdi/shared/view";
 import type { AgentIconSize } from "@/components/dashboard/agent-icon";
 import { AgentLabel } from "@/components/dashboard/agent-label";
-import { profileLabel } from "@/lib/agent-profiles";
 
 export function SessionAgentLabel({
 	session,

@@ -18,9 +18,11 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import type { Transaction } from "@/hosted/billing/format";
+import { signedCredits } from "@/hosted/billing/store/store-presentation";
 import { useI18n } from "@/lib/i18n";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { useStoreSurfaces } from "@/platform/store/store-provider";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function TransactionRow({ item }: { item: Transaction }) {
@@ -28,7 +30,9 @@ export function TransactionRow({ item }: { item: Transaction }) {
 	const scope = useAccountScope();
 	const action = useAuthAction(scope.identity);
 	const capture = useForegroundLease();
-	const document = transactionDocumentAction(item);
+	const surfaces = useStoreSurfaces();
+	// Store builds never link to Stripe receipts or invoices.
+	const document = surfaces.cardBilling ? transactionDocumentAction(item) : null;
 	let documentUrl: string | null = null;
 	try {
 		const url = document ? new URL(document.url) : null;
@@ -83,7 +87,9 @@ export function TransactionRow({ item }: { item: Transaction }) {
 				recipe={transactions.amount}
 				className={item.direction === "credit" ? "text-success-muted-foreground" : undefined}
 			>
-				{transactionSignedAmount(item)}
+				{surfaces.creditUnits
+					? signedCredits(transactionSignedAmount(item), t("store.credits"))
+					: transactionSignedAmount(item)}
 			</WebText>
 		</WebView>
 	);

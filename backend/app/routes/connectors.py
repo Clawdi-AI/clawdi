@@ -1,9 +1,11 @@
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from app.core.auth import AuthContext, require_clerk_id, require_user_auth_short_session
 from app.core.config import settings
+from app.core.posthog import capture_event
 from app.middleware.request_timing import record_pre_handler, request_stage
 from app.schemas.common import Paginated
 from app.schemas.connector import (
@@ -34,13 +36,26 @@ from app.services.composio import (
     get_auth_fields,
     get_available_apps,
     get_connector_metadata,
+    get_owned_account,
     invalidate_tool_router_mcp_session,
     normalize_composio_failure,
     update_account_alias,
 )
+from app.services.metrics import record_connector_auth_failure
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/connectors", tags=["connectors"])
+
+
+def _connection_created_at(value: str) -> datetime | None:
+    """Use the provider's stable timestamp; never replace missing metadata with now."""
+    try:
+        timestamp = datetime.fromisoformat(value)
+        if timestamp.utcoffset() is None:
+            return None
+        return timestamp.astimezone(UTC)
+    except (ValueError, OverflowError):
+        return None
 
 
 def _is_composio_auth_error(exc: ComposioRouteError) -> bool:
@@ -51,7 +66,10 @@ def _is_composio_auth_error(exc: ComposioRouteError) -> bool:
     deployments, fresh self-hosted installs) should look like an
     unconfigured integration, not an outage.
     """
-    return normalize_composio_failure(exc).kind == "authentication"
+    failed = normalize_composio_failure(exc).kind == "authentication"
+    if failed:
+        record_connector_auth_failure()
+    return failed
 
 
 _REDIRECT_AUTH_TYPES = {
@@ -68,6 +86,8 @@ _REDIRECT_AUTH_TYPES = {
 def map_composio_error(exc: ComposioRouteError) -> HTTPException:
     """Map the adapter's sanitized failure record to the public HTTP contract."""
     failure = normalize_composio_failure(exc)
+    if failure.kind == "authentication":
+        record_connector_auth_failure()
     if failure.kind == "metadata":
         return HTTPException(
             status.HTTP_502_BAD_GATEWAY,
@@ -143,7 +163,8 @@ async def list_connections(
     with request_stage(request.scope, "connector_invalidation_ms"):
         await invalidate_tool_router_mcp_session(clerk_id)
     with request_stage(request.scope, "connector_response_build_ms"):
-        return [ConnectorConnectionResponse.model_validate(account) for account in accounts]
+        connections = [ConnectorConnectionResponse.model_validate(account) for account in accounts]
+    return connections
 
 
 @router.post("/metadata:batchRead", response_model=ConnectorMetadataBatchResponse)
@@ -255,6 +276,12 @@ async def connect_app(
         )
     except ComposioRouteError as exc:
         raise map_composio_error(exc) from exc
+    capture_event(
+        "connector_connection_started",
+        distinct_id=auth.user.clerk_id,
+        event_key=result.id,
+        properties={"feature": "connectors"},
+    )
     return result
 
 
@@ -313,6 +340,22 @@ async def connect_credentials(
             status.HTTP_400_BAD_REQUEST,
             f"Composio returned connection status {result.status}",
         )
+    if settings.posthog_api_key.strip():
+        try:
+            account = await get_owned_account(require_clerk_id(auth), result.id)
+            created_at = _connection_created_at(account.created_at)
+        except Exception:  # noqa: BLE001 - optional telemetry cannot fail a completed mutation.
+            # A telemetry metadata read must not change the successful mutation.
+            log.warning("Connector analytics metadata unavailable")
+        else:
+            if created_at is not None:
+                capture_event(
+                    "connector_connected",
+                    distinct_id=auth.user.clerk_id,
+                    event_key=result.id,
+                    properties={"feature": "connectors"},
+                    timestamp=created_at,
+                )
     return result
 
 

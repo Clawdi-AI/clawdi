@@ -1,8 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-	buildHostedPersonProperties,
-	resolveHostedAuthIdentityAction,
-} from "@/hosted/analytics-identity.logic";
+import { resolveHostedAuthIdentityAction } from "@/hosted/analytics-identity.logic";
 
 describe("resolveHostedAuthIdentityAction", () => {
 	test("identifies when signed in with a new user id", () => {
@@ -54,52 +51,6 @@ describe("resolveHostedAuthIdentityAction", () => {
 		expect(result).toEqual({
 			action: { type: "none" },
 			nextIdentifiedUserId: null,
-		});
-	});
-});
-
-describe("buildHostedPersonProperties", () => {
-	test("returns null until full user record is loaded", () => {
-		const result = buildHostedPersonProperties({
-			isSignedIn: true,
-			userId: "user_123",
-			user: null,
-		});
-
-		expect(result).toBeNull();
-	});
-
-	test("builds enrichment payload from Clerk user", () => {
-		const result = buildHostedPersonProperties({
-			isSignedIn: true,
-			userId: "user_123",
-			user: {
-				fullName: "Ada Lovelace",
-				primaryEmailAddress: { emailAddress: "ada@example.com" },
-			},
-		});
-
-		expect(result).toEqual({
-			clerk_id: "user_123",
-			email: "ada@example.com",
-			name: "Ada Lovelace",
-		});
-	});
-
-	test("includes clerk_id even when name/email are missing", () => {
-		const result = buildHostedPersonProperties({
-			isSignedIn: true,
-			userId: "user_123",
-			user: {
-				fullName: null,
-				primaryEmailAddress: null,
-			},
-		});
-
-		expect(result).toEqual({
-			clerk_id: "user_123",
-			email: undefined,
-			name: undefined,
 		});
 	});
 });

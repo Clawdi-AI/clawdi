@@ -8,12 +8,14 @@ import { SettingsShell } from "@/components/settings/shell";
 import { NativeList } from "@/components/ui/native-list";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { nextBillingCursor, uniqueBillingItems } from "@/hosted/billing/format";
+import { useStoreRecoveryRefresh } from "@/hosted/billing/store/add-credits";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
 import { TransactionRow } from "@/hosted/billing/wallet/transactions-section";
 import { WalletSettingsSections } from "@/hosted/billing/wallet/wallet-sections";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 function initialCursor(): string | undefined {
 	return undefined;
@@ -27,6 +29,8 @@ function WalletView() {
 	const { compute } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
+	const surfaces = useStoreSurfaces();
+	useStoreRecoveryRefresh();
 	const wallet = useQuery({
 		queryKey: accountQueryKey(scope, "billing-wallet"),
 		queryFn: ({ signal }) =>
@@ -54,7 +58,7 @@ function WalletView() {
 		(item) => item.id,
 	);
 	return (
-		<SettingsShell active="wallet" scroll={false}>
+		<SettingsShell scroll={false}>
 			<NativeList
 				data={wallet.data && !wallet.isError ? rows : []}
 				keyExtractor={(item) => item.id}
@@ -124,7 +128,7 @@ function WalletView() {
 							</WebText>
 						) : null}
 						<WebText recipe={transactionsSectionClasses.description}>
-							{t("billing.noStore")}
+							{t(surfaces.addCredits ? "store.creditsNotice" : "billing.noStore")}
 						</WebText>
 					</WebView>
 				}

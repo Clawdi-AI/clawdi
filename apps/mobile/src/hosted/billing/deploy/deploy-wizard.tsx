@@ -27,8 +27,10 @@ import {
 	deployFormCopy,
 	explicitPlanOffers,
 	firstModelForProvider,
+	formatUsdExact,
 	modelDisplayName,
 	modelOptionsForProvider,
+	negativeDecimalMagnitude,
 	planOffers,
 	providerDisplayLabel,
 	runtimeBlurb,
@@ -38,7 +40,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import * as Crypto from "expo-crypto";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Cpu, CreditCard, Plus, Rocket, WalletCards, Zap } from "lucide-react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AddAgentSetup } from "@/components/dashboard/add-agent-setup";
 import {
@@ -74,6 +76,12 @@ import {
 	validationTranslationKeys,
 } from "@/hosted/billing/deploy/deploy-request";
 import { nextBillingCursor, subscriptionPrice, uniqueBillingItems } from "@/hosted/billing/format";
+import { AddCreditsAction } from "@/hosted/billing/store/add-credits";
+import {
+	creditPrice,
+	formatCreditCents,
+	formatCredits,
+} from "@/hosted/billing/store/store-presentation";
 import { operationIdFromName } from "@/hosted/deployment-status";
 import { ProviderCreate } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { AiBindingChoices } from "@/hosted/v2/ai-providers/ai-binding-choices";
@@ -89,6 +97,7 @@ import {
 } from "@/platform/creation-storage";
 import { NativeSegments } from "@/platform/navigation/segmented-control";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
+import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 const initialDraft: HostedDeployWizardDraft = {
 	runtime: "hermes",
@@ -138,6 +147,12 @@ function CreationForm() {
 	const t = useI18n();
 	const router = useRouter();
 	const action = useAuthAction(scope);
+	// Store builds fund new compute only from Wallet credits; card checkout is hidden.
+	const surfaces = useStoreSurfaces();
+	const credits = t("store.credits");
+	const fundingDefault: HostedDeploySubscriptionSelection["fundingSource"] = surfaces.cardBilling
+		? "stripe"
+		: "wallet";
 	const [draft, setDraft] = useState(initialDraft);
 	const [source, setSource] = useState<"included" | "existing" | "new" | null>(null);
 	const [providerChoice, setProviderChoice] = useState("__managed__");
@@ -241,7 +256,10 @@ function CreationForm() {
 		selectedPlan,
 		{ reusable: reusableItems, hasSavedAttempt: Boolean(attempt) },
 	);
-	const quoteOptions = offeredQuoteSelections(inventory.data?.plans ?? []);
+	const quoteOptions = offeredQuoteSelections(inventory.data?.plans ?? []).map((option) => ({
+		...option,
+		fundingSource: fundingDefault,
+	}));
 	const quoteAvailable =
 		quoteSelection &&
 		quoteOptions.some(
@@ -379,6 +397,22 @@ function CreationForm() {
 			}
 			if (current(owns)) await navigateRequest(saved.id, owns);
 		});
+	const requestQuote = () =>
+		action.run(async (owns) => {
+			if (!compute || !quoteSelection || !quoteAvailable) return;
+			const result = await read((s) =>
+				compute.quoteSubscription(buildHostedDeploySubscriptionQuoteRequest(quoteSelection), s),
+			);
+			if (current(owns)) setQuote(result);
+		});
+	// Funding finishes later; re-quote the selection current at that time.
+	const requote = useRef(requestQuote);
+	requote.current = requestQuote;
+	// A Wallet quote below the debit can be funded through the store, then re-quoted.
+	const shortfall =
+		quote?.funding_source === "wallet" && quote.balance_after_usd
+			? negativeDecimalMagnitude(quote.balance_after_usd)
+			: null;
 	const update = (patch: Partial<HostedDeployWizardDraft>) => {
 		setDraft((previous) => ({ ...previous, ...patch }));
 		setMessage("");
@@ -387,7 +421,11 @@ function CreationForm() {
 	};
 	const locked = action.busy || Boolean(attempt) || !storageReady;
 
-	const comparison = computePlanComparisonView(inventory.data?.plans ?? [], previewTerm);
+	const comparison = computePlanComparisonView(
+		inventory.data?.plans ?? [],
+		previewTerm,
+		surfaces.creditUnits ? (cents) => formatCreditCents(cents, credits) : undefined,
+	);
 	const previewPlan =
 		draft.computePlanSlug === "compute_performance" ? comparison.performance : comparison.basic;
 	const billingOffers = previewPlan
@@ -524,7 +562,11 @@ function CreationForm() {
 													<AppText>{subscriptionSourceCopy.included}</AppText>
 												</Badge>
 											}
-											details={<AppText>{subscriptionSourceCopy.dueNow}</AppText>}
+											details={
+												<AppText>
+													{surfaces.creditUnits ? t("store.dueNow") : subscriptionSourceCopy.dueNow}
+												</AppText>
+											}
 											className={webView(subscriptionSourcePickerClasses.choice)}
 										/>
 									) : null}
@@ -606,7 +648,7 @@ function CreationForm() {
 														setPreviewTerm(term);
 														setQuoteSelection({
 															...option,
-															fundingSource: quoteSelection?.fundingSource ?? "stripe",
+															fundingSource: quoteSelection?.fundingSource ?? fundingDefault,
 														});
 														setQuote(null);
 													}
@@ -698,7 +740,7 @@ function CreationForm() {
 															update({ computePlanSlug: slug });
 															setQuoteSelection({
 																...option,
-																fundingSource: quoteSelection?.fundingSource ?? "stripe",
+																fundingSource: quoteSelection?.fundingSource ?? fundingDefault,
 															});
 														}
 													}}
@@ -723,63 +765,77 @@ function CreationForm() {
 															icon: WalletCards,
 														},
 													] as const
-												).map((payment) => (
-													<EntityChoiceCard
-														key={payment.source}
-														selected={quoteSelection?.fundingSource === payment.source}
-														disabled={locked || !quoteSelection}
-														title={payment.title}
-														description={payment.description}
-														icon={
-															<IconChip
-																tint={
-																	payment.source === "stripe"
-																		? hostedAgentOverviewClasses.mutedTint
-																		: hostedAgentOverviewClasses.browserTint
-																}
-															>
-																<Icon as={payment.icon} />
-															</IconChip>
-														}
-														onClick={() => {
-															if (quoteSelection) {
-																setQuoteSelection({
-																	...quoteSelection,
-																	fundingSource: payment.source,
-																});
-																setQuote(null);
+												)
+													.filter((payment) => surfaces.cardBilling || payment.source === "wallet")
+													.map((payment) => (
+														<EntityChoiceCard
+															key={payment.source}
+															selected={quoteSelection?.fundingSource === payment.source}
+															disabled={locked || !quoteSelection}
+															title={payment.title}
+															description={payment.description}
+															icon={
+																<IconChip
+																	tint={
+																		payment.source === "stripe"
+																			? hostedAgentOverviewClasses.mutedTint
+																			: hostedAgentOverviewClasses.browserTint
+																	}
+																>
+																	<Icon as={payment.icon} />
+																</IconChip>
 															}
-														}}
-													/>
-												))}
+															onClick={() => {
+																if (quoteSelection) {
+																	setQuoteSelection({
+																		...quoteSelection,
+																		fundingSource: payment.source,
+																	});
+																	setQuote(null);
+																}
+															}}
+														/>
+													))}
 											</WebView>
 										</WebView>
 										<AppText>{t("creation.quoteNotice")}</AppText>
 										<ActionButton
 											label={t("creation.quote")}
 											disabled={action.busy || !quoteAvailable || inventory.isError}
-											onPress={() => {
-												void action.run(async (owns) => {
-													if (!quoteSelection || !quoteAvailable) return;
-													const result = await read((s) =>
-														compute.quoteSubscription(
-															buildHostedDeploySubscriptionQuoteRequest(quoteSelection),
-															s,
-														),
-													);
-													if (current(owns)) setQuote(result);
-												});
-											}}
+											onPress={() => void requestQuote()}
 										/>
 										{quote ? (
 											<AppText>
 												{t("creation.preview")}:{" "}
-												{subscriptionPrice({
-													price_cents: quote.term_price_cents,
-													currency: quote.currency,
-												}) ?? t("billing.unknown")}{" "}
+												{(surfaces.creditUnits
+													? creditPrice(
+															{ price_cents: quote.term_price_cents, currency: quote.currency },
+															credits,
+														)
+													: subscriptionPrice({
+															price_cents: quote.term_price_cents,
+															currency: quote.currency,
+														})) ?? t("billing.unknown")}{" "}
 												· {formatDate(quote.expires_at) ?? t("billing.unknown")}
 											</AppText>
+										) : null}
+										{quote && surfaces.creditUnits && quote.balance_after_usd ? (
+											<AppText>
+												{t("store.quoteBalance")}: {formatCredits(quote.balance_after_usd, credits)}
+											</AppText>
+										) : null}
+										{shortfall && surfaces.addCredits ? (
+											<>
+												<AppText>
+													{t("store.shortfall").replace(
+														"{amount}",
+														surfaces.creditUnits
+															? formatCredits(shortfall, credits)
+															: formatUsdExact(shortfall),
+													)}
+												</AppText>
+												<AddCreditsAction onFunded={() => void requote.current()} />
+											</>
 										) : null}
 									</WebView>
 								) : null}
@@ -902,7 +958,11 @@ function CreationForm() {
 					) : null}
 					{source === "included" || source === "existing" ? (
 						<WebText recipe={styles.amountValue}>
-							{source === "included" ? "Free" : subscriptionSourceCopy.dueNow}
+							{source === "included"
+								? "Free"
+								: surfaces.creditUnits
+									? t("store.dueNow")
+									: subscriptionSourceCopy.dueNow}
 						</WebText>
 					) : null}
 

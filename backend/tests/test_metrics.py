@@ -42,15 +42,14 @@ def _unlabeled_metric_value(name: str) -> float:
 
 def test_metrics_exports_all_expected_metrics() -> None:
     text = _metrics_text()
+    assert "clawdi_backend_http_requests_total" in text
+    assert "clawdi_backend_http_request_duration_seconds" in text
     assert "clawdi_backend_authenticated_requests_total" in text
     assert "msg_router_inbound_total" in text
     assert "msg_router_outbound_total" in text
     assert "msg_router_outbound_errors_total" in text
-    assert "msg_router_discord_command_fanout_runs_total" in text
     assert "msg_router_rate_limit_rejects_total" in text
-    assert "msg_router_ingress_errors_total" in text
     assert "msg_router_proxy_latency_seconds" in text
-    assert "msg_router_active_polls" in text
     assert "msg_router_webhook_deliveries_total" in text
     assert "msg_router_webhook_ttl_drops_total" in text
     assert "msg_router_channel_queue_pending" in text

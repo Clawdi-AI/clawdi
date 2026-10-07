@@ -287,6 +287,115 @@ async def _commit_generation(
     return generation, final_head, append_id
 
 
+@pytest.mark.parametrize("snapshot_first", [False, True])
+async def test_product_sync_capture_counts_once_across_replay_append_and_generation_replacement(
+    client, db_session, monkeypatch, snapshot_first
+):
+    from app.core import posthog
+    from app.core.config import settings
+
+    captures = []
+    monkeypatch.setattr(settings, "posthog_api_key", "test-project-key")
+    monkeypatch.setattr(
+        posthog,
+        "capture_event",
+        lambda name, **kwargs: captures.append({"event": name, **kwargs}) or True,
+    )
+    local_id = "analytics-events-session"
+    agent_id, session = await _register_session(client, db_session, local_session_id=local_id)
+    # Count the analytics-only COUNT, excluding the search projection's own SQL.
+    count_queries = []
+    original_scalar = db_session.scalar
+
+    async def scalar(statement, *args, **kwargs):
+        if "count(distinct(session_message_search.position))" in str(statement):
+            count_queries.append(statement)
+        return await original_scalar(statement, *args, **kwargs)
+
+    monkeypatch.setattr(db_session, "scalar", scalar)
+    if snapshot_first:
+        uploaded = await client.post(
+            f"/v1/sessions/{local_id}/upload",
+            files={
+                "file": (
+                    "snapshot.json",
+                    b'[{"role":"user","content":"PRIVATE"}]',
+                    "application/json",
+                )
+            },
+        )
+        assert uploaded.status_code == 200, uploaded.text
+    # One long message has several search chunks; those must count as one.
+    events = [
+        _event(
+            0, "message", "user", role="user", parts=[{"type": "text", "text": "PRIVATE " * 4000}]
+        )
+    ]
+    generation, head, append_id = await _commit_generation(
+        client,
+        environment_id=agent_id,
+        local_session_id=local_id,
+        events=events,
+    )
+    replay = await client.post(
+        f"/v1/sessions/{local_id}/events/generations/{generation}/commit",
+        json={
+            "append_id": append_id,
+            "base_generation": None,
+            "base_revision": 0,
+            "base_count": 0,
+            "base_head_hash": EMPTY_EVENT_HEAD,
+            "final_count": 1,
+            "final_head_hash": head,
+        },
+    )
+    assert replay.status_code == 200, replay.text
+    appended_events = [
+        _event(
+            1, "message", "assistant", role="assistant", parts=[{"type": "text", "text": "reply"}]
+        )
+    ]
+    data, content_hash = _chunk(appended_events)
+    final_head = advance_event_head(head, appended_events)
+    append = {
+        "environment_id": agent_id,
+        "append_id": str(uuid.uuid4()),
+        "generation": generation,
+        "base_revision": "1",
+        "base_count": "1",
+        "base_head_hash": head,
+        "final_count": "2",
+        "final_head_hash": final_head,
+        "content_hash": content_hash,
+    }
+    for _ in range(2):
+        appended = await client.post(
+            f"/v1/sessions/{local_id}/events/append",
+            data=append,
+            files={"file": ("1.ndjson", data, "application/x-ndjson")},
+        )
+        assert appended.status_code == 200, appended.text
+    await _commit_generation(
+        client,
+        environment_id=agent_id,
+        local_session_id=local_id,
+        events=events + appended_events,
+        base_generation=generation,
+        base_revision=2,
+        base_count=2,
+        base_head_hash=final_head,
+    )
+    syncs = [capture for capture in captures if capture["event"] == "session_synced"]
+    assert len(syncs) == 1
+    assert syncs[0]["properties"]["message_count"] == 1
+    assert syncs[0]["properties"]["has_messages"] is True
+    assert syncs[0]["properties"]["protocol"] == ("snapshot-v1" if snapshot_first else "events-v1")
+    assert syncs[0]["event_key"] == str(session.id)
+    assert syncs[0]["timestamp"] == session.created_at
+    assert len(count_queries) == (0 if snapshot_first else 1)
+    assert "PRIVATE" not in str(syncs)
+
+
 @pytest.mark.asyncio
 async def test_staging_uploads_and_retries_refresh_retention_activity(
     client: httpx.AsyncClient,

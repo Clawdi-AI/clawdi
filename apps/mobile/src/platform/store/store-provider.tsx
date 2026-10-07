@@ -1,6 +1,6 @@
 import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
-import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import { AppState, Platform } from "react-native";
 import { useMobileApi } from "@/lib/api-provider";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
@@ -11,6 +11,7 @@ import { createPurchaseFlow, type PurchaseFlow, type PurchaseOutcome } from "./p
 import { revenueCat } from "./revenuecat";
 import { type StorePurchaseError, storePurchaseError } from "./store-error";
 import { createStoreIdentity, type StoreAvailability } from "./store-identity";
+import { isStoreBuild, type StoreSurfaces, storeSurfaces } from "./store-policy";
 import { recoverStoreFlow } from "./store-recovery";
 
 const journal = createPurchaseAttemptStore(SecureStore);
@@ -20,13 +21,14 @@ type MobileStore = Readonly<{
 	recovery: readonly PurchaseOutcome[];
 	error: StorePurchaseError | null;
 }>;
+type MobileStoreContext = MobileStore & Readonly<{ storeBuild: boolean }>;
 const unavailable: MobileStore = {
 	availability: { available: false, reason: "store_purchases_disabled" },
 	flow: null,
 	recovery: [],
 	error: null,
 };
-const StoreContext = createContext<MobileStore>(unavailable);
+const StoreContext = createContext<MobileStoreContext>({ ...unavailable, storeBuild: false });
 
 /** Mounts no UI. Account scope and foreground leases fence every async result. */
 export function StoreProvider({
@@ -116,13 +118,17 @@ export function StoreProvider({
 			subscription.remove();
 		};
 	}, [scope, client, config]);
-	return (
-		<StoreContext.Provider value={state?.scope === scope ? state.value : unavailable}>
-			{children}
-		</StoreContext.Provider>
-	);
+	const active = state?.scope === scope ? state.value : unavailable;
+	const storeBuild = isStoreBuild(config);
+	const value = useMemo(() => ({ ...active, storeBuild }), [active, storeBuild]);
+	return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 
-export function useMobileStore(): MobileStore {
+export function useMobileStore(): MobileStoreContext {
 	return useContext(StoreContext);
+}
+
+export function useStoreSurfaces(): StoreSurfaces {
+	const store = useMobileStore();
+	return storeSurfaces(store.storeBuild, store.flow !== null);
 }

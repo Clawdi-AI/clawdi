@@ -287,6 +287,11 @@ class Settings(BaseSettings):
     runtime_observation_hard_retention_days: Annotated[int, Field(gt=0, le=3_650)] = 30
     runtime_observation_cleanup_batch_size: Annotated[int, Field(gt=0, le=10_000)] = 500
 
+    # Same project/config contract as Hosted; unset key disables product capture.
+    posthog_api_key: str = ""
+    posthog_host: str = "https://us.i.posthog.com"
+    posthog_disable_geoip: bool = True
+
     # Admin endpoints (POST/DELETE /v1/admin/auth/keys) auth.
     # Empty string disables them entirely (returns 503). Set in
     # production to a strong secret (e.g. `openssl rand -hex 32`)

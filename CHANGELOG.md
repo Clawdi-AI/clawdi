@@ -15,6 +15,34 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
+### Analytics
+
+The unmerged product-metrics change now extends the existing PostHog and
+Prometheus systems. Existing published Prometheus names remain stable; the
+three removed legacy definitions never emitted samples. No compatibility
+aliases are introduced for names added only by this PR.
+
+| Before | Action / after | Reason |
+| --- | --- | --- |
+| `clawdi_backend_api_requests_total` | Rename to `clawdi_backend_http_requests_total` | Standard HTTP request counter name; unmerged PR addition. |
+| `clawdi_backend_api_duration_seconds` | Rename to `clawdi_backend_http_request_duration_seconds` | Standard HTTP duration histogram name; unmerged PR addition. |
+| `clawdi_backend_sync_failures_total` | Merge into HTTP request counter, filtering `route_group=sessions` and `status_class=4xx\|5xx` | Duplicate failed-request counter; session-route errors now share RED. |
+| `msg_router_discord_command_fanout_runs_total`, `msg_router_ingress_errors_total`, `msg_router_active_polls` | Remove | No producers or emitted samples; unused bot-ID label eliminated. |
+| Other `msg_router_*`, authentication, connector authentication, event-loop, database and embedding metrics | Keep | Existing operational consumers retain names and semantics. |
+| `product_viewed`, `signup_viewed`, `signin_viewed`, `onboarding_viewed` | Merge views into existing `$pageview` by `feature`; dialog intent becomes `agent_setup_opened` | One authoritative view producer, no duplicate client view events. |
+| `cli_command_completed`, `cli_command_failed`, CLI PostHog SDK/configuration hooks | Remove | Server authentication and HTTP RED measure CLI traffic; no client analytics producer. |
+| Cloud business events | Keep; sessions capture first sync only; connector list polling does not capture | Server owns outcomes; stable Session UUID/timestamp protects retries without revision-driven volume. |
+| Web `enrichHostedUser`, `buildHostedPersonProperties` and their unused types/tests | Remove | No application callers; existing identify already supplies the opaque Clerk subject. |
+| SDK `$pageleave` | Disable | Time-on-page is unused; keep initial/history-change pageviews. |
+| Sentry and structured diagnostics | Keep | Existing operational diagnostics. |
+
+Analytics: removed properties — the duplicate UI events' `step` and CLI outcome
+properties are retired with their PR-only events. Existing event properties are
+not removed. `$host` is retained only as a hostname; URL/path fields stay
+filtered. External dashboards and insights were not inspected; this migration
+only renames unmerged PR series and never-emitted definitions. See
+[metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
+
 ### CLI 0.15.8
 
 - **Hermes profiles:** Hosted daemons leave MCP ownership to the runtime

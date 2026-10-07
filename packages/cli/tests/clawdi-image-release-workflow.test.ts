@@ -507,6 +507,7 @@ describe("backend image release workflow contract", () => {
 						KAMAL_SECRETS: "ADMIN_API_KEY=fake-render-value\nMETRICS_BEARER_TOKEN=stale",
 						CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: "s".repeat(43),
 						METRICS_BEARER_TOKEN: token,
+						POSTHOG_API_KEY: "",
 						WHATSAPP_TAILSCALE_EGRESS_ENABLED: "false",
 					},
 					encoding: "utf8",
@@ -520,6 +521,57 @@ describe("backend image release workflow contract", () => {
 						.split("\n")
 						.filter((line) => line.startsWith("METRICS_BEARER_TOKEN="));
 					expect(values).toEqual([`METRICS_BEARER_TOKEN=${token}`]);
+					expect(statSync(path).mode & 0o777).toBe(0o600);
+				}
+			}
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	test("writes an optional PostHog key exactly once without exposing it", () => {
+		const step = imageRelease.jobs["deploy-vps"]?.steps?.find(
+			(candidate) => candidate.name === "Write Kamal secrets",
+		);
+		if (!step?.run) throw new Error("Missing Kamal secrets writer");
+		expect(step.env?.POSTHOG_API_KEY).toBe(`\${{ secrets.POSTHOG_API_KEY }}`);
+		const root = mkdtempSync(join(tmpdir(), "clawdi-posthog-secrets-"));
+		try {
+			const cases: [string, boolean][] = [
+				["", true],
+				["phc_fixture-A_z0", true],
+				["phc_", false],
+				["personal_fixture", false],
+				["phc_fixture\nINJECTED=value", false],
+				["phc_fixture=", false],
+				["phc_fixture secret", false],
+				["phc_fixture$(command)", false],
+			];
+			for (const [index, [token, valid]] of cases.entries()) {
+				const dir = join(root, String(index));
+				mkdirSync(dir);
+				const result = spawnSync("bash", ["-eu", "-c", step.run], {
+					cwd: dir,
+					env: {
+						PATH: process.env.PATH,
+						TMPDIR: dir,
+						KAMAL_SECRETS: "ADMIN_API_KEY=fake-render-value\nPOSTHOG_API_KEY=stale",
+						CHANNEL_WHATSAPP_BAILEYS_SIDECAR_TOKEN: "s".repeat(43),
+						METRICS_BEARER_TOKEN: "m".repeat(43),
+						POSTHOG_API_KEY: token,
+						WHATSAPP_TAILSCALE_EGRESS_ENABLED: "false",
+					},
+					encoding: "utf8",
+				});
+				expect(result.status).toBe(valid ? 0 : 1);
+				expect(result.stdout).toBe("");
+				expect(result.stderr).toBe(valid ? "" : "POSTHOG_API_KEY has an invalid format\n");
+				if (valid) {
+					const path = join(dir, ".kamal/secrets");
+					const values = readFileSync(path, "utf8")
+						.split("\n")
+						.filter((line) => line.startsWith("POSTHOG_API_KEY="));
+					expect(values).toEqual([`POSTHOG_API_KEY=${token}`]);
 					expect(statSync(path).mode & 0o777).toBe(0o600);
 				}
 			}
