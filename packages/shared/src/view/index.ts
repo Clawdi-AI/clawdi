@@ -78,6 +78,7 @@ export * from "./settings-copy";
 export * from "./skill-forms";
 export * from "./skill-search";
 export * from "./skill-transfer-dialog";
+export * from "./start-compute-action";
 export * from "./subscription-source-picker";
 export * from "./usage-summary";
 export * from "./utils";

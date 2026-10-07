@@ -1,7 +1,11 @@
 import type { DeploymentRead } from "../api";
 import { runtimeBrowserUiLabel } from "./agent-overview";
 import { computeSubscriptionRequiredToStart } from "./compute-dunning";
-import { deploymentStatusFromResource, deploymentStatusLabel } from "./deployment-status";
+import {
+	deploymentStatusFromResource,
+	deploymentStatusLabel,
+	isRunningStatus,
+} from "./deployment-status";
 import { runtimeDisplayName } from "./hosted-runtime";
 import { deploymentRuntimeUiIsReady, deploymentRuntimeUiWithdrawn } from "./runtime-ui-readiness";
 
@@ -61,4 +65,28 @@ export function stoppedAgentDescription(deployment: DeploymentRead) {
 		: deployment.start_action === "start"
 			? "This agent is stopped. Start it to use its tools again."
 			: "This agent is stopped. Your saved data is kept.";
+}
+
+/** Web FilesTab states; only the running state hosts the Files browser. */
+export function agentFilesPresentation(deployment: DeploymentRead) {
+	const status = deploymentStatusFromResource(deployment.resource.status);
+	if (status.kind === "stopped")
+		return {
+			state: "stopped",
+			title: "Stopped",
+			description: stoppedAgentDescription(deployment),
+		} as const;
+	if (isRunningStatus(status)) return { state: "running" } as const;
+	return status.kind === "creating" || status.kind === "starting"
+		? ({
+				state: "starting",
+				title: "Starting your agent…",
+				description:
+					"Files opens once your agent and its private workspace service are ready. This page updates automatically.",
+			} as const)
+		: ({
+				state: "not_running",
+				title: "Agent is not running",
+				description: `Start the agent to browse its workspace. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`,
+			} as const);
 }

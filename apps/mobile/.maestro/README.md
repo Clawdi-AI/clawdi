@@ -37,12 +37,14 @@ For retries or offline runs, `--maestro-archive /path/to/maestro.zip` reuses a
 previously downloaded official ZIP with the same pinned checksum validation.
 
 `smoke.yaml` runs launch, Home → Agent detail, Agents → another Agent detail,
+Agents → hosted Agent hub rows (Tools, Settings) → Files state page,
 Sessions → fixture transcript, Library → project bundle, and Account → settings
 menu → General and API Keys. The flows use loaded fixture entity IDs, including a transcript message.
 Native tab Triggers retain test IDs. On Android, react-native-screens 4.26.2
 exports those IDs only as Espresso View tags, so Maestro uses short tab labels
 scoped to native Material tab items by their container, with no index selectors. The flows
-cite the upstream limitation. Settings menu rows use `settings-row-<panel>` test IDs;
+cite the upstream limitation. Settings menu rows use `settings-row-<panel>` test IDs and Agent hub rows use
+`agent-section-<section>`;
 `@expo/ui`'s Compose `testID` modifier exports them as resource IDs.
 The first card is on the initial viewport: the launch flow waits for its loaded
 fixture ID without scrolling during data loading. Visibility waits share the

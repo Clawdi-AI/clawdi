@@ -9,10 +9,12 @@ export const agentOverviewCopy = {
 	viewAll: "View all",
 	noRecentSessions: "No recent sessions",
 	status: "Status",
+	compute: "Compute",
 	machine: "Machine",
 	lastSeen: "Last seen",
 	workspace: "Workspace",
 	shared: "Shared",
+	tools: "Tools",
 	unavailable: "Unavailable right now",
 };
 export function agentOverviewSummary(

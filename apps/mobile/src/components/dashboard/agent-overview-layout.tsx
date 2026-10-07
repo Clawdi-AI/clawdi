@@ -32,6 +32,7 @@ export function OverviewNavigationCard({
 	children,
 	disabled = false,
 	prominent = false,
+	testID,
 }: {
 	title: string;
 	description: ReactNode;
@@ -42,6 +43,7 @@ export function OverviewNavigationCard({
 	/** Visually emphasizes the card as a primary entry point. */
 	prominent?: boolean;
 	children?: ReactNode;
+	testID?: string;
 }) {
 	return (
 		<Card
@@ -59,6 +61,7 @@ export function OverviewNavigationCard({
 				)}
 			>
 				<AppPressable
+					testID={testID}
 					accessibilityRole="link"
 					accessibilityLabel={title}
 					onPress={onPress}
