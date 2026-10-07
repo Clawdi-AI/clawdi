@@ -124,14 +124,25 @@ from `@clerk/expo/native` (clerk-ios / clerk-android), matching Web's Clerk
   active sessions, sign-out and account deletion. Sign-out is synced to the JS
   SDK; the auth gates route to `/sign-in` and `AccountScopeProvider` retires the
   account scope and its query cache.
-- Account deletion is Clerk's built-in delete, as on Web; Hosted cleans up on the
-  verified Clerk deletion webhook. Before store auto-renewing subscriptions ship,
-  self-delete must be disabled and replaced by a custom profile page that shows
-  the store-billing notice and calls Hosted `DELETE /v1/me`.
+- Account deletion follows the Clerk instance setting "allow users to delete
+  their accounts", as on Web. While it is enabled, Clerk's built-in delete is
+  shown and Hosted cleans up on the verified Clerk deletion webhook. When it is
+  disabled (`user.deleteSelfEnabled === false`), a `customPages` row "Delete
+  account" (`src/hosted/account/delete-account-page.tsx`) replaces it: it shows
+  the App Store / Google Play billing notice, confirms with the system alert,
+  calls Hosted `DELETE /v1/me` once (no automatic retry) and signs out. When
+  Clerk rejects the sign-out of the deleted user (clerk-js then leaves the
+  session in its transitive `undefined` state), it clears the session locally
+  with Clerk's documented `setActive({ session: null })` and waits for the
+  change through `addListener` (10 s bound).
+  Disable self-delete before store auto-renewing subscriptions ship.
   On Android, clerk-android 1.1.10/1.1.11 crashes right after a successful
-  delete (`NavDisplay backstack cannot be empty`); the fix (clerk/clerk-android
-  #1010) is unreleased, so ship only after `@clerk/expo` pins a clerk-android
-  release that contains it.
+  built-in delete (`NavDisplay backstack cannot be empty`); the fix
+  (clerk/clerk-android #1010) is unreleased, so the Android store gate stays
+  closed until `@clerk/expo` pins a clerk-android release that contains it.
+  The custom page counts as an alternative only after an owner-run check: on a
+  real device, with self-delete disabled, a real deletion against a dev hosted
+  environment returns to sign-in. That check has not happened yet.
 
 The native views are **Beta** in `@clerk/expo` 4.8.0 and need a development
 build (not Expo Go). The `@clerk/expo` config plugin raises the iOS deployment
@@ -152,7 +163,8 @@ Clerk Dashboard prerequisites (owner):
 - register the iOS app (Team ID + `ai.clawdi.app`) and the Android app
   (package + SHA-256 signing fingerprints);
 - configure native Google client IDs and the Apple provider for social sign-in;
-- keep "allow users to delete their accounts" enabled for Phase 1.
+- turn "allow users to delete their accounts" off before store subscriptions
+  ship.
 
 If the native views cannot ship on a platform, the official fallback is
 `useHostedAuth()` (Clerk Account Portal in a browser session), not custom forms.
