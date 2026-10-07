@@ -63,6 +63,9 @@ afterEach(() => {
 
 describe("ai-provider commands", () => {
 	it("adds and lists a provider without printing secret values", async () => {
+		const cloudMock = mockFetch([
+			{ method: "GET", path: "/v1/ai-providers", response: () => jsonResponse({ providers: [] }) },
+		]);
 		const { output, restore } = captureConsole();
 		try {
 			await aiProviderAddCommand("openai-main", {
@@ -74,6 +77,7 @@ describe("ai-provider commands", () => {
 			await aiProviderListCommand();
 		} finally {
 			restore();
+			cloudMock.restore();
 		}
 
 		expect(existsSync(aiProviderCatalogPath())).toBe(true);
@@ -110,6 +114,9 @@ describe("ai-provider commands", () => {
 	});
 
 	it("protects defaults on remove unless forced", async () => {
+		const cloudMock = mockFetch([
+			{ method: "GET", path: "/v1/ai-providers", response: () => jsonResponse({ providers: [] }) },
+		]);
 		const { restore } = captureConsole();
 		try {
 			await aiProviderAddCommand("openai-main", {
@@ -123,6 +130,7 @@ describe("ai-provider commands", () => {
 			await aiProviderRemoveCommand("openai-main", { force: true, json: true });
 		} finally {
 			restore();
+			cloudMock.restore();
 		}
 		const catalog = JSON.parse(readFileSync(aiProviderCatalogPath(), "utf-8"));
 		expect(catalog.providers).toEqual([]);

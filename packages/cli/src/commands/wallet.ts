@@ -1,7 +1,62 @@
 import type { HostedDeployWallet, HostedWalletBinding } from "@clawdi/shared/api";
+import { parsePositiveInteger } from "../lib/cli-options";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
+import { requireAuth } from "../lib/require-auth";
 import { isInteractive } from "../lib/tty";
+
+export async function walletTransactionsCommand(
+	options: { limit?: string | number; json?: boolean } = {},
+): Promise<void> {
+	requireAuth();
+	const limit = options.limit === undefined ? undefined : parsePositiveInteger(options.limit);
+	const result = await readWalletResult(() =>
+		new HostedDeployClient().getWalletTransactions(limit),
+	);
+	if (options.json) {
+		console.log(JSON.stringify({ schemaVersion: "clawdi.walletTransactions.v1", ...result }));
+		return;
+	}
+	if (result.items.length === 0) console.log("No wallet transactions.");
+	for (const item of result.items) {
+		console.log(
+			`${item.id}  ${item.occurred_at}  ${item.direction} $${item.amount}  ${item.kind}  ${item.status}`,
+		);
+	}
+	if (result.has_more)
+		console.error("More transactions are available. Increase --limit to show more.");
+}
+
+export async function walletUsageCommand(
+	options: { days?: string | number; json?: boolean } = {},
+): Promise<void> {
+	requireAuth();
+	const days = options.days === undefined ? undefined : parsePositiveInteger(options.days);
+	const result = await readWalletResult(() => new HostedDeployClient().getWalletUsage(days));
+	if (options.json) {
+		console.log(JSON.stringify({ schemaVersion: "clawdi.walletUsage.v1", ...result }));
+		return;
+	}
+	console.log(`Period: ${result.period_start} – ${result.period_end}`);
+	console.log(
+		`Usage: ${result.total_usd === null ? "unavailable" : `$${result.total_usd}`} (${result.total_requests ?? "unavailable"} requests)`,
+	);
+	console.log(`Availability: ${result.availability}`);
+	for (const item of result.by_day) console.log(`${item.date}  $${item.amount_usd}`);
+}
+
+export async function walletPortalCommand(): Promise<void> {
+	requireAuth();
+	console.log("https://cloud.clawdi.ai/?settings=billing-wallet");
+}
+
+async function readWalletResult<T>(load: () => Promise<T>): Promise<T> {
+	try {
+		return await load();
+	} catch (error) {
+		throw new Error(safeWalletStatusError(error).message);
+	}
+}
 
 export type WalletStatusOptions = { json?: boolean };
 

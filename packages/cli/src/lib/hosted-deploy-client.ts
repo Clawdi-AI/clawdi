@@ -17,6 +17,7 @@ import {
 	type HostedSavedAiProvider,
 	type HostedWalletBinding,
 	type paths,
+	providerRemovalHeaders,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
 import createClient, { type Client, type Middleware } from "openapi-fetch";
@@ -164,6 +165,50 @@ export class HostedDeployClient {
 
 	async checkAuthorization(): Promise<void> {
 		assertHostedDeployAccessToken(await this.auth.getAccessToken(), this.now());
+	}
+
+	async getWalletTransactions(limit?: number) {
+		return unwrapHosted(
+			await this.client.GET("/v2/wallet/transactions", {
+				params: { query: { limit } },
+			}),
+		);
+	}
+
+	async getWalletUsage(days?: number) {
+		return unwrapHosted(
+			await this.client.GET("/v2/usage", {
+				params: { query: { days } },
+			}),
+		);
+	}
+
+	async getAiProviderRemovalImpact(providerId: string) {
+		const impact = unwrapHosted(
+			await this.client.GET("/v2/ai-providers/{provider_id}/removal-impact", {
+				params: { path: { provider_id: providerId } },
+			}),
+		);
+		if (impact.provider_id !== providerId || !Array.isArray(impact.agents)) {
+			throw new HostedDeployApiError(502, "Clawdi returned an invalid provider removal impact.");
+		}
+		providerRemovalHeaders(impact.impact_revision, impact.provider_incarnation_token, "validate");
+		return impact;
+	}
+
+	async removeAiProvider(impact: DeployComponents["schemas"]["V2AiProviderRemovalImpactResponse"]) {
+		return unwrapHosted(
+			await this.client.DELETE("/v2/ai-providers/{provider_id}", {
+				params: {
+					path: { provider_id: impact.provider_id },
+					header: providerRemovalHeaders(
+						impact.impact_revision,
+						impact.provider_incarnation_token,
+						randomUUID(),
+					),
+				},
+			}),
+		);
 	}
 
 	/**

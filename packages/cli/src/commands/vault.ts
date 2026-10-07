@@ -3,6 +3,7 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
+import { requireUuid } from "../lib/cli-options";
 import { parseDotenvDetailed } from "../lib/dotenv";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -13,6 +14,85 @@ import { isInteractive } from "../lib/tty";
 
 const VAULT_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,198}[a-z0-9])?$/;
 const VAULT_ITEM_SEGMENT_RE = /^[A-Za-z0-9_.-]+$/;
+
+const VAULT_REQUEST_WAIT_MS = 5 * 60 * 1000;
+const VAULT_REQUEST_POLL_MS = 2000;
+
+export async function vaultRequest(
+	key: string,
+	opts: { project?: string; wait?: boolean; json?: boolean } = {},
+	dependencies: { now?: () => number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<void> {
+	requireAuth();
+	const { vaultSlug, section, field } = parseVaultKey(key);
+	const api = new ApiClient();
+	const projectId = requireUuid(
+		await resolveProjectId(api.baseUrl, await api.getAccessToken(), opts.project),
+		"Project ID",
+	);
+	const catalog = await fetchAllVaults(api, projectId);
+	const matches = catalog.items.filter((vault) => vault.slug === vaultSlug);
+	if (matches.length !== 1 || !matches[0]) {
+		throw new Error(
+			`Vault ${vaultSlug} must match exactly one vault attached to this project. Run clawdi vault list --project ${projectId}.`,
+		);
+	}
+	const created = unwrap(
+		await api.POST("/v1/vault/requests", {
+			body: {
+				project_id: projectId,
+				vault_id: requireUuid(matches[0].id, "Vault ID"),
+				slug: vaultSlug,
+				section,
+				fields: [field],
+				expires_in_seconds: 3600,
+			},
+		}),
+	);
+	requireUuid(created.id, "Request ID");
+	// Select metadata explicitly: secret values never belong in command output.
+	let status = created.status;
+	const result = () => ({
+		schemaVersion: "clawdi.vaultRequest.v1",
+		id: created.id,
+		url: created.url,
+		status,
+		expires_at: created.expires_at,
+	});
+	if (!opts.json) console.log(`Request: ${created.id}\nOpen to supply the secret: ${created.url}`);
+	if (opts.wait) {
+		if (opts.json) console.error(`Request ${created.id}: ${created.url}`);
+		const now = dependencies.now ?? Date.now;
+		const sleep =
+			dependencies.sleep ??
+			((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+		const deadline = now() + VAULT_REQUEST_WAIT_MS;
+		while (status === "pending" && now() < deadline) {
+			await sleep(Math.min(VAULT_REQUEST_POLL_MS, deadline - now()));
+			if (now() >= deadline) break;
+			const polled = unwrap(
+				await api.GET("/v1/vault/requests/{request_id}", {
+					params: { path: { request_id: created.id } },
+					signal: AbortSignal.timeout(Math.max(1, deadline - now())),
+				}),
+			);
+			if (polled.id !== created.id)
+				throw new Error(
+					"Clawdi returned a different secret request. Stop waiting and create a new request.",
+				);
+			status = polled.status;
+		}
+	}
+	if (opts.json) console.log(JSON.stringify(result()));
+	else console.log(`Status: ${status}`);
+	if (opts.wait && status !== "supplied") {
+		throw new Error(
+			status === "pending"
+				? `Timed out waiting for request ${created.id}. The request remains pending.`
+				: `Secret request ${created.id} is ${status}. Create a new request.`,
+		);
+	}
+}
 const BROAD_VAULT_SLUGS = new Set([
 	"dev",
 	"development",
