@@ -81,9 +81,15 @@
 		"generate-api": "scripts/openapi-typescript.sh http://localhost:8000/openapi.json -o packages/shared/src/api/api.generated.ts",
 		"lint": "biome lint .",
 		"lint:fix": "biome lint --write .",
-		"format": "biome format --write .",
-		"prepare": "node scripts/install-git-hooks.mjs"
+		"format": "biome format --write ."
 	},
+	"trustedDependencies": [
+		"bufferutil",
+		"electron",
+		"electron-winstaller",
+		"sharp",
+		"utf-8-validate"
+	],
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.14",
 		"lefthook": "^2.1.14",
