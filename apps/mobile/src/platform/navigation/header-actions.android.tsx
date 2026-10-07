@@ -1,9 +1,12 @@
 import {
+	Badge,
+	Box,
 	DropdownMenu,
 	DropdownMenuItem,
 	HorizontalDivider,
 	Host,
 	Icon,
+	IconButton,
 	Row,
 	Text,
 	TextButton,
@@ -28,10 +31,11 @@ export function HeaderActions({
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const { theme } = useUniwind();
-	const [foreground, destructive, popover] = useCSSVariable([
+	const [foreground, destructive, popover, destructiveForeground] = useCSSVariable([
 		"--color-foreground",
 		"--color-destructive",
 		"--color-popover",
+		"--color-destructive-foreground",
 	]);
 	const color = (value: string | number | undefined) =>
 		typeof value === "string" ? value : undefined;
@@ -59,19 +63,43 @@ export function HeaderActions({
 		<Stack.Toolbar placement="right" asChild>
 			<Host matchContents colorScheme={theme === "dark" ? "dark" : "light"}>
 				<Row verticalAlignment="center">
-					{actions.map((action) => (
-						<TextButton
-							key={action.id}
-							enabled={!action.disabled}
-							onClick={action.onPress}
-							modifiers={[
-								semantics({ contentDescription: action.accessibilityLabel ?? action.label }),
-							]}
-							colors={{ contentColor: color(action.destructive ? destructive : foreground) }}
-						>
-							<Text style={{ fontFamily: "Geist-Medium", fontSize: 14 }}>{action.label}</Text>
-						</TextButton>
-					))}
+					{actions.map((action) =>
+						action.icon ? (
+							// Same Material 3 composition as expo-router's Android toolbar badge.
+							<Box key={action.id} contentAlignment="topEnd">
+								<IconButton onClick={action.onPress} enabled={!action.disabled}>
+									<Icon
+										source={action.icon.android}
+										tint={color(foreground)}
+										size={24}
+										contentDescription={action.accessibilityLabel ?? action.label}
+									/>
+								</IconButton>
+								{action.badge ? (
+									<Badge
+										containerColor={color(destructive)}
+										contentColor={color(destructiveForeground)}
+									>
+										<Text style={{ typography: "labelSmall", fontFamily: "Geist-Medium" }}>
+											{action.badge}
+										</Text>
+									</Badge>
+								) : null}
+							</Box>
+						) : (
+							<TextButton
+								key={action.id}
+								enabled={!action.disabled}
+								onClick={action.onPress}
+								modifiers={[
+									semantics({ contentDescription: action.accessibilityLabel ?? action.label }),
+								]}
+								colors={{ contentColor: color(action.destructive ? destructive : foreground) }}
+							>
+								<Text style={{ fontFamily: "Geist-Medium", fontSize: 14 }}>{action.label}</Text>
+							</TextButton>
+						),
+					)}
 					{menu ? (
 						<DropdownMenu
 							expanded={expanded}

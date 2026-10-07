@@ -1,6 +1,12 @@
 "use client";
 
-import { projectDetailHref } from "@clawdi/shared/view";
+import { notificationCenterClasses as styles } from "@clawdi/shared/ui";
+import {
+	notificationCenterCopy as copy,
+	formatNotificationTime,
+	notificationBadgeLabel,
+	projectDetailHref,
+} from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
@@ -104,11 +110,11 @@ export function NotificationCenter({ account }: { account?: AccountNotificationS
 			),
 		onSuccess: (result, variables) => {
 			refetchMembershipDerived();
-			const copy = getAcceptedProjectInvitationToastCopy(variables.projectName);
-			toast.success(copy.title, {
-				description: copy.description,
+			const joined = getAcceptedProjectInvitationToastCopy(variables.projectName);
+			toast.success(joined.title, {
+				description: joined.description,
 				action: {
-					label: "Open project",
+					label: copy.openProject,
 					onClick: () => void router.navigate({ href: projectDetailHref(result.project_id) }),
 				},
 			});
@@ -116,7 +122,7 @@ export function NotificationCenter({ account }: { account?: AccountNotificationS
 		onError: (error) => {
 			toast.error(
 				error instanceof ApiError && error.status === 410
-					? "This invitation was canceled. Ask the owner to send a new one."
+					? copy.invitationCanceled
 					: normalizeApiError(error),
 			);
 		},
@@ -132,10 +138,10 @@ export function NotificationCenter({ account }: { account?: AccountNotificationS
 		},
 		onSuccess: () => {
 			refetchMembershipDerived();
-			toast.success("Invitation declined");
+			toast.success(copy.declined);
 		},
 		onError: (error) => {
-			toast.error("Couldn't decline invitation", {
+			toast.error(copy.declineFailed, {
 				description: normalizeApiError(error),
 			});
 		},
@@ -144,6 +150,7 @@ export function NotificationCenter({ account }: { account?: AccountNotificationS
 	const invitationItems = invitations.data ?? [];
 	const attentionCount = getPendingNotificationCount(invitationItems, account?.unreadCount);
 	const triggerLabel = getNotificationCenterTriggerLabel(attentionCount);
+	const badge = notificationBadgeLabel(attentionCount);
 
 	function handleOpenChange(nextOpen: boolean) {
 		setOpen(nextOpen);
@@ -166,12 +173,12 @@ export function NotificationCenter({ account }: { account?: AccountNotificationS
 				}
 			>
 				<Bell className="size-4" />
-				{attentionCount > 0 ? (
+				{badge ? (
 					<span
 						aria-hidden="true"
 						className="-right-1 -top-1 absolute flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 font-semibold text-[9px] text-destructive-foreground leading-none ring-2 ring-background"
 					>
-						{attentionCount > 9 ? "9+" : attentionCount}
+						{badge}
 					</span>
 				) : null}
 			</PopoverTrigger>
@@ -182,8 +189,8 @@ export function NotificationCenter({ account }: { account?: AccountNotificationS
 			>
 				<PopoverHeader className="gap-2 px-4 pt-4 pb-3">
 					<div className="flex items-start justify-between gap-3">
-						<div className="min-w-0">
-							<PopoverTitle className="text-base">Notifications</PopoverTitle>
+						<div className={styles.rowTitleGroup}>
+							<PopoverTitle className="text-base">{copy.title}</PopoverTitle>
 							<PopoverDescription className="mt-0.5 text-xs">
 								{getNotificationCenterDescription()}
 							</PopoverDescription>
@@ -245,7 +252,7 @@ function NotificationCenterContent({
 	return (
 		<div className="max-h-[min(34rem,calc(100vh-10rem))] overflow-y-auto overscroll-contain">
 			{accountNotifications.length > 0 ? (
-				<NotificationSection title="Account updates">
+				<NotificationSection title={copy.accountSection}>
 					{accountNotifications.map((notification) => (
 						<AccountNotificationRow
 							key={notification.id}
@@ -263,18 +270,18 @@ function NotificationCenterContent({
 			) : null}
 
 			{account?.loading && accountNotifications.length === 0 ? (
-				<SourceLoading label="Loading account updates…" />
+				<SourceLoading label={copy.loadingAccount} />
 			) : null}
 			{account?.error ? (
 				<SourceError
-					title="Account updates unavailable"
-					description="We couldn't load account updates. Check your connection and try again."
+					title={copy.accountUnavailableTitle}
+					description={copy.accountUnavailableDescription}
 					onRetry={account.onRetry}
 				/>
 			) : null}
 
 			{invitations.length > 0 ? (
-				<NotificationSection title="Project invitations">
+				<NotificationSection title={copy.invitationsSection}>
 					{invitations.map((invitation) => (
 						<ProjectInvitationRow
 							key={invitation.id}
@@ -289,11 +296,11 @@ function NotificationCenterContent({
 			) : null}
 
 			{invitationsLoading && invitations.length === 0 ? (
-				<SourceLoading label="Loading project invitations…" />
+				<SourceLoading label={copy.loadingInvitations} />
 			) : null}
 			{invitationsError ? (
 				<SourceError
-					title="Project invitations unavailable"
+					title={copy.invitationsUnavailableTitle}
 					description={normalizeApiError(invitationsError)}
 					onRetry={onRetryInvitations}
 				/>
@@ -302,7 +309,7 @@ function NotificationCenterContent({
 			{!hasVisibleNotifications && !hasSourceStatus && !canLoadMoreAccount ? <EmptyState /> : null}
 
 			{canLoadMoreAccount ? (
-				<div className="border-t px-4 py-3 text-center">
+				<div className={styles.loadMore}>
 					<Button
 						type="button"
 						variant="ghost"
@@ -311,7 +318,7 @@ function NotificationCenterContent({
 						onClick={account?.onLoadMore}
 					>
 						{account?.loadingMore ? <Spinner /> : <RefreshCw />}
-						Load earlier
+						{copy.loadEarlier}
 					</Button>
 				</div>
 			) : null}
@@ -322,10 +329,10 @@ function NotificationCenterContent({
 function NotificationSection({ title, children }: { title: string; children: ReactNode }) {
 	return (
 		<section aria-label={title}>
-			<div className="sticky top-0 z-10 border-b bg-popover/95 px-4 py-2 text-xs backdrop-blur-sm supports-backdrop-filter:bg-popover/85">
-				<span className="font-medium text-muted-foreground">{title}</span>
+			<div className={styles.sectionHeader}>
+				<span className={styles.sectionTitle}>{title}</span>
 			</div>
-			<ul className="divide-y">{children}</ul>
+			<ul className={styles.list}>{children}</ul>
 		</section>
 	);
 }
@@ -347,33 +354,33 @@ function AccountNotificationRow({
 }: AccountNotificationRowProps) {
 	const isNew = fresh || !notification.read;
 	return (
-		<li className={cn("group relative px-4 py-3.5 transition-colors", isNew && "bg-muted/35")}>
-			{isNew ? (
-				<span
-					aria-hidden="true"
-					className="absolute top-5 left-1.5 size-1.5 rounded-full bg-primary"
-				/>
-			) : null}
-			<div className="flex items-start gap-3">
-				<IconChip size="sm" tint={notificationIconTint(notification.severity)}>
+		<li className={cn(styles.accountRow, isNew && styles.accountRowNew)}>
+			{isNew ? <span aria-hidden="true" className={styles.newDot} /> : null}
+			<div className={styles.rowLayout}>
+				<IconChip size="sm" tint={styles.severityTint[notification.severity]}>
 					<Bell />
 				</IconChip>
-				<div className="min-w-0 flex-1">
-					<div className="flex min-w-0 items-start justify-between gap-3">
-						<div className="min-w-0">
-							<div className={cn("text-sm", isNew ? "font-semibold" : "font-medium")}>
+				<div className={styles.rowBody}>
+					<div className={styles.rowHead}>
+						<div className={styles.rowTitleGroup}>
+							<div
+								className={cn(
+									styles.accountTitle,
+									isNew ? styles.accountTitleNew : styles.accountTitleRead,
+								)}
+							>
 								{notification.title}
-								{isNew ? <span className="sr-only"> (new)</span> : null}
+								{isNew ? <span className="sr-only">{copy.newSuffix}</span> : null}
 							</div>
 							<time
 								dateTime={notification.createdAt.toISOString()}
 								title={notification.createdAt.toLocaleString()}
-								className="mt-0.5 block text-xs text-muted-foreground"
+								className={styles.time}
 							>
-								{formatRelativeDate(notification.createdAt)}
+								{formatNotificationTime(notification.createdAt)}
 							</time>
 						</div>
-						<div className="flex shrink-0 items-center gap-1">
+						<div className={styles.rowTrailing}>
 							<Badge variant="outline">{notification.category}</Badge>
 							<DropdownMenu>
 								<DropdownMenuTrigger
@@ -383,7 +390,7 @@ function AccountNotificationRow({
 											variant="ghost"
 											size="icon-xs"
 											disabled={busy}
-											aria-label={`More actions for ${notification.title}`}
+											aria-label={copy.moreActions(notification.title)}
 										/>
 									}
 								>
@@ -392,17 +399,15 @@ function AccountNotificationRow({
 								<DropdownMenuContent align="end" className="w-44">
 									<DropdownMenuItem variant="destructive" onClick={() => onDelete?.(notification)}>
 										<Trash2 />
-										Remove
+										{copy.remove}
 									</DropdownMenuItem>
 								</DropdownMenuContent>
 							</DropdownMenu>
 						</div>
 					</div>
-					<p className="mt-2 text-xs text-muted-foreground leading-relaxed">
-						{notification.description}
-					</p>
+					<p className={styles.description}>{notification.description}</p>
 					{notification.actionLabel && notification.actionUrl ? (
-						<div className="mt-3">
+						<div className={styles.action}>
 							<Button
 								type="button"
 								variant="outline"
@@ -436,28 +441,26 @@ function ProjectInvitationRow({
 }) {
 	const busy = accepting || declining;
 	return (
-		<li className="px-4 py-3.5">
-			<div className="flex items-start gap-3">
+		<li className={styles.invitationRow}>
+			<div className={styles.rowLayout}>
 				<IconChip size="sm">
 					<FolderInput />
 				</IconChip>
-				<div className="min-w-0 flex-1">
-					<div className="flex min-w-0 items-start justify-between gap-3">
-						<div className="min-w-0">
-							<div className="truncate text-sm font-semibold">{invitation.project_name}</div>
-							<div className="mt-0.5 text-xs text-muted-foreground">
-								From {invitation.owner_display}{" "}
-								<span className="font-mono">@{invitation.owner_handle}</span>
+				<div className={styles.rowBody}>
+					<div className={styles.rowHead}>
+						<div className={styles.rowTitleGroup}>
+							<div className={styles.invitationName}>{invitation.project_name}</div>
+							<div className={styles.invitationMeta}>
+								{copy.from(invitation.owner_display)}{" "}
+								<span className={styles.invitationHandle}>@{invitation.owner_handle}</span>
 								<span aria-hidden="true"> · </span>
-								{formatRelativeDate(new Date(invitation.created_at))}
+								{formatNotificationTime(new Date(invitation.created_at))}
 							</div>
 						</div>
-						<Badge variant="secondary">Viewer</Badge>
+						<Badge variant="secondary">{copy.viewer}</Badge>
 					</div>
-					<p className="mt-2 text-xs text-muted-foreground leading-relaxed">
-						{getProjectInvitationAccessCopy()}
-					</p>
-					<div className="mt-3 flex justify-end gap-1.5">
+					<p className={styles.description}>{getProjectInvitationAccessCopy()}</p>
+					<div className={styles.invitationActions}>
 						<Button
 							type="button"
 							size="xs"
@@ -466,11 +469,11 @@ function ProjectInvitationRow({
 							disabled={busy}
 						>
 							<XCircle />
-							{declining ? "Declining…" : "Decline"}
+							{declining ? copy.declining : copy.decline}
 						</Button>
 						<Button type="button" size="xs" onClick={() => onAccept(invitation)} disabled={busy}>
 							<CheckCircle2 />
-							{accepting ? "Joining…" : "Accept"}
+							{accepting ? copy.accepting : copy.accept}
 						</Button>
 					</div>
 				</div>
@@ -481,11 +484,8 @@ function ProjectInvitationRow({
 
 function SourceLoading({ label }: { label: string }) {
 	return (
-		<div
-			className="flex items-center gap-2 border-b px-4 py-4 text-xs text-muted-foreground"
-			role="status"
-		>
-			<Spinner className="size-3.5" />
+		<div className={styles.sourceLoading} role="status">
+			<Spinner className={styles.sourceLoadingSpinner} />
 			{label}
 		</div>
 	);
@@ -501,17 +501,23 @@ function SourceError({
 	onRetry?: () => void;
 }) {
 	return (
-		<div className="flex items-start gap-3 border-b px-4 py-4" role="status">
-			<IconChip size="sm" tint="bg-muted text-muted-foreground">
+		<div className={styles.sourceError} role="status">
+			<IconChip size="sm" tint={styles.sourceErrorTint}>
 				<CircleAlert />
 			</IconChip>
-			<div className="min-w-0 flex-1">
-				<div className="text-sm font-medium">{title}</div>
-				<p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">{description}</p>
+			<div className={styles.rowBody}>
+				<div className={styles.sourceErrorTitle}>{title}</div>
+				<p className={styles.sourceErrorDescription}>{description}</p>
 				{onRetry ? (
-					<Button type="button" size="xs" variant="outline" className="mt-2.5" onClick={onRetry}>
+					<Button
+						type="button"
+						size="xs"
+						variant="outline"
+						className={styles.sourceErrorRetry}
+						onClick={onRetry}
+					>
 						<RefreshCw />
-						Retry
+						{copy.retry}
 					</Button>
 				) : null}
 			</div>
@@ -522,38 +528,12 @@ function SourceError({
 function EmptyState() {
 	const empty = getNotificationCenterEmptyCopy();
 	return (
-		<div className="flex min-h-48 flex-col items-center justify-center px-8 py-10 text-center">
-			<div className="flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-				<MailOpen className="size-4" />
+		<div className={styles.empty}>
+			<div className={styles.emptyIcon}>
+				<MailOpen className={styles.emptyGlyph} />
 			</div>
-			<div className="mt-3 text-sm font-medium">{empty.title}</div>
-			<p className="mt-1 max-w-64 text-xs text-muted-foreground leading-relaxed">
-				{empty.description}
-			</p>
+			<div className={styles.emptyTitle}>{empty.title}</div>
+			<p className={styles.emptyDescription}>{empty.description}</p>
 		</div>
 	);
-}
-
-function notificationIconTint(severity: AccountNotification["severity"]): string | undefined {
-	if (severity === "destructive") return "bg-destructive/10 text-destructive";
-	if (severity === "warning") return "bg-warning/10 text-warning-foreground";
-	return undefined;
-}
-
-function formatRelativeDate(value: Date): string {
-	const seconds = Math.round((value.getTime() - Date.now()) / 1_000);
-	const absoluteSeconds = Math.abs(seconds);
-	if (absoluteSeconds < 45) return "Now";
-
-	const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-	if (absoluteSeconds < 60 * 60) return formatter.format(Math.round(seconds / 60), "minute");
-	if (absoluteSeconds < 60 * 60 * 24) return formatter.format(Math.round(seconds / 3_600), "hour");
-	if (absoluteSeconds < 60 * 60 * 24 * 7)
-		return formatter.format(Math.round(seconds / 86_400), "day");
-
-	return value.toLocaleDateString(undefined, {
-		month: "short",
-		day: "numeric",
-		...(value.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
-	});
 }

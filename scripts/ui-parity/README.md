@@ -77,6 +77,7 @@ Additional CLI flags:
 | `--memory-provider` | `builtin` | Start with `builtin` or `mem0`. |
 | `--mem0-configured` | `false` | `true` renders configured Mem0; `false` renders its key form when Mem0 is selected. |
 | `--whatsapp-state` | `ready` | State returned by new/retried/repaired sessions: `generating`, `ready`, `scanned`, `connected`, `expired`, `canceled`, or `error`. |
+| `--account-state` | `active` | `suspended` answers every authenticated request with the `account_suspended` problem: 401 on cloud paths, 403 on hosted paths (`/v2/*` except `/v2/runtime/*`, `/v1/me`, `/v1/agent-environments`, `/v1/me/notifications*`), as the two APIs do. Exercises the full-screen suspended state on Web and mobile. |
 
 Settings PATCH persists the provider and configured/unconfigured toggle.
 Submitted Mem0 values are discarded; GET returns only a fixed synthetic marker
@@ -84,6 +85,7 @@ in `mem0_api_key` (plus `mem0_api_key_configured`) for the existing clients.
 
 | Flow | Fixture / stable ID / Web entry |
 | --- | --- |
+| Account notifications | `GET /v1/me/notifications` (cursor pages, `limit`) returns two unread (Billing destructive with a Wallet link, Agents warning linking to Failed OpenClaw) and two read (Product with an external `www.clawdi.ai` link, Billing without an action). `read-all` with `up_to_id` and `DELETE` persist in memory; an unknown `up_to_id` or deleted ID answers 404 and an unknown `cursor` 400. Web bell / mobile Overview bell. |
 | Received invitations | `GET /v1/me/invitations`: Partner Research (`1a710000-0002-4000-8000-000000000002`) and Platform Operations (`1a710000-0003-4000-8000-000000000003`). Web notification bell exposes Accept/Decline. Accepted Partner Research/Platform Operations joins the project inventory with IDs `a0f1c2d3-0006-4a00-8000-000000000006` / `a0f1c2d3-0007-4a00-8000-000000000007`. |
 | Member invitation | Acme Web App has pending `sam@acme.dev`, ID `1a710000-0001-4000-8000-000000000001`. Project → Access → Manage sharing exposes cancellation. |
 | Project invite link | Acme link `51aee000-0001-4000-8000-000000000001`, label Design review. Preview/join token `fixture_project_acme_0000000000000000000000`, Web `/share/fixture_project_acme_0000000000000000000000`. Creation returns a one-time URL/token; revocation invalidates preview. |

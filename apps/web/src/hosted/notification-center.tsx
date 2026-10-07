@@ -1,6 +1,18 @@
 "use client";
 
-import type { DeployComponents, DeployPaths } from "@clawdi/shared/api";
+import type { DeployPaths } from "@clawdi/shared/api";
+import {
+	ACCOUNT_NOTIFICATIONS_PAGE_SIZE,
+	type AccountNotification,
+	type AccountNotificationPage,
+	accountNotificationsFromPages,
+	markNotificationPagesSeen,
+	notificationCenterCopy,
+	notificationToMarkSeen,
+	removeNotificationFromPages,
+	resolveNotificationUrl,
+	unreadNotificationIds,
+} from "@clawdi/shared/view";
 import {
 	type InfiniteData,
 	useInfiniteQuery,
@@ -12,19 +24,12 @@ import createClient from "openapi-fetch";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { NotificationCenter } from "@/components/notification-center";
-import {
-	type AccountNotification,
-	resolveNotificationUrl,
-} from "@/components/notification-center.logic";
 import { DEPLOY_API_URL, hostedApiBaseUrl, isDeployApiConfigured } from "@/hosted/access/api";
 import { ApiError, normalizeApiError } from "@/lib/api-errors";
 import { useDashboardAuth } from "@/lib/auth-client";
 
-type ApiNotification = DeployComponents["schemas"]["AccountNotificationResponse"];
-type NotificationPage = DeployComponents["schemas"]["AccountNotificationListResponse"];
-type NotificationQueryData = InfiniteData<NotificationPage, string | null>;
+type NotificationQueryData = InfiniteData<AccountNotificationPage, string | null>;
 
-const PAGE_SIZE = 50;
 const notificationApi = createClient<DeployPaths>({
 	baseUrl: hostedApiBaseUrl(DEPLOY_API_URL),
 });
@@ -37,20 +42,6 @@ function responseError(response: Response): ApiError {
 	return new ApiError(response.status, response.statusText || "Notification request failed");
 }
 
-function toAccountNotification(item: ApiNotification): AccountNotification {
-	return {
-		id: item.id,
-		title: item.title,
-		description: item.description,
-		category: item.category,
-		createdAt: new Date(item.created_at),
-		read: item.read_at != null,
-		actionLabel: item.action_label ?? undefined,
-		actionUrl: item.action_url ?? undefined,
-		severity: item.severity,
-	};
-}
-
 export function HostedNotificationCenter() {
 	const router = useRouter();
 	const { getToken, isSignedIn, userId } = useDashboardAuth();
@@ -60,11 +51,11 @@ export function HostedNotificationCenter() {
 
 	const notifications = useInfiniteQuery({
 		queryKey,
-		queryFn: async ({ pageParam, signal }): Promise<NotificationPage> => {
+		queryFn: async ({ pageParam, signal }): Promise<AccountNotificationPage> => {
 			const result = await notificationApi.GET("/v1/me/notifications", {
 				params: {
 					query: {
-						limit: PAGE_SIZE,
+						limit: ACCOUNT_NOTIFICATIONS_PAGE_SIZE,
 						cursor: pageParam,
 					},
 				},
@@ -82,13 +73,10 @@ export function HostedNotificationCenter() {
 		refetchOnWindowFocus: true,
 	});
 
-	const accountNotifications = useMemo(() => {
-		const unique = new Map<string, AccountNotification>();
-		for (const item of notifications.data?.pages.flatMap((page) => page.items) ?? []) {
-			unique.set(item.id, toAccountNotification(item));
-		}
-		return [...unique.values()];
-	}, [notifications.data?.pages]);
+	const accountNotifications = useMemo(
+		() => accountNotificationsFromPages(notifications.data?.pages),
+		[notifications.data?.pages],
+	);
 
 	const [popoverOpen, setPopoverOpen] = useState(false);
 	const [freshIds, setFreshIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -109,19 +97,8 @@ export function HostedNotificationCenter() {
 			const previous = queryClient.getQueryData<NotificationQueryData>(queryKey);
 			if (!previous) return { previous };
 
-			const readAt = new Date().toISOString();
-			const pages = previous.pages.map((page) => ({
-				...page,
-				items: page.items.map((item) => {
-					if (item.read_at != null) return item;
-					return { ...item, read_at: readAt };
-				}),
-			}));
 			const optimistic = {
-				pages: pages.map((page) => ({
-					...page,
-					unread_count: 0,
-				})),
+				pages: markNotificationPagesSeen(previous.pages, new Date().toISOString()),
 				pageParams: previous.pageParams,
 			};
 			queryClient.setQueryData(queryKey, optimistic);
@@ -149,23 +126,8 @@ export function HostedNotificationCenter() {
 			const previous = queryClient.getQueryData<NotificationQueryData>(queryKey);
 			if (!previous) return { previous };
 
-			let wasUnread = false;
-			const pages = previous.pages.map((page) => {
-				const item = page.items.find((notification) => notification.id === id);
-				const removedUnread = item !== undefined && item.read_at == null;
-				if (removedUnread) wasUnread = true;
-				return {
-					...page,
-					items: page.items.filter((notification) => notification.id !== id),
-				};
-			});
 			const optimistic = {
-				pages: wasUnread
-					? pages.map((page) => ({
-							...page,
-							unread_count: Math.max(0, page.unread_count - 1),
-						}))
-					: pages,
+				pages: removeNotificationFromPages(previous.pages, id),
 				pageParams: previous.pageParams,
 			};
 			queryClient.setQueryData(queryKey, optimistic);
@@ -175,7 +137,7 @@ export function HostedNotificationCenter() {
 		},
 		onError: (error, _id, context) => {
 			if (context?.previous) queryClient.setQueryData(queryKey, context.previous);
-			toast.error("Couldn't remove notification", { description: normalizeApiError(error) });
+			toast.error(notificationCenterCopy.removeFailed, { description: normalizeApiError(error) });
 		},
 		onSettled: (_data, _error, id) => {
 			setRemovingIds((current) => {
@@ -192,18 +154,15 @@ export function HostedNotificationCenter() {
 	useEffect(() => {
 		if (!popoverOpen) return;
 		if (notifications.isLoading || notifications.isFetching || notifications.error) return;
-		if (!firstPage || firstPage.unread_count <= 0 || firstPage.items.length === 0) return;
-		const newest = firstPage.items[0];
-		if (lastMarkedNewestId.current === newest.id) return;
-		lastMarkedNewestId.current = newest.id;
+		const newestId = notificationToMarkSeen(firstPage, lastMarkedNewestId.current);
+		if (!newestId) return;
+		lastMarkedNewestId.current = newestId;
 		setFreshIds((current) => {
 			const next = new Set(current);
-			for (const item of notifications.data?.pages.flatMap((page) => page.items) ?? []) {
-				if (item.read_at == null) next.add(item.id);
-			}
+			for (const id of unreadNotificationIds(notifications.data?.pages)) next.add(id);
 			return next;
 		});
-		markSeen.mutate({ upToId: newest.id });
+		markSeen.mutate({ upToId: newestId });
 	}, [
 		firstPage,
 		markSeen,
@@ -236,7 +195,7 @@ export function HostedNotificationCenter() {
 		if (!notification.actionUrl) return;
 		const target = resolveNotificationUrl(notification.actionUrl, window.location.origin);
 		if (!target) {
-			toast.error("This notification link is invalid");
+			toast.error(notificationCenterCopy.invalidLink);
 			return;
 		}
 		try {
@@ -247,7 +206,7 @@ export function HostedNotificationCenter() {
 				window.location.assign(target.url.href);
 			}
 		} catch {
-			toast.error("Couldn't open notification link");
+			toast.error(notificationCenterCopy.openFailed);
 		}
 	}
 
