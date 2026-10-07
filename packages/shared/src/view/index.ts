@@ -1,4 +1,5 @@
 export type { ContributionDay, DashboardStats } from "../api/schemas";
+export * from "./account-deletion";
 export * from "./add-agent-setup";
 export * from "./add-keys-dialog";
 export * from "./agent-channel-cards";
@@ -78,6 +79,7 @@ export * from "./settings-copy";
 export * from "./skill-forms";
 export * from "./skill-search";
 export * from "./skill-transfer-dialog";
+export * from "./start-compute-action";
 export * from "./subscription-source-picker";
 export * from "./usage-summary";
 export * from "./utils";

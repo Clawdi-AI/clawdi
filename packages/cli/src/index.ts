@@ -208,15 +208,6 @@ authCmd
 	});
 
 authCmd
-	.command("desktop-session", { hidden: true })
-	.description("Create a short-lived desktop dashboard session")
-	.option("--json", "Output as JSON")
-	.action(async () => {
-		const { authDesktopSessionMachine } = await import("./commands/auth.js");
-		await authDesktopSessionMachine();
-	});
-
-authCmd
 	.command("logout")
 	.description("Remove local credentials")
 	.action(async () => {

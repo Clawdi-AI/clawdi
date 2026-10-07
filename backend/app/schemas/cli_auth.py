@@ -30,7 +30,7 @@ class OAuthRevokeResponse(BaseModel):
 
 
 class DesktopSessionTicketResponse(BaseModel):
-    """Short-lived, one-use Clerk ticket for the first-party desktop shell."""
+    """Legacy success shape for released clients; the retired route always returns 410."""
 
     ticket: str
     expires_in: int

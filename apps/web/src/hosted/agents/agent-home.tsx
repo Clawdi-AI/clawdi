@@ -23,6 +23,7 @@ import {
 } from "@/lib/agent-routes";
 import { useDeploymentEventStreamActive } from "@/lib/deployment-event-stream-context";
 import { hostedAgentVisibleSectionIds } from "@/lib/navigation-model";
+import { useHydrated } from "@/lib/use-hydrated";
 
 export async function runManualDeploymentRefetch(
 	refetch: () => Promise<unknown>,
@@ -57,6 +58,7 @@ export function AgentHome({
 	const router = useRouter();
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const eventStreamActive = useDeploymentEventStreamActive();
+	const hydrated = useHydrated();
 	const {
 		deployment,
 		inventoryDeployments,
@@ -131,6 +133,10 @@ export function AgentHome({
 			manualCheckInFlightRef.current = false;
 		}
 	};
+
+	// Match the SSR skeleton while this lazy boundary hydrates; sibling sensors
+	// may already have filled the deployments cache.
+	if (!hydrated) return <ConnectedAgentDetailSkeleton hosted section={section} />;
 
 	// A dismissed hosted member must not reappear as a connected agent during cleanup.
 	if (dismissedHostedAgent) return ownsCurrentSection ? <Navigate to="/" replace /> : null;

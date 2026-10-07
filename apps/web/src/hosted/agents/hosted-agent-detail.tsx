@@ -12,6 +12,8 @@ import {
 	agentChannelLinkUnavailableReason,
 	agentChannelSectionCopy,
 	agentDisplayName,
+	agentFilesPresentation,
+	agentOverviewCopy,
 	aiBindingCopy,
 	canRetryInitialDeployment,
 	computeStatusDetailsCopy,
@@ -20,7 +22,9 @@ import {
 	initialDeploymentCopy,
 	initialDeploymentPresentation,
 	RUNTIME_UI_WITHDRAWN_DESCRIPTION,
+	SUPPORT_MAILTO,
 	shouldShowInitialDeploymentProgress,
+	startComputeActionPresentation,
 	stoppedAgentDescription,
 } from "@clawdi/shared/view";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -446,11 +450,13 @@ function StartComputeAction({
 }) {
 	const lifecycle = useDeploymentLifecycle();
 	const runAction = useActionLock();
-	const status = deploymentStatusFromResource(deployment.resource.status);
-	const canStart = canStartDeployment(status);
-	const startAction = deployment.start_action;
-	const needsSubscription = computeSubscriptionRequiredToStart(deployment);
-	if (needsSubscription || startAction === "fix_payment" || startAction === "top_up") {
+	const action = startComputeActionPresentation(deployment, label);
+	if (
+		action.target === "subscribe" ||
+		action.target === "fix_payment" ||
+		action.target === "top_up"
+	) {
+		const needsSubscription = action.target === "subscribe";
 		const subscribe = needsSubscription ? onSubscribe : undefined;
 		const Icon = needsSubscription ? Plus : CreditCard;
 		return (
@@ -458,7 +464,7 @@ function StartComputeAction({
 				type="button"
 				size="sm"
 				variant={variant}
-				disabled={disabled || !canStart || (needsSubscription && lifecycle.isPending)}
+				disabled={disabled || !action.enabled || (needsSubscription && lifecycle.isPending)}
 				onClick={subscribe}
 				render={
 					subscribe ? undefined : (
@@ -473,32 +479,28 @@ function StartComputeAction({
 				nativeButton={Boolean(subscribe)}
 			>
 				<Icon className="size-3.5" />
-				{needsSubscription
-					? "Subscribe to start"
-					: startAction === "top_up"
-						? "Top up to start"
-						: "Pay to start"}
+				{action.label}
 			</Button>
 		);
 	}
-	if (startAction === "contact_support") {
+	if (action.target === "contact_support") {
 		return (
 			<Button
 				size="sm"
 				variant={variant}
 				disabled={disabled}
-				render={<a href="mailto:support@clawdi.ai" />}
+				render={<a href={SUPPORT_MAILTO} />}
 				nativeButton={false}
 			>
 				<LifeBuoy className="size-3.5" />
-				Contact support
+				{action.label}
 			</Button>
 		);
 	}
-	if (startAction !== "start") {
+	if (action.target !== "start") {
 		return (
 			<Button size="sm" variant={variant} disabled>
-				{startAction === "unavailable" ? "Start unavailable" : "Updating subscription"}
+				{action.label}
 			</Button>
 		);
 	}
@@ -507,7 +509,7 @@ function StartComputeAction({
 			type="button"
 			size="sm"
 			variant={variant}
-			disabled={disabled || lifecycle.isPending || !canStart}
+			disabled={disabled || lifecycle.isPending || !action.enabled}
 			onClick={() =>
 				void runAction(async () => {
 					await lifecycle.mutateAsync({ id: deployment.resource.id, action: "start" });
@@ -519,7 +521,7 @@ function StartComputeAction({
 			) : (
 				<RefreshCw className="size-3.5" />
 			)}
-			{label}
+			{action.label}
 		</Button>
 	);
 }
@@ -1493,7 +1495,7 @@ function OverviewTab({
 				<AgentOverviewStatusCard
 					agentId={agentId}
 					section="settings"
-					title="Compute"
+					title={agentOverviewCopy.compute}
 					icon={Cpu}
 					tint={hostedAgentOverviewClasses.computeTint}
 					description={
@@ -1810,25 +1812,23 @@ export function ConsoleTab({
 }
 
 function FilesTab({ deployment, url }: { deployment: HostedDeployment; url: string }) {
-	const status = deploymentStatusFromResource(deployment.resource.status);
-	const isRunning = isRunningStatus(status);
-	const isStarting = isStartingStatus(status);
+	const view = agentFilesPresentation(deployment);
 
-	if (status.kind === "stopped") {
+	if (view.state === "stopped") {
 		return <StoppedAgentState deployment={deployment} />;
 	}
 
-	if (!isRunning) {
+	if (view.state !== "running") {
 		return (
 			<EmptyState
 				icon={FolderOpen}
-				title={isStarting ? startingTitle() : "Agent is not running"}
-				description={
-					isStarting
-						? "Files opens once your agent and its private workspace service are ready. This page updates automatically."
-						: `Start the agent to browse its workspace. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+				title={view.title}
+				description={view.description}
+				action={
+					canStartDeployment(deploymentStatusFromResource(deployment.resource.status)) ? (
+						<StartComputeAction deployment={deployment} />
+					) : null
 				}
-				action={canStartDeployment(status) ? <StartComputeAction deployment={deployment} /> : null}
 			/>
 		);
 	}
