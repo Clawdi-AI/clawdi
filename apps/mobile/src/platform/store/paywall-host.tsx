@@ -62,7 +62,8 @@ export function PaywallHost({ children }: { children: ReactNode }) {
 					{active ? (
 						<PaywallBoundary key={active.id} onError={active.session.failRender}>
 							<RevenueCatUI.Paywall
-								options={{ offering: active.offering }}
+								// V2 templates ignore this; their close button is owner-configured.
+								options={{ offering: active.offering, displayCloseButton: true }}
 								{...active.session.listeners}
 							/>
 						</PaywallBoundary>

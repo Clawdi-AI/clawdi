@@ -3,6 +3,7 @@ import {
 	creditPrice,
 	formatCreditCents,
 	formatCredits,
+	pendingCheckNotice,
 	purchaseErrorNotice,
 	purchaseOutcomeNotice,
 	signedCredits,
@@ -62,5 +63,23 @@ describe("purchase notices", () => {
 			expect(purchaseErrorNotice(code)).toMatchObject({ key: "store.unconfirmed", refresh: true });
 		expect(purchaseErrorNotice("purchase_pending").key).toBe("store.purchaseInProgress");
 		expect(purchaseErrorNotice("store_purchases_disabled").key).toBe("store.unavailable");
+	});
+
+	test("checking pending purchases reports the most actionable recovered outcome", () => {
+		expect(pendingCheckNotice([])).toEqual({
+			key: "store.noPending",
+			tone: "neutral",
+			refresh: false,
+		});
+		expect(pendingCheckNotice([outcome("cancelled")]).key).toBe("store.noPending");
+		expect(
+			pendingCheckNotice([outcome("pending"), outcome("funding_applied", "funding_applied")]),
+		).toMatchObject({ key: "store.fundingApplied", refresh: true });
+		expect(
+			pendingCheckNotice([
+				outcome("funding_applied", "funding_applied"),
+				outcome("terminal", "reconciliation_required"),
+			]).key,
+		).toBe("store.reviewRequired");
 	});
 });

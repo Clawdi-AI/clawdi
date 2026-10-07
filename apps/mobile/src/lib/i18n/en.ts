@@ -164,11 +164,18 @@ const connectorsEn = {
 } as const;
 const storeEn = {
 	addCredits: "Add credits",
+	addCreditsToStart: "Add credits to start",
+	checkPending: "Check pending purchases",
+	checkingPending: "Checking pending purchases…",
+	noPending: "No pending purchases found.",
+	lowBalance: "Low — add credits before Clawdi AI pauses",
+	recoveryStatus: "This subscription needs attention. Its status updates here automatically.",
+	usdcInApp: "Browser-wallet USDC funding isn't available in this app.",
 	purchasing: "Confirming purchase…",
 	credits: "credits",
 	unavailable: "Purchases aren't available right now. Your credits balance is unaffected.",
 	fundingApplied: "Credits were added to your Wallet.",
-	submitted: "Purchase submitted; credit will arrive in your wallet.",
+	submitted: "Purchase submitted; credits will arrive in your Wallet.",
 	processing:
 		"Your purchase is still being confirmed. Credits are added automatically when it completes.",
 	paymentPending:

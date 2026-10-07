@@ -79,7 +79,9 @@ function SubscriptionRecovery({ item }: { item: Subscription }) {
 			) : recoveryAction === "card_status" ? (
 				<Text className="text-muted-foreground">{t("store.cardDunning")}</Text>
 			) : recoveryAction ? (
-				<Text className="text-muted-foreground">{t("billing.providerRecovery")}</Text>
+				<Text className="text-muted-foreground">
+					{t(surfaces.cardBilling ? "billing.providerRecovery" : "store.recoveryStatus")}
+				</Text>
 			) : null}
 		</AppView>
 	);

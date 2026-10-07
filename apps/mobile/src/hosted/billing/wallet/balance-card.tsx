@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
-import { AddCreditsAction } from "@/hosted/billing/store/add-credits";
+import { AddCreditsAction, CheckPendingPurchasesAction } from "@/hosted/billing/store/add-credits";
 import { formatCredits } from "@/hosted/billing/store/store-presentation";
 import { useI18n } from "@/lib/i18n";
 import { useStoreSurfaces } from "@/platform/store/store-provider";
@@ -34,13 +34,18 @@ export function BalanceCard({ wallet }: { wallet: Pick<Wallet, "balance_usd"> })
 					{low ? (
 						<WebView recipe={balance.warning} className="flex-row">
 							<Icon as={TriangleAlert} />
-							<Text>{t("billingParity.lowBalance")}</Text>
+							<Text>
+								{t(surfaces.addCredits ? "store.lowBalance" : "billingParity.lowBalance")}
+							</Text>
 						</WebView>
 					) : null}
 				</WebView>
 				<WebView recipe={balance.actions}>
 					{surfaces.addCredits ? (
-						<AddCreditsAction />
+						<>
+							<AddCreditsAction />
+							{surfaces.cardBilling ? null : <CheckPendingPurchasesAction />}
+						</>
 					) : (
 						<Button disabled>
 							<Icon as={CreditCard} />

@@ -6,6 +6,7 @@ import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
 import {
+	pendingCheckNotice,
 	purchaseErrorNotice,
 	purchaseOutcomeNotice,
 	type StoreNotice,
@@ -40,6 +41,59 @@ export function useStoreRecoveryRefresh() {
 	useEffect(() => {
 		if (funded) void refresh();
 	}, [recovery, funded]);
+}
+
+function NoticeText({ notice }: { notice: StoreNotice }) {
+	const t = useI18n();
+	return (
+		<Text
+			accessibilityRole={notice.tone === "warning" ? "alert" : undefined}
+			className={
+				notice.tone === "success" ? "text-success-muted-foreground" : "text-muted-foreground"
+			}
+		>
+			{t(notice.key)}
+		</Text>
+	);
+}
+
+/**
+ * Store builds: reconcile interrupted or deferred purchases through M1 recovery.
+ * Never opens a Paywall or starts a store charge; consumables cannot be restored.
+ */
+export function CheckPendingPurchasesAction() {
+	const t = useI18n();
+	const scope = useAccountScope();
+	const { flow } = useMobileStore();
+	const refresh = useRefreshWallet();
+	const action = useAuthAction(scope);
+	const [notice, setNotice] = useState<StoreNotice | null>(null);
+	const check = () =>
+		action.run(async (owns) => {
+			if (!flow) return;
+			setNotice(null);
+			let next: StoreNotice;
+			if (flow.isBusy()) next = purchaseErrorNotice("purchase_pending");
+			else {
+				try {
+					next = pendingCheckNotice(await flow.recover());
+				} catch (error) {
+					next = purchaseErrorNotice(storePurchaseError(error).code);
+				}
+			}
+			if (!owns()) return;
+			setNotice(next);
+			if (next.refresh) await refresh();
+		});
+	if (!flow) return null;
+	return (
+		<AppView className="gap-2">
+			<Button variant="outline" size="sm" disabled={action.busy} onPress={() => void check()}>
+				<Text>{t(action.busy ? "store.checkingPending" : "store.checkPending")}</Text>
+			</Button>
+			{notice ? <NoticeText notice={notice} /> : null}
+		</AppView>
+	);
 }
 
 /**
@@ -96,14 +150,7 @@ export function AddCreditsAction({
 			{!available ? (
 				<Text className="text-muted-foreground">{t("store.unavailable")}</Text>
 			) : notice ? (
-				<Text
-					accessibilityRole={notice.tone === "warning" ? "alert" : undefined}
-					className={
-						notice.tone === "success" ? "text-success-muted-foreground" : "text-muted-foreground"
-					}
-				>
-					{t(notice.key)}
-				</Text>
+				<NoticeText notice={notice} />
 			) : action.error ? (
 				<Text accessibilityRole="alert" className="text-muted-foreground">
 					{t("store.failed")}

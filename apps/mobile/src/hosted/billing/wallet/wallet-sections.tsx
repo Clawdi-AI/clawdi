@@ -180,9 +180,11 @@ export function WalletSettingsSections({
 					</WebView>
 				}
 				description={
-					wallet.x402_enabled && !addCredits
-						? t("billing.noStore")
-						: t("billingParity.usdcUnavailable")
+					!wallet.x402_enabled
+						? t("billingParity.usdcUnavailable")
+						: addCredits
+							? t("store.usdcInApp")
+							: t("billing.noStore")
 				}
 			/>
 		</>

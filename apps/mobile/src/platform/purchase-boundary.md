@@ -111,12 +111,23 @@ before the attempt is created; a missing, empty or failed offering surfaces
 `store_offering_unavailable` without opening the Paywall. A Paywall that cannot
 render (no native `PaywallView`) resolves null with `paywall_unavailable`.
 
+**Owner configuration requirement:** the Paywall attached to the `credits`
+offering must include a close button. `displayCloseButton: true` (passed by
+`PaywallHost`) applies only to original-template Paywalls; V2 Paywalls ignore it
+and show only the close button configured in the RevenueCat Paywall editor. The
+full-screen React Native `Modal` has no iOS swipe-to-dismiss (Android back maps
+to `requestClose`), so without that button an iOS user cannot leave the Paywall
+until the operation deadline. Test Store acceptance must verify that the close
+button dismisses the Paywall, that the flow returns `cancelled` without a charge,
+and that a retry reopens it.
+
 `AddCreditsAction` is the only purchase entry. It runs
 `flow.purchase({ purpose: "standalone_topup" }, …)` from the Wallet balance card,
 Wallet-rail `top_up` recovery (dunning banner and subscription details) and the
 deploy wizard's Wallet shortfall, which re-quotes after funding. Funded,
 submitted, pending and unconfirmed outcomes refresh the Wallet queries; nothing
-auto-deploys.
+auto-deploys. Store builds also show "Check pending purchases", which runs
+`flow.recover()` (never a Paywall or store charge) and refreshes the Wallet.
 
 `storeSurfaces()` (`store-policy.ts`) gates presentation. Store builds hide
 auto-reload, saved cards/card setup, Stripe receipt/invoice links, card

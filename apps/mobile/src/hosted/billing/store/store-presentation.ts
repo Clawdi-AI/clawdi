@@ -60,6 +60,25 @@ export function purchaseOutcomeNotice(
 	}
 }
 
+/** The most actionable result of an explicit "Check pending purchases" recovery. */
+export function pendingCheckNotice(
+	outcomes: readonly Parameters<typeof purchaseOutcomeNotice>[0][],
+): StoreNotice {
+	const rank: readonly TranslationKey[] = [
+		"store.reviewRequired",
+		"store.fundingApplied",
+		"store.submitted",
+		"store.processing",
+		"store.notCompleted",
+	];
+	const notices = outcomes.flatMap((outcome) => purchaseOutcomeNotice(outcome, null) ?? []);
+	for (const key of rank) {
+		const notice = notices.find((item) => item.key === key);
+		if (notice) return notice;
+	}
+	return { key: "store.noPending", tone: "neutral", refresh: false };
+}
+
 export function purchaseErrorNotice(code: PurchaseErrorCode): StoreNotice {
 	const notice = (key: TranslationKey, tone: StoreNotice["tone"] = "warning"): StoreNotice => ({
 		key,
