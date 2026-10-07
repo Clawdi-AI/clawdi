@@ -1011,7 +1011,10 @@ Hosted's canonical `docs/v2/2026-08-29-posthog-event-registry.md`: snake_case
 `object_action` events, shared Clerk `distinct_id`, bounded properties and no
 PII, tokens, content, paths or free-text errors. Configure the same
 `POSTHOG_API_KEY` and `POSTHOG_HOST` as Hosted; an unset key is a no-op. Cloud
-uses the official Python SDK version already resolved by optional Mem0. No new
+uses the official Python SDK pinned in `backend/uv.lock` (`7.39.2`). The release
+workflow always writes `POSTHOG_API_KEY` to Kamal's backend secrets, including
+an empty value (capture disabled); a nonempty value must be a safe `phc_` project
+token. Use Hosted's project token, not a personal API key. No new
 analytics store, pipeline or Cloud admin analytics API is introduced.
 
 | Metric / prior gap | Existing component extended |
@@ -1026,8 +1029,9 @@ Cloud never labels lazy local user creation as signup: Hosted's verified Clerk
 creation time owns `signed_up_at`. Connected registration is distinct from
 Hosted deployment. Human engagement uses identified browser/desktop `$pageview`
 activity by bounded `feature`, not daemon polling or AI traffic. The web SDK
-owns history-change pageviews and pageleave; it does not use DOM autocapture or
-session recording. A browser left open without navigation does not produce a
+owns history-change pageviews; pageleave is disabled because time-on-page is
+unused. It does not use DOM autocapture or session recording. A browser left
+open without navigation does not produce a
 new daily activity event.
 
 Cloud events have `source=cloud` and integer `schema_version=1`. Business
@@ -1039,10 +1043,10 @@ Capture is best effort; a crash or full SDK queue can lose an event.
 [PostHog event deduplication](https://posthog.com/docs/data/events#event-deduplication)
 requires the same **UUID, event name, timestamp and distinct ID**, and occurs
 eventually during storage merges. A repeated `$insert_id` alone is insufficient.
-Connector observations normalize the provider's timezone-aware `created_at` to
-UTC; credentials success and repeated enabled-ACTIVE reads send the same four
-fields and all properties. Missing, invalid or timezone-less timestamps skip
-capture. With analytics enabled, credentials success reuses `get_owned_account`
+Connector credentials success normalizes the provider's timezone-aware
+`created_at` to UTC. List reads and polling never capture. Missing, invalid or
+timezone-less timestamps skip capture. With analytics enabled, credentials
+success reuses `get_owned_account`
 for this metadata; a read failure skips telemetry without changing the success
 response. Duplicate records can remain visible before PostHog merges them.
 
@@ -1050,7 +1054,7 @@ response. Duplicate records can remain visible before PostHog merges them.
 | --- | --- | --- | --- |
 | `user_enrolled` | First committed Cloud user mirror, not Clerk signup | common properties only | Cloud auth |
 | `agent_connected` | First positive Connected registration evidence; excludes Hosted identities | common properties only | Cloud agents |
-| `session_synced` | Committed snapshot content or event generation/append | `protocol: snapshot-v1\|events-v1`, `session_id: opaque UUID`, optional `agent_id: opaque UUID`, `has_messages: bool\|null`, `message_count: int\|null` | Cloud sessions |
+| `session_synced` | First successful content sync per new Session, after commit | `protocol: snapshot-v1\|events-v1`, `session_id: opaque UUID`, optional `agent_id: opaque UUID`, `has_messages: bool\|null`, `message_count: int\|null` | Cloud sessions |
 | `project_created` | Committed user-created Project | `feature: projects` | Cloud projects |
 | `skill_saved` | Committed new/changed skill revision; unchanged replays skipped | `feature: skills` | Cloud skills |
 | `vault_created` | Committed new Vault | `feature: vault` | Cloud vault |
@@ -1058,17 +1062,39 @@ response. Duplicate records can remain visible before PostHog merges them.
 | `share_created` | Committed Project or Session share | `feature: sharing`, `resource_type: project\|session` | Cloud sharing |
 | `invitation_created`, `invitation_accepted` | Committed invitation creation / acceptance | `feature: sharing` | Cloud sharing |
 | `connector_connection_started` | Provider successfully creates an OAuth attempt | `feature: connectors` | Cloud connectors |
-| `connector_connected` | Successful credentials or an enabled ACTIVE provider read with a stable creation timestamp | `feature: connectors` | Cloud connectors |
+| `connector_connected` | Successful credentials mutation with a stable provider creation timestamp | `feature: connectors` | Cloud connectors |
 | `$pageview` | Existing SDK initial/history-change view | `feature: bounded surface enum\|null`, `$host: hostname`, `source: web\|desktop`, `schema_version: int 1`; auth features also have bounded acquisition categories | Web/desktop |
-| `$pageleave` | Existing SDK pageleave | SDK identity/session fields and bounded properties only | Web/desktop |
 | `agent_setup_opened` | Add Agent dialog becomes visible | `source: web\|desktop`, `schema_version: int 1` | Web/desktop |
 
-Web honors its existing Hosted gate, DNT and SDK opt-out. Existing `identify`
+Web requires the Hosted build gate, a nonempty token and the exact production
+HTTPS hostname `cloud.clawdi.ai`; localhost, previews and other hosts cannot
+initialize, identify or capture. Web honors DNT and SDK opt-out. Existing `identify`
 links anonymous history to the Clerk subject, and sign-out resets it. The Vault
 request page is excluded. Final SDK filtering removes URLs, pathnames, raw
 referrers, DOM text, IPs and arbitrary properties. `$host` is a hostname only;
 `feature` adds `sign_up`, `sign_in`, `deploy` to the existing product surfaces.
 Person identity retains only `clerk_id`; backend Hosted owns profile enrichment.
+The final property filter preserves the SDK's `$process_person_profile` boolean
+so `person_profiles: "identified_only"` also applies to anonymous pageviews.
+
+The three successful-sync callers hold the Session row lock and use durable
+`first_synced_at` evidence. Snapshot batch hash changes can clear
+`content_uploaded_at`, so that field cannot determine first sync. The durable
+marker is written even when capture is disabled and rolls back with content.
+Only the first emission runs the events-v1 message COUNT. Revisions, append
+retries, generation replacement and snapshot-to-events upgrades never recapture.
+The event key is the Session UUID and its timestamp is immutable `created_at`.
+The migration conservatively marks **all pre-existing Sessions** at rollout:
+their first-upload history cannot be recovered reliably, and replaying history
+could exhaust usage. Pending pre-rollout Sessions are consequently not counted.
+No migration-time events or backfill captures are sent.
+
+Other Cloud events are attached to committed creations or actual changed skill
+versions; unchanged writes return before capture. Agent registration records
+positive first-registration evidence; invitation acceptance removes its pending
+invitation. No read/poll path produces a Cloud event. OAuth connection attempts
+are observed, but OAuth completion has no mutation/webhook producer here; it is
+not inferred repeatedly from connection lists.
 
 Sign-up/sign-in pageviews receive bounded acquisition source and UTM/referrer
 categories. Source is `direct`, `google`, `bing`, `github`, `x`, `linkedin`,
@@ -1078,22 +1104,76 @@ categories. Source is `direct`, `google`, `bing`, `github`, `x`, `linkedin`,
 belongs to Hosted; Cloud auth-entry views do not count as marketing landing
 visits.
 
-The shared PostHog project must enable **Discard client IP data**; outbound
-filtering does not stop ingestion-side IP fallback. See
-[PostHog's privacy guidance](https://posthog.com/tutorials/web-redact-properties#hiding-customer-ip-address).
-The deprecated JS `ip` option has no effect. The Hosted owner must verify the
-existing project setting before enabling Cloud producers. No project settings
-or live telemetry APIs were read or changed during implementation.
+The owner reports that the shared project has enabled **Discard client IP data**,
+the recommended GDPR privacy setting because IP addresses are personal data.
+Without it, ingestion may populate `$ip` from the HTTP request even when the SDK
+does not send `$ip`. No custom IP sentinel or stripping mechanism is used.
+Cloud retains `posthog_disable_geoip=True`: the SDK emits `$geoip_disable=True`,
+since a backend's location is not the user's location. In the installed Python
+SDK `7.39.2`, capture adds `$os`, `$os_version`, Linux `$os_distro`,
+`$python_runtime`, `$python_version`, `$lib`, `$lib_version`, and `$is_server`;
+it does not add `$ip` or a hostname. The documented `before_send` hook keeps only
+the content-free product properties, Clerk subject and SDK processing metadata,
+removing OS/runtime information. A real-SDK test checks the final outgoing
+payload without sending any network request.
+
+After enabling IP discard, the owner should verify whether web events still
+have `$geoip_country_code`. PostHog documents that GeoIP transformations can
+enrich before IP discard, but project configuration determines actual coverage.
+If country disappears, a follow-up can attach trusted Cloudflare `CF-IPCountry`
+as a bounded server-side `country` property; this change does not implement it.
+No project settings or live telemetry APIs were read or changed here.
+
+Official choices and references:
+
+| Choice | Official reference |
+| --- | --- |
+| Web `identify` with Clerk subject, `reset` on logout; server `distinct_id` uses the same subject | [Identifying users](https://posthog.com/docs/product-analytics/identify), [Python capture](https://posthog.com/docs/libraries/python) |
+| `person_profiles: "identified_only"`; preserve `$process_person_profile`; non-person server events must use `$process_person_profile: false` | [Person profiles](https://posthog.com/docs/product-analytics/person-profiles). All current Cloud events require a real user's Clerk subject; no machine/anonymous server events are emitted. |
+| Retry identity uses the documented `uuid`, event name, timestamp and distinct ID | [Event deduplication](https://posthog.com/docs/data/events#event-deduplication), [Python capture](https://posthog.com/docs/libraries/python) |
+| Server `disable_geoip=True` / `$geoip_disable=True` and minimal no-PII filtering with `before_send` | [Python GeoIP and event filtering](https://posthog.com/docs/libraries/python), [upstream capture source](https://github.com/PostHog/posthog-python/blob/main/posthog/client.py), [system context source](https://github.com/PostHog/posthog-python/blob/main/posthog/utils.py). The payload test exercises the installed lockfile version, not upstream HEAD. |
+| Project-level IP discard; no ineffective JS `ip` option | [Data storage privacy](https://posthog.com/docs/privacy/data-storage), [IP fallback](https://posthog.com/tutorials/web-redact-properties#hiding-customer-ip-address) |
+| SDK batching/queue/retry defaults, with `shutdown()` at API exit; no custom delivery queue or retry timer | [Python configuration and shutdown](https://posthog.com/docs/libraries/python). Locked SDK defaults are 100 events / 5 seconds, asynchronous capture, queue size 10,000, three retries, 15-second HTTP timeout. |
+| History-change pageviews, `capture_pageleave: false`, `autocapture: false`, `disable_session_recording: true` | [JavaScript configuration](https://posthog.com/docs/libraries/js/config), [Capture only what you need](https://posthog.com/docs/product-analytics/capture-events) |
+
+Monthly volume budget (30 days; ~113 weekly active users and ~1,300 new
+Sessions/day supplied by the owner). Only Session arrivals and WAU are observed
+inputs; per-user activity and mutation allowances below are planning assumptions,
+not measured traffic or application rate limits.
+
+| Event family | Expected events/month | Assumption / bound |
+| --- | ---: | --- |
+| Cloud `session_synced` | ~39,000 | At most one per newly synced Session; revisions add zero. |
+| Web `$pageview` | ~4,800–14,500 | 10–30 initial/history-change views per WAU/week. |
+| Web SDK identity (`$identify` / `$set`) | 0–1,000 | Allow up to two identity operations per WAU/week. |
+| Cloud `user_enrolled`, `agent_connected` | 0–500 | Planning allowance for new users/agents; no registration polling captures. |
+| Cloud Project/skill/Vault/channel mutations | 0–2,000 | New resources and actual skill revisions only. |
+| Cloud shares and invitations | 0–500 | Created shares/invitations and successful acceptance. |
+| Cloud connector attempts / credentials success | 0–500 | One per provider mutation; list polling adds zero. |
+| Web `agent_setup_opened` | 0–500 | User opens the Add Agent dialog. |
+| `$pageleave`, autocapture, session replay, read/poll events | 0 | Disabled or no producer. |
+
+Plan for **~44,000–59,000 Cloud + dashboard events/month**, with a ~60,000
+planning budget at this traffic level. This excludes Hosted marketing,
+deployment and revenue events: the shared project's actual billing limit must
+include those producers and headroom. SDK batching reduces requests, not
+billable event count; deduplication is replay protection, not a volume budget.
+Configure a [PostHog billing limit](https://posthog.com/docs/billing/limits-alerts)
+(a $0 limit when only the free allowance is desired) and ensure the organization
+owner receives the documented **80% and 100%** usage/free-allotment alerts.
+Use a [separate project for staging](https://posthog.com/docs/settings/projects)
+with its own token; production web capture remains restricted to its production
+hostname. Revisit assumptions using actual usage after rollout.
 
 Recommended PostHog insights (UTC, display observation coverage):
 
 | Insight / dashboard | Definition and query |
 | --- | --- |
-| North Star | Weekly distinct users with `session_synced,has_messages=true`; chart beside human WAU. |
+| New-session activity | Weekly distinct users with first-sync `session_synced,has_messages=true`; chart beside human WAU. Ongoing revisions of older Sessions are not measured. |
 | Acquisition | Hosted landing → `$pageview{feature=sign_up}`; use Hosted person `signed_up_at` for completed signup conversion and bounded UTM/referrer breakdown. A person timestamp is not a funnel event; local enrollment is not signup. |
 | Activation | HogQL joins `person.properties.signed_up_at` to earliest `agent_connected`, Hosted `v2_deployment_succeeded`, or nonempty `session_synced`. Show independent milestones, median/P95 elapsed time and mature 24h/7d cohorts only. Successful sync does not prove a successful AI response. |
 | Engagement | Distinct identified people with `$pageview` on product features in trailing 1/7/30 days; DAU/MAU stickiness. Exclude auth features and anonymous views. Browser sessions count distinct `$session_id`. Distinct synchronized `session_id`/`agent_id` per person separately measure agent usage. CLI traffic is operational request volume, not human DAU. |
-| Messages | Latest `message_count` per session (`argMax(message_count,timestamp)` in HogQL); never sum repeated snapshots. This measures synchronized inventory, not messages authored in the report window. Null means projection unavailable. |
+| Messages at first sync | `message_count` per newly synced Session only; no later inventory/message-volume estimate. Null means projection unavailable at first sync; an empty first upload remains empty in analytics. |
 | Feature adoption | Unique people with successful Cloud feature events; separately show `$pageview` by `feature` and `source=web\|desktop`. Files have view coverage. Dialog intent → successful agent connection is a funnel; a view does not prove use. |
 | Retention | Signup-week cohorts from `signed_up_at`; exact D1/D7/D30 activity retention using identified product pageviews, divided by mature cohort size. Suppress immature cells; also show first-human-activity cohorts. One completed inactive week marks churn; activity after an inactive week marks resurrection. |
 | Referral | Shares/invitations created → accepted invitations by person; share creation alone is not acquisition. |
@@ -1114,4 +1194,4 @@ their legacy names and semantics. The before/after inventory is recorded in the
 [unreleased analytics changelog](../CHANGELOG.md#analytics) so retired names have
 one migration reference.
 
-Done: `bash scripts/test.sh backend tests/test_posthog.py tests/test_connectors.py tests/test_request_timing.py tests/test_metrics.py`, full backend, web, CLI, CI and lint suites pass in isolated Docker without calling PostHog. `backend-lint` runs Ruff and the owned type gate; backend-relative arguments can restrict the format check. No live verification or dashboard creation is implied.
+Done: `bash scripts/test.sh backend tests/test_posthog.py tests/test_session_events.py tests/test_session_first_sync_migration.py tests/test_connectors.py tests/test_request_timing.py tests/test_metrics.py` reports passing tests in isolated Docker without calling PostHog. Also run the full `backend`, `web`, `ci`, release-workflow `cli`, and `cli-lint .` suites. `backend-lint` runs Ruff and the owned type gate; backend-relative arguments can restrict the format check to changed files. No live verification or dashboard creation is implied.

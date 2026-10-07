@@ -31,9 +31,10 @@ aliases are introduced for names added only by this PR.
 | Other `msg_router_*`, authentication, connector authentication, event-loop, database and embedding metrics | Keep | Existing operational consumers retain names and semantics. |
 | `product_viewed`, `signup_viewed`, `signin_viewed`, `onboarding_viewed` | Merge views into existing `$pageview` by `feature`; dialog intent becomes `agent_setup_opened` | One authoritative view producer, no duplicate client view events. |
 | `cli_command_completed`, `cli_command_failed`, CLI PostHog SDK/configuration hooks | Remove | Server authentication and HTTP RED measure CLI traffic; no client analytics producer. |
-| Cloud business events | Keep; stabilize connector creation timestamps | Server owns outcomes; repeated connection observations share PostHog's complete deduplication key. |
+| Cloud business events | Keep; sessions capture first sync only; connector list polling does not capture | Server owns outcomes; stable Session UUID/timestamp protects retries without revision-driven volume. |
 | Web `enrichHostedUser`, `buildHostedPersonProperties` and their unused types/tests | Remove | No application callers; existing identify already supplies the opaque Clerk subject. |
-| Sentry, structured diagnostics and SDK pageleave | Keep | Outside Package A's behavioral changes. |
+| SDK `$pageleave` | Disable | Time-on-page is unused; keep initial/history-change pageviews. |
+| Sentry and structured diagnostics | Keep | Existing operational diagnostics. |
 
 Analytics: removed properties — the duplicate UI events' `step` and CLI outcome
 properties are retired with their PR-only events. Existing event properties are
