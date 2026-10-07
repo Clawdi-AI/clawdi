@@ -30,6 +30,7 @@ export function ProjectResourceCard({
 		identity = identityFor(name);
 	return (
 		<HeroCard
+			testID={project.id ? `project-card-${project.id}` : undefined}
 			icon={
 				<IconChip
 					tint={identity.colorClasses}

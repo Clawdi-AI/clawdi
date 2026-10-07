@@ -1,0 +1,69 @@
+name: Mobile production build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Platform to build
+        type: choice
+        options: [android, ios, all]
+        default: all
+        required: true
+      auto_submit:
+        description: Submit completed builds using the production submit profile
+        type: boolean
+        default: false
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    environment: production
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - name: Require Expo release configuration
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+        run: |
+          if [[ -z "$EXPO_TOKEN" ]]; then
+            echo "::error::Configure EXPO_TOKEN in the production GitHub Environment before dispatching a mobile release."
+            exit 1
+          fi
+          if [[ -z "$EAS_PROJECT_ID" ]]; then
+            echo "::error::Configure the EAS_PROJECT_ID repository variable before dispatching a mobile release."
+            exit 1
+          fi
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          node-version: "24.21.0"
+      - name: Set up EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: 24.8.0
+          packager: bun
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Build production app
+        working-directory: apps/mobile
+        env:
+          PLATFORM: ${{ inputs.platform }}
+          AUTO_SUBMIT: ${{ inputs.auto_submit }}
+          EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+        run: |
+          case "$PLATFORM" in
+            android|ios|all) ;;
+            *) echo "::error::Invalid platform"; exit 1 ;;
+          esac
+          args=(build --profile production --non-interactive --platform "$PLATFORM")
+          if [[ "$AUTO_SUBMIT" == true ]]; then
+            args+=(--auto-submit)
+          fi
+          eas "${args[@]}"

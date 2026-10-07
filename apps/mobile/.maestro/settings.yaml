@@ -1,0 +1,38 @@
+appId: ${APP_ID}
+name: Account settings and fixture API keys
+---
+# react-native-screens 4.26.2 writes tab testIDs to View.tag (Espresso),
+# not UIAutomator resource IDs. Keep Trigger IDs and scope short tab labels
+# to the native Material tab container containing that label; no tab indices.
+# https://github.com/software-mansion/react-native-screens/blob/4.26.2/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/host/TabsHostA11yCoordinator.kt
+- tapOn:
+    text: Account
+    childOf:
+      id: ${APP_ID}:id/navigation_bar_item_content_container
+      containsDescendants:
+        - text: Account
+- assertVisible:
+    id: settings-general
+- assertVisible:
+    id: settings-user-name
+    text: Avery Chen
+- assertVisible:
+    id: settings-user-email
+    text: avery@clawdi.dev
+- assertVisible:
+    id: settings-appearance
+- takeScreenshot: settings
+# SDK 57's upstream SegmentedControl has no per-segment testID contract.
+# Keep its short label scoped to our container; leave the native adapter intact.
+# https://github.com/expo/expo/blob/sdk-57/packages/@expo/ui/src/community/segmented-control/SegmentedControl.android.tsx
+- tapOn:
+    text: API Keys
+    childOf:
+      id: settings-navigation
+- extendedWaitUntil:
+    visible:
+      id: api-key-a9100000-0001-4000-8000-000000000001
+    timeout: 30000
+- assertVisible:
+    id: api-key-a9100000-0002-4000-8000-000000000002
+- takeScreenshot: api-keys

@@ -1,0 +1,37 @@
+appId: ${APP_ID}
+name: Development client launch
+---
+# The script waits for the native dev-launcher activity before Maestro starts.
+- openLink:
+    link: ${DEV_CLIENT_URL}
+    autoVerify: false
+# A delayed System UI startup ANR was observed after the script's boot/launcher
+# checks on this memory-constrained host. Wait once only for that exact dialog;
+# application ANRs are never dismissed and still fail the required app checks.
+- extendedWaitUntil:
+    visible:
+      id: overview-screen|android:id/aerr_wait
+    timeout: 180000
+- runFlow:
+    when:
+      visible:
+        id: android:id/alertTitle
+        text: "System UI isn't responding"
+    commands:
+      - tapOn:
+          id: android:id/aerr_wait
+- extendedWaitUntil:
+    visible:
+      id: overview-screen
+    timeout: 180000
+# The first fixture card is on the initial viewport. Wait for data without
+# issuing a swipe while the list is loading. Maestro 2.11.0 subtracts time
+# since openLink from later visibility waits, so use the same startup budget.
+# https://github.com/mobile-dev-inc/Maestro/blob/cli-2.11.0/maestro-orchestra/src/main/java/maestro/orchestra/Orchestra.kt
+- extendedWaitUntil:
+    visible:
+      id: agent-card-c1a0de00-0001-4c00-8000-000000000001
+    timeout: 180000
+- assertVisible:
+    id: agent-card-c1a0de00-0001-4c00-8000-000000000001
+- takeScreenshot: launch

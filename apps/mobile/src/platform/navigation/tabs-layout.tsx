@@ -38,23 +38,23 @@ function AppTabs() {
 				selected: { color: themeColor(foreground), fontFamily: "Geist-Medium" },
 			}}
 		>
-			<NativeTabs.Trigger name="(overview)">
+			<NativeTabs.Trigger name="(overview)" testID="tab-overview">
 				<NativeTabs.Trigger.Label>{t("navigation.home")}</NativeTabs.Trigger.Label>
 				<NativeTabs.Trigger.Icon sf="square.grid.2x2" md="dashboard" />
 			</NativeTabs.Trigger>
-			<NativeTabs.Trigger name="(agents)">
+			<NativeTabs.Trigger name="(agents)" testID="tab-agents">
 				<NativeTabs.Trigger.Label>{t("navigation.agents")}</NativeTabs.Trigger.Label>
 				<NativeTabs.Trigger.Icon sf="desktopcomputer" md="computer" />
 			</NativeTabs.Trigger>
-			<NativeTabs.Trigger name="(sessions)">
+			<NativeTabs.Trigger name="(sessions)" testID="tab-sessions">
 				<NativeTabs.Trigger.Label>{t("navigation.sessions")}</NativeTabs.Trigger.Label>
 				<NativeTabs.Trigger.Icon sf="bubble.left" md="chat_bubble" />
 			</NativeTabs.Trigger>
-			<NativeTabs.Trigger name="(library)">
+			<NativeTabs.Trigger name="(library)" testID="tab-library">
 				<NativeTabs.Trigger.Label>{t("navigation.library")}</NativeTabs.Trigger.Label>
 				<NativeTabs.Trigger.Icon sf="books.vertical" md="library_books" />
 			</NativeTabs.Trigger>
-			<NativeTabs.Trigger name="(account)">
+			<NativeTabs.Trigger name="(account)" testID="tab-account">
 				<NativeTabs.Trigger.Label>{t("navigation.account")}</NativeTabs.Trigger.Label>
 				<NativeTabs.Trigger.Icon sf="person.crop.circle" md="person" />
 			</NativeTabs.Trigger>

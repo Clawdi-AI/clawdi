@@ -76,7 +76,7 @@ function ApiKeysView() {
 				refreshing={keys.isRefetching}
 				onRefresh={() => void keys.refetch()}
 				header={
-					<WebView recipe={styles.panel}>
+					<WebView testID="api-keys-header" recipe={styles.panel}>
 						<WebText recipe={styles.factLabel}>{settingsCopy.apiKeysDescription}</WebText>
 						{isEmpty ? null : (
 							<Alert icon={Terminal}>
@@ -101,7 +101,7 @@ function ApiKeysView() {
 					) : null
 				}
 				renderItem={({ item: key }) => (
-					<WebView recipe={styles.card}>
+					<WebView testID={`api-key-${key.id}`} recipe={styles.card}>
 						<WebView recipe={styles.cardHeader} className="flex-row">
 							<WebView recipe={styles.factBody} className="flex-1">
 								<WebText recipe={styles.cardName}>{key.label}</WebText>

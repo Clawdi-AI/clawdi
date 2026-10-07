@@ -7,6 +7,7 @@ import { NativeHeader } from "@/platform/navigation/native-header";
 import type { HeaderAction, HeaderMenu } from "@/platform/navigation/native-header-types";
 
 interface PageHeaderProps {
+	testID?: string;
 	title: ReactNode;
 	titleAdornment?: ReactNode;
 	description?: ReactNode;
@@ -19,6 +20,7 @@ interface PageHeaderProps {
 	"aria-hidden"?: boolean;
 }
 export function PageHeader({
+	testID,
 	title,
 	titleAdornment,
 	description,
@@ -31,6 +33,7 @@ export function PageHeader({
 }: PageHeaderProps) {
 	return (
 		<WebView
+			testID={testID}
 			recipe={styles.root}
 			accessibilityElementsHidden={hidden}
 			importantForAccessibility={hidden ? "no-hide-descendants" : "auto"}

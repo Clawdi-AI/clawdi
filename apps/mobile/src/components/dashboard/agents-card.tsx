@@ -73,6 +73,7 @@ export function AgentTileView({ tile }: { tile: AgentTile }) {
 	const { meta, statusVisual } = agentTileCardProjection(tile);
 	return (
 		<AppPressable
+			testID={`agent-card-${tile.id}`}
 			style={{ height: "auto" }}
 			accessibilityRole="link"
 			accessibilityLabel={`Open ${tile.name}${statusVisual ? `. Status: ${statusVisual.label}` : ""}`}
