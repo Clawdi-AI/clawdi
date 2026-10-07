@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { detectRuntimeMode } from "../runtime/paths";
 import { clearConnectedVaultFiles, connectedVaultFilesSupported } from "../runtime/vault-files";
 import { type ConnectedVaultSync, prepareConnectedVaultSync } from "./vault-sync";
 /**
@@ -401,7 +402,10 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	}
 	const api = new ApiClient({ abortSignal: opts.abort });
 	const shutdownApi = new ApiClient();
-	const profileSync = createProfileSync(opts.adapter, api, opts.environmentId);
+	const runtimeMode = detectRuntimeMode();
+	const profileSync = createProfileSync(opts.adapter, api, opts.environmentId, {
+		manageLocalMcp: runtimeMode !== "hosted",
+	});
 	sessions = profileSync.sessions;
 	const health = new SyncHealth();
 	const inFlightSessionHash = new Map<string, string>();

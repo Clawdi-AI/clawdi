@@ -1,0 +1,6 @@
+appId: ${APP_ID}
+name: Fixture smoke
+---
+- runFlow: launch.yaml
+- runFlow: tabs-fixture.yaml
+- runFlow: settings.yaml

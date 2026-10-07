@@ -18,7 +18,7 @@ import {
 	profileDiscoveryWatchPaths,
 	profileSessionKey,
 } from "../adapters/profiles";
-import { reconcileLocalHermesMcp } from "../commands/hermes-mcp";
+import { classifyHermesMcpFailure, reconcileLocalHermesMcp } from "../commands/hermes-mcp";
 import { log } from "../serve/log";
 import { type ApiClient, ApiError, unwrap } from "./api-client";
 import { canonicalApiOrigin } from "./api-origin";
@@ -66,7 +66,7 @@ export function createProfileSync(
 	adapter: AgentAdapter,
 	api: ApiClient,
 	environmentId: string | null,
-	options: { readOnly?: boolean } = {},
+	options: { readOnly?: boolean; manageLocalMcp?: boolean } = {},
 ): {
 	refresh(context?: SyncReadContext): Promise<void>;
 	refreshIfChanged(context?: SyncReadContext): Promise<void>;
@@ -79,7 +79,10 @@ export function createProfileSync(
 	let discoveryPaths = profileDiscoveryWatchPaths(adapter);
 	let inventorySignature = "";
 	const mcpSeen = new Set<string>();
+	const mcpLoggedFailures = new Set<string>();
+	const mcpFailedProfiles = new Set<string>();
 	const failed = new Set<string>();
+	const manageLocalMcp = options.manageLocalMcp ?? true;
 	const attributed = new Map<string, Set<string>>();
 	let supported = false;
 	const fallback = () => {
@@ -190,20 +193,30 @@ export function createProfileSync(
 			return;
 		}
 		unwrap(inventory);
-		if (adapter.agentType === "hermes")
+		if (adapter.agentType === "hermes" && manageLocalMcp)
 			for (const profile of profiles) {
 				if (mcpSeen.has(profile.profileKey) || failed.has(profile.profileKey)) continue;
-				mcpSeen.add(profile.profileKey);
 				try {
 					await reconcileLocalHermesMcp(
 						true,
 						profile.isDefault ? undefined : profile.upstreamKey,
 						context?.signal,
 					);
-				} catch {
+					if (mcpFailedProfiles.delete(profile.profileKey))
+						log.info("profiles.mcp_recovered", { profile_key: profile.profileKey });
+					mcpSeen.add(profile.profileKey);
+				} catch (error) {
 					context?.signal.throwIfAborted();
-					if (profile.isDefault) log.warn("profiles.mcp_failed", { profile_key: "" });
-					else failProfile(profile.profileKey);
+					mcpFailedProfiles.add(profile.profileKey);
+					const reason = classifyHermesMcpFailure(error);
+					const failureKey = `${profile.profileKey}\u0000${reason}`;
+					if (!mcpLoggedFailures.has(failureKey)) {
+						mcpLoggedFailures.add(failureKey);
+						log.warn("profiles.mcp_failed", {
+							profile_key: profile.profileKey,
+							reason,
+						});
+					}
 				}
 			}
 	};

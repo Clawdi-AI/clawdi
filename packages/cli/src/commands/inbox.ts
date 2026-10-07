@@ -15,11 +15,11 @@ import { rmSync } from "node:fs";
 
 import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
-
 import { allAdapterEntries } from "../adapters/registry";
 import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
+import { commandMessage, commandResult } from "../lib/command-output";
 import { getAuth, getConfig } from "../lib/config";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
@@ -551,7 +551,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 
 export async function inboxDeclineCommand(
 	invitationId: string,
-	opts: { yes?: boolean } = {},
+	opts: { yes?: boolean; json?: boolean } = {},
 ): Promise<void> {
 	const { apiUrl } = getConfig();
 	requireAuth();
@@ -562,6 +562,7 @@ export async function inboxDeclineCommand(
 			action: "decline this invitation",
 		}))
 	) {
+		commandResult(opts.json, "clawdi.inboxDecline.v1", { id: invitationId, status: "cancelled" });
 		return;
 	}
 	const accessToken = await getClawdiAccessToken(apiUrl);
@@ -572,7 +573,8 @@ export async function inboxDeclineCommand(
 		},
 	);
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-	console.log(`${chalk.green("✓")} Invitation declined.`);
+	commandMessage(opts.json, `${chalk.green("✓")} Invitation declined.`);
+	commandResult(opts.json, "clawdi.inboxDecline.v1", { id: invitationId, status: "declined" });
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -581,7 +583,7 @@ export async function inboxDeclineCommand(
 
 export async function inboxForgetCommand(
 	projectId: string,
-	opts: { yes?: boolean } = {},
+	opts: { yes?: boolean; json?: boolean } = {},
 ): Promise<void> {
 	const token = findToken(projectId);
 	if (!token) {
@@ -598,6 +600,10 @@ export async function inboxForgetCommand(
 				action: "forget this local share",
 			}))
 		) {
+			commandResult(opts.json, "clawdi.inboxForget.v1", {
+				project_id: projectId,
+				status: "cancelled",
+			});
 			return;
 		}
 	}
@@ -630,15 +636,27 @@ export async function inboxForgetCommand(
 		throw new Error("local share changed while it was being forgotten; retry the command");
 	}
 
-	console.log(`${chalk.green("✓")} Forgot local share for "${chalk.bold(token.project_name)}".`);
+	commandMessage(
+		opts.json,
+		`${chalk.green("✓")} Forgot local share for "${chalk.bold(token.project_name)}".`,
+	);
 	if (removed > 0) {
-		console.log(chalk.gray(`  Removed ${removed} local skill folder${removed === 1 ? "" : "s"}.`));
+		commandMessage(
+			opts.json,
+			chalk.gray(`  Removed ${removed} local skill folder${removed === 1 ? "" : "s"}.`),
+		);
 	}
-	console.log(
+	commandMessage(
+		opts.json,
 		chalk.gray(
 			"  This only affects this device. To leave the project on the server, run `clawdi project leave <project>`.",
 		),
 	);
+	commandResult(opts.json, "clawdi.inboxForget.v1", {
+		project_id: projectId,
+		status: "forgotten",
+		removed_skill_count: removed,
+	});
 }
 
 // ────────────────────────────────────────────────────────────────

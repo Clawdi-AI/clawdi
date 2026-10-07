@@ -43,7 +43,14 @@ export function SettingsShell({
 	] as const;
 	return (
 		<AppSafeAreaView edges={["left", "right"]} className="flex-1 bg-popover">
-			<WebView recipe={styles.navigation}>
+			{/* A testID alone leaves Compose segments as siblings in Android's accessibility tree.
+			    Keep their parent without making this non-accessible View a focusable group.
+			    https://reactnative.dev/docs/accessibility#importantforaccessibility-android */}
+			<WebView
+				testID="settings-navigation"
+				importantForAccessibility="yes"
+				recipe={styles.navigation}
+			>
 				<NativeSegments
 					value={active}
 					options={items.map((item) => ({ value: item.id, label: item.label }))}

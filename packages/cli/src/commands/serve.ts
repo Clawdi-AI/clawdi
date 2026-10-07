@@ -384,7 +384,7 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 const INSTALL_ALLOWED = new Set(["host", "port", "allowRemote"]);
 const UNINSTALL_ALLOWED = new Set<string>();
 const STOP_ALLOWED = new Set<string>();
-const STATUS_ALLOWED = new Set(["agent"]);
+const STATUS_ALLOWED = new Set(["agent", "json"]);
 const DOCTOR_ALLOWED = new Set(["json"]);
 const RPC_ALLOWED = new Set(["host", "port", "token"]);
 
@@ -435,6 +435,7 @@ export async function serveRestart(opts: ServeInstallOpts): Promise<void> {
 
 interface ServeStatusOpts {
 	agent?: string;
+	json?: boolean;
 }
 
 export async function serveStatus(opts: ServeStatusOpts): Promise<void> {
@@ -443,10 +444,14 @@ export async function serveStatus(opts: ServeStatusOpts): Promise<void> {
 		? [pickAgent(opts.agent).agentType]
 		: listRegisteredAgentTypes();
 	if (targets.length === 0) {
-		console.log("No agents registered yet — run `clawdi setup` first.");
+		console.error("No agents registered yet — run `clawdi setup` first.");
+	}
+	const agents = targets.map(buildStatusReport);
+	if (opts.json) {
+		console.log(JSON.stringify({ schemaVersion: "clawdi.daemonStatus.v1", agents }));
 		return;
 	}
-	for (const [i, report] of targets.map(buildStatusReport).entries()) {
+	for (const [i, report] of agents.entries()) {
 		if (i > 0) console.log("");
 		printAgentStatus(report);
 	}

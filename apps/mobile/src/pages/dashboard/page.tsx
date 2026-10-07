@@ -56,7 +56,7 @@ export default function HomeRoute() {
 	const wallet = useHeaderWalletBalance();
 	const recent = sessions.data?.pages[0]?.items.slice(0, 15) ?? [];
 	return (
-		<SafeAreaScreen>
+		<SafeAreaScreen testID="overview-screen">
 			<NativeHeader
 				title={OVERVIEW_COPY.title}
 				actions={wallet ? [wallet] : []}

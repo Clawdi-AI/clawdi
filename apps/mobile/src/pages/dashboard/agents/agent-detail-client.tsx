@@ -54,6 +54,7 @@ export default function AgentDetailRoute({ section }: { section?: "console" } = 
 				) : (
 					<>
 						<PageHeader
+							testID={`agent-detail-${agent.data.id}`}
 							title={agentDisplayName(agent.data)}
 							description={agentOverviewCopy.description}
 							icon={<WebIcon as={LayoutDashboard} recipe={styles.sectionIcon} />}

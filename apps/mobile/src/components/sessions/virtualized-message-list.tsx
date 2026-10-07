@@ -189,7 +189,7 @@ function TranscriptView({
 		maxLength: SEARCH_QUERY_MAX_LENGTH,
 	});
 	return (
-		<SafeAreaScreen>
+		<SafeAreaScreen testID={`session-transcript-${sessionId}`}>
 			<Stack.Screen
 				options={{
 					headerSearchBarOptions:

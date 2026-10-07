@@ -37,6 +37,56 @@ export interface HermesConfigTransaction {
 
 export type HermesConfigCommitResult = "unchanged" | "committed" | "conflict";
 
+type ErrorCode = string | number | undefined;
+
+function errorProperty(error: unknown, property: "code" | "errno"): ErrorCode {
+	if (typeof error !== "object" || error === null || !(property in error)) return undefined;
+	const record = error as { code?: unknown; errno?: unknown };
+	const value = record[property];
+	return typeof value === "string" || typeof value === "number" ? value : undefined;
+}
+
+export class HermesConfigInvalidError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "HermesConfigInvalidError";
+	}
+}
+
+export class HermesConfigConflictError extends Error {
+	constructor(message = "Hermes config changed during reconciliation") {
+		super(message);
+		this.name = "HermesConfigConflictError";
+	}
+}
+
+export class HermesConfigReadError extends Error {
+	readonly code: ErrorCode;
+	readonly errno: ErrorCode;
+
+	constructor(cause: unknown) {
+		const detail = cause instanceof Error ? cause.message : String(cause);
+		super(`Hermes config could not be read: ${detail}`);
+		this.name = "HermesConfigReadError";
+		this.code = errorProperty(cause, "code");
+		this.errno = errorProperty(cause, "errno");
+	}
+}
+
+export class HermesConfigCommandError extends Error {
+	readonly code: ErrorCode;
+	readonly errno: ErrorCode;
+	readonly status: number | null;
+
+	constructor(operation: string, cause: unknown, status: number | null, detail: string) {
+		super(`${operation} failed${detail ? `: ${detail}` : ""}`);
+		this.name = "HermesConfigCommandError";
+		this.code = errorProperty(cause, "code");
+		this.errno = errorProperty(cause, "errno");
+		this.status = status;
+	}
+}
+
 function commandText(value: string | Buffer | null | undefined): string {
 	return stripTerminalEscapes(String(value ?? "")).trim();
 }
@@ -50,7 +100,7 @@ function commandFailure(
 	}
 	const detail =
 		commandText(result.stderr) || commandText(result.stdout) || commandText(result.error?.message);
-	return new Error(`${operation} failed${detail ? `: ${detail}` : ""}`);
+	return new HermesConfigCommandError(operation, result.error, result.status, detail);
 }
 
 function runHermesConfigCommand(
@@ -83,7 +133,7 @@ export function getHermesResolvedConfigValue(
 	try {
 		return { exists: true, value: JSON.parse(stdout) as unknown };
 	} catch {
-		throw new Error(`Hermes config get ${key} returned invalid JSON`);
+		throw new HermesConfigInvalidError(`Hermes config get ${key} returned invalid JSON`);
 	}
 }
 
@@ -100,7 +150,8 @@ function hermesConfigPath(context: HermesConfigCommandContext): string {
 		throw commandFailure("Hermes config path", result);
 	}
 	const path = commandText(result.stdout);
-	if (!isAbsolute(path)) throw new Error("Hermes config path returned a non-absolute path");
+	if (!isAbsolute(path))
+		throw new HermesConfigInvalidError("Hermes config path returned a non-absolute path");
 	return path;
 }
 
@@ -113,9 +164,7 @@ function readHermesConfigContentAtPath(path: string): string {
 		return readFileSync(path, "utf8");
 	} catch (error) {
 		if (error instanceof Error && "code" in error && error.code === "ENOENT") return "";
-		throw new Error(
-			`Hermes config could not be read: ${error instanceof Error ? error.message : String(error)}`,
-		);
+		throw new HermesConfigReadError(error);
 	}
 }
 
@@ -127,12 +176,12 @@ function readHermesConfigDocumentAtPath(path: string): {
 } {
 	const content = readHermesConfigContentAtPath(path);
 	const document = parseDocument(content);
-	if (document.errors.length > 0) {
-		throw new Error(`Hermes config is invalid YAML: ${document.errors[0]?.message}`);
-	}
+	if (document.errors.length > 0)
+		throw new HermesConfigInvalidError("Hermes config is invalid YAML");
 	const parsed = document.toJS() as unknown;
 	if (parsed === null || parsed === undefined) return { path, content, document, root: {} };
-	if (!isConfigRecord(parsed)) throw new Error("Hermes config must be an object");
+	if (!isConfigRecord(parsed))
+		throw new HermesConfigInvalidError("Hermes config must be an object");
 	return { path, content, document, root: parsed };
 }
 
@@ -162,7 +211,7 @@ export function getHermesRawConfigValue(
 }
 
 export function getHermesRawConfigFileValue(path: string, key: string): HermesConfigValue {
-	if (!isAbsolute(path)) throw new Error("Hermes config path must be absolute");
+	if (!isAbsolute(path)) throw new HermesConfigInvalidError("Hermes config path must be absolute");
 	return rawConfigValue(readHermesConfigDocumentAtPath(path).root, key);
 }
 
@@ -192,7 +241,9 @@ function setHermesConfigValue(
 			continue;
 		}
 		if (!isConfigRecord(parent.value)) {
-			throw new Error(`Hermes config field ${parentPath.join(".")} must be an object`);
+			throw new HermesConfigInvalidError(
+				`Hermes config field ${parentPath.join(".")} must be an object`,
+			);
 		}
 	}
 	transaction.document.setIn(keyPath, transaction.document.createNode(value));
@@ -247,7 +298,7 @@ export function reconcileHermesConfigValue(
 
 function commitImmediateHermesConfigTransaction(transaction: HermesConfigTransaction): void {
 	if (commitHermesConfigTransaction(transaction) === "conflict") {
-		throw new Error("Hermes config changed during reconciliation");
+		throw new HermesConfigConflictError();
 	}
 }
 
@@ -269,7 +320,8 @@ export function commitHermesConfigTransaction(
 function configDocumentRoot(document: ReturnType<typeof parseDocument>): Record<string, unknown> {
 	const parsed = document.toJS() as unknown;
 	if (parsed === null || parsed === undefined) return {};
-	if (!isConfigRecord(parsed)) throw new Error("Hermes config must be an object");
+	if (!isConfigRecord(parsed))
+		throw new HermesConfigInvalidError("Hermes config must be an object");
 	return parsed;
 }
 
@@ -291,15 +343,21 @@ export async function beginHermesConfigTransactionAsync(
 		},
 	);
 	const path = commandText(result.stdout);
-	if (!isAbsolute(path)) throw new Error("Hermes config path returned a non-absolute path");
+	if (!isAbsolute(path))
+		throw new HermesConfigInvalidError("Hermes config path returned a non-absolute path");
 	let content = "";
 	try {
 		content = await readFile(path, "utf8");
 	} catch (error) {
-		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+			content = "";
+		} else {
+			throw new HermesConfigReadError(error);
+		}
 	}
 	const document = parseDocument(content);
-	if (document.errors.length > 0) throw new Error("Hermes config is invalid YAML");
+	if (document.errors.length > 0)
+		throw new HermesConfigInvalidError("Hermes config is invalid YAML");
 	configDocumentRoot(document);
 	return { context, path, sourceContent: content, document, changed: false };
 }

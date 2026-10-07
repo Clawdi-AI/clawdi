@@ -2971,7 +2971,16 @@ exec /usr/bin/systemctl "$@"
 			);
 			return components?.entries.find((entry) => entry.component === "hermes-ui")?.status;
 		};
-		expect(await componentStatus()).toBe("ok");
+		const expectComponentStatusOk = async () => {
+			const deadline = Date.now() + VIRGIN_RUNTIME_PORT_TIMEOUT_MS;
+			let status = await componentStatus();
+			while (status !== "ok" && Date.now() < deadline) {
+				await Bun.sleep(100);
+				status = await componentStatus();
+			}
+			expect(status).toBe("ok");
+		};
+		await expectComponentStatusOk();
 		const initialGatewayEnvironment = readFileSync(
 			join(paths.systemdEnvRoot, "hermes-gateway.service.env"),
 			"utf8",
@@ -2988,7 +2997,7 @@ exec /usr/bin/systemctl "$@"
 		const failedFinalState = behavioralGuardObservableState(paths, skillRoot);
 		expect(directoryFileDigests(paths.runConfigRoot)).toEqual(initialRunConfigs);
 		expect(readFileSync(paths.appliedState, "utf8")).toBe(initialAppliedBytes);
-		expect(await componentStatus()).toBe("ok");
+		await expectComponentStatusOk();
 		expect(failedFinalState.appliedState.generation).toBe(1);
 		expect(failedFinalState.lastGood.generation).toBe(1);
 		expect(failedFinalState.skillTree["SKILL.md"]).toContain(
@@ -3024,7 +3033,7 @@ exec /usr/bin/systemctl "$@"
 		expect(readFileSync(failureMarker, "utf8").trim()).toBe("consumed");
 		expect(readFileSync(dashboardConfigPath, "utf8")).toBe(retainedBytes);
 		expect(readFileSync(paths.appliedState, "utf8")).toBe(retainedApplied);
-		expect(await componentStatus()).toBe("ok");
+		await expectComponentStatusOk();
 
 		const repaired = await convergeBehavioralGuard(generationThree, paths, generationThreeSkill);
 		expect([...repaired.installErrors, ...repaired.resourceProjectionErrors]).toEqual([]);

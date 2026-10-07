@@ -27,7 +27,7 @@ export function GeneralPanel() {
 	const router = useRouter();
 	const initial = user?.fullName?.[0] ?? user?.primaryEmailAddress?.emailAddress?.[0] ?? "U";
 	return (
-		<WebView recipe={styles.panel}>
+		<WebView testID="settings-general" recipe={styles.panel}>
 			<SettingsPanelHeader
 				title={t("settingsParity.general")}
 				description={t("settingsParity.generalDescription")}
@@ -40,8 +40,12 @@ export function GeneralPanel() {
 					<WebView recipe={styles.identity} className="flex-row">
 						<Avatar src={user?.imageUrl} fallback={initial} className={webView(styles.avatar)} />
 						<WebView recipe={styles.identityText}>
-							<WebText recipe={styles.name}>{user?.fullName ?? "Anonymous"}</WebText>
-							<WebText recipe={styles.email}>{user?.primaryEmailAddress?.emailAddress}</WebText>
+							<WebText testID="settings-user-name" recipe={styles.name}>
+								{user?.fullName ?? "Anonymous"}
+							</WebText>
+							<WebText testID="settings-user-email" recipe={styles.email}>
+								{user?.primaryEmailAddress?.emailAddress}
+							</WebText>
 						</WebView>
 					</WebView>
 					<Button variant="outline" size="sm" onPress={() => router.push("/settings/account")}>
@@ -51,7 +55,7 @@ export function GeneralPanel() {
 				</WebView>
 			</SettingsSection>
 			<SettingsSection title={t("settingsParity.appearance")}>
-				<WebView recipe={styles.appearanceRow}>
+				<WebView testID="settings-appearance" recipe={styles.appearanceRow}>
 					<WebView recipe={styles.appearanceLabel}>
 						<Label>{t("settingsParity.theme")}</Label>
 						<WebText recipe={styles.description}>{t("settingsParity.themeDescription")}</WebText>

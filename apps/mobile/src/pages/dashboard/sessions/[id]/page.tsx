@@ -55,6 +55,7 @@ export default function SessionDetailRoute() {
 	const header = (
 		<WebView recipe={styles.header}>
 			<PageHeader
+				testID={`session-detail-${session.id}`}
 				title={sessionTitle(session)}
 				className={webView(styles.header)}
 				status={

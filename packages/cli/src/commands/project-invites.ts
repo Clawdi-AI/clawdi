@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { commandMessage, commandResult } from "../lib/command-output";
 
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
@@ -33,7 +34,7 @@ interface InvitationItem {
 
 export async function projectInvitesCommand(
 	projectArg: string,
-	opts: { cancel?: string; yes?: boolean },
+	opts: { cancel?: string; yes?: boolean; json?: boolean },
 ): Promise<void> {
 	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
@@ -50,6 +51,11 @@ export async function projectInvitesCommand(
 					action: "cancel this project invitation",
 				}))
 			) {
+				commandResult(opts.json, "clawdi.projectInvites.v1", {
+					project_id: projectId,
+					id: opts.cancel,
+					status: "cancelled",
+				});
 				return;
 			}
 		}
@@ -59,8 +65,13 @@ export async function projectInvitesCommand(
 			`/v1/projects/${projectId}/invitations/${opts.cancel}`,
 			{ method: "DELETE" },
 		);
-		console.log(`${chalk.green("✓")} Invitation canceled.`);
-		console.log(chalk.gray("  The recipient will no longer see it in their inbox."));
+		commandMessage(opts.json, `${chalk.green("✓")} Invitation canceled.`);
+		commandMessage(opts.json, chalk.gray("  The recipient will no longer see it in their inbox."));
+		commandResult(opts.json, "clawdi.projectInvites.v1", {
+			project_id: projectId,
+			id: opts.cancel,
+			status: "canceled",
+		});
 		return;
 	}
 
@@ -69,6 +80,10 @@ export async function projectInvitesCommand(
 		apiKey,
 		`/v1/projects/${projectId}/invitations`,
 	);
+	if (opts.json) {
+		commandResult(true, "clawdi.projectInvites.v1", { project_id: projectId, invitations: items });
+		return;
+	}
 	if (items.length === 0) {
 		console.log("No pending invites on this project.");
 		console.log();

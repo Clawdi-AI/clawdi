@@ -177,6 +177,7 @@ Examples:
 	serveCmd
 		.command("status")
 		.description("Show daemon health (last heartbeat) and supervisor state")
+		.option("--json", "Output as JSON")
 		.option("--agent <type>", "Agent to check (defaults to all registered agents)")
 		.action(async (_opts, cmd) => {
 			const h = await get();
