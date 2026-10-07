@@ -39,12 +39,15 @@ The five native tabs use pathless groups over Web URLs: `/`, `/agents`,
 `project-access`, `model-provider` and `channel-links` segments. Agent details
 retain nested resource URLs; Skill keys use the path rather than a query-only
 `detail` route, and Vault slugs resolve to a stable, account-scoped identity.
-The Account tab root `/settings` is a native settings menu listing Web's
-settings dialog sections (General, API Keys, Wallet, Compute) and Clerk's
-"Manage account"; each row pushes `/settings/<panel>`. Web's
-`?settings=<section>` ids (`billing-wallet`, `billing-plan`, `profile`, ...)
-open the matching `/settings/<panel>`; Clerk's native `UserProfileView` lives
-at `/settings/account`. Hosted deployments open through their Agent id.
+The Account tab root `/settings` is a native grouped settings menu: General,
+Account (Clerk's native `UserProfileView`), API Keys, then Wallet and Compute
+when a compute API is configured. Each row pushes a natively headed
+`/settings/{general,account,api-keys,wallet,compute}` page; AI Usage will join
+the hosted group as `/settings/usage`. Web's `?settings=<section>` ids
+(`general`, `api-keys`, `billing-wallet`, `billing-plan`, `profile`) open the
+matching page; unknown sections, including `billing-usage` until it is ported,
+open the menu. `SettingsShell` is now only the panel screen container
+(`scroll` toggles the Web panel ScrollView); it has no section navigation. Hosted deployments open through their Agent id.
 The previous deployment inventory screen is covered by the Agents inventory.
 
 Mobile-only tab hubs, the Clerk profile route, development galleries and native

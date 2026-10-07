@@ -24,21 +24,10 @@ export default function SettingsMenuPage() {
 		label: string,
 		description?: string,
 	): SettingsMenuRow => ({ id, icon, label, description, onPress: () => router.push(href) });
+	// AI Usage (`/settings/usage`) joins the hosted rows when its panel is ported.
 	const sections: SettingsMenuSection[] = [
 		{
-			id: "account",
-			rows: [
-				row(
-					"account",
-					"/settings/account",
-					UserCog,
-					t("settingsParity.manageAccount"),
-					user?.primaryEmailAddress?.emailAddress,
-				),
-			],
-		},
-		{
-			id: "panels",
+			id: "settings",
 			rows: [
 				row(
 					"general",
@@ -48,14 +37,26 @@ export default function SettingsMenuPage() {
 					t("settingsParity.generalSummary"),
 				),
 				row(
+					"account",
+					"/settings/account",
+					UserCog,
+					t("settingsParity.account"),
+					user?.primaryEmailAddress?.emailAddress ?? t("settingsParity.accountDescription"),
+				),
+				row(
 					"api-keys",
 					"/settings/api-keys",
 					Key,
 					t("settingsParity.apiKeys"),
 					t("settingsParity.apiKeysSummary"),
 				),
-				...(compute
-					? [
+			],
+		},
+		...(compute
+			? [
+					{
+						id: "hosted",
+						rows: [
 							row(
 								"wallet",
 								"/settings/wallet",
@@ -70,10 +71,10 @@ export default function SettingsMenuPage() {
 								t("billingParity.compute"),
 								t("billingParity.computeSummary"),
 							),
-						]
-					: []),
-			],
-		},
+						],
+					},
+				]
+			: []),
 	];
 	return (
 		<SafeAreaScreen>
