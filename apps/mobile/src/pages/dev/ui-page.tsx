@@ -61,18 +61,6 @@ import { SectionLabel } from "@/components/section-label";
 import { TimeTooltip } from "@/components/time-tooltip";
 import { TruncatedText } from "@/components/truncated-text";
 import { Alert } from "@/components/ui/alert";
-import {
-	AlertDialog,
-	AlertDialogAction,
-	AlertDialogCancel,
-	AlertDialogContent,
-	AlertDialogDescription,
-	AlertDialogFooter,
-	AlertDialogHeader,
-	AlertDialogMedia,
-	AlertDialogTitle,
-	AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,17 +73,8 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ConfirmAction } from "@/components/ui/confirm-action";
-import {
-	Dialog,
-	DialogClose,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-	DialogTrigger,
-} from "@/components/ui/dialog";
 import {
 	DropdownMenu,
 	DropdownMenuCheckboxItem,
@@ -113,7 +92,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
-import { SearchInput } from "@/components/ui/search-input";
 import {
 	Select,
 	SelectContent,
@@ -125,25 +103,15 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import {
-	Sheet,
-	SheetClose,
-	SheetContent,
-	SheetDescription,
-	SheetFooter,
-	SheetHeader,
-	SheetTitle,
-	SheetTrigger,
-} from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge, StatusDot, type StatusTone } from "@/components/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Text } from "@/components/ui/text";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { AppSafeAreaView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
 
 const buttonVariants = ["default", "outline", "secondary", "ghost", "destructive", "link"] as const;
 const buttonSizes = ["default", "xs", "sm", "lg", "icon", "icon-xs", "icon-sm", "icon-lg"] as const;
@@ -164,12 +132,10 @@ function GallerySection({ name, children }: { name: string; children: ReactNode 
 }
 function Gallery() {
 	const t = useI18n(),
-		[search, setSearch] = useState(""),
 		[filter, setFilter] = useState(false),
 		[checked, setChecked] = useState(true),
 		[choice, setChoice] = useState("projects"),
-		[confirmed, setConfirmed] = useState(false),
-		[alertOpen, setAlertOpen] = useState(false);
+		[confirmed, setConfirmed] = useState(false);
 	const identity = identityFor(sampleName),
 		brand = frameworkBrandIcon("codex");
 	const icon = (
@@ -308,7 +274,7 @@ function Gallery() {
 			),
 		},
 		{
-			name: "Input / Label / Textarea / SearchInput",
+			name: "Input / Label / Textarea",
 			render: () => (
 				<>
 					<Label>{t("projects.name")}</Label>
@@ -316,8 +282,6 @@ function Gallery() {
 					<Input placeholder={t("projects.name")} />
 					<Input value={sampleName} editable={false} />
 					<Input multiline defaultValue={t("projects.description")} />
-					<SearchInput value={search} onChange={setSearch} />
-					<SearchInput value={sampleName} onChange={noop} />
 				</>
 			),
 		},
@@ -582,14 +546,13 @@ function Gallery() {
 			),
 		},
 		{
-			name: "SectionLabel / ListToolbar / FilterChip / Tabs / Switch / ToggleGroup",
+			name: "SectionLabel / ListToolbar / FilterChip / Tabs / Switch / NativeSegments / Checkbox",
 			render: () => (
 				<>
 					<SectionLabel leading={icon} count={12}>
 						{t("projects.title")}
 					</SectionLabel>
 					<ListToolbar
-						search={<SearchInput value={search} onChange={setSearch} />}
 						filters={
 							<>
 								<FilterChip active={!filter} onClick={() => setFilter(false)}>
@@ -632,27 +595,46 @@ function Gallery() {
 							</>
 						}
 					/>
-					{(["default", "outline"] as const).flatMap((variant) =>
-						(["default", "sm", "lg"] as const).map((size) => (
-							<ToggleGroup
-								key={`${variant}/${size}`}
-								variant={variant}
-								size={size}
-								defaultValue={["projects"]}
-								spacing={variant === "outline" ? 0 : 2}
-							>
-								<ToggleGroupItem value="projects">{t("projects.title")}</ToggleGroupItem>
-								<ToggleGroupItem value="skills">{t("home.statsSkills")}</ToggleGroupItem>
-								<ToggleGroupItem value="vaults" disabled>
-									{t("sharing.vaults")}
-								</ToggleGroupItem>
-							</ToggleGroup>
-						)),
-					)}
-					<ToggleGroup multiple orientation="vertical">
-						<ToggleGroupItem value="projects">{t("projects.title")}</ToggleGroupItem>
-						<ToggleGroupItem value="skills">{t("home.statsSkills")}</ToggleGroupItem>
-					</ToggleGroup>
+					<NativeSegments
+						value={choice}
+						onChange={setChoice}
+						options={[
+							{ value: "projects", label: t("projects.title") },
+							{ value: "skills", label: t("home.statsSkills") },
+						]}
+					/>
+					<NativeSegments
+						value={choice}
+						onChange={setChoice}
+						disabled
+						options={[
+							{ value: "projects", label: t("projects.title") },
+							{ value: "skills", label: t("home.statsSkills") },
+						]}
+					/>
+					<ListToolbar
+						filters={
+							<>
+								<Checkbox
+									checked={checked}
+									onCheckedChange={setChecked}
+									accessibilityLabel={t("projects.title")}
+								/>
+								<Checkbox
+									checked={false}
+									onCheckedChange={noop}
+									disabled
+									accessibilityLabel={t("home.statsSkills")}
+								/>
+								<Checkbox
+									checked
+									onCheckedChange={noop}
+									disabled
+									accessibilityLabel={t("sharing.vaults")}
+								/>
+							</>
+						}
+					/>
 				</>
 			),
 		},
@@ -725,66 +707,9 @@ function Gallery() {
 			),
 		},
 		{
-			name: "Dialog / Sheet / AlertDialog / ConfirmAction",
+			name: "ConfirmAction",
 			render: () => (
 				<>
-					<Dialog>
-						<DialogTrigger>
-							<Text>{t("projects.edit")}</Text>
-						</DialogTrigger>
-						<DialogContent>
-							<DialogHeader>
-								<DialogTitle>{t("projects.edit")}</DialogTitle>
-								<DialogDescription>{t("projects.description")}</DialogDescription>
-							</DialogHeader>
-							<Input defaultValue={sampleName} />
-							<DialogFooter showCloseButton>
-								<DialogClose>
-									<Text>{t("projects.save")}</Text>
-								</DialogClose>
-							</DialogFooter>
-						</DialogContent>
-					</Dialog>
-					{(["top", "right", "bottom", "left"] as const).map((side) => (
-						<Sheet key={side}>
-							<SheetTrigger>
-								<Text>Sheet/{side}</Text>
-							</SheetTrigger>
-							<SheetContent side={side}>
-								<SheetHeader>
-									<SheetTitle>{sampleName}</SheetTitle>
-									<SheetDescription>{t("projects.description")}</SheetDescription>
-								</SheetHeader>
-								<SheetFooter>
-									<SheetClose>
-										<Text>{t("composite.close")}</Text>
-									</SheetClose>
-								</SheetFooter>
-							</SheetContent>
-						</Sheet>
-					))}
-					<AlertDialog open={alertOpen} onOpenChange={setAlertOpen}>
-						<AlertDialogTrigger>
-							<Text>{t("projects.archive")}</Text>
-						</AlertDialogTrigger>
-						<AlertDialogContent size="sm">
-							<AlertDialogHeader>
-								<AlertDialogMedia>
-									<Icon as={Archive} />
-								</AlertDialogMedia>
-								<AlertDialogTitle>{t("projects.archive")}</AlertDialogTitle>
-								<AlertDialogDescription>{t("projects.archiveWarning")}</AlertDialogDescription>
-							</AlertDialogHeader>
-							<AlertDialogFooter>
-								<AlertDialogCancel>
-									<Text>{t("composite.cancel")}</Text>
-								</AlertDialogCancel>
-								<AlertDialogAction variant="destructive" onPress={() => setAlertOpen(false)}>
-									<Text>{t("composite.confirm")}</Text>
-								</AlertDialogAction>
-							</AlertDialogFooter>
-						</AlertDialogContent>
-					</AlertDialog>
 					<ConfirmAction
 						title={t("projects.archive")}
 						description={t("projects.archiveWarning")}
@@ -835,7 +760,7 @@ function Gallery() {
 								}
 							/>
 							<DashboardSectionToolbar>
-								<SearchInput value={search} onChange={setSearch} />
+								<Text>{t("projects.description")}</Text>
 							</DashboardSectionToolbar>
 							<DashboardEmptyLine title={t("projects.empty")} message={t("projects.description")} />
 						</DashboardSection>

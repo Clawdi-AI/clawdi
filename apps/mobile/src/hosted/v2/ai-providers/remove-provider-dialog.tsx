@@ -206,8 +206,16 @@ function ProviderRemoveForm({
 							checked={acknowledged}
 							disabled={action.busy}
 							onCheckedChange={setAcknowledged}
+							accessibilityLabel={copy.acknowledge}
 						/>
-						<Label className="flex-1">{copy.acknowledge}</Label>
+						<Label
+							className="flex-1"
+							accessibilityElementsHidden
+							importantForAccessibility="no"
+							onPress={action.busy ? undefined : () => setAcknowledged(!acknowledged)}
+						>
+							{copy.acknowledge}
+						</Label>
 					</WebView>
 				</>
 			) : null}

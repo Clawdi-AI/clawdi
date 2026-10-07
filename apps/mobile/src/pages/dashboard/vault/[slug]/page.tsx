@@ -520,7 +520,12 @@ function VaultDetail({
 									className={webView(addKeysDialogClasses.checkbox)}
 								/>
 								<WebView recipe={addKeysDialogClasses.newField} className="flex-1">
-									<Label className={webBoth(addKeysDialogClasses.label)}>
+									<Label
+										className={webBoth(addKeysDialogClasses.label)}
+										accessibilityElementsHidden
+										importantForAccessibility="no"
+										onPress={action.busy ? undefined : () => setReplace(!replace)}
+									>
 										{formCopy.overwrite}
 									</Label>
 									<WebText recipe={addKeysDialogClasses.meta}>
