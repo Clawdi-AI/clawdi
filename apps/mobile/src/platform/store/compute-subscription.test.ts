@@ -214,7 +214,7 @@ describe("restore purchases", () => {
 			],
 		};
 		expect(restoredComputeSlot(previous, response)).toEqual(previous);
-		expect(restoredComputeSlot(previous, { ...response, compute_slot: null })).toBeNull();
+		expect(restoredComputeSlot(previous, { ...response, compute_slot: null })).toEqual(previous);
 		const startup = {
 			computeSlot: previous,
 			recovery: ["startup-recovery"],

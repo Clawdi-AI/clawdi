@@ -17,9 +17,7 @@ export function restoredComputeSlot(
 	previous: StoreComputeReconcileResponse["compute_slot"] | null | undefined,
 	response: Pick<StoreComputeReconcileResponse, "compute_slot">,
 ): NonNullable<StoreComputeReconcileResponse["compute_slot"]> | null {
-	return Object.hasOwn(response, "compute_slot")
-		? (response.compute_slot ?? null)
-		: (previous ?? null);
+	return response.compute_slot ?? previous ?? null;
 }
 
 /** Restore updates only observations returned by Hosted; startup state stays visible. */
