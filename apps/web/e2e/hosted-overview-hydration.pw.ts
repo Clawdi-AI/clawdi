@@ -12,6 +12,10 @@ const HYDRATION_ERROR = /Hydration failed|Minified React error #418/;
 // The ownership sensor fills the deployments cache once the dashboard shell
 // hydrates, often before the lazy agent boundary does. The boundary's
 // hydration render must still match the server skeleton.
+//
+// Detection is probabilistic: without the fix this fails in roughly 60-75% of
+// Vite dev cold loads. Do not add CPU throttling; on Vite dev it stalls
+// hydration past the expect timeout and hides the race (0/20 detected at 4x).
 for (const { label, path, ready } of [
 	{ label: "overview", path: "", ready: "Compute" },
 	{ label: "settings", path: "/settings", ready: "Basic plan" },
