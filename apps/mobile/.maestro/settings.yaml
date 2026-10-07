@@ -21,18 +21,19 @@ name: Account settings and fixture API keys
 - assertVisible:
     id: settings-row-account
 - assertVisible:
+    text: avery@clawdi.dev
+- assertVisible:
     id: settings-row-api-keys
+# The fixture configures a compute API, so the hosted rows are present.
+- assertVisible:
+    id: settings-row-wallet
+- assertVisible:
+    id: settings-row-compute
 - takeScreenshot: settings-menu
 - tapOn:
     id: settings-row-general
 - assertVisible:
     id: settings-general
-- assertVisible:
-    id: settings-user-name
-    text: Avery Chen
-- assertVisible:
-    id: settings-user-email
-    text: avery@clawdi.dev
 - assertVisible:
     id: settings-appearance
 - takeScreenshot: settings

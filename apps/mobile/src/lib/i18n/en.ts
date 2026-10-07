@@ -466,6 +466,10 @@ export const en = {
 		failed: "Could not read or save your appearance preference. Please retry.",
 		retry: "Retry loading appearance",
 	},
+	settingsMenu: {
+		generalSummary: "Appearance",
+		generalDescription: "Appearance preferences for this device.",
+	},
 	publicSession: {
 		open: "Open a shared Session",
 		title: "Shared Session",

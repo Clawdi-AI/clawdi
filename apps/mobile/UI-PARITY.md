@@ -43,11 +43,14 @@ The Account tab root `/settings` is a native grouped settings menu: General,
 Account (Clerk's native `UserProfileView`), API Keys, then Wallet and Compute
 when a compute API is configured. Each row pushes a natively headed
 `/settings/{general,account,api-keys,wallet,compute}` page; AI Usage will join
-the hosted group as `/settings/usage`. Web's `?settings=<section>` ids
-(`general`, `api-keys`, `billing-wallet`, `billing-plan`, `profile`) open the
-matching page; unknown sections, including `billing-usage` until it is ported,
-open the menu. `SettingsShell` is now only the panel screen container
-(`scroll` toggles the Web panel ScrollView); it has no section navigation. Hosted deployments open through their Agent id.
+the hosted group as `/settings/usage`. Web's `?settings=<panel>` opens the
+matching `/settings/<panel>`. Because the Account row is the account entry,
+mobile General shows only Appearance (mobile-only row subtitle and panel
+description; Web's General keeps its Account section). `SettingsShell` is only
+the panel screen container (`scroll` toggles the Web panel ScrollView) with no
+section navigation. Pushed settings pages use the native screen background
+(`bg-background`, matching the stack header) instead of the Web dialog's
+`bg-popover` surface. Hosted deployments open through their Agent id.
 The previous deployment inventory screen is covered by the Agents inventory.
 
 Mobile-only tab hubs, the Clerk profile route, development galleries and native
@@ -215,12 +218,16 @@ refresh. Put the sheet description and form controls in the list header; the
 native sheet keeps the same close/error and busy-dismiss guards.
 
 **Settings menu** — `src/components/settings/settings-menu{,.android}.tsx`.
-iOS uses `@expo/ui`'s universal `FieldGroup` (SwiftUI `Form`/`Section`) with
-`ListItem` rows. Android uses Compose Material 3 `ListItem` rows with
-`clickable` and `testID` modifiers in a `LazyColumn`: the universal Android
-`FieldGroup.Section` wraps every row in its own non-clickable `ListItem`, so it
-cannot host full-width tappable navigation rows. Rows keep Web's sidebar
-labels, descriptions and Lucide icons; panels own their native stack titles.
+iOS uses `@expo/ui`'s universal `FieldGroup` (SwiftUI `Form`/`Section`); rows
+are SwiftUI plain `Button`s laid out like the universal `ListItem`, with a
+native `chevron.right` SF Symbol in the tertiary style (the universal iOS
+`ListItem` wraps every accessory in `RNHostView`, so it cannot take a SwiftUI
+`Image`). Android uses universal `ListItem` rows (Compose Material 3) in a
+`LazyColumn`, with a Compose `testID` modifier because the Android `ListItem`
+ignores `testID`: the universal Android `FieldGroup.Section` wraps every row in
+its own non-clickable `ListItem`, so it cannot host full-width tappable
+navigation rows. Rows keep Web's sidebar labels, descriptions and Lucide icons
+(General's subtitle is mobile-only); panels own their native stack titles.
 
 **Lists** — `src/components/ui/native-list.tsx`. One FlatList owns scrolling,
 RefreshControl and `onEndReached`. Keep Web sections, filters, empty/error/

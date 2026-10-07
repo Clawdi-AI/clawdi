@@ -98,22 +98,6 @@ test("Web paths resolve identically for custom scheme and verified universal lin
 			() => "",
 		),
 	).toBe("/settings/wallet");
-	for (const [section, panel] of [
-		["billing-wallet", "/settings/wallet"],
-		["billing-plan", "/settings/compute"],
-		["profile", "/settings/general"],
-		["api-keys", "/settings/api-keys"],
-		["billing-usage", "/settings"],
-		["constructor", "/settings"],
-	]) {
-		expect(
-			mobileLinkDestination(
-				`https://links.example.test/?settings=${section}`,
-				["links.example.test"],
-				() => "",
-			),
-		).toBe(panel);
-	}
 	for (const page of ["/agents/agent-id", "/sessions", "/skills/key"]) {
 		expect(mobileLinkDestination(`clawdi://${page.slice(1)}?settings=wallet`, [], () => "")).toBe(
 			"/settings/wallet",

@@ -34,7 +34,7 @@ export default function SettingsMenuPage() {
 					"/settings/general",
 					SlidersHorizontal,
 					t("settingsParity.general"),
-					t("settingsParity.generalSummary"),
+					t("settingsMenu.generalSummary"),
 				),
 				row(
 					"account",
