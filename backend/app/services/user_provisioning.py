@@ -28,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.posthog import stage_capture
 from app.models.project import PROJECT_KIND_PERSONAL, Project
 from app.models.user import (
     PRINCIPAL_KIND_CLERK,
@@ -142,6 +143,13 @@ async def lazy_create_user_with_personal_project(
         db,
         user=new_user,
         identity_log=f"clerk_id={clerk_id}",
+    )
+    stage_capture(
+        db,
+        "user_enrolled",
+        user=new_user,
+        event_key=str(new_user.id),
+        timestamp=new_user.created_at,
     )
     return new_user
 
