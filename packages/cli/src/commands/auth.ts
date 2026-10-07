@@ -204,7 +204,7 @@ async function runDeviceLogin(
 			error instanceof ClerkOAuthError &&
 			error.code === "credential_state_changed" &&
 			isClerkOAuthAuth(current) &&
-			current.subject === auth.subject
+			current.userId === auth.userId
 		) {
 			if (!ui.quiet) {
 				loginMessage(`Signed in as ${current.email || current.userId}`);
@@ -293,13 +293,6 @@ export async function authComplete() {
 		return;
 	}
 	try {
-		if (pending.authType === "clerk_oauth_pkce") {
-			await clearPendingClerkOAuthLogin(pending);
-			throw new ClerkOAuthError(
-				"legacy_pending_auth",
-				"This sign-in was started by an older Clawdi CLI. Run `clawdi auth login` again.",
-			);
-		}
 		if (
 			!Number.isFinite(Date.parse(pending.expiresAt)) ||
 			Date.parse(pending.expiresAt) <= Date.now()
@@ -372,11 +365,10 @@ export async function authLogout() {
 
 	// Warn about running daemons before clearing creds. `clearAuth`
 	// deletes auth.json, but launchd / systemd units installed by
-	// `clawdi daemon install` keep
-	// running with the API key cached in their unit env. They'll
-	// keep posting heartbeats to the cloud (with a now-revoked
-	// token, getting 401s in a tight loop) until the user
-	// `daemon uninstall`s.
+	// `clawdi daemon install` keep running with the credential captured
+	// for that daemon. They'll keep posting heartbeats to the cloud
+	// after sign-out (with a stale or revoked token, getting 401s in a
+	// tight loop) until the user `daemon uninstall`s.
 	//
 	// Source from `listInstalledAgents` (scans the OS supervisor)
 	// not `listRegisteredAgentTypes` (env-file registry) — the

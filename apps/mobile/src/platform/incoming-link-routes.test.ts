@@ -77,8 +77,12 @@ const paths = [
 	`/share/${"a".repeat(43)}`,
 	"/sign-in",
 	"/sign-up",
+	"/settings",
+	"/settings/general",
 	"/settings/api-keys",
 	"/settings/account",
+	"/settings/wallet",
+	"/settings/compute",
 ];
 test("Web paths resolve identically for custom scheme and verified universal links", () => {
 	for (const path of paths) {
@@ -104,6 +108,54 @@ test("Web paths resolve identically for custom scheme and verified universal lin
 		);
 	}
 });
+
+test.each([
+	["/?settings=billing-plan", "/settings/compute"],
+	["/deploy?checkout=cancel", "/deploy?checkout=cancel"],
+	["/?settings=billing-plan&checkout=cancel", "/settings/compute"],
+	[
+		"/?settings=billing-wallet&wallet_checkout_session_id={CHECKOUT_SESSION_ID}",
+		"/settings/wallet",
+	],
+	["/?settings=billing-wallet", "/settings/wallet"],
+	["/?settings=billing-plan&session_id={CHECKOUT_SESSION_ID}", "/settings/compute"],
+	["/?settings=billing-usage", "/settings"],
+	["/?settings=billing-wallet#billing", "/settings/wallet"],
+])("hosted return or notification URL %s resolves to %s", (path, destination) => {
+	expect(
+		mobileLinkDestination(`https://cloud.clawdi.ai${path}`, ["cloud.clawdi.ai"], () => {
+			throw new Error("Billing links must not stage capabilities");
+		}),
+	).toBe(destination);
+});
+
+test.each([
+	["general", "/settings/general"],
+	["account", "/settings/account"],
+	["api-keys", "/settings/api-keys"],
+	["wallet", "/settings/wallet"],
+	["compute", "/settings/compute"],
+	["billing", "/settings/compute"],
+	["billing-wallet", "/settings/wallet"],
+	["billing-plan", "/settings/compute"],
+	["billing-usage", "/settings"],
+	["profile", "/settings/general"],
+	["", "/settings"],
+	["unknown", "/settings"],
+	["constructor", "/settings"],
+])("Web and legacy mobile settings id %s resolves to %s without the hash", (panel, destination) => {
+	for (const page of ["/", "/agents/agent-id", "/sessions", "/skills/key"]) {
+		const path = `${page}?settings=${panel}#billing`;
+		for (const link of [path, `clawdi://${path.slice(1)}`, `https://cloud.clawdi.ai${path}`]) {
+			expect(
+				mobileLinkDestination(link, ["cloud.clawdi.ai"], () => {
+					throw new Error("Settings links must not stage capabilities");
+				}),
+			).toBe(destination);
+		}
+	}
+});
+
 test("resource links reject unverified hosts and unsupported or malformed routes", () => {
 	for (const path of [
 		"https://evil.test/agents/id",

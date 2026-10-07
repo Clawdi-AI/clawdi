@@ -12,7 +12,6 @@ from app.models import (  # noqa: F401 - register models
     app_setting,
     audit,
     channel,
-    device_authorization,
     distributed_state,
     hosted_runtime,
     memory,

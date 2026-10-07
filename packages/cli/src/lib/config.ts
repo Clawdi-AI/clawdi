@@ -78,13 +78,8 @@ export interface ClerkOAuthAuth {
 	accessTokenExpiresAt: string;
 	issuer: string;
 	clientId: string;
-	audience: string;
-	/** Clerk Account Portal/custom-domain origins accepted from the optional `azp` claim. */
-	authorizedParties?: string[];
 	tokenEndpoint: string;
 	scopes: string[];
-	/** Stable Clerk user id from the OAuth access token `sub` claim. */
-	subject: string;
 	/** Cloud-local user id, populated after `/v1/auth/me` succeeds. */
 	userId: string;
 	email?: string;
@@ -105,8 +100,6 @@ export interface PendingDeviceAuth {
 	interval: number;
 	issuer: string;
 	clientId: string;
-	audience: string;
-	authorizedParties: string[];
 	tokenEndpoint: string;
 	expiresAt: string;
 	apiUrl: string;
@@ -115,13 +108,6 @@ export interface PendingDeviceAuth {
 }
 
 export type PendingAuth = PendingDeviceAuth;
-
-/** Read only so transactions left by released CLIs can be cleared. */
-export interface LegacyPendingAuth {
-	authType: "clerk_oauth_pkce";
-	state: string;
-	expiresAt: string;
-}
 
 function readJson<T>(path: string): T | null {
 	if (!existsSync(path)) return null;
@@ -306,8 +292,9 @@ export function isLoggedIn(): boolean {
 	return getAuth() !== null;
 }
 
-export function getPendingAuth(): PendingAuth | LegacyPendingAuth | null {
-	return readRecoverablePrivateJson<PendingAuth | LegacyPendingAuth>(pendingAuthFile());
+export function getPendingAuth(): PendingAuth | null {
+	const pending = readRecoverablePrivateJson<PendingAuth>(pendingAuthFile());
+	return pending?.authType === "clerk_oauth_device" ? pending : null;
 }
 
 export function setPendingAuth(pending: PendingAuth) {

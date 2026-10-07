@@ -157,7 +157,9 @@ describe("native publication manifests", () => {
 		writeFileSync(v2Path, v2.replace("version\t1.2.3", "version\t1.2.4"));
 		expect(check().stderr).toContain("native release version mismatch");
 		writeFileSync(v2Path, v2.replace("artifact\twin32-arm64\t", "artifact\tunknown\t"));
-		expect(check().stderr).toContain("invalid artifact entry");
+		expect(check().stderr).toContain("supported target matrix");
+		writeFileSync(v2Path, `${v2}artifact\tfreebsd-x64\tfuture\tunknown\n`);
+		expect(check().stderr).toContain("supported target matrix");
 		writeFileSync(v2Path, v2);
 		writeFileSync(v1Path, v1.replace("version\t1.2.3", "version\t1.2.4"));
 		expect(check().stderr).toContain("native release version mismatch");

@@ -62,8 +62,6 @@ function rpcPendingAuth(): PendingAuth {
 		interval: 5,
 		issuer: "https://clerk.example.test",
 		clientId: "clawdi-cli",
-		audience: "clawdi-api",
-		authorizedParties: ["https://accounts.clawdi.test"],
 		tokenEndpoint: "https://clerk.example.test/oauth/token",
 		expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
 		apiUrl: "https://cloud.example.test",
@@ -568,20 +566,6 @@ describe("full control RPC handler surface", () => {
 				expect(await once({})).toEqual({ status: outcome });
 				expect(config.getPendingAuth()).toBeNull();
 			}
-			writeFileSync(
-				join(tmpHome, ".clawdi", "pending-auth.json"),
-				JSON.stringify({
-					authType: "clerk_oauth_pkce",
-					state: "old",
-					expiresAt: new Date(Date.now() + 60_000).toISOString(),
-				}),
-			);
-			expect(await status({})).toMatchObject({ pending_auth: null });
-			expect(await complete({})).toMatchObject({
-				status: "no_pending_auth",
-				message: expect.stringContaining("older Clawdi CLI"),
-			});
-			expect(config.getPendingAuth()).toBeNull();
 		} finally {
 			globalThis.fetch = originalFetch;
 			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;
@@ -628,6 +612,7 @@ describe("full control RPC handler surface", () => {
 								access_token: rpcOAuthAccessToken(),
 								refresh_token: `refresh-${cloudCase}-secret`,
 								token_type: "Bearer",
+								expires_in: 3600,
 								scope: "openid profile email offline_access",
 							});
 						}

@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+	AUTO_UPDATE_MIN_AGE_MS,
 	daemonAutoUpdateOnce,
 	detectCurrentUpdateOwnership,
 	detectPackageManagerUpdateOwnershipFromPaths,
@@ -377,8 +378,8 @@ describe("update --json", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "99.0.0", beta: "99.0.0" } }),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "99.0.0" }),
 			},
 		]);
 		try {
@@ -411,8 +412,8 @@ describe("update --json", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: current, beta: current } }),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: current }),
 			},
 		]);
 		try {
@@ -431,7 +432,7 @@ describe("update --json", () => {
 		async (failure) => {
 			const { restore } = mockFetch([
 				{
-					path: "/clawdi",
+					path: "/-/package/clawdi/dist-tags",
 					response: () => {
 						if (failure === "network") throw new TypeError("fetch failed");
 						return new Response("unavailable", { status: 503 });
@@ -447,7 +448,7 @@ describe("update --json", () => {
 					latest: null,
 					error: {
 						code: "registry_unreachable",
-						message: "Could not reach https://registry.npmjs.org/clawdi",
+						message: "Could not reach https://registry.npmjs.org/-/package/clawdi/dist-tags",
 					},
 				});
 				expect(result).not.toHaveProperty("upgradeAvailable");
@@ -466,7 +467,9 @@ describe("update --json", () => {
 				withStdoutTty(() => update({ check: true })),
 			);
 			expect(stdout).toBe("");
-			expect(stderr).toContain("Could not reach https://registry.npmjs.org/clawdi");
+			expect(stderr).toContain(
+				"Could not reach https://registry.npmjs.org/-/package/clawdi/dist-tags",
+			);
 			expect(process.exitCode).toBe(1);
 		} finally {
 			restore();
@@ -477,7 +480,10 @@ describe("update --json", () => {
 		"keeps non-TTY runs check-only without install authorization: %j",
 		async (opts) => {
 			const { restore } = mockFetch([
-				{ path: "/clawdi", response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }) },
+				{
+					path: "/-/package/clawdi/dist-tags",
+					response: () => jsonResponse(releaseTags("99.0.0")),
+				},
 			]);
 			let installed = false;
 			try {
@@ -517,8 +523,8 @@ describe("update --json", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "latest" } }),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "latest" }),
 			},
 		]);
 		try {
@@ -538,7 +544,10 @@ describe("update install", () => {
 			const calls: { command: string; args: string[] }[] = [];
 			const ownership = { ...npmOwnership, installer };
 			const { restore } = mockFetch([
-				{ path: "/clawdi", response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }) },
+				{
+					path: "/-/package/clawdi/dist-tags",
+					response: () => jsonResponse(releaseTags("99.0.0")),
+				},
 			]);
 			try {
 				const { stdout, stderr } = await captureOutput(() =>
@@ -593,7 +602,7 @@ describe("update install", () => {
 			script,
 			[
 				`import { update } from ${JSON.stringify(modulePath)};`,
-				'globalThis.fetch = async () => new Response(JSON.stringify({ "dist-tags": { latest: "99.0.0", beta: "99.0.0" } }));',
+				'globalThis.fetch = async () => new Response(JSON.stringify({ latest: "99.0.0" }));',
 				`await update({ yes: true, json: true }, { isDesktopManaged: () => false, isHomebrewManaged: () => false, detectOwnership: () => (${JSON.stringify({ ...npmOwnership, installerExecutable: installerPath, executable })}) });`,
 			].join("\n"),
 		);
@@ -633,7 +642,7 @@ describe("update install", () => {
 			name: "checksum mismatch",
 			expected: "Native release checksum verification failed.",
 			fetcher: testFetcher(async (input) =>
-				String(input).endsWith("clawdi-cli-manifest.txt")
+				String(input).endsWith("clawdi-cli-manifest-v2.txt")
 					? new Response(nativeManifest("99.0.0", "0".repeat(64)))
 					: new Response("not the approved archive"),
 			),
@@ -702,7 +711,7 @@ describe("update install", () => {
 			const checksum = createHash("sha256").update(archive).digest("hex");
 			const manifest = nativeManifest("99.0.0", checksum);
 			const nativeFetcher = testFetcher(async (input) =>
-				String(input).endsWith("clawdi-cli-manifest.txt")
+				String(input).endsWith("clawdi-cli-manifest-v2.txt")
 					? new Response(manifest)
 					: new Response(archive),
 			);
@@ -719,8 +728,8 @@ describe("update install", () => {
 			const { restore } = mockFetch([
 				{
 					method: "GET",
-					path: "/clawdi",
-					response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
+					path: "/-/package/clawdi/dist-tags",
+					response: () => jsonResponse(releaseTags("99.0.0")),
 				},
 			]);
 			process.env.CLAWDI_NATIVE_PROBE_LOG = probeLog;
@@ -775,8 +784,8 @@ describe("update install", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse(releaseTags("99.0.0")),
 			},
 		]);
 		try {
@@ -820,8 +829,8 @@ describe("update install", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse(releaseTags("99.0.0")),
 			},
 		]);
 		try {
@@ -852,8 +861,8 @@ describe("update install", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse(releaseTags("99.0.0")),
 			},
 		]);
 		try {
@@ -893,8 +902,8 @@ describe("update install", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse(releaseTags("99.0.0")),
 			},
 		]);
 		try {
@@ -920,11 +929,321 @@ describe("update install", () => {
 	});
 });
 
+describe("release age policy", () => {
+	it("records first discovery once and installs only at the 24 hour boundary", async () => {
+		let now = Date.parse("2026-10-07T00:00:00Z");
+		const firstSeen = new Date(now).toISOString();
+		const calls: string[][] = [];
+		const { captured, restore } = mockFetch([
+			{
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "1.2.4" }),
+			},
+		]);
+		const options = {
+			currentVersion: "1.2.3",
+			ownership: npmOwnership,
+			now: () => now,
+			installRunner: async (_installer: string, args: string[]) => {
+				calls.push(args);
+				return 0;
+			},
+			versionReader: () => "1.2.4",
+		};
+		try {
+			expect(await daemonAutoUpdateOnce(options)).toBe("no_update");
+			expect(captured[0]?.url).toBe("https://registry.npmjs.org/-/package/clawdi/dist-tags");
+			now += AUTO_UPDATE_MIN_AGE_MS - 1;
+			expect(await daemonAutoUpdateOnce(options)).toBe("no_update");
+			expect(readUpdateCache().firstSeen).toEqual([{ version: "1.2.4", firstSeenAt: firstSeen }]);
+			now += 1;
+			expect(await daemonAutoUpdateOnce(options)).toBe("installed");
+			expect(calls).toEqual([["i", "-g", "clawdi@1.2.4"]]);
+		} finally {
+			restore();
+		}
+	});
+
+	it.each(["daemon", "background"])(
+		"%s skips intermediate releases for the newest eligible version",
+		async (path) => {
+			const now = Date.now();
+			seedObservedVersions(
+				"1.2.7",
+				[
+					{ version: "1.2.5", age: AUTO_UPDATE_MIN_AGE_MS + 1 },
+					{ version: "1.2.4", age: AUTO_UPDATE_MIN_AGE_MS * 2 },
+					{ version: "1.2.7", age: 1 },
+					{ version: "1.2.6", age: AUTO_UPDATE_MIN_AGE_MS },
+				],
+				now,
+			);
+			const calls: string[][] = [];
+			const runtime = {
+				ownership: npmOwnership,
+				now: () => now,
+				installRunner: async (_installer: string, args: string[]) => {
+					calls.push(args);
+					return 0;
+				},
+				versionReader: () => "1.2.6",
+			};
+			const { restore } = mockFetch([
+				{
+					path: "/-/package/clawdi/dist-tags",
+					response: () => jsonResponse({ latest: "1.2.7" }),
+				},
+			]);
+			try {
+				const result =
+					path === "daemon"
+						? await daemonAutoUpdateOnce({ currentVersion: "1.2.3", ...runtime })
+						: await runBackgroundUpdateWorker({ currentVersion: "1.2.3" }, runtime);
+				expect(result).toBe("installed");
+				expect(calls).toEqual([["i", "-g", "clawdi@1.2.6"]]);
+			} finally {
+				restore();
+			}
+		},
+	);
+
+	it("background discovery waits a day and foreground startup stays silent before eligibility", async () => {
+		const now = Date.now();
+		const { restore } = mockFetch([
+			{
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "999.0.0" }),
+			},
+		]);
+		try {
+			expect(
+				await runBackgroundUpdateWorker(
+					{ currentVersion: "1.2.3" },
+					{
+						ownership: npmOwnership,
+						now: () => now,
+						installRunner: async () => {
+							throw new Error("fresh releases must not install");
+						},
+					},
+				),
+			).toBe("no_update");
+			const { stdout } = await captureOutput(() =>
+				withStdoutTty(() =>
+					maybeAutoUpdate({
+						now: () => now,
+						detectOwnership: () => npmOwnership,
+						spawnBackgroundWorker: () => {
+							throw new Error("fresh cache needs no worker");
+						},
+					}),
+				),
+			);
+			expect(stdout).not.toContain("in background");
+		} finally {
+			restore();
+		}
+	});
+
+	it.each(["1.2.4", "1.2.5"])(
+		"never downgrades or reinstalls current %s",
+		async (currentVersion) => {
+			seedObservedVersions("1.2.4", [{ version: "1.2.4", age: AUTO_UPDATE_MIN_AGE_MS }]);
+			const { restore } = mockFetch([
+				{
+					path: "/-/package/clawdi/dist-tags",
+					response: () => jsonResponse({ latest: "1.2.4" }),
+				},
+			]);
+			const runtime = {
+				ownership: npmOwnership,
+				installRunner: async () => {
+					throw new Error("must not downgrade or reinstall");
+				},
+			};
+			try {
+				expect(await daemonAutoUpdateOnce({ currentVersion, ...runtime })).toBe("no_update");
+				expect(await runBackgroundUpdateWorker({ currentVersion }, runtime)).toBe("no_update");
+			} finally {
+				restore();
+			}
+		},
+	);
+
+	it("ignores stale process versions when the installed CLI is already newer", async () => {
+		seedObservedVersions("0.1.0", [{ version: "0.1.0", age: AUTO_UPDATE_MIN_AGE_MS }]);
+		const { restore } = mockFetch([
+			{
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "0.1.0" }),
+			},
+		]);
+		const runtime = {
+			ownership: npmOwnership,
+			installRunner: async () => {
+				throw new Error("must preserve the newer installed CLI");
+			},
+		};
+		try {
+			expect(await runBackgroundUpdateWorker({ currentVersion: "0.0.1" }, runtime)).toBe(
+				"no_update",
+			);
+			expect(await daemonAutoUpdateOnce({ currentVersion: "0.0.1", ...runtime })).toBe("no_update");
+		} finally {
+			restore();
+		}
+	});
+
+	it("manual --yes installs latest immediately and records its first observation", async () => {
+		const now = Date.now();
+		const calls: string[][] = [];
+		const { restore } = mockFetch([
+			{
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "99.0.0" }),
+			},
+		]);
+		try {
+			await captureOutput(() =>
+				withStdoutTty(
+					() =>
+						update(
+							{ yes: true },
+							{
+								now: () => now,
+								detectOwnership: () => npmOwnership,
+								installRunner: (_command, args) => {
+									calls.push(args);
+									return 0;
+								},
+								versionReader: () => "99.0.0",
+							},
+						),
+					false,
+				),
+			);
+			expect(calls).toEqual([["i", "-g", "clawdi@99.0.0"]]);
+			expect(readUpdateCache().firstSeen).toEqual([
+				{ version: "99.0.0", firstSeenAt: new Date(now).toISOString() },
+			]);
+		} finally {
+			restore();
+		}
+	});
+
+	it("bounds history while retaining the newest aged candidate during frequent releases", async () => {
+		const now = Date.now();
+		seedObservedVersions("1.0.0", [{ version: "1.0.0", age: AUTO_UPDATE_MIN_AGE_MS }], now);
+		let latest = "1.0.0";
+		const { restore } = mockFetch([
+			{
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest }),
+			},
+		]);
+		try {
+			await captureOutput(async () => {
+				for (let i = 1; i <= 20; i++) {
+					latest = `1.0.${i}`;
+					await update({ check: true, json: true }, { now: () => now });
+				}
+			});
+			expect(readUpdateCache().firstSeen).toHaveLength(8);
+			expect(readUpdateCache().firstSeen.map(({ version }) => version)).toContain("1.0.0");
+			expect(readUpdateCache().firstSeen[0]?.version).toBe("1.0.20");
+		} finally {
+			restore();
+		}
+	});
+
+	it("eventually installs during a sustained burst that exceeds the history bound", async () => {
+		let now = Date.parse("2026-10-07T00:00:00Z");
+		const start = now;
+		let latest = "1.0.1";
+		const calls: string[][] = [];
+		const { restore } = mockFetch([
+			{
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest }),
+			},
+		]);
+		const options = {
+			currentVersion: "1.0.0",
+			ownership: npmOwnership,
+			now: () => now,
+			installRunner: async (_installer: string, args: string[]) => {
+				calls.push(args);
+				return 0;
+			},
+			versionReader: () => "1.0.1",
+		};
+		try {
+			for (let hour = 0; hour < 24; hour++) {
+				now = start + hour * (60 * 60 * 1000 + 1);
+				latest = `1.0.${hour + 1}`;
+				expect(await daemonAutoUpdateOnce(options)).toBe("no_update");
+				expect(readUpdateCache().firstSeen.length).toBeLessThanOrEqual(8);
+			}
+			now = start + AUTO_UPDATE_MIN_AGE_MS;
+			expect(await daemonAutoUpdateOnce(options)).toBe("installed");
+			expect(calls).toEqual([["i", "-g", "clawdi@1.0.1"]]);
+		} finally {
+			restore();
+		}
+	});
+
+	it("starts a new observation for legacy caches and ignores malformed timestamps", async () => {
+		writeFileSync(
+			join(tmpHome, ".clawdi", "update.json"),
+			JSON.stringify({
+				checkedAt: new Date().toISOString(),
+				latest: "1.2.4",
+				firstSeen: [{ version: "1.2.4", firstSeenAt: "invalid" }, null],
+			}),
+		);
+		expect(await daemonAutoUpdateOnce({ currentVersion: "1.2.3", ownership: npmOwnership })).toBe(
+			"no_update",
+		);
+		expect(readUpdateCache().firstSeen).toHaveLength(1);
+	});
+});
+
+describe("bounded dist-tags response", () => {
+	it.each(["oversized body", "oversized length", "invalid JSON", "full packument"])(
+		"rejects %s",
+		async (kind) => {
+			const { restore } = mockFetch([
+				{
+					path: "/-/package/clawdi/dist-tags",
+					response: () =>
+						kind === "oversized body"
+							? new Response(" ".repeat(65537))
+							: kind === "oversized length"
+								? new Response('{"latest":"99.0.0"}', { headers: { "content-length": "65537" } })
+								: kind === "invalid JSON"
+									? new Response("{")
+									: jsonResponse({ "dist-tags": { latest: "99.0.0" } }),
+				},
+			]);
+			try {
+				const { stdout } = await captureOutput(() => update({ check: true, json: true }));
+				expect(JSON.parse(stdout).latest).toBeNull();
+				expect(process.exitCode).toBe(1);
+			} finally {
+				restore();
+			}
+		},
+	);
+});
+
 describe("daemonAutoUpdateOnce", () => {
+	beforeEach(() =>
+		seedObservedVersions("1.2.4", [{ version: "1.2.4", age: AUTO_UPDATE_MIN_AGE_MS }]),
+	);
 	it("runs a startup request through exact install and owned executable validation", async () => {
 		const calls: Array<{ installer: string; args: string[] }> = [];
 		const result = await runBackgroundUpdateWorker(
-			{ currentVersion: "1.2.3", channel: "latest", latest: "1.2.4" },
+			{ currentVersion: "1.2.3" },
 			{
 				ownership: npmOwnership,
 				installRunner: async (installer, args) => {
@@ -961,8 +1280,8 @@ describe("daemonAutoUpdateOnce", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "1.2.4" } }),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "1.2.4" }),
 			},
 		]);
 		try {
@@ -984,13 +1303,14 @@ describe("daemonAutoUpdateOnce", () => {
 		}
 	});
 
-	it("auto-installs major updates from daemon context", async () => {
+	it("auto-installs aged major updates from daemon context", async () => {
+		seedObservedVersions("2.0.0", [{ version: "2.0.0", age: AUTO_UPDATE_MIN_AGE_MS }]);
 		const calls: { installer: string; args: string[] }[] = [];
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "2.0.0" } }),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "2.0.0" }),
 			},
 		]);
 		try {
@@ -1010,37 +1330,28 @@ describe("daemonAutoUpdateOnce", () => {
 		}
 	});
 
-	it.each([
-		["rc", "1.2.3-rc.2", "1.2.3-rc.10"],
-		["alpha", "1.2.4-alpha.1", "1.2.4-alpha.2"],
-	])("routes %s prereleases through the beta dist-tag", async (tag, current, next) => {
-		const calls: { installer: string; args: string[] }[] = [];
+	it("uses latest for prerelease clients without downgrading to a stale beta tag", async () => {
+		seedObservedVersions("1.2.3", [{ version: "1.2.3", age: AUTO_UPDATE_MIN_AGE_MS }]);
+		const calls: string[][] = [];
 		const { restore } = mockFetch([
 			{
-				method: "GET",
-				path: "/clawdi",
-				response: () =>
-					jsonResponse({
-						"dist-tags": {
-							latest: "1.2.2",
-							beta: next,
-							[tag]: `99.0.0-${tag}.1`,
-						},
-					}),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "1.2.3", beta: "1.2.2-beta.1" }),
 			},
 		]);
 		try {
-			const result = await daemonAutoUpdateOnce({
-				currentVersion: current,
-				ownership: npmOwnership,
-				installRunner: async (installer, args) => {
-					calls.push({ installer, args });
-					return 0;
-				},
-				versionReader: () => next,
-			});
-			expect(result).toBe("installed");
-			expect(calls).toEqual([{ installer: "npm", args: ["i", "-g", `clawdi@${next}`] }]);
+			expect(
+				await daemonAutoUpdateOnce({
+					currentVersion: "1.2.3-rc.2",
+					ownership: npmOwnership,
+					installRunner: async (_installer, args) => {
+						calls.push(args);
+						return 0;
+					},
+					versionReader: () => "1.2.3",
+				}),
+			).toBe("installed");
+			expect(calls).toEqual([["i", "-g", "clawdi@1.2.3"]]);
 		} finally {
 			restore();
 		}
@@ -1076,8 +1387,8 @@ describe("daemonAutoUpdateOnce", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "1.2.4" } }),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "1.2.4" }),
 			},
 		]);
 		try {
@@ -1091,7 +1402,7 @@ describe("daemonAutoUpdateOnce", () => {
 			expect(result).toBe("locked");
 			expect(
 				await runBackgroundUpdateWorker(
-					{ currentVersion: "1.2.3", channel: "latest", latest: "1.2.4" },
+					{ currentVersion: "1.2.3" },
 					{
 						ownership: npmOwnership,
 						installRunner: async () => {
@@ -1109,8 +1420,8 @@ describe("daemonAutoUpdateOnce", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "1.2.4" } }),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "1.2.4" }),
 			},
 		]);
 		try {
@@ -1132,8 +1443,8 @@ describe("daemonAutoUpdateOnce", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "1.2.4" } }),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "1.2.4" }),
 			},
 		]);
 		try {
@@ -1177,8 +1488,8 @@ describe("daemonAutoUpdateOnce", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/clawdi",
-				response: () => jsonResponse({ "dist-tags": { latest: "1.2.4" } }),
+				path: "/-/package/clawdi/dist-tags",
+				response: () => jsonResponse({ latest: "1.2.4" }),
 			},
 		]);
 		try {
@@ -1275,7 +1586,16 @@ describe("maybeAutoUpdate", () => {
 		writeFileSync(join(tmpHome, ".clawdi", "last-version"), "0.0.1");
 		writeFileSync(
 			join(tmpHome, ".clawdi", "update.json"),
-			JSON.stringify({ checkedAt: new Date().toISOString(), latest: "999.0.0" }),
+			JSON.stringify({
+				checkedAt: new Date().toISOString(),
+				latest: "999.0.0",
+				firstSeen: [
+					{
+						version: "999.0.0",
+						firstSeenAt: new Date(Date.now() - AUTO_UPDATE_MIN_AGE_MS).toISOString(),
+					},
+				],
+			}),
 		);
 		process.argv.splice(2, process.argv.length - 2, "status", "--json");
 		const orig = console.log;
@@ -1307,7 +1627,16 @@ describe("maybeAutoUpdate", () => {
 	it("silently skips background update for an unowned invocation", async () => {
 		writeFileSync(
 			join(tmpHome, ".clawdi", "update.json"),
-			JSON.stringify({ checkedAt: new Date().toISOString(), latest: "999.0.0" }),
+			JSON.stringify({
+				checkedAt: new Date().toISOString(),
+				latest: "999.0.0",
+				firstSeen: [
+					{
+						version: "999.0.0",
+						firstSeenAt: new Date(Date.now() - AUTO_UPDATE_MIN_AGE_MS).toISOString(),
+					},
+				],
+			}),
 		);
 		const orig = console.log;
 		let captured = "";
@@ -1356,7 +1685,7 @@ describe("maybeAutoUpdate", () => {
 	});
 
 	it("delegates first-run discovery without waiting for a registry request", async () => {
-		const workers: Array<{ latest?: string; channel: string }> = [];
+		const workers: Array<{ current: string }> = [];
 		const { captured: fetches, restore } = mockFetch([]);
 		try {
 			await withStdoutTty(() =>
@@ -1370,8 +1699,7 @@ describe("maybeAutoUpdate", () => {
 		}
 		expect(fetches).toHaveLength(0);
 		expect(workers).toHaveLength(1);
-		expect(workers[0]?.latest).toBeUndefined();
-		expect(workers[0]?.channel).toBe(getCliVersion().includes("-") ? "beta" : "latest");
+		expect(workers[0]?.current).toBe(getCliVersion());
 	});
 
 	it("prints `Updated clawdi to vX` when last-version differs from current", async () => {
@@ -1466,22 +1794,23 @@ describe("maybeAutoUpdate", () => {
 
 	it("auto-installs major updates from human CLI startup", async () => {
 		writeFileSync(join(tmpHome, ".clawdi", "last-version"), "0.0.1");
-		const { getCliVersion } = await import("../../src/lib/version");
-		const current = getCliVersion();
-		const channel = current.includes("-")
-			? (current.split("-", 2)[1]?.split(".", 1)[0] ?? "latest")
-			: "latest";
-		const cacheFile = channel === "latest" ? "update.json" : `update-${channel}.json`;
 		// Plant cache with a version way higher than package.json so this
 		// remains a major-bump test regardless of the fixture version.
 		writeFileSync(
-			join(tmpHome, ".clawdi", cacheFile),
-			JSON.stringify({ checkedAt: new Date().toISOString(), latest: "999.0.0" }),
+			join(tmpHome, ".clawdi", "update.json"),
+			JSON.stringify({
+				checkedAt: new Date().toISOString(),
+				latest: "999.0.0",
+				firstSeen: [
+					{
+						version: "999.0.0",
+						firstSeenAt: new Date(Date.now() - AUTO_UPDATE_MIN_AGE_MS).toISOString(),
+					},
+				],
+			}),
 		);
 		const workers: {
 			current: string;
-			latest?: string;
-			channel: string;
 			logFd: number;
 		}[] = [];
 		const orig = console.log;
@@ -1507,7 +1836,7 @@ describe("maybeAutoUpdate", () => {
 		expect(captured).toContain("→ v999.0.0 in background");
 		expect(captured).not.toContain("Major release");
 		expect(workers).toHaveLength(1);
-		expect(workers[0]?.latest).toBe("999.0.0");
+		expect(workers[0]?.current).toBe(getCliVersion());
 		expect(workers[0]?.logFd ?? -1).toBeGreaterThanOrEqual(0);
 	});
 
@@ -1516,7 +1845,16 @@ describe("maybeAutoUpdate", () => {
 		// Cache says a newer version is available.
 		writeFileSync(
 			join(tmpHome, ".clawdi", "update.json"),
-			JSON.stringify({ checkedAt: new Date().toISOString(), latest: "999.0.0" }),
+			JSON.stringify({
+				checkedAt: new Date().toISOString(),
+				latest: "999.0.0",
+				firstSeen: [
+					{
+						version: "999.0.0",
+						firstSeenAt: new Date(Date.now() - AUTO_UPDATE_MIN_AGE_MS).toISOString(),
+					},
+				],
+			}),
 		);
 		const orig = console.log;
 		let captured = "";
@@ -1596,8 +1934,8 @@ async function runNativeForegroundFailure(fetcher: typeof fetch, timeoutMs?: num
 	const { restore } = mockFetch([
 		{
 			method: "GET",
-			path: "/clawdi",
-			response: () => jsonResponse({ "dist-tags": releaseTags("99.0.0") }),
+			path: "/-/package/clawdi/dist-tags",
+			response: () => jsonResponse(releaseTags("99.0.0")),
 		},
 	]);
 	try {
@@ -1623,7 +1961,7 @@ async function runNativeForegroundFailure(fetcher: typeof fetch, timeoutMs?: num
 
 function nativeManifest(version: string, linuxX64Sha: string): string {
 	return [
-		"clawdi.nativeRelease.v1",
+		"clawdi.nativeRelease.v2",
 		`version\t${version}`,
 		...NATIVE_TARGETS.map((target: NativeTarget, index) => {
 			const sha = target === "linux-x64" ? linuxX64Sha : String(index).repeat(64);
@@ -1639,8 +1977,8 @@ function testFetcher(
 	return Object.assign(implementation, { preconnect: fetch.preconnect });
 }
 
-function releaseTags(version: string): { latest: string; beta: string } {
-	return { latest: version, beta: version };
+function releaseTags(version: string): { latest: string } {
+	return { latest: version };
 }
 
 function writeDaemonHealth(agent: string, version: string): void {
@@ -1677,4 +2015,26 @@ async function waitForProcessExit(pid: number): Promise<void> {
 	for (let attempt = 0; attempt < 100 && processIsAlive(pid); attempt++) {
 		await new Promise((resolve) => setTimeout(resolve, 5));
 	}
+}
+
+function seedObservedVersions(
+	latest: string,
+	entries: Array<{ version: string; age: number }>,
+	now = Date.now(),
+) {
+	writeFileSync(
+		join(tmpHome, ".clawdi", "update.json"),
+		JSON.stringify({
+			checkedAt: new Date(now - 2 * 60 * 60 * 1000).toISOString(),
+			latest,
+			firstSeen: entries.map(({ version, age }) => ({
+				version,
+				firstSeenAt: new Date(now - age).toISOString(),
+			})),
+		}),
+	);
+}
+
+function readUpdateCache(): { firstSeen: Array<{ version: string; firstSeenAt: string }> } {
+	return JSON.parse(readFileSync(join(tmpHome, ".clawdi", "update.json"), "utf8"));
 }

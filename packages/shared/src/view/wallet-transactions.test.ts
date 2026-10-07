@@ -7,6 +7,7 @@ type WalletTransaction = DeployComponents["schemas"]["V2WalletTransactionItemRes
 import {
 	transactionComputeDetails,
 	transactionKindLabel,
+	transactionPaymentSourceLabel,
 	transactionSignedAmount,
 } from "./wallet-transactions";
 
@@ -35,6 +36,18 @@ describe("transaction presentation", () => {
 		expect(transactionKindLabel("auto_reload")).toBe("Auto-reload");
 		expect(transactionKindLabel("compute_credit")).toBe("Compute credit");
 		expect(transactionKindLabel("internal_migration_v3")).toBe("Other transaction");
+	});
+
+	test("labels in-app purchases and their refunds with the store as the source", () => {
+		// Hosted lists store_topup as a store-funded credit and store_refund as a Wallet debit.
+		const purchase = transaction({ kind: "store_topup", amount: "10.00", funding: "store" });
+		const refund = transaction({ kind: "store_refund", amount: "10.00", direction: "debit" });
+		expect(transactionKindLabel(purchase.kind)).toBe("In-app purchase");
+		expect(transactionPaymentSourceLabel(purchase.funding)).toBe("App store");
+		expect(transactionSignedAmount(purchase)).toBe("+$10.00");
+		expect(transactionKindLabel(refund.kind)).toBe("In-app purchase refund");
+		expect(transactionPaymentSourceLabel(refund.funding)).toBe("Wallet");
+		expect(transactionSignedAmount(refund)).toBe("−$10.00");
 	});
 
 	test("signs the backend's positive Decimal amount from its direction", () => {

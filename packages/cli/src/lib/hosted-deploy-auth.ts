@@ -6,8 +6,6 @@ import {
 import { getAuth } from "./config";
 
 const ACCESS_TOKEN_EXPIRY_SKEW_MS = 5_000;
-const JWT_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
-const OAUTH_ACCESS_TOKEN_TYPES = new Set(["at+jwt", "application/at+jwt"]);
 
 export type HostedDeployAccessToken = {
 	token: string;
@@ -29,19 +27,6 @@ export class HostedDeployAuthorizationError extends Error {
 	}
 }
 
-function oauthHeaderType(token: string): string | null {
-	const headerSegment = token.split(".")[0];
-	if (!headerSegment) return null;
-	try {
-		const parsed: unknown = JSON.parse(Buffer.from(headerSegment, "base64url").toString("utf8"));
-		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
-		const headerType = Reflect.get(parsed, "typ");
-		return typeof headerType === "string" ? headerType : null;
-	} catch {
-		return null;
-	}
-}
-
 export function assertHostedDeployAccessToken(
 	credential: HostedDeployAccessToken,
 	now = Date.now(),
@@ -53,12 +38,7 @@ export function assertHostedDeployAccessToken(
 			"A legacy Clawdi API key can't deploy Cloud Agents. Run `clawdi auth login` without --manual.",
 		);
 	}
-	if (
-		!token ||
-		token.length > 8_192 ||
-		!JWT_PATTERN.test(token) ||
-		!OAUTH_ACCESS_TOKEN_TYPES.has(oauthHeaderType(token) ?? "")
-	) {
+	if (!token || token.length > 8_192) {
 		throw new HostedDeployAuthorizationError(
 			"invalid_hosted_token",
 			"Deploying a Cloud Agent needs a browser sign-in. Run `clawdi auth login` (not --manual).",

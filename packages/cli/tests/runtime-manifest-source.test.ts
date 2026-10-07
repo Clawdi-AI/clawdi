@@ -914,7 +914,9 @@ SH
 chmod +x "$HOME/.local/bin/hermes"
 printf '%s\\n' installer-mutated > "$HOME/.hermes/hermes-agent/repair-marker"
 printf '%s\\n' installer-mutated > "$HOME/.hermes/skills/user-skill/content.txt"
-printf '%s\\n' '#!/usr/bin/env bash' 'exit 0' > "$HOME/.hermes/hermes-agent/venv/bin/python"
+cat > "$HOME/.hermes/hermes-agent/venv/bin/python" <<'SH'
+${hermesTestPythonScript(true)}
+SH
 chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 `,
 		);

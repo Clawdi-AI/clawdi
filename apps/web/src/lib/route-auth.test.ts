@@ -73,7 +73,6 @@ test("hosted deep links and OSS homepage keep their sign-in return destination",
 		["/?settings=billing-wallet", "https://clawdi.ai/home"],
 		["/#billing", "https://clawdi.ai/home"],
 		["/agents?view=all", "https://clawdi.ai/home"],
-		["/cli-authorize?user_code=ABCD", "https://clawdi.ai/home"],
 		["/oauth/codex/callback?code=opaque&state=state", "https://clawdi.ai/home"],
 	] as const) {
 		try {

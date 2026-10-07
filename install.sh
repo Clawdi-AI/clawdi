@@ -6,9 +6,7 @@ MANIFEST_NAME='clawdi-cli-manifest.txt'
 MAX_MANIFEST_BYTES=65536
 MAX_ARCHIVE_BYTES=268435456
 # POSIX ulimit -f values are counts of 512-byte blocks.
-MAX_LISTING_BLOCKS=32768
 MAX_ENTRY_BLOCKS=409600
-CHANNEL=${CLAWDI_CHANNEL:-latest}
 umask 077
 
 if [ -n "${CLAWDI_INSTALL_PREFIX:-}" ]; then
@@ -27,17 +25,12 @@ case "$PREFIX" in
   /*) ;;
   *) fail 'CLAWDI_INSTALL_PREFIX must be an absolute path' ;;
 esac
-case "$CHANNEL" in
-  latest|beta) ;;
-  *) fail 'CLAWDI_CHANNEL must be latest or beta' ;;
-esac
 if [ "$(id -u)" = 0 ] && [ -n "${SUDO_USER:-}" ]; then
   fail 'do not run the installer through sudo; run it as the target user'
 fi
 
 command -v curl >/dev/null 2>&1 || fail 'curl is required'
 command -v tar >/dev/null 2>&1 || fail 'tar is required'
-command -v gzip >/dev/null 2>&1 || fail 'gzip is required'
 command -v awk >/dev/null 2>&1 || fail 'awk is required'
 
 os=$(uname -s 2>/dev/null || true)
@@ -93,44 +86,15 @@ download() {
   [ "$size" -le "$maximum" ] || fail "download exceeds size limit: $url"
 }
 
-valid_version() {
-  printf '%s\n' "$1" | awk '
-    function identifiers(value, prerelease, parts, count, i) {
-      if (value == "") return 0
-      count=split(value, parts, ".")
-      for (i=1; i<=count; i++) {
-        if (parts[i] == "" || parts[i] ~ /[^0-9A-Za-z-]/) return 0
-        if (prerelease && parts[i] ~ /^[0-9]+$/ && length(parts[i]) > 1 && substr(parts[i],1,1) == "0") return 0
-      }
-      return 1
-    }
-    {
-      value=$0
-      if (value == "" || value ~ /[^0-9A-Za-z.+-]/) exit 1
-      plus=index(value,"+")
-      if (plus) {
-        if (index(substr(value,plus+1),"+") || !identifiers(substr(value,plus+1),0)) exit 1
-        value=substr(value,1,plus-1)
-      }
-      dash=index(value,"-")
-      if (dash) {
-        if (!identifiers(substr(value,dash+1),1)) exit 1
-        value=substr(value,1,dash-1)
-      }
-      count=split(value,core,"."); if (count != 3) exit 1
-      for (i=1; i<=3; i++) if (core[i] !~ /^(0|[1-9][0-9]*)$/) exit 1
-      exit 0
-    }
-  '
-}
-
 version=${CLAWDI_VERSION:-}
 if [ -z "$version" ]; then
   registry_json="$bootstrap_tmp/registry.json"
   download 'https://registry.npmjs.org/-/package/clawdi/dist-tags' "$registry_json" "$MAX_MANIFEST_BYTES"
-  version=$(sed -n "s/.*\"$CHANNEL\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$registry_json")
+  version=$(sed -n "s/.*\"latest\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$registry_json")
 fi
-valid_version "$version" || fail "invalid exact version: $version"
+case "$version" in
+  ''|*[!0-9A-Za-z.+-]*) fail "invalid exact version: $version" ;;
+esac
 
 printf 'Installing clawdi v%s for %s...\n' "$version" "$target"
 
@@ -169,38 +133,13 @@ else
 fi
 [ "$actual_sha" = "$expected_sha" ] || fail 'native artifact checksum mismatch'
 
-entries="$bootstrap_tmp/archive.entries"
-types="$bootstrap_tmp/archive.types"
-bounded_tar="$bootstrap_tmp/native.tar"
-(ulimit -f 1048576; gzip -dc "$archive" > "$bounded_tar") || fail 'native artifact exceeds the unpacked size limit'
-unpacked_size=$(wc -c < "$bounded_tar" | tr -d ' ')
-[ "$unpacked_size" -le 536870912 ] || fail 'native artifact exceeds the unpacked size limit'
-(ulimit -f "$MAX_LISTING_BLOCKS"; tar -tf "$bounded_tar" > "$entries") ||
-  fail 'native artifact path listing exceeds the size limit'
-(ulimit -f "$MAX_LISTING_BLOCKS"; tar -tvf "$bounded_tar" > "$types") ||
-  fail 'native artifact type listing exceeds the size limit'
-awk '
-  {
-    count++; if (count > 20000) exit 1
-    p=$0; sub(/^\.\//,"",p); sub(/\/$/,"",p)
-    if (p=="" || p ~ /^\// || p ~ /(^|\/)\.\.($|\/)/ || seen[p]++) exit 1
-    split(p, part, "/")
-    if (part[1]!="clawdi" && part[1]!="egress-addon" && part[1]!="skills") exit 1
-    if (part[1]=="clawdi" && p!="clawdi") exit 1
-    if (p=="clawdi" || p=="egress-addon/clawdi_egress_addon.py" ||
-        p=="skills/clawdi/SKILL.md" || p=="skills/hosted-versions/1/clawdi/SKILL.md") required[p]=1
-  }
-  END {
-    if (!required["clawdi"] || !required["egress-addon/clawdi_egress_addon.py"] ||
-        !required["skills/clawdi/SKILL.md"] || !required["skills/hosted-versions/1/clawdi/SKILL.md"]) exit 1
-  }
-' "$entries" || fail 'native artifact contains unsafe, duplicate, excessive, or unexpected paths'
-awk '{ t=substr($1,1,1); if (t!="-" && t!="d") exit 1 }' "$types" || fail 'native artifact contains links or unsupported entry types'
-
 native_root="$PREFIX/share/clawdi"
 (umask 022; mkdir -p "$native_root") || fail "cannot create native install root: $native_root"
 stage_dir=$(mktemp -d "$native_root/.stage-XXXXXXXX") || fail 'cannot create same-filesystem native stage'
-(ulimit -f "$MAX_ENTRY_BLOCKS"; tar -xf "$bounded_tar" -C "$stage_dir" --no-same-owner --no-same-permissions) ||
+# GNU tar and bsdtar reject .. and symlink escapes unless -P is used:
+# https://www.gnu.org/software/tar/manual/html_node/absolute.html
+# https://github.com/libarchive/libarchive/blob/master/tar/bsdtar.1
+(ulimit -f "$MAX_ENTRY_BLOCKS"; tar -xzf "$archive" -C "$stage_dir" --no-same-owner --no-same-permissions) ||
   fail 'native artifact extraction failed'
 cp "$manifest" "$stage_dir/$MANIFEST_NAME"
 chmod 755 "$stage_dir/clawdi"

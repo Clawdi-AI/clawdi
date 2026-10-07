@@ -20,7 +20,6 @@ import { Route as VaultRequestRouteImport } from './routes/vault-request'
 import { Route as DotwellKnownAppleAppSiteAssociationRouteImport } from './routes/[.]well-known/apple-app-site-association'
 import { Route as DotwellKnownAssetlinksDotjsonRouteImport } from './routes/[.]well-known/assetlinks[.]json'
 import { Route as ProtectedDashboardRouteImport } from './routes/_protected/_dashboard'
-import { Route as ProtectedCliAuthorizeRouteImport } from './routes/_protected/cli-authorize'
 import { Route as ProtectedRuntimeHandoffRouteImport } from './routes/_protected/runtime-handoff'
 import { Route as SIdRouteImport } from './routes/s/$id'
 import { Route as SChar123idChar125DotjsonRouteImport } from './routes/s/{$id}[.]json'
@@ -122,11 +121,6 @@ const DotwellKnownAssetlinksDotjsonRoute =
   } as any)
 const ProtectedDashboardRoute = ProtectedDashboardRouteImport.update({
   id: '/_dashboard',
-  getParentRoute: () => ProtectedRoute,
-} as any)
-const ProtectedCliAuthorizeRoute = ProtectedCliAuthorizeRouteImport.update({
-  id: '/cli-authorize',
-  path: '/cli-authorize',
   getParentRoute: () => ProtectedRoute,
 } as any)
 const ProtectedRuntimeHandoffRoute = ProtectedRuntimeHandoffRouteImport.update({
@@ -414,7 +408,6 @@ export interface FileRoutesByFullPath {
   '/vault-request': typeof VaultRequestRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/assetlinks.json': typeof DotwellKnownAssetlinksDotjsonRoute
-  '/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
@@ -473,7 +466,6 @@ export interface FileRoutesByTo {
   '/vault-request': typeof VaultRequestRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/assetlinks.json': typeof DotwellKnownAssetlinksDotjsonRoute
-  '/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
@@ -532,7 +524,6 @@ export interface FileRoutesById {
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/assetlinks.json': typeof DotwellKnownAssetlinksDotjsonRoute
   '/_protected/_dashboard': typeof ProtectedDashboardRouteWithChildren
-  '/_protected/cli-authorize': typeof ProtectedCliAuthorizeRoute
   '/_protected/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
@@ -594,7 +585,6 @@ export interface FileRouteTypes {
     | '/vault-request'
     | '/.well-known/apple-app-site-association'
     | '/.well-known/assetlinks.json'
-    | '/cli-authorize'
     | '/runtime-handoff'
     | '/s/$id'
     | '/s/{$id}.json'
@@ -653,7 +643,6 @@ export interface FileRouteTypes {
     | '/vault-request'
     | '/.well-known/apple-app-site-association'
     | '/.well-known/assetlinks.json'
-    | '/cli-authorize'
     | '/runtime-handoff'
     | '/s/$id'
     | '/s/{$id}.json'
@@ -711,7 +700,6 @@ export interface FileRouteTypes {
     | '/.well-known/apple-app-site-association'
     | '/.well-known/assetlinks.json'
     | '/_protected/_dashboard'
-    | '/_protected/cli-authorize'
     | '/_protected/runtime-handoff'
     | '/s/$id'
     | '/s/{$id}.json'
@@ -857,13 +845,6 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof ProtectedDashboardRouteImport
-      parentRoute: typeof ProtectedRoute
-    }
-    '/_protected/cli-authorize': {
-      id: '/_protected/cli-authorize'
-      path: '/cli-authorize'
-      fullPath: '/cli-authorize'
-      preLoaderRoute: typeof ProtectedCliAuthorizeRouteImport
       parentRoute: typeof ProtectedRoute
     }
     '/_protected/runtime-handoff': {
@@ -1318,7 +1299,6 @@ const ProtectedDashboardRouteWithChildren =
 
 interface ProtectedRouteChildren {
   ProtectedDashboardRoute: typeof ProtectedDashboardRouteWithChildren
-  ProtectedCliAuthorizeRoute: typeof ProtectedCliAuthorizeRoute
   ProtectedRuntimeHandoffRoute: typeof ProtectedRuntimeHandoffRoute
   ProtectedTerminalIdRoute: typeof ProtectedTerminalIdRoute
   ProtectedOauthCodexCallbackRoute: typeof ProtectedOauthCodexCallbackRoute
@@ -1326,7 +1306,6 @@ interface ProtectedRouteChildren {
 
 const ProtectedRouteChildren: ProtectedRouteChildren = {
   ProtectedDashboardRoute: ProtectedDashboardRouteWithChildren,
-  ProtectedCliAuthorizeRoute: ProtectedCliAuthorizeRoute,
   ProtectedRuntimeHandoffRoute: ProtectedRuntimeHandoffRoute,
   ProtectedTerminalIdRoute: ProtectedTerminalIdRoute,
   ProtectedOauthCodexCallbackRoute: ProtectedOauthCodexCallbackRoute,
