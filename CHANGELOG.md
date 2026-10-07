@@ -15,6 +15,13 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
+### CLI 0.15.7
+
+- **Same access as the dashboard:** after `clawdi auth login`, the CLI can do what the Cloud dashboard can, except managing API keys and approving device sign-ins. New commands: `clawdi agent list`, `agent rm`, `agent start|stop|restart`, `agent plugins`, `session list --uploaded`, `session rm`, and `project rm`. Deleting a Cloud Agent with a renewing subscription asks whether to cancel or keep it (`--cancel-subscription` / `--keep-subscription`).
+- **Cloud resources:** `ai-provider list/edit/remove` work with your Cloud AI providers (the local catalog remains for import and export). New: `wallet transactions`, `wallet usage --days`, `wallet portal`, `channel unlink`, `channel unpair`, `skill show`, and `vault request`, which asks the user for a secret in the browser without the CLI reading it.
+- **Scripting and agents:** write commands accept `--json` and print one versioned object. Tables print full IDs. Deletions and revocations ask for confirmation and accept `--yes` (required in non-interactive shells starting in 0.16). Exit code 4 means sign-in is required. Network errors say what to do next.
+- **Windows:** reinstalling the same version works, activation retries transient file locks, and stopping the background task no longer fails if the process already exited.
+
 ### CLI 0.15.6
 
 - Managed OpenClaw credentials now discard obsolete files after successful
