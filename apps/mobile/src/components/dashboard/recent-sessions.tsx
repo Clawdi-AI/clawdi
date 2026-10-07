@@ -1,6 +1,6 @@
 import type { SessionListItem } from "@clawdi/shared/api";
 import { ENTITY_CARD_BASE, sessionFeedClasses as styles } from "@clawdi/shared/ui";
-import { formatNumber, relativeTime, sessionCardModel } from "@clawdi/shared/view";
+import { formatNumber, profileLabel, relativeTime, sessionCardModel } from "@clawdi/shared/view";
 import { router } from "expo-router";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { EntityCardSkeleton } from "@/components/entity-card";
@@ -30,6 +30,7 @@ export function AgentRecentSessions({
 		<WebView recipe={styles.overviewList}>
 			{visible.map((session) => {
 				const model = sessionCardModel(session);
+				const profile = profileLabel(session);
 				return (
 					<AppPressable
 						key={session.id}
@@ -54,6 +55,7 @@ export function AgentRecentSessions({
 								{model.title}
 							</WebText>
 							<WebText recipe={styles.meta}>
+								{profile ? `${profile} · ` : null}
 								{model.projectFolder ? (
 									<WebText recipe={styles.project}>{model.projectFolder} · </WebText>
 								) : null}

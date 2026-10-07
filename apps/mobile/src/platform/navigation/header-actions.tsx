@@ -1,5 +1,6 @@
 import { Stack } from "expo-router";
 import { useCSSVariable } from "uniwind";
+import { headerMenuGroups } from "@/platform/navigation/header-menu";
 import type { HeaderAction, HeaderMenu } from "@/platform/navigation/native-header-types";
 
 export function HeaderActions({
@@ -29,18 +30,31 @@ export function HeaderActions({
 			{menu ? (
 				<Stack.Toolbar.Menu accessibilityLabel={menu.label} icon="ellipsis">
 					<Stack.Toolbar.Label>{menu.label}</Stack.Toolbar.Label>
-					{menu.items.map((action) => (
-						<Stack.Toolbar.MenuAction
-							key={action.id}
-							disabled={action.disabled}
-							destructive={action.destructive}
-							onPress={action.onPress}
-						>
-							{action.label}
-						</Stack.Toolbar.MenuAction>
-					))}
+					{headerMenuGroups(menu).flatMap((group) =>
+						group.title === undefined
+							? group.items.map(menuAction)
+							: [
+									<Stack.Toolbar.Menu key={group.id} inline title={group.title}>
+										{group.items.map(menuAction)}
+									</Stack.Toolbar.Menu>,
+								],
+					)}
 				</Stack.Toolbar.Menu>
 			) : null}
 		</Stack.Toolbar>
+	);
+}
+
+function menuAction(action: HeaderAction) {
+	return (
+		<Stack.Toolbar.MenuAction
+			key={action.id}
+			disabled={action.disabled}
+			destructive={action.destructive}
+			isOn={action.selected}
+			onPress={action.onPress}
+		>
+			{action.label}
+		</Stack.Toolbar.MenuAction>
 	);
 }
