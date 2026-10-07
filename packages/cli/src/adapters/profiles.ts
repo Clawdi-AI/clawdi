@@ -15,13 +15,13 @@ import { getHermesHome, getOpenClawHome } from "./paths";
 
 const upstreamKey = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
 const hermesProfileIdentity = z.object({ name: upstreamKey, home: z.string().refine(isAbsolute) });
-const hermesProfileSchema = hermesProfileIdentity.extend({
+export const hermesProfileSchema = hermesProfileIdentity.extend({
 	previous_names: z.array(upstreamKey),
 	failed: z.boolean().optional(),
 });
 
 // Upstream owns identity filtering, tombstones, root resolution and rename history.
-const HERMES_PROFILE_DISCOVERY = `
+export const HERMES_PROFILE_DISCOVERY = `
 import json, sys
 sys.path.insert(0, sys.argv[1])
 from hermes_cli import profiles

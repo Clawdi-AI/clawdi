@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from "bun:test";
+import { afterAll, afterEach, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,6 +9,18 @@ import {
 	commitHermesConfigTransaction,
 	reconcileHermesConfigValue,
 } from "./hermes-config";
+
+import { runtimeFileCurrentRevision } from "./manifest-install";
+import {
+	preinstalledHermesConfigPath,
+	resetPreinstalledProbesForTest,
+} from "./preinstalled-probes";
+
+const savedEnv = { ...process.env };
+afterEach(() => {
+	process.env = { ...savedEnv };
+	resetPreinstalledProbesForTest();
+});
 
 const root = mkdtempSync(join(tmpdir(), "clawdi-hermes-config-test-"));
 const mock = fileURLToPath(new URL("../test-support/hermes-config-cli-mock.ts", import.meta.url));
@@ -102,4 +114,61 @@ test("defers a conflicting write and replays from the next config snapshot", () 
 		mcp_servers: { "user.server": { command: "user-owned" } },
 		plugins: { scan_on_install: false },
 	});
+});
+
+test("resolves named profile config through Hermes even when the default preinstalled probe matches", () => {
+	const home = join(root, "preinstalled-home");
+	const state = join(root, "preinstalled-state");
+	const command = join(home, ".local", "bin", "hermes");
+	const commandLog = join(home, "commands.log");
+	const configPath = join(home, ".hermes", "config.yaml");
+	const workConfigPath = join(home, ".hermes", "profiles", "work", "config.yaml");
+	const gitDir = join(home, ".hermes", "hermes-agent", ".git");
+	for (const path of [
+		dirname(command),
+		dirname(workConfigPath),
+		gitDir,
+		join(state, "preinstallation"),
+	])
+		mkdirSync(path, { recursive: true });
+	writeFileSync(configPath, "# default config\n");
+	writeFileSync(workConfigPath, "# work config\n");
+	writeFileSync(
+		command,
+		`#!/bin/sh\nprintf '%s\\n' "$*" >> '${commandLog}'\nexec '${process.execPath}' '${mock}' "$@"\n`,
+		{ mode: 0o755 },
+	);
+	const commit = "c".repeat(40);
+	writeFileSync(join(gitDir, "HEAD"), `${commit}\n`);
+	const executableRevision = runtimeFileCurrentRevision(command);
+	if (!executableRevision) throw new Error("Hermes fixture revision is missing");
+	const receipt = join(state, "preinstallation", "receipt.json");
+	writeFileSync(
+		receipt,
+		JSON.stringify({
+			probes: {
+				runtime: "hermes",
+				command,
+				home,
+				executableRevision,
+				sourceIdentity: `git:${commit}`,
+				version: "sealed version",
+				configPath,
+			},
+		}),
+		{ mode: 0o400 },
+	);
+	process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	process.env.CLAWDI_SERVICE_STATE_DIR = state;
+	delete process.env.HERMES_HOME;
+	resetPreinstalledProbesForTest(process.getuid?.() ?? 0);
+	expect(preinstalledHermesConfigPath(command, home, executableRevision, undefined)).toBe(
+		configPath,
+	);
+	const context = { command, home, cwd: home };
+	expect(beginHermesConfigTransaction(context).path).toBe(configPath);
+	expect(beginHermesConfigTransaction({ ...context, profile: "work" }).path).toBe(workConfigPath);
+	const calls = readFileSync(commandLog, "utf8").trim().split("\n");
+	expect(calls).toHaveLength(1);
+	expect(calls[0]?.split(" ")).toEqual(expect.arrayContaining(["-p", "work", "config", "path"]));
 });
