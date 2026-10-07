@@ -37,7 +37,9 @@
 			"lucide-react": "^1.39.0",
 			"viem": "2.56.9",
 			"yaml": "^2.9.1",
-			"lucide-react-native": "^1.52.0"
+			"lucide-react-native": "^1.52.0",
+			"culori": "4.0.2",
+			"@types/culori": "4.0.1"
 		},
 		"catalogs": {
 			"expo57": {

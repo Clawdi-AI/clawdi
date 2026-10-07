@@ -1,6 +1,6 @@
 /**
- * Builds the Uniwind theme from the Web design tokens so mobile and Web share
- * one source of truth: packages/shared/src/style/theme.css.
+ * Builds the Uniwind theme and the Clerk native theme from the Web design tokens
+ * so mobile and Web share one source of truth: packages/shared/src/style/theme.css.
  *
  * Run `bun run theme` after changing the shared tokens; `theme.test.ts` fails
  * when the committed output is stale.
@@ -8,6 +8,7 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { clampChroma, converter, formatHex, formatHex8, parse } from "culori";
 import { possibleNativeClasses } from "@/lib/web-classes";
 
 const sourcePath = fileURLToPath(
@@ -21,17 +22,20 @@ const webClassSourceDirs = ["ui", "view"].map((dir) =>
 export const webClassesOutputPath = fileURLToPath(
 	new URL("../web-classes.generated.css", import.meta.url),
 );
+export const clerkThemeOutputPath = fileURLToPath(
+	new URL("../clerk-theme.generated.json", import.meta.url),
+);
 
 const REM_PX = 16;
 
-function block(css: string, selector: string): string {
+export function block(css: string, selector: string): string {
 	const start = css.indexOf(`${selector} {`);
 	if (start < 0) throw new Error(`Missing ${selector} block in shared theme`);
 	const end = css.indexOf("\n}", start);
 	return css.slice(start + selector.length + 2, end);
 }
 
-function declarations(body: string): Map<string, string> {
+export function declarations(body: string): Map<string, string> {
 	const result = new Map<string, string>();
 	const withoutComments = body.replace(/\/\*[\s\S]*?\*\//g, "");
 	for (const match of withoutComments.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) {
@@ -102,6 +106,60 @@ ${text}
 `;
 }
 
+/** Clerk native color keys mapped to the shared Web tokens they mirror. */
+const CLERK_COLOR_TOKENS = {
+	primary: "primary",
+	primaryForeground: "primary-foreground",
+	background: "background",
+	foreground: "foreground",
+	muted: "muted",
+	mutedForeground: "muted-foreground",
+	input: "card",
+	inputForeground: "foreground",
+	border: "border",
+	ring: "ring",
+	danger: "destructive",
+	success: "success",
+	warning: "warning",
+	neutral: "secondary-foreground",
+	secondaryButtonBackground: "secondary",
+	secondaryButtonForeground: "secondary-foreground",
+} as const;
+
+const toRgb = converter("rgb");
+
+/** Native surfaces take sRGB hex; OKLCH tokens are gamut-mapped by chroma, as browsers do. */
+export function hexColor(value: string): string {
+	const parsed = parse(value);
+	if (!parsed) throw new Error(`Unsupported color ${value}`);
+	const rgb = toRgb(clampChroma(parsed, "oklch"));
+	return rgb.alpha !== undefined && rgb.alpha < 1 ? formatHex8(rgb) : formatHex(rgb);
+}
+
+function clerkColors(values: Map<string, string>) {
+	const colors: Record<string, string> = {};
+	for (const [key, token] of Object.entries(CLERK_COLOR_TOKENS)) {
+		const value = values.get(`--${token}`);
+		if (!value) throw new Error(`Shared theme is missing --${token}`);
+		colors[key] = hexColor(value);
+	}
+	// Design rule: hairline borders, no shadows.
+	colors.shadow = "#00000000";
+	return colors;
+}
+
+/** Theme for the `@clerk/expo` config plugin; `fontFamily` applies on iOS only. */
+export function buildClerkTheme(css: string): string {
+	const light = declarations(block(css, ":root"));
+	const dark = declarations(block(css, ".dark"));
+	const theme = {
+		colors: clerkColors(light),
+		darkColors: clerkColors(dark),
+		design: { fontFamily: "Geist", borderRadius: remToPx(light.get("--radius") ?? "") },
+	};
+	return `${JSON.stringify(theme, null, "\t")}\n`;
+}
+
 /**
  * Uniwind only compiles classes it finds literally in source. Web class strings
  * resolved at runtime (`hover:x` -> `active:x`, ...) are safelisted here.
@@ -159,12 +217,29 @@ export function stringLiterals(source: string): string[] {
 	return literals;
 }
 
+/**
+ * `@source inline()` parses quotes, braces and parentheses: one copy token such as
+ * `project's`, `{count}` or `(BYOK)` silently drops every class after it.
+ */
+function isInlineCandidate(name: string): boolean {
+	if (!/^[\w!@*-]/.test(name) || /["'`\\{}]/.test(name)) return false;
+	let parens = 0;
+	let brackets = 0;
+	for (const char of name) {
+		if (char === "(") parens++;
+		else if (char === ")") parens--;
+		else if (char === "[") brackets++;
+		else if (char === "]") brackets--;
+		if (parens < 0 || brackets < 0) return false;
+	}
+	return parens === 0 && brackets === 0;
+}
+
 export function buildWebClassSafelist(sources: readonly string[]): string {
 	const classes = new Set<string>();
 	for (const literal of sources.flatMap(stringLiterals)) {
 		for (const name of possibleNativeClasses(literal)) {
-			// Keep the generated CSS string valid; class candidates never contain these.
-			if (!/["\\]/.test(name)) classes.add(name);
+			if (isInlineCandidate(name)) classes.add(name);
 		}
 	}
 	const sorted = [...classes].sort();
@@ -184,6 +259,7 @@ export function readWebClassSources(): string[] {
 if (import.meta.main) {
 	writeFileSync(outputPath, buildMobileTheme(readFileSync(sourcePath, "utf8")));
 	writeFileSync(webClassesOutputPath, buildWebClassSafelist(readWebClassSources()));
+	writeFileSync(clerkThemeOutputPath, buildClerkTheme(readFileSync(sourcePath, "utf8")));
 }
 
 export function readSharedTheme() {

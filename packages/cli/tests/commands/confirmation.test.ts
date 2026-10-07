@@ -53,6 +53,8 @@ beforeEach(() => {
 			}
 			if (request.method !== "GET") mutations.push(route);
 			switch (route) {
+				case "GET /v1/ai-providers":
+					return Response.json({ providers: [] });
 				case "GET /v1/projects/default":
 					return Response.json({ project_id: projectId });
 				case "GET /v1/projects":

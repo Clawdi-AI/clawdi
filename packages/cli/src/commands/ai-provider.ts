@@ -20,6 +20,7 @@ import {
 	isSupportedSecretRef,
 	validateAiProviderCatalog,
 } from "@clawdi/shared";
+import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
 import { parse as parseYaml } from "yaml";
 import {
@@ -36,10 +37,14 @@ import {
 	probeAiProvider,
 	publicAiProviderAuthStatus,
 } from "../lib/ai-provider-test";
-import { ApiClient } from "../lib/api-client";
+import { ApiClient, unwrap } from "../lib/api-client";
+import { isClerkOAuthAuth } from "../lib/clerk-oauth";
 import { parsePositiveInteger } from "../lib/cli-options";
+import { getAuth } from "../lib/config";
+import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
 import { PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { confirmOrRequireYes } from "../lib/prompts";
+import { requireAuth } from "../lib/require-auth";
 import { isInteractive } from "../lib/tty";
 import { collectAgentCredentialProfilePayload } from "./agent-credentials";
 
@@ -176,22 +181,53 @@ const CODEX_OAUTH_LOOPBACK: OAuthLoopbackOptions = {
 
 export async function aiProviderListCommand(opts: AiProviderListOptions = {}): Promise<void> {
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
+	const cloud = getAuth() ? unwrap(await new ApiClient().GET("/v1/ai-providers")).providers : [];
+	if (!getAuth())
+		console.error(
+			"Not signed in; showing local AI providers only. Run `clawdi auth login` to include Cloud providers.",
+		);
+	const cloudIds = new Set(cloud.map((provider) => provider.provider_id));
+	const providers = [
+		...cloud.map((provider) => ({ ...cloudProviderToCatalog(provider), source: "cloud" })),
+		...catalog.providers
+			.filter((provider) => !cloudIds.has(provider.id))
+			.map((provider) => ({ ...provider, source: "local" })),
+	];
 	if (opts.json) {
-		console.log(JSON.stringify(catalog, null, 2));
+		console.log(JSON.stringify({ ...catalog, providers }, null, 2));
 		return;
 	}
-	if (catalog.providers.length === 0) {
+	if (providers.length === 0) {
 		console.log("No AI providers configured.");
 		return;
 	}
-	const rows = catalog.providers.map((provider) => [
+	const rows = providers.map((provider) => [
 		provider.id,
+		provider.source,
 		provider.type,
 		hostOf(provider.base_url),
 		modelsSummary(provider),
 		describeAuth(provider.auth),
 	]);
-	printTable(["ID", "TYPE", "HOST", "MODELS", "AUTH"], rows);
+	printTable(["ID", "SOURCE", "TYPE", "HOST", "MODELS", "AUTH"], rows);
+}
+
+function cloudProviderToCatalog(provider: components["schemas"]["AiProviderResponse"]): AiProvider {
+	return {
+		id: provider.provider_id,
+		type: provider.type,
+		base_url: provider.base_url,
+		auth: provider.auth,
+		managed_by: provider.managed_by,
+		...(provider.label ? { label: provider.label } : {}),
+		...(provider.api_mode ? { api_mode: provider.api_mode } : {}),
+		...(provider.runtime_env_name ? { runtime_env_name: provider.runtime_env_name } : {}),
+		...(provider.models ? { models: provider.models } : {}),
+		...(provider.capabilities ? { capabilities: provider.capabilities } : {}),
+		...(provider.configuration_mode ? { configuration_mode: provider.configuration_mode } : {}),
+		...(provider.native_provider ? { native_provider: provider.native_provider } : {}),
+		...(provider.native_variant ? { native_variant: provider.native_variant } : {}),
+	};
 }
 
 export async function aiProviderAddCommand(
@@ -213,21 +249,108 @@ export async function aiProviderEditCommand(
 	providerId: string,
 	opts: AiProviderEditOptions,
 ): Promise<void> {
+	requireAuth();
+	if (!isAiProviderId(providerId)) throw new Error(`Invalid AI provider ID: ${providerId}`);
+	const api = new ApiClient();
+	const cloud = unwrap(await api.GET("/v1/ai-providers")).providers.find(
+		(provider) => provider.provider_id === providerId,
+	);
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
-	const existing = catalog.providers.find((provider) => provider.id === providerId);
+	const local = catalog.providers.find((provider) => provider.id === providerId);
+	const existing = cloud ? cloudProviderToCatalog(cloud) : local;
 	if (!existing) throw new Error(`AI provider not found: ${providerId}`);
 	const updated = buildProvider(providerId, opts, existing);
-	const next = applyDefault(upsertAiProvider(catalog, updated, true), updated, opts);
-	writeAiProviderCatalog(next);
-	printMutationResult("updated", updated, opts.json);
+	if (cloud) {
+		if (opts.setDefault) throw new Error("--set-default applies to local catalog entries only.");
+		const patch: components["schemas"]["AiProviderPatch"] = {};
+		if (opts.type !== undefined) patch.type = updated.type;
+		if (opts.label !== undefined) patch.label = updated.label ?? "";
+		if (opts.baseUrl !== undefined) patch.base_url = updated.base_url;
+		if (opts.apiMode !== undefined) patch.api_mode = updated.api_mode;
+		if (opts.agentEnv !== undefined) patch.runtime_env_name = updated.runtime_env_name;
+		if (opts.auth !== undefined) {
+			if (updated.auth.type === "oauth_profile")
+				throw new Error("Use ai-provider connect to edit OAuth authentication.");
+			patch.auth = updated.auth;
+		}
+		if (opts.defaultModel)
+			patch.models = [
+				{ id: opts.defaultModel },
+				...(cloud.models ?? []).filter((model) => model.id !== opts.defaultModel),
+			];
+		if (opts.capability?.length)
+			patch.capabilities = Object.fromEntries(
+				Object.keys(updated.capabilities ?? {}).map((key) => [key, true]),
+			);
+		const saved = cloudProviderToCatalog(
+			unwrap(
+				await api.PATCH("/v1/ai-providers/{provider_id}", {
+					params: { path: { provider_id: providerId } },
+					body: patch,
+				}),
+			),
+		);
+		if (local) {
+			try {
+				writeAiProviderCatalog(upsertAiProvider(catalog, saved, true));
+			} catch {
+				throw new Error(
+					"Cloud provider updated, but the local catalog could not be saved. Check local catalog permissions and validity before retrying.",
+				);
+			}
+		}
+		if (opts.json)
+			console.log(
+				JSON.stringify({
+					schemaVersion: "clawdi.aiProviderEdit.v1",
+					updated: providerId,
+					provider: { ...saved, source: "cloud" },
+				}),
+			);
+		else console.log(chalk.green(`✓ Updated Cloud AI provider ${providerId}`));
+		return;
+	}
+	writeAiProviderCatalog(applyDefault(upsertAiProvider(catalog, updated, true), updated, opts));
+	printMutationResult(
+		"updated",
+		{ ...updated, source: "local" },
+		opts.json,
+		"clawdi.aiProviderEdit.v1",
+	);
 }
 
 export async function aiProviderRemoveCommand(
 	providerId: string,
 	opts: AiProviderRemoveOptions = {},
 ): Promise<void> {
+	const auth = requireAuth();
+	if (!isAiProviderId(providerId)) throw new Error(`Invalid AI provider ID: ${providerId}`);
+	const api = new ApiClient();
+	const cloud = unwrap(await api.GET("/v1/ai-providers")).providers.some(
+		(provider) => provider.provider_id === providerId,
+	);
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
-	const next = removeAiProvider(catalog, providerId, Boolean(opts.force));
+	const local = catalog.providers.some((provider) => provider.id === providerId);
+	if (!cloud && !local) throw new Error(`AI provider not found: ${providerId}`);
+	const next = local ? removeAiProvider(catalog, providerId, Boolean(opts.force)) : catalog;
+	const hosted = new HostedDeployClient();
+	let impact: Awaited<ReturnType<HostedDeployClient["getAiProviderRemovalImpact"]>> | undefined;
+	if (cloud && isClerkOAuthAuth(auth)) {
+		try {
+			impact = await hosted.getAiProviderRemovalImpact(providerId);
+		} catch (error) {
+			if (!(error instanceof HostedDeployApiError) || ![404, 405, 501].includes(error.status))
+				throw error;
+		}
+	}
+	if (impact?.agents.length) {
+		console.error(`Removing ${providerId} will unset the provider for these Cloud Agents:`);
+		for (const agent of impact.agents) console.error(`  ${agent.deployment_id}  ${agent.name}`);
+		if (!opts.yes)
+			throw new Error(
+				"This provider is used by Cloud Agents. Re-run with --yes to confirm the removal impact.",
+			);
+	}
 	if (
 		isInteractive() &&
 		!(await confirmOrRequireYes(`Remove AI provider ${providerId}?`, {
@@ -237,9 +360,36 @@ export async function aiProviderRemoveCommand(
 	) {
 		return;
 	}
-	writeAiProviderCatalog(next);
+	if (cloud) {
+		if (impact) await hosted.removeAiProvider(impact);
+		else
+			unwrap(
+				await api.DELETE("/v1/ai-providers/{provider_id}", {
+					params: { path: { provider_id: providerId } },
+				}),
+			);
+	}
+	if (local) {
+		try {
+			writeAiProviderCatalog(next);
+		} catch {
+			throw new Error(
+				`${cloud ? "Cloud provider removed, but the" : "The"} local catalog could not be saved. Check local catalog permissions and validity before retrying.`,
+			);
+		}
+	}
 	if (opts.json) {
-		console.log(JSON.stringify({ removed: providerId }, null, 2));
+		console.log(
+			JSON.stringify(
+				{
+					schemaVersion: "clawdi.aiProviderRemove.v1",
+					removed: providerId,
+					source: cloud ? "cloud" : "local",
+				},
+				null,
+				2,
+			),
+		);
 		return;
 	}
 	console.log(chalk.green(`✓ Removed AI provider ${providerId}`));
@@ -1567,9 +1717,20 @@ function hostOf(input: string): string {
 	}
 }
 
-function printMutationResult(action: string, provider: AiProvider, json?: boolean): void {
+function printMutationResult(
+	action: string,
+	provider: AiProvider & { source?: string },
+	json?: boolean,
+	schemaVersion?: string,
+): void {
 	if (json) {
-		console.log(JSON.stringify({ [action]: provider.id, provider }, null, 2));
+		console.log(
+			JSON.stringify(
+				{ ...(schemaVersion ? { schemaVersion } : {}), [action]: provider.id, provider },
+				null,
+				2,
+			),
+		);
 		return;
 	}
 	console.log(chalk.green(`✓ ${capitalize(action)} AI provider ${provider.id}`));

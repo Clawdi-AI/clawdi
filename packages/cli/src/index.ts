@@ -257,6 +257,41 @@ walletCmd
 		await runWalletStatusCommand(opts);
 	});
 
+walletCmd
+	.command("transactions")
+	.description("List wallet transactions")
+	.option(
+		"--limit <n>",
+		"Maximum transactions to show (default: API default)",
+		parsePositiveInteger,
+	)
+	.option("--json", "Output as JSON")
+	.addHelpText("after", "\nExample:\n  $ clawdi wallet transactions --limit 20 --json")
+	.action(async (opts) => {
+		const { walletTransactionsCommand } = await import("./commands/wallet.js");
+		await walletTransactionsCommand(opts);
+	});
+
+walletCmd
+	.command("usage")
+	.description("Show usage for the API reporting period")
+	.option("--days <n>", "Reporting period in days (default: API default)", parsePositiveInteger)
+	.option("--json", "Output as JSON")
+	.addHelpText("after", "\nExample:\n  $ clawdi wallet usage --days 7 --json")
+	.action(async (opts) => {
+		const { walletUsageCommand } = await import("./commands/wallet.js");
+		await walletUsageCommand(opts);
+	});
+
+walletCmd
+	.command("portal")
+	.description("Print the web billing URL")
+	.addHelpText("after", "\nExample:\n  $ clawdi wallet portal")
+	.action(async () => {
+		const { walletPortalCommand } = await import("./commands/wallet.js");
+		await walletPortalCommand();
+	});
+
 // ─────────────────────────────────────────────────────────────
 // config
 // ─────────────────────────────────────────────────────────────
@@ -452,7 +487,8 @@ const aiProviderCmd = program.command("ai-provider").description("Manage AI prov
 
 aiProviderCmd
 	.command("list")
-	.description("List configured AI providers")
+	.description("List Cloud and local AI providers")
+	.addHelpText("after", "\nExample:\n  $ clawdi ai-provider list --json")
 	.option("--json", "Output as JSON")
 	.action(async (opts) => {
 		const { aiProviderListCommand } = await import("./commands/ai-provider.js");
@@ -492,7 +528,8 @@ Examples:
 
 aiProviderCmd
 	.command("edit <provider-id>")
-	.description("Edit an AI provider")
+	.description("Edit a Cloud or local AI provider")
+	.addHelpText("after", "\nExample:\n  $ clawdi ai-provider edit openai-main --label Main --json")
 	.option("--type <type>", "Provider type")
 	.option("--label <label>", "Display label")
 	.option("--base-url <url>", "Provider base URL")
@@ -643,6 +680,36 @@ const channelCmd = program
 	.command("channel")
 	.alias("bot")
 	.description("Manage channel bots and pair external chats to agents");
+
+channelCmd
+	.command("unpair <channel-id>")
+	.description("Unpair a chat from a channel")
+	.requiredOption("--binding <binding-id>", "Chat binding UUID to unpair")
+	.option("-y, --yes", "Confirm unpairing the chat")
+	.option("--json", "Output as JSON")
+	.addHelpText(
+		"after",
+		"\nExample:\n  $ clawdi channel unpair <channel-id> --binding <binding-id> --yes --json",
+	)
+	.action(async (id: string, opts) => {
+		const { channelUnpairCommand } = await import("./commands/channel.js");
+		await channelUnpairCommand(id, opts);
+	});
+
+channelCmd
+	.command("unlink <channel-id>")
+	.description("Unlink an agent from a channel")
+	.requiredOption("--link <link-id>", "Agent link UUID to unlink")
+	.option("-y, --yes", "Confirm unlinking the agent")
+	.option("--json", "Output as JSON")
+	.addHelpText(
+		"after",
+		"\nExample:\n  $ clawdi channel unlink <channel-id> --link <link-id> --yes --json",
+	)
+	.action(async (id: string, opts) => {
+		const { channelUnlinkCommand } = await import("./commands/channel.js");
+		await channelUnlinkCommand(id, opts);
+	});
 
 channelCmd
 	.command("list")
@@ -884,6 +951,21 @@ Scope:
 	);
 
 vaultCmd
+	.command("request <key>")
+	.description("Request a secret through the browser without reading its value")
+	.option("--project <id-or-slug>", "Target project (default: your default-write project)")
+	.option("--wait", "Wait up to five minutes for the secret to be supplied")
+	.option("--json", "Output as JSON")
+	.addHelpText(
+		"after",
+		"\nExample:\n  $ clawdi vault request api-service/OPENAI_API_KEY --project engineering --wait --json",
+	)
+	.action(async (id: string, opts) => {
+		const { vaultRequest } = await import("./commands/vault.js");
+		await vaultRequest(id, opts);
+	});
+
+vaultCmd
 	.command("materialize")
 	.alias("pull")
 	.description("Bind one vault to a local dotenv file, or pull its saved binding")
@@ -1095,6 +1177,17 @@ program
 // skill
 // ─────────────────────────────────────────────────────────────
 const skillCmd = program.command("skill").description("Manage skills");
+
+skillCmd
+	.command("show <key>")
+	.description("Read a skill without importing it")
+	.option("-p, --project <id-or-slug>", "Target project (default: your default-write project)")
+	.option("--json", "Output as JSON")
+	.addHelpText("after", "\nExample:\n  $ clawdi skill show my-skill --project engineering --json")
+	.action(async (id: string, opts) => {
+		const { skillShow } = await import("./commands/skill.js");
+		await skillShow(id, opts);
+	});
 
 skillCmd
 	.command("list")
