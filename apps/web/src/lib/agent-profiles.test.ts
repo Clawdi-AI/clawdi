@@ -13,8 +13,6 @@ function profile(overrides: Partial<AgentProfile>): AgentProfile {
 		profile_key: "",
 		is_default: true,
 		state: "active",
-		first_seen_at: "2026-10-01T00:00:00Z",
-		removed_at: null,
 		session_count: 0,
 		...overrides,
 	};

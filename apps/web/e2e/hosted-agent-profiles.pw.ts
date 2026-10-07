@@ -50,8 +50,6 @@ function profile(
 		profile_key: key,
 		is_default: key === "",
 		state: "active",
-		first_seen_at: "2026-10-01T00:00:00.000Z",
-		removed_at: null,
 		session_count: 0,
 		...overrides,
 	};
@@ -69,7 +67,6 @@ const profilesByAgent: Record<string, AgentProfile[]> = {
 		profile(MULTI_ID, "", { session_count: 25 }),
 		profile(MULTI_ID, "research", {
 			state: "removed",
-			removed_at: "2026-10-05T12:00:00.000Z",
 			session_count: 1,
 		}),
 		profile(MULTI_ID, "staging"),

@@ -37,8 +37,6 @@ function profile(agentId: string, key: string, overrides: Record<string, unknown
 		profile_key: key,
 		is_default: key === "",
 		state: "active",
-		first_seen_at: now,
-		removed_at: null,
 		session_count: 1,
 		...overrides,
 	};
@@ -48,7 +46,7 @@ const profilesByAgent: Record<string, unknown[]> = {
 	[SINGLE_ID]: [profile(SINGLE_ID, "")],
 	[MULTI_ID]: [
 		profile(MULTI_ID, ""),
-		profile(MULTI_ID, "research", { state: "removed", removed_at: now }),
+		profile(MULTI_ID, "research", { state: "removed" }),
 		profile(MULTI_ID, "work", { session_count: 2 }),
 	],
 };

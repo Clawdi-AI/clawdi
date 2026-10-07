@@ -22,8 +22,6 @@ const DEFAULT_PROFILE: AgentProfile = {
 	profile_key: "",
 	is_default: true,
 	state: "active",
-	first_seen_at: "2026-10-01T00:00:00Z",
-	removed_at: null,
 	session_count: 147,
 };
 
@@ -62,7 +60,6 @@ describe("AgentProfilesOverview", () => {
 						profile_key: "old",
 						is_default: false,
 						state: "removed",
-						removed_at: "2026-10-05T00:00:00Z",
 					},
 				]}
 				linkSessions
