@@ -87,7 +87,7 @@
       },
       "devDependencies": {
         "@babel/core": "catalog:expo57",
-        "@clerk/shared": "4.38.0",
+        "@clerk/shared": "^4.38.0",
         "@react-native/metro-config": "catalog:expo57",
         "@types/bun": "catalog:",
         "@types/culori": "catalog:",

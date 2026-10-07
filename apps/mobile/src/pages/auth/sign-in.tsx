@@ -1,8 +1,9 @@
 import { AuthView } from "@clerk/expo/native";
 
 /**
- * Clerk's default `signInOrUp` mode: native `signIn` mode has no sign-up link, so a
- * new user would be stuck where Web's `<SignIn/>` offers "Sign up".
+ * Serves /sign-in and /sign-up with Clerk's default `signInOrUp` mode: the native
+ * `signIn`/`signUp` modes offer no switch, so a new user on /sign-in or an existing
+ * user on /sign-up (e.g. a Web /sign-up link) would be stuck.
  */
 export default function SignInPage() {
 	return <AuthView isDismissible={false} />;
