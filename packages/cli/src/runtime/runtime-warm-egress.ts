@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { egressEngineSchema } from "./egress-engine";
 import { buildEgressEngineEnv } from "./egress-env";
 import { publishEgressSystemCaBundle } from "./egress-sidecar";
 import { initializeAnonymousEgressSnapshot, recordWarmEgress } from "./egress-snapshot";
@@ -42,7 +43,9 @@ export async function generateAnonymousEgressCa(
 				readFileSync(join(paths.serviceStateRoot, "preinstallation", "receipt.json"), "utf8"),
 			),
 		);
-	const engine = ensureRuntimeMitmproxy(receipt.egressEngine, paths);
+	const egressEngine = egressEngineSchema.safeParse(receipt.egressEngine);
+	if (!egressEngine.success) return;
+	const engine = ensureRuntimeMitmproxy(egressEngine.data, paths);
 	if (engine.status !== "ready") throw new Error("prepared egress engine is unavailable");
 	ensureRuntimePlatformDirectory(paths, paths.egressRoot, { mode: 0o711 });
 	chmodSync(paths.egressRoot, 0o711);
@@ -119,7 +122,9 @@ export function warmAnonymousEgressSidecar(
 				readFileSync(join(paths.serviceStateRoot, "preinstallation", "receipt.json"), "utf8"),
 			),
 		);
-	const engine = ensureRuntimeMitmproxy(receipt.egressEngine, paths);
+	const egressEngine = egressEngineSchema.safeParse(receipt.egressEngine);
+	if (!egressEngine.success) return;
+	const engine = ensureRuntimeMitmproxy(egressEngine.data, paths);
 	if (engine.status !== "ready") throw new Error("prepared egress engine is unavailable");
 	const profileBundlePath = writeEgressProfileBundle(
 		{ schemaVersion: "clawdi.egressProfiles.v1", profiles: [] },

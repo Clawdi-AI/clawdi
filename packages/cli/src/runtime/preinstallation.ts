@@ -1,12 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-	chmodSync,
 	chownSync,
-	existsSync,
 	lstatSync,
 	mkdirSync,
-	mkdtempSync,
 	readdirSync,
 	readFileSync,
 	readlinkSync,
@@ -14,7 +11,6 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { z } from "zod";
 import {
@@ -22,15 +18,16 @@ import {
 	resolveOpenClawSdkExport,
 } from "../lib/codex-oauth-native-store";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { getCliVersion } from "../lib/version";
-import { installRuntimeCliArchive } from "./cli-update";
-import { egressEngineSchema } from "./egress-engine";
-import { prefetchFileBrowserAsset } from "./file-browser-companion";
+import { applyRuntimeCliDesiredState } from "./cli-update";
 import { prepareHermesDashboardBuild } from "./hermes-dashboard-build";
 import { resolveHostedOpenClawWorkspace } from "./hosted-openclaw-context";
 import { ensureHostedCodexCli } from "./managed-codex-provider";
-import { runtimeCommandVersionRevision, runtimeFileCurrentRevision } from "./manifest-install";
-import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
+import { OFFICIAL_INSTALL_URLS, officialInstallArgs } from "./manifest-contract";
+import {
+	observeRuntimeInstall,
+	runtimeCommandVersionRevision,
+	runtimeFileCurrentRevision,
+} from "./manifest-install";
 import {
 	prepareAnonymousOpenClawGateway,
 	seedAnonymousOpenClawAuthProbes,
@@ -45,72 +42,20 @@ import { type PreinstalledProbes, preinstalledSourceIdentity } from "./preinstal
 import { buildNumericUserCommand } from "./runtime-user-command";
 
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
-const sriSha512 = z.string().regex(/^sha512-[A-Za-z0-9+/]{86}==$/);
-const semver = z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
 export const preinstallationSpecSchema = z
 	.object({
 		schemaVersion: z.literal("clawdi.runtime-preinstallation.v1"),
 		imageFingerprint: sha256,
 		architecture: z.enum(["x64", "arm64"]),
 		cliPackageSpec: z.string().regex(/^clawdi@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/),
-		cliIntegrity: sriSha512,
-		egressEngine: egressEngineSchema.strict().optional(),
-		fileBrowserAsset: z
-			.object({
-				url: z
-					.string()
-					.regex(
-						/^https:\/\/github\.com\/gtsteffaniak\/filebrowser\/releases\/download\/[A-Za-z0-9._-]+\/linux-(?:amd64|arm64)-filebrowser$/,
-					),
-				sha256,
-			})
-			.strict()
-			.optional(),
 		runtime: z.enum(["openclaw", "hermes"]),
-		runtimeVersion: z.string(),
-		installerSha256: sha256,
-		installerUrl: z.string().url(),
-		runtimeTarballUrl: z
-			.string()
-			.regex(/^https:\/\/registry\.npmjs\.org\/openclaw\/-\/[A-Za-z0-9._-]+\.tgz$/)
-			.optional(),
-		runtimeIntegrity: sriSha512.optional(),
 	})
-	.strict()
-	.superRefine((spec, ctx) => {
-		const versionValid =
-			spec.runtime === "openclaw"
-				? semver.safeParse(spec.runtimeVersion).success
-				: /^[a-f0-9]{40}$/.test(spec.runtimeVersion);
-		const urlValid =
-			spec.runtime === "openclaw"
-				? spec.installerUrl === "https://openclaw.ai/install-cli.sh"
-				: spec.installerUrl ===
-					`https://raw.githubusercontent.com/NousResearch/hermes-agent/${spec.runtimeVersion}/scripts/install.sh`;
-		const artifactValid =
-			spec.runtime === "openclaw"
-				? Boolean(spec.runtimeTarballUrl && spec.runtimeIntegrity)
-				: spec.runtimeTarballUrl === undefined && spec.runtimeIntegrity === undefined;
-		if (!versionValid || !urlValid || !artifactValid)
-			ctx.addIssue({ code: "custom", message: "exact official runtime identity is required" });
-	});
+	.strict();
 export type PreinstallationSpec = z.infer<typeof preinstallationSpecSchema>;
 
 const SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 export function anonymousInstallerEnvironment(home: string): Record<string, string> {
-	// The pool controller installs the firewall before any installer can run.
-	const proxy: Record<string, string> = existsSync("/run/clawdi-pool-network/active")
-		? {
-				HTTPS_PROXY: "http://127.0.0.1:18081",
-				HTTP_PROXY: "http://127.0.0.1:18081",
-				NO_PROXY: "localhost,127.0.0.1",
-				NODE_USE_ENV_PROXY: "1",
-				NPM_CONFIG_HTTPS_PROXY: "http://127.0.0.1:18081",
-				NPM_CONFIG_PROXY: "http://127.0.0.1:18081",
-			}
-		: {};
 	return {
-		...proxy,
 		HOME: home,
 		USER: "clawdi",
 		LOGNAME: "clawdi",
@@ -159,12 +104,6 @@ export function preinstallationTreeSha256(root: string): string {
 	return digest.digest("hex");
 }
 
-/**
- * Version-only OpenClaw probe results that first-boot convergence would
- * otherwise compute: the official workspace roster for the untouched default
- * config and the config-schema memory-search layout. Keys are the exact
- * executable/SDK/config revisions, so any tenant change recomputes them.
- */
 function prepareOpenClawProbeResults(paths: RuntimePaths, command: string): void {
 	loadPersistedStepRevisions(paths);
 	resolveHostedOpenClawWorkspace(paths.userHome);
@@ -180,22 +119,17 @@ function prepareOpenClawProbeResults(paths: RuntimePaths, command: string): void
 
 export function prepareRuntimePreinstallation(
 	input: unknown,
-	installer: string,
 	options: {
 		home?: string;
 		state?: string;
 		uid?: number;
 		gid?: number;
-		runtimeArtifact?: string;
-		/** Hosted managed layout: install the CLI archive and shared tool artifacts. */
-		hosted?: { paths: RuntimePaths; cliArchive: string };
+		hosted?: { paths: RuntimePaths };
 	} = {},
 ) {
 	const spec = preinstallationSpecSchema.parse(input);
 	if (process.platform !== "linux" || process.arch !== spec.architecture)
 		throw new Error("preinstallation architecture mismatch");
-	if (spec.cliPackageSpec !== `clawdi@${getCliVersion()}`)
-		throw new Error("preinstallation CLI version mismatch");
 	const home = options.home ?? "/home/clawdi";
 	const state = options.state ?? "/var/lib/clawdi";
 	for (const path of [home, state]) {
@@ -207,217 +141,99 @@ export function prepareRuntimePreinstallation(
 			throw new Error("preinstallation requires empty anonymous home and state directories");
 		}
 	}
-	if (
-		options.hosted &&
-		`sha512-${createHash("sha512").update(readFileSync(options.hosted.cliArchive)).digest("base64")}` !==
-			spec.cliIntegrity
-	)
-		throw new Error("preinstallation CLI archive integrity mismatch");
-	// Read once; every later execution uses this verified private snapshot.
-	const script = readFileSync(installer);
-	if (createHash("sha256").update(script).digest("hex") !== spec.installerSha256)
-		throw new Error("preinstallation installer integrity mismatch");
-	if (spec.runtime === "openclaw" && !script.includes(Buffer.from("--runtime-only")))
-		throw new Error("official installer must support --runtime-only");
-	const temporary = mkdtempSync(join(tmpdir(), "clawdi-preinstallation-"));
-	chmodSync(temporary, 0o755);
-	try {
-		const verifiedInstaller = join(temporary, "installer.sh");
-		writeFileSync(verifiedInstaller, script, { mode: 0o444, flag: "wx" });
-		chmodSync(verifiedInstaller, 0o444);
-		let verifiedCliArchive: string | undefined;
-		if (options.hosted) {
-			const bytes = readFileSync(options.hosted.cliArchive);
-			if (`sha512-${createHash("sha512").update(bytes).digest("base64")}` !== spec.cliIntegrity)
-				throw new Error("preinstallation CLI archive integrity mismatch");
-			verifiedCliArchive = join(temporary, "clawdi.tgz");
-			writeFileSync(verifiedCliArchive, bytes, { mode: 0o400, flag: "wx" });
-		}
-		let pinnedVersion = spec.runtimeVersion;
-		if (spec.runtime === "openclaw") {
-			const download =
-				options.runtimeArtifact === undefined
-					? spawnSync(
-							"curl",
-							[
-								"--fail",
-								"--silent",
-								"--show-error",
-								"--proto",
-								"=https",
-								"--max-time",
-								"180",
-								spec.runtimeTarballUrl ?? "",
-							],
-							{
-								env: anonymousInstallerEnvironment(home),
-								timeout: 190_000,
-								maxBuffer: 250 * 1024 * 1024,
-							},
-						)
-					: undefined;
-			if (download?.error || (download && download.status !== 0)) {
-				if (download?.stderr) process.stderr.write(download.stderr.toString().slice(-8192));
-				throw new Error("official runtime artifact download failed");
-			}
-			const archive =
-				options.runtimeArtifact !== undefined
-					? readFileSync(options.runtimeArtifact)
-					: download?.stdout;
-			if (
-				!archive ||
-				`sha512-${createHash("sha512").update(archive).digest("base64")}` !== spec.runtimeIntegrity
-			)
-				throw new Error("official runtime artifact integrity mismatch");
-			pinnedVersion = join(temporary, "openclaw.tgz");
-			writeFileSync(pinnedVersion, archive, { mode: 0o444, flag: "wx" });
-			// The pool fill uses umask 077; the dropped runtime user must read this
-			// verified root-owned artifact through its traversable temporary directory.
-			chmodSync(pinnedVersion, 0o444);
-		}
-		const args =
-			spec.runtime === "openclaw"
-				? [
-						"--prefix",
-						join(home, ".local"),
-						"--version",
-						pinnedVersion,
-						"--runtime-only",
-						"--no-onboard",
-					]
-				: [
-						"--commit",
-						spec.runtimeVersion,
-						"--force-commit",
-						"--skip-setup",
-						"--skip-browser",
-						"--non-interactive",
-					];
-		const env = anonymousInstallerEnvironment(home);
-		const identity = { uid: options.uid ?? 10001, gid: options.gid ?? 10001 };
-		function run(
-			command: string,
-			commandArgs: string[],
-			timeout: number,
-			options: { cwd?: string; includeStderr?: boolean } = {},
-		) {
-			const child =
-				identity.uid === process.getuid?.() && identity.gid === process.getgid?.()
-					? { command, args: commandArgs }
-					: buildNumericUserCommand(identity.uid, identity.gid, command, commandArgs);
-			const result = spawnSync(child.command, child.args, {
-				cwd: options.cwd ?? home,
-				env,
-				encoding: "utf8",
-				timeout,
-				maxBuffer: 1024 * 1024,
-			});
-			if (result.error || result.status !== 0) {
-				// Anonymous fill diagnostics contain no inherited credentials.
-				if (result.stdout) process.stderr.write(result.stdout.slice(-8192));
-				if (result.stderr) process.stderr.write(result.stderr.slice(-8192));
-				throw new Error(
-					`anonymous runtime installation or health check failed (${command}, exit ${result.status ?? "timeout"})`,
-				);
-			}
-			return options.includeStderr
-				? [result.stdout, result.stderr].filter(Boolean).join("\n").trim()
-				: result.stdout.trim();
-		}
-		run("bash", ["--noprofile", "--norc", verifiedInstaller, ...args], 30 * 60 * 1000);
-		const command = join(home, ".local/bin", spec.runtime);
-		const health = run(command, ["--version"], 30_000, { includeStderr: true });
-		if (!health) throw new Error("anonymous runtime health check returned no version");
-		const installedIdentity =
-			spec.runtime === "openclaw"
-				? z
-						.object({ version: z.string() })
-						.parse(
-							JSON.parse(
-								readFileSync(
-									join(home, ".local/tools/node/lib/node_modules/openclaw/package.json"),
-									"utf8",
-								),
-							),
-						).version
-				: run("git", ["-C", join(home, ".hermes/hermes-agent"), "rev-parse", "HEAD"], 10_000);
-		if (installedIdentity !== spec.runtimeVersion)
-			throw new Error("installed runtime identity mismatch");
-		if (spec.runtime === "hermes") {
-			const executableRevision = runtimeFileCurrentRevision(command);
-			if (!executableRevision)
-				throw new Error("installed runtime executable identity is unavailable");
-			prepareHermesDashboardBuild({
-				home,
-				revision: runtimeCommandVersionRevision(executableRevision, health),
-				run: (args, cwd, timeout) => {
-					run("npm", args, timeout, { cwd });
-				},
-				writeRevision(path, contents) {
-					writePrivateFileAtomic(path, contents, { mode: 0o600 });
-					chownSync(path, identity.uid, identity.gid);
-				},
-			});
-		}
-		const executableRevision = runtimeFileCurrentRevision(command);
-		const sourceIdentity = preinstalledSourceIdentity(spec.runtime, home);
-		if (
-			!executableRevision ||
-			sourceIdentity !==
-				(spec.runtime === "hermes"
-					? `git:${spec.runtimeVersion}`
-					: `npm:openclaw@${spec.runtimeVersion}`)
-		)
-			throw new Error("installed runtime probe identity is unavailable");
-		const probes: PreinstalledProbes = {
-			runtime: spec.runtime,
-			command,
+	const paths = options.hosted?.paths;
+	if (!paths) throw new Error("hosted runtime paths are required for anonymous preparation");
+	const identity = { uid: options.uid ?? 10001, gid: options.gid ?? 10001 };
+	const install = {
+		authority: "official" as const,
+		method: "official-installer" as const,
+		url: OFFICIAL_INSTALL_URLS[spec.runtime],
+		home,
+		args: officialInstallArgs(spec.runtime, home),
+	};
+	const observation = observeRuntimeInstall(
+		spec.runtime,
+		{ enabled: true, install, services: {} },
+		home,
+		paths,
+		identity,
+	);
+	if (observation.status === "install_failed" || !observation.commandPath || observation.error)
+		throw new Error(observation.error ?? `anonymous ${spec.runtime} installation failed`);
+	const command = observation.commandPath;
+	const run = (args: string[], timeout: number): string => {
+		const child = buildNumericUserCommand(identity.uid, identity.gid, command, args);
+		const result = spawnSync(child.command, child.args, {
+			cwd: home,
+			env: anonymousInstallerEnvironment(home),
+			encoding: "utf8",
+			timeout,
+			maxBuffer: 1024 * 1024,
+		});
+		if (result.error || result.status !== 0)
+			throw new Error(`anonymous runtime health check failed (exit ${result.status ?? "timeout"})`);
+		return result.stdout.trim();
+	};
+	const health = run(["--version"], 30_000);
+	if (!health) throw new Error("anonymous runtime health check returned no version");
+	const executableRevision = runtimeFileCurrentRevision(command);
+	if (!executableRevision) throw new Error("installed runtime executable identity is unavailable");
+	if (spec.runtime === "hermes") {
+		prepareHermesDashboardBuild({
 			home,
-			executableRevision,
-			sourceIdentity,
-			version: health,
-			...(spec.runtime === "hermes"
-				? { configPath: run(command, ["config", "path"], 30_000) }
-				: {}),
-		};
-		if (probes.configPath !== undefined && !isAbsolute(probes.configPath))
-			throw new Error("installed Hermes config path is not absolute");
-		if (options.hosted) {
-			const { paths } = options.hosted;
-			// The same content-addressed checks used by tenant convergence then find
-			// these tenant-independent artifacts present and skip their downloads.
-			if (spec.egressEngine) {
-				const egress = ensureRuntimeMitmproxy(spec.egressEngine, paths);
-				if (egress.status !== "ready")
-					throw new Error(`egress engine preparation failed: ${egress.error}`);
-			}
-			if (spec.fileBrowserAsset) prefetchFileBrowserAsset(paths, spec.fileBrowserAsset);
-			if (!ensureHostedCodexCli(paths)) throw new Error("Codex preparation is disabled");
-			if (spec.runtime === "openclaw") {
-				prepareAnonymousOpenClawGateway(paths, identity);
-				prepareOpenClawProbeResults(paths, command);
-			}
-			if (!verifiedCliArchive) throw new Error("verified CLI archive is unavailable");
-			installRuntimeCliArchive(paths, spec.cliPackageSpec, verifiedCliArchive);
-		}
-		// Only caches explicitly redirected by this command are disposable.
-		// Keep upstream-generated runtime defaults and bundled software unchanged.
-		for (const cache of [".cache/npm", ".cache/uv", ".npm"])
-			rmSync(join(home, cache), { recursive: true, force: true });
-		const receipt = {
-			...spec,
-			preparedAt: new Date().toISOString(),
-			health,
-			probes,
-			homeTreeSha256: preinstallationTreeSha256(home),
-		};
-		mkdirSync(join(state, "preinstallation"), { mode: 0o700 });
-		const path = join(state, "preinstallation/receipt.json");
-		writeFileSync(`${path}.tmp`, `${JSON.stringify(receipt)}\n`, { mode: 0o400, flag: "wx" });
-		chmodSync(`${path}.tmp`, 0o400);
-		renameSync(`${path}.tmp`, path);
-		return receipt;
-	} finally {
-		rmSync(temporary, { recursive: true, force: true });
+			revision: runtimeCommandVersionRevision(executableRevision, health),
+			run: (args, cwd, timeout) => {
+				const child = buildNumericUserCommand(identity.uid, identity.gid, "npm", args);
+				const result = spawnSync(child.command, child.args, {
+					cwd,
+					env: anonymousInstallerEnvironment(home),
+					encoding: "utf8",
+					timeout,
+				});
+				if (result.error || result.status !== 0) throw new Error("Hermes dashboard build failed");
+			},
+			writeRevision(path, contents) {
+				writePrivateFileAtomic(path, contents, { mode: 0o600 });
+				chownSync(path, identity.uid, identity.gid);
+			},
+		});
 	}
+	const sourceIdentity = preinstalledSourceIdentity(spec.runtime, home);
+	if (!sourceIdentity) throw new Error("installed runtime source identity is unavailable");
+	const probes: PreinstalledProbes = {
+		runtime: spec.runtime,
+		command,
+		home,
+		executableRevision,
+		sourceIdentity,
+		version: health,
+		...(spec.runtime === "hermes" ? { configPath: run(["config", "path"], 30_000) } : {}),
+	};
+	if (probes.configPath !== undefined && !isAbsolute(probes.configPath))
+		throw new Error("installed Hermes config path is not absolute");
+	if (!ensureHostedCodexCli(paths)) throw new Error("Codex preparation is disabled");
+	if (spec.runtime === "openclaw") {
+		prepareAnonymousOpenClawGateway(paths, identity);
+		prepareOpenClawProbeResults(paths, command);
+	}
+	const cli = applyRuntimeCliDesiredState(
+		{ clawdiCli: { packageSpec: spec.cliPackageSpec, registry: "https://registry.npmjs.org" } },
+		paths,
+	);
+	if (cli.status === "error" || cli.status === "deferred" || cli.status === "not_requested")
+		throw new Error(cli.error ?? `anonymous CLI installation failed (${cli.status})`);
+	for (const cache of [".cache/npm", ".cache/uv", ".npm"])
+		rmSync(join(home, cache), { recursive: true, force: true });
+	const receipt = {
+		...spec,
+		preparedAt: new Date().toISOString(),
+		health,
+		probes,
+		homeTreeSha256: preinstallationTreeSha256(home),
+	};
+	mkdirSync(join(state, "preinstallation"), { mode: 0o700 });
+	const path = join(state, "preinstallation/receipt.json");
+	writeFileSync(`${path}.tmp`, `${JSON.stringify(receipt)}\n`, { mode: 0o400, flag: "wx" });
+	renameSync(`${path}.tmp`, path);
+	return receipt;
 }

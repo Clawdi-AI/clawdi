@@ -740,6 +740,29 @@ describe("runtime manifest services", () => {
 		expect(adoptableWarmOpenClawGatewayUnits(paths)).toEqual(["openclaw-gateway.service"]);
 	});
 
+	test("keeps an anonymous gateway adoptable before an egress engine is selected", () => {
+		process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = "1";
+		const paths = tempRuntimePaths();
+		ensureRuntimeStateDirs(paths);
+		const command = join(paths.userHome, ".local", "bin", "openclaw");
+		writeFakeGatewayCli({
+			path: command,
+			logPath: join(paths.runRoot, "official-service.log"),
+			runtime: "openclaw",
+			unitPath: join(paths.systemdUserRoot, "openclaw-gateway.service"),
+		});
+		const configPath = join(paths.userHome, ".openclaw", "openclaw.json");
+		mkdirSync(dirname(configPath), { recursive: true });
+		writeFileSync(configPath, '{"gateway":{"mode":"local"}}');
+		installAnonymousOpenClawGatewayService(
+			paths,
+			{ uid: TEST_PROCESS_UID, gid: TEST_PROCESS_GID },
+			{},
+		);
+		recordWarmOpenClawGateway(paths);
+		expect(adoptableWarmOpenClawGatewayUnits(paths)).toEqual(["openclaw-gateway.service"]);
+	});
+
 	test("leaves legacy identity handling to native startup during warm convergence", () => {
 		const harness = officialServiceHarness("openclaw");
 		const paths = getRuntimePaths({ mode: "hosted" });
