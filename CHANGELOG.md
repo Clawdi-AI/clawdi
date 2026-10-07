@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — Use the normal cold install for warm pools
+
+Warm preinstallation now uses npm's exact global CLI selector and the CLI's official runtime installer path, matching cold bootstrap. Removed pinned runtime preparation requirements and pool-only supply-chain and egress machinery while retaining tenant-free warm-up and single-use adoption.
+
+
+
 This changelog tracks notable user-facing Clawdi releases. It is written for
 people using or upgrading Clawdi, so it intentionally omits internal deployment,
 database migration, CI, and implementation details.
