@@ -153,6 +153,25 @@ describe("release configuration", () => {
 				parseMobileRuntimeConfig({ ...values, ...keys }, { environment: "production" }).ok,
 			).toBe(true);
 	});
+	test("Customer Center remains disabled unless the native build flag is true", () => {
+		const disabled = parseMobileRuntimeConfig(values, { environment: "production" });
+		if (!disabled.ok) throw new Error("Invalid fixture config");
+		expect(disabled.value.revenueCatCustomerCenterEnabled).toBeUndefined();
+		const enabled = parseMobileRuntimeConfig(
+			{ ...values, revenueCatCustomerCenterEnabled: true },
+			{ environment: "production" },
+		);
+		expect(enabled).toEqual({
+			ok: true,
+			value: {
+				cloudApiUrl: values.cloudApiUrl,
+				computeApiUrl: "https://api.clawdi.ai",
+				clerkPublishableKey: values.clerkPublishableKey,
+				revenueCatCustomerCenterEnabled: true,
+				environment: "production",
+			},
+		});
+	});
 	test("an empty Updates channel still enforces production auth and Sentry environment", () => {
 		for (const dsn of ["", "https://public@example.test/1"]) {
 			const result = Bun.spawnSync(

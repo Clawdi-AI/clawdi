@@ -24,6 +24,13 @@ describe("store build surfaces", () => {
 				},
 			),
 		).toBe(false);
+		expect(
+			computePurchaseAvailable(
+				{ environment: "production" },
+				{ ...enabled, compute_slot: { available: false } },
+				{ target_contract_id: "11111111-1111-4111-8111-111111111111" },
+			),
+		).toBe(true);
 	});
 
 	test("store builds hide card-only surfaces and always show credits, even when unavailable", () => {

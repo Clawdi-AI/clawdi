@@ -174,6 +174,8 @@ module.exports = ({ config }) => {
 				computeApiUrl: publicValue("EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL"),
 				revenueCatAppleKey: publicValue("EXPO_PUBLIC_REVENUECAT_APPLE_KEY"),
 				revenueCatGoogleKey: publicValue("EXPO_PUBLIC_REVENUECAT_GOOGLE_KEY"),
+				revenueCatCustomerCenterEnabled:
+					publicValue("EXPO_PUBLIC_REVENUECAT_CUSTOMER_CENTER_ENABLED") === "1",
 				clerkPublishableKey,
 				linkHosts: publicValue("EXPO_PUBLIC_CLAWDI_LINK_HOSTS"),
 			},

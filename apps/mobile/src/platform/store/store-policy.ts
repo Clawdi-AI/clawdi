@@ -32,11 +32,17 @@ export function storeSurfaces(storeBuild: boolean, purchasesAvailable: boolean):
 export function computePurchaseAvailable(
 	config: Pick<MobileRuntimeConfig, "environment">,
 	bootstrap: Pick<StoreBootstrap, "compute_subscriptions_enabled" | "compute_slot"> | null,
+	target: Readonly<{
+		pending_deploy_request_id?: string | null;
+		target_contract_id?: string | null;
+		target_deployment_id?: string | null;
+	}> = {},
 ): boolean {
+	const isPlanChange = target.target_contract_id != null;
 	return Boolean(
 		isStoreBuild(config) &&
 			bootstrap?.compute_subscriptions_enabled &&
-			bootstrap.compute_slot?.available,
+			(isPlanChange || bootstrap.compute_slot?.available),
 	);
 }
 

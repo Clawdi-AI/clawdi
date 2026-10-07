@@ -126,16 +126,18 @@ export function createPurchaseFlow(options: {
 			throw error;
 		}
 		assertStoreAccount(scope, signal);
+		const isComputeSubscription = saved.request.purpose === "compute_subscription";
 		if (
 			attempt.platform !== saved.request.platform ||
 			attempt.purpose !== saved.request.purpose ||
 			attempt.catalogue_revision !== saved.request.catalogue_revision ||
 			(attempt.pending_deploy_request_id ?? null) !==
 				(saved.request.pending_deploy_request_id ?? null) ||
-			(attempt.requested_store_product_id ?? attempt.store_product_id ?? null) !==
-				(saved.request.store_product_id ?? null) ||
-			!sameOptionalUuid(attempt.target_contract_id, saved.request.target_contract_id) ||
-			(attempt.target_deployment_id ?? null) !== (saved.request.target_deployment_id ?? null)
+			(isComputeSubscription &&
+				((attempt.requested_store_product_id ?? attempt.store_product_id ?? null) !==
+					(saved.request.store_product_id ?? null) ||
+					!sameOptionalUuid(attempt.target_contract_id, saved.request.target_contract_id) ||
+					(attempt.target_deployment_id ?? null) !== (saved.request.target_deployment_id ?? null)))
 		)
 			throw new StorePurchaseError("store_attempt_conflict");
 		if (!saved.attemptId) {
@@ -282,10 +284,11 @@ export function createPurchaseFlow(options: {
 						(saved.request.purpose !== intent.purpose ||
 							(saved.request.pending_deploy_request_id ?? null) !==
 								(intent.pending_deploy_request_id ?? null) ||
-							(saved.request.store_product_id ?? null) !== (intent.store_product_id ?? null) ||
-							!sameOptionalUuid(saved.request.target_contract_id, intent.target_contract_id) ||
-							(saved.request.target_deployment_id ?? null) !==
-								(intent.target_deployment_id ?? null))
+							(saved.request.purpose === "compute_subscription" &&
+								((saved.request.store_product_id ?? null) !== (intent.store_product_id ?? null) ||
+									!sameOptionalUuid(saved.request.target_contract_id, intent.target_contract_id) ||
+									(saved.request.target_deployment_id ?? null) !==
+										(intent.target_deployment_id ?? null))))
 					) {
 						const existing = await create(saved, signal);
 						saved = existing.saved;

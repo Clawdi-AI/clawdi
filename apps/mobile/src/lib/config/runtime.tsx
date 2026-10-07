@@ -24,6 +24,7 @@ export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
 			computeApiUrl: configuredValue("computeApiUrl"),
 			revenueCatAppleKey: configuredValue("revenueCatAppleKey"),
 			revenueCatGoogleKey: configuredValue("revenueCatGoogleKey"),
+			revenueCatCustomerCenterEnabled: configuredValue("revenueCatCustomerCenterEnabled"),
 			linkHosts: configuredValue("linkHosts"),
 		},
 		{

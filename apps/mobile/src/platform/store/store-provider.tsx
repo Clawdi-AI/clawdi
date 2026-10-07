@@ -31,7 +31,7 @@ import {
 	storeSurfaces,
 } from "./store-policy";
 import { recoverStoreFlow } from "./store-recovery";
-import { restoreStorePurchases } from "./store-restore";
+import { preserveRestoreState, restoreStorePurchases } from "./store-restore";
 
 const journal = createPurchaseAttemptStore(SecureStore);
 type MobileStore = Readonly<{
@@ -97,8 +97,10 @@ export function StoreProvider({
 		let mounted = true;
 		let recovering = false;
 		let lease: AbortController | null = null;
+		let latestValue: MobileStore | null = null;
 		const current = () => mounted && scope.isCurrent() && !scope.signal.aborted;
 		const update = (value: MobileStore) => {
+			latestValue = value;
 			if (current()) setState({ scope, value });
 		};
 		if (!scope.isReady) {
@@ -156,6 +158,7 @@ export function StoreProvider({
 							scope,
 							identity,
 							sdk: revenueCat,
+							platform,
 							signal: controller.signal,
 						});
 					} catch {
@@ -182,7 +185,7 @@ export function StoreProvider({
 					request: ComputeSubscriptionPurchaseRequest,
 					callerSignal?: AbortSignal,
 				): Promise<PurchaseOutcome> => {
-					if (!computePurchaseAvailable(config, latestBootstrap))
+					if (!computePurchaseAvailable(config, latestBootstrap, request))
 						throw new StorePurchaseError("store_purchases_disabled");
 					if (!flow) throw new StorePurchaseError("store_purchases_disabled");
 					return flow.purchase(
@@ -212,7 +215,16 @@ export function StoreProvider({
 						client,
 						signal: callerSignal,
 					});
-					latestBootstrap = { ...latestBootstrap, compute_slot: result.compute_slot ?? null };
+					const restoredState = preserveRestoreState(
+						{
+							computeSlot: latestValue?.computeSlot ?? latestBootstrap.compute_slot ?? null,
+							recovery: latestValue?.recovery ?? [],
+							error: latestValue?.error ?? null,
+						},
+						result,
+					);
+					const computeSlot = restoredState.computeSlot;
+					latestBootstrap = { ...latestBootstrap, compute_slot: computeSlot };
 					if (current())
 						update({
 							availability: {
@@ -220,11 +232,11 @@ export function StoreProvider({
 								bootstrap: latestBootstrap,
 							},
 							flow,
-							recovery: [],
-							error: null,
+							recovery: restoredState.recovery,
+							error: restoredState.error,
 							bootstrap: latestBootstrap,
 							computeSubscriptionsEnabled: latestBootstrap.compute_subscriptions_enabled,
-							computeSlot: result.compute_slot ?? null,
+							computeSlot,
 							computeProducts,
 							computeOffering,
 							purchaseComputeSubscription,

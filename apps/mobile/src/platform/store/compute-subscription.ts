@@ -18,20 +18,37 @@ type ComputeStoreSdk = Pick<
 type StoreIdentityReader = Pick<StoreIdentity, "requireReady">;
 
 export const COMPUTE_OFFERING_IDENTIFIER = "compute";
-export const COMPUTE_PRODUCT_IDENTIFIERS = [
+export const COMPUTE_APPLE_PRODUCT_IDENTIFIERS = [
 	"ai.clawdi.app.compute.basic.monthly",
 	"ai.clawdi.app.compute.basic.annual",
 	"ai.clawdi.app.compute.performance.monthly",
 	"ai.clawdi.app.compute.performance.annual",
 ] as const;
+export const COMPUTE_PLAY_PRODUCT_IDENTIFIERS = [
+	"ai.clawdi.app.compute:basic-monthly",
+	"ai.clawdi.app.compute:basic-annual",
+	"ai.clawdi.app.compute:performance-monthly",
+	"ai.clawdi.app.compute:performance-annual",
+] as const;
+/** Kept as the Apple catalogue alias for callers that do not have a platform yet. */
+export const COMPUTE_PRODUCT_IDENTIFIERS = COMPUTE_APPLE_PRODUCT_IDENTIFIERS;
+export const COMPUTE_PRODUCT_IDENTIFIERS_BY_PLATFORM = {
+	app_store: COMPUTE_APPLE_PRODUCT_IDENTIFIERS,
+	play_store: COMPUTE_PLAY_PRODUCT_IDENTIFIERS,
+} as const;
+
+export type ComputeProductIdentifier =
+	| (typeof COMPUTE_APPLE_PRODUCT_IDENTIFIERS)[number]
+	| (typeof COMPUTE_PLAY_PRODUCT_IDENTIFIERS)[number];
+type ComputeStorePlatform = keyof typeof COMPUTE_PRODUCT_IDENTIFIERS_BY_PLATFORM;
 
 export type ComputeProduct = Readonly<{
-	productIdentifier: (typeof COMPUTE_PRODUCT_IDENTIFIERS)[number];
+	productIdentifier: ComputeProductIdentifier;
 	priceString: string;
 }>;
 
 export type ComputeProductSelection =
-	| Readonly<{ kind: "product"; productIdentifier: string }>
+	| Readonly<{ kind: "product"; productIdentifier: ComputeProductIdentifier }>
 	| Readonly<{ kind: "package"; package: PurchasesPackage }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -67,6 +84,15 @@ function replacementMode(mode: NonNullable<StorePurchaseAttempt["replacement_mod
 	}
 }
 
+/** RevenueCat Android expects the Play subscription ID without its base-plan suffix. */
+function androidSubscriptionIdentifier(productIdentifier: string): string {
+	const trimmed = productIdentifier.trim();
+	const separator = trimmed.indexOf(":");
+	const subscriptionIdentifier = separator === -1 ? trimmed : trimmed.slice(0, separator);
+	if (!subscriptionIdentifier) throw new StorePurchaseError("invalid_store_result");
+	return subscriptionIdentifier;
+}
+
 /** Maps the server's transition decision to RevenueCat's documented Android argument. */
 export function googleProductChangeInfo(
 	attempt: Pick<StorePurchaseAttempt, "replacement_mode">,
@@ -75,14 +101,23 @@ export function googleProductChangeInfo(
 	if (!oldProductIdentifier.trim() || !attempt.replacement_mode)
 		throw new StorePurchaseError("invalid_store_result");
 	return {
-		oldProductIdentifier,
+		oldProductIdentifier: androidSubscriptionIdentifier(oldProductIdentifier),
 		replacementMode: replacementMode(attempt.replacement_mode),
 	};
 }
 
-function validateProducts(products: readonly PurchasesStoreProduct[]): ComputeProduct[] {
+function productIdentifiersForPlatform(
+	platform: ComputeStorePlatform,
+): readonly ComputeProductIdentifier[] {
+	return COMPUTE_PRODUCT_IDENTIFIERS_BY_PLATFORM[platform];
+}
+
+function validateProducts(
+	products: readonly PurchasesStoreProduct[],
+	productIdentifiers: readonly ComputeProductIdentifier[],
+): ComputeProduct[] {
 	const byIdentifier = new Map(products.map((product) => [product.identifier, product]));
-	return COMPUTE_PRODUCT_IDENTIFIERS.map((productIdentifier) => {
+	return productIdentifiers.map((productIdentifier) => {
 		const product = byIdentifier.get(productIdentifier);
 		if (!product?.priceString.trim()) throw new StorePurchaseError("store_offering_unavailable");
 		return { productIdentifier, priceString: product.priceString };
@@ -90,13 +125,14 @@ function validateProducts(products: readonly PurchasesStoreProduct[]): ComputePr
 }
 
 /** Fetches only the store-local display values. Prices never come from app code. */
-export async function loadComputeProducts(): Promise<readonly ComputeProduct[]> {
+export async function loadComputeProducts(
+	platform: ComputeStorePlatform = "app_store",
+): Promise<readonly ComputeProduct[]> {
+	const productIdentifiers = productIdentifiersForPlatform(platform);
 	try {
 		return validateProducts(
-			await Purchases.getProducts(
-				[...COMPUTE_PRODUCT_IDENTIFIERS],
-				Purchases.PRODUCT_CATEGORY.SUBSCRIPTION,
-			),
+			await Purchases.getProducts([...productIdentifiers], Purchases.PRODUCT_CATEGORY.SUBSCRIPTION),
+			productIdentifiers,
 		);
 	} catch (error) {
 		if (error instanceof StorePurchaseError) throw error;
@@ -145,19 +181,21 @@ export async function loadComputeProductsForIdentity(options: {
 	scope: AccountScope;
 	identity: StoreIdentityReader;
 	sdk: ComputeStoreSdk;
+	platform: ComputeStorePlatform;
 	signal: AbortSignal;
 }): Promise<readonly ComputeProduct[]> {
-	const { scope, identity, sdk, signal } = options;
+	const { scope, identity, sdk, platform, signal } = options;
 	const ready = identity.requireReady(signal);
+	const productIdentifiers = productIdentifiersForPlatform(platform);
 	try {
 		const products = await sdk.getProducts(
 			ready.appUserId,
 			() => assertStoreAccount(scope, signal),
-			COMPUTE_PRODUCT_IDENTIFIERS,
+			productIdentifiers,
 			signal,
 		);
 		assertStoreAccount(scope, signal);
-		return validateProducts(products);
+		return validateProducts(products, productIdentifiers);
 	} catch (error) {
 		if (error instanceof StorePurchaseError) throw error;
 		if (error instanceof AccountScopeChangedError) throw error;

@@ -11,32 +11,18 @@ export type StoreManagementResolution = Readonly<{
 	canManageInApp: boolean;
 }>;
 
-export type CustomerCenterAvailabilityCheck = () => boolean | Promise<boolean>;
-
-/**
- * RevenueCat UI 10.11 exposes presentation, but no availability probe in its
- * typings. M2 supplies a RevenueCat Pro availability check when configured;
- * without one the official store link remains the safe fallback.
- */
-export async function resolveStoreManagement(
+/** The build flag is the owner-approved RevenueCat Customer Center availability gate. */
+export function resolveStoreManagement(
 	management: StoreManagement | null | undefined,
 	platform: StorePlatform,
-	checkCustomerCenter?: CustomerCenterAvailabilityCheck,
-): Promise<StoreManagementResolution> {
-	let customerCenterAvailable = false;
-	if (checkCustomerCenter) {
-		try {
-			customerCenterAvailable = await checkCustomerCenter();
-		} catch {
-			customerCenterAvailable = false;
-		}
-	}
+	customerCenterEnabled: boolean,
+): StoreManagementResolution {
 	const managementUrl = storeManagementUrl(management, platform);
 	return {
 		provider: management?.provider ?? null,
 		managementUrl,
-		customerCenterAvailable,
-		canManageInApp: customerCenterAvailable && management?.provider === platform,
+		customerCenterAvailable: customerCenterEnabled,
+		canManageInApp: customerCenterEnabled && management?.provider === platform,
 	};
 }
 
@@ -48,10 +34,8 @@ export function createStoreManagement(options: {
 }) {
 	const { scope, identity, sdk, platform } = options;
 	return {
-		resolve: (
-			management: StoreManagement | null | undefined,
-			checkCustomerCenter?: CustomerCenterAvailabilityCheck,
-		) => resolveStoreManagement(management, platform, checkCustomerCenter),
+		resolve: (management: StoreManagement | null | undefined, customerCenterEnabled: boolean) =>
+			resolveStoreManagement(management, platform, customerCenterEnabled),
 		openAppleManagement: async (fallback: () => Promise<void>, signal: AbortSignal) => {
 			const ready = identity.requireReady(signal);
 			try {

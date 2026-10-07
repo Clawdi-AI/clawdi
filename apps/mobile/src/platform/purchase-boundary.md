@@ -15,6 +15,9 @@ config. An unset platform key or compute endpoint leaves purchases unavailable
 without blocking the rest of the app. Production runtime configuration rejects
 RevenueCat Test Store keys (the official `test_` prefix). The parser permits them
 outside production; RevenueCat requires a debug native build to use Test Store.
+`EXPO_PUBLIC_REVENUECAT_CUSTOMER_CENTER_ENABLED=1` is an owner-controlled native
+build flag for the RevenueCat Customer Center; it defaults to disabled, so the
+official App Store/Google Play management links remain the default path.
 `store/store-policy.ts` reads runtime
 `environment` (from `EXPO_PUBLIC_CLAWDI_ENV`): production is a store build;
 preview/development retain Web parity. M2 applies this policy even when purchases
