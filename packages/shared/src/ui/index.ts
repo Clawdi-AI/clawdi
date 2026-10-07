@@ -338,6 +338,7 @@ export * from "./this-week-card";
 export * from "./toggle";
 export * from "./toggle-group";
 export * from "./transactions-section";
+export * from "./usage-page";
 export * from "./vault-request";
 export * from "./whatsapp-device-onboarding";
 export * from "./workspace-skills-panel";

@@ -83,6 +83,7 @@ const paths = [
 	"/settings/account",
 	"/settings/wallet",
 	"/settings/compute",
+	"/settings/usage",
 ];
 test("Web paths resolve identically for custom scheme and verified universal links", () => {
 	for (const path of paths) {
@@ -119,7 +120,7 @@ test.each([
 	],
 	["/?settings=billing-wallet", "/settings/wallet"],
 	["/?settings=billing-plan&session_id={CHECKOUT_SESSION_ID}", "/settings/compute"],
-	["/?settings=billing-usage", "/settings"],
+	["/?settings=billing-usage", "/settings/usage"],
 	["/?settings=billing-wallet#billing", "/settings/wallet"],
 ])("hosted return or notification URL %s resolves to %s", (path, destination) => {
 	expect(
@@ -135,10 +136,11 @@ test.each([
 	["api-keys", "/settings/api-keys"],
 	["wallet", "/settings/wallet"],
 	["compute", "/settings/compute"],
+	["usage", "/settings/usage"],
 	["billing", "/settings/compute"],
 	["billing-wallet", "/settings/wallet"],
 	["billing-plan", "/settings/compute"],
-	["billing-usage", "/settings"],
+	["billing-usage", "/settings/usage"],
 	["profile", "/settings/general"],
 	["", "/settings"],
 	["unknown", "/settings"],

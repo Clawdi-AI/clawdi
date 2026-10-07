@@ -19,6 +19,7 @@ export type ComputeReusableSubscriptionsQuery =
 	DeployPaths["/v2/subscriptions/reusable"]["get"]["parameters"]["query"];
 export type ComputeWalletTransactionsQuery =
 	DeployPaths["/v2/wallet/transactions"]["get"]["parameters"]["query"];
+export type ComputeUsageQuery = DeployPaths["/v2/usage"]["get"]["parameters"]["query"];
 
 export function createHostedComputeClient(options: ApiClientOptions) {
 	const transport = createReadTransport(options);
@@ -122,6 +123,8 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 				(init) => api.GET("/v2/wallet/transactions", { ...init, params: { query } }),
 				signal,
 			),
+		getUsage: (query?: ComputeUsageQuery, signal?: AbortSignal) =>
+			transport.read((init) => api.GET("/v2/usage", { ...init, params: { query } }), signal),
 		/**
 		 * Explicitly requested preview: no purchase or debit. The server may initialize
 		 * customer/wallet profiles and commit, so this is not a pure read operation.
