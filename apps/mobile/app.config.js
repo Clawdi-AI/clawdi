@@ -1,4 +1,5 @@
 const { readLinkHosts, webLinkPaths } = require("@clawdi/shared/linking");
+const { parsePublishableKey } = require("@clerk/shared/keys");
 // Brand red from the artwork and the shared `--background` tokens; regenerate with `bun run icons`.
 const appColors = require("./assets/app-colors.json");
 
@@ -39,6 +40,16 @@ function fontPluginOptions() {
 
 module.exports = ({ config }) => {
 	const linkHosts = readLinkHosts(publicValue("EXPO_PUBLIC_CLAWDI_LINK_HOSTS"));
+	const clerkPublishableKey = publicValue("EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY");
+	// Clerk native passkeys need the Frontend API host, which the publishable key encodes.
+	const clerkFrontendApi = parsePublishableKey(clerkPublishableKey)?.frontendApi;
+	const associatedDomains = [
+		...new Set([
+			...(config.ios?.associatedDomains ?? []),
+			...linkHosts.map((host) => `applinks:${host}`),
+			...(clerkFrontendApi ? [`webcredentials:${clerkFrontendApi}`] : []),
+		]),
+	];
 	const projectId = publicValue("EAS_PROJECT_ID");
 	const ios = {
 		...config.ios,
@@ -134,20 +145,12 @@ module.exports = ({ config }) => {
 			],
 			// Keep native hooks stable for Build/Update; upload scripts read org/project/token from env.
 			"@sentry/react-native/expo",
+			["@clerk/expo", { theme: "./clerk-theme.generated.json" }],
 		],
-		ios,
+		ios: associatedDomains.length ? { ...ios, associatedDomains } : ios,
 		android,
 		...(linkHosts.length
 			? {
-					ios: {
-						...ios,
-						associatedDomains: [
-							...new Set([
-								...(config.ios?.associatedDomains ?? []),
-								...linkHosts.map((host) => `applinks:${host}`),
-							]),
-						],
-					},
 					android: {
 						...android,
 						intentFilters: [
@@ -171,8 +174,7 @@ module.exports = ({ config }) => {
 				computeApiUrl: publicValue("EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL"),
 				revenueCatAppleKey: publicValue("EXPO_PUBLIC_REVENUECAT_APPLE_KEY"),
 				revenueCatGoogleKey: publicValue("EXPO_PUBLIC_REVENUECAT_GOOGLE_KEY"),
-				clerkPublishableKey: publicValue("EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY"),
-				clerkOauthProviders: publicValue("EXPO_PUBLIC_CLERK_OAUTH_PROVIDERS"),
+				clerkPublishableKey,
 				linkHosts: publicValue("EXPO_PUBLIC_CLAWDI_LINK_HOSTS"),
 			},
 		},

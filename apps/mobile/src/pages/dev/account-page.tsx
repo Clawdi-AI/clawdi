@@ -2,27 +2,10 @@ import { pairingCommand } from "@clawdi/shared/api";
 import { pairingQr } from "@clawdi/shared/qr";
 import {
 	billingPageClass,
-	formLayoutClasses,
-	generalPanelClasses,
 	settingsDialogClasses,
 	transactionsSectionClasses,
 } from "@clawdi/shared/ui";
 import { Redirect, useLocalSearchParams } from "expo-router";
-import { useState } from "react";
-import { AuthFields } from "@/components/auth/auth-fields";
-import { AuthFrame } from "@/components/auth/auth-frame";
-import { ClerkAction, ClerkText } from "@/components/auth/clerk-form";
-import { AuthCredentialSecondaryActions } from "@/components/auth/credential-options";
-import {
-	AccountContactsFormView,
-	ConnectedAccountsFormView,
-	DeleteAccountFormView,
-	DeviceSessionsFormView,
-	MfaFormView,
-	PasskeysFormView,
-	PasswordFormView,
-	ProfileFormView,
-} from "@/components/settings/account-forms";
 import { SettingsPanelHeader, SettingsSection } from "@/components/settings/settings-panel-header";
 import { SheetPage } from "@/components/ui/sheet-page";
 import { AppScrollView } from "@/components/ui/view";
@@ -37,8 +20,6 @@ import { ProviderOAuthView } from "@/hosted/v2/ai-providers/provider-oauth-flow"
 import { ChannelPairingView } from "@/hosted/v2/channels/pairing-dialog-ui";
 import { WhatsAppSessionView } from "@/hosted/v2/channels/whatsapp-device-onboarding";
 import { useI18n } from "@/lib/i18n";
-import { emptySignupDetails } from "@/platform/auth/signup-details";
-import { SignupDetailsForm } from "@/platform/auth/signup-details-form";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
 const subscriptionFixture = {
@@ -67,13 +48,9 @@ export default function AccountStoriesRoute() {
 	return <AccountStories />;
 }
 function AccountStories() {
-	const { panel = "profile" } = useLocalSearchParams<{ panel?: string }>();
+	const { panel = "" } = useLocalSearchParams<{ panel?: string }>();
 	const t = useI18n();
-	const [email, setEmail] = useState("");
-	const [password, setPassword] = useState("");
-	const [details, setDetails] = useState(emptySignupDetails());
 	const noop = () => {};
-	const common = { action: { busy: false, error: null }, reverification: { prompt: null } };
 	if (panel.startsWith("pair-")) {
 		const provider = panel.replace("pair-", "");
 		const link =
@@ -182,217 +159,6 @@ function AccountStories() {
 					open={noop}
 				/>
 			</SheetPage>
-		);
-	if (panel === "profile")
-		return (
-			<ProfileFormView
-				{...common}
-				email="avery@clawdi.dev"
-				firstName="Avery"
-				lastName="Chen"
-				username="avery"
-				success={false}
-				avatar={{ url: "", custom: false }}
-				dirty={false}
-				setFirstName={noop}
-				setLastName={noop}
-				setUsername={noop}
-				setSuccess={noop}
-				updateAvatar={noop}
-				removeAvatar={noop}
-				save={noop}
-			/>
-		);
-	if (panel === "password")
-		return (
-			<PasswordFormView
-				{...common}
-				enabled
-				oldPassword=""
-				newPassword=""
-				confirmationPassword=""
-				otherSessions={false}
-				success={false}
-				setOldPassword={noop}
-				setNewPassword={noop}
-				setConfirmationPassword={noop}
-				setOtherSessions={noop}
-				edit={(setter) => setter}
-				update={noop}
-				confirmRemove={noop}
-			/>
-		);
-	if (panel === "mfa")
-		return (
-			<MfaFormView
-				{...common}
-				enabled={false}
-				mfaEnabled={false}
-				setup={null}
-				qr={null}
-				code=""
-				codes={null}
-				phones={[]}
-				success={false}
-				setCode={noop}
-				clear={noop}
-				run={noop}
-				confirm={noop}
-				confirmSms={noop}
-			/>
-		);
-	if (panel === "passkeys")
-		return (
-			<PasskeysFormView
-				{...common}
-				passkeys={[
-					{
-						id: "fixture-passkey",
-						name: "MacBook Pro",
-						lastUsedAt: new Date("2026-10-05T12:00:00Z"),
-					},
-				]}
-				edit={null}
-				saved={false}
-				setEdit={noop}
-				setSaved={noop}
-				run={noop}
-				confirmRemove={noop}
-			/>
-		);
-	if (panel === "email-addresses" || panel === "phone-numbers")
-		return (
-			<AccountContactsFormView
-				{...common}
-				kind={panel === "email-addresses" ? "emails" : "phones"}
-				contacts={[
-					{
-						id: "fixture-contact",
-						...(panel === "email-addresses"
-							? { emailAddress: "avery@clawdi.dev" }
-							: { phoneNumber: "+14155550123" }),
-						verification: { status: "verified" },
-					},
-				]}
-				primary="fixture-contact"
-				draft=""
-				verifying={null}
-				code=""
-				saved={false}
-				refresh={noop}
-				sendCode={noop}
-				confirm={noop}
-				verify={noop}
-				setCode={noop}
-				setDraft={noop}
-				add={noop}
-			/>
-		);
-	if (panel === "device-sessions")
-		return (
-			<DeviceSessionsFormView
-				{...common}
-				sessions={[
-					{
-						id: "fixture-current",
-						lastActiveAt: new Date("2026-10-05T12:00:00Z"),
-						latestActivity: {
-							deviceType: "Macintosh",
-							browserName: "Chrome",
-							browserVersion: "140",
-							city: "San Francisco",
-							country: "United States",
-							ipAddress: "192.0.2.10",
-						},
-					},
-				]}
-				scope={{ sessionId: "fixture-current" }}
-				revoked={false}
-				refresh={noop}
-				revoke={noop}
-			/>
-		);
-	if (panel === "connected-accounts")
-		return (
-			<ConnectedAccountsFormView
-				{...common}
-				accounts={[
-					{
-						id: "fixture-github",
-						provider: "github",
-						verification: { status: "verified" },
-						providerTitle: () => "GitHub",
-						accountIdentifier: () => "avery-chen",
-					},
-				]}
-				providers={[]}
-				saved={false}
-				reauthorized={false}
-				run={noop}
-				authorize={noop}
-				confirmRemove={noop}
-			/>
-		);
-	if (panel === "delete-account")
-		return (
-			<DeleteAccountFormView
-				action={common.action}
-				email="avery@clawdi.dev"
-				compute
-				phrase=""
-				outcome="idle"
-				setPhrase={noop}
-				confirm={noop}
-				leave={noop}
-			/>
-		);
-	if (panel === "sign-in" || panel === "sign-up" || panel === "sign-up-details")
-		return (
-			<AuthFrame
-				title={t(panel === "sign-in" ? "auth.signInTitle" : "auth.signUpTitle")}
-				subtitle={t(panel === "sign-in" ? "auth.signInSubtitle" : "auth.signUpSubtitle")}
-			>
-				{panel === "sign-up-details" ? (
-					<SignupDetailsForm
-						fields={["first_name", "last_name", "username"]}
-						values={details}
-						busy={false}
-						onChange={(field, value) => setDetails((previous) => ({ ...previous, [field]: value }))}
-					/>
-				) : (
-					<AuthFields
-						email={email}
-						password={password}
-						onEmailChange={setEmail}
-						onPasswordChange={setPassword}
-						busy={false}
-						newPassword={panel === "sign-up"}
-					/>
-				)}
-				<ClerkAction
-					label={t(panel === "sign-in" ? "auth.signIn" : "auth.signUp")}
-					variant="default"
-					onPress={noop}
-					disabled={!email || !password}
-				/>
-				{panel === "sign-in" || panel === "sign-up" ? (
-					<AuthCredentialSecondaryActions
-						signingUp={panel === "sign-up"}
-						busy={false}
-						validEmail={false}
-						onVault={noop}
-						onEmailCode={noop}
-						onForgotPassword={noop}
-					/>
-				) : null}
-				<WebView recipe={formLayoutClasses.form} className="flex-row flex-wrap justify-center">
-					<ClerkText>{t(panel === "sign-in" ? "auth.noAccount" : "auth.haveAccount")}</ClerkText>
-					<ClerkText className="text-primary font-semibold">
-						{t(panel === "sign-in" ? "auth.createAccount" : "auth.returnToSignIn")}
-					</ClerkText>
-				</WebView>
-				<ClerkAction label={t("publicSession.open")} onPress={noop} />
-			</AuthFrame>
 		);
 	if (panel === "subscription-details")
 		return (
@@ -508,11 +274,5 @@ function AccountStories() {
 				</AppScrollView>
 			</SafeAreaScreen>
 		);
-	return (
-		<SafeAreaScreen>
-			<AppScrollView contentContainerClassName={webView(generalPanelClasses.panel)}>
-				<ClerkText>{t("account.settings")}</ClerkText>
-			</AppScrollView>
-		</SafeAreaScreen>
-	);
+	return <Redirect href="/dev/ui" />;
 }

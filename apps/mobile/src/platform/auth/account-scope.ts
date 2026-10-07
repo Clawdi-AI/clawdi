@@ -1,5 +1,3 @@
-import type { QueryClient } from "@tanstack/react-query";
-
 export class AccountScopeChangedError extends Error {
 	constructor() {
 		super("The account scope changed while the request was running");
@@ -117,15 +115,4 @@ export function isObsoleteAccountQuery(scope: AccountScope, queryKey: readonly u
 		queryKey[0] === "account" &&
 		(queryKey[1] !== (scope.accountKey ?? "signed-out") || queryKey[2] !== scope.generation)
 	);
-}
-
-/** Retire only the captured account generation, including after an account switch. */
-export function clearAccountScope(scope: AccountScope, queries: QueryClient): void {
-	scope.abort();
-	queries.removeQueries({
-		predicate: ({ queryKey }) =>
-			queryKey[0] === "account" &&
-			queryKey[1] === (scope.accountKey ?? "signed-out") &&
-			queryKey[2] === scope.generation,
-	});
 }

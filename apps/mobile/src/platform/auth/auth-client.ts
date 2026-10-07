@@ -1,4 +1,4 @@
-import { useAuth, useClerk, useUser } from "@clerk/expo";
+import { useAuth, useUser } from "@clerk/expo";
 import { useMemo } from "react";
 
 export function isDevAuthBypass() {
@@ -26,8 +26,6 @@ type CurrentUser = Readonly<{
 		| null;
 }>;
 
-type AuthActions = Readonly<{ signOut: ReturnType<typeof useClerk>["signOut"] }>;
-
 // Keep the entire fixture behind an inline development check so Metro removes
 // the identity and bearer from production bundles, even when the env flag is set.
 // Stable objects/functions prevent API clients and queries from churning.
@@ -53,8 +51,6 @@ const devAuth =
 						},
 					},
 				},
-				// The build-time fixture identity stays signed in; the UI disables sign-out.
-				actions: { signOut: async () => {} },
 			}
 		: null;
 
@@ -78,10 +74,4 @@ export function useCurrentUser(): CurrentUser {
 		return devAuth.currentUser;
 	const { isLoaded, user } = useUser();
 	return useMemo(() => ({ isLoaded, user: user ?? null }), [isLoaded, user]);
-}
-
-export function useAuthActions(): AuthActions {
-	if (__DEV__ && process.env.EXPO_PUBLIC_DEV_AUTH_BYPASS === "1" && devAuth) return devAuth.actions;
-	const { signOut } = useClerk();
-	return useMemo(() => ({ signOut }), [signOut]);
 }

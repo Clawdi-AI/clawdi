@@ -4,7 +4,7 @@ Status: the foundation is merged in PR 1610; Wave 2 is a merge candidate in
 PR 1611. Wave 3 adds existing-entitlement Agent creation, deployment progress
 and v2 billing reads; purchases remain unavailable.
 `apps/mobile` contains the
-Cloud-only v2 Expo app, Clerk verification/recovery flows, account-generation
+Cloud-only v2 Expo app, Clerk native sign-in and account management, account-generation
 fencing, and paginated read-only Agent/Session history. Hosted v1 legacy
 configuration is intentionally not required by the mobile app. The compatibility
 fixture below is historical V0 evidence; it is not a payment implementation,
@@ -61,9 +61,10 @@ Use a development build containing the project's native modules; Metro export
 success does not establish Expo Go support. Done: Expo starts and the app shows sign-in; missing or invalid configuration
 shows a safe configuration screen instead. Use a reachable Cloud API URL on
 physical devices, not the development computer's `localhost`. These public
-values are embedded in the app; never put private credentials in them. Clerk
-email/password verification, recovery and supported second factors must be
-configured by the account owner. This work does not change Clerk settings.
+values are embedded in the app; never put private credentials in them. Sign-in
+methods, verification and second factors are Clerk Dashboard settings owned by
+the account owner (see [Clerk native authentication](#clerk-native-authentication)).
+This work does not change Clerk settings.
 
 ### Local fixture authentication
 
@@ -84,10 +85,8 @@ Optional `EXPO_PUBLIC_DEV_AUTH_NAME`, `EXPO_PUBLIC_DEV_AUTH_EMAIL` and
 `EXPO_PUBLIC_DEV_AUTH_TOKEN` default to `Avery Chen`, `avery@clawdi.dev` and
 `dev-bypass`. These are public fixture values, not credentials for a live API.
 
-Sign-out is disabled for the fixed fixture identity. Clerk account management
-(profile, email/phone, password, MFA, passkeys, sessions, connected accounts and
-deletion), sign-in/sign-up and their reverification flows are unavailable and
-show an EmptyState. Restart Metro when changing public environment values.
+The fixed fixture identity cannot sign out. Clerk's native sign-in/sign-up and
+account management views need `ClerkProvider`, so they show an EmptyState. Restart Metro when changing public environment values.
 The flag requires `__DEV__`; production exports remove the bypass identity and
 token even when `EXPO_PUBLIC_DEV_AUTH_BYPASS=1` is set. Real Clerk authentication
 and its account/session request fencing remain in use for production builds.
@@ -95,37 +94,60 @@ and its account/session request fencing remain in use for production builds.
 Done: with the fixture API running, the Android development build opens the
 real Home tab without Clerk sign-in and loads fixture data through the Cloud API.
 
-The sign-in screen also offers an explicit email-code path without requiring or
-submitting a password. It creates an identifier-only SignIn attempt, prepares only
-the server-advertised email factor and reuses the existing code/MFA/finalization
-flow. If the account service disallows email codes, the app shows the existing
-unsupported-factor notice instead of claiming a code was sent. Real delivery and
-passwordless sign-in remain acceptance gates.
+### Clerk native authentication
 
-`EXPO_PUBLIC_CLERK_OAUTH_PROVIDERS` optionally supplies a comma-separated list
-such as `google,github` for native account linking. Only the installed SDK's
-provider names or bounded `custom_<slug>` names are accepted; duplicate choices
-are removed. No list means no new-link buttons. This public build-time list does
-not enable providers in Clerk: configure those and the native redirect separately.
-Malformed explicit lists fail configuration validation. Never include credentials.
-The same list supplies social sign-in/sign-up buttons. Public SignIn OAuth creation,
-nonce reload and transferable SignUp creation follow the installed SDK flow; MFA,
-email verification and final session activation reuse the existing forms. Signup
-collects server-required names, username, email, E.164 phone and password, including
-an email-or-phone identifier, then continues email/SMS verification. Updates send
-only missing fields and pin continuation to the same SignUp resource. Verification
-delivery failures keep the code screen available for explicit resend. Passwords
-are not persisted and are cleared on background. Legal consent, Protect challenges
-and other unsupported requirements remain explicit blockers; the app never accepts
-policy agreements on the user's behalf. Run the Shared/Mobile tests and Mobile
-typechecks in the isolated runner; actual signup/delivery still requires device
-acceptance with the owner's configured Clerk instance.
-Login/register use separate `clawdi://sign-in-oauth` and `clawdi://sign-up-oauth`
-callbacks. Shared callback validation binds the flow, attempt and optional public
-Session return; native-intent routing preserves only a validated public share ID.
-Signed-out scope/page replacement retires a pending browser continuation.
-SignIn resource identity is also checked before and after nonce reload. Real
-social login, transfer, cancellation, MFA and browser/Router behavior remain gates.
+Sign-in, sign-up and account management use Clerk's prebuilt native components
+from `@clerk/expo/native` (clerk-ios / clerk-android), matching Web's Clerk
+`<SignIn/>`, `<SignUp/>` and `openUserProfile`:
+
+- `/sign-in` and `/sign-up` render the same non-dismissible `AuthView` in Clerk's
+  default `signInOrUp` mode: the native `signIn`/`signUp` modes have no link to
+  each other, so a new user on `/sign-in` or an existing user arriving from a Web
+  `/sign-up` link would be stuck. It offers every method enabled in the Clerk
+  Dashboard: email/phone codes, password, OAuth, Sign in with Apple, passkeys and MFA.
+  Social sign-in uses the native SDK flows, so the app registers no custom
+  `clawdi://` OAuth callbacks.
+  The `(auth)` layout leaves only when the session is active and
+  `useAuthViewState()` reports the native flow (session tasks, biometric
+  enrollment) complete, then returns to a validated `publicShareId` or Home.
+- Settings → General → Manage account opens `/settings/account`, which renders
+  `UserProfileView` with Clerk's own chrome (`onHostBack` pops the route). It
+  covers profile, emails, phones, password, MFA, passkeys, connected accounts,
+  active sessions, sign-out and account deletion. Sign-out is synced to the JS
+  SDK; the auth gates route to `/sign-in` and `AccountScopeProvider` retires the
+  account scope and its query cache.
+- Account deletion is Clerk's built-in delete, as on Web; Hosted cleans up on the
+  verified Clerk deletion webhook. Before store auto-renewing subscriptions ship,
+  self-delete must be disabled and replaced by a custom profile page that shows
+  the store-billing notice and calls Hosted `DELETE /v1/me`.
+  On Android, clerk-android 1.1.10/1.1.11 crashes right after a successful
+  delete (`NavDisplay backstack cannot be empty`); the fix (clerk/clerk-android
+  #1010) is unreleased, so ship only after `@clerk/expo` pins a clerk-android
+  release that contains it.
+
+The native views are **Beta** in `@clerk/expo` 4.8.0 and need a development
+build (not Expo Go). The `@clerk/expo` config plugin raises the iOS deployment
+target to 17.0, adds the Sign in with Apple entitlement and Android packaging
+and Kotlin settings, and embeds `clerk-theme.generated.json`. `bun run theme`
+generates that theme from the shared Web tokens (OKLCH → sRGB via culori);
+`design.fontFamily` (Geist) applies on iOS only. The user's light/dark choice
+reaches the native views through Uniwind's `Appearance.setColorScheme` call.
+iOS associates `webcredentials:<Frontend API host>` for passkeys. The host is
+decoded from `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` at config time (nothing is added
+when the key is unset), so each build's key must belong to the Clerk instance whose
+Dashboard → Native applications lists that iOS app; that Frontend API host is the
+domain serving the passkey association.
+
+Clerk Dashboard prerequisites (owner):
+
+- enable the **Native API**;
+- register the iOS app (Team ID + `ai.clawdi.app`) and the Android app
+  (package + SHA-256 signing fingerprints);
+- configure native Google client IDs and the Apple provider for social sign-in;
+- keep "allow users to delete their accounts" enabled for Phase 1.
+
+If the native views cannot ship on a platform, the official fallback is
+`useHostedAuth()` (Clerk Account Portal in a browser session), not custom forms.
 
 ### Clerk dashboard setup (owner)
 
@@ -634,38 +656,10 @@ change handling; Expo control Hosts and the status bar consume the resolved them
 Storage read failures expose an explicit retry; writes are serialized and applied
 only after persistence succeeds. Stale hydration/unmount results are ignored.
 Real-device cold start, OS theme changes and native control rendering remain
-acceptance gates. `/profile` edits first/last name and username through the existing Clerk
-UserResource, with account-generation/unmount fencing, a synchronous save lock,
-safe failure feedback and unsaved-change navigation confirmation. Only edited
-attributes are sent, leaving unedited attributes untouched.
-Username availability, format, requiredness and edit permissions remain Clerk's
-decision; no dashboard settings are modified. When enabled for sign-in, the new
-username also changes that sign-in identifier. It also uploads
-PNG/JPEG/WebP account pictures up to 2 MiB via the existing Expo system file picker
-and Clerk `setProfileImage`, or removes a custom picture after native confirmation.
-The picker retains its original account/action lease; upload rechecks foreground
-permission after selection and file reading. Image data is neither cached nor
-persisted by the app. Clerk's published 6.34.1 `Image` resource accepts the string
-upload body; `User.setProfileImage({ file: null })` owns removal. Real account upload,
-picker cancellation and device rendering remain acceptance gates. It does not
-change email, passwords or security factors. Clerk's native UserProfileView is
-a possible next integration,
-but its 4.8.0 plugin requires iOS 17 and enables additional platform configuration;
-it is not already wired or verified by the existing JavaScript auth flows.
+acceptance gates.
 
-`/delete-account` uses the generated Hosted `DELETE /v1/me` contract, not a
-Clerk-only delete call. The screen displays the captured account, requires typed
-`DELETE` and a native destructive confirmation, and sends no automatic retry.
-Missing Hosted configuration disables the action. Only HTTP 204 acknowledges
-the request; it does not prove resource cleanup, refunds or subscription
-cancellation completed. An unknown/failed response retains an uncertainty
-notice instead of claiming success or offering a blind retry. Sign-out targets
-only the captured session, and cache cleanup targets its account generation.
-Store subscriptions must still be managed in their purchase store. No real
-account deletion was performed; device confirmation, late responses, account
-switches and end-to-end termination remain acceptance gates.
-
-The deploy OpenAPI allowlist explicitly includes only the new DELETE operation;
+The deploy OpenAPI allowlist explicitly includes Hosted `DELETE /v1/me` for the
+Phase 2 deletion page;
 the existing generator adds its 204 response without handwritten wire types.
 Verify against the coordinated contract in an isolated runner:
 
@@ -675,113 +669,6 @@ DEPLOY_OPENAPI_SOURCE=/path/to/reviewed/openapi.json DEPLOY_CONTRACT_FETCH_MODE=
 
 Done: the filtered generated client matches exactly; the HTTP client regression
 accepts 204, rejects an unexpected 200 and does not retry 403/500 responses.
-
-`/email-addresses` and `/phone-numbers` share `account-contacts.tsx`, using Clerk's
-published User/EmailAddress/PhoneNumber resources to add a contact, explicitly
-send/resend an email or SMS code, verify it, confirm a primary-address
-change and remove a non-primary address. Refresh reloads the User resource. An
-explicit add retry first reloads and reuses an existing matching address; the app
-never automatically retries mutations. Primary change/removal reload ownership and verification
-before writing, and primary removal is unavailable. Account/action/foreground leases
-fence every asynchronous continuation; verification codes clear on blur/background.
-Success requires a returned address/primary ID or a reload confirming deletion.
-Clerk remains authoritative for enterprise, rate-limit and reverification requirements.
-Phone input requires E.164 (`+` and international digits); country codes are not
-guessed. Phone contact verification does not enable SMS MFA. Native compilation,
-real SMS/email delivery and device interaction remain acceptance gates.
-Email and profile changes share a native `useReverification` challenge UI with
-password, email/SMS codes, TOTP and backup codes, limited to factors returned by
-the current Session verification resource. The server's requested level is retained
-(an absent hint uses multi-factor); only a complete response for the captured
-Session releases the original request for the SDK's single retry. The original
-account/action/foreground lease is checked again before that retry. Cancellation,
-blur, background and account replacement reject the waiting challenge, clear inputs
-and retire late verification responses. A repeated assurance hint is not success.
-Passkey/enterprise-only verification currently fails closed with an explicit
-unsupported message. Real factor delivery, reverification and device acceptance
-are not established by static types or exports.
-
-`/passkeys` lists the current User's registered passkeys, names and last-use dates.
-Rename and confirmed removal use published `Passkey.update({ name })` and
-`Passkey.delete()` resources, with the same native reverification UI. Every action
-reloads the captured User before locating the credential; explicit retries reconcile
-an already-applied rename/removal. A second reload must confirm the requested
-result before displaying success. Account generation, captured cancellation signal
-and foreground leases retire stale results. Removal revokes the server registration,
-not the private credential in the device/password manager. No automatic mutation
-retry, credential persistence, or native registration occurs.
-Run Mobile app/test typechecks and Shared/Mobile tests in the isolated runner;
-real-device mutation/reverification remains an acceptance gate.
-Native creation/sign-in remain separate unfinished work: `@clerk/expo` 4.8.0
-documents its `__experimental_passkeys` adapter as a limited-rollout API, requiring
-the optional native module and correctly associated application/domain configuration.
-This management screen neither installs that module nor claims to enable passkeys.
-
-`/device-sessions` explicitly loads active sessions through the public Clerk Client
-reload and the captured Session's rebuilt User. Clerk JS 6.34.1 `getSessions()` caches
-its first response and `SessionWithActivities.retrieve()` converts failures to an
-empty array. The adapter therefore rejects unchanged User instances, mismatched
-account/session ownership, duplicates and inventories without the current active
-session; failed reads never become a misleading empty security inventory. Native
-confirmation revokes only another session after a fresh ownership read, supports the
-shared reverification UI and confirms absence in a second fresh inventory. It cannot
-revoke the current session, delete the account or cancel billing. Device/activity
-metadata stays in memory and clears on blur/background. Real cross-device revocation
-and native acceptance remain unverified; focused tests cover freshness and late reads.
-
-`/password` uses the public Clerk `updatePassword` and `removePassword` methods,
-with an explicit opt-in to sign out other sessions on update and native confirmation
-before removal. It reloads the account before dispatch, reuses the native assurance
-flow, retains the original account/foreground lease across its single assurance
-retry, and clears secret inputs on blur/background and after the request. Password
-policy and permitted alternative sign-in methods remain server decisions. Ambiguous
-network outcomes advise checking sign-in before retrying, not assuming a rollback.
-The root ClerkProvider enables the published `experimental.rethrowOfflineNetworkErrors`
-option: Clerk JS 6.34.1 otherwise may resolve an offline failure with the unchanged
-resource. Expo 4.8.0 forwards this option; no internal SDK mutation or live configuration
-is used. Actual password changes, removal and session effects remain unverified.
-Password and reverification inputs no longer impose a silent native length cutoff;
-the unchanged value is submitted for server validation rather than truncating a secret.
-
-`/mfa` adds authenticator creation, manual-secret/local-QR setup, verification,
-confirmed disable/pending-setup discard and confirmed backup-code replacement.
-It reuses the same native assurance flow and account/foreground guards. Verification
-and disable reload and confirm the resulting `totpEnabled` state; a changed setup
-identity is rejected. The code-entry path also works after returning to an existing
-pending setup without retaining its secret. Setup secrets and backup codes remain
-in component memory only, clear on blur/background, and are never automatically
-copied, downloaded, logged or uploaded to a QR service. Backup regeneration warns
-that older codes will stop working. MFA and WhatsApp share the native `QrImage`
-renderer and existing Shared QR encoder. Real authenticator enrollment, backup-code
-use, server policy and device privacy/accessibility remain acceptance gates.
-
-The same security page lists verified phones and supports confirmed SMS factor
-enable/disable and preferred-SMS selection using the published PhoneNumber
-`setReservedForSecondFactor` and `makeDefaultSecondFactor` methods. It reloads
-before mutations and confirms the resulting flags after reload; enabling an
-already-enabled factor reconciles without generating codes again. Returned backup
-codes use the existing ephemeral display. Disabling a factor does not delete its
-phone contact. TOTP remains preferred over SMS; server policy controls required
-factors and SMS availability. Real SMS factor enrollment and sign-in remain unverified.
-
-`/connected-accounts` lists the current Clerk external accounts and supports
-confirmed unlinking via the published `ExternalAccountResource.destroy`. It uses
-the shared native reverification and account/foreground guards, reloads before
-writing, and only reports success after a reload confirms absence. Unlinking does
-not delete the provider account; Clerk enforces remaining sign-in methods. New
-connections use public `createExternalAccount` with an explicitly configured
-provider; a matching existing resource is reauthorized after a refresh instead of
-blindly creating another link. Existing connections use public `reauthorize`.
-Both use the same Expo system auth browser continuation. Each request adds a random
-`clawdi_attempt` query value to `clawdi://account-oauth`; callback validation requires
-that exact attempt/address and one nonempty rotating token nonce before reloading
-the original User. Page/account replacement retires the browser continuation;
-intentional browser backgrounding alone does not. Router native-intent handling
-strips callback parameters, and cold callbacks do not complete any account action.
-The sign-in service must allow this native redirect and preserve its query. No
-dashboard configuration is changed here. Expo Go, real provider/browser callbacks,
-reauthorization and unlink remain device/live acceptance gates. Login-oriented
-`useSSO` is not used to create an account link.
 
 Public Session routes (`/s/[shareId]`, `/open-share`) support anonymous snapshots,
 legacy live links with optional account authentication, explicit pagination and
@@ -835,8 +722,7 @@ Router receives only a random intake reference, never the capability token.
 The focused supply screen requires explicit inspection and submission. Its
 received secrets clear on blur/background; no automatic request is sent.
 Relative/custom-scheme Vault request links lack a verified HTTPS origin and
-open manual input without retaining the token. OAuth callbacks retain their
-existing credential-stripping navigation. Real-device cold/warm starts,
+open manual input without retaining the token. Real-device cold/warm starts,
 StrictMode, backgrounding and account transitions remain acceptance checks.
 
 The native deployment terminal uses Expo SDK 57 DOM components with
@@ -921,13 +807,12 @@ Configure these exact release values in **each** environment:
 | `EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL` | `https://api.clawdi.ai` | `https://api.clawdi.ai` |
 | `EXPO_PUBLIC_CLAWDI_LINK_HOSTS` | `cloud.clawdi.ai` | `cloud.clawdi.ai` |
 | `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` | Owner's Clerk publishable key | Owner's `pk_live_` key |
-| `EXPO_PUBLIC_CLERK_OAUTH_PROVIDERS` | Owner-enabled provider list, or unset | Owner-enabled provider list, or unset |
 | `EXPO_PUBLIC_REVENUECAT_APPLE_KEY` | Owner's public SDK key, or unset pending IAP setup | Owner's public SDK key, or unset pending IAP setup |
 | `EXPO_PUBLIC_REVENUECAT_GOOGLE_KEY` | Owner's public SDK key, or unset pending IAP setup | Owner's public SDK key, or unset pending IAP setup |
 | `EXPO_PUBLIC_SENTRY_DSN` | Owner's DSN, or unset | Owner's DSN, or unset |
 
 For `development`, set `EXPO_PUBLIC_CLAWDI_ENV=development`, a device-reachable
-development Cloud URL and a Clerk test key; compute, link hosts, OAuth providers,
+development Cloud URL and a Clerk test key; compute, link hosts,
 RevenueCat keys and DSN are optional, using the development values described
 above. Never set `EXPO_PUBLIC_DEV_AUTH_*` in preview or production. Public values,
 including publishable keys and DSNs, are readable in the binary.

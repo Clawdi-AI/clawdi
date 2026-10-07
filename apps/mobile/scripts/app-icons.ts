@@ -10,7 +10,7 @@
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { block, declarations, readSharedTheme } from "./theme";
+import { block, declarations, hexColor, readSharedTheme } from "./theme";
 
 const artworkPath = fileURLToPath(new URL("../../../docs/images/logo.png", import.meta.url));
 const assetsDir = fileURLToPath(new URL("../assets/", import.meta.url));
@@ -26,36 +26,11 @@ const ADAPTIVE_ARTWORK = Math.round(CANVAS * 0.76);
 /** Rounded-square splash corners, matching the iOS app icon proportion. */
 const SPLASH_CORNER_RATIO = 0.2237;
 
-/** oklch() → sRGB hex via OKLab (https://bottosson.github.io/posts/oklab/). */
-export function oklchToHex(value: string): string {
-	const match = /^oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\)$/.exec(value);
-	if (!match) throw new Error(`Expected an opaque oklch() color, received ${value}`);
-	const [lightness, chroma, hue] = match.slice(1).map(Number) as [number, number, number];
-	const a = chroma * Math.cos((hue * Math.PI) / 180);
-	const b = chroma * Math.sin((hue * Math.PI) / 180);
-	const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
-	const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
-	const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
-	const linear = [
-		4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
-		-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
-		-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
-	];
-	return `#${linear
-		.map((channel) => {
-			const encoded = channel <= 0.0031308 ? 12.92 * channel : 1.055 * channel ** (1 / 2.4) - 0.055;
-			return Math.round(Math.min(1, Math.max(0, encoded)) * 255)
-				.toString(16)
-				.padStart(2, "0");
-		})
-		.join("")}`;
-}
-
 export function buildAppColors(css: string) {
 	const background = (selector: string) => {
 		const value = declarations(block(css, selector)).get("--background");
 		if (!value) throw new Error(`Shared theme is missing --background in ${selector}`);
-		return oklchToHex(value);
+		return hexColor(value);
 	};
 	return { light: background(":root"), dark: background(".dark") };
 }

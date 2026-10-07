@@ -1,0 +1,44 @@
+{
+	"colors": {
+		"primary": "#c96442",
+		"primaryForeground": "#ffffff",
+		"background": "#fafaf8",
+		"foreground": "#1f1e1a",
+		"muted": "#f1f0ed",
+		"mutedForeground": "#676661",
+		"input": "#fffefe",
+		"inputForeground": "#1f1e1a",
+		"border": "#e2e1de",
+		"ring": "#c96442",
+		"danger": "#c9302d",
+		"success": "#428653",
+		"warning": "#c18434",
+		"neutral": "#34332e",
+		"secondaryButtonBackground": "#f1f0ed",
+		"secondaryButtonForeground": "#34332e",
+		"shadow": "#00000000"
+	},
+	"darkColors": {
+		"primary": "#d97757",
+		"primaryForeground": "#0b0a08",
+		"background": "#11100f",
+		"foreground": "#e5e4e2",
+		"muted": "#21201e",
+		"mutedForeground": "#8a8985",
+		"input": "#181715",
+		"inputForeground": "#e5e4e2",
+		"border": "#282825",
+		"ring": "#d97757",
+		"danger": "#e24942",
+		"success": "#5da56e",
+		"warning": "#d09945",
+		"neutral": "#d8d7d4",
+		"secondaryButtonBackground": "#252421",
+		"secondaryButtonForeground": "#d8d7d4",
+		"shadow": "#00000000"
+	},
+	"design": {
+		"fontFamily": "Geist",
+		"borderRadius": 10
+	}
+}
