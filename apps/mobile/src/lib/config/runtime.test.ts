@@ -127,6 +127,32 @@ describe("release configuration", () => {
 		computeApiUrl: "https://api.clawdi.ai/v2/",
 		clerkPublishableKey: "pk_live_example",
 	};
+	test("production rejects RevenueCat Test Store keys for either platform", () => {
+		for (const key of ["revenueCatAppleKey", "revenueCatGoogleKey"]) {
+			const config = { ...values, [key]: " test_fixture_public_key " };
+			expect(parseMobileRuntimeConfig(config, { environment: "production" })).toEqual({
+				ok: false,
+				reason: "invalid",
+			});
+			expect(parseMobileRuntimeConfig(config, { environment: "preview" }).ok).toBe(true);
+			expect(
+				parseMobileRuntimeConfig(config, { environment: "development", isDevelopment: true }).ok,
+			).toBe(true);
+		}
+	});
+	test("RevenueCat keys remain optional and production accepts native public keys", () => {
+		for (const keys of [
+			{},
+			{ revenueCatAppleKey: " ", revenueCatGoogleKey: undefined },
+			{
+				revenueCatAppleKey: "appl_fixture_public_key",
+				revenueCatGoogleKey: "goog_fixture_public_key",
+			},
+		])
+			expect(
+				parseMobileRuntimeConfig({ ...values, ...keys }, { environment: "production" }).ok,
+			).toBe(true);
+	});
 	test("an empty Updates channel still enforces production auth and Sentry environment", () => {
 		for (const dsn of ["", "https://public@example.test/1"]) {
 			const result = Bun.spawnSync(
@@ -219,7 +245,7 @@ describe("release configuration", () => {
 		).toBe(true);
 		expect(parseMobileRuntimeConfig(values, { environment: "production" })).toEqual({
 			ok: true,
-			value: { ...values, computeApiUrl: "https://api.clawdi.ai" },
+			value: { ...values, computeApiUrl: "https://api.clawdi.ai", environment: "production" },
 		});
 	});
 	test("cannot relax authentication outside development", () => {
