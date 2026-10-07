@@ -220,19 +220,58 @@ export class HostedDeployClient {
 		return this.paidCheckoutSupported;
 	}
 
+	async getDeployments() {
+		return unwrapDeploymentList(unwrapHosted(await this.client.GET("/v2/deployments", {})));
+	}
+
 	async getAgentDeployment(agentId: string) {
-		const deployments = unwrapDeploymentList(
-			unwrapHosted(await this.client.GET("/v2/deployments", {})),
-		);
+		const deployments = await this.getDeployments();
 		const matches = deployments.filter(
-			(item) => item.agent_id === agentId && item.resource.spec.desired_lifecycle !== "deleted",
+			(item) =>
+				item.agent_id === agentId.toLowerCase() &&
+				item.resource.spec.desired_lifecycle !== "deleted",
 		);
 		if (matches.length !== 1) {
-			throw new Error("This agent isn't an active Cloud Agent that supports remote skills.");
+			throw new Error(
+				"This agent isn't an active Cloud Agent. Check its UUID with `clawdi agent list`.",
+			);
 		}
 		const deployment = matches[0];
 		if (!deployment) throw new Error("This Cloud Agent is unavailable.");
 		return deployment;
+	}
+
+	async changeDeploymentLifecycle(
+		deploymentId: string,
+		action: "start" | "stop" | "restart",
+		resourceVersion: string,
+		requestId: string,
+	): Promise<HostedDeployOperation> {
+		return unwrapHosted(
+			await this.client.POST(`/v2/deployments/{deployment_id}/${action}`, {
+				params: {
+					path: { deployment_id: deploymentId },
+					header: { "If-Match": `"${resourceVersion}"`, "Idempotency-Key": requestId },
+				},
+			}),
+		);
+	}
+
+	async deleteDeployment(
+		deploymentId: string,
+		body: DeployComponents["schemas"]["V2DeleteDeploymentRequest"],
+		resourceVersion: string,
+		requestId: string,
+	) {
+		return unwrapHosted(
+			await this.client.DELETE("/v2/deployments/{deployment_id}", {
+				params: {
+					path: { deployment_id: deploymentId },
+					header: { "If-Match": `"${resourceVersion}"`, "Idempotency-Key": requestId },
+				},
+				body,
+			}),
+		);
 	}
 
 	async getWorkspaceSkills(deploymentId: string) {
