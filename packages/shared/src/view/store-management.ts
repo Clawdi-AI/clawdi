@@ -97,7 +97,8 @@ export const storeSubscriptionCopy = {
 	renewalIssue: "Update the payment method on your device to keep this subscription.",
 } as const;
 
-const STORE_BILLED_THROUGH = {
+/** The billing store as named in running copy ("billed by the App Store"). */
+export const STORE_BILLED_THROUGH = {
 	app_store: "the App Store",
 	play_store: "Google Play",
 	test_store: "Test Store",

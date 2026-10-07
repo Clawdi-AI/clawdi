@@ -1,3 +1,10 @@
+import type { DeployComponents } from "../api";
+import {
+	STORE_BILLED_THROUGH,
+	type StoreManagementProvider,
+	storeSubscriptionCopy,
+} from "./store-management";
+
 /** Copy for the hosted account deletion page shown inside Clerk's user profile on Web and mobile. */
 export const accountDeletionCopy = {
 	title: "Delete account",
@@ -24,6 +31,57 @@ export const accountDeletionCopy = {
 	signOut: "Sign out",
 	signOutFailed: "Couldn't finish signing out. Check your connection and try again.",
 } as const;
+
+type AccountSubscription = Pick<
+	DeployComponents["schemas"]["V2ComputeSubscriptionListItem"],
+	"funding_source" | "store_management"
+>;
+
+/** Store contract states that can still renew after account deletion. */
+const RENEWABLE_STORE_STATES = new Set([
+	"active",
+	"grace",
+	"lapsed",
+	"paused",
+	"canceled_pending_end",
+]);
+
+export type AccountDeletionStoreNotice =
+	| { kind: "none" }
+	| { kind: "generic" }
+	| { kind: "store"; provider: StoreManagementProvider };
+
+/**
+ * Chooses the store-billing notice from the account's subscriptions. `rows` is null
+ * while the list is unavailable; `complete` is false until every page has loaded.
+ * Anything short of a complete list falls back to the generic notice.
+ */
+export function accountDeletionStoreNotice(
+	rows: readonly AccountSubscription[] | null,
+	complete: boolean,
+): AccountDeletionStoreNotice {
+	const storeRows = (rows ?? []).filter((row) => row.funding_source === "store");
+	const renewable = storeRows.find(
+		(row) => row.store_management && RENEWABLE_STORE_STATES.has(row.store_management.state),
+	)?.store_management;
+	if (renewable) return { kind: "store", provider: renewable.provider };
+	if (!rows || !complete || storeRows.some((row) => !row.store_management)) {
+		return { kind: "generic" };
+	}
+	return { kind: "none" };
+}
+
+/** Apple's deletion guidance: billing continues through the store until cancelled there. */
+export function accountDeletionStoreNoticeCopy(provider: StoreManagementProvider): {
+	title: string;
+	description: string;
+} {
+	const store = storeSubscriptionCopy.providers[provider];
+	return {
+		title: `Cancel your ${store} subscription first`,
+		description: `Your Clawdi compute subscription is billed by ${STORE_BILLED_THROUGH[provider]} and will keep renewing after your account is deleted. Cancel it in ${store} subscriptions first.`,
+	};
+}
 
 /** Store subscription management pages documented by Apple and Google Play. */
 export const STORE_SUBSCRIPTIONS_URL = {
