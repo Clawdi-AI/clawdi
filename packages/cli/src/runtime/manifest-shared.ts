@@ -3,6 +3,7 @@ import { writePrivateFileAtomic } from "../lib/private-file";
 import type { RuntimeProviderConflict, RuntimeServiceWithdrawal } from "./applied-state";
 import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import type { RuntimeManifest } from "./manifest-contract";
+import type { HostedSkillGuardRefusal } from "./manifest-skills-apply";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import type { RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import type { RuntimePaths } from "./paths";
@@ -21,6 +22,8 @@ export interface RuntimeConvergenceResult {
 	projectedProviderIds: Record<string, string[]>;
 	/** Connections left to native configuration; they never fail the apply. */
 	providerConflicts?: RuntimeProviderConflict[];
+	/** Guard refusals never fail the apply and are not persisted in strict applied state. */
+	skillGuardRefusals?: HostedSkillGuardRefusal[];
 	/** Optional services withdrawn from this generation; the runtime itself still runs. */
 	serviceWithdrawals?: RuntimeServiceWithdrawal[];
 	agentPluginFailedNames: string[];

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -13,9 +13,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { log } from "../serve/log";
 import { installHermesNativeFixture } from "../test-support/hermes-native-fixture";
 import {
 	activateHostedHermesSkill,
+	HermesSkillGuardRefusalError,
 	hostedHermesSkillSourceMatches,
 	readHostedHermesSkillRecords,
 	removeHostedHermesSkill,
@@ -24,8 +26,12 @@ import {
 	hostedSkillArchiveSourceIdentity,
 	type PreparedHostedSkill,
 } from "./hosted-sourced-skill-archive";
-import { managedSkillTargetMatchesSource } from "./managed-skill-delivery";
 import {
+	ManagedSkillResourceError,
+	managedSkillTargetMatchesSource,
+} from "./managed-skill-delivery";
+import {
+	installReservedManagedSkill,
 	managedSkillReservationLedgerPath,
 	pendingManagedSkillReservations,
 	reserveManagedSkill,
@@ -158,6 +164,18 @@ function nativePython(home: string, program: string): void {
 	);
 }
 
+function nativeResponse(home: string, response: unknown, exitCode = 0): void {
+	const venv = join(home, ".hermes", "hermes-agent", "venv");
+	rmSync(venv); // Remove only the fixture symlink, never the shared upstream environment.
+	const python = join(venv, "bin", "python");
+	mkdirSync(dirname(python), { recursive: true });
+	writeFileSync(
+		python,
+		`#!/bin/sh\ncat <<'JSON'\n${JSON.stringify(response)}\nJSON\nexit ${exitCode}\n`,
+	);
+	chmodSync(python, 0o755);
+}
+
 describe("Hermes public native Skill pipeline", () => {
 	test.each([github, project])(
 		"preserves all bytes and immutable %j provenance, invalidates cache and uninstalls",
@@ -191,15 +209,28 @@ describe("Hermes public native Skill pipeline", () => {
 		const sourceDir = skill();
 		activateHostedHermesSkill({ home, sourceDir, targetDir: target, source: github });
 		const before = readFileSync(lock);
-		expect(() =>
+		let refusal: unknown;
+		try {
 			activateHostedHermesSkill({
 				home,
 				sourceDir: skill(dangerousFiles, "dangerous"),
 				targetDir: target,
 				source: project,
 				ownedSourceIdentities: [hostedSkillArchiveSourceIdentity("review", github)],
-			}),
-		).toThrow("Blocked");
+			});
+		} catch (error) {
+			refusal = error;
+		}
+		expect(refusal).toBeInstanceOf(HermesSkillGuardRefusalError);
+		expect(refusal).toMatchObject({
+			decision: "block",
+			verdict: "dangerous",
+			trustLevel: "community",
+			targetMutationStarted: false,
+		});
+		if (!(refusal instanceof HermesSkillGuardRefusalError))
+			throw new Error("missing guard refusal");
+		expect(refusal.findingCount).toBeGreaterThan(0);
 		expect(readFileSync(lock)).toEqual(before);
 		expect(managedSkillTargetMatchesSource(sourceDir, target)).toBe(true);
 		expect(existsSync(join(dirname(lock), "quarantine", "review"))).toBe(false);
@@ -208,23 +239,209 @@ describe("Hermes public native Skill pipeline", () => {
 	test("an initial scan refusal never claims later user-created files", () => {
 		const { home, target } = setup();
 		const bundle = prepared(skill(dangerousFiles), github);
-		expect(projection(home, bundle).join("\n")).toContain("Blocked");
+		expect(projection(home, bundle)).toMatchObject({
+			errors: [],
+			refusals: [{ skillKey: "review", reason: "guard_blocked", retainedPrevious: false }],
+		});
 		expect(existsSync(target)).toBe(false);
 		expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(0);
 		const local = skill(safeFiles, "user-owned");
 		cpSync(local, target, { recursive: true });
 		expect(() => projection(home, bundle)).toThrow("refusing to replace unmanaged");
-		expect(projection(home)).toEqual([]);
+		expect(projection(home)).toEqual({ errors: [], refusals: [] });
 		expect(managedSkillTargetMatchesSource(local, target)).toBe(true);
+	});
+
+	test.each([
+		{ guard: undefined },
+		{ guard: { decision: "allow" } },
+		{ guard: { verdict: "invalid" } },
+		{ guard: { trustLevel: "invalid" } },
+		{ guard: { findingCount: -1 } },
+		{ guard: { findingCount: 0.5 } },
+		{ guard: { findingCount: Number.MAX_SAFE_INTEGER + 1 } },
+		{ targetMutationStarted: true },
+		{ targetMutationStarted: undefined },
+		{ exitCode: 1 },
+	])("invalid or post-mutation guard response remains an ordinary failure: %j", (invalid) => {
+		const { home, target } = setup();
+		const guard = {
+			decision: "block",
+			verdict: "dangerous",
+			trustLevel: "community",
+			findingCount: 1,
+		};
+		nativeResponse(
+			home,
+			{
+				ok: false,
+				error: "Blocked (dangerous)",
+				targetMutationStarted: false,
+				...invalid,
+				guard:
+					invalid.guard === undefined && "guard" in invalid
+						? undefined
+						: { ...guard, ...invalid.guard },
+			},
+			"exitCode" in invalid ? invalid.exitCode : 0,
+		);
+		let failure: unknown;
+		try {
+			activateHostedHermesSkill({ home, sourceDir: skill(), targetDir: target, source: github });
+		} catch (error) {
+			failure = error;
+		}
+		expect(failure).toBeInstanceOf(ManagedSkillResourceError);
+		expect(failure).not.toBeInstanceOf(HermesSkillGuardRefusalError);
+		expect(existsSync(target)).toBe(false);
+	});
+
+	test("structured confirmation requests report a refusal without claiming installation", () => {
+		const { home, target } = setup();
+		nativeResponse(home, {
+			ok: false,
+			error: "Confirmation needed",
+			targetMutationStarted: false,
+			guard: { decision: "ask", verdict: "caution", trustLevel: "trusted", findingCount: 2 },
+		});
+		expect(projection(home, prepared(skill(), github))).toEqual({
+			errors: [],
+			refusals: [
+				{
+					runtime: "hermes",
+					skillKey: "review",
+					reason: "guard_confirmation_required",
+					verdict: "caution",
+					trustLevel: "trusted",
+					findingCount: 2,
+					retainedPrevious: false,
+				},
+			],
+		});
+		expect(existsSync(target)).toBe(false);
+		expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(0);
+	});
+
+	test.each(["hub", "legacy"])("refused updates retract the receipt-owned %s copy", (kind) => {
+		const { home, target } = setup();
+		const sourceDir = skill();
+		if (kind === "hub")
+			expect(projection(home, prepared(sourceDir, github))).toEqual({ errors: [], refusals: [] });
+		else {
+			cpSync(sourceDir, target, { recursive: true });
+			reserveManagedSkill({
+				targetDir: target,
+				id: "review",
+				manager: "hosted-manifest",
+				sourceIdentity: hostedSkillArchiveSourceIdentity("review", github),
+			});
+		}
+		expect(projection(home, prepared(skill(dangerousFiles, "refused"), project))).toMatchObject({
+			errors: [],
+			refusals: [{ skillKey: "review", retainedPrevious: false }],
+		});
+		expect(existsSync(target)).toBe(false);
+		expect(readHostedHermesSkillRecords(home).review).toBeUndefined();
+		expect(shouldIgnoreUserSkill(target)).toBe(false);
+		expect(projection(home)).toEqual({ errors: [], refusals: [] });
+	});
+
+	test("failed retraction keeps receipt ownership and reports a resource failure", () => {
+		const { home, target } = setup();
+		cpSync(skill(), target, { recursive: true });
+		reserveManagedSkill({
+			targetDir: target,
+			id: "review",
+			manager: "hosted-manifest",
+			sourceIdentity: hostedSkillArchiveSourceIdentity("review", github),
+		});
+		nativePython(home, 'from tools.skill_usage import set_pinned; set_pinned("review", True)');
+		const result = projection(home, prepared(skill(dangerousFiles, "refused"), project));
+		expect(result.errors.join("\n")).toContain("pinned");
+		expect(result.refusals).toMatchObject([{ skillKey: "review", retainedPrevious: true }]);
+		expect(existsSync(target)).toBe(true);
+		expect(shouldIgnoreUserSkill(target)).toBe(true);
+		nativePython(home, 'from tools.skill_usage import set_pinned; set_pinned("review", False)');
+		expect(projection(home)).toEqual({ errors: [], refusals: [] });
+		expect(existsSync(target)).toBe(false);
+	});
+
+	test("a refusal retains an earlier pending receipt until normal unlink recovery", () => {
+		const { home, target } = setup();
+		expect(projection(home, prepared(skill(), github))).toEqual({ errors: [], refusals: [] });
+		const next = prepared(skill(dangerousFiles, "pending-refusal"), project);
+		const identity = next.identity;
+		if (!("sourceIdentity" in identity)) throw new Error("missing sourced identity");
+		expect(() =>
+			installReservedManagedSkill(
+				{
+					targetDir: target,
+					id: "review",
+					manager: "hosted-manifest",
+					digest: identity.digest,
+					sourceIdentity: identity.sourceIdentity,
+				},
+				() => {
+					throw new ManagedSkillResourceError("interrupted native install");
+				},
+				{
+					verify: () => false,
+					discard: () => {
+						throw new Error("must retain pending ownership");
+					},
+					nativeMutation: true,
+				},
+			),
+		).toThrow("interrupted native install");
+		expect(projection(home, next)).toMatchObject({
+			errors: [],
+			refusals: [{ retainedPrevious: false }],
+		});
+		expect(existsSync(target)).toBe(false);
+		expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(1);
+		expect(projection(home)).toEqual({ errors: [], refusals: [] });
+		expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(0);
+	});
+
+	test("logs each refused Skill once per state change and clears on unlink", () => {
+		const { home } = setup();
+		projection(home);
+		const warning = spyOn(log, "warn").mockImplementation(() => {});
+		try {
+			const bundle = prepared(skill(dangerousFiles), github);
+			projection(home, bundle);
+			projection(home, bundle);
+			expect(warning).toHaveBeenCalledTimes(1);
+			const next = prepared(skill(dangerousFiles, "next"), { ...github, commit: "c".repeat(40) });
+			projection(home, next);
+			expect(warning).toHaveBeenCalledTimes(2);
+			projection(home);
+			projection(home, next);
+			expect(warning).toHaveBeenCalledTimes(3);
+			expect(warning.mock.calls[0]).toEqual([
+				"runtime.skill.guard_refused",
+				{
+					runtime: "hermes",
+					skill: "review",
+					reason: "guard_blocked",
+					verdict: "dangerous",
+					trust_level: "community",
+					finding_count: expect.any(Number),
+					retained_previous: false,
+				},
+			]);
+		} finally {
+			warning.mockRestore();
+		}
 	});
 
 	test("reconciles a new commit with identical bytes and recreates a missing native record", () => {
 		const { home, target, lock } = setup();
 		const sourceDir = skill();
 		const first = prepared(sourceDir, github);
-		expect(projection(home, first)).toEqual([]);
+		expect(projection(home, first)).toEqual({ errors: [], refusals: [] });
 		const next = prepared(sourceDir, { ...github, commit: "c".repeat(40) });
-		expect(projection(home, next)).toEqual([]);
+		expect(projection(home, next)).toEqual({ errors: [], refusals: [] });
 		expect(readHostedHermesSkillRecords(home).review).toMatchObject({
 			metadata: {
 				clawdi_source_identity:
@@ -233,11 +450,11 @@ describe("Hermes public native Skill pipeline", () => {
 		});
 		rmSync(lock);
 		expect(hostedHermesSkillSourceMatches(home, target, github)).toBe(false);
-		expect(projection(home, next)).toEqual([]);
+		expect(projection(home, next)).toEqual({ errors: [], refusals: [] });
 		expect(readHostedHermesSkillRecords(home).review).toBeDefined();
 		// Steady-state verification must not require a Python process.
 		rmSync(join(home, ".hermes", "hermes-agent", "venv"));
-		expect(projection(home, next)).toEqual([]);
+		expect(projection(home, next)).toEqual({ errors: [], refusals: [] });
 	});
 
 	test("a first native install failure keeps the target fenced until retry", () => {
@@ -252,14 +469,14 @@ describe("Hermes public native Skill pipeline", () => {
 		const bundle = prepared(sourceDir, github);
 		chmodSync(lock, 0o444);
 		try {
-			expect(projection(home, bundle).join("\n")).toContain("PermissionError");
+			expect(projection(home, bundle).errors.join("\n")).toContain("PermissionError");
 		} finally {
 			chmodSync(lock, 0o644);
 		}
 		expect(existsSync(target)).toBe(true);
 		expect(readHostedHermesSkillRecords(home).review).toBeUndefined();
 		expect(shouldIgnoreUserSkill(target)).toBe(true);
-		expect(projection(home, bundle)).toEqual([]);
+		expect(projection(home, bundle)).toEqual({ errors: [], refusals: [] });
 		expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(0);
 	});
 
@@ -297,12 +514,12 @@ describe("Hermes public native Skill pipeline", () => {
 		(desired) => {
 			const { home, target, lock } = setup();
 			const first = prepared(skill(), github);
-			expect(projection(home, first)).toEqual([]);
+			expect(projection(home, first)).toEqual({ errors: [], refusals: [] });
 			const before = readFileSync(lock);
 			const next = prepared(skill({ "SKILL.md": "# Review updated\n" }, "updated"), project);
 			chmodSync(lock, 0o444);
 			try {
-				expect(projection(home, next).join("\n")).toContain("PermissionError");
+				expect(projection(home, next).errors.join("\n")).toContain("PermissionError");
 			} finally {
 				chmodSync(lock, 0o644);
 			}
@@ -310,7 +527,7 @@ describe("Hermes public native Skill pipeline", () => {
 			expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("# Review updated\n");
 			expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(1);
 			const final = desired === "absent" ? undefined : desired === "replacement" ? first : next;
-			expect(projection(home, final)).toEqual([]);
+			expect(projection(home, final)).toEqual({ errors: [], refusals: [] });
 			expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(0);
 			expect(existsSync(target)).toBe(desired !== "absent");
 			if (final && final.identity.source.type !== "bundled")
@@ -328,9 +545,9 @@ describe("Hermes public native Skill pipeline", () => {
 			manager: "hosted-manifest",
 			sourceIdentity: hostedSkillArchiveSourceIdentity("review", github),
 		});
-		expect(projection(home, prepared(sourceDir, github))).toEqual([]);
+		expect(projection(home, prepared(sourceDir, github))).toEqual({ errors: [], refusals: [] });
 		expect(readHostedHermesSkillRecords(home).review).toBeDefined();
-		expect(projection(home)).toEqual([]);
+		expect(projection(home)).toEqual({ errors: [], refusals: [] });
 		cpSync(skill(dangerousFiles, "legacy"), target, { recursive: true });
 		reserveManagedSkill({
 			targetDir: target,
@@ -338,14 +555,14 @@ describe("Hermes public native Skill pipeline", () => {
 			manager: "hosted-manifest",
 			sourceIdentity: hostedSkillArchiveSourceIdentity("review", github),
 		});
-		expect(projection(home)).toEqual([]);
+		expect(projection(home)).toEqual({ errors: [], refusals: [] });
 		expect(existsSync(target)).toBe(false);
 		expect(readHostedHermesSkillRecords(home).review).toBeUndefined();
 	});
 
 	test("preserves a native replacement and honors pinned local deletion refusal", () => {
 		const { home, target } = setup();
-		expect(projection(home, prepared(skill(), github))).toEqual([]);
+		expect(projection(home, prepared(skill(), github))).toEqual({ errors: [], refusals: [] });
 		activateHostedHermesSkill({
 			home,
 			sourceDir: skill({ "SKILL.md": "# Native replacement\n" }, "replacement"),
@@ -353,15 +570,15 @@ describe("Hermes public native Skill pipeline", () => {
 			source: project,
 			ownedSourceIdentities: [hostedSkillArchiveSourceIdentity("review", github)],
 		});
-		expect(projection(home).join("\n")).toContain("replaced by another source");
-		expect(projection(home, prepared(skill(), github)).join("\n")).toContain(
+		expect(projection(home).errors.join("\n")).toContain("replaced by another source");
+		expect(projection(home, prepared(skill(), github)).errors.join("\n")).toContain(
 			"replaced by another source",
 		);
 		expect(existsSync(target)).toBe(true);
 		removeHostedHermesSkill(home, target, [hostedSkillArchiveSourceIdentity("review", project)]);
 		cpSync(skill(dangerousFiles, "pinned"), target, { recursive: true });
 		nativePython(home, 'from tools.skill_usage import set_pinned; set_pinned("review", True)');
-		expect(projection(home).join("\n")).toContain("pinned");
+		expect(projection(home).errors.join("\n")).toContain("pinned");
 		expect(existsSync(target)).toBe(true);
 		expect(existsSync(managedSkillReservationLedgerPath())).toBe(true);
 	});
