@@ -1,73 +1,77 @@
 "use client";
 
+import { useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import {
-	buildHostedPersonProperties,
-	resolveHostedAuthIdentityAction,
-} from "@/hosted/analytics-identity.logic";
-import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
+import { resolveHostedAuthIdentityAction } from "@/hosted/analytics-identity.logic";
+import { useDashboardAuth } from "@/lib/auth-client";
 
 const loadHostedPostHog = () => import("@/hosted/posthog");
 
 export function HostedAnalyticsClient() {
 	const [mounted, setMounted] = useState(false);
-
 	useEffect(() => {
 		setMounted(true);
 	}, []);
-
-	if (!mounted) return null;
-	return <HostedAnalyticsIdentity />;
+	return mounted ? <HostedAnalyticsIdentity /> : null;
 }
 
 function HostedAnalyticsIdentity() {
 	const { isSignedIn, userId } = useDashboardAuth();
-	const { user, isLoaded: isUserLoaded } = useCurrentUser();
+	const pathname = useLocation({ select: (location) => location.pathname });
 	const identifiedUserIdRef = useRef<string | null>(null);
+	const lastView = useRef<string | null>(null);
 
 	useEffect(() => {
-		const transition = resolveHostedAuthIdentityAction({
-			isSignedIn: Boolean(isSignedIn),
-			userId,
-			lastIdentifiedUserId: identifiedUserIdRef.current,
-		});
-		identifiedUserIdRef.current = transition.nextIdentifiedUserId;
-
-		if (transition.action.type === "identify") {
-			const identifyUserId = transition.action.userId;
-			void loadHostedPostHog().then((mod) => {
-				mod.identifyHostedUser(identifyUserId);
+		let cancelled = false;
+		const report = async () => {
+			const sdk = await loadHostedPostHog();
+			if (cancelled) return;
+			const transition = resolveHostedAuthIdentityAction({
+				isSignedIn: Boolean(isSignedIn),
+				userId,
+				lastIdentifiedUserId: identifiedUserIdRef.current,
 			});
-			return;
-		}
-		if (transition.action.type === "reset") {
-			void loadHostedPostHog().then((mod) => {
-				mod.resetHostedPostHog();
+			if (transition.action.type === "identify") sdk.identifyHostedUser(transition.action.userId);
+			if (transition.action.type === "reset") sdk.resetHostedPostHog();
+			identifiedUserIdRef.current = transition.nextIdentifiedUserId;
+			if (!sdk.canCaptureProductEvents() || document.visibilityState === "hidden") return;
+			const viewKey = `${userId ?? "anonymous"}:${pathname}:${new Date().toISOString().slice(0, 10)}`;
+			if (lastView.current === viewKey) return;
+			const source = window.clawdiDesktop ? "desktop" : "web";
+			let captured = false;
+			if (!isSignedIn && (pathname.startsWith("/sign-up") || pathname.startsWith("/sign-in"))) {
+				captured = sdk.trackEvent(
+					{
+						name: pathname.startsWith("/sign-up") ? "signup_viewed" : "signin_viewed",
+						properties: sdk.acquisitionProperties(window.location.search, document.referrer),
+					},
+					source,
+				);
+			} else if (isSignedIn) {
+				const feature = sdk.featureForPath(pathname);
+				if (pathname === "/deploy")
+					captured = sdk.trackEvent(
+						{ name: "onboarding_viewed", properties: { step: "deployed" } },
+						source,
+					);
+				else if (feature)
+					captured = sdk.trackEvent({ name: "product_viewed", properties: { feature } }, source);
+			}
+			if (captured) lastView.current = viewKey;
+		};
+		const capture = () => {
+			void report().catch(() => {
+				/* Analytics must not interrupt navigation. */
 			});
-		}
-	}, [isSignedIn, userId]);
-
-	const userEmail = user?.primaryEmailAddress?.emailAddress ?? null;
-	const userFullName = user?.fullName ?? null;
-	const userLoaded = isUserLoaded && user !== null;
-
-	useEffect(() => {
-		const personProperties = buildHostedPersonProperties({
-			isSignedIn: Boolean(isSignedIn),
-			userId,
-			user: userLoaded
-				? {
-						fullName: userFullName,
-						primaryEmailAddress: userEmail ? { emailAddress: userEmail } : null,
-					}
-				: null,
-		});
-		if (!personProperties) return;
-
-		void loadHostedPostHog().then((mod) => {
-			mod.enrichHostedUser(personProperties);
-		});
-	}, [isSignedIn, userId, userLoaded, userEmail, userFullName]);
-
+		};
+		capture();
+		window.addEventListener("focus", capture);
+		document.addEventListener("visibilitychange", capture);
+		return () => {
+			cancelled = true;
+			window.removeEventListener("focus", capture);
+			document.removeEventListener("visibilitychange", capture);
+		};
+	}, [isSignedIn, userId, pathname]);
 	return null;
 }

@@ -69,7 +69,7 @@ describe("buildHostedPersonProperties", () => {
 		expect(result).toBeNull();
 	});
 
-	test("builds enrichment payload from Clerk user", () => {
+	test("omits PII from person enrichment", () => {
 		const result = buildHostedPersonProperties({
 			isSignedIn: true,
 			userId: "user_123",
@@ -81,8 +81,6 @@ describe("buildHostedPersonProperties", () => {
 
 		expect(result).toEqual({
 			clerk_id: "user_123",
-			email: "ada@example.com",
-			name: "Ada Lovelace",
 		});
 	});
 
@@ -98,8 +96,6 @@ describe("buildHostedPersonProperties", () => {
 
 		expect(result).toEqual({
 			clerk_id: "user_123",
-			email: undefined,
-			name: undefined,
 		});
 	});
 });

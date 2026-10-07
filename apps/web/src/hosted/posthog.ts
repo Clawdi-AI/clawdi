@@ -2,6 +2,70 @@ import posthog from "posthog-js";
 
 const POSTHOG_PROXY_PATH = "/_cdi/px";
 const POSTHOG_PROPERTY_DENYLIST = ["auth", "cookie", "password", "secret"];
+const SAFE_PROPERTY_KEYS = new Set([
+	"distinct_id",
+	"$anon_distinct_id",
+	"$device_id",
+	"$user_id",
+	"$session_id",
+	"$window_id",
+	"$lib",
+	"$lib_version",
+	"$insert_id",
+	"$is_identified",
+	"source",
+	"schema_version",
+	"feature",
+	"acquisition_source",
+	"utm_source",
+	"utm_medium",
+	"utm_campaign",
+	"referrer",
+	"step",
+]);
+
+export function safeEventProperties(
+	properties: Record<string, unknown>,
+	eventName: string,
+	pathname: string,
+): Record<string, unknown> {
+	const safe = Object.fromEntries(
+		Object.entries(properties).filter(([key]) => SAFE_PROPERTY_KEYS.has(key)),
+	);
+	// Automatic SDK pageviews can carry raw campaign values from the URL.
+	// Validate those values at the final boundary as well as in trackEvent.
+	const bounded: Record<string, readonly string[]> = {
+		feature: PRODUCT_FEATURES,
+		source: ["web", "desktop"],
+		step: ["connected", "deployed"],
+		acquisition_source: ["direct", "other", ...ACQUISITION_SOURCES],
+		utm_source: ["direct", "other", ...ACQUISITION_SOURCES],
+		referrer: ["direct", "other", ...ACQUISITION_SOURCES],
+		utm_medium: ["none", "organic", "cpc", "social", "email", "referral", "other"],
+		utm_campaign: ["none", "launch", "onboarding", "newsletter", "other"],
+	};
+	for (const [key, values] of Object.entries(bounded)) {
+		if (!(key in safe)) continue;
+		const value = safe[key];
+		if (typeof value !== "string" || !values.includes(value)) {
+			if (key.startsWith("utm_") || key === "referrer" || key === "acquisition_source")
+				safe[key] = "other";
+			else delete safe[key];
+		}
+	}
+	if (safe.schema_version !== 1) delete safe.schema_version;
+	if (eventName === "$pageview") safe.feature = featureForPath(pathname);
+	const person = properties.$set;
+	if (
+		person &&
+		typeof person === "object" &&
+		"clerk_id" in person &&
+		typeof person.clerk_id === "string"
+	) {
+		safe.$set = { clerk_id: person.clerk_id };
+	}
+	return safe;
+}
 const HOSTED_BUILD_FLAG = import.meta.env.VITE_CLAWDI_HOSTED === "true";
 const DEFAULT_POSTHOG_TOKEN = import.meta.env.VITE_POSTHOG_TOKEN;
 
@@ -13,8 +77,6 @@ type HostedPostHogOptions = {
 
 export type HostedUserPersonProperties = {
 	clerk_id: string;
-	email?: string;
-	name?: string;
 };
 
 export function normalizePostHogToken(token: string | undefined): string | null {
@@ -49,7 +111,9 @@ export function initHostedPostHog({
 		person_profiles: "identified_only",
 		capture_pageview: "history_change",
 		capture_pageleave: true,
-		autocapture: true,
+		autocapture: false,
+		respect_dnt: true,
+		disable_session_recording: true,
 		property_denylist: POSTHOG_PROPERTY_DENYLIST,
 		// Run only the bundled SDK; never load remote PostHog scripts or the toolbar.
 		disable_external_dependency_loading: true,
@@ -60,7 +124,11 @@ export function initHostedPostHog({
 				(typeof url === "string" && url.includes("/vault-request"))
 			)
 				return null;
-			return event;
+			if (!event) return null;
+			return {
+				...event,
+				properties: safeEventProperties(event.properties, event.event, window.location.pathname),
+			};
 		},
 	});
 	// Remove toolbar state left in storage by earlier sessions.
@@ -99,6 +167,143 @@ export function enrichHostedUser(
 	{ isHosted = HOSTED_BUILD_FLAG, token = DEFAULT_POSTHOG_TOKEN }: HostedPostHogOptions = {},
 ): boolean {
 	if (!isHostedPostHogEnabled({ isHosted, token })) return false;
-	posthog.setPersonProperties(personProperties);
+	posthog.setPersonProperties({ clerk_id: personProperties.clerk_id });
 	return true;
+}
+
+const PRODUCT_FEATURES = [
+	"overview",
+	"agents",
+	"sessions",
+	"skills",
+	"vault",
+	"files",
+	"connectors",
+	"channels",
+	"projects",
+	"sharing",
+	"settings",
+	"memories",
+	"ai_providers",
+] as const;
+export type ProductFeature = (typeof PRODUCT_FEATURES)[number];
+export type AcquisitionSource =
+	| "direct"
+	| "google"
+	| "bing"
+	| "github"
+	| "x"
+	| "linkedin"
+	| "newsletter"
+	| "referral"
+	| "other";
+export type AcquisitionProperties = {
+	acquisition_source: AcquisitionSource;
+	utm_source: AcquisitionSource;
+	utm_medium: "none" | "organic" | "cpc" | "social" | "email" | "referral" | "other";
+	utm_campaign: "none" | "launch" | "onboarding" | "newsletter" | "other";
+	referrer: AcquisitionSource;
+};
+export type ProductEvent =
+	| { name: "product_viewed"; properties: { feature: ProductFeature } }
+	| { name: "signup_viewed" | "signin_viewed"; properties: AcquisitionProperties }
+	| { name: "onboarding_viewed"; properties: { step: "connected" | "deployed" } };
+
+const ACQUISITION_SOURCES: readonly AcquisitionSource[] = [
+	"google",
+	"bing",
+	"github",
+	"x",
+	"linkedin",
+	"newsletter",
+	"referral",
+];
+
+export function acquisitionProperties(search: string, referrer: string): AcquisitionProperties {
+	const params = new URLSearchParams(search);
+	const value = params.get("utm_source")?.toLowerCase();
+	const utmSource =
+		ACQUISITION_SOURCES.find((entry) => entry === value) ?? (value ? "other" : "direct");
+	let referrerSource: AcquisitionSource = "direct";
+	try {
+		const host = new URL(referrer).hostname.toLowerCase();
+		referrerSource =
+			ACQUISITION_SOURCES.find(
+				(entry) => host === `${entry}.com` || host.endsWith(`.${entry}.com`),
+			) ?? "other";
+	} catch {
+		/* Empty/invalid referrers are direct; never forward a raw URL. */
+	}
+	const medium = params.get("utm_medium")?.toLowerCase();
+	const campaign = params.get("utm_campaign")?.toLowerCase();
+	return {
+		acquisition_source: value ? utmSource : referrerSource,
+		utm_source: utmSource,
+		referrer: referrerSource,
+		utm_medium: ["organic", "cpc", "social", "email", "referral"].includes(medium ?? "")
+			? (medium as AcquisitionProperties["utm_medium"])
+			: medium
+				? "other"
+				: "none",
+		utm_campaign: ["launch", "onboarding", "newsletter"].includes(campaign ?? "")
+			? (campaign as AcquisitionProperties["utm_campaign"])
+			: campaign
+				? "other"
+				: "none",
+	};
+}
+
+export function featureForPath(pathname: string): ProductFeature | null {
+	if (pathname === "/vault-request" || pathname.startsWith("/share/") || pathname.startsWith("/s/"))
+		return null;
+	if (pathname === "/" || pathname === "/dashboard") return "overview";
+	const segments = pathname.split("/");
+	for (const segment of segments.slice(1).reverse()) {
+		switch (segment) {
+			case "skills":
+				return "skills";
+			case "vault":
+			case "vaults":
+				return "vault";
+			case "files":
+				return "files";
+			case "connectors":
+				return "connectors";
+			case "channels":
+				return "channels";
+			case "sharing":
+				return "sharing";
+			case "sessions":
+				return "sessions";
+			case "settings":
+				return "settings";
+			case "memories":
+				return "memories";
+			case "ai-providers":
+				return "ai_providers";
+		}
+	}
+	if (segments[1] === "agents") return "agents";
+	if (segments[1] === "projects") return "projects";
+	return null;
+}
+
+export function canCaptureProductEvents(options: HostedPostHogOptions = {}): boolean {
+	if (!isHostedPostHogEnabled(options) || typeof window === "undefined") return false;
+	if (navigator.doNotTrack === "1" || window.location.pathname === "/vault-request") return false;
+	return !posthog.has_opted_out_capturing();
+}
+
+export function trackEvent(
+	event: ProductEvent,
+	source: "web" | "desktop",
+	options: HostedPostHogOptions = {},
+): boolean {
+	try {
+		if (!canCaptureProductEvents(options)) return false;
+		posthog.capture(event.name, { ...event.properties, source, schema_version: 1 });
+		return true;
+	} catch {
+		return false;
+	}
 }

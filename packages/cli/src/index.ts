@@ -10,6 +10,7 @@ import { loadAuthTokenFile } from "./lib/auth-token-file.js";
 import { parsePositiveInteger } from "./lib/cli-options.js";
 import { getClawdiDir } from "./lib/config.js";
 import { handleError } from "./lib/errors.js";
+import { commandEvent, reportCommandEvent } from "./lib/posthog.js";
 import { getCliVersion } from "./lib/version.js";
 import { evaluateHostPolicyForCommand } from "./runtime/host-policy.js";
 
@@ -92,6 +93,8 @@ Environment:
   CLAWDI_API_URL           Override the Clawdi API endpoint
   CLAWDI_DEPLOY_API_URL    Override the deploy API endpoint
   CLAWDI_AUTH_TOKEN_ORIGIN CLAWDI_API_URL origin that CLAWDI_AUTH_TOKEN is bound to
+  CLAWDI_ANALYTICS         Opt in to content-free CLI metrics (true; requires POSTHOG_API_KEY)
+  DO_NOT_TRACK            Disable CLI analytics (1)
   CLAWDI_DEBUG             Print stack traces on error
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
   CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via \`config set autoUpdate false\`)
@@ -109,12 +112,29 @@ Environment:
 Docs: https://github.com/Clawdi-AI/clawdi`,
 	);
 
+let analyticsCommand: string | null = null;
+let analyticsStarted = 0;
+
 program.hook("preAction", (_thisCommand, actionCommand) => {
+	analyticsCommand = commandPath(actionCommand);
+	analyticsStarted = performance.now();
 	const command = commandPath(actionCommand);
 	const decision = evaluateHostPolicyForCommand(command);
 	if (decision.allowed) return;
 	const reason = decision.reason ?? "disabled by Cloud Agent runtime policy";
 	throw new Error(`Command \`clawdi ${command}\` is disabled inside Cloud Agents: ${reason}`);
+});
+
+program.hook("postAction", async () => {
+	if (analyticsCommand !== null) {
+		await reportCommandEvent(
+			commandEvent(
+				analyticsCommand,
+				performance.now() - analyticsStarted,
+				process.exitCode ? new Error("command_failure") : undefined,
+			),
+		);
+	}
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -2370,5 +2390,11 @@ for (const [heading, commandNames] of Object.entries(TOP_LEVEL_HELP_GROUPS)) {
 	} catch {
 		// auto-update is opportunistic; never let it kill the CLI invocation
 	}
-	await program.parseAsync(commandArgs, { from: "user" }).catch(handleError);
+	await program.parseAsync(commandArgs, { from: "user" }).catch(async (error: unknown) => {
+		if (analyticsCommand !== null)
+			await reportCommandEvent(
+				commandEvent(analyticsCommand, performance.now() - analyticsStarted, error),
+			);
+		handleError(error);
+	});
 })();

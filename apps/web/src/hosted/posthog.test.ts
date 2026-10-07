@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import posthog from "posthog-js";
 import {
 	enrichHostedUser,
@@ -6,6 +6,8 @@ import {
 	isHostedPostHogEnabled,
 	normalizePostHogToken,
 	resetHostedPostHog,
+	safeEventProperties,
+	trackEvent,
 } from "@/hosted/posthog";
 
 type MutablePostHog = {
@@ -18,11 +20,21 @@ const sdk = posthog as MutablePostHog;
 const originalIdentify = sdk.identify;
 const originalReset = sdk.reset;
 const originalSetPersonProperties = sdk.setPersonProperties;
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
 
 afterEach(() => {
 	sdk.identify = originalIdentify;
 	sdk.reset = originalReset;
 	sdk.setPersonProperties = originalSetPersonProperties;
+	mock.restore();
+	for (const [key, descriptor] of [
+		["window", originalWindow],
+		["navigator", originalNavigator],
+	] as const) {
+		if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+		else Reflect.deleteProperty(globalThis, key);
+	}
 });
 
 describe("normalizePostHogToken", () => {
@@ -87,15 +99,13 @@ describe("hosted identity helpers", () => {
 		expect(reset).toHaveBeenCalledTimes(1);
 	});
 
-	test("enrichHostedUser sets person properties with email/name/clerk_id", () => {
+	test("enrichHostedUser sets only opaque identity", () => {
 		const setPersonProperties = mock(() => {});
 		sdk.setPersonProperties = setPersonProperties;
 
 		const called = enrichHostedUser(
 			{
 				clerk_id: "user_123",
-				email: "ada@example.com",
-				name: "Ada Lovelace",
 			},
 			{ isHosted: true, token: "phc_test_123" },
 		);
@@ -104,8 +114,105 @@ describe("hosted identity helpers", () => {
 		expect(setPersonProperties).toHaveBeenCalledTimes(1);
 		expect(setPersonProperties).toHaveBeenCalledWith({
 			clerk_id: "user_123",
-			email: "ada@example.com",
-			name: "Ada Lovelace",
 		});
+	});
+});
+
+describe("product analytics events", () => {
+	test("SDK capture honors consent and keeps the existing identity", () => {
+		Object.defineProperty(globalThis, "window", {
+			configurable: true,
+			value: { location: { pathname: "/agents" } },
+		});
+		Object.defineProperty(globalThis, "navigator", {
+			configurable: true,
+			value: { doNotTrack: "0" },
+		});
+		const capture = spyOn(posthog, "capture").mockImplementation(() => undefined);
+		const optedOut = spyOn(posthog, "has_opted_out_capturing").mockReturnValue(false);
+		const options = { isHosted: true, token: "phc_test" };
+		const event = { name: "product_viewed", properties: { feature: "agents" } } as const;
+		expect(trackEvent(event, "desktop", options)).toBe(true);
+		expect(capture).toHaveBeenCalledWith("product_viewed", {
+			feature: "agents",
+			source: "desktop",
+			schema_version: 1,
+		});
+		optedOut.mockReturnValue(true);
+		expect(trackEvent(event, "web", options)).toBe(false);
+		optedOut.mockReturnValue(false);
+		Object.defineProperty(globalThis, "navigator", {
+			configurable: true,
+			value: { doNotTrack: "1" },
+		});
+		expect(trackEvent(event, "web", options)).toBe(false);
+		expect(trackEvent(event, "web", { isHosted: false, token: "phc_test" })).toBe(false);
+		expect(capture).toHaveBeenCalledTimes(1);
+	});
+	test("final SDK properties retain alias/session identity and remove automatic PII", () => {
+		expect(
+			safeEventProperties(
+				{
+					distinct_id: "user_opaque",
+					$anon_distinct_id: "anon_opaque",
+					$session_id: "session_opaque",
+					$current_url: "https://private.test/secret",
+					$referrer: "https://private.test",
+					$ip: "127.0.0.1",
+					$set: { clerk_id: "user_opaque", email: "private@example.test", name: "Private" },
+					$set_once: { $initial_current_url: "secret" },
+					message: "PRIVATE MESSAGE",
+				},
+				"$pageview",
+				"/agents/opaque/files",
+			),
+		).toEqual({
+			distinct_id: "user_opaque",
+			$anon_distinct_id: "anon_opaque",
+			$session_id: "session_opaque",
+			feature: "files",
+			$set: { clerk_id: "user_opaque" },
+		});
+	});
+	test("bounded UTM categories never forward private input", async () => {
+		const { acquisitionProperties } = await import("./posthog");
+		expect(
+			acquisitionProperties(
+				"?utm_source=github&utm_medium=referral&utm_campaign=launch",
+				"https://google.com/search?q=private",
+			),
+		).toEqual({
+			acquisition_source: "github",
+			utm_source: "github",
+			utm_medium: "referral",
+			utm_campaign: "launch",
+			referrer: "google",
+		});
+		const properties = acquisitionProperties(
+			"?utm_source=private@example.test&utm_campaign=secret",
+			"https://private.test/path?token=secret",
+		);
+		expect(
+			safeEventProperties(
+				{
+					utm_source: "private@example.test",
+					utm_campaign: "SECRET",
+					referrer: "https://private.test/secret",
+					feature: "/private/path",
+				},
+				"$pageview",
+				"/agents",
+			),
+		).toEqual({ utm_source: "other", utm_campaign: "other", referrer: "other", feature: "agents" });
+		expect(JSON.stringify(properties)).not.toContain("private");
+		expect(JSON.stringify(properties)).not.toContain("secret");
+	});
+	test("route categories cover nested features without sending paths", async () => {
+		const { featureForPath } = await import("./posthog");
+		expect(featureForPath("/agents/opaque/skills")).toBe("skills");
+		expect(featureForPath("/agents/opaque/files")).toBe("files");
+		expect(featureForPath("/")).toBe("overview");
+		expect(featureForPath("/vault-request")).toBeNull();
+		expect(featureForPath("/share/secret")).toBeNull();
 	});
 });

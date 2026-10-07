@@ -72,6 +72,7 @@
 		"eventsource-parser": "^4.1.1",
 		"json5": "2.2.3",
 		"openapi-fetch": "catalog:",
+		"posthog-node": "5.55.0",
 		"tar": "^7.5.22",
 		"typescript": "catalog:",
 		"yaml": "catalog:",
