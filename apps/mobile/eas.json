@@ -9,6 +9,14 @@
 			"node": "24.21.0",
 			"bun": "1.4.2"
 		},
+		"e2e": {
+			"extends": "development",
+			"env": { "SENTRY_DISABLE_AUTO_UPLOAD": "true" },
+			"android": {
+				"withoutCredentials": true,
+				"gradleCommand": ":app:assembleDebug"
+			}
+		},
 		"preview": {
 			"distribution": "internal",
 			"android": { "buildType": "apk" },

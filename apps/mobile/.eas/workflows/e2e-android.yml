@@ -1,0 +1,73 @@
+name: Android fixture smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      eas_project_id:
+        type: string
+        required: true
+      commit_sha:
+        type: string
+        required: true
+
+defaults:
+  image: sdk-57
+  tools:
+    node: "24.21.0"
+    bun: "1.4.2"
+
+jobs:
+  cached_apk:
+    type: get-build
+    params:
+      platform: android
+      profile: e2e
+      distribution: internal
+      git_commit_hash: ${{ inputs.commit_sha }}
+
+  build_apk:
+    needs: [cached_apk]
+    if: ${{ !needs.cached_apk.outputs.build_id }}
+    type: build
+    environment: development
+    env:
+      EAS_PROJECT_ID: ${{ inputs.eas_project_id }}
+    params:
+      platform: android
+      profile: e2e
+
+  smoke:
+    needs: [cached_apk]
+    after: [build_apk]
+    if: ${{ needs.cached_apk.outputs.build_id || after.build_apk.outputs.build_id }}
+    type: maestro
+    environment: development
+    runs_on: linux-medium-nested-virtualization
+    env:
+      MAESTRO_APP_ID: ai.clawdi.app
+      MAESTRO_DEV_CLIENT_URL: exp+clawdi://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8096&disableOnboarding=1&disableAutoLaunch=1&disableFab=1
+    params:
+      build_id: ${{ needs.cached_apk.outputs.build_id || after.build_apk.outputs.build_id }}
+      flow_path: .maestro/smoke.yaml
+      maestro_version: "2.11.0"
+      android_system_image_package: system-images;android-36;google_apis;x86_64
+    hooks:
+      before_maestro_tests:
+        - name: Install frozen workspace dependencies
+          working_directory: ../..
+          run: bun install --frozen-lockfile
+        - name: Start fixture API and Metro on this worker
+          working_directory: ../..
+          run: bash scripts/mobile-e2e-eas.sh start
+      after_maestro_tests:
+        - name: Stop fixture API and Metro
+          if: ${{ always() }}
+          working_directory: ../..
+          run: bash scripts/mobile-e2e-eas.sh stop
+        - name: Upload fixture and Metro logs
+          if: ${{ always() }}
+          uses: eas/upload_artifact
+          with:
+            type: other
+            name: fixture-service-logs
+            path: ../../test-results/mobile-e2e-eas/logs/**/*

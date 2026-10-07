@@ -85,9 +85,74 @@ for the app or Android's ANR Wait button, then taps Wait once only when the
 dialog title is exactly "System UI isn't responding". Application ANRs are
 never dismissed and still fail the required app checks.
 
-Maestro is intentionally **local-only for v1**. The CI follow-up is an
-[EAS Workflows `type: maestro` job](https://docs.expo.dev/eas/workflows/pre-packaged-jobs/),
-using a development build and fixture environment.
+## Nightly and manual CI
+
+After these workflows land on `main`, trigger the GitHub **Mobile E2E** workflow:
+
+```sh
+gh workflow run mobile-e2e.yml --ref main
+```
+
+It also runs nightly at **2:23 AM PDT / 1:23 AM PST** (09:23 UTC). The preflight
+exits successfully with a `SKIP` summary when either the **`EXPO_TOKEN` repository
+secret** or **`EAS_PROJECT_ID` repository variable** is absent. The owner must
+supply an Expo project UUID, a token authorized for that project, and an EAS
+plan that supports Maestro jobs. Expo's current [pricing](https://expo.dev/pricing.md)
+lists Maestro jobs on paid plans; the Free plan's 60 workflow minutes do not
+include Maestro jobs. This workflow does not provision accounts or credentials.
+
+GitHub invokes `apps/mobile/.eas/workflows/e2e-android.yml` from the checked-out
+source with EAS CLI **24.8.0**. Uploading local source with `workflow:run` avoids
+requiring a GitHub/EAS repository connection. The official [`get-build` job](https://docs.expo.dev/eas/workflows/pre-packaged-jobs/#get-build)
+reuses a successful internal Android APK only when its `e2e` profile and commit
+match. A cache miss builds `e2e`, which extends `development` and uses documented
+[`withoutCredentials` and `:app:assembleDebug`](https://docs.expo.dev/build/eas-json/).
+It uses Android debug signing, needs no Play/Apple credentials, and disables
+Sentry uploads. A changed commit causes a new native build; the conservative
+cache avoids using an APK with stale native modules.
+
+The official [`type: maestro` job](https://docs.expo.dev/eas/workflows/pre-packaged-jobs/#maestro)
+owns the emulator, APK installation and Maestro 2.11.0. Its
+`before_maestro_tests` hook installs frozen dependencies and runs
+`scripts/mobile-e2e-eas.sh start` in the same VM. That script starts the existing
+fixture API on 8796 and one Metro worker on 8096, waits for HTTP readiness and
+the native development launcher, and uses the same `.maestro/smoke.yaml` as the
+local harness. Android reaches the fixture through its documented
+[`10.0.2.2` host alias](https://developer.android.com/studio/run/emulator-networking#networkaddresses)
+and Metro through an adb reverse rule. Metro supplies the development-only
+auth bypass and app configuration; a release APK cannot enable that bypass.
+No public fixture deployment, tunnel, production API or live Clerk account is
+needed. The `after_maestro_tests` cleanup runs with `always()`, stops only the
+owned service process groups and removes its adb reverse rule. Services also
+expire after 20 minutes if the hook is interrupted.
+
+Done: after owner setup, the GitHub job and EAS `smoke` job are green. Follow the
+EAS run link in the GitHub summary: **Maestro Test Results** contains JUnit,
+named screenshots and debug output; **fixture-service-logs** contains fixture,
+Metro and launcher logs, including on failure. GitHub waits up to 75 minutes
+for the run and attempts to cancel an unfinished run after failure/interruption.
+Cloud execution and artifact collection need that first owner-authorized run;
+local schema validation does not establish a green EAS run.
+
+For owner-side server validation from `apps/mobile`:
+
+```sh
+bunx eas-cli@24.8.0 workflow:validate .eas/workflows/e2e-android.yml --non-interactive
+```
+
+This CLI command requires an authenticated Expo project. Without credentials,
+validate against the public [official workflow schema](https://api.expo.dev/v2/workflows/schema);
+server validation remains pending.
+
+| Option | Fixture and artifacts | Cost/runtime considerations |
+| --- | --- | --- |
+| EAS Workflows (implemented) | Official Maestro hooks run fixture/Metro on the test VM; EAS uploads results and service logs. | `linux-medium-nested-virtualization` is $0.020/minute, plus $0.05 per Maestro job. Cache misses add the Android medium build's $1 flat rate, after any included credits. Queue, install, build and test time determine the total; cloud duration is unmeasured. |
+| GitHub Actions with KVM (alternative) | A Linux runner can create an AVD, obtain/cache a development APK and run `scripts/mobile-e2e.sh`; `actions/upload-artifact` can upload its output. | GitHub [documents Android hardware acceleration](https://docs.github.com/en/actions/reference/runners/github-hosted-runners); the [emulator runner action](https://github.com/ReactiveCircus/android-emulator-runner#running-hardware-accelerated-emulators-on-linux-runners) documents KVM setup. Runner minutes/quotas and native build costs apply; SDK, AVD and APK caching need separate maintenance. |
+
+Rates above are from Expo's current pricing page; check it before enabling the
+nightly schedule. GitHub's waiting job also consumes minutes on the selected CI
+runner; a long EAS queue/build can exceed its 75-minute wait budget. The existing
+local `scripts/mobile-e2e.sh` remains available.
 
 **Skipped:** the bypass-off sign-in screen check. Clerk's native `AuthView`
 requires a real Clerk instance with Native API/app registration. The fixture

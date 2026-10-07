@@ -1,0 +1,99 @@
+name: Mobile E2E
+
+on:
+  schedule:
+    # 2:23 AM PDT / 1:23 AM PST (09:23 UTC).
+    - cron: "23 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-e2e
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 5
+    outputs:
+      configured: ${{ steps.config.outputs.configured }}
+    steps:
+      - name: Check owner-provided Expo configuration
+        id: config
+        env:
+          EXPO_TOKEN_CONFIGURED: ${{ secrets.EXPO_TOKEN != '' }}
+          EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+        run: |
+          if [[ "$EXPO_TOKEN_CONFIGURED" != true || -z "$EAS_PROJECT_ID" ]]; then
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+            echo 'SKIP: configure the EXPO_TOKEN repository secret and EAS_PROJECT_ID repository variable to enable fixture E2E.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [[ ! "$EAS_PROJECT_ID" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]; then
+            echo '::error::EAS_PROJECT_ID must be the Expo project UUID.'
+            exit 1
+          fi
+          echo 'configured=true' >> "$GITHUB_OUTPUT"
+
+  smoke:
+    needs: preflight
+    if: needs.preflight.outputs.configured == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          node-version: "24.21.0"
+      - name: Set up EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: 24.8.0
+          packager: bun
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Start the official EAS Maestro workflow
+        id: launch
+        working-directory: apps/mobile
+        env:
+          EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+        run: |
+          eas workflow:run .eas/workflows/e2e-android.yml --non-interactive --json \
+            -F "eas_project_id=$EAS_PROJECT_ID" -F "commit_sha=$GITHUB_SHA" > "$RUNNER_TEMP/mobile-e2e-run.json"
+          run_id=$(jq -er '.id | strings | select(test("^[0-9a-fA-F-]{36}$"))' "$RUNNER_TEMP/mobile-e2e-run.json")
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          run_url=$(jq -er '.url | strings | select(startswith("https://expo.dev/"))' "$RUNNER_TEMP/mobile-e2e-run.json")
+          echo "[EAS fixture smoke and artifacts]($run_url)" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Artifacts: Maestro Test Results (JUnit, screenshots and debug output), plus fixture-service-logs.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Wait for fixture smoke
+        id: wait
+        timeout-minutes: 75
+        working-directory: apps/mobile
+        env:
+          EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+          EAS_RUN_ID: ${{ steps.launch.outputs.run_id }}
+        run: eas workflow:status "$EAS_RUN_ID" --non-interactive --wait
+      - name: Cancel an unfinished EAS run after interruption
+        if: ${{ !success() && steps.launch.outputs.run_id != '' }}
+        timeout-minutes: 3
+        working-directory: apps/mobile
+        env:
+          EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
+          EAS_RUN_ID: ${{ steps.launch.outputs.run_id }}
+        run: |
+          eas workflow:view "$EAS_RUN_ID" --non-interactive --json > "$RUNNER_TEMP/mobile-e2e-status.json"
+          status=$(jq -er '.status | strings' "$RUNNER_TEMP/mobile-e2e-status.json")
+          case "$status" in
+            NEW|IN_PROGRESS|WAITING|ACTION_REQUIRED)
+              eas workflow:cancel "$EAS_RUN_ID" --non-interactive
+              # The cancel CLI logs mutation errors without a nonzero exit.
+              # Wait for a terminal status so an unsuccessful cancel is visible.
+              result=0
+              eas workflow:status "$EAS_RUN_ID" --non-interactive --wait || result=$?
+              case "$result" in
+                0|11|12) ;; # Success, failure or canceled: the run has stopped.
+                *) exit "$result" ;;
+              esac
+              ;;
+          esac
