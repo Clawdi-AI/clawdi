@@ -262,7 +262,10 @@ export function PlanChangeDialog({
 		currentFundingSource,
 	);
 	const fundingSourceSwitch = isFundingSourceSwitchQuote(displayedQuote);
-	const quoteFundingSource = displayedQuote?.funding_source ?? selection.funding_source;
+	const quoteFundingSource =
+		displayedQuote?.funding_source === "stripe" || displayedQuote?.funding_source === "wallet"
+			? displayedQuote.funding_source
+			: selection.funding_source;
 	const walletBalanceAfter =
 		!fundingSourceSwitch &&
 		quoteFundingSource === "wallet" &&

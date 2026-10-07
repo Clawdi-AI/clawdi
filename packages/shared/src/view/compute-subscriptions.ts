@@ -102,8 +102,6 @@ export function isBasicCompute(planSlug: string | null | undefined): boolean {
 
 export type ComputeFundingMode = "included_basic" | "subscription" | "unknown";
 
-export type ComputeFundingSource = "included_basic" | "stripe" | "wallet" | "unknown";
-
 type ComputeFundingSubscription = Pick<HostedComputeSubscription, "funding_source" | "price_cents">;
 
 export function isIncludedBasicSubscription(
@@ -124,8 +122,12 @@ export function computeFundingMode(
 ): ComputeFundingMode {
 	const source = computeFundingSource(planSlug, computeSubscription);
 	if (source === "included_basic") return "included_basic";
-	return source === "stripe" || source === "wallet" ? "subscription" : "unknown";
+	return source === "stripe" || source === "wallet" || source === "store"
+		? "subscription"
+		: "unknown";
 }
+
+export type ComputeFundingSource = "included_basic" | "stripe" | "wallet" | "store" | "unknown";
 
 export function computeFundingSource(
 	planSlug: string | null | undefined,
@@ -134,6 +136,7 @@ export function computeFundingSource(
 	if (isIncludedBasicSubscription(planSlug, computeSubscription)) return "included_basic";
 	if (computeSubscription?.funding_source === "stripe") return "stripe";
 	if (computeSubscription?.funding_source === "wallet") return "wallet";
+	if (computeSubscription?.funding_source === "store") return "store";
 	// Pre-wallet deployment projections can omit Card funding. A positive paid price
 	// disambiguates that legacy shape from Included Basic and malformed null funding.
 	if (computeSubscription?.funding_source == null && (computeSubscription?.price_cents ?? 0) > 0) {

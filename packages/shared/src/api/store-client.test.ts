@@ -4,6 +4,7 @@ import {
 	createHostedStoreClient,
 	readStoreErrorCode,
 	type StoreBootstrap,
+	type StoreComputeReconcileResponse,
 	StoreErrorCode,
 	type StorePurchaseAttempt,
 	type StorePurchaseAttemptRequest,
@@ -30,12 +31,31 @@ const attempt: StorePurchaseAttempt = {
 };
 const bootstrap: StoreBootstrap = {
 	purchases_enabled: true,
+	compute_subscriptions_enabled: true,
 	app_user_id: "aa0fb0f2-be21-4a21-9741-458a8ea0a6af",
 	catalogue_revision: 1,
 	products: [
 		{ store_product_id: "ai.clawdi.app.credits.10", credit_usd: "10.00", effect: "wallet_credit" },
 	],
 	wallet: { balance_usd: "12.50", balance_available: true, open_debt: false },
+};
+
+const computeAttemptRequest: StorePurchaseAttemptRequest = {
+	platform: "play_store",
+	catalogue_revision: 7,
+	purpose: "compute_subscription",
+	store_product_id: "ai.clawdi.app.compute:performance-monthly",
+	target_contract_id: attempt.attempt_id.toUpperCase(),
+};
+
+const computeAttempt: StorePurchaseAttempt = {
+	...attempt,
+	...computeAttemptRequest,
+	catalogue_revision: 7,
+	pending_deploy_request_id: null,
+	target_contract_id: attempt.attempt_id,
+	requested_store_product_id: computeAttemptRequest.store_product_id,
+	replacement_mode: "DEFERRED",
 };
 
 describe("Hosted store client", () => {
@@ -162,11 +182,175 @@ describe("Hosted store client", () => {
 		}
 	});
 
+	test("creates compute attempts with one target and exposes the server replacement mode", async () => {
+		const requests: { key: string | null; body: unknown }[] = [];
+		const client = createHostedStoreClient({
+			...options,
+			fetch: async (incoming) => {
+				requests.push({
+					key: incoming.headers.get("Idempotency-Key"),
+					body: await incoming.json(),
+				});
+				return Response.json(computeAttempt);
+			},
+		});
+
+		expect(await client.createPurchaseAttempt(computeAttemptRequest, "compute-key")).toEqual(
+			computeAttempt,
+		);
+		expect(requests).toEqual([
+			{
+				key: "compute-key",
+				body: computeAttemptRequest,
+			},
+		]);
+	});
+
+	test("rejects compute attempts when the server echoes a different target or product", async () => {
+		const cases: {
+			body: StorePurchaseAttemptRequest;
+			response: StorePurchaseAttempt;
+		}[] = [
+			{
+				body: computeAttemptRequest,
+				response: {
+					...computeAttempt,
+					requested_store_product_id: "ai.clawdi.app.compute:basic-monthly",
+				},
+			},
+			{
+				body: computeAttemptRequest,
+				response: {
+					...computeAttempt,
+					target_contract_id: "f1fbff7e-640a-4ff1-9bc3-c0510d471f3d",
+				},
+			},
+			{
+				body: {
+					...computeAttemptRequest,
+					target_contract_id: null,
+					target_deployment_id: "hdep_target",
+				},
+				response: {
+					...computeAttempt,
+					target_contract_id: null,
+					target_deployment_id: "hdep_other",
+				},
+			},
+		];
+		for (const { body, response } of cases) {
+			const client = createHostedStoreClient({
+				...options,
+				fetch: async () => Response.json(response),
+			});
+			await expect(client.createPurchaseAttempt(body, "compute-key")).rejects.toBeInstanceOf(
+				ApiClientResponseError,
+			);
+		}
+	});
+
+	test("requires exactly one compute target before auth or network", async () => {
+		let tokens = 0;
+		const client = createHostedStoreClient({
+			...options,
+			getToken: async () => {
+				tokens++;
+				return "fixture";
+			},
+			fetch: async () => {
+				throw new Error("Unexpected network");
+			},
+		});
+		for (const patch of [
+			{ pending_deploy_request_id: null, target_contract_id: null },
+			{
+				pending_deploy_request_id: "deploy-request-7",
+				target_deployment_id: "hdep_target",
+				target_contract_id: null,
+			},
+			{
+				pending_deploy_request_id: "deploy-request-7",
+				target_contract_id: attempt.attempt_id,
+			},
+			{
+				pending_deploy_request_id: null,
+				target_deployment_id: "hdep_target",
+				target_contract_id: attempt.attempt_id,
+			},
+			{ pending_deploy_request_id: null, target_contract_id: "not-a-uuid" },
+		]) {
+			await expect(
+				client.createPurchaseAttempt({ ...computeAttemptRequest, ...patch }, "compute-key"),
+			).rejects.toMatchObject({
+				status: 400,
+				code: "invalid_compute_subscription_attempt_request",
+			});
+		}
+		expect(tokens).toBe(0);
+	});
+
+	test("reconciles mixed owned and foreign subscriptions without client-side aggregation", async () => {
+		const response: StoreComputeReconcileResponse = {
+			code: "reconciled",
+			compute_slot: {
+				available: false,
+				contract_id: attempt.attempt_id,
+				compute_subscription_id: 42,
+				agent_id: "hdep_bound",
+				store_management: {
+					provider: "play_store",
+					product_id: "ai.clawdi.app.compute:basic-monthly",
+					management_url:
+						"https://play.google.com/store/account/subscriptions?sku=ai.clawdi.app.compute&package=ai.clawdi.app",
+					auto_renews: true,
+					renews_or_ends_at: "2026-10-08T12:00:00Z",
+					state: "grace",
+				},
+			},
+			results: [
+				{
+					subscription_id: "owned-subscription",
+					contract_id: attempt.attempt_id,
+					code: "reconciled",
+				},
+				{
+					subscription_id: "foreign-subscription",
+					contract_id: null,
+					code: "owned_by_other_account",
+				},
+			],
+		};
+		const requests: { method: string; path: string; body: unknown }[] = [];
+		const client = createHostedStoreClient({
+			...options,
+			fetch: async (incoming) => {
+				requests.push({
+					method: incoming.method,
+					path: new URL(incoming.url).pathname,
+					body:
+						incoming.method === "POST" && incoming.headers.has("content-type")
+							? await incoming.json()
+							: null,
+				});
+				return Response.json(response);
+			},
+		});
+		expect(await client.reconcileComputeSubscriptions()).toEqual(response);
+		expect(requests).toEqual([
+			{ method: "POST", path: "/v2/store/compute-subscriptions/reconcile", body: null },
+		]);
+	});
+
 	test("accepts disabled bootstrap with omitted or null identity and unavailable wallet balance", async () => {
 		for (const response of [
-			{ purchases_enabled: false, reason: "store_purchases_disabled" },
 			{
 				purchases_enabled: false,
+				compute_subscriptions_enabled: false,
+				reason: "store_purchases_disabled",
+			},
+			{
+				purchases_enabled: false,
+				compute_subscriptions_enabled: false,
 				reason: "store_purchases_disabled",
 				app_user_id: null,
 				catalogue_revision: null,
@@ -286,6 +470,7 @@ describe("Hosted store client", () => {
 				() => client.confirmPurchaseAttempt(attempt.attempt_id),
 				() => client.getPurchaseAttempt(attempt.attempt_id),
 				() => client.listPurchaseAttempts(),
+				() => client.reconcileComputeSubscriptions(),
 			]) {
 				try {
 					await action();
@@ -298,7 +483,7 @@ describe("Hosted store client", () => {
 					expect(error.message).not.toContain("private server detail");
 				}
 			}
-			expect(sends).toBe(5);
+			expect(sends).toBe(6);
 		}
 	});
 

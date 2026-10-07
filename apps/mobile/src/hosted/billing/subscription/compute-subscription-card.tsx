@@ -46,7 +46,9 @@ export function ComputeSubscriptionCard({
 		fundingSource:
 			item.subscription_kind === "included_basic"
 				? "included"
-				: (item.funding_source ?? "unavailable"),
+				: item.funding_source === "store"
+					? "unavailable"
+					: (item.funding_source ?? "unavailable"),
 		priceCents: item.price_cents,
 		currency: item.currency,
 		billingTermMonths: item.billing_term_months,
