@@ -260,7 +260,10 @@ describe("daemon install activation failure", () => {
 				`${JSON.stringify({ id: "env-codex", agentType: "codex" })}\n`,
 			);
 			mkdirSync(stubBin, { recursive: true });
-			writeExecutable(join(stubBin, "systemctl"), "#!/bin/sh\nexit 1\n");
+			writeExecutable(
+				join(stubBin, "systemctl"),
+				'#!/bin/sh\n[ "$*" = "--user show-environment" ] && exit 0\nexit 1\n',
+			);
 			process.env.PATH = `${stubBin}:${originalPath ?? ""}`;
 			writeExecutable(fakeEntry, "#!/bin/sh\nexit 0\n");
 			process.argv[1] = fakeEntry;

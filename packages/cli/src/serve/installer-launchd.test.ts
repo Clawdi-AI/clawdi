@@ -56,7 +56,7 @@ function calls(): string[] {
 	return readFileSync(join(root, "calls"), "utf8").trim().split("\n");
 }
 
-describe("launchd modern lifecycle argv", () => {
+describe.skipIf(process.getuid === undefined)("launchd modern lifecycle argv", () => {
 	it("bootstraps installs, replaces loaded jobs, and keeps stop/uninstall idempotent", () => {
 		const first = install();
 		expect(first.replaced).toBe(false);
