@@ -1,5 +1,6 @@
 import { publicSessionId, publicSessionInput, vaultRequestToken } from "@clawdi/shared/api";
 import { isBrowserLinkPath } from "@clawdi/shared/linking";
+import { NOTIFICATION_APP_ORIGIN, resolveNotificationUrl } from "@clawdi/shared/view";
 
 const settingsDestinations = new Map([
 	["general", "/settings/general"],
@@ -84,6 +85,47 @@ export async function routeMobileIncomingLink(
 		}
 	}
 	return mobileLinkDestination(path, hosts, stageVault);
+}
+
+export type NotificationActionTarget =
+	| { kind: "route"; href: string }
+	| { kind: "browser"; url: string }
+	| null;
+
+/**
+ * Web's notification action rules on mobile: dashboard URLs (hosted's canonical origin or a
+ * configured link host) route through the incoming-link table; allowlisted Clawdi pages, and
+ * dashboard pages without a native screen, open in the browser; anything else is invalid.
+ */
+export function notificationActionTarget(
+	value: string,
+	hosts: readonly string[],
+	stageVault: (link: string) => string,
+): NotificationActionTarget {
+	const target = resolveNotificationUrl(value, NOTIFICATION_APP_ORIGIN);
+	const linked = linkHostUrl(value, hosts);
+	const url = linked ?? target?.url;
+	if (!url) return null;
+	if (linked || target?.kind === "same-origin") {
+		const href = mobileLinkDestination(`${url.pathname}${url.search}`, hosts, stageVault);
+		if (href !== "/open-share") return { kind: "route", href };
+	}
+	return { kind: "browser", url: url.href };
+}
+
+function linkHostUrl(value: string, hosts: readonly string[]): URL | null {
+	try {
+		const url = new URL(value);
+		return url.protocol === "https:" &&
+			hosts.includes(url.hostname) &&
+			!url.port &&
+			!url.username &&
+			!url.password
+			? url
+			: null;
+	} catch {
+		return null;
+	}
 }
 
 /** Explicit external-link allowlist; capability tokens never enter Router state. */

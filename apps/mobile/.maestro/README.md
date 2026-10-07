@@ -38,8 +38,10 @@ previously downloaded official ZIP with the same pinned checksum validation.
 
 `smoke.yaml` runs launch, Home → Agent detail, Agents → another Agent detail,
 Agents → hosted Agent hub rows (Tools, Settings) → Files state page,
-Sessions → fixture transcript, Library → project bundle, and Account → settings
-menu → General and API Keys. The flows use loaded fixture entity IDs, including a transcript message.
+Sessions → fixture transcript, Library → project bundle, Account → settings
+menu → General and API Keys, and finally the Overview bell → notification inbox
+→ back, asserting the badge drops from four to two once opening marks the
+account updates read. The flows use loaded fixture entity IDs, including a transcript message.
 Native tab Triggers retain test IDs. On Android, react-native-screens 4.26.2
 exports those IDs only as Espresso View tags, so Maestro uses short tab labels
 scoped to native Material tab items by their container, with no index selectors. The flows

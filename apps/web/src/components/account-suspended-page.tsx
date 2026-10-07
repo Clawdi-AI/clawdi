@@ -1,3 +1,5 @@
+import { accountSuspendedPageClasses as styles } from "@clawdi/shared/ui";
+import { accountSuspendedCopy as copy, SUPPORT_MAILTO } from "@clawdi/shared/view";
 import { LogOut, Mail, ShieldOff } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -13,41 +15,33 @@ export function AccountSuspendedPage({
 	signOutError?: string | null;
 }) {
 	return (
-		<main className="flex min-h-dvh items-center justify-center bg-background px-6 py-12">
-			<section className="w-full max-w-lg text-center" aria-labelledby="account-suspended-title">
-				<img
-					src="/clawdi-logo-transparent.png"
-					alt="Clawdi"
-					className="mx-auto size-12 rounded-md"
-				/>
-				<div className="mx-auto mt-8 flex size-11 items-center justify-center rounded-md border bg-muted text-muted-foreground">
-					<ShieldOff className="size-5" aria-hidden="true" />
+		<main className={styles.page}>
+			<section className={styles.section} aria-labelledby="account-suspended-title">
+				<img src="/clawdi-logo-transparent.png" alt="Clawdi" className={styles.logo} />
+				<div className={styles.iconChip}>
+					<ShieldOff className={styles.icon} aria-hidden="true" />
 				</div>
-				<h1 id="account-suspended-title" className="mt-5 text-xl font-semibold">
-					Account suspended
+				<h1 id="account-suspended-title" className={styles.title}>
+					{copy.title}
 				</h1>
-				<p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-					Your account has been suspended due to a violation of the Clawdi User Agreement.
-				</p>
-				<p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-					Contact support if you believe this is a mistake or need help.
-				</p>
-				<div className="mt-6 flex flex-col justify-center gap-2 sm:flex-row">
-					<a href="mailto:support@clawdi.ai" className={cn(buttonVariants())}>
+				<p className={styles.reason}>{copy.reason}</p>
+				<p className={styles.help}>{copy.help}</p>
+				<div className={styles.actions}>
+					<a href={SUPPORT_MAILTO} className={cn(buttonVariants())}>
 						<Mail data-icon="inline-start" />
-						Contact support
+						{copy.contactSupport}
 					</a>
 					<Button variant="outline" disabled={signingOut} onClick={onSignOut}>
 						{signingOut ? (
-							<Spinner data-icon="inline-start" aria-label="Signing out" />
+							<Spinner data-icon="inline-start" aria-label={copy.signingOut} />
 						) : (
 							<LogOut data-icon="inline-start" />
 						)}
-						{signingOut ? "Signing out" : "Sign out"}
+						{signingOut ? copy.signingOut : copy.signOut}
 					</Button>
 				</div>
 				{signOutError ? (
-					<p className="mt-4 text-sm text-destructive" role="alert">
+					<p className={styles.error} role="alert">
 						{signOutError}
 					</p>
 				) : null}

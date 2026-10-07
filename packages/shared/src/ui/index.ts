@@ -229,6 +229,7 @@ export const tabsContentClassName = "flex-1 text-sm outline-none";
 
 export * from "./account-alias-dialog";
 export * from "./account-alias-field";
+export * from "./account-suspended-page";
 export * from "./add-agent-setup";
 export * from "./add-keys-dialog";
 export * from "./agent-channel-section";
@@ -293,6 +294,7 @@ export * from "./list-toolbar";
 export * from "./managed-model-picker";
 export * from "./markdown";
 export * from "./message-list";
+export * from "./notification-center";
 export * from "./onboarding-card";
 export * from "./overview-compute-body";
 export * from "./page-header";

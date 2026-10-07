@@ -75,3 +75,11 @@ export function useCurrentUser(): CurrentUser {
 	const { isLoaded, user } = useUser();
 	return useMemo(() => ({ isLoaded, user: user ?? null }), [isLoaded, user]);
 }
+
+const devSignOut = async () => undefined;
+
+/** Clerk sign-out; the signed-in layouts then route to sign-in. The dev identity cannot sign out. */
+export function useAppSignOut(): () => Promise<unknown> {
+	if (__DEV__ && process.env.EXPO_PUBLIC_DEV_AUTH_BYPASS === "1" && devAuth) return devSignOut;
+	return useAuth().signOut;
+}

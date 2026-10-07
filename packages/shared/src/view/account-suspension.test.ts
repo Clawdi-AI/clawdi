@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { createAccountSuspensionStore, isAccountSuspendedProblem } from "./account-suspension";
+import { createCloudApiClient } from "../api";
+import {
+	createAccountSuspensionStore,
+	isAccountSuspendedProblem,
+	observeAccountSuspension,
+} from "./account-suspension";
 
 const problem = {
 	type: "urn:clawdi:problem:account-suspended",
@@ -40,5 +45,34 @@ describe("account suspension contract", () => {
 		expect(await store.observeResponse(response)).toBe(false);
 		expect(store.getSnapshot()).toBe(false);
 		expect(nextAccount.getSnapshot()).toBe(false);
+	});
+});
+
+describe("account suspension observation", () => {
+	test("any account read through the observed fetch suspends only on the typed problem", async () => {
+		const suspended = createAccountSuspensionStore();
+		const client = createCloudApiClient({
+			baseUrl: "https://api.example.test",
+			getToken: async () => "token",
+			fetch: observeAccountSuspension(suspended, async () =>
+				Response.json(problem, { status: 401 }),
+			),
+		});
+		await expect(client.listAgents()).rejects.toMatchObject({
+			status: 401,
+			code: "account_suspended",
+		});
+		expect(suspended.getSnapshot()).toBe(true);
+
+		const expired = createAccountSuspensionStore();
+		const other = createCloudApiClient({
+			baseUrl: "https://api.example.test",
+			getToken: async () => "token",
+			fetch: observeAccountSuspension(expired, async () =>
+				Response.json({ detail: "Invalid credentials" }, { status: 401 }),
+			),
+		});
+		await expect(other.listAgents()).rejects.toMatchObject({ status: 401 });
+		expect(expired.getSnapshot()).toBe(false);
 	});
 });

@@ -4,3 +4,4 @@ name: Fixture smoke
 - runFlow: launch.yaml
 - runFlow: tabs-fixture.yaml
 - runFlow: settings.yaml
+- runFlow: notifications.yaml

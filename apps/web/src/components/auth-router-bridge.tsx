@@ -1,7 +1,8 @@
+import { createAccountSuspensionStore } from "@clawdi/shared/view";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AccountSuspensionContext, createAccountSuspensionStore } from "@/lib/account-suspension";
+import { AccountSuspensionContext } from "@/lib/account-suspension";
 import { useRouteAuth } from "@/lib/auth-client";
 import { createAppQueryClient } from "@/lib/query-client";
 import { routeAuthIdentity } from "@/lib/route-auth";

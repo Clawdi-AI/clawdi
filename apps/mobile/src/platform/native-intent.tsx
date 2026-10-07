@@ -4,7 +4,8 @@ import { Platform } from "react-native";
 import { loadMobileRuntimeConfig } from "@/lib/config/runtime";
 import { incomingVaultLink, routeMobileIncomingLink } from "@/platform/incoming-link";
 
-async function openBrowserLink(url: string) {
+/** Custom Tabs pinned to the browser package, so a link host never resolves back to this app. */
+export async function openBrowserLink(url: string) {
 	if (Platform.OS === "android") {
 		const { preferredBrowserPackage } = await getCustomTabsSupportingBrowsersAsync();
 		if (!preferredBrowserPackage) throw new Error("No Custom Tabs browser available");
