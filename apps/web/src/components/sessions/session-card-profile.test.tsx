@@ -11,7 +11,6 @@ import type { SessionListItem } from "@/lib/api-schemas";
 
 const SESSION: SessionListItem = {
 	profile_key: "",
-	profile_display_name: null,
 	id: "session-1",
 	local_session_id: "local-1",
 	project_path: null,
@@ -53,7 +52,7 @@ describe("SessionCard profile label", () => {
 	});
 
 	test("other profiles show 'Agent · profile', or the profile alone inside the Agent", () => {
-		const work = { ...SESSION, profile_key: "work", profile_display_name: "work" };
+		const work = { ...SESSION, profile_key: "work" };
 		expect(meta(work, true)).toContain("Hermes · work");
 		expect(meta(work, false)).toContain("work");
 		expect(meta(work, false)).not.toContain("Hermes");

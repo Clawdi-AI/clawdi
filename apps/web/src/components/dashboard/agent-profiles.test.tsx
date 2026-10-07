@@ -20,14 +20,8 @@ function render(children: ReactNode) {
 const DEFAULT_PROFILE: AgentProfile = {
 	id: "00000000-0000-4000-8000-000000000001",
 	profile_key: "",
-	upstream_key: "default",
 	is_default: true,
-	display_name: null,
 	state: "active",
-	online: true,
-	first_seen_at: "2026-10-01T00:00:00Z",
-	last_seen_at: "2026-10-06T00:00:00Z",
-	removed_at: null,
 	session_count: 147,
 };
 
@@ -57,7 +51,6 @@ describe("AgentProfilesOverview", () => {
 						...DEFAULT_PROFILE,
 						id: "00000000-0000-4000-8000-000000000002",
 						profile_key: "work",
-						upstream_key: "work",
 						is_default: false,
 						session_count: 1,
 					},
@@ -65,11 +58,8 @@ describe("AgentProfilesOverview", () => {
 						...DEFAULT_PROFILE,
 						id: "00000000-0000-4000-8000-000000000003",
 						profile_key: "old",
-						upstream_key: "old",
 						is_default: false,
 						state: "removed",
-						online: false,
-						removed_at: "2026-10-05T00:00:00Z",
 					},
 				]}
 				linkSessions
@@ -80,8 +70,11 @@ describe("AgentProfilesOverview", () => {
 		expect(markup).toContain("Hermes · work");
 		expect(markup).toContain("1 session<");
 		expect(markup).toContain("View sessions for Hermes · old, removed");
+		expect(markup).toContain("View sessions for Hermes · work<");
+		// Only the removed profile carries a badge; profiles have no liveness of their own.
+		expect(markup.match(/data-slot="status-badge"/g)).toHaveLength(1);
 		expect(markup).toContain(">Removed<");
-		expect(markup).not.toContain("Removed ");
+		expect(markup).not.toMatch(/Online|Offline|Last seen/);
 		expect(markup).toContain(
 			"/agents/agent-1/sessions?profile=00000000-0000-4000-8000-000000000002",
 		);

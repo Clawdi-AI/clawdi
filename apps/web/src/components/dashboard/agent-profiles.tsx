@@ -1,7 +1,7 @@
 "use client";
 
 import type { AgentProfile } from "@clawdi/shared/api";
-import { formatNumber, relativeTime } from "@clawdi/shared/view";
+import { formatNumber } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, useEffect } from "react";
@@ -56,29 +56,14 @@ export function AgentProfilesOverview({
 				{sortAgentProfiles(profiles).map((profile) => {
 					const name = agentProfileName(agentName, profile);
 					const removed = profile.state === "removed";
-					const status = removed ? "Removed" : profile.online ? "Online" : "Offline";
 					return (
 						<li key={profile.id} className="min-w-0" data-testid="agent-profile-row">
 							<EntityRow
 								icon={<AgentIcon agent={agentType} size="lg" />}
 								title={name}
-								// Online profiles are active now, so they carry no last-active time.
-								meta={[
-									`${formatNumber(profile.session_count)} ${profile.session_count === 1 ? "session" : "sessions"}`,
-									removed || profile.online
-										? null
-										: `Last seen ${relativeTime(profile.last_seen_at)}`,
-								]}
-								// Keep the count and last-seen time whole on narrow rows.
-								metaWrap
-								status={
-									<StatusBadge
-										status={profile.online && !removed ? "success" : "neutral"}
-										withDot={!removed}
-									>
-										{status}
-									</StatusBadge>
-								}
+								meta={`${formatNumber(profile.session_count)} ${profile.session_count === 1 ? "session" : "sessions"}`}
+								// Liveness belongs to the Agent; a profile is only active or removed.
+								status={removed ? <StatusBadge>Removed</StatusBadge> : undefined}
 								link={
 									linkSessions
 										? agentSectionLink(agentId, "sessions", {
@@ -86,7 +71,7 @@ export function AgentProfilesOverview({
 											})
 										: undefined
 								}
-								ariaLabel={`View sessions for ${name}, ${status.toLowerCase()}`}
+								ariaLabel={`View sessions for ${name}${removed ? ", removed" : ""}`}
 							/>
 						</li>
 					);

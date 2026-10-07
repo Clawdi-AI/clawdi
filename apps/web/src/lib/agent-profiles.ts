@@ -18,35 +18,23 @@ export function hasMultipleProfiles(
 	return (profiles?.length ?? 0) > 1;
 }
 
-/** Default first, then active profiles, then removed ones; API order within each group. */
+/** Default (`""`) first, then active profiles, then removed ones; API order within each group. */
 export function sortAgentProfiles(profiles: readonly AgentProfile[]): AgentProfile[] {
 	const rank = (profile: AgentProfile) =>
-		profile.is_default ? 0 : profile.state === "removed" ? 2 : 1;
+		profile.profile_key === "" ? 0 : profile.state === "removed" ? 2 : 1;
 	return [...profiles].sort((a, b) => rank(a) - rank(b));
 }
 
-/** Profile-only label; null for the default profile. */
-export function profileLabel(
-	profile: Pick<AgentProfile, "is_default" | "display_name" | "upstream_key" | "profile_key">,
-): string | null {
-	if (profile.is_default) return null;
-	return profile.display_name?.trim() || profile.upstream_key || profile.profile_key;
+/** Profile-only label for a profile or session; null for the default profile. */
+export function profileLabel(item: { profile_key?: string | null }): string | null {
+	return item.profile_key || null;
 }
 
 /** "Agent · work"; the default profile is shown as the Agent name alone. */
 export function agentProfileName(
 	agentName: string,
-	profile: Pick<AgentProfile, "is_default" | "display_name" | "upstream_key" | "profile_key">,
+	profile: Pick<AgentProfile, "profile_key">,
 ): string {
 	const label = profileLabel(profile);
 	return label ? `${agentName} · ${label}` : agentName;
-}
-
-/** Session rows carry the profile key; the default profile (`""`) has no label. */
-export function sessionProfileLabel(session: {
-	profile_key?: string | null;
-	profile_display_name?: string | null;
-}): string | null {
-	if (!session.profile_key) return null;
-	return session.profile_display_name?.trim() || session.profile_key;
 }

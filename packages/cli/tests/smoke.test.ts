@@ -71,6 +71,30 @@ describe("CLI smoke — src entry", () => {
 		expect(stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
 	});
 
+	it.each([false, true])(
+		"startup removes only obsolete rename journals (CLAWDI_HOME=%s)",
+		async (override) => {
+			const { tmpdir } = await import("node:os");
+			const { existsSync, mkdtempSync, readFileSync, rmSync } = await import("node:fs");
+			const root = mkdtempSync(join(tmpdir(), "clawdi-smoke-profile-journal-"));
+			const state = join(root, override ? "custom-state" : ".clawdi");
+			const journal = join(state, "profile-renames");
+			const receipts = join(state, "sessions.lock");
+			mkdirSync(journal, { recursive: true });
+			writeFileSync(join(journal, "obsolete.json"), "legacy-journal");
+			writeFileSync(receipts, "unchanged-receipts");
+			try {
+				const env = { HOME: root, CLAWDI_HOME: override ? state : undefined };
+				expect((await runCli(["--version"], env)).code).toBe(0);
+				expect(existsSync(journal)).toBeFalse();
+				expect(readFileSync(receipts, "utf8")).toBe("unchanged-receipts");
+				expect((await runCli(["--version"], env)).code).toBe(0);
+			} finally {
+				rmSync(root, { recursive: true, force: true });
+			}
+		},
+	);
+
 	it("--help lists ordinary commands and hides Hosted operator surfaces", async () => {
 		const { stdout, code } = await runCli(["--help"]);
 		expect(code).toBe(0);

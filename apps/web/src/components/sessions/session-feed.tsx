@@ -19,7 +19,7 @@ import { ENTITY_CARD_BASE } from "@/components/entity-card";
 import { SectionLabel } from "@/components/section-label";
 import { SessionSearchMatchExcerpt } from "@/components/sessions/search-match-excerpt";
 import { Skeleton } from "@/components/ui/skeleton";
-import { sessionProfileLabel } from "@/lib/agent-profiles";
+import { profileLabel } from "@/lib/agent-profiles";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { sessionDetailLink } from "@/lib/session-search-anchor";
 import { cn } from "@/lib/utils";
@@ -221,7 +221,7 @@ export function SessionCard({
 		quietAutomated,
 	);
 	const agent = agentIdentity(sessionAgentIdentityInput(session)).primaryLabel;
-	const profile = sessionProfileLabel(session);
+	const profile = profileLabel(session);
 	const metadata: SessionMetadataItem[] = [
 		// Default-profile sessions carry no profile label.
 		showAgent

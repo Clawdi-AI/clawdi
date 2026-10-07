@@ -1,4 +1,3 @@
-from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Path
@@ -74,27 +73,15 @@ async def _responses(db: AsyncSession, agent: AgentEnvironment) -> list[AgentPro
                 counts.c.origin_profile_key == AgentProfile.profile_key,
             )
             .where(AgentProfile.environment_id == agent.id)
-            .order_by(
-                AgentProfile.is_default.desc(),
-                AgentProfile.profile_key,
-            )
+            .order_by(AgentProfile.profile_key)
         )
     ).all()
-    online = agent.last_sync_at is not None and agent.last_sync_at > datetime.now(UTC) - timedelta(
-        seconds=90
-    )
     responses = [
         AgentProfileResponse(
             id=p.id,
             profile_key=p.profile_key,
-            upstream_key=p.upstream_key,
-            is_default=p.is_default,
-            display_name=p.display_name,
+            is_default=p.profile_key == "",
             state=p.state,
-            online=online and p.state == "active",
-            first_seen_at=p.first_seen_at,
-            last_seen_at=p.last_seen_at,
-            removed_at=p.removed_at,
             session_count=count,
         )
         for p, count in rows
@@ -116,14 +103,8 @@ async def _responses(db: AsyncSession, agent: AgentEnvironment) -> list[AgentPro
             AgentProfileResponse(
                 id=uuid5(agent.id, "default-profile"),
                 profile_key="",
-                upstream_key="",
                 is_default=True,
-                display_name=None,
                 state="active",
-                online=online,
-                first_seen_at=agent.created_at,
-                last_seen_at=agent.last_seen_at or agent.created_at,
-                removed_at=None,
                 session_count=count or 0,
             ),
         )
@@ -162,7 +143,6 @@ async def put_agent_profiles(
             )
         ).scalars()
     }
-    now = datetime.now(UTC)
     present: set[str] = set()
     for item in body.profiles:
         key = "" if item.is_default else item.upstream_key
@@ -172,19 +152,16 @@ async def put_agent_profiles(
             p = AgentProfile(
                 environment_id=agent_id,
                 profile_key=key,
-                upstream_key=item.upstream_key,
-                is_default=item.is_default,
+                # Required until the legacy columns and check constraint are dropped.
+                upstream_key=key,
+                is_default=key == "",
             )
             db.add(p)
-        p.upstream_key = item.upstream_key
         p.state = "active"
-        p.last_seen_at = now
-        p.removed_at = None
     if body.complete:
         for key, p in known.items():
             if key not in present and p.state != "removed":
                 p.state = "removed"
-                p.removed_at = now
     await db.commit()
     return await _responses(db, agent)
 
@@ -280,12 +257,14 @@ async def rename_profile(
         if new in profiles:
             return ProfileSessionMoveResponse(sessions_moved=0, suppressions_moved=0)
         raise HTTPException(404, "Profile not found")
-    if source.is_default or new == "default":
+    if source.profile_key == "" or new == "default":
         raise HTTPException(400, "The default profile cannot be renamed")
     if new == profile_key:
         return ProfileSessionMoveResponse(sessions_moved=0, suppressions_moved=0)
     target = profiles.get(new)
     if target is not None:
+        # CLIs before 0.15.5 PUT inventory before rename, creating an empty target.
+        # Retain this compatibility branch until the CLI floor reaches 0.15.5.
         for model in (Session, SessionSyncSuppression):
             occupied = (
                 await db.execute(
@@ -310,9 +289,6 @@ async def rename_profile(
         await db.flush()
     result = await _move(db, auth, agent_id, profile_key, new)
     source.profile_key = new
-    source.upstream_key = new
     source.state = "active"
-    source.removed_at = None
-    source.last_seen_at = datetime.now(UTC)
     await db.commit()
     return result
