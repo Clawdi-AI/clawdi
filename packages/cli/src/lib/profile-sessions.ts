@@ -19,7 +19,6 @@ import {
 	profileSessionKey,
 } from "../adapters/profiles";
 import { classifyHermesMcpFailure, reconcileLocalHermesMcp } from "../commands/hermes-mcp";
-import { detectRuntimeMode } from "../runtime/paths";
 import { log } from "../serve/log";
 import { type ApiClient, ApiError, unwrap } from "./api-client";
 import { canonicalApiOrigin } from "./api-origin";
@@ -81,8 +80,9 @@ export function createProfileSync(
 	let inventorySignature = "";
 	const mcpSeen = new Set<string>();
 	const mcpLoggedFailures = new Set<string>();
+	const mcpFailedProfiles = new Set<string>();
 	const failed = new Set<string>();
-	const manageLocalMcp = options.manageLocalMcp ?? detectRuntimeMode() !== "hosted";
+	const manageLocalMcp = options.manageLocalMcp ?? true;
 	const attributed = new Map<string, Set<string>>();
 	let supported = false;
 	const fallback = () => {
@@ -202,9 +202,12 @@ export function createProfileSync(
 						profile.isDefault ? undefined : profile.upstreamKey,
 						context?.signal,
 					);
+					if (mcpFailedProfiles.delete(profile.profileKey))
+						log.info("profiles.mcp_recovered", { profile_key: profile.profileKey });
 					mcpSeen.add(profile.profileKey);
 				} catch (error) {
 					context?.signal.throwIfAborted();
+					mcpFailedProfiles.add(profile.profileKey);
 					const reason = classifyHermesMcpFailure(error);
 					const failureKey = `${profile.profileKey}\u0000${reason}`;
 					if (!mcpLoggedFailures.has(failureKey)) {

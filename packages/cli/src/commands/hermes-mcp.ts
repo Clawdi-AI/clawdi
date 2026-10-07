@@ -7,6 +7,10 @@ import {
 	commitHermesConfigTransaction,
 	getHermesRawConfigValue,
 	type HermesConfigCommandContext,
+	HermesConfigCommandError,
+	HermesConfigConflictError,
+	HermesConfigInvalidError,
+	HermesConfigReadError,
 	reconcileHermesConfigValue,
 } from "../runtime/hermes-config";
 import { RuntimeUserCommandTimeoutError } from "../runtime/runtime-user-command";
@@ -17,8 +21,7 @@ export type HermesMcpFailureReason =
 	| "command_failed"
 	| "command_timeout"
 	| "config_invalid"
-	| "config_conflict"
-	| "cli_unresolved";
+	| "config_conflict";
 
 function errorCode(error: unknown): string | number | undefined {
 	if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
@@ -28,35 +31,37 @@ function errorCode(error: unknown): string | number | undefined {
 
 /** Reduce local reconcile failures to a stable, non-sensitive reason for daemon logs. */
 export function classifyHermesMcpFailure(error: unknown): HermesMcpFailureReason {
-	if (error instanceof RuntimeUserCommandTimeoutError || errorCode(error) === "ETIMEDOUT")
-		return "command_timeout";
-	const code = errorCode(error);
-	const message = error instanceof Error ? error.message : String(error);
 	if (
-		message.includes("could not resolve the current clawdi CLI script") ||
-		message.includes("could not resolve CLI executable path") ||
-		message.includes("could not resolve CLI script path") ||
-		message.includes("refusing to invoke a relative CLI") ||
-		message.includes("could not resolve the clawdi package resource root")
+		error instanceof RuntimeUserCommandTimeoutError ||
+		errorCode(error) === "ETIMEDOUT" ||
+		(typeof error === "object" &&
+			error !== null &&
+			"killed" in error &&
+			error.killed === true &&
+			"signal" in error &&
+			error.signal === "SIGKILL")
 	)
-		return "cli_unresolved";
+		return "command_timeout";
+	if (error instanceof HermesConfigConflictError) return "config_conflict";
+	if (error instanceof HermesConfigInvalidError || error instanceof HermesConfigReadError)
+		return "config_invalid";
+	const code = errorCode(error);
+	const errno =
+		typeof error === "object" && error !== null && "errno" in error
+			? typeof error.errno === "string" || typeof error.errno === "number"
+				? error.errno
+				: undefined
+			: undefined;
 	if (
 		code === 127 ||
 		code === "ENOENT" ||
 		code === "EACCES" ||
-		message.includes("ENOENT") ||
-		message.includes("No such file or directory") ||
-		message.includes("command not found")
+		errno === "ENOENT" ||
+		errno === "EACCES"
 	)
 		return "command_unavailable";
-	if (message.includes("changed during reconciliation")) return "config_conflict";
-	if (
-		message.includes("invalid YAML") ||
-		message.includes("must be an object") ||
-		message.includes("returned invalid JSON") ||
-		message.includes("non-absolute path")
-	)
-		return "config_invalid";
+	if (error instanceof HermesConfigCommandError && error.status === 127)
+		return "command_unavailable";
 	return "command_failed";
 }
 
@@ -84,7 +89,7 @@ export async function reconcileLocalHermesMcp(
 		current.exists &&
 		(typeof current.value !== "object" || current.value === null || Array.isArray(current.value))
 	) {
-		throw new Error("Hermes config field mcp_servers must be an object");
+		throw new HermesConfigInvalidError("Hermes config field mcp_servers must be an object");
 	}
 	const next: Record<string, unknown> = current.exists
 		? { ...(current.value as Record<string, unknown>) }
@@ -98,7 +103,7 @@ export async function reconcileLocalHermesMcp(
 		Object.keys(next).length > 0 ? next : undefined,
 	);
 	if (commitHermesConfigTransaction(transaction) === "conflict")
-		throw new Error("Hermes config changed during reconciliation");
+		throw new HermesConfigConflictError();
 	return changed;
 }
 

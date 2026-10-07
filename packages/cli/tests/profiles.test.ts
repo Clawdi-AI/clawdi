@@ -20,7 +20,7 @@ import {
 	discoverHermesProfiles,
 	profileSessionKey,
 } from "../src/adapters/profiles";
-import { reconcileAllLocalHermesMcp } from "../src/commands/hermes-mcp";
+import { classifyHermesMcpFailure, reconcileAllLocalHermesMcp } from "../src/commands/hermes-mcp";
 import { ApiClient } from "../src/lib/api-client";
 import { resolveCurrentCliInvocation } from "../src/lib/current-cli-invocation";
 import { createProfileSync, moveProfileSessionReceipts } from "../src/lib/profile-sessions";
@@ -32,6 +32,7 @@ import {
 	readSessionsLock,
 	sessionFenceKey,
 } from "../src/lib/sessions-lock";
+import { HermesConfigReadError } from "../src/runtime/hermes-config";
 import { log } from "../src/serve/log";
 import { enqueueChangedSessionsAfterStability } from "../src/serve/sync-engine";
 import { cleanupTmp, copyFixtureToTmp } from "./adapters/helpers";
@@ -268,6 +269,15 @@ test("Hermes MCP setup skips a failed named profile and registers the remaining 
 	} finally {
 		warn.mockRestore();
 	}
+});
+
+test("Hermes MCP classifies execFile SIGKILL timeouts and typed config read failures", () => {
+	expect(classifyHermesMcpFailure({ killed: true, signal: "SIGKILL" })).toBe("command_timeout");
+	expect(classifyHermesMcpFailure({ code: "EACCES" })).toBe("command_unavailable");
+	expect(
+		classifyHermesMcpFailure(new HermesConfigReadError({ code: "EACCES", errno: "EACCES" })),
+	).toBe("config_invalid");
+	expect(classifyHermesMcpFailure(new Error("command not found"))).toBe("command_failed");
 });
 
 test("per-profile readers preserve duplicate imported IDs and projection bytes", async () => {
@@ -841,7 +851,9 @@ test("hosted profile sync skips local Hermes MCP reconciliation", async () => {
 	const warn = spyOn(log, "warn");
 	const client = api(async () => response([]));
 	try {
-		const sync = createProfileSync(new HermesAdapter(), client, "env");
+		const sync = createProfileSync(new HermesAdapter(), client, "env", {
+			manageLocalMcp: false,
+		});
 		await sync.refresh();
 		expect(reconcile).not.toHaveBeenCalled();
 		expect(warn.mock.calls).toEqual([]);
@@ -854,6 +866,7 @@ test("hosted profile sync skips local Hermes MCP reconciliation", async () => {
 test("MCP failures retry on refresh and deduplicate each profile and reason", async () => {
 	const reconcile = spyOn(await import("../src/commands/hermes-mcp"), "reconcileLocalHermesMcp");
 	const warn = spyOn(log, "warn");
+	const info = spyOn(log, "info");
 	let workAttempts = 0;
 	let workHealthy = false;
 	reconcile.mockImplementation(async (_enabled, profile) => {
@@ -876,9 +889,11 @@ test("MCP failures retry on refresh and deduplicate each profile and reason", as
 		await sync.refresh();
 		expect(workAttempts).toBe(3);
 		expect(warn.mock.calls).toHaveLength(1);
+		expect(info.mock.calls).toEqual([["profiles.mcp_recovered", { profile_key: "work" }]]);
 	} finally {
 		reconcile.mockRestore();
 		warn.mockRestore();
+		info.mockRestore();
 	}
 });
 

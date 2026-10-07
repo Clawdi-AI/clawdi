@@ -402,8 +402,9 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	}
 	const api = new ApiClient({ abortSignal: opts.abort });
 	const shutdownApi = new ApiClient();
+	const runtimeMode = detectRuntimeMode();
 	const profileSync = createProfileSync(opts.adapter, api, opts.environmentId, {
-		manageLocalMcp: detectRuntimeMode() !== "hosted",
+		manageLocalMcp: runtimeMode !== "hosted",
 	});
 	sessions = profileSync.sessions;
 	const health = new SyncHealth();
