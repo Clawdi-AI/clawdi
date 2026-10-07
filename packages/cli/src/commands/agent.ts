@@ -1,11 +1,13 @@
-import type { components } from "@clawdi/shared/api";
+import type { components, Deployment } from "@clawdi/shared/api";
 import chalk from "chalk";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
+import { HostedDeployClient } from "../lib/hosted-deploy-client";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
+import { type AgentRemoveOptions, removeCloudAgent } from "./agent-lifecycle";
 
 export async function agentList(opts: { json?: boolean } = {}): Promise<void> {
 	requireAuth();
@@ -20,19 +22,33 @@ export async function agentList(opts: { json?: boolean } = {}): Promise<void> {
 		}
 		throw new Error("Could not list agents. Please retry or run `clawdi doctor`.");
 	}
+	let deployments: Deployment[] | null = null;
+	try {
+		deployments = await new HostedDeployClient().getDeployments();
+	} catch {
+		console.error(
+			"Could not load Cloud Agent deployment status. Kind and deployment status are unavailable; please retry or run `clawdi doctor`.",
+		);
+	}
+	const inventory = agents.map((agent) => {
+		const deployment = deployments?.find((item) => item.agent_id === agent.id);
+		return {
+			id: agent.id,
+			name: agent.name,
+			display_name: agent.display_name ?? null,
+			agent_type: agent.agent_type,
+			machine_name: agent.machine_name,
+			last_seen_at: agent.last_seen_at,
+			kind: deployments === null ? null : deployment ? "cloud" : "local",
+			deployment_status: deployment?.resource.status?.summary_state ?? null,
+		};
+	});
 	if (opts.json) {
 		console.log(
 			JSON.stringify(
 				{
 					schemaVersion: "clawdi.agentList.v1",
-					agents: agents.map((agent) => ({
-						id: agent.id,
-						name: agent.name,
-						display_name: agent.display_name ?? null,
-						agent_type: agent.agent_type,
-						machine_name: agent.machine_name,
-						last_seen_at: agent.last_seen_at,
-					})),
+					agents: inventory,
 				},
 				null,
 				2,
@@ -44,13 +60,15 @@ export async function agentList(opts: { json?: boolean } = {}): Promise<void> {
 		console.log("No agents found.");
 		return;
 	}
-	const headers = ["ID", "Name", "Type", "Machine", "Last activity"];
-	const rows = agents.map((agent) => [
+	const headers = ["ID", "Name", "Type", "Machine", "Last activity", "Kind", "Deployment status"];
+	const rows = inventory.map((agent) => [
 		agent.id,
 		sanitizeMetadata(agent.display_name || agent.name),
 		sanitizeMetadata(agent.agent_type),
 		sanitizeMetadata(agent.machine_name),
 		sanitizeMetadata(agent.last_seen_at ?? "Never"),
+		agent.kind ?? "-",
+		sanitizeMetadata(agent.deployment_status ?? "-"),
 	]);
 	const widths = headers.map((header, index) =>
 		Math.max(header.length, ...rows.map((row) => row[index]?.length ?? 0)),
@@ -61,17 +79,20 @@ export async function agentList(opts: { json?: boolean } = {}): Promise<void> {
 	for (const row of rows) console.log(line(row));
 }
 
-export async function agentRm(
-	agentId: string,
-	opts: { yes?: boolean; json?: boolean } = {},
-): Promise<void> {
+export async function agentRm(agentId: string, opts: AgentRemoveOptions = {}): Promise<void> {
 	requireAuth();
 	requireUuid(agentId, "Agent ID (from `clawdi agent list`)");
+	if (opts.cancelSubscription && opts.keepSubscription)
+		throw new Error("Choose either --cancel-subscription or --keep-subscription, not both.");
 	if (
-		!(await confirmOrRequireYes(`Disconnect agent ${agentId} and archive its workspace?`, {
-			yes: opts.yes,
-			action: "disconnect this agent and archive its workspace",
-		}))
+		!(await confirmOrRequireYes(
+			`Remove agent ${agentId}? This archives a local agent's workspace or permanently deletes a Cloud Agent and its saved data.`,
+			{
+				yes: opts.yes,
+				action:
+					"remove this agent (archive a local workspace or permanently delete a Cloud Agent and its saved data)",
+			},
+		))
 	)
 		return;
 	try {
@@ -92,7 +113,8 @@ export async function agentRm(
 				);
 			}
 			if (error.status === 409) {
-				throw new Error("This agent cannot be disconnected here. Manage it in the dashboard.");
+				await removeCloudAgent(agentId, opts);
+				return;
 			}
 			if (error.status === 401 || error.isNetwork) throw error;
 		}
