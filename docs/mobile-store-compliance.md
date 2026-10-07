@@ -96,7 +96,7 @@ release APK, including dependency permissions, before submission.
 | Privacy policy URL | Owner must supply a public URL covering app and service processing, retention and deletion |
 | Support URL | Owner must supply a public support URL |
 | Play account-deletion web URL | Owner must confirm an existing public deletion-request page or provide one; no page is assumed to exist |
-| In-app deletion | Settings > Account > Delete account uses hosted `DELETE /v1/me`; release config requires compute URL |
+| In-app deletion | Settings > Account > Delete account: Clerk's built-in delete while self-delete is enabled; once the owner disables it, a custom profile page shows the store-billing notice and calls hosted `DELETE /v1/me` (release config requires compute URL) |
 | App Review access | Owner supplies a working review account without MFA friction |
 | Accounts and credentials | Apple team/ASC app record, Play app/service account, Expo project/token, Clerk production/native registration, optional Sentry project/DSN/token |
 | Store listing | Owner supplies listing copy and device screenshots |

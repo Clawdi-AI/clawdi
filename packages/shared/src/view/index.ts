@@ -1,4 +1,5 @@
 export type { ContributionDay, DashboardStats } from "../api/schemas";
+export * from "./account-deletion";
 export * from "./add-agent-setup";
 export * from "./add-keys-dialog";
 export * from "./agent-channel-cards";

@@ -463,6 +463,7 @@ const vaultEn = {
 } as const;
 
 import {
+	accountDeletionCopy,
 	billingCopy,
 	LIBRARY_COPY,
 	sessionDetailCopy,
@@ -473,6 +474,7 @@ export const en = {
 	settingsParity: settingsCopy,
 	billingParity: billingCopy,
 	usageParity: usageCopy,
+	accountDeletion: accountDeletionCopy,
 	sessionDetail: sessionDetailCopy,
 	libraryPort: LIBRARY_COPY,
 	composite: {
