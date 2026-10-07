@@ -1,6 +1,20 @@
 import { publicSessionId, publicSessionInput, vaultRequestToken } from "@clawdi/shared/api";
 import { isBrowserLinkPath } from "@clawdi/shared/linking";
 
+const settingsDestinations = new Map([
+	["general", "/settings/general"],
+	["account", "/settings/account"],
+	["api-keys", "/settings/api-keys"],
+	["wallet", "/settings/wallet"],
+	["compute", "/settings/compute"],
+	["usage", "/settings/usage"],
+	["billing", "/settings/compute"],
+	["billing-wallet", "/settings/wallet"],
+	["billing-plan", "/settings/compute"],
+	["billing-usage", "/settings/usage"],
+	["profile", "/settings"],
+]);
+
 /** One pending capability, never Router state, storage, logs or query keys. */
 export function createVaultLinkInbox(now = Date.now) {
 	let pending: { id: string; link: string; expiresAt: number } | undefined;
@@ -123,11 +137,7 @@ export function mobileLinkDestination(
 			return `/vault/${encodeURIComponent(slug)}${query ? `?${query}` : ""}`;
 		}
 		if (isWebPath(pathname) && url.searchParams.has("settings")) {
-			const panel = url.searchParams.get("settings");
-			return panel &&
-				["general", "api-keys", "wallet", "compute", "billing", "account"].includes(panel)
-				? `/settings/${panel}`
-				: "/settings";
+			return settingsDestinations.get(url.searchParams.get("settings") ?? "") ?? "/settings";
 		}
 		if (!isWebPath(pathname)) return "/open-share";
 		return `${pathname}${url.search}`;
