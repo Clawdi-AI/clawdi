@@ -13,6 +13,7 @@ import {
 	normalizeHostedDeployLanguage,
 } from "@clawdi/shared/api";
 import {
+	agentDisplayName,
 	agentSurfaceCopy,
 	aiBindingCopy,
 	computeFundingMode,
@@ -131,8 +132,8 @@ export function DeploymentControls({
 		writeBlocked ||
 		transitioning ||
 		Boolean(deployment?.accepted_operation && !deployment.accepted_operation.done);
-	const submit = (saved: RuntimeAttempt, fresh = false, guarded = false) =>
-		(guarded ? action.runOrThrow : action.run)(async (current) => {
+	const submit = (saved: RuntimeAttempt, fresh = false) =>
+		action.run(async (current) => {
 			const visible = capture();
 			const owns = () => current() && scope.isCurrent() && !scope.signal.aborted;
 			if (!deploymentMutations || !storageKey || !visible() || saved.status === "rejected") return;
@@ -187,6 +188,15 @@ export function DeploymentControls({
 	const offerChoice = fundingMode === "subscription" && isComputeSubscriptionRenewing(subscription);
 	const periodEnd = formatShortDate(subscription?.current_period_end);
 	const periodEndLabel = periodEnd === "—" ? null : periodEnd;
+	const deleteTitle = deployment
+		? t("runtime.deleteTitle").replace(
+				"{name}",
+				agentDisplayName({
+					name: deployment.resource.name,
+					agent_type: deployment.resource.spec.runtime,
+				}),
+			)
+		: "";
 	const [deleteChoice, setDeleteChoice] = useState<{
 		choice: SubscriptionChoice;
 		confirm: (choice: SubscriptionChoice) => unknown;
@@ -211,7 +221,9 @@ export function DeploymentControls({
 				!scope.signal.aborted &&
 				visible()
 			) {
-				return submit(prepared(next), true, true);
+				// Failures close the confirmation: the journaled attempt and its Retry/Discard
+				// controls drive recovery instead of a second, conflicting confirm.
+				return submit(prepared(next), true);
 			}
 		};
 		if (mutation.action === "delete" && offerChoice) {
@@ -222,9 +234,7 @@ export function DeploymentControls({
 			return;
 		}
 		nativeConfirmation.show(
-			mutation.action === "delete"
-				? t("runtime.deleteTitle").replace("{name}", deployment.resource.name)
-				: t("runtime.confirm"),
+			mutation.action === "delete" ? deleteTitle : t("runtime.confirm"),
 			mutation.action === "delete"
 				? subscription?.cancel_at_period_end
 					? `${t("runtime.deleteWarning")}\n\n${t("runtime.deleteScheduledCancel")}`
@@ -253,7 +263,7 @@ export function DeploymentControls({
 							setDeleteChoice(null);
 						}
 					}}
-					title={t("runtime.deleteTitle").replace("{name}", deployment.resource.name)}
+					title={deleteTitle}
 					description={
 						<AppView className="gap-3">
 							<AppText>{t("runtime.deleteWarning")}</AppText>
