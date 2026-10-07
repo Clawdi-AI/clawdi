@@ -121,6 +121,7 @@ export function SessionCard({
 	].filter((item) => item !== null);
 	return (
 		<AppPressable
+			testID={`session-card-${session.id}`}
 			accessibilityRole="link"
 			accessibilityLabel={`Open session ${title}`}
 			className={cn(

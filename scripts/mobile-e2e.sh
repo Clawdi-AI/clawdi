@@ -79,10 +79,6 @@ for port in (5564, 5565, 8796, 8096):
             raise SystemExit(f"mobile-e2e: port {port} is occupied; leave its owner untouched")
 PY
 serial=emulator-5564
-devices=$(timeout -k 5s 15s "$adb_bin" devices)
-if awk -v serial="$serial" '$1 == serial {found=1} END {exit !found}' <<<"$devices"; then
-	fail "$serial is already registered; leave it untouched"
-fi
 
 mkdir -p "$repo_root/test-results"
 if [[ -n $output ]]; then
@@ -95,6 +91,7 @@ output=$(realpath "$output")
 task_dir=$(mktemp -d "$repo_root/test-results/.mobile-e2e-runtime.XXXXXX")
 owned_pids=()
 emulator_pid=
+adb_server_pid=
 cleanup() {
 	local status=$? pid
 	trap - EXIT INT TERM
@@ -122,6 +119,17 @@ cleanup() {
 		fi
 		wait "$pid" 2>/dev/null || true
 	done
+	# Stop an owned foreground adb server last, after emulator clients have exited.
+	# A shared server is never shut down.
+	if [[ -n $adb_server_pid ]]; then
+		kill -TERM -- "-$adb_server_pid" 2>/dev/null || true
+		for (( attempt=0; attempt<5; attempt++ )); do
+			kill -0 -- "-$adb_server_pid" 2>/dev/null || break
+			sleep 1
+		done
+		kill -KILL -- "-$adb_server_pid" 2>/dev/null || true
+		wait "$adb_server_pid" 2>/dev/null || true
+	fi
 	rm -rf "$task_dir"
 	echo "Artifacts: $output"
 	exit "$status"
@@ -130,8 +138,8 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# Keep emulator/Java/CLI runtime state local. Never alter the AVD, adb server,
-# netsimd, global Maestro installation, shell profiles or other emulators.
+# Keep runtime state local before the first adb invocation. Never alter the
+# AVD, shared adb server, netsimd, global tools or other emulators.
 mkdir -p "$task_dir"/{tmp,android-home,java-home}
 export TMPDIR=$task_dir/tmp
 export ANDROID_USER_HOME=$task_dir/android-home
@@ -154,6 +162,42 @@ run_process() {
 	return "$status"
 }
 
+# Check the default server socket without adb's implicit server startup.
+if python3 - <<'PY'
+import socket
+try:
+    with socket.create_connection(("127.0.0.1", 5037), timeout=1):
+        pass
+except OSError:
+    raise SystemExit(1)
+PY
+then
+	echo "Reusing shared adb server on port 5037; it will remain running." | tee "$output/adb-ownership.log"
+else
+	# Upstream adb supports a foreground server; retain its PID for exact cleanup.
+	setsid "$adb_bin" -L tcp:localhost:5037 server nodaemon >"$output/adb-server.log" 2>&1 &
+	adb_server_pid=$!
+	echo "Started task-owned adb server on port 5037 (PID $adb_server_pid)." | tee "$output/adb-ownership.log"
+	adb_deadline=$((SECONDS + 15))
+	until python3 - <<'PY'
+import socket
+try:
+    with socket.create_connection(("127.0.0.1", 5037), timeout=1):
+        pass
+except OSError:
+    raise SystemExit(1)
+PY
+	do
+		kill -0 "$adb_server_pid" 2>/dev/null || fail "Owned adb server exited (see adb-server.log)"
+		(( SECONDS < adb_deadline )) || fail "adb server startup exceeded 15s"
+		sleep 1
+	done
+fi
+devices=$(timeout -k 5s 15s "$adb_bin" devices)
+if awk -v serial="$serial" '$1 == serial {found=1} END {exit !found}' <<<"$devices"; then
+	fail "$serial is already registered; leave it untouched"
+fi
+
 echo "Preparing task-local Maestro 2.11.0"
 if [[ -n $maestro_archive ]]; then
 	cp "$maestro_archive" "$task_dir/maestro.zip"
@@ -168,6 +212,19 @@ export JAVA_OPTS="-Xmx512m -XX:ActiveProcessorCount=2 -Duser.home=\"$task_dir/ja
 maestro=$task_dir/maestro/bin/maestro
 
 adb() { timeout -k 5s 15s "$adb_bin" -s "$serial" "$@"; }
+wait_activity() {
+	local component=$1 limit=$2 deadline=$((SECONDS + $2)) state
+	while (( SECONDS < deadline )); do
+		kill -0 "$emulator_pid" 2>/dev/null || fail "Emulator exited (see emulator.log)"
+		state=$(adb shell dumpsys activity activities 2>/dev/null || true)
+		if grep -E 'mResumedActivity|topResumedActivity' <<<"$state" | grep -F "$component" >/dev/null; then
+			printf '%s\n' "$state" >"$output/activity-ready.log"
+			return
+		fi
+		sleep 2
+	done
+	fail "Activity readiness exceeded ${limit}s: $component"
+}
 wait_http() {
 	local url=$1 pid=$2 limit=$3 deadline=$((SECONDS + $3))
 	while (( SECONDS < deadline )); do
@@ -184,18 +241,43 @@ start_process emulator.log "$emulator_bin" -avd "$avd" -port 5564 \
 	-no-boot-anim -no-metrics -memory 2560 -gpu swiftshader
 emulator_pid=$started_pid
 boot_deadline=$((SECONDS + 180))
-until [[ $(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r') == 1 ]]; do
+until [[ $(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r') == 1 &&
+	$(adb shell getprop init.svc.bootanim 2>/dev/null | tr -d '\r') == stopped ]]; do
 	kill -0 "$emulator_pid" 2>/dev/null || fail "Emulator exited (see emulator.log)"
 	(( SECONDS < boot_deadline )) || fail "Emulator boot exceeded 180s"
 	sleep 2
 done
 adb shell wm dismiss-keyguard
+# Android may initially resolve HOME to Settings' temporary FallbackHome.
+# Re-resolve until the real launcher replaces it, as FallbackHome itself does:
+# https://android.googlesource.com/platform/packages/apps/Settings/+/refs/heads/main/src/com/android/settings/FallbackHome.java
+home_deadline=$((SECONDS + 90))
+while true; do
+	kill -0 "$emulator_pid" 2>/dev/null || fail "Emulator exited (see emulator.log)"
+	(( SECONDS < home_deadline )) || fail "Android HOME launcher readiness exceeded 90s"
+	home_component=$(adb shell cmd package resolve-activity --brief -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/null | tr -d '\r' | tail -n 1 || true)
+	if [[ $home_component =~ ^[A-Za-z0-9._]+/[A-Za-z0-9._]+$ &&
+		$home_component != com.android.settings/.FallbackHome &&
+		$home_component != com.android.settings/com.android.settings.FallbackHome ]]; then
+		state=$(adb shell dumpsys activity activities 2>/dev/null || true)
+		if grep -E 'mResumedActivity|topResumedActivity' <<<"$state" | grep -F "${home_component%%/*}/" >/dev/null; then
+			printf 'Resolved HOME: %s\n%s\n' "$home_component" "$state" >"$output/home-ready.log"
+			break
+		fi
+	fi
+	sleep 2
+done
 run_process apk-install.log timeout -k 10s 120s "$adb_bin" -s "$serial" install -r "$apk"
 
 cd "$repo_root"
 start_process fixture.log bun scripts/ui-parity/fixture-api.ts --port 8796 --host 127.0.0.1
 wait_http http://127.0.0.1:8796/health "$started_pid" 30
 cd "$repo_root/apps/mobile"
+# SDK 57 CLI has no public equivalents for isolated Expo user state or disabling
+# the standalone desktop DevTools installer. These knobs are upstream-implemented:
+# https://github.com/expo/expo/blob/sdk-57/packages/@expo/cli/src/api/user/UserSettings.ts
+# https://github.com/expo/expo/blob/sdk-57/packages/@expo/cli/src/utils/env.ts
+# https://github.com/expo/expo/blob/sdk-57/packages/@expo/cli/src/start/server/metro/debugging/createDebugMiddleware.ts
 start_process metro.log env CI=1 EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 EXPO_NO_TELEMETRY=1 EXPO_UNSTABLE_HEADLESS=1 \
 	__UNSAFE_EXPO_HOME_DIRECTORY="$task_dir/expo-home" EXPO_TOKEN= \
 	EXPO_PUBLIC_CLAWDI_ENV=development EXPO_PUBLIC_DEV_AUTH_BYPASS=1 \
@@ -209,6 +291,15 @@ start_process metro.log env CI=1 EXPO_OFFLINE=1 EXPO_NO_DOTENV=1 EXPO_NO_TELEMET
 	./node_modules/.bin/expo start --dev-client --localhost --port 8096 --max-workers 1
 wait_http http://127.0.0.1:8096/status "$started_pid" 120
 adb reverse tcp:8096 tcp:8096
+
+# Start from clean app data, then wait for the actual native launcher activity.
+# Opening the deep link before this activity resumes can lose the initial URL.
+main_activity=$(sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p" <<<"$badging")
+[[ $main_activity =~ ^[A-Za-z0-9._]+$ ]] || fail "APK has no launchable activity"
+adb shell pm clear "$app_id"
+adb shell am start -W -n "$app_id/$main_activity"
+wait_activity 'expo.modules.devlauncher.launcher.DevLauncherActivity' 120
+cp "$output/activity-ready.log" "$output/dev-launcher-ready.log"
 
 # SDK 57's official dev-client URL loads both JS and Constants.expoConfig
 # from this Metro instance, so the fixture origin is not baked into the APK.

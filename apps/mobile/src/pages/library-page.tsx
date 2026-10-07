@@ -48,7 +48,7 @@ export default function LibraryRoute() {
 	const library = consoleNavigationGroups(true).find((g) => g.id === "library");
 	const items = [CONSOLE_NAVIGATION_ITEMS.memories, ...(library?.items ?? [])];
 	return (
-		<SafeAreaScreen>
+		<SafeAreaScreen testID="library-screen">
 			<NativeHeader title={t("navigation.library")} />
 			<NativeList
 				data={items}
@@ -60,6 +60,7 @@ export default function LibraryRoute() {
 						<WebView key={id} recipe="">
 							{id === "projects" ? <SectionLabel>{library?.label}</SectionLabel> : null}
 							<AppPressable
+								testID={`library-${id}`}
 								accessibilityRole="link"
 								onPress={() => router.push(routes[id])}
 								className={webView(

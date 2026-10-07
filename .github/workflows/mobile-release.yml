@@ -24,23 +24,31 @@ concurrency:
 
 jobs:
   build:
+    environment: production
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v7
-      - name: Require Expo access token
+      - name: Require Expo release configuration
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}
         run: |
           if [[ -z "$EXPO_TOKEN" ]]; then
-            echo "::error::Configure the EXPO_TOKEN repository secret before dispatching a mobile release."
+            echo "::error::Configure EXPO_TOKEN in the production GitHub Environment before dispatching a mobile release."
+            exit 1
+          fi
+          if [[ -z "$EAS_PROJECT_ID" ]]; then
+            echo "::error::Configure the EAS_PROJECT_ID repository variable before dispatching a mobile release."
             exit 1
           fi
       - uses: ./.github/actions/setup-bun-ci
+        with:
+          node-version: "24.21.0"
       - name: Set up EAS CLI
         uses: expo/expo-github-action@v8
         with:
-          eas-version: latest
+          eas-version: 24.8.0
           packager: bun
           token: ${{ secrets.EXPO_TOKEN }}
       - name: Build production app

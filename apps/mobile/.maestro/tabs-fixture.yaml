@@ -1,48 +1,105 @@
 appId: ${APP_ID}
 name: Fixture tabs and details
 ---
-# Home: open a fixture Agent from the overview card.
-- tapOn: "Open Claude Code.*"
-- assertVisible: "Claude Code"
-- assertVisible: "Status, resources, and recent activity for this agent."
+# react-native-screens 4.26.2 writes tab testIDs to View.tag (Espresso),
+# not UIAutomator resource IDs. Keep Trigger IDs and scope short tab labels
+# to the native Material tab container containing that label; no tab indices.
+# https://github.com/software-mansion/react-native-screens/blob/4.26.2/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/host/TabsHostA11yCoordinator.kt
+# The label also makes the parent unique: childOf resolves one matching parent.
+
+# Home: open a loaded fixture Agent from the overview card.
+# Cold startup can leave the card visible after a tap. Retry that state at most
+# three times; require the loaded detail header afterward, not any UI change.
+# https://docs.maestro.dev/reference/commands-available/repeat
+- repeat:
+    times: 3
+    while:
+      visible:
+        id: agent-card-c1a0de00-0001-4c00-8000-000000000001
+    commands:
+      - tapOn:
+          id: agent-card-c1a0de00-0001-4c00-8000-000000000001
+- extendedWaitUntil:
+    visible:
+      id: agent-detail-c1a0de00-0001-4c00-8000-000000000001
+    timeout: 30000
 - takeScreenshot: home-detail
 - back
+- tapOn:
+    text: Overview
+    childOf:
+      id: ${APP_ID}:id/navigation_bar_item_content_container
+      containsDescendants:
+        - text: Overview
+- assertVisible:
+    id: overview-screen
 
-# Agents: inventory and a different fixture Agent detail.
-- tapOn: "Agents"
+# Agents: inventory and a different loaded fixture Agent detail.
+- tapOn:
+    text: Agents
+    childOf:
+      id: ${APP_ID}:id/navigation_bar_item_content_container
+      containsDescendants:
+        - text: Agents
 - extendedWaitUntil:
-    visible: "Open Codex.*"
+    visible:
+      id: agent-card-c0de0000-0002-4c00-8000-000000000002
     timeout: 30000
 - takeScreenshot: agents
-- tapOn: "Open Codex.*"
-- assertVisible: "Codex"
-- assertVisible: "Status, resources, and recent activity for this agent."
+- tapOn:
+    id: agent-card-c0de0000-0002-4c00-8000-000000000002
+- assertVisible:
+    id: agent-detail-c0de0000-0002-4c00-8000-000000000002
 - takeScreenshot: agent-detail
 - back
 
-# Sessions: fixture inventory and the rendered transcript, not just a title.
-- tapOn: "Sessions"
+# Sessions: loaded fixture inventory and an actual rendered transcript message.
+- tapOn:
+    text: Sessions
+    childOf:
+      id: ${APP_ID}:id/navigation_bar_item_content_container
+      containsDescendants:
+        - text: Sessions
 - extendedWaitUntil:
-    visible: ".*Refactor billing webhooks into an idempotent queue.*"
+    visible:
+      id: session-card-5e550000-0001-4000-8000-000000000001
     timeout: 30000
 - takeScreenshot: sessions
-- tapOn: ".*Refactor billing webhooks into an idempotent queue.*"
-- assertVisible: ".*Refactor billing webhooks into an idempotent queue.*"
+- tapOn:
+    id: session-card-5e550000-0001-4000-8000-000000000001
+- assertVisible:
+    id: session-detail-5e550000-0001-4000-8000-000000000001
+- assertVisible:
+    id: session-transcript-5e550000-0001-4000-8000-000000000001
 - scrollUntilVisible:
-    element: ".*Start by looking at the relevant files and propose a plan before changing anything.*"
+    element:
+      id: session-message-0
     timeout: 30000
-- assertVisible: ".*Start by looking at the relevant files and propose a plan before changing anything.*"
+- assertVisible:
+    id: session-message-0
 - takeScreenshot: session-detail
 - back
 
-# Library: projects list and fixture project bundle.
-- tapOn: "Library"
-- assertVisible: "Projects.*"
+# Library: projects list and the loaded fixture project bundle.
+- tapOn:
+    text: Library
+    childOf:
+      id: ${APP_ID}:id/navigation_bar_item_content_container
+      containsDescendants:
+        - text: Library
+- assertVisible:
+    id: library-screen
+- assertVisible:
+    id: library-projects
 - takeScreenshot: library
-- tapOn: "Projects.*"
+- tapOn:
+    id: library-projects
 - extendedWaitUntil:
-    visible: "Open Acme Web App"
+    visible:
+      id: project-card-a0f1c2d3-0002-4a00-8000-000000000002
     timeout: 30000
-- tapOn: "Open Acme Web App"
-- assertVisible: ".*Customer-facing dashboard, marketing site and design system.*"
+- tapOn:
+    id: project-card-a0f1c2d3-0002-4a00-8000-000000000002
+- assertVisible:
+    id: project-detail-a0f1c2d3-0002-4a00-8000-000000000002
 - takeScreenshot: project-detail

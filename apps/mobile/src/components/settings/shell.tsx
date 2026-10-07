@@ -43,7 +43,13 @@ export function SettingsShell({
 	] as const;
 	return (
 		<AppSafeAreaView edges={["left", "right"]} className="flex-1 bg-popover">
-			<WebView recipe={styles.navigation}>
+			{/* Keep the container in Android's accessibility hierarchy for scoped selectors.
+			    https://reactnative.dev/docs/accessibility#importantforaccessibility-android */}
+			<WebView
+				testID="settings-navigation"
+				importantForAccessibility="yes"
+				recipe={styles.navigation}
+			>
 				<NativeSegments
 					value={active}
 					options={items.map((item) => ({ value: item.id, label: item.label }))}

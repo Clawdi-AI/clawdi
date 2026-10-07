@@ -83,6 +83,7 @@ export function SessionTimelineRowView({
 			{message ? (
 				<WebView recipe={isGroupStart && !row.dividerTimestamp ? styles.groupStart : ""}>
 					<WebView
+						testID={position !== null ? `session-message-${position}` : undefined}
 						recipe={`${styles.messageRow} ${highlighted ? styles.highlighted : ""}`}
 						accessibilityLabel={highlighted ? "Current search match" : undefined}
 					>

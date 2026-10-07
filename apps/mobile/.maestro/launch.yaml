@@ -1,28 +1,33 @@
 appId: ${APP_ID}
 name: Development client launch
 ---
-# A slow read-only AVD cold boot may show this Android startup dialog.
-# Allow System UI to finish; app ANRs still fail the smoke.
-- runFlow:
-    when:
-      visible: "System UI isn't responding"
-    commands:
-      - tapOn: "Wait"
-- launchApp:
-    clearState: true
-    permissions: {}
-- extendedWaitUntil:
-    visible: "Development Build"
-    timeout: 120000
+# The script waits for the native dev-launcher activity before Maestro starts.
 - openLink:
     link: ${DEV_CLIENT_URL}
     autoVerify: false
+# A delayed System UI startup ANR was observed after the script's boot/launcher
+# checks on this memory-constrained host. Wait once only for that exact dialog;
+# application ANRs are never dismissed and still fail the required app checks.
 - extendedWaitUntil:
-    visible: "Overview"
+    visible:
+      id: overview-screen|android:id/aerr_wait
     timeout: 180000
-- assertVisible: ".*Avery.*"
+- runFlow:
+    when:
+      visible:
+        id: android:id/alertTitle
+        text: "System UI isn't responding"
+    commands:
+      - tapOn:
+          id: android:id/aerr_wait
+- extendedWaitUntil:
+    visible:
+      id: overview-screen
+    timeout: 180000
 - scrollUntilVisible:
-    element: "Open Claude Code.*"
+    element:
+      id: agent-card-c1a0de00-0001-4c00-8000-000000000001
     timeout: 30000
-- assertVisible: "Open Claude Code.*"
+- assertVisible:
+    id: agent-card-c1a0de00-0001-4c00-8000-000000000001
 - takeScreenshot: launch

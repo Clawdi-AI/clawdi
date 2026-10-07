@@ -145,6 +145,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 			{project ? (
 				<>
 					<PageHeader
+						testID={`project-detail-${project.id}`}
 						title={displayProjectName(project)}
 						description={projectDetailDescription(project, project.is_owner)}
 						icon={

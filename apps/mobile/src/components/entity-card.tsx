@@ -137,10 +137,17 @@ export function EntityCardLink({
 	variant,
 	ariaLabel,
 	className,
+	testID,
 	...link
-}: EntityCardLinkOptions & { variant: EntityCardVariant; ariaLabel: string; className?: string }) {
+}: EntityCardLinkOptions & {
+	variant: EntityCardVariant;
+	ariaLabel: string;
+	className?: string;
+	testID?: string;
+}) {
 	return (
 		<AppPressable
+			testID={testID}
 			accessibilityRole="link"
 			accessibilityLabel={ariaLabel}
 			className={cn(ENTITY_CARD_STRETCHED_LINK_CLASS[variant], className)}
@@ -272,6 +279,7 @@ export function EntityHeader({
 	);
 }
 export function HeroCard({
+	testID,
 	icon,
 	title,
 	badges,
@@ -290,6 +298,7 @@ export function HeroCard({
 	footerWrap = false,
 	children,
 }: {
+	testID?: string;
 	icon?: ReactNode;
 	title: ReactNode;
 	badges?: ReactNode;
@@ -316,9 +325,15 @@ export function HeroCard({
 			className={cn(webView(entityCardClasses.hero.replace(/gap-\S+/g, "")), className)}
 		>
 			{link ? (
-				<EntityCardLink variant="resource" {...link} ariaLabel={ariaLabel ?? t("composite.open")} />
+				<EntityCardLink
+					testID={testID}
+					variant="resource"
+					{...link}
+					ariaLabel={ariaLabel ?? t("composite.open")}
+				/>
 			) : onClick ? (
 				<AppPressable
+					testID={testID}
 					accessibilityRole="button"
 					accessibilityLabel={ariaLabel ?? t("composite.open")}
 					onPress={onClick}
