@@ -39,7 +39,6 @@ export function WalletSettingsSections({
 	const { compute } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
-	// Store builds hide card-only surfaces: saved cards, card setup and auto-reload.
 	const { cardBilling, addCredits } = useStoreSurfaces();
 	const methods = useQuery({
 		queryKey: accountQueryKey(scope, "billing-payment-methods"),
@@ -51,122 +50,111 @@ export function WalletSettingsSections({
 				return compute.getWalletPaymentMethods(lease);
 			}, signal),
 	});
+	// Store builds hide saved cards, card setup, auto-reload and USDC funding (owner-approved).
+	if (!cardBilling) return null;
 	return (
 		<>
-			{cardBilling ? (
-				<>
-					<SettingsSection
-						title={t("billingParity.paymentMethods")}
-						description={t("billingParity.paymentMethodsDescription")}
-						actions={
-							<Button variant="outline" size="sm" disabled>
-								<Icon as={Pencil} />
-								<Text>{t("billingParity.edit")}</Text>
-							</Button>
-						}
-					>
-						<WebView recipe={paymentMethodsSectionClasses.body}>
-							{methods.isPending ? (
-								<Skeleton className={webView(paymentMethodsSectionClasses.loading)} />
-							) : methods.isError ? (
-								<ApiErrorPanel
-									error={methods.error}
-									title={paymentMethodsCopy.error}
-									onRetry={() => void methods.refetch()}
-								/>
-							) : methods.data?.items.length ? (
-								<WebView recipe={paymentMethodsSectionClasses.list}>
-									{methods.data.items.map((method) => {
-										const copy = paymentMethodPresentation(method);
-										return (
-											<WebView
-												key={method.id}
-												recipe={paymentMethodsSectionClasses.item}
-												className="flex-row"
-											>
-												<Icon
-													as={CreditCard}
-													className={webView(paymentMethodsSectionClasses.icon)}
-												/>
-												<WebView recipe={paymentMethodsSectionClasses.copy}>
-													<WebText recipe={paymentMethodsSectionClasses.title}>
-														{copy.title}
-													</WebText>
-													<WebText recipe={paymentMethodsSectionClasses.hint}>
-														{copy.expires}
-													</WebText>
-												</WebView>
-												{method.is_default ? (
-													<Badge variant="outline">
-														<Text>{paymentMethodsCopy.billingDefault}</Text>
-													</Badge>
-												) : null}
-												{method.is_auto_reload ? (
-													<Badge variant="outline">
-														<Text>{paymentMethodsCopy.autoReload}</Text>
-													</Badge>
-												) : null}
-											</WebView>
-										);
-									})}
-								</WebView>
-							) : (
-								<WebText recipe={paymentMethodsSectionClasses.empty}>
-									{paymentMethodsCopy.empty}
-								</WebText>
-							)}
-							{methods.data?.has_more ? (
-								<WebText recipe={paymentMethodsSectionClasses.hint}>
-									{paymentMethodsCopy.more}
-								</WebText>
-							) : null}
-							<WebText recipe={paymentMethodsSectionClasses.hint}>
-								{t("billingParity.autoReloadCardHint")}
-							</WebText>
-						</WebView>
-					</SettingsSection>
-					<SettingsSection
-						title={t("billingParity.autoReload")}
-						description={t("billingParity.autoReloadDescription")}
-						actions={
-							<Switch
-								checked={wallet.auto_reload_enabled}
-								disabled
-								accessibilityLabel={t("billingParity.autoReload")}
-							/>
-						}
-					>
-						{wallet.auto_reload_enabled ? (
-							<WebView recipe={autoReloadCardClasses.form}>
-								{[
-									{ key: "autoReloadThreshold" as const, value: wallet.auto_reload_threshold_usd },
-									{
-										key: "autoReloadAmount" as const,
-										value: String(wallet.auto_reload_amount_cents / 100),
-									},
-									...(wallet.auto_reload_monthly_cap_cents > 0
-										? [
-												{
-													key: "autoReloadMonthlyLimit" as const,
-													value: String(wallet.auto_reload_monthly_cap_cents / 100),
-												},
-											]
-										: []),
-								].map((field) => (
-									<WebView key={field.key} recipe={autoReloadCardClasses.field}>
-										<Label>{t(`billingParity.${field.key}`)}</Label>
-										<Input
-											value={field.value}
-											editable={false}
-											className={webView(autoReloadCardClasses.input)}
-										/>
+			<SettingsSection
+				title={t("billingParity.paymentMethods")}
+				description={t("billingParity.paymentMethodsDescription")}
+				actions={
+					<Button variant="outline" size="sm" disabled>
+						<Icon as={Pencil} />
+						<Text>{t("billingParity.edit")}</Text>
+					</Button>
+				}
+			>
+				<WebView recipe={paymentMethodsSectionClasses.body}>
+					{methods.isPending ? (
+						<Skeleton className={webView(paymentMethodsSectionClasses.loading)} />
+					) : methods.isError ? (
+						<ApiErrorPanel
+							error={methods.error}
+							title={paymentMethodsCopy.error}
+							onRetry={() => void methods.refetch()}
+						/>
+					) : methods.data?.items.length ? (
+						<WebView recipe={paymentMethodsSectionClasses.list}>
+							{methods.data.items.map((method) => {
+								const copy = paymentMethodPresentation(method);
+								return (
+									<WebView
+										key={method.id}
+										recipe={paymentMethodsSectionClasses.item}
+										className="flex-row"
+									>
+										<Icon as={CreditCard} className={webView(paymentMethodsSectionClasses.icon)} />
+										<WebView recipe={paymentMethodsSectionClasses.copy}>
+											<WebText recipe={paymentMethodsSectionClasses.title}>{copy.title}</WebText>
+											<WebText recipe={paymentMethodsSectionClasses.hint}>{copy.expires}</WebText>
+										</WebView>
+										{method.is_default ? (
+											<Badge variant="outline">
+												<Text>{paymentMethodsCopy.billingDefault}</Text>
+											</Badge>
+										) : null}
+										{method.is_auto_reload ? (
+											<Badge variant="outline">
+												<Text>{paymentMethodsCopy.autoReload}</Text>
+											</Badge>
+										) : null}
 									</WebView>
-								))}
+								);
+							})}
+						</WebView>
+					) : (
+						<WebText recipe={paymentMethodsSectionClasses.empty}>
+							{paymentMethodsCopy.empty}
+						</WebText>
+					)}
+					{methods.data?.has_more ? (
+						<WebText recipe={paymentMethodsSectionClasses.hint}>{paymentMethodsCopy.more}</WebText>
+					) : null}
+					<WebText recipe={paymentMethodsSectionClasses.hint}>
+						{t("billingParity.autoReloadCardHint")}
+					</WebText>
+				</WebView>
+			</SettingsSection>
+			<SettingsSection
+				title={t("billingParity.autoReload")}
+				description={t("billingParity.autoReloadDescription")}
+				actions={
+					<Switch
+						checked={wallet.auto_reload_enabled}
+						disabled
+						accessibilityLabel={t("billingParity.autoReload")}
+					/>
+				}
+			>
+				{wallet.auto_reload_enabled ? (
+					<WebView recipe={autoReloadCardClasses.form}>
+						{[
+							{ key: "autoReloadThreshold" as const, value: wallet.auto_reload_threshold_usd },
+							{
+								key: "autoReloadAmount" as const,
+								value: String(wallet.auto_reload_amount_cents / 100),
+							},
+							...(wallet.auto_reload_monthly_cap_cents > 0
+								? [
+										{
+											key: "autoReloadMonthlyLimit" as const,
+											value: String(wallet.auto_reload_monthly_cap_cents / 100),
+										},
+									]
+								: []),
+						].map((field) => (
+							<WebView key={field.key} recipe={autoReloadCardClasses.field}>
+								<Label>{t(`billingParity.${field.key}`)}</Label>
+								<Input
+									value={field.value}
+									editable={false}
+									className={webView(autoReloadCardClasses.input)}
+								/>
 							</WebView>
-						) : null}
-					</SettingsSection>
-				</>
-			) : null}
+						))}
+					</WebView>
+				) : null}
+			</SettingsSection>
 			<SettingsSection
 				title={
 					<WebView recipe={x402CardClasses.title}>

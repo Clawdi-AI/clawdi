@@ -130,8 +130,8 @@ auto-deploys. Store builds also show "Check pending purchases", which runs
 `flow.recover()` (never a Paywall or store charge) and refreshes the Wallet.
 
 `storeSurfaces()` (`store-policy.ts`) gates presentation. Store builds hide
-auto-reload, saved cards/card setup, Stripe receipt/invoice links, card
-`fix_payment` and card-only management copy, show Wallet amounts and compute
+auto-reload, saved cards/card setup, browser-wallet USDC funding, Stripe
+receipt/invoice links, card `fix_payment` and card-only management copy, show Wallet amounts and compute
 prices in credits, and keep the Add credits entry visible (disabled with a
 neutral status while purchases are unavailable). Preview/development builds keep
 Web parity; they show Add credits only when a debug build has a usable store

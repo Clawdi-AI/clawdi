@@ -7,7 +7,7 @@ export function isStoreBuild(config: Pick<MobileRuntimeConfig, "environment">): 
 }
 
 export type StoreSurfaces = Readonly<{
-	/** Auto-reload, saved cards, card setup, Stripe receipts, card recovery and portal. */
+	/** Auto-reload, saved cards, card setup, USDC funding, Stripe receipts, card recovery and portal. */
 	cardBilling: boolean;
 	/** The official RevenueCat Paywall entry for the `credits` offering. */
 	addCredits: boolean;

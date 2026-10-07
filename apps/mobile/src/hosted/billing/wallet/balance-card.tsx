@@ -30,7 +30,11 @@ export function BalanceCard({ wallet }: { wallet: Pick<Wallet, "balance_usd"> })
 							? formatCredits(wallet.balance_usd, t("store.credits"))
 							: formatUsdExact(wallet.balance_usd)}
 					</WebText>
-					<WebText recipe={balance.meta}>{t("billingParity.walletExplanation")}</WebText>
+					<WebText recipe={balance.meta}>
+						{t(
+							surfaces.cardBilling ? "billingParity.walletExplanation" : "store.walletExplanation",
+						)}
+					</WebText>
 					{low ? (
 						<WebView recipe={balance.warning} className="flex-row">
 							<Icon as={TriangleAlert} />

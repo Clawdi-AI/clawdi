@@ -171,6 +171,7 @@ const storeEn = {
 	lowBalance: "Low — add credits before Clawdi AI pauses",
 	recoveryStatus: "This subscription needs attention. Its status updates here automatically.",
 	usdcInApp: "Browser-wallet USDC funding isn't available in this app.",
+	walletExplanation: "Pays for AI usage and credit-funded compute subscriptions.",
 	purchasing: "Confirming purchase…",
 	credits: "credits",
 	unavailable: "Purchases aren't available right now. Your credits balance is unaffected.",
