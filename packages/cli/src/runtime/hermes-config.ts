@@ -41,7 +41,8 @@ type ErrorCode = string | number | undefined;
 
 function errorProperty(error: unknown, property: "code" | "errno"): ErrorCode {
 	if (typeof error !== "object" || error === null || !(property in error)) return undefined;
-	const value = error[property];
+	const record = error as { code?: unknown; errno?: unknown };
+	const value = record[property];
 	return typeof value === "string" || typeof value === "number" ? value : undefined;
 }
 
