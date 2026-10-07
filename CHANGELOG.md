@@ -15,7 +15,7 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
-### CLI (next release)
+### CLI 0.15.6
 
 - Managed OpenClaw credentials now discard obsolete files after successful
   applies, retaining current configuration, native rollback snapshots, and two
