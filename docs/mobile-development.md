@@ -127,6 +127,37 @@ Signed-out scope/page replacement retires a pending browser continuation.
 SignIn resource identity is also checked before and after nonce reload. Real
 social login, transfer, cancellation, MFA and browser/Router behavior remain gates.
 
+### Clerk dashboard setup (owner)
+
+Production uses a Clerk production instance and its `pk_live_` publishable key.
+App Review 4.8 requires Sign in with Apple on iOS whenever another social
+sign-in is offered. In the Clerk Dashboard:
+
+1. **SSO connections** → **Add connection** → **For all users** → **Apple**,
+   then enable it for sign-up and sign-in. Native iOS Apple sign-in does not
+   need an Apple Services ID or private key; browser-based Apple OAuth does.
+2. **Native applications**: register the iOS app (Team ID and bundle ID) and
+   the Android app (namespace and package name).
+3. **Native applications** → **Allowlist for mobile SSO redirect**: add
+   `clawdi://sign-in-oauth`, `clawdi://sign-up-oauth` and
+   `clawdi://account-oauth`.
+
+### App icon and splash screen
+
+`bun run --cwd apps/mobile icons` renders the brand artwork
+`docs/images/logo.png` (800px master; Web ships the same artwork at 512px) into
+`apps/mobile/assets/`. Sizes above 800px are Lanczos3 upscales of the same
+artwork. Outputs: the full-bleed opaque 1024px `icon.png`; the Android adaptive
+foreground `adaptive-icon.png`, scaled so the face stays inside the 66dp safe
+zone, on the artwork's red; the themed-icon layer
+`adaptive-icon-monochrome.png`, which is the cream line art keyed off the red;
+and the rounded-square `splash-icon.png`, used in both themes. `assets/app-colors.json`
+holds the artwork red and the shared `--background` tokens used as splash
+backgrounds; `app-icons.test.ts` fails when the token colors are stale. The
+root layout holds the native splash until the stored appearance is applied, so
+the first frame already uses the right theme. Icon and splash changes need a new
+native build.
+
 `EXPO_PUBLIC_CLAWDI_COMPUTE_API_URL` optionally enables the v2 compute control
 plane. It is separate from the Cloud identity/Session API and does not enable
 Hosted v1. A trailing `/v2` is normalized. In development, an absent compute URL
