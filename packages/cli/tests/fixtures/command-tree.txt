@@ -2992,7 +2992,7 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi vault detach [options] <vault>\n\nRemove a project's access to a vault without deleting keys\n\nOptions:\n  -p, --project <id-or-slug>  Project that should stop using this vault\n  -y, --yes                   Confirm detaching the vault\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault unlink providers --project old-agent\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi vault detach [options] <vault>\n\nRemove a project's access to a vault without deleting keys\n\nOptions:\n  -p, --project <id-or-slug>  Project that should stop using this vault\n  -y, --yes                   Confirm detaching the vault\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault detach providers --project old-agent\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi vault unlink",
@@ -3036,7 +3036,7 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi vault unlink [options] <vault>\n\nRemove a project's access to a vault without deleting keys\n\nOptions:\n  -p, --project <id-or-slug>  Project that should stop using this vault\n  -y, --yes                   Confirm detaching the vault\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault unlink providers --project old-agent\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi vault unlink [options] <vault>\n\nRemove a project's access to a vault without deleting keys\n\nOptions:\n  -p, --project <id-or-slug>  Project that should stop using this vault\n  -y, --yes                   Confirm detaching the vault\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault detach providers --project old-agent\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi vault rm",

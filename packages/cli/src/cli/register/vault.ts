@@ -133,7 +133,7 @@ Scope:
 			.option("-y, --yes", "Confirm detaching the vault")
 			.addHelpText(
 				"after",
-				"\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault unlink providers --project old-agent",
+				"\nExamples:\n  $ clawdi vault detach providers --project env-abc123\n  $ clawdi vault detach providers --project old-agent",
 			)
 			.option("--json", "Output as JSON")
 			.action(async (vault, opts) => {
