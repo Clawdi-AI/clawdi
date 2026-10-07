@@ -3,7 +3,11 @@ import { encodePaymentRequiredHeader, encodePaymentResponseHeader } from "@x402/
 import type { PaymentRequired, SettleResponse } from "@x402/core/types";
 import { isHex, toHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import type { WalletBinding, WalletState } from "../src/hosted/billing/contracts";
+import type {
+	WalletBinding,
+	WalletState,
+	WalletTransaction,
+} from "../src/hosted/billing/contracts";
 import {
 	basicPlan,
 	collectBrowserErrors,
@@ -15,8 +19,44 @@ import {
 	walletPastDueDeployment,
 	walletState,
 } from "./hosted-stub-api";
+import { expectNoHorizontalOverflow } from "./support/hosted-api-stub";
 
 const DEPLOY_API = process.env.E2E_HOSTED_DEPLOY_API_URL ?? "http://127.0.0.1:8001";
+
+// Shapes as hosted lists them: `kind` is the ledger operation and store refunds debit the Wallet.
+const walletTransactions: WalletTransaction[] = [
+	{
+		id: "wallet:store-refund",
+		kind: "store_refund",
+		occurred_at: "2026-10-06T18:00:00Z",
+		amount: "10.00",
+		currency: "usd",
+		direction: "debit",
+		status: "applied",
+		funding: "wallet",
+	},
+	{
+		id: "wallet:store-topup",
+		kind: "store_topup",
+		occurred_at: "2026-10-05T18:00:00Z",
+		amount: "25.00",
+		currency: "usd",
+		direction: "credit",
+		status: "applied",
+		funding: "store",
+	},
+	{
+		id: "wallet:card-topup",
+		kind: "topup",
+		occurred_at: "2026-10-04T18:00:00Z",
+		amount: "50.00",
+		currency: "usd",
+		direction: "credit",
+		status: "applied",
+		funding: "card",
+		receipt_url: "https://pay.stripe.com/receipts/e2e",
+	},
+];
 
 test("wallet top-up completion refreshes an automatically paid open invoice", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
@@ -53,6 +93,37 @@ test("wallet top-up completion refreshes an automatically paid open invoice", as
 		amount_cents: 2_500,
 	});
 	expect(errors, `wallet open-invoice top-up: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("wallet transactions label in-app purchases and refunds at desktop and phone widths", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	await stubHostedApi(page, { walletTransactions });
+	for (const viewport of [
+		{ name: "desktop", width: 1280, height: 900 },
+		{ name: "phone", width: 390, height: 844 },
+	]) {
+		await page.setViewportSize(viewport);
+		const dialog = await gotoHostedSettingsDialog(page, "billing-wallet");
+		const section = dialog.locator("section#transactions");
+		const rows =
+			viewport.name === "desktop" ? section.getByRole("row") : section.getByRole("listitem");
+		const row = (label: string) => rows.filter({ has: page.getByText(label, { exact: true }) });
+
+		await expect(row("In-app purchase")).toContainText("App store");
+		await expect(row("In-app purchase")).toContainText("+$25.00");
+		await expect(row("In-app purchase refund")).toContainText("Wallet");
+		await expect(row("In-app purchase refund")).toContainText("−$10.00");
+		await expect(row("Top-up").getByRole("button", { name: "Receipt" })).toBeVisible();
+		await expect(section.getByText("Other transaction")).toHaveCount(0);
+		// Only the desktop receipt column uses a dash for a missing document.
+		await expect(rows.getByText("—", { exact: true })).toHaveCount(
+			viewport.name === "desktop" ? 2 : 0,
+		);
+		await expectNoHorizontalOverflow(section, `${viewport.name} wallet transactions`);
+	}
+	expect(errors, `wallet transactions: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("x402 stays gated, then binds and recovers an unverifiable browser-wallet payment", async ({
