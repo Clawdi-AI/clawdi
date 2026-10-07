@@ -138,7 +138,7 @@ jobs:
           mkdir -p "$(dirname "$remote_app")"
           ditto "$smoke_output/mac-arm64/Clawdi.app" "$remote_app"
           node apps/desktop/scripts/smoke-packaged.mjs \
-            "$remote_app/Contents/MacOS/Clawdi" "$runtime_home/remote-smoke" remote
+            "$remote_app/Contents/MacOS/Clawdi" "$runtime_home/local-smoke" local
           cd "$(dirname "$dmg_path")"
           shasum -a 256 "${dmg[0]}" > "${dmg[0]}.sha256"
 

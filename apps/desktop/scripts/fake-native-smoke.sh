@@ -10,15 +10,8 @@ case "$1 ${2:-}" in
 		printf '0.0.0-smoke\tdarwin-arm64\n'
 		;;
 	"auth status")
-		if [ "${CLAWDI_DESKTOP_SMOKE_SURFACE:-install}" = "dashboard" ] || [ "${CLAWDI_DESKTOP_SMOKE_SURFACE:-install}" = "remote" ]; then
-			printf '%s\n' '{"authenticated":true,"credentialType":"clerk-oauth","user":{"id":"smoke-user","email":"smoke@clawdi.ai"}}'
-		else
-			printf '%s\n' '{"authenticated":false,"source":"none"}'
-		fi
-		;;
-	"auth desktop-session")
-		printf '%s\n' '{"schemaVersion":"clawdi.desktopSession.v1","ticket":"smoke-ticket","expiresIn":60}'
-		;;
+        printf '%s\n' '{"authenticated":false,"source":"none"}'
+        ;;
 	"daemon doctor")
 		# An authenticated Desktop must still open Dashboard when sync is intentionally stopped.
 		printf '%s\n' '{"cli_version":"0.0.0-smoke","singleton_unit_installed":false,"singleton_unit_running":false,"agents":[]}'

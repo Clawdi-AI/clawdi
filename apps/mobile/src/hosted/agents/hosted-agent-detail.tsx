@@ -1,10 +1,16 @@
-import type { HostedDeployOperation } from "@clawdi/shared/api";
+import {
+	type DeploymentRead,
+	deploymentLifecycleAvailable,
+	type HostedDeployOperation,
+} from "@clawdi/shared/api";
 import { agentsIndexClasses } from "@clawdi/shared/ui";
 import {
+	agentFilesPresentation,
 	agentOverviewCopy,
 	agentSurfaceCopy,
 	canRetryInitialDeployment,
 	deploymentFailurePresentation,
+	deploymentFilesUrl,
 	deploymentPollingState,
 	deploymentRuntimeStatusPresentation,
 	deploymentStatusFromResource,
@@ -18,8 +24,8 @@ import {
 	stoppedAgentDescription,
 } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "expo-router";
-import { MonitorPlay, TerminalSquare } from "lucide-react-native";
+import { Redirect, useRouter } from "expo-router";
+import { FolderOpen, MonitorPlay, TerminalSquare } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentOverview } from "@/components/dashboard/agent-overview-resource-bodies";
@@ -27,10 +33,12 @@ import { AgentSourceBadge } from "@/components/dashboard/agent-section-source-ba
 import { ActionButton } from "@/components/dashboard/controls";
 import { AgentSectionNavigation } from "@/components/dashboard/navigation";
 import { BackButton } from "@/components/detail/back-link";
+import { LibraryPage } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { EntityCardSkeleton } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { ResourceError } from "@/components/resource-error";
+import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { SheetPage } from "@/components/ui/sheet-page";
@@ -43,17 +51,18 @@ import { CancelOperation } from "@/hosted/agents/deployment-cancel-action";
 import { DeploymentControls } from "@/hosted/agents/deployment-controls";
 import { InitialDeploymentPage } from "@/hosted/agents/initial-deployment-page";
 import { RuntimeBrowser } from "@/hosted/agents/runtime-handoff";
+import { StartComputeAction } from "@/hosted/agents/start-compute-action";
 import {
 	DEPLOYMENT_POLL_WINDOW_MS,
 	deploymentNeedsPolling,
 	operationIdFromName,
 } from "@/hosted/deployment-status";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
-import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 export function DeploymentDetailScreen({
 	deploymentId,
@@ -62,7 +71,7 @@ export function DeploymentDetailScreen({
 }: {
 	deploymentId: string | undefined;
 	management?: boolean;
-	section?: "console";
+	section?: "console" | "files";
 }) {
 	const scope = useAccountScope();
 	return (
@@ -82,7 +91,7 @@ function DeploymentDetail({
 }: {
 	deploymentId: string | undefined;
 	management?: boolean;
-	section?: "console";
+	section?: "console" | "files";
 }) {
 	const cache = useQueryClient();
 	const [accepted, setAccepted] = useState<HostedDeployOperation | null>(null);
@@ -93,7 +102,6 @@ function DeploymentDetail({
 	const read = useAccountRead();
 	const router = useRouter();
 	const t = useI18n();
-	const surfaces = useStoreSurfaces();
 	const [startedAt, setStartedAt] = useState(Date.now);
 	const trackers = useRef<ReadonlyMap<string, SettlingTracker>>(new Map());
 	const [, setPollEpoch] = useState(0);
@@ -199,6 +207,61 @@ function DeploymentDetail({
 		await Promise.all([query.refetch(), ...(operationId ? [operation.refetch()] : [])]);
 	};
 
+	// Web shows the start control when stopped, and otherwise only while start is available.
+	const startAction = (deployment: DeploymentRead, stopped: boolean) =>
+		stopped || deploymentLifecycleAvailable("start", status.kind) ? (
+			<StartComputeAction
+				deployment={deployment}
+				startLabel={stopped ? "Start" : undefined}
+				blocked={query.isError}
+				transitioning={Boolean(activeOperation && !activeOperation.done)}
+				onAccepted={async (result) => {
+					setAccepted(result);
+					await refreshResources();
+				}}
+				onAbsent={refreshResources}
+				onFunded={() => void refreshResources()}
+			/>
+		) : null;
+
+	if (section === "files" && !deployment && query.isPending)
+		return (
+			<LibraryPage>
+				<RouteLoadingSkeleton />
+			</LibraryPage>
+		);
+	// Web hides Files without an authoritative endpoint and falls back to the overview.
+	if (section === "files" && deployment?.agent_id && !deploymentFilesUrl(deployment))
+		return <Redirect href={agentSectionHref(deployment.agent_id)} />;
+	if (section === "files" && deployment) {
+		const view = agentFilesPresentation(deployment);
+		return (
+			<SafeAreaScreen>
+				<AgentSectionNavigation agentId={deployment.agent_id ?? ""} section="files" />
+				{query.isError ? (
+					<ApiErrorPanel error={query.error} onRetry={() => void query.refetch()} />
+				) : null}
+				<EmptyState
+					// Web's StoppedAgentState keeps the default empty-state icon.
+					icon={view.state === "stopped" ? undefined : FolderOpen}
+					className="flex-1"
+					title={view.state === "running" ? t("files.webOnlyTitle") : view.title}
+					description={view.state === "running" ? t("files.webOnlyDescription") : view.description}
+					action={
+						view.state === "running" ? (
+							<ActionButton
+								label={runtimeConsoleCopy.terminal}
+								onPress={() => router.push(agentSectionHref(deployment.agent_id ?? "", "terminal"))}
+							/>
+						) : (
+							startAction(deployment, view.state === "stopped")
+						)
+					}
+				/>
+			</SafeAreaScreen>
+		);
+	}
+
 	if (section === "console" && deployment) {
 		const view = runtimeConsolePresentation(
 			deployment,
@@ -267,42 +330,9 @@ function DeploymentDetail({
 										onPress={() => router.push(`/agents/${deployment.agent_id}/terminal`)}
 									/>
 								) : null}
-								{(view.state === "stopped" || view.state === "not_running") &&
-								deployment.start_action === "start" ? (
-									<DeploymentControls
-										section="startup"
-										startLabel={view.state === "stopped" ? "Start" : "Start agent"}
-										deployment={deployment}
-										deploymentId={deployment.resource.id}
-										blocked={query.isError}
-										transitioning={Boolean(activeOperation && !activeOperation.done)}
-										onAccepted={async (result) => {
-											setAccepted(result);
-											await refreshResources();
-										}}
-										onAbsent={refreshResources}
-									/>
-								) : view.state === "stopped" ? (
-									<ActionButton
-										label={
-											deployment.start_action === "subscribe"
-												? "Subscribe to start"
-												: deployment.start_action === "top_up"
-													? surfaces.addCredits
-														? t("store.addCreditsToStart")
-														: "Top up to start"
-													: deployment.start_action === "contact_support"
-														? "Contact support"
-														: "Pay to start"
-										}
-										onPress={() =>
-											router.push({
-												pathname: "/agents/[id]/compute",
-												params: { id: deployment.agent_id ?? "" },
-											})
-										}
-									/>
-								) : null}
+								{view.state === "stopped" || view.state === "not_running"
+									? startAction(deployment, view.state === "stopped")
+									: null}
 								{transition === "escalated" && cancellableOperation ? (
 									<CancelOperation operation={cancellableOperation} onRequested={checkAgain} />
 								) : null}

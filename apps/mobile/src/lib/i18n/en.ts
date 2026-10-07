@@ -164,7 +164,6 @@ const connectorsEn = {
 } as const;
 const storeEn = {
 	addCredits: "Add credits",
-	addCreditsToStart: "Add credits to start",
 	checkPending: "Check pending purchases",
 	checkingPending: "Checking pending purchases…",
 	noPending: "No pending purchases found.",
@@ -267,6 +266,7 @@ const runtimeEn = {
 	deleteCancelsSubscription: "This request also cancels the Agent's subscription.",
 	deleteReported:
 		"The server reports this Agent deleted for your account. Cleanup may still be in progress.",
+	supportFailed: "Couldn't open your email app. Email support@clawdi.ai.",
 	paymentRequired:
 		"Starting requires a server-approved subscription or payment action. No payment is made by these controls.",
 	uncertain:
@@ -518,6 +518,11 @@ export const en = {
 		connected: "Connected",
 		reconnecting: "Reconnecting…",
 		disconnected: "Disconnected",
+	},
+	files: {
+		webOnlyTitle: "Files opens on the web",
+		webOnlyDescription:
+			"Browse and edit this agent's workspace files from the Clawdi web dashboard, or use Terminal now.",
 	},
 	profile: {
 		unsavedTitle: "Discard profile changes?",

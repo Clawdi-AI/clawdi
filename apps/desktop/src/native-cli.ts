@@ -132,17 +132,6 @@ export class DesktopCliService {
 		}
 	}
 
-	async createDashboardSession(): Promise<string> {
-		const cli = this.cli();
-		const result = await this.runJson(cli, ["auth", "desktop-session", "--json"]);
-		const ticket = readString(result.ticket);
-		const expiresIn = typeof result.expiresIn === "number" ? result.expiresIn : 0;
-		if (!ticket || ticket.length > 8192 || expiresIn <= 0 || expiresIn > 120) {
-			throw new Error("Clawdi returned an invalid desktop sign-in session.");
-		}
-		return ticket;
-	}
-
 	async logout(): Promise<void> {
 		const cli = this.cli();
 		await this.run(cli, ["daemon", "uninstall"], { timeoutMs: 60_000 });
@@ -274,6 +263,9 @@ export class DesktopCliService {
 				signal,
 				timeoutMs: OAUTH_TIMEOUT_MS,
 			});
+			if (result.schemaVersion === "clawdi.desktopLogin.v1" && result.status === "cancelled") {
+				return { status: "cancelled" };
+			}
 			const user = isRecord(result.user) ? result.user : null;
 			const id = user ? readString(user.id) : null;
 			const email = user ? readString(user.email) : null;

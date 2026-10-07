@@ -6,9 +6,8 @@ import { dirname, join, resolve } from "node:path";
 import { chromium } from "@playwright/test";
 
 const [executablePath, runtimeRoot, surface = "install"] = process.argv.slice(2);
-const smokeAgentId = "00000000-0000-4000-8000-000000000001";
-if (!executablePath || !runtimeRoot || !["install", "welcome", "remote"].includes(surface)) {
-	throw new Error("usage: smoke-packaged.mjs <executable> <runtime-root> [install|welcome|remote]");
+if (!executablePath || !runtimeRoot || !["install", "welcome", "local"].includes(surface)) {
+	throw new Error("usage: smoke-packaged.mjs <executable> <runtime-root> [install|welcome|local]");
 }
 
 const home = join(runtimeRoot, "home");
@@ -52,23 +51,12 @@ try {
 	browser = await chromium.connectOverCDP(endpoint);
 	const context = browser.contexts()[0];
 	if (!context) throw new Error("Packaged app did not create a browser context.");
-	if (surface === "remote") {
-		const window = await waitForWindow(context, "dashboard", 30_000);
-		await window
-			.getByRole("heading", { name: "Desktop sign-in expired" })
-			.waitFor({ timeout: 30_000 });
-		const remote = await window.evaluate(async () => {
-			const response = await fetch("/assets/not-packaged.js", { cache: "no-store" });
-			return {
-				version: window.clawdiDesktop?.apiVersion,
-				contentType: response.headers.get("content-type"),
-			};
-		});
-		assert.equal(remote.version, 1);
-		assert.ok(remote.contentType, "Dashboard did not reach the remote web server.");
-		await verifyDashboardBridge(context, window);
+	if (surface === "local") {
+		const window = await waitForWindow(context, 30_000);
+		await window.getByRole("heading", { name: "Welcome to Clawdi" }).waitFor({ timeout: 30_000 });
+		await verifyLocalRenderer(context, window);
 	} else if (surface === "welcome") {
-		const window = await waitForWindow(context, null, 30_000);
+		const window = await waitForWindow(context, 30_000);
 		await window.getByRole("heading", { name: "Welcome to Clawdi" }).waitFor({ timeout: 30_000 });
 		await verifyAutomaticCliCommand();
 	} else await verifyInstallGate(context, desktop, output, cliLog);
@@ -101,7 +89,7 @@ if (failure) {
 }
 
 async function verifyInstallGate(context, desktop, output, cliLog) {
-	const window = await waitForWindow(context, null, 30_000);
+	const window = await waitForWindow(context, 30_000);
 	const moveToApplications = window.getByRole("heading", {
 		name: "Move Clawdi to Applications",
 	});
@@ -121,67 +109,53 @@ async function verifyInstallGate(context, desktop, output, cliLog) {
 	);
 }
 
-async function verifyDashboardBridge(context, window) {
-	assert.equal(new URL(window.url()).origin, "https://cloud.clawdi.ai");
-	const bridgeMethods = await window.evaluate(() => Object.keys(window.clawdiDesktop ?? {}).sort());
-	assert.deepEqual(bridgeMethods, [
-		"apiVersion",
-		"createDashboardSession",
-		"openConnectWizard",
-		"openFilesWindow",
-		"openRuntimeWindow",
-		"openTerminalWindow",
-		"retryDashboard",
-		"signIn",
-		"signOut",
-	]);
-	await window
-		.getByRole("heading", { name: "Desktop sign-in expired" })
-		.waitFor({ timeout: 20_000 });
-	const initialTickets =
-		readFileSync(cliLog, "utf8").match(/^auth desktop-session /gm)?.length ?? 0;
-	await window.getByRole("button", { name: "Try again", exact: true }).click();
-	const retryDeadline = Date.now() + 10_000;
-	while (Date.now() < retryDeadline) {
-		const tickets = readFileSync(cliLog, "utf8").match(/^auth desktop-session /gm)?.length ?? 0;
-		if (tickets > initialTickets) break;
-		await delay(100);
-	}
-	assert.ok(
-		(readFileSync(cliLog, "utf8").match(/^auth desktop-session /gm)?.length ?? 0) > initialTickets,
-		"Retry waited for the previous sign-in timeout instead of requesting a fresh ticket.",
+async function verifyLocalRenderer(context, window) {
+	assert.equal(new URL(window.url()).protocol, "clawdi-app:");
+	await window.waitForFunction(() =>
+		Array.from(document.images).some((image) => image.complete && image.naturalWidth > 0),
 	);
-	const childOpened = context.waitForEvent("page", { timeout: 20_000 });
-	await window.evaluate(
-		(agentId) => window.clawdiDesktop.openTerminalWindow(`${location.origin}/terminal/${agentId}`),
-		smokeAgentId,
-	);
-	const child = await childOpened;
-	// The fake ticket cannot authenticate. Verify the stable route contract rather
-	// than production copy: the child must withhold Terminal and preserve the
-	// intended destination for the OAuth flow.
-	await child.waitForURL((url) => url.pathname === "/sign-in", { timeout: 20_000 });
-	const redirectUrl = new URL(child.url()).searchParams.get("redirect_url");
-	assert.equal(redirectUrl, `/terminal/${smokeAgentId}`);
-	assert.deepEqual(
-		await child.evaluate(() => ({
+	const local = await window.evaluate(() => {
+		return {
 			hasDesktopBridge: window.clawdiDesktop !== undefined,
-			hasOpener: window.opener !== null,
-		})),
-		{ hasDesktopBridge: false, hasOpener: false },
-	);
-	await child.close();
-	const cliCalls = readFileSync(cliLog, "utf8");
-	assert.doesNotMatch(cliCalls, /^daemon install(?:\s|$)/m);
+			methods: Object.keys(window.clawdiConnect ?? {}).sort(),
+			loadedLogo: Array.from(document.images).some(
+				(image) => image.complete && image.naturalWidth > 0,
+			),
+			csp: document
+				.querySelector('meta[http-equiv="Content-Security-Policy"]')
+				?.getAttribute("content"),
+		};
+	});
+	assert.equal(local.hasDesktopBridge, false);
+	assert.equal(local.loadedLogo, true);
+	assert.match(local.csp ?? "", /default-src 'none'/);
+	assert.deepEqual(local.methods, [
+		"authenticate",
+		"cancelAuthentication",
+		"connectAgents",
+		"detectAgents",
+		"getBootstrapState",
+		"getInstallationState",
+		"listReconnectableAgents",
+		"moveToApplicationsFolder",
+		"openDashboard",
+	]);
+	const originalUrl = window.url();
+	await window.evaluate(() => {
+		window.location.href = "https://cloud.clawdi.ai/";
+	});
+	await delay(500);
+	assert.equal(window.url(), originalUrl, "The local wizard accepted remote dashboard navigation.");
+	assert.ok(context.pages().every((page) => new URL(page.url()).protocol === "clawdi-app:"));
+	assert.doesNotMatch(readFileSync(cliLog, "utf8"), /^daemon install(?:\s|$)/m);
 }
 
-async function waitForWindow(context, surface, timeout) {
+async function waitForWindow(context, timeout) {
 	const deadline = Date.now() + timeout;
 	while (Date.now() < deadline) {
 		const window = context.pages().find((page) => {
 			try {
 				const url = new URL(page.url());
-				if (surface === "dashboard") return url.origin === "https://cloud.clawdi.ai";
 				return url.protocol === "clawdi-app:";
 			} catch {
 				return false;

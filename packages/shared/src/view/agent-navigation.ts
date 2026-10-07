@@ -1,3 +1,4 @@
+import { agentOverviewCopy } from "./agent-overview";
 import { getProjectResourceDefinition } from "./project-resource-model";
 export const agentSectionCopy = {
 	overview: {
@@ -35,6 +36,12 @@ export const agentSectionCopy = {
 } as const;
 export type MobileAgentSection = keyof typeof agentSectionCopy;
 
+/** Hosted live tools. Console takes the runtime's browser UI label instead. */
+export const agentToolSectionCopy = {
+	files: { label: "Files", description: "Browse and edit files in this agent's workspace." },
+	terminal: { label: "Terminal", description: "Use a terminal for this agent." },
+} as const;
+
 export const AGENT_NAVIGATION_GROUPS = [
 	{
 		id: "primary",
@@ -44,19 +51,19 @@ export const AGENT_NAVIGATION_GROUPS = [
 	},
 	{
 		id: "workspace",
-		label: "Workspace",
+		label: agentOverviewCopy.workspace,
 		itemIds: ["projects", "plugins"],
 		separated: false,
 	},
 	{
 		id: "shared",
-		label: "Shared",
+		label: agentOverviewCopy.shared,
 		itemIds: ["memories", "connectors"],
 		separated: false,
 	},
 	{
 		id: "operate",
-		label: "Tools",
+		label: agentOverviewCopy.tools,
 		itemIds: ["files", "terminal"],
 		separated: false,
 	},

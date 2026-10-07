@@ -57,6 +57,37 @@ name: Fixture tabs and details
 - takeScreenshot: agent-detail
 - back
 
+# Agent hub: hosted overview rows reach Web's Tools and Settings sections.
+# Files renders its native state page (no in-app Files browser handoff).
+- scrollUntilVisible:
+    element:
+      id: agent-card-0c1a3000-0004-4c00-8000-000000000004
+    timeout: 30000
+- tapOn:
+    id: agent-card-0c1a3000-0004-4c00-8000-000000000004
+- scrollUntilVisible:
+    element:
+      id: agent-section-files
+    timeout: 30000
+- assertVisible:
+    id: agent-section-terminal
+- scrollUntilVisible:
+    element:
+      id: agent-section-settings
+    timeout: 30000
+- takeScreenshot: agent-hub
+- tapOn:
+    id: agent-section-files
+- extendedWaitUntil:
+    visible:
+      text: Files opens on the web
+    timeout: 30000
+- assertVisible:
+    text: Use Terminal
+- takeScreenshot: agent-files
+- back
+- back
+
 # Sessions: loaded fixture inventory and an actual rendered transcript message.
 - tapOn:
     text: Sessions
