@@ -10,7 +10,7 @@ const settingsDestinations = new Map([
 	["billing", "/settings/compute"],
 	["billing-wallet", "/settings/wallet"],
 	["billing-plan", "/settings/compute"],
-	["billing-usage", "/settings"],
+	["billing-usage", "/settings/usage"],
 	["profile", "/settings/general"],
 ]);
 
