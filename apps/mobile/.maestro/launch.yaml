@@ -1,9 +1,9 @@
-appId: ${APP_ID}
+appId: ${MAESTRO_APP_ID}
 name: Development client launch
 ---
 # The script waits for the native dev-launcher activity before Maestro starts.
 - openLink:
-    link: ${DEV_CLIENT_URL}
+    link: ${MAESTRO_DEV_CLIENT_URL}
     autoVerify: false
 # A delayed System UI startup ANR was observed after the script's boot/launcher
 # checks on this memory-constrained host. Wait once only for that exact dialog;

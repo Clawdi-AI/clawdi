@@ -12,10 +12,7 @@
 		"e2e": {
 			"extends": "development",
 			"env": { "SENTRY_DISABLE_AUTO_UPLOAD": "true" },
-			"android": {
-				"withoutCredentials": true,
-				"gradleCommand": ":app:assembleDebug"
-			}
+			"android": { "withoutCredentials": true }
 		},
 		"preview": {
 			"distribution": "internal",

@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   preflight:
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       configured: ${{ steps.config.outputs.configured }}
@@ -40,10 +40,12 @@ jobs:
   smoke:
     needs: preflight
     if: needs.preflight.outputs.configured == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
-    timeout-minutes: 90
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: ./.github/actions/setup-bun-ci
         with:
           node-version: "24.21.0"
@@ -75,8 +77,8 @@ jobs:
           EAS_RUN_ID: ${{ steps.launch.outputs.run_id }}
         run: eas workflow:status "$EAS_RUN_ID" --non-interactive --wait
       - name: Cancel an unfinished EAS run after interruption
-        if: ${{ !success() && steps.launch.outputs.run_id != '' }}
-        timeout-minutes: 3
+        if: ${{ (failure() || cancelled()) && steps.launch.outputs.run_id != '' }}
+        timeout-minutes: 10
         working-directory: apps/mobile
         env:
           EAS_PROJECT_ID: ${{ vars.EAS_PROJECT_ID }}

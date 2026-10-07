@@ -59,7 +59,18 @@ mkdir "$runtime" || fail "Services already started; stop the owned run first"
 : > "$runtime/pids"
 mkdir "$runtime/tmp"
 export TMPDIR=$runtime/tmp
-trap 'if (( $? != 0 )); then stop_services; fi' EXIT
+trap '
+	if (( $? != 0 )); then
+		# A failed before hook skips after hooks, including artifact uploads.
+		for log in fixture metro; do
+			if [[ -f $output/logs/$log.log ]]; then
+				printf "\n--- %s.log (last 80 lines) ---\n" "$log" >&2
+				tail -n 80 "$output/logs/$log.log" >&2 || true
+			fi
+		done
+		stop_services || true
+	fi
+' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 

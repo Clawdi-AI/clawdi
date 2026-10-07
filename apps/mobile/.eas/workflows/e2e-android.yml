@@ -29,7 +29,6 @@ jobs:
     needs: [cached_apk]
     if: ${{ !needs.cached_apk.outputs.build_id }}
     type: build
-    environment: development
     env:
       EAS_PROJECT_ID: ${{ inputs.eas_project_id }}
     params:
@@ -42,7 +41,7 @@ jobs:
     if: ${{ needs.cached_apk.outputs.build_id || after.build_apk.outputs.build_id }}
     type: maestro
     environment: development
-    runs_on: linux-medium-nested-virtualization
+    runs_on: linux-large-nested-virtualization
     env:
       MAESTRO_APP_ID: ai.clawdi.app
       MAESTRO_DEV_CLIENT_URL: exp+clawdi://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8096&disableOnboarding=1&disableAutoLaunch=1&disableFab=1
