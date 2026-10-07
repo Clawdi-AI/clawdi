@@ -300,5 +300,10 @@ Default native, upstream-contract and Windows gates in the CLI suite remain
 disabled; Linux systemd qualification and the paired native pool fixture run
 separately. The writer-lock source is byte-identical to native source `b6c5db354`.
 
+The final main fetch at 7:25 PM PDT on 2026-10-06 rebased onto `8ea990bf0`
+(qualification source `25936024e`). CLI source and its test entrypoints are
+byte-identical to the full qualification above. The upstream mobile/shared UI
+changes passed a separate full Docker `ci` rerun with exit 0.
+
 Done: both writer/GC interleavings, the requested OSS Docker suites and the two
 native runtime samples pass; fixture cleanup is complete.
