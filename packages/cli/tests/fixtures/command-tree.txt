@@ -2461,25 +2461,7 @@
 		"options": [
 			{
 				"flags": "--spec <path>",
-				"description": "Strict preinstallation specification",
-				"hidden": false,
-				"required": true,
-				"optional": false,
-				"mandatory": true,
-				"variadic": false
-			},
-			{
-				"flags": "--installer <path>",
-				"description": "SHA256-verified official installer",
-				"hidden": false,
-				"required": true,
-				"optional": false,
-				"mandatory": true,
-				"variadic": false
-			},
-			{
-				"flags": "--cli-archive <path>",
-				"description": "Integrity-verified npm archive of this CLI release",
+				"description": "Anonymous runtime specification",
 				"hidden": false,
 				"required": true,
 				"optional": false,
@@ -2487,7 +2469,7 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi runtime prepare [options]\n\nPrepare anonymous software-only runtime data without Cloud identity\n\nOptions:\n  --spec <path>         Strict preinstallation specification\n  --installer <path>    SHA256-verified official installer\n  --cli-archive <path>  Integrity-verified npm archive of this CLI release\n  -h, --help            display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi runtime prepare [options]\n\nPrepare anonymous software-only runtime data without Cloud identity\n\nOptions:\n  --spec <path>  Anonymous runtime specification\n  -h, --help     display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi runtime warm",
