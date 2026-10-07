@@ -86,6 +86,52 @@ describe("Hosted compute client", () => {
 			server.stop(true);
 		}
 	});
+	test("pages, marks read up to an item and deletes account notifications", async () => {
+		const requests: { method: string; path: string; body: string }[] = [];
+		const server = Bun.serve({
+			hostname: "127.0.0.1",
+			port: 0,
+			async fetch(request) {
+				const url = new URL(request.url);
+				requests.push({
+					method: request.method,
+					path: `${url.pathname}${url.search}`,
+					body: await request.text(),
+				});
+				if (request.method === "DELETE") return new Response(null, { status: 204 });
+				if (request.method === "POST") return Response.json({ updated_count: 2 });
+				return Response.json({ items: [], unread_count: 0, next_cursor: null });
+			},
+		});
+		const client = createHostedComputeClient({
+			...options,
+			baseUrl: `${server.url.href}v2`,
+			fetch: (request, init) => fetch(request, init),
+		});
+		try {
+			expect(await client.listNotifications({ limit: 50, cursor: "c-2" })).toEqual({
+				items: [],
+				unread_count: 0,
+				next_cursor: null,
+			});
+			expect(await client.markNotificationsRead("n-1")).toEqual({ updated_count: 2 });
+			expect(await client.deleteNotification("n-1")).toBeNull();
+			await expect(client.deleteNotification("..")).rejects.toMatchObject({
+				code: "invalid_resource_id",
+			});
+			expect(requests).toEqual([
+				{ method: "GET", path: "/v1/me/notifications?limit=50&cursor=c-2", body: "" },
+				{
+					method: "POST",
+					path: "/v1/me/notifications/read-all",
+					body: JSON.stringify({ up_to_id: "n-1" }),
+				},
+				{ method: "DELETE", path: "/v1/me/notifications/n-1", body: "" },
+			]);
+		} finally {
+			server.stop(true);
+		}
+	});
 	test("serializes catalog, paging, preview and existing Basic/Performance admission over HTTP", async () => {
 		const requests: {
 			url: string;

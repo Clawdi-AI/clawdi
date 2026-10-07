@@ -1,5 +1,5 @@
+import { ACCOUNT_SUSPENDED_CODE } from "@clawdi/shared/view";
 import { toast } from "sonner";
-import { ACCOUNT_SUSPENDED_CODE } from "@/lib/account-suspension";
 
 /**
  * Cloud-api (`useApi` / openapi-fetch) error model + normalization.

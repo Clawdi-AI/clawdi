@@ -68,6 +68,7 @@ for (const [name, allowed, fallback] of [
 		["generating", "ready", "scanned", "connected", "expired", "canceled", "error"],
 		"ready",
 	],
+	["account-state", ["active", "suspended"], "active"],
 ] satisfies [string, string[], string][]) {
 	if (!allowed.includes(readFlag(name, fallback))) {
 		console.error(`Invalid --${name}; expected ${allowed.join("|")}`);
@@ -2291,10 +2292,77 @@ function usageSummary(url: URL): DeployGetOk<"/v2/usage"> | Reply {
 	};
 }
 
+// Hosted account notifications (`/v1/me/notifications`), newest first. Read state, `read-all`
+// and removal persist in memory until the server stops.
+let accountNotifications: DeploySchemas["AccountNotificationResponse"][] = [
+	{
+		id: "a7700000-0004-4000-8000-000000000004",
+		kind: "billing.payment_failed",
+		title: "Payment failed for Payment overdue",
+		description:
+			"We couldn't renew this Agent's Performance subscription. Top up your Wallet to restart it.",
+		category: "Billing",
+		severity: "destructive",
+		action_label: "Top up Wallet",
+		action_url: "https://cloud.clawdi.ai/?settings=billing-wallet",
+		created_at: ago(12 * MINUTE),
+		read_at: null,
+	},
+	{
+		id: "a7700000-0003-4000-8000-000000000003",
+		kind: "agent.start_failed",
+		title: "Failed OpenClaw couldn't start",
+		description: "The runtime exited during startup. Review the Agent and start it again.",
+		category: "Agents",
+		severity: "warning",
+		action_label: "Open Agent",
+		action_url: "https://cloud.clawdi.ai/agents/4e2e5000-0006-4c00-8000-000000000006",
+		created_at: ago(3 * HOUR),
+		read_at: null,
+	},
+	{
+		id: "a7700000-0002-4000-8000-000000000002",
+		kind: "account.release_notes",
+		title: "Agent profiles are here",
+		description: "Separate sessions and memories per profile on one Agent.",
+		category: "Product",
+		severity: "info",
+		action_label: "Read more",
+		action_url: "https://www.clawdi.ai/changelog",
+		created_at: ago(2 * DAY),
+		read_at: ago(DAY),
+	},
+	{
+		id: "a7700000-0001-4000-8000-000000000001",
+		kind: "billing.subscription_canceled",
+		title: "Subscription canceled",
+		description: "Your Basic subscription for Staging ended at the close of the billing period.",
+		category: "Billing",
+		severity: "info",
+		created_at: ago(9 * DAY),
+		read_at: ago(8 * DAY),
+	},
+];
+
+function notificationPage(url: URL): DeploySchemas["AccountNotificationListResponse"] | Reply {
+	const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit") ?? "50") || 50));
+	const cursor = url.searchParams.get("cursor");
+	const after = cursor ? accountNotifications.findIndex((item) => item.id === cursor) : -1;
+	if (cursor && after < 0) return new Reply(400, { detail: "Invalid notification cursor" });
+	const start = after + 1;
+	const items = accountNotifications.slice(start, start + limit);
+	const next = accountNotifications[start + limit] ? items.at(-1)?.id : null;
+	return {
+		items,
+		unread_count: accountNotifications.filter((item) => item.read_at == null).length,
+		next_cursor: next ?? null,
+	};
+}
+
 const computeGetRoutes = {
 	"/v1/me": () => hostedProfile,
 	"/v1/agent-environments": () => ({ environment_ids: [] }),
-	"/v1/me/notifications": () => ({ items: [], unread_count: 0, next_cursor: null }),
+	"/v1/me/notifications": ({ url }) => notificationPage(url),
 	"/v2/subscription/plans": () => computePlans,
 	"/v2/deployments": ({ url }) =>
 		url.searchParams.get("event_stream_handoff") === "true"
@@ -2372,6 +2440,25 @@ const computeGetRoutes = {
 for (const [template, handler] of Object.entries(computeGetRoutes)) {
 	routes.push({ method: "GET", template, handler, ...compile(template) });
 }
+on("POST", "/v1/me/notifications/read-all", async ({ request }) => {
+	const body = await bodyObject(request);
+	const upTo = accountNotifications.findIndex((item) => item.id === body.up_to_id);
+	if (body.up_to_id != null && upTo < 0) return notFound("Notification not found");
+	const readAt = ago(0);
+	let updated = 0;
+	accountNotifications = accountNotifications.map((item, index) => {
+		if (item.read_at != null || (upTo >= 0 && index < upTo)) return item;
+		updated += 1;
+		return { ...item, read_at: readAt };
+	});
+	return { updated_count: updated } satisfies DeploySchemas["AccountNotificationReadAllResponse"];
+});
+on("DELETE", "/v1/me/notifications/{notification_id}", ({ params }) => {
+	if (!accountNotifications.some((item) => item.id === params.notification_id))
+		return notFound("Notification not found");
+	accountNotifications = accountNotifications.filter((item) => item.id !== params.notification_id);
+	return new Reply(204, null);
+});
 // No live hosted stream or runtime infrastructure is simulated.
 on("GET", "/v2/events", () => new Reply(204, null));
 // One-time Files handoff stub; the fixture never serves the Files host itself.
@@ -3481,6 +3568,28 @@ function json(request: Request, status: number, body: unknown) {
 
 const PUBLIC_PATHS = new Set(["/health", "/ready"]);
 
+// `--account-state suspended`: every authenticated request answers like a suspended account.
+// Cloud sends 401; hosted (clawdi-hosted `AccountSuspendedHTTPException`) sends the same body as 403.
+const accountSuspended = readFlag("account-state", "active") === "suspended";
+const accountSuspendedProblem = {
+	type: "urn:clawdi:problem:account-suspended",
+	title: "Account suspended",
+	status: 401,
+	detail: "Account is suspended",
+	code: "account_suspended",
+} satisfies Schemas["AccountSuspendedProblem"];
+
+/** Hosted paths from deploy.generated.ts; cloud owns only runtime-internal `/v2/runtime/*`. */
+function isHostedPath(pathname: string): boolean {
+	return (
+		(pathname.startsWith("/v2/") && !pathname.startsWith("/v2/runtime/")) ||
+		pathname === "/v1/me" ||
+		pathname === "/v1/agent-environments" ||
+		pathname === "/v1/me/notifications" ||
+		pathname.startsWith("/v1/me/notifications/")
+	);
+}
+
 function resolve(method: string, pathname: string) {
 	for (const route of routes) {
 		if (route.method !== method) continue;
@@ -3523,6 +3632,10 @@ const server = Bun.serve({
 			!/^Bearer\s+\S+/i.test(authorization)
 		) {
 			return json(request, 401, { detail: "Missing bearer token" });
+		}
+		if (accountSuspended && /^Bearer\s+\S+/i.test(authorization)) {
+			const status = isHostedPath(url.pathname) ? 403 : 401;
+			return json(request, status, { ...accountSuspendedProblem, status });
 		}
 		const resolved = resolve(request.method, url.pathname);
 		if (!resolved) {

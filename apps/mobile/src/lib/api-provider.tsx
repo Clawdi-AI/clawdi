@@ -47,9 +47,22 @@ import {
 	type WhatsAppClient,
 	type WorkspaceSkillClient,
 } from "@clawdi/shared/api";
-import { createContext, type ReactNode, useCallback, useContext, useMemo } from "react";
+import {
+	type AccountSuspensionStore,
+	createAccountSuspensionStore,
+	observeAccountSuspension,
+} from "@clawdi/shared/view";
+import {
+	createContext,
+	type ReactNode,
+	useCallback,
+	useContext,
+	useMemo,
+	useSyncExternalStore,
+} from "react";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime";
 import { useAccountScope } from "@/platform/account-lifecycle";
+import type { AccountScope } from "@/platform/auth/account-scope";
 import { useAppAuth } from "@/platform/auth/auth-client";
 
 type MobileApiClients = Readonly<{
@@ -79,6 +92,18 @@ type MobileApiClients = Readonly<{
 }>;
 
 const MobileApiContext = createContext<MobileApiClients | null>(null);
+const AccountSuspensionContext = createContext<AccountSuspensionStore | null>(null);
+const suspensionStores = new WeakMap<AccountScope, AccountSuspensionStore>();
+
+/** One store per account scope, as on Web: a late response never suspends the next account. */
+function accountSuspension(scope: AccountScope): AccountSuspensionStore {
+	let store = suspensionStores.get(scope);
+	if (!store) {
+		store = createAccountSuspensionStore();
+		suspensionStores.set(scope, store);
+	}
+	return store;
+}
 
 export function MobileApiProvider({
 	children,
@@ -105,9 +130,10 @@ export function MobileApiProvider({
 		}
 		return token ?? null;
 	}, [getToken, scope, sessionId]);
-	const fetcher = useCallback<ApiClientFetch>(
-		(request, init) => globalThis.fetch(request, init),
-		[],
+	const suspension = accountSuspension(scope);
+	const fetcher = useMemo<ApiClientFetch>(
+		() => observeAccountSuspension(suspension, (request, init) => globalThis.fetch(request, init)),
+		[suspension],
 	);
 	const clients = useMemo<MobileApiClients>(
 		() => ({
@@ -239,7 +265,18 @@ export function MobileApiProvider({
 		}),
 		[config.cloudApiUrl, config.computeApiUrl, fetcher, readToken],
 	);
-	return <MobileApiContext.Provider value={clients}>{children}</MobileApiContext.Provider>;
+	return (
+		<AccountSuspensionContext.Provider value={suspension}>
+			<MobileApiContext.Provider value={clients}>{children}</MobileApiContext.Provider>
+		</AccountSuspensionContext.Provider>
+	);
+}
+
+/** True once any account read in the current scope returned hosted's `account_suspended` problem. */
+export function useAccountSuspended(): boolean {
+	const store = useContext(AccountSuspensionContext);
+	if (!store) throw new Error("useAccountSuspended must be used inside MobileApiProvider");
+	return useSyncExternalStore(store.subscribe, store.getSnapshot);
 }
 
 export function useMobileApi(): MobileApiClients {

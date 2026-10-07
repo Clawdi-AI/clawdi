@@ -22,9 +22,11 @@ export function HeaderActions({
 						action.destructive && typeof destructive === "string" ? destructive : undefined
 					}
 					onPress={action.onPress}
+					icon={action.icon?.ios}
 					style={{ fontFamily: "Geist-Medium" }}
 				>
 					{action.label}
+					{action.badge ? <Stack.Toolbar.Badge>{action.badge}</Stack.Toolbar.Badge> : null}
 				</Stack.Toolbar.Button>
 			))}
 			{menu ? (
