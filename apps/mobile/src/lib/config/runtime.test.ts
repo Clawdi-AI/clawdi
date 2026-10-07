@@ -219,7 +219,7 @@ describe("release configuration", () => {
 		).toBe(true);
 		expect(parseMobileRuntimeConfig(values, { environment: "production" })).toEqual({
 			ok: true,
-			value: { ...values, computeApiUrl: "https://api.clawdi.ai" },
+			value: { ...values, computeApiUrl: "https://api.clawdi.ai", environment: "production" },
 		});
 	});
 	test("cannot relax authentication outside development", () => {

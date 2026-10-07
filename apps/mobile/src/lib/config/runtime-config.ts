@@ -4,6 +4,7 @@ import { readLinkHosts } from "@clawdi/shared/linking";
 export type MobileRuntimeConfig = Readonly<{
 	cloudApiUrl: string;
 	clerkPublishableKey: string;
+	environment?: string;
 	computeApiUrl?: string;
 	revenueCatAppleKey?: string;
 	revenueCatGoogleKey?: string;
@@ -83,6 +84,7 @@ export function parseMobileRuntimeConfig(
 			value: {
 				cloudApiUrl: readApiBaseUrl(cloudApiUrl),
 				clerkPublishableKey: clerkPublishableKey ?? "",
+				...(environment ? { environment } : {}),
 				...(linkHosts.length ? { linkHosts } : {}),
 				...(computeApiUrl ? { computeApiUrl: readApiBaseUrl(computeApiUrl, true) } : {}),
 				...(revenueCatAppleKey ? { revenueCatAppleKey } : {}),
