@@ -89,7 +89,8 @@ export async function agentRm(agentId: string, opts: AgentRemoveOptions = {}): P
 			`Remove agent ${agentId}? This archives a local agent's workspace or permanently deletes a Cloud Agent and its saved data.`,
 			{
 				yes: opts.yes,
-				action: "disconnect this agent and archive its workspace",
+				action:
+					"remove this agent (archive a local workspace or permanently delete a Cloud Agent and its saved data)",
 			},
 		))
 	)

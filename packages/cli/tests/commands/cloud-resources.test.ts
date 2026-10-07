@@ -669,6 +669,7 @@ describe("Cloud Agent removal", () => {
 					if (flags.length === 2) expect(result.stderr).toContain("not both");
 					else if (!yes) {
 						expect(result.stderr).toContain("Confirmation required");
+						expect(result.stderr).toContain("permanently delete a Cloud Agent and its saved data");
 						expect(requests).toEqual([]);
 					} else expect(result.stderr).toContain("renewing subscription");
 				}
