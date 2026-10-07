@@ -49,6 +49,13 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.15.10
+
+- Warm runtime preparation now uses the ordinary exact npm CLI selector and
+  official runtime installers, so pool fills follow the same install path as
+  fresh deployments.
+
+
 ### CLI 0.15.9
 
 - **Hosted Hermes profiles:** managed Clawdi MCP now converges in every profile,

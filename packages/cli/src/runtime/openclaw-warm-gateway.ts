@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
@@ -94,7 +94,11 @@ function warmOpenClawGatewayIdentity(paths: RuntimePaths): string | null {
 			unit: read(join(paths.systemdUserRoot, systemdUnitFileName(name))),
 			dropIn: read(systemdDropInFilePath(paths, name)),
 			environment: read(systemdEnvironmentFilePath(paths, name)).replace(DIGEST_LINE, ""),
-			egressCaBundle: read(paths.egressSystemCaFile),
+			// An anonymous preinstallation has no tenant manifest and therefore
+			// may not have an egress engine yet. Cold convergence will project the
+			// bundle when the tenant supplies one; absence is part of the warm
+			// gateway identity rather than a warm-up failure.
+			egressCaBundle: existsSync(paths.egressSystemCaFile) ? read(paths.egressSystemCaFile) : null,
 			gateway: gatewayRestartSettings(
 				readPlainOpenClawConfig(join(paths.userHome, ".openclaw", "openclaw.json")),
 			),
