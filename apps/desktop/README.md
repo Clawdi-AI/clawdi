@@ -23,7 +23,7 @@ declared as production dependencies of the Electron shell.
 ## Terminal command
 
 Packaged builds include the matching native `clawdi` CLI. On each packaged
-application launch, Desktop reconciles a lightweight launcher after opening its first window:
+application launch, Desktop reconciles a lightweight launcher after startup checks:
 macOS and Linux use
 `~/.local/bin/clawdi`, while Windows uses a per-user launcher directory added to
 the user PATH. An existing `clawdi` from another installation is never replaced.
