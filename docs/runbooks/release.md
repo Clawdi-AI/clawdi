@@ -127,7 +127,8 @@ before the executable is removed. No root cleanup script is installed.
    compiled Linux artifact through the native installer/daemon lifecycle. The
    exact-version release manifest is the sole checksum contract for native
    archives. The workflow transfers the same artifacts to the protected npm
-   job, verifies them again, and publishes the npm package once
+   job, verifies them again, completes the matching GitHub Release with native
+   assets, and then publishes the npm package once
    to `beta` for a prerelease or `latest` for a stable version with
    trusted-publisher OIDC. Package-level tag overrides are rejected. The build
    job may use the configured fast runner; the protected publish job must use
@@ -139,10 +140,10 @@ before the executable is removed. No root cleanup script is installed.
    republished and must have the same `dist.integrity` as this run's artifact.
    Fresh publish completion does not wait for the eventually consistent
    attestation read API. The GitHub Release may be created or a draft may be
-   completed only for the same `GITHUB_SHA`; another target fails closed. After
-   npm succeeds, rerun the original
-   workflow run to complete GitHub assets. A different commit whose artifact
-   differs must bump the package version instead of recovering across commits.
+   completed only for the same `GITHUB_SHA`; another target fails closed. If
+   release completion or npm publication fails, rerun the original workflow run.
+   A different commit whose artifact differs must bump the package version
+   instead of recovering across commits.
    Native ownership is separate: installed native executables update only from
    the exact `clawdi-cli-v<version>` manifest and assets. npm/Bun installs use
    exact npm versions. Hosted remains a separate exact-version npm authority and

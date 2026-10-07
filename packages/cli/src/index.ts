@@ -1580,8 +1580,6 @@ program
 	.option("--json", "Output as JSON")
 	.addOption(new Option("--background-worker").hideHelp())
 	.addOption(new Option("--current-version <version>").hideHelp())
-	.addOption(new Option("--channel <channel>").hideHelp())
-	.addOption(new Option("--latest <version>").hideHelp())
 	.addOption(new Option("--native-identity").hideHelp())
 	.addOption(new Option("--native-activate").hideHelp())
 	.addOption(new Option("--native-stage <path>").hideHelp())
@@ -1642,13 +1640,11 @@ program
 		}
 		const { runBackgroundUpdateWorker, update } = await import("./commands/update.js");
 		if (opts.backgroundWorker) {
-			if (!opts.currentVersion || !opts.channel) {
-				throw new Error("background update worker requires current version and channel");
+			if (!opts.currentVersion) {
+				throw new Error("background update worker requires current version");
 			}
 			const result = await runBackgroundUpdateWorker({
 				currentVersion: opts.currentVersion,
-				channel: opts.channel,
-				latest: opts.latest,
 			});
 			if (result === "failed") process.exitCode = 1;
 			return;
