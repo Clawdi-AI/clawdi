@@ -38,12 +38,13 @@ in_container() {
 		return 1
 	}
 
-	# The CLI owns the official installer URL and arguments for Hosted installs.
+	# The CLI owns the official installer URL and arguments for Hosted installs,
+	# including any fresh-install pin applied when the executable is absent.
 	local installer_url hermes_install_args=()
 	installer_url="$(cd packages/cli && bun --eval \
-		'import { OFFICIAL_INSTALL_URLS } from "./src/runtime/manifest-contract"; console.log(OFFICIAL_INSTALL_URLS.hermes)')"
+		'import { OFFICIAL_INSTALL_URLS } from "./src/runtime/manifest-contract"; import { freshInstallPin } from "./src/runtime/manifest-install"; const url = OFFICIAL_INSTALL_URLS.hermes; console.log(freshInstallPin("hermes", url)?.url ?? url)')"
 	(cd packages/cli && bun --eval \
-		'import { officialInstallArgs } from "./src/runtime/manifest-contract"; for (const arg of officialInstallArgs("hermes", process.env.HOME ?? "")) process.stdout.write(`${arg}\0`);') \
+		'import { OFFICIAL_INSTALL_URLS, officialInstallArgs } from "./src/runtime/manifest-contract"; import { freshInstallPin } from "./src/runtime/manifest-install"; const args = [...officialInstallArgs("hermes", process.env.HOME ?? ""), ...(freshInstallPin("hermes", OFFICIAL_INSTALL_URLS.hermes)?.args ?? [])]; for (const arg of args) process.stdout.write(`${arg}\0`);') \
 		>"$report_dir/install-args"
 	mapfile -d '' hermes_install_args <"$report_dir/install-args"
 	if [[ -z "$installer_url" || "${#hermes_install_args[@]}" -eq 0 ]]; then

@@ -49,6 +49,13 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.15.12
+
+- **Hosted Hermes:** the fresh-install pin now applies only when the CLI runs
+  the installer for an absent executable. The manifest install policy matches
+  0.15.9 again, so upgrading from 0.15.9 does not restart running Hermes
+  gateways. Do not roll out 0.15.10 or 0.15.11 to Hosted Hermes tenants.
+
 ### CLI 0.15.11
 
 - **Automatic updates (since 0.15.10):** daemon and background updates wait

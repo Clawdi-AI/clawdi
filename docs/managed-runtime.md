@@ -806,7 +806,7 @@ Normalization maps hosted fields into the internal shape:
 | `clawdiCli.packageSpec` | Required exact `clawdi@<semver>` without build metadata, at most 200 characters; remote Hosted manifests never select an npm dist-tag or local path |
 | `clawdiCli.registry` | Required literal `https://registry.npmjs.org`; Hosted does not use npm registry defaults or overrides |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
-| `runtimes.<name>.install` | Required strict `{source: "official"}` selector. Hosted chooses the official installer policy: OpenClaw follows its default release, while fresh Hermes installs use the verified v2026.9.24 (0.21.5) upstream commit. |
+| `runtimes.<name>.install` | Required strict `{source: "official"}` selector. Hosted cannot select a version, channel, commit, digest, or custom installer. Both supported runtimes use the official installer's default latest release; fresh Hermes installs apply the CLI's temporary pin below. |
 | `runtimes.<name>.run` | Exact official gateway argv; only OpenClaw may carry its single gateway-token secret reference. Hosted rejects custom commands, cwd, env, and PATH projection. |
 | `runtimes.<name>.providerMode` | Required runtime-provider ownership discriminator: `configured` or `unmanaged` |
 | `runtimes.<name>.provider_ids` | Core Hosted configured mode requires one primary provider and permits one additional capability provider; unmanaged mode requires an exact empty list. The capability provider does not participate in chat fallback or ordering. |
@@ -834,7 +834,10 @@ behavior because an installed executable is not reinstalled during convergence.
 Fresh Hermes installs use the verified upstream commit
 [`f97608f`](https://github.com/NousResearch/hermes-agent/commit/f97608f178d1ffeca59860195ab7da295f7c8e5f)
 (v2026.9.24 / 0.21.5), with the installer script and checkout pinned together.
-The pin remains until the documented upstream regressions are fixed and a fresh
+The CLI applies the pin only when it runs the installer for an absent
+executable. It is not part of the manifest install policy, which feeds the
+gateway program revision, so introducing or removing the pin does not restart
+running Hermes Agents. The pin remains until the documented upstream regressions are fixed and a fresh
 install is verified again. The
 [Hermes Upstream Contract](../.github/workflows/hermes-upstream-contract.yml)
 workflow installs Hermes with that same policy every three hours as UID 10001
