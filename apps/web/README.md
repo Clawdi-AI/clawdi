@@ -14,6 +14,47 @@ bun run --cwd apps/web dev
 
 Open http://localhost:3000.
 
+## Mobile app links
+
+Set these public signing identities in the Web server's deployment environment
+(not `VITE_*` variables):
+
+- `CLAWDI_APPLE_TEAM_ID`: the 10-character Apple Developer Team ID used as the
+  application identifier prefix for `ai.clawdi.app`.
+- `CLAWDI_ANDROID_CERT_SHA256`: comma-separated, colon-delimited SHA-256
+  certificate fingerprints, including the **Play App Signing** certificate and
+  the upload certificate for `ai.clawdi.app`.
+
+`/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json`
+serve public JSON without authentication or redirects. Each returns 404 when
+its signing identity is missing or malformed. Only these two exact paths bypass
+Clerk; other `/.well-known/` paths retain their existing middleware behavior.
+Successful responses use the same public cache policy as agent files; 404s use
+`no-store`. AASA paths come directly from
+[`@clawdi/shared/linking`](../../packages/shared/src/linking.js); `webcredentials`
+uses the same Apple application identifier. Password autofill additionally
+requires the app's `webcredentials` associated-domain entitlement. See
+[Apple's association format](https://developer.apple.com/documentation/xcode/supporting-associated-domains)
+and [Android's certificate guidance](https://developer.android.com/training/app-links/configure-assetlinks).
+
+Link roots match their exact path and slash-delimited descendants. AASA excludes
+public agent files before matching those roots. Android 15+ with Google services
+uses the same ordered exclusions through Dynamic App Links. Older Android versions
+still match skill files under `/skills/` in the manifest; mobile intake opens them with
+`expo-web-browser` in a Custom Tab pinned to a browser package to avoid recapture.
+
+With the local Web server running and the relevant variable set, verify:
+
+```bash
+curl -i http://localhost:3000/.well-known/apple-app-site-association
+curl -i http://localhost:3000/.well-known/assetlinks.json
+```
+
+Done: configured endpoints return 200 with `Content-Type: application/json`
+and no `Location` header. Native builds must also configure the same link host
+through `EXPO_PUBLIC_CLAWDI_LINK_HOSTS` (see
+[`../../docs/mobile-development.md`](../../docs/mobile-development.md)).
+
 ## Verification
 
 Use the canonical web verification set in
