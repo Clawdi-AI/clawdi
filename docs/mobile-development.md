@@ -131,8 +131,10 @@ from `@clerk/expo/native` (clerk-ios / clerk-android), matching Web's Clerk
   account" (`src/hosted/account/delete-account-page.tsx`) replaces it: it shows
   the App Store / Google Play billing notice, confirms with the system alert,
   calls Hosted `DELETE /v1/me` once (no automatic retry) and signs out. When
-  Clerk rejects the sign-out of the deleted user, it falls back to Clerk's
-  `handleUnauthenticated()`, which refetches the Client and clears the session.
+  Clerk rejects the sign-out of the deleted user (clerk-js then leaves the
+  session in its transitive `undefined` state), it clears the session locally
+  with Clerk's documented `setActive({ session: null })` and waits for the
+  change through `addListener` (10 s bound).
   Disable self-delete before store auto-renewing subscriptions ship.
   On Android, clerk-android 1.1.10/1.1.11 crashes right after a successful
   built-in delete (`NavDisplay backstack cannot be empty`); the fix

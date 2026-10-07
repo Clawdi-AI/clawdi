@@ -20,59 +20,92 @@ describe("shouldShowAccountDeletionPage", () => {
 	});
 });
 
-/** Models clerk-js: signOut rejects for a deleted user; handleUnauthenticated refetches the Client. */
-function deletedUserClerk(sessions: string[], active: string) {
-	const state = { sessions, active: active as string | null };
+/**
+ * Models clerk-js behind the React SDK for a deleted user: `signOut` enters the
+ * transitive `undefined` session state, then rejects when the Frontend API refuses the
+ * removal. `setActive({ session: null })` resolves after Clerk emits the change.
+ */
+function deletedUserClerk(active: string | null, { emitAfterMs = 5 } = {}) {
+	const state: { session: string | null | undefined } = { session: active };
+	const listeners = new Set<(resources: { session?: { id: string } | null }) => void>();
+	const current = (): { id: string } | null | undefined =>
+		typeof state.session === "string" ? { id: state.session } : state.session;
+	const emit = () => {
+		for (const listener of listeners) listener({ session: current() });
+	};
 	const clerk = {
 		get session() {
-			return state.active ? { id: state.active } : null;
+			return current();
 		},
-		signOut: mock(async (): Promise<unknown> => {
-			throw new Error("resource_not_found");
+		signOut: mock(
+			async (_options?: { sessionId?: string; redirectUrl?: string }): Promise<unknown> => {
+				state.session = undefined;
+				emit();
+				throw new Error("resource_not_found");
+			},
+		),
+		setActive: mock(
+			(_params: { session: null }): Promise<unknown> =>
+				new Promise((resolve) =>
+					setTimeout(() => {
+						state.session = null;
+						emit();
+						resolve(undefined);
+					}, emitAfterMs),
+				),
+		),
+		addListener: mock((listener: (resources: { session?: { id: string } | null }) => void) => {
+			listeners.add(listener);
+			listener({ session: current() });
+			return () => {
+				listeners.delete(listener);
+			};
 		}),
-		handleUnauthenticated: mock(async () => {
-			state.sessions = state.sessions.filter((id) => id !== active);
-			state.active = state.sessions[0] ?? null;
-		}),
-	} satisfies DeletedAccountClerk;
+		listenerCount: () => listeners.size,
+	} satisfies DeletedAccountClerk & { listenerCount: () => number };
 	return clerk;
 }
 
 describe("endDeletedAccountSession", () => {
 	test("uses Clerk's sign-out when it succeeds", async () => {
-		const clerk = deletedUserClerk(["sess_a"], "sess_a");
+		const clerk = deletedUserClerk("sess_a");
 		clerk.signOut.mockImplementation(async () => undefined);
 		expect(await endDeletedAccountSession(clerk, { redirectUrl: "/sign-in" })).toBe("signed-out");
 		expect(clerk.signOut).toHaveBeenCalledWith({ sessionId: undefined, redirectUrl: "/sign-in" });
-		expect(clerk.handleUnauthenticated).not.toHaveBeenCalled();
+		expect(clerk.setActive).not.toHaveBeenCalled();
 	});
 
-	test("single session: clears local state when sign-out is rejected", async () => {
-		const clerk = deletedUserClerk(["sess_a"], "sess_a");
-		expect(await endDeletedAccountSession(clerk)).toBe("cleared");
-		expect(clerk.handleUnauthenticated).toHaveBeenCalledTimes(1);
+	test("single session: clears the transitive session after sign-out is rejected", async () => {
+		const clerk = deletedUserClerk("sess_a", { emitAfterMs: 20 });
+		expect(await endDeletedAccountSession(clerk)).toBe("signed-out");
+		expect(clerk.setActive).toHaveBeenCalledWith({ session: null });
 		expect(clerk.session).toBeNull();
+		expect(clerk.listenerCount()).toBe(0);
 	});
 
-	test("multi-session: clears only the deleted session when sign-out is rejected", async () => {
-		const clerk = deletedUserClerk(["sess_a", "sess_b"], "sess_a");
-		expect(await endDeletedAccountSession(clerk, { sessionId: "sess_a" })).toBe("cleared");
+	test("multi-session: targets the deleted session and clears it", async () => {
+		const clerk = deletedUserClerk("sess_a");
+		expect(await endDeletedAccountSession(clerk, { sessionId: "sess_a" })).toBe("signed-out");
 		expect(clerk.signOut).toHaveBeenCalledWith({ sessionId: "sess_a", redirectUrl: undefined });
-		expect(clerk.session?.id).toBe("sess_b");
+		expect(clerk.session).toBeNull();
+		expect(clerk.listenerCount()).toBe(0);
 	});
 
-	test("reports failure when Clerk cannot be reached", async () => {
-		const clerk = deletedUserClerk(["sess_a"], "sess_a");
-		clerk.handleUnauthenticated.mockImplementation(async () => {
-			throw new Error("network_error");
-		});
-		expect(await endDeletedAccountSession(clerk, { sessionId: "sess_a" })).toBe("failed");
+	test("does not mistake the transitive undefined session for a cleared one", async () => {
+		const clerk = deletedUserClerk("sess_a");
+		clerk.setActive.mockImplementation(() => new Promise(() => {}));
+		expect(await endDeletedAccountSession(clerk, { timeoutMs: 30 })).toBe("failed");
+		expect(clerk.session).toBeUndefined();
+		expect(clerk.listenerCount()).toBe(0);
 	});
 
-	test("reports failure when the deleted session is still active", async () => {
-		const clerk = deletedUserClerk(["sess_a"], "sess_a");
-		clerk.handleUnauthenticated.mockImplementation(async () => undefined);
-		expect(await endDeletedAccountSession(clerk)).toBe("failed");
+	test("fails fast when setActive rejects", async () => {
+		const clerk = deletedUserClerk("sess_a");
+		clerk.setActive.mockImplementation(() => Promise.reject(new Error("not loaded")));
+		const started = Date.now();
+		expect(await endDeletedAccountSession(clerk, { timeoutMs: 5_000 })).toBe("failed");
+		expect(Date.now() - started).toBeLessThan(1_000);
+		expect(clerk.listenerCount()).toBe(0);
 	});
 });
 
@@ -86,10 +119,10 @@ describe("deleteAccountThenSignOut", () => {
 			},
 			endSession: async () => {
 				calls.push("endSession");
-				return "cleared";
+				return "signed-out";
 			},
 		});
-		expect(result).toEqual({ outcome: "deleted", session: "cleared" });
+		expect(result).toEqual({ outcome: "deleted", session: "signed-out" });
 		expect(calls).toEqual(["delete", "endSession"]);
 	});
 

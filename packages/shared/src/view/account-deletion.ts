@@ -44,40 +44,65 @@ export function shouldShowAccountDeletionPage(user: object | null | undefined): 
 export type DeletedAccountClerk = {
 	readonly session?: { id: string } | null;
 	signOut: (options?: { sessionId?: string; redirectUrl?: string }) => Promise<unknown>;
-	handleUnauthenticated: () => Promise<unknown>;
+	setActive: (params: { session: null }) => Promise<unknown>;
+	addListener: (listener: (resources: { session?: { id: string } | null }) => void) => () => void;
 };
 
-/**
- * "signed-out": Clerk's sign-out succeeded. "cleared": sign-out was rejected (the user
- * no longer exists) and Clerk refreshed the Client and Session itself. "failed": neither
- * reached Clerk, e.g. offline; retrying is safe.
- */
-export type DeletedAccountSessionEnd = "signed-out" | "cleared" | "failed";
+/** "failed": Clerk did not clear the session in time; retrying is safe. */
+export type DeletedAccountSessionEnd = "signed-out" | "failed";
+
+/** How long the fallback waits for Clerk to drop the deleted session. */
+export const DELETED_SESSION_CLEAR_TIMEOUT_MS = 10_000;
 
 /**
- * Ends the local session of an account the hosted service just deleted. Clerk's
- * `signOut()` throws on any non-network Frontend API error, in both the single-session
- * (`client.removeSessions()`) and multi-session (`session.remove()`) paths, and leaves
- * local state untouched. The fallback is Clerk's documented `handleUnauthenticated()`,
- * which refetches the Client and clears sessions the server no longer has.
+ * Ends the local session of an account the hosted service just deleted.
+ *
+ * clerk-js `signOut()` first puts the session into its transitive `undefined` state,
+ * then removes it through the Frontend API (`client.removeSessions()` or
+ * `session.remove()`). On any non-network error it rethrows and leaves the session
+ * `undefined`, which also turns `handleUnauthenticated()` into a no-op. The fallback is
+ * the documented `setActive({ session: null })`, which clears the session locally; the
+ * server already ended it with the user. Completion is observed through `addListener`,
+ * where `undefined` still means "in transition".
  */
 export async function endDeletedAccountSession(
 	clerk: DeletedAccountClerk,
-	{ sessionId, redirectUrl }: { sessionId?: string; redirectUrl?: string } = {},
+	{
+		sessionId,
+		redirectUrl,
+		timeoutMs = DELETED_SESSION_CLEAR_TIMEOUT_MS,
+	}: { sessionId?: string; redirectUrl?: string; timeoutMs?: number } = {},
 ): Promise<DeletedAccountSessionEnd> {
+	const deletedSessionId = sessionId ?? clerk.session?.id;
 	try {
 		await clerk.signOut({ sessionId, redirectUrl });
 		return "signed-out";
 	} catch {
 		// The deleted user's sessions cannot be removed through the Frontend API.
 	}
-	try {
-		await clerk.handleUnauthenticated();
-	} catch {
-		return "failed";
-	}
-	const remaining = clerk.session?.id;
-	return (sessionId ? remaining !== sessionId : !remaining) ? "cleared" : "failed";
+	if (!deletedSessionId) return "signed-out";
+	const cleared = await new Promise<boolean>((resolve) => {
+		let settled = false;
+		let unsubscribe: (() => void) | undefined;
+		const finish = (result: boolean) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			unsubscribe?.();
+			resolve(result);
+		};
+		const timer = setTimeout(() => finish(false), timeoutMs);
+		try {
+			unsubscribe = clerk.addListener(({ session }) => {
+				if (session !== undefined && session?.id !== deletedSessionId) finish(true);
+			});
+			if (settled) unsubscribe();
+			else clerk.setActive({ session: null }).catch(() => finish(false));
+		} catch {
+			finish(false);
+		}
+	});
+	return cleared ? "signed-out" : "failed";
 }
 
 export type AccountDeletionResult =

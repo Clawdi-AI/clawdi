@@ -89,12 +89,13 @@ function DeleteAccountPage() {
 					return clerk.session;
 				},
 				signOut: (options) => signOut({ redirectUrl: options?.redirectUrl }),
-				handleUnauthenticated: () => clerk.handleUnauthenticated(),
+				setActive: (params) => clerk.setActive(params),
+				addListener: (listener) => clerk.addListener(listener),
 			},
 			{ redirectUrl: "/sign-in" },
 		);
-		// Clerk's sign-out navigates itself; otherwise reload into the signed-out state.
-		if (ended !== "signed-out") window.location.assign("/sign-in");
+		// Always reload into the signed-out state, whichever path ended the session.
+		window.location.assign("/sign-in");
 		return ended;
 	};
 	const leave = async () => {
