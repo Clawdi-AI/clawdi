@@ -75,11 +75,20 @@ test("wallet top-up completion refreshes an automatically paid open invoice", as
 	await expect(pastDueAlert).toContainText(
 		"Stripe will keep the invoice open while funds are short",
 	);
-	await expect(pastDueAlert.getByRole("button", { name: "Top up" })).toBeVisible();
+	// The Compute card owns the recovery action, so the banner drops its own.
+	await expect(pastDueAlert.getByRole("button")).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Fix payment" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: /Retry payment/ })).toHaveCount(0);
 
-	await pastDueAlert.getByRole("button", { name: "Top up" }).click();
+	const computeCard = page
+		.getByRole("article")
+		.filter({ has: page.getByRole("link", { name: "Compute", exact: true }) });
+	// Let hydration settle before the settings dialog's focus isolation mutates the page.
+	await page.waitForLoadState("networkidle");
+	await computeCard.getByRole("button", { name: "Top up" }).click();
+	const settingsDialog = page.getByTestId("settings-dialog");
+	await expect(settingsDialog).toBeVisible();
+	await settingsDialog.getByRole("button", { name: "Top up", exact: true }).click();
 	const topUpDialog = page.getByRole("dialog").filter({ hasText: "Top up wallet" });
 	await expect(topUpDialog).toBeVisible();
 	await topUpDialog.getByRole("button", { name: "Continue with $25.00" }).click();
@@ -87,8 +96,7 @@ test("wallet top-up completion refreshes an automatically paid open invoice", as
 	await expect.poll(() => topUpRequests.length).toBe(1);
 	await expect(page.getByText("Payment accepted", { exact: true })).toBeVisible();
 	await expect(pastDueAlert).toHaveCount(0);
-	await page.getByRole("link", { name: "Settings", exact: true }).click();
-	await expect(page.getByText("Wallet", { exact: true })).toBeVisible();
+	await expect(settingsDialog.getByRole("heading", { name: "Wallet", level: 2 })).toBeVisible();
 	expect(JSON.parse(topUpRequests[0] ?? "{}")).toEqual({
 		amount_cents: 2_500,
 	});
