@@ -40,23 +40,3 @@ export function resolveHostedAuthIdentityAction({
 		nextIdentifiedUserId: null,
 	};
 }
-
-export type HostedClerkUser = {
-	fullName: string | null;
-	primaryEmailAddress: {
-		emailAddress: string;
-	} | null;
-};
-
-export function buildHostedPersonProperties({
-	isSignedIn,
-	userId,
-	user,
-}: {
-	isSignedIn: boolean;
-	userId: string | null | undefined;
-	user: HostedClerkUser | null;
-}): { clerk_id: string } | null {
-	if (!isSignedIn || !userId || user === null) return null;
-	return { clerk_id: userId };
-}

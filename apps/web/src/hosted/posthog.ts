@@ -9,6 +9,7 @@ const SAFE_PROPERTY_KEYS = new Set([
 	"$user_id",
 	"$session_id",
 	"$window_id",
+	"$host",
 	"$lib",
 	"$lib_version",
 	"$insert_id",
@@ -21,7 +22,6 @@ const SAFE_PROPERTY_KEYS = new Set([
 	"utm_medium",
 	"utm_campaign",
 	"referrer",
-	"step",
 ]);
 
 export function safeEventProperties(
@@ -37,7 +37,6 @@ export function safeEventProperties(
 	const bounded: Record<string, readonly string[]> = {
 		feature: PRODUCT_FEATURES,
 		source: ["web", "desktop"],
-		step: ["connected", "deployed"],
 		acquisition_source: ["direct", "other", ...ACQUISITION_SOURCES],
 		utm_source: ["direct", "other", ...ACQUISITION_SOURCES],
 		referrer: ["direct", "other", ...ACQUISITION_SOURCES],
@@ -55,6 +54,17 @@ export function safeEventProperties(
 	}
 	if (safe.schema_version !== 1) delete safe.schema_version;
 	if (eventName === "$pageview") safe.feature = featureForPath(pathname);
+	// Keep only the hostname. URLs, credentials, ports, query strings and paths
+	// must never travel in the SDK's host property.
+	if ("$host" in safe) {
+		const host = safe.$host;
+		try {
+			if (typeof host !== "string" || new URL(`https://${host}`).hostname !== host)
+				delete safe.$host;
+		} catch {
+			delete safe.$host;
+		}
+	}
 	const person = properties.$set;
 	if (
 		person &&
@@ -73,10 +83,6 @@ type PostHogClient = typeof posthog & { __loaded?: boolean };
 type HostedPostHogOptions = {
 	isHosted?: boolean;
 	token?: string;
-};
-
-export type HostedUserPersonProperties = {
-	clerk_id: string;
 };
 
 export function normalizePostHogToken(token: string | undefined): string | null {
@@ -125,9 +131,19 @@ export function initHostedPostHog({
 			)
 				return null;
 			if (!event) return null;
+			const pathname = window.location.pathname;
+			const feature = featureForPath(pathname);
+			const properties = {
+				...event.properties,
+				source: window.clawdiDesktop ? "desktop" : "web",
+				schema_version: 1,
+				...(event.event === "$pageview" && (feature === "sign_up" || feature === "sign_in")
+					? acquisitionProperties(window.location.search, document.referrer)
+					: {}),
+			};
 			return {
 				...event,
-				properties: safeEventProperties(event.properties, event.event, window.location.pathname),
+				properties: safeEventProperties(properties, event.event, pathname),
 			};
 		},
 	});
@@ -162,17 +178,11 @@ export function resetHostedPostHog({
 	return true;
 }
 
-export function enrichHostedUser(
-	personProperties: HostedUserPersonProperties,
-	{ isHosted = HOSTED_BUILD_FLAG, token = DEFAULT_POSTHOG_TOKEN }: HostedPostHogOptions = {},
-): boolean {
-	if (!isHostedPostHogEnabled({ isHosted, token })) return false;
-	posthog.setPersonProperties({ clerk_id: personProperties.clerk_id });
-	return true;
-}
-
 const PRODUCT_FEATURES = [
 	"overview",
+	"sign_up",
+	"sign_in",
+	"deploy",
 	"agents",
 	"sessions",
 	"skills",
@@ -204,10 +214,7 @@ export type AcquisitionProperties = {
 	utm_campaign: "none" | "launch" | "onboarding" | "newsletter" | "other";
 	referrer: AcquisitionSource;
 };
-export type ProductEvent =
-	| { name: "product_viewed"; properties: { feature: ProductFeature } }
-	| { name: "signup_viewed" | "signin_viewed"; properties: AcquisitionProperties }
-	| { name: "onboarding_viewed"; properties: { step: "connected" | "deployed" } };
+export type ProductEvent = { name: "agent_setup_opened"; properties: Record<string, never> };
 
 const ACQUISITION_SOURCES: readonly AcquisitionSource[] = [
 	"google",
@@ -256,6 +263,9 @@ export function acquisitionProperties(search: string, referrer: string): Acquisi
 export function featureForPath(pathname: string): ProductFeature | null {
 	if (pathname === "/vault-request" || pathname.startsWith("/share/") || pathname.startsWith("/s/"))
 		return null;
+	if (pathname === "/sign-up" || pathname.startsWith("/sign-up/")) return "sign_up";
+	if (pathname === "/sign-in" || pathname.startsWith("/sign-in/")) return "sign_in";
+	if (pathname === "/deploy") return "deploy";
 	if (pathname === "/" || pathname === "/dashboard") return "overview";
 	const segments = pathname.split("/");
 	for (const segment of segments.slice(1).reverse()) {

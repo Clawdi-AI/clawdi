@@ -24,7 +24,7 @@ export function AddAgentDialog({ open, onClose }: { open: boolean; onClose: () =
 			.then((sdk) => {
 				if (!cancelled)
 					sdk.trackEvent(
-						{ name: "onboarding_viewed", properties: { step: "connected" } },
+						{ name: "agent_setup_opened", properties: {} },
 						window.clawdiDesktop ? "desktop" : "web",
 					);
 			})
