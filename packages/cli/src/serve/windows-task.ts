@@ -12,6 +12,33 @@ export function windowsTaskLogPath(root: string): string {
 	return join(root, "serve", "windows-task", "daemon.log");
 }
 
+export function renderWindowsTaskLauncher(
+	invocation: CurrentCliInvocation,
+	env: readonly { key: string; value: string }[],
+	log: string,
+): string {
+	if (env.some(({ key }) => key === "CLAWDI_AUTH_TOKEN")) {
+		throw new Error("Windows task configuration cannot contain CLAWDI_AUTH_TOKEN.");
+	}
+	return (
+		"\uFEFF" +
+		[
+			// Windows PowerShell represents redirected native stderr as ErrorRecords.
+			// Daemon diagnostic output must not abort the supervising action.
+			"$ErrorActionPreference = 'Continue'",
+			"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+			"$OutputEncoding = [Console]::OutputEncoding",
+			...env.map(({ key, value }) => `$env:${key} = ${powershellLiteral(value)}`),
+			// Pin UTF-16LE rather than relying on PowerShell's redirection defaults.
+			`& ${[invocation.command, ...invocation.args].map(powershellLiteral).join(" ")} 2>&1 | Out-File -LiteralPath ${powershellLiteral(log)} -Encoding unicode -Append -ErrorAction Stop`,
+			// Exit 2 requires user intervention. Other spontaneous exits must restart
+			// just as launchd KeepAlive/systemd Restart=always do.
+			"if ($LASTEXITCODE -eq 2) { exit 0 }; exit 1",
+			"",
+		].join("\n")
+	);
+}
+
 function powershell(script: string): string {
 	return execFileSync(
 		"powershell.exe",
@@ -102,25 +129,7 @@ $directoryInfo.SetAccessControl($acl)
 	const launcher = join(directory, "run.ps1");
 	const log = windowsTaskLogPath(root);
 	// Windows PowerShell 5.1 requires a BOM to read non-ASCII paths as UTF-8.
-	writeFileSync(
-		launcher,
-		"\uFEFF" +
-			[
-				// Windows PowerShell represents redirected native stderr as ErrorRecords.
-				// Daemon diagnostic output must not abort the supervising action.
-				"$ErrorActionPreference = 'Continue'",
-				"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
-				"$OutputEncoding = [Console]::OutputEncoding",
-				...env.map(({ key, value }) => `$env:${key} = ${powershellLiteral(value)}`),
-				// Pin UTF-16LE rather than relying on PowerShell's redirection defaults.
-				`& ${[invocation.command, ...invocation.args].map(powershellLiteral).join(" ")} 2>&1 | Out-File -LiteralPath ${powershellLiteral(log)} -Encoding unicode -Append -ErrorAction Stop`,
-				// Exit 2 requires user intervention. Other spontaneous exits must restart
-				// just as launchd KeepAlive/systemd Restart=always do.
-				"if ($LASTEXITCODE -eq 2) { exit 0 }; exit 1",
-				"",
-			].join("\n"),
-		{ mode: 0o600 },
-	);
+	writeFileSync(launcher, renderWindowsTaskLauncher(invocation, env, log), { mode: 0o600 });
 	powershell(`${connect}
 $definition = $service.NewTask(0)
 $definition.RegistrationInfo.Description = 'Clawdi per-user background Sync'
