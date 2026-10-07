@@ -205,18 +205,23 @@ qualification tested CLI source `f2122dc89`, based on main `109a66954`. The firs
 rebase qualification source was `fca2749a4` on main `f6af1f7d3`, including Windows
 native-reinstall changes. Its runtime/adapters, pool regression tests, test
 runners and locked dependencies match the tested source byte-for-byte.
-The final branch base is main `ae5b38a42`; final qualification source is
+The mobile-refresh branch base was main `ae5b38a42`; its qualification source was
 `0ae2166fc`. This later refresh adds mobile release/crash reporting and root
 catalog/lockfile changes. Runtime/adapters, pool regression tests, test runners
 and CLI/shared package declarations remain identical. Original native runs
 remain bound to their original commits; source equivalence is not a second
 native run, and the root package/lockfile equivalence applies to the first rebase.
+The latest rebase onto main `10b68709c` produced qualification source `aa4655ed7`.
+It adds Windows documentation and mobile/web app-link handling. CLI source/tests,
+runtime/adapters, runners, infrastructure, CLI/root package declarations and
+locked dependencies match the successful mobile-refresh qualification. Shared
+adds its app-link export; this rebase does not represent another native run.
 
 The first rebase full CLI/typecheck passed all 205 files, `ci` exited 0, and `cli-lint`
 passed nine task or upstream-touched files without modifications. Paired Hosted
 source `780b0b8d7` also passed 467 pool unit and 102 PostgreSQL tests with
 Ruff/format/types. The other full suites and native results below were not
-repeated after the later mobile refresh; Git trees are recorded in the paired
+repeated after the later mobile/app-link refreshes; Git trees are recorded in the paired
 Hosted qualification record.
 
 The final mobile-refresh full CLI/typecheck rerun passed all 205 files; `ci`
@@ -224,6 +229,12 @@ exited 0 and nine files passed lint without modifications. The first full
 attempt exceeded an unchanged daemon-RPC fixture's 20-second deadline. Both
 unchanged cases passed focused Docker verification, then the full rerun passed
 without timeout or product changes.
+
+The latest app-link rebase passed full `ci` with exit 0. Its first attempt
+exceeded an unchanged CLI direct-help smoke test's 30-second deadline. All 21
+unchanged smoke cases passed focused Docker verification in 8.08 s before the
+successful full CI rerun. No timeout or product changes were made; the timeout
+root causes remain unconfirmed.
 
 Paired Hosted follow-up `74d05334f` corrected npm key ID compatibility: IDs select
 independently pinned P-256 keys and are not SPKI DER fingerprints. A public
@@ -240,7 +251,7 @@ repeated for this signature-only branch.
 | Full CLI typecheck/tests | 205 files, exit 0 |
 | Focused verified-byte and credential-GC regressions | 36 tests, 317 assertions |
 | `runtime-systemd` | 25 tests, including real service and child-OOM behavior |
-| `ci` | Exit 0, including workspace types, mobile, web build, shared and backend smoke |
+| `ci` | Exit 0 on `aa4655ed7`, including workspace types, mobile, web build, shared and backend smoke |
 | Changed-file `cli-lint` | 9 task or upstream-touched files on the mobile refresh, no fixes |
 | `hermes-upstream-contract` | 14 tests on upstream commit `65bc6727b43c05dff410608c78fa055ec194eee0` (`0.21.5+8490.g65bc672`) |
 
