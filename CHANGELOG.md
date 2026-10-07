@@ -54,6 +54,9 @@ only renames unmerged PR series and never-emitted definitions. See
 - Warm runtime preparation now uses the ordinary exact npm CLI selector and
   official runtime installers, so pool fills follow the same install path as
   fresh deployments.
+- Fresh Hermes installs use the verified upstream v2026.9.24 (0.21.5) commit
+  until the documented upstream regressions are fixed and a fresh install is
+  verified again. Existing tenants keep their normal self-update behavior.
 
 
 ### CLI 0.15.9

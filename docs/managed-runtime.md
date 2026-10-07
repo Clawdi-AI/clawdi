@@ -806,7 +806,7 @@ Normalization maps hosted fields into the internal shape:
 | `clawdiCli.packageSpec` | Required exact `clawdi@<semver>` without build metadata, at most 200 characters; remote Hosted manifests never select an npm dist-tag or local path |
 | `clawdiCli.registry` | Required literal `https://registry.npmjs.org`; Hosted does not use npm registry defaults or overrides |
 | `runtimes.<name>.enabled` | Run config and systemd unit state |
-| `runtimes.<name>.install` | Required strict `{source: "official"}` selector; Hosted cannot select a version, channel, commit, digest, or custom installer. Both supported runtimes use the official installer's default latest release. |
+| `runtimes.<name>.install` | Required strict `{source: "official"}` selector. Hosted chooses the official installer policy: OpenClaw follows its default release, while fresh Hermes installs use the verified v2026.9.24 (0.21.5) upstream commit. |
 | `runtimes.<name>.run` | Exact official gateway argv; only OpenClaw may carry its single gateway-token secret reference. Hosted rejects custom commands, cwd, env, and PATH projection. |
 | `runtimes.<name>.providerMode` | Required runtime-provider ownership discriminator: `configured` or `unmanaged` |
 | `runtimes.<name>.provider_ids` | Core Hosted configured mode requires one primary provider and permits one additional capability provider; unmanaged mode requires an exact empty list. The capability provider does not participate in chat fallback or ordering. |
@@ -826,13 +826,18 @@ Normalization maps hosted fields into the internal shape:
 
 The outer Hosted selector remains unchanged for reader-first CLI upgrades.
 Hosted v2 normalizes both OpenClaw and Hermes to their official installers
-without a version or channel argument. Convergence runs the installer when the
+using the shared CLI installer policy. Convergence runs the installer when the
 runtime executable is absent; it does not resolve, compare, or rewrite upstream
-versions independently.
+versions independently. Existing tenants keep their runtime's own self-update
+behavior because an installed executable is not reinstalled during convergence.
 
-Because new Hermes Agents always receive upstream `main`, the
+Fresh Hermes installs use the verified upstream commit
+[`f97608f`](https://github.com/NousResearch/hermes-agent/commit/f97608f178d1ffeca59860195ab7da295f7c8e5f)
+(v2026.9.24 / 0.21.5), with the installer script and checkout pinned together.
+The pin remains until the documented upstream regressions are fixed and a fresh
+install is verified again. The
 [Hermes Upstream Contract](../.github/workflows/hermes-upstream-contract.yml)
-workflow installs the current official Hermes every three hours as UID 10001
+workflow still installs the current official Hermes every three hours as UID 10001
 in a clean Ubuntu container and drives the CLI's own Hermes adapter code
 against it: interpreter resolution, command-line surfaces, config, Skill,
 credential-pool, Codex OAuth, and Agent Plugin helpers, the dashboard cold
