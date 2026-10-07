@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import {
 	ApiClientError,
 	type HostedStoreClient,
+	type StoreComputeReconcileResponse,
 	StoreErrorCode,
 	type StorePurchaseAttempt,
 	type StorePurchaseAttemptRequest,
@@ -96,6 +97,7 @@ function fixture(configOverrides: Partial<MobileRuntimeConfig> = {}, identityTim
 	};
 	const bootstrap = mock(async () => ({
 		purchases_enabled: true,
+		compute_subscriptions_enabled: false,
 		app_user_id: appUserId,
 		catalogue_revision: 1,
 		products: [],
@@ -118,12 +120,20 @@ function fixture(configOverrides: Partial<MobileRuntimeConfig> = {}, identityTim
 	);
 	const getPurchaseAttempt = mock(async () => attempt);
 	const listPurchaseAttempts = mock(async () => [] as StorePurchaseAttempt[]);
+	const reconcileComputeSubscriptions = mock(
+		async (): Promise<StoreComputeReconcileResponse> => ({
+			code: "reconciliation_pending",
+			compute_slot: null,
+			results: [],
+		}),
+	);
 	const client: HostedStoreClient = {
 		bootstrap,
 		createPurchaseAttempt,
 		confirmPurchaseAttempt,
 		getPurchaseAttempt,
 		listPurchaseAttempts,
+		reconcileComputeSubscriptions,
 	};
 	let time = 0;
 	const delays: number[] = [];
@@ -199,6 +209,7 @@ describe("store account identity", () => {
 		const f = fixture();
 		f.client.bootstrap = async () => ({
 			purchases_enabled: false,
+			compute_subscriptions_enabled: false,
 			app_user_id: null,
 			reason: "store_purchases_disabled",
 		});
@@ -265,6 +276,7 @@ describe("store account identity", () => {
 				...f.client,
 				bootstrap: async () => ({
 					purchases_enabled: true,
+					compute_subscriptions_enabled: false,
 					app_user_id: otherAppUserId,
 					catalogue_revision: 1,
 				}),
@@ -423,6 +435,7 @@ describe("durable store attempts", () => {
 		expect(paywall).not.toHaveBeenCalled();
 		f.client.bootstrap = async () => ({
 			purchases_enabled: true,
+			compute_subscriptions_enabled: false,
 			app_user_id: appUserId,
 			catalogue_revision: 2,
 		});

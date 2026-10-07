@@ -73,7 +73,8 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 	const fallback = deployment.commercial_display?.latest_funding_fact;
 	if (deployment.commercial_display?.recovery_action !== "start_new") return null;
 	if (fallback?.fact_kind !== "funding_revoked") return null;
-	if (!fallback.reason || !fallback.funding_source) return null;
+	if (!fallback.reason || !fallback.funding_source || fallback.funding_source === "store")
+		return null;
 	const recoveryPlanSlug = recoveryPlanSlugFor(deployment);
 	if (!recoveryPlanSlug) return null;
 
@@ -151,13 +152,14 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		return fallbackState;
 	}
 	if (!subscription) return null;
+	const fundingSource = subscription.funding_source;
+	if (fundingSource !== "stripe" && fundingSource !== "wallet") return null;
 	const recoveryTarget = computeSubscriptionRecoveryTarget(subscription);
 
 	const recoveryPlanSlug = recoveryPlanSlugFor(deployment, subscription);
 	const computeName = recoveryPlanSlug
 		? `your ${computeTierLabel(recoveryPlanSlug)} plan`
 		: "your paid plan";
-	const fundingSource = subscription.funding_source ?? "stripe";
 	const common = {
 		fundingSource,
 		fallbackOccurredAt: null,

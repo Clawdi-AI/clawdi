@@ -167,6 +167,9 @@ describe("compute funding", () => {
 		expect(
 			computeFundingSource(COMPUTE_BASIC_SLUG, { ...subscription(), funding_source: "wallet" }),
 		).toBe("wallet");
+		expect(
+			computeFundingSource(COMPUTE_BASIC_SLUG, { ...subscription(), funding_source: "store" }),
+		).toBe("store");
 	});
 
 	test("reads additive wallet subscription metadata only when valid", () => {

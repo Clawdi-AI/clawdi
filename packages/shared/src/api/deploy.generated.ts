@@ -488,6 +488,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/store/compute-subscriptions/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reconcile Store Compute Subscriptions */
+        post: operations["reconcile_store_compute_subscriptions_v2_store_compute_subscriptions_reconcile_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/subscription/checkout": {
         parameters: {
             query?: never;
@@ -1734,6 +1751,12 @@ export interface components {
             /** Products */
             products?: components["schemas"]["StoreCatalogueProductResponse"][] | null;
             wallet?: components["schemas"]["StoreWalletResponse"] | null;
+            /**
+             * Compute Subscriptions Enabled
+             * @default false
+             */
+            compute_subscriptions_enabled: boolean;
+            compute_slot?: components["schemas"]["StoreComputeSlot"] | null;
         };
         /** StoreCatalogueProductResponse */
         StoreCatalogueProductResponse: {
@@ -1746,6 +1769,59 @@ export interface components {
              * @constant
              */
             effect: "wallet_credit";
+        };
+        /** StoreComputeReconcileResponse */
+        StoreComputeReconcileResponse: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "reconciled" | "reconciliation_pending" | "owned_by_other_account";
+            compute_slot?: components["schemas"]["StoreComputeSlot"] | null;
+            /** Results */
+            results?: components["schemas"]["StoreComputeSubscriptionReconcileResult"][];
+        };
+        /** StoreComputeSlot */
+        StoreComputeSlot: {
+            /** Available */
+            available: boolean;
+            /** Contract Id */
+            contract_id?: string | null;
+            /** Compute Subscription Id */
+            compute_subscription_id?: number | null;
+            /** Agent Id */
+            agent_id?: string | null;
+            store_management?: components["schemas"]["StoreManagement"] | null;
+        };
+        /** StoreComputeSubscriptionReconcileResult */
+        StoreComputeSubscriptionReconcileResult: {
+            /** Subscription Id */
+            subscription_id?: string | null;
+            /** Contract Id */
+            contract_id?: string | null;
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "reconciled" | "reconciliation_pending" | "owned_by_other_account";
+        };
+        /** StoreManagement */
+        StoreManagement: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "app_store" | "play_store" | "test_store";
+            /** Product Id */
+            product_id: string;
+            /** Management Url */
+            management_url: string | null;
+            /** Auto Renews */
+            auto_renews: boolean;
+            /** Renews Or Ends At */
+            renews_or_ends_at: string | null;
+            /** State */
+            state: string;
         };
         /** StorePurchaseAttemptRequest */
         StorePurchaseAttemptRequest: {
@@ -1760,7 +1836,13 @@ export interface components {
              * Purpose
              * @enum {string}
              */
-            purpose: "standalone_topup" | "deploy_continuation";
+            purpose: "standalone_topup" | "deploy_continuation" | "compute_subscription";
+            /** Store Product Id */
+            store_product_id?: string | null;
+            /** Target Contract Id */
+            target_contract_id?: string | null;
+            /** Target Deployment Id */
+            target_deployment_id?: string | null;
             /** Pending Deploy Request Id */
             pending_deploy_request_id?: string | null;
         };
@@ -1792,13 +1874,21 @@ export interface components {
              * Purpose
              * @enum {string}
              */
-            purpose: "standalone_topup" | "deploy_continuation";
+            purpose: "standalone_topup" | "deploy_continuation" | "compute_subscription";
             /** Catalogue Revision */
             catalogue_revision: number;
             /** Pending Deploy Request Id */
             pending_deploy_request_id?: string | null;
             /** Transaction Id */
             transaction_id?: string | null;
+            /** Target Contract Id */
+            target_contract_id?: string | null;
+            /** Target Deployment Id */
+            target_deployment_id?: string | null;
+            /** Requested Store Product Id */
+            requested_store_product_id?: string | null;
+            /** Replacement Mode */
+            replacement_mode?: ("CHARGE_PRORATED_PRICE" | "CHARGE_FULL_PRICE" | "DEFERRED") | null;
         };
         /** StorePurchaseConfirmRequest */
         StorePurchaseConfirmRequest: {
@@ -2118,7 +2208,7 @@ export interface components {
             /** Subscription Id */
             subscription_id: number;
             /** Funding Source */
-            funding_source?: ("stripe" | "wallet") | null;
+            funding_source?: ("stripe" | "wallet" | "store") | null;
             /** Current Plan Slug */
             current_plan_slug: string;
             /** Target Plan Slug */
@@ -2191,9 +2281,14 @@ export interface components {
              * @enum {string}
              */
             return_context: "compute" | "wallet";
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /** Subscription Id */
+            subscription_id?: string | null;
         };
         /** V2ComputeReusableSubscriptionItem */
         V2ComputeReusableSubscriptionItem: {
+            store_management?: components["schemas"]["StoreManagement"] | null;
             /**
              * Subscription Id
              * Format: sqid
@@ -2214,12 +2309,12 @@ export interface components {
              * Funding Source
              * @enum {string}
              */
-            funding_source: "stripe" | "wallet";
+            funding_source: "stripe" | "wallet" | "store";
             /**
              * Status
              * @enum {string}
              */
-            status: "trialing" | "active" | "canceling";
+            status: "trialing" | "active" | "canceling" | "past_due";
             /** Price Cents */
             price_cents?: number | null;
             /** Currency */
@@ -2251,7 +2346,7 @@ export interface components {
             /** Status */
             status: string;
             /** Funding Source */
-            funding_source?: ("stripe" | "wallet") | null;
+            funding_source?: ("stripe" | "wallet" | "store") | null;
             /** Billing Term Months */
             billing_term_months: number;
             /** Cancel At Period End */
@@ -2263,7 +2358,7 @@ export interface components {
             /** Invoice Due At */
             invoice_due_at?: string | null;
             /** Recovery Action */
-            recovery_action?: ("top_up" | "fix_payment" | "start_new") | null;
+            recovery_action?: ("top_up" | "fix_payment" | "start_new" | "manage_store_subscription") | null;
             /** Pending Plan Slug */
             pending_plan_slug?: string | null;
             /** Action State */
@@ -2280,6 +2375,7 @@ export interface components {
         };
         /** V2ComputeSubscriptionListItem */
         V2ComputeSubscriptionListItem: {
+            store_management?: components["schemas"]["StoreManagement"] | null;
             /**
              * Subscription Id
              * Format: sqid
@@ -2294,7 +2390,7 @@ export interface components {
             /** Plan Slug */
             plan_slug: string;
             /** Funding Source */
-            funding_source: ("stripe" | "wallet") | null;
+            funding_source: ("stripe" | "wallet" | "store") | null;
             /**
              * Status
              * @enum {string}
@@ -2332,7 +2428,7 @@ export interface components {
             /** Next Payment Attempt At */
             next_payment_attempt_at: string | null;
             /** Recovery Action */
-            recovery_action: ("top_up" | "fix_payment" | "start_new") | null;
+            recovery_action: ("top_up" | "fix_payment" | "start_new" | "manage_store_subscription") | null;
             /** Pending Plan Slug */
             pending_plan_slug: string | null;
             /** Lifecycle Status */
@@ -2371,6 +2467,8 @@ export interface components {
              * @enum {string}
              */
             funding_source: "stripe" | "wallet";
+            /** Upgrade Deployment Id */
+            upgrade_deployment_id?: string | null;
         };
         /** V2ComputeSubscriptionQuoteResponse */
         "V2ComputeSubscriptionQuoteResponse-Input": {
@@ -2562,7 +2660,7 @@ export interface components {
             /** Compute Plan Slug */
             compute_plan_slug?: string | null;
             /** Funding Source */
-            funding_source?: ("stripe" | "wallet") | null;
+            funding_source?: ("stripe" | "wallet" | "store") | null;
             /** Reason */
             reason?: ("payment_failure" | "canceled" | "refunded" | "disputed" | "admin_forced") | null;
             /** Prior Plan Slug */
@@ -2599,12 +2697,13 @@ export interface components {
         };
         /** V2HostedComputeSubscriptionInfo */
         V2HostedComputeSubscriptionInfo: {
+            store_management?: components["schemas"]["StoreManagement"] | null;
             /** Subscription Id */
             subscription_id?: number | null;
             /** Status */
             status: string;
             /** Funding Source */
-            funding_source?: ("stripe" | "wallet") | null;
+            funding_source?: ("stripe" | "wallet" | "store") | null;
             /**
              * Payment State
              * @default ok
@@ -2638,7 +2737,7 @@ export interface components {
             /** Next Payment Attempt At */
             next_payment_attempt_at?: string | null;
             /** Recovery Action */
-            recovery_action?: ("top_up" | "fix_payment" | "start_new") | null;
+            recovery_action?: ("top_up" | "fix_payment" | "start_new" | "manage_store_subscription") | null;
             /** Pending Plan Slug */
             pending_plan_slug?: string | null;
             /** Recovery Blocked Reason */
@@ -2778,7 +2877,7 @@ export interface components {
             compute_subscription?: components["schemas"]["V2HostedComputeSubscriptionInfo"] | null;
             latest_funding_fact?: components["schemas"]["V2HostedCommercialFundingFactInfo"] | null;
             /** Recovery Action */
-            recovery_action?: ("top_up" | "fix_payment" | "start_new") | null;
+            recovery_action?: ("top_up" | "fix_payment" | "start_new" | "manage_store_subscription") | null;
         };
         /** V2HostedDeploymentReadResponse */
         V2HostedDeploymentReadResponse: {
@@ -5132,6 +5231,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reconcile_store_compute_subscriptions_v2_store_compute_subscriptions_reconcile_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoreComputeReconcileResponse"];
                 };
             };
         };

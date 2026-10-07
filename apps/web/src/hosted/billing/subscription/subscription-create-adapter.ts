@@ -157,6 +157,9 @@ export function subscriptionCreateRequest(request: SubscriptionCreateRequestView
 export function existingSubscriptionCreateSelection(
 	subscription: ReusableSubscription,
 ): SubscriptionCreateSelection {
+	if (subscription.funding_source !== "stripe" && subscription.funding_source !== "wallet") {
+		throw new Error("Store-managed subscriptions cannot use the hosted card checkout flow.");
+	}
 	return {
 		planSlug: subscription.plan_slug,
 		billingTermMonths: subscription.billing_term_months,
