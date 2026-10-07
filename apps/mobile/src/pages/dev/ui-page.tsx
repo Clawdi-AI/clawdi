@@ -11,7 +11,6 @@ import {
 	PROVIDER_BRAND_ICON_IDS,
 	relativeTime,
 } from "@clawdi/shared/view";
-import { Redirect } from "expo-router";
 import {
 	Archive,
 	Folder,
@@ -792,5 +791,5 @@ function Gallery() {
 	);
 }
 export default function DevUiRoute() {
-	return __DEV__ ? <Gallery /> : <Redirect href="/" />;
+	return <Gallery />;
 }

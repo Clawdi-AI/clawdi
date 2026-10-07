@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { WebView, webBoth, webView } from "@/components/ui/web-layout";
+import { useI18n } from "@/lib/i18n";
 
 /** Native rendering of SecretInput in Web's VaultRequestPage. */
 export function SecretInput({
@@ -26,6 +27,7 @@ export function SecretInput({
 	disabled?: boolean;
 	maxLength?: number;
 }) {
+	const t = useI18n();
 	const [visible, setVisible] = useState(false);
 	const multiline = /[\r\n]/.test(value);
 	return (
@@ -55,7 +57,7 @@ export function SecretInput({
 				<Button
 					variant="ghost"
 					className={webView(inputGroupButtonVariants({ size: "icon-xs" }))}
-					accessibilityLabel={`${visible ? "Hide" : "Show"} ${label}`}
+					accessibilityLabel={`${visible ? t("labels.hide") : t("labels.show")} ${label}`}
 					accessibilityState={{ checked: visible }}
 					disabled={disabled}
 					onPress={() => setVisible((current) => !current)}

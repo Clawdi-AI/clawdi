@@ -30,7 +30,7 @@ export function ChannelCreate({ scoped = false }: { scoped?: boolean }) {
 	const scope = useAccountScope();
 	return (
 		<ActionButton
-			label={scoped ? "Add channel" : copy.title}
+			label={copy.title}
 			icon={<Icon as={Plus} />}
 			variant={scoped ? "outline" : "default"}
 			disabled={!scope.isReady}
@@ -129,7 +129,7 @@ function ChannelCreateView() {
 
 				<WebView recipe={styles.configuration}>
 					<WebText recipe={styles.configurationTitle}>
-						Configure {PROVIDER_META[provider].label}
+						{t("channels.configure")} {PROVIDER_META[provider].label}
 					</WebText>
 					<WebView recipe={styles.hint} className="flex-row flex-wrap">
 						<WebText recipe={styles.hint}>

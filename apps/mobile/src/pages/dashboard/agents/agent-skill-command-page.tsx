@@ -10,8 +10,10 @@ import { Input, Label } from "@/components/ui/input";
 import { SheetPage } from "@/components/ui/sheet-page";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
+import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 export default function AgentSkillCommandPage() {
+	const t = useI18n();
 	const params = useLocalSearchParams<{ id?: string | string[]; key?: string | string[] }>();
 	const id = routeParam(params.id),
 		key = routeParam(params.key);
@@ -33,7 +35,7 @@ export default function AgentSkillCommandPage() {
 			description={
 				remove
 					? agentSurfaceCopy.runThisCommandOnTheAgentMachineTheSkill
-					: "Enter a GitHub skill path, then run the generated command on the agent machine."
+					: t("workspaceSkills.commandDescription")
 			}
 			fallback={id ? `/agents/${id}/skills` : "/agents"}
 		>

@@ -288,7 +288,7 @@ function DeploymentDetail({
 						view.state === "ready"
 							? view.browserLabel
 							: view.state === "stopped"
-								? "Stopped"
+								? t("runtime.stoppedLabel")
 								: view.state === "withdrawn"
 									? view.withdrawnTitle
 									: view.state === "pending"
@@ -353,7 +353,7 @@ function DeploymentDetail({
 	if (management)
 		return (
 			<SheetPage
-				title="Agent settings"
+				title={t("agentSettings.title")}
 				busy={managementBusy}
 				fallback={deployment?.agent_id ? `/agents/${deployment.agent_id}` : "/agents"}
 			>
@@ -482,7 +482,7 @@ function DeploymentDetail({
 					<BackButton />
 				)}
 				<PageHeader
-					title={deployment?.resource.name ?? "Overview"}
+					title={deployment?.resource.name ?? t("navigation.home")}
 					description={agentOverviewCopy.description}
 					titleAdornment={
 						deployment?.agent_id ? (

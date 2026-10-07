@@ -112,7 +112,7 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 	const headerSearch = useHeaderSearch({
 		value: search,
 		onChange: setSearch,
-		placeholder: "Search Skills…",
+		placeholder: t("workspaceSkills.search"),
 		maxLength: 200,
 	});
 	const sheet = useSheet({ fallback: `/agents/${id}/skills`, busy: browse && action.busy });
@@ -125,7 +125,7 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 					actions={[
 						{
 							id: "close",
-							label: "Cancel",
+							label: t("accountDeletion.cancel"),
 							disabled: action.busy,
 							onPress: () => void sheet.close().catch(setCloseError),
 						},
@@ -157,7 +157,7 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 
 							{closeError ? <ApiErrorPanel error={closeError} /> : null}
 							{action.error ? (
-								<ApiErrorPanel error={action.error} title="Couldn't update Skill" />
+								<ApiErrorPanel error={action.error} title={t("workspaceSkills.updateError")} />
 							) : null}
 						</>
 					}
@@ -167,7 +167,7 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 						) : library.isPending ? (
 							<HeroCardSkeleton />
 						) : (
-							<EmptyState title="No Skills found" />
+							<EmptyState title={t("workspaceSkills.noMatches")} />
 						)
 					}
 					renderItem={({ item }) => (
@@ -182,7 +182,7 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 							description={item.description}
 							actions={
 								<ActionButton
-									label="Install"
+									label={t("agentExtensions.install")}
 									disabled={
 										disabled ||
 										inventory.data?.skills.some(
@@ -248,7 +248,7 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 										}
 									/>
 									<ActionButton
-										label="Uninstall"
+										label={t("workspaceSkills.uninstallAction")}
 										disabled={disabled || item.read_only}
 										onPress={() => {
 											if (item.skill_id) remove(item.skill_id);
@@ -260,17 +260,23 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 					/>
 				);
 			}}
-			title="Skills"
-			description="Skills available in this Agent's Workspace."
+			title={t("skills.title")}
+			description={t("workspaceSkills.inventoryDescription")}
 			navigation={<AgentSectionNavigation agentId={id} section="skills" />}
 		>
 			{accepted ? <AppText>{t("agentExtensions.accepted")}</AppText> : null}
-			{action.error ? <ApiErrorPanel error={action.error} title="Couldn't update Skill" /> : null}
+			{action.error ? (
+				<ApiErrorPanel error={action.error} title={t("workspaceSkills.updateError")} />
+			) : null}
 			{inventory.data?.removal_failures?.length ? (
 				<AppText accessibilityRole="alert">{t("agentExtensions.removalFailed")}</AppText>
 			) : null}
 			{!id || inventory.isError ? (
-				<ApiErrorPanel error={inventory.error} title="Couldn't load Skills" onRetry={refresh} />
+				<ApiErrorPanel
+					error={inventory.error}
+					title={t("workspaceSkills.loadError")}
+					onRetry={refresh}
+				/>
 			) : inventory.isPending ? (
 				<WebView recipe={HERO_GRID_CLASS}>
 					{[0, 1, 2].map((i) => (
@@ -278,7 +284,7 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 					))}
 				</WebView>
 			) : !inventory.data?.skills.length ? (
-				<EmptyState variant="inset" description="No Skills have synced from this Agent yet." />
+				<EmptyState variant="inset" description={t("workspaceSkills.inventoryEmpty")} />
 			) : null}
 
 			{confirmationDialog.dialog}

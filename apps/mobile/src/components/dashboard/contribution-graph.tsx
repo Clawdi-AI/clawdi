@@ -8,6 +8,7 @@ import { buildWeeks, clampLevel, computeMonthLabels, DASHBOARD_COPY } from "@cla
 import { useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { useI18n } from "@/lib/i18n";
 
 const CELL = 11,
 	GAP = 3,
@@ -21,6 +22,7 @@ const colors = [
 	styles.peakActivity,
 ];
 export function ContributionGraph({ data }: { data: ContributionDay[] }) {
+	const t = useI18n();
 	const [maxWeeks, setMaxWeeks] = useState(52);
 	const weeks = buildWeeks(data).slice(-maxWeeks),
 		labels = computeMonthLabels(weeks);
@@ -56,7 +58,9 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 										recipe={`${styles.cell} ${day.date ? colors[clampLevel(day.level)] : styles.placeholder}`}
 										style={{ width: CELL, height: CELL }}
 										accessibilityLabel={
-											day.date ? `${day.count} sessions on ${day.date}` : undefined
+											day.date
+												? t("labels.sessionsOnDate", { count: day.count, date: day.date })
+												: undefined
 										}
 									/>
 								))}

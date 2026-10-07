@@ -11,7 +11,9 @@ import {
 	buildAgentChannelCardGroups,
 	type ChannelProviderFilter,
 	canonicalAgentChannelLinks,
+	channelFormCopy,
 	channelHealthSummary,
+	connectBotDialogCopy,
 	orderedChannelsForFilter,
 	providerCounts,
 	providerMeta,
@@ -40,6 +42,7 @@ import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { ChannelCard, DiscordConnectionIssueAlert } from "@/hosted/v2/channels/channel-card";
 import { useChannelQuery } from "@/hosted/v2/channels/channels-hooks";
 import { ChannelCreate } from "@/hosted/v2/channels/connect-bot-dialog";
+import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { NativeHeader } from "@/platform/navigation/native-header";
@@ -49,6 +52,7 @@ export function ChannelsScreen() {
 	return <ChannelsView key={`${scope.accountKey}:${scope.generation}`} />;
 }
 function ChannelsView() {
+	const t = useI18n();
 	const params = useLocalSearchParams<{ id?: string | string[]; agentId?: string | string[] }>(),
 		agentId = routeParam(params.id ?? params.agentId);
 	const agent = useCloudAgent(agentId);
@@ -156,11 +160,11 @@ function ChannelsView() {
 																<>
 																	<Button variant="outline" size="sm" onPress={open}>
 																		<Icon as={QrCode} />
-																		<Text>Pair</Text>
+																		<Text>{t("channels.pairAction")}</Text>
 																	</Button>
 																	<Button variant="ghost" size="sm" onPress={open}>
 																		<Icon as={Link2Off} />
-																		<Text>Unlink</Text>
+																		<Text>{t("channels.unlinkAction")}</Text>
 																	</Button>
 																</>
 															) : (
@@ -168,7 +172,7 @@ function ChannelsView() {
 																	{bot.visibility === "private" ? (
 																		<Button variant="ghost" size="sm" onPress={open}>
 																			<Icon as={Trash2} />
-																			<Text>Delete</Text>
+																			<Text>{t("sessionDetail.delete")}</Text>
 																		</Button>
 																	) : null}
 																	<Button
@@ -177,7 +181,7 @@ function ChannelsView() {
 																		onPress={open}
 																	>
 																		<Icon as={Link2} />
-																		<Text>Link</Text>
+																		<Text>{t("channels.linkAction")}</Text>
 																	</Button>
 																</>
 															)
@@ -211,7 +215,13 @@ function ChannelsView() {
 		<SafeAreaScreen>
 			<NativeHeader
 				title={agentSurfaceCopy.channels}
-				actions={[{ id: "add", label: "Add channel", onPress: () => router.push("/channels/new") }]}
+				actions={[
+					{
+						id: "add",
+						label: connectBotDialogCopy.title,
+						onPress: () => router.push("/channels/new"),
+					},
+				]}
 			/>
 			<NativeList
 				data={rows}
@@ -232,7 +242,9 @@ function ChannelsView() {
 							filters={
 								<>
 									<FilterChip active={filter === "all"} onClick={() => setFilter("all")}>
-										<Text>All {total}</Text>
+										<Text>
+											{t("sessionFilters.all")} {total}
+										</Text>
 									</FilterChip>
 									{providersWithBots(counts).map((provider) => (
 										<FilterChip
@@ -329,13 +341,13 @@ function ChannelsView() {
 										}
 									>
 										<Icon as={Link2} />
-										<Text>Link agent</Text>
+										<Text>{channelFormCopy.linkTitle}</Text>
 									</Button>
 									{item.kind === "custom" ? (
 										<Button
 											variant="ghost"
 											size="icon-sm"
-											accessibilityLabel="Delete channel"
+											accessibilityLabel={t("channels.deleteAction")}
 											onPress={() =>
 												router.push({
 													pathname: "/channels/[id]",

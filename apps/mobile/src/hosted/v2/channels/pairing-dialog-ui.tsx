@@ -11,6 +11,7 @@ import { ActionButton } from "@/components/dashboard/controls";
 import { QrImage } from "@/components/ui/qr-image";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webText } from "@/components/ui/web-layout";
+import { useI18n } from "@/lib/i18n";
 import { NativeSegments } from "@/platform/navigation/segmented-control";
 
 /** Presentation only. The route controller owns validation, expiry and secret lifetime. */
@@ -29,6 +30,7 @@ export function ChannelPairingView({
 	busy: boolean;
 	open: (url: string) => void;
 }) {
+	const t = useI18n();
 	const [path, setPath] = useState("server");
 	const [now, setNow] = useState(Date.now());
 	useEffect(() => {
@@ -59,7 +61,7 @@ export function ChannelPairingView({
 				<WebView recipe={channelFormClasses.pairingQr}>
 					<QrImage
 						matrix={qr}
-						label={`${providerMeta(provider).label} pairing QR code`}
+						label={t("labels.pairingCode", { provider: providerMeta(provider).label })}
 						size={176}
 					/>
 				</WebView>

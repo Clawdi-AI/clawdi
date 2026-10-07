@@ -9,6 +9,7 @@ import { AgentPluginsScreen } from "@/hosted/v2/agent-plugins/agent-plugins-surf
 import { AiProvidersScreen } from "@/hosted/v2/ai-providers/ai-providers-page";
 import { ChannelsScreen } from "@/hosted/v2/channels/channels-page";
 import { parseAgentSectionSegment } from "@/lib/agent-routes";
+import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import AgentDetailPage from "@/pages/dashboard/agents/agent-detail-client";
 import ConnectorsPage from "@/pages/dashboard/connectors/page";
@@ -17,6 +18,7 @@ import SessionsPage from "@/pages/dashboard/sessions/page";
 import TerminalPage from "@/pages/terminal-page";
 
 export default function AgentSectionPage() {
+	const t = useI18n();
 	const params = useLocalSearchParams<{ section?: string | string[] }>();
 	const segment = routeParam(params.section) ?? "";
 	switch (parseAgentSectionSegment(segment)) {
@@ -52,7 +54,7 @@ export default function AgentSectionPage() {
 		default:
 			return (
 				<LibraryPage>
-					<EmptyState title="Agent section unavailable" />
+					<EmptyState title={t("agents.sectionUnavailable")} />
 				</LibraryPage>
 			);
 	}

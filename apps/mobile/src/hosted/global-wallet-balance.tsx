@@ -1,4 +1,3 @@
-import { globalWalletBalanceClasses as styles } from "@clawdi/shared/ui";
 import {
 	billingCopy,
 	headerWalletBalanceControlPresentation,
@@ -6,10 +5,6 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { WalletCards } from "lucide-react-native";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { WebIcon, WebText, webView } from "@/components/ui/web-layout";
 import { formatCredits } from "@/hosted/billing/store/store-presentation";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
@@ -52,26 +47,4 @@ export function useHeaderWalletBalance() {
 				},
 			}
 		: null;
-}
-export function GlobalWalletBalance() {
-	const { compute, scope, state, displayedBalance, label } = useWalletPresentation();
-	if (!compute) return null;
-	return (
-		<Button
-			variant="ghost"
-			size="sm"
-			className={webView(styles.control).replace(/\bw-full\b/g, "")}
-			accessibilityLabel={label}
-			onPress={() => {
-				if (scope.isCurrent() && !scope.signal.aborted) router.push("/settings/wallet");
-			}}
-		>
-			<WebIcon as={WalletCards} recipe={styles.icon} />
-			{state === "loading" ? (
-				<Skeleton className={webView(styles.skeleton)} />
-			) : displayedBalance ? (
-				<WebText recipe={styles.balance.replace(/\bflex-1\b/g, "")}>{displayedBalance}</WebText>
-			) : null}
-		</Button>
-	);
 }

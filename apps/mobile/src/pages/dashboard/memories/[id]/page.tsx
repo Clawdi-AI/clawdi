@@ -112,10 +112,10 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 									<Text>{memory.category}</Text>
 								</Badge>
 								<Text>
-									{memory.source} · Saved {relativeTime(memory.created_at)} ·{" "}
+									{memory.source} {t("memories.savedSeparator")} {relativeTime(memory.created_at)} ·{" "}
 									{(memory.access_count ?? 0) > 0
 										? `Recalled ${memory.access_count} ${memory.access_count === 1 ? "time" : "times"}`
-										: "Never recalled yet"}
+										: t("memories.neverRecalled")}
 								</Text>
 							</DetailMeta>
 						}
@@ -137,7 +137,7 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 							</WebText>
 						</WebView>
 						<WebView recipe={memoryDetailClasses.tags}>
-							<WebText recipe={memoryDetailClasses.subtitle}>Tags:</WebText>
+							<WebText recipe={memoryDetailClasses.subtitle}>{t("memories.tags")}</WebText>
 							{memory.tags?.map((tag) => (
 								<Badge key={tag} variant="outline">
 									<Text>#{tag}</Text>
@@ -149,8 +149,8 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 								<Icon as={Laptop} className={webBoth(memoryDetailClasses.sourceIcon)} />
 								<Text>
 									{memory.source_machine_name
-										? `Learned on ${memory.source_machine_name}`
-										: "Learned from a session"}
+										? t("labels.learnedOn", { machine: memory.source_machine_name })
+										: t("memories.learnedFromSession")}
 								</Text>
 								{memory.source_session_id ? (
 									<Button
@@ -163,7 +163,7 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 											})
 										}
 									>
-										<Text>View session</Text>
+										<Text>{t("memories.viewSession")}</Text>
 									</Button>
 								) : null}
 							</WebView>

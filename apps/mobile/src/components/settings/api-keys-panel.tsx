@@ -148,7 +148,10 @@ function ApiKeysView() {
 				onOpenChange={(open) => {
 					if (!open) setTarget(null);
 				}}
-				title={settingsCopy.revokeTitle.replace("{label}", () => target?.label ?? "API key")}
+				title={settingsCopy.revokeTitle.replace(
+					"{label}",
+					() => target?.label ?? t("account.apiKey"),
+				)}
 				description={settingsCopy.revokeDescription}
 				destructive
 				confirmLabel={settingsCopy.revokeKey}

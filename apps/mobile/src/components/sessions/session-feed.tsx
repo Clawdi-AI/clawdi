@@ -24,6 +24,7 @@ import { SectionLabel } from "@/components/section-label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { useI18n } from "@/lib/i18n";
 import { useAgentRouteId } from "@/platform/navigation/use-agent-route";
 
 function SessionCardSkeleton() {
@@ -104,6 +105,7 @@ export function SessionCard({
 	quietAutomated?: boolean;
 	searchQuery?: string;
 }) {
+	const t = useI18n();
 	const agentId = useAgentRouteId();
 	const { title, projectFolder, totalTokens, isAutomated } = sessionCardModel(
 		session,
@@ -130,7 +132,7 @@ export function SessionCard({
 		<AppPressable
 			testID={`session-card-${session.id}`}
 			accessibilityRole="link"
-			accessibilityLabel={`Open session ${title}`}
+			accessibilityLabel={t("labels.openSession", { title: title })}
 			className={cn(
 				ENTITY_CARD_BASE,
 				webView(styles.card),

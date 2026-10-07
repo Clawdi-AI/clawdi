@@ -187,7 +187,7 @@ function ProjectsView() {
 							formatResourceCount(project.skill_count, "skill"),
 							formatResourceCount(project.vault_count, "vault"),
 							project.is_owner === false && (project.owner_display || project.owner_handle)
-								? `by ${project.owner_display || project.owner_handle}`
+								? t("labels.projectOwner", { name: project.owner_display || project.owner_handle })
 								: null,
 						]}
 						actions={

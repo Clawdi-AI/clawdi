@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
+import { useI18n } from "@/lib/i18n";
 
 /** Web's name, routing and credential fields, with controlled native inputs. */
 export function ProviderFieldsForm({
@@ -53,6 +54,7 @@ export function ProviderFieldsForm({
 	onCredentialHelp?: () => void;
 	oauthContent?: ReactNode;
 }) {
+	const t = useI18n();
 	const [visible, setVisible] = useState(false);
 	return (
 		<WebView recipe={styles.root}>
@@ -138,7 +140,7 @@ export function ProviderFieldsForm({
 							<Button
 								variant="ghost"
 								className={webView(inputGroupButtonVariants({ size: "icon-xs" }))}
-								accessibilityLabel={`${visible ? "Hide" : "Show"} ${credentialLabel}`}
+								accessibilityLabel={`${visible ? t("labels.hide") : t("labels.show")} ${credentialLabel}`}
 								accessibilityState={{ checked: visible }}
 								disabled={disabled}
 								onPress={() => setVisible((value) => !value)}

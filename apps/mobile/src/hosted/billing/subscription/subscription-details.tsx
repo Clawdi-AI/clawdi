@@ -1,6 +1,6 @@
 import { computeSubscriptionRecoveryPresentation } from "@clawdi/shared/api";
 import { transactionsSectionClasses } from "@clawdi/shared/ui";
-import { ClerkAction as DetailAction } from "@/components/auth/clerk-form";
+import { DetailAction } from "@/components/detail/detail-action";
 import { Text } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";

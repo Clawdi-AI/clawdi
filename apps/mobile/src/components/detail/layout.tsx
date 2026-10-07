@@ -9,6 +9,7 @@ import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
 import { AppScrollView } from "@/components/ui/view";
 import { WebView, webView } from "@/components/ui/web-layout";
+import { useI18n } from "@/lib/i18n";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export function LibraryPage({
 	children,
@@ -42,6 +43,7 @@ export function DetailMeta({ children }: { children: ReactNode }) {
 	return <WebView recipe={detailLayoutClasses.meta}>{children}</WebView>;
 }
 export function DetailBackLink({ href, label }: { href: Href; label: string }) {
+	const t = useI18n();
 	const headerHeight = useContext(HeaderHeightContext);
 	if (headerHeight) return null;
 	return (
@@ -52,7 +54,9 @@ export function DetailBackLink({ href, label }: { href: Href; label: string }) {
 			onPress={() => (router.canGoBack() ? router.back() : router.replace(href))}
 		>
 			<Icon as={ArrowLeft} />
-			<Text>Back to {label}</Text>
+			<Text>
+				{t("navigation.backTo")} {label}
+			</Text>
 		</Button>
 	);
 }

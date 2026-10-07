@@ -137,8 +137,9 @@ export function PlanComparison({ plans }: { plans: Plan[] }) {
 										<WebView recipe={styles.feature} className="flex-row">
 											<Icon as={Check} className={styles.featureIcon} />
 											<WebText recipe={styles.feature}>
-												{t("billingParity.upTo")} {plan.vcpu} vCPU · {plan.ram_gb} GB RAM ·{" "}
-												{plan.disk_size} GB {t("billingParity.storage")}
+												{t("billingParity.upTo")} {plan.vcpu} {t("billing.cpuSeparator")}{" "}
+												{plan.ram_gb} {t("billing.ramSeparator")} {plan.disk_size} {t("billing.gb")}{" "}
+												{t("billingParity.storage")}
 											</WebText>
 										</WebView>
 									) : null}

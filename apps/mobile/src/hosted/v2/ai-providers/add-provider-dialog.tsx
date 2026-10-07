@@ -191,7 +191,7 @@ function ProviderCreateView() {
 	const title =
 		step === "choose"
 			? (group?.label ?? copy.addTitle)
-			: `Set up ${identity.label ?? identity.providerId}`;
+			: t("labels.setupProvider", { name: identity.label ?? identity.providerId });
 	return (
 		<SheetPage
 			title={title}

@@ -1,14 +1,26 @@
 # Mobile development
 
-Status: the foundation is merged in PR 1610; Wave 2 is a merge candidate in
-PR 1611. Wave 3 adds existing-entitlement Agent creation, deployment progress
-and v2 billing reads; purchases remain unavailable.
-`apps/mobile` contains the
-Cloud-only v2 Expo app, Clerk native sign-in and account management, account-generation
-fencing, and paginated read-only Agent/Session history. Hosted v1 legacy
-configuration is intentionally not required by the mobile app. The compatibility
-fixture below is historical V0 evidence; it is not a payment implementation,
-native iOS/Android build, or real-device authentication proof.
+`apps/mobile` contains the Cloud-only v2 Expo app. Thin Expo Router routes in
+`app/` render `src/pages/`, with feature UI in `src/components/` and v2 hosted
+surfaces in `src/hosted/`. Domain clients, view models and Web copy come from
+`@clawdi/shared`; native auth, navigation, storage and store SDKs live in
+`src/platform/`. Mobile copy lives in `src/lib/i18n/`.
+
+Sign-in and account management use Clerk native UI. `/settings` is a grouped
+native menu that pushes General, Account, API Keys, Wallet, Compute and AI Usage
+(the last three require a compute API). RevenueCat Paywalls sell consumable
+Clawdi Credits into the hosted Wallet; pending purchases have explicit recovery.
+Consumable credits cannot be restored. Customer Center management is planned
+for store subscriptions and is not wired in the current app. New paid compute
+subscriptions remain unavailable in the deployment wizard. Agent overview rows
+reach every section; Files opens through the hosted one-time browser handoff,
+while Terminal uses Expo DOM. See
+[UI parity](../apps/mobile/UI-PARITY.md) and
+[store compliance](mobile-store-compliance.md) for platform boundaries and
+gates.
+
+Hosted v1 configuration is not required. The compatibility fixture at the end
+is historical V0 evidence, not a native-build or real-device acceptance claim.
 
 ## Foundation toolchain
 
@@ -58,12 +70,13 @@ bun run --cwd apps/mobile dev
 ```
 
 Use a development build containing the project's native modules; Metro export
-success does not establish Expo Go support. Done: Expo starts and the app shows sign-in; missing or invalid configuration
-shows a safe configuration screen instead. Use a reachable Cloud API URL on
-physical devices, not the development computer's `localhost`. These public
-values are embedded in the app; never put private credentials in them. Sign-in
-methods, verification and second factors are Clerk Dashboard settings owned by
-the account owner (see [Clerk native authentication](#clerk-native-authentication)).
+success does not establish Expo Go support. Done: Expo starts and the app shows
+sign-in; missing or invalid configuration shows a safe configuration screen
+instead. Use a reachable Cloud API URL on physical devices, not the development
+computer's `localhost`. These public values are embedded in the app; never put
+private credentials in them. Sign-in methods, verification and second factors
+are Clerk Dashboard settings owned by the account owner (see
+[Clerk native authentication](#clerk-native-authentication)).
 This work does not change Clerk settings.
 
 ### Local fixture authentication
@@ -86,13 +99,27 @@ Optional `EXPO_PUBLIC_DEV_AUTH_NAME`, `EXPO_PUBLIC_DEV_AUTH_EMAIL` and
 `dev-bypass`. These are public fixture values, not credentials for a live API.
 
 The fixed fixture identity cannot sign out. Clerk's native sign-in/sign-up and
-account management views need `ClerkProvider`, so they show an EmptyState. Restart Metro when changing public environment values.
+account management views need `ClerkProvider`, so they show an EmptyState.
+Restart Metro when changing public environment values.
 The flag requires `__DEV__`; production exports remove the bypass identity and
 token even when `EXPO_PUBLIC_DEV_AUTH_BYPASS=1` is set. Real Clerk authentication
 and its account/session request fencing remain in use for production builds.
 
 Done: with the fixture API running, the Android development build opens the
 real Home tab without Clerk sign-in and loads fixture data through the Cloud API.
+
+For local Android previews, reuse the shared development-client APK:
+
+```bash
+CLAWDI_ANDROID_DEV_APK="${XDG_CACHE_HOME:-$HOME/.cache}/clawdi/android-preview/apk/clawdi-dev.apk"
+scripts/mobile-e2e.sh --apk "$CLAWDI_ANDROID_DEV_APK"
+```
+
+Read the APK directory's `README.md` before using it. The APK contains native
+modules and loads JavaScript from the current worktree's Metro server; no
+fixture API is baked into it. Rebuild it when native modules change, not for JS
+or copy edits. The smoke script checks the app identity and dev-client manifest
+before installing.
 
 For bounded Android automation, run `scripts/mobile-e2e.sh --apk <development.apk>`
 from the repository root. The APK must contain `expo-dev-client`; the script
@@ -102,6 +129,45 @@ existing read-only AVD on port 5564, fixture API 8796 and one Metro worker on
 [Maestro smoke guide](../apps/mobile/.maestro/README.md) for prerequisites,
 coverage, artifacts, the skipped live Clerk check, nightly/manual EAS fixture
 smoke and manual release CI.
+
+### Development galleries and production exports
+
+`/dev/ui` and `/dev/account` load their implementation with a literal
+`__DEV__` conditional `require`. Expo's documented
+[development-code removal](https://docs.expo.dev/guides/tree-shaking/#remove-development-only-code)
+folds that condition before collecting dependencies in SDK 57. Production keeps
+only redirect route stubs; `src/pages/dev/` and its gallery-only imports are
+absent from the bundle graph. A layout or page redirect alone does not exclude
+imports.
+
+From `apps/mobile`, verify the exported graph and gallery markers:
+
+```bash
+mobile_exports=$(mktemp -d)
+trap 'rm -rf "$mobile_exports"' EXIT
+bunx expo export --platform all --no-bytecode --source-maps --output-dir "$mobile_exports"
+python3 - "$mobile_exports" <<'PYCODE'
+import json
+import sys
+from pathlib import Path
+root = Path(sys.argv[1]) / "_expo/static/js"
+for platform in ("ios", "android"):
+    maps = list((root / platform).glob("*.map"))
+    assert maps, f"Missing {platform} sourcemaps"
+    for path in maps:
+        sources = json.loads(path.read_text())["sources"]
+        assert not any("/src/pages/dev/" in s.replace("\\", "/") for s in sources)
+    bundles = list((root / platform).glob("*.js"))
+    assert bundles, f"Missing {platform} bundles"
+    for path in bundles:
+        assert not any(marker in path.read_text() for marker in ("UI gallery", "csub_fixture"))
+    print(platform, sum(path.stat().st_size for path in bundles), "bytes; galleries excluded")
+PYCODE
+```
+
+Done: both platforms print `galleries excluded`. Check source membership as well
+as text markers: minification already removes many gallery strings even when
+its imports remain. `expo export --dev` must retain both gallery implementations.
 
 ### Clerk native authentication
 
@@ -119,7 +185,7 @@ from `@clerk/expo/native` (clerk-ios / clerk-android), matching Web's Clerk
   The `(auth)` layout leaves only when the session is active and
   `useAuthViewState()` reports the native flow (session tasks, biometric
   enrollment) complete, then returns to a validated `publicShareId` or Home.
-- Settings → General → Manage account opens `/settings/account`, which renders
+- Settings → Account opens `/settings/account`, which renders
   `UserProfileView` with Clerk's own chrome (`onHostBack` pops the route). It
   covers profile, emails, phones, password, MFA, passkeys, connected accounts,
   active sessions, sign-out and account deletion. Sign-out is synced to the JS
@@ -181,9 +247,9 @@ sign-in is offered. In the Clerk Dashboard:
    need an Apple Services ID or private key; browser-based Apple OAuth does.
 2. **Native applications**: register the iOS app (Team ID and bundle ID) and
    the Android app (namespace and package name).
-3. **Native applications** → **Allowlist for mobile SSO redirect**: add
-   `clawdi://sign-in-oauth`, `clawdi://sign-up-oauth` and
-   `clawdi://account-oauth`.
+3. Enable the Native API and configure native Google client IDs and the Apple
+   provider. Clerk native UI owns social sign-in; the app registers no custom
+   OAuth callback routes.
 
 ### App icon and splash screen
 
@@ -255,9 +321,12 @@ Subscription quotes are explicitly requested previews, not payments. They may
 initialize and commit customer, enrollment and Wallet profiles. They do not
 purchase or debit Wallet funds and must not be described as strictly read-only.
 Current catalog prices and Stripe/Wallet quotes are not App Store/Play purchase
-offers. Native purchases, top-ups, refunds, restore and subscription management
-remain disabled until a reviewed provider-aware contract and authorized store
-sandbox are available. Wallet-funded compute still uses Stripe invoice
+offers. Store builds add credits through the official RevenueCat Paywall. The
+hosted purchase attempt is created before opening the Paywall, and Hosted
+confirms the completed transaction before applying funding. Pending purchases
+can be checked explicitly. Consumable credits cannot be restored; Customer
+Center subscription management is not wired yet. Store sandbox acceptance
+remains a release gate. Wallet-funded compute still uses Stripe invoice
 orchestration; it is not a store-independent funding rail.
 
 Run the isolated product suite from the repository root:
@@ -277,8 +346,9 @@ Agent-to-Sessions navigation uses the generated `environment_id` filter.
 Session responses do not expose a stable Agent id, so no reverse link is
 invented. Transcripts pin subsequent pages to the first response's content
 revision, offer an explicit reset on a revision conflict, and distinguish
-unuploaded content from a network error. Messages remain read-only and plain
-text; this app does not send messages or embed a runtime UI.
+unuploaded content from a network error. Messages remain read-only and render
+native Markdown. The app does not send messages; Terminal uses an Expo DOM
+view, and Files opens in the system browser.
 
 After independent review corrected the Expo UI hosting contract, one bounded
 Docker run passed the exact foundation's Mobile/Shared TypeScript 7, Biome
@@ -319,11 +389,12 @@ destructive confirmations retain the captured account scope. Raw API keys and
 Mem0 input are transient and cleared on backgrounding. Dashboard statistics now
 participate in pull-to-refresh and expose loading/error states.
 
-[Project sharing](../apps/mobile/src/features/project-sharing.tsx) now includes
-owner-managed links, invitations and members, stop-sharing, recipient accept/decline,
-manual link preview/join, and leaving a shared project. Joining does not
-automatically bind an Agent. Newly created links remain out of query
-caches and persistence, are cleared on blur/background/account retirement, and
+[Project sharing](../apps/mobile/src/components/sharing/share-project-dialog.tsx)
+now includes owner-managed links, invitations and members, stop-sharing,
+recipient accept/decline, manual link preview/join, and leaving a shared
+project. Joining does not automatically bind an Agent. Newly created links
+remain out of query caches and persistence, are cleared on
+blur/background/account retirement, and
 can be explicitly sent through the native share sheet. Removing a member and
 revoking an invite link are distinct actions with distinct confirmation copy.
 
@@ -1012,15 +1083,15 @@ until each surface has implementation, focused verification and device evidence:
 
 | Surface | Implemented source | Remaining scope |
 | --- | --- | --- |
-| Account/settings | Authentication, recovery/MFA, API keys, Memory provider settings, persisted light/dark/system appearance, account name/username/picture and shared email/phone contact management, shared native password/code reverification, active-device review/revocation, password management, authenticator/SMS factor management and backup codes, linked-account inventory/unlink and configured-provider browser linking/reauthorization, Passkey inventory/rename/removal, confirmed Hosted account-deletion request | Native Passkey creation/sign-in, end-to-end account termination, remaining security management, passkey/enterprise reverification and real Clerk/browser/device acceptance |
+| Account/settings | Grouped settings menu, Clerk native AuthView/UserProfileView, API keys, AI Usage and persisted appearance; conditional custom account-deletion page | End-to-end account termination and real Clerk/device acceptance |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search and details with recall metadata/source Session navigation | Remaining Skill detail parity and native file/share/managed-runtime acceptance |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools with shared Web/native identifier/name/description search | Device/provider OAuth verification and keyboard/list accessibility acceptance |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport and configured HTTPS intake | Signed domain association and device acceptance |
 | v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal and Agent model binding; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Native/live provider and channel acceptance |
-| Deployment/billing | Included Basic and existing funded Basic/Performance eligibility/creation/recovery, paginated reusable inventory and read-only billing/deployment views | New paid subscription creation, plan/lifecycle management, Wallet purchases, RevenueCat/store backend |
-| Runtime UI/terminal | Shared Web/native xterm engine, Expo DOM terminal route, native controls and foreground teardown; bounded generated credential clients; confirmed system-browser OpenClaw handoff and Hermes OIDC entry with shared URL validation | Native WebView/keyboard/real-server round-trip and compilation; device browser authentication and revocation acceptance |
+| Deployment/billing | Included Basic and existing funded Basic/Performance eligibility/creation/recovery, paginated reusable inventory and billing/deployment views, RevenueCat credit purchases and pending-purchase recovery | New paid compute subscription creation, Customer Center management and store sandbox acceptance |
+| Runtime UI/terminal | Shared Web/native xterm engine, Expo DOM terminal route, native controls and foreground teardown; bounded generated credential clients; confirmed system-browser runtime handoff, hosted one-time Files handoff and Hermes OIDC entry with shared URL validation | Native WebView/keyboard/real-server round-trip and compilation; device browser authentication and revocation acceptance |
 | Platform acceptance | Typechecks, isolated suites, Metro exports and Android ARM64 Debug Kotlin/Java/C++ compiler gate | iOS/Release/other-ABI compilation, signing, real devices, accessibility/visual interaction, store sandbox purchases |
 
 Connector tool search is a Shared literal substring filter consumed by both Web

@@ -410,7 +410,7 @@ function ChannelDetail({
 	if (mode === "pair") {
 		return (
 			<SheetPage
-				title={`Pair ${providerMeta(provider).label}`}
+				title={t("labels.pairChannel", { provider: providerMeta(provider).label })}
 				fallback={id ? `/channels/${encodeURIComponent(id)}` : "/channels"}
 				busy={action.busy}
 				sheet={sheet}
@@ -453,7 +453,7 @@ function ChannelDetail({
 									size="sm"
 								/>
 							}
-							title={linkedAgent ? agentDisplayName(linkedAgent) : "Agent unavailable"}
+							title={linkedAgent ? agentDisplayName(linkedAgent) : t("agents.unavailable")}
 							meta={[`Linked ${relativeTime(link.created_at)}`]}
 						/>
 						<ActionButton
@@ -611,7 +611,7 @@ function ChannelDetail({
 	return (
 		<SafeAreaScreen>
 			<NativeHeader
-				title={bot?.name ?? ownedBot?.name ?? "Channels"}
+				title={bot?.name ?? ownedBot?.name ?? t("channels.title")}
 				menu={{
 					label: t("sessionFilters.options"),
 					items: [
@@ -644,9 +644,11 @@ function ChannelDetail({
 				header={
 					<AppView className={webView(styles.skeletonContent)}>
 						<PageHeader
-							title={bot?.name ?? ownedBot?.name ?? "Channels"}
+							title={bot?.name ?? ownedBot?.name ?? t("channels.title")}
 							description={providerMeta(provider).label}
-							icon={<EntityIcon kind="channel" id={provider} label="Channel" size="lg" />}
+							icon={
+								<EntityIcon kind="channel" id={provider} label={t("channels.singular")} size="lg" />
+							}
 						/>
 						{provider === "discord" ? (
 							<DiscordConnectionIssueAlert
