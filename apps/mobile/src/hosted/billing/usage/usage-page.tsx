@@ -14,6 +14,7 @@ import {
 	modelDisplayName,
 	modelOptionsForProvider,
 	providerDisplayLabel,
+	shouldBlockQueryError,
 	sortModelBreakdown,
 	USAGE_RANGE_ITEMS,
 	type UsageAgentBreakdown,
@@ -174,7 +175,7 @@ function UsageView() {
 				<UsageSkeleton />
 			</>
 		);
-	} else if (!usage.data) {
+	} else if (shouldBlockQueryError(usage.error, usage.data) || !usage.data) {
 		body = (
 			<>
 				<SettingsPanelHeader title={copy.title} actions={filters} />
