@@ -1,11 +1,6 @@
 import { computeSubscriptionRecoveryPresentation } from "@clawdi/shared/api";
 import { transactionsSectionClasses } from "@clawdi/shared/ui";
-import {
-	billingTermLabel,
-	computeSubscriptionPlanLabel,
-	storeProviderLabel,
-	storeSubscriptionSchedule,
-} from "@clawdi/shared/view";
+import { computeSubscriptionPlanLabel } from "@clawdi/shared/view";
 import { DetailAction } from "@/components/detail/detail-action";
 import { Text } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
@@ -152,7 +147,10 @@ export function SubscriptionDetails({
 	);
 }
 
-/** App Store / Google Play rows: store contract facts and store actions only, never Stripe. */
+/**
+ * App Store / Google Play rows: the card already shows plan, term, store and schedule;
+ * add only the Agent, a pending plan and store actions, never Stripe.
+ */
 function StoreSubscriptionDetails({
 	item,
 	onDeployment,
@@ -161,15 +159,10 @@ function StoreSubscriptionDetails({
 	onDeployment: () => void;
 }) {
 	const t = useI18n();
-	const management = item.store_management;
 	return (
 		<AppView className={webView(transactionsSectionClasses.section)}>
 			<ComputeSubscriptionCard item={item} storeNotice={false} />
 			<BillingFact label={t("billing.agent")} value={item.agent_name ?? t("billing.unknown")} />
-			<BillingFact label={t("billing.plan")} value={computeSubscriptionPlanLabel(item.plan_slug)} />
-			<BillingFact label={t("billing.term")} value={billingTermLabel(item.billing_term_months)} />
-			<BillingFact label={t("billing.source")} value={storeProviderLabel(management)} />
-			<BillingFact label={t("billing.periodEnd")} value={storeSubscriptionSchedule(management)} />
 			{item.pending_plan_slug ? (
 				<BillingFact
 					label={t("billing.pendingPlan")}

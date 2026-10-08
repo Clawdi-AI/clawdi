@@ -215,6 +215,9 @@ export function restorePurchasesNotices(
 	response: Pick<StoreComputeReconcileResponse, "code" | "results">,
 	store: string,
 ): StoreNotice[] {
+	// Hosted reconciles with no results when the store has no compute subscription to restore.
+	if (response.code === "reconciled" && !response.results?.length)
+		return [{ key: "storeCompute.nothingToRestore", tone: "neutral", refresh: false }];
 	const codes = new Set([response.code, ...(response.results ?? []).map((result) => result.code)]);
 	const notices: StoreNotice[] = [];
 	if (codes.has("owned_by_other_account"))

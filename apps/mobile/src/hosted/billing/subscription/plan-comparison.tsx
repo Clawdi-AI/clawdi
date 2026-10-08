@@ -1,5 +1,5 @@
 import type { DeployComponents } from "@clawdi/shared/api";
-import { planComparisonClasses as styles, termSwitcherClasses } from "@clawdi/shared/ui";
+import { planComparisonClasses as styles } from "@clawdi/shared/ui";
 import {
 	billingTermLabel,
 	cardTrialPricePresentation,
@@ -10,11 +10,10 @@ import { useState } from "react";
 import { SettingsSection } from "@/components/settings/settings-panel-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Text } from "@/components/ui/text";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { formatCreditCents } from "@/hosted/billing/store/store-presentation";
 import { useI18n } from "@/lib/i18n";
+import { NativeSegments } from "@/platform/navigation/segmented-control";
 import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 type Plan = DeployComponents["schemas"]["V2PlanResponse"];
@@ -48,28 +47,17 @@ export function PlanComparison({ plans }: { plans: Plan[] }) {
 			)}
 			actions={
 				common.length > 1 ? (
-					<Tabs
-						className="w-full"
+					<NativeSegments
 						value={String(selected)}
-						onValueChange={(value) => {
+						options={common.map((offer) => ({
+							value: String(offer.billing_term_months),
+							label: billingTermLabel(offer.billing_term_months),
+						}))}
+						onChange={(value) => {
 							const offer = common.find((item) => String(item.billing_term_months) === value);
 							if (offer) setTerm(offer.billing_term_months);
 						}}
-					>
-						<TabsList variant="default">
-							{common.map((offer) => (
-								<TabsTrigger
-									key={offer.billing_term_months}
-									value={String(offer.billing_term_months)}
-									className={webView(
-										termSwitcherClasses.item.replace(/(?:^|\s)flex-1(?=\s|$)/g, " "),
-									)}
-								>
-									<Text>{billingTermLabel(offer.billing_term_months)}</Text>
-								</TabsTrigger>
-							))}
-						</TabsList>
-					</Tabs>
+					/>
 				) : null
 			}
 		>
