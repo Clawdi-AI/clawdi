@@ -338,7 +338,8 @@ Real macOS/Windows signed beta-to-beta checks remain required before first signe
 
 ### Windows update end-to-end check
 
-In a disposable Windows x64 account without an existing Clawdi Sync task:
+In an elevated session on a disposable Windows x64 runner without an existing
+Clawdi Sync task (the test temporarily trusts its CA in the machine store):
 
 ```powershell
 bun apps/desktop/scripts/update-e2e-windows.ts

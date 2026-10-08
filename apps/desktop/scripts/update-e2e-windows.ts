@@ -141,8 +141,8 @@ function installerName(directory: string): string {
 
 try {
 	// Chromium/Electron use the Windows certificate store. Trust only this test
-	// CA in the disposable account and remove that exact certificate in finally.
-	// https://learn.microsoft.com/en-us/powershell/module/pki/import-certificate
+	// CA on the disposable runner and remove that exact certificate in finally.
+	// https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/certutil#-addstore
 	const openssl = join(process.env.ProgramFiles ?? "C:\\Program Files", "Git/usr/bin/openssl.exe");
 	await run(openssl, [
 		"req",
@@ -197,8 +197,11 @@ try {
 	await powershell(`
 $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new("$env:CLAWDI_DESKTOP_UPDATE_E2E_ROOT/ca.crt")
 [System.IO.File]::WriteAllText("$env:CLAWDI_DESKTOP_UPDATE_E2E_ROOT/ca-thumbprint", $cert.Thumbprint)
-Import-Certificate -FilePath "$env:CLAWDI_DESKTOP_UPDATE_E2E_ROOT/ca.crt" -CertStoreLocation Cert:\\CurrentUser\\Root | Out-Null
 `);
+	// The CurrentUser root store requires interactive trust confirmation. The
+	// disposable hosted runner is elevated: the machine store accepts certutil
+	// without UI, and finally removes only this test-generated thumbprint.
+	await run("certutil.exe", ["-addstore", "Root", join(root, "ca.crt")]);
 	server = createServer({
 		key: readFileSync(join(root, "server.key")),
 		cert: readFileSync(join(root, "server.crt")),
@@ -298,7 +301,7 @@ Import-Certificate -FilePath "$env:CLAWDI_DESKTOP_UPDATE_E2E_ROOT/ca.crt" -CertS
 			.pipe(response);
 	});
 	// NSIS documents /S and the last /D argument for silent per-user install:
-	// https://www.electron.build/docs/nsis#guid
+	// https://nsis.sourceforge.io/Docs/Chapter3.html#installerusage
 	await run(join(previous, previousName), ["/S", `/D=${installed}`], 120_000);
 	installedApp = true;
 	const executable = join(installed, "Clawdi.exe");
@@ -407,7 +410,7 @@ Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.Executa
 				if (existsSync(join(root, "ca-thumbprint")))
 					await powershell(`
 $thumbprint = [System.IO.File]::ReadAllText("$env:CLAWDI_DESKTOP_UPDATE_E2E_ROOT/ca-thumbprint")
-if (Test-Path "Cert:\\CurrentUser\\Root\\$thumbprint") { Remove-Item "Cert:\\CurrentUser\\Root\\$thumbprint" }
+if (Test-Path "Cert:\\LocalMachine\\Root\\$thumbprint") { Remove-Item "Cert:\\LocalMachine\\Root\\$thumbprint" }
 `);
 			} finally {
 				if (server) {
