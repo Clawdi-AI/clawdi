@@ -1,11 +1,36 @@
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
-import { basename } from "node:path";
+import { basename, extname } from "node:path";
 import { canonicalJson } from "../lib/session-events";
 import type { SessionContentPart, SessionReasoningEvent } from "./base";
 
 // Bump once per release when any adapter changes persisted Session/Event bytes.
 export const SESSION_PROJECTION_REVISION = 7;
+
+// SessionAttachmentPart in backend/app/schemas/session_events.py; lengths are
+// Unicode code points, matching Python len rather than JavaScript string.length.
+const ATTACHMENT_LIMITS = { name: 512, mediaType: 255, uri: 4096 };
+
+type AttachmentPart = Extract<SessionContentPart, { type: "attachment" }>;
+
+function boundedAttachmentPart(part: AttachmentPart): AttachmentPart {
+	if (part.name) {
+		const characters = Array.from(part.name);
+		if (characters.length > ATTACHMENT_LIMITS.name) {
+			const extension = extname(part.name);
+			const suffix = Array.from(extension).length <= 16 ? extension : "";
+			const prefixLength = ATTACHMENT_LIMITS.name - 1 - Array.from(suffix).length;
+			part.name = `${characters.slice(0, prefixLength).join("")}…${suffix}`;
+		}
+	}
+	if (part.media_type && Array.from(part.media_type).length > ATTACHMENT_LIMITS.mediaType)
+		delete part.media_type;
+	if (part.uri && Array.from(part.uri).length > ATTACHMENT_LIMITS.uri) {
+		part.availability = "metadata_only";
+		delete part.uri;
+	}
+	return part;
+}
 
 export type JsonObject = Record<string, unknown>;
 
@@ -98,12 +123,7 @@ function localReferenceName(value: string | null): string | null {
 	// URI payloads are never local filenames; preserve Windows drive paths.
 	if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(normalized) && !/^[a-zA-Z]:\//.test(normalized)) return null;
 	const name = basename(normalized);
-	return name &&
-		name !== "." &&
-		name !== ".." &&
-		name !== "/" &&
-		name.length <= 512 &&
-		!/[\p{Cc}]/u.test(name)
+	return name && name !== "." && name !== ".." && name !== "/" && !/[\p{Cc}]/u.test(name)
 		? name
 		: null;
 }
@@ -127,7 +147,7 @@ function nonNegativeInteger(...values: unknown[]): number | null {
 	return null;
 }
 
-function attachmentPart(block: JsonObject): Extract<SessionContentPart, { type: "attachment" }> {
+function attachmentPart(block: JsonObject): AttachmentPart {
 	const source = jsonObject(block.source);
 	const imageUrl = jsonObject(block.image_url);
 	const rawUri =
@@ -156,11 +176,22 @@ function attachmentPart(block: JsonObject): Extract<SessionContentPart, { type: 
 		jsonString(block.mime_type) ??
 		jsonString(block.mimeType) ??
 		jsonString(source?.media_type);
+	const names = [
+		localReferenceName(jsonString(block.name)),
+		localReferenceName(jsonString(block.filename)),
+		localReferenceName(localPath),
+		uriReferenceName(rawUri),
+	];
+	const candidateName = names.find((name) => name !== null) ?? null;
+	// Preserve the released identity calculation, including its UTF-16 name cap.
+	// Only emitted metadata changes; truncation must not change attachment IDs.
+	const identityName = names.find((name) => name && name.length <= ATTACHMENT_LIMITS.name) ?? null;
+	// Keep already in-bounds projections byte-identical, including names the old
+	// UTF-16 cap omitted. Only over-contract names need a new projection.
 	const name =
-		localReferenceName(jsonString(block.name)) ??
-		localReferenceName(jsonString(block.filename)) ??
-		localReferenceName(localPath) ??
-		uriReferenceName(rawUri);
+		candidateName && Array.from(candidateName).length > ATTACHMENT_LIMITS.name
+			? candidateName
+			: identityName;
 	const sizeBytes = nonNegativeInteger(block.size_bytes, block.size, bytes?.length);
 	const identity =
 		jsonString(block.id) ??
@@ -169,11 +200,11 @@ function attachmentPart(block: JsonObject): Extract<SessionContentPart, { type: 
 		localPath ??
 		rawUri ??
 		canonicalJson({
-			name,
+			name: identityName,
 			media_type: mediaType,
 			size_bytes: nonNegativeInteger(block.size_bytes, block.size),
 		});
-	return {
+	return boundedAttachmentPart({
 		type: "attachment",
 		attachment_id: `sha256:${sha256(identity)}`,
 		availability: safeUri ? "external" : "metadata_only",
@@ -182,7 +213,7 @@ function attachmentPart(block: JsonObject): Extract<SessionContentPart, { type: 
 		...(mediaType ? { media_type: mediaType } : {}),
 		...(sizeBytes === null ? {} : { size_bytes: sizeBytes }),
 		...(contentSha && /^[0-9a-f]{64}$/.test(contentSha) ? { sha256: contentSha } : {}),
-	};
+	});
 }
 
 export function visibleContentParts(content: unknown): SessionContentPart[] {
