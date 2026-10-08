@@ -1,18 +1,14 @@
 appId: ${MAESTRO_APP_ID}
 name: Account settings and fixture API keys
 ---
-# react-native-screens 4.26.2 writes tab testIDs to View.tag (Espresso),
-# not UIAutomator resource IDs. Keep Trigger IDs and scope short tab labels
-# to the native Material tab container containing that label; no tab indices.
-# https://github.com/software-mansion/react-native-screens/blob/4.26.2/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/host/TabsHostA11yCoordinator.kt
-- tapOn:
-    text: Account
-    childOf:
-      id: ${MAESTRO_APP_ID}:id/navigation_bar_item_content_container
-      containsDescendants:
-        - text: Account
+# select-tab.yaml handles each platform's native tab accessibility.
+- runFlow:
+    file: select-tab.yaml
+    env:
+      TAB_LABEL: Account
+      TAB_ID: account
 # The Account tab root is the native settings menu; rows push `/settings/<panel>`.
-# @expo/ui's Compose testID modifier exports each row's tag as a resource ID.
+# @expo/ui exports row testIDs through SwiftUI accessibility or Compose IDs.
 # https://github.com/expo/expo/blob/sdk-57/packages/expo-ui/android/src/main/java/expo/modules/ui/Modifiers.kt
 - extendedWaitUntil:
     visible:
@@ -42,7 +38,7 @@ name: Account settings and fixture API keys
 - assertVisible:
     text: Spend over time
 - takeScreenshot: settings-usage
-- back
+- runFlow: navigate-back.yaml
 - tapOn:
     id: settings-row-general
 - assertVisible:
@@ -50,7 +46,7 @@ name: Account settings and fixture API keys
 - assertVisible:
     id: settings-appearance
 - takeScreenshot: settings
-- back
+- runFlow: navigate-back.yaml
 - tapOn:
     id: settings-row-api-keys
 - extendedWaitUntil:

@@ -1,25 +1,29 @@
 appId: ${MAESTRO_APP_ID}
 name: Development client launch
 ---
-# The script waits for the native dev-launcher activity before Maestro starts.
+# The Android script waits for its native dev-launcher activity before Maestro.
 - openLink:
     link: ${MAESTRO_DEV_CLIENT_URL}
     autoVerify: false
 # A delayed System UI startup ANR was observed after the script's boot/launcher
 # checks on this memory-constrained host. Wait once only for that exact dialog;
 # application ANRs are never dismissed and still fail the required app checks.
-- extendedWaitUntil:
-    visible:
-      id: overview-screen|android:id/aerr_wait
-    timeout: 180000
 - runFlow:
     when:
-      visible:
-        id: android:id/alertTitle
-        text: "System UI isn't responding"
+      platform: Android
     commands:
-      - tapOn:
-          id: android:id/aerr_wait
+      - extendedWaitUntil:
+          visible:
+            id: overview-screen|android:id/aerr_wait
+          timeout: 180000
+      - runFlow:
+          when:
+            visible:
+              id: android:id/alertTitle
+              text: "System UI isn't responding"
+          commands:
+            - tapOn:
+                id: android:id/aerr_wait
 - extendedWaitUntil:
     visible:
       id: overview-screen
