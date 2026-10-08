@@ -17,7 +17,62 @@ env:
 # This repository builds, verifies, and publishes one immutable artifact.
 # Prereleases publish to beta; stable releases publish to latest.
 jobs:
+  release-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      # Gate the expensive build and protected publisher with a standard job output.
+      # https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/pass-job-outputs
+      # https://docs.github.com/en/webhooks/webhook-events-and-payloads#push (before)
+      # https://docs.npmjs.com/cli/v11/commands/npm-view
+      - name: Check version bump and npm registry
+        id: check
+        working-directory: packages/cli
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PREVIOUS_SHA: ${{ github.event.before }}
+        run: |
+          package_name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          test "$package_name" = "clawdi"
+          if [ "$EVENT_NAME" = push ]; then
+            previous_version=$(git show "$PREVIOUS_SHA:packages/cli/package.json" | node -p "JSON.parse(require('node:fs').readFileSync(0, 'utf8')).version")
+            if [ "$version" = "$previous_version" ]; then
+              echo "Skipping CLI publish: version $version did not change."
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          # Read the existing package's full version list so registry errors fail
+          # explicitly instead of being mistaken for an unpublished version.
+          versions_json=$(npm view "$package_name" versions --json)
+          VERSIONS_JSON="$versions_json" VERSION="$version" node - <<'NODE'
+          const fs = require("node:fs");
+          const versions = JSON.parse(process.env.VERSIONS_JSON);
+          if (!Array.isArray(versions) || !versions.every((version) => typeof version === "string")) {
+            throw new Error("npm returned an invalid package version list");
+          }
+          const published = versions.includes(process.env.VERSION);
+          console.log(published
+            ? `Skipping CLI publish: clawdi@${process.env.VERSION} is already on npm.`
+            : `Publishing new CLI version: ${process.env.VERSION}.`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `publish=${!published}\n`);
+          NODE
+
   build-immutable-artifact:
+    needs: release-check
+    if: needs.release-check.outputs.publish == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     permissions:
       contents: read
@@ -339,6 +394,9 @@ jobs:
           NPM_TAG: ${{ needs['build-immutable-artifact'].outputs.npm_tag }}
           VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
         run: |
+          # JavaScript template literals below intentionally use shell single quotes.
+          # https://www.shellcheck.net/wiki/SC2016
+          # shellcheck disable=SC2016
           local_integrity=$(node -e 'const { createHash }=require("node:crypto"); const { readFileSync }=require("node:fs"); console.log(`sha512-${createHash("sha512").update(readFileSync(process.argv[1])).digest("base64")}`)' "./release/$CLI_TARBALL_FILENAME")
           npm_release_visible() {
             test "$(npm view "clawdi@$VERSION" version 2>/dev/null)" = "$VERSION"
