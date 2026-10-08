@@ -39,7 +39,6 @@ import {
 	convergeRuntimeManifest,
 } from "../../src/runtime/manifest";
 import type { RuntimeManifest } from "../../src/runtime/manifest-contract";
-import { runtimeCommandCurrentRevision } from "../../src/runtime/manifest-install";
 import type { HostedSkillSource } from "../../src/runtime/manifest-resources";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
@@ -50,7 +49,6 @@ import { readComponentServiceState, runtimeComponentIsReady } from "../../src/ru
 import { LEGACY_CLAWDI_MANAGED_PROVIDER_PLUGIN_ID } from "../../src/runtime/openclaw-legacy-provider-plugin";
 import { openClawPluginCapabilityConsentArgs } from "../../src/runtime/openclaw-plugin-cli";
 import { getRuntimePaths } from "../../src/runtime/paths";
-import { HERMES_DASHBOARD_BUILD_REVISION_FILE } from "../../src/runtime/runtime-systemd-reconciliation";
 import { ensureRuntimePlatformDirectory, ensureRuntimeStateDirs } from "../../src/runtime/state";
 import {
 	applySystemdRuntimeUpdate,
@@ -2645,13 +2643,6 @@ function installBehavioralGuardHermesRuntime(): void {
 	const dashboardRoot = "/home/clawdi/.hermes/hermes-agent/hermes_cli/web_dist";
 	mkdirSync(join(dashboardRoot, "assets"), { recursive: true });
 	writeFileSync(join(dashboardRoot, "index.html"), "<html>Hermes dashboard</html>\n");
-	const commandRevision = runtimeCommandCurrentRevision(
-		"/home/clawdi/.local/bin/hermes",
-		"/home/clawdi",
-		"/home/clawdi",
-	);
-	if (!commandRevision) throw new Error("could not resolve the behavioral Hermes revision");
-	writeFileSync(join(dashboardRoot, HERMES_DASHBOARD_BUILD_REVISION_FILE), `${commandRevision}\n`);
 	chownTreeWithoutFollowingLinks(dashboardRoot, 10_001, 10_001);
 }
 

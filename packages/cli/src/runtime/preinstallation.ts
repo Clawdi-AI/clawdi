@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-	chownSync,
 	lstatSync,
 	mkdirSync,
 	readdirSync,
@@ -17,17 +16,11 @@ import {
 	OPENCLAW_SDK_EXPORT_PATHS,
 	resolveOpenClawSdkExport,
 } from "../lib/codex-oauth-native-store";
-import { writePrivateFileAtomic } from "../lib/private-file";
 import { applyRuntimeCliDesiredState } from "./cli-update";
-import { prepareHermesDashboardBuild } from "./hermes-dashboard-build";
 import { resolveHostedOpenClawWorkspace } from "./hosted-openclaw-context";
 import { ensureHostedCodexCli } from "./managed-codex-provider";
 import { OFFICIAL_INSTALL_URLS, officialInstallArgs } from "./manifest-contract";
-import {
-	observeRuntimeInstall,
-	runtimeCommandVersionRevision,
-	runtimeFileCurrentRevision,
-} from "./manifest-install";
+import { observeRuntimeInstall, runtimeFileCurrentRevision } from "./manifest-install";
 import {
 	prepareAnonymousOpenClawGateway,
 	seedAnonymousOpenClawAuthProbes,
@@ -178,26 +171,6 @@ export function prepareRuntimePreinstallation(
 	if (!health) throw new Error("anonymous runtime health check returned no version");
 	const executableRevision = runtimeFileCurrentRevision(command);
 	if (!executableRevision) throw new Error("installed runtime executable identity is unavailable");
-	if (spec.runtime === "hermes") {
-		prepareHermesDashboardBuild({
-			home,
-			revision: runtimeCommandVersionRevision(executableRevision, health),
-			run: (args, cwd, timeout) => {
-				const child = buildNumericUserCommand(identity.uid, identity.gid, "npm", args);
-				const result = spawnSync(child.command, child.args, {
-					cwd,
-					env: anonymousInstallerEnvironment(home),
-					encoding: "utf8",
-					timeout,
-				});
-				if (result.error || result.status !== 0) throw new Error("Hermes dashboard build failed");
-			},
-			writeRevision(path, contents) {
-				writePrivateFileAtomic(path, contents, { mode: 0o600 });
-				chownSync(path, identity.uid, identity.gid);
-			},
-		});
-	}
 	const sourceIdentity = preinstalledSourceIdentity(spec.runtime, home);
 	if (!sourceIdentity) throw new Error("installed runtime source identity is unavailable");
 	const probes: PreinstalledProbes = {
