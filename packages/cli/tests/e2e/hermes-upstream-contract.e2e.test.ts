@@ -539,21 +539,18 @@ describe.skipIf(!enabled)("upstream Hermes adapter contract", () => {
 			"--no-open",
 		]);
 		try {
-			const ready = await waitFor(
-				async () => {
-					if (child.exitCode !== null || child.signalCode !== null)
-						throw new Error(serviceLog("dashboard-cold-build"));
-					try {
-						const response = await fetch(`http://127.0.0.1:${HERMES_DASHBOARD_PORT}/`, {
-							signal: AbortSignal.timeout(2_000),
-						});
-						return response.ok && /<!doctype html|<html[\s>]/i.test(await response.text());
-					} catch {
-						return false;
-					}
-				},
-				900_000,
-			);
+			const ready = await waitFor(async () => {
+				if (child.exitCode !== null || child.signalCode !== null)
+					throw new Error(serviceLog("dashboard-cold-build"));
+				try {
+					const response = await fetch(`http://127.0.0.1:${HERMES_DASHBOARD_PORT}/`, {
+						signal: AbortSignal.timeout(2_000),
+					});
+					return response.ok && /<!doctype html|<html[\s>]/i.test(await response.text());
+				} catch {
+					return false;
+				}
+			}, 900_000);
 			expect(ready, serviceLog("dashboard-cold-build")).toBe(true);
 			expect(existsSync(join(appRoot, "hermes_cli", "web_dist", "index.html"))).toBe(true);
 			expect(existsSync(join(appRoot, "hermes_cli", "web_dist", ".hermes-product"))).toBe(true);
