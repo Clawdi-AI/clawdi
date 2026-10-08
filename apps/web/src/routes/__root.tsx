@@ -63,12 +63,11 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
 		<html lang="en" className="h-full" suppressHydrationWarning>
 			<head>
 				{nonce ? <meta name="csp-nonce" content={nonce} /> : null}
-				{/* TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7. */}
 				<script
 					nonce={nonce}
 					dangerouslySetInnerHTML={{
 						__html:
-							'if(window.clawdiDesktop){document.documentElement.dataset.clawdiDesktop="true"}try{var t=localStorage.getItem("clawdi-theme")||"system";var d=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",d)}catch(e){}',
+							'try{var t=localStorage.getItem("clawdi-theme")||"system";var d=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",d)}catch(e){}',
 					}}
 				/>
 				<HeadContent />

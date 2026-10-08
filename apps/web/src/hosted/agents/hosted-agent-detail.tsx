@@ -361,7 +361,6 @@ import {
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { CHATWOOT_LIVE_CHAT_AVAILABLE, openChatwootWithContext } from "@/lib/chatwoot";
-import { useDesktopBridge } from "@/lib/desktop";
 import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
 import {
 	AGENT_SECTION_NAVIGATION_ITEMS,
@@ -1945,22 +1944,9 @@ function RuntimeUiAccessDialog({
 	onRetryRuntimeAccess: () => Promise<RuntimeUiCredentials | null>;
 }) {
 	const label = runtimeBrowserUiLabel(runtime);
-	const desktopBridge = useDesktopBridge();
 
-	const openRuntime = useCallback(async () => {
+	const openRuntime = useCallback(() => {
 		if (!windowTarget) return;
-		if (desktopBridge) {
-			try {
-				if (await desktopBridge.openRuntimeWindow(windowTarget)) return;
-			} catch {
-				// Fall through to the existing user-facing launch error.
-			}
-			toast.error(`Couldn't open ${label}`, {
-				id: RUNTIME_UI_LAUNCH_TOAST_ID,
-				description: "Clawdi couldn't create the runtime window.",
-			});
-			return;
-		}
 		const popup = openSecureRuntimeWindow(window.open.bind(window), windowTarget);
 		if (!popup) {
 			toast.error(`Couldn't open ${label}`, {
@@ -1970,7 +1956,7 @@ function RuntimeUiAccessDialog({
 			return;
 		}
 		trackRuntimeWindow(deployment.resource.id, popup);
-	}, [deployment.resource.id, desktopBridge, label, windowTarget]);
+	}, [deployment.resource.id, label, windowTarget]);
 
 	return (
 		<div className="flex items-center gap-1.5">
@@ -2070,29 +2056,11 @@ function TerminalTab({
 	const isStarting = isStartingStatus(status);
 	const label = agentName;
 	const client = useBillingClient();
-	const desktopBridge = useDesktopBridge();
 	const terminal = useSensitiveAction(({ id }: { id: string }) => client.createTerminalSession(id));
 	const { isPending: isOpeningTerminal, execute: createTerminalSession } = terminal;
 	const [terminalStatus, setTerminalStatus] = useState<HostedTerminalStatus>("connecting");
 	const [reconnectRequest, setReconnectRequest] = useState(0);
-	const openTerminalWindow = useCallback(async () => {
-		if (desktopBridge) {
-			try {
-				if (
-					await desktopBridge.openTerminalWindow(
-						new URL(terminalWindowHref, window.location.href).href,
-					)
-				)
-					return;
-			} catch {
-				// Fall through to the existing user-facing launch error.
-			}
-			toast.error("Couldn't open Terminal", {
-				id: TERMINAL_WINDOW_LAUNCH_TOAST_ID,
-				description: "Clawdi couldn't create the terminal window.",
-			});
-			return;
-		}
+	const openTerminalWindow = useCallback(() => {
 		const popup = openSecureRuntimeWindow(window.open.bind(window), terminalWindowHref);
 		if (!popup) {
 			toast.error("Couldn't open Terminal", {
@@ -2102,7 +2070,7 @@ function TerminalTab({
 			return;
 		}
 		trackRuntimeWindow(deployment.resource.id, popup);
-	}, [deployment.resource.id, desktopBridge, terminalWindowHref]);
+	}, [deployment.resource.id, terminalWindowHref]);
 	const requestWebsocketUrl = useCallback(async () => {
 		const session = await createTerminalSession({ id: deployment.resource.id });
 		return session.websocket_url ?? "";

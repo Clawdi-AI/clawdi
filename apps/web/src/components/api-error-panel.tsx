@@ -18,16 +18,9 @@ const DEFAULT_API_ERROR_NORMALIZER: ApiErrorNormalizer = {
 	normalizeError: normalizeApiError,
 };
 
-/** Restore Desktop auth from the CLI before asking for a new browser sign-in. */
+/** Send the user to sign in again, then back to this page. */
 function reauthenticate() {
 	if (typeof window === "undefined") return;
-	// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
-	if (window.clawdiDesktop) {
-		void window.clawdiDesktop.retryDashboard().catch(() => {
-			window.location.href = "/sign-in";
-		});
-		return;
-	}
 	window.location.href = signInActionHref(
 		window.location.pathname + window.location.search + window.location.hash,
 	);

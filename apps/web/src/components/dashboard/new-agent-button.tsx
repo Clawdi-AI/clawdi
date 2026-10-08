@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/dialog";
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useDesktopBridge } from "@/lib/desktop";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useProductAccess } from "@/lib/product-access";
 import { useHydrated } from "@/lib/use-hydrated";
@@ -34,7 +33,6 @@ export function NewAgentButton({
 	className?: string;
 } = {}) {
 	const router = useRouter();
-	const desktopBridge = useDesktopBridge();
 	const hostedAccess = useProductAccess();
 	const hydrated = useHydrated();
 	const [chooserOpen, setChooserOpen] = useState(false);
@@ -45,10 +43,6 @@ export function NewAgentButton({
 
 	function handleClick() {
 		if (checkingDeployAccess) return;
-		if (desktopBridge && !canDeployOnClawdi) {
-			void desktopBridge.openConnectWizard().catch(() => setConnectOpen(true));
-			return;
-		}
 		if (canDeployOnClawdi || deployAccessError) {
 			setChooserOpen(true);
 			return;
@@ -58,10 +52,6 @@ export function NewAgentButton({
 
 	function chooseConnect() {
 		setChooserOpen(false);
-		if (desktopBridge) {
-			void desktopBridge.openConnectWizard().catch(() => setConnectOpen(true));
-			return;
-		}
 		setConnectOpen(true);
 	}
 
@@ -133,11 +123,7 @@ export function NewAgentButton({
 						<ChoiceCard
 							icon={<TerminalSquare />}
 							title="Connect your own agent"
-							description={
-								desktopBridge
-									? "Find and connect Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode."
-									: "Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode via the CLI."
-							}
+							description="Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode via the CLI."
 							onClick={chooseConnect}
 						/>
 					</div>

@@ -81,31 +81,7 @@ export function ConnectorConnectAction({
 
 	const startConnect = () => {
 		if (inflightRef.current || connect.isPending) return;
-		// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
-		const desktop = typeof window !== "undefined" && Boolean(window.clawdiDesktop);
-		const popup =
-			typeof window !== "undefined" && !desktop ? window.open("about:blank", "_blank") : null;
-		if (desktop) {
-			inflightRef.current = true;
-			const redirectUrl = new URL(redirectHref ?? window.location.href, window.location.origin)
-				.href;
-			void connect
-				.execute(redirectUrl, alias.trim())
-				.then((result) => {
-					if (!mountedRef.current) return;
-					window.open(result.connect_url, "_blank", "noopener");
-					setOauthOpen(false);
-				})
-				.catch(() => {
-					toast.error("Couldn't start connection", {
-						description: "Try again. If the problem persists, contact support.",
-					});
-				})
-				.finally(() => {
-					inflightRef.current = false;
-				});
-			return;
-		}
+		const popup = typeof window !== "undefined" ? window.open("about:blank", "_blank") : null;
 		if (!popup) {
 			toast.error("Popup blocked", { description: "Allow popups for this site to continue." });
 			return;

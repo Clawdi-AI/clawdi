@@ -81,10 +81,6 @@ export interface DesktopAuthenticationProgress {
 	expiresAt: string;
 }
 
-export interface DesktopShellAuthenticationResult {
-	status: "authenticated" | "cancelled";
-}
-
 export interface DesktopMoveToApplicationsResult {
 	status: "cancelled" | "not-required" | "relaunching";
 }
@@ -122,18 +118,4 @@ export interface ClawdiDesktopConnectBridge {
 	connectAgents(connections: DesktopAgentConnection[]): Promise<DesktopConnectResult>;
 	moveToApplicationsFolder(): Promise<DesktopMoveToApplicationsResult>;
 	openDashboard(): Promise<void>;
-}
-
-// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
-export interface ClawdiDesktopShellBridge {
-	/** Absent on the first beta; existing methods form protocol version 1. */
-	readonly apiVersion?: 1;
-	signIn(): Promise<DesktopShellAuthenticationResult>;
-	signOut(): Promise<void>;
-	openFilesWindow(url: string): Promise<boolean>;
-	openRuntimeWindow(url: string): Promise<boolean>;
-	openTerminalWindow(url: string): Promise<boolean>;
-	openConnectWizard(): Promise<void>;
-	retryDashboard(): Promise<void>;
-	createDashboardSession(): Promise<string>;
 }

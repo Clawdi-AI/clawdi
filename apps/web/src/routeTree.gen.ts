@@ -10,7 +10,6 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ProtectedRouteImport } from './routes/_protected'
-import { Route as DesktopAuthRouteImport } from './routes/desktop-auth'
 import { Route as GetStartedDotmdRouteImport } from './routes/get-started[.]md'
 import { Route as LlmsDottxtRouteImport } from './routes/llms[.]txt'
 import { Route as SignInRouteImport } from './routes/sign-in'
@@ -70,11 +69,6 @@ import { Route as ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRouteImp
 
 const ProtectedRoute = ProtectedRouteImport.update({
   id: '/_protected',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DesktopAuthRoute = DesktopAuthRouteImport.update({
-  id: '/desktop-auth',
-  path: '/desktop-auth',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GetStartedDotmdRoute = GetStartedDotmdRouteImport.update({
@@ -399,7 +393,6 @@ const ProtectedDashboardAgentsIdProjectAccessProjectIdVaultsRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof ProtectedDashboardIndexRoute
-  '/desktop-auth': typeof DesktopAuthRoute
   '/get-started.md': typeof GetStartedDotmdRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/sign-in': typeof SignInRouteWithChildren
@@ -457,7 +450,6 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof ProtectedDashboardIndexRoute
-  '/desktop-auth': typeof DesktopAuthRoute
   '/get-started.md': typeof GetStartedDotmdRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/sign-in': typeof SignInRouteWithChildren
@@ -514,7 +506,6 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_protected': typeof ProtectedRouteWithChildren
-  '/desktop-auth': typeof DesktopAuthRoute
   '/get-started.md': typeof GetStartedDotmdRoute
   '/llms.txt': typeof LlmsDottxtRoute
   '/sign-in': typeof SignInRouteWithChildren
@@ -576,7 +567,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/desktop-auth'
     | '/get-started.md'
     | '/llms.txt'
     | '/sign-in'
@@ -634,7 +624,6 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/desktop-auth'
     | '/get-started.md'
     | '/llms.txt'
     | '/sign-in'
@@ -690,7 +679,6 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_protected'
-    | '/desktop-auth'
     | '/get-started.md'
     | '/llms.txt'
     | '/sign-in'
@@ -751,7 +739,6 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   ProtectedRoute: typeof ProtectedRouteWithChildren
-  DesktopAuthRoute: typeof DesktopAuthRoute
   GetStartedDotmdRoute: typeof GetStartedDotmdRoute
   LlmsDottxtRoute: typeof LlmsDottxtRoute
   SignInRoute: typeof SignInRouteWithChildren
@@ -775,13 +762,6 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof ProtectedRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/desktop-auth': {
-      id: '/desktop-auth'
-      path: '/desktop-auth'
-      fullPath: '/desktop-auth'
-      preLoaderRoute: typeof DesktopAuthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/get-started.md': {
@@ -1339,7 +1319,6 @@ const SignUpRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   ProtectedRoute: ProtectedRouteWithChildren,
-  DesktopAuthRoute: DesktopAuthRoute,
   GetStartedDotmdRoute: GetStartedDotmdRoute,
   LlmsDottxtRoute: LlmsDottxtRoute,
   SignInRoute: SignInRouteWithChildren,
