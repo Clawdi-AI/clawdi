@@ -10,17 +10,25 @@ import {
 	agentSurfaceCopy,
 	agentToolSectionCopy,
 	canRetryInitialDeployment,
+	deploymentAwaitingRuntimeUi,
 	deploymentFailurePresentation,
 	deploymentFilesUrl,
 	deploymentPollingState,
+	deploymentProvisioningPath,
 	deploymentRuntimeStatusPresentation,
 	deploymentStatusFromResource,
+	hostedDeploymentSetupInProgress,
+	INITIAL_DEPLOYMENT_COMPLETE_PAUSE_MS,
+	type InitialDeploymentSupportState,
 	initialDeploymentCopy,
+	initialDeploymentStartedAtMs,
+	initialDeploymentSupportContext,
+	initialDeploymentSupportMailto,
 	RUNTIME_UI_WITHDRAWN_DESCRIPTION,
 	runtimeConsoleCopy,
 	runtimeConsolePresentation,
-	runtimeDisplayName,
 	type SettlingTracker,
+	SUPPORT_EMAIL,
 	shouldShowInitialDeploymentProgress,
 	stoppedAgentDescription,
 } from "@clawdi/shared/view";
@@ -28,6 +36,7 @@ import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack
 import { Redirect, useRouter } from "expo-router";
 import { FolderOpen, MonitorPlay, TerminalSquare } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
+import { AccessibilityInfo, Alert, Linking } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentOverview } from "@/components/dashboard/agent-overview-resource-bodies";
 import { AgentSourceBadge } from "@/components/dashboard/agent-section-source-badge";
@@ -205,7 +214,27 @@ function DeploymentDetail({
 	const transition = deployment ? polling.transitions.get(deployment.resource.id)?.kind : undefined;
 	const failure = deployment ? deploymentFailurePresentation(deployment) : null;
 	const status = deploymentStatusFromResource(deployment?.resource.status ?? null);
-	const initial = Boolean(deployment && shouldShowInitialDeploymentProgress(status, failure));
+	const setupInProgress = Boolean(deployment && hostedDeploymentSetupInProgress(deployment));
+	// Setup is done only when the agent runs and its web chat surface is published.
+	const settingUp = Boolean(
+		deployment && (shouldShowInitialDeploymentProgress(status, failure) || setupInProgress),
+	);
+	// Keep the completed state readable for a moment before the overview replaces it.
+	const [wasSettingUp, setWasSettingUp] = useState(settingUp);
+	const [completing, setCompleting] = useState(false);
+	if (wasSettingUp !== settingUp) {
+		setWasSettingUp(settingUp);
+		if (wasSettingUp && status.kind === "running") setCompleting(true);
+	}
+	useEffect(() => {
+		if (!completing) return;
+		// Announce once and refresh the inventory that gates agent navigation elsewhere.
+		AccessibilityInfo.announceForAccessibility(initialDeploymentCopy.ready);
+		void cache.invalidateQueries({ queryKey: accountQueryKey(scope, "deployments") });
+		const timeout = setTimeout(() => setCompleting(false), INITIAL_DEPLOYMENT_COMPLETE_PAUSE_MS);
+		return () => clearTimeout(timeout);
+	}, [cache, completing, scope]);
+	const initial = settingUp || (completing && status.kind === "running");
 	const checkAgain = async () => {
 		await Promise.all([query.refetch(), ...(operationId ? [operation.refetch()] : [])]);
 	};
@@ -483,22 +512,24 @@ function DeploymentDetail({
 				) : (
 					<BackButton />
 				)}
-				<PageHeader
-					title={deployment?.resource.name ?? t("navigation.home")}
-					description={agentOverviewCopy.description}
-					titleAdornment={
-						deployment?.agent_id ? (
-							<AgentSourceBadge
-								agentId={deployment.agent_id}
-								ownership={{
-									cloudAgentIds: new Set([deployment.agent_id.toLowerCase()]),
-									legacyAgentIds: new Set(),
-									isResolved: true,
-								}}
-							/>
-						) : undefined
-					}
-				/>
+				{deployment && initial ? null : (
+					<PageHeader
+						title={deployment?.resource.name ?? t("navigation.home")}
+						description={agentOverviewCopy.description}
+						titleAdornment={
+							deployment?.agent_id ? (
+								<AgentSourceBadge
+									agentId={deployment.agent_id}
+									ownership={{
+										cloudAgentIds: new Set([deployment.agent_id.toLowerCase()]),
+										legacyAgentIds: new Set(),
+										isResolved: true,
+									}}
+								/>
+							) : undefined
+						}
+					/>
+				)}
 				{!hosted ? (
 					<EmptyState
 						title={agentSurfaceCopy.unavailable}
@@ -514,39 +545,39 @@ function DeploymentDetail({
 						{query.isPending ? <EntityCardSkeleton /> : null}
 						{deployment && initial ? (
 							<InitialDeploymentPage
+								runtime={deployment.resource.spec.runtime}
+								avatarUrl={agent.data?.avatar_url}
 								status={status}
-								runtimeLabel={runtimeDisplayName(deployment.resource.spec.runtime)}
+								provisioningPath={deploymentProvisioningPath(deployment)}
+								awaitingChat={deploymentAwaitingRuntimeUi(deployment)}
+								startedAtMs={initialDeploymentStartedAtMs(deployment.accepted_operation)}
 								failure={failure}
 								timedOut={transition === "timed_out" || transition === "escalated"}
 								escalated={transition === "escalated"}
 								actions={
-									failure?.failedVerb === "create" && canRetryInitialDeployment(failure) ? (
-										<DeploymentControls
-											section="startup"
-											deployment={deployment}
-											deploymentId={deploymentId}
-											blocked={query.isError}
-											transitioning={Boolean(activeOperation && !activeOperation.done)}
-											onAccepted={async (result) => {
-												setAccepted(result);
-												await refreshResources();
-											}}
-											onAbsent={refreshResources}
-										/>
-									) : transition === "timed_out" || transition === "escalated" ? (
-										<WebView recipe="flex flex-wrap gap-2">
-											<ActionButton
-												label={initialDeploymentCopy.check}
-												disabled={query.isFetching || operation.isFetching}
-												onPress={() => void checkAgain()}
-											/>
-											{transition === "escalated" && cancellableOperation ? (
-												<CancelOperation
-													operation={cancellableOperation}
-													onRequested={checkAgain}
+									failure?.failedVerb === "create" ? (
+										<>
+											{canRetryInitialDeployment(failure) ? (
+												<DeploymentControls
+													section="startup"
+													deployment={deployment}
+													deploymentId={deploymentId}
+													blocked={query.isError}
+													transitioning={Boolean(activeOperation && !activeOperation.done)}
+													onAccepted={async (result) => {
+														setAccepted(result);
+														await refreshResources();
+													}}
+													onAbsent={refreshResources}
 												/>
 											) : null}
-										</WebView>
+											<ContactSupportAction deployment={deployment} state="failed" />
+										</>
+									) : transition === "timed_out" || transition === "escalated" ? (
+										<ContactSupportAction
+											deployment={deployment}
+											state={transition === "escalated" ? "stuck" : "delayed"}
+										/>
 									) : undefined
 								}
 							/>
@@ -576,5 +607,31 @@ function DeploymentDetail({
 				)}
 			</AppScrollView>
 		</SafeAreaScreen>
+	);
+}
+
+/**
+ * The app has no live chat, so support opens as an email to the address Web uses,
+ * prefilled with the same setup context. Polling continues in the background.
+ */
+function ContactSupportAction({
+	deployment,
+	state,
+}: {
+	deployment: DeploymentRead;
+	state: InitialDeploymentSupportState;
+}) {
+	return (
+		<ActionButton
+			label={initialDeploymentCopy.contactSupport}
+			onPress={() => {
+				const href = initialDeploymentSupportMailto(
+					initialDeploymentSupportContext(deployment, state, Date.now()),
+				);
+				Linking.openURL(href).catch(() =>
+					Alert.alert(initialDeploymentCopy.contactSupport, SUPPORT_EMAIL),
+				);
+			}}
+		/>
 	);
 }

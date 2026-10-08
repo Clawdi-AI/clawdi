@@ -9,6 +9,7 @@ import {
 	deploymentFailurePresentation,
 	deploymentFailureReason,
 } from "./deployment-failure";
+import { deploymentSetupAwaitingRuntimeUi } from "./deployment-polling";
 import {
 	type DeploymentStatus,
 	type DeploymentStatusTone,
@@ -96,6 +97,23 @@ export function hostedRuntimeStatusView(
 	};
 }
 
+/**
+ * The agent's first start is still in progress: nothing has failed and the accepted
+ * create has not yet produced a running runtime whose web chat surface is published.
+ */
+export function hostedDeploymentSetupInProgress(
+	deployment: HostedDeployment,
+	nowMs = Date.now(),
+): boolean {
+	if (deploymentFailurePresentation(deployment) !== null) return false;
+	const status = deploymentStatusFromResource(deployment.resource.status);
+	return (
+		status.kind === "creating" ||
+		(status.kind === "starting" && deployment.accepted_operation?.metadata.verb === "create") ||
+		deploymentSetupAwaitingRuntimeUi(deployment, nowMs)
+	);
+}
+
 export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
 	if (!isHostedDeploymentVisible(d)) return [];
 	const runtime = d.resource.spec.runtime;
@@ -129,6 +147,7 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 			external: false,
 			cardStatus,
 			filesAvailable: deploymentFilesUrl(d) !== null,
+			setupInProgress: hostedDeploymentSetupInProgress(d),
 			env: matchedEnv ?? null,
 		},
 	];

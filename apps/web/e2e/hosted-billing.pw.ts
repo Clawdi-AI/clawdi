@@ -668,10 +668,11 @@ test("paid checkout waits for deployment membership before navigation without LR
 	await expect(page).toHaveURL("/deploy");
 	releaseDetail();
 	await expect(page).toHaveURL(`/agents/${fixtureAgentId(startingDeployment)}`);
-	await expect(page.getByText("Setting up Hermes", { exact: true })).toBeVisible();
-	await expect(page.getByText("Preparing cloud resources", { exact: true })).toBeVisible();
+	await expect(page.getByText("Setting up your agent…", { exact: true })).toBeVisible();
 	await expect(page.getByTestId("hosted-initial-deployment-panel")).toBeVisible();
-	await expect(page.getByText("Chat on the web", { exact: true })).toHaveCount(0);
+	// The overview behind the setup card is an inert preview, not reachable yet.
+	await expect(page.getByRole("button", { name: "Chat on the web" })).toHaveCount(0);
+	await expect(page.getByRole("link", { name: "Chat on the web" })).toHaveCount(0);
 	expect(operationPollRequests).toEqual([]);
 	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
 });

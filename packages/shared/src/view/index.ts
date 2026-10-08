@@ -51,6 +51,7 @@ export * from "./hosted-agent-tiles";
 export * from "./hosted-runtime";
 export * from "./identity";
 export * from "./initial-deployment";
+export * from "./initial-deployment-support";
 export * from "./library-copy";
 export * from "./library-forms";
 export * from "./managed-model-picker";

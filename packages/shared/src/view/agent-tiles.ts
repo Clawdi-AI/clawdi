@@ -54,6 +54,8 @@ export interface AgentTile {
 	cardStatus?: AgentCardStatusProjection;
 	/** Whether this hosted deployment has an authoritative Files endpoint. */
 	filesAvailable?: boolean;
+	/** Hosted first start still in progress; runtime sections stay disabled until ready. */
+	setupInProgress?: boolean;
 	/** Self-managed Agents carry their full response so the tile can render a
 	 * sync indicator. Hosted tiles attach an observed Cloud projection when it
 	 * exists; deployment authority remains available when it does not. */
