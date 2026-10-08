@@ -1949,7 +1949,15 @@ function RuntimeUiAccessDialog({
 
 	const openRuntime = useCallback(async () => {
 		if (!windowTarget) return;
-		if (desktopBridge) {
+		if (desktopBridge?.apiVersion === 2) {
+			try {
+				await desktopBridge.openExternal(windowTarget);
+			} catch {
+				toast.error(`Couldn't open ${label}`);
+			}
+			return;
+		}
+		if (desktopBridge && "openRuntimeWindow" in desktopBridge) {
 			try {
 				if (await desktopBridge.openRuntimeWindow(windowTarget)) return;
 			} catch {
@@ -2076,7 +2084,15 @@ function TerminalTab({
 	const [terminalStatus, setTerminalStatus] = useState<HostedTerminalStatus>("connecting");
 	const [reconnectRequest, setReconnectRequest] = useState(0);
 	const openTerminalWindow = useCallback(async () => {
-		if (desktopBridge) {
+		if (desktopBridge?.apiVersion === 2) {
+			try {
+				await desktopBridge.openExternal(new URL(terminalWindowHref, window.location.href).href);
+			} catch {
+				toast.error("Couldn't open Terminal");
+			}
+			return;
+		}
+		if (desktopBridge && "openTerminalWindow" in desktopBridge) {
 			try {
 				if (
 					await desktopBridge.openTerminalWindow(

@@ -1,10 +1,17 @@
 "use client";
 
-import { useAuth, useClerk, useSession, useUser } from "@clerk/tanstack-react-start";
+import {
+	useAuth,
+	useClerk,
+	useReverification,
+	useSession,
+	useUser,
+} from "@clerk/tanstack-react-start";
 import { useCallback } from "react";
 import { ApiError } from "@/lib/api-errors";
 import { resetChatwoot } from "@/lib/chatwoot";
 import { env } from "@/lib/env";
+import { STRICT_REVERIFICATION_ERROR } from "@/lib/reverification";
 import { resolveRouteAuth } from "@/lib/route-auth";
 
 const DEV_AUTH_BEARER = env.VITE_DEV_AUTH_TOKEN;
@@ -13,7 +20,10 @@ const DEV_AUTH_BEARER = env.VITE_DEV_AUTH_TOKEN;
 // fresh `getToken`) each render would churn every `useMemo`/`useQuery` that
 // depends on `getToken` (e.g. the channel-edit client), re-creating clients
 // and re-issuing in-flight requests. Keep one constant reference.
-const DEV_AUTH_TOKEN_RESULT = { getToken: async () => DEV_AUTH_BEARER };
+const DEV_AUTH_TOKEN_RESULT = {
+	getToken: async () => DEV_AUTH_BEARER,
+	getReverifiedToken: async () => DEV_AUTH_BEARER,
+};
 
 const DEV_USER = {
 	id: "dev_browser",
@@ -43,7 +53,27 @@ export function useAuthToken() {
 		}
 		return token;
 	}, [clerk, session]);
-	return { getToken };
+	const reverify = useReverification(async () => {
+		if (!session || clerk.session?.id !== session.id) {
+			throw new ApiError(401, "Session is not available");
+		}
+		if (!clerk.session.checkAuthorization({ reverification: "strict" })) {
+			return STRICT_REVERIFICATION_ERROR;
+		}
+		// The retry after Clerk's modal must use the updated signed fva claim.
+		const token = await session.getToken({ skipCache: true });
+		if (!token || clerk.session?.id !== session.id) {
+			throw new ApiError(401, "Session is not available");
+		}
+		return token;
+	});
+	const getReverifiedToken = useCallback(async () => {
+		const token: unknown = await reverify();
+		if (typeof token !== "string" || !token)
+			throw new ApiError(403, "Verify your identity to continue");
+		return token;
+	}, [reverify]);
+	return { getToken, getReverifiedToken };
 }
 
 export function useDashboardAuth() {
@@ -95,7 +125,6 @@ export function useAuthActions() {
 		};
 	}
 	const clerk = useClerk();
-	// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
 	const desktopBridge = typeof window === "undefined" ? undefined : window.clawdiDesktop;
 	if (desktopBridge) {
 		return {

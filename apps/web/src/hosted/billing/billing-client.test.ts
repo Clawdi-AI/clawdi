@@ -1357,3 +1357,42 @@ describe("compute plan changes", () => {
 		}
 	});
 });
+
+it("sensitive Hosted mutations wait for reverification and cancellation never sends a request", async () => {
+	const requests: Request[] = [];
+	let verified = false;
+	const client = createBillingClient(
+		async () => "ordinary-token",
+		{
+			fetch: async (request) => {
+				requests.push(request);
+				return jsonResponse({});
+			},
+		},
+		async () => {
+			if (!verified) throw new Error("Verification cancelled");
+			return "verified-token";
+		},
+	);
+	await expect(client.changePlan({ operation_id: "plan-fixture" })).rejects.toThrow(
+		"Verification cancelled",
+	);
+	await expect(
+		client.createWalletAutoReloadSetup(
+			{
+				consent_version: "wallet_auto_reload_off_session_v2",
+				auto_reload_threshold_usd: "5",
+				auto_reload_amount_cents: 2500,
+				auto_reload_monthly_cap_cents: 10000,
+			},
+			"setup-fixture",
+		),
+	).rejects.toThrow("Verification cancelled");
+	expect(requests).toHaveLength(0);
+	verified = true;
+	await client.finalizeWalletAutoReloadSetup({
+		setup_identity: `wsetup_${"a".repeat(64)}`,
+		setup_intent_id: "seti_fixture",
+	});
+	expect(requests[0]?.headers.get("Authorization")).toBe("Bearer verified-token");
+});

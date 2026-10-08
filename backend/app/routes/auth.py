@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, get_auth, require_web_auth
+from app.core.auth import AuthContext, get_auth, require_reverified_web_auth
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.schemas.api_key import (
@@ -41,7 +41,7 @@ async def list_api_keys(
     # to enumerate every other key issued for the account (id /
     # label / prefix / permission scopes / env binding). Mirrors the lockdown
     # applied to DELETE.
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_reverified_web_auth),
     db: AsyncSession = Depends(get_session),
 ):
     result = await db.execute(
@@ -75,7 +75,7 @@ async def revoke_api_key(
     # Dashboard-only: a leaked key
     # otherwise could revoke its own parent / sibling keys to lock
     # the user out of the dashboard recovery flow.
-    auth: AuthContext = Depends(require_web_auth),
+    auth: AuthContext = Depends(require_reverified_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> ApiKeyRevokeResponse:
     result = await db.execute(

@@ -1,18 +1,17 @@
 "use client";
 
-import type { ClawdiDesktopShellBridge } from "@clawdi/shared/desktop";
+import type { ClawdiDashboardBridge } from "@clawdi/shared/desktop";
 import { useEffect, useState } from "react";
 import { compatibleDesktopBridge, DesktopBridgeCompatibilityError } from "./desktop-bridge";
 
-// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
 declare global {
 	interface Window {
-		clawdiDesktop?: ClawdiDesktopShellBridge;
+		clawdiDesktop?: ClawdiDashboardBridge;
 	}
 }
 
-export function useDesktopBridge(): ClawdiDesktopShellBridge | null | undefined {
-	const [bridge, setBridge] = useState<ClawdiDesktopShellBridge | null>();
+export function useDesktopBridge(): ClawdiDashboardBridge | null | undefined {
+	const [bridge, setBridge] = useState<ClawdiDashboardBridge | null>();
 	useEffect(() => {
 		setBridge(compatibleDesktopBridge(window.clawdiDesktop));
 	}, []);

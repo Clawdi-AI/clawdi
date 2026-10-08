@@ -210,6 +210,25 @@
 		"help": "Usage: clawdi auth login [options]\n\nSign in through your browser\n\nOptions:\n  --manual    Paste an existing API key; new keys cannot be created. Use `clawdi\n              auth login` (`--no-open` on a server)\n  --no-open   Print the sign-in link and code without opening a browser\n  -h, --help  display help for command\n\nExamples:\n  $ clawdi auth login\n  $ clawdi auth login --no-open\n  $ clawdi auth login --manual\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
+		"path": "clawdi auth desktop-session",
+		"aliases": [],
+		"description": "Create a one-use session for the embedded Desktop dashboard",
+		"hidden": true,
+		"arguments": [],
+		"options": [
+			{
+				"flags": "--json",
+				"description": "Private machine-readable credential transport",
+				"hidden": false,
+				"required": false,
+				"optional": false,
+				"mandatory": true,
+				"variadic": false
+			}
+		],
+		"help": "Usage: clawdi auth desktop-session [options]\n\nCreate a one-use session for the embedded Desktop dashboard\n\nOptions:\n  --json      Private machine-readable credential transport\n  -h, --help  display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+	},
+	{
 		"path": "clawdi auth complete",
 		"aliases": [],
 		"description": "Resume waiting for a pending sign-in",

@@ -54,6 +54,10 @@ npm i -g clawdi
 
 See the [Connected Agent quickstart](https://docs.clawdi.ai/getting-started/quickstart).
 
+Clawdi Desktop loads the live dashboard inside the app. A single device-code
+approval in your browser signs in the CLI, Desktop and its embedded dashboard;
+CLI and Desktop share `~/.clawdi/auth.json`.
+
 ## Capabilities
 
 - **Context:** Sessions and durable Memories.

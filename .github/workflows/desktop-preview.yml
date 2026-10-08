@@ -164,6 +164,9 @@ jobs:
           cd "$(dirname "$dmg_path")"
           shasum -a 256 "${dmg[0]}" > "${dmg[0]}.sha256"
 
+      - name: Verify shared device login in real Electron with mocks
+        run: bun apps/desktop/scripts/shared-login-e2e.ts
+
       - name: Upload ad-hoc signed preview
         uses: actions/upload-artifact@v7
         with:

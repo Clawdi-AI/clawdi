@@ -34,3 +34,17 @@ test("rejects missing methods and unsupported versions", () => {
 		expect(compatibleDesktopBridge(value)).toBeNull();
 	}
 });
+
+test("supports the minimal current bridge without legacy window or sign-in methods", () => {
+	const current = {
+		apiVersion: 2 as const,
+		async signOut() {},
+		async openConnectWizard() {},
+		async createDashboardSession() {
+			return { ticket: "fixture", accountId: "local" };
+		},
+		async openExternal() {},
+	};
+	expect(compatibleDesktopBridge(current)).toBe(current);
+	expect(compatibleDesktopBridge({ ...current, createDashboardSession: null })).toBeNull();
+});

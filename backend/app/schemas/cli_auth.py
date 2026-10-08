@@ -30,7 +30,8 @@ class OAuthRevokeResponse(BaseModel):
 
 
 class DesktopSessionTicketResponse(BaseModel):
-    """Legacy success shape for released clients; the retired route always returns 410."""
+    """One-use Clerk sign-in token for the Desktop preload exchange."""
 
     ticket: str
     expires_in: int
+    clerk_user_id: str

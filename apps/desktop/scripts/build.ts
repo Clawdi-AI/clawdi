@@ -33,6 +33,7 @@ for (const [name, size] of [
 
 await bundle("main.ts", "main.js", "node", "esm");
 await bundle("connect-preload.ts", "connect-preload.cjs", "node", "cjs");
+await bundle("shell-preload.ts", "shell-preload.cjs", "node", "cjs");
 await bundle("connect-renderer.tsx", "connect-renderer.js", "browser", "esm");
 buildRendererStyles();
 cpSync(join(sourceRoot, "renderer.html"), join(outputRoot, "renderer.html"));

@@ -71,7 +71,9 @@ export function useOpenFilesInNewWindow(url: string, deploymentId: string): () =
 		try {
 			const token = await getToken();
 			await primeFilesGrant(url, token);
-			if (desktopBridge) {
+			if (desktopBridge?.apiVersion === 2) {
+				await desktopBridge.openExternal(url);
+			} else if (desktopBridge && "openFilesWindow" in desktopBridge) {
 				if (!(await desktopBridge.openFilesWindow(url)))
 					throw new Error("Desktop child was denied");
 			} else {

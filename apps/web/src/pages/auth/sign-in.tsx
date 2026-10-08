@@ -1,6 +1,6 @@
 "use client";
 
-import type { ClawdiDesktopShellBridge } from "@clawdi/shared/desktop";
+import type { ClawdiDashboardBridge } from "@clawdi/shared/desktop";
 import { authPageClasses } from "@clawdi/shared/ui";
 import { SignIn } from "@clerk/tanstack-react-start";
 import { LoaderCircle, LogIn } from "lucide-react";
@@ -26,8 +26,7 @@ export default function SignInPage() {
 	);
 }
 
-// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
-function DesktopSignIn({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
+function DesktopSignIn({ bridge }: { bridge: ClawdiDashboardBridge }) {
 	const [opening, setOpening] = useState<"retry" | "sign-in" | null>(null);
 	const [failed, setFailed] = useState(false);
 
@@ -35,7 +34,10 @@ function DesktopSignIn({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
 		setOpening(action);
 		setFailed(false);
 		try {
-			await (action === "retry" ? bridge.retryDashboard() : bridge.signIn());
+			if (bridge.apiVersion === 2) {
+				if (action === "retry") window.location.replace("/desktop-auth");
+				else await bridge.openConnectWizard();
+			} else await (action === "retry" ? bridge.retryDashboard() : bridge.signIn());
 		} catch {
 			setFailed(true);
 		} finally {

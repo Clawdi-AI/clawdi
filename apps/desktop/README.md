@@ -110,26 +110,33 @@ The CSP has no inline styles, so Base UI's injected style element is disabled
 with `CSPProvider` and the equivalent rule lives in `connect-renderer.css`.
 Screen headings and window titles share one Title Case page title.
 
-Clawdi Desktop opens the Dashboard in the system browser at `https://cloud.clawdi.ai`.
-Set `CLAWDI_DESKTOP_WEB_URL` to a self-hosted HTTPS dashboard URL (or an HTTP
-loopback URL for local development). Dashboard entry points never load remote
-content into Electron. Only the bundled Connect wizard has a renderer and IPC.
+Clawdi Desktop opens the live dashboard at `https://cloud.clawdi.ai` inside a
+separate sandboxed Electron window. Web deployments update it immediately.
+The Connect window keeps its bundled local assets and design system.
 
-The bundled CLI owns credentials, Agent registration, and daemon lifecycle.
-Desktop sign-in runs the CLI's device authorization flow through
-`clawdi auth login --desktop`. The CLI opens the prefilled verification page
-(`verification_uri_complete`, falling back to `verification_uri`) in the system
-browser. Desktop shows the short-lived code so the user can confirm it matches
-the browser before approving. The CLI completes and saves its credentials on
-approval; no local callback listener is used. Desktop never receives
-tokens or creates a Clerk browser session; the Dashboard uses normal browser
-sign-in independently. Signing out of Desktop uninstalls the daemon and signs the
-CLI out. It leaves the browser's Dashboard session signed in.
+Device authorization is the only interactive sign-in. The browser opens the
+prefilled approval page; Desktop shows the code for confirmation. CLI and
+Desktop use the same `~/.clawdi/auth.json`. The embedded dashboard obtains a
+60-second, single-use Clerk sign-in token through a minimal preload bridge and
+consumes it on `/desktop-auth`. Normal browsers cannot consume URL tickets.
+Sign out from Desktop or the embedded dashboard removes the shared credential,
+turns off sync and clears the embedded window's cookies/storage. Desktop also
+observes CLI sign-out during its regular status refresh (up to one minute).
 
-Native shell and CLI changes require an application update. Dashboard deployments
-take effect in the browser as normal. Packaged smoke tests verify the bundled
-wizard and remote navigation rejection without contacting the hosted Dashboard.
-Unit tests verify the system-browser handoff.
+The remote window enables context isolation and the sandbox, disables Node
+integration, denies permissions/downloads, and allows navigation only to the
+exact Clawdi web and first-party Clerk origins. Validated HTTPS external links
+open in the system browser. IPC validates the window, main frame and origin;
+session handoff is restricted to `/desktop-auth`. The remote bridge also exposes
+validated external HTTPS opening for runtime links.
+
+API key review/revocation uses Clerk's documented `strict` reverification
+(10 minutes, second factor with first-factor fallback) in the UI and Cloud API.
+Payment entry, auto-reload and plan changes use the same UI gate. Their Hosted
+API must deploy the corresponding signed `fva` check before server protection
+is complete; see `docs/desktop-authentication.md`. Users need an eligible Clerk
+verification factor (password, email/phone code, or MFA); no Clerk settings are
+changed by this repository.
 
 ## Main-process diagnostics and login items
 
@@ -423,7 +430,7 @@ builds. Missing Windows secrets select unsigned updates over HTTPS + SHA-512;
 partially configured secrets fail closed. A local cross-compile does not establish
 runtime support.
 
-Before general distribution, validate browser OAuth, persistent session restore,
+Before general distribution, validate device-code approval, embedded session restore,
 account switching, Agent reconnect and a signed beta-to-beta update with test
 accounts on every OS/architecture. Hosted OAuth contracts are unchanged. Signing
 credentials, live test accounts and native runner execution are external gates;

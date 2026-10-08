@@ -33,6 +33,15 @@ export function registerAuth(program: Command): void {
 		);
 
 	authCmd
+		.command("desktop-session", { hidden: true })
+		.description("Create a one-use session for the embedded Desktop dashboard")
+		.requiredOption("--json", "Private machine-readable credential transport")
+		.action(async () => {
+			const { authDesktopSessionMachine } = await import("../../commands/auth.js");
+			await authDesktopSessionMachine();
+		});
+
+	authCmd
 		.command("complete")
 		.description("Resume waiting for a pending sign-in")
 		.action(async () => {

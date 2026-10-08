@@ -9,6 +9,7 @@ import { useAccountSuspension } from "@/lib/account-suspension";
 import { ApiError, ApiNetworkError, apiErrorCode } from "@/lib/api-errors";
 import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
+import { requiresCloudReverification } from "@/lib/reverification";
 
 // `ApiError` and the cloud-api error-toast helper live in `api-errors` (a
 // dependency-free module so they're unit-testable); re-export so the many
@@ -89,12 +90,17 @@ function useAccountFetch() {
  */
 function useConfiguredApi(throwOnError: boolean) {
 	const accountFetch = useAccountFetch();
-	const { getToken } = useAuthToken();
+	const { getToken, getReverifiedToken } = useAuthToken();
 	return useMemo(() => {
 		const client = createClient<ApiPaths>({ baseUrl: API_URL, fetch: accountFetch });
 		client.use({
 			async onRequest({ request }) {
-				const token = await getToken();
+				const token = await (requiresCloudReverification(
+					request.method,
+					new URL(request.url).pathname,
+				)
+					? getReverifiedToken()
+					: getToken());
 				request.headers.set("Authorization", `Bearer ${token}`);
 				return request;
 			},
@@ -110,7 +116,7 @@ function useConfiguredApi(throwOnError: boolean) {
 			});
 		}
 		return client;
-	}, [accountFetch, getToken, throwOnError]);
+	}, [accountFetch, getToken, getReverifiedToken, throwOnError]);
 }
 
 /** Share previews are explicitly anonymous; private clients require a session. */

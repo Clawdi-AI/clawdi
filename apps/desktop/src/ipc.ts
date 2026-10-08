@@ -1,4 +1,8 @@
 export const DESKTOP_IPC = {
+	signOut: "clawdi:sign-out",
+	openConnectWizard: "clawdi:open-connect-wizard",
+	createDashboardSession: "clawdi:create-dashboard-session",
+	openExternal: "clawdi:open-external",
 	bootstrapState: "clawdi:bootstrap-state",
 	authenticate: "clawdi:authenticate",
 	authenticationProgress: "clawdi:authentication-progress",

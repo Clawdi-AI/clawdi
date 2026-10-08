@@ -56,6 +56,7 @@ import {
 } from "@/hosted/billing/errors";
 import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
+import { requiresHostedReverification } from "@/lib/reverification";
 
 const BASE_URL = env.VITE_CLAWDI_DEPLOY_API_URL;
 const ROOT_BASE_URL = hostedApiBaseUrl(BASE_URL);
@@ -513,6 +514,7 @@ function completedPlanChange(operation: ParsedPlanChangeOperation): ComputePlanC
 export function createBillingClient(
 	getToken: BillingAuthTokenGetter,
 	options: BillingClientOptions = {},
+	getReverifiedToken: BillingAuthTokenGetter = getToken,
 ) {
 	const sleep =
 		options.sleep ??
@@ -523,7 +525,12 @@ export function createBillingClient(
 	});
 	api.use({
 		async onRequest({ request }) {
-			const token = await getToken();
+			const token = await (requiresHostedReverification(
+				request.method,
+				new URL(request.url).pathname,
+			)
+				? getReverifiedToken()
+				: getToken());
 			request.headers.set("Authorization", `Bearer ${token}`);
 			return request;
 		},
@@ -1081,6 +1088,9 @@ export type BillingClient = ReturnType<typeof createBillingClient>;
 export type CheckoutOperationResult = Awaited<ReturnType<BillingClient["checkout"]>>;
 
 export function useBillingClient() {
-	const { getToken } = useAuthToken();
-	return useMemo(() => createBillingClient(getToken), [getToken]);
+	const { getToken, getReverifiedToken } = useAuthToken();
+	return useMemo(
+		() => createBillingClient(getToken, {}, getReverifiedToken),
+		[getToken, getReverifiedToken],
+	);
 }

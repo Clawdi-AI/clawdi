@@ -92,8 +92,8 @@
   ],
   "DELETE /api/auth/keys/{key_id}": [
     [
-      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> app.core.database.get_session",
-      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.auth.require_reverified_web_auth -> app.core.auth.require_web_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_reverified_web_auth -> app.core.auth.require_web_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
       "app.core.database.get_session"
     ]
   ],
@@ -329,8 +329,8 @@
   ],
   "DELETE /v1/auth/keys/{key_id}": [
     [
-      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> app.core.database.get_session",
-      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.auth.require_reverified_web_auth -> app.core.auth.require_web_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_reverified_web_auth -> app.core.auth.require_web_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
       "app.core.database.get_session"
     ]
   ],
@@ -639,8 +639,8 @@
   ],
   "GET /api/auth/keys": [
     [
-      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> app.core.database.get_session",
-      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.auth.require_reverified_web_auth -> app.core.auth.require_web_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_reverified_web_auth -> app.core.auth.require_web_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
       "app.core.database.get_session"
     ]
   ],
@@ -1324,8 +1324,8 @@
   ],
   "GET /v1/auth/keys": [
     [
-      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> app.core.database.get_session",
-      "app.core.auth.require_web_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
+      "app.core.auth.require_reverified_web_auth -> app.core.auth.require_web_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_reverified_web_auth -> app.core.auth.require_web_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
       "app.core.database.get_session"
     ]
   ],
@@ -2412,7 +2412,10 @@
     []
   ],
   "POST /api/cli/auth/oauth/desktop-ticket": [
-    []
+    [
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer"
+    ]
   ],
   "POST /api/cli/auth/oauth/revoke": [
     [
@@ -3066,7 +3069,10 @@
     []
   ],
   "POST /v1/cli/auth/oauth/desktop-ticket": [
-    []
+    [
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> app.core.database.get_session",
+      "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer"
+    ]
   ],
   "POST /v1/cli/auth/oauth/revoke": [
     [

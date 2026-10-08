@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
-import { ApiError, readJson } from "../lib/api-client";
+import { ApiClient, ApiError, readJson, unwrap } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { openInBrowser } from "../lib/browser";
 import {
@@ -384,6 +384,24 @@ export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<
 		},
 		false,
 	);
+}
+
+/** Machine-only credential transport: stdout is read privately by Desktop, never diagnostics. */
+export async function authDesktopSessionMachine(): Promise<void> {
+	if (!isClerkOAuthAuth(getAuth())) {
+		throw new Error("Desktop sign-in requires Clerk OAuth. Sign in from Clawdi Desktop.");
+	}
+	try {
+		const payload = unwrap(await new ApiClient().POST("/v1/cli/auth/oauth/desktop-ticket"));
+		emitJson({
+			schemaVersion: "clawdi.desktopSession.v1",
+			ticket: payload.ticket,
+			expiresIn: payload.expires_in,
+			accountId: payload.clerk_user_id,
+		});
+	} catch {
+		throw new Error("Couldn't create a Desktop session. Sign in again from Clawdi Desktop.");
+	}
 }
 
 export async function authLogout() {

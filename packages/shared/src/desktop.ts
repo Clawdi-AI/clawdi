@@ -121,6 +121,23 @@ export interface ClawdiDesktopConnectBridge {
 	openDashboard(): Promise<void>;
 }
 
+export interface DesktopDashboardSession {
+	ticket: string;
+	/** Verified Clerk subject, distinct from the local Clawdi account UUID. */
+	accountId: string;
+}
+
+/** Remote content receives session handoff, sign-out, Connect and validated external links. */
+export interface ClawdiDesktopBridge {
+	readonly apiVersion: 2;
+	signOut(): Promise<void>;
+	openConnectWizard(): Promise<void>;
+	createDashboardSession(): Promise<DesktopDashboardSession>;
+	openExternal(url: string): Promise<void>;
+}
+
+export type ClawdiDashboardBridge = ClawdiDesktopBridge | ClawdiDesktopShellBridge;
+
 // TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
 export interface ClawdiDesktopShellBridge {
 	/** Absent on the first beta; existing methods form protocol version 1. */

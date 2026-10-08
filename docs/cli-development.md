@@ -470,8 +470,11 @@ system browser and emits `clawdi.desktopLogin.progress.v1` on stderr with
 for confirmation. Approval completes the CLI command, which emits one
 `clawdi.desktopLogin.v1` result on stdout without tokens. No local callback
 listener is used.
-Desktop opens the Dashboard in the system browser independently of CLI sign-in;
-see the [Desktop browser architecture](../apps/desktop/README.md). Instances without Clerk OAuth must enable it for
+Desktop opens the live Dashboard inside its own window. The hidden
+`auth desktop-session --json` command exchanges the saved CLI OAuth credential
+for a 60-second, single-use Clerk sign-in token over private stdout to Desktop;
+never run it for diagnostics or log its output. See the
+[Desktop authentication architecture](desktop-authentication.md). Instances without Clerk OAuth must enable it for
 user login. For local development, the administrator can issue a key through
 `POST /v1/admin/auth/keys`; `clawdi auth login --manual` only pastes that existing
 key. See [backend local CLI setup](backend-development.md#local-admin-api).

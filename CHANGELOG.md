@@ -18,6 +18,13 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+- Desktop opens the live dashboard inside a sandboxed app window. One browser
+  device-code approval signs in CLI, Desktop and its embedded dashboard using
+  the shared local credential. Sign-out clears both local and embedded sessions.
+- Sensitive dashboard actions use Clerk reverification. Cloud API key review
+  and revocation enforce the signed factor-verification age; Hosted payment,
+  auto-reload and plan-change UI gates require paired Hosted API enforcement.
+
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
