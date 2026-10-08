@@ -267,6 +267,7 @@ export function runtimeConvergenceWithoutApply(input: {
 		installErrors: input.installErrors,
 		resourceProjectionErrors: [],
 		projectedProviderIds: input.projectedProviderIds,
+		hermesNativeEnvConflicts: [],
 		agentPluginFailedNames: input.agentPluginFailedNames ?? [],
 		outputs: {
 			processManager: "systemd",

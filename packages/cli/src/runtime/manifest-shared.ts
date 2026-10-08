@@ -24,6 +24,8 @@ export interface RuntimeConvergenceResult {
 	providerConflicts?: RuntimeProviderConflict[];
 	/** Guard refusals never fail the apply and are not persisted in strict applied state. */
 	skillGuardRefusals?: HostedSkillGuardRefusal[];
+	/** Hermes native environment values kept by user ownership; they never fail the apply. */
+	hermesNativeEnvConflicts: string[];
 	/** Optional services withdrawn from this generation; the runtime itself still runs. */
 	serviceWithdrawals?: RuntimeServiceWithdrawal[];
 	agentPluginFailedNames: string[];

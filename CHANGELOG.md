@@ -49,6 +49,13 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.15.15
+
+- **Hosted Hermes:** native values in `~/.hermes/.env` remain user-owned when
+  they conflict with a Clawdi-managed profile field. Conflicts are reported as
+  applied runtime state instead of health errors, so runtime watch does not
+  retry a healthy deployment.
+
 ### CLI 0.15.14
 
 - **Hosted Hermes:** fresh installs use the official installer's latest release

@@ -131,16 +131,19 @@ test("native ownership rotates, adopts emergency placeholders, unlinks only owne
 
 test("unowned and subsequently edited credentials are preserved and conflicts contain no values", () => {
 	const f = fixture();
-	writeFileSync(f.envPath, "DISCORD_BOT_TOKEN=user-private\n");
-	const conflict = f.run({ DISCORD_BOT_TOKEN: "managed-private" });
-	expect(JSON.parse(conflict.stdout)).toEqual({ changed: false, conflicts: ["DISCORD_BOT_TOKEN"] });
+	writeFileSync(f.envPath, "TELEGRAM_BOT_TOKEN=user-private\n");
+	const conflict = f.run({ TELEGRAM_BOT_TOKEN: "managed-private" });
+	expect(JSON.parse(conflict.stdout)).toEqual({
+		changed: false,
+		conflicts: ["TELEGRAM_BOT_TOKEN"],
+	});
 	expect(conflict.stdout + conflict.stderr).not.toContain("private");
-	expect(readFileSync(f.envPath, "utf8")).toBe("DISCORD_BOT_TOKEN=user-private\n");
+	expect(readFileSync(f.envPath, "utf8")).toBe("TELEGRAM_BOT_TOKEN=user-private\n");
 	writeFileSync(f.envPath, "");
-	expect(f.run({ DISCORD_BOT_TOKEN: "managed-private" }).status).toBe(0);
-	writeFileSync(f.envPath, "DISCORD_BOT_TOKEN=new-user-private\n");
+	expect(f.run({ TELEGRAM_BOT_TOKEN: "managed-private" }).status).toBe(0);
+	writeFileSync(f.envPath, "TELEGRAM_BOT_TOKEN=new-user-private\n");
 	expect(f.run({}).status).toBe(0);
-	expect(readFileSync(f.envPath, "utf8")).toBe("DISCORD_BOT_TOKEN=new-user-private\n");
+	expect(readFileSync(f.envPath, "utf8")).toBe("TELEGRAM_BOT_TOKEN=new-user-private\n");
 });
 
 test.each([false, true])(

@@ -1500,6 +1500,9 @@ export function runtimeWatchEventForOutcome(
 		...(outcome.convergence.skillGuardRefusals?.length
 			? { skillGuardRefusals: outcome.convergence.skillGuardRefusals }
 			: {}),
+		...(outcome.convergence.hermesNativeEnvConflicts.length
+			? { hermesNativeEnvConflicts: outcome.convergence.hermesNativeEnvConflicts }
+			: {}),
 	});
 }
 
@@ -1788,6 +1791,14 @@ async function applyRuntimeDesiredState(
 							resourceProjectionErrors: [
 								...convergence.resourceProjectionErrors,
 								...replay.convergence.resourceProjectionErrors,
+							],
+							skillGuardRefusals: [
+								...(convergence.skillGuardRefusals ?? []),
+								...(replay.convergence.skillGuardRefusals ?? []),
+							],
+							hermesNativeEnvConflicts: [
+								...convergence.hermesNativeEnvConflicts,
+								...replay.convergence.hermesNativeEnvConflicts,
 							],
 						},
 					};
