@@ -1,8 +1,6 @@
 export const addAgentSetupClasses = {
 	actionIcon: "size-3.5",
 	root: "space-y-4",
-	manualDivider: "flex items-center gap-3 text-xs text-muted-foreground",
-	manualDividerLine: "h-px flex-1 bg-border",
 	tabsList: "w-full sm:w-auto",
 	commands: "mt-2 space-y-4",
 	title: "text-sm font-medium",

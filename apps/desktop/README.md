@@ -22,8 +22,8 @@ declared as production dependencies of the Electron shell.
 
 ## Deep link
 
-The dashboard's Add agent dialog links to `clawdi-desktop://connect`, which opens
-or focuses the Connect window. Desktop accepts only that exact link: no query,
+`clawdi-desktop://connect` opens or focuses the Connect window; the dashboard's
+Add agent hand-off uses it. Desktop accepts only that exact link: no query,
 fragment, path or other host, and it never passes link data to the CLI. Other
 links are ignored. A request made while signing in or connecting waits, as for
 the tray's Connect Agents… item.
@@ -31,9 +31,10 @@ the tray's Connect Agents… item.
 Packaged builds register the scheme: electron-builder `protocols` writes the
 macOS `CFBundleURLTypes` and the DEB/RPM desktop entry's
 `x-scheme-handler/clawdi-desktop`, and `app.setAsDefaultProtocolClient` registers
-it on Windows. Development runs and AppImages without desktop integration don't
-register it; the dialog's download link and manual steps remain available. Links
-arrive through `open-url` on macOS and the command line on Windows and Linux
+it on Windows, where the NSIS uninstaller removes
+`HKCU\Software\Classes\clawdi-desktop`. Development runs and AppImages without
+desktop integration don't register it. Links arrive through `open-url` on macOS
+and the command line on Windows and Linux
 ([Electron deep links](https://www.electronjs.org/docs/latest/tutorial/launch-app-from-url-in-another-app)).
 
 ## Terminal command

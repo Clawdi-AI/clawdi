@@ -1,12 +1,5 @@
-/** OS protocol that Clawdi Desktop registers for links from the dashboard. */
+/** OS protocol that Clawdi Desktop registers; `clawdi-desktop://connect` opens Connect. */
 export const DESKTOP_DEEP_LINK_SCHEME = "clawdi-desktop";
-
-/** Opens Clawdi Desktop's Connect window; the only link Desktop accepts. */
-export const DESKTOP_CONNECT_DEEP_LINK = `${DESKTOP_DEEP_LINK_SCHEME}://connect`;
-
-/** Clawdi Desktop installers are published as GitHub releases tagged `desktop-v*`. */
-export const DESKTOP_DOWNLOAD_URL =
-	"https://github.com/Clawdi-AI/clawdi/releases?q=desktop&expanded=true";
 
 export const DESKTOP_AGENT_TYPES = [
 	"claude_code",
