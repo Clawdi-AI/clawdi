@@ -19,6 +19,7 @@ function fixture(missingAsset = false) {
 		tag_name: `desktop-v${version}`,
 		prerelease,
 		draft: false,
+		published_at: "2020-01-01T00:00:00Z",
 		assets: [
 			{ name: prerelease ? "beta-mac.yml" : "latest-mac.yml", id: 1 },
 			{ name: prerelease ? "beta-mac-x64.yml" : "latest-mac-x64.yml", id: prerelease ? 1 : 2 },
@@ -59,7 +60,7 @@ function fixture(missingAsset = false) {
 	return root;
 }
 
-async function prepare(root: string) {
+async function prepare(root: string, paused = "") {
 	const child = Bun.spawn(
 		[
 			process.execPath,
@@ -72,6 +73,8 @@ async function prepare(root: string) {
 				PATH: `${join(root, "bin")}:${process.env.PATH}`,
 				FIXTURE_ROOT: root,
 				GITHUB_REPOSITORY: "owner/repo",
+				DESKTOP_PAUSED_VERSIONS: paused,
+				DESKTOP_UPDATE_SITE_URL: "",
 			},
 			stdout: "pipe",
 			stderr: "pipe",
@@ -89,6 +92,7 @@ test("Pages keeps both channels, paginates releases and selects semantic version
 	] as const) {
 		const metadata = parse(readFileSync(join(root, "site/desktop", file), "utf8"));
 		expect(metadata.version).toBe(version);
+		expect(metadata.stagingPercentage).toBe(file.startsWith("latest") ? 100 : undefined);
 		expect(metadata.files[0].url).toBe(
 			`https://github.com/owner/repo/releases/download/desktop-v${version}/Clawdi.zip`,
 		);
@@ -96,6 +100,17 @@ test("Pages keeps both channels, paginates releases and selects semantic version
 		const intel = parse(readFileSync(join(root, "site/desktop/darwin-x64", file), "utf8"));
 		expect(intel.version).toBe(version);
 	}
+});
+
+test("all paused channels remove metadata, and regeneration is idempotent", async () => {
+	const root = fixture();
+	expect((await prepare(root)).code).toBe(0);
+	const previous = readFileSync(join(root, "site/desktop/latest-mac.yml"), "utf8");
+	expect((await prepare(root)).code).toBe(0);
+	expect(readFileSync(join(root, "site/desktop/latest-mac.yml"), "utf8")).toBe(previous);
+	expect((await prepare(root, "1.0.0,1.1.0-beta.2,1.1.0-beta.10")).code).toBe(0);
+	expect(existsSync(join(root, "site/desktop/latest-mac.yml"))).toBe(false);
+	expect(existsSync(join(root, "site/desktop/beta-mac.yml"))).toBe(false);
 });
 
 test("Pages refuses metadata pointing to an absent release artifact", async () => {

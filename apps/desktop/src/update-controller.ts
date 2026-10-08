@@ -1,4 +1,4 @@
-import electronUpdater, { type AppUpdater } from "electron-updater";
+import type { AppUpdater, ProgressInfo, UpdateDownloadedEvent, UpdateInfo } from "electron-updater";
 import type { DesktopUpdatePolicy } from "./update-policy";
 import {
 	canCheckForDesktopUpdate,
@@ -9,51 +9,86 @@ import {
 
 const AUTOMATIC_CHECK_DELAY_MS = 30_000;
 const AUTOMATIC_CHECK_INTERVAL_MS = 6 * 60 * 60_000;
-const { autoUpdater } = electronUpdater;
+
+export interface DesktopUpdater
+	extends Pick<
+		AppUpdater,
+		| "autoDownload"
+		| "autoInstallOnAppQuit"
+		| "autoRunAppAfterInstall"
+		| "channel"
+		| "allowPrerelease"
+		| "allowDowngrade"
+		| "checkForUpdates"
+		| "quitAndInstall"
+	> {
+	on: (...args: Parameters<AppUpdater["on"]>) => unknown;
+}
 
 export interface DesktopUpdateControllerOptions {
 	policy: DesktopUpdatePolicy;
 	onStateChange: (state: DesktopUpdateState) => void;
 	onUpdateReady: (version: string) => void;
-	updater?: AppUpdater;
+	onUpdateAvailable?: (version: string) => void;
+	updater: DesktopUpdater;
 }
 
 export class DesktopUpdateController {
-	private readonly updater: AppUpdater;
+	private readonly updater: DesktopUpdater;
+	private readonly notifiedVersions = new Set<string>();
+	private installing = false;
+	private installError: Error | null = null;
 	private state: DesktopUpdateState;
 	private initialCheck: ReturnType<typeof setTimeout> | null = null;
 	private periodicCheck: ReturnType<typeof setInterval> | null = null;
 
 	constructor(private readonly options: DesktopUpdateControllerOptions) {
-		this.updater = options.updater ?? autoUpdater;
-		this.state = options.policy.enabled
-			? { status: "idle" }
-			: { status: "disabled", reason: options.policy.reason };
+		this.updater = options.updater;
+		this.state =
+			"channel" in options.policy
+				? { status: "idle" }
+				: { status: "disabled", reason: options.policy.reason };
 		this.options.onStateChange(this.state);
 	}
 
 	start(): void {
-		if (!this.options.policy.enabled) return;
-		this.updater.autoDownload = true;
-		this.updater.autoInstallOnAppQuit = false;
-		this.updater.autoRunAppAfterInstall = false;
+		if (!("channel" in this.options.policy)) return;
+		// https://www.electron.build/docs/features/auto-update/
+		// DEB/RPM use checkForUpdates with autoDownload=false, never an installer.
+		this.updater.autoDownload = this.options.policy.enabled;
+		// Before-quit awaits the application's service shutdown. Installation on
+		// quit is owned by electron-updater; its quit handler does not relaunch.
+		this.updater.autoInstallOnAppQuit = this.options.policy.enabled;
 		this.updater.channel = this.options.policy.channel === "stable" ? "latest" : "beta";
 		this.updater.allowPrerelease = this.options.policy.channel === "beta";
 		// Setting channel enables downgrades in electron-updater.
 		this.updater.allowDowngrade = false;
 		this.updater.on("checking-for-update", () => this.transition({ type: "check" }));
-		this.updater.on("update-available", (info) =>
-			this.transition({ type: "available", version: info.version }),
-		);
-		this.updater.on("download-progress", (info) =>
+		this.updater.on("update-available", (info: UpdateInfo) => {
+			this.transition({
+				type: "available",
+				version: info.version,
+				checkOnly: !this.options.policy.enabled,
+			});
+			if (this.state.status === "available" && !this.notifiedVersions.has(info.version)) {
+				this.notifiedVersions.add(info.version);
+				this.options.onUpdateAvailable?.(info.version);
+			}
+		});
+		this.updater.on("download-progress", (info: ProgressInfo) =>
 			this.transition({ type: "progress", percent: info.percent }),
 		);
 		this.updater.on("update-not-available", () => this.transition({ type: "not-available" }));
-		this.updater.on("update-downloaded", (event) => {
+		this.updater.on("update-downloaded", (event: UpdateDownloadedEvent) => {
+			if (!this.options.policy.enabled) return;
 			this.transition({ type: "downloaded", version: event.version });
-			this.options.onUpdateReady(event.version);
+			if (this.state.status === "ready" && !this.notifiedVersions.has(event.version)) {
+				this.notifiedVersions.add(event.version);
+				this.options.onUpdateReady(event.version);
+			}
 		});
-		this.updater.on("error", (error) => {
+		this.updater.on("error", (error: Error) => {
+			if (this.installing) this.installError = error;
 			console.error("Desktop update failed", error);
 			this.transition({ type: "error" });
 		});
@@ -70,7 +105,7 @@ export class DesktopUpdateController {
 	}
 
 	async checkForUpdates(): Promise<void> {
-		if (!this.options.policy.enabled || !canCheckForDesktopUpdate(this.state)) return;
+		if (!("channel" in this.options.policy) || !canCheckForDesktopUpdate(this.state)) return;
 		try {
 			await this.updater.checkForUpdates();
 		} catch (error) {
@@ -82,9 +117,19 @@ export class DesktopUpdateController {
 	}
 
 	installDownloadedUpdate(): boolean {
-		if (this.state.status !== "ready") return false;
-		this.updater.autoRunAppAfterInstall = true;
-		this.updater.quitAndInstall(false, true);
+		if (!this.options.policy.enabled || this.state.status !== "ready" || this.installing)
+			return false;
+		this.installing = true;
+		this.installError = null;
+		try {
+			// Use the documented default restart for a notification/menu action:
+			// https://www.electron.build/docs/features/auto-update/
+			this.updater.quitAndInstall();
+			if (this.installError) throw this.installError;
+		} catch (error) {
+			this.installing = false;
+			throw error;
+		}
 		return true;
 	}
 

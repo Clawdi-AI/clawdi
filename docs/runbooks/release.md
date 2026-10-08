@@ -55,6 +55,23 @@ their target-specific `publish: null` excludes them from updater metadata.
 The GitHub Release contains one `SHA256SUMS` file covering every published asset.
 See [Desktop packaging](../../apps/desktop/README.md) for inputs and recovery.
 
+Desktop Update Site holds stable releases for 24 hours from GitHub `published_at`,
+then emits the standard `stagingPercentage: 25` until 48 hours and `100` afterward.
+Beta is immediate. Hourly regeneration advances these stages. Owner pause/resume
+control uses the comma-separated repository variable `DESKTOP_PAUSED_VERSIONS`;
+set it to bare versions and dispatch `desktop-update-site.yml` on `main`.
+Remove a version and dispatch again to resume. See the
+[pause procedure](../../apps/desktop/README.md#rollout-and-pause-control).
+Installed clients never downgrade; fix an installed bad release with a higher
+version. Pauses do not revoke downloads already cached on a client.
+
+Update-ready notifications and the menu use the documented default restart.
+Quitting uses `autoInstallOnAppQuit` without relaunching Desktop. The existing
+daemon stop path does not have verified post-install service-manager recovery;
+see the [service continuity gap](../../apps/desktop/README.md#service-continuity-gap).
+Windows signing and the first stable release remain owner gates. The new Linux
+AppImage e2e uses a trusted local HTTPS feed, and publishes no releases or Pages.
+
 The signed application embeds its feed URL and stable or beta channel. Stable
 reads `latest*` metadata; beta reads `beta*` metadata in isolated platform and
 architecture feeds (see the Desktop packaging matrix). Channels remain independent:

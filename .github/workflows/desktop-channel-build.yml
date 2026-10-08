@@ -92,6 +92,7 @@ jobs:
           path: |
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
+            apps/desktop/release/*.zip.blockmap
             apps/desktop/release/*-mac*.yml
           if-no-files-found: error
           retention-days: 14

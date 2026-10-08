@@ -26,7 +26,8 @@ export interface DesktopUpdatePolicyInput {
 
 export type DesktopUpdatePolicy =
 	| { enabled: true; channel: "stable" | "beta" }
-	| { enabled: false; reason: DesktopUpdateSkipReason };
+	| { enabled: false; reason: "package-manager"; channel: "stable" | "beta" }
+	| { enabled: false; reason: Exclude<DesktopUpdateSkipReason, "package-manager"> };
 
 export function evaluateDesktopUpdatePolicy(input: DesktopUpdatePolicyInput): DesktopUpdatePolicy {
 	if (!input.isPackaged) return { enabled: false, reason: "development" };
@@ -40,7 +41,7 @@ export function evaluateDesktopUpdatePolicy(input: DesktopUpdatePolicyInput): De
 		return { enabled: false, reason: "invalid-metadata" };
 	}
 	if (input.platform === "linux" && !input.isAppImage)
-		return { enabled: false, reason: "package-manager" };
+		return { enabled: false, reason: "package-manager", channel: input.channel };
 	if (input.platform === "win32" && !isDesktopWindowsPublisherDn(input.windowsPublisher))
 		return { enabled: false, reason: "unsigned" };
 	if (input.platform === "darwin" && !isDeveloperIdSignature(input.signature)) {
