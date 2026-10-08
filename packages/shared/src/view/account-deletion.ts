@@ -1,6 +1,7 @@
 import type { DeployComponents } from "../api";
 import {
 	STORE_BILLED_THROUGH,
+	type StoreManagement,
 	type StoreManagementProvider,
 	storeSubscriptionCopy,
 } from "./store-management";
@@ -50,14 +51,15 @@ const RENEWABLE_STORE_STATES = new Set([
 	"conflict_hold",
 ]);
 
-function mayStillBill(management: NonNullable<AccountSubscription["store_management"]>): boolean {
+function mayStillBill(management: StoreManagement): boolean {
 	return RENEWABLE_STORE_STATES.has(management.state) || management.auto_renews === true;
 }
 
 export type AccountDeletionStoreNotice =
 	| { kind: "none" }
 	| { kind: "generic" }
-	| { kind: "store"; provider: StoreManagementProvider };
+	/** The renewable contract, so clients can open its store management. */
+	| { kind: "store"; management: StoreManagement };
 
 /**
  * Chooses the store-billing notice from the account's subscriptions. `rows` is null
@@ -72,7 +74,7 @@ export function accountDeletionStoreNotice(
 	const renewable = storeRows.find(
 		(row) => row.store_management != null && mayStillBill(row.store_management),
 	)?.store_management;
-	if (renewable) return { kind: "store", provider: renewable.provider };
+	if (renewable) return { kind: "store", management: renewable };
 	if (!rows || !complete || storeRows.some((row) => !row.store_management)) {
 		return { kind: "generic" };
 	}
@@ -90,12 +92,6 @@ export function accountDeletionStoreNoticeCopy(provider: StoreManagementProvider
 		description: `Your Clawdi compute subscription is billed by ${STORE_BILLED_THROUGH[provider]} and will keep renewing after your account is deleted. Cancel it in ${store} subscriptions first. Deleting your account is not a refund request.`,
 	};
 }
-
-/** Store subscription management pages documented by Apple and Google Play. */
-export const STORE_SUBSCRIPTIONS_URL = {
-	appStore: "https://apps.apple.com/account/subscriptions",
-	googlePlay: "https://play.google.com/store/account/subscriptions",
-} as const;
 
 /**
  * Clerk's built-in delete owns the entry while the instance allows self-deletion.

@@ -8,6 +8,7 @@ import {
 	resolveStoreSubscriptionActions,
 	type StoreManagement,
 	storeBillingNotice,
+	storeManagementUrl,
 	storeProviderLabel,
 	storeRenewalIssue,
 	storeSubscriptionCopy,
@@ -17,7 +18,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, RotateCcw, Settings, TriangleAlert } from "lucide-react-native";
 import { useState } from "react";
-import { Linking, Platform } from "react-native";
+import { Linking } from "react-native";
 import type { PurchasesPackage } from "react-native-purchases";
 import RevenueCatUI from "react-native-purchases-ui";
 import { EntityCardChassis, EntityChoiceCard } from "@/components/entity-card";
@@ -36,7 +37,6 @@ import {
 	computePurchaseNotice,
 	restorePurchasesNotices,
 	type StoreNotice,
-	storeContractIdForRow,
 } from "@/hosted/billing/store/store-presentation";
 import { useMobileRuntimeConfig } from "@/lib/config/runtime";
 import { useI18n } from "@/lib/i18n";
@@ -47,18 +47,15 @@ import { computeProductPlan } from "@/platform/store/compute-subscription";
 import { usePaywall } from "@/platform/store/paywall-host";
 import type { PurchaseOutcome } from "@/platform/store/purchase-flow";
 import { StorePurchaseError, storePurchaseError } from "@/platform/store/store-error";
-import { resolveStoreManagement } from "@/platform/store/store-management";
+import { canManageInApp } from "@/platform/store/store-management";
+import { currentStorePlatform } from "@/platform/store/store-platform";
 import { computePurchaseAvailable } from "@/platform/store/store-policy";
 import {
 	type ComputeSubscriptionPurchaseRequest,
 	useMobileStore,
 } from "@/platform/store/store-provider";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
-
-/** The store that bills purchases made on this device. */
-export function currentStorePlatform(): StorePlatform | null {
-	return Platform.OS === "ios" ? "app_store" : Platform.OS === "android" ? "play_store" : null;
-}
+import { StoreNoticeText } from "./store-notice";
 
 function storeName(platform: StorePlatform | null): string {
 	return platform
@@ -66,30 +63,19 @@ function storeName(platform: StorePlatform | null): string {
 		: storeSubscriptionCopy.unknownProvider;
 }
 
-export function StoreNoticeText({ notice }: { notice: StoreNotice }) {
-	const t = useI18n();
-	return (
-		<Text
-			accessibilityRole={notice.tone === "warning" ? "alert" : undefined}
-			className={
-				notice.tone === "success" ? "text-success-muted-foreground" : "text-muted-foreground"
-			}
-		>
-			{t(notice.key, notice.values)}
-		</Text>
-	);
-}
-
 /** Store data that may change after a compute purchase, restore or plan change. */
 function useRefreshCompute() {
 	const cache = useQueryClient();
 	const scope = useAccountScope();
-	return () =>
-		Promise.all(
+	const store = useMobileStore();
+	return () => {
+		void store.refresh({ recover: false });
+		return Promise.all(
 			(["billing-subscriptions", "deployments", "deployment", "creation-reusable"] as const).map(
 				(key) => cache.invalidateQueries({ queryKey: accountQueryKey(scope, key) }),
 			),
 		);
+	};
 }
 
 /**
@@ -208,28 +194,31 @@ function openUrl(url: string | null) {
 	return url ? Linking.openURL(url).then(() => undefined) : Promise.resolve();
 }
 
-/** Customer Center when enabled, otherwise the official store management page. */
-function ManageStoreSubscriptionAction({ management }: { management: StoreManagement }) {
-	const t = useI18n();
+/**
+ * Customer Center when enabled, then Apple's `showManageSubscriptions()`, otherwise the
+ * official store management page. Null when this device can't manage the contract.
+ */
+export function useManageStoreSubscription(management: StoreManagement | null) {
 	const scope = useAccountScope();
 	const store = useMobileStore();
 	const capture = useForegroundLease();
 	const action = useAuthAction(scope);
 	const platform = currentStorePlatform();
-	if (!platform) return null;
 	const controller = store.management;
-	const resolution = resolveStoreManagement(
+	if (!platform || !management) return null;
+	const inApp = canManageInApp(
 		management,
 		platform,
 		store.customerCenterEnabled && controller !== null,
 	);
-	if (!resolution.canManageInApp && !resolution.managementUrl) return null;
+	const managementUrl = storeManagementUrl(management, platform);
+	if (!inApp && !managementUrl) return null;
 	const manage = () => {
 		const visible = capture();
 		return action.run(async (owns) => {
 			if (!owns() || !visible()) return;
-			const link = () => openUrl(resolution.managementUrl);
-			if (resolution.canManageInApp && controller)
+			const link = () => openUrl(managementUrl);
+			if (inApp && controller)
 				await controller.openCustomerCenter(
 					() => RevenueCatUI.presentCustomerCenter(),
 					link,
@@ -240,8 +229,15 @@ function ManageStoreSubscriptionAction({ management }: { management: StoreManage
 			else await link();
 		});
 	};
+	return { manage, busy: action.busy };
+}
+
+function ManageStoreSubscriptionAction({ management }: { management: StoreManagement }) {
+	const t = useI18n();
+	const manage = useManageStoreSubscription(management);
+	if (!manage) return null;
 	return (
-		<Button variant="outline" size="sm" disabled={action.busy} onPress={() => void manage()}>
+		<Button variant="outline" size="sm" disabled={manage.busy} onPress={() => void manage.manage()}>
 			<Icon as={Settings} />
 			<Text>{t("storeCompute.manage")}</Text>
 		</Button>
@@ -309,7 +305,7 @@ function StoreChangePlanAction({
 				description={
 					<AppView className="gap-3">
 						<Text>{t("storeCompute.changePlanDescription", { store: name })}</Text>
-						<AppView accessibilityRole="radiogroup" className="gap-2">
+						<AppView className="gap-2">
 							{products.map((product) => {
 								const plan = computeProductPlan(product.productIdentifier);
 								const label = plan
@@ -405,7 +401,7 @@ export function StoreSubscriptionPanel({ item }: { item: Subscription }) {
 		store.storeBuild && platform && management
 			? resolveStoreSubscriptionActions({ management, platform })
 			: { actions: [], managedElsewhere: null };
-	const contractId = storeContractIdForRow(item, store.computeSlot);
+	const contractId = management?.contract_id ?? null;
 	return (
 		<AppView className="gap-3">
 			{storeRenewalIssue(management) ? (

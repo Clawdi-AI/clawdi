@@ -13,7 +13,6 @@ import {
 import {
 	discoverAgentProfiles,
 	type LocalAgentProfile,
-	legacyProfileDiscovery,
 	parseProfileSessionKey,
 	profileDiscoveryWatchPaths,
 	profileSessionKey,
@@ -73,7 +72,7 @@ export function createProfileSync(
 	watchPaths(): string[];
 	sessions?: SessionModule;
 } {
-	let profiles = legacyProfileDiscovery(adapter).profiles;
+	let profiles: LocalAgentProfile[] = [];
 	let initialized = false;
 	let refreshing: Promise<void> | null = null;
 	let discoveryPaths = profileDiscoveryWatchPaths(adapter);
@@ -86,7 +85,7 @@ export function createProfileSync(
 	const attributed = new Map<string, Set<string>>();
 	let supported = false;
 	const fallback = () => {
-		profiles = legacyProfileDiscovery(adapter).profiles;
+		profiles = [];
 		supported = false;
 	};
 	const signature = async () => {
@@ -120,6 +119,7 @@ export function createProfileSync(
 			return;
 		}
 		if (options.readOnly || !environmentId) return;
+		if (adapter.agentType !== "hermes" && adapter.agentType !== "openclaw") return;
 		const prior = await api.GET("/v1/agents/{agent_id}/profiles", {
 			params: { path: { agent_id: environmentId } },
 		});

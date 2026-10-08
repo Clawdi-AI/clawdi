@@ -18,6 +18,7 @@ import {
 	aiBindingCopy,
 	computeFundingMode,
 	computeSubscriptionCancellationCopy,
+	deploymentDeleteSubscriptionPolicy,
 	firstModelForProvider,
 	formatShortDate,
 	initialDeploymentCopy,
@@ -35,7 +36,6 @@ import { Input as AppTextInput } from "@/components/ui/input";
 import { Text as AppText } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppView } from "@/components/ui/view";
-import { deploymentDeleteSubscriptionPolicy } from "@/hosted/agents/delete-subscription-policy";
 import { ProviderCreate } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { AiBindingChoices } from "@/hosted/v2/ai-providers/ai-binding-choices";
 import { useMobileApi } from "@/lib/api-provider";
@@ -188,13 +188,12 @@ export function DeploymentControls({
 	const periodEnd = formatShortDate(subscription?.current_period_end);
 	const periodEndLabel = periodEnd === "—" ? null : periodEnd;
 	const deleteTitle = deployment
-		? t("runtime.deleteTitle").replace(
-				"{name}",
-				agentDisplayName({
+		? t("runtime.deleteTitle", {
+				name: agentDisplayName({
 					name: deployment.resource.name,
 					agent_type: deployment.resource.spec.runtime,
 				}),
-			)
+			})
 		: "";
 	const [deleteChoice, setDeleteChoice] = useState<{
 		choice: SubscriptionChoice;
@@ -283,7 +282,7 @@ export function DeploymentControls({
 							<AppText>
 								{deleteChoice?.choice === "keep_subscription"
 									? periodEndLabel
-										? `${t("runtime.deleteKeepDescription")} ${t("runtime.deleteValidThrough").replace("{date}", periodEndLabel)}`
+										? `${t("runtime.deleteKeepDescription")} ${t("runtime.deleteValidThrough", { date: periodEndLabel })}`
 										: t("runtime.deleteKeepDescription")
 									: computeSubscriptionCancellationCopy({
 											isTrial: subscription?.status === "trialing",

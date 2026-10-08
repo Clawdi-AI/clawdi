@@ -1,15 +1,7 @@
-"""CLI authentication routes.
+"""CLI authentication routes."""
 
-Interactive login uses Clerk OAuth device authorization. The legacy
-browser-approved API-key bootstrap is retired; the device and poll endpoints
-remain as 410 stubs so released CLIs receive upgrade guidance.
-"""
-
-# The module-level httpx name remains a patch seam for transport tests.
-# pyright: reportUnusedImport=false
 from urllib.parse import quote
 
-import httpx  # noqa: F401 - retained as a patch seam for Clerk transport tests
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +10,6 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.schemas.cli_auth import (
     DesktopSessionTicketResponse,
-    DeviceFlowRetiredResponse,
     OAuthConfigResponse,
     OAuthRevokeRequest,
     OAuthRevokeResponse,
@@ -36,9 +27,6 @@ from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
 
 router = APIRouter(prefix="/cli/auth", tags=["cli-auth"])
 
-_RETIRED_DEVICE_FLOW_DETAIL = (
-    "This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`."
-)
 _RETIRED_DESKTOP_TICKET_DETAIL = (
     "Desktop sign-in tickets are no longer supported. Update Clawdi Desktop and open "
     "https://cloud.clawdi.ai in your browser."
@@ -68,9 +56,6 @@ async def _oauth_public_config_or_503(db: AsyncSession) -> OAuthConfigResponse:
         client_id=oauth_setting.client_id,
         audience=oauth_setting.audience,
         authorized_parties=oauth_setting.authorized_parties,
-        # 2026-10-07: Keep redirect_uri for released 0.14 CLIs; no CLI >=0.15 uses it.
-        # Remove after 2026-11-06 with any server-side loopback assumptions.
-        redirect_uri=oauth_setting.redirect_uri,
     )
 
 
@@ -132,48 +117,16 @@ async def revoke_oauth_refresh_grant(
     return OAuthRevokeResponse(status="revoked")
 
 
-# TODO (2026-10-08): Remove after 2026-11-08; retained for released Desktop clients.
+# Keep upgrade guidance for Desktop beta.1–7 until beta.8 is released.
 @router.post(
     "/oauth/desktop-ticket",
     response_model=DesktopSessionTicketResponse,
     deprecated=True,
     responses={
         status.HTTP_410_GONE: {
-            "model": DeviceFlowRetiredResponse,
             "description": _RETIRED_DESKTOP_TICKET_DETAIL,
         }
     },
 )
 async def create_desktop_session_ticket():
-    """Retain upgrade guidance for released Desktop clients for one release cycle."""
     raise HTTPException(status.HTTP_410_GONE, _RETIRED_DESKTOP_TICKET_DETAIL)
-
-
-@router.post(
-    "/device",
-    response_model=DeviceFlowRetiredResponse,
-    deprecated=True,
-    responses={
-        status.HTTP_410_GONE: {
-            "model": DeviceFlowRetiredResponse,
-            "description": _RETIRED_DEVICE_FLOW_DETAIL,
-        }
-    },
-)
-async def start_device_flow():
-    raise HTTPException(status.HTTP_410_GONE, _RETIRED_DEVICE_FLOW_DETAIL)
-
-
-@router.post(
-    "/poll",
-    response_model=DeviceFlowRetiredResponse,
-    deprecated=True,
-    responses={
-        status.HTTP_410_GONE: {
-            "model": DeviceFlowRetiredResponse,
-            "description": _RETIRED_DEVICE_FLOW_DETAIL,
-        }
-    },
-)
-async def poll_device_flow():
-    raise HTTPException(status.HTTP_410_GONE, _RETIRED_DEVICE_FLOW_DETAIL)

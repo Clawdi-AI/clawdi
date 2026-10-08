@@ -22,7 +22,7 @@ import {
 	validateNativeArchive,
 } from "./native-activation";
 import type { NativeCompiledIdentity } from "./native-distribution";
-import { NATIVE_PUBLISH_TARGET_CATALOG, nativeAssetName } from "./native-release-manifest";
+import { NATIVE_BUILD_TARGET_CATALOG, nativeAssetName } from "./native-release-manifest";
 import type { PrivateDirectoryLockLease } from "./private-directory-lock";
 
 const roots: string[] = [];
@@ -390,7 +390,7 @@ describe("native release staging", () => {
 			const manifest = [
 				"clawdi.nativeRelease.v2",
 				"version\t1.2.3",
-				...NATIVE_PUBLISH_TARGET_CATALOG.map(
+				...NATIVE_BUILD_TARGET_CATALOG.map(
 					({ target }) =>
 						`artifact\t${target}\t${nativeAssetName(target)}\t${new Bun.CryptoHasher("sha256").update(archive).digest("hex")}`,
 				),

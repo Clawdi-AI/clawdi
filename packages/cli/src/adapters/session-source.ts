@@ -5,11 +5,33 @@ import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { projectEventsToMessages } from "../lib/session-events";
 import type { RawSession, SessionEvent, SessionMessage, SyncReadContext } from "./base";
-import { type JsonObject, jsonObject } from "./rich-event-mapping";
+import { type JsonObject, jsonObject, SESSION_PROJECTION_REVISION } from "./rich-event-mapping";
 
 export const SESSION_RECORD_MAX_BYTES = 8 * 1024 * 1024;
 export const EAGER_SESSION_MAX_BYTES = 256 * 1024;
 const READ_BUFFER_BYTES = 64 * 1024;
+export const RACY_CLEAN_WINDOW_NS = 2_000_000_000n;
+
+/** Only stable, supported file identities can confirm an unchanged JSONL source. */
+export function jsonlStatRevision(
+	stat: BigIntStats,
+	capturedAtNs = BigInt(Date.now()) * 1_000_000n,
+): string | undefined {
+	if (
+		!stat.isFile() ||
+		typeof stat.ino !== "bigint" ||
+		stat.ino <= 0n ||
+		typeof stat.size !== "bigint" ||
+		stat.size < 0n ||
+		typeof stat.mtimeNs !== "bigint" ||
+		stat.mtimeNs <= 0n ||
+		typeof stat.ctimeNs !== "bigint" ||
+		stat.ctimeNs <= 0n ||
+		capturedAtNs - stat.mtimeNs < RACY_CLEAN_WINDOW_NS
+	)
+		return undefined;
+	return `jsonl-stat-v1:p${SESSION_PROJECTION_REVISION}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+}
 
 export function addSessionModel(models: Set<string>, model: string): void {
 	if (Buffer.byteLength(model) > 8192 || (!models.has(model) && models.size >= 128))
@@ -45,6 +67,7 @@ export class JsonlSessionSource {
 	private constructor(
 		readonly path: string,
 		readonly stat: BigIntStats,
+		private readonly capturedAtNs: bigint,
 		private readonly context?: SyncReadContext,
 	) {}
 
@@ -53,9 +76,10 @@ export class JsonlSessionSource {
 		const file = await open(path, "r");
 		try {
 			const stat = await file.stat({ bigint: true });
+			const capturedAtNs = BigInt(Date.now()) * 1_000_000n;
 			if (!stat.isFile() || stat.size > BigInt(Number.MAX_SAFE_INTEGER))
 				throw new Error("session source is not a supported regular file");
-			return new JsonlSessionSource(path, stat, context);
+			return new JsonlSessionSource(path, stat, capturedAtNs, context);
 		} finally {
 			await file.close();
 		}
@@ -66,7 +90,7 @@ export class JsonlSessionSource {
 	}
 
 	get revision(): string | undefined {
-		return this.digest === undefined ? undefined : `jsonl-v1:${this.stat.size}:${this.digest}`;
+		return this.digest === undefined ? undefined : jsonlStatRevision(this.stat, this.capturedAtNs);
 	}
 
 	async unchanged(): Promise<boolean> {

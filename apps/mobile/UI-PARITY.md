@@ -296,9 +296,9 @@ segmented buttons with shared colors/Geist on Android.
 For longer option sets, `scrollable` uses Compose's documented horizontal-scroll
 modifier and single-line labels; Project detail and Memory categories use it
 for their longer option sets. Single-choice Web `Tabs` in content (channel
-detail, Discord pairing path, agent setup, tool payloads) render `NativeSegments`
-and conditionally render the selected panel; `ui/tabs.tsx` remains only for
-compute-plan comparisons and deployment billing-term selection. Store credit
+detail, Discord pairing path, agent setup, tool payloads, compute-plan and
+deployment billing-term selection) render `NativeSegments` and conditionally
+render the selected panel. Store credit
 purchases use the official RevenueCat Paywall instead. `ui/checkbox.tsx` renders
 `@expo/ui`'s universal `Checkbox` (a SwiftUI toggle on iOS, tinted with
 `--primary`); Android uses the Compose `Checkbox` with Web's `--primary`,

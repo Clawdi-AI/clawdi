@@ -8,7 +8,7 @@ import {
 	writeNativeInstallIdentity,
 } from "./native-distribution";
 import {
-	NATIVE_PUBLISH_TARGET_CATALOG,
+	NATIVE_BUILD_TARGET_CATALOG,
 	NATIVE_TARGETS,
 	type NativeTarget,
 	nativeAssetName,
@@ -75,7 +75,7 @@ describe("Windows native install ownership", () => {
 		const manifest = [
 			"clawdi.nativeRelease.v2",
 			`version\t${identity.version}`,
-			...NATIVE_PUBLISH_TARGET_CATALOG.map(
+			...NATIVE_BUILD_TARGET_CATALOG.map(
 				({ target }, index) =>
 					`artifact\t${target}\t${nativeAssetName(target)}\t${String(index).repeat(64)}`,
 			),

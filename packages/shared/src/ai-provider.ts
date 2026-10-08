@@ -180,7 +180,6 @@ const CLAWDI_MANAGED_V2_ACCEPTED_API_MODES = [
 	CLAWDI_MANAGED_V2_API_MODE,
 	"openai_chat",
 ] as const satisfies readonly AiProviderApiMode[];
-export const CLAWDI_MANAGED_V2_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID;
 export const CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX = "clawdi-v2-deployment-";
 const CLAWDI_MANAGED_PROVIDER_MAX_ID_LENGTH = 63;
 export const CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID = "clawdi-v2";
@@ -191,7 +190,6 @@ export const CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID = "clawdi-managed-v2";
 export const CLAWDI_MANAGED_PROVIDER_IDS: ReadonlySet<string> = new Set([
 	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
-	CLAWDI_MANAGED_V2_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 ]);
@@ -206,7 +204,6 @@ export interface AiProviderManagedIdentity {
 export function isClawdiManagedV2ProviderId(providerId: string): boolean {
 	if (
 		providerId === CLAWDI_MANAGED_PROVIDER_ID ||
-		providerId === CLAWDI_MANAGED_V2_PROVIDER_ID ||
 		providerId === CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID ||
 		providerId === CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID
 	) {

@@ -26,7 +26,6 @@ export const NATIVE_BUILD_TARGET_CATALOG = [
 	{ target: "win32-arm64", bunTarget: "bun-windows-arm64" },
 ] as const;
 export type NativeBuildTarget = (typeof NATIVE_BUILD_TARGET_CATALOG)[number]["target"];
-export const NATIVE_PUBLISH_TARGET_CATALOG = NATIVE_BUILD_TARGET_CATALOG;
 
 export function isNativeBuildTarget(value: string): value is NativeBuildTarget {
 	return NATIVE_BUILD_TARGET_CATALOG.some((entry) => entry.target === value);

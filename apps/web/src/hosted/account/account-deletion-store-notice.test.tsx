@@ -74,7 +74,7 @@ function noticeFor(
 describe("account deletion store notice", () => {
 	test("names the billing store of a renewable store subscription without a store link", () => {
 		const { notice, markup } = noticeFor({ pages: [{ items: [row(), appStoreRow] }] });
-		expect(notice).toEqual({ kind: "store", provider: "app_store" });
+		expect(notice).toMatchObject({ kind: "store", management: { provider: "app_store" } });
 		expect(markup).toContain("Cancel your App Store subscription first");
 		expect(markup).toContain("billed by the App Store and will keep renewing");
 		expect(markup).not.toContain("Google Play");

@@ -20,7 +20,7 @@ export type StorePurchaseAttemptsQuery =
 	paths["/v2/store/purchase-attempts"]["get"]["parameters"]["query"];
 
 /** Hosted HTTP error codes are not advertised in OpenAPI. Sources: clawdi-hosted
- * origin/main (verified at 1c2e07c01), grouped by their owning file below.
+ * origin/main (verified at 5ddb90629), grouped by their owning file below.
  */
 export const StoreErrorCode = {
 	// backend/app/v2/store_routes.py: _problem() codes.
@@ -35,6 +35,19 @@ export const StoreErrorCode = {
 	store_identity_tombstoned: "store_identity_tombstoned",
 	store_identity_unavailable: "store_identity_unavailable",
 	store_purchases_disabled: "store_purchases_disabled",
+	store_compute_subscriptions_disabled: "store_compute_subscriptions_disabled",
+	store_compute_target_not_allowed: "store_compute_target_not_allowed",
+	// backend/app/v2/money/store_compute_funding.py: pre-insert compute rejections.
+	store_target_conflict: "store_target_conflict",
+	store_target_required: "store_target_required",
+	store_contract_not_found: "store_contract_not_found",
+	store_contract_not_changeable: "store_contract_not_changeable",
+	store_product_already_active: "store_product_already_active",
+	store_slot_in_use: "store_slot_in_use",
+	agent_already_funded: "agent_already_funded",
+	deployment_not_found: "deployment_not_found",
+	deployment_deleted: "deployment_deleted",
+	deploy_request_funding_conflict: "deploy_request_funding_conflict",
 	// backend/app/services/webhook_inbox.py: WebhookQuarantineReason.STORE_* hold reasons.
 	store_namespace_invalid: "store_namespace_invalid",
 	store_replay_conflict: "store_replay_conflict",
@@ -78,7 +91,7 @@ function isPlatform(value: unknown): boolean {
 function isUuidOrNull(value: unknown): boolean {
 	return value == null || isUuid(value);
 }
-function normalizeUuid(value: string | null | undefined): string | null {
+export function normalizeUuid(value: string | null | undefined): string | null {
 	return value?.toLowerCase() ?? null;
 }
 function isPurpose(value: unknown): boolean {
@@ -91,7 +104,7 @@ function isPurpose(value: unknown): boolean {
 function isNonemptyString(value: unknown): value is string {
 	return typeof value === "string" && value.length > 0;
 }
-function isUuid(value: unknown): value is string {
+export function isUuid(value: unknown): value is string {
 	return (
 		typeof value === "string" &&
 		/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(value)
@@ -138,6 +151,9 @@ function isComputeSlot(value: unknown): value is StoreComputeSlot {
 				slot.compute_subscription_id > 0)) &&
 		(slot.agent_id == null ||
 			(typeof slot.agent_id === "string" && /^hdep_.+/.test(slot.agent_id))) &&
+		(slot.reserved_deploy_request_id == null ||
+			(isNonemptyString(slot.reserved_deploy_request_id) &&
+				slot.reserved_deploy_request_id.length <= 191)) &&
 		(slot.store_management == null || isStoreManagement(slot.store_management))
 	);
 }
@@ -243,6 +259,69 @@ export function storeIdempotencyHeaders(key: string) {
 	return { "Idempotency-Key": key };
 }
 
+/** Validates and serializes the same request at the API and durable-journal boundaries. */
+export function normalizeStorePurchaseAttemptRequest(
+	body: unknown,
+): StorePurchaseAttemptRequest | null {
+	if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+	const request = body as Record<string, unknown>;
+	const { platform, purpose, catalogue_revision } = request;
+	if (
+		(platform !== "app_store" && platform !== "play_store") ||
+		(purpose !== "standalone_topup" &&
+			purpose !== "deploy_continuation" &&
+			purpose !== "compute_subscription") ||
+		typeof catalogue_revision !== "number" ||
+		!isRevision(catalogue_revision) ||
+		(request.store_product_id != null &&
+			(!isNonemptyString(request.store_product_id) || request.store_product_id.length > 255)) ||
+		(request.pending_deploy_request_id != null &&
+			(!isNonemptyString(request.pending_deploy_request_id) ||
+				request.pending_deploy_request_id.length > 191)) ||
+		!isUuidOrNull(request.target_contract_id) ||
+		(request.target_deployment_id != null &&
+			(typeof request.target_deployment_id !== "string" ||
+				!/^hdep_.+/.test(request.target_deployment_id))) ||
+		(purpose === "standalone_topup" && request.pending_deploy_request_id != null) ||
+		(purpose === "compute_subscription" &&
+			(!isNonemptyString(request.store_product_id) ||
+				[
+					request.pending_deploy_request_id,
+					request.target_contract_id,
+					request.target_deployment_id,
+				].filter((value) => value != null).length !== 1))
+	)
+		return null;
+	const normalized: StorePurchaseAttemptRequest = {
+		platform,
+		catalogue_revision,
+		purpose,
+		pending_deploy_request_id:
+			typeof request.pending_deploy_request_id === "string"
+				? request.pending_deploy_request_id
+				: request.pending_deploy_request_id === null
+					? null
+					: undefined,
+	};
+	if (purpose === "compute_subscription") {
+		if (typeof request.store_product_id !== "string") return null;
+		normalized.store_product_id = request.store_product_id;
+		normalized.target_contract_id =
+			typeof request.target_contract_id === "string"
+				? request.target_contract_id
+				: request.target_contract_id === null
+					? null
+					: undefined;
+		normalized.target_deployment_id =
+			typeof request.target_deployment_id === "string"
+				? request.target_deployment_id
+				: request.target_deployment_id === null
+					? null
+					: undefined;
+	}
+	return normalized;
+}
+
 /** Uses ApiClientError.status/code for hosted typed failures; never exposes server details or retries. */
 export function createHostedStoreClient(options: ApiClientOptions) {
 	const transport = createReadTransport(options);
@@ -268,52 +347,16 @@ export function createHostedStoreClient(options: ApiClientOptions) {
 			signal?: AbortSignal,
 		): Promise<StorePurchaseAttempt> => {
 			const header = storeIdempotencyHeaders(key);
-			if (
-				!body ||
-				!isPlatform(body.platform) ||
-				!isPurpose(body.purpose) ||
-				!isRevision(body.catalogue_revision) ||
-				(body.store_product_id != null &&
-					(typeof body.store_product_id !== "string" ||
-						body.store_product_id.length < 1 ||
-						body.store_product_id.length > 255)) ||
-				(body.pending_deploy_request_id != null &&
-					(typeof body.pending_deploy_request_id !== "string" ||
-						body.pending_deploy_request_id.length < 1 ||
-						body.pending_deploy_request_id.length > 191))
-			)
-				throw new ApiClientError(400, "invalid_store_attempt_request");
-			if (body.purpose === "standalone_topup" && body.pending_deploy_request_id != null)
+			if (body?.purpose === "standalone_topup" && body.pending_deploy_request_id != null)
 				throw new ApiClientError(409, StoreErrorCode.pending_deploy_request_not_allowed);
-			if (body.purpose === "compute_subscription") {
-				const targetCount = [
-					body.pending_deploy_request_id,
-					body.target_deployment_id,
-					body.target_contract_id,
-				].filter((value) => value != null).length;
-				if (
-					!isNonemptyString(body.store_product_id) ||
-					!isUuidOrNull(body.target_contract_id) ||
-					(body.target_deployment_id != null &&
-						(typeof body.target_deployment_id !== "string" ||
-							!/^hdep_.+/.test(body.target_deployment_id))) ||
-					targetCount !== 1
-				)
-					throw new ApiClientError(400, "invalid_compute_subscription_attempt_request");
-			}
-			const request: StorePurchaseAttemptRequest = {
-				platform: body.platform,
-				catalogue_revision: body.catalogue_revision,
-				purpose: body.purpose,
-				pending_deploy_request_id: body.pending_deploy_request_id,
-				...(body.purpose === "compute_subscription"
-					? {
-							store_product_id: body.store_product_id,
-							target_contract_id: body.target_contract_id,
-							target_deployment_id: body.target_deployment_id,
-						}
-					: {}),
-			};
+			const request = normalizeStorePurchaseAttemptRequest(body);
+			if (!request)
+				throw new ApiClientError(
+					400,
+					body?.purpose === "compute_subscription"
+						? "invalid_compute_subscription_attempt_request"
+						: "invalid_store_attempt_request",
+				);
 			const result = validateAttempt(
 				await transport.read(
 					(init) =>

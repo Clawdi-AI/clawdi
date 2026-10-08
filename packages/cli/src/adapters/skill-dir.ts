@@ -1,12 +1,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
-import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
-import {
-	migrateLegacyLocalSetupSkill,
-	mutateUserSkillTarget,
-	shouldIgnoreUserSkill,
-} from "../runtime/managed-skill-reservation";
+import { mutateUserSkillTarget, shouldIgnoreUserSkill } from "../runtime/managed-skill-reservation";
 import type { RawSkill, SkillModule, SyncReadContext } from "./base";
 import { SKIP_DIRS, safeSkillDirectoryPath } from "./paths";
 
@@ -56,12 +51,6 @@ export function collectSkillsFromDir(
 	root: string,
 	options: SkillDirectoryOptions = {},
 ): RawSkill[] {
-	migrateLegacyLocalSetupSkill({
-		targetDir: join(root, "clawdi"),
-		id: "clawdi",
-		version: 1,
-		digest: managedSkillDirectoryDigest,
-	});
 	return enumerateSkillDirs(root, options).flatMap(({ key, dirPath }) => {
 		try {
 			const filePath = join(dirPath, "SKILL.md");

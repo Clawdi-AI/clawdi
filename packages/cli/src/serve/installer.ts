@@ -16,8 +16,7 @@
  *
  * `clawdi daemon install` writes one singleton unit
  * (`ai.clawdi.serve` / `clawdi-serve.service`) whose process runs
- * every registered agent's sync engine. Older per-agent units are
- * still detected so setup/install can remove them during migration.
+ * every registered agent's sync engine.
  *
  * Windows: current-user InteractiveToken Task Scheduler task.
  */
@@ -34,7 +33,6 @@ import {
 } from "node:fs";
 import { homedir, platform } from "node:os";
 import { join } from "node:path";
-import { AGENT_TYPES, type AgentType } from "../adapters/agent-types";
 import { persistAuthTokenFile } from "../lib/auth-token-file";
 import {
 	type CurrentCliInvocation,
@@ -54,8 +52,6 @@ import {
 } from "./windows-task";
 
 interface InstallOpts {
-	/** Internal migration hook for removing pre-singleton per-agent units. */
-	agent?: string;
 	rpcHost?: string;
 	rpcPort?: number;
 	rpcAllowRemote?: boolean;
@@ -109,8 +105,8 @@ function unitName(): string {
 	return "ai.clawdi.serve";
 }
 
-function daemonProgramArgs(opts: InstallOpts, authTokenFile?: string): string[] {
-	const args = opts.agent ? ["daemon", "run", "--agent", opts.agent] : ["daemon", "run"];
+function daemonProgramArgs(authTokenFile?: string): string[] {
+	const args = ["daemon", "run"];
 	return authTokenFile ? [...args, "--auth-token-file", authTokenFile] : args;
 }
 
@@ -246,7 +242,7 @@ function currentDaemonInstallContext(opts: InstallOpts): DaemonInstallContext {
 		const authTokenFile = process.env.CLAWDI_AUTH_TOKEN
 			? persistAuthTokenFile(clawdiRoot(), process.env.CLAWDI_AUTH_TOKEN)
 			: undefined;
-		invocation = resolveCurrentCliInvocation(daemonProgramArgs(opts, authTokenFile));
+		invocation = resolveCurrentCliInvocation(daemonProgramArgs(authTokenFile));
 		if (homebrewRuntime) invocation.command = homebrewRuntime.activationPath;
 	} catch (error) {
 		throw new Error(
@@ -296,18 +292,18 @@ export function install(opts: InstallOpts = {}): {
 	throw new Error(`unsupported platform for service install: ${p}`);
 }
 
-export function uninstall(opts: InstallOpts = {}): { removed: boolean } {
+export function uninstall(): { removed: boolean } {
 	const p = platform();
-	if (p === "darwin") return uninstallLaunchd(opts);
-	if (p === "linux") return uninstallSystemd(opts);
+	if (p === "darwin") return uninstallLaunchd();
+	if (p === "linux") return uninstallSystemd();
 	if (p === "win32") return uninstallWindowsTask(clawdiRoot());
 	throw new Error(`unsupported platform for service uninstall: ${p}`);
 }
 
-export function statusLines(opts: InstallOpts = {}): string[] {
+export function statusLines(): string[] {
 	const p = platform();
-	if (p === "darwin") return statusLaunchd(opts);
-	if (p === "linux") return statusSystemd(opts);
+	if (p === "darwin") return statusLaunchd();
+	if (p === "linux") return statusSystemd();
 	if (p === "win32") return windowsTaskStatus();
 	return [`unsupported platform: ${p}`];
 }
@@ -315,12 +311,12 @@ export function statusLines(opts: InstallOpts = {}): string[] {
 /** Restart an already-installed daemon unit. Throws if no unit is
  * installed (caller should install first) or if the supervisor
  * refuses to restart (corrupt unit, permissions, etc). */
-export function restart(opts: InstallOpts = {}): void {
+export function restart(): void {
 	const p = platform();
 	if (p === "darwin") {
-		restartLaunchd(opts);
+		restartLaunchd();
 	} else if (p === "linux") {
-		restartSystemd(opts);
+		restartSystemd();
 	} else if (p === "win32") {
 		restartWindowsTask();
 	} else {
@@ -329,12 +325,12 @@ export function restart(opts: InstallOpts = {}): void {
 }
 
 /** Stop an installed daemon without removing or disabling its supervisor unit. */
-export function stop(opts: InstallOpts = {}): void {
+export function stop(): void {
 	const p = platform();
 	if (p === "darwin") {
-		stopLaunchd(opts);
+		stopLaunchd();
 	} else if (p === "linux") {
-		stopSystemd(opts);
+		stopSystemd();
 	} else if (p === "win32") {
 		stopWindowsTask();
 	} else {
@@ -342,17 +338,17 @@ export function stop(opts: InstallOpts = {}): void {
 	}
 }
 
-function restartLaunchd(opts: InstallOpts): void {
-	const path = opts.agent ? plistPath(opts.agent) : singletonPlistPath();
+function restartLaunchd(): void {
+	const path = singletonPlistPath();
 	if (!existsSync(path)) {
 		throw new Error("no daemon unit installed (run `clawdi daemon install` first)");
 	}
-	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
+	const label = unitName();
 	const target = `${launchdDomain()}/${label}`;
 	// Hot restart a loaded job; bootstrap a stopped/ejected job from its plist.
 	const isLoaded = tryRun(["launchctl", "print", target]);
 	if (isLoaded && tryRun(["launchctl", "kickstart", "-k", target])) return;
-	stopLaunchd(opts);
+	stopLaunchd();
 	if (!bootstrapLaunchd(path, label)) {
 		throw new Error(
 			`launchctl could not (re)load ${label}. ` +
@@ -370,8 +366,8 @@ function bootstrapLaunchd(path: string, label: string): boolean {
 	);
 }
 
-function restartSystemd(opts: InstallOpts): void {
-	const unit = unitFileName(opts.agent);
+function restartSystemd(): void {
+	const unit = unitFileName();
 	const ok = tryRun(["systemctl", "--user", "restart", unit]);
 	if (!ok) {
 		throw new Error(
@@ -391,16 +387,8 @@ function launchAgentsDir(): string {
 	return dir;
 }
 
-function plistPath(agent: string): string {
-	return join(launchAgentsDir(), `${legacyUnitName(agent)}.plist`);
-}
-
 function singletonPlistPath(): string {
 	return join(launchAgentsDir(), `${unitName()}.plist`);
-}
-
-function legacyUnitName(agent: string): string {
-	return `ai.clawdi.serve.${agent}`;
 }
 
 function installLaunchd(opts: InstallOpts): {
@@ -408,7 +396,7 @@ function installLaunchd(opts: InstallOpts): {
 	instructions: string;
 	replaced: boolean;
 } {
-	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
+	const label = unitName();
 	const context = currentDaemonInstallContext(opts);
 	const invocation = context.invocation;
 	const logDir = join(clawdiRoot(), "serve", "logs");
@@ -440,9 +428,9 @@ ${programArgs}
   <key>ThrottleInterval</key>
   <integer>10</integer>
   <key>StandardErrorPath</key>
-  <string>${escapeXml(join(logDir, `${opts.agent ?? "daemon"}.stderr.log`))}</string>
+	<string>${escapeXml(join(logDir, "daemon.stderr.log"))}</string>
   <key>StandardOutPath</key>
-  <string>${escapeXml(join(logDir, `${opts.agent ?? "daemon"}.stdout.log`))}</string>
+	<string>${escapeXml(join(logDir, "daemon.stdout.log"))}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
@@ -457,7 +445,7 @@ ${programArgs}
 </plist>
 `;
 
-	const path = opts.agent ? plistPath(opts.agent) : singletonPlistPath();
+	const path = singletonPlistPath();
 	// Sample BEFORE we writeFileSync — caller wants to know
 	// whether this install was a fresh write or replacing an
 	// existing unit.
@@ -480,7 +468,7 @@ ${programArgs}
 	}
 
 	// Remove a loaded definition before bootstrapping the updated plist.
-	stopLaunchd(opts);
+	stopLaunchd();
 	const loaded = bootstrapLaunchd(path, label);
 	if (!loaded) {
 		throw new Error(
@@ -489,25 +477,25 @@ ${programArgs}
 		);
 	}
 
-	const instructions = `Loaded ${label}. Tail logs with: tail -f ${join(logDir, `${opts.agent ?? "daemon"}.stderr.log`)}`;
+	const instructions = `Loaded ${label}. Tail logs with: tail -f ${join(logDir, "daemon.stderr.log")}`;
 	return { unit: path, instructions, replaced };
 }
 
-function uninstallLaunchd(opts: InstallOpts): { removed: boolean } {
-	const path = opts.agent ? plistPath(opts.agent) : singletonPlistPath();
+function uninstallLaunchd(): { removed: boolean } {
+	const path = singletonPlistPath();
 	if (!existsSync(path)) return { removed: false };
 	// Preserve the plist if stopping a loaded service fails.
-	stopLaunchd(opts);
+	stopLaunchd();
 	unlinkSync(path);
 	return { removed: true };
 }
 
-function stopLaunchd(opts: InstallOpts): void {
-	const path = opts.agent ? plistPath(opts.agent) : singletonPlistPath();
+function stopLaunchd(): void {
+	const path = singletonPlistPath();
 	if (!existsSync(path)) {
 		throw new Error("no daemon unit installed (run `clawdi daemon install` first)");
 	}
-	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
+	const label = unitName();
 	const target = `${launchdDomain()}/${label}`;
 	if (!tryRun(["launchctl", "print", target])) return;
 	if (tryRun(["launchctl", "bootout", target])) return;
@@ -516,10 +504,10 @@ function stopLaunchd(opts: InstallOpts): void {
 	);
 }
 
-function statusLaunchd(opts: InstallOpts): string[] {
-	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
+function statusLaunchd(): string[] {
+	const label = unitName();
 	const lines: string[] = [];
-	const path = opts.agent ? plistPath(opts.agent) : singletonPlistPath();
+	const path = singletonPlistPath();
 	lines.push(`unit:    ${existsSync(path) ? path : "(not installed)"}`);
 	const out = tryRunCapture(["launchctl", "list", label]);
 	if (out !== null) {
@@ -547,12 +535,12 @@ function systemdUserDir(): string {
 	return dir;
 }
 
-function unitFileName(agent?: string): string {
-	return agent ? `clawdi-serve-${agent}.service` : "clawdi-serve.service";
+function unitFileName(): string {
+	return "clawdi-serve.service";
 }
 
-function unitPath(agent?: string): string {
-	return join(systemdUserDir(), unitFileName(agent));
+function unitPath(): string {
+	return join(systemdUserDir(), unitFileName());
 }
 
 function installSystemd(opts: InstallOpts): {
@@ -562,7 +550,7 @@ function installSystemd(opts: InstallOpts): {
 } {
 	const context = currentDaemonInstallContext(opts);
 	const invocation = context.invocation;
-	const path = unitPath(opts.agent);
+	const path = unitPath();
 	const replaced = existsSync(path);
 
 	// systemd `Environment="KEY=VALUE"` parses backslash + double-
@@ -644,18 +632,18 @@ WantedBy=default.target
 	}
 	const activated =
 		tryRun(["systemctl", "--user", "daemon-reload"]) &&
-		tryRun(["systemctl", "--user", "enable", "--now", unitFileName(opts.agent)]) &&
-		(!replaced || tryRun(["systemctl", "--user", "restart", unitFileName(opts.agent)]));
+		tryRun(["systemctl", "--user", "enable", "--now", unitFileName()]) &&
+		(!replaced || tryRun(["systemctl", "--user", "restart", unitFileName()]));
 	if (!activated) {
 		throw new Error(
 			`Wrote daemon unit to ${path}, but systemctl activation failed. ` +
 				"The unit was preserved. Try: " +
-				`systemctl --user daemon-reload && systemctl --user enable --now ${unitFileName(opts.agent)}`,
+				`systemctl --user daemon-reload && systemctl --user enable --now ${unitFileName()}`,
 		);
 	}
 
 	const instructions =
-		`Enabled and started ${unitFileName(opts.agent)}. Tail logs with: journalctl --user -u ${unitFileName(opts.agent)} -f` +
+		`Enabled and started ${unitFileName()}. Tail logs with: journalctl --user -u ${unitFileName()} -f` +
 		lingerHint();
 	return { unit: path, instructions, replaced };
 }
@@ -674,21 +662,21 @@ function lingerHint(): string {
 	return "\n  Sync stops at logout without lingering. To keep syncing: loginctl enable-linger $USER (may require privileges).";
 }
 
-function uninstallSystemd(opts: InstallOpts): { removed: boolean } {
-	const path = unitPath(opts.agent);
+function uninstallSystemd(): { removed: boolean } {
+	const path = unitPath();
 	if (!existsSync(path)) return { removed: false };
-	stopSystemd(opts);
-	if (!tryRun(["systemctl", "--user", "disable", unitFileName(opts.agent)])) {
-		throw new Error(`systemctl --user disable ${unitFileName(opts.agent)} failed.`);
+	stopSystemd();
+	if (!tryRun(["systemctl", "--user", "disable", unitFileName()])) {
+		throw new Error(`systemctl --user disable ${unitFileName()} failed.`);
 	}
 	unlinkSync(path);
 	tryRun(["systemctl", "--user", "daemon-reload"]);
 	return { removed: true };
 }
 
-function stopSystemd(opts: InstallOpts): void {
-	const path = unitPath(opts.agent);
-	const unit = unitFileName(opts.agent);
+function stopSystemd(): void {
+	const path = unitPath();
+	const unit = unitFileName();
 	if (!existsSync(path)) {
 		throw new Error("no daemon unit installed (run `clawdi daemon install` first)");
 	}
@@ -700,19 +688,13 @@ function stopSystemd(opts: InstallOpts): void {
 	}
 }
 
-function statusSystemd(opts: InstallOpts): string[] {
+function statusSystemd(): string[] {
 	const lines: string[] = [];
-	const path = unitPath(opts.agent);
+	const path = unitPath();
 	lines.push(`unit:    ${existsSync(path) ? path : "(not installed)"}`);
-	const out = tryRunCapture(["systemctl", "--user", "is-active", unitFileName(opts.agent)]);
+	const out = tryRunCapture(["systemctl", "--user", "is-active", unitFileName()]);
 	lines.push(`active:  ${out?.trim() ?? "unknown"}`);
-	const sub = tryRunCapture([
-		"systemctl",
-		"--user",
-		"status",
-		unitFileName(opts.agent),
-		"--no-pager",
-	]);
+	const sub = tryRunCapture(["systemctl", "--user", "status", unitFileName(), "--no-pager"]);
 	if (sub !== null) {
 		lines.push("systemctl:");
 		// status is verbose; show first ~10 lines (header +
@@ -769,29 +751,6 @@ function shellEscape(s: string): string {
 	return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/%/g, "%%").replace(/\$/g, "$$$$")}"`;
 }
 
-/** Scan the OS supervisor for every clawdi daemon unit installed
- * by older `clawdi daemon install --agent <agent>` builds,
- * regardless of whether its agent is still registered in
- * `~/.clawdi/environments/`. Used only for migration cleanup and
- * logout warnings.
- *
- * Cheap implementation: enumerate `~/Library/LaunchAgents/` (macOS)
- * or `~/.config/systemd/user/` (Linux) and pattern-match against
- * the clawdi unit name shape. Skips agents not in `AGENT_TYPES` so
- * a malicious filename can't smuggle into the iteration.
- */
-export function listInstalledAgents(): AgentType[] {
-	const installed: AgentType[] = [];
-	for (const agent of AGENT_TYPES) {
-		const p = platform();
-		const path = p === "darwin" ? plistPath(agent) : p === "linux" ? unitPath(agent) : null;
-		if (path && existsSync(path)) installed.push(agent);
-	}
-	return installed;
-}
-
-export type InstalledDaemonTarget = AgentType | "daemon";
-
 export function isSingletonDaemonInstalled(): boolean {
 	const p = platform();
 	if (p === "win32") return windowsTaskInstalled();
@@ -813,13 +772,6 @@ export function isSingletonDaemonRunning(): boolean {
 		return state !== null && /"?PID"?\s*=\s*[1-9]\d*/.test(state);
 	}
 	return false;
-}
-
-export function listInstalledDaemonTargets(): InstalledDaemonTarget[] {
-	const targets: InstalledDaemonTarget[] = [];
-	if (isSingletonDaemonInstalled()) targets.push("daemon");
-	targets.push(...listInstalledAgents());
-	return targets;
 }
 
 /** Health-file age check, used by `clawdi daemon status` even

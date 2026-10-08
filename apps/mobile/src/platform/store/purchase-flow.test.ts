@@ -7,13 +7,23 @@ import {
 	type StorePurchaseAttempt,
 	type StorePurchaseAttemptRequest,
 	type StorePurchaseConfirmation,
+	validateAndBuildHostedDeployRequest,
 } from "@clawdi/shared/api";
+import type { AppStateStatus } from "react-native";
+import { storeFundingHoldsAttempt } from "@/hosted/billing/deploy/deploy-request";
+import { readHostedStoreFunding } from "@/hosted/billing/deploy/store-funding";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
 import { createAccountScope } from "@/platform/auth/account-scope";
 import { createPurchaseAttemptStore, parsePurchaseAttempt } from "./purchase-attempt-storage";
+import type { PurchaseOutcome } from "./purchase-flow";
 import { StorePurchaseError } from "./store-error";
 import { isStoreBuild } from "./store-policy";
-import { recoverStoreFlow } from "./store-recovery";
+import {
+	recoverStoreRefresh,
+	refreshRecoveredWallet,
+	type StoreRefreshOptions,
+	subscribeStoreRefresh,
+} from "./store-refresh";
 
 const appUserId = "11111111-1111-4111-8111-111111111111";
 const otherAppUserId = "22222222-2222-4222-8222-222222222222";
@@ -234,6 +244,56 @@ describe("store account identity", () => {
 		expect(logOut).not.toHaveBeenCalled();
 		expect(paywall).not.toHaveBeenCalled();
 		expect(f.createPurchaseAttempt).not.toHaveBeenCalled();
+	});
+	test("a compute-only bootstrap initializes the SDK but never starts a credits purchase", async () => {
+		const f = fixture();
+		const computeOnly = {
+			purchases_enabled: false,
+			compute_subscriptions_enabled: true,
+			reason: "store_purchases_disabled",
+			app_user_id: appUserId,
+			catalogue_revision: 1,
+			compute_slot: { available: true },
+		};
+		f.client.bootstrap = async () => computeOnly;
+		expect(await f.initialize()).toEqual({ available: true, bootstrap: computeOnly });
+		expect(logIn).toHaveBeenCalledWith(appUserId);
+		const paywall = mock(async () => transaction);
+		await expect(f.makeFlow().purchase(intent, paywall)).rejects.toMatchObject({
+			code: "store_purchases_disabled",
+		});
+		expect(paywall).not.toHaveBeenCalled();
+		expect(f.createPurchaseAttempt).not.toHaveBeenCalled();
+		expect(f.values.size).toBe(0);
+		f.setAttemptFields(computeIntent);
+		await f.makeFlow().purchase(computeIntent, async () => null);
+		expect(f.createPurchaseAttempt).toHaveBeenCalledTimes(1);
+
+		// The next account has both switches off: no login under the previous identity.
+		f.switchAccount();
+		const newScope = createAccountScope("other:session", "other", "session", 1, () => true);
+		const next = createStoreIdentity({
+			scope: newScope,
+			client: {
+				...f.client,
+				bootstrap: async () => ({
+					purchases_enabled: false,
+					compute_subscriptions_enabled: false,
+					app_user_id: otherAppUserId,
+					catalogue_revision: null,
+					reason: "store_purchases_disabled",
+				}),
+			},
+			sdk: f.sdk,
+			config: f.config,
+			platform: "app_store",
+		});
+		expect(await next.initialize(newScope.signal)).toEqual({
+			available: false,
+			reason: "store_purchases_disabled",
+		});
+		expect(logIn).toHaveBeenCalledTimes(1);
+		expect(sdkUserId).toBe(appUserId);
 	});
 	test("unset platform keys keep store purchases unavailable", async () => {
 		const f = fixture({ revenueCatAppleKey: undefined, revenueCatGoogleKey: "google-key" });
@@ -970,6 +1030,29 @@ describe("durable store attempts", () => {
 });
 
 describe("store errors and build policy", () => {
+	test.each([
+		[403, StoreErrorCode.store_compute_subscriptions_disabled],
+		[409, StoreErrorCode.store_slot_in_use],
+		[404, StoreErrorCode.store_contract_not_found],
+	] as const)(
+		"explicit hosted compute rejection %s / %s clears the un-created journal and a later credits purchase proceeds",
+		async (status, code) => {
+			const f = fixture();
+			await f.initialize();
+			f.createPurchaseAttempt.mockImplementationOnce(async () => {
+				throw new ApiClientError(status, code);
+			});
+			const flow = f.makeFlow();
+			const nativePurchase = mock(async () => transaction);
+			await expect(flow.purchase(computeIntent, nativePurchase)).rejects.toMatchObject({ code });
+			expect(nativePurchase).not.toHaveBeenCalled();
+			expect(f.values.size).toBe(0);
+			f.setAttempt("funding_applied");
+			expect((await flow.purchase(intent, nativePurchase)).status).toBe("funding_applied");
+			expect(f.createPurchaseAttempt.mock.calls[1]?.[0].purpose).toBe("standalone_topup");
+		},
+	);
+
 	for (const code of [
 		StoreErrorCode.catalogue_revision_stale,
 		StoreErrorCode.open_refund_debt,
@@ -1006,11 +1089,9 @@ describe("store errors and build policy", () => {
 			f.createPurchaseAttempt.mockImplementationOnce(async () => {
 				throw new ApiClientError(409, code);
 			});
-			const recovered = await recoverStoreFlow(flow, f.scope.signal);
-			expect(recovered.flow).toBe(flow);
-			expect(recovered.error?.code).toBe(code);
+			await expect(flow.recover(f.scope.signal)).rejects.toMatchObject({ code });
 			expect(f.values.size).toBe(0);
-			expect((await recovered.flow.purchase(intent, async () => null)).status).toBe("cancelled");
+			expect((await flow.purchase(intent, async () => null)).status).toBe("cancelled");
 			expect(f.newKey).toHaveBeenCalledTimes(2);
 		});
 	}
@@ -1031,11 +1112,9 @@ describe("store errors and build policy", () => {
 			f.createPurchaseAttempt.mockImplementationOnce(async () => {
 				throw error;
 			});
-			const recovered = await recoverStoreFlow(flow, f.scope.signal);
-			expect(recovered.flow).toBe(flow);
-			expect(recovered.error).not.toBeNull();
+			await expect(flow.recover(f.scope.signal)).rejects.toBeDefined();
 			expect(f.values.get("journal")).toBe(saved);
-			expect((await recovered.flow.purchase(intent, async () => null)).status).toBe("cancelled");
+			expect((await flow.purchase(intent, async () => null)).status).toBe("cancelled");
 			expect(f.newKey).toHaveBeenCalledTimes(1);
 			expect(f.createPurchaseAttempt.mock.calls.map((call) => call[1])).toEqual([
 				"persisted-idempotency-key",
@@ -1053,11 +1132,11 @@ describe("store errors and build policy", () => {
 		f.getPurchaseAttempt.mockImplementationOnce(async () => {
 			throw new ApiClientError(409, StoreErrorCode.store_attempt_unavailable);
 		});
-		const recovered = await recoverStoreFlow(flow, f.scope.signal);
-		expect(recovered.flow).toBe(flow);
-		expect(recovered.error?.code).toBe(StoreErrorCode.store_attempt_unavailable);
+		await expect(flow.recover(f.scope.signal)).rejects.toMatchObject({
+			code: StoreErrorCode.store_attempt_unavailable,
+		});
 		expect(f.values.get("journal")).toBe(saved);
-		expect((await recovered.flow.purchase(intent, async () => null)).status).toBe("cancelled");
+		expect((await flow.purchase(intent, async () => null)).status).toBe("cancelled");
 	});
 	test("future API codes and native error messages remain private", async () => {
 		const f = fixture();
@@ -1099,5 +1178,226 @@ describe("store errors and build policy", () => {
 		).toBe(true);
 		for (const environment of ["preview", "development", undefined])
 			expect(isStoreBuild({ environment })).toBe(false);
+	});
+});
+
+describe("post-purchase hosted observation", () => {
+	function pendingDraft() {
+		const draft = {
+			runtime: "hermes",
+			computePlanSlug: "compute_performance",
+			agentName: "Agent",
+			language: "en",
+			timezone: "",
+			ai: { mode: "unmanaged" },
+		} as const;
+		const result = validateAndBuildHostedDeployRequest(draft);
+		if (!result.ok) throw new Error("Invalid fixture");
+		return {
+			version: 1,
+			submission: "prepared",
+			id: computeIntent.pending_deploy_request_id,
+			draft,
+			request: { ...result.request, deploy_request_id: computeIntent.pending_deploy_request_id },
+			storeFunding: "purchase_pending",
+		} as const;
+	}
+
+	test("Ask-to-Buy/PENDING immediately keeps waiting without recovery, SDK sync or polling", async () => {
+		const f = fixture();
+		await f.initialize();
+		f.setAttemptFields(computeIntent);
+		const flow = f.makeFlow();
+		flow.recover = mock(flow.recover);
+		await expect(
+			flow.purchase(computeIntent, async () => {
+				throw new StorePurchaseError("payment_pending");
+			}),
+		).rejects.toMatchObject({ code: "payment_pending" });
+		const saved = pendingDraft();
+		f.listPurchaseAttempts.mockImplementationOnce(async () => [await f.getPurchaseAttempt()]);
+		f.bootstrap.mockClear();
+		const funding = await readHostedStoreFunding(
+			f.client,
+			"app_store",
+			saved,
+			() => null,
+			f.scope.signal,
+		);
+		const publish = mock(() => {});
+		await recoverStoreRefresh({ recover: false }, flow, f.scope.signal, publish);
+		expect(publish).not.toHaveBeenCalled();
+		expect(funding).toBe("purchase_pending");
+		expect(storeFundingHoldsAttempt({ storeFunding: funding ?? undefined })).toBe(true);
+		expect(flow.recover).not.toHaveBeenCalled();
+		expect(syncPurchases).not.toHaveBeenCalled();
+		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
+		expect(f.delays).toEqual([]);
+		expect(f.bootstrap).toHaveBeenCalledTimes(1);
+		expect(f.listPurchaseAttempts).toHaveBeenCalledTimes(1);
+		expect(flow.isBusy()).toBe(false);
+		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.purchaseStarted).toBe(true);
+	});
+
+	test("a hosted pending upgrade after settlement does not lock credits during hosted reads", async () => {
+		const f = fixture();
+		await f.initialize();
+		const upgrade = {
+			...computeIntent,
+			pending_deploy_request_id: null,
+			target_contract_id: otherAppUserId,
+		};
+		f.setAttemptFields(upgrade);
+		f.confirmPurchaseAttempt.mockImplementationOnce(async () => ({
+			state: "funding_applied",
+			correlation_id: "safe-correlation",
+		}));
+		const flow = f.makeFlow();
+		flow.recover = mock(flow.recover);
+		expect((await flow.purchase(upgrade, async () => transaction)).status).toBe("funding_applied");
+		expect(f.values.size).toBe(0);
+		f.setAttempt("verification_pending");
+		f.listPurchaseAttempts.mockImplementationOnce(async () => [await f.getPurchaseAttempt()]);
+		const bootstrap = deferred<Awaited<ReturnType<typeof f.bootstrap>>>();
+		f.bootstrap.mockImplementationOnce(() => bootstrap.promise);
+		const observation = readHostedStoreFunding(
+			f.client,
+			"app_store",
+			pendingDraft(),
+			() => null,
+			f.scope.signal,
+		);
+		expect(flow.isBusy()).toBe(false);
+		f.createPurchaseAttempt.mockImplementationOnce(async (body) => ({
+			...body,
+			attempt_id: otherAppUserId,
+			state: "prepared",
+			expires_at: "2099-01-01T00:00:00Z",
+		}));
+		const creditsPaywall = mock(async () => null);
+		expect((await flow.purchase(intent, creditsPaywall)).status).toBe("cancelled");
+		expect(creditsPaywall).toHaveBeenCalledTimes(1);
+		expect(flow.recover).not.toHaveBeenCalled();
+		expect(syncPurchases).not.toHaveBeenCalled();
+		expect(f.delays).toEqual([]);
+		bootstrap.resolve(await f.bootstrap());
+		await observation;
+	});
+});
+
+describe("lifecycle store recovery", () => {
+	function lifecycle(refresh: (options: StoreRefreshOptions) => Promise<void>) {
+		let foreground: (value: AppStateStatus) => void = () => {};
+		let connected: (value: boolean) => void = () => {};
+		const remove = mock(() => {});
+		const unsubscribeOnline = mock(() => {});
+		const abort = mock(() => {});
+		const pending: Promise<void>[] = [];
+		const refreshing = mock((options: StoreRefreshOptions) => {
+			const promise = refresh(options);
+			pending.push(promise);
+			return promise;
+		});
+		const unsubscribe = subscribeStoreRefresh({
+			refresh: refreshing,
+			appState: {
+				addEventListener: (_event, listener) => {
+					foreground = listener;
+					return { remove };
+				},
+			},
+			online: {
+				subscribe: (listener) => {
+					connected = listener;
+					return unsubscribeOnline;
+				},
+			},
+			abort,
+		});
+		return {
+			foreground: (value: AppStateStatus) => foreground(value),
+			connected: (value: boolean) => connected(value),
+			settled: () => Promise.all(pending),
+			refreshing,
+			abort,
+			unsubscribe,
+			remove,
+			unsubscribeOnline,
+		};
+	}
+
+	for (const trigger of ["app start", "foreground", "reconnect"] as const) {
+		test(`${trigger} recovers confirmed-but-unsettled credits and refreshes the Wallet`, async () => {
+			const f = fixture();
+			await f.initialize();
+			const outcome = await f.makeFlow().purchase(intent, async () => {
+				f.setAttempt("verification_pending");
+				return transaction;
+			});
+			expect(outcome.status).toBe("pending");
+			expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.transactionHint).toBe(
+				transaction.transactionIdentifier,
+			);
+			// A new process uses the durable journal, not the purchase call's in-memory result.
+			const sdk = createRevenueCat();
+			const identity = createStoreIdentity({
+				scope: f.scope,
+				client: f.client,
+				sdk,
+				config: f.config,
+				platform: "app_store",
+			});
+			const flow = f.makeFlow(sdk, identity);
+			flow.recover = mock(flow.recover);
+			const walletRefresh = mock(async () => {});
+			let recovery: readonly PurchaseOutcome[] = [];
+			const walletUpdates: Promise<void>[] = [];
+			const refresh = async (options: StoreRefreshOptions) => {
+				await identity.initialize(f.scope.signal);
+				await recoverStoreRefresh(options, flow, f.scope.signal, (outcomes) => {
+					recovery = outcomes;
+					walletUpdates.push(refreshRecoveredWallet(outcomes, walletRefresh));
+				});
+			};
+			if (trigger === "app start") f.setAttempt("funding_applied");
+			const events = lifecycle(refresh);
+			await events.settled();
+			if (trigger !== "app start") {
+				expect(recovery[0]?.status).toBe("pending");
+				expect(walletRefresh).not.toHaveBeenCalled();
+				f.setAttempt("funding_applied");
+				if (trigger === "foreground") {
+					events.foreground("background");
+					expect(events.abort).toHaveBeenCalledTimes(1);
+					events.foreground("active");
+				} else {
+					events.connected(false);
+					expect(events.refreshing).toHaveBeenCalledTimes(1);
+					events.connected(true);
+				}
+				await events.settled();
+			}
+			await Promise.all(walletUpdates);
+			expect(recovery[0]?.status).toBe("funding_applied");
+			expect(walletRefresh).toHaveBeenCalledTimes(1);
+			expect(f.values.size).toBe(0);
+			expect(flow.recover).toHaveBeenCalledTimes(trigger === "app start" ? 1 : 2);
+			for (const [options] of events.refreshing.mock.calls) expect(options.recover).toBe(true);
+			events.unsubscribe();
+			expect(events.remove).toHaveBeenCalledTimes(1);
+			expect(events.unsubscribeOnline).toHaveBeenCalledTimes(1);
+		});
+	}
+
+	test("aborted lifecycle recovery never publishes outcomes or refreshes a retired Wallet", async () => {
+		const controller = new AbortController();
+		const recovered = deferred<PurchaseOutcome[]>();
+		const flow = { recover: mock(() => recovered.promise) };
+		const publish = mock(() => {});
+		const refreshing = recoverStoreRefresh({ recover: true }, flow, controller.signal, publish);
+		controller.abort();
+		recovered.resolve([]);
+		await refreshing;
+		expect(publish).not.toHaveBeenCalled();
 	});
 });

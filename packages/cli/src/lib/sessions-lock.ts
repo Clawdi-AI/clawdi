@@ -70,23 +70,12 @@ export interface FencedSessionSourceRevisionUpdate {
 	sourceRevision: string;
 }
 
-export interface LegacySessionLockEntry {
-	hash: string;
-}
+export type SessionLockEntry = FencedSessionLockEntry;
 
-export type SessionLockEntry = FencedSessionLockEntry | LegacySessionLockEntry;
-
-export type SessionsLock =
-	| { version: 1; sessions: Record<string, LegacySessionLockEntry> }
-	| { version: 2; sessions: Record<string, SessionLockEntry> };
+export type SessionsLock = { version: 2; sessions: Record<string, SessionLockEntry> };
 
 const LOCK_FILE = "sessions-lock.json";
 const CURRENT_VERSION = 2;
-
-/** Legacy v1 cache key retained only so deployed lock files remain readable. */
-export function cacheKey(agentType: AgentType, localSessionId: string): string {
-	return `${agentType}:${localSessionId}`;
-}
 
 export function sessionFenceKey(fence: SessionFence): string {
 	const identity = JSON.stringify([
@@ -176,24 +165,17 @@ export function persistFencedSessionSourceRevisions(
 	if (changed) writeSessionsLock(lock);
 }
 
-/** Read the current lock while accepting v1 without trusting its unfenced hash. */
+/** Read the current v2 lock; older layouts are discarded without migration. */
 export function readSessionsLock(): SessionsLock {
 	const path = join(getClawdiDir(), LOCK_FILE);
 	if (!existsSync(path)) return emptyLock();
 	try {
 		const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
 		if (!isObject(raw) || !isObject(raw.sessions)) return emptyLock();
-		if (raw.version === 1) {
-			const sessions: Record<string, LegacySessionLockEntry> = {};
-			for (const [key, value] of Object.entries(raw.sessions)) {
-				if (isLegacyEntry(value)) sessions[key] = value;
-			}
-			return { version: 1, sessions };
-		}
 		if (raw.version === CURRENT_VERSION) {
 			const sessions: Record<string, SessionLockEntry> = {};
 			for (const [key, value] of Object.entries(raw.sessions)) {
-				if (isLegacyEntry(value) || isFencedSessionLockEntry(value)) sessions[key] = value;
+				if (isFencedSessionLockEntry(value)) sessions[key] = value;
 			}
 			return { version: CURRENT_VERSION, sessions };
 		}
@@ -226,7 +208,7 @@ export function writeSessionsLock(lock: SessionsLock): void {
 }
 
 function toCurrentLock(lock: SessionsLock): Extract<SessionsLock, { version: 2 }> {
-	return lock.version === 2 ? lock : { version: CURRENT_VERSION, sessions: { ...lock.sessions } };
+	return lock;
 }
 
 function emptyLock(): Extract<SessionsLock, { version: 2 }> {
@@ -235,10 +217,6 @@ function emptyLock(): Extract<SessionsLock, { version: 2 }> {
 
 function isObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isLegacyEntry(value: unknown): value is LegacySessionLockEntry {
-	return isObject(value) && typeof value.hash === "string";
 }
 
 export function isFencedSessionLockEntry(value: unknown): value is FencedSessionLockEntry {

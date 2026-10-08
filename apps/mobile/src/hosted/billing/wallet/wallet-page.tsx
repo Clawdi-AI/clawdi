@@ -124,7 +124,7 @@ function WalletView() {
 						) : null}
 						{rows.length ? (
 							<WebText recipe={transactionsSectionClasses.description}>
-								{t("billingParity.transactionsCount").replace("{count}", String(rows.length))}
+								{t("billingParity.transactionsCount", { count: rows.length })}
 							</WebText>
 						) : null}
 						<WebText recipe={transactionsSectionClasses.description}>

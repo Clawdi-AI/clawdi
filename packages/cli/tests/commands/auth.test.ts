@@ -3,13 +3,9 @@ import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as prompts from "@clack/prompts";
-import {
-	authComplete,
-	authLogin,
-	authLoginDesktop,
-	browserOpenCommand,
-} from "../../src/commands/auth";
+import { authComplete, authLogin, authLoginDesktop } from "../../src/commands/auth";
 import * as browser from "../../src/lib/browser";
+import { browserOpenCommand } from "../../src/lib/browser";
 import {
 	clearAuth,
 	getAuth,

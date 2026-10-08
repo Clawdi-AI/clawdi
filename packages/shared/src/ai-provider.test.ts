@@ -8,7 +8,6 @@ import {
 	CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX,
 	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
-	CLAWDI_MANAGED_V2_PROVIDER_ID,
 	defaultAiProviderRuntimeEnvName,
 	isClawdiManagedV2ProviderId,
 	isFirstPartyManagedAiProvider,
@@ -347,7 +346,6 @@ describe("validateAiProviderCatalog", () => {
 
 	test.each([
 		CLAWDI_MANAGED_PROVIDER_ID,
-		CLAWDI_MANAGED_V2_PROVIDER_ID,
 		CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
 		CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 		`${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`,
@@ -376,7 +374,7 @@ describe("validateAiProviderCatalog", () => {
 	});
 
 	test("uses clawdi as the exact public id while accepting the legacy public id", () => {
-		expect(CLAWDI_MANAGED_V2_PROVIDER_ID).toBe("clawdi");
+		expect(CLAWDI_MANAGED_PROVIDER_ID).toBe("clawdi");
 		expect(isClawdiManagedV2ProviderId("clawdi-v2")).toBe(true);
 	});
 
@@ -477,9 +475,6 @@ describe("isFirstPartyManagedAiProvider", () => {
 		expect(isFirstPartyManagedAiProvider({ provider_id: CLAWDI_MANAGED_V1_PROVIDER_ID })).toBe(
 			true,
 		);
-		expect(isFirstPartyManagedAiProvider({ provider_id: CLAWDI_MANAGED_V2_PROVIDER_ID })).toBe(
-			true,
-		);
 		expect(
 			isFirstPartyManagedAiProvider({
 				provider_id: CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
@@ -496,7 +491,6 @@ describe("isFirstPartyManagedAiProvider", () => {
 			}),
 		).toBe(true);
 		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_PROVIDER_ID)).toBe(true);
-		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_PROVIDER_ID)).toBe(true);
 		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID)).toBe(true);
 		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID)).toBe(true);
 	});

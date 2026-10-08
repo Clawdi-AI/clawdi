@@ -141,40 +141,10 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 	},
 ] as const satisfies readonly ProjectResourceDefinition[];
 
-export const PROJECT_RESOURCE_GROUPS = [
-	{
-		id: "projects",
-		label: "Projects",
-		resourceIds: ["projects"],
-	},
-	{
-		id: "library",
-		label: "Library",
-		resourceIds: ["skills", "vaults", "connectors"],
-	},
-	{
-		id: "activity",
-		label: "Activity",
-		resourceIds: ["sessions", "memories"],
-	},
-] as const satisfies readonly {
-	id: ProjectResourceGroup;
-	label: string;
-	resourceIds: readonly ProjectResourceId[];
-}[];
-
-const PROJECT_MANAGED_RESOURCE_IDS = PROJECT_RESOURCE_DEFINITIONS.filter(
-	(resource) => resource.projectScope === "project-managed",
-).map((resource) => resource.id);
-
 export function getProjectResourceDefinition(id: ProjectResourceId): ProjectResourceDefinition {
 	const definition = PROJECT_RESOURCE_DEFINITIONS.find((resource) => resource.id === id);
 	if (!definition) throw new Error(`Unknown project resource: ${id}`);
 	return definition;
-}
-
-export function projectManagedResourceDefinitions(): ProjectResourceDefinition[] {
-	return PROJECT_MANAGED_RESOURCE_IDS.map((id) => getProjectResourceDefinition(id));
 }
 
 export function projectResourcePathLabel(
@@ -199,21 +169,12 @@ export function vaultDetailHref(slug: string, vaultId?: string | null): string {
 	return vaultId ? `${path}?vault=${encodeURIComponent(vaultId)}` : path;
 }
 
-export function skillDetailHref(skillKey: string, projectId?: string | null): string {
-	const base = `/skills/${encodeURIComponent(skillKey)}`;
-	return projectId ? `${base}?project=${encodeURIComponent(projectId)}` : base;
-}
-
 export function decodeResourceRouteParam(value: string): string {
 	try {
 		return decodeURIComponent(value);
 	} catch {
 		return value;
 	}
-}
-
-export function sessionDetailHref(sessionId: string): string {
-	return `/sessions/${encodeURIComponent(sessionId)}`;
 }
 
 export function memoryDetailHref(memoryId: string): string {
@@ -234,19 +195,6 @@ export function projectResourceScopeLabel(scope: ProjectResourceScope): string {
 			return "Account activity";
 		case "all-agents":
 			return "All agents";
-	}
-}
-
-export function projectResourceScopeDescription(resource: ProjectResourceDefinition): string {
-	switch (resource.projectScope) {
-		case "container":
-			return "Start here to create shareable projects, then browse the Library for reusable skills and vaults.";
-		case "project-managed":
-			return "Saved in a project. Pick the project before you add, edit, or remove it.";
-		case "activity":
-			return "Activity from agents, shown with the agent that produced it.";
-		case "all-agents":
-			return "Shared across all agents in this account. Changes here affect all agents.";
 	}
 }
 

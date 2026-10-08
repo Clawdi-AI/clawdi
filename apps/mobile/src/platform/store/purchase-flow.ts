@@ -1,6 +1,7 @@
 import {
 	ApiClientError,
 	type HostedStoreClient,
+	normalizeUuid,
 	readStoreErrorCode,
 	type StorePlatform,
 	type StorePurchaseAttempt,
@@ -16,7 +17,7 @@ import type { RevenueCat, StoreTransactionHint } from "./revenuecat";
 import { StorePurchaseError, storePurchaseError } from "./store-error";
 import { assertStoreAccount, type StoreIdentity } from "./store-identity";
 
-export type PurchaseIntent = Pick<
+type PurchaseIntent = Pick<
 	StorePurchaseAttemptRequest,
 	| "purpose"
 	| "pending_deploy_request_id"
@@ -25,19 +26,6 @@ export type PurchaseIntent = Pick<
 	| "target_deployment_id"
 >;
 
-function sameOptionalUuid(
-	left: string | null | undefined,
-	right: string | null | undefined,
-): boolean {
-	if (left === right) return true;
-	return (
-		typeof left === "string" &&
-		typeof right === "string" &&
-		/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(left) &&
-		/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(right) &&
-		left.toLowerCase() === right.toLowerCase()
-	);
-}
 export type PurchaseOutcome = Readonly<{
 	status: "funding_applied" | "submitted" | "terminal" | "pending" | "cancelled";
 	attempt: StorePurchaseAttempt;
@@ -136,7 +124,8 @@ export function createPurchaseFlow(options: {
 			(isComputeSubscription &&
 				((attempt.requested_store_product_id ?? attempt.store_product_id ?? null) !==
 					(saved.request.store_product_id ?? null) ||
-					!sameOptionalUuid(attempt.target_contract_id, saved.request.target_contract_id) ||
+					normalizeUuid(attempt.target_contract_id) !==
+						normalizeUuid(saved.request.target_contract_id) ||
 					(attempt.target_deployment_id ?? null) !== (saved.request.target_deployment_id ?? null)))
 		)
 			throw new StorePurchaseError("store_attempt_conflict");
@@ -275,6 +264,9 @@ export function createPurchaseFlow(options: {
 				return await run(async (signal) => {
 					const deadline = clock.now() + 120_000;
 					const ready = await checkIdentity(signal);
+					// A compute-only identity never starts a credits purchase.
+					if (intent.purpose !== "compute_subscription" && !ready.creditsEnabled)
+						throw new StorePurchaseError("store_purchases_disabled");
 					let saved = await journal.readSavedAttempt(storageKey);
 					assertStoreAccount(scope, signal);
 					if (saved && (saved.appUserId !== ready.appUserId || saved.request.platform !== platform))
@@ -286,7 +278,8 @@ export function createPurchaseFlow(options: {
 								(intent.pending_deploy_request_id ?? null) ||
 							(saved.request.purpose === "compute_subscription" &&
 								((saved.request.store_product_id ?? null) !== (intent.store_product_id ?? null) ||
-									!sameOptionalUuid(saved.request.target_contract_id, intent.target_contract_id) ||
+									normalizeUuid(saved.request.target_contract_id) !==
+										normalizeUuid(intent.target_contract_id) ||
 									(saved.request.target_deployment_id ?? null) !==
 										(intent.target_deployment_id ?? null))))
 					) {
@@ -389,7 +382,7 @@ export function createPurchaseFlow(options: {
 				busy = false;
 			}
 		},
-		/** Start/foreground recovery never opens a paywall or starts another store charge. */
+		/** Start/foreground and explicit recovery never opens a paywall or starts another store charge. */
 		recover: async (callerSignal?: AbortSignal): Promise<PurchaseOutcome[]> => {
 			if (busy) return [];
 			busy = true;

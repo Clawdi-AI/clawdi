@@ -5,7 +5,7 @@ import * as tar from "tar";
 import { validateNativeArchive } from "../src/lib/native-activation.ts";
 import {
 	isNativeTarget,
-	NATIVE_PUBLISH_TARGET_CATALOG,
+	NATIVE_BUILD_TARGET_CATALOG,
 	NATIVE_RELEASE_MANIFEST_NAME,
 	NATIVE_RELEASE_MANIFEST_SCHEMA,
 	NATIVE_RELEASE_MANIFEST_V2_NAME,
@@ -16,7 +16,7 @@ import {
 } from "../src/lib/native-release-manifest.ts";
 
 export function writeNativeReleaseManifests(releaseDir, version) {
-	const artifacts = NATIVE_PUBLISH_TARGET_CATALOG.map(({ target }) => {
+	const artifacts = NATIVE_BUILD_TARGET_CATALOG.map(({ target }) => {
 		const asset = nativeAssetName(target);
 		const sha256 = createHash("sha256")
 			.update(readFileSync(resolve(releaseDir, asset)))

@@ -14,11 +14,7 @@ import { progress as p } from "../lib/progress";
 import { askMulti, confirmOrRequireYes } from "../lib/prompts";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
-import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
-import {
-	migrateLegacyLocalSetupSkill,
-	releaseManagedSkill,
-} from "../runtime/managed-skill-reservation";
+import { releaseManagedSkill } from "../runtime/managed-skill-reservation";
 
 export async function teardown(opts: {
 	agent?: string;
@@ -159,12 +155,6 @@ async function teardownOne(
 	const skillDir = adapter.skills ? builtinSkillTargetDir(agentType) : null;
 	if (skillDir) {
 		try {
-			migrateLegacyLocalSetupSkill({
-				targetDir: skillDir,
-				id: "clawdi",
-				version: 1,
-				digest: managedSkillDirectoryDigest,
-			});
 			const result = releaseManagedSkill({
 				targetDir: skillDir,
 				id: "clawdi",

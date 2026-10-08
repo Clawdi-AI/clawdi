@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import {
-	NATIVE_PUBLISH_TARGET_CATALOG,
+	NATIVE_BUILD_TARGET_CATALOG,
 	nativeAssetName,
 } from "../../src/lib/native-release-manifest";
 import { getCliVersion } from "../../src/lib/version";
@@ -236,7 +236,7 @@ async function buildRelease(root: string, version: string, binary: string | null
 		[
 			"clawdi.nativeRelease.v2",
 			`version\t${version}`,
-			...NATIVE_PUBLISH_TARGET_CATALOG.map(
+			...NATIVE_BUILD_TARGET_CATALOG.map(
 				({ target }) => `artifact\t${target}\t${nativeAssetName(target)}\t${sha256}`,
 			),
 			"",

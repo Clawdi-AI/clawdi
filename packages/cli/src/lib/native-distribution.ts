@@ -3,7 +3,7 @@ import { basename, dirname, join, normalize, resolve } from "node:path";
 import {
 	isNativeBuildTarget,
 	MAX_NATIVE_MANIFEST_BYTES,
-	NATIVE_PUBLISH_TARGET_CATALOG,
+	NATIVE_BUILD_TARGET_CATALOG,
 	NATIVE_RELEASE_MANIFEST_NAME,
 	NATIVE_RELEASE_MANIFEST_V2_NAME,
 	type NativeBuildTarget,
@@ -199,7 +199,7 @@ export function nativeVersionDirectoryName(version: string, target: NativeBuildT
 function parseVersionDirectoryName(
 	name: string,
 ): { version: string; target: NativeBuildTarget } | null {
-	for (const { target } of NATIVE_PUBLISH_TARGET_CATALOG) {
+	for (const { target } of NATIVE_BUILD_TARGET_CATALOG) {
 		const suffix = `-${target}`;
 		if (!name.endsWith(suffix)) continue;
 		const version = name.slice(0, -suffix.length);

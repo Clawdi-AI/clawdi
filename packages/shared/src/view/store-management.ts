@@ -40,7 +40,7 @@ export function isStoreManagementOnPlatform(
 export function isStoreManagementOnOtherStore(
 	management: StoreManagement | null | undefined,
 	platform: StorePlatform,
-): boolean {
+): management is StoreManagement & { provider: Exclude<StoreManagementProvider, "test_store"> } {
 	return (
 		management?.provider !== undefined &&
 		management.provider !== "test_store" &&
@@ -59,27 +59,6 @@ export function storeManagementUrl(
 ): string | null {
 	if (!management || !isStoreManagementOnPlatform(management, platform)) return null;
 	return STORE_MANAGEMENT_URLS[management.provider];
-}
-
-export type StoreManagementPresentation = {
-	provider: StoreManagementProvider | null;
-	state: StoreManagementState | null;
-	isOnThisPlatform: boolean;
-	isOnOtherStore: boolean;
-	managementUrl: string | null;
-};
-
-export function storeManagementPresentation(
-	management: StoreManagement | null | undefined,
-	platform: StorePlatform,
-): StoreManagementPresentation {
-	return {
-		provider: storeManagementProvider(management),
-		state: storeManagementState(management),
-		isOnThisPlatform: isStoreManagementOnPlatform(management, platform),
-		isOnOtherStore: isStoreManagementOnOtherStore(management, platform),
-		managementUrl: storeManagementUrl(management, platform),
-	};
 }
 
 /** Read-only copy for store-billed compute; surfaces never sell or manage these rows. */

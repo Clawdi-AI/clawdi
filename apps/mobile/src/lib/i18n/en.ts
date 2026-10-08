@@ -77,36 +77,20 @@ const channelsEn = {
 	linkAction: "Link",
 	deleteAction: "Delete channel",
 	configure: "Configure",
-	create: "Add Custom bot",
 	name: "Bot name",
 	token: "Bot token",
 	applicationId: "Discord application ID",
 	publicKey: "Discord interactions public key",
-	createInstructions:
-		"Use a Telegram token from BotFather, or Discord bot credentials from the developer portal. The bot is added without an Agent; linking and pairing are separate actions.",
 	createUncertain:
 		"This bot may already have been created. Refresh and inspect inventory before submitting again. Closing this form does not undo a request already sent.",
 	reviewInventory: "Refresh inventory before another submission",
 	title: "Channels",
-	description: "Manage Custom bots, shared bots, Agent links and paired chats.",
-	empty: "No channels available.",
-	details: "Manage channel",
-	shared: "Shared bot",
-	custom: "Custom bot",
-	links: "Linked agents",
 	link: "Link selected Agent",
 	replace: "Replace this Agent's existing channel for this provider",
 	replaceWarning:
 		"Replacement disconnects the previous bot for this provider. Paired chats may lose access.",
-	selectAgent: "Select an Agent",
 	unlink: "Unlink agent",
 	pair: "Generate chat pairing code",
-	pairInstructions:
-		"Use this command in the intended chat. Codes expire after five minutes. Refresh paired chats to confirm; opening a link is not proof of pairing.",
-	pairExpired: "Pairing code expired. Generate a new code.",
-	openPair: "Open pairing link",
-	install: "Install Discord bot",
-	installUser: "Install Discord app for user",
 	bindings: "Paired chats",
 	noBindings: "No paired chats.",
 	unpair: "Unpair chat",
@@ -114,21 +98,10 @@ const channelsEn = {
 	cleanupWarning:
 		"Chat access was revoked, but notification or provider cleanup is incomplete. Refresh to inspect the result.",
 	unpairNotConfirmed: "Unpairing was not confirmed. Refresh paired chats before trying again.",
-	activity: "Recent activity (up to 50 events)",
-	remove: "Delete Custom bot",
-	removeWarning: "Deleting this bot disconnects its Agents and chats. This cannot be undone.",
-	sync: "Sync channel commands",
 	done: "Action confirmed. Refresh to inspect current state.",
 	failed:
 		"The action was not confirmed. Refresh before trying again. Channel availability, capacity or runtime permissions may have changed.",
-	unavailable:
-		"Channel permissions or availability could not be confirmed. Refresh before making changes.",
 	refresh: "Refresh channels",
-	health: "Channel health",
-	ok: "Healthy",
-	warning: "Needs attention",
-	error: "Unhealthy",
-	unknown: "Health unavailable",
 };
 const whatsappEn = {
 	repair: "Repair WhatsApp connection",
@@ -177,7 +150,7 @@ const storeEn = {
 	checkingPending: "Checking pending purchases…",
 	noPending: "No pending purchases found.",
 	lowBalance: "Low — add credits before Clawdi AI pauses",
-	recoveryStatus: "This subscription needs attention. Its status updates here automatically.",
+	recoveryStatus: "This subscription needs attention. Refresh to see its latest status.",
 	usdcInApp: "Browser-wallet USDC funding isn't available in this app.",
 	walletExplanation: "Pays for AI usage and credit-funded compute subscriptions.",
 	usageSummary: "LLM spend in credits, paid from wallet",
@@ -228,7 +201,7 @@ const storeComputeEn = {
 	waitingForApprovalChange:
 		"Waiting for approval. The plan change applies after the purchase is approved.",
 	processing:
-		"Your subscription is still being confirmed. This page updates automatically when it completes.",
+		"Your subscription is still being confirmed. Refresh to see the latest status, or check again later.",
 	submitted: "Subscription submitted. It applies automatically once {store} confirms it.",
 	unconfirmed:
 		"This purchase couldn't be confirmed yet. If you were charged, the subscription applies automatically, and trying again won't charge you twice.",
@@ -237,6 +210,7 @@ const storeComputeEn = {
 	changed: "Plan change confirmed. {store} applies it on its own schedule; details update here.",
 	unavailable: "Subscriptions couldn't be loaded. Try again later.",
 	failed: "The subscription couldn't be started. Try again.",
+	alreadySubscribed: "You already have a {store} subscription for this. Check Billing.",
 	planMismatch:
 		"This saved Agent request uses {plan}. Choose a {plan} plan, or discard the saved request first.",
 	changePlan: "Change plan",
@@ -248,6 +222,7 @@ const storeComputeEn = {
 	restore: "Restore purchases",
 	restoring: "Restoring purchases…",
 	restored: "Purchases restored.",
+	nothingToRestore: "No subscriptions to restore.",
 	restorePending: "Your purchases are still being checked. Try again in a few minutes.",
 	restoreFailed: "Purchases couldn't be restored. Try again.",
 	checkStatus: "Check status",
@@ -263,7 +238,6 @@ const storeComputeEn = {
 	slotTitle: "{store} subscription",
 	slotBound: "Used by {agent}",
 	slotAvailable: "Available for your next Agent",
-	deletionManage: "Manage subscription",
 	deletionContinue: "I've cancelled — continue",
 } as const;
 const creationEn = {
@@ -294,8 +268,14 @@ const creationEn = {
 	discard: "Discard this unsubmitted or rejected draft",
 	notAdmitted:
 		"The server rejected this request before admission. You may explicitly discard it and edit a new draft.",
+	reservedTitle: "Finish setting up your agent",
+	reservedDescription:
+		"Your {store} subscription is reserved for an Agent that hasn't been created yet. Choose its settings, then finish setup.",
+	reservedAction: "Finish setting up",
+	reservedNotice:
+		"This Agent uses your {store} subscription. Nothing new is purchased when you finish setup.",
 	storeComputeUnavailable:
-		"Your store subscription isn't available for this Agent yet. Your saved request is preserved. Check status, then retry the same request.",
+		"Your store subscription can't be used for this Agent. Check status, subscribe again, or discard this request.",
 	storeComputeDisabled:
 		"Store subscription deployment is temporarily unavailable. Your saved request is preserved. Check status, then retry later.",
 	storeComputePending:
@@ -404,11 +384,8 @@ const workspaceSkillsEn = {
 	loadError: "Couldn't load Skills",
 	inventoryEmpty: "No Skills have synced from this Agent yet.",
 	title: "Workspace GitHub Skills",
-	description:
-		"Manage GitHub Skills requested for this hosted Agent. Library references and runtime plugins are not managed on this screen.",
 	source: "GitHub owner/repo or owner/repo/path",
 	install: "Request installation",
-	uninstall: "Request removal",
 	confirm: "Change Workspace Skills?",
 	warning:
 		"This updates the Agent's desired Skill manifest. Runtime application may complete later. Existing Cloud library Skills are not modified.",
@@ -420,7 +397,6 @@ const workspaceSkillsEn = {
 	accepted:
 		"Desired state accepted. Refresh to inspect runtime status; this is not proof the runtime has finished applying it.",
 	open: "Read Skill",
-	empty: "No GitHub Skills in the desired manifest.",
 	uncertain:
 		"An unresolved request is saved. Retry its exact body, resource version and key; refreshing does not prove whether it was accepted.",
 	retry: "Retry saved request",
@@ -435,7 +411,6 @@ const workspaceSkillsEn = {
 };
 const skillArchiveEn = {
 	title: "Skill packages",
-	open: "Download, upload or transfer package",
 	key: "Skill key (for example: tools/research)",
 	upload: "Choose and upload new package",
 	replace: "Replace package",
@@ -443,9 +418,6 @@ const skillArchiveEn = {
 		"Replace this Skill's files with the selected tar.gz package? Refresh first if another device may have changed it. This upload is not automatically retried.",
 	hint: "Choose a tar.gz Skill package up to 25 MiB. The server validates its contents. New uploads never overwrite an existing Skill.",
 	download: "Download and share package",
-	target: "Destination Project",
-	copy: "Copy to Project",
-	move: "Move to Project",
 	moveWarning:
 		"Copy the package to the selected Project, then remove the source only if its content has not changed. If removal fails, both copies remain.",
 	uploaded: "Package uploaded.",

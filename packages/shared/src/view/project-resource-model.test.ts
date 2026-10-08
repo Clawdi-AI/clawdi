@@ -5,13 +5,9 @@ import {
 	getProjectResourceDefinition,
 	memoryDetailHref,
 	projectDetailHref,
-	projectManagedResourceDefinitions,
 	projectResourceHref,
 	projectResourcePathLabel,
-	projectResourceScopeDescription,
 	projectResourceScopeLabel,
-	sessionDetailHref,
-	skillDetailHref,
 	vaultDetailHref,
 } from "@clawdi/shared/view";
 
@@ -27,9 +23,6 @@ describe("project resource model", () => {
 		expect(projectDetailHref("proj 1")).toBe("/projects/proj%201");
 		expect(vaultDetailHref("prod keys", "vault/1")).toBe("/vaults/prod%20keys?vault=vault%2F1");
 		expect(vaultDetailHref("prod keys")).toBe("/vaults/prod%20keys");
-		expect(skillDetailHref("team/foo", "proj 1")).toBe("/skills/team%2Ffoo?project=proj%201");
-		expect(skillDetailHref("team/foo")).toBe("/skills/team%2Ffoo");
-		expect(sessionDetailHref("session 1")).toBe("/sessions/session%201");
 		expect(memoryDetailHref("memory 1")).toBe("/memories/memory%201");
 		expect(connectorDetailHref("google drive")).toBe("/connectors/google%20drive");
 	});
@@ -47,21 +40,11 @@ describe("project resource model", () => {
 		expect(getProjectResourceDefinition("memories").projectScope).toBe("all-agents");
 	});
 
-	it("selects only Project-managed resources", () => {
-		expect(projectManagedResourceDefinitions().map((r) => r.id)).toEqual(["skills", "vaults"]);
-	});
-
 	it("renders stable user-facing scope labels", () => {
 		expect(projectResourceScopeLabel("container")).toBe("Project home");
 		expect(projectResourceScopeLabel("project-managed")).toBe("Saved in a project");
 		expect(projectResourceScopeLabel("activity")).toBe("Account activity");
 		expect(projectResourceScopeLabel("all-agents")).toBe("All agents");
-		expect(projectResourceScopeDescription(getProjectResourceDefinition("memories"))).toContain(
-			"all agents",
-		);
-		expect(projectResourceScopeDescription(getProjectResourceDefinition("skills"))).toContain(
-			"Pick the project",
-		);
 	});
 
 	it("renders resource paths from reusable path segments", () => {

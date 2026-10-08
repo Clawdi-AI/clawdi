@@ -217,12 +217,3 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		workspaceRoot: mode === "hosted" ? userHome : join(userHome, "clawdi"),
 	};
 }
-
-// Released Hosted CLIs through 0.14.82 stored committed bytes on the rootfs.
-export function legacyRuntimeManifestPaths(paths: RuntimePaths): RuntimePaths {
-	return {
-		...paths,
-		manifestLastGood: join(paths.cacheRoot, "manifest.last-good.json"),
-		managedSecretCacheFile: join(paths.cacheRoot, "runtime-secrets.last-good.json"),
-	};
-}

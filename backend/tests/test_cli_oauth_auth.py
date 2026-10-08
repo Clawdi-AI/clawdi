@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.routes.cli_auth as cli_auth_module
+import app.services.clerk_backend as clerk_backend_module
 from app.core.auth import _auth_via_clerk_jwt, get_auth, require_cli_auth, require_user_cli
 from app.core.config import settings
 from app.core.database import get_session
@@ -594,7 +595,6 @@ async def test_oauth_config_returns_only_public_values(
         "client_id": _CLIENT_ID,
         "audience": _AUDIENCE,
         "authorized_parties": [_AUTHORIZED_PARTY],
-        "redirect_uri": _REDIRECT_URI,
     }
     assert _SECRET_KEY not in response.text
     assert _APPLICATION_ID not in response.text
@@ -747,7 +747,7 @@ async def test_oauth_revoke_uses_validated_oauth_identity_and_safe_proxy(
             captured.update(kwargs)
             return FakeResponse()
 
-    monkeypatch.setattr(cli_auth_module.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(clerk_backend_module.httpx, "AsyncClient", FakeAsyncClient)
     access_token = _oauth_access_token(clerk_oauth_signing_key, f"user_revoke_{uuid.uuid4().hex}")
     response = await raw_auth_client.post(
         "/v1/cli/auth/oauth/revoke",
@@ -836,7 +836,7 @@ async def test_oauth_revoke_hides_upstream_failure_details(
             _ = (url, kwargs)
             return FakeResponse()
 
-    monkeypatch.setattr(cli_auth_module.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(clerk_backend_module.httpx, "AsyncClient", FakeAsyncClient)
     access_token = _oauth_access_token(
         clerk_oauth_signing_key, f"user_revoke_error_{uuid.uuid4().hex}"
     )

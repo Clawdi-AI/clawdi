@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { AgentType } from "../../src/adapters/agent-types";
+import type { RawSession, SessionBatchScan } from "../../src/adapters/base";
 import { CodexAdapter } from "../../src/adapters/codex";
 import { adapterRegistry } from "../../src/adapters/registry";
 import { push } from "../../src/commands/push";
@@ -46,8 +47,22 @@ function batchSessions(c: CapturedRequest | undefined): BatchSession[] {
 	return body?.sessions ?? [];
 }
 
+function fixtureSessionScan(sessions: RawSession[]): SessionBatchScan {
+	return {
+		coverage: "complete",
+		batches: (async function* () {
+			yield {
+				sessions,
+				observedLocalSessionIds: sessions.map((session) => session.localSessionId),
+				dedupedCount: 0,
+			};
+		})(),
+	};
+}
+
 let tmpHome: string;
 let origHome: string | undefined;
+let origPath: string | undefined;
 let origHomeOverrides: AgentHomeOverrideSnapshot = {};
 
 function setup(agent: AgentType): {
@@ -55,16 +70,45 @@ function setup(agent: AgentType): {
 	restore: () => void;
 } {
 	origHome = process.env.HOME;
+	origPath = process.env.PATH;
 	origHomeOverrides = snapshotAndClearAgentHomeOverrides();
 	tmpHome = copyFixtureToTmp(agent);
 	process.env.HOME = tmpHome;
 	seedAuthAndEnv(tmpHome, agent);
+	if (agent === "hermes") {
+		const appRoot = join(tmpHome, ".hermes", "hermes-agent");
+		const python = join(appRoot, "venv", "bin", "python");
+		mkdirSync(dirname(python), { recursive: true });
+		writeFileSync(
+			python,
+			`#!/bin/sh\nprintf '[{"name":"default","home":"%s/.hermes","previous_names":[]}]\\n' "$HOME"\n`,
+			{ mode: 0o755 },
+		);
+	}
+	if (agent === "openclaw") {
+		const bin = join(tmpHome, "bin");
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(
+			join(bin, "openclaw"),
+			`#!/bin/sh
+if [ "$*" = "agents list --json" ]; then
+  printf '[{"id":"main","workspace":"%s/.openclaw/agents/main"}]\\n' "$HOME"
+  exit 0
+fi
+exit 1
+`,
+			{ mode: 0o755 },
+		);
+		process.env.PATH = `${bin}:${origPath ?? ""}`;
+	}
 	return { sent: [], restore: () => {} };
 }
 
 afterEach(() => {
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
+	if (origPath === undefined) delete process.env.PATH;
+	else process.env.PATH = origPath;
 	restoreAgentHomeOverrides(origHomeOverrides);
 	origHomeOverrides = {};
 	// `push` sets `process.exitCode = 1` on abort paths (not logged in,
@@ -73,6 +117,13 @@ afterEach(() => {
 	process.exitCode = 0;
 	if (tmpHome) cleanupTmp(tmpHome);
 });
+
+function okProfileInventory() {
+	return {
+		path: "/v1/agents/env-test/profiles",
+		response: () => jsonResponse([]),
+	};
+}
 
 describe("push — scan snapshot", () => {
 	it("honors persisted project exclusions without a flag and leaves the session lock unchanged", async () => {
@@ -106,7 +157,7 @@ describe("push — scan snapshot", () => {
 		const originalCreate = adapterRegistry.codex.create;
 		adapterRegistry.codex.create = () => {
 			const adapter = new CodexAdapter();
-			adapter.sessions.collect = async () => ({ sessions, coverage: "complete", dedupedCount: 0 });
+			adapter.sessions.scan = async () => fixtureSessionScan(sessions);
 			return adapter;
 		};
 		const { captured, restore } = mockFetch([
@@ -157,11 +208,7 @@ describe("push — scan snapshot", () => {
 		const originalCreate = adapterRegistry.codex.create;
 		adapterRegistry.codex.create = () => {
 			const adapter = new CodexAdapter();
-			adapter.sessions.collect = async () => ({
-				sessions: [session],
-				coverage: "complete",
-				dedupedCount: 0,
-			});
+			adapter.sessions.scan = async () => fixtureSessionScan([session]);
 			adapter.sessions.resolve = async () => {
 				resolves++;
 				return { ...fixture, events: remoteEvents };
@@ -253,9 +300,9 @@ describe("push — scan snapshot", () => {
 		const originalCreate = adapterRegistry.codex.create;
 		adapterRegistry.codex.create = () => {
 			const adapter = new CodexAdapter();
-			const collect = adapter.sessions.collect;
-			adapter.sessions.collect = async (request) => {
-				const result = await collect(request);
+			const scan = adapter.sessions.scan;
+			adapter.sessions.scan = async (request, revisions, context) => {
+				const result = await scan(request, revisions, context);
 				persistFencedSessionEntry(fence, entries[mode]);
 				return result;
 			};
@@ -326,6 +373,7 @@ describe("push — Hermes fixture", () => {
 		setup("hermes");
 		const { captured, restore } = mockFetch([
 			okEnvironmentProbe(),
+			okProfileInventory(),
 			{
 				method: "POST",
 				path: "/v1/sessions/batch",
@@ -615,6 +663,7 @@ describe("push — OpenClaw fixture", () => {
 		setup("openclaw");
 		const { captured, restore } = mockFetch([
 			okEnvironmentProbe(),
+			okProfileInventory(),
 			{
 				method: "POST",
 				path: "/v1/sessions/batch",
@@ -661,6 +710,7 @@ describe("push — env_id probe (Codex plan A)", () => {
 		setup("hermes");
 		const { restore } = mockFetch([
 			okEnvironmentProbe(), // probe succeeds…
+			okProfileInventory(),
 			{
 				// …but a parallel teardown could delete the env between probe and
 				// batch. The CLI must catch the structured 400 the same way.

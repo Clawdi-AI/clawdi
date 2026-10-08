@@ -40,11 +40,7 @@ import {
 	type RuntimeManifestLoad,
 } from "../src/runtime/manifest-source";
 import { readHostedRuntimeObserved } from "../src/runtime/observed";
-import {
-	detectRuntimeMode,
-	getRuntimePaths,
-	legacyRuntimeManifestPaths,
-} from "../src/runtime/paths";
+import { detectRuntimeMode, getRuntimePaths } from "../src/runtime/paths";
 import { buildRuntimeRunConfig } from "../src/runtime/run-config";
 import { TRANSPARENT_EGRESS_PORT } from "../src/runtime/transparent-egress";
 import { getDaemonControlTokenPath } from "../src/serve/paths";
@@ -369,12 +365,6 @@ describe("runtime applied content identity", () => {
 				),
 			};
 			expect(runtimePublicSourcePath(cached, paths)).toBe(paths.manifestLastGood);
-			expect(
-				runtimePublicSourcePath(
-					{ ...cached, sourcePath: legacyRuntimeManifestPaths(paths).manifestLastGood },
-					paths,
-				),
-			).toBe(legacyRuntimeManifestPaths(paths).manifestLastGood);
 		}
 		expect(runtimePublicSourcePath(load("000000"), paths)).toBe("inline-secret-identity");
 	});

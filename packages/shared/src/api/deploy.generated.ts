@@ -1796,6 +1796,8 @@ export interface components {
             compute_subscription_id?: number | null;
             /** Agent Id */
             agent_id?: string | null;
+            /** Reserved Deploy Request Id */
+            reserved_deploy_request_id?: string | null;
             store_management?: components["schemas"]["StoreManagement"] | null;
         };
         /** StoreComputeSubscriptionReconcileResult */

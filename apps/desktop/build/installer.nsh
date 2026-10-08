@@ -23,5 +23,7 @@
       SetErrorLevel 1
       Abort
     ${endif}
+    ; Registered by app.setAsDefaultProtocolClient("clawdi-desktop") on launch.
+    DeleteRegKey HKCU "Software\Classes\clawdi-desktop"
   ${endif}
 !macroend

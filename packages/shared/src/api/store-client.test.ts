@@ -386,6 +386,40 @@ describe("Hosted store client", () => {
 		}
 	});
 
+	test("accepts a compute-only bootstrap whose slot reserves a deploy request", async () => {
+		const computeOnly = {
+			purchases_enabled: false,
+			reason: "store_purchases_disabled",
+			app_user_id: bootstrap.app_user_id,
+			catalogue_revision: 1,
+			compute_subscriptions_enabled: true,
+			compute_slot: {
+				available: false,
+				contract_id: attempt.attempt_id,
+				compute_subscription_id: 42,
+				agent_id: null,
+				reserved_deploy_request_id: "8e244ab3-1111-4111-8111-111111111111",
+				store_management: null,
+			},
+		};
+		const client = createHostedStoreClient({
+			...options,
+			fetch: async () => Response.json(computeOnly),
+		});
+		expect(await client.bootstrap("app_store")).toEqual(computeOnly);
+		for (const reserved of ["", 42, "x".repeat(192)]) {
+			const invalid = createHostedStoreClient({
+				...options,
+				fetch: async () =>
+					Response.json({
+						...computeOnly,
+						compute_slot: { ...computeOnly.compute_slot, reserved_deploy_request_id: reserved },
+					}),
+			});
+			await expect(invalid.bootstrap("app_store")).rejects.toBeInstanceOf(ApiClientResponseError);
+		}
+	});
+
 	test("rejects enabled bootstrap without a valid RevenueCat identity or complete catalogue", async () => {
 		for (const response of [
 			null,
@@ -508,6 +542,7 @@ describe("Hosted store client", () => {
 
 	test("classifies server store errors and holds while preserving unknown and unrelated errors", () => {
 		for (const code of [
+			StoreErrorCode.store_slot_in_use,
 			StoreErrorCode.store_purchases_disabled,
 			StoreErrorCode.catalogue_revision_stale,
 			StoreErrorCode.store_identity_tombstoned,

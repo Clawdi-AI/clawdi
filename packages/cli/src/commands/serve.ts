@@ -25,8 +25,7 @@ import { emitJson } from "../lib/command-output";
  */
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { AGENT_TYPES, type AgentType } from "../adapters/registry";
 import { loadAuthTokenFile } from "../lib/auth-token-file";
 import {
@@ -73,7 +72,6 @@ import {
 	install as installService,
 	isSingletonDaemonInstalled,
 	isSingletonDaemonRunning,
-	listInstalledAgents,
 	readHealth,
 	restart as restartService,
 	statusLines as serviceStatusLines,
@@ -98,11 +96,6 @@ interface RpcListenOpts {
 	host?: unknown;
 	port?: unknown;
 	allowRemote?: unknown;
-}
-
-interface LegacyRunOpts {
-	agent?: unknown;
-	environmentId?: unknown;
 }
 
 interface AuthTokenFileOpts {
@@ -139,7 +132,6 @@ interface DaemonDoctorReport {
 	registered_agents: number;
 	singleton_unit_installed: boolean;
 	singleton_unit_running: boolean;
-	legacy_daemon_units: AgentType[];
 	control_rpc: {
 		token_path: string;
 		http: { host: string; port: number; allow_remote: boolean };
@@ -174,13 +166,6 @@ interface RpcCommandResponse extends CommandResult {
 	json?: unknown;
 }
 
-/**
- * Reject legacy selector options that a singleton-daemon subcommand
- * does not support. Pre-fix `clawdi daemon doctor --agent codex`
- * and `clawdi daemon status --environment-id <id>` silently accepted
- * those flags but ignored them, leaving users with no signal that
- * their command had no effect.
- */
 export function rejectUnsupportedOpts(
 	cmdName: string,
 	opts: Record<string, unknown>,
@@ -205,16 +190,10 @@ function camelToFlag(name: string): string {
 }
 
 export async function serve(_opts: ServeOpts): Promise<void> {
-	const opts = _opts as RpcListenOpts & LegacyRunOpts & AuthTokenFileOpts;
+	const opts = _opts as RpcListenOpts & AuthTokenFileOpts;
 	const mode = (process.env.CLAWDI_SERVE_MODE ?? "host").toLowerCase();
 	const isContainer = mode === "container";
 	loadAuthTokenFile(optionalStringParam(opts.authTokenFile, "--auth-token-file"));
-	const legacyRun = resolveLegacyRunOpts(opts);
-
-	if (legacyRun && !isContainer) {
-		migrateLegacyDaemonRun(legacyRun);
-		return;
-	}
 
 	const rpcListen = resolveRpcListenConfig(opts);
 
@@ -238,9 +217,7 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 			}
 		}
 	}
-	const targets = legacyRun
-		? [pickLegacyDaemonRunTarget(legacyRun)]
-		: pickDaemonRunTargets({ allowEmpty: hostedRuntime });
+	const targets = pickDaemonRunTargets({ allowEmpty: hostedRuntime });
 
 	log.info("serve.boot", {
 		mode,
@@ -378,8 +355,6 @@ export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 		console.error(`Install failed: ${toErrorMessage(e)}`);
 		process.exit(1);
 	}
-	const failed = cleanupLegacyDaemonUnits();
-	if (failed > 0) process.exit(1);
 }
 
 const INSTALL_ALLOWED = new Set(["host", "port", "allowRemote"]);
@@ -405,7 +380,6 @@ export async function serveUninstall(opts: ServeInstallOpts): Promise<void> {
 		console.error(`✗ daemon: ${toErrorMessage(e)}`);
 		failed += 1;
 	}
-	failed += cleanupLegacyDaemonUnits();
 	if (removed === 0 && failed === 0) console.log("No daemon units installed.");
 	if (failed > 0) process.exit(1);
 }
@@ -595,9 +569,6 @@ export async function serveDoctor(opts: ServeDoctorOpts): Promise<void> {
 	console.log(`cli version: ${summary.cli_version}`);
 	console.log(`agents:      ${summary.registered_agents}`);
 	console.log(`unit:        ${summary.singleton_unit_installed ? "installed" : "not installed"}`);
-	if (summary.legacy_daemon_units.length > 0) {
-		console.log(`legacy:      ${summary.legacy_daemon_units.join(", ")}`);
-	}
 	console.log(`rpc http:    ${summary.control_rpc.http.host}:${summary.control_rpc.http.port}`);
 	console.log("");
 	if (summary.registered_agents === 0) {
@@ -664,7 +635,6 @@ function buildDoctorReport(): DaemonDoctorReport {
 		registered_agents: registered.length,
 		singleton_unit_installed: isSingletonDaemonInstalled(),
 		singleton_unit_running: isSingletonDaemonRunning(),
-		legacy_daemon_units: listInstalledAgents(),
 		control_rpc: {
 			token_path: getDaemonControlTokenPath(),
 			http: activeControlRpcHttp ?? normalizeRpcHttpConfig(resolveRpcListenConfig({})),
@@ -725,7 +695,6 @@ export function createControlRpcHandlers(opts: ControlRpcHandlerOptions = {}): C
 		const targets = agent ? [agent] : listRegisteredAgentTypes();
 		return {
 			singleton_unit_installed: isSingletonDaemonInstalled(),
-			legacy_daemon_units: listInstalledAgents(),
 			agents: targets.map(buildStatusReport),
 		};
 	};
@@ -1165,27 +1134,23 @@ function daemonInstallRpc(params: unknown): unknown {
 function daemonUninstallRpc(params: unknown): unknown {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(record, new Set());
-	const targets = daemonUnitTargets();
-	if (targets.length === 0) {
+	if (!isSingletonDaemonInstalled()) {
 		return { accepted: false, reason: "no daemon units installed" };
 	}
 	return scheduleDaemonControlAction(
 		"uninstall",
 		() => {
-			for (const target of targets) {
-				try {
-					const opts = target === "daemon" ? undefined : { agent: target };
-					uninstallService(opts);
-				} catch (error) {
-					log.error("daemon.control_action_target_failed", {
-						action: "uninstall",
-						target,
-						error: toErrorMessage(error),
-					});
-				}
+			try {
+				uninstallService();
+			} catch (error) {
+				log.error("daemon.control_action_target_failed", {
+					action: "uninstall",
+					target: "daemon",
+					error: toErrorMessage(error),
+				});
 			}
 		},
-		{ targets },
+		{ target: "daemon" },
 	);
 }
 
@@ -1303,13 +1268,6 @@ function splitLogLines(output: string): string[] {
 
 function tailLogLines(lines: string[], limit: number): string[] {
 	return lines.slice(Math.max(0, lines.length - limit));
-}
-
-function daemonUnitTargets(): Array<"daemon" | AgentType> {
-	const targets: Array<"daemon" | AgentType> = [];
-	if (isSingletonDaemonInstalled()) targets.push("daemon");
-	targets.push(...listInstalledAgents());
-	return targets;
 }
 
 function rejectRpcParams(record: Record<string, unknown>, allowed: ReadonlySet<string>): void {
@@ -1491,125 +1449,6 @@ function optionalPortParam(
 		throw new Error(message);
 	}
 	return port;
-}
-
-function cleanupLegacyDaemonUnits(): number {
-	return cleanupLegacyDaemonUnitsExceptLast();
-}
-
-function cleanupLegacyDaemonUnitsExceptLast(lastAgent?: AgentType): number {
-	let failed = 0;
-	const installedAgents = listInstalledAgents();
-	const orderedAgents = lastAgent
-		? [
-				...installedAgents.filter((agentType) => agentType !== lastAgent),
-				...installedAgents.filter((agentType) => agentType === lastAgent),
-			]
-		: installedAgents;
-	for (const agentType of orderedAgents) {
-		try {
-			const result = uninstallService({ agent: agentType });
-			if (result.removed) {
-				console.log(`✓ Removed legacy per-agent daemon unit for ${agentType}`);
-			}
-		} catch (e) {
-			console.error(`✗ Failed to remove legacy daemon unit for ${agentType}: ${toErrorMessage(e)}`);
-			failed += 1;
-		}
-	}
-	return failed;
-}
-
-interface LegacyDaemonRun {
-	agentType: AgentType;
-	environmentId?: string;
-}
-
-function resolveLegacyRunOpts(opts: LegacyRunOpts): LegacyDaemonRun | null {
-	const agentType = optionalAgentParam(opts.agent);
-	const environmentId = optionalStringParam(opts.environmentId, "--environment-id");
-	if (!agentType) {
-		if (environmentId) {
-			throw new Error("--environment-id requires --agent for legacy daemon run compatibility");
-		}
-		return null;
-	}
-	return { agentType, environmentId };
-}
-
-function migrateLegacyDaemonRun(legacy: LegacyDaemonRun): void {
-	if (!isLoggedIn()) {
-		log.error("serve.legacy_daemon_migration_no_auth", {
-			agent: legacy.agentType,
-			hint: "Set CLAWDI_AUTH_TOKEN env or run `clawdi auth login`, then run `clawdi daemon install`.",
-		});
-		process.exit(1);
-	}
-	if (legacy.environmentId) {
-		persistLegacyEnvironmentId(legacy);
-	}
-	log.info("serve.legacy_daemon_migration_started", {
-		agent: legacy.agentType,
-		has_environment_id: legacy.environmentId !== undefined,
-	});
-	try {
-		const result = installService();
-		log.info("serve.legacy_daemon_migration_singleton_installed", {
-			unit: result.unit,
-			replaced: result.replaced,
-		});
-	} catch (error) {
-		log.error("serve.legacy_daemon_migration_install_failed", {
-			agent: legacy.agentType,
-			error: toErrorMessage(error),
-		});
-		process.exit(1);
-	}
-	const failed = cleanupLegacyDaemonUnitsExceptLast(legacy.agentType);
-	log.info("serve.legacy_daemon_migration_finished", {
-		agent: legacy.agentType,
-		failed,
-	});
-	process.exit(failed > 0 ? 1 : 0);
-}
-
-function persistLegacyEnvironmentId(legacy: LegacyDaemonRun): void {
-	if (!legacy.environmentId) return;
-	const envDir = join(getClawdiDir(), "environments");
-	mkdirSync(envDir, { recursive: true });
-	const envPath = join(envDir, `${legacy.agentType}.json`);
-	writeFileSync(
-		envPath,
-		`${JSON.stringify({ id: legacy.environmentId, agentType: legacy.agentType }, null, 2)}\n`,
-		{ mode: 0o600 },
-	);
-	try {
-		chmodSync(envPath, 0o600);
-	} catch {
-		/* best effort */
-	}
-}
-
-function pickLegacyDaemonRunTarget(legacy: LegacyDaemonRun): DaemonRunTarget {
-	const adapter = adapterForType(legacy.agentType);
-	if (!adapter) {
-		log.error("serve.no_agent_adapter", { agent: legacy.agentType });
-		console.error(`No adapter available for ${legacy.agentType}.`);
-		process.exit(1);
-	}
-	const environmentId = legacy.environmentId ?? resolveEnvironmentId(legacy.agentType, 1);
-	if (!environmentId) {
-		log.error("serve.no_environment", {
-			agent: legacy.agentType,
-			hint: "Pass --environment-id, set CLAWDI_ENVIRONMENT_ID, or run `clawdi setup`.",
-		});
-		process.exit(1);
-	}
-	return {
-		agentType: legacy.agentType,
-		adapter,
-		environmentId,
-	};
 }
 
 function isAgentType(s: string): s is AgentType {
