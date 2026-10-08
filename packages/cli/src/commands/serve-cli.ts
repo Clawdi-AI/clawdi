@@ -9,7 +9,7 @@
  * weakest link.
  */
 
-import { type Command, Option } from "commander";
+import type { Command } from "commander";
 
 /**
  * Handlers that the daemon command tree dispatches to. Production
@@ -34,12 +34,6 @@ function addRpcEndpointOptions(cmd: Command): Command {
 		.option("--host <host>", "Control HTTP RPC host")
 		.option("--port <port>", "Control HTTP RPC port")
 		.option("--allow-remote", "Allow the control HTTP RPC listener to bind a non-loopback host");
-}
-
-function addLegacyRunOptions(cmd: Command): Command {
-	return cmd
-		.addOption(new Option("--agent <type>", "Legacy per-agent daemon selector").hideHelp())
-		.addOption(new Option("--environment-id <id>", "Legacy per-agent environment id").hideHelp());
 }
 
 async function defaultHandlers(): Promise<ServeHandlers> {
@@ -89,33 +83,28 @@ Examples:
   $ CLAWDI_SERVE_MODE=container clawdi daemon run
   $ clawdi daemon install                       # set up one launchd / systemd unit
   $ clawdi daemon rotate-token                  # rotate the local control token
-  $ clawdi daemon status --agent claude_code    # health + supervisor state
-  $ clawdi serve status --agent claude_code     # legacy alias`,
+  $ clawdi daemon status --agent claude_code    # health + supervisor state`,
 		)
 		.action(async (opts) => {
-			// `clawdi daemon` (or legacy `clawdi serve`) with no
-			// subcommand still runs the daemon in the foreground for
-			// backward compatibility. `daemon run` is the clearer
-			// spelling for new users.
+			// `clawdi daemon` (or `clawdi serve`) with no subcommand
+			// runs the daemon in the foreground. `daemon run` is the
+			// clearer spelling for new users.
 			const h = await get();
 			await h.serve(opts);
 		});
-	addLegacyRunOptions(serveCmd);
-
-	addLegacyRunOptions(
-		serveCmd
-			.command("run")
-			.description("Run the sync daemon in the foreground")
-			.configureHelp({ showGlobalOptions: true })
-			.addHelpText("after", "\nControl RPC listens on loopback HTTP by default.")
-			.option("--auth-token-file <path>", "Read CLAWDI_AUTH_TOKEN from an owner-only file")
-			.option("--host <host>", "Control HTTP RPC host")
-			.option("--port <port>", "Control HTTP RPC port")
-			.option("--allow-remote", "Allow the control HTTP RPC listener to bind a non-loopback host"),
-	).action(async (_opts, cmd) => {
-		const h = await get();
-		await h.serve(cmd.optsWithGlobals());
-	});
+	serveCmd
+		.command("run")
+		.description("Run the sync daemon in the foreground")
+		.configureHelp({ showGlobalOptions: true })
+		.addHelpText("after", "\nControl RPC listens on loopback HTTP by default.")
+		.option("--auth-token-file <path>", "Read CLAWDI_AUTH_TOKEN from an owner-only file")
+		.option("--host <host>", "Control HTTP RPC host")
+		.option("--port <port>", "Control HTTP RPC port")
+		.option("--allow-remote", "Allow the control HTTP RPC listener to bind a non-loopback host")
+		.action(async (_opts, cmd) => {
+			const h = await get();
+			await h.serve(cmd.optsWithGlobals());
+		});
 
 	addRpcEndpointOptions(
 		serveCmd

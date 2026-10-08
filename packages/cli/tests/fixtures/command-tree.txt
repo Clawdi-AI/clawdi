@@ -790,27 +790,9 @@
 				"optional": false,
 				"mandatory": false,
 				"variadic": false
-			},
-			{
-				"flags": "--agent <type>",
-				"description": "Legacy per-agent daemon selector",
-				"hidden": true,
-				"required": true,
-				"optional": false,
-				"mandatory": false,
-				"variadic": false
-			},
-			{
-				"flags": "--environment-id <id>",
-				"description": "Legacy per-agent environment id",
-				"hidden": true,
-				"required": true,
-				"optional": false,
-				"mandatory": false,
-				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi daemon|serve [options] [command]\n\nManage the background sync daemon — syncs local agent skills to Clawdi and\nmirrors sessions\n\nOptions:\n  --host <host>           Control HTTP RPC host\n  --port <port>           Control HTTP RPC port\n  --allow-remote          Allow the control HTTP RPC listener to bind a\n                          non-loopback host\n  -h, --help              display help for command\n\nCommands:\n  run [options]           Run the sync daemon in the foreground\n  install [options]       Install the singleton daemon as a per-user OS service\n  uninstall               Remove the singleton daemon service unit and stop the\n                          daemon\n  stop                    Stop the singleton daemon while preserving its\n                          installed service unit\n  restart                 Restart the installed singleton daemon (launchctl\n                          kickstart -k on macOS, systemctl --user restart on\n                          Linux)\n  ping [options]          Check whether the daemon control RPC is reachable\n  rotate-token [options]  Rotate the daemon control RPC bearer token\n  status [options]        Show daemon health (last heartbeat) and supervisor\n                          state\n  logs [options]          Show the daemon's recent log lines (journald on Linux,\n                          log file on macOS/Windows)\n  doctor [options]        Snapshot every registered agent's daemon state — for\n                          support handoff\n\nEnvironment:\n  CLAWDI_AUTH_TOKEN       Bearer token (preferred over ~/.clawdi/auth.json)\n  CLAWDI_AUTH_TOKEN_ORIGIN Explicit Cloud origin binding for the bearer token\n  CLAWDI_SERVE_MODE       \"container\" forces polling watcher + graceful SIGTERM\n  CLAWDI_STATE_DIR        Override location of queue.jsonl + health (default ~/.clawdi/serve)\n  CLAWDI_DAEMON_RPC_HOST         HTTP RPC host (default 127.0.0.1)\n  CLAWDI_DAEMON_RPC_PORT         HTTP RPC port (default 17654)\n  CLAWDI_DAEMON_RPC_ALLOW_REMOTE Set to 1 to allow non-loopback HTTP bind\n  CLAWDI_DAEMON_RPC_TOKEN        Bearer token for HTTP RPC clients (defaults to generated token file)\n  CLAWDI_SERVE_DEBUG=1    Emit debug-level events to stderr\n\nExamples:\n  $ clawdi daemon run\n  $ clawdi daemon run --host 127.0.0.1 --port 17654\n  $ clawdi daemon ping\n  $ CLAWDI_SERVE_MODE=container clawdi daemon run\n  $ clawdi daemon install                       # set up one launchd / systemd unit\n  $ clawdi daemon rotate-token                  # rotate the local control token\n  $ clawdi daemon status --agent claude_code    # health + supervisor state\n  $ clawdi serve status --agent claude_code     # legacy alias\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi daemon|serve [options] [command]\n\nManage the background sync daemon — syncs local agent skills to Clawdi and\nmirrors sessions\n\nOptions:\n  --host <host>           Control HTTP RPC host\n  --port <port>           Control HTTP RPC port\n  --allow-remote          Allow the control HTTP RPC listener to bind a\n                          non-loopback host\n  -h, --help              display help for command\n\nCommands:\n  run [options]           Run the sync daemon in the foreground\n  install [options]       Install the singleton daemon as a per-user OS service\n  uninstall               Remove the singleton daemon service unit and stop the\n                          daemon\n  stop                    Stop the singleton daemon while preserving its\n                          installed service unit\n  restart                 Restart the installed singleton daemon (launchctl\n                          kickstart -k on macOS, systemctl --user restart on\n                          Linux)\n  ping [options]          Check whether the daemon control RPC is reachable\n  rotate-token [options]  Rotate the daemon control RPC bearer token\n  status [options]        Show daemon health (last heartbeat) and supervisor\n                          state\n  logs [options]          Show the daemon's recent log lines (journald on Linux,\n                          log file on macOS/Windows)\n  doctor [options]        Snapshot every registered agent's daemon state — for\n                          support handoff\n\nEnvironment:\n  CLAWDI_AUTH_TOKEN       Bearer token (preferred over ~/.clawdi/auth.json)\n  CLAWDI_AUTH_TOKEN_ORIGIN Explicit Cloud origin binding for the bearer token\n  CLAWDI_SERVE_MODE       \"container\" forces polling watcher + graceful SIGTERM\n  CLAWDI_STATE_DIR        Override location of queue.jsonl + health (default ~/.clawdi/serve)\n  CLAWDI_DAEMON_RPC_HOST         HTTP RPC host (default 127.0.0.1)\n  CLAWDI_DAEMON_RPC_PORT         HTTP RPC port (default 17654)\n  CLAWDI_DAEMON_RPC_ALLOW_REMOTE Set to 1 to allow non-loopback HTTP bind\n  CLAWDI_DAEMON_RPC_TOKEN        Bearer token for HTTP RPC clients (defaults to generated token file)\n  CLAWDI_SERVE_DEBUG=1    Emit debug-level events to stderr\n\nExamples:\n  $ clawdi daemon run\n  $ clawdi daemon run --host 127.0.0.1 --port 17654\n  $ clawdi daemon ping\n  $ CLAWDI_SERVE_MODE=container clawdi daemon run\n  $ clawdi daemon install                       # set up one launchd / systemd unit\n  $ clawdi daemon rotate-token                  # rotate the local control token\n  $ clawdi daemon status --agent claude_code    # health + supervisor state\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi daemon run",
@@ -851,24 +833,6 @@
 				"description": "Allow the control HTTP RPC listener to bind a non-loopback host",
 				"hidden": false,
 				"required": false,
-				"optional": false,
-				"mandatory": false,
-				"variadic": false
-			},
-			{
-				"flags": "--agent <type>",
-				"description": "Legacy per-agent daemon selector",
-				"hidden": true,
-				"required": true,
-				"optional": false,
-				"mandatory": false,
-				"variadic": false
-			},
-			{
-				"flags": "--environment-id <id>",
-				"description": "Legacy per-agent environment id",
-				"hidden": true,
-				"required": true,
 				"optional": false,
 				"mandatory": false,
 				"variadic": false
