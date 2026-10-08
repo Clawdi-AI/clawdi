@@ -106,7 +106,9 @@ def test_clerk_cli_oauth_setting_is_strict_atomic_and_canonical() -> None:
 @pytest.mark.parametrize("retired_value", ["http://127.0.0.1:18473/oauth/callback", "", None])
 def test_clerk_cli_oauth_setting_rejects_retired_key(retired_value: object) -> None:
     with pytest.raises(ValidationError):
-        CLERK_CLI_OAUTH_SETTING_ADAPTER.validate_python(_configured_value(redirect_uri=retired_value))
+        CLERK_CLI_OAUTH_SETTING_ADAPTER.validate_python(
+            _configured_value(redirect_uri=retired_value)
+        )
 
 
 @pytest.mark.asyncio
