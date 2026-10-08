@@ -523,6 +523,189 @@ async function quietCodexFixture() {
 	return { adapter, file: original.rawFilePath, first, known: confirmedCodex(first.sessions) };
 }
 
+function codexForkFixture(childFirst = true) {
+	const active = join(tmpHome, ".codex", "sessions");
+	const archived = join(tmpHome, ".codex", "archived_sessions");
+	rmSync(active, { recursive: true });
+	const parent = {
+		id: "019ae46c-52a7-7000-8000-000000000001",
+		cwd: "/synthetic/parent",
+		timestamp: "2026-10-08T18:00:00Z",
+		file: join(childFirst ? archived : active, "rollout-parent.jsonl"),
+	};
+	const child = {
+		id: "019ae46c-52a7-7000-8000-000000000002",
+		cwd: "/synthetic/child",
+		timestamp: "2026-10-08T19:00:00Z",
+		file: join(childFirst ? active : archived, "rollout-child.jsonl"),
+	};
+	const parentMeta = {
+		type: "session_meta",
+		timestamp: parent.timestamp,
+		payload: { id: parent.id, cwd: parent.cwd, timestamp: parent.timestamp },
+	};
+	const childMeta = {
+		type: "session_meta",
+		timestamp: child.timestamp,
+		payload: {
+			id: child.id,
+			cwd: child.cwd,
+			timestamp: child.timestamp,
+			forked_from_id: parent.id,
+		},
+	};
+	const message = (timestamp: string, role: "user" | "assistant", text: string) => ({
+		type: "response_item",
+		timestamp,
+		payload: {
+			type: "message",
+			role,
+			content: [{ type: role === "user" ? "input_text" : "output_text", text }],
+		},
+	});
+	const parentRecords = [
+		parentMeta,
+		message("2026-10-08T18:00:01Z", "user", "Parent prompt"),
+		message("2026-10-08T18:00:02Z", "assistant", "Parent answer"),
+	];
+	// Codex copied forks persist their own meta before the parent's complete rollout.
+	const childRecords = [
+		childMeta,
+		...parentRecords,
+		message("2026-10-08T19:00:01Z", "user", "Child prompt"),
+		message("2026-10-08T19:00:02Z", "assistant", "Child answer"),
+	];
+	const past = new Date(Date.now() - 10_000);
+	for (const [directory, file, records] of [
+		[childFirst ? archived : active, parent.file, parentRecords],
+		[childFirst ? active : archived, child.file, childRecords],
+	] as const) {
+		mkdirSync(directory, { recursive: true });
+		writeFileSync(file, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
+		utimesSync(file, past, past);
+	}
+	return { parent, child };
+}
+
+async function assertCodexForkSessions(
+	sessions: RawSession[],
+	{ parent, child }: ReturnType<typeof codexForkFixture>,
+) {
+	expect(sessions).toHaveLength(2);
+	const parentSession = sessions.find((session) => session.localSessionId === parent.id);
+	const childSession = sessions.find((session) => session.localSessionId === child.id);
+	for (const [session, fixture, messageCount] of [
+		[parentSession, parent, 2],
+		[childSession, child, 4],
+	] as const) {
+		expect(session).toMatchObject({
+			localSessionId: fixture.id,
+			projectPath: fixture.cwd,
+			startedAt: new Date(fixture.timestamp),
+			messageCount,
+			summary: "Parent prompt",
+			rawFilePath: fixture.file,
+		});
+		if (!session) throw new Error("expected fork session");
+		const upload = await prepareSessionUpload(session, "events-v1");
+		const contents: string[] = [];
+		for await (const event of upload.readEvents?.() ?? upload.events ?? []) {
+			expect(event.source.session_key).toBe(fixture.id);
+			if (event.type === "message") {
+				contents.push(
+					event.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join(""),
+				);
+			}
+		}
+		expect(contents).toEqual(
+			fixture === parent
+				? ["Parent prompt", "Parent answer"]
+				: ["Parent prompt", "Parent answer", "Child prompt", "Child answer"],
+		);
+	}
+}
+
+describe("CodexAdapter copied fork sessions", () => {
+	for (const childFirst of [true, false]) {
+		it(`emits each thread's own content and metadata with ${childFirst ? "child" : "parent"} visited first`, async () => {
+			const fixture = codexForkFixture(childFirst);
+			const result = await scanCodex(new CodexAdapter());
+			expect(result.observedLocalSessionIds).toEqual(
+				childFirst ? [fixture.child.id, fixture.parent.id] : [fixture.parent.id, fixture.child.id],
+			);
+			await assertCodexForkSessions(result.sessions, fixture);
+		});
+	}
+
+	it("emits only the child when its parent file is absent", async () => {
+		const { parent, child } = codexForkFixture();
+		rmSync(parent.file);
+		const result = await scanCodex(new CodexAdapter());
+		expect(result.observedLocalSessionIds).toEqual([child.id]);
+		expect(result.sessions).toHaveLength(1);
+		expect(result.sessions[0]).toMatchObject({
+			localSessionId: child.id,
+			projectPath: child.cwd,
+			startedAt: new Date(child.timestamp),
+			messageCount: 4,
+		});
+	});
+
+	it("re-parses a legacy lock that confirmed a child file under its parent id", async () => {
+		const fixture = codexForkFixture();
+		const legacyRevision = jsonlStatRevision(statSync(fixture.child.file, { bigint: true }));
+		if (!legacyRevision) throw new Error("expected a stable child file stat revision");
+		const result = await scanCodex(
+			new CodexAdapter(),
+			new Map([[fixture.parent.id, legacyRevision]]),
+		);
+		expect(result.observedLocalSessionIds).toEqual([fixture.child.id, fixture.parent.id]);
+		await assertCodexForkSessions(result.sessions, fixture);
+	});
+
+	it("skips both confirmed threads and stops observing a deleted parent", async () => {
+		const { parent, child } = codexForkFixture();
+		const adapter = new CodexAdapter();
+		const first = await scanCodex(adapter);
+		const known = confirmedCodex(first.sessions);
+		expect(known.size).toBe(2);
+		const warm = await scanCodex(adapter, known);
+		expect(warm.sessions).toHaveLength(0);
+		expect(warm.observedLocalSessionIds).toEqual([child.id, parent.id]);
+		rmSync(parent.file);
+		const deleted = await scanCodex(adapter, known);
+		expect(deleted.sessions).toHaveLength(0);
+		expect(deleted.observedLocalSessionIds).toEqual([child.id]);
+		expect(await adapter.sessions.resolve(parent.id)).toBeNull();
+	});
+
+	it("resolves the parent and child to their own sessions after a warm scan", async () => {
+		const fixture = codexForkFixture();
+		const first = await scanCodex(new CodexAdapter());
+		const adapter = new CodexAdapter();
+		await scanCodex(adapter, confirmedCodex(first.sessions));
+		const parent = await adapter.sessions.resolve(fixture.parent.id);
+		const child = await adapter.sessions.resolve(fixture.child.id);
+		if (!parent || !child) throw new Error("expected both fork sessions to resolve");
+		await assertCodexForkSessions([parent, child], fixture);
+	});
+
+	it("does not take a copied parent's id when the first meta has no id", async () => {
+		const { parent, child } = codexForkFixture();
+		rmSync(parent.file);
+		const records = readFileSync(child.file, "utf8").trimEnd().split("\n");
+		records[0] = JSON.stringify({
+			type: "session_meta",
+			timestamp: child.timestamp,
+			payload: { cwd: child.cwd, timestamp: child.timestamp },
+		});
+		writeFileSync(child.file, `${records.join("\n")}\n`);
+		const result = await scanCodex(new CodexAdapter());
+		expect(result.sessions).toHaveLength(0);
+		expect(result.observedLocalSessionIds).toEqual([]);
+	});
+});
+
 describe("CodexAdapter stat-skip scans", () => {
 	it("skips confirmed files without opening the parser, including paths and restart scans", async () => {
 		const { file, first, known } = await quietCodexFixture();
@@ -604,13 +787,13 @@ describe("CodexAdapter stat-skip scans", () => {
 			utimesSync(file, mtime, mtime);
 			const fresh = await scanCodex(adapter);
 			expect(fresh.sessions[0]?.sourceRevision).toBeUndefined();
-			const revision = jsonlStatRevision(
-				statSync(file, { bigint: true }),
-				BigInt(Date.now() + 120_000) * 1_000_000n,
-			);
-			const id = fresh.observedLocalSessionIds[0];
-			if (!id) throw new Error("expected racy Codex fixture id");
-			const known = revision === undefined ? new Map<string, string>() : new Map([[id, revision]]);
+			const clock = spyOn(Date, "now").mockReturnValue(Date.now() + 120_000);
+			let known: Map<string, string>;
+			try {
+				known = confirmedCodex((await scanCodex(adapter)).sessions);
+			} finally {
+				clock.mockRestore();
+			}
 			const result = await scanCodex(adapter, known);
 			expect(result.sessions).toHaveLength(1);
 			expect(result.sessions[0]?.sourceRevision).toBeUndefined();
@@ -632,7 +815,7 @@ describe("CodexAdapter stat-skip scans", () => {
 		for (const revision of oldRevisions) {
 			const migrated = await scanCodex(adapter, new Map([[session.localSessionId, revision]]));
 			expect(migrated.sessions).toHaveLength(1);
-			if (known.size) expect(migrated.sessions[0]?.sourceRevision).toStartWith("jsonl-stat-v1:");
+			if (known.size) expect(migrated.sessions[0]?.sourceRevision).toBe(session.sourceRevision);
 			const next = await scanCodex(adapter, confirmedCodex(migrated.sessions));
 			expect(next.sessions).toHaveLength(known.size ? 0 : 1);
 		}

@@ -49,6 +49,12 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.1
+
+- **Codex session sync:** fork and sub-agent threads now sync as their own
+  sessions. Previously misattributed parent sessions are corrected on the next
+  sync.
+
 ### CLI 0.16.0
 
 - **Breaking scripting contract:** human output stays human-readable when piped;
