@@ -4,13 +4,14 @@ export type DesktopUpdateState =
 	| { status: "disabled"; reason: DesktopUpdateSkipReason }
 	| { status: "idle" }
 	| { status: "checking" }
+	| { status: "available"; version: string }
 	| { status: "downloading"; version: string; percent: number | null }
 	| { status: "ready"; version: string }
 	| { status: "error" };
 
 export type DesktopUpdateEvent =
 	| { type: "check" }
-	| { type: "available"; version: string }
+	| { type: "available"; version: string; checkOnly?: boolean }
 	| { type: "progress"; percent: number }
 	| { type: "downloaded"; version: string }
 	| { type: "not-available" }
@@ -26,7 +27,9 @@ export function reduceDesktopUpdateState(
 			return canCheckForDesktopUpdate(state) ? { status: "checking" } : state;
 		case "available":
 			return state.status === "checking"
-				? { status: "downloading", version: event.version, percent: null }
+				? event.checkOnly
+					? { status: "available", version: event.version }
+					: { status: "downloading", version: event.version, percent: null }
 				: state;
 		case "progress":
 			return state.status === "downloading"
@@ -42,7 +45,7 @@ export function reduceDesktopUpdateState(
 }
 
 export function canCheckForDesktopUpdate(state: DesktopUpdateState): boolean {
-	return state.status === "idle" || state.status === "error";
+	return state.status === "idle" || state.status === "error" || state.status === "available";
 }
 
 export function desktopUpdateStatusLabel(state: DesktopUpdateState): string | null {
@@ -52,6 +55,8 @@ export function desktopUpdateStatusLabel(state: DesktopUpdateState): string | nu
 			return null;
 		case "checking":
 			return "Checking for Updates…";
+		case "available":
+			return `Clawdi ${state.version} is available`;
 		case "downloading":
 			return state.percent === null
 				? `Downloading Clawdi ${state.version}…`

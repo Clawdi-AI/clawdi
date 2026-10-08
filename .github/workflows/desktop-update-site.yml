@@ -3,6 +3,10 @@ name: Desktop Update Site
 on:
   workflow_call:
   workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -15,7 +19,9 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' ||
+      (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'desktop-v'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -24,16 +30,27 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: main
           persist-credentials: false
       - uses: ./.github/actions/setup-bun-ci
       - uses: actions/configure-pages@v6
+        id: pages
       - name: Prepare both Desktop update channels
         env:
           GH_TOKEN: ${{ github.token }}
+          DESKTOP_PAUSED_VERSIONS: ${{ vars.DESKTOP_PAUSED_VERSIONS }}
+          DESKTOP_UPDATE_SITE_URL: ${{ steps.pages.outputs.base_url }}/
         run: bun apps/desktop/scripts/prepare-update-site.ts "$RUNNER_TEMP/desktop-site"
+      - name: Compare all prepared files with Pages
+        id: site
+        env:
+          DESKTOP_UPDATE_SITE_URL: ${{ steps.pages.outputs.base_url }}/
+        run: bun apps/desktop/scripts/compare-update-site.ts "$RUNNER_TEMP/desktop-site"
       - uses: actions/upload-pages-artifact@v5
+        if: steps.site.outputs.changed == 'true'
         with:
           path: ${{ runner.temp }}/desktop-site
       - name: Deploy update metadata
+        if: steps.site.outputs.changed == 'true'
         id: deployment
         uses: actions/deploy-pages@v5

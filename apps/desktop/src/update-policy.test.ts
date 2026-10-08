@@ -47,7 +47,6 @@ describe("evaluateDesktopUpdatePolicy", () => {
 		const cases = [
 			[{ ...SIGNED_STABLE, isPackaged: false }, "development"],
 			[{ ...SIGNED_STABLE, platform: "freebsd" }, "unsupported-platform"],
-			[{ ...SIGNED_STABLE, platform: "linux" }, "package-manager"],
 			[{ ...SIGNED_STABLE, platform: "win32" }, "unsigned"],
 			[{ ...SIGNED_STABLE, isMacAppStore: true }, "mac-app-store"],
 			[{ ...SIGNED_STABLE, channel: "disabled" }, "disabled-by-metadata"],
@@ -77,6 +76,18 @@ describe("evaluateDesktopUpdatePolicy", () => {
 
 		for (const [input, reason] of cases) {
 			expect(evaluateDesktopUpdatePolicy(input)).toEqual({ enabled: false, reason });
+		}
+	});
+	test("DEB/RPM check the release channel without enabling self-install", () => {
+		for (const channel of ["stable", "beta"] as const) {
+			expect(
+				evaluateDesktopUpdatePolicy({
+					...SIGNED_STABLE,
+					platform: "linux",
+					channel,
+					isAppImage: false,
+				}),
+			).toEqual({ enabled: false, reason: "package-manager", channel });
 		}
 	});
 });

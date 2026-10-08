@@ -117,8 +117,18 @@ bun run --cwd apps/desktop package:preview
 
 Preview packages are unsigned or ad-hoc signed and carry
 `clawdiUpdateChannel=disabled`, so the updater skips them deterministically.
-Stable builds download updates in the background and install them only through
-the explicit Restart and Install command.
+Release builds download updates in the background. A native notification announces
+`Clawdi Desktop <version> is ready — restart to update`; clicking it or the
+Restart to Install Update menu item uses electron-updater's default restart.
+Quitting instead uses `autoInstallOnAppQuit` and does not relaunch Desktop.
+macOS/Linux leave background services running through either installation path.
+On the next Desktop launch, the existing reconciliation replaces a live daemon
+whose version or executable path differs from the bundled CLI. Windows waits for
+the existing service-stop operation to release executable locks before installing;
+self-update remains disabled for unsigned Windows builds.
+DEB/RPM installations only check for a newer version and show a non-blocking
+notification and a Download New Version menu link to the GitHub release page.
+They never download or install an update through electron-updater.
 
 ## Release package
 
@@ -208,9 +218,11 @@ immutable GitHub release assets.
 Unsigned Windows releases have no Windows metadata directories and are manual
 downloads only. The GitHub Release includes one `SHA256SUMS` covering all assets;
 the DMG remains the user installer and the ZIP remains Squirrel.Mac's update payload.
+macOS also uploads `<renamed ZIP filename>.blockmap`; packaging refuses a missing
+blockmap, matching electron-updater's `<ZIP URL>.blockmap` differential requests.
 Both channels are rebuilt from all published Desktop releases, choosing their
-highest semantic version, so CLI releases and older-version reruns cannot move
-the feed backwards. Metadata comes from electron-builder, not a custom protocol.
+highest eligible semantic version, so CLI releases and older-version reruns cannot
+move the feed backwards. Metadata comes from electron-builder, not a custom protocol.
 DMG hashes are refreshed after stapling. Never manually replace release assets.
 
 If Pages deployment fails after publication, rerun Desktop Update Site instead
@@ -221,12 +233,81 @@ The standard electron-updater client reads its sole feed configuration from
 electron-builder's `app-update.yml`; no `setFeedURL` override or custom package
 feed URL is used. Release packaging validates that YAML against the strict HTTPS
 input and channel. The client selects `latest` or `beta`, checks after
-30 seconds and every six hours, and supports Check for Updates. Automatic
+30 seconds, every six hours and after system resume, and supports Check for Updates. Automatic
 downgrades are disabled. Channel selection is build-time, not an in-app switch.
 Beta remains on the beta feed even after a stable release; install the signed
 stable DMG manually to leave beta. Stable publication never changes beta metadata.
 Validate a signed beta-to-beta upgrade on a Mac before general distribution;
 the old disabled preview cannot self-update.
+
+### Rollout and pause control
+
+Stable releases enter the feed 24 hours after GitHub `published_at`, with
+electron-updater's documented `stagingPercentage: 25` through the first 48 hours,
+then `stagingPercentage: 100`. Beta has no age gate or staging percentage. The
+Desktop Update Site workflow regenerates both channels hourly, on Desktop release
+publication, and on manual dispatch. It compares every prepared file (including
+`index.html`) and removed feeds with live Pages using curl, skipping upload and
+deployment when unchanged. A generated file returning 404 requires deployment;
+a feed already absent both locally and online does not. Failed preparation or
+comparison preserves the deployed feed. Generation checks existing Pages versions
+and refuses an unexplained regression; a pause may point the feed at an older
+eligible release for users who have not installed the paused version. Clients
+never downgrade an installed app.
+
+Owner: set the repository variable `DESKTOP_PAUSED_VERSIONS` to comma-separated
+versions (no `desktop-v` prefix), then regenerate the feed:
+
+```bash
+gh variable set DESKTOP_PAUSED_VERSIONS --body '1.2.3,1.3.0-beta.2'
+gh workflow run desktop-update-site.yml --ref main
+```
+
+Resume by removing the version from the variable (an empty value pauses nothing),
+then dispatch the same workflow. If every release in a channel is paused, its
+metadata files are omitted. A pause cannot revoke an already downloaded update
+or roll back an installed version; ship a higher version to repair those clients.
+Never delete or modify immutable release assets to halt an update.
+
+Done: after the workflow succeeds, the relevant `latest*.yml` or `beta*.yml` on
+the configured Pages URL names the newest eligible non-paused version, or returns
+404 if the channel has no eligible release.
+
+### Background services during updates
+
+Installation on quit does not reopen Desktop. macOS/Linux do not stop the daemon:
+the running process continues with its existing binary while the bundle or image
+is replaced. On the next launch, [`daemon-runtime.ts`](src/daemon-runtime.ts) and
+the existing account-verified startup reconciliation compare live daemon versions
+and executable paths against the bundled CLI, then reinstall the service when
+they differ. The macOS service uses the stable installed app bundle path.
+
+AppImage is identified through its documented
+[`APPIMAGE` environment variable](https://docs.appimage.org/packaging-guide/environment-variables.html).
+The bundled CLI is copied from the mount to the existing durable
+`userData/runtimes/<version>` runtime before service registration. systemd points
+at that copy, which survives Desktop exit and AppImage replacement; no service
+definition points at a transient `/tmp/.mount_*` path. Reconciliation installs
+the new runtime on the next launch, then prunes older runtime copies.
+
+Windows stops the task process tree before installation to release file locks.
+Unsigned Windows builds keep self-update disabled. Signed Windows updates and
+post-install service recovery still require real-device verification by the owner.
+
+### Linux update end-to-end check
+
+```bash
+bash apps/desktop/scripts/update-e2e.sh
+```
+
+Done: the isolated Docker check builds only two Linux x64 AppImages (0.0.1 and
+0.0.2), trusts a task-local CA in NSS, verifies a real HTTPS download and its SHA-512
+in the updater cache, quits through the production shutdown path, and launches the
+replaced image to assert 0.0.2. It uses a fake bundled CLI and does not prove OS
+service recovery. The container is limited to 4 GiB, builds run serially, and the
+script cleans up its containers, image and processes. PR CI runs this single job
+only for Desktop, its release/update workflows and direct build dependencies.
+Real macOS/Windows signed beta-to-beta checks remain required before first stable.
 
 ## Verification and external gates
 

@@ -18,14 +18,17 @@ import {
 	Menu,
 	type MenuItemConstructorOptions,
 	type MessageBoxOptions,
+	Notification,
 	nativeImage,
 	net,
+	powerMonitor,
 	protocol,
 	type Session,
 	session,
 	shell,
 	Tray,
 } from "electron";
+import electronUpdater from "electron-updater";
 import {
 	authenticateDesktopAccount,
 	type DesktopAuthenticationFlowResult,
@@ -38,6 +41,8 @@ import { DESKTOP_IPC } from "./ipc";
 import { DesktopCliError, DesktopCliService } from "./native-cli";
 import { requireDesktopPlatform } from "./platform";
 import { DesktopUpdateController } from "./update-controller";
+import { DesktopUpdateInstallation } from "./update-install";
+import { desktopUpdateDownloadUrl, desktopUpdateNotification } from "./update-notification";
 import { evaluateDesktopUpdatePolicy } from "./update-policy";
 import { readMacCodeSignature } from "./update-signature";
 import { type DesktopUpdateState, desktopUpdateStatusLabel } from "./update-state";
@@ -59,6 +64,8 @@ let trayStateChecking = true;
 let trayStateRefresh: Promise<void> | null = null;
 let availableWindowOpening: Promise<void> | null = null;
 let updateController: DesktopUpdateController | null = null;
+let updateInstallation: DesktopUpdateInstallation | null = null;
+let updateNotification: Notification | null = null;
 let updateState: DesktopUpdateState = { status: "disabled", reason: "development" };
 let updatePromptedVersion: string | null = null;
 let activeCriticalOperations = 0;
@@ -123,7 +130,12 @@ async function startApplication(): Promise<void> {
 	configurePermissions();
 	createApplicationMenu();
 	createTray();
-	app.on("before-quit", () => {
+	app.on("before-quit", (event) => {
+		if (updateInstallation?.shouldDeferQuit()) {
+			event.preventDefault();
+			runAsync("install the update on quit", updateInstallation.install(true));
+			return;
+		}
 		quitting = true;
 		updateController?.stop();
 		runAsync("cancel sign-in", cli.cancelAuthentication());
@@ -180,16 +192,83 @@ async function initializeUpdates(): Promise<void> {
 		isAppImage: Boolean(process.env.APPIMAGE),
 		windowsPublisher: readPackageMetadataField("clawdiWindowsPublisher"),
 	});
-	if (!policy.enabled) console.info(`Desktop updates disabled: ${policy.reason}`);
+	if (!("channel" in policy)) {
+		console.info(`Desktop updates disabled: ${policy.reason}`);
+		updateState = { status: "disabled", reason: policy.reason };
+		renderUpdateMenus();
+		return;
+	}
+	// A Linux updater checks the same generic feed for DEB/RPM. AppImageUpdater
+	// requires APPIMAGE even to check; DebUpdater can check installed packages.
+	// autoDownload=false and the policy prohibit all artifact/installer operations.
+	// https://www.electron.build/docs/features/auto-update/
+	const updater = policy.enabled ? electronUpdater.autoUpdater : new electronUpdater.DebUpdater();
 	updateController = new DesktopUpdateController({
 		policy,
+		updater,
 		onStateChange: (state) => {
 			updateState = state;
 			renderUpdateMenus();
 		},
-		onUpdateReady: () => runAsync("offer the downloaded update", maybePromptForUpdate()),
+		onUpdateReady: (version) => {
+			showUpdateNotification(version, true);
+			runAsync("offer the downloaded update", maybePromptForUpdate());
+		},
+		onUpdateAvailable: (version) => showUpdateNotification(version, false),
+	});
+	updateInstallation = new DesktopUpdateInstallation({
+		platform: process.platform,
+		isReady: () => updateState.status === "ready",
+		isBusy: () => activeCriticalOperations > 0,
+		stopBackgroundServices: () =>
+			withCriticalOperation(async () => {
+				const state = await cli.bootstrapState();
+				// Release executable locks. Retain the installed unit as durable Sync intent.
+				if (state.daemon.installed) await cli.stopDaemon();
+				return state.daemon.installed;
+			}),
+		restoreBackgroundServices: () => cli.restartDaemon(),
+		install: (onQuit) => {
+			if (onQuit) {
+				app.quit(); // electron-updater autoInstallOnAppQuit; no relaunch.
+				return true;
+			}
+			return updateController?.installDownloadedUpdate() ?? false;
+		},
 	});
 	updateController.start();
+	powerMonitor.on("resume", () =>
+		runAsync(
+			"check for updates after resume",
+			updateController?.checkForUpdates() ?? Promise.resolve(),
+		),
+	);
+}
+
+function showUpdateNotification(version: string, ready: boolean): void {
+	// https://www.electronjs.org/docs/latest/api/notification
+	if (!Notification.isSupported()) return;
+	try {
+		updateNotification?.close();
+		updateNotification = new Notification({
+			...desktopUpdateNotification(version, ready),
+			icon: desktopIcon(),
+		});
+		updateNotification.once("click", () => {
+			if (ready) restartToInstallUpdate();
+			else
+				runAsync(
+					"open the Desktop download",
+					shell.openExternal(desktopUpdateDownloadUrl(version)),
+				);
+		});
+		updateNotification.on("failed", (_event, error) =>
+			console.error("Could not show the Desktop update notification", error),
+		);
+		updateNotification.show();
+	} catch (error) {
+		console.error("Could not show the Desktop update notification", error);
+	}
 }
 
 function readPackageMetadataField(name: string): unknown {
@@ -222,10 +301,25 @@ function updateActionMenuItems(): MenuItemConstructorOptions[] {
 	if (updateState.status === "ready") {
 		items.push({
 			label: "Restart to Install Update",
-			enabled: activeCriticalOperations === 0,
+			enabled: activeCriticalOperations === 0 && !updateInstallation?.isInProgress,
 			click: restartToInstallUpdate,
 		});
-	} else if (updateState.status === "idle" || updateState.status === "error") {
+	} else if (updateState.status === "available") {
+		const version = updateState.version;
+		items.push({
+			label: "Download New Version…",
+			click: () =>
+				runAsync(
+					"open the Desktop download",
+					shell.openExternal(desktopUpdateDownloadUrl(version)),
+				),
+		});
+	}
+	if (
+		updateState.status === "idle" ||
+		updateState.status === "error" ||
+		updateState.status === "available"
+	) {
 		items.push({
 			label: "Check for Updates…",
 			click: () => runAsync("check for updates", checkForUpdatesManually()),
@@ -255,6 +349,7 @@ async function checkForUpdatesManually(): Promise<void> {
 async function maybePromptForUpdate(): Promise<void> {
 	if (
 		updateState.status !== "ready" ||
+		updateInstallation?.isInProgress ||
 		activeCriticalOperations > 0 ||
 		updatePromptedVersion === updateState.version
 	) {
@@ -282,21 +377,7 @@ async function maybePromptForUpdate(): Promise<void> {
 }
 
 function restartToInstallUpdate(): void {
-	if (activeCriticalOperations > 0 || !updateController || updateState.status !== "ready") return;
-	runAsync(
-		"prepare the update",
-		withCriticalOperation(async () => {
-			const state = await cli.bootstrapState();
-			// Release Windows executable locks and prevent the old runtime surviving
-			// an update. Keep the installed unit as durable Sync intent.
-			if (state.daemon.installed) await cli.stopDaemon();
-			quitting = true;
-			if (!updateController?.installDownloadedUpdate()) {
-				quitting = false;
-				if (state.daemon.installed) await cli.restartDaemon();
-			}
-		}),
-	);
+	if (updateInstallation) runAsync("prepare the update", updateInstallation.install(false));
 }
 
 function registerIpc(): void {
@@ -389,8 +470,11 @@ async function withCriticalOperation<T>(action: () => Promise<T>): Promise<T> {
 	} finally {
 		activeCriticalOperations -= 1;
 		renderUpdateMenus();
-		if (activeCriticalOperations === 0)
+		if (activeCriticalOperations === 0) {
+			if (updateInstallation)
+				runAsync("finish the requested quit", updateInstallation.resumePendingQuit());
 			runAsync("offer the downloaded update", maybePromptForUpdate());
+		}
 	}
 }
 

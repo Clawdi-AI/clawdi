@@ -72,6 +72,11 @@ async function verifyReleaseArtifacts(version: string): Promise<void> {
 	}
 	const zipName = zip[0];
 	if (!zipName) throw new Error("Desktop release ZIP is missing.");
+	// electron-updater requests <zip URL>.blockmap, including artifactName:
+	// https://www.electron.build/docs/features/auto-update/
+	if (!existsSync(join(releaseRoot, `${zipName}.blockmap`))) {
+		throw new Error(`Missing differential update asset: ${zipName}.blockmap`);
+	}
 	const metadata = parse(readFileSync(metadataPath, "utf8"));
 	if (!isRecord(metadata) || metadata.version !== version || !Array.isArray(metadata.files)) {
 		throw new Error("Channel metadata has an invalid Desktop update structure.");

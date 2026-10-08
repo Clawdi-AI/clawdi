@@ -1,11 +1,22 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
-import { releaseAssetMetadataName, standardUpdateMetadataName } from "../src/update-metadata";
+import { desktopUpdateSiteTargets, releaseAssetMetadataName } from "../src/update-metadata";
+import { normalizeDesktopUpdateFeedUrl } from "../src/update-policy";
+import {
+	assertDesktopFeedDoesNotRegress,
+	desktopPausedVersions,
+	selectDesktopUpdateRelease,
+} from "../src/update-rollout";
 
 const repository = process.env.GITHUB_REPOSITORY;
 const output = process.argv[2];
+const paused = desktopPausedVersions(process.env.DESKTOP_PAUSED_VERSIONS);
+const now = Date.now();
+const siteUrl = process.env.DESKTOP_UPDATE_SITE_URL;
+if (siteUrl && !normalizeDesktopUpdateFeedUrl(siteUrl))
+	throw new Error("Invalid existing update site URL.");
 if (!repository || !/^[\w-]+\/[\w.-]+$/.test(repository) || !output) {
 	throw new Error("GITHUB_REPOSITORY and an output directory are required.");
 }
@@ -30,30 +41,33 @@ if (!Array.isArray(pages) || !pages.every(Array.isArray))
 const releases = pages.flat().filter(record);
 const desktop = join(output, "desktop");
 mkdirSync(desktop, { recursive: true });
-let channels = 0;
-for (const { channel, arch, platform } of (["stable", "beta"] as const).flatMap((channel) =>
-	(["darwin", "linux", "win32"] as const).flatMap((platform) =>
-		(["arm64", "x64"] as const).map((arch) => ({ channel, arch, platform })),
-	),
-)) {
-	const pattern =
-		channel === "stable"
-			? /^desktop-v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/
-			: /^desktop-v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)-beta\.(?:0|[1-9]\d*))$/;
-	const candidates = releases
-		.flatMap((release) => {
-			const match = typeof release.tag_name === "string" ? pattern.exec(release.tag_name) : null;
-			return !release.draft && release.prerelease === (channel === "beta") && match?.[1]
-				? [{ release, version: match[1] }]
-				: [];
-		})
-		.sort((a, b) => Bun.semver.order(b.version, a.version));
-	const selected = candidates[0];
+// An empty site deliberately removes feeds when every release is paused.
+writeFileSync(
+	join(output, "index.html"),
+	"<!doctype html><title>Clawdi Desktop updates</title>Clawdi Desktop update metadata.",
+);
+for (const { channel, arch, platform, path: relative } of desktopUpdateSiteTargets) {
+	const destination = join(output, relative);
+	rmSync(destination, { force: true });
+	const selected = selectDesktopUpdateRelease(releases, channel, now, paused);
+	if (siteUrl) {
+		const response = await fetch(new URL(relative, siteUrl), {
+			signal: AbortSignal.timeout(15_000),
+			cache: "no-store",
+		});
+		if (response.ok) {
+			const previous: unknown = parse(await response.text());
+			if (!record(previous) || typeof previous.version !== "string")
+				throw new Error(`Invalid existing ${relative}.`);
+			assertDesktopFeedDoesNotRegress(previous.version, selected?.version, paused);
+		} else if (response.status !== 404) {
+			throw new Error(`Could not read existing ${relative}: HTTP ${response.status}.`);
+		}
+	}
 	if (!selected) continue;
 	const { release, version } = selected;
 	if (!Array.isArray(release.assets)) throw new Error("Missing release assets.");
 	const assets = release.assets;
-	const filename = standardUpdateMetadataName(platform, arch, channel);
 	const assetName = releaseAssetMetadataName(platform, arch, channel);
 	const asset = assets.find((item: unknown) => record(item) && item.name === assetName);
 	const platformMetadataPattern = new RegExp(`-${platform}-(x64|arm64)\\.yml$`);
@@ -67,7 +81,7 @@ for (const { channel, arch, platform } of (["stable", "beta"] as const).flatMap(
 		throw new Error(`Incomplete Desktop release: missing ${assetName}.`);
 	// Releases predating Intel support contain only the arm64 metadata.
 	if (!asset && (arch === "x64" || platform !== "darwin")) continue;
-	if (!record(asset) || typeof asset.id !== "number") throw new Error(`Missing ${filename}.`);
+	if (!record(asset) || typeof asset.id !== "number") throw new Error(`Missing ${relative}.`);
 	const metadata: unknown = parse(
 		gh([
 			"api",
@@ -82,7 +96,7 @@ for (const { channel, arch, platform } of (["stable", "beta"] as const).flatMap(
 		!Array.isArray(metadata.files) ||
 		metadata.files.length === 0
 	) {
-		throw new Error(`Invalid ${filename}.`);
+		throw new Error(`Invalid ${relative}.`);
 	}
 	const assetUrl = (name: unknown): string => {
 		const artifactPattern =
@@ -102,10 +116,9 @@ for (const { channel, arch, platform } of (["stable", "beta"] as const).flatMap(
 		file.url = assetUrl(file.url);
 	}
 	if (metadata.path !== undefined) metadata.path = assetUrl(metadata.path);
-	const directory =
-		platform === "darwin" && arch === "arm64" ? desktop : join(desktop, `${platform}-${arch}`);
-	mkdirSync(directory, { recursive: true });
-	writeFileSync(join(directory, filename), stringify(metadata));
-	channels++;
+	delete metadata.stagingPercentage;
+	if (selected.stagingPercentage !== undefined)
+		metadata.stagingPercentage = selected.stagingPercentage;
+	mkdirSync(dirname(destination), { recursive: true });
+	writeFileSync(destination, stringify(metadata));
 }
-if (!channels) throw new Error("No published Desktop update channels found.");
