@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { sessionDetailQueryKey, sessionListQueryKey } from "@clawdi/shared/view";
+import { sessionDetailQueryKey } from "@clawdi/shared/view";
 import { normalizeSessionListQuery } from "../api/session-query";
 
 describe("session query cache keys", () => {
@@ -10,14 +10,6 @@ describe("session query cache keys", () => {
 			sort: "last_activity_at",
 			order: "desc",
 		});
-		expect(sessionListQueryKey({})).toEqual(
-			sessionListQueryKey({
-				page: 1,
-				page_size: 25,
-				sort: "last_activity_at",
-				order: "desc",
-			}),
-		);
 	});
 
 	it("drops empty filters while preserving explicit false filters", () => {

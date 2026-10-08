@@ -1,6 +1,10 @@
 "use client";
 
-import { agentDisplayName, formatShortDate, storeAgentDeletionNotice } from "@clawdi/shared/view";
+import {
+	agentDisplayName,
+	deploymentDeleteSubscriptionPolicy,
+	formatShortDate,
+} from "@clawdi/shared/view";
 import { useRouter } from "@tanstack/react-router";
 import { type ReactElement, useRef, useState } from "react";
 import {
@@ -18,38 +22,10 @@ import { buttonVariants } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useDeleteDeployment } from "@/hosted/agents/deployment-hooks";
 import type { DeploymentDeleteRequest, HostedDeployment } from "@/hosted/billing/contracts";
-import {
-	computeFundingMode,
-	computeFundingSource,
-	computeSubscriptionCancellationCopy,
-	isComputeSubscriptionRenewing,
-} from "@/hosted/billing/subscription/subscription-utils";
+import { computeSubscriptionCancellationCopy } from "@/hosted/billing/subscription/subscription-utils";
 import { cn } from "@/lib/utils";
 
 type DeleteSubscriptionChoice = DeploymentDeleteRequest["subscription_choice"];
-
-/** Which subscription choices the delete dialog offers, and the request used without a choice. */
-export function deploymentDeleteSubscriptionPolicy(deployment: HostedDeployment): {
-	offerChoice: boolean;
-	defaultChoice: DeleteSubscriptionChoice;
-	storeNotice: string | null;
-} {
-	const subscription = deployment.commercial_display?.compute_subscription;
-	const fundingMode = computeFundingMode(deployment.current_plan_slug, subscription);
-	// Deleting never cancels store billing; the API keeps the store subscription.
-	if (computeFundingSource(deployment.current_plan_slug, subscription) === "store") {
-		return {
-			offerChoice: false,
-			defaultChoice: "keep_subscription",
-			storeNotice: storeAgentDeletionNotice(subscription?.store_management),
-		};
-	}
-	return {
-		offerChoice: fundingMode === "subscription" && isComputeSubscriptionRenewing(subscription),
-		defaultChoice: fundingMode === "included_basic" ? "cancel_subscription" : "keep_subscription",
-		storeNotice: null,
-	};
-}
 
 export function HostedDeploymentDeleteAction({
 	children,

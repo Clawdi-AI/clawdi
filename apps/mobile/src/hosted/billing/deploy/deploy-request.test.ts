@@ -11,14 +11,18 @@ import {
 import {
 	type CreationAttempt,
 	canDiscardCreationAttempt,
+	canStartStorePurchase,
 	isDefinitiveAdmissionRejection,
 	offeredQuoteSelections,
 	parseCreationAttempt,
 	retryStoreAdmission,
 	serverAllowsEntitledCreation,
 	storeAdmissionMessageKey,
+	storeAdmissionRecoveryAttempt,
+	storeFundingHoldsAttempt,
 } from "@/hosted/billing/deploy/deploy-request";
 import { en } from "@/lib/i18n/en";
+import { createAttemptStore } from "@/platform/creation-attempt-store";
 
 describe("durable creation boundary", () => {
 	const capabilities: DeployComponents["schemas"]["V1UserProductCapabilities"] = {
@@ -228,6 +232,63 @@ describe("store-only admission recovery", () => {
 		storeFunding: "funded",
 	};
 
+	test("first-send store_compute_unavailable makes the saved request purchasable and discardable; earlier uncertainty stays", async () => {
+		for (const submission of ["prepared", "uncertain"] as const) {
+			const values = new Map<string, string>();
+			const journal = createAttemptStore({
+				getItemAsync: async (key) => values.get(key) ?? null,
+				setItemAsync: async (key, value) => {
+					values.set(key, value);
+				},
+				deleteItemAsync: async (key) => {
+					values.delete(key);
+				},
+			});
+			const saved = { ...attempt, submission };
+			await journal.saveAttempt("account", saved, () => true);
+			const submitting = { ...saved, submission: "uncertain" as const };
+			await journal.replaceAttempt("account", saved, submitting, () => true);
+			const recovered = storeAdmissionRecoveryAttempt(
+				saved,
+				new ApiClientError(409, "store_compute_unavailable"),
+			);
+			if (recovered) await journal.replaceAttempt("account", submitting, recovered, () => true);
+			const restored = await journal.readSavedAttempt("account");
+			if (!restored) throw new Error("Missing saved request");
+			if (submission === "prepared") {
+				expect(restored.storeFunding).toBe("awaiting_purchase");
+				expect(canStartStorePurchase(restored)).toBe(true);
+				expect(canDiscardCreationAttempt(restored) && !storeFundingHoldsAttempt(restored)).toBe(
+					true,
+				);
+			} else {
+				expect(recovered).toBeNull();
+				expect(restored).toEqual(submitting);
+				expect(canDiscardCreationAttempt(restored)).toBe(false);
+			}
+		}
+	});
+
+	test("long Retry-After is not awaited", async () => {
+		const error = new ApiClientError(409, "compute_entitlement_pending", 30_001);
+		let sends = 0;
+		await expect(
+			retryStoreAdmission(
+				attempt,
+				async () => {
+					sends++;
+					throw error;
+				},
+				new AbortController().signal,
+				async () => {
+					throw new Error("Must not wait");
+				},
+			),
+		).rejects.toBe(error);
+		expect(sends).toBe(1);
+		expect(storeAdmissionMessageKey(attempt, error)).toBe("creation.storeComputePending");
+	});
+
 	test.each([
 		["store_compute_unavailable", "creation.storeComputeUnavailable"],
 		["store_compute_subscriptions_disabled", "creation.storeComputeDisabled"],
@@ -248,7 +309,7 @@ describe("store-only admission recovery", () => {
 				"creation.storeComputePending": en.creation.storeComputePending,
 			}[key];
 			expect(copy).toContain("Check status");
-			expect(copy).toContain("retry");
+			if (key !== "creation.storeComputeUnavailable") expect(copy).toContain("retry");
 			expect(storeAdmissionMessageKey({ ...attempt, storeFunding: undefined }, error)).toBeNull();
 		},
 	);
@@ -415,7 +476,7 @@ describe("store-only admission recovery", () => {
 			async () => {
 				sends++;
 				started();
-				throw new ApiClientError(409, "compute_entitlement_pending", 60_000);
+				throw new ApiClientError(409, "compute_entitlement_pending", 30_000);
 			},
 			controller.signal,
 		);

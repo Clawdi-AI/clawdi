@@ -217,7 +217,7 @@ function AccountStories() {
 										/>
 									</WebView>
 									<WebText recipe={transactionsSectionClasses.description}>
-										{t("billingParity.transactionsCount").replace("{count}", "1")}
+										{t("billingParity.transactionsCount", { count: 1 })}
 									</WebText>
 								</WebView>
 							</SettingsSection>
