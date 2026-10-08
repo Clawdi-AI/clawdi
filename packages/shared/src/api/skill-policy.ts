@@ -67,6 +67,3 @@ export function isWritableSkillProject(
 ): boolean {
 	return Boolean(project && project.kind !== "environment" && project.is_owner !== false);
 }
-
-/** Compatibility name for existing Web consumers. */
-export const isBrowserWritableSkillProject = isWritableSkillProject;

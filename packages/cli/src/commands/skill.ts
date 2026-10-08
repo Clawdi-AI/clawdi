@@ -19,7 +19,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import type { SkillSummary } from "../lib/api-schemas";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
-import { commandMessage, commandResult, emitJson, wantsJson } from "../lib/command-output";
+import { commandResult, emitJson, message, wantsJson } from "../lib/command-output";
 import { getConfig } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
@@ -240,7 +240,7 @@ async function installGithubSkillForAgent(
 		skillKey: downloaded.skillKey,
 		hash: committedSnapshot.hash,
 	});
-	commandMessage(
+	message(
 		json,
 		chalk.green(
 			`✓ Installed ${sanitizeMetadata(result.name)} for ${adapterRegistry[target.adapter.agentType].displayName} (v${result.version}, ${result.file_count} files)`,
@@ -372,7 +372,7 @@ export async function skillAdd(
 	const { data } = parseFrontmatter(skillMdSource);
 	if (!data.name || !data.description) {
 		console.error(chalk.red("SKILL.md must declare both `name` and `description` in frontmatter."));
-		commandMessage(
+		message(
 			opts.json,
 			chalk.gray("  Example:\n    ---\n    name: my-skill\n    description: what it does\n    ---"),
 		);
@@ -450,7 +450,7 @@ export async function skillAdd(
 		);
 	}
 
-	commandMessage(
+	message(
 		opts.json,
 		chalk.green(
 			`✓ Uploaded ${sanitizeMetadata(result.skill_key)} (v${result.version}, ${result.file_count} files)`,
@@ -487,7 +487,7 @@ export async function skillInstall(
 	const api = new ApiClient();
 	const target = await resolveSkillMutationTarget(api, opts);
 	if (target.agentId && target.adapter) {
-		commandMessage(
+		message(
 			opts.json,
 			chalk.cyan(
 				`Fetching from ${parsed.owner}/${parsed.repo}${parsed.path ? `/${parsed.path}` : ""}...`,
@@ -510,7 +510,7 @@ export async function skillInstall(
 	const repo = `${parsed.owner}/${parsed.repo}`;
 	const path = parsed.path;
 
-	commandMessage(opts.json, chalk.cyan(`Fetching from ${repo}${path ? `/${path}` : ""}...`));
+	message(opts.json, chalk.cyan(`Fetching from ${repo}${path ? `/${path}` : ""}...`));
 
 	const installResult = unwrap(
 		await api.POST("/v1/projects/{project_id}/skills/install", {
@@ -519,7 +519,7 @@ export async function skillInstall(
 		}),
 	);
 
-	commandMessage(
+	message(
 		opts.json,
 		chalk.green(
 			`\n✓ Installed ${sanitizeMetadata(installResult.name)} in cloud (v${installResult.version}, ${installResult.file_count} files)`,
@@ -573,7 +573,7 @@ export async function skillRm(
 			});
 		}
 		if (materialization && !hasAgentProjection) {
-			commandMessage(opts.json, chalk.green(`✓ Removed ${sanitizeMetadata(key)} from agent`));
+			message(opts.json, chalk.green(`✓ Removed ${sanitizeMetadata(key)} from agent`));
 			commandResult(opts.json, "clawdi.skillRm.v1", {
 				project_id: target.projectId,
 				skill_key: key,
@@ -604,7 +604,7 @@ export async function skillRm(
 			}),
 		);
 	}
-	commandMessage(opts.json, chalk.green(`✓ Removed ${sanitizeMetadata(key)}`));
+	message(opts.json, chalk.green(`✓ Removed ${sanitizeMetadata(key)}`));
 	commandResult(opts.json, "clawdi.skillRm.v1", {
 		project_id: target.projectId,
 		skill_key: key,

@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { commandMessage, commandResult } from "../lib/command-output";
+import { commandResult, message } from "../lib/command-output";
 
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
@@ -62,8 +62,8 @@ export async function projectInvitesCommand(
 			`/v1/projects/${projectId}/invitations/${opts.cancel}`,
 			{ method: "DELETE" },
 		);
-		commandMessage(opts.json, `${chalk.green("✓")} Invitation canceled.`);
-		commandMessage(opts.json, chalk.gray("  The recipient will no longer see it in their inbox."));
+		message(opts.json, `${chalk.green("✓")} Invitation canceled.`);
+		message(opts.json, chalk.gray("  The recipient will no longer see it in their inbox."));
 		commandResult(opts.json, "clawdi.projectInvites.v1", {
 			project_id: projectId,
 			id: opts.cancel,

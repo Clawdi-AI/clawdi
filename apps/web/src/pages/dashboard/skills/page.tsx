@@ -52,7 +52,7 @@ import { unwrap, useApi, useOpenApi } from "@/lib/api";
 import { normalizeApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
+import { isWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
 import { parseAsPositiveInt } from "@/lib/url-search-parsers";
 import { cn } from "@/lib/utils";
 
@@ -190,9 +190,7 @@ function SkillsPageInner() {
 		setPage((current) => Math.min(current, pageCount));
 	}, [pageCount]);
 	const writable = Boolean(
-		selectedProject &&
-			isBrowserWritableSkillProject(selectedProject) &&
-			isProjectOwner(selectedProject),
+		selectedProject && isWritableSkillProject(selectedProject) && isProjectOwner(selectedProject),
 	);
 	useEffect(() => {
 		if (addParam !== "1" || !projectResolved) return;

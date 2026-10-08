@@ -4,7 +4,7 @@ import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
-import { commandMessage, commandResult, emitJson, wantsJson } from "../lib/command-output";
+import { commandResult, emitJson, message, wantsJson } from "../lib/command-output";
 import { parseDotenvDetailed } from "../lib/dotenv";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -206,7 +206,7 @@ export async function vaultSet(key: string, opts: VaultSetOptions = {}) {
 	const api = new ApiClient();
 
 	const targetProject = await resolveVaultWriteProject(api, opts.project);
-	commandMessage(
+	message(
 		opts.json,
 		chalk.gray(`  Target: ${formatVaultTarget(vaultSlug, section, targetProject)}`),
 	);
@@ -224,8 +224,8 @@ export async function vaultSet(key: string, opts: VaultSetOptions = {}) {
 		}),
 	);
 
-	commandMessage(opts.json, chalk.green(`✓ Stored ${normalizedKey}`));
-	commandMessage(
+	message(opts.json, chalk.green(`✓ Stored ${normalizedKey}`));
+	message(
 		opts.json,
 		chalk.gray(
 			`  Reference: ${buildExactClawdiReference(targetProject.projectId, vaultSlug, section, field)}`,
@@ -372,7 +372,7 @@ export async function vaultAttach(vaultSlugArg: string, opts: VaultProjectOption
 	}
 	const projectIdsBefore = vaultProjectIds(vault);
 	if (projectIdsBefore.includes(targetProject.projectId)) {
-		commandMessage(
+		message(
 			opts.json,
 			chalk.gray(
 				`Vault "${sanitizeMetadata(vaultSlug)}" is already available in ${formatProjectTarget(targetProject)}.`,
@@ -389,13 +389,13 @@ export async function vaultAttach(vaultSlugArg: string, opts: VaultProjectOption
 
 	await ensureVault(api, vaultSlug, vaultSlug, targetProject.projectId);
 	const attachedCount = projectIdsBefore.length + 1;
-	commandMessage(
+	message(
 		opts.json,
 		chalk.green(
 			`✓ Attached vault "${sanitizeMetadata(vaultSlug)}" to ${formatProjectTarget(targetProject)}`,
 		),
 	);
-	commandMessage(
+	message(
 		opts.json,
 		chalk.gray(
 			`  Keys in this vault are now available from ${attachedCount} project${attachedCount === 1 ? "" : "s"} and remain one shared key set.`,
@@ -425,7 +425,7 @@ export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOption
 	}
 	const projectIdsBefore = vaultProjectIds(vault);
 	if (!projectIdsBefore.includes(targetProject.projectId)) {
-		commandMessage(
+		message(
 			opts.json,
 			chalk.gray(
 				`Vault "${sanitizeMetadata(vaultSlug)}" is not attached to ${formatProjectTarget(targetProject)}.`,
@@ -462,13 +462,13 @@ export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOption
 		}),
 	);
 	const remainingCount = Math.max(projectIdsBefore.length - 1, 0);
-	commandMessage(
+	message(
 		opts.json,
 		chalk.green(
 			`✓ Detached vault "${sanitizeMetadata(vaultSlug)}" from ${formatProjectTarget(targetProject)}`,
 		),
 	);
-	commandMessage(
+	message(
 		opts.json,
 		chalk.gray(
 			`  No keys were deleted. This vault remains attached to ${remainingCount} project${remainingCount === 1 ? "" : "s"}.`,
@@ -534,7 +534,7 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 	}
 
 	if (Object.keys(fields).length === 0) {
-		commandMessage(
+		message(
 			opts.json,
 			chalk.gray(
 				parsed.skippedInvalidIdentifiers.length > 0
@@ -593,13 +593,10 @@ export async function vaultImport(file: string, opts: VaultImportOptions = {}) {
 		}),
 	);
 
-	commandMessage(
-		opts.json,
-		chalk.green(`✓ Imported ${Object.keys(fields).length} keys to ${target}`),
-	);
-	commandMessage(opts.json, chalk.gray("  References:"));
+	message(opts.json, chalk.green(`✓ Imported ${Object.keys(fields).length} keys to ${target}`));
+	message(opts.json, chalk.gray("  References:"));
 	for (const field of Object.keys(fields).sort()) {
-		commandMessage(
+		message(
 			opts.json,
 			chalk.gray(
 				`    ${sanitizeMetadata(field)}=${buildExactClawdiReference(targetProject.projectId, vaultSlug, section, field)}`,
@@ -684,7 +681,7 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 		attachedProjectIds.length > 1
 			? ` globally from shared ${target} (${attachedProjectIds.length} projects attached)`
 			: ` from ${target}`;
-	commandMessage(opts.json, chalk.green(`✓ Deleted ${normalizedKey}${suffix}`));
+	message(opts.json, chalk.green(`✓ Deleted ${normalizedKey}${suffix}`));
 	commandResult(opts.json, "clawdi.vaultRm.v1", {
 		project_id: targetProject.projectId,
 		vault_id: vault.id,

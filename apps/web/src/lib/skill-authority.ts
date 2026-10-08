@@ -1,5 +1,5 @@
 export {
-	isBrowserWritableSkillProject,
+	isWritableSkillProject,
 	type SkillCapabilities,
 	type SkillReadOnlyReason,
 	skillCapabilities,

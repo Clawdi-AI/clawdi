@@ -122,7 +122,7 @@ import {
 	resourceCatalogReturnTarget,
 	resourceCollectionTarget,
 } from "@/lib/resource-navigation";
-import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
+import { isWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
 import { useCommittedLocation } from "@/lib/use-committed-location";
 import { cn } from "@/lib/utils";
 
@@ -231,7 +231,7 @@ export default function ProjectDetailPage({
 					vaults: projectResourceHref("vaults", projectId),
 				};
 	const isOwner = project?.is_owner !== false;
-	const canManageSkills = isBrowserWritableSkillProject(project);
+	const canManageSkills = isWritableSkillProject(project);
 	const isShareableProject = project ? isCustomProject(project) : false;
 	const scopedBindings = useAgentProjectBindings(scope.kind === "agent" ? scope.agentId : "", {
 		enabled: scope.kind === "agent",

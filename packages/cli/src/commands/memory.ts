@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { Memory } from "../lib/api-schemas";
 import { parsePositiveInteger } from "../lib/cli-options";
-import { commandMessage, commandResult, emitJson, wantsJson } from "../lib/command-output";
+import { commandResult, emitJson, message, wantsJson } from "../lib/command-output";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
@@ -122,7 +122,7 @@ export async function memoryAdd(content: string, opts: { category?: string; json
 			body: { content, category, source: "manual" },
 		}),
 	);
-	commandMessage(opts.json, chalk.green(`✓ Added memory ${result.id} (${category})`));
+	message(opts.json, chalk.green(`✓ Added memory ${result.id} (${category})`));
 	commandResult(opts.json, "clawdi.memoryAdd.v1", { id: result.id, category, status: "added" });
 }
 
@@ -140,7 +140,7 @@ export async function memoryRm(id: string, opts: { yes?: boolean; json?: boolean
 	}
 	const api = new ApiClient();
 	unwrap(await api.DELETE("/v1/memories/{memory_id}", { params: { path: { memory_id: id } } }));
-	commandMessage(opts.json, chalk.green("✓ Deleted memory"));
+	message(opts.json, chalk.green("✓ Deleted memory"));
 	commandResult(opts.json, "clawdi.memoryRm.v1", { id, status: "deleted" });
 }
 
