@@ -5810,6 +5810,54 @@ del list_profile_names
 		});
 	});
 
+	test("reports native Hermes environment conflicts without treating them as projection errors", () => {
+		const paths = tempRuntimePaths();
+		const command = writeFakeHermesCli(paths);
+		const nativeEnvPath = join(paths.userHome, ".hermes", ".env");
+		const nativeEnv = "TELEGRAM_BOT_TOKEN=native-telegram-token\n";
+		writeFileSync(nativeEnvPath, nativeEnv, { mode: 0o600 });
+		const desired = baseManifest(
+			paths,
+			{
+				hermes: {
+					enabled: true,
+					run: {
+						...runSettings(command, ["gateway", "run"]),
+						env: { TELEGRAM_BOT_TOKEN: "managed-telegram-token" },
+					},
+					services: {},
+				},
+			},
+			{
+				projection: {
+					channels: {
+						telegram: {
+							defaultAccount: "clawdi_telegram",
+							accounts: { clawdi_telegram: { enabled: true } },
+						},
+					},
+				},
+			},
+		);
+		const warning = spyOn(log, "warn").mockImplementation(() => {});
+		try {
+			const result = convergeRuntimeManifest(
+				manifestLoad(desired, "hermes-native-env-conflict"),
+				paths,
+			);
+			expect(result.installErrors).toEqual([]);
+			expect(result.resourceProjectionErrors).toEqual([]);
+			expect(result.hermesNativeEnvConflicts).toEqual(["TELEGRAM_BOT_TOKEN"]);
+			expect(readFileSync(nativeEnvPath, "utf8")).toBe(nativeEnv);
+			expect(warning.mock.calls).toContainEqual([
+				"runtime.hermes.native_env_conflicts",
+				{ keys: ["TELEGRAM_BOT_TOKEN"] },
+			]);
+		} finally {
+			warning.mockRestore();
+		}
+	});
+
 	test.each(["mcp-disabled", "runtime-disabled"])(
 		"removes managed profile MCP entries when %s and preserves user servers",
 		(mode) => {
