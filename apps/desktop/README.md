@@ -18,7 +18,7 @@ declared as production dependencies of the Electron shell.
 | --- | --- | --- | --- |
 | macOS | arm64, x64 | signed/notarized DMG and ZIP | electron-updater, isolated architecture feeds |
 | Linux with systemd user services | x64, arm64 | AppImage, DEB and RPM | AppImage auto-update; package manager for DEB/RPM |
-| Windows | x64, arm64 | per-user NSIS; signed when credentials are configured | electron-updater only for signed builds with a pinned Authenticode publisher |
+| Windows | x64, arm64 | per-user NSIS; signed when credentials are configured | electron-updater over HTTPS + SHA-512; publisher verification when signed |
 
 ## Terminal command
 
@@ -124,8 +124,10 @@ Quitting instead uses `autoInstallOnAppQuit` and does not relaunch Desktop.
 macOS/Linux leave background services running through either installation path.
 On the next Desktop launch, the existing reconciliation replaces a live daemon
 whose version or executable path differs from the bundled CLI. Windows waits for
-the existing service-stop operation to release executable locks before installing;
-self-update remains disabled for unsigned Windows builds.
+the existing service-stop operation to release executable locks before installing.
+Its preserved Sync task resumes through account-verified reconciliation on the
+next Desktop launch, or its next logon trigger. Install-on-quit leaves Windows
+Sync stopped until then; choose Restart to Install Update to reopen Desktop.
 DEB/RPM installations only check for a newer version and show a non-blocking
 notification and a Download New Version menu link to the GitHub release page.
 They never download or install an update through electron-updater.
@@ -147,12 +149,27 @@ For signed Windows releases, set `WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD` and
 standard electron-builder Windows signing variables, independent of Apple's
 `CSC_LINK`. Set the publisher as a GitHub repository variable of the same name.
 Partial Windows signing configuration fails before building. With all three values
-unset, the build emits a `-unsigned.exe`, disables updates, and produces no Windows
-update metadata or blockmap. With all three set, it verifies Authenticode and exact
+unset, the build emits a `-unsigned.exe`, its `.exe.blockmap`, and standard
+`latest.yml`/`beta.yml` referencing that exact filename. Unsigned Windows updates
+use HTTPS and electron-updater's SHA-512 validation, the same integrity model as
+the CLI. `win.verifyUpdateCodeSignature=false` omits `publisherName` from
+`app-update.yml`; no custom verifier is installed. With all three set, the default
+`verifyUpdateCodeSignature=true` and configured publisher enable verification.
+The build verifies Authenticode and exact
 Subject equality on the installer, app and CLI, and checks the publisher pin in
 `app-update.yml`. Linux requires no Apple/Windows secrets; its AppImage feed
 uses SHA-512 checksums over HTTPS. DEB/RPM repository signing belongs to the
 package repository operator.
+
+Unsigned Windows installers may show SmartScreen's unknown-publisher warning,
+and Defender may scan, quarantine, or block the installer or bundled CLI. Check
+the official release source and your organization's policy; Desktop does not
+bypass these protections. Publisher authenticity is not verified until signing
+is configured. TODO (2026-10-08): provision the three signing settings above and
+validate a signed beta-to-beta update; that configuration turns publisher
+verification on without a client verifier change. Existing unsigned clients
+accept that signed successor over the same HTTPS/checksum feed, and the new
+installed client then pins the publisher.
 
 Done: the command exits 0 with installers and any applicable validated metadata
 under `release/`. It never publishes. Signed Windows and macOS verification
@@ -215,8 +232,9 @@ electron-updater's standard filenames: `latest.yml`/`beta.yml` on Windows,
 Linux arm64. Release metadata asset names are architecture-qualified to avoid
 upload collisions; Pages restores the standard names. Downloads point to
 immutable GitHub release assets.
-Unsigned Windows releases have no Windows metadata directories and are manual
-downloads only. The GitHub Release includes one `SHA256SUMS` covering all assets;
+Unsigned Windows releases use the same Windows feeds. The `.exe.blockmap`
+asset stays beside the exact `-unsigned.exe` referenced in the metadata.
+The GitHub Release includes one `SHA256SUMS` covering all assets;
 the DMG remains the user installer and the ZIP remains Squirrel.Mac's update payload.
 macOS also uploads `<renamed ZIP filename>.blockmap`; packaging refuses a missing
 blockmap, matching electron-updater's `<ZIP URL>.blockmap` differential requests.
@@ -290,9 +308,18 @@ at that copy, which survives Desktop exit and AppImage replacement; no service
 definition points at a transient `/tmp/.mount_*` path. Reconciliation installs
 the new runtime on the next launch, then prunes older runtime copies.
 
-Windows stops the task process tree before installation to release file locks.
-Unsigned Windows builds keep self-update disabled. Signed Windows updates and
-post-install service recovery still require real-device verification by the owner.
+Windows stops the task process tree before installation to release file locks,
+retaining its registration as durable Sync intent. NSIS upgrades preserve the task.
+The next Desktop launch verifies the account and Agent registrations and restarts
+the stopped task through [`auth-orchestrator.ts`](src/auth-orchestrator.ts).
+Notification/menu installation calls `quitAndInstall()` with its documented
+default restart; install-on-quit uses upstream `install(true, false)` and does not
+relaunch. Known Windows limitation: after install-on-quit, Sync remains stopped
+until Desktop next launches or the Task Scheduler logon trigger runs. Failed
+account/Agent verification needs attention before Desktop can resume Sync.
+The Windows e2e checks this stop/preserve/restart path with a real Task Scheduler
+process; its account and Agent responses are fixtures. Signed Windows updates
+still require signing credentials and real-device verification by the owner.
 
 ### Linux update end-to-end check
 
@@ -305,9 +332,27 @@ Done: the isolated Docker check builds only two Linux x64 AppImages (0.0.1 and
 in the updater cache, quits through the production shutdown path, and launches the
 replaced image to assert 0.0.2. It uses a fake bundled CLI and does not prove OS
 service recovery. The container is limited to 4 GiB, builds run serially, and the
-script cleans up its containers, image and processes. PR CI runs this single job
-only for Desktop, its release/update workflows and direct build dependencies.
-Real macOS/Windows signed beta-to-beta checks remain required before first stable.
+script cleans up its containers, image and processes. PR CI path-filters both update jobs
+to Desktop, its release/update workflows and direct build dependencies.
+Real macOS/Windows signed beta-to-beta checks remain required before first signed stable.
+
+### Windows update end-to-end check
+
+In an elevated session on a disposable Windows x64 runner without an existing
+Clawdi Sync task (the test temporarily trusts its CA in the machine store):
+
+```powershell
+bun apps/desktop/scripts/update-e2e-windows.ts
+```
+
+Done: output includes `Windows update e2e passed`. The `windows-latest` PR job
+builds unsigned N and N+1 NSIS installers using the release configuration,
+silently installs N, and downloads N+1 from a local HTTPS feed trusted by a
+test-only CA. It checks artifact names, SHA-512 and blockmaps, installation on
+quit, N+1 launch, and startup recovery of a real Task Scheduler task. Account/Agent
+responses are fixtures; this does not prove hosted account connectivity. It
+removes its task, certificate, installation and processes on exit, publishes
+nothing, and has per-process bounds plus a 25-minute job timeout.
 
 ## Verification and external gates
 
@@ -319,7 +364,7 @@ Done: the isolated Docker runner passes Desktop typechecking and tests. It does
 not validate Windows or macOS execution. The Windows lifecycle test is opt-in
 (`CLAWDI_WINDOWS_TASK_TEST=1`) and refuses to replace an existing task. Only run
 it in a disposable CI account. Release publication waits for all six native
-builds. Missing Windows secrets select the explicit unsigned/no-updater path;
+builds. Missing Windows secrets select unsigned updates over HTTPS + SHA-512;
 partially configured secrets fail closed. A local cross-compile does not establish
 runtime support.
 
@@ -330,13 +375,13 @@ credentials, live test accounts and native runner execution are external gates;
 this repository does not create credentials or alter hosted infrastructure.
 
 Official contracts: [Bun targets](https://bun.sh/docs/bundler/executables),
-[electron-builder auto-update](https://www.electron.build/auto-update.html),
-[Windows signing](https://www.electron.build/code-signing-win.html),
-[NSIS customization](https://www.electron.build/nsis.html), and
+[electron-builder auto-update](https://www.electron.build/docs/features/auto-update/),
+[Windows signing](https://www.electron.build/docs/features/code-signing/code-signing-win),
+[NSIS customization](https://www.electron.build/docs/nsis), and
 [Task Scheduler security contexts](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks).
 The updater's `Provider` source defines metadata suffixes; NSIS `publisherName`
 enables downloaded-installer signature verification.
-The locked `app-builder-lib@26.16.0` signing manager reads `WIN_CSC_LINK`, and
+The locked `app-builder-lib@26.17.0` signing manager reads `WIN_CSC_LINK`, and
 `WinPackager.doGetCscPassword` prefers `WIN_CSC_KEY_PASSWORD`. Its
 `createTransformerForExtraFiles` signs `.exe` files while copying extraResources,
 including `resources/native/clawdi.exe`; the ordinary builder pipeline also

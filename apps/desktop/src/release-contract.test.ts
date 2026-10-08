@@ -18,12 +18,16 @@ describe("Desktop release contract", () => {
 		expect(unsigned.windowsPublisher).toBeUndefined();
 		expect(unsignedArgs.some((arg) => arg.startsWith("--config.win.sign="))).toBeFalse();
 		expect(unsignedArgs).toContain("--config.win.verifyUpdateCodeSignature=false");
-		expect(unsignedArgs).toContain("--config.nsis.differentialPackage=false");
-		expect(unsignedArgs).toContain("--config.extraMetadata.clawdiUpdateChannel=disabled");
+		expect(unsignedArgs).not.toContain("--config.nsis.differentialPackage=false");
+		expect(unsignedArgs).toContain("--config.extraMetadata.clawdiUpdateChannel=stable");
 		expect(unsignedArgs).toContain(
 			`--config.win.artifactName=Clawdi-\${version}-win32-\${arch}-unsigned.\${ext}`,
 		);
-		expect(unsignedArgs).not.toContain("--config.publish.provider=generic");
+		expect(unsignedArgs).toContain("--config.publish.provider=generic");
+		expect(unsignedArgs).toContain("--config.publish.channel=latest");
+		expect(unsignedArgs).toContain(
+			`--config.publish.url=${RELEASE_ENV.CLAWDI_DESKTOP_UPDATE_FEED_URL}`,
+		);
 		expect(() =>
 			readDesktopReleaseConfiguration({ ...RELEASE_ENV, WIN_CSC_LINK: "certificate.p12" }, "win32"),
 		).toThrow("together");
@@ -41,6 +45,9 @@ describe("Desktop release contract", () => {
 			"--config.win.signtoolOptions.publisherName=CN=Clawdi Inc., O=Clawdi Inc., C=US",
 		);
 		expect(desktopReleaseBuilderArgs(release)).toContain("--config.forceCodeSigning=true");
+		expect(desktopReleaseBuilderArgs(release)).not.toContain(
+			"--config.win.verifyUpdateCodeSignature=false",
+		);
 		for (const publisher of ["Clawdi Inc.", "CN=Clawdi Inc."]) {
 			expect(() =>
 				readDesktopReleaseConfiguration(

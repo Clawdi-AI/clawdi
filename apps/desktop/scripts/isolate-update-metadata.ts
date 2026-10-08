@@ -21,7 +21,6 @@ const source = join(directory, standardUpdateMetadataName(platform, arch, channe
 const target = join(directory, releaseAssetMetadataName(platform, arch, channel));
 
 if (!existsSync(source)) {
-	if (platform === "win32") process.exit(0);
 	throw new Error(`Missing update metadata: ${source}`);
 }
 if (source !== target) renameSync(source, target);

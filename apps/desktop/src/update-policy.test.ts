@@ -17,7 +17,7 @@ const SIGNED_STABLE: DesktopUpdatePolicyInput = {
 };
 
 describe("evaluateDesktopUpdatePolicy", () => {
-	test("enables only AppImage or publisher-pinned Windows release updates", () => {
+	test("enables AppImage and unsigned Windows release updates", () => {
 		for (const platform of ["linux", "win32"] as const) {
 			expect(
 				evaluateDesktopUpdatePolicy({
@@ -25,7 +25,6 @@ describe("evaluateDesktopUpdatePolicy", () => {
 					platform,
 					signature: null,
 					isAppImage: true,
-					windowsPublisher: "CN=Clawdi Inc., O=Clawdi Inc., C=US",
 				}).enabled,
 			).toBe(true);
 		}
@@ -47,7 +46,6 @@ describe("evaluateDesktopUpdatePolicy", () => {
 		const cases = [
 			[{ ...SIGNED_STABLE, isPackaged: false }, "development"],
 			[{ ...SIGNED_STABLE, platform: "freebsd" }, "unsupported-platform"],
-			[{ ...SIGNED_STABLE, platform: "win32" }, "unsigned"],
 			[{ ...SIGNED_STABLE, isMacAppStore: true }, "mac-app-store"],
 			[{ ...SIGNED_STABLE, channel: "disabled" }, "disabled-by-metadata"],
 			[{ ...SIGNED_STABLE, channel: "alpha" }, "invalid-metadata"],
