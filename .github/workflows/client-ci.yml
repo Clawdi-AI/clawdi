@@ -298,8 +298,12 @@ jobs:
         with:
           name: web-e2e-playwright-diagnostics
           path: |
-            apps/web/playwright-report
-            apps/web/test-results
+            apps/web/playwright-report/auth
+            apps/web/playwright-report/oss
+            apps/web/playwright-report/hosted
+            apps/web/test-results/auth
+            apps/web/test-results/oss
+            apps/web/test-results/hosted
           if-no-files-found: ignore
           retention-days: 7
 

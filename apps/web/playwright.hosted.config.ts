@@ -23,8 +23,11 @@ export default defineConfig({
 	expect: { timeout: 12_000 },
 	fullyParallel: false,
 	workers: 1,
-	reporter: "list",
-	use: { baseURL, trace: "on-first-retry" },
+	reporter: process.env.CI
+		? [["github"], ["html", { outputFolder: "playwright-report/hosted", open: "never" }]]
+		: "list",
+	outputDir: "test-results/hosted",
+	use: { baseURL, trace: "on-first-retry", screenshot: "only-on-failure" },
 	webServer: [
 		{
 			command: `bun run dev -- --host 127.0.0.1 --port ${hostedPort}`,

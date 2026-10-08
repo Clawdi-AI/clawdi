@@ -30,11 +30,13 @@ export default defineConfig({
 	// compiles against per-assertion timeouts and flake nondeterministically.
 	workers: 1,
 	reporter: process.env.CI
-		? [["github"], ["html", { outputFolder: "playwright-report", open: "never" }]]
+		? [["github"], ["html", { outputFolder: "playwright-report/oss", open: "never" }]]
 		: "list",
+	outputDir: "test-results/oss",
 	use: {
 		baseURL,
-		trace: "retain-on-failure",
+		trace: "on-first-retry",
+		screenshot: "only-on-failure",
 	},
 	webServer: {
 		command: `bun run dev -- --host 127.0.0.1 --port ${serverPort} --strictPort`,
