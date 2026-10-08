@@ -11,7 +11,7 @@ import {
 } from "../scripts/native-publication.mjs";
 import { validateNativeArchive } from "../src/lib/native-activation";
 import {
-	NATIVE_PUBLISH_TARGET_CATALOG,
+	NATIVE_BUILD_TARGET_CATALOG,
 	NATIVE_RELEASE_MANIFEST_NAME,
 	NATIVE_RELEASE_MANIFEST_V2_NAME,
 	nativeAssetName,
@@ -105,7 +105,7 @@ describe("native publication inventory", () => {
 describe("native publication manifests", () => {
 	test("generates byte-identical v1 fixture output accepted by the old parser", () => {
 		const root = payload();
-		for (const { target } of NATIVE_PUBLISH_TARGET_CATALOG) {
+		for (const { target } of NATIVE_BUILD_TARGET_CATALOG) {
 			writeFileSync(join(root, nativeAssetName(target)), `fixture ${target}\n`);
 		}
 		writeNativeReleaseManifests(root, "1.2.3");
@@ -172,7 +172,7 @@ describe("native publication manifests", () => {
 		expect(check().stderr).toContain("checksum mismatch for clawdi-cli-win32-arm64.tar.gz");
 	});
 
-	test("the existing Unix installer accepts v1 from a release with both manifests", async () => {
+	test("the Unix installer accepts v2 from a release that still publishes both manifests", async () => {
 		const root = await releaseFixture();
 		const home = join(root, "home");
 		mkdirSync(home);
@@ -185,8 +185,8 @@ describe("native publication manifests", () => {
 		});
 		expect(result.code, result.stderr).toBe(0);
 		expect(result.stdout).toContain("Installing clawdi v1.2.3 for linux-x64");
-		expect(result.curlLog).toContain(NATIVE_RELEASE_MANIFEST_NAME);
-		expect(result.curlLog).not.toContain(NATIVE_RELEASE_MANIFEST_V2_NAME);
+		expect(result.curlLog).toContain(NATIVE_RELEASE_MANIFEST_V2_NAME);
+		expect(result.curlLog).not.toContain(`/${NATIVE_RELEASE_MANIFEST_NAME}`);
 	});
 });
 
@@ -205,7 +205,7 @@ fi
 	chmodSync(join(root, "clawdi"), 0o755);
 	const unixArchive = await archive(root);
 	const windowsArchive = await archive(payload("clawdi.exe"), "clawdi.exe");
-	for (const { target } of NATIVE_PUBLISH_TARGET_CATALOG) {
+	for (const { target } of NATIVE_BUILD_TARGET_CATALOG) {
 		writeFileSync(
 			join(root, nativeAssetName(target)),
 			target.startsWith("win32-") ? windowsArchive : unixArchive,

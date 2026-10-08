@@ -50,8 +50,8 @@ oldest pending candidate during a burst of releases. `clawdi update` and `clawdi
 use `CLAWDI_VERSION`; installers resolve `latest` when no pin is supplied.
 
 Native updaters read v2 manifests and tolerate future targets and metadata.
-Existing Unix installations and `install.sh` still accept the frozen v1 manifest.
-Release checks enforce the full current target matrix.
+Existing Unix installations still accept the frozen v1 manifest while `install.sh`
+reads v2. Release checks enforce the full current target matrix.
 
 Done: `bun run --cwd packages/cli test -- tests/commands/update.test.ts` passes
 in the isolated runner.
@@ -786,7 +786,9 @@ typechecks, runs the full CLI suite, packs one immutable npm tarball, and builds
 the native target matrix once. It verifies the npm package after installation
 and runs the compiled Linux artifact through the installer/daemon lifecycle.
 The exact-version native manifest is the checksum contract for all native
-assets. The workflow transfers the same artifacts to the protected npm job and
+assets. Unix installation reads the v2 `clawdi-cli-manifest-v2.txt` manifest;
+the v1 manifest remains published while older native clients are retired. The
+workflow transfers the same artifacts to the protected npm job and
 publishes the npm tarball exactly once to the
 standard npm channel derived from the package version: prereleases use `beta`
 and stable releases use `latest`. Package-level tag overrides are rejected.
