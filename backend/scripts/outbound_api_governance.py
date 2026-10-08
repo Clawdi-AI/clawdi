@@ -81,7 +81,6 @@ EXPECTED_EXTERNAL_IMPORTS: dict[str, frozenset[str]] = {
             "app/routes/channel_routers/shared.py",
             "app/routes/channel_routers/telegram.py",
             "app/routes/clerk_webhooks.py",
-            "app/routes/cli_auth.py",
             "app/services/ai_provider_connection.py",
             "app/services/ai_provider_oauth_attempt.py",
             "app/services/ai_provider_oauth_revoke_worker.py",
