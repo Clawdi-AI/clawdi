@@ -1,77 +1,11 @@
 name: Client CI
 
 on:
+  # Required workflows must start even when all heavy jobs will skip.
+  # https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/troubleshooting-required-status-checks#handling-skipped-but-required-checks
   pull_request:
-    paths:
-      - "apps/mobile/**"
-      - "apps/web/**"
-      - "packages/shared/**"
-      - "packages/cli/**"
-      - "packages/whatsapp-baileys-sidecar/**"
-      - "backend/app/routes/channel_routers/whatsapp.py"
-      - "backend/app/services/whatsapp_*.py"
-      - "backend/tests/*whatsapp*.py"
-      - "backend/tests/conftest.py"
-      - "backend/app/services/channels.py"
-      - "backend/app/models/channel.py"
-      - "scripts/test.sh"
-      - "docker-compose.test.yml"
-      - "docker/test-runner.Dockerfile"
-      - "config/postgres-image.txt"
-      - "backend/pyproject.toml"
-      - "backend/uv.lock"
-      - "install.sh"
-      - "scripts/test-managed-whatsapp-native-e2e.sh"
-      - "scripts/filter-deploy-openapi.py"
-      - "scripts/openapi-typescript.sh"
-      - "scripts/generate-deploy-api.sh"
-      - "scripts/check-deploy-generated-api.sh"
-      - "package.json"
-      - "bun.lock"
-      - "patches/libsignal@6.0.0.patch"
-      - "turbo.json"
-      - "tsconfig.base.json"
-      - "biome.json"
-      - ".github/actions/setup-bun-ci/**"
-      - ".github/actions/setup-docker-hub-mirror/**"
-      - ".github/workflows/client-ci.yml"
-      - ".github/workflows/mobile-release.yml"
   push:
     branches: [main]
-    paths:
-      - "apps/mobile/**"
-      - "apps/web/**"
-      - "packages/shared/**"
-      - "packages/cli/**"
-      - "packages/whatsapp-baileys-sidecar/**"
-      - "backend/app/routes/channel_routers/whatsapp.py"
-      - "backend/app/services/whatsapp_*.py"
-      - "backend/tests/*whatsapp*.py"
-      - "backend/tests/conftest.py"
-      - "backend/app/services/channels.py"
-      - "backend/app/models/channel.py"
-      - "scripts/test.sh"
-      - "docker-compose.test.yml"
-      - "docker/test-runner.Dockerfile"
-      - "config/postgres-image.txt"
-      - "backend/pyproject.toml"
-      - "backend/uv.lock"
-      - "install.sh"
-      - "scripts/test-managed-whatsapp-native-e2e.sh"
-      - "scripts/filter-deploy-openapi.py"
-      - "scripts/openapi-typescript.sh"
-      - "scripts/generate-deploy-api.sh"
-      - "scripts/check-deploy-generated-api.sh"
-      - "package.json"
-      - "bun.lock"
-      - "patches/libsignal@6.0.0.patch"
-      - "turbo.json"
-      - "tsconfig.base.json"
-      - "biome.json"
-      - ".github/actions/setup-bun-ci/**"
-      - ".github/actions/setup-docker-hub-mirror/**"
-      - ".github/workflows/client-ci.yml"
-      - ".github/workflows/mobile-release.yml"
   schedule:
     - cron: "17 6 * * *"
 
@@ -104,8 +38,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+      # Standard job routing: https://github.com/dorny/paths-filter#conditional-execution
       - id: filter
-        uses: dorny/paths-filter@v4
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         with:
           # Use the exact event endpoints so path routing stays on the bounded
           # git fallback instead of the pull-request files API.
@@ -178,7 +113,9 @@ jobs:
               - ".github/workflows/client-ci.yml"
               - ".github/actions/setup-docker-hub-mirror/**"
 
-  # Keep one stable client check while routing package work through the actual
+  # Keep current package coverage: Turbo --affected bun.lock routing is unverified.
+  # https://turborepo.com/docs/reference/run#--affected
+  # Route package work through the actual
   # workspace dependency edges. Shared changes fan out to Web and CLI.
   verify:
     needs: changes
@@ -358,8 +295,7 @@ jobs:
 
   whatsapp-native-e2e:
     needs: changes
-    # Keep the required check name stable. A backend-only PR gets a successful
-    # skipped job, while the daily schedule catches pinned upstream/runtime drift.
+    # The daily schedule catches pinned upstream/runtime drift.
     if: >-
       always() &&
       (github.event_name == 'schedule' ||
@@ -431,3 +367,18 @@ jobs:
           DEPLOY_OPENAPI_SOURCE: https://api.clawdi.ai/openapi.json
           DEPLOY_CONTRACT_FETCH_MODE: strict
         run: scripts/check-deploy-generated-api.sh
+
+  # Aggregate skipped/successful lanes into a stable required check.
+  # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idneeds
+  # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#always
+  ci-ok:
+    name: Client CI OK
+    needs: [changes, verify, deploy-contract-drift, web-e2e, whatsapp-native-e2e, deploy-contract-drift-daily]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject failed or cancelled jobs
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+      - name: Required jobs passed or skipped
+        run: echo "All required jobs passed or were skipped by change detection."
