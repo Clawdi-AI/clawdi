@@ -141,6 +141,48 @@ neutral status while purchases are unavailable). Preview/development builds keep
 Web parity; they show Add credits only when a debug build has a usable store
 flow (Test Store key plus enabled hosted bootstrap).
 
+## Compute subscriptions (P2-M2)
+
+Entries render only on store builds while bootstrap reports
+`compute_subscriptions_enabled`; new purchases also need `compute_slot.available`,
+the loaded `compute` offering and the Paywall host (`useComputePurchaseGate`).
+
+- **Subscribe / upgrade** (deploy wizard source, Agent → Compute on Included Basic)
+  present the official Paywall for the `compute` offering. A compute attempt needs its
+  product up front, so `compute-paywall.ts` holds the Paywall's purchase in the
+  documented `onPurchasePackageInitiated` gate, lets M1 journal and create the attempt
+  for the selected package (deploy: the wizard first persists its draft with the
+  package's plan and passes `pending_deploy_request_id`; upgrade: `target_deployment_id`),
+  then resumes so the Paywall buys exactly that package. A refused attempt resumes
+  `false` and closes the Paywall. A cancelled store sheet closes it with no purchase;
+  Hosted keeps no pending deploy request for store attempts, so admission runs only
+  after this request's own attempt reaches `funding_applied`. The creation journal
+  persists `storeFunding` (`awaiting_purchase` → `purchase_pending` → `funded`) and
+  every admission path checks it, including restart and Retry. Ask-to-Buy / Play
+  `PENDING`, unconfirmed and other unfinished results show "Waiting for approval" with
+  only "Check status", which runs `flow.recover()` and then reads this request's
+  attempts and a fresh bootstrap `compute_slot`. A `funding_applied` result (immediate
+  or from Check status) enables the existing explicit admission with the same
+  `deploy_request_id`. When no attempt of the request is live or funded (for example
+  an expired, declined Ask-to-Buy), the request returns to `awaiting_purchase`, unless
+  an unbound store slot of the same plan exists: hosted `_select_subscription` binds it
+  through `bind_available_store_contract`, so admission is allowed.
+  `reconciliation_required` shows the review copy, blocks admission and allows
+  discarding the draft.
+- **Store rows** use the shared presentation and
+  `resolveStoreSubscriptionActions` (platform-aware; Web keeps store rows read-only).
+  Change plan buys another compute product through the M1 plan-change flow with the
+  live contract from `compute_slot` and the server's replacement mode, and always shows
+  the shared `CLAWDI_LEGAL_URLS` (Terms of Use (EULA), Privacy Policy) with the
+  auto-renew disclosure. Manage opens the Customer Center when the build flag
+  is on, otherwise `showManageSubscriptions()` (iOS, Apple link fallback) or the Play
+  link; rows billed by the other store show "Managed in … on your … device", no link.
+- **Billing**: store slot card and "Restore purchases" (`owned_by_other_account` is
+  reported, never transferred).
+- **Deletion**: store-funded Agents never offer cancellation choices; the custom
+  account-deletion page adds a "cancel it first" step using the shared rule over the
+  subscriptions list plus `compute_slot`.
+
 ## Recovery and official APIs
 
 `flow.recover()` reconciles the local journal and lists server attempts with
@@ -158,7 +200,12 @@ and recovers again. Foreground events during a purchase preserve its SDK identit
 
 Accepted residual behavior (C): a different-purpose purchase remains blocked by
 a locally cancelled `prepared` attempt until the server expires it (up to 15
-minutes), despite reading its current state. Accepted residual behavior (E):
+minutes), despite reading its current state. Hosted links store purchases by
+identity, product and attempt validity, so a second live attempt could turn the
+purchase into a `conflict_hold`; there is no hosted cancel route. The error carries
+that attempt's `expires_at` as `retryAt`, and M2 shows when to try again (this also
+covers choosing another compute product for the same deploy request). Accepted
+residual behavior (E):
 each foreground recovery of an interrupted `prepared` attempt without a hint
 calls `syncPurchases()` again; repeated foreground refreshes can repeat the sync.
 

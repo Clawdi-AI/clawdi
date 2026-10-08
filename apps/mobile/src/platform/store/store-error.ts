@@ -16,7 +16,11 @@ export type PurchaseErrorCode =
 	| "store_request_failed";
 
 export class StorePurchaseError extends Error {
-	constructor(public readonly code: PurchaseErrorCode) {
+	constructor(
+		public readonly code: PurchaseErrorCode,
+		/** For `purchase_pending`: when the blocking prepared attempt expires, if known. */
+		public readonly retryAt: string | null = null,
+	) {
 		super("The store purchase could not be completed");
 		this.name = "StorePurchaseError";
 	}

@@ -5,8 +5,16 @@ type HostedComputeSubscription = NonNullable<
 >;
 
 import type { ComputeRecoveryTarget } from "../api/compute-recovery";
+import type { StorePlatform } from "../api/store-client";
 import type { ComputeSubscriptionManagementResult } from "./compute-subscription-management";
 import { computeFundingSource } from "./compute-subscriptions";
+import {
+	isStoreManagementOnOtherStore,
+	isStoreManagementOnPlatform,
+	isStoreManagementTerminal,
+	type StoreManagement,
+	type StoreManagementProvider,
+} from "./store-management";
 
 export type ComputeSubscriptionActionKind =
 	| "upgrade"
@@ -154,4 +162,46 @@ export function resolveComputeSubscriptionActions({
 	}
 
 	return [];
+}
+
+export type StoreSubscriptionActionKind = "change_store_plan" | "manage_store_subscription";
+
+export type StoreSubscriptionActions = {
+	actions: readonly StoreSubscriptionActionKind[];
+	/** Billed by the other platform's store: managed on that device, with no link here. */
+	managedElsewhere: Exclude<StoreManagementProvider, "test_store"> | null;
+};
+
+/**
+ * Platform-aware extension of `resolveComputeSubscriptionActions` for the Clawdi app on
+ * a store platform. Web has no store platform and keeps store rows read-only. Only the
+ * store that bills a subscription can change or manage it; plan changes are offered
+ * while the contract is active, and the server validates every transition.
+ */
+export function resolveStoreSubscriptionActions({
+	management,
+	platform,
+}: {
+	management: StoreManagement | null | undefined;
+	platform: StorePlatform;
+}): StoreSubscriptionActions {
+	if (!management || isStoreManagementTerminal(management)) {
+		return { actions: [], managedElsewhere: null };
+	}
+	if (isStoreManagementOnOtherStore(management, platform)) {
+		return {
+			actions: [],
+			managedElsewhere: management.provider === "test_store" ? null : management.provider,
+		};
+	}
+	if (!isStoreManagementOnPlatform(management, platform)) {
+		return { actions: [], managedElsewhere: null };
+	}
+	return {
+		actions:
+			management.state === "active"
+				? ["change_store_plan", "manage_store_subscription"]
+				: ["manage_store_subscription"],
+		managedElsewhere: null,
+	};
 }

@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	type ComputeSubscriptionActionEntitlement,
 	resolveComputeSubscriptionActions,
+	resolveStoreSubscriptionActions,
 } from "./compute-subscription-actions";
 import type { ComputeSubscriptionManagementResult } from "./compute-subscription-management";
 
@@ -234,5 +235,59 @@ describe("resolveComputeSubscriptionActions", () => {
 				{ recoveryTarget: { kind: "start_new", action: "start_new" } },
 			),
 		).toEqual([]);
+	});
+});
+
+describe("resolveStoreSubscriptionActions", () => {
+	const management = {
+		provider: "play_store" as const,
+		product_id: "ai.clawdi.app.compute:basic-monthly",
+		management_url: null,
+		auto_renews: true,
+		renews_or_ends_at: "2026-11-08T00:00:00Z",
+		state: "active",
+	};
+
+	test("the billing store's own platform can change plan and manage", () => {
+		expect(resolveStoreSubscriptionActions({ management, platform: "play_store" })).toEqual({
+			actions: ["change_store_plan", "manage_store_subscription"],
+			managedElsewhere: null,
+		});
+		for (const state of ["grace", "lapsed", "paused", "canceled_pending_end", "conflict_hold"]) {
+			expect(
+				resolveStoreSubscriptionActions({
+					management: { ...management, state },
+					platform: "play_store",
+				}).actions,
+			).toEqual(["manage_store_subscription"]);
+		}
+	});
+
+	test("a subscription billed by the other store has no actions and names that store", () => {
+		expect(resolveStoreSubscriptionActions({ management, platform: "app_store" })).toEqual({
+			actions: [],
+			managedElsewhere: "play_store",
+		});
+	});
+
+	test("ended contracts, Test Store and missing projections have no actions", () => {
+		for (const state of ["expired", "revoked", "owner_terminated"]) {
+			expect(
+				resolveStoreSubscriptionActions({
+					management: { ...management, state },
+					platform: "play_store",
+				}),
+			).toEqual({ actions: [], managedElsewhere: null });
+		}
+		expect(
+			resolveStoreSubscriptionActions({
+				management: { ...management, provider: "test_store" },
+				platform: "play_store",
+			}),
+		).toEqual({ actions: [], managedElsewhere: null });
+		expect(resolveStoreSubscriptionActions({ management: null, platform: "app_store" })).toEqual({
+			actions: [],
+			managedElsewhere: null,
+		});
 	});
 });

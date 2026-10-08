@@ -1,5 +1,11 @@
 import { computeSubscriptionRecoveryPresentation } from "@clawdi/shared/api";
 import { transactionsSectionClasses } from "@clawdi/shared/ui";
+import {
+	billingTermLabel,
+	computeSubscriptionPlanLabel,
+	storeProviderLabel,
+	storeSubscriptionSchedule,
+} from "@clawdi/shared/view";
 import { DetailAction } from "@/components/detail/detail-action";
 import { Text } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
@@ -8,6 +14,7 @@ import { formatDate } from "@/hooks/cloud-inventory";
 import type { Subscription } from "@/hosted/billing/format";
 import { subscriptionPrice } from "@/hosted/billing/format";
 import { AddCreditsAction } from "@/hosted/billing/store/add-credits";
+import { StoreSubscriptionPanel } from "@/hosted/billing/store/compute-store";
 import { creditPrice } from "@/hosted/billing/store/store-presentation";
 import { ComputeSubscriptionCard } from "@/hosted/billing/subscription/compute-subscription-card";
 import { useI18n } from "@/lib/i18n";
@@ -97,6 +104,8 @@ export function SubscriptionDetails({
 	const t = useI18n();
 	// Store builds: credits instead of dollars, and no card management instructions.
 	const { cardBilling, creditUnits } = useStoreSurfaces();
+	if (item.funding_source === "store")
+		return <StoreSubscriptionDetails item={item} onDeployment={onDeployment} />;
 	return (
 		<AppView className={webView(transactionsSectionClasses.section)}>
 			<ComputeSubscriptionCard item={item} />
@@ -136,6 +145,38 @@ export function SubscriptionDetails({
 			) : item.funding_source === "stripe" ? (
 				<Text className="text-muted-foreground">{t("store.cardBillingStatus")}</Text>
 			) : null}
+			{item.deployment_id ? (
+				<DetailAction label={t("billing.deployment")} onPress={onDeployment} />
+			) : null}
+		</AppView>
+	);
+}
+
+/** App Store / Google Play rows: store contract facts and store actions only, never Stripe. */
+function StoreSubscriptionDetails({
+	item,
+	onDeployment,
+}: {
+	item: Subscription;
+	onDeployment: () => void;
+}) {
+	const t = useI18n();
+	const management = item.store_management;
+	return (
+		<AppView className={webView(transactionsSectionClasses.section)}>
+			<ComputeSubscriptionCard item={item} storeNotice={false} />
+			<BillingFact label={t("billing.agent")} value={item.agent_name ?? t("billing.unknown")} />
+			<BillingFact label={t("billing.plan")} value={computeSubscriptionPlanLabel(item.plan_slug)} />
+			<BillingFact label={t("billing.term")} value={billingTermLabel(item.billing_term_months)} />
+			<BillingFact label={t("billing.source")} value={storeProviderLabel(management)} />
+			<BillingFact label={t("billing.periodEnd")} value={storeSubscriptionSchedule(management)} />
+			{item.pending_plan_slug ? (
+				<BillingFact
+					label={t("billing.pendingPlan")}
+					value={computeSubscriptionPlanLabel(item.pending_plan_slug)}
+				/>
+			) : null}
+			<StoreSubscriptionPanel item={item} />
 			{item.deployment_id ? (
 				<DetailAction label={t("billing.deployment")} onPress={onDeployment} />
 			) : null}

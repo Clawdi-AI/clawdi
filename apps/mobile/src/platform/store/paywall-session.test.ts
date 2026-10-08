@@ -1,5 +1,9 @@
 import { describe, expect, mock, test } from "bun:test";
-import type { PurchasesError, PurchasesStoreTransaction } from "react-native-purchases";
+import type {
+	PurchasesError,
+	PurchasesPackage,
+	PurchasesStoreTransaction,
+} from "react-native-purchases";
 
 mock.module("react-native-purchases", () => ({
 	default: {
@@ -12,16 +16,20 @@ const storeTransaction = {
 	transactionIdentifier: "GPA.0000-0000",
 } as PurchasesStoreTransaction;
 const purchaseError = (code: string) => ({ error: { code } as PurchasesError });
+const selectedPackage = {
+	identifier: "basic_monthly",
+	product: { identifier: "ai.clawdi.app.compute.basic.monthly" },
+} as PurchasesPackage;
 
-function session(settleGraceMs?: number) {
+function session(settleGraceMs?: number, options?: Parameters<typeof createPaywallSession>[3]) {
 	const controller = new AbortController();
 	const close = mock(() => undefined);
-	const value = createPaywallSession(controller.signal, close, settleGraceMs);
+	const value = createPaywallSession(controller.signal, close, settleGraceMs, options);
 	return { controller, close, ...value };
 }
 function initiate(s: ReturnType<typeof session>) {
 	const resume = mock((_proceed: boolean) => undefined);
-	s.listeners.onPurchasePackageInitiated({ resume });
+	s.listeners.onPurchasePackageInitiated({ packageBeingPurchased: selectedPackage, resume });
 	return resume;
 }
 
@@ -121,5 +129,36 @@ describe("Paywall session (M1 showPaywall contract)", () => {
 		s.failRender();
 		expect(await s.result).toBeNull();
 		expect(s.failure()).toBe("paywall_unavailable");
+	});
+
+	test("an intercepted selection waits for its gate and cannot proceed after close", async () => {
+		const gate: { resume?: (shouldResume: boolean) => void } = {};
+		const intercept = mock((_selected: PurchasesPackage, resume: (go: boolean) => void) => {
+			gate.resume = resume;
+		});
+		const s = session(undefined, { intercept });
+		const resume = initiate(s);
+		expect(intercept.mock.calls[0]?.[0]).toBe(selectedPackage);
+		expect(resume).not.toHaveBeenCalled();
+		s.requestClose();
+		expect(await s.result).toBeNull();
+		gate.resume?.(true);
+		expect(resume).toHaveBeenCalledWith(false);
+	});
+
+	test("settleOnCancel closes on a cancelled store sheet but not on Ask-to-Buy", async () => {
+		const cancelled = session(undefined, { settleOnCancel: true });
+		initiate(cancelled);
+		cancelled.listeners.onPurchaseCancelled();
+		expect(await cancelled.result).toBeNull();
+		expect(cancelled.close).toHaveBeenCalledTimes(1);
+
+		const deferred = session(undefined, { settleOnCancel: true });
+		initiate(deferred);
+		deferred.listeners.onPurchaseError(purchaseError("20"));
+		deferred.listeners.onPurchaseCancelled();
+		expect(deferred.close).not.toHaveBeenCalled();
+		deferred.listeners.onDismiss();
+		await expect(deferred.result).rejects.toMatchObject({ code: "payment_pending" });
 	});
 });

@@ -1,5 +1,6 @@
 import Purchases, {
 	type PurchasesError,
+	type PurchasesPackage,
 	type PurchasesStoreTransaction,
 } from "react-native-purchases";
 import type { StoreTransactionHint } from "./revenuecat";
@@ -7,12 +8,26 @@ import { type PurchaseErrorCode, StorePurchaseError } from "./store-error";
 
 /** Paywall listeners, matching `<RevenueCatUI.Paywall>` props. */
 type PaywallListeners = Readonly<{
-	onPurchasePackageInitiated: (event: { resume: (shouldResume: boolean) => void }) => void;
+	onPurchasePackageInitiated: (event: {
+		packageBeingPurchased: PurchasesPackage;
+		resume: (shouldResume: boolean) => void;
+	}) => void;
 	onPurchaseStarted: () => void;
 	onPurchaseCompleted: (event: { storeTransaction: PurchasesStoreTransaction }) => void;
 	onPurchaseError: (event: { error: PurchasesError }) => void;
 	onPurchaseCancelled: () => void;
 	onDismiss: () => void;
+}>;
+
+export type PaywallSessionOptions = Readonly<{
+	/**
+	 * Holds the Paywall's purchase of the selected package until `resume` is called, as
+	 * RevenueCat documents for validation before a purchase proceeds. Without it the
+	 * purchase proceeds immediately.
+	 */
+	intercept?: (selected: PurchasesPackage, resume: (shouldResume: boolean) => void) => void;
+	/** Close with a null result when the store sheet is cancelled, instead of on dismissal. */
+	settleOnCancel?: boolean;
 }>;
 
 export type PaywallSession = Readonly<{
@@ -37,6 +52,7 @@ export function createPaywallSession(
 	signal: AbortSignal,
 	close: () => void,
 	settleGraceMs = 30_000,
+	options: PaywallSessionOptions = {},
 ): PaywallSession {
 	let inFlight = false;
 	let transaction: StoreTransactionHint | null = null;
@@ -69,6 +85,10 @@ export function createPaywallSession(
 		inFlight = false;
 		if (signal.aborted) settle({ error: abortError() });
 	};
+	const cancelled = () => {
+		nativeSettled();
+		if (options.settleOnCancel && !transaction && !uncertain) settle({ value: null });
+	};
 	if (signal.aborted) onAbort();
 	else signal.addEventListener("abort", onAbort, { once: true });
 
@@ -81,10 +101,18 @@ export function createPaywallSession(
 	return {
 		result,
 		listeners: {
-			onPurchasePackageInitiated: ({ resume }) => {
-				const proceed = !settled && !signal.aborted;
-				if (proceed) inFlight = true;
-				resume(proceed);
+			onPurchasePackageInitiated: ({ packageBeingPurchased, resume }) => {
+				let answered = false;
+				const answer = (shouldResume: boolean) => {
+					if (answered) return;
+					answered = true;
+					const proceed = shouldResume && !settled && !signal.aborted;
+					if (proceed) inFlight = true;
+					resume(proceed);
+				};
+				if (options.intercept && !settled && !signal.aborted)
+					options.intercept(packageBeingPurchased, answer);
+				else answer(true);
 			},
 			onPurchaseStarted: () => {
 				inFlight = true;
@@ -96,7 +124,7 @@ export function createPaywallSession(
 			},
 			onPurchaseError: ({ error }) => {
 				const { PURCHASES_ERROR_CODE } = Purchases;
-				if (error.code === PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR) return nativeSettled();
+				if (error.code === PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR) return cancelled();
 				// Deferred and failed purchases are not proof that no charge happened.
 				uncertain =
 					error.code === PURCHASES_ERROR_CODE.PAYMENT_PENDING_ERROR
@@ -104,7 +132,7 @@ export function createPaywallSession(
 						: (uncertain ?? "purchase_unconfirmed");
 				nativeSettled();
 			},
-			onPurchaseCancelled: nativeSettled,
+			onPurchaseCancelled: cancelled,
 			onDismiss: dismiss,
 		},
 		requestClose: () => {
