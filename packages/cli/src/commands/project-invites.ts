@@ -46,7 +46,6 @@ export async function projectInvitesCommand(
 			!(await confirmOrRequireYes(`Cancel invitation ${opts.cancel}?`, {
 				yes: opts.yes,
 				action: "cancel this project invitation",
-				legacyNonInteractive: true,
 			}))
 		) {
 			commandResult(opts.json, "clawdi.projectInvites.v1", {
@@ -103,6 +102,6 @@ export async function projectInvitesCommand(
 	}
 	console.log();
 	console.log(
-		chalk.gray("Cancel: ") + chalk.cyan(`clawdi project invites ${projectArg} --cancel <id>`),
+		chalk.gray("Cancel: ") + chalk.cyan(`clawdi project invites ${projectArg} --cancel <id> --yes`),
 	);
 }

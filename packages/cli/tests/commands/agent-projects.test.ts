@@ -42,7 +42,7 @@ afterEach(() => {
 });
 
 describe("agent project commands", () => {
-	it("shows friendly agent project verbs in help and hides removed verbs", async () => {
+	it("shows supported agent project verbs in help", async () => {
 		const proc = Bun.spawn([bunExe, srcEntry, "agent", "projects", "--help"], {
 			stdout: "pipe",
 			stderr: "pipe",
@@ -58,8 +58,8 @@ describe("agent project commands", () => {
 		expect(code).toBe(0);
 		expect(stdout).toContain("link");
 		expect(stdout).toContain("unlink");
-		expect(stdout).toContain("attach");
-		expect(stdout).toContain("detach");
+		expect(stdout).not.toContain("attach");
+		expect(stdout).not.toContain("detach");
 		expect(stdout).toContain("move");
 		expect(stdout).not.toContain("set-home");
 		expect(stdout).not.toContain("set-primary");
@@ -68,8 +68,8 @@ describe("agent project commands", () => {
 		expect(stdout).not.toContain("reorder");
 	});
 
-	it("keeps the released attach alias while showing Vault resolution priority", async () => {
-		const proc = Bun.spawn([bunExe, srcEntry, "agent", "projects", "attach", "--help"], {
+	it("shows link options and Vault resolution priority", async () => {
+		const proc = Bun.spawn([bunExe, srcEntry, "agent", "projects", "link", "--help"], {
 			stdout: "pipe",
 			stderr: "pipe",
 			env: {

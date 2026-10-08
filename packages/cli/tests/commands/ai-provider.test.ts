@@ -127,7 +127,7 @@ describe("ai-provider commands", () => {
 				json: true,
 			});
 			await expect(aiProviderRemoveCommand("openai-main")).rejects.toThrow("Pass --force");
-			await aiProviderRemoveCommand("openai-main", { force: true, json: true });
+			await aiProviderRemoveCommand("openai-main", { force: true, yes: true, json: true });
 		} finally {
 			restore();
 			cloudMock.restore();

@@ -105,8 +105,6 @@ Examples:
 		)
 		.option("--timeout <seconds>", "Provider probe timeout in seconds", parsePositiveInteger, 10)
 		.option("--live", "Also run a direct provider metadata probe")
-		.option("--probe", "Deprecated alias for --live")
-		.option("--no-probe", "Compatibility flag; live probes are disabled unless --live is passed")
 		.option("--json", "Output as JSON")
 		.action(async (providerId: string, opts) => {
 			const { aiProviderTestCommand } = await import("../../commands/ai-provider.js");

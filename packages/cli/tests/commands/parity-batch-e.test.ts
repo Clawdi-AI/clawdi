@@ -137,7 +137,9 @@ test("memory mutations emit one result object and route success/category warning
 			"Unknown category",
 		),
 	).toMatchObject({ id: itemId, category: "fact" });
-	expect(await result(["memory", "rm", itemId], "memoryRm", "Deleted memory")).toMatchObject({
+	expect(
+		await result(["memory", "rm", itemId, "--yes"], "memoryRm", "Deleted memory"),
+	).toMatchObject({
 		id: itemId,
 		status: "deleted",
 	});
@@ -162,7 +164,11 @@ test("skill add/install/rm report cloud mutations while keeping fetching progres
 		),
 	).toMatchObject({ project_id: projectId, ...skill });
 	expect(
-		await result(["skill", "rm", "review", "--project", projectId], "skillRm", "Removed review"),
+		await result(
+			["skill", "rm", "review", "--project", projectId, "--yes"],
+			"skillRm",
+			"Removed review",
+		),
 	).toMatchObject({ skill_key: "review", status: "removed" });
 	const envDir = join(taskHome, ".clawdi/environments");
 	mkdirSync(envDir);
@@ -175,7 +181,11 @@ test("skill add/install/rm report cloud mutations while keeping fetching progres
 	await result(["skill", "add", file, "--agent", "claude_code"], "skillAdd", "Uploaded");
 	const localSkill = join(taskHome, ".claude/skills/review/SKILL.md");
 	expect(existsSync(localSkill)).toBe(true);
-	await result(["skill", "rm", "review", "--agent", "claude_code"], "skillRm", "Removed review");
+	await result(
+		["skill", "rm", "review", "--agent", "claude_code", "--yes"],
+		"skillRm",
+		"Removed review",
+	);
 	expect(existsSync(localSkill)).toBe(false);
 	writeFileSync(file, "# Missing frontmatter");
 	const invalid = await cli(["skill", "add", file, "--json"]);
@@ -247,7 +257,7 @@ test("vault mutations expose key names only and preserve explicit deletion/impor
 		await result(["vault", "attach", "service", ...args], "vaultAttach", "already available"),
 	).toMatchObject({ status: "already_attached" });
 	expect(
-		await result(["vault", "detach", "service", ...args], "vaultDetach", "--yes will be required"),
+		await result(["vault", "detach", "service", ...args, "--yes"], "vaultDetach", "Detached"),
 	).toMatchObject({ status: "detached" });
 	expect(
 		await result(["vault", "detach", "service", ...args], "vaultDetach", "not attached"),
@@ -259,7 +269,7 @@ test("vault mutations expose key names only and preserve explicit deletion/impor
 	});
 });
 
-test("project sharing covers creation, lists and revoke/cancel with existing deprecation notices", async () => {
+test("project sharing covers creation, lists and revoke/cancel with explicit confirmation", async () => {
 	const url = `https://cloud.example.test/share/${"t".repeat(43)}`;
 	handler = (call) =>
 		jsonResponse(
@@ -294,16 +304,16 @@ test("project sharing covers creation, lists and revoke/cancel with existing dep
 	});
 	expect(
 		await result(
-			["project", "share-links", projectId, "--revoke", itemId],
+			["project", "share-links", projectId, "--revoke", itemId, "--yes"],
 			"projectShareLinks",
-			"--yes will be required",
+			"Share link revoked",
 		),
 	).toMatchObject({ id: itemId, status: "revoked" });
 	expect(
 		await result(
-			["project", "invites", projectId, "--cancel", itemId],
+			["project", "invites", projectId, "--cancel", itemId, "--yes"],
 			"projectInvites",
-			"--yes will be required",
+			"Invitation canceled",
 		),
 	).toMatchObject({ id: itemId, status: "canceled" });
 });
@@ -322,14 +332,18 @@ test("agent project mutations report link identities and updated priority withou
 		),
 	).toMatchObject({ items: [{ binding_id: itemId, priority: 2 }] });
 	expect(
-		await result(["agent", "projects", "unlink", ...args], "agentProjectsUnlink", "Unlinked"),
+		await result(
+			["agent", "projects", "unlink", ...args, "--yes"],
+			"agentProjectsUnlink",
+			"Unlinked",
+		),
 	).toMatchObject({ id: itemId, status: "unlinked" });
 });
 
 test("inbox decline/forget emit results without exposing a persisted share credential", async () => {
 	handler = () => jsonResponse({ status: "declined" });
 	expect(
-		await result(["inbox", "decline", itemId], "inboxDecline", "Invitation declined"),
+		await result(["inbox", "decline", itemId, "--yes"], "inboxDecline", "Invitation declined"),
 	).toMatchObject({ id: itemId, status: "declined" });
 	const token = "s".repeat(43);
 	writeFileSync(
@@ -350,7 +364,7 @@ test("inbox decline/forget emit results without exposing a persisted share crede
 		}),
 	);
 	expect(
-		await result(["inbox", "forget", projectId], "inboxForget", "--yes will be required"),
+		await result(["inbox", "forget", projectId, "--yes"], "inboxForget", "Forgot"),
 	).toMatchObject({ project_id: projectId, status: "forgotten", removed_skill_count: 0 });
 	expect(readFileSync(join(taskHome, ".clawdi/share-tokens.json"), "utf8")).not.toContain(token);
 });

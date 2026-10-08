@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,7 +14,6 @@ const agentId = "00000000-0000-0000-0000-000000000101";
 const projectId = "00000000-0000-0000-0000-000000000102";
 const linkId = "00000000-0000-0000-0000-000000000103";
 const invitationId = "00000000-0000-0000-0000-000000000104";
-const notice = "--yes will be required in a non-interactive shell starting in 0.16";
 let tmpHome: string;
 let originalHome: string | undefined;
 let originalApiUrl: string | undefined;
@@ -65,7 +64,7 @@ describe("Tier D destructive confirmations", () => {
 						response: () => jsonResponse({ desired_state: "removed" }),
 					},
 				]),
-			run: () => agentSkillsRemove(agentId, "library-key"),
+			run: (yes?: boolean) => agentSkillsRemove(agentId, "library-key", { yes }),
 			mutation: `/v1/agents/${agentId}/skill-references/library-id`,
 		},
 		{
@@ -78,7 +77,7 @@ describe("Tier D destructive confirmations", () => {
 						response: () => jsonResponse({ status: "revoked" }),
 					},
 				]),
-			run: () => projectShareLinksCommand(projectId, { revoke: linkId }),
+			run: (yes?: boolean) => projectShareLinksCommand(projectId, { revoke: linkId, yes }),
 			mutation: `/v1/projects/${projectId}/share-links/${linkId}`,
 		},
 		{
@@ -91,7 +90,7 @@ describe("Tier D destructive confirmations", () => {
 						response: () => jsonResponse({ status: "canceled" }),
 					},
 				]),
-			run: () => projectInvitesCommand(projectId, { cancel: invitationId }),
+			run: (yes?: boolean) => projectInvitesCommand(projectId, { cancel: invitationId, yes }),
 			mutation: `/v1/projects/${projectId}/invitations/${invitationId}`,
 		},
 		{
@@ -128,7 +127,7 @@ describe("Tier D destructive confirmations", () => {
 						response: () => new Response(null, { status: 204 }),
 					},
 				]),
-			run: () => vaultDetach("providers", { project: projectId }),
+			run: (yes?: boolean) => vaultDetach("providers", { project: projectId, yes }),
 			mutation: "/v1/vault/providers",
 		},
 		{
@@ -152,30 +151,45 @@ describe("Tier D destructive confirmations", () => {
 				);
 				return mockFetch([]);
 			},
-			run: () => inboxForgetCommand(projectId),
+			run: (yes?: boolean) => inboxForgetCommand(projectId, { yes }),
 			mutation: null,
 		},
 	] as const;
 
-	it.each(cases)("warns and proceeds for $name without --yes", async (testCase) => {
-		const { captured, restore } = testCase.setup();
-		const errors: string[] = [];
-		const output: string[] = [];
-		const originalError = console.error;
-		const originalLog = console.log;
-		console.error = (value?: unknown) => errors.push(String(value));
-		console.log = (value?: unknown) => output.push(String(value));
-		try {
-			await testCase.run();
-		} finally {
-			console.error = originalError;
-			console.log = originalLog;
-			restore();
-		}
+	for (const testCase of cases) {
+		it.each([false, true])(`${testCase.name} enforces confirmation with yes=%s`, async (yes) => {
+			const { captured, restore } = testCase.setup();
+			const tokenPath = join(tmpHome, ".clawdi", "share-tokens.json");
+			const originalTokens = testCase.mutation === null ? readFileSync(tokenPath, "utf8") : null;
+			const originalError = console.error;
+			const originalLog = console.log;
+			console.error = () => {};
+			console.log = () => {};
+			try {
+				if (yes) {
+					await testCase.run(yes);
+				} else {
+					await expect(testCase.run()).rejects.toThrow(
+						/Confirmation required to .+\. Re-run with --yes in a non-interactive shell\./,
+					);
+				}
+			} finally {
+				console.error = originalError;
+				console.log = originalLog;
+				restore();
+			}
 
-		expect(errors).toContain(notice);
-		expect(output.join("\n")).not.toContain(notice);
-		if (testCase.mutation)
-			expect(captured.some((request) => request.path.startsWith(testCase.mutation))).toBe(true);
-	});
+			const writes = captured.filter((request) => request.method !== "GET");
+			if (yes && testCase.mutation) {
+				expect(writes).toHaveLength(1);
+				expect(new URL(writes[0].path, "https://api.test").pathname).toBe(testCase.mutation);
+			} else {
+				expect(writes).toEqual([]);
+			}
+			if (originalTokens !== null) {
+				if (yes) expect(JSON.parse(readFileSync(tokenPath, "utf8")).tokens).toEqual([]);
+				else expect(readFileSync(tokenPath, "utf8")).toBe(originalTokens);
+			}
+		});
+	}
 });
