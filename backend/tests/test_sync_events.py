@@ -1242,135 +1242,155 @@ async def test_pending_events_cleared_on_rollback_hook(db_session: AsyncSession)
     assert "_clawdi_pending_sse_events" not in sync_session.info
 
 
-@pytest.mark.asyncio
-async def test_try_subscribe_caps_per_user_and_per_key(seed_user: User):
-    """Round-r5 P1: verify both subscription caps that the SSE
-    route relies on for blast-radius bounds.
+@pytest.mark.parametrize(
+    "hold_oldest_refresh", [False, True], ids=["next-refresh-closes", "same-worker-zombie"]
+)
+async def test_real_sse_bound_key_replacement_admits_and_closes_oldest_stream(
+    db_session: AsyncSession,
+    seed_user: User,
+    channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+    hold_oldest_refresh: bool,
+):
+    """Postgres admits the replacement while a superseded local stream still exists."""
+    from app.main import app
+    from app.routes import sync as sync_route
+    from app.services.api_key import mint_api_key
 
-    1. Per-user cap: `max_per_user` is the hard ceiling. Once
-       reached, `try_subscribe` MUST return None (route turns
-       into 429). A regression dropping this cap lets a buggy
-       client open unbounded SSE streams against a single user
-       and exhaust process memory.
-
-    2. Per-key cap (Agent API keys only): a bound
-       `api_key_id` may hold three simultaneous subscribers for
-       daemon skill sync, runtime-watch invalidation, and one
-       debug/diagnostic connection. A fourth is rejected. Unbound
-       keys (multi-agent personal install: serve --all spawns N
-       daemons sharing one auth key from ~/.clawdi/auth.json) MUST
-       bypass this cap so 3+ agent installs continue to receive
-       realtime sync.
-
-    3. Aggregate user cap remains authoritative: five bound keys
-       with two routine streams each fill all ten user slots. A
-       key's otherwise-allowed third diagnostic stream is rejected.
-    """
-    user_id = seed_user.id
-    bound_key = uuid.uuid4()
-    unbound_key = uuid.uuid4()
-
-    # Clean any prior subscribers for this user from earlier
-    # tests in the module.
-    sync_events._subscribers.pop(user_id, None)
-
-    # 1) per-user cap: fill exactly max_per_user, next must None.
-    handles: list = []
-    for _ in range(3):
-        h = await sync_events.try_subscribe(
-            user_id,
-            frozenset(),
-            max_per_user=3,
-            api_key_id=None,
-            is_env_bound=False,
-        )
-        assert h is not None
-        handles.append(h)
-    over = await sync_events.try_subscribe(
-        user_id,
-        frozenset(),
-        max_per_user=3,
-        api_key_id=None,
-        is_env_bound=False,
+    minted = await mint_api_key(
+        db_session,
+        user_id=seed_user.id,
+        environment_id=channel_agent.id,
+        label="sse-bound-key-replacement",
     )
-    assert over is None, "per-user cap must reject the (max_per_user+1)-th subscriber"
+    await db_session.commit()
+    monkeypatch.setattr(sync_route, "HEARTBEAT_INTERVAL_S", 0.05)
+    oldest_id = None
+    oldest_refresh_started = asyncio.Event()
+    allow_oldest_refresh = asyncio.Event()
+    released = []
+    refresh = sync_route.refresh_sync_subscription_lease
+    release = sync_route.release_sync_subscription_lease
+    tasks_before = asyncio.all_tasks()
 
-    # Cleanup so the next phase starts with an empty list.
-    for q, _sub in handles:
-        sync_events.unsubscribe(user_id, q)
-    sync_events._subscribers.pop(user_id, None)
+    async def controlled_refresh(lease_id, **kwargs):
+        if hold_oldest_refresh and lease_id == oldest_id:
+            oldest_refresh_started.set()
+            await allow_oldest_refresh.wait()
+        return await refresh(lease_id, **kwargs)
 
-    # 2a) bound deploy key uses the production default cap of 3.
-    bound_handles: list = []
-    for _ in range(3):
-        h = await sync_events.try_subscribe(
-            user_id,
-            frozenset(),
-            max_per_user=10,
-            api_key_id=bound_key,
-            is_env_bound=True,
-        )
-        assert h is not None
-        bound_handles.append(h)
-    fourth = await sync_events.try_subscribe(
-        user_id,
-        frozenset(),
-        max_per_user=10,
-        api_key_id=bound_key,
-        is_env_bound=True,
-    )
-    assert fourth is None, "bound deploy key must reject its fourth subscriber"
+    async def capture_release(lease_id):
+        await release(lease_id)
+        released.append(lease_id)
 
-    # 2b) unbound key (multi-agent personal install) bypasses
-    # the per-key cap — `serve --all` runs N daemons that all
-    # use ~/.clawdi/auth.json. With 5 daemons all 5 must
-    # subscribe successfully.
-    unbound_handles: list = []
-    for _ in range(5):
-        h = await sync_events.try_subscribe(
-            user_id,
-            frozenset(),
-            max_per_user=10,
-            api_key_id=unbound_key,
-            is_env_bound=False,
-        )
-        assert h is not None, "unbound key must bypass max_per_key"
-        unbound_handles.append(h)
+    monkeypatch.setattr(sync_route, "refresh_sync_subscription_lease", controlled_refresh)
+    monkeypatch.setattr(sync_route, "release_sync_subscription_lease", capture_release)
+    requests = []
 
-    for q, _sub in (*bound_handles, *unbound_handles):
-        sync_events.unsubscribe(user_id, q)
-    sync_events._subscribers.pop(user_id, None)
+    def open_request():
+        disconnected = asyncio.Event()
+        connected = asyncio.Event()
+        first_request = True
+        bodies = []
 
-    # 3) Five bound keys with their two routine streams fill the
-    # aggregate user cap. The first key is still below its cap of
-    # three, but its diagnostic stream must be rejected by the
-    # account-level ceiling.
-    routine_handles: list = []
-    routine_keys = [uuid.uuid4() for _ in range(5)]
-    for key_id in routine_keys:
-        for _ in range(2):
-            h = await sync_events.try_subscribe(
-                user_id,
-                frozenset(),
-                max_per_user=10,
-                api_key_id=key_id,
-                is_env_bound=True,
+        async def receive():
+            nonlocal first_request
+            if first_request:
+                first_request = False
+                return {"type": "http.request", "body": b"", "more_body": False}
+            await disconnected.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            if message["type"] == "http.response.start":
+                assert message["status"] == 200
+            elif message["type"] == "http.response.body":
+                bodies.append(message["body"])
+                if message["body"] == b": connected\n\n":
+                    connected.set()
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": "/v1/sync/events",
+            "raw_path": b"/v1/sync/events",
+            "query_string": b"",
+            "headers": [(b"authorization", f"Bearer {minted.raw_key}".encode())],
+            "client": ("127.0.0.1", 1),
+            "server": ("test", 80),
+        }
+        task = asyncio.create_task(app(scope, receive, send))
+        requests.append((task, disconnected, connected, bodies))
+        return connected
+
+    try:
+        async with asyncio.timeout(8):
+            lease_ids = []
+            for index in range(3):
+                await open_request().wait()
+                current_ids = set(
+                    await db_session.scalars(
+                        select(SyncSubscriptionLease.id).where(
+                            SyncSubscriptionLease.bound_api_key_id == minted.api_key.id
+                        )
+                    )
+                )
+                new_ids = current_ids - set(lease_ids)
+                assert len(new_ids) == 1
+                lease_ids.append(new_ids.pop())
+                if index == 0:
+                    oldest_id = lease_ids[0]
+            assert sync_events.connection_count(seed_user.id) == 3
+            start = datetime.now(UTC) - timedelta(seconds=90)
+            for index, lease_id in enumerate(lease_ids):
+                await db_session.execute(
+                    update(SyncSubscriptionLease)
+                    .where(SyncSubscriptionLease.id == lease_id)
+                    .values(created_at=start + timedelta(seconds=index))
+                )
+            await db_session.commit()
+            if hold_oldest_refresh:
+                await oldest_refresh_started.wait()
+
+            await open_request().wait()
+            if hold_oldest_refresh:
+                # The missing lease's stream is still registered on this worker.
+                assert not requests[0][0].done()
+                assert sync_events.connection_count(seed_user.id) == 4
+                assert released == []
+                allow_oldest_refresh.set()
+
+            await requests[0][0]
+            assert requests[0][3][-1] == b""
+            assert released == [oldest_id]
+            assert sync_events.connection_count(seed_user.id) == 3
+            assert all(not request[0].done() for request in requests[1:])
+            remaining = set(
+                await db_session.scalars(
+                    select(SyncSubscriptionLease.id).where(
+                        SyncSubscriptionLease.bound_api_key_id == minted.api_key.id
+                    )
+                )
             )
-            assert h is not None
-            routine_handles.append(h)
-
-    diagnostic = await sync_events.try_subscribe(
-        user_id,
-        frozenset(),
-        max_per_user=10,
-        api_key_id=routine_keys[0],
-        is_env_bound=True,
+            assert len(remaining) == 3
+            assert oldest_id not in remaining
+            assert set(lease_ids[1:]) <= remaining
+    finally:
+        allow_oldest_refresh.set()
+        for task, disconnected, _connected, _bodies in requests:
+            disconnected.set()
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*(request[0] for request in requests), return_exceptions=True)
+    assert sync_events.connection_count(seed_user.id) == 0
+    assert str(seed_user.id) not in sync_events.sync_subscriptions_changed._waiters
+    assert not await db_session.scalar(
+        select(SyncSubscriptionLease.id).where(SyncSubscriptionLease.user_id == seed_user.id)
     )
-    assert diagnostic is None, "per-user cap must reject an otherwise-allowed third stream"
-
-    for q, _sub in routine_handles:
-        sync_events.unsubscribe(user_id, q)
-    sync_events._subscribers.pop(user_id, None)
+    assert asyncio.all_tasks() <= tasks_before
 
 
 @pytest.mark.parametrize("disconnect", ["peer", "cancel"])

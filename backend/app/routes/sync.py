@@ -16,9 +16,9 @@ Heartbeat: server emits `: ping` comment line every 25s. Daemon
 considers the connection stale if no message arrives for 60s and
 reconnects with exponential backoff (1→60s, ±20% jitter).
 
-Connection cap: per-user max concurrent SSE connections (v1
-default 10) — excess gets 429 with `Retry-After`. Stops a
-misbehaving daemon from opening hundreds of streams.
+Connection caps: excess bound-key connections replace the oldest stream
+at least 60s old. The per-user cap (v1 default 10) returns 429 with
+`Retry-After`, bounding account-level memory and connection use.
 
 Server-side project filter: each subscriber registers with the set
 of `project_ids` it's allowed to see (`project_ids_visible_to`). The
@@ -68,15 +68,17 @@ router = APIRouter(prefix="/sync", tags=["sync"])
 log = logging.getLogger(__name__)
 
 
-# Per-user open-connection cap. Bound deploy keys may each hold
+# PostgreSQL enforces the connection caps. Bound deploy keys may each hold
 # three streams (daemon skill sync, runtime-watch invalidation,
-# and one debug/diagnostic stream), but the aggregate user cap
+# and one debug/diagnostic stream). Excess bound-key connections replace the
+# oldest stream at least 60s old, but the aggregate user cap
 # remains authoritative: five keys with their two routine streams
 # consume all 10 slots, so an additional diagnostic stream gets
 # 429 until another stream closes. This bounds account-level
 # memory and connection use.
 PER_USER_CONNECTION_CAP = 10
 PER_BOUND_KEY_CONNECTION_CAP = 3
+BOUND_KEY_EVICTION_MIN_AGE = timedelta(seconds=60)
 
 # Heartbeat cadence. SSE comments (`: ping\n\n`) are ignored by
 # clients but keep intermediary proxies (k8s ingress, Cloudflare)
@@ -186,7 +188,7 @@ async def refresh_subscription_lease(lease_id: UUID, close_stream: asyncio.Event
             close_stream.set()
             return
         if not refreshed:
-            log.warning("sync events: subscription lease expired")
+            log.warning("sync events: subscription lease expired or superseded")
             close_stream.set()
             return
 
@@ -314,6 +316,7 @@ async def events(
             max_per_user=PER_USER_CONNECTION_CAP,
             max_per_key=PER_BOUND_KEY_CONNECTION_CAP,
             ttl=SUBSCRIPTION_LEASE_TTL,
+            evict_bound_key_min_age=BOUND_KEY_EVICTION_MIN_AGE,
         )
         if lease_id is None:
             raise HTTPException(
@@ -324,24 +327,9 @@ async def events(
         subscription = await sync_events.try_subscribe(
             user_id,
             initial_visible,
-            max_per_user=PER_USER_CONNECTION_CAP,
             api_key_id=auth.api_key.id if auth.api_key is not None else None,
-            # Per-key cap only applies to Agent API keys. Unbound
-            # CLI keys are user-level (one key shared across N daemons
-            # via `clawdi daemon install --all`), so any small per-key
-            # cap would silently 429 later local agents on a multi-agent
-            # machine. Bound keys use `try_subscribe`'s single default
-            # authority of 3: skill sync + runtime watch + one diagnostic.
-            is_env_bound=(auth.api_key is not None and auth.api_key.environment_id is not None),
             environment_id=(auth.api_key.environment_id if auth.api_key is not None else None),
-            max_per_key=PER_BOUND_KEY_CONNECTION_CAP,
         )
-        if subscription is None:
-            raise HTTPException(
-                status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="too many concurrent sync subscriptions for this user",
-                headers={"Retry-After": "30"},
-            )
     except BaseException:
         if lease_id is not None:
             await release_subscription_lease_safely(lease_id)
