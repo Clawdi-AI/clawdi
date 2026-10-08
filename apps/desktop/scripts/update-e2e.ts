@@ -270,7 +270,7 @@ try {
 		CLAWDI_DESKTOP_UPDATE_E2E_SHA512: sha512,
 	});
 	assert.equal(JSON.parse(readFileSync(join(root, "download.json"), "utf8")).version, "0.0.1");
-	assert.match(readFileSync(join(root, "cli.log"), "utf8"), /^daemon stop$/m);
+	assert.doesNotMatch(readFileSync(join(root, "cli.log"), "utf8"), /^daemon stop$/m);
 	assert.equal(
 		createHash("sha512").update(readFileSync(installed)).digest("base64"),
 		sha512,
@@ -283,7 +283,7 @@ try {
 	assert.equal(JSON.parse(readFileSync(join(root, "verified.json"), "utf8")).version, "0.0.2");
 	assert.ok(requests.includes("latest-linux.yml") && requests.includes(imageName));
 	console.log(
-		"Desktop update e2e passed: HTTPS feed, SHA-512 download, service stop, install on quit, N+1 launch.",
+		"Desktop update e2e passed: HTTPS feed, SHA-512 download, no service stop, install on quit, N+1 launch.",
 	);
 } finally {
 	for (const child of children)

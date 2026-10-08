@@ -95,10 +95,14 @@ describe("Desktop updater", () => {
 	});
 });
 
-describe("service shutdown before update installation", () => {
-	function installation(install: (onQuit: boolean) => boolean = () => true) {
+describe("background services during update installation", () => {
+	function installation(
+		platform: NodeJS.Platform = "win32",
+		install: (onQuit: boolean) => boolean = () => true,
+	) {
 		const calls: string[] = [];
 		const controller = new DesktopUpdateInstallation({
+			platform,
 			isReady: () => true,
 			isBusy: () => false,
 			stopBackgroundServices: async () => {
@@ -115,7 +119,7 @@ describe("service shutdown before update installation", () => {
 		});
 		return { controller, calls };
 	}
-	test("quit waits for services and then allows the upstream quit handler, without relaunch", async () => {
+	test("Windows quit waits for services and allows the upstream quit handler without relaunch", async () => {
 		const f = installation();
 		expect(f.controller.shouldDeferQuit()).toBe(true);
 		await f.controller.install(true);
@@ -124,13 +128,27 @@ describe("service shutdown before update installation", () => {
 		await f.controller.install(true);
 		expect(f.calls).toHaveLength(2);
 	});
-	test("the notification/menu action uses the same stop path", async () => {
+	test("the Windows notification/menu action uses the same stop path", async () => {
 		const f = installation();
 		await f.controller.install(false);
 		expect(f.calls).toEqual(["stop", "quitAndInstall"]);
 	});
+	test("macOS/Linux leave services running for both installation paths", async () => {
+		for (const platform of ["darwin", "linux"] as const) {
+			for (const onQuit of [true, false]) {
+				const f = installation(platform);
+				await f.controller.install(onQuit);
+				expect(f.calls).toEqual([onQuit ? "quit-for-auto-install" : "quitAndInstall"]);
+				expect(f.controller.shouldDeferQuit()).toBe(false);
+			}
+			const failed = installation(platform, () => false);
+			await expect(failed.controller.install(false)).rejects.toThrow("no longer ready");
+			expect(failed.calls).toEqual(["quitAndInstall"]);
+			expect(failed.controller.shouldDeferQuit()).toBe(true);
+		}
+	});
 	test("a failed install restores services, cancels quitting, and permits retry", async () => {
-		const f = installation(() => false);
+		const f = installation("win32", () => false);
 		await expect(f.controller.install(false)).rejects.toThrow("no longer ready");
 		expect(f.calls).toEqual(["stop", "quitAndInstall", "restore"]);
 		expect(f.controller.shouldDeferQuit()).toBe(true);
@@ -139,6 +157,7 @@ describe("service shutdown before update installation", () => {
 		let busy = true;
 		const calls: string[] = [];
 		const installation = new DesktopUpdateInstallation({
+			platform: "win32",
 			isReady: () => true,
 			isBusy: () => busy,
 			stopBackgroundServices: async () => {
@@ -163,6 +182,7 @@ describe("service shutdown before update installation", () => {
 	test("failed service shutdown aborts installation without starting an unrelated service", async () => {
 		const calls: string[] = [];
 		const installation = new DesktopUpdateInstallation({
+			platform: "win32",
 			isReady: () => true,
 			isBusy: () => false,
 			stopBackgroundServices: () => Promise.reject(new Error("stop failed")),

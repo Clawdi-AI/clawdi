@@ -121,7 +121,11 @@ Release builds download updates in the background. A native notification announc
 `Clawdi Desktop <version> is ready — restart to update`; clicking it or the
 Restart to Install Update menu item uses electron-updater's default restart.
 Quitting instead uses `autoInstallOnAppQuit` and does not relaunch Desktop.
-Both paths wait for the existing background-service stop operation before installing.
+macOS/Linux leave background services running through either installation path.
+On the next Desktop launch, the existing reconciliation replaces a live daemon
+whose version or executable path differs from the bundled CLI. Windows waits for
+the existing service-stop operation to release executable locks before installing;
+self-update remains disabled for unsigned Windows builds.
 DEB/RPM installations only check for a newer version and show a non-blocking
 notification and a Download New Version menu link to the GitHub release page.
 They never download or install an update through electron-updater.
@@ -265,20 +269,26 @@ Done: after the workflow succeeds, the relevant `latest*.yml` or `beta*.yml` on
 the configured Pages URL names the newest eligible non-paused version, or returns
 404 if the channel has no eligible release.
 
-### Service continuity gap
+### Background services during updates
 
-Installation on quit deliberately does not reopen Desktop. The current CLI stop
-path retains Sync intent but cannot guarantee automatic service recovery:
-[`installer.ts`](../../packages/cli/src/serve/installer.ts) uses `launchctl bootout`
-on macOS and `systemctl --user stop` on Linux; those explicit stops do not trigger
-KeepAlive/Restart. Windows [`windows-task.ts`](../../packages/cli/src/serve/windows-task.ts)
-stops the task process tree and has a logon trigger plus failure retries; native
-post-install recovery has not been verified. macOS/Windows use the installed
-bundle's native CLI path. AppImage uses the durable `userData/runtimes/<version>`
-copy, so its path survives an update but still references the old runtime until
-Desktop reconciles it. There is no verified post-install service-manager activation
-in this change. This requires a separate approved service lifecycle design;
-reopening Desktop restores the existing startup reconciliation path.
+Installation on quit does not reopen Desktop. macOS/Linux do not stop the daemon:
+the running process continues with its existing binary while the bundle or image
+is replaced. On the next launch, [`daemon-runtime.ts`](src/daemon-runtime.ts) and
+the existing account-verified startup reconciliation compare live daemon versions
+and executable paths against the bundled CLI, then reinstall the service when
+they differ. The macOS service uses the stable installed app bundle path.
+
+AppImage is identified through its documented
+[`APPIMAGE` environment variable](https://docs.appimage.org/packaging-guide/environment-variables.html).
+The bundled CLI is copied from the mount to the existing durable
+`userData/runtimes/<version>` runtime before service registration. systemd points
+at that copy, which survives Desktop exit and AppImage replacement; no service
+definition points at a transient `/tmp/.mount_*` path. Reconciliation installs
+the new runtime on the next launch, then prunes older runtime copies.
+
+Windows stops the task process tree before installation to release file locks.
+Unsigned Windows builds keep self-update disabled. Signed Windows updates and
+post-install service recovery still require real-device verification by the owner.
 
 ### Linux update end-to-end check
 

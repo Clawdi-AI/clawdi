@@ -66,9 +66,11 @@ Installed clients never downgrade; fix an installed bad release with a higher
 version. Pauses do not revoke downloads already cached on a client.
 
 Update-ready notifications and the menu use the documented default restart.
-Quitting uses `autoInstallOnAppQuit` without relaunching Desktop. The existing
-daemon stop path does not have verified post-install service-manager recovery;
-see the [service continuity gap](../../apps/desktop/README.md#service-continuity-gap).
+Quitting uses `autoInstallOnAppQuit` without relaunching Desktop. macOS/Linux keep
+the daemon running; the next Desktop launch reconciles differing CLI versions or
+executable paths. Windows stops services before installation for file locks and
+keeps self-update disabled until signing. See
+[background services during updates](../../apps/desktop/README.md#background-services-during-updates).
 Windows signing and the first stable release remain owner gates. The new Linux
 AppImage e2e uses a trusted local HTTPS feed, and publishes no releases or Pages.
 

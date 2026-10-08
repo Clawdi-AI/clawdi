@@ -217,6 +217,7 @@ async function initializeUpdates(): Promise<void> {
 		onUpdateAvailable: (version) => showUpdateNotification(version, false),
 	});
 	updateInstallation = new DesktopUpdateInstallation({
+		platform: process.platform,
 		isReady: () => updateState.status === "ready",
 		isBusy: () => activeCriticalOperations > 0,
 		stopBackgroundServices: () =>

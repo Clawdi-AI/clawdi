@@ -14,10 +14,12 @@ afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function serviceFixture(failFirstInstall = false, loginProgress?: unknown) {
+function serviceFixture(failFirstInstall = false, loginProgress?: unknown, mounted = false) {
 	const root = mkdtempSync(join(tmpdir(), "desktop-cli-runtime-"));
 	roots.push(root);
-	process.env.APPIMAGE = join(root, "Clawdi.AppImage");
+	const appImagePath = join(root, "Clawdi.AppImage");
+	process.env.APPIMAGE = appImagePath;
+	const resourcesPath = join(root, mounted ? ".mount_Clawdi/resources" : "resources");
 	const cliName = process.platform === "win32" ? "clawdi.exe" : "clawdi";
 	for (const file of [
 		cliName,
@@ -25,7 +27,7 @@ function serviceFixture(failFirstInstall = false, loginProgress?: unknown) {
 		"skills/hosted-versions/1/clawdi/SKILL.md",
 		"egress-addon/clawdi_egress_addon.py",
 	]) {
-		const path = join(root, "resources/native", file);
+		const path = join(resourcesPath, "native", file);
 		mkdirSync(dirname(path), { recursive: true });
 		writeFileSync(path, "fixture", { mode: 0o755 });
 	}
@@ -34,7 +36,7 @@ function serviceFixture(failFirstInstall = false, loginProgress?: unknown) {
 		cliVersion: "1.2.0",
 		daemonVersion: "1.2.0",
 		live: false,
-		executable: join(root, "resources/native", cliName),
+		executable: join(resourcesPath, "native", cliName),
 	};
 	const execute: typeof runCommand = async (_command, args, options) => {
 		const command = args.join(" ");
@@ -124,10 +126,44 @@ function serviceFixture(failFirstInstall = false, loginProgress?: unknown) {
 			getVersion: () => "2.0.0",
 		},
 		execute,
-		join(root, "resources"),
+		resourcesPath,
 	);
-	return { service, calls, state, runtimeDirectory: join(root, "data/runtimes") };
+	return {
+		service,
+		calls,
+		state,
+		resourcesPath,
+		appImagePath,
+		runtimeDirectory: join(root, "data/runtimes"),
+	};
 }
+
+test.skipIf(process.platform !== "linux")(
+	"AppImage launch refreshes an old live daemon using a path that survives mount and image replacement",
+	async () => {
+		const { service, calls, state, resourcesPath, appImagePath, runtimeDirectory } = serviceFixture(
+			false,
+			undefined,
+			true,
+		);
+		writeFileSync(appImagePath, "N");
+		state.live = true;
+		state.daemonVersion = "1.1.0";
+		await service.bootstrapState();
+		expect(calls).not.toContain("daemon install");
+		expect(await service.reconcileDaemonRuntime("fixture")).toBe(true);
+		const durableCli = join(runtimeDirectory, "2.0.0/clawdi");
+		expect(state.executable).toBe(durableCli);
+		expect(state.executable).not.toContain(".mount_");
+		expect(state.daemonVersion).toBe(state.cliVersion);
+		await service.reconcileDaemonRuntime("fixture");
+		expect(calls.filter((command) => command === "daemon install")).toHaveLength(1);
+		rmSync(resourcesPath, { recursive: true });
+		writeFileSync(appImagePath, "N+1");
+		expect(await service.shellCommandTarget()).toBe(durableCli);
+		expect(existsSync(durableCli)).toBe(true);
+	},
+);
 
 test("accepts dsh detection and reconnect candidates from the CLI", async () => {
 	const { service } = serviceFixture();

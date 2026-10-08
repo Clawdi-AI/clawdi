@@ -1,4 +1,5 @@
 export interface DesktopUpdateInstallationOptions {
+	platform: NodeJS.Platform;
 	isReady: () => boolean;
 	isBusy: () => boolean;
 	stopBackgroundServices: () => Promise<boolean>;
@@ -6,8 +7,8 @@ export interface DesktopUpdateInstallationOptions {
 	install: (onQuit: boolean) => boolean;
 }
 
-/** Share shutdown/recovery between the notification, menu and before-quit.
- * Electron before-quit permits preventDefault while services stop asynchronously:
+/** Keep macOS/Linux daemons running during replacement; only Windows needs
+ * shutdown/recovery for executable locks. Electron before-quit permits deferral:
  * https://www.electronjs.org/docs/latest/api/app#event-before-quit */
 export class DesktopUpdateInstallation {
 	private inProgress = false;
@@ -38,7 +39,7 @@ export class DesktopUpdateInstallation {
 		this.inProgress = true;
 		let stopped = false;
 		try {
-			stopped = await this.options.stopBackgroundServices();
+			if (this.options.platform === "win32") stopped = await this.options.stopBackgroundServices();
 			// Allow the updater's own quit, rather than intercepting it again.
 			this.allowQuit = true;
 			if (!this.options.install(onQuit))

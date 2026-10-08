@@ -1,6 +1,32 @@
 import { expect, test } from "bun:test";
 import { desktopDaemonReconciliationAction, needsDaemonRuntimeRefresh } from "./daemon-runtime";
 
+test("next macOS/Linux launch reconciles an older live daemon even at the same executable path", () => {
+	for (const [platform, executable] of [
+		["darwin", "/Applications/Clawdi.app/Contents/Resources/native/clawdi"],
+		["linux", "/data/runtimes/2.0.0/clawdi"],
+	] as const) {
+		const input = {
+			installed: true,
+			supervisorRunning: true,
+			authenticated: true,
+			alreadyReconciled: false,
+			isAppImage: platform === "linux",
+		};
+		for (const version of ["1.1.0", "1.2.0"]) {
+			const liveRuntimeMismatch = needsDaemonRuntimeRefresh(
+				"1.2.0",
+				executable,
+				[{ version, executable }],
+				platform,
+			);
+			expect(desktopDaemonReconciliationAction({ ...input, liveRuntimeMismatch })).toBe(
+				version === "1.1.0" ? "install" : null,
+			);
+		}
+	}
+});
+
 test("stopped AppImage old units install the new path once before startup restart", () => {
 	const stopped = {
 		installed: true,

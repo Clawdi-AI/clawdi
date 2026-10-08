@@ -6,6 +6,5 @@ case "$1 ${2:-}" in
   "auth status") printf '%s\n' '{"authenticated":false,"source":"none"}' ;;
   "daemon doctor") printf '%s\n' '{"cli_version":"0.0.0-smoke","singleton_unit_installed":true,"singleton_unit_running":false,"agents":[]}' ;;
   "agent detect") printf '%s\n' '{"agents":[]}' ;;
-  "daemon stop") exit 0 ;;
   *) printf 'Unexpected update e2e CLI call: %s\n' "$*" >&2; exit 2 ;;
 esac
