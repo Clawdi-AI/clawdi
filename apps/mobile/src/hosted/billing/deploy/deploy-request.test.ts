@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	ApiClientError,
+	createHostedComputeClient,
 	type DeployComponents,
 	type HostedDeployPlan,
 	type HostedDeployWizardDraft,
@@ -13,8 +14,11 @@ import {
 	isDefinitiveAdmissionRejection,
 	offeredQuoteSelections,
 	parseCreationAttempt,
+	retryStoreAdmission,
 	serverAllowsEntitledCreation,
+	storeAdmissionMessageKey,
 } from "@/hosted/billing/deploy/deploy-request";
+import { en } from "@/lib/i18n/en";
 
 describe("durable creation boundary", () => {
 	const capabilities: DeployComponents["schemas"]["V1UserProductCapabilities"] = {
@@ -138,6 +142,13 @@ describe("durable creation boundary", () => {
 			request: { ...built.request, deploy_request_id: id },
 		};
 		expect(parseCreationAttempt(JSON.stringify(saved))).toEqual(saved);
+		const funded = { ...saved, storeFunding: "funded" as const };
+		expect(parseCreationAttempt(JSON.stringify(funded))).toEqual(funded);
+		expect(
+			parseCreationAttempt(
+				JSON.stringify({ ...funded, request: { ...funded.request, compute_source: "store" } }),
+			),
+		).toBeNull();
 		const performanceDraft: HostedDeployWizardDraft = {
 			...draft,
 			computePlanSlug: "compute_performance",
@@ -193,5 +204,226 @@ describe("durable creation boundary", () => {
 			),
 		).toBeNull();
 		expect(parseCreationAttempt("{broken")).toBeNull();
+	});
+});
+
+describe("store-only admission recovery", () => {
+	const id = "8e244ab3-1111-4111-8111-111111111111";
+	const draft: HostedDeployWizardDraft = {
+		runtime: "hermes",
+		computePlanSlug: "compute_basic",
+		agentName: "Store Agent",
+		language: "en",
+		timezone: "UTC",
+		ai: { mode: "unmanaged" },
+	};
+	const built = validateAndBuildHostedDeployRequest(draft);
+	if (!built.ok) throw new Error("Invalid fixture");
+	const attempt: CreationAttempt = {
+		version: 1,
+		submission: "prepared",
+		id,
+		draft,
+		request: { ...built.request, deploy_request_id: id },
+		storeFunding: "funded",
+	};
+
+	test.each([
+		["store_compute_unavailable", "creation.storeComputeUnavailable"],
+		["store_compute_subscriptions_disabled", "creation.storeComputeDisabled"],
+		["compute_entitlement_pending", "creation.storeComputePending"],
+		["deployment_plan_release_pending", "creation.storeComputePending"],
+	] as const)(
+		"preserves store-funded attempts for %s with Check status / retry copy",
+		(code, key) => {
+			const error = new ApiClientError(409, code);
+			for (const submission of ["prepared", "uncertain", "entitlement_rejected"] as const) {
+				const saved = { ...attempt, submission };
+				expect(isDefinitiveAdmissionRejection(saved, error)).toBe(false);
+				expect(storeAdmissionMessageKey(saved, error)).toBe(key);
+			}
+			const copy = {
+				"creation.storeComputeUnavailable": en.creation.storeComputeUnavailable,
+				"creation.storeComputeDisabled": en.creation.storeComputeDisabled,
+				"creation.storeComputePending": en.creation.storeComputePending,
+			}[key];
+			expect(copy).toContain("Check status");
+			expect(copy).toContain("retry");
+			expect(storeAdmissionMessageKey({ ...attempt, storeFunding: undefined }, error)).toBeNull();
+		},
+	);
+
+	test("a store purchase is preserved even if admission reports a missing entitlement", () => {
+		expect(
+			isDefinitiveAdmissionRejection(
+				attempt,
+				new ApiClientError(409, "compute_entitlement_required"),
+			),
+		).toBe(false);
+	});
+
+	test("HTTP pending responses retry the same store-only body without persisting compute_source", async () => {
+		const bodies: unknown[] = [];
+		const keys: (string | null)[] = [];
+		const operation: DeployComponents["schemas"]["LongRunningOperation"] = {
+			name: "operations/store-create",
+			done: false,
+			metadata: {
+				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+				deploymentId: "hdep_store",
+				verb: "create",
+				targetGeneration: 1,
+				manifestETag: "etag",
+				createTime: "2026-10-08T00:00:00Z",
+				updateTime: "2026-10-08T00:00:00Z",
+			},
+		};
+		const client = createHostedComputeClient({
+			baseUrl: "https://compute.example.test",
+			getToken: async () => "test-token",
+			fetch: async (request) => {
+				bodies.push(await request.json());
+				keys.push(request.headers.get("Idempotency-Key"));
+				return bodies.length < 3
+					? Response.json(
+							{
+								code:
+									bodies.length === 1
+										? "compute_entitlement_pending"
+										: "deployment_plan_release_pending",
+							},
+							{ status: 409, headers: { "Retry-After": "0" } },
+						)
+					: Response.json(operation, { status: 202 });
+			},
+		});
+		const before = JSON.stringify(attempt);
+		expect(
+			await retryStoreAdmission(
+				attempt,
+				(signal) =>
+					client.createEntitledDeployment(attempt.request, attempt.id, signal, {
+						computeSource: "store",
+					}),
+				new AbortController().signal,
+			),
+		).toEqual(operation);
+		expect(bodies).toEqual(
+			Array.from({ length: 3 }, () => ({ ...attempt.request, compute_source: "store" })),
+		);
+		expect(keys).toEqual([attempt.id, attempt.id, attempt.id]);
+		expect(JSON.stringify(attempt)).toBe(before);
+		expect(parseCreationAttempt(before)).toEqual(attempt);
+	});
+
+	test.each(["compute_entitlement_pending", "deployment_plan_release_pending"])(
+		"retries %s after the supplied delay and keeps the exact journal",
+		async (code) => {
+			const original = JSON.stringify(attempt);
+			const delays: number[] = [];
+			let sends = 0;
+			const signal = new AbortController().signal;
+			const result = await retryStoreAdmission(
+				attempt,
+				async (s) => {
+					expect(s).toBe(signal);
+					sends++;
+					if (sends <= 2) throw new ApiClientError(409, code, sends * 5000);
+					return "admitted";
+				},
+				signal,
+				async (delay) => {
+					delays.push(delay);
+				},
+			);
+			expect(result).toBe("admitted");
+			expect(delays).toEqual([5000, 10_000]);
+			expect(sends).toBe(3);
+			expect(JSON.stringify(attempt)).toBe(original);
+			expect(parseCreationAttempt(original)).toEqual(attempt);
+		},
+	);
+
+	test.each(["compute_entitlement_pending", "deployment_plan_release_pending"])(
+		"bounds retries for %s then directs Check status",
+		async (code) => {
+			const error = new ApiClientError(409, code, 5000);
+			let sends = 0;
+			const delays: number[] = [];
+			await expect(
+				retryStoreAdmission(
+					attempt,
+					async () => {
+						sends++;
+						throw error;
+					},
+					new AbortController().signal,
+					async (delay) => {
+						delays.push(delay);
+					},
+				),
+			).rejects.toBe(error);
+			expect(sends).toBe(4);
+			expect(delays).toEqual([5000, 5000, 5000]);
+			expect(storeAdmissionMessageKey(attempt, error)).toBe("creation.storeComputePending");
+		},
+	);
+
+	test("does not retry non-store attempts, unavailable/disabled admission, uncertainty or missing guidance", async () => {
+		for (const [saved, error] of [
+			[
+				{ ...attempt, storeFunding: undefined },
+				new ApiClientError(409, "compute_entitlement_pending", 5000),
+			],
+			[
+				{ ...attempt, storeFunding: "purchase_pending" as const },
+				new ApiClientError(409, "compute_entitlement_pending", 5000),
+			],
+			[attempt, new ApiClientError(409, "store_compute_unavailable", 5000)],
+			[attempt, new ApiClientError(409, "store_compute_subscriptions_disabled", 5000)],
+			[attempt, new ApiClientError(409, "compute_entitlement_pending")],
+			[attempt, new ApiClientError(500, "compute_entitlement_pending", 5000)],
+			[attempt, new Error("network uncertainty")],
+		] as const) {
+			let sends = 0;
+			await expect(
+				retryStoreAdmission(
+					saved,
+					async () => {
+						sends++;
+						throw error;
+					},
+					new AbortController().signal,
+					async () => {
+						throw new Error("Must not wait");
+					},
+				),
+			).rejects.toBe(error);
+			expect(sends).toBe(1);
+		}
+	});
+
+	test("account cancellation during Retry-After stops the timer and any later POST", async () => {
+		const controller = new AbortController();
+		let started: () => void = () => {};
+		const sent = new Promise<void>((resolve) => {
+			started = resolve;
+		});
+		let sends = 0;
+		const result = retryStoreAdmission(
+			attempt,
+			async () => {
+				sends++;
+				started();
+				throw new ApiClientError(409, "compute_entitlement_pending", 60_000);
+			},
+			controller.signal,
+		);
+		await sent;
+		// Let the failed POST start its retry timer before canceling the account scope.
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		controller.abort(new Error("Account changed"));
+		await expect(result).rejects.toBe(controller.signal.reason);
+		expect(sends).toBe(1);
 	});
 });

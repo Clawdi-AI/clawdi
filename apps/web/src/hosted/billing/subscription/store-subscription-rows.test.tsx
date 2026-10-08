@@ -21,6 +21,7 @@ const STRIPE_COPY = ["Fix payment", "Top up", "Card", "Retries", "Past due"];
 
 function management(overrides: Partial<StoreManagement> = {}): StoreManagement {
 	return {
+		contract_id: "11111111-1111-4111-8111-111111111111",
 		provider: "app_store",
 		product_id: "ai.clawdi.app.compute.performance.monthly",
 		management_url: "https://apps.apple.com/account/subscriptions",

@@ -52,6 +52,7 @@ describe("Agent delete subscription policy", () => {
 					price_cents: null,
 					actions: { cancel: null, resume: false, command_state: null },
 					store_management: {
+						contract_id: "11111111-1111-4111-8111-111111111111",
 						provider,
 						product_id: "ai.clawdi.app.compute.performance.monthly",
 						management_url: null,

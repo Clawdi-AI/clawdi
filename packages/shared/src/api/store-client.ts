@@ -114,6 +114,7 @@ function isStoreManagement(
 	if (!value || typeof value !== "object") return false;
 	const management = value as Record<string, unknown>;
 	return (
+		isUuid(management.contract_id) &&
 		isStoreProvider(management.provider) &&
 		isNonemptyString(management.product_id) &&
 		(management.management_url == null || isNonemptyString(management.management_url)) &&

@@ -298,6 +298,7 @@ describe("Hosted store client", () => {
 				compute_subscription_id: 42,
 				agent_id: "hdep_bound",
 				store_management: {
+					contract_id: attempt.attempt_id,
 					provider: "play_store",
 					product_id: "ai.clawdi.app.compute:basic-monthly",
 					management_url:
@@ -339,6 +340,24 @@ describe("Hosted store client", () => {
 		expect(requests).toEqual([
 			{ method: "POST", path: "/v2/store/compute-subscriptions/reconcile", body: null },
 		]);
+		const management = response.compute_slot?.store_management;
+		if (!management) throw new Error("Missing management fixture");
+		for (const contractId of [undefined, null, "not-a-uuid", 42]) {
+			const invalid = createHostedStoreClient({
+				...options,
+				fetch: async () =>
+					Response.json({
+						...response,
+						compute_slot: {
+							...response.compute_slot,
+							store_management: { ...management, contract_id: contractId },
+						},
+					}),
+			});
+			await expect(invalid.reconcileComputeSubscriptions()).rejects.toBeInstanceOf(
+				ApiClientResponseError,
+			);
+		}
 	});
 
 	test("accepts disabled bootstrap with omitted or null identity and unavailable wallet balance", async () => {

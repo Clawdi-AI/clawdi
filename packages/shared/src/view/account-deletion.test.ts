@@ -153,6 +153,7 @@ describe("deleteAccountThenSignOut", () => {
 
 describe("accountDeletionStoreNotice", () => {
 	const management = {
+		contract_id: "11111111-1111-4111-8111-111111111111",
 		provider: "play_store",
 		product_id: "ai.clawdi.app.compute.basic.monthly",
 		management_url: null,

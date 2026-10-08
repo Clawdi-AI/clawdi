@@ -75,7 +75,9 @@ import {
 	canStartStorePurchase,
 	isDefinitiveAdmissionRejection,
 	offeredQuoteSelections,
+	retryStoreAdmission,
 	serverAllowsEntitledCreation,
+	storeAdmissionMessageKey,
 	storeFundingAfterCheck,
 	storeFundingAfterPurchase,
 	storeFundingHoldsAttempt,
@@ -416,9 +418,26 @@ function CreationForm() {
 		await replaceAttempt(storageKey, saved, submitting, () => current(owns));
 		if (!current(owns)) return;
 		setAttempt(submitting);
+		setMessage("");
 		try {
-			await read((s) => compute.createEntitledDeployment(submitting.request, submitting.id, s));
+			await read((signal) =>
+				retryStoreAdmission(
+					submitting,
+					(s) => {
+						if (!current(owns)) throw new Error("Creation action expired");
+						return compute.createEntitledDeployment(submitting.request, submitting.id, s, {
+							computeSource: submitting.storeFunding ? "store" : undefined,
+						});
+					},
+					signal,
+				),
+			);
 		} catch (error) {
+			const storeMessage = storeAdmissionMessageKey(saved, error);
+			if (current(owns) && storeMessage) {
+				setMessage(t(storeMessage));
+				return;
+			}
 			if (current(owns) && isDefinitiveAdmissionRejection(saved, error)) {
 				const rejected: CreationAttempt = { ...saved, submission: "entitlement_rejected" };
 				await replaceAttempt(storageKey, submitting, rejected, () => current(owns));
@@ -1107,7 +1126,7 @@ function CreationForm() {
 								<AppText>{t("creation.saved")}</AppText>
 								<AppText selectable>{attempt.id}</AppText>
 								<ActionButton
-									label={t("creation.recover")}
+									label={t(attempt.storeFunding ? "storeCompute.checkStatus" : "creation.recover")}
 									disabled={action.busy}
 									onPress={() => {
 										void action.run((owns) => navigateRequest(attempt.id, owns));
