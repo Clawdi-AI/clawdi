@@ -13,12 +13,12 @@ import { assertStoreAccount, type StoreIdentity } from "./store-identity";
 
 type ComputeStoreSdk = Pick<
 	RevenueCat,
-	"getProducts" | "getOfferings" | "purchaseStoreProduct" | "purchasePackage" | "withIdentity"
+	"getProducts" | "getOfferings" | "purchaseStoreProduct" | "withIdentity"
 >;
 type StoreIdentityReader = Pick<StoreIdentity, "requireReady">;
 
 export const COMPUTE_OFFERING_IDENTIFIER = "compute";
-export const COMPUTE_APPLE_PRODUCT_IDENTIFIERS = [
+const COMPUTE_APPLE_PRODUCT_IDENTIFIERS = [
 	"ai.clawdi.app.compute.basic.monthly",
 	"ai.clawdi.app.compute.basic.annual",
 	"ai.clawdi.app.compute.performance.monthly",
@@ -30,9 +30,7 @@ export const COMPUTE_PLAY_PRODUCT_IDENTIFIERS = [
 	"ai.clawdi.app.compute:performance-monthly",
 	"ai.clawdi.app.compute:performance-annual",
 ] as const;
-/** Kept as the Apple catalogue alias for callers that do not have a platform yet. */
-export const COMPUTE_PRODUCT_IDENTIFIERS = COMPUTE_APPLE_PRODUCT_IDENTIFIERS;
-export const COMPUTE_PRODUCT_IDENTIFIERS_BY_PLATFORM = {
+const COMPUTE_PRODUCT_IDENTIFIERS_BY_PLATFORM = {
 	app_store: COMPUTE_APPLE_PRODUCT_IDENTIFIERS,
 	play_store: COMPUTE_PLAY_PRODUCT_IDENTIFIERS,
 } as const;
@@ -49,7 +47,6 @@ export type ComputeProduct = Readonly<{
 
 export type ComputeProductSelection =
 	| Readonly<{ kind: "product"; productIdentifier: ComputeProductIdentifier }>
-	| Readonly<{ kind: "package"; package: PurchasesPackage }>
 	| Readonly<{
 			/** The official Paywall purchases the package it selected once the attempt exists. */
 			kind: "paywall";
@@ -57,7 +54,7 @@ export type ComputeProductSelection =
 			purchase: (signal: AbortSignal) => Promise<StoreTransactionHint | null>;
 	  }>;
 
-export type ComputeProductPlan = Readonly<{
+type ComputeProductPlan = Readonly<{
 	planSlug: "compute_basic" | "compute_performance";
 	billingTermMonths: 1 | 12;
 }>;
@@ -150,34 +147,6 @@ function validateProducts(
 		if (!product?.priceString.trim()) throw new StorePurchaseError("store_offering_unavailable");
 		return { productIdentifier, priceString: product.priceString };
 	});
-}
-
-/** Fetches only the store-local display values. Prices never come from app code. */
-export async function loadComputeProducts(
-	platform: ComputeStorePlatform = "app_store",
-): Promise<readonly ComputeProduct[]> {
-	const productIdentifiers = productIdentifiersForPlatform(platform);
-	try {
-		return validateProducts(
-			await Purchases.getProducts([...productIdentifiers], Purchases.PRODUCT_CATEGORY.SUBSCRIPTION),
-			productIdentifiers,
-		);
-	} catch (error) {
-		if (error instanceof StorePurchaseError) throw error;
-		throw new StorePurchaseError("store_offering_unavailable");
-	}
-}
-
-export async function loadComputeOffering(): Promise<PurchasesOffering> {
-	try {
-		const offering = (await Purchases.getOfferings()).all[COMPUTE_OFFERING_IDENTIFIER];
-		if (!offering?.availablePackages.length)
-			throw new StorePurchaseError("store_offering_unavailable");
-		return offering;
-	} catch (error) {
-		if (error instanceof StorePurchaseError) throw error;
-		throw new StorePurchaseError("store_offering_unavailable");
-	}
 }
 
 export async function loadComputeOfferingForIdentity(options: {
@@ -275,37 +244,21 @@ export function createComputeSubscriptionPurchase(options: {
 				assertStoreAccount(scope, signal);
 				return transaction ? transactionHint(transaction) : null;
 			}
-			let product: PurchasesStoreProduct | null = null;
-			if (selection.kind === "product") {
-				const products = await sdk.getProducts(
-					ready.appUserId,
-					() => assertStoreAccount(scope, signal),
-					[selectedIdentifier],
-					signal,
-				);
-				product = products.find((candidate) => candidate.identifier === selectedIdentifier) ?? null;
-				if (!product) throw new StorePurchaseError("store_offering_unavailable");
-			}
-			const result =
-				selection.kind === "package"
-					? await sdk.purchasePackage(
-							ready.appUserId,
-							() => assertStoreAccount(scope, signal),
-							selection.package,
-							changeInfo,
-							signal,
-						)
-					: product
-						? await sdk.purchaseStoreProduct(
-								ready.appUserId,
-								() => assertStoreAccount(scope, signal),
-								product,
-								changeInfo,
-								signal,
-							)
-						: (() => {
-								throw new StorePurchaseError("store_offering_unavailable");
-							})();
+			const products = await sdk.getProducts(
+				ready.appUserId,
+				() => assertStoreAccount(scope, signal),
+				[selectedIdentifier],
+				signal,
+			);
+			const product = products.find((candidate) => candidate.identifier === selectedIdentifier);
+			if (!product) throw new StorePurchaseError("store_offering_unavailable");
+			const result = await sdk.purchaseStoreProduct(
+				ready.appUserId,
+				() => assertStoreAccount(scope, signal),
+				product,
+				changeInfo,
+				signal,
+			);
 			assertStoreAccount(scope, signal);
 			return transactionHint(result.transaction);
 		} catch (error) {

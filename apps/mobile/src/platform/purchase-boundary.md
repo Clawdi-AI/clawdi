@@ -39,10 +39,10 @@ endpoint and platform through a SHA-256 SecureStore key.
 
 ## M2 purchase integration
 
-Use `useMobileStore()` for availability, the `flow`, recovered outcomes and safe
-typed errors. After explicit user intent, call
-`flow.purchase({ purpose: "standalone_topup" }, showPaywall)` (or the generated
-`deploy_continuation` purpose/target).
+Use `useMobileStore()` for the `flow`, recovered outcomes and compute inventory.
+After explicit user intent, call
+`flow.purchase({ purpose: "standalone_topup" }, showPaywall)` for credits or
+`purchaseComputeSubscription()` with the selected compute product and exact target.
 
 1. M1 generates and persists the idempotency key and exact request **before**
    `POST /v2/store/purchase-attempts`. It saves the returned attempt id and a
@@ -97,8 +97,9 @@ the purchase-start marker. Retrying reconciles without another store charge.
 A lost create response reuses the saved key and original request/revision.
 An explicit typed 4xx create rejection clears the journal when no attempt id
 was received and surfaces the original typed code. Network, 5xx and unknown
-outcomes retain the journal. Recovery errors surface through `error` while
-preserving bootstrap availability and `flow`, so a retry remains possible.
+outcomes retain the journal. Automatic recovery ignores errors and preserves the
+bootstrap and `flow`; the explicit "Check pending purchases" action reports typed
+recovery errors and permits retry.
 Before blocking a different purpose/target with `purchase_pending`, M1 reads
 the previous server attempt and finishes any completed state other than
 `reconciliation_required` before proceeding. Paid expired evidence is submitted
@@ -124,7 +125,7 @@ until the operation deadline. Test Store acceptance must verify that the close
 button dismisses the Paywall, that the flow returns `cancelled` without a charge,
 and that a retry reopens it.
 
-`AddCreditsAction` is the only purchase entry. It runs
+`AddCreditsAction` is the credits purchase entry. It runs
 `flow.purchase({ purpose: "standalone_topup" }, …)` from the Wallet balance card,
 Wallet-rail `top_up` recovery (dunning banner and subscription details) and the
 deploy wizard's Wallet shortfall, which re-quotes after funding. Funded,
@@ -172,7 +173,8 @@ the loaded `compute` offering and the Paywall host (`useComputePurchaseGate`).
 - **Store rows** use the shared presentation and
   `resolveStoreSubscriptionActions` (platform-aware; Web keeps store rows read-only).
   Change plan buys another compute product through the M1 plan-change flow with the
-  live contract from `compute_slot` and the server's replacement mode, and always shows
+  exact contract from the row's `store_management.contract_id` and the server's
+  replacement mode, and always shows
   the shared `CLAWDI_LEGAL_URLS` (Terms of Use (EULA), Privacy Policy) with the
   auto-renew disclosure. Manage opens the Customer Center when the build flag
   is on, otherwise `showManageSubscriptions()` (iOS, Apple link fallback) or the Play
@@ -195,8 +197,11 @@ attempt expires through the server TTL. Other attempts without local transaction
 evidence also recover through reads, never confirm. Prepared attempts without a
 purchase-start marker are read without sync or confirmation. Recovery shares
 one two-minute polling budget across attempts.
-Backgrounding cancels recovery; foregrounding refreshes bootstrap
-and recovers again. Foreground events during a purchase preserve its SDK identity.
+Backgrounding cancels recovery; foregrounding and network reconnection refresh
+bootstrap and recover again. Upgrade, plan-change, restore and store status-check
+actions also refresh the store context. One bootstrap supplies the compute slot and flag;
+restore patches only a returned compute slot. Refresh is guarded during recovery
+and purchases to preserve the SDK identity.
 
 When switching compute products or targets after a locally cancelled `prepared`
 compute attempt with no purchase-start marker or transaction hint, M1 clears its
@@ -205,7 +210,8 @@ unlinked prepared compute attempts when creating that new attempt.
 
 Accepted residual behavior (C): a different-intent purchase remains blocked when
 it involves credits or the previous purchase has a start marker or transaction
-hint. Uncancelled prepared attempts also keep blocking. A `prepared` attempt
+hint. Uncancelled prepared attempts also keep blocking; only cancelled, unstarted
+compute attempts can be superseded. A `prepared` attempt
 blocks until the server expires it (up to 15 minutes), despite reading its current
 state. Hosted links store purchases by identity, product and attempt validity, so
 a second live attempt could turn the purchase into a `conflict_hold`; there is no
@@ -229,11 +235,3 @@ References: [customer identity](https://www.revenuecat.com/docs/customers/identi
 [Customer Center RN](https://www.revenuecat.com/docs/tools/customer-center/customer-center-react-native),
 [Test Store](https://www.revenuecat.com/docs/test-and-launch/sandbox/test-store),
 [official RN SDK](https://github.com/RevenueCat/react-native-purchases).
-
-Done: `bun run --cwd apps/mobile typecheck` and `bash scripts/test.sh mobile`
-exit 0. Mock SDK tests cover fencing, restart recovery, idempotency reuse,
-persistence failure, recovery errors, evidence-free sync/read recovery, late
-paid expiry, cancellation, Paywall timeout, production Test Store key rejection
-and typed errors. Native rendering, real transactions and live settlement
-require separate M2/sandbox acceptance; an
-Android export proves bundling only.

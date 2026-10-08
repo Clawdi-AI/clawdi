@@ -1,5 +1,11 @@
-import type { ComputeRecoveryTarget, StoreBootstrap } from "@clawdi/shared/api";
+import type { ComputeRecoveryTarget, StoreBootstrap, StorePlatform } from "@clawdi/shared/api";
+import { Platform } from "react-native";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
+
+/** The store that bills purchases made on this device. */
+export function currentStorePlatform(): StorePlatform | null {
+	return Platform.OS === "ios" ? "app_store" : Platform.OS === "android" ? "play_store" : null;
+}
 
 /** M2 uses this policy for card-only surfaces, independently of IAP availability. */
 export function isStoreBuild(config: Pick<MobileRuntimeConfig, "environment">): boolean {

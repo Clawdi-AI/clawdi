@@ -47,7 +47,8 @@ export function ComputeSubscriptionCard({
 	const lifecycle = computeSubscriptionLifecycle(item);
 	const status = { label: lifecycle.badgeLabel, tone: lifecycle.badgeTone };
 	// Store prices are per storefront: store rows show the store contract, never a Clawdi price.
-	const store = item.funding_source === "store";
+	const fundingSource = item.funding_source;
+	const store = fundingSource === "store";
 	const showStoreNotice = store && storeNotice;
 	const view = store
 		? storeSubscriptionCardView({
@@ -62,9 +63,7 @@ export function ComputeSubscriptionCard({
 				fundingSource:
 					item.subscription_kind === "included_basic"
 						? "included"
-						: item.funding_source === "store"
-							? "unavailable"
-							: (item.funding_source ?? "unavailable"),
+						: (fundingSource ?? "unavailable"),
 				priceCents: item.price_cents,
 				currency: item.currency,
 				billingTermMonths: item.billing_term_months,

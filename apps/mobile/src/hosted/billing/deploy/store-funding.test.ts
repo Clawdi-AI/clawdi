@@ -7,7 +7,6 @@ import {
 	canStartStorePurchase,
 	parseCreationAttempt,
 	storeFundingAfterCheck,
-	storeFundingAfterPurchase,
 	storeFundingHoldsAttempt,
 	unboundStoreSlotPlan,
 } from "@/hosted/billing/deploy/deploy-request";
@@ -36,63 +35,10 @@ function storeAttempt(storeFunding: CreationAttempt["storeFunding"]): CreationAt
 	};
 }
 
-const outcome = (
-	status: "funding_applied" | "submitted" | "terminal" | "pending" | "cancelled",
-	state:
-		| "funding_applied"
-		| "rejected"
-		| "canceled"
-		| "expired"
-		| "reconciliation_required"
-		| "prepared" = "prepared",
-) => ({ outcome: { status, attempt: { state } } });
-
 const plan = "compute_performance";
 const noSlot = null;
 
 describe("store-funded creation admission", () => {
-	test("pending, unconfirmed and unfinished purchases never allow admission", () => {
-		for (const result of [
-			{ error: "payment_pending" as const },
-			{ error: "purchase_unconfirmed" as const },
-			{ error: "store_operation_timeout" as const },
-			{ error: "store_request_failed" as const },
-			{ error: "account_changed" as const },
-			outcome("pending"),
-			outcome("submitted"),
-		]) {
-			const funding = storeFundingAfterPurchase(result, plan, noSlot);
-			expect(funding).toBe("purchase_pending");
-			expect(canAdmitCreationAttempt({ storeFunding: funding })).toBe(false);
-			expect(canStartStorePurchase(storeAttempt(funding))).toBe(false);
-		}
-	});
-
-	test("only this request's funding_applied allows admission", () => {
-		expect(
-			storeFundingAfterPurchase(outcome("funding_applied", "funding_applied"), plan, noSlot),
-		).toBe("funded");
-		expect(canAdmitCreationAttempt({ storeFunding: "funded" })).toBe(true);
-		expect(canAdmitCreationAttempt({ storeFunding: "awaiting_purchase" })).toBe(false);
-		expect(canAdmitCreationAttempt({})).toBe(true);
-	});
-
-	test("a cancelled, ended or provably unstarted purchase can be retried, not admitted", () => {
-		for (const result of [
-			outcome("cancelled"),
-			outcome("terminal", "rejected"),
-			outcome("terminal", "expired"),
-			{ error: "paywall_unavailable" as const },
-			{ error: "store_offering_unavailable" as const },
-			{ error: "purchase_pending" as const },
-		]) {
-			const funding = storeFundingAfterPurchase(result, plan, noSlot);
-			expect(funding).toBe("awaiting_purchase");
-			expect(canAdmitCreationAttempt({ storeFunding: funding })).toBe(false);
-			expect(canStartStorePurchase(storeAttempt(funding))).toBe(true);
-		}
-	});
-
 	const other = {
 		purpose: "compute_subscription" as const,
 		pending_deploy_request_id: "other-request",
@@ -131,7 +77,6 @@ describe("store-funded creation admission", () => {
 		const funding = storeFundingAfterCheck(id, expired, "purchase_pending", plan, plan);
 		expect(funding).toBe("funded");
 		expect(canAdmitCreationAttempt({ storeFunding: funding })).toBe(true);
-		expect(storeFundingAfterPurchase(outcome("terminal", "expired"), plan, plan)).toBe("funded");
 		// A slot of another plan cannot be bound by this request.
 		const other = storeFundingAfterCheck(id, expired, "purchase_pending", plan, "compute_basic");
 		expect(other).toBe("awaiting_purchase");
@@ -150,18 +95,12 @@ describe("store-funded creation admission", () => {
 			plan,
 			plan,
 		);
-		const fromPurchase = storeFundingAfterPurchase(
-			outcome("terminal", "reconciliation_required"),
-			plan,
-			plan,
-		);
-		for (const funding of [fromCheck, fromPurchase]) {
-			expect(funding).toBe("review_required");
-			const attempt = storeAttempt(funding);
-			expect(canAdmitCreationAttempt(attempt)).toBe(false);
-			expect(canStartStorePurchase(attempt)).toBe(false);
-			expect(canDiscardCreationAttempt(attempt) && !storeFundingHoldsAttempt(attempt)).toBe(true);
-		}
+		const funding = fromCheck;
+		expect(funding).toBe("review_required");
+		const attempt = storeAttempt(funding);
+		expect(canAdmitCreationAttempt(attempt)).toBe(false);
+		expect(canStartStorePurchase(attempt)).toBe(false);
+		expect(canDiscardCreationAttempt(attempt) && !storeFundingHoldsAttempt(attempt)).toBe(true);
 	});
 
 	test("unbound store slots are matched by plan and supplying state only", () => {

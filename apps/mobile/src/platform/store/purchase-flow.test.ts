@@ -12,8 +12,9 @@ import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
 import { createAccountScope } from "@/platform/auth/account-scope";
 import { createPurchaseAttemptStore, parsePurchaseAttempt } from "./purchase-attempt-storage";
 import { StorePurchaseError } from "./store-error";
-import { isStoreBuild } from "./store-policy";
-import { recoverStoreFlow } from "./store-recovery";
+
+mock.module("react-native", () => ({ Platform: { OS: "ios" } }));
+const { isStoreBuild } = await import("./store-policy");
 
 const appUserId = "11111111-1111-4111-8111-111111111111";
 const otherAppUserId = "22222222-2222-4222-8222-222222222222";
@@ -970,6 +971,29 @@ describe("durable store attempts", () => {
 });
 
 describe("store errors and build policy", () => {
+	test.each([
+		[403, StoreErrorCode.store_compute_subscriptions_disabled],
+		[409, StoreErrorCode.store_slot_in_use],
+		[404, StoreErrorCode.store_contract_not_found],
+	] as const)(
+		"explicit hosted compute rejection %s / %s clears the un-created journal and a later credits purchase proceeds",
+		async (status, code) => {
+			const f = fixture();
+			await f.initialize();
+			f.createPurchaseAttempt.mockImplementationOnce(async () => {
+				throw new ApiClientError(status, code);
+			});
+			const flow = f.makeFlow();
+			const nativePurchase = mock(async () => transaction);
+			await expect(flow.purchase(computeIntent, nativePurchase)).rejects.toMatchObject({ code });
+			expect(nativePurchase).not.toHaveBeenCalled();
+			expect(f.values.size).toBe(0);
+			f.setAttempt("funding_applied");
+			expect((await flow.purchase(intent, nativePurchase)).status).toBe("funding_applied");
+			expect(f.createPurchaseAttempt.mock.calls[1]?.[0].purpose).toBe("standalone_topup");
+		},
+	);
+
 	for (const code of [
 		StoreErrorCode.catalogue_revision_stale,
 		StoreErrorCode.open_refund_debt,
@@ -1006,11 +1030,9 @@ describe("store errors and build policy", () => {
 			f.createPurchaseAttempt.mockImplementationOnce(async () => {
 				throw new ApiClientError(409, code);
 			});
-			const recovered = await recoverStoreFlow(flow, f.scope.signal);
-			expect(recovered.flow).toBe(flow);
-			expect(recovered.error?.code).toBe(code);
+			await expect(flow.recover(f.scope.signal)).rejects.toMatchObject({ code });
 			expect(f.values.size).toBe(0);
-			expect((await recovered.flow.purchase(intent, async () => null)).status).toBe("cancelled");
+			expect((await flow.purchase(intent, async () => null)).status).toBe("cancelled");
 			expect(f.newKey).toHaveBeenCalledTimes(2);
 		});
 	}
@@ -1031,11 +1053,9 @@ describe("store errors and build policy", () => {
 			f.createPurchaseAttempt.mockImplementationOnce(async () => {
 				throw error;
 			});
-			const recovered = await recoverStoreFlow(flow, f.scope.signal);
-			expect(recovered.flow).toBe(flow);
-			expect(recovered.error).not.toBeNull();
+			await expect(flow.recover(f.scope.signal)).rejects.toBeDefined();
 			expect(f.values.get("journal")).toBe(saved);
-			expect((await recovered.flow.purchase(intent, async () => null)).status).toBe("cancelled");
+			expect((await flow.purchase(intent, async () => null)).status).toBe("cancelled");
 			expect(f.newKey).toHaveBeenCalledTimes(1);
 			expect(f.createPurchaseAttempt.mock.calls.map((call) => call[1])).toEqual([
 				"persisted-idempotency-key",
@@ -1053,11 +1073,11 @@ describe("store errors and build policy", () => {
 		f.getPurchaseAttempt.mockImplementationOnce(async () => {
 			throw new ApiClientError(409, StoreErrorCode.store_attempt_unavailable);
 		});
-		const recovered = await recoverStoreFlow(flow, f.scope.signal);
-		expect(recovered.flow).toBe(flow);
-		expect(recovered.error?.code).toBe(StoreErrorCode.store_attempt_unavailable);
+		await expect(flow.recover(f.scope.signal)).rejects.toMatchObject({
+			code: StoreErrorCode.store_attempt_unavailable,
+		});
 		expect(f.values.get("journal")).toBe(saved);
-		expect((await recovered.flow.purchase(intent, async () => null)).status).toBe("cancelled");
+		expect((await flow.purchase(intent, async () => null)).status).toBe("cancelled");
 	});
 	test("future API codes and native error messages remain private", async () => {
 		const f = fixture();

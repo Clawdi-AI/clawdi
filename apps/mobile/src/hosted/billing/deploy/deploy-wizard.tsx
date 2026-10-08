@@ -78,8 +78,8 @@ import {
 	retryStoreAdmission,
 	serverAllowsEntitledCreation,
 	storeAdmissionMessageKey,
+	storeAdmissionRecoveryAttempt,
 	storeFundingAfterCheck,
-	storeFundingAfterPurchase,
 	storeFundingHoldsAttempt,
 	unboundStoreSlotPlan,
 	validationTranslationKeys,
@@ -87,11 +87,10 @@ import {
 import { nextBillingCursor, subscriptionPrice, uniqueBillingItems } from "@/hosted/billing/format";
 import { AddCreditsAction } from "@/hosted/billing/store/add-credits";
 import {
-	currentStorePlatform,
-	StoreNoticeText,
 	useComputePaywallPurchase,
 	useComputePurchaseGate,
 } from "@/hosted/billing/store/compute-store";
+import { StoreNoticeText } from "@/hosted/billing/store/store-notice";
 import {
 	computePurchaseErrorNotice,
 	computePurchaseNotice,
@@ -116,7 +115,9 @@ import {
 import { NativeSegments } from "@/platform/navigation/segmented-control";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { computeProductPlan } from "@/platform/store/compute-subscription";
+import type { PurchaseOutcome } from "@/platform/store/purchase-flow";
 import { StorePurchaseError, storePurchaseError } from "@/platform/store/store-error";
+import { currentStorePlatform } from "@/platform/store/store-policy";
 import { useMobileStore, useStoreSurfaces } from "@/platform/store/store-provider";
 
 const initialDraft: HostedDeployWizardDraft = {
@@ -179,7 +180,7 @@ function CreationForm() {
 	// Store builds: subscribe through the official Paywall when the M1 gate allows it.
 	const storeGate = useComputePurchaseGate();
 	const purchaseCompute = useComputePaywallPurchase();
-	const { flow: storeFlow, computeSlot } = useMobileStore();
+	const { flow: storeFlow, refresh: refreshStore } = useMobileStore();
 	const slotPlanOf = (slot: StoreComputeSlot | null | undefined) =>
 		unboundStoreSlotPlan(slot, (productId) => computeProductPlan(productId)?.planSlug ?? null);
 	const [storeNotice, setStoreNotice] = useState<StoreNotice | null>(null);
@@ -435,6 +436,12 @@ function CreationForm() {
 		} catch (error) {
 			const storeMessage = storeAdmissionMessageKey(saved, error);
 			if (current(owns) && storeMessage) {
+				const recovered = storeAdmissionRecoveryAttempt(saved, error);
+				if (recovered) {
+					await replaceAttempt(storageKey, submitting, recovered, () => current(owns));
+					if (!current(owns)) return;
+					setAttempt(recovered);
+				}
 				setMessage(t(storeMessage));
 				return;
 			}
@@ -449,6 +456,26 @@ function CreationForm() {
 			throw error;
 		}
 		if (current(owns)) await navigateRequest(saved.id, owns);
+	};
+	/** Reconcile and read hosted funding for the exact saved request. */
+	const readStoreFunding = async (saved: CreationAttempt, owns: () => boolean) => {
+		const platform = currentStorePlatform();
+		if (!saved.storeFunding || !storeClient || !platform) return null;
+		if (storeFlow && !storeFlow.isBusy()) await storeFlow.recover().catch(() => []);
+		const [attempts, bootstrap] = await read((s) =>
+			Promise.all([
+				storeClient.listPurchaseAttempts(undefined, s),
+				storeClient.bootstrap(platform, s),
+			]),
+		);
+		if (!current(owns)) return null;
+		return storeFundingAfterCheck(
+			saved.id,
+			attempts,
+			saved.storeFunding,
+			saved.draft.computePlanSlug,
+			slotPlanOf(bootstrap.compute_slot),
+		);
 	};
 	/**
 	 * Design §5.1: persist the deploy draft for the plan the Paywall selected, buy it with
@@ -481,10 +508,11 @@ function CreationForm() {
 				if (current(owns)) setAttempt(next);
 			};
 			let mismatch: string | null = null;
-			let result: Parameters<typeof storeFundingAfterPurchase>[0];
+			let outcome: PurchaseOutcome | null = null;
+			let purchaseFailed = false;
 			let notice: StoreNotice | null;
 			try {
-				const outcome = await purchaseCompute(async (selected) => {
+				outcome = await purchaseCompute(async (selected) => {
 					const plan = computeProductPlan(selected.product.identifier);
 					if (!plan) throw new StorePurchaseError("store_offering_unavailable");
 					// Admission binds the store row by request and plan, so they must match.
@@ -506,12 +534,12 @@ function CreationForm() {
 						await persist({ ...saved, storeFunding: "awaiting_purchase" });
 					return { pending_deploy_request_id: saved.id };
 				});
-				if (!outcome) return;
-				result = { outcome };
-				notice = computePurchaseNotice(outcome, null, "deploy", storeGate.storeName);
+				notice = outcome
+					? computePurchaseNotice(outcome, null, "deploy", storeGate.storeName)
+					: null;
 			} catch (error) {
 				const failure = storePurchaseError(error);
-				result = { error: failure.code };
+				purchaseFailed = true;
 				notice = mismatch
 					? null
 					: computePurchaseErrorNotice(
@@ -523,11 +551,17 @@ function CreationForm() {
 			}
 			if (!current(owns)) return;
 			if (saved?.storeFunding && !mismatch) {
-				const funding = storeFundingAfterPurchase(
-					result,
-					saved.draft.computePlanSlug,
-					slotPlanOf(computeSlot),
-				);
+				let funding: CreationAttempt["storeFunding"];
+				if (outcome?.status === "funding_applied") funding = "funded";
+				else if (!purchaseFailed && (!outcome || outcome.status === "cancelled"))
+					funding = "awaiting_purchase";
+				else {
+					// Persist possible payment before another network read, including read failures.
+					await persist({ ...saved, storeFunding: "purchase_pending" });
+					if (!saved || !current(owns)) return;
+					funding = (await readStoreFunding(saved, owns)) ?? undefined;
+					if (!funding || !current(owns)) return;
+				}
 				if (funding !== saved.storeFunding) await persist({ ...saved, storeFunding: funding });
 				// The persistent waiting line and Check status cover unfinished purchases.
 				if (funding === "purchase_pending" && notice?.key !== "store.reviewRequired") notice = null;
@@ -553,33 +587,10 @@ function CreationForm() {
 	const checkStoreFunding = () =>
 		action.run(async (owns) => {
 			const saved = attempt;
-			const platform = currentStorePlatform();
-			if (
-				!saved?.storeFunding ||
-				saved.storeFunding === "funded" ||
-				!storageKey ||
-				!storeClient ||
-				!platform
-			)
-				return;
+			if (!saved?.storeFunding || saved.storeFunding === "funded" || !storageKey) return;
 			setStoreNotice(null);
-			// Recovery confirms a paid purchase whose confirmation was interrupted.
-			if (storeFlow && !storeFlow.isBusy()) await storeFlow.recover().catch(() => []);
-			// A fresh slot read: the store contract may have appeared since startup.
-			const [attempts, bootstrap] = await read((s) =>
-				Promise.all([
-					storeClient.listPurchaseAttempts(undefined, s),
-					storeClient.bootstrap(platform, s),
-				]),
-			);
-			if (!current(owns)) return;
-			const funding = storeFundingAfterCheck(
-				saved.id,
-				attempts,
-				saved.storeFunding,
-				saved.draft.computePlanSlug,
-				slotPlanOf(bootstrap.compute_slot),
-			);
+			const funding = await readStoreFunding(saved, owns);
+			if (!funding || !current(owns)) return;
 			if (funding !== saved.storeFunding) {
 				const next: CreationAttempt = { ...saved, storeFunding: funding };
 				await replaceAttempt(storageKey, saved, next, () => current(owns));
@@ -595,6 +606,7 @@ function CreationForm() {
 							? null
 							: { key: "storeCompute.stillWaiting", tone: "neutral", refresh: false },
 			);
+			await refreshStore();
 		});
 	const requestQuote = () =>
 		action.run(async (owns) => {
@@ -1064,12 +1076,11 @@ function CreationForm() {
 										{shortfall && surfaces.addCredits ? (
 											<>
 												<AppText>
-													{t("store.shortfall").replace(
-														"{amount}",
-														surfaces.creditUnits
+													{t("store.shortfall", {
+														amount: surfaces.creditUnits
 															? formatCredits(shortfall, credits)
 															: formatUsdExact(shortfall),
-													)}
+													})}
 												</AppText>
 												<AddCreditsAction onFunded={() => void requote.current()} />
 											</>

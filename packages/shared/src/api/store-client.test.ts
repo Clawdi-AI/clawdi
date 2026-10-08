@@ -508,6 +508,7 @@ describe("Hosted store client", () => {
 
 	test("classifies server store errors and holds while preserving unknown and unrelated errors", () => {
 		for (const code of [
+			StoreErrorCode.store_slot_in_use,
 			StoreErrorCode.store_purchases_disabled,
 			StoreErrorCode.catalogue_revision_stale,
 			StoreErrorCode.store_identity_tombstoned,

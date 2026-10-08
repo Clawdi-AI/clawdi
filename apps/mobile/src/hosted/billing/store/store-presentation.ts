@@ -1,6 +1,5 @@
-import type { StoreComputeReconcileResponse, StoreComputeSlot } from "@clawdi/shared/api";
+import type { StoreComputeReconcileResponse } from "@clawdi/shared/api";
 import { formatCents, formatUsdExact } from "@clawdi/shared/view";
-import type { Subscription } from "@/hosted/billing/format";
 import type { TranslationKey } from "@/lib/i18n/en";
 import type { PurchaseOutcome } from "@/platform/store/purchase-flow";
 import type { PurchaseErrorCode } from "@/platform/store/store-error";
@@ -117,7 +116,7 @@ export function purchaseErrorNotice(code: PurchaseErrorCode): StoreNotice {
 }
 
 /** What a compute subscription purchase is for; drives its result copy. */
-export type ComputePurchaseContext = "deploy" | "upgrade" | "change";
+type ComputePurchaseContext = "deploy" | "upgrade" | "change";
 
 /**
  * Result of a compute subscription purchase. `funding_applied` for a deploy is not a
@@ -194,6 +193,10 @@ export function computePurchaseErrorNotice(
 		case "store_operation_timeout":
 		case "store_request_failed":
 			return { key: "storeCompute.unconfirmed", tone: "warning", refresh: true, values };
+		case "store_slot_in_use":
+		case "store_product_already_active":
+		case "agent_already_funded":
+			return { key: "storeCompute.alreadySubscribed", tone: "warning", refresh: false, values };
 		case "store_purchases_disabled":
 		case "store_configuration_missing":
 		case "store_identity_unavailable":
@@ -226,14 +229,4 @@ export function restorePurchasesNotices(
 	if (response.code === "reconciled" || codes.has("reconciled"))
 		notices.push({ key: "storeCompute.restored", tone: "success", refresh: true });
 	return notices;
-}
-
-/** Match a subscription row to the slot's explicit store contract identity. */
-export function storeContractIdForRow(
-	item: Pick<Subscription, "deployment_id" | "store_management">,
-	slot: StoreComputeSlot | null,
-): string | null {
-	const management = item.store_management;
-	if (!slot || slot.available || !slot.contract_id || !management) return null;
-	return management.contract_id === slot.contract_id ? slot.contract_id : null;
 }

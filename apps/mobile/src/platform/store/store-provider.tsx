@@ -3,10 +3,11 @@ import type {
 	StoreComputeReconcileResponse,
 	StoreComputeSlot,
 } from "@clawdi/shared/api";
+import { onlineManager } from "@tanstack/react-query";
 import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState } from "react";
-import { AppState, Platform } from "react-native";
+import { AppState } from "react-native";
 import type { PurchasesOffering } from "react-native-purchases";
 import { useMobileApi } from "@/lib/api-provider";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
@@ -22,27 +23,24 @@ import {
 import { createPurchaseAttemptStore } from "./purchase-attempt-storage";
 import { createPurchaseFlow, type PurchaseFlow, type PurchaseOutcome } from "./purchase-flow";
 import { revenueCat } from "./revenuecat";
-import { StorePurchaseError, storePurchaseError } from "./store-error";
-import { createStoreIdentity, type StoreAvailability } from "./store-identity";
+import { StorePurchaseError } from "./store-error";
+import { createStoreIdentity } from "./store-identity";
 import { createStoreManagement, type StoreManagementController } from "./store-management";
 import {
 	computePurchaseAvailable,
+	currentStorePlatform,
 	isStoreBuild,
 	type StoreSurfaces,
 	storeSurfaces,
 } from "./store-policy";
-import { recoverStoreFlow } from "./store-recovery";
-import { preserveRestoreState, restoreStorePurchases } from "./store-restore";
+import { restoreStorePurchases } from "./store-restore";
 
 const journal = createPurchaseAttemptStore(SecureStore);
 type MobileStore = Readonly<{
-	availability: StoreAvailability;
 	flow: PurchaseFlow | null;
 	recovery: readonly PurchaseOutcome[];
-	error: StorePurchaseError | null;
 	bootstrap: StoreBootstrap | null;
-	computeSubscriptionsEnabled: boolean;
-	computeSlot: StoreComputeSlot | null;
+	refresh: () => Promise<void>;
 	computeProducts: readonly ComputeProduct[];
 	computeOffering: PurchasesOffering | null;
 	purchaseComputeSubscription: (
@@ -53,7 +51,12 @@ type MobileStore = Readonly<{
 	management: StoreManagementController | null;
 }>;
 type MobileStoreContext = MobileStore &
-	Readonly<{ storeBuild: boolean; customerCenterEnabled: boolean }>;
+	Readonly<{
+		storeBuild: boolean;
+		customerCenterEnabled: boolean;
+		computeSubscriptionsEnabled: boolean;
+		computeSlot: StoreComputeSlot | null;
+	}>;
 
 export type ComputeSubscriptionPurchaseRequest = Readonly<{
 	store_product_id: string;
@@ -71,20 +74,24 @@ const unavailableRestore = async (): Promise<StoreComputeReconcileResponse> => {
 	throw new StorePurchaseError("store_purchases_disabled");
 };
 const unavailable: MobileStore = {
-	availability: { available: false, reason: "store_purchases_disabled" },
 	flow: null,
 	recovery: [],
-	error: null,
 	bootstrap: null,
-	computeSubscriptionsEnabled: false,
-	computeSlot: null,
+	refresh: async () => {},
 	computeProducts: [],
 	computeOffering: null,
 	purchaseComputeSubscription: unavailablePurchase,
 	restorePurchases: unavailableRestore,
 	management: null,
 };
+function computeState(bootstrap: StoreBootstrap | null) {
+	return {
+		computeSubscriptionsEnabled: bootstrap?.compute_subscriptions_enabled ?? false,
+		computeSlot: bootstrap?.compute_slot ?? null,
+	};
+}
 const StoreContext = createContext<MobileStoreContext>({
+	...computeState(null),
 	...unavailable,
 	storeBuild: false,
 	customerCenterEnabled: false,
@@ -117,14 +124,13 @@ export function StoreProvider({
 				mounted = false;
 			};
 		}
-		const platform =
-			Platform.OS === "ios" ? "app_store" : Platform.OS === "android" ? "play_store" : null;
+		const platform = currentStorePlatform();
 		if (!platform || !client)
 			return () => {
 				mounted = false;
 			};
 		const identity = createStoreIdentity({ scope, client, sdk: revenueCat, config, platform });
-		const management = createStoreManagement({ scope, identity, sdk: revenueCat, platform });
+		const management = createStoreManagement({ scope, identity, sdk: revenueCat });
 		let flow: PurchaseFlow | null = null;
 		const refresh = async () => {
 			if (!current() || recovering || flow?.isBusy()) return;
@@ -137,11 +143,10 @@ export function StoreProvider({
 				const availability = await identity.initialize(controller.signal);
 				if (!current() || controller.signal.aborted) return;
 				if (!availability.available) {
-					update({ ...unavailable, availability });
+					update({ ...unavailable, refresh });
 					return;
 				}
 				const bootstrap = availability.bootstrap;
-				let latestBootstrap = bootstrap;
 				if (!flow) {
 					const digest = await Crypto.digestStringAsync(
 						Crypto.CryptoDigestAlgorithm.SHA256,
@@ -194,7 +199,7 @@ export function StoreProvider({
 					request: ComputeSubscriptionPurchaseRequest,
 					callerSignal?: AbortSignal,
 				): Promise<PurchaseOutcome> => {
-					if (!computePurchaseAvailable(config, latestBootstrap, request))
+					if (!computePurchaseAvailable(config, latestValue?.bootstrap ?? null, request))
 						throw new StorePurchaseError("store_purchases_disabled");
 					if (!flow) throw new StorePurchaseError("store_purchases_disabled");
 					return flow.purchase(
@@ -224,67 +229,29 @@ export function StoreProvider({
 						client,
 						signal: callerSignal,
 					});
-					const restoredState = preserveRestoreState(
-						{
-							computeSlot: latestValue?.computeSlot ?? latestBootstrap.compute_slot ?? null,
-							recovery: latestValue?.recovery ?? [],
-							error: latestValue?.error ?? null,
-						},
-						result,
-					);
-					const computeSlot = restoredState.computeSlot;
-					latestBootstrap = { ...latestBootstrap, compute_slot: computeSlot };
-					if (current())
+					if (current() && result.compute_slot && latestValue?.bootstrap) {
 						update({
-							availability: {
-								available: true,
-								bootstrap: latestBootstrap,
-							},
-							flow,
-							recovery: restoredState.recovery,
-							error: restoredState.error,
-							bootstrap: latestBootstrap,
-							computeSubscriptionsEnabled: latestBootstrap.compute_subscriptions_enabled,
-							computeSlot,
-							computeProducts,
-							computeOffering,
-							purchaseComputeSubscription,
-							restorePurchases,
-							management,
+							...latestValue,
+							bootstrap: { ...latestValue.bootstrap, compute_slot: result.compute_slot },
 						});
+					}
 					return result;
 				};
 				update({
-					availability,
 					flow,
 					recovery: [],
-					error: null,
 					bootstrap,
-					computeSubscriptionsEnabled: bootstrap.compute_subscriptions_enabled,
-					computeSlot: bootstrap.compute_slot ?? null,
+					refresh,
 					computeProducts,
 					computeOffering,
 					purchaseComputeSubscription,
 					restorePurchases,
 					management,
 				});
-				const recovered = await recoverStoreFlow(flow, controller.signal);
-				if (!controller.signal.aborted)
-					update({
-						availability,
-						...recovered,
-						bootstrap,
-						computeSubscriptionsEnabled: bootstrap.compute_subscriptions_enabled,
-						computeSlot: bootstrap.compute_slot ?? null,
-						computeProducts,
-						computeOffering,
-						purchaseComputeSubscription,
-						restorePurchases,
-						management,
-					});
-			} catch (error) {
-				if (!controller.signal.aborted)
-					update({ ...unavailable, error: storePurchaseError(error) });
+				const recovery = await flow.recover(controller.signal).catch(() => []);
+				if (!controller.signal.aborted && latestValue) update({ ...latestValue, recovery });
+			} catch {
+				if (!controller.signal.aborted) update({ ...unavailable, refresh });
 			} finally {
 				scope.signal.removeEventListener("abort", abort);
 				recovering = false;
@@ -297,9 +264,13 @@ export function StoreProvider({
 			if (value === "active") void refresh();
 			else lease?.abort();
 		});
+		const unsubscribeOnline = onlineManager.subscribe((online) => {
+			if (online) void refresh();
+		});
 		return () => {
 			mounted = false;
 			lease?.abort();
+			unsubscribeOnline();
 			subscription.remove();
 		};
 	}, [scope, client, config]);
@@ -307,7 +278,7 @@ export function StoreProvider({
 	const storeBuild = isStoreBuild(config);
 	const customerCenterEnabled = config.revenueCatCustomerCenterEnabled === true;
 	const value = useMemo(
-		() => ({ ...active, storeBuild, customerCenterEnabled }),
+		() => ({ ...active, ...computeState(active.bootstrap), storeBuild, customerCenterEnabled }),
 		[active, storeBuild, customerCenterEnabled],
 	);
 	return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

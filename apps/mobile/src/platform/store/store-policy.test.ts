@@ -1,5 +1,9 @@
-import { describe, expect, test } from "bun:test";
-import { computePurchaseAvailable, storeRecoveryAction, storeSurfaces } from "./store-policy";
+import { describe, expect, mock, test } from "bun:test";
+
+mock.module("react-native", () => ({ Platform: { OS: "ios" } }));
+const { computePurchaseAvailable, storeRecoveryAction, storeSurfaces } = await import(
+	"./store-policy"
+);
 
 describe("store build surfaces", () => {
 	test("compute purchases require the store build, server flag, and an available slot", () => {

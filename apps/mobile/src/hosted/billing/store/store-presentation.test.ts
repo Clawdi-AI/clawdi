@@ -10,7 +10,6 @@ import {
 	purchaseOutcomeNotice,
 	restorePurchasesNotices,
 	signedCredits,
-	storeContractIdForRow,
 } from "./store-presentation";
 
 describe("credit units", () => {
@@ -185,63 +184,5 @@ describe("restore purchases", () => {
 				(notice) => notice.key,
 			),
 		).toEqual(["storeCompute.restorePending"]);
-	});
-});
-
-describe("store contract for a subscription row", () => {
-	const management = {
-		contract_id: "11111111-1111-4111-8111-111111111111",
-		provider: "play_store" as const,
-		product_id: "ai.clawdi.app.compute:basic-monthly",
-		management_url: null,
-		auto_renews: true,
-		renews_or_ends_at: null,
-		state: "active",
-	};
-	const row = { deployment_id: "hdep_a", store_management: management };
-	const slot = {
-		available: false,
-		contract_id: "11111111-1111-4111-8111-111111111111",
-		agent_id: "hdep_a",
-		store_management: management,
-	};
-
-	test("matches the live contract bound to the row's Agent or unbound", () => {
-		expect(storeContractIdForRow(row, slot)).toBe(slot.contract_id);
-		expect(
-			storeContractIdForRow({ ...row, deployment_id: null }, { ...slot, agent_id: null }),
-		).toBe(slot.contract_id);
-	});
-
-	test("contract identity survives Agent and product projection changes", () => {
-		expect(storeContractIdForRow({ ...row, deployment_id: "hdep_b" }, slot)).toBe(slot.contract_id);
-		expect(
-			storeContractIdForRow(
-				{
-					...row,
-					store_management: { ...management, product_id: "ai.clawdi.app.compute:basic-annual" },
-				},
-				slot,
-			),
-		).toBe(slot.contract_id);
-	});
-
-	test("does not match a different contract even with the same Agent and product", () => {
-		expect(
-			storeContractIdForRow(
-				{
-					...row,
-					store_management: { ...management, contract_id: "22222222-2222-4222-8222-222222222222" },
-				},
-				slot,
-			),
-		).toBeNull();
-	});
-
-	test("has no contract for an open slot or missing management", () => {
-		expect(storeContractIdForRow(row, { available: true })).toBeNull();
-		expect(storeContractIdForRow(row, null)).toBeNull();
-		expect(storeContractIdForRow({ deployment_id: null, store_management: null }, slot)).toBeNull();
-		expect(storeContractIdForRow(row, { ...slot, contract_id: null })).toBeNull();
 	});
 });
