@@ -172,24 +172,6 @@ describe("release configuration", () => {
 			},
 		});
 	});
-	test("subscription legal links are optional and must use https", () => {
-		const legal = {
-			termsOfUseUrl: "https://clawdi.example/terms",
-			privacyPolicyUrl: "https://clawdi.example/privacy",
-		};
-		const configured = parseMobileRuntimeConfig(
-			{ ...values, ...legal },
-			{ environment: "production" },
-		);
-		if (!configured.ok) throw new Error("Invalid fixture config");
-		expect(configured.value).toMatchObject(legal);
-		expect(
-			parseMobileRuntimeConfig(
-				{ ...values, privacyPolicyUrl: "http://clawdi.example/privacy" },
-				{ environment: "production" },
-			).ok,
-		).toBe(false);
-	});
 	test("an empty Updates channel still enforces production auth and Sentry environment", () => {
 		for (const dsn of ["", "https://public@example.test/1"]) {
 			const result = Bun.spawnSync(

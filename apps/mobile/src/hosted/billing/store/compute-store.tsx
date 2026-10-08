@@ -2,6 +2,7 @@ import type { DeploymentRead, StoreComputeSlot, StorePlatform } from "@clawdi/sh
 import {
 	agentDisplayName,
 	billingTermLabel,
+	CLAWDI_LEGAL_URLS,
 	computeFundingMode,
 	computeSubscriptionPlanLabel,
 	resolveStoreSubscriptionActions,
@@ -255,7 +256,6 @@ function StoreChangePlanAction({
 	const t = useI18n();
 	const scope = useAccountScope();
 	const store = useMobileStore();
-	const config = useMobileRuntimeConfig();
 	const refresh = useRefreshCompute();
 	const action = useAuthAction(scope);
 	const [open, setOpen] = useState(false);
@@ -263,19 +263,10 @@ function StoreChangePlanAction({
 	const [notice, setNotice] = useState<StoreNotice | null>(null);
 	const platform = currentStorePlatform();
 	const name = storeName(platform);
-	const legal = config.ok ? config.value : null;
 	const products = store.computeProducts.filter(
 		(product) => product.productIdentifier !== management.product_id,
 	);
-	// App Review requires the EULA and privacy links with the purchase.
-	if (
-		!store.flow ||
-		!store.computeSubscriptionsEnabled ||
-		!products.length ||
-		!legal?.termsOfUseUrl ||
-		!legal.privacyPolicyUrl
-	)
-		return null;
+	if (!store.flow || !store.computeSubscriptionsEnabled || !products.length) return null;
 	const change = (productIdentifier: string) =>
 		action.run(async (owns) => {
 			const product = products.find((item) => item.productIdentifier === productIdentifier);
@@ -332,18 +323,19 @@ function StoreChangePlanAction({
 						<Text className="text-muted-foreground">
 							{t("storeCompute.autoRenew", { store: name })}
 						</Text>
+						{/* App Review requires the EULA and privacy links with the purchase. */}
 						<AppView className="flex-row flex-wrap gap-x-4 gap-y-1">
 							<Text
 								accessibilityRole="link"
 								className="text-primary underline"
-								onPress={() => void openUrl(legal.termsOfUseUrl ?? null)}
+								onPress={() => void openUrl(CLAWDI_LEGAL_URLS.termsOfUse)}
 							>
 								{t("storeCompute.termsOfUse")}
 							</Text>
 							<Text
 								accessibilityRole="link"
 								className="text-primary underline"
-								onPress={() => void openUrl(legal.privacyPolicyUrl ?? null)}
+								onPress={() => void openUrl(CLAWDI_LEGAL_URLS.privacyPolicy)}
 							>
 								{t("storeCompute.privacyPolicy")}
 							</Text>

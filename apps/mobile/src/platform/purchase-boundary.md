@@ -161,10 +161,9 @@ the loaded `compute` offering and the Paywall host (`useComputePurchaseGate`).
 - **Store rows** use the shared presentation and
   `resolveStoreSubscriptionActions` (platform-aware; Web keeps store rows read-only).
   Change plan buys another compute product through the M1 plan-change flow with the
-  live contract from `compute_slot` and the server's replacement mode. It requires the
-  owner-provided `EXPO_PUBLIC_CLAWDI_TERMS_OF_USE_URL` and
-  `EXPO_PUBLIC_CLAWDI_PRIVACY_POLICY_URL` (https); without them the action is hidden
-  and Manage subscription remains. Manage opens the Customer Center when the build flag
+  live contract from `compute_slot` and the server's replacement mode, and always shows
+  the shared `CLAWDI_LEGAL_URLS` (Terms of Use (EULA), Privacy Policy) with the
+  auto-renew disclosure. Manage opens the Customer Center when the build flag
   is on, otherwise `showManageSubscriptions()` (iOS, Apple link fallback) or the Play
   link; rows billed by the other store show "Managed in … on your … device", no link.
 - **Billing**: store slot card and "Restore purchases" (`owned_by_other_account` is
