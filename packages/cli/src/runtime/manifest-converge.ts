@@ -1,5 +1,6 @@
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { log } from "../serve/log";
 import {
 	type RuntimeProviderConflict,
 	readRuntimeAppliedState,
@@ -209,6 +210,7 @@ interface RuntimeConvergenceState {
 	resourceProjectionErrors: string[];
 	providerConflicts: RuntimeProviderConflict[];
 	skillGuardRefusals: HostedSkillGuardRefusal[];
+	hermesNativeEnvConflicts: string[];
 	serviceWithdrawals: { runtime: string; service: string }[];
 	/** OpenClaw channels whose managed projection is withdrawn for this generation. */
 	withdrawnOpenClawChannels: Set<string>;
@@ -346,6 +348,7 @@ function initializeRuntimeConvergence(
 		resourceProjectionErrors: [],
 		providerConflicts: [],
 		skillGuardRefusals: [],
+		hermesNativeEnvConflicts: [],
 		serviceWithdrawals: [],
 		withdrawnOpenClawChannels: new Set(),
 		projectedProviderIds: {},
@@ -1050,10 +1053,12 @@ function applyRuntimeEntryProjections(
 			desired: hermesManagedProfileEnvironment(manifest, secretValues),
 		});
 		if (profileEnvironment.changed) state.nativeCredentialChangedRuntimes.add("hermes");
-		for (const key of profileEnvironment.conflicts)
-			state.resourceProjectionErrors.push(
-				`Hermes managed profile field ${key} conflicts with native configuration`,
-			);
+		state.hermesNativeEnvConflicts.push(...profileEnvironment.conflicts);
+		if (profileEnvironment.conflicts.length > 0) {
+			log.warn("runtime.hermes.native_env_conflicts", {
+				keys: profileEnvironment.conflicts,
+			});
+		}
 	}
 	for (const [name, runtime] of runtimeEntries) {
 		const observation = state.observations.get(name);
@@ -1412,6 +1417,7 @@ function buildRuntimeConvergenceResult(
 		projectedProviderIds: state.projectedProviderIds,
 		providerConflicts: state.providerConflicts,
 		skillGuardRefusals: state.skillGuardRefusals,
+		hermesNativeEnvConflicts: state.hermesNativeEnvConflicts,
 		serviceWithdrawals: runtimeServiceWithdrawals(state.serviceWithdrawals),
 		nativeCredentialProviderIds: state.nativeCredentialProviderIds,
 		agentPluginFailedNames: [...state.agentPluginFailedNames].sort(),
