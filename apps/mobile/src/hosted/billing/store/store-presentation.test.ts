@@ -129,6 +129,20 @@ describe("compute subscription results", () => {
 		);
 	});
 
+	test("a blocking earlier attempt says when the purchase can be retried", () => {
+		expect(
+			computePurchaseErrorNotice("purchase_pending", "deploy", "App Store", "Oct 8, 2026, 1:15 AM"),
+		).toEqual({
+			key: "storeCompute.previousPurchasePreparing",
+			tone: "neutral",
+			refresh: false,
+			values: { time: "Oct 8, 2026, 1:15 AM" },
+		});
+		expect(computePurchaseErrorNotice("purchase_pending", "change", "Google Play").key).toBe(
+			"storeCompute.previousPurchasePreparingSoon",
+		);
+	});
+
 	test("held and unfinished attempts are distinct from success", () => {
 		expect(
 			computePurchaseNotice(outcome("terminal", "reconciliation_required"), null, "deploy", "x")

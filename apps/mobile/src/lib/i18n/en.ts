@@ -251,6 +251,11 @@ const storeComputeEn = {
 	restorePending: "Your purchases are still being checked. Try again in a few minutes.",
 	restoreFailed: "Purchases couldn't be restored. Try again.",
 	checkStatus: "Check status",
+	previousPurchasePreparing:
+		"A previous purchase is still being prepared. You can try again after {time}.",
+	previousPurchasePreparingSoon:
+		"A previous purchase is still being prepared. Try again in about 15 minutes.",
+	underReview: "We're reviewing this purchase. Contact support if it doesn't resolve.",
 	checkingStatus: "Checking status…",
 	stillWaiting: "The purchase isn't confirmed yet. Check again after it is approved.",
 	fundingConfirmed: "Subscription confirmed. Deploy to create this Agent.",

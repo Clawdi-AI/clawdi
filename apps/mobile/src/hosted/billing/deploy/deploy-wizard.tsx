@@ -7,6 +7,7 @@ import {
 	hostedDeployAgentNameAfterRuntimeChange,
 	hostedDeployRuntimeLabel,
 	projectHostedDeployRequest,
+	type StoreComputeSlot,
 	validateAndBuildHostedDeployRequest,
 } from "@clawdi/shared/api";
 import {
@@ -78,11 +79,13 @@ import {
 	storeFundingAfterCheck,
 	storeFundingAfterPurchase,
 	storeFundingHoldsAttempt,
+	unboundStoreSlotPlan,
 	validationTranslationKeys,
 } from "@/hosted/billing/deploy/deploy-request";
 import { nextBillingCursor, subscriptionPrice, uniqueBillingItems } from "@/hosted/billing/format";
 import { AddCreditsAction } from "@/hosted/billing/store/add-credits";
 import {
+	currentStorePlatform,
 	StoreNoticeText,
 	useComputePaywallPurchase,
 	useComputePurchaseGate,
@@ -174,7 +177,9 @@ function CreationForm() {
 	// Store builds: subscribe through the official Paywall when the M1 gate allows it.
 	const storeGate = useComputePurchaseGate();
 	const purchaseCompute = useComputePaywallPurchase();
-	const { flow: storeFlow } = useMobileStore();
+	const { flow: storeFlow, computeSlot } = useMobileStore();
+	const slotPlanOf = (slot: StoreComputeSlot | null | undefined) =>
+		unboundStoreSlotPlan(slot, (productId) => computeProductPlan(productId)?.planSlug ?? null);
 	const [storeNotice, setStoreNotice] = useState<StoreNotice | null>(null);
 	const [providerChoice, setProviderChoice] = useState("__managed__");
 	const [previewTerm, setPreviewTerm] = useState(1);
@@ -486,13 +491,24 @@ function CreationForm() {
 				result = { outcome };
 				notice = computePurchaseNotice(outcome, null, "deploy", storeGate.storeName);
 			} catch (error) {
-				const code = storePurchaseError(error).code;
-				result = { error: code };
-				notice = mismatch ? null : computePurchaseErrorNotice(code, "deploy", storeGate.storeName);
+				const failure = storePurchaseError(error);
+				result = { error: failure.code };
+				notice = mismatch
+					? null
+					: computePurchaseErrorNotice(
+							failure.code,
+							"deploy",
+							storeGate.storeName,
+							formatDate(failure.retryAt),
+						);
 			}
 			if (!current(owns)) return;
 			if (saved?.storeFunding && !mismatch) {
-				const funding = storeFundingAfterPurchase(result);
+				const funding = storeFundingAfterPurchase(
+					result,
+					saved.draft.computePlanSlug,
+					slotPlanOf(computeSlot),
+				);
 				if (funding !== saved.storeFunding) await persist({ ...saved, storeFunding: funding });
 				// The persistent waiting line and Check status cover unfinished purchases.
 				if (funding === "purchase_pending" && notice?.key !== "store.reviewRequired") notice = null;
@@ -518,14 +534,33 @@ function CreationForm() {
 	const checkStoreFunding = () =>
 		action.run(async (owns) => {
 			const saved = attempt;
-			if (!saved?.storeFunding || saved.storeFunding === "funded" || !storageKey || !storeClient)
+			const platform = currentStorePlatform();
+			if (
+				!saved?.storeFunding ||
+				saved.storeFunding === "funded" ||
+				!storageKey ||
+				!storeClient ||
+				!platform
+			)
 				return;
 			setStoreNotice(null);
 			// Recovery confirms a paid purchase whose confirmation was interrupted.
 			if (storeFlow && !storeFlow.isBusy()) await storeFlow.recover().catch(() => []);
-			const attempts = await read((s) => storeClient.listPurchaseAttempts(undefined, s));
+			// A fresh slot read: the store contract may have appeared since startup.
+			const [attempts, bootstrap] = await read((s) =>
+				Promise.all([
+					storeClient.listPurchaseAttempts(undefined, s),
+					storeClient.bootstrap(platform, s),
+				]),
+			);
 			if (!current(owns)) return;
-			const funding = storeFundingAfterCheck(saved.id, attempts, saved.storeFunding);
+			const funding = storeFundingAfterCheck(
+				saved.id,
+				attempts,
+				saved.storeFunding,
+				saved.draft.computePlanSlug,
+				slotPlanOf(bootstrap.compute_slot),
+			);
 			if (funding !== saved.storeFunding) {
 				const next: CreationAttempt = { ...saved, storeFunding: funding };
 				await replaceAttempt(storageKey, saved, next, () => current(owns));
@@ -537,7 +572,9 @@ function CreationForm() {
 					? { key: "storeCompute.fundingConfirmed", tone: "success", refresh: false }
 					: funding === "awaiting_purchase"
 						? { key: "storeCompute.notCompleted", tone: "neutral", refresh: false }
-						: { key: "storeCompute.stillWaiting", tone: "neutral", refresh: false },
+						: funding === "review_required"
+							? null
+							: { key: "storeCompute.stillWaiting", tone: "neutral", refresh: false },
 			);
 		});
 	const requestQuote = () =>
@@ -802,6 +839,8 @@ function CreationForm() {
 											<AppText accessibilityRole="alert">
 												{t("storeCompute.waitingForApproval")}
 											</AppText>
+										) : attempt?.storeFunding === "review_required" ? (
+											<AppText accessibilityRole="alert">{t("storeCompute.underReview")}</AppText>
 										) : null}
 										{storeNotice ? <StoreNoticeText notice={storeNotice} /> : null}
 									</WebView>
@@ -1149,7 +1188,9 @@ function CreationForm() {
 						</WebText>
 					) : null}
 
-					{source === "store" && attempt?.storeFunding === "purchase_pending" ? (
+					{source === "store" &&
+					(attempt?.storeFunding === "purchase_pending" ||
+						attempt?.storeFunding === "review_required") ? (
 						<ActionButton
 							label={t(action.busy ? "storeCompute.checkingStatus" : "storeCompute.checkStatus")}
 							icon={<Icon as={Store} />}

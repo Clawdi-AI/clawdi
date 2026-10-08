@@ -3,11 +3,13 @@ import { validateAndBuildHostedDeployRequest } from "@clawdi/shared/api";
 import {
 	type CreationAttempt,
 	canAdmitCreationAttempt,
+	canDiscardCreationAttempt,
 	canStartStorePurchase,
 	parseCreationAttempt,
 	storeFundingAfterCheck,
 	storeFundingAfterPurchase,
 	storeFundingHoldsAttempt,
+	unboundStoreSlotPlan,
 } from "@/hosted/billing/deploy/deploy-request";
 import { createAttemptStore } from "@/platform/creation-attempt-store";
 
@@ -45,6 +47,9 @@ const outcome = (
 		| "prepared" = "prepared",
 ) => ({ outcome: { status, attempt: { state } } });
 
+const plan = "compute_performance";
+const noSlot = null;
+
 describe("store-funded creation admission", () => {
 	test("pending, unconfirmed and unfinished purchases never allow admission", () => {
 		for (const result of [
@@ -55,10 +60,8 @@ describe("store-funded creation admission", () => {
 			{ error: "account_changed" as const },
 			outcome("pending"),
 			outcome("submitted"),
-			outcome("terminal", "expired"),
-			outcome("terminal", "reconciliation_required"),
 		]) {
-			const funding = storeFundingAfterPurchase(result);
+			const funding = storeFundingAfterPurchase(result, plan, noSlot);
 			expect(funding).toBe("purchase_pending");
 			expect(canAdmitCreationAttempt({ storeFunding: funding })).toBe(false);
 			expect(canStartStorePurchase(storeAttempt(funding))).toBe(false);
@@ -66,51 +69,128 @@ describe("store-funded creation admission", () => {
 	});
 
 	test("only this request's funding_applied allows admission", () => {
-		expect(storeFundingAfterPurchase(outcome("funding_applied", "funding_applied"))).toBe("funded");
+		expect(
+			storeFundingAfterPurchase(outcome("funding_applied", "funding_applied"), plan, noSlot),
+		).toBe("funded");
 		expect(canAdmitCreationAttempt({ storeFunding: "funded" })).toBe(true);
 		expect(canAdmitCreationAttempt({ storeFunding: "awaiting_purchase" })).toBe(false);
 		expect(canAdmitCreationAttempt({})).toBe(true);
 	});
 
-	test("a cancelled or provably unstarted purchase can be retried, not admitted", () => {
+	test("a cancelled, ended or provably unstarted purchase can be retried, not admitted", () => {
 		for (const result of [
 			outcome("cancelled"),
 			outcome("terminal", "rejected"),
+			outcome("terminal", "expired"),
 			{ error: "paywall_unavailable" as const },
 			{ error: "store_offering_unavailable" as const },
+			{ error: "purchase_pending" as const },
 		]) {
-			const funding = storeFundingAfterPurchase(result);
+			const funding = storeFundingAfterPurchase(result, plan, noSlot);
 			expect(funding).toBe("awaiting_purchase");
 			expect(canAdmitCreationAttempt({ storeFunding: funding })).toBe(false);
 			expect(canStartStorePurchase(storeAttempt(funding))).toBe(true);
 		}
 	});
 
-	test("Check status enables admission only from this request's funded attempt", () => {
-		const other = {
-			purpose: "compute_subscription" as const,
-			pending_deploy_request_id: "other-request",
-			state: "funding_applied" as const,
-		};
-		const own = { ...other, pending_deploy_request_id: id };
+	const other = {
+		purpose: "compute_subscription" as const,
+		pending_deploy_request_id: "other-request",
+		state: "funding_applied" as const,
+	};
+	const own = { ...other, pending_deploy_request_id: id };
+
+	test("Check status admits only this request's funded attempt while a live one remains", () => {
+		const check = (attempts: Parameters<typeof storeFundingAfterCheck>[1]) =>
+			storeFundingAfterCheck(id, attempts, "purchase_pending", plan, noSlot);
+		expect(check([other, { ...own, state: "verification_pending" }])).toBe("purchase_pending");
+		expect(check([{ ...own, state: "prepared" }])).toBe("purchase_pending");
+		expect(check([own])).toBe("funded");
+		// A locally cancelled request keeps its retry while its prepared attempt lives on.
 		expect(
-			storeFundingAfterCheck(
-				id,
-				[other, { ...own, state: "verification_pending" }],
-				"purchase_pending",
-			),
-		).toBe("purchase_pending");
+			storeFundingAfterCheck(id, [{ ...own, state: "prepared" }], "awaiting_purchase", plan, null),
+		).toBe("awaiting_purchase");
+	});
+
+	test("an expired or missing attempt returns the request to awaiting_purchase", () => {
+		for (const attempts of [
+			[{ ...own, state: "expired" as const }],
+			[{ ...own, state: "rejected" as const }],
+			[{ ...own, state: "canceled" as const }],
+			[{ ...own, purpose: "standalone_topup" as const }],
+			[],
+		]) {
+			const funding = storeFundingAfterCheck(id, attempts, "purchase_pending", plan, noSlot);
+			expect(funding).toBe("awaiting_purchase");
+			expect(canAdmitCreationAttempt({ storeFunding: funding })).toBe(false);
+		}
+	});
+
+	test("an expired attempt plus an unbound slot of the same plan allows admission", () => {
+		const expired = [{ ...own, state: "expired" as const }];
+		const funding = storeFundingAfterCheck(id, expired, "purchase_pending", plan, plan);
+		expect(funding).toBe("funded");
+		expect(canAdmitCreationAttempt({ storeFunding: funding })).toBe(true);
+		expect(storeFundingAfterPurchase(outcome("terminal", "expired"), plan, plan)).toBe("funded");
+		// A slot of another plan cannot be bound by this request.
+		const other = storeFundingAfterCheck(id, expired, "purchase_pending", plan, "compute_basic");
+		expect(other).toBe("awaiting_purchase");
+		expect(canAdmitCreationAttempt({ storeFunding: other })).toBe(false);
+		// A live attempt is never bypassed by a slot.
 		expect(
-			storeFundingAfterCheck(id, [{ ...own, purpose: "standalone_topup" }], "purchase_pending"),
+			storeFundingAfterCheck(id, [{ ...own, state: "prepared" }], "purchase_pending", plan, plan),
 		).toBe("purchase_pending");
-		expect(storeFundingAfterCheck(id, [], "purchase_pending")).toBe("purchase_pending");
-		expect(storeFundingAfterCheck(id, [own], "purchase_pending")).toBe("funded");
-		expect(storeFundingAfterCheck(id, [{ ...own, state: "rejected" }], "purchase_pending")).toBe(
-			"awaiting_purchase",
-		);
-		expect(storeFundingAfterCheck(id, [{ ...own, state: "expired" }], "purchase_pending")).toBe(
+	});
+
+	test("reconciliation_required blocks admission and allows discarding the draft", () => {
+		const fromCheck = storeFundingAfterCheck(
+			id,
+			[{ ...own, state: "reconciliation_required" }],
 			"purchase_pending",
+			plan,
+			plan,
 		);
+		const fromPurchase = storeFundingAfterPurchase(
+			outcome("terminal", "reconciliation_required"),
+			plan,
+			plan,
+		);
+		for (const funding of [fromCheck, fromPurchase]) {
+			expect(funding).toBe("review_required");
+			const attempt = storeAttempt(funding);
+			expect(canAdmitCreationAttempt(attempt)).toBe(false);
+			expect(canStartStorePurchase(attempt)).toBe(false);
+			expect(canDiscardCreationAttempt(attempt) && !storeFundingHoldsAttempt(attempt)).toBe(true);
+		}
+	});
+
+	test("unbound store slots are matched by plan and supplying state only", () => {
+		const management = {
+			provider: "app_store" as const,
+			product_id: "ai.clawdi.app.compute.performance.monthly",
+			management_url: null,
+			auto_renews: true,
+			renews_or_ends_at: null,
+			state: "active",
+		};
+		const planOf = (productId: string) =>
+			productId.includes("performance") ? "compute_performance" : "compute_basic";
+		const slot = {
+			available: false,
+			contract_id: "c",
+			agent_id: null,
+			store_management: management,
+		};
+		expect(unboundStoreSlotPlan(slot, planOf)).toBe("compute_performance");
+		expect(unboundStoreSlotPlan({ ...slot, agent_id: "hdep_bound" }, planOf)).toBeNull();
+		expect(unboundStoreSlotPlan({ available: true }, planOf)).toBeNull();
+		expect(
+			unboundStoreSlotPlan(
+				{ ...slot, store_management: { ...management, state: "lapsed" } },
+				planOf,
+			),
+		).toBeNull();
+		expect(unboundStoreSlotPlan(null, planOf)).toBeNull();
 	});
 
 	test("a restart mid-purchase restores the store gate from the creation journal", async () => {

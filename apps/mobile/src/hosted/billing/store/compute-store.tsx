@@ -28,6 +28,7 @@ import { Icon } from "@/components/ui/icon";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Text } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
+import { formatDate } from "@/hooks/cloud-inventory";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
 import type { Subscription } from "@/hosted/billing/format";
 import {
@@ -168,10 +169,12 @@ export function StoreUpgradeAction({ deployment }: { deployment: DeploymentRead 
 				}));
 				next = outcome ? computePurchaseNotice(outcome, null, "upgrade", gate.storeName) : null;
 			} catch (error) {
+				const failure = storePurchaseError(error);
 				next = computePurchaseErrorNotice(
-					storePurchaseError(error).code,
+					failure.code,
 					"upgrade",
 					gate.storeName,
+					formatDate(failure.retryAt),
 				);
 			}
 			if (!owns()) return;
@@ -282,7 +285,13 @@ function StoreChangePlanAction({
 				});
 				next = computePurchaseNotice(outcome, null, "change", name);
 			} catch (error) {
-				next = computePurchaseErrorNotice(storePurchaseError(error).code, "change", name);
+				const failure = storePurchaseError(error);
+				next = computePurchaseErrorNotice(
+					failure.code,
+					"change",
+					name,
+					formatDate(failure.retryAt),
+				);
 			}
 			if (!owns()) return;
 			setNotice(next);

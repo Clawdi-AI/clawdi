@@ -161,9 +161,20 @@ export function computePurchaseErrorNotice(
 	code: PurchaseErrorCode,
 	context: ComputePurchaseContext,
 	store: string,
+	/** Display time when a blocking earlier attempt expires (`StorePurchaseError.retryAt`). */
+	retryAt: string | null = null,
 ): StoreNotice {
 	const values = { store };
 	switch (code) {
+		case "purchase_pending":
+			return retryAt
+				? {
+						key: "storeCompute.previousPurchasePreparing",
+						tone: "neutral",
+						refresh: false,
+						values: { time: retryAt },
+					}
+				: { key: "storeCompute.previousPurchasePreparingSoon", tone: "neutral", refresh: false };
 		case "payment_pending":
 			return {
 				key:
@@ -188,7 +199,6 @@ export function computePurchaseErrorNotice(
 		case "store_identity_unavailable":
 		case "store_identity_tombstoned":
 		case "identity_mismatch":
-		case "purchase_pending":
 		case "open_refund_debt":
 		case "account_changed":
 			return purchaseErrorNotice(code);

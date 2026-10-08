@@ -102,10 +102,7 @@ preserving bootstrap availability and `flow`, so a retry remains possible.
 Before blocking a different purpose/target with `purchase_pending`, M1 reads
 the previous server attempt and finishes any completed state other than
 `reconciliation_required` before proceeding. Paid expired evidence is submitted
-through confirm before its journal is released. A locally cancelled attempt that
-never started a purchase and is still `prepared` on the server is released for the
-new intent (for example another compute product for the same deploy request); its
-unused server attempt expires through the TTL.
+through confirm before its journal is released.
 
 ## M2 UI
 
@@ -164,8 +161,14 @@ the loaded `compute` offering and the Paywall host (`useComputePurchaseGate`).
   every admission path checks it, including restart and Retry. Ask-to-Buy / Play
   `PENDING`, unconfirmed and other unfinished results show "Waiting for approval" with
   only "Check status", which runs `flow.recover()` and then reads this request's
-  attempts. A `funding_applied` result (immediate or from Check status) enables the
-  existing explicit admission with the same `deploy_request_id`.
+  attempts and a fresh bootstrap `compute_slot`. A `funding_applied` result (immediate
+  or from Check status) enables the existing explicit admission with the same
+  `deploy_request_id`. When no attempt of the request is live or funded (for example
+  an expired, declined Ask-to-Buy), the request returns to `awaiting_purchase`, unless
+  an unbound store slot of the same plan exists: hosted `_select_subscription` binds it
+  through `bind_available_store_contract`, so admission is allowed.
+  `reconciliation_required` shows the review copy, blocks admission and allows
+  discarding the draft.
 - **Store rows** use the shared presentation and
   `resolveStoreSubscriptionActions` (platform-aware; Web keeps store rows read-only).
   Change plan buys another compute product through the M1 plan-change flow with the
@@ -195,7 +198,14 @@ one two-minute polling budget across attempts.
 Backgrounding cancels recovery; foregrounding refreshes bootstrap
 and recovers again. Foreground events during a purchase preserve its SDK identity.
 
-Accepted residual behavior (E):
+Accepted residual behavior (C): a different-purpose purchase remains blocked by
+a locally cancelled `prepared` attempt until the server expires it (up to 15
+minutes), despite reading its current state. Hosted links store purchases by
+identity, product and attempt validity, so a second live attempt could turn the
+purchase into a `conflict_hold`; there is no hosted cancel route. The error carries
+that attempt's `expires_at` as `retryAt`, and M2 shows when to try again (this also
+covers choosing another compute product for the same deploy request). Accepted
+residual behavior (E):
 each foreground recovery of an interrupted `prepared` attempt without a hint
 calls `syncPurchases()` again; repeated foreground refreshes can repeat the sync.
 
