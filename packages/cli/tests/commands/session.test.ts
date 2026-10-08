@@ -11,6 +11,7 @@ import {
 	sessionShareList,
 	sessionShareRevoke,
 } from "../../src/commands/session";
+import type { SessionListQuery } from "../../src/lib/api-schemas";
 import { jsonResponse, mockFetch, seedAuthAndEnv } from "./helpers";
 
 let tmpHome: string;
@@ -35,6 +36,39 @@ afterEach(() => {
 });
 
 describe("cloud session commands", () => {
+	it("lists uploaded sessions with the generated query contract and default options", async () => {
+		const { captured, restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/sessions",
+				response: () => jsonResponse({ items: [], total: 0, page: 1, page_size: 25 }),
+			},
+		]);
+		const output = spyOn(console, "log").mockImplementation(() => {});
+		try {
+			await sessionList({ uploaded: true, json: true });
+			expect(captured).toHaveLength(1);
+			const expectedQuery = {
+				page_size: 25,
+				sort: "last_activity_at",
+				order: "desc",
+			} satisfies SessionListQuery;
+			expect(Object.fromEntries(new URL(captured[0]?.url ?? "").searchParams)).toEqual(
+				Object.fromEntries(
+					Object.entries(expectedQuery).map(([key, value]) => [key, String(value)]),
+				),
+			);
+			expect(JSON.parse(String(output.mock.calls[0]?.[0]))).toEqual({
+				schemaVersion: "clawdi.sessionList.v2",
+				sessions: [],
+				total: 0,
+			});
+		} finally {
+			output.mockRestore();
+			restore();
+		}
+	});
+
 	it("lists uploaded sessions without a search query", async () => {
 		const sessionId = "00000000-0000-0000-0000-000000000125";
 		const { captured, restore } = mockFetch([
@@ -95,11 +129,17 @@ describe("cloud session commands", () => {
 		}
 
 		const query = new URL(captured[0]?.url ?? "").searchParams;
-		expect(query.get("q")).toBeNull();
-		expect(query.get("agent")).toBe("codex");
-		expect(query.get("environment_id")).toBe("00000000-0000-0000-0000-000000000099");
-		expect(query.get("page_size")).toBe("1");
-		expect(query.get("since")).toBe("2026-08-01T00:00:00.000Z");
+		const expectedQuery = {
+			agent: "codex",
+			environment_id: "00000000-0000-0000-0000-000000000099",
+			page_size: 1,
+			since: "2026-08-01T00:00:00.000Z",
+			sort: "last_activity_at",
+			order: "desc",
+		} satisfies SessionListQuery;
+		expect(Object.fromEntries(query)).toEqual(
+			Object.fromEntries(Object.entries(expectedQuery).map(([key, value]) => [key, String(value)])),
+		);
 		const payload = JSON.parse(output[0] ?? "{}");
 		expect(payload.schemaVersion).toBe("clawdi.sessionList.v2");
 		expect(payload.sessions[0].id).toBe(sessionId);
