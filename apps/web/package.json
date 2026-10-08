@@ -15,6 +15,7 @@
 		"test:ssr:internal": "node --test --test-timeout=180000 scripts/production-ssr.mjs",
 		"e2e": "playwright test",
 		"e2e:hosted": "playwright test --config=playwright.hosted.config.ts",
+		"icons": "bun scripts/brand-icons.ts",
 		"generate-api": "../../scripts/openapi-typescript.sh http://localhost:8000/openapi.json -o ../../packages/shared/src/api/api.generated.ts",
 		"generate-deploy-api": "../../scripts/generate-deploy-api.sh",
 		"generate-deploy-api:live": "DEPLOY_OPENAPI_SOURCE=https://api.clawdi.ai/openapi.json ../../scripts/generate-deploy-api.sh"
@@ -77,6 +78,7 @@
 		"@vercel/nft": "^1.11.0",
 		"@vitejs/plugin-react": "^6.1.1",
 		"shadcn": "4.21.0",
+		"sharp": "0.34.5",
 		"tailwindcss": "catalog:",
 		"typescript": "catalog:",
 		"vite": "^8.3.1"

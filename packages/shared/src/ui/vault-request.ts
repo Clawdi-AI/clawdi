@@ -4,7 +4,7 @@ export const vaultRequestClasses = {
 	card: "min-w-0 w-full",
 	header: "gap-5",
 	brand: "flex items-center gap-2",
-	brandIcon: "size-7 shrink-0 rounded-md",
+	brandIcon: "size-7 shrink-0",
 	brandName: "text-sm font-semibold tracking-tight",
 	title: "text-xl font-semibold tracking-tight",
 	muted: "text-muted-foreground",

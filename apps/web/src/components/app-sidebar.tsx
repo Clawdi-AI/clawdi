@@ -55,6 +55,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { toast } from "sonner";
 import { useAccountDataIdentity } from "@/components/account-suspension-boundary";
 import { useSetBreadcrumbSegmentTitle } from "@/components/breadcrumb-title";
+import { ClawdiLogo } from "@/components/clawdi-logo";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
@@ -1145,11 +1146,7 @@ function FocusRailContent({
 							aria-label="Open Clawdi homepage"
 							className="flex size-11 items-center justify-center rounded-lg transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 						>
-							<img
-								src="/clawdi-logo-transparent.png"
-								alt=""
-								className="size-9 shrink-0 rounded-md"
-							/>
+							<ClawdiLogo className="size-9 shrink-0" />
 							<span className="sr-only">Clawdi</span>
 						</a>
 					</SidebarMenuItem>

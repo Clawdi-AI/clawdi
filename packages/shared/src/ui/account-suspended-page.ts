@@ -2,7 +2,7 @@
 export const accountSuspendedPageClasses = {
 	page: "flex min-h-dvh items-center justify-center bg-background px-6 py-12",
 	section: "w-full max-w-lg text-center",
-	logo: "mx-auto size-12 rounded-md",
+	logo: "mx-auto size-12",
 	iconChip:
 		"mx-auto mt-8 flex size-11 items-center justify-center rounded-md border bg-muted text-muted-foreground",
 	icon: "size-5",

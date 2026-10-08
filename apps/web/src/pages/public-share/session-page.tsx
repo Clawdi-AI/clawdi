@@ -2,6 +2,7 @@ import { publicSessionClasses } from "@clawdi/shared/ui";
 import { publicSessionScopeLabel, relativeTime } from "@clawdi/shared/view";
 import { Link } from "@tanstack/react-router";
 import { Clock, MessageSquare } from "lucide-react";
+import { ClawdiLogo } from "@/components/clawdi-logo";
 import { AgentInline } from "@/components/dashboard/agent-label";
 import { DetailMeta, DetailStats, DetailTitle } from "@/components/detail/layout";
 import { ModelBadge } from "@/components/meta/model-badge";
@@ -102,13 +103,7 @@ function ShareHeader() {
 		<header className={publicSessionClasses.header}>
 			<div className={publicSessionClasses.headerRow}>
 				<Link to="/" className={publicSessionClasses.brand}>
-					<img
-						src="/clawdi-logo-transparent.png"
-						alt=""
-						width={28}
-						height={28}
-						className={publicSessionClasses.brandImage}
-					/>
+					<ClawdiLogo width={28} height={28} className={publicSessionClasses.brandImage} />
 					<span className={publicSessionClasses.brandName}>Clawdi</span>
 				</Link>
 				<ShareHeaderUser />
