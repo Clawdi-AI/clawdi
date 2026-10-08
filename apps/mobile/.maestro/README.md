@@ -1,4 +1,6 @@
-# Android fixture smoke
+# Fixture smoke
+
+## Local Android
 
 From the repository root, install the frozen Bun dependencies and pass a local
 **development** APK containing `expo-dev-client`:
@@ -189,6 +191,71 @@ requires a real Clerk instance with Native API/app registration. The fixture
 cannot render that container; no custom sign-in fields are tested or stubbed.
 The script writes `signin-screen.skip.txt` so a green fixture run does not
 imply live authentication coverage.
+
+## Manual iOS simulator smoke in EAS
+
+Use EAS CLI **24.8.0**, an authorized `EXPO_TOKEN`, the owner's `EAS_PROJECT_ID`
+UUID and the same Maestro-capable EAS plan described above. From `apps/mobile`:
+
+```sh
+eas workflow:run .eas/workflows/e2e-ios.yml --non-interactive --json \
+  -F "eas_project_id=$EAS_PROJECT_ID" -F "commit_sha=$(git rev-parse HEAD)"
+```
+
+Run from a clean checkout of the commit being tested; `commit_sha` is the cache
+filter, while `workflow:run` uploads the local source. Use the returned run ID
+with `eas workflow:status <run-id> --non-interactive --wait` to observe completion.
+The GitHub nightly/manual workflow above continues to dispatch Android only.
+All iOS build and simulator work runs in EAS cloud; the owner's Mac is not used.
+
+[`e2e-ios.yml`](../.eas/workflows/e2e-ios.yml) mirrors Android's inputs, tool
+defaults, conditional build, Maestro flow and log hooks. The
+[`get-build`](https://docs.expo.dev/eas/workflows/pre-packaged-jobs/#get-build)
+filter selects an internal iOS build with `simulator: true`, profile `e2e-ios`
+and the requested commit. A miss runs the documented
+[`build` job](https://docs.expo.dev/eas/workflows/pre-packaged-jobs/#build) on
+`macos-medium`. The `e2e-ios` profile extends `e2e` and sets
+[`ios.simulator: true`](https://docs.expo.dev/build-reference/simulators/),
+retaining development-client configuration and disabled Sentry uploads without
+changing Android or device profiles. Simulator builds need no Apple Developer
+account or device signing credentials.
+
+The [`maestro` job](https://docs.expo.dev/eas/workflows/pre-packaged-jobs/#maestro)
+uses `device_identifier: iPhone 16 Plus`, Maestro **2.11.0**, the shared
+`sdk-57` [image](https://docs.expo.dev/build-reference/infrastructure/#ios-server-images)
+and the documented [`macos-large` runner](https://docs.expo.dev/eas/workflows/syntax/#jobsjob_idruns_on).
+Device availability differs by image and must be confirmed in the first run's
+logs. The iOS hook calls `scripts/mobile-e2e-eas.sh start ios`; it uses Python
+process groups and a 20-minute alarm on stock macOS, without Linux `setsid`,
+GNU `timeout` or adb. The Simulator accesses the fixture at `127.0.0.1:8796`
+and Metro at `127.0.0.1:8096` on that same worker. Expo's
+[`--localhost` option](https://docs.expo.dev/more/expo-cli/#server-options) is
+[implemented as `127.0.0.1`](https://github.com/expo/expo/blob/sdk-57/packages/@expo/cli/src/start/server/UrlCreator.ts);
+the dev-client URL uses that address directly. Android retains its `10.0.2.2`
+fixture address and Metro adb reverse rule.
+
+Both platforms run `.maestro/smoke.yaml`. `select-tab.yaml` uses the existing
+`tab-*` accessibility identifiers on iOS and the Material container selector
+on Android. `navigate-back.yaml` uses iOS's native edge-back gesture via the
+documented [`swipe`](https://docs.maestro.dev/reference/commands-available/swipe)
+command; the stack's [`gestureEnabled`](https://reactnavigation.org/docs/native-stack-navigator/#gestureenabled)
+defaults to true on iOS. Maestro's system `back` and the Android System UI ANR handler are guarded by
+the documented [`runFlow` platform condition](https://docs.maestro.dev/maestro-flows/flow-control-and-logic/conditions).
+The same fixture entity assertions, screenshots and skipped live Clerk check
+apply to both platforms.
+
+For authenticated server validation from `apps/mobile`:
+
+```sh
+bunx eas-cli@24.8.0 workflow:validate .eas/workflows/e2e-ios.yml --non-interactive
+```
+
+Done: after owner setup, the EAS iOS `smoke` job is green and its run contains
+**Maestro Test Results** and **fixture-service-logs**. Repeat the same commit
+to confirm a cache hit skips `build_simulator`. Server validation, native build
+success, Simulator networking, service survival across hooks, iOS accessibility
+selectors, cache reuse and artifact collection remain unverified until those
+EAS runs; local schema checks do not establish a passing iOS smoke.
 
 # Manual release workflow
 

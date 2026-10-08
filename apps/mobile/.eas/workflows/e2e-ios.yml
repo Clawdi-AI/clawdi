@@ -1,0 +1,74 @@
+name: iOS simulator fixture smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      eas_project_id:
+        type: string
+        required: true
+      commit_sha:
+        type: string
+        required: true
+
+defaults:
+  image: sdk-57
+  tools:
+    node: "24.21.0"
+    bun: "1.4.2"
+
+jobs:
+  cached_simulator:
+    type: get-build
+    params:
+      platform: ios
+      profile: e2e-ios
+      distribution: internal
+      simulator: true
+      git_commit_hash: ${{ inputs.commit_sha }}
+
+  build_simulator:
+    needs: [cached_simulator]
+    if: ${{ !needs.cached_simulator.outputs.build_id }}
+    type: build
+    runs_on: macos-medium
+    env:
+      EAS_PROJECT_ID: ${{ inputs.eas_project_id }}
+    params:
+      platform: ios
+      profile: e2e-ios
+
+  smoke:
+    needs: [cached_simulator]
+    after: [build_simulator]
+    if: ${{ needs.cached_simulator.outputs.build_id || after.build_simulator.outputs.build_id }}
+    type: maestro
+    environment: development
+    runs_on: macos-large
+    env:
+      MAESTRO_APP_ID: ai.clawdi.app
+      MAESTRO_DEV_CLIENT_URL: exp+clawdi://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8096&disableOnboarding=1&disableAutoLaunch=1&disableFab=1
+    params:
+      build_id: ${{ needs.cached_simulator.outputs.build_id || after.build_simulator.outputs.build_id }}
+      flow_path: .maestro/smoke.yaml
+      maestro_version: "2.11.0"
+      device_identifier: iPhone 16 Plus
+    hooks:
+      before_maestro_tests:
+        - name: Install frozen workspace dependencies
+          working_directory: ../..
+          run: bun install --frozen-lockfile
+        - name: Start fixture API and Metro on this worker
+          working_directory: ../..
+          run: bash scripts/mobile-e2e-eas.sh start ios
+      after_maestro_tests:
+        - name: Stop fixture API and Metro
+          if: ${{ always() }}
+          working_directory: ../..
+          run: bash scripts/mobile-e2e-eas.sh stop ios
+        - name: Upload fixture and Metro logs
+          if: ${{ always() }}
+          uses: eas/upload_artifact
+          with:
+            type: other
+            name: fixture-service-logs
+            path: ../../test-results/mobile-e2e-eas/logs/**/*
