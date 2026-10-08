@@ -104,14 +104,9 @@ def test_clerk_cli_oauth_setting_is_strict_atomic_and_canonical() -> None:
 
 
 @pytest.mark.parametrize("retired_value", ["http://127.0.0.1:18473/oauth/callback", "", None])
-def test_clerk_cli_oauth_setting_discards_only_retired_key(retired_value: object) -> None:
-    value = _configured_value(redirect_uri=retired_value)
-    validated = CLERK_CLI_OAUTH_SETTING_ADAPTER.validate_python(value)
-    assert "redirect_uri" not in validated.model_dump(mode="json")
-    assert value["redirect_uri"] == retired_value
-    assert "redirect_uri" not in validated.model_json_schema()["properties"]
+def test_clerk_cli_oauth_setting_rejects_retired_key(retired_value: object) -> None:
     with pytest.raises(ValidationError):
-        CLERK_CLI_OAUTH_SETTING_ADAPTER.validate_python({**value, "unexpected": True})
+        CLERK_CLI_OAUTH_SETTING_ADAPTER.validate_python(_configured_value(redirect_uri=retired_value))
 
 
 @pytest.mark.asyncio
@@ -154,6 +149,10 @@ async def test_admin_app_setting_upsert_is_guarded_canonical_atomic_and_audited(
         headers=_ADMIN_HEADERS,
         json={"value": value},
     )
+    if retired_key:
+        assert response.status_code == 400
+        assert response.json() == {"detail": "Invalid app setting value"}
+        return
     assert response.status_code == 200, response.text
     expected = {
         "enabled": True,

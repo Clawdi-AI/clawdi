@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypeGuard
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
@@ -40,10 +40,6 @@ def _canonical_authorized_parties(value: object) -> object:
     return sorted(canonical)
 
 
-def _is_object_dict(value: object) -> TypeGuard[dict[object, object]]:
-    return isinstance(value, dict)
-
-
 class ClerkCliOAuthSetting(BaseModel):
     """Atomic value stored under the global ``clerk_cli_oauth`` key.
 
@@ -78,21 +74,6 @@ class ClerkCliOAuthSetting(BaseModel):
     @classmethod
     def canonicalize_authorized_parties(cls, value: object) -> object:
         return _canonical_authorized_parties(value)
-
-    # TODO (2026-10-08): remove this validator in the follow-up data-cleanup PR,
-    # after this tolerant model is deployed and its migration removes the key.
-    @model_validator(mode="before")
-    @classmethod
-    def discard_retired_redirect_uri(cls, value: object) -> object:
-        """Allow new app processes to read the row before the data migration.
-
-        Pydantic before validators run before extra="forbid" validation. Copy
-        the input so a read never mutates the stored JSON; every other unknown
-        key still fails validation. The retired key is never serialized again.
-        """
-        if _is_object_dict(value) and "redirect_uri" in value:
-            return {key: item for key, item in value.items() if key != "redirect_uri"}
-        return value
 
     @model_validator(mode="after")
     def reject_partial_or_empty_enabled_config(self) -> ClerkCliOAuthSetting:
