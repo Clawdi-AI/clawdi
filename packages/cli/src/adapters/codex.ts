@@ -38,6 +38,13 @@ import {
 import { flatSkillModule } from "./skill-dir";
 import { readCommandVersion } from "./version";
 
+// Bump when Codex identity or metadata parsing changes so stale confirmations re-parse.
+const CODEX_SOURCE_REVISION = "codex-v2";
+
+function codexRevision(revision: string | undefined): string | undefined {
+	return revision === undefined ? undefined : `${CODEX_SOURCE_REVISION}:${revision}`;
+}
+
 function codexDir() {
 	return getCodexHome();
 }
@@ -315,6 +322,7 @@ async function parseSessionFile(
 	}
 
 	let sessionId: string | null = null;
+	let seenSessionMeta = false;
 	let projectPath: string | null = null;
 	let startedAt: Date | null = null;
 	let endedAt: Date | null = null;
@@ -326,6 +334,8 @@ async function parseSessionFile(
 
 	for await (const { data: raw } of source.records()) {
 		const parsed = raw as SessionLine;
+		// Upstream rollout/list.rs: the first SessionMeta owns the file; later ones are fork history.
+		if (parsed.type === "session_meta" && seenSessionMeta) continue;
 
 		const ts = parsed.timestamp ? new Date(parsed.timestamp) : null;
 		if (ts && !Number.isNaN(ts.getTime())) {
@@ -334,8 +344,9 @@ async function parseSessionFile(
 		}
 
 		if (parsed.type === "session_meta") {
-			sessionId = parsed.payload?.id ?? sessionId;
-			projectPath = parsed.payload?.cwd ?? projectPath;
+			seenSessionMeta = true;
+			sessionId = parsed.payload?.id ?? null;
+			projectPath = parsed.payload?.cwd ?? null;
 			if (parsed.payload?.timestamp) {
 				const headerTs = new Date(parsed.payload.timestamp);
 				if (!Number.isNaN(headerTs.getTime())) startedAt = headerTs;
@@ -409,7 +420,7 @@ async function parseSessionFile(
 		durationSeconds: durationSecondsBetween(startedAt, endedAt),
 		summary: firstRealUser ? safeTruncate(firstRealUser.content, 200) : null,
 		...description.content,
-		sourceRevision: source.revision,
+		sourceRevision: codexRevision(source.revision),
 		rawFilePath: filePath,
 	};
 }
@@ -487,7 +498,7 @@ export class CodexAdapter implements AgentAdapterCore {
 			if (context) await setImmediate(undefined, { signal: context.signal });
 			try {
 				if (!request.projectFilter) {
-					const revision = jsonlStatRevision(await stat(filePath, { bigint: true }));
+					const revision = codexRevision(jsonlStatRevision(await stat(filePath, { bigint: true })));
 					const id = revision === undefined ? undefined : byRevision.get(revision);
 					if (id !== undefined) {
 						if (!observed.has(id)) {
