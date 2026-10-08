@@ -38,7 +38,6 @@ _ISSUER = "https://clerk.example.test"
 _CLIENT_ID = "client_clawdi_cli"
 _AUDIENCE = "clawdi-cloud-api"
 _AUTHORIZED_PARTY = "https://accounts.clawdi.test"
-_REDIRECT_URI = "http://127.0.0.1:18473/oauth/callback"
 _APPLICATION_ID = "oauthapp_clawdi_cli"
 _SECRET_KEY = "sk_test_clerk_backend"
 
@@ -68,7 +67,6 @@ def _oauth_setting_value(**overrides: object) -> dict[str, object]:
         "issuer": _ISSUER,
         "client_id": _CLIENT_ID,
         "application_id": _APPLICATION_ID,
-        "redirect_uri": _REDIRECT_URI,
         "audience": _AUDIENCE,
         "authorized_parties": [_AUTHORIZED_PARTY],
     }
@@ -583,9 +581,21 @@ async def test_oauth_and_session_issuers_cannot_rebind_the_same_clerk_sub(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("before_migration", [True, False])
 async def test_oauth_config_returns_only_public_values(
-    raw_auth_client: httpx.AsyncClient, clerk_oauth_signing_key: str
+    raw_auth_client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    clerk_oauth_signing_key: str,
+    before_migration: bool,
 ):
+    if before_migration:
+        row = await db_session.get(AppSetting, CLERK_CLI_OAUTH_SETTING_KEY)
+        assert row is not None
+        row.value_json = {
+            **row.value_json,
+            "redirect_uri": "http://127.0.0.1:18473/oauth/callback",
+        }
+        await db_session.commit()
     response = await raw_auth_client.get("/v1/cli/auth/oauth/config")
 
     assert response.status_code == 200
@@ -656,7 +666,6 @@ async def test_oauth_config_fails_closed_when_public_app_is_not_configured(
         issuer="",
         client_id="",
         application_id="",
-        redirect_uri="",
         audience="",
         authorized_parties=[],
     )
@@ -678,7 +687,6 @@ async def test_disabled_oauth_setting_fails_closed_for_access_tokens(
         issuer="",
         client_id="",
         application_id="",
-        redirect_uri="",
         audience="",
         authorized_parties=[],
     )

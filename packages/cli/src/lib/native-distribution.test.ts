@@ -7,12 +7,7 @@ import {
 	NATIVE_INSTALL_IDENTITY_NAME,
 	writeNativeInstallIdentity,
 } from "./native-distribution";
-import {
-	NATIVE_BUILD_TARGET_CATALOG,
-	NATIVE_TARGETS,
-	type NativeTarget,
-	nativeAssetName,
-} from "./native-release-manifest";
+import { NATIVE_BUILD_TARGET_CATALOG, nativeAssetName } from "./native-release-manifest";
 
 const roots: string[] = [];
 
@@ -34,12 +29,20 @@ afterEach(() => {
 		writeFileSync(executable, "native\n");
 		writeFileSync(join(versionDir, "egress-addon", "clawdi_egress_addon.py"), "addon\n");
 		writeFileSync(join(versionDir, "skills", "clawdi", "SKILL.md"), "# skill\n");
-		writeFileSync(join(versionDir, "clawdi-cli-manifest.txt"), manifest);
+		writeFileSync(join(versionDir, "clawdi-cli-manifest-v2.txt"), manifest);
 		symlinkSync("../share/clawdi/versions/1.2.3-linux-x64/clawdi", join(prefix, "bin", "clawdi"));
 
 		expect(detectNativeInstall(executable, identity)).toBeNull();
 		writeNativeInstallIdentity(versionDir, identity, manifest);
 		expect(detectNativeInstall(executable, identity)?.launcher).toBe(join(prefix, "bin", "clawdi"));
+
+		rmSync(join(versionDir, "clawdi-cli-manifest-v2.txt"));
+		writeFileSync(
+			join(versionDir, "clawdi-cli-manifest.txt"),
+			manifest.replace("clawdi.nativeRelease.v2", "clawdi.nativeRelease.v1"),
+		);
+		expect(detectNativeInstall(executable, identity)).toBeNull();
+		writeFileSync(join(versionDir, "clawdi-cli-manifest-v2.txt"), manifest);
 
 		writeFileSync(join(versionDir, NATIVE_INSTALL_IDENTITY_NAME), "clawdi.nativeInstall.v1\n");
 		expect(detectNativeInstall(executable, identity)).toBeNull();
@@ -48,10 +51,10 @@ afterEach(() => {
 
 function nativeManifest(version: string): string {
 	return [
-		"clawdi.nativeRelease.v1",
+		"clawdi.nativeRelease.v2",
 		`version\t${version}`,
-		...NATIVE_TARGETS.map(
-			(target: NativeTarget, index) =>
+		...NATIVE_BUILD_TARGET_CATALOG.map(
+			({ target }, index) =>
 				`artifact\t${target}\t${nativeAssetName(target)}\t${String(index).repeat(64)}`,
 		),
 		"",
@@ -102,7 +105,13 @@ describe("Windows native install ownership", () => {
 		mkdirSync(current);
 		expect(detectNativeInstall(executable, identity, "win32")).toBeNull();
 		rmSync(join(versionDir, "clawdi-cli-manifest-v2.txt"));
-		writeFileSync(join(versionDir, "clawdi-cli-manifest.txt"), nativeManifest(identity.version));
+		writeFileSync(
+			join(versionDir, "clawdi-cli-manifest.txt"),
+			nativeManifest(identity.version).replace(
+				"clawdi.nativeRelease.v2",
+				"clawdi.nativeRelease.v1",
+			),
+		);
 		expect(detectNativeInstall(executable, identity, "win32")).toBeNull();
 	});
 });

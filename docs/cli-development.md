@@ -49,9 +49,11 @@ oldest pending candidate during a burst of releases. `clawdi update` and `clawdi
 `latest` immediately; `--check` only reports availability. Installer exact pins
 use `CLAWDI_VERSION`; installers resolve `latest` when no pin is supplied.
 
-Native updaters read v2 manifests and tolerate future targets and metadata.
-Existing Unix installations still accept the frozen v1 manifest while `install.sh`
-reads v2. Release checks enforce the full current target matrix.
+Native installers and updaters use only `clawdi-cli-manifest-v2.txt` and tolerate
+future targets and metadata. Releases generate, attest, and publish only v2;
+release checks enforce the full current target matrix. Installed native CLIs
+≤0.15.8 can no longer self-update and must reinstall with
+`curl -fsSL https://clawdi.ai/install.sh | sh`. npm installations are unaffected.
 
 Done: `bun run --cwd packages/cli test -- tests/commands/update.test.ts` passes
 in the isolated runner.

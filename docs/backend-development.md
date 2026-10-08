@@ -696,11 +696,26 @@ existing admin key:
 curl -sS -X PUT http://localhost:8000/v1/admin/settings/clerk_cli_oauth \
   -H "X-Admin-Key: ${ADMIN_API_KEY}" \
   -H "Content-Type: application/json" \
-  -d '{"value":{"enabled":true,"schema_version":1,"issuer":"https://clerk.example","client_id":"client_cli","application_id":"oauthapp_cli","redirect_uri":"http://127.0.0.1:18473/oauth/callback","audience":"clawdi-cloud-api","authorized_parties":["https://accounts.example"]}}'
+  -d '{"value":{"enabled":true,"schema_version":1,"issuer":"https://clerk.example","client_id":"client_cli","application_id":"oauthapp_cli","audience":"clawdi-cloud-api","authorized_parties":["https://accounts.example"]}}'
 ```
 
 Done: the command returns HTTP 200 JSON containing
 `"key":"clerk_cli_oauth"` and the canonicalized whole value.
+
+The CLI OAuth setting no longer stores `redirect_uri`. For this rollout, first
+replace all serving app processes with the new model while the stored row still
+has the key, then run Alembic revision `c4a8e2d6f913` to remove it from
+`app_settings.value_json`. The usual migration-first deployment order must not
+leave old model processes serving the migrated row: they require this callback
+for configured settings. The new model's Pydantic
+[`model_validator(mode="before")`](https://docs.pydantic.dev/latest/concepts/validators/#model-validators)
+strips the retired key before `extra="forbid"` runs, so new processes can serve
+`/v1/cli/auth/oauth/config` before or after the migration. Reads leave the stored
+JSON untouched and admin writes serialize only the current fields. All other
+unknown keys remain invalid. Downgrading cannot recover the removed value.
+
+Done: `scripts/test.sh backend tests/test_cli_oauth_redirect_uri_migration.py tests/test_cli_oauth_auth.py tests/test_app_settings.py`
+passes against the isolated PostgreSQL runner.
 
 The value is strictly validated and canonicalized before the setting and its
 control-plane audit event commit together. JWT signatures are verified against
