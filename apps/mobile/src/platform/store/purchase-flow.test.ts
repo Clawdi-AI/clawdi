@@ -193,6 +193,13 @@ function fixture(configOverrides: Partial<MobileRuntimeConfig> = {}, identityTim
 	};
 }
 const intent = { purpose: "standalone_topup" } as const;
+const computeIntent = {
+	purpose: "compute_subscription",
+	store_product_id: "ai.clawdi.app.compute.plus",
+	pending_deploy_request_id: "first-request",
+	target_contract_id: null,
+	target_deployment_id: null,
+} as const;
 const transaction = { transactionIdentifier: "store-transaction-1" };
 
 describe("store account identity", () => {
@@ -605,6 +612,125 @@ describe("durable store attempts", () => {
 		expect(outcome.status).toBe("cancelled");
 		expect(parsePurchaseAttempt(cancelled.values.get("journal") ?? "")?.cancelled).toBe(true);
 	});
+	for (const [label, nextIntent] of [
+		["product", { ...computeIntent, store_product_id: "ai.clawdi.app.compute.pro" }],
+		["pending deploy request", { ...computeIntent, pending_deploy_request_id: "next-request" }],
+	] as const) {
+		test(`a different compute ${label} clears the cancelled prepared journal and creates a new attempt`, async () => {
+			const f = fixture();
+			await f.initialize();
+			f.setAttemptFields(computeIntent);
+			await f.makeFlow().purchase(computeIntent, async () => null);
+			const clearJournal = mock(async (key: string) => {
+				expect(parsePurchaseAttempt(f.values.get(key) ?? "")?.attemptId).toBe(attemptId);
+				f.values.delete(key);
+			});
+			f.store.deleteItemAsync = clearJournal;
+			f.newKey.mockReturnValueOnce("new-compute-key");
+			f.createPurchaseAttempt.mockImplementationOnce(async (body, key) => {
+				expect(clearJournal).toHaveBeenCalledTimes(1);
+				expect(key).toBe("new-compute-key");
+				expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.request).toEqual(body);
+				return {
+					...body,
+					attempt_id: otherAppUserId,
+					state: "prepared",
+					expires_at: "2099-01-01T00:00:00Z",
+				};
+			});
+			const paywall = mock(async () => null);
+			const outcome = await f.makeFlow().purchase(nextIntent, paywall);
+			expect(outcome.status).toBe("cancelled");
+			expect(outcome.attempt.attempt_id).toBe(otherAppUserId);
+			expect(clearJournal).toHaveBeenCalledWith("journal");
+			expect(f.getPurchaseAttempt).toHaveBeenCalledTimes(1);
+			expect(f.createPurchaseAttempt).toHaveBeenCalledTimes(2);
+			expect(f.newKey).toHaveBeenCalledTimes(2);
+			expect(paywall).toHaveBeenCalledTimes(1);
+			expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
+			expect(parsePurchaseAttempt(f.values.get("journal") ?? "")).toMatchObject({
+				key: "new-compute-key",
+				attemptId: otherAppUserId,
+				request: nextIntent,
+			});
+		});
+	}
+	for (const [label, purchaseStarted, transactionHint] of [
+		["started purchase", true, null],
+		["transaction hint", true, transaction.transactionIdentifier],
+		["uncancelled attempt", false, null],
+	] as const) {
+		test(`a different compute product remains blocked by a prepared ${label}`, async () => {
+			const f = fixture();
+			await f.initialize();
+			f.setAttemptFields(computeIntent);
+			await f.makeFlow().purchase(computeIntent, async () => null);
+			const saved = parsePurchaseAttempt(f.values.get("journal") ?? "");
+			if (!saved) throw new Error("Missing journal fixture");
+			await createPurchaseAttemptStore(f.store).replaceAttempt(
+				"journal",
+				saved,
+				{ ...saved, cancelled: false, purchaseStarted, transactionHint },
+				() => true,
+			);
+			const raw = f.values.get("journal");
+			const paywall = mock(async () => null);
+			await expect(
+				f
+					.makeFlow()
+					.purchase({ ...computeIntent, store_product_id: "ai.clawdi.app.compute.pro" }, paywall),
+			).rejects.toMatchObject({
+				code: "purchase_pending",
+				retryAt: "2099-01-01T00:00:00Z",
+			});
+			expect(f.values.get("journal")).toBe(raw);
+			expect(f.createPurchaseAttempt).toHaveBeenCalledTimes(1);
+			expect(f.newKey).toHaveBeenCalledTimes(1);
+			expect(paywall).not.toHaveBeenCalled();
+			expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
+		});
+	}
+	for (const [previousIntent, nextIntent] of [
+		[intent, computeIntent],
+		[computeIntent, intent],
+	] as const) {
+		test(`a cancelled prepared ${previousIntent.purpose} attempt blocks switching to ${nextIntent.purpose}`, async () => {
+			const f = fixture();
+			await f.initialize();
+			f.setAttemptFields(previousIntent);
+			await f.makeFlow().purchase(previousIntent, async () => null);
+			const raw = f.values.get("journal");
+			const paywall = mock(async () => null);
+			await expect(f.makeFlow().purchase(nextIntent, paywall)).rejects.toMatchObject({
+				code: "purchase_pending",
+				retryAt: "2099-01-01T00:00:00Z",
+			});
+			expect(f.values.get("journal")).toBe(raw);
+			expect(f.createPurchaseAttempt).toHaveBeenCalledTimes(1);
+			expect(f.newKey).toHaveBeenCalledTimes(1);
+			expect(paywall).not.toHaveBeenCalled();
+		});
+	}
+	for (const source of ["confirm", "poll"] as const) {
+		test(`server canceled returned by ${source} clears the journal and returns terminal`, async () => {
+			const f = fixture();
+			await f.initialize();
+			f.confirmPurchaseAttempt.mockImplementationOnce(async () => {
+				f.setAttempt("canceled");
+				return {
+					state: source === "confirm" ? "canceled" : "verification_pending",
+					correlation_id: "safe-correlation",
+				};
+			});
+			const outcome = await f.makeFlow().purchase(intent, async () => transaction);
+			expect(outcome.status).toBe("terminal");
+			expect(outcome.attempt.state).toBe("canceled");
+			expect(f.values.size).toBe(0);
+			expect(f.confirmPurchaseAttempt).toHaveBeenCalledTimes(1);
+			expect(f.getPurchaseAttempt).toHaveBeenCalledTimes(source === "confirm" ? 0 : 1);
+			expect(f.delays).toEqual(source === "confirm" ? [] : [2000]);
+		});
+	}
 	test("recovery confirms expired paid evidence once, returns submitted and releases the journal", async () => {
 		const f = fixture();
 		await f.initialize();
