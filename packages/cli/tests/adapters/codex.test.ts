@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import {
 	appendFileSync,
 	existsSync,
@@ -6,15 +6,27 @@ import {
 	readFileSync,
 	renameSync,
 	rmSync,
+	statSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import {
+	type RawSession,
+	type SessionScanRequest,
+	scanSessionModule,
+} from "../../src/adapters/base";
 import { CodexAdapter } from "../../src/adapters/codex";
+import { SESSION_PROJECTION_REVISION } from "../../src/adapters/rich-event-mapping";
 import {
 	assertProjectionGolden,
 	assertSessionGolden,
 } from "../../src/adapters/session-golden.test-support";
-import { SESSION_RECORD_MAX_BYTES } from "../../src/adapters/session-source";
+import {
+	JsonlSessionSource,
+	jsonlStatRevision,
+	SESSION_RECORD_MAX_BYTES,
+} from "../../src/adapters/session-source";
 import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
 import attachmentNameFixtures from "../fixtures/codex-attachment-names.json";
@@ -102,7 +114,7 @@ describe("CodexAdapter.collectSessions", () => {
 		}
 	});
 	it("preserves origin/main session bytes and localHash", async () => {
-		await assertSessionGolden("codex", new CodexAdapter().sessions);
+		await assertSessionGolden("codex", new CodexAdapter().sessions, { statRevision: true });
 	});
 	it("maps sanitized attachment records to bounded basenames without losing the session", async () => {
 		const adapter = new CodexAdapter();
@@ -474,5 +486,177 @@ describe("CodexAdapter.writeSkillArchive + getSkillPath", () => {
 		const extracted = join(tmpHome, ".codex", "skills", "demo", "SKILL.md");
 		expect(existsSync(extracted)).toBe(true);
 		expect(readFileSync(extracted, "utf-8")).toContain("name: demo");
+	});
+});
+
+async function scanCodex(
+	adapter: CodexAdapter,
+	known: ReadonlyMap<string, string> = new Map(),
+	request: SessionScanRequest = { kind: "complete" },
+) {
+	const scan = await scanSessionModule(adapter.sessions, request, known);
+	const batches = [];
+	for await (const batch of scan.batches) batches.push(batch);
+	expect(batches).toHaveLength(1);
+	const batch = batches[0];
+	if (!batch) throw new Error("expected Codex scan batch");
+	return batch;
+}
+
+function confirmedCodex(sessions: RawSession[]): Map<string, string> {
+	return new Map(
+		sessions.flatMap((session) =>
+			session.sourceRevision === undefined
+				? []
+				: [[session.localSessionId, session.sourceRevision]],
+		),
+	);
+}
+
+async function quietCodexFixture() {
+	const adapter = new CodexAdapter();
+	const original = (await adapter.sessions.collect({ kind: "complete" })).sessions[0];
+	if (!original) throw new Error("expected Codex fixture");
+	const past = new Date(Date.now() - 10_000);
+	utimesSync(original.rawFilePath, past, past);
+	const first = await scanCodex(adapter);
+	return { adapter, file: original.rawFilePath, first, known: confirmedCodex(first.sessions) };
+}
+
+describe("CodexAdapter stat-skip scans", () => {
+	it("skips confirmed files without opening the parser, including paths and restart scans", async () => {
+		const { file, first, known } = await quietCodexFixture();
+		const adapter = new CodexAdapter();
+		const parser = spyOn(JsonlSessionSource, "open");
+		try {
+			for (const request of [
+				{ kind: "complete" } as const,
+				{ kind: "paths", paths: [file] } as const,
+			]) {
+				parser.mockClear();
+				const result = await scanCodex(adapter, known, request);
+				expect(result.sessions).toHaveLength(known.size ? 0 : 1);
+				expect(result.observedLocalSessionIds).toEqual(first.observedLocalSessionIds);
+				if (known.size) expect(parser).not.toHaveBeenCalled();
+				else expect(parser).toHaveBeenCalled();
+			}
+			const filtered = await scanCodex(adapter, known, {
+				kind: "complete",
+				projectFilter: "/Users/fixture/project",
+			});
+			expect(filtered.sessions).toHaveLength(1);
+			expect((await adapter.sessions.collect({ kind: "complete" })).sessions).toHaveLength(1);
+		} finally {
+			parser.mockRestore();
+		}
+	});
+
+	it("re-parses appended content", async () => {
+		const { adapter, file, first, known } = await quietCodexFixture();
+		appendFileSync(
+			file,
+			`${JSON.stringify({
+				type: "response_item",
+				timestamp: "2026-04-20T10:01:00Z",
+				payload: {
+					type: "message",
+					role: "user",
+					content: [{ type: "input_text", text: "appended" }],
+				},
+			})}\n`,
+		);
+		const past = new Date(Date.now() - 10_000);
+		utimesSync(file, past, past);
+		const result = await scanCodex(adapter, known);
+		expect(result.sessions).toHaveLength(1);
+		expect(result.sessions[0]?.messageCount).toBe((first.sessions[0]?.messageCount ?? 0) + 1);
+		if (known.size)
+			expect(result.sessions[0]?.sourceRevision).not.toBe(first.sessions[0]?.sourceRevision);
+	});
+
+	it("detects a same-size rewrite after mtime is restored", async () => {
+		const { adapter, file, known } = await quietCodexFixture();
+		const content = readFileSync(file, "utf8");
+		const past = new Date(Date.now() - 10_000);
+		utimesSync(file, past, past);
+		const before = await scanCodex(adapter);
+		await Bun.sleep(20);
+		const rewritten = content.replace("hello", "world");
+		expect(Buffer.byteLength(rewritten)).toBe(Buffer.byteLength(content));
+		writeFileSync(file, rewritten);
+		utimesSync(file, past, past);
+		const result = await scanCodex(adapter, confirmedCodex(before.sessions));
+		expect(result.sessions).toHaveLength(1);
+		const session = result.sessions[0];
+		if (!session) throw new Error("expected rewritten Codex fixture");
+		expect(session.summary).toBe("world");
+		const upload = await prepareSessionUpload(session, "events-v1");
+		const events = [];
+		for await (const event of upload.readEvents?.() ?? upload.events ?? []) events.push(event);
+		expect(JSON.stringify(events)).toContain("world");
+		if (known.size)
+			expect(result.sessions[0]?.sourceRevision).not.toBe(before.sessions[0]?.sourceRevision);
+	});
+
+	it("never skips recent or future files even with a matching stat fingerprint", async () => {
+		const { adapter, file } = await quietCodexFixture();
+		for (const mtime of [new Date(), new Date(Date.now() + 60_000)]) {
+			utimesSync(file, mtime, mtime);
+			const fresh = await scanCodex(adapter);
+			expect(fresh.sessions[0]?.sourceRevision).toBeUndefined();
+			const revision = jsonlStatRevision(
+				statSync(file, { bigint: true }),
+				BigInt(Date.now() + 120_000) * 1_000_000n,
+			);
+			const id = fresh.observedLocalSessionIds[0];
+			if (!id) throw new Error("expected racy Codex fixture id");
+			const known = revision === undefined ? new Map<string, string>() : new Map([[id, revision]]);
+			const result = await scanCodex(adapter, known);
+			expect(result.sessions).toHaveLength(1);
+			expect(result.sessions[0]?.sourceRevision).toBeUndefined();
+		}
+	});
+
+	it("re-parses old digest and projection revisions once before skipping confirmed state", async () => {
+		const { adapter, first, known } = await quietCodexFixture();
+		const session = first.sessions[0];
+		if (!session) throw new Error("expected Codex fixture session");
+		const oldRevisions = ["jsonl-v1:42:old-digest"];
+		if (session.sourceRevision)
+			oldRevisions.push(
+				session.sourceRevision.replace(
+					`p${SESSION_PROJECTION_REVISION}:`,
+					`p${SESSION_PROJECTION_REVISION - 1}:`,
+				),
+			);
+		for (const revision of oldRevisions) {
+			const migrated = await scanCodex(adapter, new Map([[session.localSessionId, revision]]));
+			expect(migrated.sessions).toHaveLength(1);
+			if (known.size) expect(migrated.sessions[0]?.sourceRevision).toStartWith("jsonl-stat-v1:");
+			const next = await scanCodex(adapter, confirmedCodex(migrated.sessions));
+			expect(next.sessions).toHaveLength(known.size ? 0 : 1);
+		}
+	});
+
+	it("refreshes archived paths for skipped sessions and handles deletion", async () => {
+		const { adapter, file, first, known } = await quietCodexFixture();
+		const sessionId = first.observedLocalSessionIds[0];
+		if (!sessionId) throw new Error("expected Codex fixture id");
+		const archived = join(tmpHome, ".codex", "archived_sessions", "moved.jsonl");
+		mkdirSync(join(tmpHome, ".codex", "archived_sessions"), { recursive: true });
+		renameSync(file, archived);
+		const moved = await scanCodex(adapter, known);
+		expect(moved.observedLocalSessionIds).toEqual([sessionId]);
+		const updated = moved.sessions.length ? confirmedCodex(moved.sessions) : known;
+		const restarted = new CodexAdapter();
+		await scanCodex(restarted, updated);
+		expect((await restarted.sessions.resolve(sessionId))?.rawFilePath).toBe(archived);
+		rmSync(archived);
+		expect(
+			(await scanCodex(restarted, updated, { kind: "paths", paths: [archived] }))
+				.observedLocalSessionIds,
+		).toEqual([]);
+		expect((await scanCodex(restarted, updated)).observedLocalSessionIds).toEqual([]);
+		expect(await restarted.sessions.resolve(sessionId)).toBeNull();
 	});
 });

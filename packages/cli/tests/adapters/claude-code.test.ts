@@ -1,12 +1,26 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import {
+	appendFileSync,
+	cpSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
+import {
+	type RawSession,
+	type SessionScanRequest,
+	scanSessionModule,
+} from "../../src/adapters/base";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
 import {
 	assertProjectionGolden,
 	assertSessionGolden,
 } from "../../src/adapters/session-golden.test-support";
-import { SESSION_RECORD_MAX_BYTES } from "../../src/adapters/session-source";
+import { JsonlSessionSource, SESSION_RECORD_MAX_BYTES } from "../../src/adapters/session-source";
 import { prepareSessionUpload } from "../../src/lib/session-upload";
 import { tarSkillDir } from "../../src/lib/tar";
 import {
@@ -318,7 +332,9 @@ describe("ClaudeCodeAdapter.collectSessions", () => {
 	});
 
 	it("preserves origin/main session bytes and localHash", async () => {
-		await assertSessionGolden("claude-code", new ClaudeCodeAdapter().sessions);
+		await assertSessionGolden("claude-code", new ClaudeCodeAdapter().sessions, {
+			statRevision: true,
+		});
 	});
 	it("parses the fixture session with correct tokens and model", async () => {
 		const a = new ClaudeCodeAdapter();
@@ -745,5 +761,147 @@ describe("ClaudeCodeAdapter.writeSkillArchive + getSkillPath", () => {
 	it("getSkillPath returns skills/<key>/SKILL.md under Claude home", () => {
 		const a = new ClaudeCodeAdapter();
 		expect(a.skills.path("xyz")).toBe(join(tmpHome, ".claude", "skills", "xyz", "SKILL.md"));
+	});
+});
+
+async function scanClaude(
+	adapter: ClaudeCodeAdapter,
+	known: ReadonlyMap<string, string> = new Map(),
+	request: SessionScanRequest = { kind: "complete" },
+) {
+	const scan = await scanSessionModule(adapter.sessions, request, known);
+	for await (const batch of scan.batches) return batch;
+	throw new Error("expected Claude scan batch");
+}
+
+function confirmedClaude(sessions: RawSession[]): Map<string, string> {
+	return new Map(
+		sessions.flatMap((session) =>
+			session.sourceRevision === undefined
+				? []
+				: [[session.localSessionId, session.sourceRevision]],
+		),
+	);
+}
+
+function quietClaudeFile(cwd: string, sessionId: string): string {
+	const file = join(tmpHome, ".claude", "projects", cwd.replace(/\//g, "-"), `${sessionId}.jsonl`);
+	const past = new Date(Date.now() - 10_000);
+	utimesSync(file, past, past);
+	return file;
+}
+
+function emptyClaudeProjects() {
+	rmSync(join(tmpHome, ".claude", "projects"), { recursive: true });
+	mkdirSync(join(tmpHome, ".claude", "projects"));
+}
+
+describe("ClaudeCodeAdapter directory stat-skip scans", () => {
+	it("keeps dedupe after a non-uuid predecessor append and restores it when the successor is deleted", async () => {
+		emptyClaudeProjects();
+		const cwd = "/workspace/resume";
+		writeResumeSessionFile({ cwd, sessionId: "predecessor", uuids: ["u1", "u2", "u3"] });
+		writeResumeSessionFile({ cwd, sessionId: "successor", uuids: ["u1", "u2", "u3", "u4"] });
+		const predecessor = quietClaudeFile(cwd, "predecessor");
+		const successor = quietClaudeFile(cwd, "successor");
+		const adapter = new ClaudeCodeAdapter();
+		const first = await scanClaude(adapter);
+		expect(first.sessions.map((session) => session.localSessionId)).toEqual(["successor"]);
+		expect(first.dedupedCount).toBe(1);
+		const known = confirmedClaude(first.sessions);
+		const parser = spyOn(JsonlSessionSource, "open");
+		try {
+			const skipped = await scanClaude(adapter, known);
+			expect(skipped.sessions).toHaveLength(known.size ? 0 : 1);
+			expect(skipped.observedLocalSessionIds).toEqual(["successor"]);
+			if (known.size) expect(parser).not.toHaveBeenCalled();
+			else expect(parser).toHaveBeenCalled();
+			appendFileSync(predecessor, '{"type":"ai-title","title":"renamed"}\n');
+			quietClaudeFile(cwd, "predecessor");
+			parser.mockClear();
+			const changed = await scanClaude(adapter, known, { kind: "paths", paths: [predecessor] });
+			expect(parser).toHaveBeenCalled();
+			expect(changed.sessions.map((session) => session.localSessionId)).toEqual(["successor"]);
+			expect(changed.dedupedCount).toBe(1);
+			rmSync(successor);
+			const deleted = await scanClaude(adapter, confirmedClaude(changed.sessions));
+			expect(deleted.sessions.map((session) => session.localSessionId)).toEqual(["predecessor"]);
+			expect(deleted.observedLocalSessionIds).toEqual(["predecessor"]);
+		} finally {
+			parser.mockRestore();
+		}
+	});
+
+	it("parses only changed directories and keeps unconfirmed sessions eligible", async () => {
+		emptyClaudeProjects();
+		for (const id of ["idle", "active"]) {
+			writeResumeSessionFile({
+				cwd: `/workspace/${id}`,
+				sessionId: id,
+				uuids: [`${id}-1`, `${id}-2`],
+			});
+			quietClaudeFile(`/workspace/${id}`, id);
+		}
+		const adapter = new ClaudeCodeAdapter();
+		const first = await scanClaude(adapter);
+		const known = confirmedClaude(first.sessions);
+		const file = quietClaudeFile("/workspace/active", "active");
+		appendFileSync(file, '{"type":"ai-title","title":"changed"}\n');
+		quietClaudeFile("/workspace/active", "active");
+		const changed = await scanClaude(adapter, known);
+		expect(changed.sessions.map((session) => session.localSessionId).sort()).toEqual(
+			known.size === 2 ? ["active"] : ["active", "idle"],
+		);
+		expect([...changed.observedLocalSessionIds].sort()).toEqual(["active", "idle"]);
+		const confirmed = new Map([...known, ...confirmedClaude(changed.sessions)]);
+		confirmed.delete("active");
+		const pending = await scanClaude(adapter, confirmed);
+		expect(pending.sessions.map((session) => session.localSessionId).sort()).toEqual(
+			confirmed.has("idle") ? ["active"] : ["active", "idle"],
+		);
+		const filtered = await scanClaude(adapter, known, {
+			kind: "paths",
+			paths: [quietClaudeFile("/workspace/idle", "idle")],
+			projectFilter: "/workspace/idle",
+		});
+		expect(filtered.sessions.map((session) => session.localSessionId)).toEqual(["idle"]);
+	});
+
+	it("invalidates directory signatures when a subagent is added or a source becomes racy", async () => {
+		emptyClaudeProjects();
+		const cwd = "/workspace/subagent";
+		writeResumeSessionFile({ cwd, sessionId: "parent", uuids: ["u1", "u2"] });
+		const parent = quietClaudeFile(cwd, "parent");
+		const adapter = new ClaudeCodeAdapter();
+		const first = await scanClaude(adapter);
+		const known = confirmedClaude(first.sessions);
+		const dir = join(
+			tmpHome,
+			".claude",
+			"projects",
+			cwd.replace(/\//g, "-"),
+			"parent",
+			"subagents",
+		);
+		mkdirSync(dir, { recursive: true });
+		const subagent = join(dir, "agent-worker.jsonl");
+		writeFileSync(subagent, makeJsonl({ cwd, sessionId: "worker", uuids: ["s1", "s2"] }));
+		const past = new Date(Date.now() - 10_000);
+		utimesSync(subagent, past, past);
+		const added = await scanClaude(adapter, known, { kind: "paths", paths: [subagent] });
+		expect(added.sessions.map((session) => session.localSessionId).sort()).toEqual([
+			"parent",
+			"parent.agent-worker",
+		]);
+		const now = new Date();
+		utimesSync(parent, now, now);
+		const racy = await scanClaude(adapter, confirmedClaude(added.sessions));
+		expect(racy.sessions).toHaveLength(2);
+		expect(
+			racy.sessions.find((session) => session.localSessionId === "parent")?.sourceRevision,
+		).toBeUndefined();
+		expect((await scanClaude(adapter, confirmedClaude(added.sessions))).sessions).toHaveLength(2);
+		rmSync(join(tmpHome, ".claude", "projects", cwd.replace(/\//g, "-")), { recursive: true });
+		expect((await scanClaude(adapter, known)).observedLocalSessionIds).toEqual([]);
 	});
 });

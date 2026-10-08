@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentType } from "../../src/adapters/agent-types";
+import type { RawSession, SessionBatchScan } from "../../src/adapters/base";
 import { CodexAdapter } from "../../src/adapters/codex";
 import { adapterRegistry } from "../../src/adapters/registry";
 import { push } from "../../src/commands/push";
@@ -44,6 +45,19 @@ interface BatchSession {
 function batchSessions(c: CapturedRequest | undefined): BatchSession[] {
 	const body = c?.body as { sessions?: BatchSession[] } | undefined;
 	return body?.sessions ?? [];
+}
+
+function fixtureSessionScan(sessions: RawSession[]): SessionBatchScan {
+	return {
+		coverage: "complete",
+		batches: (async function* () {
+			yield {
+				sessions,
+				observedLocalSessionIds: sessions.map((session) => session.localSessionId),
+				dedupedCount: 0,
+			};
+		})(),
+	};
 }
 
 let tmpHome: string;
@@ -106,7 +120,7 @@ describe("push — scan snapshot", () => {
 		const originalCreate = adapterRegistry.codex.create;
 		adapterRegistry.codex.create = () => {
 			const adapter = new CodexAdapter();
-			adapter.sessions.collect = async () => ({ sessions, coverage: "complete", dedupedCount: 0 });
+			adapter.sessions.scan = async () => fixtureSessionScan(sessions);
 			return adapter;
 		};
 		const { captured, restore } = mockFetch([
@@ -157,11 +171,7 @@ describe("push — scan snapshot", () => {
 		const originalCreate = adapterRegistry.codex.create;
 		adapterRegistry.codex.create = () => {
 			const adapter = new CodexAdapter();
-			adapter.sessions.collect = async () => ({
-				sessions: [session],
-				coverage: "complete",
-				dedupedCount: 0,
-			});
+			adapter.sessions.scan = async () => fixtureSessionScan([session]);
 			adapter.sessions.resolve = async () => {
 				resolves++;
 				return { ...fixture, events: remoteEvents };
@@ -253,9 +263,9 @@ describe("push — scan snapshot", () => {
 		const originalCreate = adapterRegistry.codex.create;
 		adapterRegistry.codex.create = () => {
 			const adapter = new CodexAdapter();
-			const collect = adapter.sessions.collect;
-			adapter.sessions.collect = async (request) => {
-				const result = await collect(request);
+			const scan = adapter.sessions.scan;
+			adapter.sessions.scan = async (request, revisions, context) => {
+				const result = await scan(request, revisions, context);
 				persistFencedSessionEntry(fence, entries[mode]);
 				return result;
 			};

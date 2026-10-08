@@ -49,6 +49,12 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.15.18
+
+- **Session sync:** Codex, Claude Code, and Pi skip confirmed, unchanged JSONL
+  history during background scans, reducing repeated file reads while preserving
+  updates, deletions, archived Codex sessions, and Claude resume-chain deduplication.
+
 ### CLI 0.15.17
 
 - **Hermes dashboard:** fresh and warm installs use the web UI built by the

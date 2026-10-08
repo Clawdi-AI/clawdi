@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
@@ -9,14 +10,17 @@ import {
 	type SessionEventDraft,
 	sequenceSessionEvents,
 } from "../lib/session-events";
-import type {
-	AgentAdapterCore,
-	RawSession,
-	SessionEvent,
-	SessionScanIssue,
-	SessionScanRequest,
-	SessionScanResult,
-	SyncReadContext,
+import {
+	type AgentAdapterCore,
+	collectFromScan,
+	type RawSession,
+	type SessionBatchScan,
+	type SessionEvent,
+	type SessionScanBatch,
+	type SessionScanIssue,
+	type SessionScanRequest,
+	type SessionScanResult,
+	type SyncReadContext,
 } from "./base";
 import { getPiHome, getPiSessionsDir, matchesProjectFilter } from "./paths";
 import { piMessageDrafts } from "./pi-message-drafts";
@@ -25,6 +29,7 @@ import { jsonlPathsWithin, listJsonlFiles } from "./session-files";
 import {
 	describeSessionContent,
 	JsonlSessionSource,
+	jsonlStatRevision,
 	SessionSourceBlockedError,
 } from "./session-source";
 import { flatSkillModule } from "./skill-dir";
@@ -469,8 +474,14 @@ export class PiAdapter implements AgentAdapterCore {
 			context?.signal.throwIfAborted();
 			return "events-v1" as const;
 		},
-		collect: (request: SessionScanRequest, context?: SyncReadContext) =>
-			this.collectSessions(request, context),
+		collect: collectFromScan((request, revisions, context) =>
+			this.scanSessions(request, revisions, context),
+		),
+		scan: (
+			request: SessionScanRequest,
+			knownSourceRevisions: ReadonlyMap<string, string>,
+			context?: SyncReadContext,
+		) => this.scanSessions(request, knownSourceRevisions, context),
 		resolve: (localSessionId: string, context?: SyncReadContext) =>
 			this.resolveSession(localSessionId, context),
 		watchPaths: () => [getPiSessionsDir()],
@@ -484,49 +495,64 @@ export class PiAdapter implements AgentAdapterCore {
 		return readCommandVersion("pi", ["--version"]);
 	}
 
+	private async scanSessions(
+		request: SessionScanRequest,
+		knownSourceRevisions: ReadonlyMap<string, string>,
+		context?: SyncReadContext,
+	): Promise<SessionBatchScan> {
+		const result = await this.collectSessions(request, knownSourceRevisions, context);
+		return {
+			coverage: result.coverage,
+			batches: (async function* () {
+				yield result;
+			})(),
+		};
+	}
+
 	private async collectSessions(
 		request: SessionScanRequest,
+		knownSourceRevisions: ReadonlyMap<string, string>,
 		context?: SyncReadContext,
-	): Promise<SessionScanResult> {
+	): Promise<SessionScanResult & Pick<SessionScanBatch, "observedLocalSessionIds">> {
 		context?.signal.throwIfAborted();
 		const root = resolve(getPiSessionsDir());
-		if (request.kind === "paths") {
-			const paths = jsonlPathsWithin(request, [root]);
-			if (!paths)
-				return this.collectSessions(
-					{ kind: "complete", projectFilter: request.projectFilter },
-					context,
-				);
-			const sessions: RawSession[] = [];
-			const scanIssues: SessionScanIssue[] = [];
-			for (const path of paths) {
-				let session: RawSession | null;
-				try {
-					session = await parseSession(path, request.projectFilter, undefined, context);
-				} catch (error) {
-					if (!(error instanceof SessionSourceBlockedError)) throw error;
+		const paths = jsonlPathsWithin(request, [root]);
+		const byRevision = new Map([...knownSourceRevisions].map(([id, revision]) => [revision, id]));
+		const sessions: RawSession[] = [];
+		const observed = new Set<string>();
+		const scanIssues: SessionScanIssue[] = [];
+		for (const path of paths ?? listJsonlFiles(root).sort()) {
+			if (context) await setImmediate(undefined, { signal: context.signal });
+			try {
+				if (!request.projectFilter) {
+					const revision = jsonlStatRevision(await stat(path, { bigint: true }));
+					const id = revision === undefined ? undefined : byRevision.get(revision);
+					if (id !== undefined) {
+						observed.add(id);
+						continue;
+					}
+				}
+				const session = await parseSession(path, request.projectFilter, undefined, context);
+				if (session) {
+					observed.add(session.localSessionId);
+					sessions.push(session);
+				}
+			} catch (error) {
+				context?.signal.throwIfAborted();
+				if (error instanceof SessionSourceBlockedError) {
 					scanIssues.push({ path: error.path, reason: error.reason });
 					continue;
 				}
-				if (session) sessions.push(session);
+				if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
 			}
-			return { sessions, dedupedCount: 0, coverage: "partial", scanIssues };
 		}
-		const sessions: RawSession[] = [];
-		const scanIssues: SessionScanIssue[] = [];
-		for (const path of listJsonlFiles(root).sort()) {
-			if (context) await setImmediate(undefined, { signal: context.signal });
-			let session: RawSession | null;
-			try {
-				session = await parseSession(path, request.projectFilter, undefined, context);
-			} catch (error) {
-				if (!(error instanceof SessionSourceBlockedError)) throw error;
-				scanIssues.push({ path: error.path, reason: error.reason });
-				continue;
-			}
-			if (session) sessions.push(session);
-		}
-		return { sessions, dedupedCount: 0, coverage: "complete", scanIssues };
+		return {
+			sessions,
+			observedLocalSessionIds: [...observed],
+			dedupedCount: 0,
+			coverage: paths ? "partial" : "complete",
+			scanIssues,
+		};
 	}
 
 	private async resolveSession(

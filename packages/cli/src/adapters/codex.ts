@@ -1,16 +1,20 @@
 import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-events";
-import type {
-	AgentAdapterCore,
-	RawSession,
-	SessionScanIssue,
-	SessionScanRequest,
-	SessionScanResult,
-	SyncReadContext,
+import {
+	type AgentAdapterCore,
+	collectFromScan,
+	type RawSession,
+	type SessionBatchScan,
+	type SessionScanBatch,
+	type SessionScanIssue,
+	type SessionScanRequest,
+	type SessionScanResult,
+	type SyncReadContext,
 } from "./base";
 import { getCodexHome, matchesProjectFilter } from "./paths";
 import {
@@ -28,6 +32,7 @@ import {
 	addSessionModel,
 	describeSessionContent,
 	JsonlSessionSource,
+	jsonlStatRevision,
 	SessionSourceBlockedError,
 } from "./session-source";
 import { flatSkillModule } from "./skill-dir";
@@ -417,8 +422,14 @@ export class CodexAdapter implements AgentAdapterCore {
 			context?.signal.throwIfAborted();
 			return "events-v1" as const;
 		},
-		collect: (request: SessionScanRequest, context?: SyncReadContext) =>
-			this.collectSessions(request, context),
+		collect: collectFromScan((request, revisions, context) =>
+			this.scanSessions(request, revisions, context),
+		),
+		scan: (
+			request: SessionScanRequest,
+			knownSourceRevisions: ReadonlyMap<string, string>,
+			context?: SyncReadContext,
+		) => this.scanSessions(request, knownSourceRevisions, context),
 		resolve: (localSessionId: string, context?: SyncReadContext) =>
 			this.resolveSession(localSessionId, context),
 		watchPaths: () => this.getSessionsWatchPaths(),
@@ -441,80 +452,81 @@ export class CodexAdapter implements AgentAdapterCore {
 		return readCommandVersion("codex", ["--version"]);
 	}
 
+	private async scanSessions(
+		request: SessionScanRequest,
+		knownSourceRevisions: ReadonlyMap<string, string>,
+		context?: SyncReadContext,
+	): Promise<SessionBatchScan> {
+		const result = await this.collectSessions(request, knownSourceRevisions, context);
+		return {
+			coverage: result.coverage,
+			batches: (async function* () {
+				yield result;
+			})(),
+		};
+	}
+
 	private async collectSessions(
 		request: SessionScanRequest,
+		knownSourceRevisions: ReadonlyMap<string, string>,
 		context?: SyncReadContext,
-	): Promise<SessionScanResult> {
+	): Promise<SessionScanResult & Pick<SessionScanBatch, "observedLocalSessionIds">> {
 		context?.signal.throwIfAborted();
 		const absFilter = resolveProjectFilter(request.projectFilter);
-		const scanIssues: SessionScanIssue[] = [];
-		const parse = async (filePath: string): Promise<RawSession | null> => {
-			try {
-				return await parseSessionFile(filePath, absFilter, context);
-			} catch (error) {
-				if (error instanceof SessionSourceBlockedError) {
-					scanIssues.push({ path: error.path, reason: error.reason });
-					return null;
-				}
-				throw error;
-			}
-		};
-		if (request.kind === "paths") {
-			const paths = jsonlPathsWithin(request, sessionRoots());
-			if (!paths)
-				return this.collectSessions(
-					{ kind: "complete", projectFilter: request.projectFilter },
-					context,
-				);
-			const files = new Set<string>();
-			for (const path of paths) {
-				for (const [sessionId, knownPath] of this.sessionPaths) {
-					if (knownPath === path && !existsSync(path)) this.sessionPaths.delete(sessionId);
-				}
-				if (existsSync(path)) files.add(path);
-			}
-			const sessionsById = new Map<string, RawSession>();
-			for (const filePath of files) {
-				if (context) await setImmediate(undefined, { signal: context.signal });
-				const session = await parse(filePath);
-				if (session) {
-					sessionsById.set(session.localSessionId, session);
-					this.sessionPaths.set(session.localSessionId, filePath);
-				}
-			}
-			return {
-				sessions: [...sessionsById.values()],
-				dedupedCount: 0,
-				coverage: "partial",
-				scanIssues,
-			};
-		}
-
-		const sessionsById = new Map<string, RawSession>();
+		const paths = jsonlPathsWithin(request, sessionRoots());
+		const coverage = paths ? "partial" : "complete";
+		const files = paths
+			? [...new Set(paths)]
+			: sessionRoots().flatMap((root) => listJsonlFiles(root, { skipHidden: true }));
+		const byRevision = new Map([...knownSourceRevisions].map(([id, revision]) => [revision, id]));
+		const observed = new Set<string>();
+		const sessions: RawSession[] = [];
 		const pathsById = new Map<string, string>();
-		for (const root of sessionRoots()) {
-			for (const filePath of listJsonlFiles(root, { skipHidden: true })) {
-				if (context) await setImmediate(undefined, { signal: context.signal });
-				const session = await parse(filePath);
-				if (session && !sessionsById.has(session.localSessionId)) {
-					sessionsById.set(session.localSessionId, session);
+		const scanIssues: SessionScanIssue[] = [];
+		for (const filePath of files) {
+			if (context) await setImmediate(undefined, { signal: context.signal });
+			try {
+				if (!request.projectFilter) {
+					const revision = jsonlStatRevision(await stat(filePath, { bigint: true }));
+					const id = revision === undefined ? undefined : byRevision.get(revision);
+					if (id !== undefined) {
+						if (!observed.has(id)) {
+							observed.add(id);
+							pathsById.set(id, filePath);
+						}
+						continue;
+					}
+				}
+				const session = await parseSessionFile(filePath, absFilter, context);
+				if (session && !observed.has(session.localSessionId)) {
+					observed.add(session.localSessionId);
+					sessions.push(session);
 					pathsById.set(session.localSessionId, filePath);
 				}
+			} catch (error) {
+				context?.signal.throwIfAborted();
+				if (error instanceof SessionSourceBlockedError) {
+					scanIssues.push({ path: error.path, reason: error.reason });
+					continue;
+				}
+				if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
 			}
 		}
-		if (request.projectFilter) {
-			for (const [sessionId, path] of pathsById) this.sessionPaths.set(sessionId, path);
+		if (coverage === "partial" || request.projectFilter) {
+			for (const filePath of paths ?? []) {
+				for (const [id, knownPath] of this.sessionPaths) {
+					if (knownPath === filePath && !existsSync(filePath)) this.sessionPaths.delete(id);
+				}
+			}
+			for (const [id, path] of pathsById) this.sessionPaths.set(id, path);
 		} else {
 			this.sessionPaths = pathsById;
 		}
-
-		// Codex stores long-conversation history via in-file `compacted`
-		// entries rather than spawning new sessionId files, so it cannot
-		// produce the resume-chain duplication that ClaudeCodeAdapter dedupes.
 		return {
-			sessions: [...sessionsById.values()],
+			sessions,
+			observedLocalSessionIds: [...observed],
 			dedupedCount: 0,
-			coverage: "complete",
+			coverage,
 			scanIssues,
 		};
 	}
@@ -537,7 +549,7 @@ export class CodexAdapter implements AgentAdapterCore {
 			this.sessionPaths.delete(localSessionId);
 		}
 		return (
-			(await this.collectSessions({ kind: "complete" }, context)).sessions.find(
+			(await this.sessions.collect({ kind: "complete" }, context)).sessions.find(
 				(session) => session.localSessionId === localSessionId,
 			) ?? null
 		);
