@@ -1,4 +1,5 @@
 import {
+	ApiClientError,
 	buildHostedDeploySubscriptionQuoteRequest,
 	HOSTED_DEPLOY_LANGUAGE_OPTIONS,
 	type HostedDeploySubscriptionQuote,
@@ -58,6 +59,7 @@ import { IconChip } from "@/components/icon-chip";
 import { PageHeader } from "@/components/page-header";
 import { ResourceError } from "@/components/resource-error";
 import { SettingsSection } from "@/components/settings-section";
+import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Input as AppTextInput } from "@/components/ui/input";
@@ -66,12 +68,15 @@ import { AppScrollView, AppView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { formatDate } from "@/hooks/cloud-inventory";
 import {
+	admitWithStoreSlotRefresh,
 	type CreationAttempt,
 	canAdmitCreationAttempt,
 	canDiscardCreationAttempt,
 	canStartStorePurchase,
 	isDefinitiveAdmissionRejection,
 	offeredQuoteSelections,
+	type ReservedDeployResume,
+	reservedDeployResume,
 	retryStoreAdmission,
 	serverAllowsEntitledCreation,
 	storeAdmissionMessageKey,
@@ -176,7 +181,7 @@ function CreationForm() {
 	// Store builds: subscribe through the official Paywall when the M1 gate allows it.
 	const storeGate = useComputePurchaseGate();
 	const purchaseCompute = useComputePaywallPurchase();
-	const { flow: storeFlow, refresh: refreshStore } = useMobileStore();
+	const { flow: storeFlow, refresh: refreshStore, computeSlot } = useMobileStore();
 	const [storeNotice, setStoreNotice] = useState<StoreNotice | null>(null);
 	const [providerChoice, setProviderChoice] = useState("__managed__");
 	const [previewTerm, setPreviewTerm] = useState(1);
@@ -191,6 +196,8 @@ function CreationForm() {
 		null,
 	);
 	const [resolved, setResolved] = useState(false);
+	// The reserved store request the user chose to finish on this device.
+	const [resume, setResume] = useState<ReservedDeployResume | null>(null);
 	const inventory = useQuery({
 		queryKey: accountQueryKey(scope, "creation-inventory"),
 		queryFn: ({ signal }) =>
@@ -273,12 +280,18 @@ function CreationForm() {
 				: previous,
 		);
 	}, [storageReady, attempt, inventory.data]);
+	const productPlan = (productId: string) => computeProductPlan(productId)?.planSlug ?? null;
+	const reserved =
+		storageReady && !storageError ? reservedDeployResume(computeSlot, attempt, productPlan) : null;
+	const resuming = resume && reserved?.id === resume.id ? resume : null;
+	// A reserved store request is admitted by its own slot, like a saved request.
+	const hasRequest = Boolean(attempt) || resuming !== null;
 	const selectedPlan = inventory.data?.plans.find((plan) => plan.slug === draft.computePlanSlug);
 	const eligible = serverAllowsEntitledCreation(
 		inventory.data?.capabilities,
 		inventory.data?.included,
 		selectedPlan,
-		{ reusable: reusableItems, hasSavedAttempt: Boolean(attempt) },
+		{ reusable: reusableItems, hasSavedAttempt: hasRequest },
 	);
 	const quoteOptions = offeredQuoteSelections(inventory.data?.plans ?? []).map((option) => ({
 		...option,
@@ -292,8 +305,9 @@ function CreationForm() {
 				option.billingTermMonths === quoteSelection.billingTermMonths,
 		);
 	const current = (owns: () => boolean) => owns() && scope.isCurrent() && !scope.signal.aborted;
-	// The store purchase for the saved request exists; admission selects its store row.
-	const storeAdmission = source === "store" && attempt?.storeFunding === "funded";
+	// The store purchase for the saved or reserved request exists; admission selects its store row.
+	const storeAdmission =
+		source === "store" && (attempt?.storeFunding === "funded" || resuming !== null);
 	const navigateDeployment = async (deploymentId: string, owns: () => boolean) => {
 		if (!hosted) throw new Error("Hosted API unavailable");
 		const deployment = await read((lease) => hosted.getDeployment(deploymentId, lease));
@@ -359,7 +373,7 @@ function CreationForm() {
 				]),
 			);
 			if (!current(owns)) return;
-			const refreshedReusable = attempt
+			const refreshedReusable = hasRequest
 				? undefined
 				: await reusable.refetch({ throwOnError: true });
 			if (
@@ -370,11 +384,15 @@ function CreationForm() {
 					plans.find((p) => p.slug === draft.computePlanSlug),
 					{
 						reusable: refreshedReusable?.data?.pages.flatMap((page) => page.items ?? []),
-						hasSavedAttempt: Boolean(attempt),
+						hasSavedAttempt: hasRequest,
 					},
 				)
 			) {
 				if (current(owns)) setMessage(t("creation.blocked"));
+				return;
+			}
+			if (!attempt && resuming) {
+				await finishReserved(resuming, owns);
 				return;
 			}
 			// A saved request is already validated. Catalog changes must not rewrite
@@ -382,7 +400,34 @@ function CreationForm() {
 			const saved = attempt ?? prepareAttempt(draft);
 			if (saved) await submit(saved, saved === attempt, owns);
 		});
-	const prepareAttempt = (next: HostedDeployWizardDraft): CreationAttempt | null => {
+	/**
+	 * Hosted keeps no draft for a reserved request before admission and exposes none after,
+	 * so a request it already holds is only observed; a new payload would conflict.
+	 */
+	const finishReserved = async (reservedRequest: ReservedDeployResume, owns: () => boolean) => {
+		if (!hosted) return;
+		const known = await read((s) => hosted.getDeploymentByRequest(reservedRequest.id, s)).then(
+			() => true,
+			(error: unknown) => {
+				if (error instanceof ApiClientError && error.status === 404) return false;
+				throw error;
+			},
+		);
+		if (!current(owns)) return;
+		if (known) {
+			await navigateRequest(reservedRequest.id, owns);
+			return;
+		}
+		const prepared = prepareAttempt(
+			{ ...draft, computePlanSlug: reservedRequest.planSlug },
+			reservedRequest.id,
+		);
+		if (prepared) await submit({ ...prepared, storeFunding: "funded" }, false, owns);
+	};
+	const prepareAttempt = (
+		next: HostedDeployWizardDraft,
+		id: string = Crypto.randomUUID(),
+	): CreationAttempt | null => {
 		const validated = validateAndBuildHostedDeployRequest(next, models);
 		if (!validated.ok) {
 			setMessage(
@@ -392,7 +437,6 @@ function CreationForm() {
 		}
 		const ai = next.ai;
 		if (ai.mode === "managed" && !models.some((model) => model.id === ai.model)) return null;
-		const id = Crypto.randomUUID();
 		return {
 			version: 1,
 			submission: "prepared",
@@ -414,18 +458,31 @@ function CreationForm() {
 		if (!current(owns)) return;
 		setAttempt(submitting);
 		setMessage("");
+		const readSlot = async () => {
+			const platform = currentStorePlatform();
+			if (!storeClient || !platform) return null;
+			const bootstrap = await read((s) => storeClient.bootstrap(platform, s));
+			return current(owns) ? bootstrap.compute_slot : null;
+		};
 		try {
-			await read((signal) =>
-				retryStoreAdmission(
-					submitting,
-					(s) => {
-						if (!current(owns)) throw new Error("Creation action expired");
-						return compute.createEntitledDeployment(submitting.request, submitting.id, s, {
-							computeSource: submitting.storeFunding ? "store" : undefined,
-						});
-					},
-					signal,
-				),
+			// The same request id and payload: hosted admits it at most once.
+			await admitWithStoreSlotRefresh(
+				submitting,
+				() =>
+					read((signal) =>
+						retryStoreAdmission(
+							submitting,
+							(s) => {
+								if (!current(owns)) throw new Error("Creation action expired");
+								return compute.createEntitledDeployment(submitting.request, submitting.id, s, {
+									computeSource: submitting.storeFunding ? "store" : undefined,
+								});
+							},
+							signal,
+						),
+					),
+				readSlot,
+				productPlan,
 			);
 		} catch (error) {
 			const storeMessage = storeAdmissionMessageKey(saved, error);
@@ -449,6 +506,8 @@ function CreationForm() {
 			}
 			throw error;
 		}
+		// The admitted request no longer holds a store reservation.
+		if (saved.storeFunding) void refreshStore({ recover: false });
 		if (current(owns)) await navigateRequest(saved.id, owns);
 	};
 	/** Read hosted funding for the exact saved request without starting recovery. */
@@ -456,13 +515,7 @@ function CreationForm() {
 		const platform = currentStorePlatform();
 		if (!saved.storeFunding || !storeClient || !platform) return null;
 		const funding = await read((s) =>
-			readHostedStoreFunding(
-				storeClient,
-				platform,
-				saved,
-				(productId) => computeProductPlan(productId)?.planSlug ?? null,
-				s,
-			),
+			readHostedStoreFunding(storeClient, platform, saved, productPlan, s),
 		);
 		return current(owns) ? funding : null;
 	};
@@ -664,6 +717,24 @@ function CreationForm() {
 							<AppText className="text-destructive">{t("creation.error")}</AppText>
 						) : null}
 						{inventory.isError ? <ResourceError missing={false} /> : null}
+						{reserved && !resuming ? (
+							<Alert icon={Store} title={t("creation.reservedTitle")}>
+								<AppText>
+									{t("creation.reservedDescription", { store: storeGate.storeName })}
+								</AppText>
+								<ActionButton
+									label={t("creation.reservedAction")}
+									className="mt-2 self-start"
+									disabled={action.busy}
+									onPress={() => {
+										setResume(reserved);
+										setSource("store");
+										setStoreNotice(null);
+										update({ computePlanSlug: reserved.planSlug });
+									}}
+								/>
+							</Alert>
+						) : null}
 						<SettingsSection title={agentSurfaceCopy.agentSoftware}>
 							<WebView recipe={ENTITY_CHOICE_GRID_CLASS}>
 								{(["hermes", "openclaw"] as const).map((runtime) => (
@@ -747,7 +818,7 @@ function CreationForm() {
 									{inventory.data?.included.available_slots ? (
 										<EntityChoiceCard
 											selected={source === "included"}
-											disabled={locked}
+											disabled={locked || resuming !== null}
 											onClick={() => {
 												setSource("included");
 												update({ computePlanSlug: "compute_basic" });
@@ -775,7 +846,7 @@ function CreationForm() {
 									{reusableItems.length ? (
 										<EntityChoiceCard
 											selected={source === "existing"}
-											disabled={locked}
+											disabled={locked || resuming !== null}
 											onClick={() => {
 												setSource("existing");
 												update({
@@ -808,16 +879,25 @@ function CreationForm() {
 													<Icon as={Store} />
 												</IconChip>
 											}
-											title={t("storeCompute.subscribeTitle", { store: storeGate.storeName })}
-											description={t("storeCompute.subscribeDescription", {
-												store: storeGate.storeName,
-											})}
+											title={t(
+												resuming ? "storeCompute.slotTitle" : "storeCompute.subscribeTitle",
+												{
+													store: storeGate.storeName,
+												},
+											)}
+											description={
+												resuming
+													? t("storeCompute.slotAvailable")
+													: t("storeCompute.subscribeDescription", { store: storeGate.storeName })
+											}
 											className={webView(subscriptionSourcePickerClasses.choice)}
 										/>
 									) : null}
 									<EntityChoiceCard
 										selected={source === "new"}
-										disabled={locked || inventory.isPending || reusable.isPending}
+										disabled={
+											locked || resuming !== null || inventory.isPending || reusable.isPending
+										}
 										onClick={() => {
 											setSource("new");
 											setConfirmed(false);
@@ -856,7 +936,11 @@ function CreationForm() {
 								) : null}
 								{source === "store" ? (
 									<WebView recipe={styles.compute}>
-										<AppText>{t("storeCompute.autoRenew", { store: storeGate.storeName })}</AppText>
+										<AppText>
+											{resuming
+												? t("creation.reservedNotice", { store: storeGate.storeName })
+												: t("storeCompute.autoRenew", { store: storeGate.storeName })}
+										</AppText>
 										{attempt?.storeFunding === "purchase_pending" ? (
 											<AppText accessibilityRole="alert">
 												{t("storeCompute.waitingForApproval")}
@@ -1238,7 +1322,13 @@ function CreationForm() {
 						/>
 					) : (
 						<ActionButton
-							label={attempt ? t("creation.retry") : deployFormCopy.deploy}
+							label={
+								attempt
+									? t("creation.retry")
+									: resuming
+										? t("creation.reservedAction")
+										: deployFormCopy.deploy
+							}
 							icon={<Icon as={Rocket} />}
 							variant="default"
 							disabled={

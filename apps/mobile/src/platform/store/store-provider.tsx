@@ -61,6 +61,8 @@ type MobileStoreContext = MobileStore &
 		customerCenterEnabled: boolean;
 		computeSubscriptionsEnabled: boolean;
 		computeSlot: StoreComputeSlot | null;
+		/** Credits purchases need the flow and the hosted credits switch. */
+		creditsAvailable: boolean;
 	}>;
 
 export type ComputeSubscriptionPurchaseRequest = Readonly<{
@@ -89,14 +91,15 @@ const unavailable: MobileStore = {
 	restorePurchases: unavailableRestore,
 	management: null,
 };
-function computeState(bootstrap: StoreBootstrap | null) {
+function bootstrapState(flow: PurchaseFlow | null, bootstrap: StoreBootstrap | null) {
 	return {
 		computeSubscriptionsEnabled: bootstrap?.compute_subscriptions_enabled ?? false,
 		computeSlot: bootstrap?.compute_slot ?? null,
+		creditsAvailable: flow !== null && bootstrap?.purchases_enabled === true,
 	};
 }
 const StoreContext = createContext<MobileStoreContext>({
-	...computeState(null),
+	...bootstrapState(null, null),
 	...unavailable,
 	storeBuild: false,
 	customerCenterEnabled: false,
@@ -282,7 +285,12 @@ export function StoreProvider({
 	const storeBuild = isStoreBuild(config);
 	const customerCenterEnabled = config.revenueCatCustomerCenterEnabled === true;
 	const value = useMemo(
-		() => ({ ...active, ...computeState(active.bootstrap), storeBuild, customerCenterEnabled }),
+		() => ({
+			...active,
+			...bootstrapState(active.flow, active.bootstrap),
+			storeBuild,
+			customerCenterEnabled,
+		}),
 		[active, storeBuild, customerCenterEnabled],
 	);
 	return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
@@ -294,5 +302,5 @@ export function useMobileStore(): MobileStoreContext {
 
 export function useStoreSurfaces(): StoreSurfaces {
 	const store = useMobileStore();
-	return storeSurfaces(store.storeBuild, store.flow !== null);
+	return storeSurfaces(store.storeBuild, store.creditsAvailable);
 }

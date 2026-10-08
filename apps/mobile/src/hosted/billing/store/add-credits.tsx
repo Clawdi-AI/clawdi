@@ -104,7 +104,7 @@ export function AddCreditsAction({
 	const action = useAuthAction(scope);
 	const [notice, setNotice] = useState<StoreNotice | null>(null);
 	const flow = store.flow;
-	const available = flow !== null && present !== null;
+	const available = store.creditsAvailable && present !== null;
 	const buy = () =>
 		action.run(async (owns) => {
 			if (!flow || !present) return;

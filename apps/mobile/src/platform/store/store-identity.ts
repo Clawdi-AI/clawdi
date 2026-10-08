@@ -22,7 +22,8 @@ export function createStoreIdentity(options: {
 	platform: StorePlatform;
 }) {
 	const { scope, client, sdk, config, platform } = options;
-	let ready: { appUserId: string; catalogueRevision: number } | null = null;
+	let ready: { appUserId: string; catalogueRevision: number; creditsEnabled: boolean } | null =
+		null;
 	return {
 		initialize: async (signal: AbortSignal): Promise<StoreAvailability> => {
 			ready = null;
@@ -31,13 +32,18 @@ export function createStoreIdentity(options: {
 			if (!key || !client) return { available: false, reason: "store_configuration_missing" };
 			const bootstrap = await client.bootstrap(platform, signal);
 			assertStoreAccount(scope, signal);
-			if (!bootstrap.purchases_enabled)
+			// Credits and compute subscriptions are independent hosted switches.
+			if (!bootstrap.purchases_enabled && !bootstrap.compute_subscriptions_enabled)
 				return { available: false, reason: bootstrap.reason ?? "store_purchases_disabled" };
 			if (!bootstrap.app_user_id || !bootstrap.catalogue_revision)
 				return { available: false, reason: "store_identity_unavailable" };
 			await sdk.logIn(key, bootstrap.app_user_id, () => assertStoreAccount(scope, signal));
 			assertStoreAccount(scope, signal);
-			ready = { appUserId: bootstrap.app_user_id, catalogueRevision: bootstrap.catalogue_revision };
+			ready = {
+				appUserId: bootstrap.app_user_id,
+				catalogueRevision: bootstrap.catalogue_revision,
+				creditsEnabled: bootstrap.purchases_enabled,
+			};
 			return { available: true, bootstrap };
 		},
 		requireReady: (signal: AbortSignal) => {

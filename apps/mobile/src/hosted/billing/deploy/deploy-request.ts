@@ -1,6 +1,7 @@
 import {
 	ApiClientError,
 	type DeployComponents,
+	type HostedDeployComputePlanSlug,
 	type HostedDeployPlan,
 	type HostedDeployRequest,
 	type HostedDeploySubscriptionSelection,
@@ -40,6 +41,9 @@ function isStoreFunding(value: unknown): value is StoreFunding {
 	);
 }
 
+/** Creation journals hold only the UUID v4 request ids this app generates. */
+const CREATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function record(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -51,7 +55,7 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 			!record(value) ||
 			value.version !== 1 ||
 			typeof value.id !== "string" ||
-			!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.id)
+			!CREATION_ID.test(value.id)
 		)
 			return null;
 		const draft = value.draft;
@@ -142,15 +146,40 @@ const ACTIVE_ATTEMPT_STATES = new Set<StorePurchaseAttempt["state"]>([
 	"verification_pending",
 ]);
 
-/** Plan of an unbound store contract that hosted admission can bind to a new request. */
+/**
+ * Plan of an unbound store contract that hosted admission can bind to this request.
+ * A compute reserved for a deploy request admits only that request.
+ */
 export function unboundStoreSlotPlan(
 	slot: StoreComputeSlot | null | undefined,
 	productPlan: (productId: string) => string | null,
+	deployRequestId: string,
 ): string | null {
 	const management = slot?.store_management;
 	if (!slot || slot.available || slot.agent_id || !management) return null;
+	if (slot.reserved_deploy_request_id && slot.reserved_deploy_request_id !== deployRequestId)
+		return null;
 	if (!["active", "grace", "canceled_pending_end"].includes(management.state)) return null;
 	return productPlan(management.product_id);
+}
+
+export type ReservedDeployResume = Readonly<{ id: string; planSlug: HostedDeployComputePlanSlug }>;
+
+/**
+ * Hosted reserves a purchased slot's compute for the deploy request the purchase named
+ * and admits only that request with compute_source "store". After a reinstall or on
+ * another device the journal lacks it; hosted keeps no draft before admission, so the
+ * user completes one for the slot's plan. Any saved attempt takes precedence.
+ */
+export function reservedDeployResume(
+	slot: StoreComputeSlot | null | undefined,
+	attempt: CreationAttempt | null,
+	productPlan: (productId: string) => string | null,
+): ReservedDeployResume | null {
+	const id = slot?.reserved_deploy_request_id;
+	if (attempt || !id || !CREATION_ID.test(id)) return null;
+	const planSlug = unboundStoreSlotPlan(slot, productPlan, id);
+	return planSlug && isHostedDeployComputePlan(planSlug) ? { id, planSlug } : null;
 }
 
 /**
@@ -226,6 +255,34 @@ export function storeAdmissionRecoveryAttempt(
 		canDiscardCreationAttempt(attempt)
 		? { ...attempt, storeFunding: "awaiting_purchase" }
 		: null;
+}
+
+/**
+ * Hosted S2: a late store webhook expires the deploy attempt and leaves an unbound slot,
+ * so a refusal can precede the slot this request may bind. Re-read the slot once and
+ * repeat the same request only when hosted would now bind it; otherwise keep the refusal.
+ */
+export async function admitWithStoreSlotRefresh<Data>(
+	attempt: CreationAttempt,
+	admit: () => Promise<Data>,
+	readSlot: () => Promise<StoreComputeSlot | null | undefined>,
+	productPlan: (productId: string) => string | null,
+): Promise<Data> {
+	try {
+		return await admit();
+	} catch (error) {
+		if (storeAdmissionMessageKey(attempt, error) !== "creation.storeComputeUnavailable")
+			throw error;
+		let slot: StoreComputeSlot | null | undefined;
+		try {
+			slot = await readSlot();
+		} catch {
+			throw error;
+		}
+		if (unboundStoreSlotPlan(slot, productPlan, attempt.id) !== attempt.draft.computePlanSlug)
+			throw error;
+		return admit();
+	}
 }
 
 function waitForAdmissionRetry(delayMs: number, signal: AbortSignal): Promise<void> {
