@@ -24,7 +24,6 @@ import { commandMessage, commandResult, emitJson } from "../lib/command-output";
 import { getAuth, getConfig } from "../lib/config";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
-import { isInteractive } from "../lib/tty";
 import { addToken, findToken, listTokens, removeToken, type ShareToken } from "../share/tokens";
 
 const RAW_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -77,13 +76,12 @@ function upgradeIdempotencyKey(token: string): string {
 
 interface AcceptOpts {
 	agent?: string[];
-	useAs?: string;
 	invite?: string;
 	url?: string;
 	json?: boolean;
 }
 
-type JoinOpts = Pick<AcceptOpts, "agent" | "useAs" | "json">;
+type JoinOpts = Pick<AcceptOpts, "agent" | "json">;
 
 type ShareUpgradeResponse = components["schemas"]["ShareUpgradeResponse"];
 type SharePreview = components["schemas"]["ShareRedeemResponse"];
@@ -142,7 +140,7 @@ function safeLegacyLocalShare(
 	token: ShareToken,
 ): Omit<ShareToken, "token"> & { cleanup_command: string } {
 	const { token: _rawToken, ...safe } = token;
-	return { ...safe, cleanup_command: `clawdi inbox forget ${token.project_id}` };
+	return { ...safe, cleanup_command: `clawdi inbox forget ${token.project_id} --yes` };
 }
 
 function renderLocalPendingShares(shares: ShareToken[], signedIn: boolean): void {
@@ -165,7 +163,7 @@ function renderLegacyLocalShares(shares: ShareToken[]): void {
 	for (const share of shares) {
 		console.log(`  ${chalk.bold(share.project_name)}  ${chalk.gray(`(@${share.owner_handle})`)}`);
 		console.log(chalk.gray(`    project_id: ${share.project_id}`));
-		console.log(chalk.gray(`    Cleanup: clawdi inbox forget ${share.project_id}`));
+		console.log(chalk.gray(`    Cleanup: clawdi inbox forget ${share.project_id} --yes`));
 	}
 	console.log(chalk.gray("No automatic action occurs for these records."));
 }
@@ -184,29 +182,10 @@ function normalizeAgentIds(values?: string[]): string[] {
 async function buildAcceptRequestBody(opts: AcceptOpts): Promise<Record<string, unknown>> {
 	const reqBody: Record<string, unknown> = {};
 	const agentIds = normalizeAgentIds(opts.agent);
-	if (agentIds.length === 0) {
-		if (opts.useAs) {
-			throw new Error("Pass --agent before choosing how to link the project.");
-		}
-		return reqBody;
-	}
-	const useAs = normalizeAcceptMode(opts);
+	if (agentIds.length === 0) return reqBody;
 	reqBody.agent_ids = agentIds;
-	reqBody.use_as = useAs;
+	reqBody.use_as = "attached";
 	return reqBody;
-}
-
-function normalizeAcceptMode(opts: AcceptOpts): "attached" {
-	if (opts.useAs) {
-		const useAs = opts.useAs.toLowerCase();
-		if (useAs === "attached") return "attached";
-		if (useAs === "home") {
-			throw new Error("`--use-as home` is no longer supported. Workspace is fixed.");
-		}
-		throw new Error("`--use-as` must be `attached`.");
-	}
-
-	return "attached";
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -301,7 +280,7 @@ export async function inboxAcceptCommand(
 	const auth = getAuth();
 	if (!auth?.apiKey) {
 		// Anonymous: only URL path makes sense (invitations require auth).
-		if (normalizeAgentIds(opts.agent).length > 0 || opts.useAs) {
+		if (normalizeAgentIds(opts.agent).length > 0) {
 			console.error(
 				chalk.red(
 					"Sign in before linking an accepted project to an agent. " +
@@ -532,7 +511,6 @@ export async function inboxDeclineCommand(
 	const { apiUrl } = getConfig();
 	requireAuth();
 	if (
-		isInteractive() &&
 		!(await confirmOrRequireYes(`Decline invitation ${invitationId}?`, {
 			yes: opts.yes,
 			action: "decline this invitation",
@@ -572,7 +550,6 @@ export async function inboxForgetCommand(
 		!(await confirmOrRequireYes(`Forget local share ${projectId}?`, {
 			yes: opts.yes,
 			action: "forget this local share",
-			legacyNonInteractive: true,
 		}))
 	) {
 		commandResult(opts.json, "clawdi.inboxForget.v1", {
@@ -623,7 +600,7 @@ export async function inboxForgetCommand(
 	commandMessage(
 		opts.json,
 		chalk.gray(
-			"  This only affects this device. To leave the project on the server, run `clawdi project leave <project>`.",
+			"  This only affects this device. To leave the project on the server, run `clawdi project leave <project> --yes`.",
 		),
 	);
 	commandResult(opts.json, "clawdi.inboxForget.v1", {
@@ -647,7 +624,7 @@ async function acceptAnonymousUrl(
 
 	const existing = listTokens().find((t) => t.token === token);
 	if (existing?.upgraded_at) {
-		const cleanupCommand = `clawdi inbox forget ${existing.project_id}`;
+		const cleanupCommand = `clawdi inbox forget ${existing.project_id} --yes`;
 		if (opts.json) {
 			emitJson({
 				status: "legacy_local_share_record",

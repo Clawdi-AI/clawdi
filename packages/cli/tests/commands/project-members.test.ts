@@ -91,7 +91,11 @@ describe("project member lifecycle commands", () => {
 			out = args.map(String).join(" ");
 		};
 		try {
-			await projectMembersCommand("engineering", { remove: "bob@example.test", json: true });
+			await projectMembersCommand("engineering", {
+				remove: "bob@example.test",
+				json: true,
+				yes: true,
+			});
 		} finally {
 			console.log = orig;
 			restore();
@@ -124,7 +128,7 @@ describe("project member lifecycle commands", () => {
 			out = args.map(String).join(" ");
 		};
 		try {
-			await projectLeaveCommand("@alice-a3b4/shared-toolkit", { json: true });
+			await projectLeaveCommand("@alice-a3b4/shared-toolkit", { json: true, yes: true });
 		} finally {
 			console.log = orig;
 			restore();
@@ -156,7 +160,7 @@ describe("project member lifecycle commands", () => {
 			out = args.map(String).join(" ");
 		};
 		try {
-			await projectUnshareCommand("engineering", { json: true });
+			await projectUnshareCommand("engineering", { json: true, yes: true });
 		} finally {
 			console.log = orig;
 			restore();

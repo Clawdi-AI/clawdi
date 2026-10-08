@@ -442,7 +442,7 @@ export async function vaultDetach(vaultSlugArg: string, opts: VaultProjectOption
 	if (
 		!(await confirmOrRequireYes(
 			`Detach vault ${sanitizeMetadata(vaultSlug)} from ${formatProjectTarget(targetProject)}?`,
-			{ yes: opts.yes, action: "detach this vault", legacyNonInteractive: true },
+			{ yes: opts.yes, action: "detach this vault" },
 		))
 	) {
 		commandResult(opts.json, "clawdi.vaultDetach.v1", {
@@ -628,11 +628,6 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 
 	const { vaultSlug, section, field } = parseVaultKey(key);
 	const normalizedKey = formatVaultKey(vaultSlug, section, field);
-	if (!opts.yes && !isInteractive()) {
-		throw new Error(
-			"Cannot prompt for vault deletion in a non-interactive shell. Pass --yes to confirm explicitly.",
-		);
-	}
 
 	const api = new ApiClient();
 	const targetProject = await resolveVaultWriteProject(api, opts.project);
@@ -646,24 +641,21 @@ export async function vaultRm(key: string, opts: VaultRmOptions = {}) {
 		);
 	}
 
-	if (!opts.yes) {
-		const ok = await p.confirm({
-			output: process.stderr,
-			message:
-				attachedProjectIds.length > 1
-					? `Delete ${normalizedKey} globally from ${attachedProjectIds.length} projects using ${target}?`
-					: `Delete ${normalizedKey} from ${target}?`,
+	if (
+		!(await confirmOrRequireYes(
+			attachedProjectIds.length > 1
+				? `Delete ${normalizedKey} globally from ${attachedProjectIds.length} projects using ${target}?`
+				: `Delete ${normalizedKey} from ${target}?`,
+			{ yes: opts.yes, action: "delete this vault key" },
+		))
+	) {
+		commandResult(opts.json, "clawdi.vaultRm.v1", {
+			vault: vaultSlug,
+			section,
+			keys: [field],
+			status: "cancelled",
 		});
-		if (p.isCancel(ok) || !ok) {
-			p.cancel("Cancelled.", { output: process.stderr });
-			commandResult(opts.json, "clawdi.vaultRm.v1", {
-				vault: vaultSlug,
-				section,
-				keys: [field],
-				status: "cancelled",
-			});
-			return;
-		}
+		return;
 	}
 
 	unwrap(

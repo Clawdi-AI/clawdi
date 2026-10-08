@@ -130,15 +130,18 @@ describe("registerServeCommand", () => {
 		expect(captured.last?.allowRemote).toBe(true);
 	});
 
-	it("legacy serve with no subcommand still runs the foreground action", async () => {
+	it("rejects the removed serve alias before dispatch", async () => {
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve"]);
-		expect(captured.last).toEqual({});
+		program.exitOverride().configureOutput({ writeErr: () => {} });
+		await expect(program.parseAsync(["node", "clawdi", "serve"])).rejects.toMatchObject({
+			code: "commander.unknownCommand",
+		});
+		expect(captured.last).toBeNull();
 	});
 
 	it("uninstall reaches the action", async () => {
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve", "uninstall"]);
+		await program.parseAsync(["node", "clawdi", "daemon", "uninstall"]);
 		expect(captured.last).toEqual({});
 	});
 
@@ -166,7 +169,7 @@ describe("registerServeCommand", () => {
 
 	it("restart reaches the action", async () => {
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve", "restart"]);
+		await program.parseAsync(["node", "clawdi", "daemon", "restart"]);
 		expect(captured.last).toEqual({});
 	});
 
@@ -231,7 +234,7 @@ describe("registerServeCommand", () => {
 
 	it("status --agent claude_code (child-side) reaches the action", async () => {
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve", "status", "--agent", "claude_code"]);
+		await program.parseAsync(["node", "clawdi", "daemon", "status", "--agent", "claude_code"]);
 		expect(captured.last?.agent).toBe("claude_code");
 	});
 
@@ -241,19 +244,19 @@ describe("registerServeCommand", () => {
 		// hands the action `agent: undefined` (not e.g. an empty
 		// string), so the falsy check works.
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve", "status"]);
+		await program.parseAsync(["node", "clawdi", "daemon", "status"]);
 		expect(captured.last?.agent).toBeUndefined();
 	});
 
 	it("logs --follow flows through", async () => {
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve", "logs", "--follow"]);
+		await program.parseAsync(["node", "clawdi", "daemon", "logs", "--follow"]);
 		expect(captured.last?.follow).toBe(true);
 	});
 
 	it("doctor --json reaches the action", async () => {
 		const { program, captured } = buildTree();
-		await program.parseAsync(["node", "clawdi", "serve", "doctor", "--json"]);
+		await program.parseAsync(["node", "clawdi", "daemon", "doctor", "--json"]);
 		expect(captured.last?.json).toBe(true);
 	});
 });

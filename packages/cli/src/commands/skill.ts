@@ -539,7 +539,6 @@ export async function skillRm(
 	const api = new ApiClient();
 	const target = await resolveSkillMutationTarget(api, opts);
 	if (
-		isInteractive() &&
 		!(await confirmOrRequireYes(`Remove skill ${sanitizeMetadata(key)}?`, {
 			yes: opts.yes,
 			action: "remove this skill",
