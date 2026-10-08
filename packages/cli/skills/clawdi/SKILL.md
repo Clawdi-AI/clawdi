@@ -8,6 +8,12 @@ description: "API keys, tokens, memory, sessions, Projects, integrations. Use Cl
 Use Clawdi tools through the `clawdi` MCP server when they provide context or
 capabilities unavailable more directly.
 
+When falling back to the CLI, pass `--json` explicitly whenever a machine-readable
+result is needed. Piping output does not select JSON mode. Each JSON result is one
+object with a `schemaVersion` such as `clawdi.memoryList.v2`; collections are in
+named arrays (for example, `memories` or `sessions`). Parse the documented schema
+and treat additional fields as forward-compatible.
+
 ## Context Routing
 
 Use the current conversation and user-provided artifacts first. For project facts, inspect

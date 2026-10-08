@@ -218,7 +218,7 @@ test("list exposes failed removals and sets failure exit status without claiming
 	try {
 		await agentSkillsList(agentId, { json: true });
 		expect(process.exitCode).toBe(1);
-		expect(JSON.parse(output[0] ?? "").removal_failures).toEqual([
+		expect(JSON.parse(output[0] ?? "").desired.removal_failures).toEqual([
 			{ skill_key: "removed", observation_error_code: "reconcile_failed" },
 		]);
 	} finally {

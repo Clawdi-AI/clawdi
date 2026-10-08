@@ -207,11 +207,11 @@ describe("CLI smoke — src entry", () => {
 			expect(code).toBe(0);
 			const parsed = JSON.parse(stdout);
 			expect(parsed.schemaVersion).toBe("clawdi.capabilities.v1");
-			expect(parsed.commands).toContain("runtime");
-			expect(parsed.commands).toContain("deploy");
-			expect(parsed.commands).toContain("channel");
-			expect(parsed.updateMode).toBe("local-self-update");
-			expect(parsed.providerApply).toBeUndefined();
+			expect(parsed.capabilities.commands).toContain("runtime");
+			expect(parsed.capabilities.commands).toContain("deploy");
+			expect(parsed.capabilities.commands).toContain("channel");
+			expect(parsed.capabilities.updateMode).toBe("local-self-update");
+			expect(parsed.capabilities.providerApply).toBeUndefined();
 		} finally {
 			rmSync(fakeHome, { recursive: true, force: true });
 		}
@@ -460,7 +460,7 @@ describe("CLI smoke — src entry", () => {
 		mkdirSync(fakeHome, { recursive: true });
 
 		try {
-			const proc = Bun.spawn(["bun", srcEntry, "status"], {
+			const proc = Bun.spawn(["bun", srcEntry, "status", "--json"], {
 				stdout: "pipe",
 				stderr: "pipe",
 				env: { ...process.env, HOME: fakeHome, CLAWDI_API_URL: "http://127.0.0.1:0" },
@@ -468,7 +468,7 @@ describe("CLI smoke — src entry", () => {
 			const stdout = await new Response(proc.stdout).text();
 			const code = await proc.exited;
 			expect(code).toBe(0);
-			// stdout is piped (non-TTY), so status auto-renders JSON.
+			// JSON is emitted only when explicitly requested.
 			const parsed = JSON.parse(stdout);
 			expect(parsed.loggedIn).toBe(false);
 		} finally {

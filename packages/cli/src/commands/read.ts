@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { applyLinkedProjectContext } from "../lib/reference-context";
 import {
 	previewClawdiReference,
@@ -21,7 +21,7 @@ export async function readCommand(
 		if (opts.dryRun) {
 			const hit = await previewClawdiReference(reference, applyLinkedProjectContext(opts));
 			if (opts.json) {
-				emitJson(hit);
+				emit(hit);
 				return;
 			}
 			console.log(chalk.green(`✓ Reference resolves from ${hit.source_alias} (redacted)`));
@@ -30,7 +30,7 @@ export async function readCommand(
 		}
 		const hit = await resolveClawdiReference(reference, applyLinkedProjectContext(opts));
 		if (opts.json) {
-			emitJson(hit);
+			emit(hit);
 			return;
 		}
 		console.log(hit.value);

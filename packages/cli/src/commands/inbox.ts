@@ -20,7 +20,7 @@ import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { isUuid } from "../lib/cli-options";
-import { commandResult, emitJson, message } from "../lib/command-output";
+import { commandResult, emit, message } from "../lib/command-output";
 import { getAuth, getConfig } from "../lib/config";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
@@ -213,7 +213,7 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 	const items = await readJson<InvitationItem[]>(r, "/v1/me/invitations");
 
 	if (opts.json) {
-		emitJson({
+		emit({
 			invitations: items,
 			local_share_tokens: localShares.map(safeLocalShare),
 		});
@@ -399,7 +399,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 	if (response.status === 404 || response.status === 410) {
 		await removeToken(ticket.project_id, ticket.token);
 		if (opts.json) {
-			emitJson({
+			emit({
 				status: "unavailable",
 				project_id: ticket.project_id,
 				local_ticket_removed: true,
@@ -419,7 +419,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 		if (conflict?.detail?.error === "already_owner") {
 			await removeToken(ticket.project_id, ticket.token);
 			if (opts.json) {
-				emitJson({
+				emit({
 					status: "already_owner",
 					project_id: ticket.project_id,
 					local_ticket_removed: true,
@@ -462,7 +462,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 
 	await removeToken(ticket.project_id, ticket.token);
 	if (opts.json) {
-		emitJson({
+		emit({
 			status: "joined",
 			...body,
 			local_ticket_removed: true,
@@ -598,7 +598,7 @@ async function acceptAnonymousUrl(
 	const existing = listTokens().find((t) => t.token === token);
 	if (existing) {
 		if (opts.json) {
-			emitJson({
+			emit({
 				status: "already_redeemed",
 				membership_changed: false,
 				local_share_token: safeLocalShare(existing),
@@ -642,7 +642,7 @@ async function acceptAnonymousUrl(
 	};
 	await addToken(record);
 	if (opts.json) {
-		emitJson({
+		emit({
 			status: "redeemed",
 			membership_changed: false,
 			share: body,
@@ -718,7 +718,7 @@ async function acceptUrl(
 		if (detail.error === "already_owner") {
 			if (localTicket) await removeToken(localTicket.project_id, localTicket.token);
 			if (opts.json) {
-				emitJson({
+				emit({
 					status: "already_owner",
 					local_ticket_removed: Boolean(localTicket),
 				});
@@ -751,7 +751,7 @@ async function acceptUrl(
 	}
 	if (localTicket) await removeToken(localTicket.project_id, localTicket.token);
 	if (opts.json) {
-		emitJson({
+		emit({
 			status: "joined",
 			...body,
 			local_ticket_removed: Boolean(localTicket),
@@ -788,7 +788,7 @@ async function acceptInvitation(
 
 	const body = await readJson<InvitationAcceptResponse>(r, "accept project invitation");
 	if (opts.json) {
-		emitJson({
+		emit({
 			status: "joined",
 			...body,
 			next_command: `clawdi pull --project ${body.project_id}`,

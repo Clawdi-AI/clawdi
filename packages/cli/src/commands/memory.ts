@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { Memory } from "../lib/api-schemas";
 import { parsePositiveInteger } from "../lib/cli-options";
-import { commandResult, emitJson, message, wantsJson } from "../lib/command-output";
+import { commandResult, emit, message, wantsJson } from "../lib/command-output";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
@@ -50,8 +50,8 @@ export async function memoryList(opts: ListOpts = {}) {
 		console.error(`Showing ${memories.length} of ${page.total}; pass --limit to see more.`);
 	}
 
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson(memories);
+	if (wantsJson(opts)) {
+		emit({ schemaVersion: "clawdi.memoryList.v2", memories, total: page.total });
 		return;
 	}
 
@@ -76,8 +76,13 @@ export async function memorySearch(query: string, opts: ListOpts = {}) {
 		console.error(`Showing ${memories.length} of ${page.total}; pass --limit to see more.`);
 	}
 
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson(memories);
+	if (wantsJson(opts)) {
+		emit({
+			schemaVersion: "clawdi.memorySearch.v2",
+			memories,
+			total: page.total,
+			query: searchQuery,
+		});
 		return;
 	}
 
@@ -155,8 +160,13 @@ export async function memoryUpdate(id: string, content: string, opts: { json?: b
 			body: { content },
 		}),
 	);
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson(result, false);
+	if (wantsJson(opts)) {
+		emit({
+			schemaVersion: "clawdi.memoryUpdate.v2",
+			id: result.memory_id ?? id,
+			status: "updated",
+			memory: result,
+		});
 	} else {
 		console.log(`Updated memory ${sanitizeMetadata(result.memory_id)}; metadata preserved.`);
 	}

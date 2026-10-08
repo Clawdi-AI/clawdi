@@ -337,7 +337,7 @@ describe("deploy option parsing", () => {
 });
 
 describe("deploy orchestration", () => {
-	test("uses one JSON stdout object for non-TTY success, failure, and parse errors", async () => {
+	test("uses one JSON stdout object when --json is explicit", async () => {
 		const cases: Array<{
 			options: Parameters<typeof deployCommand>[0];
 			client: FakeDeployGateway;
@@ -350,18 +350,19 @@ describe("deploy orchestration", () => {
 					compute: "basic",
 					requestId: "123e4567-e89b-42d3-a456-426614174000",
 					yes: true,
+					json: true,
 				},
 				client: new FakeDeployGateway(),
 				status: "succeeded",
 			},
 			{
-				options: { provider: "managed", compute: "basic", yes: true },
+				options: { provider: "managed", compute: "basic", yes: true, json: true },
 				client: new FakeDeployGateway(),
 				status: "error",
 				code: "request_id_required",
 			},
 			{
-				options: { runtime: "invalid" },
+				options: { runtime: "invalid", json: true },
 				client: new FakeDeployGateway(),
 				status: "error",
 				code: "invalid_runtime",
@@ -381,11 +382,11 @@ describe("deploy orchestration", () => {
 			expect(stdout).toHaveLength(1);
 			const result: unknown = JSON.parse(stdout[0] ?? "");
 			expect(result).toMatchObject({
-				schema_version: "clawdi.deploy.v1",
+				schemaVersion: "clawdi.deploy.v2",
 				status: testCase.status,
 				...(testCase.code ? { error: { code: testCase.code } } : {}),
 			});
-			expect(stderr.join("\n")).not.toContain("schema_version");
+			expect(stderr.join("\n")).not.toContain("schemaVersion");
 		}
 		process.exitCode = 0;
 	});

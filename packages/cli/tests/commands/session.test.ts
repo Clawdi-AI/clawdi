@@ -101,7 +101,7 @@ describe("cloud session commands", () => {
 		expect(query.get("page_size")).toBe("1");
 		expect(query.get("since")).toBe("2026-08-01T00:00:00.000Z");
 		const payload = JSON.parse(output[0] ?? "{}");
-		expect(payload.schemaVersion).toBe("clawdi.sessionList.v1");
+		expect(payload.schemaVersion).toBe("clawdi.sessionList.v2");
 		expect(payload.sessions[0].id).toBe(sessionId);
 		expect(payload.total).toBe(2);
 		expect(errors).toEqual(["Showing 1 of 2; pass --limit to see more."]);
@@ -177,7 +177,8 @@ describe("cloud session commands", () => {
 			restore();
 		}
 
-		expect(JSON.parse(output[0])).toHaveLength(1);
+		expect(JSON.parse(output[0]).schemaVersion).toBe("clawdi.sessionSearch.v2");
+		expect(JSON.parse(output[0]).sessions).toHaveLength(1);
 		expect(errors).toContain("Showing 1 of 2; pass --limit to see more.");
 	});
 

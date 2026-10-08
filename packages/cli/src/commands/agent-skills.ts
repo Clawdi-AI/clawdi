@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { isUuid, requireUuid } from "../lib/cli-options";
-import { emitJson, wantsJson } from "../lib/command-output";
+import { emit, wantsJson } from "../lib/command-output";
 import { HostedDeployClient } from "../lib/hosted-deploy-client";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
@@ -40,8 +40,8 @@ async function hostedWorkspace(agentId: string) {
 	return { client, deploymentId, workspace };
 }
 
-function print(value: unknown): void {
-	emitJson(value);
+function print(schemaVersion: string, value: Record<string, unknown>): void {
+	emit({ schemaVersion, ...value });
 }
 
 export async function agentSkillsList(agentId: string, opts: { json?: boolean } = {}) {
@@ -52,8 +52,8 @@ export async function agentSkillsList(agentId: string, opts: { json?: boolean } 
 		Boolean(desired.removal_failures?.length) ||
 		workspace.items?.some((item) => item.status === "failed");
 	if (failed) process.exitCode = 1;
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		print({ ...desired, workspace });
+	if (wantsJson(opts)) {
+		print("clawdi.agentSkillsList.v2", { desired, workspace });
 		return;
 	}
 	for (const skill of desired.skills) {
@@ -92,7 +92,7 @@ export async function agentSkillsRead(
 				params: { path: { project_id: skill.project_id, skill_key: skill.source_skill_key } },
 			}),
 		);
-		if (wantsJson(opts, { legacyImplicit: true })) print({ ...skill, detail });
+		if (wantsJson(opts)) print("clawdi.agentSkillsRead.v2", { skill, detail });
 		else console.log(stripTerminalEscapes(detail.content ?? "Skill content is unavailable."));
 		return;
 	}
@@ -101,7 +101,7 @@ export async function agentSkillsRead(
 	}
 	const { client, deploymentId } = await hostedWorkspace(agentId);
 	const detail = await client.getWorkspaceSkill(deploymentId, skillKey);
-	if (wantsJson(opts, { legacyImplicit: true })) print({ ...skill, detail });
+	if (wantsJson(opts)) print("clawdi.agentSkillsRead.v2", { skill, detail });
 	else console.log(stripTerminalEscapes(detail.content));
 }
 
@@ -129,7 +129,7 @@ export async function agentSkillsInstall(agentId: string, opts: InstallOptions) 
 				params: { path: { agent_id: agentId, skill_id: opts.library } },
 			}),
 		);
-		if (wantsJson(opts, { legacyImplicit: true })) print({ status: "accepted", ...result });
+		if (wantsJson(opts)) print("clawdi.agentSkillsInstall.v2", { status: "accepted", ...result });
 		else
 			console.log(
 				`Library skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
@@ -173,7 +173,7 @@ export async function agentSkillsRemove(
 				params: { path: { agent_id: agentId, skill_id: skill.skill_id } },
 			}),
 		);
-		if (wantsJson(opts, { legacyImplicit: true })) print({ status: "accepted", ...result });
+		if (wantsJson(opts)) print("clawdi.agentSkillsRemove.v2", { status: "accepted", ...result });
 		else
 			console.log(
 				`Library skill ${result.desired_state} request accepted. Run \`clawdi agent skills list ${agentId}\` to check application.`,
@@ -235,8 +235,8 @@ async function mutateGithubSkill(
 		const result = source
 			? await client.installWorkspaceSkill(deploymentId, source, resourceVersion, requestId)
 			: await client.removeWorkspaceSkill(deploymentId, skillKey ?? "", resourceVersion, requestId);
-		if (wantsJson({ json }, { legacyImplicit: true })) {
-			print({
+		if (wantsJson({ json })) {
+			print("clawdi.agentSkillsMutation.v2", {
 				acceptance: "accepted",
 				request_id: requestId,
 				request_resource_version: resourceVersion,

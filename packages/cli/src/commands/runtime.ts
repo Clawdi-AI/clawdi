@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import chalk from "chalk";
-import { emitJson, wantsJson } from "../lib/command-output";
+import { emit, wantsJson } from "../lib/command-output";
 import { getCliVersion } from "../lib/version";
 import {
 	type RuntimeAppliedContentIdentity,
@@ -607,7 +607,7 @@ const NO_SYSTEMD_APPLY = {
 
 function emitRuntimeWatchEvent(event: RuntimeWatchEvent, json: boolean | undefined): void {
 	if (json) {
-		emitJson(event, false);
+		emit(event, false);
 		return;
 	}
 	if (event.status === "applied") {
@@ -633,8 +633,8 @@ function emitRuntimeInitStatus(input: {
 }): void {
 	const status = buildRuntimeBootStatus(input.status, input.paths);
 	if (input.persist !== false) writeRuntimeBootStatus(status, input.paths);
-	if (wantsJson(input.opts, { legacyImplicit: true })) {
-		emitJson(input.jsonExtras ? { ...status, ...input.jsonExtras } : status);
+	if (wantsJson(input.opts)) {
+		emit(input.jsonExtras ? { ...status, ...input.jsonExtras } : status);
 	} else {
 		input.render?.(status);
 	}

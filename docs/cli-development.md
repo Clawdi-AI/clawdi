@@ -101,7 +101,7 @@ The new Cloud resource commands emit these envelopes:
 | `agent plugins install <agent-id> <plugin-name> --json` | `{schemaVersion: "clawdi.agentPluginsInstall.v1", status: "accepted", ...desiredState}` |
 | `agent plugins rm <agent-id> <plugin-name> --yes --json` | `{schemaVersion: "clawdi.agentPluginsRm.v1", status: "accepted", ...desiredAbsence}` |
 | `session rm <session-id> --yes --json` | `{schemaVersion: "clawdi.sessionRm.v1", id, status: "deleted"}` |
-| `session list --uploaded --json` | `{schemaVersion: "clawdi.sessionList.v1", sessions: [...], total}` |
+| `session list --uploaded --json` | `{schemaVersion: "clawdi.sessionList.v2", sessions: [...], total}` |
 | `project rm <project> --yes --json` | `{schemaVersion: "clawdi.projectRm.v1", id, status: "archived"}` |
 
 Cloud Agent commands accept the stable Agent UUID from `agent list`, rather than
@@ -178,17 +178,24 @@ unregistration remains best effort: `mcp` is `"removal_attempted"`, `"kept"`, or
 are never included in `inbox forget` output. Empty daemon status emits
 `agents: []` and writes the setup hint to stderr.
 
-Legacy shapes are frozen. Don't change them to match the new convention:
+The following formerly inconsistent surfaces now use the same versioned object
+contract. Every command requires an explicit `--json`; piping human output does
+not switch modes.
 
-| Existing surface | Keep this shape |
+| Command | JSON result |
 | --- | --- |
-| `deploy`, `wallet` | Snake-case `schema_version` with a string version |
-| `doctor`, `session list`, `memory list` | Bare arrays, without a version envelope |
-| `project list` | Unversioned object containing project arrays and `hidden_environment_project_count` |
-| `ai-provider` catalog (`list`, `export`) | Numeric `schema_version: 1` |
-
-Existing commands that emit JSON implicitly in non-TTY mode retain that
-behavior; new commands require explicit `--json`.
+| `doctor --json` | `{schemaVersion: "clawdi.doctor.v2", status, checks, failed}` |
+| `session list --json` | `{schemaVersion: "clawdi.sessionList.v2", sessions, total}` |
+| `session search --json` | `{schemaVersion: "clawdi.sessionSearch.v2", sessions, total, query}` |
+| `memory list --json` | `{schemaVersion: "clawdi.memoryList.v2", memories, total}` |
+| `memory search --json` | `{schemaVersion: "clawdi.memorySearch.v2", memories, total, query}` |
+| `project list --json` | `{schemaVersion: "clawdi.projectList.v2", projects, ownedProjects, sharedProjects, environmentProjects, hiddenEnvironmentProjectCount}` |
+| `deploy --json` | `{schemaVersion: "clawdi.deploy.v2", requestId, deploymentId, operationName, deployRequestId, computePlanSlug, aiProvider, primaryModel, payment}` |
+| `wallet status --json` | `{schemaVersion: "clawdi.walletStatus.v2", balanceUsd, x402Enabled, x402PaymentStatus, x402PaymentAttempt, x402PaymentAuthority, binding}` |
+| `wallet transactions --json` | `{schemaVersion: "clawdi.walletTransactions.v2", transactions, hasMore}` |
+| `wallet usage --json` | `{schemaVersion: "clawdi.walletUsage.v2", periodStart, periodEnd, totalUsd, totalRequests, availability, byDay}` |
+| `ai-provider list --json` | `{schemaVersion: "clawdi.aiProviderList.v2", providers, defaults}` |
+| `ai-provider export --json` | `{schemaVersion: "clawdi.aiProviderExport.v2", catalog}` |
 
 ```bash
 scripts/test.sh cli tests/commands/cloud-resources.test.ts tests/commands/confirmation.test.ts

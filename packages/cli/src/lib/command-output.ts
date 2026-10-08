@@ -2,32 +2,28 @@ import { progressLine } from "./progress";
 
 export type JsonOutputOptions = { json?: boolean };
 
+/** Resolve machine-readable output mode. JSON is opt-in via --json. */
+export function wantsJson(opts: JsonOutputOptions | boolean | undefined): boolean {
+	return typeof opts === "boolean" ? opts : opts?.json === true;
+}
+
 /**
- * Resolve the command's machine-readable output mode.
- *
- * The non-TTY fallback is a frozen compatibility contract for commands that
- * shipped before `--json`; see docs/cli-development.md. New commands should
- * pass only `{ json: true }` and opt in explicitly.
+ * Emit one JSON value to stdout. The object form is the only supported
+ * command contract: callers should include a schemaVersion and named arrays.
+ * The two-argument form adds a schemaVersion for commandResult callers.
  */
-export function wantsJson(
-	opts: JsonOutputOptions | boolean | undefined,
-	options: { legacyImplicit?: boolean } = {},
-): boolean {
-	const explicit = typeof opts === "boolean" ? opts : opts?.json === true;
-	return explicit || (options.legacyImplicit === true && process.stdout.isTTY !== true);
-}
-
-/** Emit one machine-readable result object with its schema version. */
-export function emit(schemaVersion: string, result: Record<string, unknown>): void {
-	emitJson({ ...result, schemaVersion }, false);
-}
-
-/** Emit a legacy JSON shape without changing its documented envelope. */
-export function emitJson(
-	value: unknown,
-	pretty = true,
+export function emit(value: unknown, pretty?: boolean, write?: (text: string) => void): void;
+export function emit(schemaVersion: string, result: Record<string, unknown>): void;
+export function emit(
+	valueOrSchema: unknown,
+	prettyOrResult: boolean | Record<string, unknown> = true,
 	write: (text: string) => void = console.log,
 ): void {
+	const value =
+		typeof prettyOrResult === "object" && prettyOrResult !== null
+			? { ...prettyOrResult, schemaVersion: valueOrSchema }
+			: valueOrSchema;
+	const pretty = typeof prettyOrResult === "boolean" ? prettyOrResult : false;
 	write(JSON.stringify(value, null, pretty ? 2 : undefined));
 }
 

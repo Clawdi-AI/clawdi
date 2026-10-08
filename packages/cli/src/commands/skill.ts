@@ -19,7 +19,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import type { SkillSummary } from "../lib/api-schemas";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
-import { commandResult, emitJson, message, wantsJson } from "../lib/command-output";
+import { commandResult, emit, message, wantsJson } from "../lib/command-output";
 import { getConfig } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
@@ -186,7 +186,7 @@ export async function skillShow(
 		}),
 	);
 	if (opts.json) {
-		emitJson({ schemaVersion: "clawdi.skillShow.v1", project_id: projectId, skill }, false);
+		emit({ schemaVersion: "clawdi.skillShow.v1", project_id: projectId, skill }, false);
 	} else {
 		console.log(
 			`${skill.name} (${skill.skill_key}, v${skill.version})\n${skill.content ?? "No skill content available."}`,
@@ -263,8 +263,8 @@ export async function skillList(opts: { json?: boolean; project?: string } = {})
 	}
 	const skills = await fetchAllSkills(api, projectId);
 
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson(skills);
+	if (wantsJson(opts)) {
+		emit({ schemaVersion: "clawdi.skillList.v2", skills });
 		return;
 	}
 

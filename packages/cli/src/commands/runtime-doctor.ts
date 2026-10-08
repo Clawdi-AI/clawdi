@@ -1,6 +1,6 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import chalk from "chalk";
-import { emitJson, wantsJson } from "../lib/command-output";
+import { emit, wantsJson } from "../lib/command-output";
 import { getCliVersion } from "../lib/version";
 import { readRuntimeApplyContext } from "../runtime/apply-identity";
 import { readHostPolicy } from "../runtime/host-policy";
@@ -63,8 +63,8 @@ export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
 		},
 		errors,
 	};
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson(result);
+	if (wantsJson(opts)) {
+		emit(result);
 	} else if (errors.length === 0) {
 		console.log(
 			chalk.green(`runtime verify ok${selected ? `: ${storage} snapshot at ${sourcePath}` : ""}`),
@@ -88,8 +88,8 @@ export async function runtimeStatus(opts: { json?: boolean } = {}) {
 	};
 	if (read.error || read.status?.status === "error") process.exitCode = 1;
 
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson(payload);
+	if (wantsJson(opts)) {
+		emit(payload);
 		return;
 	}
 
@@ -204,8 +204,13 @@ export async function runtimeDoctor(opts: { json?: boolean } = {}) {
 	];
 	const failed = checks.filter((check) => !check.ok).length;
 
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson(checks);
+	if (wantsJson(opts)) {
+		emit({
+			schemaVersion: "clawdi.runtimeDoctor.v2",
+			status: failed === 0 ? "ok" : "error",
+			checks,
+			failed,
+		});
 		if (failed > 0) process.exitCode = 1;
 		return;
 	}

@@ -5,7 +5,7 @@ import chalk from "chalk";
 import { adapterModuleNames } from "../adapters/base";
 import { AGENT_TYPES, type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { getAuth } from "../lib/config";
 import { writeEnvironmentRegistration } from "../lib/environment-registration";
 import { errMessage } from "../lib/errors";
@@ -53,7 +53,7 @@ export async function agentReconnect(
 	}
 	if (opts.desktopList) {
 		const currentMachineId = readMachineId();
-		emitJson(
+		emit(
 			{
 				schemaVersion: DESKTOP_CANDIDATES_SCHEMA,
 				agents: agents.flatMap((agent) => {
