@@ -206,16 +206,18 @@ Android form sheets support neither a nested Stack nor its header
 ([Expo Router modals](https://docs.expo.dev/router/advanced/modals/#android-limitations)).
 Configure presentation in `root-layout.tsx` before opening.
 Content is an ordinary page, never an additional Dialog/Modal.
-Use `SheetPage` for title/cancel/scroll; pass `scroll={false}` when a
-`NativeList` owns the route scroll (the Provider chooser is the pilot). Its
-optional `actions` adds native step/back controls without drawing another header.
+Use `SheetPage` for title/cancel/scroll; on Android, `sheetCancelHeaderOptions`
+hides the back arrow the first sheet screen inherits, so only Cancel shows, as on
+iOS. Pass `scroll={false}` when a `NativeList` owns the route scroll (the
+Provider chooser is the pilot). Its optional `actions` adds native step/back
+controls without drawing another header.
 forms with an existing dirty-state guard own their `NativeHeader` instead.
 
 ```tsx
 // app/(sheets)/projects/[id]/sharing.tsx
 export { default } from "@/pages/dashboard/projects/[id]/sharing/page";
 // root-layout.tsx: outer sheet; (sheets)/_layout.tsx: native Stack
-<Stack.Screen name="(sheets)" options={formSheetOptions} />;
+<Stack.Screen name="(sheets)" options={sheetPresentationOptions} />;
 // Other form routes follow the same thin-file pattern.
 ```
 

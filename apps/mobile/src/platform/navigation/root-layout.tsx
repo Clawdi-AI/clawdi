@@ -19,7 +19,7 @@ import { AppearanceProvider } from "@/platform/appearance-provider";
 import { isDevAuthBypass } from "@/platform/auth/auth-client";
 import { MobileProviders } from "@/platform/mobile-providers";
 import { useNativeStackOptions } from "@/platform/navigation/native-header";
-import { formSheetOptions } from "@/platform/navigation/sheet-options";
+import { sheetPresentationOptions } from "@/platform/navigation/sheet-options";
 import {
 	navigationIntegration,
 	reportRootError,
@@ -57,7 +57,7 @@ function Navigation() {
 			</Stack.Protected>
 			<Stack.Protected guard={!suspended}>
 				<Stack.Screen name="(tabs)" />
-				<Stack.Screen name="(sheets)" options={formSheetOptions} />
+				<Stack.Screen name="(sheets)" options={sheetPresentationOptions} />
 				<Stack.Screen name="terminal/[id]" />
 			</Stack.Protected>
 			<Stack.Screen name="s/[id]" options={{ ...options, headerShown: true }} />

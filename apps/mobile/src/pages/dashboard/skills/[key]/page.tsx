@@ -30,7 +30,7 @@ import {
 	skillRemovalTitle,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { router, useLocalSearchParams, useNavigation } from "expo-router";
+import { router, Stack, useLocalSearchParams, useNavigation } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import {
 	BookOpen,
@@ -65,6 +65,7 @@ import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { NativeHeader } from "@/platform/navigation/native-header";
+import { sheetCancelHeaderOptions } from "@/platform/navigation/sheet-options";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
@@ -415,6 +416,7 @@ function SkillEditor({
 				) : null}
 				{draft && create ? (
 					<WebView recipe="gap-4">
+						<Stack.Screen options={sheetCancelHeaderOptions} />
 						<NativeHeader
 							title={copy.title}
 							actions={[
