@@ -599,7 +599,7 @@ function CreationForm() {
 							? null
 							: { key: "storeCompute.stillWaiting", tone: "neutral", refresh: false },
 			);
-			await refreshStore();
+			await refreshStore({ recover: false });
 		});
 	const requestQuote = () =>
 		action.run(async (owns) => {

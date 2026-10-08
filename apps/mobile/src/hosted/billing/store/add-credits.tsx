@@ -18,6 +18,7 @@ import { usePaywall } from "@/platform/store/paywall-host";
 import { loadCreditsOffering } from "@/platform/store/revenuecat";
 import { type PurchaseErrorCode, storePurchaseError } from "@/platform/store/store-error";
 import { useMobileStore } from "@/platform/store/store-provider";
+import { refreshRecoveredWallet } from "@/platform/store/store-refresh";
 import { StoreNoticeText } from "./store-notice";
 
 /** Wallet reads that a store top-up can change. */
@@ -36,12 +37,9 @@ function useRefreshWallet() {
 export function useStoreRecoveryRefresh() {
 	const { recovery } = useMobileStore();
 	const refresh = useRefreshWallet();
-	const funded = recovery.some(
-		(outcome) => outcome.status === "funding_applied" || outcome.status === "submitted",
-	);
 	useEffect(() => {
-		if (funded) void refresh();
-	}, [recovery, funded]);
+		void refreshRecoveredWallet(recovery, refresh);
+	}, [recovery]);
 }
 
 /**

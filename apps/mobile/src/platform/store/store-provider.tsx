@@ -33,6 +33,11 @@ import {
 	type StoreSurfaces,
 	storeSurfaces,
 } from "./store-policy";
+import {
+	recoverStoreRefresh,
+	type StoreRefreshOptions,
+	subscribeStoreRefresh,
+} from "./store-refresh";
 import { restoreStorePurchases } from "./store-restore";
 
 const journal = createPurchaseAttemptStore(SecureStore);
@@ -40,7 +45,7 @@ type MobileStore = Readonly<{
 	flow: PurchaseFlow | null;
 	recovery: readonly PurchaseOutcome[];
 	bootstrap: StoreBootstrap | null;
-	refresh: () => Promise<void>;
+	refresh: (options: StoreRefreshOptions) => Promise<void>;
 	computeProducts: readonly ComputeProduct[];
 	computeOffering: PurchasesOffering | null;
 	purchaseComputeSubscription: (
@@ -132,8 +137,8 @@ export function StoreProvider({
 		const identity = createStoreIdentity({ scope, client, sdk: revenueCat, config, platform });
 		const management = createStoreManagement({ scope, identity, sdk: revenueCat });
 		let flow: PurchaseFlow | null = null;
-		// Refresh observations only; recovery belongs to an explicit Check status action.
-		const refresh = async () => {
+		// Lifecycle refreshes recover pending purchases; post-purchase refreshes only observe.
+		const refresh = async ({ recover }: StoreRefreshOptions) => {
 			if (!current() || refreshing || flow?.isBusy()) return;
 			refreshing = true;
 			const controller = new AbortController();
@@ -249,28 +254,28 @@ export function StoreProvider({
 					restorePurchases,
 					management,
 				});
+				await recoverStoreRefresh({ recover }, flow, controller.signal, (recovery) => {
+					if (latestValue) update({ ...latestValue, recovery });
+				});
 			} catch {
 				if (!controller.signal.aborted) update({ ...unavailable, refresh });
 			} finally {
 				scope.signal.removeEventListener("abort", abort);
 				refreshing = false;
 				if (controller.signal.aborted && AppState.currentState === "active" && current())
-					void refresh();
+					void refresh({ recover: true });
 			}
 		};
-		void refresh();
-		const subscription = AppState.addEventListener("change", (value) => {
-			if (value === "active") void refresh();
-			else lease?.abort();
-		});
-		const unsubscribeOnline = onlineManager.subscribe((online) => {
-			if (online) void refresh();
+		const unsubscribeLifecycle = subscribeStoreRefresh({
+			refresh,
+			appState: AppState,
+			online: onlineManager,
+			abort: () => lease?.abort(),
 		});
 		return () => {
 			mounted = false;
 			lease?.abort();
-			unsubscribeOnline();
-			subscription.remove();
+			unsubscribeLifecycle();
 		};
 	}, [scope, client, config]);
 	const active = state?.scope === scope ? state.value : unavailable;

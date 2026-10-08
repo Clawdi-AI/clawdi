@@ -69,7 +69,7 @@ function useRefreshCompute() {
 	const scope = useAccountScope();
 	const store = useMobileStore();
 	return () => {
-		void store.refresh();
+		void store.refresh({ recover: false });
 		return Promise.all(
 			(["billing-subscriptions", "deployments", "deployment", "creation-reusable"] as const).map(
 				(key) => cache.invalidateQueries({ queryKey: accountQueryKey(scope, key) }),

@@ -2,8 +2,7 @@
 
 `store/` is the non-UI M1 platform layer. `StoreProvider`, mounted inside the
 existing account and API providers, bootstraps the authenticated store identity
-and refreshes bootstrap on start/foreground and network reconnection. Only explicit
-"Check status" / "Check pending purchases" actions recover attempts. M2 owns
+and recovers pending attempts on start/foreground and network reconnection. M2 owns
 RevenueCat Paywalls, Customer Center and card-only surface hiding. SDK results and `CustomerInfo`
 never grant credits or compute; only hosted `funding_applied` acknowledges
 settlement. Funding does not automatically spend credits or admit a deployment.
@@ -98,8 +97,9 @@ the purchase-start marker. Retrying reconciles without another store charge.
 A lost create response reuses the saved key and original request/revision.
 An explicit typed 4xx create rejection clears the journal when no attempt id
 was received and surfaces the original typed code. Network, 5xx and unknown
-outcomes retain the journal. Ordinary refresh never runs recovery; the explicit
-"Check pending purchases" action reports typed recovery errors and permits retry.
+outcomes retain the journal. Lifecycle recovery ignores errors and preserves the
+bootstrap and `flow`; the explicit "Check pending purchases" action reports typed
+recovery errors and permits retry.
 Before blocking a different purpose/target with `purchase_pending`, M1 reads
 the previous server attempt and finishes any completed state other than
 `reconciliation_required` before proceeding. Paid expired evidence is submitted
@@ -197,13 +197,16 @@ attempt expires through the server TTL. Other attempts without local transaction
 evidence also recover through reads, never confirm. Prepared attempts without a
 purchase-start marker are read without sync or confirmation. Recovery shares
 one two-minute polling budget across attempts.
-Foregrounding and network reconnection refresh bootstrap without running recovery.
-Upgrade, plan-change, restore and store status-check actions also refresh the store
-context; compute query invalidation does not await that refresh. Post-purchase deploy
-funding reads only hosted attempts and bootstrap; only the user-initiated Check status
-action runs recovery first. One bootstrap supplies the compute slot and flag;
-restore patches only a returned compute slot. Refresh is guarded during another refresh
-and purchases to preserve the SDK identity.
+Backgrounding cancels lifecycle recovery; app start, foregrounding and network
+reconnection call `refresh({ recover: true })` to refresh bootstrap and recover
+pending purchases. Recovered funding refreshes the Wallet queries. Upgrade,
+plan-change, restore and store status-check actions refresh the store context with
+`recover: false`; compute query invalidation does not await that refresh.
+Post-purchase deploy funding reads only hosted attempts and bootstrap. Explicit
+Check status runs recovery before the read and skips recovery in the following
+context refresh. One bootstrap supplies the compute slot and flag; restore patches
+only a returned compute slot. Refresh is guarded during another refresh and
+purchases to preserve the SDK identity.
 
 When switching compute products or targets after a locally cancelled `prepared`
 compute attempt with no purchase-start marker or transaction hint, M1 clears its
@@ -219,8 +222,9 @@ state. Hosted links store purchases by identity, product and attempt validity, s
 a second live attempt could turn the purchase into a `conflict_hold`; there is no
 hosted cancel route. The error carries that prepared attempt's `expires_at` as
 `retryAt`, and M2 shows when to try again. Accepted residual behavior (E):
-each explicit recovery of an interrupted `prepared` attempt without a hint
-calls `syncPurchases()` again; repeated user-initiated checks can repeat the sync.
+each lifecycle or explicit recovery of an interrupted `prepared` attempt without
+a hint calls `syncPurchases()` again; repeated foreground refreshes can repeat
+the sync.
 
 Both RevenueCat packages are **10.11.0**; UI was added with
 `npx expo install react-native-purchases-ui@10.11.0 --bun`. Official installed
