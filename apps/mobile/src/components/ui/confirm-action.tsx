@@ -136,6 +136,7 @@ export function RichConfirmAction({
 	confirmClassName,
 	secondaryAction,
 	destructive = false,
+	confirmDisabled = false,
 	onConfirm,
 	open: controlledOpen,
 	onOpenChange,
@@ -150,6 +151,8 @@ export function RichConfirmAction({
 	confirmClassName?: string;
 	secondaryAction?: { label: string; onAction: () => unknown };
 	destructive?: boolean;
+	/** Keeps the confirm action unavailable until the sheet's input is complete. */
+	confirmDisabled?: boolean;
 	onConfirm: () => unknown;
 }) {
 	const t = useI18n(),
@@ -242,7 +245,7 @@ export function RichConfirmAction({
 							// Web forms with a custom action recipe style the default Action.
 							// A destructive variant would keep its dark muted background here.
 							variant={destructive && !confirmClassName ? "destructive" : "default"}
-							disabled={pendingAction !== null}
+							disabled={pendingAction !== null || confirmDisabled}
 							className={`${webView(confirmActionClasses.action)} ${webBoth(confirmClassName ?? "")}`}
 							onPress={() => void runAction("confirm", onConfirm)}
 						>

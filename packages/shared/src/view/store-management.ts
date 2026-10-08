@@ -95,6 +95,10 @@ export const storeSubscriptionCopy = {
 	schedule: "Schedule",
 	availableInApp: "Available in the Clawdi app",
 	renewalIssue: "Update the payment method on your device to keep this subscription.",
+	managedElsewhere: {
+		app_store: "Managed in the App Store on your Apple device",
+		play_store: "Managed in Google Play on your Android device",
+	} satisfies Record<Exclude<StoreManagementProvider, "test_store">, string>,
 } as const;
 
 /** The billing store as named in running copy ("billed by the App Store"). */
@@ -148,6 +152,11 @@ const STORE_SUBSCRIPTION_STATUS = new Map<string, StoreSubscriptionStatus>([
 ]);
 
 const STORE_TERMINAL_STATES = new Set(["expired", "revoked", "owner_terminated"]);
+
+/** The store contract has ended; nothing on it can still be managed or changed. */
+export function isStoreManagementTerminal(management: StoreManagement | null | undefined): boolean {
+	return management != null && STORE_TERMINAL_STATES.has(management.state);
+}
 
 /** Status from the store contract; `fallback` covers rows whose contract is not projected. */
 export function storeSubscriptionStatus(

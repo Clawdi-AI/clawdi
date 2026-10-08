@@ -12,6 +12,7 @@ import { Text } from "@/components/ui/text";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { uniqueBillingItems } from "@/hosted/billing/format";
 import { useSubscriptions } from "@/hosted/billing/hooks";
+import { StoreComputeBillingSection } from "@/hosted/billing/store/compute-store";
 import { ComputeSubscriptionCard } from "@/hosted/billing/subscription/compute-subscription-card";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { useMobileApi } from "@/lib/api-provider";
@@ -67,6 +68,7 @@ function BillingView() {
 							title={t("billingParity.subscriptions")}
 							description={t("billingParity.subscriptionsDescription")}
 						/>
+						<StoreComputeBillingSection />
 					</WebView>
 				}
 				empty={

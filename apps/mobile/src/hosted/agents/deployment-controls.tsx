@@ -21,7 +21,6 @@ import {
 	firstModelForProvider,
 	formatShortDate,
 	initialDeploymentCopy,
-	isComputeSubscriptionRenewing,
 	isManagedProviderId,
 	primaryModelValue,
 } from "@clawdi/shared/view";
@@ -36,6 +35,7 @@ import { Input as AppTextInput } from "@/components/ui/input";
 import { Text as AppText } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppView } from "@/components/ui/view";
+import { deploymentDeleteSubscriptionPolicy } from "@/hosted/agents/delete-subscription-policy";
 import { ProviderCreate } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { AiBindingChoices } from "@/hosted/v2/ai-providers/ai-binding-choices";
 import { useMobileApi } from "@/lib/api-provider";
@@ -181,11 +181,10 @@ export function DeploymentControls({
 				throw error;
 			}
 		});
-	// Mirrors Web's delete action: included Basic is released with the Agent, a renewing
-	// paid subscription is the owner's choice (default cancel), and anything else is kept.
 	const subscription = deployment?.commercial_display?.compute_subscription;
 	const fundingMode = computeFundingMode(deployment?.current_plan_slug, subscription);
-	const offerChoice = fundingMode === "subscription" && isComputeSubscriptionRenewing(subscription);
+	const { offerChoice, defaultChoice, storeNotice } =
+		deploymentDeleteSubscriptionPolicy(deployment);
 	const periodEnd = formatShortDate(subscription?.current_period_end);
 	const periodEndLabel = periodEnd === "—" ? null : periodEnd;
 	const deleteTitle = deployment
@@ -236,9 +235,11 @@ export function DeploymentControls({
 		nativeConfirmation.show(
 			mutation.action === "delete" ? deleteTitle : t("runtime.confirm"),
 			mutation.action === "delete"
-				? subscription?.cancel_at_period_end
-					? `${t("runtime.deleteWarning")}\n\n${t("runtime.deleteScheduledCancel")}`
-					: t("runtime.deleteWarning")
+				? storeNotice
+					? `${t("runtime.deleteWarning")}\n\n${storeNotice}`
+					: subscription?.cancel_at_period_end
+						? `${t("runtime.deleteWarning")}\n\n${t("runtime.deleteScheduledCancel")}`
+						: t("runtime.deleteWarning")
 				: t("runtime.warning"),
 			[
 				{ text: t("account.cancel"), style: "cancel" },
@@ -398,10 +399,7 @@ export function DeploymentControls({
 					onPress={() =>
 						confirm({
 							action: "delete",
-							body: {
-								subscription_choice:
-									fundingMode === "included_basic" ? "cancel_subscription" : "keep_subscription",
-							},
+							body: { subscription_choice: defaultChoice },
 						})
 					}
 				/>

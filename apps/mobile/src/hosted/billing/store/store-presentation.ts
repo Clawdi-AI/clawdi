@@ -1,4 +1,6 @@
+import type { StoreComputeReconcileResponse, StoreComputeSlot } from "@clawdi/shared/api";
 import { formatCents, formatUsdExact } from "@clawdi/shared/view";
+import type { Subscription } from "@/hosted/billing/format";
 import type { TranslationKey } from "@/lib/i18n/en";
 import type { PurchaseOutcome } from "@/platform/store/purchase-flow";
 import type { PurchaseErrorCode } from "@/platform/store/store-error";
@@ -37,6 +39,8 @@ export type StoreNotice = Readonly<{
 	tone: "success" | "neutral" | "warning";
 	/** The Wallet balance may have changed. */
 	refresh: boolean;
+	/** Interpolation values, such as the billing store's name. */
+	values?: Readonly<Record<string, string>>;
 }>;
 
 /** A null notice means the user dismissed the Paywall without buying. */
@@ -110,4 +114,128 @@ export function purchaseErrorNotice(code: PurchaseErrorCode): StoreNotice {
 		default:
 			return notice("store.failed");
 	}
+}
+
+/** What a compute subscription purchase is for; drives its result copy. */
+export type ComputePurchaseContext = "deploy" | "upgrade" | "change";
+
+/**
+ * Result of a compute subscription purchase. `funding_applied` for a deploy is not a
+ * notice: the caller continues with admission. A null notice means the Paywall or store
+ * sheet was closed without buying, so the draft stays as it was.
+ */
+export function computePurchaseNotice(
+	outcome: Pick<PurchaseOutcome, "status"> & { attempt: Pick<PurchaseOutcome["attempt"], "state"> },
+	failure: PurchaseErrorCode | null,
+	context: ComputePurchaseContext,
+	store: string,
+): StoreNotice | null {
+	const notice = (key: TranslationKey, tone: StoreNotice["tone"]): StoreNotice => ({
+		key,
+		tone,
+		refresh: true,
+		values: { store },
+	});
+	switch (outcome.status) {
+		case "funding_applied":
+			return context === "deploy"
+				? null
+				: notice(
+						context === "upgrade" ? "storeCompute.upgraded" : "storeCompute.changed",
+						"success",
+					);
+		case "submitted":
+			return notice("storeCompute.submitted", "neutral");
+		case "pending":
+			return notice("storeCompute.processing", "neutral");
+		case "terminal":
+			return outcome.attempt.state === "reconciliation_required"
+				? notice("store.reviewRequired", "warning")
+				: notice("storeCompute.notCompleted", "neutral");
+		case "cancelled":
+			return failure ? computePurchaseErrorNotice(failure, context, store) : null;
+	}
+}
+
+export function computePurchaseErrorNotice(
+	code: PurchaseErrorCode,
+	context: ComputePurchaseContext,
+	store: string,
+	/** Display time when a blocking earlier attempt expires (`StorePurchaseError.retryAt`). */
+	retryAt: string | null = null,
+): StoreNotice {
+	const values = { store };
+	switch (code) {
+		case "purchase_pending":
+			return retryAt
+				? {
+						key: "storeCompute.previousPurchasePreparing",
+						tone: "neutral",
+						refresh: false,
+						values: { time: retryAt },
+					}
+				: { key: "storeCompute.previousPurchasePreparingSoon", tone: "neutral", refresh: false };
+		case "payment_pending":
+			return {
+				key:
+					context === "deploy"
+						? "storeCompute.waitingForApproval"
+						: context === "upgrade"
+							? "storeCompute.waitingForApprovalUpgrade"
+							: "storeCompute.waitingForApprovalChange",
+				tone: "neutral",
+				refresh: true,
+				values,
+			};
+		case "store_offering_unavailable":
+		case "paywall_unavailable":
+			return { key: "storeCompute.unavailable", tone: "warning", refresh: false, values };
+		case "purchase_unconfirmed":
+		case "store_operation_timeout":
+		case "store_request_failed":
+			return { key: "storeCompute.unconfirmed", tone: "warning", refresh: true, values };
+		case "store_purchases_disabled":
+		case "store_configuration_missing":
+		case "store_identity_unavailable":
+		case "store_identity_tombstoned":
+		case "identity_mismatch":
+		case "open_refund_debt":
+		case "account_changed":
+			return purchaseErrorNotice(code);
+		default:
+			return { key: "storeCompute.failed", tone: "warning", refresh: false, values };
+	}
+}
+
+/** Restore results, most actionable first; another account's subscription is never moved. */
+export function restorePurchasesNotices(
+	response: Pick<StoreComputeReconcileResponse, "code" | "results">,
+	store: string,
+): StoreNotice[] {
+	const codes = new Set([response.code, ...(response.results ?? []).map((result) => result.code)]);
+	const notices: StoreNotice[] = [];
+	if (codes.has("owned_by_other_account"))
+		notices.push({
+			key: "storeCompute.ownedByOtherAccount",
+			tone: "warning",
+			refresh: false,
+			values: { store },
+		});
+	if (codes.has("reconciliation_pending"))
+		notices.push({ key: "storeCompute.restorePending", tone: "neutral", refresh: true });
+	if (response.code === "reconciled" || codes.has("reconciled"))
+		notices.push({ key: "storeCompute.restored", tone: "success", refresh: true });
+	return notices;
+}
+
+/** The live store contract behind a store-funded row; one per account. */
+export function storeContractIdForRow(
+	item: Pick<Subscription, "deployment_id" | "store_management">,
+	slot: StoreComputeSlot | null,
+): string | null {
+	const management = item.store_management;
+	if (!slot || slot.available || !slot.contract_id || !management) return null;
+	if (slot.store_management?.product_id !== management.product_id) return null;
+	if (slot.agent_id && slot.agent_id !== item.deployment_id) return null;
+	return slot.contract_id;
 }

@@ -36,6 +36,25 @@ export function createStoreManagement(options: {
 	return {
 		resolve: (management: StoreManagement | null | undefined, customerCenterEnabled: boolean) =>
 			resolveStoreManagement(management, platform, customerCenterEnabled),
+		/** Presents the RevenueCat Customer Center under the store identity. */
+		openCustomerCenter: async (
+			present: () => Promise<void>,
+			fallback: () => Promise<void>,
+			signal: AbortSignal,
+		) => {
+			const ready = identity.requireReady(signal);
+			try {
+				await sdk.withIdentity(
+					ready.appUserId,
+					() => assertStoreAccount(scope, signal),
+					present,
+					signal,
+				);
+			} catch {
+				assertStoreAccount(scope, signal);
+				await fallback();
+			}
+		},
 		openAppleManagement: async (fallback: () => Promise<void>, signal: AbortSignal) => {
 			const ready = identity.requireReady(signal);
 			try {
@@ -52,3 +71,5 @@ export function createStoreManagement(options: {
 		platform,
 	};
 }
+
+export type StoreManagementController = ReturnType<typeof createStoreManagement>;

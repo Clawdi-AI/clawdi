@@ -28,6 +28,12 @@ export const INSTALLATION_DOCS_URL = "https://docs.clawdi.ai/installation";
 /** Origin of the hosted marketing site that publishes the agent-facing files. */
 export const HOSTED_PUBLIC_SITE_ORIGIN = "https://clawdi.ai";
 
+/** Clawdi legal pages, required with in-app subscription purchases. */
+export const CLAWDI_LEGAL_URLS = {
+	termsOfUse: `${HOSTED_PUBLIC_SITE_ORIGIN}/terms`,
+	privacyPolicy: `${HOSTED_PUBLIC_SITE_ORIGIN}/privacy`,
+} as const;
+
 /** Path of the published onboarding guide (Web `AGENT_FILES.getStarted`). */
 const GET_STARTED_PATH = "/get-started.md";
 

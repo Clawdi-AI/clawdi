@@ -764,7 +764,10 @@ describe("durable store attempts", () => {
 				.makeFlow()
 				.purchase({ purpose: "deploy_continuation", pending_deploy_request_id: "target" }, paywall);
 			if (state === "prepared" || state === "reconciliation_required") {
-				await expect(purchase).rejects.toMatchObject({ code: "purchase_pending" });
+				await expect(purchase).rejects.toMatchObject({
+					code: "purchase_pending",
+					retryAt: state === "prepared" ? "2099-01-01T00:00:00Z" : null,
+				});
 				expect(paywall).not.toHaveBeenCalled();
 				expect(f.newKey).toHaveBeenCalledTimes(1);
 			} else {

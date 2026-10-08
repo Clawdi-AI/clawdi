@@ -303,7 +303,12 @@ export function createPurchaseFlow(options: {
 							)
 								throw new StorePurchaseError("purchase_pending");
 							saved = null;
-						} else throw new StorePurchaseError("purchase_pending");
+						} else
+							throw new StorePurchaseError(
+								"purchase_pending",
+								// An unpaid prepared attempt blocks only until its server TTL ends.
+								existing.attempt.state === "prepared" ? existing.attempt.expires_at : null,
+							);
 					}
 					if (!saved) {
 						const request: StorePurchaseAttemptRequest = {
