@@ -54,11 +54,12 @@ describe("Desktop file logging", () => {
 			"--token private-flag Bearer private-bearer clawdi_privatekey eyJhbGci.eyJzdWI.signature ABCD-EFGH",
 			"https://user:private-password@example.com/path?unknown=private-query",
 			"user_code=private-code&device_code=private-device&code=private-oauth",
+			"Authorization: Bearer private-auth-header; Proxy-Authorization: Basic c2VjcmV0X3Bhc3M=",
 		];
 		for (const message of messages) {
 			const redacted = redactDesktopLog(message);
 			expect(redacted).not.toMatch(
-				/secret-|shortcode|private-|clawdi_privatekey|eyJhbGci|ABCD-EFGH/,
+				/secret-|shortcode|private-|clawdi_privatekey|eyJhbGci|ABCD-EFGH|c2VjcmV0X3Bhc3M/,
 			);
 			expect(redactDesktopLog(redacted)).toBe(redacted);
 		}
@@ -81,7 +82,7 @@ describe("Desktop file logging", () => {
 		expect(content).not.toMatch(/private-code|private-token|unlabelled-private-data|private-cause/);
 	});
 
-	test.each(["initialization", "write"])(
+	test.each(["location", "initialization", "write"])(
 		"%s failure preserves the action and redacted console",
 		(failure) => {
 			const root = directory();
@@ -89,9 +90,22 @@ describe("Desktop file logging", () => {
 				rmSync(root, { recursive: true });
 				writeFileSync(root, "not a directory");
 			}
-			restoreConsole = initializeDesktopLogging(root);
-			if (failure === "write") rmSync(root, { recursive: true });
-			expect(() => console.error("operation failed", { token: "private-token" })).not.toThrow();
+			const originalError = console.error;
+			const output: string[] = [];
+			console.error = (...values: unknown[]) => {
+				output.push(values.join(" "));
+			};
+			try {
+				restoreConsole = initializeDesktopLogging(failure === "location" ? undefined : root);
+				if (failure === "write") rmSync(root, { recursive: true });
+				expect(() => console.error("operation failed", { token: "private-token" })).not.toThrow();
+				expect(output.join("\n")).toContain("[redacted]");
+				expect(output.join("\n")).not.toContain("private-token");
+			} finally {
+				restoreConsole?.();
+				restoreConsole = undefined;
+				console.error = originalError;
+			}
 		},
 	);
 

@@ -19,9 +19,9 @@ const SECRET_ARGUMENT = new RegExp(
 /** No raw CLI output, arguments, sign-in progress or credentials should be logged. */
 export function redactDesktopLog(message: string): string {
 	return message
+		.replace(/\b(Bearer|Basic)\s+[^\s,"';]+/gi, "$1 [redacted]")
 		.replace(SECRET_ASSIGNMENT, "$1[redacted]")
 		.replace(SECRET_ARGUMENT, "$1[redacted]")
-		.replace(/\bBearer\s+[^\s,"';]+/gi, "Bearer [redacted]")
 		.replace(/\bclawdi_[a-zA-Z0-9_-]+/g, "[redacted]")
 		.replace(/\beyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b/g, "[redacted]")
 		.replace(/\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/g, "[redacted]")
@@ -91,7 +91,7 @@ export function getDesktopLogDirectory(application: Pick<App, "getPath">): strin
 }
 
 /** Route existing console output and electron-updater's logger to the same sink. */
-export function initializeDesktopLogging(directory: string): () => void {
+export function initializeDesktopLogging(directory: string | undefined): () => void {
 	const original = {
 		debug: console.debug,
 		log: console.log,
@@ -101,10 +101,11 @@ export function initializeDesktopLogging(directory: string): () => void {
 	};
 	let log: DesktopFileLog | null = null;
 	try {
-		log = new DesktopFileLog(directory);
+		if (directory !== undefined) log = new DesktopFileLog(directory);
 	} catch {
-		original.error("Desktop file logging unavailable; using console output.");
+		// An unavailable directory must not disable console redaction.
 	}
+	if (!log) original.error("Desktop file logging unavailable; using console output.");
 	for (const level of LOG_METHODS) {
 		console[level] = (...values: unknown[]) => {
 			const message = redactDesktopLog(

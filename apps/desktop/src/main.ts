@@ -131,12 +131,14 @@ if (!app.requestSingleInstanceLock()) {
 async function startApplication(): Promise<void> {
 	app.setName("Clawdi");
 	// https://www.electronjs.org/docs/latest/api/app#appsetapplogspathpath
+	let logDirectory: string | undefined;
 	try {
 		app.setAppLogsPath();
-		initializeDesktopLogging(getDesktopLogDirectory(app));
+		logDirectory = getDesktopLogDirectory(app);
 	} catch {
-		console.error("Desktop file logging unavailable; using console output.");
+		// Logging still redacts console output if Electron cannot create its directory.
 	}
+	initializeDesktopLogging(logDirectory);
 	console.info("Desktop starting", { platform: process.platform, version: app.getVersion() });
 	const startHidden = wasOpenedAtLogin();
 	if (startHidden && process.platform === "darwin") app.dock?.hide();
