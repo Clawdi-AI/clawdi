@@ -52,6 +52,7 @@ function menuAction(action: HeaderAction) {
 		<Stack.Toolbar.MenuAction
 			key={action.id}
 			disabled={action.disabled}
+			subtitle={action.subtitle}
 			destructive={action.destructive}
 			isOn={action.selected}
 			onPress={action.onPress}

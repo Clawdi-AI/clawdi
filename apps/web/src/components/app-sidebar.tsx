@@ -1,15 +1,19 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { initialDeploymentClasses } from "@clawdi/shared/ui";
 import {
 	type AgentCardStatusProjection,
 	type AgentTile,
 	agentDisplayName,
+	agentSectionAvailableDuringSetup,
 	agentSourceKindLabel,
 	agentTypeLabel,
 	compareAgentTiles,
 	type DaemonStatusSource,
 	errorMessage,
+	INITIAL_DEPLOYMENT_COMPLETE_PAUSE_MS,
+	initialDeploymentCopy,
 	relativeTime,
 	selfManagedAgentTiles,
 } from "@clawdi/shared/view";
@@ -179,6 +183,10 @@ type SidebarNavItem = {
 	active: boolean;
 	external?: boolean;
 	prefetch?: () => void;
+	/** Shown instead of navigating while the item is unavailable. */
+	disabledReason?: string;
+	/** Just became available: fades in from its muted state on the setup reveal timeline. */
+	revealing?: boolean;
 };
 
 type AgentPrimaryProjectNavigation = {
@@ -288,6 +296,29 @@ function SidebarNavSection({
 					{before}
 					{items.map((item) => {
 						const Icon = item.icon;
+						const content = (
+							<>
+								<IconChip size="xs" tint={item.tint}>
+									<Icon />
+								</IconChip>
+								<span>{item.label}</span>
+							</>
+						);
+						if (item.disabledReason) {
+							// Disabled items are not focusable; the wrapper keeps the hover hint.
+							return (
+								<SidebarMenuItem key={item.id}>
+									<Tooltip>
+										<TooltipTrigger render={<div data-sidebar-item-disabled={item.id} />}>
+											<SidebarMenuButton disabled>{content}</SidebarMenuButton>
+										</TooltipTrigger>
+										<TooltipContent side="right" align="center">
+											{item.disabledReason}
+										</TooltipContent>
+									</Tooltip>
+								</SidebarMenuItem>
+							);
+						}
 						return (
 							<SidebarMenuItem key={item.id}>
 								<SidebarMenuButton
@@ -312,11 +343,9 @@ function SidebarNavSection({
 									}
 									isActive={item.active}
 									tooltip={item.tooltip}
+									className={item.revealing ? initialDeploymentClasses.navReveal : undefined}
 								>
-									<IconChip size="xs" tint={item.tint}>
-										<Icon />
-									</IconChip>
-									<span>{item.label}</span>
+									{content}
 									{item.external ? (
 										<ExternalLink className="ml-auto size-3 text-muted-foreground" />
 									) : null}
@@ -375,6 +404,41 @@ function ConsoleNavigationSections({
 	));
 }
 
+/**
+ * When this agent's setup completes in view, its sections stay disabled through the
+ * completed-state pause (the same moment the overview shows it), then fade in with
+ * the reveal instead of popping.
+ */
+function useSectionsLeavingSetup(
+	agentId: string,
+	setupInProgress: boolean,
+): "idle" | "pausing" | "revealing" {
+	const [observed, setObserved] = useState({
+		agentId,
+		setupInProgress,
+		phase: "idle" as "idle" | "pausing" | "revealing",
+	});
+	if (observed.agentId !== agentId || observed.setupInProgress !== setupInProgress) {
+		setObserved({
+			agentId,
+			setupInProgress,
+			phase:
+				observed.agentId === agentId && observed.setupInProgress && !setupInProgress
+					? "pausing"
+					: "idle",
+		});
+	}
+	useEffect(() => {
+		if (observed.phase !== "pausing") return;
+		const timeout = window.setTimeout(
+			() => setObserved((current) => ({ ...current, phase: "revealing" })),
+			INITIAL_DEPLOYMENT_COMPLETE_PAUSE_MS,
+		);
+		return () => window.clearTimeout(timeout);
+	}, [observed.phase]);
+	return observed.phase;
+}
+
 function AgentSectionList({
 	agentId,
 	variant,
@@ -385,6 +449,7 @@ function AgentSectionList({
 	allowWorkspaceSkills = true,
 	extraPrimaryItems = [],
 	loading = false,
+	setupInProgress = false,
 	onNavigate,
 }: {
 	agentId: string;
@@ -396,6 +461,8 @@ function AgentSectionList({
 	allowWorkspaceSkills?: boolean;
 	extraPrimaryItems?: SidebarNavItem[];
 	loading?: boolean;
+	/** First start in progress: sections that need the runtime are disabled. */
+	setupInProgress?: boolean;
 	onNavigate?: () => void;
 }) {
 	const { pathname, searchStr } = useLocation({
@@ -429,8 +496,14 @@ function AgentSectionList({
 		activeAgentRoute?.section !== "vaults" &&
 		(scopedResourceTarget?.kind === "projects" ||
 			(isFlatProjectResourceRoute && !activePrimaryProjectResource));
+	const setupExit = useSectionsLeavingSetup(agentId, setupInProgress);
+	const revealingSections = setupExit === "revealing";
+	const sectionDisabled = (section: AgentSectionId) =>
+		(setupInProgress || setupExit === "pausing") && !agentSectionAvailableDuringSetup(section);
 	const normalizedActiveSection =
-		loading || groups.some((group) => group.items.some((item) => item.id === activeSection))
+		loading ||
+		(groups.some((group) => group.items.some((item) => item.id === activeSection)) &&
+			!sectionDisabled(activeSection))
 			? activeSection
 			: "overview";
 	const primaryProjectItems = primaryProject
@@ -448,6 +521,10 @@ function AgentSectionList({
 						icon: item.icon,
 						tint: item.tint,
 						tooltip: section === "vaults" ? "Available vaults" : `${item.label} in workspace`,
+						disabledReason: sectionDisabled(section)
+							? initialDeploymentCopy.unavailableUntilReady
+							: undefined,
+						revealing: revealingSections,
 						active:
 							section === "vaults"
 								? activeAgentRoute?.section === "vaults" || activePrimaryProjectResource === section
@@ -477,6 +554,10 @@ function AgentSectionList({
 										!activeContextProjectResource &&
 										activeAgentRoute?.section !== "vaults",
 							prefetch: item.id === "connectors" ? prefetchConnectorsCatalog : undefined,
+							disabledReason: sectionDisabled(item.id)
+								? initialDeploymentCopy.unavailableUntilReady
+								: undefined,
+							revealing: revealingSections && !agentSectionAvailableDuringSetup(item.id),
 						};
 					}),
 					...(group.id === "workspace" ? primaryProjectItems : []),
@@ -508,6 +589,7 @@ function AgentFocusSections({
 	runtime,
 	adapterModules,
 	filesAvailable,
+	setupInProgress,
 	activeSection,
 	primaryProject,
 	onNavigate,
@@ -519,6 +601,7 @@ function AgentFocusSections({
 	runtime?: AgentTile["agentType"];
 	adapterModules?: SidebarEnvironment["adapter_modules"];
 	filesAvailable?: boolean;
+	setupInProgress?: boolean;
 	activeSection: AgentSectionId;
 	primaryProject?: AgentPrimaryProjectNavigation | null;
 	onNavigate?: () => void;
@@ -561,6 +644,7 @@ function AgentFocusSections({
 			primaryProject={primaryProject}
 			allowWorkspaceSkills={allowWorkspaceSkills}
 			extraPrimaryItems={extraPrimaryItems}
+			setupInProgress={resolved && kind === "cloud" && setupInProgress === true}
 			onNavigate={onNavigate}
 		/>
 	);
@@ -619,6 +703,7 @@ function SidebarMainNavigation({
 				runtime={activeAgentTile?.agentType}
 				adapterModules={activeAgentTile?.env?.adapter_modules}
 				filesAvailable={activeAgentTile?.filesAvailable}
+				setupInProgress={activeAgentTile?.setupInProgress}
 				activeSection={activeSection}
 				primaryProject={resolved ? primaryProject : null}
 				onNavigate={onNavigate}

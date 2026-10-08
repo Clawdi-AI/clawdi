@@ -1,4 +1,5 @@
 import type { DeploymentFailurePresentation } from "./deployment-failure";
+import type { ProvisioningPath } from "./deployment-polling";
 import type { DeploymentStatus } from "./deployment-status";
 
 export function shouldShowInitialDeploymentProgress(
@@ -15,61 +16,104 @@ export function canRetryInitialDeployment(failure: DeploymentFailurePresentation
 	return failure.retryable !== false && failure.remediation.kind === "restart";
 }
 
+/**
+ * Agent sections that stay usable while the first start is in progress: the setup
+ * screen itself and account-wide data that never touches the runtime. Every other
+ * section needs a running runtime and is disabled until it is ready.
+ */
+export const AGENT_SECTIONS_AVAILABLE_DURING_SETUP = [
+	"overview",
+	"memories",
+	"connectors",
+] as const;
+
+export function agentSectionAvailableDuringSetup(section: string): boolean {
+	return AGENT_SECTIONS_AVAILABLE_DURING_SETUP.some((candidate) => candidate === section);
+}
+
 export const initialDeploymentCopy = {
 	failureTitle: "Agent setup failed",
-	failureDescription: "Setup stopped before this agent became ready.",
 	retry: "Retry startup",
-	check: "Check again",
-	progress: "Setup progress",
+	contactSupport: "Contact support",
+	ready: "Your agent is ready.",
+	elapsed: "Elapsed",
+	unavailableUntilReady: "Available when your agent is ready",
 } as const;
 
+/** How long the completed state stays readable before the overview is revealed. */
+export const INITIAL_DEPLOYMENT_COMPLETE_PAUSE_MS = 1_100;
+
+/** Length of the single reveal from the setup status into the agent overview. */
+export const INITIAL_DEPLOYMENT_REVEAL_MS = 900;
+
+export type InitialDeploymentTone = "progress" | "delayed" | "stuck" | "ready";
+
+/**
+ * Presents the first-start wait as one status line: starting (or setting up on the
+ * standard path) until chat on the web is usable, then ready. Publishing the chat
+ * surface after the runtime runs is an internal step and keeps the same line. The
+ * provisioning path selects the honest expectation shown beside the elapsed time.
+ */
 export function initialDeploymentPresentation(
 	status: DeploymentStatus,
-	runtimeLabel: string,
 	timedOut: boolean,
 	escalated: boolean,
-) {
-	const stages = [
-		{ status: "creating", label: "Cloud resources" },
-		{ status: "starting", label: "Agent software" },
-		{ status: "running", label: "Ready" },
-	] as const;
-	const activeStageIndex = status.kind === "starting" ? 1 : status.kind === "running" ? 2 : 0;
-	const activeStage =
-		activeStageIndex === 0
-			? {
-					label: "Preparing cloud resources",
-					description: "Creating a private environment and connecting your AI provider.",
-				}
-			: activeStageIndex === 1
-				? {
-						label: `Installing and starting ${runtimeLabel}`,
-						description:
-							"Provisioning a private workspace, installing the agent, and confirming readiness.",
-					}
-				: { label: "Ready", description: "Setup is complete." };
+	provisioningPath: ProvisioningPath,
+	/** Running, but chat on the web is not usable yet. */
+	awaitingChat = false,
+): {
+	tone: InitialDeploymentTone;
+	title: string;
+	/** Typical duration, shown with the elapsed time while setup is on track. */
+	expectation: string | null;
+} {
+	const tone: InitialDeploymentTone =
+		status.kind === "running" && !awaitingChat
+			? "ready"
+			: escalated
+				? "stuck"
+				: timedOut
+					? "delayed"
+					: "progress";
+	const warm = provisioningPath === "warm";
 	return {
-		title: escalated
-			? "Setup appears to be stuck"
-			: timedOut
-				? "Setup is taking longer than expected"
-				: `Setting up ${runtimeLabel}`,
-		description: escalated
-			? "We’ll keep checking automatically. If you want, cancel this setup and try again."
-			: timedOut
-				? "Your agent may still be starting. We’ll keep checking automatically."
-				: "Setup usually takes about 7–10 minutes. It continues if you leave, and this page updates automatically while open.",
-		activeStage,
-		activeStageIndex,
-		step: `Step ${activeStageIndex + 1} of ${stages.length}`,
-		stages: stages.map((stage, index) => ({
-			...stage,
-			state:
-				status.kind === "running" || index < activeStageIndex
-					? "completed"
-					: index === activeStageIndex
-						? "active"
-						: "pending",
-		})),
+		tone,
+		title:
+			tone === "ready"
+				? "Your agent is ready"
+				: tone === "stuck"
+					? "Setup appears to be stuck"
+					: tone === "delayed"
+						? "Setup is taking longer than expected"
+						: warm
+							? "Starting your agent…"
+							: "Setting up your agent…",
+		expectation:
+			tone !== "progress" ? null : warm ? "Usually under a minute" : "Usually 3–5 minutes",
 	};
+}
+
+/** Start of the accepted create operation, used for the honest elapsed timer. */
+export function initialDeploymentStartedAtMs(
+	operation:
+		| {
+				metadata: { verb: string; createTime?: string | null };
+		  }
+		| null
+		| undefined,
+): number | null {
+	if (operation?.metadata.verb !== "create") return null;
+	const startedAtMs = Date.parse(operation.metadata.createTime ?? "");
+	return Number.isFinite(startedAtMs) ? startedAtMs : null;
+}
+
+/** Stopwatch-style elapsed time: `0:07`, `4:32`, `1:02:09`. */
+export function formatElapsedClock(elapsedMs: number): string {
+	const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+	const hours = Math.floor(totalSeconds / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+	const seconds = String(totalSeconds % 60).padStart(2, "0");
+	return hours > 0
+		? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`
+		: `${minutes}:${seconds}`;
 }

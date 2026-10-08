@@ -1,114 +1,224 @@
-import { initialDeploymentClasses as classes } from "@clawdi/shared/ui";
+import {
+	initialDeploymentClasses as classes,
+	initialDeploymentCircleStops,
+} from "@clawdi/shared/ui";
 import {
 	type DeploymentFailurePresentation,
 	type DeploymentStatus,
+	formatElapsedClock,
+	type HostedRuntime,
+	type InitialDeploymentTone,
 	initialDeploymentCopy,
 	initialDeploymentPresentation,
+	type ProvisioningPath,
 } from "@clawdi/shared/view";
-import { AlertCircle } from "lucide-react-native";
-import type { ReactNode } from "react";
-import { ActivityIndicator } from "react-native";
-import { DetailPanel } from "@/components/detail/layout";
-import { Alert } from "@/components/ui/alert";
-import { Text } from "@/components/ui/text";
+import { AlertCircle, Check } from "lucide-react-native";
+import { type ReactNode, useEffect, useState } from "react";
+import { AccessibilityInfo } from "react-native";
+import Svg, { Circle, Defs, RadialGradient, Stop } from "react-native-svg";
+import { useCSSVariable } from "uniwind";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
+import { EntityCardSkeleton } from "@/components/entity-card";
 import { WebIcon, WebText, WebView } from "@/components/ui/web-layout";
 
+type LaunchTone = InitialDeploymentTone | "failed";
+
 export function InitialDeploymentPage({
+	runtime,
+	avatarUrl,
 	status,
-	runtimeLabel,
+	provisioningPath,
+	awaitingChat,
 	failure,
 	timedOut,
 	escalated,
+	startedAtMs,
 	actions,
 }: {
+	runtime: HostedRuntime;
+	avatarUrl?: string | null;
 	status: DeploymentStatus;
-	runtimeLabel: string;
+	provisioningPath: ProvisioningPath;
+	/** Running, but the web chat surface is not published yet. */
+	awaitingChat: boolean;
 	failure: DeploymentFailurePresentation | null;
 	timedOut: boolean;
 	escalated: boolean;
+	startedAtMs: number | null;
 	actions?: ReactNode;
 }) {
-	if (failure?.failedVerb === "create")
-		return (
-			<DetailPanel className={classes.failurePanel}>
-				<WebView recipe={classes.failureBody} accessibilityRole="alert">
-					<WebView recipe="">
-						<WebView recipe={classes.title}>
-							<WebIcon as={AlertCircle} recipe="size-5 text-destructive" />
-							<WebText recipe={classes.title}>{initialDeploymentCopy.failureTitle}</WebText>
-						</WebView>
-						<WebText recipe={classes.description}>
-							{initialDeploymentCopy.failureDescription}
-						</WebText>
-					</WebView>
-					<Alert variant="destructive" icon={AlertCircle} title={failure.title}>
-						<WebView recipe="space-y-1">
-							<Text>{failure.reason}</Text>
-							<Text>{failure.description}</Text>
-						</WebView>
-					</Alert>
-					{actions}
-				</WebView>
-			</DetailPanel>
-		);
-	const view = initialDeploymentPresentation(status, runtimeLabel, timedOut, escalated);
+	const identity = { runtime, avatarUrl };
+	const view =
+		failure?.failedVerb === "create"
+			? null
+			: initialDeploymentPresentation(status, timedOut, escalated, provisioningPath, awaitingChat);
 	return (
-		<DetailPanel
-			className={`${classes.panel} ${timedOut || escalated ? classes.warningPanel : ""}`}
-		>
+		<WebView recipe="relative">
+			{/* A dimmed placeholder of the overview this screen turns into. */}
 			<WebView
-				recipe={classes.body}
-				accessibilityRole={timedOut || escalated ? "alert" : undefined}
+				recipe={classes.nativePreview}
+				pointerEvents="none"
+				accessibilityElementsHidden
+				importantForAccessibility="no-hide-descendants"
 			>
-				<WebView recipe="">
-					<WebView recipe={classes.title}>
-						{timedOut || escalated ? <WebIcon as={AlertCircle} recipe="size-5" /> : null}
-						<WebText recipe={classes.title}>{view.title}</WebText>
-					</WebView>
-					<WebText recipe={classes.description}>{view.description}</WebText>
-				</WebView>
-				<WebView recipe="">
-					<WebView recipe={classes.stageHeader}>
-						<WebView
-							recipe={classes.activeLabel}
-							className="flex-1"
-							accessibilityLiveRegion="polite"
-						>
-							{!timedOut && !escalated && status.kind !== "running" ? (
-								<ActivityIndicator size="small" />
-							) : null}
-							<WebText recipe={classes.activeLabel} className="flex-shrink">
-								{view.activeStage.label}
-							</WebText>
-						</WebView>
-						<WebText recipe={classes.step}>{view.step}</WebText>
-					</WebView>
-					<WebText recipe={classes.stageDescription}>{view.activeStage.description}</WebText>
-					<WebView
-						recipe={classes.stages}
-						className="flex-row"
-						accessibilityLabel={initialDeploymentCopy.progress}
-					>
-						{view.stages.map((stage) => (
-							<WebView
-								key={stage.status}
-								recipe="flex-1"
-								accessibilityLabel={`${stage.label}, ${stage.state}`}
-							>
-								<WebView
-									recipe={`${classes.bar} ${stage.state === "active" ? classes.activeBar : stage.state === "completed" ? classes.completedBar : classes.pendingBar}`}
-								/>
-								<WebText
-									recipe={`${classes.stageLabel} ${stage.state === "pending" ? classes.pendingLabel : classes.readyLabel}`}
-								>
-									{stage.label}
-								</WebText>
-							</WebView>
-						))}
-					</WebView>
-				</WebView>
-				{actions}
+				{["dashboard", "channels", "model", "compute"].map((key) => (
+					<EntityCardSkeleton key={key} />
+				))}
 			</WebView>
-		</DetailPanel>
+			<WebView recipe={classes.nativeOverlay}>
+				{view ? (
+					<Launch
+						{...identity}
+						tone={view.tone}
+						title={view.title}
+						expectation={view.expectation}
+						startedAtMs={startedAtMs}
+						actions={actions}
+					/>
+				) : (
+					<Launch
+						{...identity}
+						tone="failed"
+						title={initialDeploymentCopy.failureTitle}
+						detail={failure?.reason ?? null}
+						actions={actions}
+					/>
+				)}
+			</WebView>
+		</WebView>
+	);
+}
+
+/**
+ * Same minimal composition as Web: the agent mark and one status line naming the
+ * phase, with the expectation and elapsed time. The native header names the agent.
+ */
+function Launch({
+	runtime,
+	avatarUrl,
+	tone,
+	title,
+	expectation = null,
+	startedAtMs = null,
+	detail = null,
+	actions,
+}: {
+	runtime: HostedRuntime;
+	avatarUrl?: string | null;
+	tone: LaunchTone;
+	title: string;
+	expectation?: string | null;
+	startedAtMs?: number | null;
+	detail?: string | null;
+	actions?: ReactNode;
+}) {
+	const BadgeIcon = tone === "ready" ? Check : tone === "progress" ? null : AlertCircle;
+	// The detail screen announces readiness and a failure is an alert; the phases in
+	// between are announced once each has settled.
+	useSettledAnnouncement(tone === "ready" || tone === "failed" ? null : title);
+	return (
+		<WebView recipe={classes.nativeCircle}>
+			<CircleFill />
+			<WebView recipe={classes.hero} accessibilityElementsHidden importantForAccessibility="no">
+				<WebView recipe={`${classes.frame} ${classes.frameTone[tone]}`}>
+					<AgentIcon agent={runtime} avatarUrl={avatarUrl} size="xl" shape="circle" />
+					{BadgeIcon && tone !== "progress" ? (
+						<WebView recipe={`${classes.badge} ${classes.badgeTone[tone]}`}>
+							<WebIcon as={BadgeIcon} recipe="size-4" />
+						</WebView>
+					) : null}
+				</WebView>
+			</WebView>
+			<WebView recipe={classes.statusLine}>
+				<WebText
+					recipe={`${classes.status} ${classes.statusTone[tone]}`}
+					accessibilityRole={tone === "failed" ? "alert" : "header"}
+				>
+					{title}
+				</WebText>
+				{expectation || startedAtMs !== null ? (
+					<WebText recipe={classes.statusMeta}>
+						{expectation}
+						{expectation && startedAtMs !== null ? " · " : null}
+						{startedAtMs !== null ? (
+							<ElapsedClock startedAtMs={startedAtMs} running={tone !== "ready"} />
+						) : null}
+					</WebText>
+				) : null}
+			</WebView>
+			{detail ? <WebText recipe={classes.detail}>{detail}</WebText> : null}
+			{actions ? <WebView recipe={classes.actions}>{actions}</WebView> : null}
+		</WebView>
+	);
+}
+
+/**
+ * The module's circle, as on Web: the page background at the shared fill opacity,
+ * fading softly to transparent at the rim.
+ */
+function CircleFill() {
+	const background = useCSSVariable("--color-background");
+	const color = typeof background === "string" ? background : "transparent";
+	return (
+		<WebView recipe={classes.nativeCircleFill} pointerEvents="none">
+			<Svg style={{ width: "100%", height: "100%" }} viewBox="0 0 100 100">
+				<Defs>
+					<RadialGradient
+						id="initial-deployment-circle"
+						cx="50"
+						cy="50"
+						r="50"
+						gradientUnits="userSpaceOnUse"
+					>
+						{initialDeploymentCircleStops().map((stop) => (
+							<Stop
+								key={stop.offset}
+								offset={stop.offset}
+								stopColor={color}
+								stopOpacity={stop.opacity}
+							/>
+						))}
+					</RadialGradient>
+				</Defs>
+				<Circle cx="50" cy="50" r="50" fill="url(#initial-deployment-circle)" />
+			</Svg>
+		</WebView>
+	);
+}
+
+/** Same rule as Web: a phase is announced once it holds, never the one on mount. */
+const ANNOUNCEMENT_SETTLE_MS = 1_000;
+
+function useSettledAnnouncement(text: string | null): void {
+	const [baseline] = useState(text);
+	const [announced, setAnnounced] = useState<string | null>(null);
+	const changed = text !== null && text !== announced && (announced !== null || text !== baseline);
+	useEffect(() => {
+		if (!changed || text === null) return;
+		const timeout = setTimeout(() => {
+			AccessibilityInfo.announceForAccessibility(text);
+			setAnnounced(text);
+		}, ANNOUNCEMENT_SETTLE_MS);
+		return () => clearTimeout(timeout);
+	}, [changed, text]);
+}
+
+function ElapsedClock({ startedAtMs, running }: { startedAtMs: number; running: boolean }) {
+	const [nowMs, setNowMs] = useState(() => Date.now());
+	useEffect(() => {
+		if (!running) return;
+		const tick = () => setNowMs(Date.now());
+		tick();
+		const interval = setInterval(tick, 1000);
+		return () => clearInterval(interval);
+	}, [running]);
+	const elapsed = formatElapsedClock(nowMs - startedAtMs);
+	return (
+		<WebText
+			recipe={classes.elapsed}
+			accessibilityLabel={`${initialDeploymentCopy.elapsed} ${elapsed}`}
+		>
+			{elapsed}
+		</WebText>
 	);
 }

@@ -64,3 +64,13 @@ export function deploymentRuntimeUiIsReady(deployment: HostedDeployment): boolea
 			deployment.runtime_ui_endpoint.url,
 	);
 }
+
+/**
+ * The single readiness gate for finishing a first start: chat on the web is usable.
+ * Hosted's `serving_ready` covers the route, auth handoff, and public reachability.
+ */
+export function deploymentWebChatIsUsable(deployment: HostedDeployment): boolean {
+	return (
+		deployment.runtime_ui_endpoint?.serving_ready === true && deploymentRuntimeUiIsReady(deployment)
+	);
+}

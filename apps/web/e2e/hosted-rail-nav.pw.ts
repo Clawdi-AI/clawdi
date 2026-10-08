@@ -5,6 +5,7 @@ import { measureNavigation } from "./navigation-measurement";
 import {
 	basicPlan,
 	CLOUD_API,
+	completedDeploymentOperation,
 	expectContainedInOwnerAndViewport,
 	expectNoHorizontalOverflow,
 	hostedOverviewSessionsPage,
@@ -448,4 +449,192 @@ test("Console actions remain reachable on narrow screens", async ({ page }) => {
 	await connectors.focus();
 	await page.keyboard.press("Tab");
 	await expect(main.getByRole("button", { name: "View all" })).toBeFocused();
+});
+
+test("first setup disables runtime sections until the agent opens itself", async ({ page }) => {
+	const fixture = {
+		...railHostedDeployment,
+		status: "starting" as const,
+		provisioning_path: "warm" as const,
+	};
+	const deployment = mutationDeploymentReadFixture(fixture);
+	deployment.runtime_ui_endpoint = null;
+	// A create accepted just now, so the wait is on track rather than delayed.
+	const operation = completedDeploymentOperation(fixture, "create");
+	const createTime = new Date().toISOString();
+	deployment.accepted_operation = {
+		...operation,
+		done: false,
+		response: null,
+		metadata: { ...operation.metadata, createTime, updateTime: createTime },
+	};
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentResourceFixtures: true,
+	});
+
+	// A deep link to a runtime section returns to the setup screen.
+	await page.goto(`/agents/${railHostedEnvironmentId}/channel-links`);
+	// The first agent page load includes the dev server's cold compile.
+	await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}`, { timeout: 30_000 });
+	const panel = page.getByTestId("hosted-initial-deployment-panel");
+	await expect(panel.getByRole("heading", { name: "Starting your agent" })).toBeVisible();
+
+	const sidebar = page.locator('[data-sidebar="sidebar"]').first();
+	for (const section of ["console", "channels", "ai", "sessions", "plugins", "settings"]) {
+		await expect(
+			sidebar.locator(`[data-sidebar-item-disabled="${section}"] button`),
+		).toBeDisabled();
+	}
+	await expect(sidebar.getByRole("link", { name: "Channels" })).toHaveCount(0);
+	await expect(sidebar.getByRole("link", { name: "Overview" })).toBeVisible();
+	await expect(sidebar.getByRole("link", { name: "Memories" })).toBeVisible();
+	await expect(sidebar.getByRole("link", { name: "Connectors" })).toBeVisible();
+	await sidebar.locator('[data-sidebar-item-disabled="channels"]').hover();
+	await expect(page.getByText("Available when your agent is ready", { exact: true })).toBeVisible();
+
+	// The real overview waits behind the card in place, so revealing it shifts nothing.
+	const preview = page.locator("[data-setup-preview]");
+	await expect(preview).toHaveAttribute("inert", "");
+	await expect(preview).toHaveAttribute("aria-hidden", "true");
+	const overviewBoxes = () =>
+		page
+			.locator("[data-overview-section], [data-overview-module], [data-overview-status]")
+			.evaluateAll((elements) =>
+				elements.map((element) => {
+					const box = element.getBoundingClientRect();
+					const id =
+						element.getAttribute("data-overview-module") ??
+						element.getAttribute("data-overview-status") ??
+						element.getAttribute("data-overview-section");
+					return [
+						id,
+						Math.round(box.x),
+						Math.round(box.y),
+						Math.round(box.width),
+						Math.round(box.height),
+					];
+				}),
+			);
+	await page.waitForLoadState("networkidle");
+	const previewBoxes = await overviewBoxes();
+	expect(previewBoxes.length).toBeGreaterThan(3);
+
+	// A running runtime is not done: setup waits until chat on the web is usable.
+	const running = mutationDeploymentReadFixture({
+		...fixture,
+		status: "running" as const,
+		hermes_control_ui_url: "https://runtime.example/",
+	});
+	// Two inventory reads after the change guarantee the running runtime was observed.
+	const inventoryRead = () =>
+		page.waitForResponse(
+			(response) =>
+				new URL(response.url()).pathname === "/v2/deployments" &&
+				response.request().method() === "GET",
+			{ timeout: 20_000 },
+		);
+	deployment.resource.status = running.resource.status;
+	await inventoryRead();
+	await inventoryRead();
+	await expect(panel.getByRole("heading", { name: "Starting your agent…" })).toBeVisible();
+	await expect(panel.getByText("Your agent is ready")).toHaveCount(0);
+	await expect(sidebar.locator('[data-sidebar-item-disabled="channels"] button')).toBeDisabled();
+
+	// Once chat is usable, the completed state stays readable before the reveal, and
+	// runtime sections stay disabled until the reveal starts.
+	deployment.runtime_ui_endpoint = running.runtime_ui_endpoint;
+	await expect(panel.getByRole("heading", { name: "Your agent is ready" })).toBeVisible({
+		timeout: 20_000,
+	});
+	await expect(panel.locator(".lucide-check")).toHaveCount(1);
+	await expect(sidebar.locator('[data-sidebar-item-disabled="channels"] button')).toBeDisabled();
+	await expect(page.locator('[data-setup-overlay="leaving"]')).toHaveCount(1, { timeout: 3_000 });
+	await expect(panel).toHaveCount(0, { timeout: 5_000 });
+	await expect(page.locator('[data-overview-module="dashboard"] :disabled')).toHaveCount(0);
+	await expect(page.locator("[data-setup-preview]")).toHaveCount(0);
+	await page.waitForLoadState("networkidle");
+	await expect.poll(overviewBoxes).toEqual(previewBoxes);
+	await expect(page.getByRole("button", { name: "Open agent" })).toHaveCount(0);
+	await expect(page.getByText("Your agent is ready.", { exact: true })).toHaveCount(1);
+	await expect(sidebar.locator("[data-sidebar-item-disabled]")).toHaveCount(0);
+	await sidebar.getByRole("link", { name: "Channels" }).click();
+	await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/channel-links`);
+});
+
+test("a stuck first setup offers support with its context instead of check and cancel", async ({
+	page,
+}) => {
+	await page.addInitScript(() => {
+		const calls: [string, unknown][] = [];
+		window.__chatwootCalls = calls;
+		const record = (method: string) => (argument?: unknown) => {
+			calls.push([method, argument]);
+		};
+		window.$chatwoot = {
+			hasLoaded: true,
+			darkMode: "light",
+			setColorScheme: () => {},
+			setUser: () => {},
+			reset: () => {},
+			toggleBubbleVisibility: () => {},
+			toggle: record("toggle"),
+			setConversationCustomAttributes: record("setConversationCustomAttributes"),
+			setLabel: record("setLabel"),
+		};
+	});
+	const fixture = {
+		...railHostedDeployment,
+		status: "starting" as const,
+		provisioning_path: "standard" as const,
+	};
+	const deployment = mutationDeploymentReadFixture(fixture);
+	deployment.runtime_ui_endpoint = null;
+	// Accepted long enough ago that the wait has escalated to stuck.
+	const operation = completedDeploymentOperation(fixture, "create");
+	const createTime = new Date(Date.now() - 16 * 60_000).toISOString();
+	deployment.accepted_operation = {
+		...operation,
+		done: false,
+		response: null,
+		metadata: { ...operation.metadata, createTime, updateTime: createTime },
+	};
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		cloudAgents: [railHostedCloudAgent],
+		agentResourceFixtures: true,
+	});
+
+	await page.goto(`/agents/${railHostedEnvironmentId}`);
+	const panel = page.getByTestId("hosted-initial-deployment-panel");
+	// The first agent page load includes the dev server's cold compile.
+	await expect(panel.getByRole("heading", { name: "Setup appears to be stuck" })).toBeVisible({
+		timeout: 30_000,
+	});
+	await expect(panel.getByRole("button", { name: "Check again" })).toHaveCount(0);
+	await expect(panel.getByRole("button", { name: /Cancel/ })).toHaveCount(0);
+
+	await panel.getByRole("button", { name: "Contact support" }).click();
+	const calls = await page.evaluate(() => window.__chatwootCalls ?? []);
+	const attributes = calls.find(([method]) => method === "setConversationCustomAttributes")?.[1];
+	expect(attributes).toMatchObject({
+		setup_deployment_id: deployment.resource.id,
+		setup_runtime: deployment.resource.spec.runtime,
+		setup_provisioning_path: "standard",
+		setup_status: "starting",
+		setup_state: "stuck",
+	});
+	expect(attributes).toHaveProperty("setup_elapsed_seconds");
+	expect(attributes).toHaveProperty("setup_reported_at");
+	expect(calls).toContainEqual(["setLabel", "agent-setup"]);
+	// Context is attached before the widget opens.
+	const order = calls.map(([method, argument]) =>
+		method === "toggle" ? `toggle:${argument}` : method,
+	);
+	expect(order.indexOf("toggle:open")).toBeGreaterThan(
+		order.indexOf("setConversationCustomAttributes"),
+	);
+	// Setup keeps polling behind the conversation.
+	await expect(panel).toBeVisible();
 });

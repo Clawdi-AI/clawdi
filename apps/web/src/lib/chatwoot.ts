@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/tanstackstart-react";
 import { parseAgentPathname } from "@/lib/agent-routes";
 
 // Official Website SDK surface: https://www.chatwoot.com/hc/user-guide/articles/1677587234
@@ -19,6 +20,10 @@ export type ChatwootApi = {
 	) => void;
 	reset: () => void;
 	toggle: (state?: "open" | "close") => void;
+	/** Attributes for the current conversation, or queued for the next one. */
+	setConversationCustomAttributes: (attributes: Record<string, string | number>) => void;
+	/** Applied only when the label exists in the Chatwoot account. */
+	setLabel: (label: string) => void;
 	toggleBubbleVisibility: (visibility: "hide" | "show") => void;
 	setColorScheme: (scheme: ChatwootSettings["darkMode"]) => void;
 };
@@ -77,14 +82,47 @@ export function shouldHideChatwoot(pathname: string): boolean {
 	return section === "console" || section === "files" || section === "terminal";
 }
 
-/** Opens the widget, waiting for `chatwoot:ready` when the SDK is still loading. */
-export function openChatwoot(): void {
+/** Live chat loads only in hosted Web builds with a configured widget. */
+export const CHATWOOT_LIVE_CHAT_AVAILABLE =
+	import.meta.env.VITE_CLAWDI_HOSTED === "true" &&
+	import.meta.env.VITE_CLAWDI_DESKTOP_BUILD !== "true" &&
+	Boolean(import.meta.env.VITE_CHATWOOT_BASE_URL && import.meta.env.VITE_CHATWOOT_WEBSITE_TOKEN);
+
+function whenChatwootReady(run: (chatwoot: ChatwootApi) => void): void {
 	if (window.$chatwoot?.hasLoaded) {
-		window.$chatwoot.toggle("open");
+		run(window.$chatwoot);
 		return;
 	}
-	window.addEventListener("chatwoot:ready", () => window.$chatwoot?.toggle("open"), {
-		once: true,
+	window.addEventListener(
+		"chatwoot:ready",
+		() => {
+			if (window.$chatwoot) run(window.$chatwoot);
+		},
+		{ once: true },
+	);
+}
+
+/** Opens the widget, waiting for `chatwoot:ready` when the SDK is still loading. */
+export function openChatwoot(): void {
+	whenChatwootReady((chatwoot) => chatwoot.toggle("open"));
+}
+
+/**
+ * Opens the widget with context for support: conversation attributes and a label,
+ * which Chatwoot attaches to the conversation the visitor starts or continues.
+ */
+export function openChatwootWithContext(context: {
+	conversationAttributes: Record<string, string | number>;
+	label: string;
+}): void {
+	whenChatwootReady((chatwoot) => {
+		try {
+			chatwoot.setConversationCustomAttributes(context.conversationAttributes);
+			chatwoot.setLabel(context.label);
+		} catch (error: unknown) {
+			Sentry.captureException(error);
+		}
+		chatwoot.toggle("open");
 	});
 }
 

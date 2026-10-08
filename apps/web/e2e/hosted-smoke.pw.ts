@@ -184,7 +184,9 @@ test("runtime readiness keeps launch closed across generation and credential rac
 		const launch = page.locator('[data-overview-module="dashboard"]');
 		if (state === "starting") {
 			await expect(page.getByTestId("hosted-initial-deployment-panel")).toBeVisible();
-			await expect(launch).toHaveCount(0);
+			// The overview waits behind the setup card as an inert preview.
+			await expect(page.locator("[data-setup-preview]")).toHaveAttribute("inert", "");
+			await expect(page.getByRole("button", { name: "Chat on the web" })).toHaveCount(0);
 		} else {
 			await expect(launch.getByRole("button", { name: "Chat on the web" })).toBeDisabled();
 		}
@@ -278,6 +280,8 @@ test("Help opens Chatwoot live chat", async ({ page }) => {
 				window.__chatwootToggleCalls = (window.__chatwootToggleCalls ?? 0) + 1;
 			},
 			toggleBubbleVisibility: () => {},
+			setConversationCustomAttributes: () => {},
+			setLabel: () => {},
 		};
 	});
 	await stubHostedApi(page);
