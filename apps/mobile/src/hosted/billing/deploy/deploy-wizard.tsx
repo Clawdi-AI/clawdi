@@ -14,7 +14,6 @@ import {
 	hostedAgentOverviewClasses,
 	deployWizardClasses as styles,
 	subscriptionSourcePickerClasses,
-	termSwitcherClasses,
 } from "@clawdi/shared/ui";
 import {
 	agentSurfaceCopy,
@@ -62,7 +61,6 @@ import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Input as AppTextInput } from "@/components/ui/input";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Text as AppText } from "@/components/ui/text";
 import { AppScrollView, AppView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
@@ -871,44 +869,37 @@ function CreationForm() {
 								) : null}
 								{source === "new" ? (
 									<WebView recipe={styles.compute}>
-										<WebView recipe={styles.billingTerm}>
+										{/* Web caps the term switcher at max-w-xs; the native control spans the form like plan comparison. */}
+										<WebView recipe={styles.billingTerm.replace(/(?:^|\s)max-w-xs(?=\s|$)/g, " ")}>
 											<WebText recipe={styles.fieldLabel}>{deployFormCopy.billingTerm}</WebText>
-											<Tabs
-												value={String(previewTerm)}
-												onValueChange={(value) => {
-													const term = Number(value);
-													const option = quoteOptions.find(
-														(option) =>
-															option.planSlug === draft.computePlanSlug &&
-															option.billingTermMonths === term,
-													);
-													if (option) {
-														setPreviewTerm(term);
-														setQuoteSelection({
-															...option,
-															fundingSource: quoteSelection?.fundingSource ?? fundingDefault,
-														});
-														setQuote(null);
-													}
-												}}
-											>
-												<TabsList variant="default">
-													{billingOffers.map((offer) => (
-														<TabsTrigger
-															key={offer.billing_term_months}
-															value={String(offer.billing_term_months)}
-															className={webView(termSwitcherClasses.item)}
-														>
-															<AppText>{billingTermLabel(offer.billing_term_months)}</AppText>
-															{offer.discount_percent > 0 ? (
-																<WebText recipe={termSwitcherClasses.discount}>
-																	−{offer.discount_percent}%
-																</WebText>
-															) : null}
-														</TabsTrigger>
-													))}
-												</TabsList>
-											</Tabs>
+											<AppView className="w-full">
+												<NativeSegments
+													value={String(previewTerm)}
+													options={billingOffers.map((offer) => ({
+														value: String(offer.billing_term_months),
+														label:
+															offer.discount_percent > 0
+																? `${billingTermLabel(offer.billing_term_months)} −${offer.discount_percent}%`
+																: billingTermLabel(offer.billing_term_months),
+													}))}
+													onChange={(value) => {
+														const term = Number(value);
+														const option = quoteOptions.find(
+															(option) =>
+																option.planSlug === draft.computePlanSlug &&
+																option.billingTermMonths === term,
+														);
+														if (option) {
+															setPreviewTerm(term);
+															setQuoteSelection({
+																...option,
+																fundingSource: quoteSelection?.fundingSource ?? fundingDefault,
+															});
+															setQuote(null);
+														}
+													}}
+												/>
+											</AppView>
 										</WebView>
 										<WebView recipe={ENTITY_CHOICE_GRID_CLASS}>
 											{(
@@ -1129,13 +1120,16 @@ function CreationForm() {
 							<>
 								<AppText>{t("creation.saved")}</AppText>
 								<AppText selectable>{attempt.id}</AppText>
-								<ActionButton
-									label={t(attempt.storeFunding ? "storeCompute.checkStatus" : "creation.recover")}
-									disabled={action.busy}
-									onPress={() => {
-										void action.run((owns) => navigateRequest(attempt.id, owns));
-									}}
-								/>
+								{/* Only a sent admission can be recovered; store funding uses the footer Check status. */}
+								{attempt.submission === "uncertain" ? (
+									<ActionButton
+										label={t("creation.recover")}
+										disabled={action.busy}
+										onPress={() => {
+											void action.run((owns) => navigateRequest(attempt.id, owns));
+										}}
+									/>
+								) : null}
 								{resolved ||
 								(canDiscardCreationAttempt(attempt) && !storeFundingHoldsAttempt(attempt)) ? (
 									<ActionButton

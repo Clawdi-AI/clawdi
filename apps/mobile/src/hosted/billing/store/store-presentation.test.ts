@@ -178,6 +178,12 @@ describe("restore purchases", () => {
 		expect(notices[0]?.values).toEqual({ store: "App Store" });
 	});
 
+	test("a reconcile without subscriptions says there was nothing to restore", () => {
+		expect(restorePurchasesNotices({ code: "reconciled", results: [] }, "App Store")).toEqual([
+			{ key: "storeCompute.nothingToRestore", tone: "neutral", refresh: false },
+		]);
+	});
+
 	test("pending reconciliation is reported as pending", () => {
 		expect(
 			restorePurchasesNotices({ code: "reconciliation_pending", results: [] }, "Google Play").map(

@@ -176,9 +176,9 @@ describe("accountDeletionStoreNotice", () => {
 			"canceled_pending_end",
 			"conflict_hold",
 		]) {
-			expect(accountDeletionStoreNotice([cardRow, storeRow(state)], true)).toEqual({
+			expect(accountDeletionStoreNotice([cardRow, storeRow(state)], true)).toMatchObject({
 				kind: "store",
-				provider: "play_store",
+				management: { provider: "play_store" },
 			});
 		}
 		// Auto-renewal is decisive even for a state this client does not list.
@@ -192,11 +192,11 @@ describe("accountDeletionStoreNotice", () => {
 				],
 				true,
 			),
-		).toEqual({ kind: "store", provider: "play_store" });
+		).toMatchObject({ kind: "store", management: { provider: "play_store" } });
 		// A renewable row is decisive even before later pages load.
-		expect(accountDeletionStoreNotice([storeRow("grace", "app_store")], false)).toEqual({
+		expect(accountDeletionStoreNotice([storeRow("grace", "app_store")], false)).toMatchObject({
 			kind: "store",
-			provider: "app_store",
+			management: { provider: "app_store" },
 		});
 		expect(accountDeletionStoreNoticeCopy("app_store")).toEqual({
 			title: "Cancel your App Store subscription first",

@@ -56,7 +56,7 @@ export function AccountDeletionStoreNoticeAlert({
 	if (notice.kind === "none") return null;
 	const copy =
 		notice.kind === "store"
-			? accountDeletionStoreNoticeCopy(notice.provider)
+			? accountDeletionStoreNoticeCopy(notice.management.provider)
 			: {
 					title: accountDeletionCopy.storeNoticeTitle,
 					description: accountDeletionCopy.storeNotice,

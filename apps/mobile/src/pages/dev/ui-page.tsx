@@ -105,7 +105,6 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge, StatusDot, type StatusTone } from "@/components/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Text } from "@/components/ui/text";
 import { AppSafeAreaView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
@@ -545,7 +544,7 @@ function Gallery() {
 			),
 		},
 		{
-			name: "SectionLabel / ListToolbar / FilterChip / Tabs / Switch / NativeSegments / Checkbox",
+			name: "SectionLabel / ListToolbar / FilterChip / Switch / NativeSegments / Checkbox",
 			render: () => (
 				<>
 					<SectionLabel leading={icon} count={12}>
@@ -568,23 +567,6 @@ function Gallery() {
 							</Button>
 						}
 					/>
-					{(["line", "default"] as const).map((variant) => (
-						<Tabs key={variant} defaultValue="projects">
-							<TabsList variant={variant}>
-								<TabsTrigger value="projects">{t("projects.title")}</TabsTrigger>
-								<TabsTrigger value="skills">{t("home.statsSkills")}</TabsTrigger>
-								<TabsTrigger value="vaults" disabled>
-									{t("sharing.vaults")}
-								</TabsTrigger>
-							</TabsList>
-							<TabsContent value="projects">
-								<Text>{t("projects.description")}</Text>
-							</TabsContent>
-							<TabsContent value="skills">
-								<Text>{t("skills.description")}</Text>
-							</TabsContent>
-						</Tabs>
-					))}
 					<ListToolbar
 						filters={
 							<>

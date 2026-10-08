@@ -3,7 +3,7 @@ import {
 	type DeletedAccountSessionEnd,
 	deleteAccountThenSignOut,
 	endDeletedAccountSession,
-	STORE_SUBSCRIPTIONS_URL,
+	STORE_MANAGEMENT_URLS,
 } from "@clawdi/shared/view";
 import { useClerk, useUser } from "@clerk/expo";
 import { TriangleAlert } from "lucide-react-native";
@@ -18,6 +18,7 @@ import { AppScrollView, AppView } from "@/components/ui/view";
 import { mobileAccountDeletionStoreNotice } from "@/hosted/account/account-deletion-store";
 import { uniqueBillingItems } from "@/hosted/billing/format";
 import { useSubscriptions } from "@/hosted/billing/hooks";
+import { useManageStoreSubscription } from "@/hosted/billing/store/compute-store";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -26,18 +27,10 @@ import { currentStorePlatform } from "@/platform/store/store-platform";
 import { useMobileStore } from "@/platform/store/store-provider";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
-const STORE_SUBSCRIPTIONS = {
-	app_store: {
-		provider: "app_store",
-		url: STORE_SUBSCRIPTIONS_URL.appStore,
-		label: "accountDeletion.manageAppStore",
-	} as const,
-	play_store: {
-		provider: "play_store",
-		url: STORE_SUBSCRIPTIONS_URL.googlePlay,
-		label: "accountDeletion.manageGooglePlay",
-	} as const,
-};
+const MANAGE_LABELS = {
+	app_store: "accountDeletion.manageAppStore",
+	play_store: "accountDeletion.manageGooglePlay",
+} as const;
 
 /** Clerk `UserProfileView` custom page that replaces the built-in delete once self-deletion is off. */
 export function DeleteAccountPage() {
@@ -77,22 +70,22 @@ function DeleteAccount({ email }: { email: string }) {
 		computeSlot,
 	);
 	const storeCopy =
-		storeNotice.kind === "store" ? accountDeletionStoreNoticeCopy(storeNotice.provider) : null;
-	const platform = currentStorePlatform();
-	const deviceStore = platform ? STORE_SUBSCRIPTIONS[platform] : null;
-	// Store links are only actionable for the store that bills on this device.
-	const manageLink =
 		storeNotice.kind === "store"
-			? storeNotice.provider === deviceStore?.provider
-				? deviceStore
-				: null
-			: storeNotice.kind === "generic"
-				? deviceStore
-				: null;
-	const openManageLink = () => {
+			? accountDeletionStoreNoticeCopy(storeNotice.management.provider)
+			: null;
+	const platform = currentStorePlatform();
+	// A named contract uses the app's official store management path; it is only
+	// actionable on the store that bills it. The generic notice links this device's store.
+	const storeManage = useManageStoreSubscription(
+		storeNotice.kind === "store" ? storeNotice.management : null,
+	);
+	const genericUrl =
+		storeNotice.kind === "generic" && platform ? STORE_MANAGEMENT_URLS[platform] : null;
+	const openGenericLink = () => {
 		const visible = capture();
-		if (manageLink && visible()) void Linking.openURL(manageLink.url).catch(() => undefined);
+		if (genericUrl && visible()) void Linking.openURL(genericUrl).catch(() => undefined);
 	};
+	const manage = storeManage ?? (genericUrl ? { manage: openGenericLink, busy: false } : null);
 	// Sign-out reaches the auth gates through the synced JS session; the native view follows.
 	const endSession = async (): Promise<DeletedAccountSessionEnd> =>
 		scope.sessionId && scope.isCurrent()
@@ -141,9 +134,9 @@ function DeleteAccount({ email }: { email: string }) {
 					{storeCopy?.description ?? t("accountDeletion.storeNotice")}
 				</Alert>
 			) : null}
-			{manageLink ? (
-				<Button variant="outline" onPress={openManageLink}>
-					<Text>{t(manageLink.label)}</Text>
+			{manage && platform ? (
+				<Button variant="outline" disabled={manage.busy} onPress={() => void manage.manage()}>
+					<Text>{t(MANAGE_LABELS[platform])}</Text>
 				</Button>
 			) : null}
 			{outcome === "idle" ? (
@@ -159,9 +152,7 @@ function DeleteAccount({ email }: { email: string }) {
 								description={storeCopy.description}
 								cancelLabel={t("accountDeletion.cancel")}
 								secondaryAction={
-									manageLink
-										? { label: t("storeCompute.manage"), onAction: openManageLink }
-										: undefined
+									manage ? { label: t("storeCompute.manage"), onAction: manage.manage } : undefined
 								}
 								confirmLabel={t("storeCompute.deletionContinue")}
 								onConfirm={() => setConfirming(true)}

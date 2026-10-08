@@ -194,16 +194,18 @@ function openUrl(url: string | null) {
 	return url ? Linking.openURL(url).then(() => undefined) : Promise.resolve();
 }
 
-/** Customer Center when enabled, otherwise the official store management page. */
-function ManageStoreSubscriptionAction({ management }: { management: StoreManagement }) {
-	const t = useI18n();
+/**
+ * Customer Center when enabled, then Apple's `showManageSubscriptions()`, otherwise the
+ * official store management page. Null when this device can't manage the contract.
+ */
+export function useManageStoreSubscription(management: StoreManagement | null) {
 	const scope = useAccountScope();
 	const store = useMobileStore();
 	const capture = useForegroundLease();
 	const action = useAuthAction(scope);
 	const platform = currentStorePlatform();
-	if (!platform) return null;
 	const controller = store.management;
+	if (!platform || !management) return null;
 	const inApp = canManageInApp(
 		management,
 		platform,
@@ -227,8 +229,15 @@ function ManageStoreSubscriptionAction({ management }: { management: StoreManage
 			else await link();
 		});
 	};
+	return { manage, busy: action.busy };
+}
+
+function ManageStoreSubscriptionAction({ management }: { management: StoreManagement }) {
+	const t = useI18n();
+	const manage = useManageStoreSubscription(management);
+	if (!manage) return null;
 	return (
-		<Button variant="outline" size="sm" disabled={action.busy} onPress={() => void manage()}>
+		<Button variant="outline" size="sm" disabled={manage.busy} onPress={() => void manage.manage()}>
 			<Icon as={Settings} />
 			<Text>{t("storeCompute.manage")}</Text>
 		</Button>
@@ -296,7 +305,7 @@ function StoreChangePlanAction({
 				description={
 					<AppView className="gap-3">
 						<Text>{t("storeCompute.changePlanDescription", { store: name })}</Text>
-						<AppView accessibilityRole="radiogroup" className="gap-2">
+						<AppView className="gap-2">
 							{products.map((product) => {
 								const plan = computeProductPlan(product.productIdentifier);
 								const label = plan
