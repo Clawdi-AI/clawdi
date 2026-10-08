@@ -869,34 +869,37 @@ function CreationForm() {
 								) : null}
 								{source === "new" ? (
 									<WebView recipe={styles.compute}>
-										<WebView recipe={styles.billingTerm}>
+										{/* Web caps the term switcher at max-w-xs; the native control spans the form like plan comparison. */}
+										<WebView recipe={styles.billingTerm.replace(/(?:^|\s)max-w-xs(?=\s|$)/g, " ")}>
 											<WebText recipe={styles.fieldLabel}>{deployFormCopy.billingTerm}</WebText>
-											<NativeSegments
-												value={String(previewTerm)}
-												options={billingOffers.map((offer) => ({
-													value: String(offer.billing_term_months),
-													label:
-														offer.discount_percent > 0
-															? `${billingTermLabel(offer.billing_term_months)} −${offer.discount_percent}%`
-															: billingTermLabel(offer.billing_term_months),
-												}))}
-												onChange={(value) => {
-													const term = Number(value);
-													const option = quoteOptions.find(
-														(option) =>
-															option.planSlug === draft.computePlanSlug &&
-															option.billingTermMonths === term,
-													);
-													if (option) {
-														setPreviewTerm(term);
-														setQuoteSelection({
-															...option,
-															fundingSource: quoteSelection?.fundingSource ?? fundingDefault,
-														});
-														setQuote(null);
-													}
-												}}
-											/>
+											<AppView className="w-full">
+												<NativeSegments
+													value={String(previewTerm)}
+													options={billingOffers.map((offer) => ({
+														value: String(offer.billing_term_months),
+														label:
+															offer.discount_percent > 0
+																? `${billingTermLabel(offer.billing_term_months)} −${offer.discount_percent}%`
+																: billingTermLabel(offer.billing_term_months),
+													}))}
+													onChange={(value) => {
+														const term = Number(value);
+														const option = quoteOptions.find(
+															(option) =>
+																option.planSlug === draft.computePlanSlug &&
+																option.billingTermMonths === term,
+														);
+														if (option) {
+															setPreviewTerm(term);
+															setQuoteSelection({
+																...option,
+																fundingSource: quoteSelection?.fundingSource ?? fundingDefault,
+															});
+															setQuote(null);
+														}
+													}}
+												/>
+											</AppView>
 										</WebView>
 										<WebView recipe={ENTITY_CHOICE_GRID_CLASS}>
 											{(
