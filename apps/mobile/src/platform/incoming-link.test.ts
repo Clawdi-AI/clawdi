@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
 	createVaultLinkInbox,
+	isDevelopmentClientLaunchUrl,
 	mobileLinkDestination,
 	type NotificationActionTarget,
 	notificationActionTarget,
@@ -97,5 +98,22 @@ test("notification actions route dashboard URLs in-app and open allowlisted page
 		"javascript:alert(1)",
 	]) {
 		expect(notificationActionTarget(value, hosts, stage)).toBeNull();
+	}
+});
+
+test("only dev-launcher URLs bypass the incoming-link table", () => {
+	const metro =
+		"?url=http%3A%2F%2F127.0.0.1%3A8096&disableOnboarding=1&disableAutoLaunch=1&disableFab=1";
+	expect(isDevelopmentClientLaunchUrl(`exp+clawdi://expo-development-client/${metro}`)).toBe(true);
+	expect(isDevelopmentClientLaunchUrl(`clawdi://expo-development-client/${metro}`)).toBe(true);
+	for (const value of [
+		"clawdi://projects/join",
+		"clawdi:///expo-development-client",
+		"https://links.example.test/expo-development-client",
+		"exp+clawdi://other-host/?url=http%3A%2F%2F127.0.0.1%3A8096",
+		"/expo-development-client",
+		"not a url",
+	]) {
+		expect(isDevelopmentClientLaunchUrl(value)).toBe(false);
 	}
 });

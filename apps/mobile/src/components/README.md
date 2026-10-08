@@ -31,9 +31,10 @@ editing recipes, run `bun run --cwd apps/mobile theme` and commit
   pass an item's plain `label` when its children are not plain text. Trigger
   appearance uses shared Web recipes. `render` accepts a native element.
   On iOS, menu open/close observation is unavailable; selection still works.
-- Web dialogs are native containers: forms are Expo Router `formSheet` routes
-  (`SheetPage`), string confirmations use `Alert.alert`, and rich
-  confirmations use `ConfirmAction`'s `@expo/ui` BottomSheet with the shared
+- Web dialogs are native containers: forms are Expo Router route sheets
+  (`SheetPage`; `formSheet` on iOS, full-height `modal` on Android), string
+  confirmations use `Alert.alert`, and rich confirmations use
+  `ConfirmAction`'s `@expo/ui` BottomSheet with the shared
   `AlertDialog*` content slots. `ConfirmAction` keeps async actions visible,
   fences stale completions with the existing action gate, and shows safe
   inline errors on rejection.

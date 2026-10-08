@@ -1,5 +1,5 @@
 import { detailLayoutClasses } from "@clawdi/shared/ui";
-import type { Href } from "expo-router";
+import { type Href, Stack } from "expo-router";
 import { type ReactNode, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AppScrollView, AppView } from "@/components/ui/view";
@@ -7,6 +7,7 @@ import { WebText, webView } from "@/components/ui/web-layout";
 import { useI18n } from "@/lib/i18n";
 import type { HeaderAction } from "@/platform/navigation/native-header-types";
 import { NativeHeader } from "@/platform/navigation/native-header";
+import { sheetCancelHeaderOptions } from "@/platform/navigation/sheet-options";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
@@ -45,6 +46,7 @@ export function SheetPage({
 	);
 	return (
 		<SafeAreaScreen>
+			<Stack.Screen options={sheetCancelHeaderOptions} />
 			<NativeHeader
 				title={title}
 				actions={[

@@ -4,21 +4,8 @@ name: Fixture tabs and details
 # select-tab.yaml uses iOS tab testIDs and Android's scoped Material tab labels.
 
 # Home: open a loaded fixture Agent from the overview card.
-# Wait for loaded fixture data and visual idle before navigation. Cold Android
-# taps still failed after these checks and with retryTapIfNoChange's one retry.
-# Bound attempts to three while the original card remains visible, then require
-# the loaded detail header; unrelated hierarchy changes cannot satisfy the test.
-# https://docs.maestro.dev/reference/commands-available/waitforanimationtoend
-# https://docs.maestro.dev/reference/commands-available/repeat
-- waitForAnimationToEnd
-- repeat:
-    times: 3
-    while:
-      visible:
-        id: agent-card-c1a0de00-0001-4c00-8000-000000000001
-    commands:
-      - tapOn:
-          id: agent-card-c1a0de00-0001-4c00-8000-000000000001
+- tapOn:
+    id: agent-card-c1a0de00-0001-4c00-8000-000000000001
 - extendedWaitUntil:
     visible:
       id: agent-detail-c1a0de00-0001-4c00-8000-000000000001

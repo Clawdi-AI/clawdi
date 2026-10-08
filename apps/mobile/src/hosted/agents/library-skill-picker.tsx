@@ -26,6 +26,7 @@ import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/acc
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { NativeHeader, useHeaderSearch } from "@/platform/navigation/native-header";
 import { NativeSegments } from "@/platform/navigation/segmented-control";
+import { sheetCancelHeaderOptions } from "@/platform/navigation/sheet-options";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
@@ -131,7 +132,9 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 						},
 					]}
 				/>
-				<Stack.Screen options={{ headerSearchBarOptions: headerSearch }} />
+				<Stack.Screen
+					options={{ ...sheetCancelHeaderOptions, headerSearchBarOptions: headerSearch }}
+				/>
 				<NativeList
 					data={library.isError ? [] : items}
 					keyExtractor={(item) => item.id}
