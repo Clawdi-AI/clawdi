@@ -76,7 +76,6 @@ import {
 	OFFICIAL_INSTALL_URLS,
 	officialInstallArgs,
 } from "./manifest-contract";
-import { runtimeCommandCurrentRevision } from "./manifest-install";
 import { reconcileHostedHermesProfileMcp } from "./manifest-mcp";
 import { removeOpenClawManagedProviderAuthProfiles } from "./manifest-oauth";
 import { openClawGatewayHostedPatch } from "./manifest-providers";
@@ -101,7 +100,6 @@ import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { loadPersistedStepRevisions, persistedStepRevision } from "./persisted-step-revisions";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 import {
-	HERMES_DASHBOARD_BUILD_REVISION_FILE,
 	installOfficialRuntimeService,
 	planOfficialRuntimeServices,
 	runtimeSystemdCommonEnvironment,
@@ -3573,13 +3571,7 @@ writeFileSync(${JSON.stringify(configPath)}, JSON.stringify({auth:{concurrent:"n
 		"withdraws archived Hermes WhatsApp through committed bundle reconciliation (%s)",
 		(ownership) => {
 			const paths = tempRuntimePaths();
-			const command = writeFakeHermesCli(paths);
-			const webDist = join(paths.userHome, ".hermes", "hermes-agent", "hermes_cli", "web_dist");
-			mkdirSync(webDist, { recursive: true });
-			writeFileSync(join(webDist, "index.html"), "<html>dashboard fixture</html>");
-			const revision = runtimeCommandCurrentRevision(command, paths.userHome, paths.userHome);
-			if (!revision) throw new Error("Hermes fixture command revision is missing");
-			writeFileSync(join(webDist, HERMES_DASHBOARD_BUILD_REVISION_FILE), revision);
+			writeFakeHermesCli(paths);
 			const bridge = join(paths.userHome, ".hermes", "hermes-agent", "scripts", "whatsapp-bridge");
 			const baileys = join(bridge, "node_modules", "@whiskeysockets", "baileys");
 			const pristineBaileys = join(

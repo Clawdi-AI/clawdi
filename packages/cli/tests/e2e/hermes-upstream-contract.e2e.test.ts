@@ -3,8 +3,8 @@
  *
  * Hosted Agents install Hermes with the official, unpinned installer, so every
  * surface the CLI adapter depends on is exercised here against whatever that
- * installer currently ships. Every check drives the CLI's own production code
- * or embedded helper sources; nothing here re-implements an adapter path.
+ * installer currently ships. Checks drive the CLI's production code, embedded
+ * helpers, or official runtime surfaces; none re-implements an adapter path.
  *
  * Run through `scripts/test-hermes-upstream-contract.sh`, which installs the
  * latest upstream Hermes as a non-root runtime user in a disposable container.
@@ -12,6 +12,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
@@ -65,11 +66,7 @@ import {
 import { applyHostedRuntimeConfigProjection } from "../../src/runtime/manifest-runtime-config";
 import { runtimeComponentIsReady, runtimeServiceIsReady } from "../../src/runtime/observed";
 import { getRuntimePaths, type RuntimePaths } from "../../src/runtime/paths";
-import {
-	OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS,
-	prepareOfficialRuntimeServiceDependencies,
-	type RuntimeSystemdUserProgram,
-} from "../../src/runtime/runtime-systemd-reconciliation";
+import { OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS } from "../../src/runtime/runtime-systemd-reconciliation";
 import { executableExists, spawnRuntimeUserCommand } from "../../src/runtime/runtime-user-command";
 
 const CONTRACT_GATE = "CLAWDI_TEST_HERMES_UPSTREAM_CONTRACT";
@@ -508,40 +505,66 @@ describe.skipIf(!enabled)("upstream Hermes adapter contract", () => {
 		).not.toContain(nativeId);
 	}, 300_000);
 
-	test("dashboard cold build produces the served web UI", () => {
-		// Remove any installer-built bundle so only the adapter's build can satisfy the check.
-		rmSync(join(appRoot, "hermes_cli", "web_dist"), { recursive: true, force: true });
-		const gateway: RuntimeSystemdUserProgram = {
-			programKind: "runtime",
-			runtime: "hermes",
-			service: null,
-			command: hermesCommand,
-			args: [...HOSTED_GATEWAY_RUN_ARGS],
-			cwd: home,
-			env: {},
-			resolvedSecretEnv: {},
-		};
-		const dashboard: RuntimeSystemdUserProgram = {
-			...gateway,
-			service: "dashboard",
-			args: [...HOSTED_HERMES_DASHBOARD_ARGS],
-		};
-		const failure = prepareOfficialRuntimeServiceDependencies(
-			[gateway, dashboard],
-			{
-				pending: [{ unitName: "hermes-gateway.service", program: gateway, serviceRevision: null }],
-				serviceRevisions: {},
-			},
-			paths,
+	test("official installer provides a current dashboard build", () => {
+		const result = managedPython(
+			[
+				"-c",
+				[
+					"from pathlib import Path",
+					"import sys",
+					"sys.path.insert(0, sys.argv[1])",
+					"from hermes_cli.source_build import source_product_current",
+					"root = Path(sys.argv[1])",
+					"print(source_product_current(root, 'web', root / 'hermes_cli/web_dist'))",
+				].join("\n"),
+				appRoot,
+			],
+			"",
+			appRoot,
 		);
-		if (failure) {
-			const log = join(paths.statusRoot, "installer-logs", "hermes-dashboard-prerequisite.log");
-			throw new Error(
-				`${failure}\n${existsSync(log) ? readFileSync(log, "utf8").slice(-4000) : ""}`,
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.stdout.trim()).toBe("True");
+	});
+
+	test("dashboard cold launch builds and serves the web UI", async () => {
+		// Upstream owns rebuilding a missing bundle and recording its freshness.
+		rmSync(join(appRoot, "hermes_cli", "web_dist"), { recursive: true, force: true });
+		// Hosted authentication is configured by the following readiness test.
+		const child = startService("dashboard-cold-build", [
+			"dashboard",
+			"--host",
+			"127.0.0.1",
+			"--port",
+			String(HERMES_DASHBOARD_PORT),
+			"--no-open",
+		]);
+		try {
+			const ready = await waitFor(
+				async () => {
+					if (child.exitCode !== null || child.signalCode !== null)
+						throw new Error(serviceLog("dashboard-cold-build"));
+					try {
+						const response = await fetch(`http://127.0.0.1:${HERMES_DASHBOARD_PORT}/`, {
+							signal: AbortSignal.timeout(2_000),
+						});
+						return response.ok && /<!doctype html|<html[\s>]/i.test(await response.text());
+					} catch {
+						return false;
+					}
+				},
+				900_000,
 			);
+			expect(ready, serviceLog("dashboard-cold-build")).toBe(true);
+			expect(existsSync(join(appRoot, "hermes_cli", "web_dist", "index.html"))).toBe(true);
+			expect(existsSync(join(appRoot, "hermes_cli", "web_dist", ".hermes-product"))).toBe(true);
+		} finally {
+			if (child.exitCode === null && child.signalCode === null) {
+				const stopped = once(child, "exit", { signal: AbortSignal.timeout(10_000) });
+				child.kill("SIGTERM");
+				await stopped;
+			}
 		}
-		expect(existsSync(join(appRoot, "hermes_cli", "web_dist", "index.html"))).toBe(true);
-	}, 900_000);
+	}, 920_000);
 
 	test("hosted gateway and OIDC dashboard become ready", async () => {
 		const manifest: RuntimeManifest = {
