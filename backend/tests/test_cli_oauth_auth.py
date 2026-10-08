@@ -19,7 +19,7 @@ from httpx import ASGITransport
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.routes.cli_auth as cli_auth_module
+import app.services.clerk_backend as clerk_backend_module
 from app.core.auth import _auth_via_clerk_jwt, get_auth, require_cli_auth, require_user_cli
 from app.core.config import settings
 from app.core.database import get_session
@@ -594,7 +594,6 @@ async def test_oauth_config_returns_only_public_values(
         "client_id": _CLIENT_ID,
         "audience": _AUDIENCE,
         "authorized_parties": [_AUTHORIZED_PARTY],
-        "redirect_uri": _REDIRECT_URI,
     }
     assert _SECRET_KEY not in response.text
     assert _APPLICATION_ID not in response.text
@@ -694,32 +693,6 @@ async def test_disabled_oauth_setting_fails_closed_for_access_tokens(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("authorization", [None, "Bearer retired-desktop-credential"])
-@pytest.mark.parametrize(
-    "path",
-    ["/v1/cli/auth/oauth/desktop-ticket", "/api/cli/auth/oauth/desktop-ticket"],
-)
-async def test_oauth_desktop_ticket_is_retired_without_contacting_clerk(
-    raw_auth_client: httpx.AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
-    authorization: str | None,
-    path: str,
-):
-    def unexpected_clerk_client():
-        pytest.fail("Retired desktop tickets must not contact Clerk")
-
-    monkeypatch.setattr(cli_auth_module, "get_clerk_backend_client", unexpected_clerk_client)
-    headers = {"Authorization": authorization} if authorization else {}
-    response = await raw_auth_client.post(path, headers=headers)
-
-    assert response.status_code == 410
-    assert response.json() == {
-        "detail": "Desktop sign-in tickets are no longer supported. Update Clawdi Desktop and open "
-        "https://cloud.clawdi.ai in your browser."
-    }
-
-
-@pytest.mark.asyncio
 async def test_oauth_revoke_uses_validated_oauth_identity_and_safe_proxy(
     raw_auth_client: httpx.AsyncClient,
     clerk_oauth_signing_key: str,
@@ -747,7 +720,7 @@ async def test_oauth_revoke_uses_validated_oauth_identity_and_safe_proxy(
             captured.update(kwargs)
             return FakeResponse()
 
-    monkeypatch.setattr(cli_auth_module.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(clerk_backend_module.httpx, "AsyncClient", FakeAsyncClient)
     access_token = _oauth_access_token(clerk_oauth_signing_key, f"user_revoke_{uuid.uuid4().hex}")
     response = await raw_auth_client.post(
         "/v1/cli/auth/oauth/revoke",
@@ -836,7 +809,7 @@ async def test_oauth_revoke_hides_upstream_failure_details(
             _ = (url, kwargs)
             return FakeResponse()
 
-    monkeypatch.setattr(cli_auth_module.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(clerk_backend_module.httpx, "AsyncClient", FakeAsyncClient)
     access_token = _oauth_access_token(
         clerk_oauth_signing_key, f"user_revoke_error_{uuid.uuid4().hex}"
     )

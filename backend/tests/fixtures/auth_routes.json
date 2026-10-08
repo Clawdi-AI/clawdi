@@ -2408,21 +2408,12 @@
       "app.core.database.get_session"
     ]
   ],
-  "POST /api/cli/auth/device": [
-    []
-  ],
-  "POST /api/cli/auth/oauth/desktop-ticket": [
-    []
-  ],
   "POST /api/cli/auth/oauth/revoke": [
     [
       "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> app.core.database.get_session",
       "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
       "app.core.database.get_session"
     ]
-  ],
-  "POST /api/cli/auth/poll": [
-    []
   ],
   "POST /api/connectors/metadata:batchRead": [
     [
@@ -3062,21 +3053,12 @@
       "app.core.database.get_session"
     ]
   ],
-  "POST /v1/cli/auth/device": [
-    []
-  ],
-  "POST /v1/cli/auth/oauth/desktop-ticket": [
-    []
-  ],
   "POST /v1/cli/auth/oauth/revoke": [
     [
       "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> app.core.database.get_session",
       "app.core.auth.require_oauth_cli_auth -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
       "app.core.database.get_session"
     ]
-  ],
-  "POST /v1/cli/auth/poll": [
-    []
   ],
   "POST /v1/connectors/metadata:batchRead": [
     [

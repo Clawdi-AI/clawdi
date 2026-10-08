@@ -747,67 +747,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/cli/auth/oauth/desktop-ticket": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Desktop Session Ticket
-         * @deprecated
-         * @description Retain upgrade guidance for released Desktop clients for one release cycle.
-         */
-        post: operations["create_desktop_session_ticket_v1_cli_auth_oauth_desktop_ticket_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/cli/auth/device": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Start Device Flow
-         * @deprecated
-         */
-        post: operations["start_device_flow_v1_cli_auth_device_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/cli/auth/poll": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Poll Device Flow
-         * @deprecated
-         */
-        post: operations["poll_device_flow_v1_cli_auth_poll_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/sessions/{session_id}/content-events": {
         parameters: {
             query?: never;
@@ -6121,21 +6060,6 @@ export interface components {
             /** Project Id */
             project_id: string;
         };
-        /**
-         * DesktopSessionTicketResponse
-         * @description Legacy success shape for released clients; the retired route always returns 410.
-         */
-        DesktopSessionTicketResponse: {
-            /** Ticket */
-            ticket: string;
-            /** Expires In */
-            expires_in: number;
-        };
-        /** DeviceFlowRetiredResponse */
-        DeviceFlowRetiredResponse: {
-            /** Detail */
-            detail: string;
-        };
         /** EmbedBackfillResponse */
         EmbedBackfillResponse: {
             /** Processed */
@@ -7421,8 +7345,6 @@ export interface components {
             audience: string;
             /** Authorized Parties */
             authorized_parties?: string[];
-            /** Redirect Uri */
-            redirect_uri: string;
         };
         /**
          * OAuthRevokeRequest
@@ -12215,93 +12137,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_desktop_session_ticket_v1_cli_auth_oauth_desktop_ticket_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DesktopSessionTicketResponse"];
-                };
-            };
-            /** @description Desktop sign-in tickets are no longer supported. Update Clawdi Desktop and open https://cloud.clawdi.ai in your browser. */
-            410: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
-                };
-            };
-        };
-    };
-    start_device_flow_v1_cli_auth_device_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
-                };
-            };
-            /** @description This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`. */
-            410: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
-                };
-            };
-        };
-    };
-    poll_device_flow_v1_cli_auth_poll_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
-                };
-            };
-            /** @description This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`. */
-            410: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
                 };
             };
         };

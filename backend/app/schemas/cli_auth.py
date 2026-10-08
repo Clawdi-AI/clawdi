@@ -3,10 +3,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
-class DeviceFlowRetiredResponse(BaseModel):
-    detail: str
-
-
 class OAuthConfigResponse(BaseModel):
     """Public configuration for the first-party Clerk OAuth CLI client."""
 
@@ -14,7 +10,6 @@ class OAuthConfigResponse(BaseModel):
     client_id: str
     audience: str
     authorized_parties: list[str] = Field(default_factory=list)
-    redirect_uri: str
 
 
 class OAuthRevokeRequest(BaseModel):
@@ -27,10 +22,3 @@ class OAuthRevokeRequest(BaseModel):
 
 class OAuthRevokeResponse(BaseModel):
     status: Literal["revoked"]
-
-
-class DesktopSessionTicketResponse(BaseModel):
-    """Legacy success shape for released clients; the retired route always returns 410."""
-
-    ticket: str
-    expires_in: int
