@@ -7,7 +7,6 @@ import { AuthProvider } from "@/components/auth-provider";
 import { Providers } from "@/components/providers";
 import RootError from "@/components/root-error";
 import { APP_TITLE } from "@/lib/document-title";
-import { env } from "@/lib/env";
 import "@/styles/globals.css";
 
 const DESCRIPTION =
@@ -61,14 +60,10 @@ function RootComponent() {
 function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
 	const nonce = useRouter().options.ssr?.nonce;
 	return (
-		<html
-			lang="en"
-			className="h-full"
-			data-clawdi-desktop={env.VITE_CLAWDI_DESKTOP_BUILD ? "true" : undefined}
-			suppressHydrationWarning
-		>
+		<html lang="en" className="h-full" suppressHydrationWarning>
 			<head>
 				{nonce ? <meta name="csp-nonce" content={nonce} /> : null}
+				{/* TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7. */}
 				<script
 					nonce={nonce}
 					dangerouslySetInnerHTML={{

@@ -136,7 +136,6 @@ import { cn } from "@/lib/utils";
 
 type AgentChromeKind = AgentOwnershipKind;
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
-const IS_DESKTOP_BUILD = import.meta.env.VITE_CLAWDI_DESKTOP_BUILD === "true";
 const HAS_CHATWOOT_CONFIG = Boolean(
 	import.meta.env.VITE_CHATWOOT_BASE_URL && import.meta.env.VITE_CHATWOOT_WEBSITE_TOKEN,
 );
@@ -149,7 +148,7 @@ const HostedUnifiedAgentListSensor = IS_HOSTED_BUILD
 	: null;
 
 const ChatwootLiveChatMenuItem = IS_HOSTED_BUILD
-	? IS_DESKTOP_BUILD || !HAS_CHATWOOT_CONFIG
+	? !HAS_CHATWOOT_CONFIG
 		? null
 		: lazy(() =>
 				import("@/hosted/chatwoot-live-chat-menu-item").then((m) => ({
@@ -1135,10 +1134,7 @@ function FocusRailContent({
 		<>
 			<SidebarHeader
 				data-clawdi-window-drag-region
-				className={cn(
-					"h-(--clawdi-rail-width) items-center justify-center p-0",
-					IS_DESKTOP_BUILD && "h-[calc(var(--clawdi-rail-width)+2rem)] pt-8",
-				)}
+				className="h-(--clawdi-rail-width) items-center justify-center p-0"
 			>
 				<SidebarMenu className="items-center">
 					<SidebarMenuItem>

@@ -99,6 +99,7 @@ export interface ClawdiDesktopConnectBridge {
 	openDashboard(): Promise<void>;
 }
 
+// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
 export interface ClawdiDesktopShellBridge {
 	/** Absent on the first beta; existing methods form protocol version 1. */
 	readonly apiVersion?: 1;

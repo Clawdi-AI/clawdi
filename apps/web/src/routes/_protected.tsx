@@ -6,7 +6,6 @@ import { AuthStatus } from "@/components/auth-status";
 import { ProtectedAuthBoundary } from "@/components/protected-auth-boundary";
 import RootError from "@/components/root-error";
 import { ApiNetworkError } from "@/lib/api-errors";
-import { useRouteAuth, useSessionIdentity } from "@/lib/auth-client";
 import { env } from "@/lib/env";
 import { requireRouteIdentity } from "@/lib/route-auth";
 
@@ -20,7 +19,6 @@ const getAuthState = createServerFn({ method: "GET" }).handler(async () => {
 });
 
 const loadProtectedRoute = async ({ location }: { location: { href: string } }) => {
-	if (env.VITE_CLAWDI_DESKTOP_BUILD) return { authIdentity: null };
 	const authState = await getAuthState({
 		// Navigation can outlive the connection; classify the transport
 		// failure so the error boundary does not report it as an app fault.
@@ -46,23 +44,9 @@ export const Route = createFileRoute("/_protected")({
 
 function ProtectedLayout() {
 	const { authIdentity } = Route.useRouteContext();
-	if (env.VITE_CLAWDI_DESKTOP_BUILD) return <DesktopProtectedLayout />;
 	if (!authIdentity) return <AuthStatus status="signed-out" />;
 	return (
 		<ProtectedAuthBoundary identity={authIdentity}>
-			<Outlet />
-		</ProtectedAuthBoundary>
-	);
-}
-
-function DesktopProtectedLayout() {
-	const auth = useRouteAuth();
-	const identity = useSessionIdentity();
-	if (!identity || auth.status !== "signed-in") {
-		return <AuthStatus status={auth.status === "signed-in" ? "loading" : auth.status} />;
-	}
-	return (
-		<ProtectedAuthBoundary identity={identity}>
 			<Outlet />
 		</ProtectedAuthBoundary>
 	);

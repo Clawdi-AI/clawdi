@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
 	DesktopAgentConnection,
 	DesktopAgentType,
+	DesktopAuthenticationResult,
 	DesktopBootstrapState,
 	DesktopInstallationState,
 	DesktopMoveToApplicationsResult,
@@ -31,13 +32,19 @@ import {
 import electronUpdater from "electron-updater";
 import {
 	authenticateDesktopAccount,
-	type DesktopAuthenticationFlowResult,
 	prepareDesktopStartup,
 	reconcileDesktopStartupSync,
 } from "./auth-orchestrator";
 import { type DesktopCliCommandOptions, installDesktopCliCommand } from "./cli-command";
 import { openDashboardInBrowser } from "./dashboard-browser";
 import { DESKTOP_IPC } from "./ipc";
+import { getDesktopLogDirectory, initializeDesktopLogging } from "./logging";
+import {
+	readDesktopLoginItemSettings,
+	setDesktopLaunchAtLogin,
+	supportsDesktopLoginItems,
+	wasDesktopOpenedAtLogin,
+} from "./login-item";
 import { DesktopCliError, DesktopCliService } from "./native-cli";
 import { requireDesktopPlatform } from "./platform";
 import { DesktopUpdateController } from "./update-controller";
@@ -123,6 +130,16 @@ if (!app.requestSingleInstanceLock()) {
 
 async function startApplication(): Promise<void> {
 	app.setName("Clawdi");
+	// https://www.electronjs.org/docs/latest/api/app#appsetapplogspathpath
+	let logDirectory: string | undefined;
+	try {
+		app.setAppLogsPath();
+		logDirectory = getDesktopLogDirectory(app);
+	} catch {
+		// Logging still redacts console output if Electron cannot create its directory.
+	}
+	initializeDesktopLogging(logDirectory);
+	console.info("Desktop starting", { platform: process.platform, version: app.getVersion() });
 	const startHidden = wasOpenedAtLogin();
 	if (startHidden && process.platform === "darwin") app.dock?.hide();
 	registerAppProtocol(session.defaultSession);
@@ -202,10 +219,12 @@ async function initializeUpdates(): Promise<void> {
 	// autoDownload=false and the policy prohibit all artifact/installer operations.
 	// https://www.electron.build/docs/features/auto-update/
 	const updater = policy.enabled ? electronUpdater.autoUpdater : new electronUpdater.DebUpdater();
+	updater.logger = console;
 	updateController = new DesktopUpdateController({
 		policy,
 		updater,
 		onStateChange: (state) => {
+			console.info("Desktop update state", state.status);
 			updateState = state;
 			renderUpdateMenus();
 		},
@@ -406,13 +425,13 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.authenticate, (event) =>
 		safeConnectAction(event, "sign in", async () => {
 			assertRuntimeLocation();
-			const result = await authenticateAndResumeSync();
+			const result = await authenticateAccount();
+			console.info("Desktop sign-in result", result.status);
 			if (result.status === "cancelled") {
 				return { status: "cancelled" as const };
 			}
-			const state = await cli.bootstrapState();
-			setTrayState(state);
-			return { status: "authenticated" as const, state };
+			setTrayState(result.state);
+			return result;
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.cancelAuthentication, (event) =>
@@ -444,21 +463,15 @@ function registerIpc(): void {
 	);
 }
 
-async function authenticateAndResumeSync(force = false): Promise<DesktopAuthenticationFlowResult> {
-	return authenticateDesktopAccount(
-		{
-			bootstrapState: () => cli.bootstrapState(),
-			getAuthState: () => cli.getAuthState(),
-			authenticate: (forceAuthentication) =>
-				cli.authenticate(forceAuthentication, (progress) => {
-					if (connectWindow && !connectWindow.isDestroyed())
-						connectWindow.webContents.send(DESKTOP_IPC.authenticationProgress, progress);
-				}),
-			stopDaemon: () => withCriticalOperation(() => cli.stopDaemon()),
-			restartDaemon: () => withCriticalOperation(() => cli.restartDaemon()),
-		},
-		{ force },
-	);
+async function authenticateAccount(): Promise<DesktopAuthenticationResult> {
+	return authenticateDesktopAccount({
+		bootstrapState: () => cli.bootstrapState(),
+		authenticate: () =>
+			cli.authenticate((progress) => {
+				if (connectWindow && !connectWindow.isDestroyed())
+					connectWindow.webContents.send(DESKTOP_IPC.authenticationProgress, progress);
+			}),
+	});
 }
 
 async function withCriticalOperation<T>(action: () => Promise<T>): Promise<T> {
@@ -897,7 +910,7 @@ async function turnOffBackgroundSync(): Promise<void> {
 }
 
 async function setLaunchAtLogin(enabled: boolean): Promise<void> {
-	if (process.platform !== "darwin" || !app.isPackaged) {
+	if (!supportsDesktopLoginItems() || !app.isPackaged) {
 		renderTrayMenu();
 		return;
 	}
@@ -907,7 +920,7 @@ async function setLaunchAtLogin(enabled: boolean): Promise<void> {
 		return;
 	}
 	try {
-		app.setLoginItemSettings({ openAtLogin: enabled, type: "mainAppService" });
+		setDesktopLaunchAtLogin(app, enabled);
 		const actual = readLoginItemSettings();
 		if (!actual || actual.openAtLogin !== enabled) {
 			await showLoginItemError();
@@ -920,9 +933,9 @@ async function setLaunchAtLogin(enabled: boolean): Promise<void> {
 }
 
 function readLoginItemSettings(): ReturnType<typeof app.getLoginItemSettings> | null {
-	if (process.platform !== "darwin" || !app.isPackaged) return null;
+	if (!supportsDesktopLoginItems() || !app.isPackaged) return null;
 	try {
-		return app.getLoginItemSettings({ type: "mainAppService" });
+		return readDesktopLoginItemSettings(app);
 	} catch (error) {
 		console.error("Could not read the login item", error);
 		return null;
@@ -930,14 +943,22 @@ function readLoginItemSettings(): ReturnType<typeof app.getLoginItemSettings> | 
 }
 
 function wasOpenedAtLogin(): boolean {
-	return app.isPackaged && readLoginItemSettings()?.wasOpenedAtLogin === true;
+	try {
+		return wasDesktopOpenedAtLogin(app);
+	} catch (error) {
+		console.error("Could not read the login launch state", error);
+		return false;
+	}
 }
 
 async function showLoginItemError(): Promise<void> {
 	await showMessageBox({
 		type: "warning",
 		message: "The login item couldn't be changed",
-		detail: "Review Clawdi in System Settings > General > Login Items and try again.",
+		detail:
+			process.platform === "win32"
+				? "Review Clawdi in Settings > Apps > Startup and try again."
+				: "Review Clawdi in System Settings > General > Login Items and try again.",
 	});
 }
 

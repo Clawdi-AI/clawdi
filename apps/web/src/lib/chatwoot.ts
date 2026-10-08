@@ -85,7 +85,6 @@ export function shouldHideChatwoot(pathname: string): boolean {
 /** Live chat loads only in hosted Web builds with a configured widget. */
 export const CHATWOOT_LIVE_CHAT_AVAILABLE =
 	import.meta.env.VITE_CLAWDI_HOSTED === "true" &&
-	import.meta.env.VITE_CLAWDI_DESKTOP_BUILD !== "true" &&
 	Boolean(import.meta.env.VITE_CHATWOOT_BASE_URL && import.meta.env.VITE_CHATWOOT_WEBSITE_TOKEN);
 
 function whenChatwootReady(run: (chatwoot: ChatwootApi) => void): void {

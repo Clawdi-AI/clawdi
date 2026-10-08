@@ -44,6 +44,7 @@ export function AuthRouterBridge({ children }: { children: React.ReactNode }) {
 			previouslySignedIn.current = auth.status === "signed-in";
 		}
 		previousAuthKey.current = authKey;
+		// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
 		if (hadSession && auth.status === "signed-out" && window.clawdiDesktop) {
 			void window.clawdiDesktop
 				.retryDashboard()
