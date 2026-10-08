@@ -119,6 +119,7 @@ export function createProfileSync(
 			return;
 		}
 		if (options.readOnly || !environmentId) return;
+		if (adapter.agentType !== "hermes" && adapter.agentType !== "openclaw") return;
 		const prior = await api.GET("/v1/agents/{agent_id}/profiles", {
 			params: { path: { agent_id: environmentId } },
 		});

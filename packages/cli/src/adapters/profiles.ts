@@ -218,6 +218,20 @@ export async function discoverAgentProfiles(
 				})),
 			};
 		}
+		if (adapter.sessions) {
+			return {
+				complete: true,
+				profiles: [
+					{
+						profileKey: "",
+						upstreamKey: "default",
+						isDefault: true,
+						previousNames: [],
+						reader: adapter.sessions,
+					},
+				],
+			};
+		}
 	} catch (error) {
 		signal?.throwIfAborted();
 		log.warn("profiles.discovery_incomplete", {

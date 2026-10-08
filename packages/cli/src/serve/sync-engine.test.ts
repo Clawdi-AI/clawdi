@@ -1939,14 +1939,14 @@ describe("daemon startup Agent lookup", () => {
 				const plan = planSessionUpload(session, "snapshot-v1");
 				const fence = sessionFence(new ApiClient(), {
 					environmentId: "agent-isolated",
-					adapter: "hermes",
+					adapter: "pi",
 					sourceSessionKey: session.localSessionId,
 				});
 				persistFencedSessionEntry(fence, { protocol: plan.protocol, local_hash: plan.localHash });
 				let scans = 0;
 				let resolved = false;
 				const adapter: AgentAdapter = {
-					agentType: "hermes",
+					agentType: "pi",
 					detect: async () => true,
 					getVersion: async () => null,
 					sessions: {
@@ -2040,7 +2040,7 @@ describe("daemon startup Agent lookup", () => {
 				persistFencedSessionEntry(
 					sessionFence(api, {
 						environmentId: "agent-isolated",
-						adapter: "hermes",
+						adapter: "pi",
 						sourceSessionKey: session.localSessionId,
 					}),
 					{
@@ -2058,7 +2058,7 @@ describe("daemon startup Agent lookup", () => {
 				);
 				let resolved = false;
 				const adapter: AgentAdapter = {
-					agentType: "hermes",
+					agentType: "pi",
 					detect: async () => true,
 					getVersion: async () => null,
 					sessions: {
