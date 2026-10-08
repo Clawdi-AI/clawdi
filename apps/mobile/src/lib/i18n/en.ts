@@ -222,7 +222,7 @@ const storeComputeEn = {
 	upgradeDescription: "Move this Agent from Included Basic to a plan billed by {store}.",
 	purchasing: "Confirming subscription…",
 	waitingForApproval:
-		"Waiting for approval. Nothing is deployed until the purchase is approved; then retry the saved request.",
+		"Waiting for approval. Your Agent is created only after the purchase is approved. Check its status here.",
 	waitingForApprovalUpgrade:
 		"Waiting for approval. This Agent upgrades after the purchase is approved.",
 	waitingForApprovalChange:
@@ -250,6 +250,10 @@ const storeComputeEn = {
 	restored: "Purchases restored.",
 	restorePending: "Your purchases are still being checked. Try again in a few minutes.",
 	restoreFailed: "Purchases couldn't be restored. Try again.",
+	checkStatus: "Check status",
+	checkingStatus: "Checking status…",
+	stillWaiting: "The purchase isn't confirmed yet. Check again after it is approved.",
+	fundingConfirmed: "Subscription confirmed. Deploy to create this Agent.",
 	ownedByOtherAccount: "This {store} subscription is linked to a different Clawdi account.",
 	slotTitle: "{store} subscription",
 	slotBound: "Used by {agent}",

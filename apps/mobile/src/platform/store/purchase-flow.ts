@@ -303,6 +303,16 @@ export function createPurchaseFlow(options: {
 							)
 								throw new StorePurchaseError("purchase_pending");
 							saved = null;
+						} else if (
+							existing.attempt.state === "prepared" &&
+							saved.cancelled &&
+							!saved.purchaseStarted &&
+							!saved.transactionHint
+						) {
+							// A definitively cancelled Paywall made no purchase; the new intent replaces it.
+							// The unused server attempt expires through its TTL.
+							await journal.clearAttempt(storageKey, saved, () => current(signal));
+							saved = null;
 						} else throw new StorePurchaseError("purchase_pending");
 					}
 					if (!saved) {

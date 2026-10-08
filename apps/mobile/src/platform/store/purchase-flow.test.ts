@@ -747,7 +747,7 @@ describe("durable store attempts", () => {
 		"reconciliation_required",
 		"prepared",
 	] as const) {
-		test(`a different purpose reads the ${state} attempt before ${state === "prepared" || state === "reconciliation_required" ? "blocking" : "releasing the journal"}`, async () => {
+		test(`a different purpose reads the cancelled ${state} attempt before ${state === "reconciliation_required" ? "blocking" : "releasing the journal"}`, async () => {
 			const f = fixture();
 			await f.initialize();
 			await f.makeFlow().purchase(intent, async () => null);
@@ -763,7 +763,7 @@ describe("durable store attempts", () => {
 			const purchase = f
 				.makeFlow()
 				.purchase({ purpose: "deploy_continuation", pending_deploy_request_id: "target" }, paywall);
-			if (state === "prepared" || state === "reconciliation_required") {
+			if (state === "reconciliation_required") {
 				await expect(purchase).rejects.toMatchObject({ code: "purchase_pending" });
 				expect(paywall).not.toHaveBeenCalled();
 				expect(f.newKey).toHaveBeenCalledTimes(1);
@@ -775,6 +775,64 @@ describe("durable store attempts", () => {
 			expect(f.getPurchaseAttempt).toHaveBeenCalledTimes(1);
 		});
 	}
+	test("a cancelled compute Paywall lets the same deploy request choose another product", async () => {
+		const f = fixture();
+		await f.initialize();
+		const compute = (store_product_id: string) =>
+			({
+				purpose: "compute_subscription",
+				store_product_id,
+				pending_deploy_request_id: "8e244ab3-1111-4111-8111-111111111111",
+			}) as const;
+		f.createPurchaseAttempt.mockImplementation(async (body) => ({
+			...body,
+			requested_store_product_id: body.store_product_id,
+			attempt_id: body.store_product_id?.endsWith("annual") ? otherAppUserId : attemptId,
+			state: "prepared",
+			expires_at: "2099-01-01T00:00:00Z",
+		}));
+		const monthly = "ai.clawdi.app.compute.basic.monthly";
+		expect((await f.makeFlow().purchase(compute(monthly), async () => null)).status).toBe(
+			"cancelled",
+		);
+		f.setAttemptFields({
+			purpose: "compute_subscription",
+			pending_deploy_request_id: "8e244ab3-1111-4111-8111-111111111111",
+			store_product_id: monthly,
+			requested_store_product_id: monthly,
+			target_contract_id: null,
+			target_deployment_id: null,
+			state: "prepared",
+		});
+		f.newKey.mockReturnValueOnce("annual-key");
+		const paywall = mock(async () => null);
+		const annual = await f
+			.makeFlow()
+			.purchase(compute("ai.clawdi.app.compute.basic.annual"), paywall);
+		expect(annual.status).toBe("cancelled");
+		expect(paywall).toHaveBeenCalledTimes(1);
+		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.request.store_product_id).toBe(
+			"ai.clawdi.app.compute.basic.annual",
+		);
+	});
+	test("a started purchase without a result still blocks a different intent", async () => {
+		const f = fixture();
+		await f.initialize();
+		await expect(
+			f.makeFlow().purchase(intent, async () => {
+				throw new StorePurchaseError("payment_pending");
+			}),
+		).rejects.toMatchObject({ code: "payment_pending" });
+		f.setAttempt("prepared");
+		const paywall = mock(async () => null);
+		await expect(
+			f
+				.makeFlow()
+				.purchase({ purpose: "deploy_continuation", pending_deploy_request_id: "target" }, paywall),
+		).rejects.toMatchObject({ code: "purchase_pending" });
+		expect(paywall).not.toHaveBeenCalled();
+		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.purchaseStarted).toBe(true);
+	});
 	test("pending settlement times out after bounded backoff and is retained for foreground recovery", async () => {
 		const f = fixture();
 		await f.initialize();

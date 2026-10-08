@@ -102,7 +102,10 @@ preserving bootstrap availability and `flow`, so a retry remains possible.
 Before blocking a different purpose/target with `purchase_pending`, M1 reads
 the previous server attempt and finishes any completed state other than
 `reconciliation_required` before proceeding. Paid expired evidence is submitted
-through confirm before its journal is released.
+through confirm before its journal is released. A locally cancelled attempt that
+never started a purchase and is still `prepared` on the server is released for the
+new intent (for example another compute product for the same deploy request); its
+unused server attempt expires through the TTL.
 
 ## M2 UI
 
@@ -155,9 +158,14 @@ the loaded `compute` offering and the Paywall host (`useComputePurchaseGate`).
   package's plan and passes `pending_deploy_request_id`; upgrade: `target_deployment_id`),
   then resumes so the Paywall buys exactly that package. A refused attempt resumes
   `false` and closes the Paywall. A cancelled store sheet closes it with no purchase;
-  Ask-to-Buy / Play `PENDING` shows "Waiting for approval" and never deploys. After
-  `funding_applied` the wizard runs the existing explicit admission with the same
-  `deploy_request_id`.
+  Hosted keeps no pending deploy request for store attempts, so admission runs only
+  after this request's own attempt reaches `funding_applied`. The creation journal
+  persists `storeFunding` (`awaiting_purchase` → `purchase_pending` → `funded`) and
+  every admission path checks it, including restart and Retry. Ask-to-Buy / Play
+  `PENDING`, unconfirmed and other unfinished results show "Waiting for approval" with
+  only "Check status", which runs `flow.recover()` and then reads this request's
+  attempts. A `funding_applied` result (immediate or from Check status) enables the
+  existing explicit admission with the same `deploy_request_id`.
 - **Store rows** use the shared presentation and
   `resolveStoreSubscriptionActions` (platform-aware; Web keeps store rows read-only).
   Change plan buys another compute product through the M1 plan-change flow with the
@@ -187,9 +195,7 @@ one two-minute polling budget across attempts.
 Backgrounding cancels recovery; foregrounding refreshes bootstrap
 and recovers again. Foreground events during a purchase preserve its SDK identity.
 
-Accepted residual behavior (C): a different-purpose purchase remains blocked by
-a locally cancelled `prepared` attempt until the server expires it (up to 15
-minutes), despite reading its current state. Accepted residual behavior (E):
+Accepted residual behavior (E):
 each foreground recovery of an interrupted `prepared` attempt without a hint
 calls `syncPurchases()` again; repeated foreground refreshes can repeat the sync.
 

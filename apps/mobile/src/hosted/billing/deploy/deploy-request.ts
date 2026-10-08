@@ -10,8 +10,18 @@ import {
 	isHostedDeployBillingTerm,
 	isHostedDeployComputePlan,
 	isHostedDeployRuntime,
+	type StorePurchaseAttempt,
 	validateAndBuildHostedDeployRequest,
 } from "@clawdi/shared/api";
+import type { PurchaseOutcome } from "@/platform/store/purchase-flow";
+import type { PurchaseErrorCode } from "@/platform/store/store-error";
+
+/**
+ * Store funding of a request paid through the App Store/Google Play. Hosted keeps no
+ * pending deploy request for store attempts, so admission before `funded` would bind
+ * other compute and leave the later store purchase without an Agent.
+ */
+export type StoreFunding = "awaiting_purchase" | "purchase_pending" | "funded";
 
 export type CreationAttempt = {
 	version: 1;
@@ -19,7 +29,12 @@ export type CreationAttempt = {
 	id: string;
 	draft: HostedDeployWizardDraft;
 	request: HostedDeployRequest;
+	storeFunding?: StoreFunding;
 };
+
+function isStoreFunding(value: unknown): value is StoreFunding {
+	return value === "awaiting_purchase" || value === "purchase_pending" || value === "funded";
+}
 
 function record(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -76,7 +91,15 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 			submission !== "entitlement_rejected"
 		)
 			return null;
-		return { version: 1, submission, id: value.id, draft: restoredDraft, request };
+		if (value.storeFunding !== undefined && !isStoreFunding(value.storeFunding)) return null;
+		return {
+			version: 1,
+			submission,
+			id: value.id,
+			draft: restoredDraft,
+			request,
+			...(value.storeFunding !== undefined ? { storeFunding: value.storeFunding } : {}),
+		};
 	} catch {
 		return null;
 	}
@@ -84,6 +107,79 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 
 export function canDiscardCreationAttempt(attempt: CreationAttempt): boolean {
 	return attempt.submission !== "uncertain";
+}
+
+/** Only a store-funded request whose own purchase reached `funding_applied` may be admitted. */
+export function canAdmitCreationAttempt(attempt: Pick<CreationAttempt, "storeFunding">): boolean {
+	return attempt.storeFunding === undefined || attempt.storeFunding === "funded";
+}
+
+/** A store purchase may start only before any purchase for this request is in flight. */
+export function canStartStorePurchase(attempt: CreationAttempt | null): boolean {
+	return (
+		!attempt ||
+		(attempt.submission !== "uncertain" &&
+			(attempt.storeFunding === undefined || attempt.storeFunding === "awaiting_purchase"))
+	);
+}
+
+/** A pending or completed store purchase keeps its request; discarding would orphan it. */
+export function storeFundingHoldsAttempt(attempt: Pick<CreationAttempt, "storeFunding">): boolean {
+	return attempt.storeFunding === "purchase_pending" || attempt.storeFunding === "funded";
+}
+
+/** Purchase errors that prove no store charge was started for this attempt. */
+const NO_PURCHASE_ERRORS = new Set<PurchaseErrorCode>([
+	"store_offering_unavailable",
+	"paywall_unavailable",
+	"invalid_purchase_request",
+	"store_attempt_conflict",
+	"store_purchases_disabled",
+	"store_configuration_missing",
+	"store_identity_unavailable",
+	"identity_mismatch",
+]);
+
+/** Store funding after a purchase; anything that may have charged stays pending. */
+export function storeFundingAfterPurchase(
+	result:
+		| {
+				outcome: Pick<PurchaseOutcome, "status"> & { attempt: Pick<StorePurchaseAttempt, "state"> };
+		  }
+		| { error: PurchaseErrorCode },
+): StoreFunding {
+	if ("error" in result)
+		return NO_PURCHASE_ERRORS.has(result.error) ? "awaiting_purchase" : "purchase_pending";
+	const { status, attempt } = result.outcome;
+	if (status === "funding_applied") return "funded";
+	if (status === "cancelled") return "awaiting_purchase";
+	if (status === "terminal" && (attempt.state === "rejected" || attempt.state === "canceled"))
+		return "awaiting_purchase";
+	return "purchase_pending";
+}
+
+/** Store funding after an explicit status check of this request's hosted attempts. */
+export function storeFundingAfterCheck(
+	deployRequestId: string,
+	attempts: readonly Pick<
+		StorePurchaseAttempt,
+		"purpose" | "pending_deploy_request_id" | "state"
+	>[],
+	current: StoreFunding,
+): StoreFunding {
+	const own = attempts.filter(
+		(attempt) =>
+			attempt.purpose === "compute_subscription" &&
+			attempt.pending_deploy_request_id === deployRequestId,
+	);
+	if (own.some((attempt) => attempt.state === "funding_applied")) return "funded";
+	if (
+		current === "purchase_pending" &&
+		own.length > 0 &&
+		own.every((attempt) => attempt.state === "rejected" || attempt.state === "canceled")
+	)
+		return "awaiting_purchase";
+	return current;
 }
 
 /** Only this confirmed first-send rejection precedes pending-request persistence.

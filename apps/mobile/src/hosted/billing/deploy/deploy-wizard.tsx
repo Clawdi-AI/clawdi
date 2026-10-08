@@ -69,10 +69,15 @@ import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { formatDate } from "@/hooks/cloud-inventory";
 import {
 	type CreationAttempt,
+	canAdmitCreationAttempt,
 	canDiscardCreationAttempt,
+	canStartStorePurchase,
 	isDefinitiveAdmissionRejection,
 	offeredQuoteSelections,
 	serverAllowsEntitledCreation,
+	storeFundingAfterCheck,
+	storeFundingAfterPurchase,
+	storeFundingHoldsAttempt,
 	validationTranslationKeys,
 } from "@/hosted/billing/deploy/deploy-request";
 import { nextBillingCursor, subscriptionPrice, uniqueBillingItems } from "@/hosted/billing/format";
@@ -107,7 +112,7 @@ import { NativeSegments } from "@/platform/navigation/segmented-control";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { computeProductPlan } from "@/platform/store/compute-subscription";
 import { StorePurchaseError, storePurchaseError } from "@/platform/store/store-error";
-import { useStoreSurfaces } from "@/platform/store/store-provider";
+import { useMobileStore, useStoreSurfaces } from "@/platform/store/store-provider";
 
 const initialDraft: HostedDeployWizardDraft = {
 	runtime: "hermes",
@@ -152,7 +157,7 @@ export function CreateAgentScreen() {
 
 function CreationForm() {
 	const cache = useQueryClient();
-	const { compute, hosted, aiProviders } = useMobileApi();
+	const { compute, hosted, aiProviders, store: storeClient } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const t = useI18n();
@@ -169,9 +174,8 @@ function CreationForm() {
 	// Store builds: subscribe through the official Paywall when the M1 gate allows it.
 	const storeGate = useComputePurchaseGate();
 	const purchaseCompute = useComputePaywallPurchase();
+	const { flow: storeFlow } = useMobileStore();
 	const [storeNotice, setStoreNotice] = useState<StoreNotice | null>(null);
-	// Once a store purchase exists for the saved request, deploying retries its admission.
-	const [storePurchased, setStorePurchased] = useState(false);
 	const [providerChoice, setProviderChoice] = useState("__managed__");
 	const [previewTerm, setPreviewTerm] = useState(1);
 	const [attempt, setAttempt] = useState<CreationAttempt | null>(null);
@@ -238,7 +242,8 @@ function CreationForm() {
 				if (saved) {
 					setDraft(saved.draft);
 					setProviderChoice(saved.draft.ai.mode === "managed" ? "__managed__" : "__unmanaged__");
-					setSource("existing");
+					// A store-funded request stays on the store path until its purchase is funded.
+					setSource(saved.storeFunding ? "store" : "existing");
 				}
 				setStorageReady(true);
 			} catch {
@@ -286,7 +291,7 @@ function CreationForm() {
 		);
 	const current = (owns: () => boolean) => owns() && scope.isCurrent() && !scope.signal.aborted;
 	// The store purchase for the saved request exists; admission selects its store row.
-	const storeAdmission = source === "store" && storePurchased && Boolean(attempt);
+	const storeAdmission = source === "store" && attempt?.storeFunding === "funded";
 	const navigateDeployment = async (deploymentId: string, owns: () => boolean) => {
 		if (!hosted) throw new Error("Hosted API unavailable");
 		const deployment = await read((lease) => hosted.getDeployment(deploymentId, lease));
@@ -396,7 +401,7 @@ function CreationForm() {
 	};
 	/** Explicit admission of a persisted request; the server is the final permission boundary. */
 	const submit = async (saved: CreationAttempt, persisted: boolean, owns: () => boolean) => {
-		if (!compute || !storageKey) return;
+		if (!compute || !storageKey || !canAdmitCreationAttempt(saved)) return;
 		// Persist before POST. A failed write must never fall through to creation.
 		if (!persisted) await saveAttempt(storageKey, saved, () => current(owns));
 		if (!current(owns)) return;
@@ -436,15 +441,23 @@ function CreationForm() {
 				source !== "store" ||
 				!storeGate.available ||
 				(providerChoice !== "__managed__" && providerChoice !== "__unmanaged__") ||
-				attempt?.submission === "uncertain" ||
+				!canStartStorePurchase(attempt) ||
 				!current(owns)
 			)
 				return;
 			if (!attempt && !prepareAttempt(draft)) return;
 			setMessage("");
 			setStoreNotice(null);
+			// The persisted journal value; every change is a compare-and-set against it.
 			let saved = attempt;
+			const persist = async (next: CreationAttempt) => {
+				if (!saved) return;
+				await replaceAttempt(storageKey, saved, next, () => current(owns));
+				saved = next;
+				if (current(owns)) setAttempt(next);
+			};
 			let mismatch: string | null = null;
+			let result: Parameters<typeof storeFundingAfterPurchase>[0];
 			let notice: StoreNotice | null;
 			try {
 				const outcome = await purchaseCompute(async (selected) => {
@@ -456,29 +469,38 @@ function CreationForm() {
 						throw new StorePurchaseError("invalid_purchase_request");
 					}
 					if (!saved) {
-						const next = prepareAttempt({ ...draft, computePlanSlug: plan.planSlug });
-						if (!next) throw new StorePurchaseError("invalid_purchase_request");
+						const prepared = prepareAttempt({ ...draft, computePlanSlug: plan.planSlug });
+						if (!prepared) throw new StorePurchaseError("invalid_purchase_request");
+						const next: CreationAttempt = { ...prepared, storeFunding: "awaiting_purchase" };
 						await saveAttempt(storageKey, next, () => current(owns));
 						saved = next;
 						if (current(owns)) {
 							setAttempt(next);
 							setDraft(next.draft);
 						}
-					}
+					} else if (saved.storeFunding !== "awaiting_purchase")
+						await persist({ ...saved, storeFunding: "awaiting_purchase" });
 					return { pending_deploy_request_id: saved.id };
 				});
-				if (!outcome || !current(owns)) return;
-				if (outcome.status === "funding_applied" && saved) {
-					setStorePurchased(true);
-					await submit(saved, true, owns);
-					return;
-				}
-				if (outcome.status !== "cancelled") setStorePurchased(true);
+				if (!outcome) return;
+				result = { outcome };
 				notice = computePurchaseNotice(outcome, null, "deploy", storeGate.storeName);
 			} catch (error) {
 				const code = storePurchaseError(error).code;
-				if (code === "payment_pending" || code === "purchase_unconfirmed") setStorePurchased(true);
+				result = { error: code };
 				notice = mismatch ? null : computePurchaseErrorNotice(code, "deploy", storeGate.storeName);
+			}
+			if (!current(owns)) return;
+			if (saved?.storeFunding && !mismatch) {
+				const funding = storeFundingAfterPurchase(result);
+				if (funding !== saved.storeFunding) await persist({ ...saved, storeFunding: funding });
+				// The persistent waiting line and Check status cover unfinished purchases.
+				if (funding === "purchase_pending" && notice?.key !== "store.reviewRequired") notice = null;
+				// Only this request's own funded purchase may run admission.
+				if (funding === "funded") {
+					await submit(saved, true, owns);
+					return;
+				}
 			}
 			if (!current(owns)) return;
 			if (mismatch)
@@ -491,6 +513,32 @@ function CreationForm() {
 					}),
 				);
 			setStoreNotice(notice);
+		});
+	/** Explicit status check: reconcile store purchases, then read this request's attempts. */
+	const checkStoreFunding = () =>
+		action.run(async (owns) => {
+			const saved = attempt;
+			if (!saved?.storeFunding || saved.storeFunding === "funded" || !storageKey || !storeClient)
+				return;
+			setStoreNotice(null);
+			// Recovery confirms a paid purchase whose confirmation was interrupted.
+			if (storeFlow && !storeFlow.isBusy()) await storeFlow.recover().catch(() => []);
+			const attempts = await read((s) => storeClient.listPurchaseAttempts(undefined, s));
+			if (!current(owns)) return;
+			const funding = storeFundingAfterCheck(saved.id, attempts, saved.storeFunding);
+			if (funding !== saved.storeFunding) {
+				const next: CreationAttempt = { ...saved, storeFunding: funding };
+				await replaceAttempt(storageKey, saved, next, () => current(owns));
+				if (!current(owns)) return;
+				setAttempt(next);
+			}
+			setStoreNotice(
+				funding === "funded"
+					? { key: "storeCompute.fundingConfirmed", tone: "success", refresh: false }
+					: funding === "awaiting_purchase"
+						? { key: "storeCompute.notCompleted", tone: "neutral", refresh: false }
+						: { key: "storeCompute.stillWaiting", tone: "neutral", refresh: false },
+			);
 		});
 	const requestQuote = () =>
 		action.run(async (owns) => {
@@ -750,6 +798,11 @@ function CreationForm() {
 								{source === "store" ? (
 									<WebView recipe={styles.compute}>
 										<AppText>{t("storeCompute.autoRenew", { store: storeGate.storeName })}</AppText>
+										{attempt?.storeFunding === "purchase_pending" ? (
+											<AppText accessibilityRole="alert">
+												{t("storeCompute.waitingForApproval")}
+											</AppText>
+										) : null}
 										{storeNotice ? <StoreNoticeText notice={storeNotice} /> : null}
 									</WebView>
 								) : null}
@@ -1021,7 +1074,8 @@ function CreationForm() {
 										void action.run((owns) => navigateRequest(attempt.id, owns));
 									}}
 								/>
-								{resolved || canDiscardCreationAttempt(attempt) ? (
+								{resolved ||
+								(canDiscardCreationAttempt(attempt) && !storeFundingHoldsAttempt(attempt)) ? (
 									<ActionButton
 										label={t(resolved ? "creation.clear" : "creation.discard")}
 										disabled={action.busy}
@@ -1095,7 +1149,17 @@ function CreationForm() {
 						</WebText>
 					) : null}
 
-					{source === "store" && !storeAdmission ? (
+					{source === "store" && attempt?.storeFunding === "purchase_pending" ? (
+						<ActionButton
+							label={t(action.busy ? "storeCompute.checkingStatus" : "storeCompute.checkStatus")}
+							icon={<Icon as={Store} />}
+							variant="default"
+							disabled={action.busy || !storageReady || storageError}
+							onPress={() => {
+								void checkStoreFunding();
+							}}
+						/>
+					) : source === "store" && !storeAdmission ? (
 						<ActionButton
 							label={action.busy ? t("storeCompute.purchasing") : t("storeCompute.subscribeDeploy")}
 							icon={<Icon as={Store} />}
@@ -1105,7 +1169,7 @@ function CreationForm() {
 								resolved ||
 								(providerChoice !== "__managed__" && providerChoice !== "__unmanaged__") ||
 								!storeGate.available ||
-								attempt?.submission === "uncertain" ||
+								!canStartStorePurchase(attempt) ||
 								!storageReady ||
 								storageError ||
 								inventory.isError

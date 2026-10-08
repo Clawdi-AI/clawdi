@@ -120,4 +120,25 @@ describe("compute Paywall", () => {
 		expect((await result)?.status).toBe("cancelled");
 		expect(shown.closed).toBe(1);
 	});
+
+	test("an already aborted purchase signal closes the Paywall without buying", async () => {
+		const { shown, present, initiate } = host();
+		const resume = mock((_proceed: boolean) => undefined);
+		const reason = new Error("store_operation_timeout");
+		const result = runComputePaywall({
+			offering,
+			present,
+			signal: new AbortController().signal,
+			purchase: async (_pkg, paywall) => {
+				const aborted = new AbortController();
+				aborted.abort(reason);
+				await expect(paywall(aborted.signal)).rejects.toBe(reason);
+				return { status: "cancelled", attempt } as PurchaseOutcome;
+			},
+		});
+		initiate(resume);
+		await result;
+		expect(resume).toHaveBeenCalledWith(false);
+		expect(shown.closed).toBe(1);
+	});
 });

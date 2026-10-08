@@ -43,9 +43,9 @@ export function runComputePaywall({
 				let resumed = false;
 				purchase(selected, (purchaseSignal) => {
 					resumed = true;
-					purchaseSignal.addEventListener("abort", () => controller.abort(purchaseSignal.reason), {
-						once: true,
-					});
+					const abortPaywall = () => controller.abort(purchaseSignal.reason);
+					if (purchaseSignal.aborted) abortPaywall();
+					else purchaseSignal.addEventListener("abort", abortPaywall, { once: true });
 					resume(!purchaseSignal.aborted);
 					return session.result;
 				})

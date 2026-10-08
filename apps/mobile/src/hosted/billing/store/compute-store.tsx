@@ -343,6 +343,7 @@ function StoreChangePlanAction({
 					</AppView>
 				}
 				confirmLabel={t("storeCompute.changePlan")}
+				confirmDisabled={selected === null}
 				onConfirm={() => (selected ? change(selected) : undefined)}
 			/>
 			<Button
@@ -406,12 +407,11 @@ export function StoreSubscriptionPanel({ item }: { item: Subscription }) {
 					{storeSubscriptionCopy.renewalIssue}
 				</Alert>
 			) : null}
-			<Text className="text-muted-foreground">{storeBillingNotice(management)}</Text>
-			{resolved.managedElsewhere ? (
-				<Text className="text-muted-foreground">
-					{storeSubscriptionCopy.managedElsewhere[resolved.managedElsewhere]}
-				</Text>
-			) : null}
+			<Text className="text-muted-foreground">
+				{resolved.managedElsewhere
+					? storeSubscriptionCopy.managedElsewhere[resolved.managedElsewhere]
+					: storeBillingNotice(management)}
+			</Text>
 			{management && resolved.actions.length ? (
 				<AppView className="gap-2">
 					{resolved.actions.includes("change_store_plan") && contractId ? (
