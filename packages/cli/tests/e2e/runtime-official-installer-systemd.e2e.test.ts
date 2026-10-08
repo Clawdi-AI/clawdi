@@ -1331,7 +1331,7 @@ test("projects a large OpenClaw provider model-list reduction through the public
 			configPath,
 			`${JSON.stringify(
 				{
-					...configWithLegacyProviderPlugin,
+					...existingConfig,
 					agents: {
 						...existingConfig.agents,
 						list: [{ id: "main", workspace: null }],
