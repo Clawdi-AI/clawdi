@@ -315,6 +315,90 @@ async def test_sync_subscription_evicts_oldest_eligible_bound_key_lease(
 
 
 @pytest.mark.asyncio
+async def test_sync_subscription_bound_key_replacement_frees_user_slot(
+    db_session: AsyncSession,
+    seed_user: User,
+    bound_key: UUID,
+) -> None:
+    start = datetime(2026, 8, 27, tzinfo=UTC)
+    bound_leases = [
+        await _acquire_bound_lease(seed_user.id, bound_key, start + timedelta(seconds=offset))
+        for offset in range(3)
+    ]
+    other_leases = [
+        await acquire_sync_subscription_lease(
+            user_id=seed_user.id,
+            bound_api_key_id=None,
+            max_per_user=10,
+            max_per_key=3,
+            ttl=timedelta(minutes=5),
+            now=start,
+        )
+        for _ in range(7)
+    ]
+    assert all(lease is not None for lease in [*bound_leases, *other_leases])
+
+    current = start + timedelta(seconds=120)
+    replacement = await _acquire_bound_lease(seed_user.id, bound_key, current)
+    assert replacement is not None
+    assert (
+        await refresh_sync_subscription_lease(
+            bound_leases[0], ttl=timedelta(minutes=5), now=current
+        )
+        is False
+    )
+    for lease in [*bound_leases[1:], *other_leases, replacement]:
+        assert lease is not None
+        assert await refresh_sync_subscription_lease(lease, ttl=timedelta(minutes=5), now=current)
+
+    lease_count = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(SyncSubscriptionLease)
+            .where(SyncSubscriptionLease.user_id == seed_user.id)
+        )
+    ).scalar_one()
+    assert lease_count == 10
+
+
+@pytest.mark.asyncio
+async def test_sync_subscription_user_cap_rejects_bound_key_below_key_cap(
+    db_session: AsyncSession,
+    seed_user: User,
+    bound_key: UUID,
+) -> None:
+    start = datetime(2026, 8, 27, tzinfo=UTC)
+    bound_leases = [await _acquire_bound_lease(seed_user.id, bound_key, start) for _ in range(2)]
+    other_leases = [
+        await acquire_sync_subscription_lease(
+            user_id=seed_user.id,
+            bound_api_key_id=None,
+            max_per_user=10,
+            max_per_key=3,
+            ttl=timedelta(minutes=5),
+            now=start,
+        )
+        for _ in range(8)
+    ]
+    assert all(lease is not None for lease in [*bound_leases, *other_leases])
+
+    current = start + timedelta(seconds=120)
+    assert await _acquire_bound_lease(seed_user.id, bound_key, current) is None
+    for lease in [*bound_leases, *other_leases]:
+        assert lease is not None
+        assert await refresh_sync_subscription_lease(lease, ttl=timedelta(minutes=5), now=current)
+
+    lease_count = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(SyncSubscriptionLease)
+            .where(SyncSubscriptionLease.user_id == seed_user.id)
+        )
+    ).scalar_one()
+    assert lease_count == 10
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("age_seconds", [10, 59, 60])
 async def test_sync_subscription_bound_key_eviction_respects_min_age(
     db_session: AsyncSession,

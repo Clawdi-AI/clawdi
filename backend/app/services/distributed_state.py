@@ -142,7 +142,8 @@ async def acquire_sync_subscription_lease(
     """Acquire an SSE slot under the authoritative user row lock.
 
     Opt-in bound-key eviction replaces the oldest eligible leases at the key
-    cap. The per-user cap always rejects excess subscriptions without eviction.
+    cap before evaluating the per-user cap, so a replacement does not consume
+    an additional user slot.
     """
     if max_per_user <= 0 or max_per_key <= 0 or ttl <= timedelta(0):
         raise ValueError("subscription lease bounds must be positive")
@@ -170,10 +171,6 @@ async def acquire_sync_subscription_lease(
                 .where(SyncSubscriptionLease.user_id == user_id)
             )
         ).scalar_one()
-        if active_for_user >= max_per_user:
-            await db.commit()
-            return None
-
         if bound_api_key_id is not None:
             active_for_key = (
                 await db.execute(
@@ -216,6 +213,10 @@ async def acquire_sync_subscription_lease(
                         SyncSubscriptionLease.id.in_([lease.id for lease in evicted_leases])
                     )
                 )
+
+        if active_for_user - len(evicted_leases) >= max_per_user:
+            await db.commit()
+            return None
 
         db.add(
             SyncSubscriptionLease(
