@@ -14,6 +14,18 @@ export function standardUpdateMetadataName(
 	return `${base}.yml`;
 }
 
+// Shared by site generation and comparison, including feeds omitted by a pause.
+export const desktopUpdateSiteTargets = (["stable", "beta"] as const).flatMap((channel) =>
+	(["darwin", "linux", "win32"] as const).flatMap((platform) =>
+		(["arm64", "x64"] as const).map((arch) => {
+			const filename = standardUpdateMetadataName(platform, arch, channel);
+			const directory =
+				platform === "darwin" && arch === "arm64" ? "desktop" : `desktop/${platform}-${arch}`;
+			return { channel, platform, arch, path: `${directory}/${filename}` };
+		}),
+	),
+);
+
 export function releaseAssetMetadataName(
 	platform: DesktopPlatform,
 	arch: DesktopArchitecture,

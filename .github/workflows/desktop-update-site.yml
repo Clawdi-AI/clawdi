@@ -41,9 +41,16 @@ jobs:
           DESKTOP_PAUSED_VERSIONS: ${{ vars.DESKTOP_PAUSED_VERSIONS }}
           DESKTOP_UPDATE_SITE_URL: ${{ steps.pages.outputs.base_url }}/
         run: bun apps/desktop/scripts/prepare-update-site.ts "$RUNNER_TEMP/desktop-site"
+      - name: Compare all prepared files with Pages
+        id: site
+        env:
+          DESKTOP_UPDATE_SITE_URL: ${{ steps.pages.outputs.base_url }}/
+        run: bun apps/desktop/scripts/compare-update-site.ts "$RUNNER_TEMP/desktop-site"
       - uses: actions/upload-pages-artifact@v5
+        if: steps.site.outputs.changed == 'true'
         with:
           path: ${{ runner.temp }}/desktop-site
       - name: Deploy update metadata
+        if: steps.site.outputs.changed == 'true'
         id: deployment
         uses: actions/deploy-pages@v5

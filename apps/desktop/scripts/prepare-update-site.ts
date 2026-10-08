@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parse, stringify } from "yaml";
-import { releaseAssetMetadataName, standardUpdateMetadataName } from "../src/update-metadata";
+import { desktopUpdateSiteTargets, releaseAssetMetadataName } from "../src/update-metadata";
 import { normalizeDesktopUpdateFeedUrl } from "../src/update-policy";
 import {
 	assertDesktopFeedDoesNotRegress,
@@ -46,21 +46,11 @@ writeFileSync(
 	join(output, "index.html"),
 	"<!doctype html><title>Clawdi Desktop updates</title>Clawdi Desktop update metadata.",
 );
-for (const { channel, arch, platform } of (["stable", "beta"] as const).flatMap((channel) =>
-	(["darwin", "linux", "win32"] as const).flatMap((platform) =>
-		(["arm64", "x64"] as const).map((arch) => ({ channel, arch, platform })),
-	),
-)) {
-	const filename = standardUpdateMetadataName(platform, arch, channel);
-	const directory =
-		platform === "darwin" && arch === "arm64" ? desktop : join(desktop, `${platform}-${arch}`);
-	rmSync(join(directory, filename), { force: true });
+for (const { channel, arch, platform, path: relative } of desktopUpdateSiteTargets) {
+	const destination = join(output, relative);
+	rmSync(destination, { force: true });
 	const selected = selectDesktopUpdateRelease(releases, channel, now, paused);
 	if (siteUrl) {
-		const relative =
-			platform === "darwin" && arch === "arm64"
-				? `desktop/${filename}`
-				: `desktop/${platform}-${arch}/${filename}`;
 		const response = await fetch(new URL(relative, siteUrl), {
 			signal: AbortSignal.timeout(15_000),
 			cache: "no-store",
@@ -91,7 +81,7 @@ for (const { channel, arch, platform } of (["stable", "beta"] as const).flatMap(
 		throw new Error(`Incomplete Desktop release: missing ${assetName}.`);
 	// Releases predating Intel support contain only the arm64 metadata.
 	if (!asset && (arch === "x64" || platform !== "darwin")) continue;
-	if (!record(asset) || typeof asset.id !== "number") throw new Error(`Missing ${filename}.`);
+	if (!record(asset) || typeof asset.id !== "number") throw new Error(`Missing ${relative}.`);
 	const metadata: unknown = parse(
 		gh([
 			"api",
@@ -106,7 +96,7 @@ for (const { channel, arch, platform } of (["stable", "beta"] as const).flatMap(
 		!Array.isArray(metadata.files) ||
 		metadata.files.length === 0
 	) {
-		throw new Error(`Invalid ${filename}.`);
+		throw new Error(`Invalid ${relative}.`);
 	}
 	const assetUrl = (name: unknown): string => {
 		const artifactPattern =
@@ -129,6 +119,6 @@ for (const { channel, arch, platform } of (["stable", "beta"] as const).flatMap(
 	delete metadata.stagingPercentage;
 	if (selected.stagingPercentage !== undefined)
 		metadata.stagingPercentage = selected.stagingPercentage;
-	mkdirSync(directory, { recursive: true });
-	writeFileSync(join(directory, filename), stringify(metadata));
+	mkdirSync(dirname(destination), { recursive: true });
+	writeFileSync(destination, stringify(metadata));
 }

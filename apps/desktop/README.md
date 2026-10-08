@@ -246,10 +246,14 @@ Stable releases enter the feed 24 hours after GitHub `published_at`, with
 electron-updater's documented `stagingPercentage: 25` through the first 48 hours,
 then `stagingPercentage: 100`. Beta has no age gate or staging percentage. The
 Desktop Update Site workflow regenerates both channels hourly, on Desktop release
-publication, and on manual dispatch. A failed preparation preserves the deployed
-feed. Generation checks existing Pages versions and refuses an unexplained
-regression; a pause may point the feed at an older eligible release for users who
-have not installed the paused version. Clients never downgrade an installed app.
+publication, and on manual dispatch. It compares every prepared file (including
+`index.html`) and removed feeds with live Pages using curl, skipping upload and
+deployment when unchanged. A generated file returning 404 requires deployment;
+a feed already absent both locally and online does not. Failed preparation or
+comparison preserves the deployed feed. Generation checks existing Pages versions
+and refuses an unexplained regression; a pause may point the feed at an older
+eligible release for users who have not installed the paused version. Clients
+never downgrade an installed app.
 
 Owner: set the repository variable `DESKTOP_PAUSED_VERSIONS` to comma-separated
 versions (no `desktop-v` prefix), then regenerate the feed:

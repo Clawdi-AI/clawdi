@@ -57,8 +57,10 @@ See [Desktop packaging](../../apps/desktop/README.md) for inputs and recovery.
 
 Desktop Update Site holds stable releases for 24 hours from GitHub `published_at`,
 then emits the standard `stagingPercentage: 25` until 48 hours and `100` afterward.
-Beta is immediate. Hourly regeneration advances these stages. Owner pause/resume
-control uses the comma-separated repository variable `DESKTOP_PAUSED_VERSIONS`;
+Beta is immediate. Hourly regeneration advances these stages; upload/deployment
+is skipped when all generated site files and removed feeds match live Pages.
+Owner pause/resume control uses the comma-separated repository variable
+`DESKTOP_PAUSED_VERSIONS`;
 set it to bare versions and dispatch `desktop-update-site.yml` on `main`.
 Remove a version and dispatch again to resume. See the
 [pause procedure](../../apps/desktop/README.md#rollout-and-pause-control).
