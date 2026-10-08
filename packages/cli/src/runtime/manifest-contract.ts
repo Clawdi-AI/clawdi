@@ -51,15 +51,6 @@ export const HOSTED_HERMES_DASHBOARD_ARGS = [
 	"--port",
 	"9119",
 	"--no-open",
-	"--skip-build",
-] as const;
-const LEGACY_HOSTED_HERMES_DASHBOARD_ARGS = [
-	"dashboard",
-	"--host",
-	"0.0.0.0",
-	"--port",
-	"9119",
-	"--no-open",
 ] as const;
 
 function exactStringArray(value: unknown, expected: readonly string[]): boolean {
@@ -78,10 +69,7 @@ export function isHostedGatewayRunArgs(runtime: "openclaw" | "hermes", value: un
 }
 
 export function isHostedHermesDashboardArgs(value: unknown): boolean {
-	return (
-		exactStringArray(value, HOSTED_HERMES_DASHBOARD_ARGS) ||
-		exactStringArray(value, LEGACY_HOSTED_HERMES_DASHBOARD_ARGS)
-	);
+	return exactStringArray(value, HOSTED_HERMES_DASHBOARD_ARGS);
 }
 
 const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {

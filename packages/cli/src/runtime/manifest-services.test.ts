@@ -21,21 +21,28 @@ import {
 	type RuntimeConvergenceOptions,
 	type RuntimeManifest,
 } from "./manifest";
-import { OFFICIAL_INSTALL_URLS, officialInstallArgs } from "./manifest-contract";
+import {
+	hostedRuntimeBundleV2ManifestSchema,
+	OFFICIAL_INSTALL_URLS,
+	officialInstallArgs,
+} from "./manifest-contract";
 import {
 	observeRuntimeInstall,
 	runtimeCommandCurrentRevision,
 	runtimeCommandVersion,
 	writeRuntimeInstallerLog,
 } from "./manifest-install";
+import { runtimeProgramRevisionForManifest } from "./manifest-runtime-state";
 import type { RuntimeManifestLoad } from "./manifest-source";
 import {
 	adoptableWarmOpenClawGatewayUnits,
 	recordWarmOpenClawGateway,
 } from "./openclaw-warm-gateway";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
-import type { RuntimeRunSettings } from "./run-config";
+import { buildRuntimeRunConfig, type RuntimeRunSettings } from "./run-config";
+import { runtimeServiceProgramRevision } from "./runtime-impact-revision";
 import {
+	buildRuntimeSystemdUserProgram,
 	installAnonymousOpenClawGatewayService,
 	planOfficialRuntimeServices,
 	type RuntimeSystemdUserProgram,
@@ -55,6 +62,105 @@ const TEST_RUNTIME_USER = String(TEST_PROCESS_UID);
 const HERMES_CONFIG_CLI_MOCK = fileURLToPath(
 	new URL("../test-support/hermes-config-cli-mock.ts", import.meta.url),
 );
+
+test("preserves pre-cleanup Hermes revisions and managed digests for hosted dashboard args", () => {
+	const paths = tempRuntimePaths();
+	ensureRuntimeStateDirs(paths);
+	process.env.CLAWDI_RUNTIME_HOME = "/home/clawdi";
+	process.env.PATH = "/usr/bin:/bin";
+	const programPaths = getRuntimePaths({ mode: "hosted" });
+	const golden: { manifest: Record<string, unknown> } = JSON.parse(
+		readFileSync(
+			join(import.meta.dir, "../../../../test-fixtures/runtime-bundle-v2.golden.json"),
+			"utf8",
+		),
+	);
+	const dashboardArgs = ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"];
+	const manifest = hostedRuntimeBundleV2ManifestSchema.parse({
+		...golden.manifest,
+		deploymentId: "hdep_dashboardtest",
+		runtime: "hermes",
+		providers: {},
+		system: {
+			hermesDashboardAuth: {
+				mode: "oidc",
+				provider: "self-hosted",
+				deploymentId: "hdep_dashboardtest",
+				issuer: "https://auth.example.test",
+				clientId: "clawdi-hermes-hdep_dashboardtest-r1",
+				accessRevision: 1,
+				publicUrl: "https://agent.example.test",
+				trustedProxies: ["192.0.2.1"],
+				activation: { enabled: true, capability: "hermes-self-hosted-oidc-v1" },
+			},
+		},
+		runtimes: {
+			hermes: {
+				enabled: true,
+				providerMode: "unmanaged",
+				provider_ids: [],
+				install: { source: "official" },
+				run: { args: ["gateway", "run"] },
+				services: { dashboard: { args: dashboardArgs } },
+			},
+		},
+	});
+	expect(manifest.runtimes.hermes.services.dashboard.args).toEqual(dashboardArgs);
+	const runtimeRevision = (desired: RuntimeManifest) =>
+		runtimeProgramRevisionForManifest(desired, "hermes", {}, null, null, false);
+	const runtimePrograms = [null, "dashboard"].map((service) => {
+		const program = buildRuntimeSystemdUserProgram({
+			config: buildRuntimeRunConfig({
+				runtime: "hermes",
+				service,
+				enabled: true,
+				generatedAt: manifest.issuedAt,
+				generation: manifest.generation,
+				instanceId: manifest.instanceId,
+				commandPath: "/home/clawdi/.local/bin/hermes",
+				appRoot: "/home/clawdi/.hermes/hermes-agent",
+				workspaceRoot: programPaths.workspaceRoot,
+				settings: service
+					? manifest.runtimes.hermes.services[service]
+					: manifest.runtimes.hermes.run,
+			}),
+			paths: programPaths,
+			secretValues: {},
+			egress: null,
+		});
+		if (!program) throw new Error("expected enabled Hermes program");
+		return program;
+	});
+	const revisions = {
+		gateway: runtimeRevision(manifest),
+		dashboard: runtimeServiceProgramRevision(runtimePrograms[1]),
+	};
+	// Recorded from 1777e47b1694b0e9506856a54fdab5cb14501e6c before the argv cleanup.
+	expect(revisions).toEqual({
+		gateway: "298bc09f7a6583e830734bd55e30f613",
+		dashboard: "0d7899ccc4cdb7ab6af81fd0a051dbba",
+	});
+	writeRuntimeSystemdState({
+		runtimePrograms,
+		egressProgram: null,
+		egressIdentity: null,
+		runtimeIdentity: { uid: TEST_PROCESS_UID, gid: TEST_PROCESS_GID },
+		manifest,
+		paths,
+		workspaceRoot: programPaths.workspaceRoot,
+		daemonAuthTokenFile: null,
+		secretValues: {},
+		providerProjectionRevisions: {},
+		runtimeRevision,
+		commonEnvironment: {},
+	});
+	for (const [unit, revision] of [
+		["hermes-gateway", revisions.gateway],
+		["clawdi-hermes-dashboard", revisions.dashboard],
+	]) {
+		expect(readSystemdEnvironment(paths, unit).CLAWDI_MANAGED_CONTENT_DIGEST).toBe(revision);
+	}
+});
 
 test("reuses a runtime version until its executable revision changes", () => {
 	const paths = tempRuntimePaths();
