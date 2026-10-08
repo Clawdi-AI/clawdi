@@ -14,6 +14,6 @@ export const publicSessionClasses = {
 		"sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80",
 	headerRow: "flex items-center justify-between px-4 py-3 lg:px-6",
 	brand: "flex items-center gap-2 transition-opacity hover:opacity-80",
-	brandImage: "size-7 shrink-0 rounded-md",
+	brandImage: "size-7 shrink-0",
 	brandName: "text-sm font-semibold tracking-tight",
 } as const;

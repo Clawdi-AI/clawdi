@@ -4,6 +4,7 @@ import { buildVaultSupplyAgentMessage, VAULT_REQUEST_COPY } from "@clawdi/shared
 import { Eye, EyeOff } from "lucide-react";
 import createClient from "openapi-fetch";
 import { useEffect, useRef, useState } from "react";
+import { ClawdiLogo } from "@/components/clawdi-logo";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -392,13 +393,7 @@ export function VaultRequestPage() {
 			<Card className={vaultRequestClasses.card}>
 				<CardHeader className={vaultRequestClasses.header}>
 					<div className={vaultRequestClasses.brand}>
-						<img
-							src="/clawdi-logo-transparent.png"
-							alt=""
-							width={28}
-							height={28}
-							className={vaultRequestClasses.brandIcon}
-						/>
+						<ClawdiLogo width={28} height={28} className={vaultRequestClasses.brandIcon} />
 						<span className={vaultRequestClasses.brandName}>Clawdi</span>
 					</div>
 					<CardTitle>

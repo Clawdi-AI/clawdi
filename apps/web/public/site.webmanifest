@@ -13,13 +13,13 @@
 			"type": "image/png"
 		},
 		{
-			"src": "/android-chrome-512x512.png",
+			"src": "/maskable-icon-512x512.png",
 			"sizes": "512x512",
 			"type": "image/png",
 			"purpose": "maskable"
 		}
 	],
-	"theme_color": "#DE332C",
-	"background_color": "#ffffff",
+	"theme_color": "#C96442",
+	"background_color": "#FAFAF8",
 	"display": "standalone"
 }

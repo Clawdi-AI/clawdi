@@ -430,7 +430,7 @@ function Shell({ children }: { children: ReactNode }) {
 				data-window-drag-region
 				className="flex h-12 shrink-0 items-center justify-center gap-2 border-b border-border"
 			>
-				<img src="./clawdi-logo.png" alt="" className="size-5" draggable={false} />
+				<img src="./clawdi-logo.png" alt="" className="size-5 rounded-[22.37%]" draggable={false} />
 				<span className="text-sm font-medium">Clawdi</span>
 			</header>
 			{children}

@@ -1,6 +1,7 @@
 import { accountSuspendedPageClasses as styles } from "@clawdi/shared/ui";
 import { accountSuspendedCopy as copy, SUPPORT_MAILTO } from "@clawdi/shared/view";
 import { LogOut, Mail, ShieldOff } from "lucide-react";
+import { ClawdiLogo } from "@/components/clawdi-logo";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
@@ -17,7 +18,7 @@ export function AccountSuspendedPage({
 	return (
 		<main className={styles.page}>
 			<section className={styles.section} aria-labelledby="account-suspended-title">
-				<img src="/clawdi-logo-transparent.png" alt="Clawdi" className={styles.logo} />
+				<ClawdiLogo alt="Clawdi" className={styles.logo} />
 				<div className={styles.iconChip}>
 					<ShieldOff className={styles.icon} aria-hidden="true" />
 				</div>
