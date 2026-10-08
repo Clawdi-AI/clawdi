@@ -208,13 +208,16 @@ async def acquire_sync_subscription_lease(
                 if len(evicted_leases) < needed:
                     await db.commit()
                     return None
+                if active_for_user - len(evicted_leases) >= max_per_user:
+                    await db.commit()
+                    return None
                 await db.execute(
                     delete(SyncSubscriptionLease).where(
                         SyncSubscriptionLease.id.in_([lease.id for lease in evicted_leases])
                     )
                 )
 
-        if active_for_user - len(evicted_leases) >= max_per_user:
+        if active_for_user >= max_per_user and not evicted_leases:
             await db.commit()
             return None
 
