@@ -57,6 +57,14 @@
 			"output": "release"
 		},
 		"afterPack": "apps/desktop/scripts/after-pack.mjs",
+		"protocols": [
+			{
+				"name": "ai.clawdi.desktop",
+				"schemes": [
+					"clawdi-desktop"
+				]
+			}
+		],
 		"files": [
 			"dist/**/*",
 			"package.json"

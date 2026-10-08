@@ -11,7 +11,7 @@ import type {
 	DesktopInstallationState,
 	DesktopMoveToApplicationsResult,
 } from "@clawdi/shared/desktop";
-import { isDesktopAgentType } from "@clawdi/shared/desktop";
+import { DESKTOP_DEEP_LINK_SCHEME, isDesktopAgentType } from "@clawdi/shared/desktop";
 import {
 	app,
 	BrowserWindow,
@@ -45,6 +45,7 @@ import {
 	verificationPageToOpen,
 } from "./connect-ipc";
 import { openDashboardInBrowser } from "./dashboard-browser";
+import { connectViewFromArgv, connectViewFromDeepLink } from "./deep-link";
 import {
 	applicationMenuTemplate,
 	type DesktopMenuActions,
@@ -90,6 +91,9 @@ const cli = new DesktopCliService(app);
 let connectWindow: BrowserWindow | null = null;
 // Cleared only when the renderer takes it, so a request survives window creation.
 let requestedConnectView: DesktopConnectView | null = null;
+// A clawdi-desktop:// link that launched the app: argv on Windows and Linux,
+// open-url before ready on macOS.
+let launchConnectView = connectViewFromArgv(process.argv);
 let verificationPage: string | null = null;
 let tray: Tray | null = null;
 let trayState: DesktopBootstrapState | null = null;
@@ -143,9 +147,28 @@ if (!app.requestSingleInstanceLock()) {
 	app.quit();
 } else {
 	const applicationStarted = app.whenReady().then(startApplication);
+	// Registered before ready so macOS delivers the link that launched the app.
+	// https://www.electronjs.org/docs/latest/tutorial/launch-app-from-url-in-another-app
+	app.on("open-url", (event, url) => {
+		event.preventDefault();
+		const view = connectViewFromDeepLink(url);
+		if (!view) {
+			console.warn("Ignored an unsupported Clawdi Desktop link");
+		} else if (!app.isReady()) {
+			launchConnectView = view;
+		} else {
+			runAsync(
+				"open Connect from a link",
+				applicationStarted.then(() => showAvailableWindow(view)),
+			);
+		}
+	});
 	app.on("window-all-closed", () => undefined);
-	app.on("second-instance", () =>
-		runAsync("show the existing window", applicationStarted.then(showAvailableWindow)),
+	app.on("second-instance", (_event, argv) =>
+		runAsync(
+			"show the existing window",
+			applicationStarted.then(() => showAvailableWindow(connectViewFromArgv(argv) ?? undefined)),
+		),
 	);
 	void applicationStarted.catch((error) => {
 		console.error("Could not start Clawdi", error);
@@ -166,7 +189,8 @@ async function startApplication(): Promise<void> {
 	}
 	initializeDesktopLogging(logDirectory);
 	console.info("Desktop starting", { platform: process.platform, version: app.getVersion() });
-	const startHidden = wasOpenedAtLogin();
+	registerDeepLinkProtocol();
+	const startHidden = !launchConnectView && wasOpenedAtLogin();
 	if (startHidden && process.platform === "darwin") app.dock?.hide();
 	registerAppProtocol(session.defaultSession);
 	registerIpc();
@@ -190,12 +214,12 @@ async function startApplication(): Promise<void> {
 
 	if (installationState().requiresMove) {
 		setTrayState(null);
-		if (!startHidden) await showConnectWindow();
+		if (!startHidden) await showConnectWindow(launchConnectView ?? undefined);
 	} else {
 		const startup = await prepareDesktopStartup(cli);
 		setTrayState(startup.state);
 		// The dashboard opens after sign-in and on explicit clicks, not on every launch.
-		if (!startHidden) await showConnectWindow();
+		if (!startHidden) await showConnectWindow(launchConnectView ?? undefined);
 		if (!startup.requiresWizard) {
 			runAsync("reconcile sync after startup", reconcileBackgroundSyncAfterStartup());
 		}
@@ -209,6 +233,15 @@ async function startApplication(): Promise<void> {
 	runAsync("initialize Desktop updates", initializeUpdates());
 
 	app.on("activate", () => runAsync("show the active window", showAvailableWindow()));
+}
+
+function registerDeepLinkProtocol(): void {
+	// Packaged builds only: a development registration would point the OS at this checkout.
+	// macOS and Linux packages also declare the scheme through electron-builder `protocols`.
+	if (!app.isPackaged) return;
+	if (!app.setAsDefaultProtocolClient(DESKTOP_DEEP_LINK_SCHEME)) {
+		console.warn("Could not register Clawdi Desktop links");
+	}
 }
 
 function registerAppProtocol(targetSession: Session): void {
@@ -1041,11 +1074,13 @@ async function promptToMove(detail: string): Promise<void> {
 	}
 }
 
-async function showAvailableWindow(): Promise<void> {
+async function showAvailableWindow(view?: DesktopConnectView): Promise<void> {
 	if (connectWindow) {
-		await showConnectWindow();
+		await showConnectWindow(view);
 		return;
 	}
+	// The new window takes the request when its renderer starts.
+	if (view) requestedConnectView = view;
 	if (availableWindowOpening) return availableWindowOpening;
 
 	const opening = showWindowFromTrayState();
