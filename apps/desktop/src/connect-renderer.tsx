@@ -2,7 +2,6 @@ import { CSPProvider } from "@base-ui/react/csp-provider";
 import type { ClawdiDesktopConnectBridge } from "@clawdi/shared/desktop";
 import { createRoot } from "react-dom/client";
 import { ConnectApp } from "./connect-app";
-import "./connect-renderer.css";
 
 declare global {
 	interface Window {

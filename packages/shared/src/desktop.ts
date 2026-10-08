@@ -90,8 +90,8 @@ export interface DesktopVerificationReopenResult {
 	status: "opened" | "not-active";
 }
 
-/** Views the main process can ask the Connect window to show. */
-export type DesktopConnectView = "connect" | "exclude-projects";
+/** Views the tray or app menu can ask the Connect window to show. */
+export type DesktopConnectView = "connect" | "fix-sync" | "exclude-projects";
 
 export interface DesktopExcludedProjectAddResult {
 	status: "added" | "cancelled" | "exists";
@@ -106,9 +106,10 @@ export interface ClawdiDesktopConnectBridge {
 	cancelAuthentication(): Promise<DesktopAuthenticationCancellationResult>;
 	/** Opens the verification page of the active sign-in again. */
 	reopenVerificationPage(): Promise<DesktopVerificationReopenResult>;
-	/** Returns and clears the view requested from the tray or app menu. */
-	takeRequestedView(): Promise<DesktopConnectView>;
-	onViewRequested(listener: (view: DesktopConnectView) => void): () => void;
+	/** Returns and clears the pending tray or app menu request, if any. */
+	takeRequestedView(): Promise<DesktopConnectView | null>;
+	/** Signals that a request is pending; take it with takeRequestedView. */
+	onViewRequested(listener: () => void): () => void;
 	listExcludedProjects(): Promise<string[]>;
 	/** Lets the user choose a folder in a native dialog, then excludes it. */
 	addExcludedProject(): Promise<DesktopExcludedProjectAddResult>;

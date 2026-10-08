@@ -93,15 +93,20 @@ Connect Agents…, Exclude Projects… and Sign Out; Fix Sync… appears while s
 needs attention, and Help links to the docs, support and the log folder.
 Exclude Projects edits the CLI's `excludeProjects` setting through
 `clawdi config` (the same list as `clawdi config set excludeProjects`); it never
-touches credentials. Launching Clawdi shows the Connect window; the Dashboard
-opens after a successful sign-in and when the user chooses Open Dashboard.
+touches credentials. Launching Clawdi shows the Connect window. The Dashboard
+opens automatically once, after the first completed agent connection on the
+computer (a `first-connection` marker in Electron `userData`), and whenever the
+user chooses Open Dashboard; relaunching or signing in again never opens it.
 
-The Connect window is styled like the Dashboard: Tailwind CSS v4 (through the
-official `bun-plugin-tailwind`), `@clawdi/shared/style/theme.css`, Geist from
-Fontsource, and the `@clawdi/shared/ui` recipes with Base UI controls. Its CSP
-has no inline styles, so Base UI's injected style element is disabled with
-`CSPProvider` and the equivalent rule lives in `connect-renderer.css`. Fontsource
-fonts are inlined by Bun's CSS bundler, hence `font-src 'self' data:`.
+The Connect window is styled like the Dashboard: Tailwind CSS v4 compiled by the
+official `@tailwindcss/cli` (the same catalog version as `apps/web`),
+`@clawdi/shared/style/theme.css`, Geist from Fontsource, and the
+`@clawdi/shared/ui` recipes with Base UI controls. The build copies the Geist
+files referenced by the stylesheet to `dist/files/`, which the `clawdi-app://`
+protocol serves by an exact filename pattern, so the CSP stays `font-src 'self'`.
+The CSP has no inline styles, so Base UI's injected style element is disabled
+with `CSPProvider` and the equivalent rule lives in `connect-renderer.css`.
+Screen headings and window titles share one Title Case page title.
 
 Clawdi Desktop opens the Dashboard in the system browser at `https://cloud.clawdi.ai`.
 Set `CLAWDI_DESKTOP_WEB_URL` to a self-hosted HTTPS dashboard URL (or an HTTP

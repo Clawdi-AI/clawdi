@@ -1,8 +1,10 @@
+import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import tailwind from "bun-plugin-tailwind";
 
+// Must match the font allow-list in src/main.ts.
+const FONT_FILE = /^geist-(?:sans|mono)-latin-\d{3}-normal\.woff2?$/;
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = join(desktopRoot, "src");
 const outputRoot = join(desktopRoot, "dist");
@@ -32,6 +34,7 @@ for (const [name, size] of [
 await bundle("main.ts", "main.js", "node", "esm");
 await bundle("connect-preload.ts", "connect-preload.cjs", "node", "cjs");
 await bundle("connect-renderer.tsx", "connect-renderer.js", "browser", "esm");
+buildRendererStyles();
 cpSync(join(sourceRoot, "renderer.html"), join(outputRoot, "renderer.html"));
 cpSync(join(webRoot, "public", "clawdi-logo-transparent.png"), join(outputRoot, "clawdi-logo.png"));
 
@@ -48,12 +51,47 @@ async function bundle(
 		target,
 		format,
 		external: target === "node" ? ["electron", "electron-updater", "builder-util-runtime"] : [],
-		plugins: target === "browser" ? [tailwind] : [],
 		minify: true,
 		sourcemap: "none",
 	});
 	if (!result.success) {
 		for (const log of result.logs) console.error(log);
 		throw new Error(`Could not build ${entry}.`);
+	}
+}
+
+/**
+ * Compiles the renderer stylesheet with the official Tailwind CLI (the same
+ * catalog version as apps/web), then copies the Fontsource files it references
+ * so the renderer CSP keeps `font-src 'self'`.
+ */
+function buildRendererStyles(): void {
+	const output = join(outputRoot, "connect-renderer.css");
+	const cli = join(
+		dirname(Bun.resolveSync("@tailwindcss/cli/package.json", desktopRoot)),
+		"dist",
+		"index.mjs",
+	);
+	const result = spawnSync(
+		process.execPath,
+		[cli, "--input", join(sourceRoot, "connect-renderer.css"), "--output", output, "--minify"],
+		{ cwd: desktopRoot, stdio: "inherit" },
+	);
+	if (result.status !== 0) throw new Error("Could not build connect-renderer.css.");
+
+	const fonts = new Set(
+		[...readFileSync(output, "utf8").matchAll(/url\(\.\/files\/([^)]+)\)/g)].map(
+			(match) => match[1],
+		),
+	);
+	if (fonts.size === 0) throw new Error("connect-renderer.css references no Geist fonts.");
+	mkdirSync(join(outputRoot, "files"));
+	for (const font of fonts) {
+		if (!font || !FONT_FILE.test(font)) throw new Error(`Unexpected renderer font: ${font}`);
+		const fontPackage = font.startsWith("geist-mono-")
+			? "@fontsource/geist-mono"
+			: "@fontsource/geist-sans";
+		const packageRoot = dirname(Bun.resolveSync(`${fontPackage}/package.json`, desktopRoot));
+		cpSync(join(packageRoot, "files", font), join(outputRoot, "files", font));
 	}
 }

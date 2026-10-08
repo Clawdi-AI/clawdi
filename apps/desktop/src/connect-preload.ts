@@ -2,7 +2,6 @@ import type {
 	ClawdiDesktopConnectBridge,
 	DesktopAgentConnection,
 	DesktopAuthenticationProgress,
-	DesktopConnectView,
 } from "@clawdi/shared/desktop";
 import { contextBridge, ipcRenderer } from "electron";
 import { DESKTOP_IPC } from "./ipc";
@@ -21,7 +20,7 @@ const bridge: ClawdiDesktopConnectBridge = {
 	reopenVerificationPage: () => ipcRenderer.invoke(DESKTOP_IPC.reopenVerificationPage),
 	takeRequestedView: () => ipcRenderer.invoke(DESKTOP_IPC.takeRequestedView),
 	onViewRequested: (listener) => {
-		const handle = (_event: Electron.IpcRendererEvent, view: DesktopConnectView) => listener(view);
+		const handle = () => listener();
 		ipcRenderer.on(DESKTOP_IPC.viewRequested, handle);
 		return () => ipcRenderer.removeListener(DESKTOP_IPC.viewRequested, handle);
 	},

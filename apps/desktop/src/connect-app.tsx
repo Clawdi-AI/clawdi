@@ -55,22 +55,13 @@ type SignInEnding = "expired" | "denied";
 
 const NEW_AGENT = "new";
 
-/** Native window titles follow macOS HIG Title Case. */
-const WINDOW_TITLES: Record<Stage, string> = {
-	loading: "Connect Agents",
-	install: "Move to Applications",
-	moving: "Move to Applications",
-	welcome: "Sign In",
-	"signing-in": "Sign In",
-	"sign-in-ended": "Sign In",
-	select: "Choose Agents",
-	connecting: "Connecting Agents",
-	complete: "Agents Connected",
-	error: "Needs Attention",
-};
+/** A tray or menu request is applied only between these long-running stages. */
+const BUSY_STAGES: ReadonlySet<Stage> = new Set(["signing-in", "connecting", "moving"]);
 
 export function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
-	const [view, setView] = useState<DesktopConnectView | null>(null);
+	const [view, setView] = useState<"connect" | "exclude-projects">("connect");
+	const [viewRequestPending, setViewRequestPending] = useState(true);
+	const loadedOnce = useRef(false);
 	const [stage, setStage] = useState<Stage>("loading");
 	const [bootstrap, setBootstrap] = useState<DesktopBootstrapState | null>(null);
 	const [requiresMove, setRequiresMove] = useState(false);
@@ -86,14 +77,8 @@ export function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 	const [signInEnding, setSignInEnding] = useState<SignInEnding>("denied");
 	const [canceling, setCanceling] = useState(false);
 	const signInInterruption = useRef<"canceled" | "expired" | null>(null);
-	const stageRef = useRef(stage);
-	stageRef.current = stage;
 
 	useEffect(() => bridge.onAuthenticationProgress(setAuthProgress), [bridge]);
-
-	useEffect(() => {
-		document.title = `${view === "exclude-projects" ? "Exclude Projects" : WINDOW_TITLES[stage]} · Clawdi`;
-	}, [stage, view]);
 
 	const fail = useCallback((error: unknown) => {
 		setFailure(error instanceof Error ? error.message : "Setup couldn't be completed.");
@@ -101,10 +86,17 @@ export function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 	}, []);
 
 	const applyAgentChoices = useCallback(
-		(detected: DesktopDetectedAgent[], candidates: DesktopReconnectCandidate[]) => {
+		(
+			detected: DesktopDetectedAgent[],
+			candidates: DesktopReconnectCandidate[],
+			repairSync = false,
+		) => {
 			setAgents(detected);
 			setReconnectCandidates(candidates);
-			const available = detected.filter((agent) => agent.detected && !agent.registered);
+			// Fix Sync keeps the connected set as is, so Start sync is the direct action.
+			const available = repairSync
+				? []
+				: detected.filter((agent) => agent.detected && !agent.registered);
 			setSelected(new Set(available.map((agent) => agent.type)));
 			setConnectionModes(
 				new Map(
@@ -134,54 +126,56 @@ export function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		}
 	}, [applyAgentChoices, bridge, fail]);
 
-	const load = useCallback(async () => {
-		setStage("loading");
-		setFailure(null);
-		try {
-			const location = await bridge.getInstallationState();
-			setRequiresMove(location.requiresMove);
-			if (location.requiresMove) {
-				setStage("install");
-				return;
+	const load = useCallback(
+		async (repairSync = false) => {
+			loadedOnce.current = true;
+			setStage("loading");
+			setFailure(null);
+			try {
+				const location = await bridge.getInstallationState();
+				setRequiresMove(location.requiresMove);
+				if (location.requiresMove) {
+					setStage("install");
+					return;
+				}
+				const detected = await bridge.detectAgents();
+				setAgents(detected);
+				const state = await bridge.getBootstrapState();
+				setBootstrap(state);
+				if (!state.auth.authenticated) {
+					setStage("welcome");
+					return;
+				}
+				applyAgentChoices(detected, await bridge.listReconnectableAgents(), repairSync);
+				setStage("select");
+			} catch (error) {
+				fail(error);
 			}
-			const detected = await bridge.detectAgents();
-			setAgents(detected);
-			const state = await bridge.getBootstrapState();
-			setBootstrap(state);
-			if (!state.auth.authenticated) {
-				setStage("welcome");
-				return;
-			}
-			applyAgentChoices(detected, await bridge.listReconnectableAgents());
-			setStage("select");
-		} catch (error) {
-			fail(error);
-		}
-	}, [applyAgentChoices, bridge, fail]);
+		},
+		[applyAgentChoices, bridge, fail],
+	);
 
+	useEffect(() => bridge.onViewRequested(() => setViewRequestPending(true)), [bridge]);
+
+	// Main keeps a request until it is taken here, so none is lost before this
+	// listener exists; requests made while signing in or connecting wait.
+	const busy = BUSY_STAGES.has(stage);
 	useEffect(() => {
-		let active = true;
+		if (!viewRequestPending || busy) return;
+		setViewRequestPending(false);
 		void bridge
 			.takeRequestedView()
-			.catch(() => "connect" as const)
-			.then((requested) => {
-				if (active) setView(requested);
+			.catch(() => null)
+			.then((requested: DesktopConnectView | null) => {
+				if (requested === "exclude-projects") {
+					setView("exclude-projects");
+					if (!loadedOnce.current) void load();
+				} else if (requested || !loadedOnce.current) {
+					setView("connect");
+					void load(requested === "fix-sync");
+				}
 			});
-		void load();
-		return () => {
-			active = false;
-		};
-	}, [bridge, load]);
-
-	useEffect(
-		() =>
-			bridge.onViewRequested((requested) => {
-				setView(requested);
-				const busy = ["signing-in", "connecting", "moving"].includes(stageRef.current);
-				if (requested === "connect" && !busy) void load();
-			}),
-		[bridge, load],
-	);
+	}, [bridge, busy, load, viewRequestPending]);
 
 	async function signIn() {
 		signInInterruption.current = null;
@@ -286,7 +280,7 @@ export function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 		<Shell>
 			{stage === "loading" ? (
 				<Page
-					title="Connect agents"
+					title="Connect Agents"
 					description="Looking for agents on this computer…"
 					footer={null}
 				>
@@ -327,7 +321,7 @@ export function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 
 			{stage === "sign-in-ended" ? (
 				<Page
-					title={signInEnding === "expired" ? "Sign-in code expired" : "Sign-in didn't finish"}
+					title={signInEnding === "expired" ? "Sign-In Code Expired" : "Sign-In Didn't Finish"}
 					description={
 						signInEnding === "expired"
 							? "Try again to get a new code."
@@ -366,7 +360,7 @@ export function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 
 			{stage === "connecting" ? (
 				<Page
-					title="Connecting agents"
+					title="Connecting Agents"
 					description="Registering your agents and starting sync…"
 					footer={null}
 				>
@@ -387,7 +381,7 @@ export function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 
 			{stage === "complete" ? (
 				<Page
-					title="Agents connected"
+					title="Agents Connected"
 					description={`${account ? `Signed in as ${account}. ` : ""}Sync keeps running when Clawdi is closed.`}
 					footer={
 						<Button onClick={() => void openDashboard()}>
@@ -412,7 +406,7 @@ export function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 
 			{stage === "error" ? (
 				<Page
-					title="Couldn't finish setup"
+					title="Couldn't Finish Setup"
 					footer={
 						<Button variant="outline" onClick={() => void load()}>
 							<RefreshCw data-icon="inline-start" /> Try again
@@ -457,6 +451,10 @@ function Page({
 	footer?: ReactNode;
 	children?: ReactNode;
 }) {
+	// Each screen's page title (Title Case, DESIGN.md) is also the window title.
+	useEffect(() => {
+		document.title = title;
+	}, [title]);
 	return (
 		<>
 			<main className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
@@ -607,7 +605,7 @@ function SigningIn({
 
 	return (
 		<Page
-			title="Continue in your browser"
+			title="Continue in Your Browser"
 			description="Check that your browser shows this code, then approve the sign-in."
 			footer={
 				<>
@@ -700,7 +698,7 @@ function AgentSelection({
 
 	return (
 		<Page
-			title="Choose agents"
+			title="Choose Agents"
 			description={account ? `Signed in as ${account}` : "Choose the agents to connect."}
 			action={
 				<Button
@@ -850,7 +848,7 @@ function ExcludedProjects({
 
 	return (
 		<Page
-			title="Exclude projects"
+			title="Exclude Projects"
 			description="Clawdi doesn't sync sessions from these project folders."
 			footer={
 				<>

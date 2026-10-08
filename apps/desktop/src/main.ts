@@ -53,6 +53,7 @@ import {
 	desktopSyncStatusLabel,
 	trayMenuTemplate,
 } from "./desktop-menus";
+import { claimFirstConnection } from "./first-connection";
 import { DESKTOP_IPC } from "./ipc";
 import { DesktopCliError, DesktopCliService } from "./native-cli";
 import { requireDesktopPlatform } from "./platform";
@@ -72,13 +73,16 @@ const APP_ASSETS = new Map([
 	["/connect-renderer.css", "connect-renderer.css"],
 	["/clawdi-logo.png", "clawdi-logo.png"],
 ]);
+// Geist files copied by scripts/build.ts; the pattern admits no path separators.
+const APP_FONT = /^\/files\/(geist-(?:sans|mono)-latin-\d{3}-normal\.woff2?)$/;
 const DOCS_URL = "https://docs.clawdi.ai";
 const SUPPORT_URL = "mailto:support@clawdi.ai";
 // --background from packages/shared/src/style/theme.css, shown before the renderer paints.
 const WINDOW_BACKGROUND = { light: "#fafaf8", dark: "#11100f" } as const;
 const cli = new DesktopCliService(app);
 let connectWindow: BrowserWindow | null = null;
-let requestedConnectView: DesktopConnectView = "connect";
+// Cleared only when the renderer takes it, so a request survives window creation.
+let requestedConnectView: DesktopConnectView | null = null;
 let verificationPage: string | null = null;
 let tray: Tray | null = null;
 let trayState: DesktopBootstrapState | null = null;
@@ -152,6 +156,10 @@ async function startApplication(): Promise<void> {
 	configurePermissions();
 	createApplicationMenu();
 	createTray();
+	nativeTheme.on("updated", () => {
+		if (connectWindow && !connectWindow.isDestroyed())
+			connectWindow.setBackgroundColor(windowBackground());
+	});
 	app.on("before-quit", (event) => {
 		if (updateInstallation?.shouldDeferQuit()) {
 			event.preventDefault();
@@ -189,7 +197,11 @@ async function startApplication(): Promise<void> {
 function registerAppProtocol(targetSession: Session): void {
 	targetSession.protocol.handle(APP_SCHEME, (request) => {
 		const url = new URL(request.url);
-		const asset = url.host === APP_HOST ? APP_ASSETS.get(url.pathname) : null;
+		const font = APP_FONT.exec(url.pathname)?.[1];
+		const asset =
+			url.host === APP_HOST
+				? (APP_ASSETS.get(url.pathname) ?? (font ? join("files", font) : null))
+				: null;
 		if (request.method !== "GET" || !asset) return new Response(null, { status: 404 });
 		return net.fetch(pathToFileURL(join(app.getAppPath(), "dist", asset)).toString());
 	});
@@ -378,7 +390,9 @@ async function maybePromptForUpdate(): Promise<void> {
 		{
 			type: "info",
 			message: `Clawdi ${updateState.version} is ready`,
-			detail: "Choose Later to keep working, then use Restart to Update from the Clawdi menu.",
+			detail: `Choose Later to keep working, then use Restart to Update from ${
+				process.platform === "darwin" ? "the Clawdi menu" : "the File menu or the tray"
+			}.`,
 			buttons: ["Restart and Install", "Later"],
 			defaultId: 0,
 			cancelId: 1,
@@ -431,7 +445,6 @@ function registerIpc(): void {
 			}
 			const state = await cli.bootstrapState();
 			setTrayState(state);
-			runAsync("open the dashboard after sign-in", openDashboard());
 			return { status: "authenticated" as const, state };
 		}),
 	);
@@ -446,7 +459,7 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.takeRequestedView, (event) =>
 		safeConnectAction(event, "open the requested view", async () => {
 			const view = requestedConnectView;
-			requestedConnectView = "connect";
+			requestedConnectView = null;
 			return view;
 		}),
 	);
@@ -482,6 +495,10 @@ function registerIpc(): void {
 				cli.connectAgents(readAgentConnections(rawConnections)),
 			);
 			runAsync("refresh sync status", refreshTrayState());
+			runAsync(
+				"open the dashboard after the first connection",
+				openDashboardAfterFirstConnection(),
+			);
 			return result;
 		}),
 	);
@@ -647,7 +664,7 @@ function menuState(): DesktopMenuState {
 const menuActions: DesktopMenuActions = {
 	openDashboard: () => runAsync("open the dashboard", openDashboard()),
 	connectAgents: () => runAsync("open Connect Agents", showConnectWindow("connect")),
-	fixSync: () => runAsync("open Connect Agents to fix sync", showConnectWindow("connect")),
+	fixSync: () => runAsync("open Fix Sync", showConnectWindow("fix-sync")),
 	excludeProjects: () => runAsync("open Exclude Projects", showConnectWindow("exclude-projects")),
 	setSync: (enabled) => runAsync("change sync", setSyncEnabled(enabled)),
 	setLaunchAtLogin: (enabled) => runAsync("change the login item", setLaunchAtLogin(enabled)),
@@ -721,7 +738,7 @@ function hardenLocalWindow(
 			showMessageBox(
 				{
 					type: "warning",
-					message: `${label} couldn't recover`,
+					message: `The ${label} couldn't recover`,
 					detail: "Close this window and open it again from Clawdi.",
 				},
 				window,
@@ -734,10 +751,8 @@ async function showConnectWindow(view?: DesktopConnectView): Promise<void> {
 	if (process.platform === "darwin") await app.dock?.show();
 	if (view) requestedConnectView = view;
 	if (connectWindow) {
-		if (view && !connectWindow.isDestroyed()) {
-			requestedConnectView = "connect";
-			connectWindow.webContents.send(DESKTOP_IPC.viewRequested, view);
-		}
+		if (view && !connectWindow.isDestroyed())
+			connectWindow.webContents.send(DESKTOP_IPC.viewRequested);
 		if (connectWindow.isMinimized()) connectWindow.restore();
 		connectWindow.show();
 		connectWindow.focus();
@@ -752,9 +767,7 @@ async function showConnectWindow(view?: DesktopConnectView): Promise<void> {
 		minWidth: 480,
 		minHeight: 560,
 		show: false,
-		backgroundColor: nativeTheme.shouldUseDarkColors
-			? WINDOW_BACKGROUND.dark
-			: WINDOW_BACKGROUND.light,
+		backgroundColor: windowBackground(),
 		title: "Clawdi",
 		...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
 		...(icon.isEmpty() ? {} : { icon }),
@@ -767,11 +780,14 @@ async function showConnectWindow(view?: DesktopConnectView): Promise<void> {
 		},
 	});
 	connectWindow = window;
-	hardenLocalWindow(window, CONNECT_URL, "Clawdi", 1);
+	hardenLocalWindow(window, CONNECT_URL, "Connect window", 1);
 	window.once("ready-to-show", () => window.show());
 	window.on("closed", () => {
 		runAsync("cancel sign-in", cli.cancelAuthentication());
-		if (connectWindow === window) connectWindow = null;
+		if (connectWindow === window) {
+			connectWindow = null;
+			requestedConnectView = null;
+		}
 	});
 	await window.loadURL(CONNECT_URL);
 }
@@ -1039,6 +1055,11 @@ async function reconcileBackgroundSyncAfterStartup(): Promise<void> {
 	setTrayState(recovery.state);
 }
 
+async function openDashboardAfterFirstConnection(): Promise<void> {
+	if (claimFirstConnection(join(app.getPath("userData"), "first-connection")))
+		await openDashboard();
+}
+
 async function openDashboard(): Promise<void> {
 	await openDashboardInBrowser(
 		(url) => shell.openExternal(url),
@@ -1068,6 +1089,10 @@ async function signOutOfDesktop(): Promise<void> {
 		detail:
 			"Sync is off. Your browser stays signed in; sign out of the dashboard in your browser separately.",
 	});
+}
+
+function windowBackground(): string {
+	return nativeTheme.shouldUseDarkColors ? WINDOW_BACKGROUND.dark : WINDOW_BACKGROUND.light;
 }
 
 function desktopIcon() {
