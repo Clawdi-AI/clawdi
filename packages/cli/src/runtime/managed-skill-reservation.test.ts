@@ -1,23 +1,19 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
-	cpSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
 	rmSync,
-	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
-import { managedSkillDirectoryDigest } from "./hosted-bundled-skill";
+import { basename, dirname, join } from "node:path";
 import {
 	installReservedManagedSkill,
 	managedSkillReservationLedgerPath,
 	managedSkillReservationState,
-	migrateLegacyLocalSetupSkill,
 	mutateUserSkillTarget,
 	releaseManagedSkill,
 	replaceManagedSkillDirectoryAtomic,
@@ -217,101 +213,6 @@ describe("managed Skill reservations", () => {
 		expect(() => shouldIgnoreUserSkill(path, "example")).toThrow(
 			"managed Skill ownership state is invalid",
 		);
-	});
-
-	it("records legacy migration independently for each canonical target", () => {
-		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
-		process.env.HOME = root;
-		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "service-state");
-		const existing = join(root, "one", "skills", "clawdi");
-		const absent = join(root, "two", "skills", "clawdi");
-		// Released CLI 0.14.28 content: legacy adoption must not depend on the current bundle.
-		cpSync(resolve(import.meta.dir, "../../tests/fixtures/legacy-local-clawdi"), existing, {
-			recursive: true,
-		});
-
-		expect(
-			migrateLegacyLocalSetupSkill({
-				targetDir: existing,
-				id: "clawdi",
-				version: 1,
-				digest: managedSkillDirectoryDigest,
-			}),
-		).toBe("adopted");
-		expect(
-			migrateLegacyLocalSetupSkill({
-				targetDir: absent,
-				id: "clawdi",
-				version: 1,
-				digest: managedSkillDirectoryDigest,
-			}),
-		).toBe("absent");
-		expect(managedSkillReservationState(existing, "clawdi")).toBe("reserved");
-
-		mkdirSync(absent, { recursive: true });
-		writeFileSync(join(absent, "SKILL.md"), "# Future user Skill\n");
-		expect(
-			migrateLegacyLocalSetupSkill({
-				targetDir: absent,
-				id: "clawdi",
-				version: 1,
-				digest: managedSkillDirectoryDigest,
-			}),
-		).toBe("already_migrated");
-		expect(managedSkillReservationState(absent, "clawdi")).toBe("unreserved");
-	});
-
-	it("records custom same-name content as unmanaged instead of adopting it", () => {
-		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
-		process.env.HOME = root;
-		const custom = join(root, "one", "skills", "clawdi");
-		mkdirSync(custom, { recursive: true });
-		writeFileSync(join(custom, "SKILL.md"), "---\nname: clawdi\ndescription: User Skill\n---\n");
-
-		expect(
-			migrateLegacyLocalSetupSkill({
-				targetDir: custom,
-				id: "clawdi",
-				version: 1,
-				digest: managedSkillDirectoryDigest,
-			}),
-		).toBe("unmanaged");
-		expect(managedSkillReservationState(custom, "clawdi")).toBe("unreserved");
-		expect(
-			migrateLegacyLocalSetupSkill({
-				targetDir: custom,
-				id: "clawdi",
-				version: 1,
-				digest: managedSkillDirectoryDigest,
-			}),
-		).toBe("already_migrated");
-	});
-
-	it("completes legacy migration when custom same-name content cannot be digested", () => {
-		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
-		process.env.HOME = root;
-		const custom = join(root, "one", "skills", "clawdi");
-		mkdirSync(custom, { recursive: true });
-		writeFileSync(join(custom, "SKILL.md"), "# User Skill\n");
-		symlinkSync("SKILL.md", join(custom, "unsupported-link"));
-
-		expect(
-			migrateLegacyLocalSetupSkill({
-				targetDir: custom,
-				id: "clawdi",
-				version: 1,
-				digest: managedSkillDirectoryDigest,
-			}),
-		).toBe("unmanaged");
-		expect(managedSkillReservationState(custom, "clawdi")).toBe("unreserved");
-		expect(
-			migrateLegacyLocalSetupSkill({
-				targetDir: custom,
-				id: "clawdi",
-				version: 1,
-				digest: managedSkillDirectoryDigest,
-			}),
-		).toBe("already_migrated");
 	});
 
 	it("atomically replaces stale files under an active reservation", () => {

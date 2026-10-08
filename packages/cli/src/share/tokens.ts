@@ -53,9 +53,6 @@ export interface ShareToken {
 	owner_handle: string;
 	token: string;
 	redeemed_at: string; // ISO8601
-	// Legacy marker retained for read compatibility. Explicit join ignores
-	// these previously upgraded records and never acts on them automatically.
-	upgraded_at?: string;
 	// API origin that accepted the anonymous token. New records are bound so
 	// another Cloud endpoint never receives a credential it did not issue.
 	api_origin?: string;
@@ -176,6 +173,17 @@ function normalizeToken(
 		nonEmptyString(canonicalFields.project_name) ?? nonEmptyString(canonicalFields.scope_name);
 	delete canonicalFields.scope_id;
 	delete canonicalFields.scope_name;
+	if ("upgraded_at" in value) {
+		return {
+			kind: "issue",
+			issue: {
+				label:
+					projectName ?? (projectId ? `Project ${projectId}` : `local share entry ${index + 1}`),
+				reason: "legacy local share record is unsupported",
+			},
+			projectId,
+		};
+	}
 	const ownerDisplay = nonEmptyString(canonicalFields.owner_display);
 	const ownerHandle = nonEmptyString(canonicalFields.owner_handle);
 	const token = nonEmptyString(canonicalFields.token);
@@ -213,9 +221,6 @@ function normalizeToken(
 		token,
 		redeemed_at: redeemedAt,
 	};
-	if ("upgraded_at" in value && typeof value.upgraded_at !== "string") {
-		delete normalized.upgraded_at;
-	}
 	if ("api_origin" in value) {
 		const apiOrigin = normalizedApiOrigin(value.api_origin);
 		if (apiOrigin) normalized.api_origin = apiOrigin;

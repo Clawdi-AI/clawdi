@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import { parsePositiveInteger } from "../lib/cli-options";
-import { commandMessage, commandResult, emitJson } from "../lib/command-output";
+import { commandResult, emitJson, message } from "../lib/command-output";
 import { authedJson, projectAlias, requireProjectAuth } from "../lib/project-command-utils";
 import { listProjects, type ProjectBrief, resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -101,8 +101,8 @@ export async function agentProjectsAddContextCommand(
 			body: JSON.stringify({ project_id: projectId, priority }),
 		},
 	);
-	commandMessage(opts.json, `${chalk.green("✓")} Linked to ${agentId}.`);
-	commandMessage(opts.json, chalk.gray("  Vaults resolve after the workspace."));
+	message(opts.json, `${chalk.green("✓")} Linked to ${agentId}.`);
+	message(opts.json, chalk.gray("  Vaults resolve after the workspace."));
 	commandResult(opts.json, "clawdi.agentProjectsLink.v1", { ...binding });
 }
 
@@ -149,8 +149,8 @@ export async function agentProjectsRemoveContextCommand(
 		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings/${encodeURIComponent(matches[0].id)}`,
 		{ method: "DELETE" },
 	);
-	commandMessage(opts.json, `${chalk.green("✓")} Unlinked from ${agentId}.`);
-	commandMessage(opts.json, chalk.gray("  Project membership unchanged."));
+	message(opts.json, `${chalk.green("✓")} Unlinked from ${agentId}.`);
+	message(opts.json, chalk.gray("  Project membership unchanged."));
 	commandResult(opts.json, "clawdi.agentProjectsUnlink.v1", {
 		agent_id: agentId,
 		project_id: projectId,
@@ -187,10 +187,7 @@ export async function agentProjectsReorderCommand(
 			body: JSON.stringify({ items }),
 		},
 	);
-	commandMessage(
-		opts.json,
-		`${chalk.green("✓")} Updated vault resolution priority for ${agentId}.`,
-	);
+	message(opts.json, `${chalk.green("✓")} Updated vault resolution priority for ${agentId}.`);
 	commandResult(opts.json, "clawdi.agentProjectsMove.v1", {
 		agent_id: agentId,
 		items,

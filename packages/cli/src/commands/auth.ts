@@ -26,8 +26,6 @@ import { emitJson, wantsJson } from "../lib/command-output";
 import { getAuth, getConfig, getPendingAuth, isLoggedIn, type PendingAuth } from "../lib/config";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 
-export { browserOpenCommand } from "../lib/browser";
-
 interface MeResponse {
 	id: string;
 	email: string;
@@ -392,23 +390,12 @@ export async function authLogout() {
 		return;
 	}
 
-	// Warn about running daemons before clearing creds. `clearAuth`
-	// deletes auth.json, but launchd / systemd units installed by
-	// `clawdi daemon install` keep running with the credential captured
-	// for that daemon. They'll keep posting heartbeats to the cloud
-	// after sign-out (with a stale or revoked token, getting 401s in a
-	// tight loop) until the user `daemon uninstall`s.
-	//
-	// Source from `listInstalledAgents` (scans the OS supervisor)
-	// not `listRegisteredAgentTypes` (env-file registry) — the
-	// env-file path would skip a daemon whose env file got deleted
-	// but whose plist was still installed (codex flagged this gap
-	// in PR-#74 review).
-	const { listInstalledDaemonTargets } = await import("../serve/installer");
-	const installedAgents = listInstalledDaemonTargets();
-	if (installedAgents.length > 0) {
+	// Warn about the singleton daemon before clearing credentials. The service
+	// keeps its captured credential until it is uninstalled explicitly.
+	const { isSingletonDaemonInstalled } = await import("../serve/installer");
+	if (isSingletonDaemonInstalled()) {
 		p.log.warn(
-			`${installedAgents.length} daemon(s) still installed (${installedAgents.join(", ")}). ` +
+			"A daemon is still installed. " +
 				`They keep running after sign-out and will fail to authenticate. ` +
 				`Run \`clawdi daemon uninstall\` to stop them.`,
 			{ output: process.stderr },

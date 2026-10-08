@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
 	isNativeTarget,
-	NATIVE_PUBLISH_TARGET_CATALOG,
+	NATIVE_BUILD_TARGET_CATALOG,
 	NATIVE_RELEASE_MANIFEST_NAME,
 	NATIVE_RELEASE_MANIFEST_V2_NAME,
 	nativeExecutableName,
@@ -26,9 +26,9 @@ const manifestV2 = parseNativeReleaseManifestV2(manifestV2Content);
 // Clients ignore future rows; publication must contain exactly the current matrix.
 if (
 	manifestV2Content.split("\n").filter((line) => line.length > 0).length !==
-		NATIVE_PUBLISH_TARGET_CATALOG.length + 2 ||
-	manifestV2.artifacts.length !== NATIVE_PUBLISH_TARGET_CATALOG.length ||
-	NATIVE_PUBLISH_TARGET_CATALOG.some(
+		NATIVE_BUILD_TARGET_CATALOG.length + 2 ||
+	manifestV2.artifacts.length !== NATIVE_BUILD_TARGET_CATALOG.length ||
+	NATIVE_BUILD_TARGET_CATALOG.some(
 		({ target }) => !manifestV2.artifacts.some((artifact) => artifact.target === target),
 	)
 ) {

@@ -369,8 +369,8 @@ afterEach(() => {
 		const stage = join(prefix, "share", "clawdi", ".stage-stale-auto-update");
 		cpSync(join(older.directory, "payload"), stage, { recursive: true });
 		cpSync(
-			join(older.directory, "clawdi-cli-manifest.txt"),
-			join(stage, "clawdi-cli-manifest.txt"),
+			join(older.directory, "clawdi-cli-manifest-v2.txt"),
+			join(stage, "clawdi-cli-manifest-v2.txt"),
 		);
 		const result = command(
 			join(stage, "clawdi"),
@@ -425,7 +425,7 @@ afterEach(() => {
 		const activeTarget = readlinkSync(launcher);
 
 		withReleaseClone(baseline, root, "checksum", (checksum) => {
-			const manifestPath = join(checksum.directory, "clawdi-cli-manifest.txt");
+			const manifestPath = join(checksum.directory, "clawdi-cli-manifest-v2.txt");
 			writeFileSync(
 				manifestPath,
 				readFileSync(manifestPath, "utf8").replace(
@@ -581,7 +581,7 @@ function assertPublicNativeModes(prefix: string, active: string): void {
 	}
 	expect(mode(join(active, "clawdi"))).toBe(0o755);
 	for (const file of [
-		join(active, "clawdi-cli-manifest.txt"),
+		join(active, "clawdi-cli-manifest-v2.txt"),
 		join(active, "clawdi-native-install.txt"),
 		join(active, "skills", "clawdi", "SKILL.md"),
 		join(active, "egress-addon", "clawdi_egress_addon.py"),

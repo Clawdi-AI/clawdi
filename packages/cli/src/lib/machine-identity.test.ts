@@ -27,7 +27,7 @@ describe("machine identity", () => {
 		});
 	});
 
-	test("adopts the previous registration identity instead of duplicating the machine", () => {
+	test("ignores a legacy registration identity", () => {
 		const root = isolatedClawdiHome();
 		const envDir = join(root, "environments");
 		mkdirSync(envDir, { recursive: true });
@@ -36,8 +36,10 @@ describe("machine identity", () => {
 			JSON.stringify({ id: "env-codex", agentType: "codex", machineId: "legacy-machine" }),
 		);
 
-		expect(getOrCreateMachineId()).toBe("legacy-machine");
-		expect(getOrCreateMachineId()).toBe("legacy-machine");
+		const first = getOrCreateMachineId();
+		expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f-]{27}$/);
+		expect(first).not.toBe("legacy-machine");
+		expect(getOrCreateMachineId()).toBe(first);
 	});
 
 	test("refuses to rotate a damaged installation identity silently", () => {

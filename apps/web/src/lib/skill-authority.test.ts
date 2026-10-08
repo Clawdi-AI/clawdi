@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { components } from "@clawdi/shared/api";
-import { isBrowserWritableSkillProject, skillCapabilities } from "./skill-authority";
+import { isWritableSkillProject, skillCapabilities } from "./skill-authority";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type Project = components["schemas"]["ProjectResponse"];
@@ -37,7 +37,7 @@ describe("skillCapabilities", () => {
 	test("does not restore writes when an orphan Agent Project loses its origin id", () => {
 		const orphanProject = project("environment");
 		expect(skillCapabilities(skill("cloud"), orphanProject).canDelete).toBe(false);
-		expect(isBrowserWritableSkillProject(orphanProject)).toBe(false);
+		expect(isWritableSkillProject(orphanProject)).toBe(false);
 	});
 
 	test("uses the persisted row's Project kind even when Project metadata is unavailable", () => {

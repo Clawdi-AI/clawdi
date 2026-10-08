@@ -8,12 +8,11 @@ import { isValidSkillKey } from "./skill-key";
 import { snapshotSkillArchive } from "./tar";
 
 /**
- * Durable Agent Skill projection ledger plus legacy upload baselines.
+ * Durable Agent Skill projection ledger plus upload hash cache.
  * A v3 claim records the exact stable Agent, resolved Agent Project,
  * adapter, Skill key, and last successfully projected hash. Only such
  * an exact claim is evidence that a subsequently missing local Skill
- * may delete its Cloud projection. v1/v2 hash entries are retained as
- * best-effort upload baselines, but never authorize deletion.
+ * may delete its Cloud projection.
  *
  * Lives at `~/.clawdi/skills-lock.json` — single file, version-stamped,
  * corrupt-tolerant. The Agent filesystem is authoritative; deleting the
@@ -22,9 +21,8 @@ import { snapshotSkillArchive } from "./tar";
  */
 export interface SkillsLock {
 	version: 5;
-	// Historical v1/v2 hash cache. These entries may suppress a redundant
-	// upload after callers re-confirm remote state, but are not ownership
-	// evidence and must never drive a projection delete.
+	// Hash cache entries suppress redundant uploads after callers re-confirm
+	// remote state. They are not ownership evidence and never drive deletes.
 	skills: Record<string, { hash: string }>;
 	// Keyed by skillClaimCacheKey(agent_id, project_id, skill_key). Entries
 	// repeat every identity field so hand-edited/corrupt mismatches can be
@@ -77,13 +75,7 @@ type ProjectSkillMaterializationInput = ProjectSkillMaterializationIdentity & {
 
 export interface SkillProjectionState {
 	claims: Map<string, string>;
-	legacyBaselines: Map<string, string>;
 }
-
-type LegacyWritableSkillsLock = {
-	version: 1 | 2;
-	skills: Record<string, { hash: string }>;
-};
 
 const LOCK_FILE = "skills-lock.json";
 const CURRENT_VERSION = 5;
@@ -136,7 +128,7 @@ export async function computeSkillFolderHash(
 	return (await snapshotSkillArchive(skillDir, trustRoot, skillKey)).hash;
 }
 
-/** Read `~/.clawdi/skills-lock.json` and normalize v1/v2 baselines to v3.
+/** Read `~/.clawdi/skills-lock.json`.
  * Future/corrupt files reset to an empty ledger. Invalid individual claims
  * are omitted, because ambiguous identity must never authorize deletion. */
 export function readSkillsLock(): SkillsLock {
@@ -145,27 +137,15 @@ export function readSkillsLock(): SkillsLock {
 	try {
 		const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
 		if (!isRecord(parsed)) return emptyLock();
-		if (
-			parsed.version !== 1 &&
-			parsed.version !== 2 &&
-			parsed.version !== 3 &&
-			parsed.version !== 4 &&
-			parsed.version !== CURRENT_VERSION
-		) {
+		if (parsed.version !== CURRENT_VERSION) {
 			return emptyLock();
 		}
 		const skills = readHashEntries(parsed.skills);
-		if (parsed.version === 1 || parsed.version === 2) {
-			return { version: CURRENT_VERSION, skills, claims: {}, materializations: {} };
-		}
 		return {
 			version: CURRENT_VERSION,
 			skills,
 			claims: readProjectionClaims(parsed.claims),
-			materializations:
-				parsed.version === 4 || parsed.version === CURRENT_VERSION
-					? readProjectSkillMaterializations(parsed.materializations)
-					: {},
+			materializations: readProjectSkillMaterializations(parsed.materializations),
 		};
 	} catch {
 		console.log(chalk.yellow(`⚠ ~/.clawdi/${LOCK_FILE} is corrupted; resetting.`));
@@ -173,7 +153,7 @@ export function readSkillsLock(): SkillsLock {
 	}
 }
 
-export function writeSkillsLock(lock: SkillsLock | LegacyWritableSkillsLock): void {
+export function writeSkillsLock(lock: SkillsLock): void {
 	withPrivateDirectoryLockSync(lockPath(), (lease) => {
 		// Baseline writers still use the released read/mutate/write API.
 		// Preserve exact claims committed after their read so a stale
@@ -181,12 +161,8 @@ export function writeSkillsLock(lock: SkillsLock | LegacyWritableSkillsLock): vo
 		const current = readSkillsLock();
 		const currentClaims = current.claims;
 		const currentMaterializations = current.materializations;
-		const requestedClaims =
-			lock.version === CURRENT_VERSION ? readProjectionClaims(lock.claims) : {};
-		const requestedMaterializations =
-			lock.version === CURRENT_VERSION
-				? readProjectSkillMaterializations(lock.materializations)
-				: {};
+		const requestedClaims = readProjectionClaims(lock.claims);
+		const requestedMaterializations = readProjectSkillMaterializations(lock.materializations);
 		lease.assertOwned();
 		writeSkillsLockUnlocked({
 			version: CURRENT_VERSION,
@@ -228,9 +204,7 @@ function writeSkillsLockUnlocked(lock: SkillsLock): void {
 	});
 }
 
-/** Return only claims fenced to the exact adapter, Agent, and Project.
- * Legacy baselines are returned separately to make their weaker authority
- * explicit in callers. */
+/** Return only claims fenced to the exact adapter, Agent, and Project. */
 export function readSkillProjectionState(
 	agentType: string,
 	agentId: string,
@@ -248,26 +222,7 @@ export function readSkillProjectionState(
 		}
 	}
 
-	const legacyBaselines = new Map<string, string>();
-	// v1 flat entries are the weakest fallback.
-	for (const [key, entry] of Object.entries(lock.skills)) {
-		if (!key.includes(":")) legacyBaselines.set(key, entry.hash);
-	}
-	// v2 adapter-partitioned entries override v1.
-	const agentPrefix = `${agentType}:`;
-	const projectPrefix = `${agentType}:${projectId}:`;
-	for (const [key, entry] of Object.entries(lock.skills)) {
-		if (key.startsWith(agentPrefix) && !key.startsWith(projectPrefix)) {
-			legacyBaselines.set(key.slice(agentPrefix.length), entry.hash);
-		}
-	}
-	// Some released pull paths also included project ID inside the old key.
-	for (const [key, entry] of Object.entries(lock.skills)) {
-		if (key.startsWith(projectPrefix)) {
-			legacyBaselines.set(key.slice(projectPrefix.length), entry.hash);
-		}
-	}
-	return { claims, legacyBaselines };
+	return { claims };
 }
 
 /** Enumerate every exact claim for a stable Agent across Project

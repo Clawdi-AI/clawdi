@@ -6,7 +6,7 @@ import { readRuntimeApplyContext } from "../runtime/apply-identity";
 import { readHostPolicy } from "../runtime/host-policy";
 import { inspectHostedRuntimeIdentity } from "../runtime/hosted-runtime-contract";
 import { loadCommittedRuntimeManifest, runtimeSnapshotExists } from "../runtime/manifest-source";
-import { getRuntimePaths, legacyRuntimeManifestPaths } from "../runtime/paths";
+import { getRuntimePaths } from "../runtime/paths";
 import { assertRuntimePlatformRoots, readRuntimeBootStatus } from "../runtime/state";
 import { toErrorMessage } from "../serve/log";
 
@@ -47,13 +47,7 @@ export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
 	const selected = "manifest" in committed ? committed : null;
 	const sourcePath = selected?.sourcePath ?? paths.manifestLastGood;
 	const manifestCacheExists = existsSync(sourcePath);
-	const storage = selected
-		? paths.mode === "local"
-			? "local"
-			: sourcePath === legacyRuntimeManifestPaths(paths).manifestLastGood
-				? "legacy"
-				: "durable"
-		: null;
+	const storage = selected ? (paths.mode === "local" ? "local" : "durable") : null;
 	const errors: string[] = [];
 	if (runtimeSnapshotExists(paths) && "errors" in committed) errors.push(...committed.errors);
 
@@ -73,13 +67,7 @@ export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
 		emitJson(result);
 	} else if (errors.length === 0) {
 		console.log(
-			storage === "legacy"
-				? chalk.yellow(
-						`runtime verify ok: legacy snapshot at ${sourcePath}; migrate before rootfs replacement`,
-					)
-				: chalk.green(
-						`runtime verify ok${selected ? `: ${storage} snapshot at ${sourcePath}` : ""}`,
-					),
+			chalk.green(`runtime verify ok${selected ? `: ${storage} snapshot at ${sourcePath}` : ""}`),
 		);
 	} else {
 		console.log(chalk.red(errors[0]));

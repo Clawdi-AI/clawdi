@@ -1,7 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import {
 	chmodSync,
-	cpSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -445,7 +444,7 @@ exit 0
 			),
 		).toBe(true);
 		expectDaemonRunSingleton();
-		expect(daemonUnitExists("claude_code")).toBe(false);
+		expect(daemonUnitExists("claude_code")).toBe(true);
 		expect(daemonUnitExists("codex")).toBe(false);
 		expect(consoleOutput.join("\n")).toContain(
 			"Background sync: session history and skills upload to your account automatically",
@@ -530,18 +529,6 @@ exit 0
 		await setup({ agent: "codex", yes: true, daemon: false });
 
 		expect(existsSync(join(target, "removed-by-upgrade.txt"))).toBe(false);
-		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
-	});
-
-	it("adopts a pre-ledger clawdi target under the previous exclusion contract", async () => {
-		const target = join(home, ".codex", "skills", "clawdi");
-		cpSync(resolve(import.meta.dir, "../fixtures/legacy-local-clawdi"), target, {
-			recursive: true,
-		});
-		installEnvironmentMock("env-codex");
-
-		await setup({ agent: "codex", yes: true, daemon: false });
-
 		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
 	});
 

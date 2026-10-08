@@ -75,7 +75,7 @@ describe.each([
 		expect(readFileSync(managedSkillReservationLedgerPath(), "utf8")).toBe(ledger);
 	});
 
-	test("listKeys does not migrate legacy setup skills or write a ledger", async () => {
+	test("skill discovery does not mutate ownership state", async () => {
 		const legacy = join(tmpHome, ...rootParts, "clawdi");
 		cpSync(join(import.meta.dir, "../fixtures/legacy-local-clawdi"), legacy, { recursive: true });
 		const ledger = managedSkillReservationLedgerPath();
@@ -84,8 +84,8 @@ describe.each([
 		await adapter.skills.listKeys();
 		expect(existsSync(ledger)).toBe(false);
 		const skills = await adapter.skills.collect();
-		expect(existsSync(ledger)).toBe(true);
-		expect(skills.some((skill) => skill.skillKey === "clawdi")).toBe(false);
+		expect(existsSync(ledger)).toBe(false);
+		expect(skills.some((skill) => skill.skillKey === "clawdi")).toBe(true);
 		expect((await adapter.skills.listKeys()).sort()).toEqual(
 			skills.map((skill) => skill.skillKey).sort(),
 		);

@@ -34,15 +34,12 @@ import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
 	installReservedManagedSkill,
 	managedSkillReservationState,
-	migrateLegacyLocalSetupSkill,
 	replaceManagedSkillDirectoryAtomic,
 } from "../runtime/managed-skill-reservation";
 import {
 	BackgroundServiceUnsupportedError,
 	install as installDaemonService,
-	listInstalledAgents,
 	restart as restartDaemonService,
-	uninstall as uninstallDaemonService,
 } from "../serve/installer";
 
 export interface LocalAgentSetupOpts {
@@ -327,8 +324,6 @@ function installDaemonForAllRegisteredAgents(restartExisting: boolean): DaemonSe
 		const verb = result.replaced ? "updated" : "installed";
 		progressLine(chalk.green(`✓ Singleton daemon ${verb}`));
 		progressLine(chalk.gray(`  ${result.instructions}`));
-		const failed = cleanupLegacyDaemonUnits();
-		if (failed > 0) process.exitCode = 1;
 		return { installed: true };
 	} catch (e) {
 		if (e instanceof BackgroundServiceUnsupportedError) {
@@ -344,26 +339,6 @@ function installDaemonForAllRegisteredAgents(restartExisting: boolean): DaemonSe
 		process.exitCode = 1;
 		return { installed: false, reason: "failed" };
 	}
-}
-
-function cleanupLegacyDaemonUnits(): number {
-	let failed = 0;
-	for (const agentType of listInstalledAgents()) {
-		try {
-			const result = uninstallDaemonService({ agent: agentType });
-			if (result.removed) {
-				progressLine(chalk.green(`✓ Removed legacy per-agent daemon unit for ${agentType}`));
-			}
-		} catch (e) {
-			console.error(
-				chalk.yellow(
-					`⚠ Could not remove legacy per-agent daemon unit for ${agentType}: ${errMessage(e)}`,
-				),
-			);
-			failed += 1;
-		}
-	}
-	return failed;
 }
 
 async function shouldInstallDaemons(opts: SetupOpts): Promise<boolean> {
@@ -442,12 +417,6 @@ async function installBuiltinSkill(agentType: AgentType): Promise<boolean> {
 
 	try {
 		const sourceDigest = managedSkillDirectoryDigest(sourceDir);
-		migrateLegacyLocalSetupSkill({
-			targetDir,
-			id: "clawdi",
-			version: 1,
-			digest: managedSkillDirectoryDigest,
-		});
 		const reservationState = managedSkillReservationState(targetDir);
 		if (
 			existsSync(targetDir) &&

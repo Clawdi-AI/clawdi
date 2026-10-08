@@ -120,7 +120,6 @@ import {
 import { loadCommittedRuntimeManifest, type RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
 import { gcOpenClawFileSecrets, openClawCredentialGeneration } from "./openclaw-file-secrets";
-import { removeLegacyManagedOpenClawProviderPlugin } from "./openclaw-legacy-provider-plugin";
 import {
 	beginOpenClawConfigTransaction,
 	commitOpenClawConfigTransaction,
@@ -607,13 +606,6 @@ function prepareRuntimeApplyDependencies(
 		}
 		if (state.installErrors.length > 0) throw new Error(state.installErrors.join("; "));
 		const managedOpenClawObservation = state.observations.get("openclaw");
-		if (managedOpenClawObservation?.commandPath) {
-			removeLegacyManagedOpenClawProviderPlugin({
-				home: openClawContext.home,
-				stateRoot: openClawContext.stateRoot,
-				commandPath: managedOpenClawObservation.commandPath,
-			});
-		}
 		if (managedOpenClawObservation && openClawContext.managedApiKeyProjection) {
 			openClawContext.agentDirs.managed = discoverOpenClawManagedProviderAuthAgentDirs(
 				openClawContext,

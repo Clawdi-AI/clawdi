@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-	NATIVE_PUBLISH_TARGET_CATALOG,
+	NATIVE_BUILD_TARGET_CATALOG,
 	NATIVE_RELEASE_MANIFEST_SCHEMA,
 	NATIVE_RELEASE_MANIFEST_V2_SCHEMA,
 	NATIVE_TARGETS,
@@ -9,7 +9,7 @@ import {
 	parseNativeReleaseManifestV2,
 } from "./native-release-manifest";
 
-const rows = NATIVE_PUBLISH_TARGET_CATALOG.map(
+const rows = NATIVE_BUILD_TARGET_CATALOG.map(
 	({ target }, index) =>
 		`artifact\t${target}\t${nativeAssetName(target)}\t${String(index).repeat(64)}`,
 );
@@ -36,7 +36,7 @@ describe("native release manifest compatibility", () => {
 		expect(parsed.schemaVersion).toBe(NATIVE_RELEASE_MANIFEST_V2_SCHEMA);
 		expect(parsed.version).toBe("1.2.3");
 		expect(parsed.artifacts.map(({ target }) => target)).toEqual(
-			NATIVE_PUBLISH_TARGET_CATALOG.map(({ target }) => target),
+			NATIVE_BUILD_TARGET_CATALOG.map(({ target }) => target),
 		);
 		for (const { sha256 } of parsed.artifacts) expect(sha256).toMatch(/^[0-9a-f]{64}$/);
 		expect(

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, cpSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
+	NATIVE_BUILD_TARGET_CATALOG,
 	NATIVE_TARGETS,
 	type NativeTarget,
 	nativeAssetName,
@@ -182,7 +183,7 @@ while [ "$#" -gt 0 ]; do
 done
 case "$url" in
   */-/package/clawdi/dist-tags) printf '{"latest":"%s","beta":"%s"}\\n' "$FAKE_VERSION" "$FAKE_VERSION" > "$output" ;;
-  */clawdi-cli-manifest.txt) cp "$FAKE_RELEASE_DIR/clawdi-cli-manifest.txt" "$output" ;;
+  */clawdi-cli-manifest-v2.txt) cp "$FAKE_RELEASE_DIR/clawdi-cli-manifest-v2.txt" "$output" ;;
   */clawdi-cli-*.tar.gz)
     if [ -n "$FAKE_ARTIFACT_DELAY" ]; then sleep "$FAKE_ARTIFACT_DELAY"; fi
     cp "$FAKE_RELEASE_DIR/\${url##*/}" "$output"
@@ -225,11 +226,11 @@ function writeManifest(directory: string, version: string, selected: NativeTarge
 		.update(readFileSync(join(directory, selectedAsset)))
 		.digest("hex");
 	writeFileSync(
-		join(directory, "clawdi-cli-manifest.txt"),
+		join(directory, "clawdi-cli-manifest-v2.txt"),
 		[
-			"clawdi.nativeRelease.v1",
+			"clawdi.nativeRelease.v2",
 			`version\t${version}`,
-			...NATIVE_TARGETS.map((target, index) => {
+			...NATIVE_BUILD_TARGET_CATALOG.map(({ target }, index) => {
 				const sha = target === selected ? selectedSha : String(index).repeat(64);
 				return `artifact\t${target}\t${nativeAssetName(target)}\t${sha}`;
 			}),

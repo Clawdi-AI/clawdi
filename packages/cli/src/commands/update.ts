@@ -37,7 +37,7 @@ import { getCliVersion } from "../lib/version";
 import { evaluateHostPolicyForCommand } from "../runtime/host-policy";
 import { detectRuntimeMode } from "../runtime/paths";
 import type { RestartCoordination } from "../serve/auto-restart";
-import { isSingletonDaemonInstalled, listInstalledAgents, readHealth } from "../serve/installer";
+import { readHealth } from "../serve/installer";
 import { log } from "../serve/log";
 import { getServeStateDir } from "../serve/paths";
 
@@ -683,12 +683,7 @@ function isLongLivedDaemonInvocation(args = process.argv.slice(2)): boolean {
 	const commandIndex = args.findIndex((arg) => arg === "daemon");
 	if (commandIndex < 0) return false;
 	const rest = args.slice(commandIndex + 1);
-	for (let i = 0; i < rest.length; i++) {
-		const arg = rest[i];
-		if (arg === "--agent" || arg === "--environment-id") {
-			i += 1;
-			continue;
-		}
+	for (const arg of rest) {
 		if (arg.startsWith("-")) continue;
 		return arg === "run";
 	}
@@ -712,9 +707,7 @@ function isMachineReadableInvocation(args = process.argv.slice(2)): boolean {
 
 function outdatedDaemonAgents(current: string): string[] {
 	try {
-		const targets = isSingletonDaemonInstalled()
-			? listRegisteredAgentTypes()
-			: listInstalledAgents();
+		const targets = listRegisteredAgentTypes();
 		return targets.filter((agent) => {
 			const health = readHealth(getServeStateDir(agent));
 			if (!health.exists) return false;

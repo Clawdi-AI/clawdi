@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { NATIVE_PUBLISH_TARGET_CATALOG } from "../src/lib/native-release-manifest.ts";
+import { NATIVE_BUILD_TARGET_CATALOG } from "../src/lib/native-release-manifest.ts";
 import { writeNativeReleaseManifests } from "./native-publication.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -15,7 +15,7 @@ const version = JSON.parse(readFileSync(resolve(cliRoot, "package.json"), "utf8"
 rmSync(nativeRoot, { recursive: true, force: true });
 rmSync(releaseRoot, { recursive: true, force: true });
 
-for (const { target } of NATIVE_PUBLISH_TARGET_CATALOG) {
+for (const { target } of NATIVE_BUILD_TARGET_CATALOG) {
 	run(resolve(scriptDir, "build-native.mjs"), [], {
 		CLAWDI_NATIVE_TARGET: target,
 	});

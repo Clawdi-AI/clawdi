@@ -759,49 +759,8 @@ export interface paths {
         /**
          * Create Desktop Session Ticket
          * @deprecated
-         * @description Retain upgrade guidance for released Desktop clients for one release cycle.
          */
         post: operations["create_desktop_session_ticket_v1_cli_auth_oauth_desktop_ticket_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/cli/auth/device": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Start Device Flow
-         * @deprecated
-         */
-        post: operations["start_device_flow_v1_cli_auth_device_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/cli/auth/poll": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Poll Device Flow
-         * @deprecated
-         */
-        post: operations["poll_device_flow_v1_cli_auth_poll_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6123,18 +6082,13 @@ export interface components {
         };
         /**
          * DesktopSessionTicketResponse
-         * @description Legacy success shape for released clients; the retired route always returns 410.
+         * @description Legacy success shape retained while the Desktop 410 stub remains.
          */
         DesktopSessionTicketResponse: {
             /** Ticket */
             ticket: string;
             /** Expires In */
             expires_in: number;
-        };
-        /** DeviceFlowRetiredResponse */
-        DeviceFlowRetiredResponse: {
-            /** Detail */
-            detail: string;
         };
         /** EmbedBackfillResponse */
         EmbedBackfillResponse: {
@@ -7421,8 +7375,6 @@ export interface components {
             audience: string;
             /** Authorized Parties */
             authorized_parties?: string[];
-            /** Redirect Uri */
-            redirect_uri: string;
         };
         /**
          * OAuthRevokeRequest
@@ -12242,67 +12194,7 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
-                };
-            };
-        };
-    };
-    start_device_flow_v1_cli_auth_device_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
-                };
-            };
-            /** @description This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`. */
-            410: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
-                };
-            };
-        };
-    };
-    poll_device_flow_v1_cli_auth_poll_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
-                };
-            };
-            /** @description This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`. */
-            410: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeviceFlowRetiredResponse"];
-                };
+                content?: never;
             };
         };
     };

@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-SCHEMA='clawdi.nativeRelease.v1'
-MANIFEST_NAME='clawdi-cli-manifest.txt'
+SCHEMA='clawdi.nativeRelease.v2'
+MANIFEST_NAME='clawdi-cli-manifest-v2.txt'
 MAX_MANIFEST_BYTES=65536
 MAX_ARCHIVE_BYTES=268435456
 # POSIX ulimit -f values are counts of 512-byte blocks.
@@ -110,13 +110,13 @@ artifact_record=$(awk -F '\t' -v schema="$SCHEMA" -v version="$version" -v selec
   NR==1 { if (NF!=1 || $1!=schema) exit 1; next }
   NR==2 { if (NF!=2 || $1!="version" || $2!=version) exit 1; next }
   {
-    if (NF!=4 || $1!="artifact" || !supported($2) || seen[$2]++) exit 1
-    count++
+    if ($1!="artifact" || !supported($2)) next
+    if (NF!=4 || seen[$2]++) exit 1
     if ($3 != "clawdi-cli-" $2 ".tar.gz") exit 1
     if (length($4)!=64 || $4 ~ /[^0-9a-f]/) exit 1
     if ($2==selected) found=$3 "\t" $4
   }
-  END { if (NR!=8 || count!=6 || found=="") exit 1; print found }
+  END { if (NR<2 || found=="") exit 1; print found }
 ' "$manifest") || fail 'invalid or incomplete exact native release manifest'
 
 artifact=$(printf '%s\n' "$artifact_record" | awk -F '\t' '{print $1}')

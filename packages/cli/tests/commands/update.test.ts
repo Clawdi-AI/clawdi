@@ -36,7 +36,7 @@ import {
 	type RestartCoordination,
 	startAutoRestart,
 } from "../../src/serve/auto-restart";
-import { jsonResponse, mockFetch } from "./helpers";
+import { jsonResponse, mockFetch, seedAuthAndEnv } from "./helpers";
 
 let tmpHome: string;
 let origHome: string | undefined;
@@ -1726,25 +1726,26 @@ describe("maybeAutoUpdate", () => {
 		expect(captured).toContain("(was v0.0.1)");
 	});
 
-	it("nudges daemon restart after CLI update when an installed daemon reports an older version", async () => {
+	it("nudges daemon restart after CLI update when a registered Agent reports an older version", async () => {
 		writeFileSync(join(tmpHome, ".clawdi", "last-version"), "0.0.1");
-		writeInstalledDaemon("codex");
-		writeDaemonHealth("codex", "0.0.1");
+		seedAuthAndEnv(tmpHome, "codex");
+		const stateDir = join(tmpHome, ".clawdi", "serve", "codex");
+		mkdirSync(stateDir, { recursive: true });
+		writeFileSync(
+			join(stateDir, "health"),
+			`${JSON.stringify({ timestamp: new Date().toISOString(), version: "0.0.1" })}\n`,
+		);
 
-		const orig = console.log;
-		let captured = "";
-		console.log = (...args: unknown[]) => {
-			captured += `${args.map(String).join(" ")}\n`;
-		};
 		const { restore } = mockFetch([]);
 		try {
-			await withStdoutTty(() => maybeAutoUpdate({ detectOwnership: () => npmOwnership }));
+			const { stdout } = await captureOutput(() =>
+				withStdoutTty(() => maybeAutoUpdate({ detectOwnership: () => npmOwnership })),
+			);
+			expect(stdout).toContain("Updated clawdi to");
+			expect(stdout).toContain("Restart the daemon to pick it up: clawdi daemon restart");
 		} finally {
-			console.log = orig;
 			restore();
 		}
-		expect(captured).toContain("Updated clawdi to");
-		expect(captured).toContain("Restart the daemon to pick it up: clawdi daemon restart");
 	});
 
 	it("keeps post-update notice out of non-TTY stdout", async () => {
@@ -1910,15 +1911,6 @@ describe("maybeAutoUpdate", () => {
 	});
 });
 
-function writeInstalledDaemon(agent: string): void {
-	const path =
-		process.platform === "darwin"
-			? join(tmpHome, "Library", "LaunchAgents", `ai.clawdi.serve.${agent}.plist`)
-			: join(tmpHome, ".config", "systemd", "user", `clawdi-serve-${agent}.service`);
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, "test daemon unit\n");
-}
-
 async function runNativeForegroundFailure(fetcher: typeof fetch, timeoutMs?: number, yes = false) {
 	const prefix = join(tmpHome, "prefix");
 	const ownership = {
@@ -1979,15 +1971,6 @@ function testFetcher(
 
 function releaseTags(version: string): { latest: string } {
 	return { latest: version };
-}
-
-function writeDaemonHealth(agent: string, version: string): void {
-	const dir = join(tmpHome, ".clawdi", "serve", agent);
-	mkdirSync(dir, { recursive: true });
-	writeFileSync(
-		join(dir, "health"),
-		`${JSON.stringify({ timestamp: new Date().toISOString(), version })}\n`,
-	);
 }
 
 async function waitForPath(path: string): Promise<void> {

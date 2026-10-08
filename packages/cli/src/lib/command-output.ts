@@ -37,11 +37,6 @@ export function message(json: boolean | undefined, messageText = ""): void {
 	else console.log(messageText);
 }
 
-/** @deprecated Prefer `message` at new call sites. */
-export function commandMessage(json: boolean | undefined, messageText = ""): void {
-	message(json, messageText);
-}
-
 /** Emit a result only when the command selected JSON output. */
 export function commandResult(
 	json: boolean | undefined,

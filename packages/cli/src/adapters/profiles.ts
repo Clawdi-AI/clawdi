@@ -8,7 +8,7 @@ import { execRuntimeUserCommand } from "../runtime/runtime-user-command";
 import { log } from "../serve/log";
 import type { AgentAdapter, SessionModule } from "./base";
 import { HermesAdapter } from "./hermes";
-import { createOpenClawProfileReaders, OpenClawAdapter } from "./openclaw";
+import { createOpenClawProfileReaders } from "./openclaw";
 import { runOpenClawCommand } from "./openclaw-command";
 import { openClawAgentId, parseOpenClawAgentWorkspaces } from "./openclaw-workspace";
 import { getHermesHome, getOpenClawHome } from "./paths";
@@ -218,6 +218,20 @@ export async function discoverAgentProfiles(
 				})),
 			};
 		}
+		if (adapter.sessions) {
+			return {
+				complete: true,
+				profiles: [
+					{
+						profileKey: "",
+						upstreamKey: "default",
+						isDefault: true,
+						previousNames: [],
+						reader: adapter.sessions,
+					},
+				],
+			};
+		}
 	} catch (error) {
 		signal?.throwIfAborted();
 		log.warn("profiles.discovery_incomplete", {
@@ -225,32 +239,7 @@ export async function discoverAgentProfiles(
 			reason: error instanceof ProfileDiscoveryError ? error.reason : "unknown",
 		});
 	}
-	return {
-		...legacyProfileDiscovery(adapter),
-		complete: adapter.agentType !== "hermes" && adapter.agentType !== "openclaw",
-	};
-}
-
-export function legacyProfileDiscovery(adapter: AgentAdapter): ProfileDiscovery {
-	const reader =
-		adapter.agentType === "openclaw" ? new OpenClawAdapter().sessions : adapter.sessions;
-	return {
-		complete: true,
-		profiles: [
-			{
-				profileKey: "",
-				upstreamKey:
-					adapter.agentType === "hermes"
-						? "default"
-						: adapter.agentType === "openclaw"
-							? openClawAgentId()
-							: "default",
-				isDefault: true,
-				previousNames: [],
-				reader,
-			},
-		],
-	};
+	return { complete: false, profiles: [] };
 }
 
 /** Default keys are deliberately byte-identical to pre-profile receipts. */
