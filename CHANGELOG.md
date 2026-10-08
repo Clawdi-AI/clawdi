@@ -54,6 +54,8 @@ only renames unmerged PR series and never-emitted definitions. See
 - **Session sync:** Codex, Claude Code, and Pi skip confirmed, unchanged JSONL
   history during background scans, reducing repeated file reads while preserving
   updates, deletions, archived Codex sessions, and Claude resume-chain deduplication.
+- **Windows session sync:** Release SQLite statements before closing session
+  indexes so temporary database cleanup no longer fails with a busy file handle.
 
 ### CLI 0.15.17
 
