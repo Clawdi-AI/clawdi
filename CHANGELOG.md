@@ -56,6 +56,11 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.15.17
+
+- **Hermes dashboard:** fresh and warm installs use the web UI built by the
+  official installer, so claiming a warm Hermes no longer rebuilds its web UI.
+
 ### CLI 0.15.16
 
 - **Hosted Hermes:** native environment conflict warnings are logged only when

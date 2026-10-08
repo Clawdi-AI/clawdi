@@ -92,6 +92,11 @@ RUN mkdir -p /home/clawdi/.hermes/hermes-agent \
 			--project /home/clawdi/.hermes/hermes-agent \
 			--python /usr/bin/python3 \
 			--frozen --extra messaging --no-dev \
+	&& runuser -u clawdi -- env \
+		HOME=/home/clawdi \
+		HERMES_HOME=/home/clawdi/.hermes \
+		/home/clawdi/.hermes/hermes-agent/venv/bin/python \
+			-c 'from pathlib import Path; from hermes_cli.main import _build_web_ui; raise SystemExit(0 if _build_web_ui(Path("/home/clawdi/.hermes/hermes-agent/web"), fatal=True) else 1)' \
 	&& printf '%s\n' \
 		'#!/usr/bin/env bash' \
 		'set -euo pipefail' \
