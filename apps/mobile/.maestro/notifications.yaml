@@ -3,15 +3,14 @@ name: Overview bell and notification inbox
 ---
 # Runs after the other flows: select the Overview tab root first (same tab
 # selector as tabs-fixture.yaml).
-- tapOn:
-    text: Overview
-    childOf:
-      id: ${MAESTRO_APP_ID}:id/navigation_bar_item_content_container
-      containsDescendants:
-        - text: Overview
+- runFlow:
+    file: select-tab.yaml
+    env:
+      TAB_LABEL: Overview
+      TAB_ID: overview
 - assertVisible:
     id: overview-screen
-# The Overview header bell is a Compose IconButton; Maestro matches its
+# The Overview header bell is a native toolbar action; Maestro matches its
 # accessibility description. The fixture has two unread account updates and
 # two received invitations, so the bell starts at four, like Web's badge.
 - extendedWaitUntil:
@@ -37,7 +36,7 @@ name: Overview bell and notification inbox
     element:
       id: invitation-1a710000-0002-4000-8000-000000000002
     timeout: 30000
-- back
+- runFlow: navigate-back.yaml
 # Opening the inbox marked every account update read (`read-all` up to the
 # newest item); only the invitations still count.
 - extendedWaitUntil:

@@ -1,11 +1,7 @@
 appId: ${MAESTRO_APP_ID}
 name: Fixture tabs and details
 ---
-# react-native-screens 4.26.2 writes tab testIDs to View.tag (Espresso),
-# not UIAutomator resource IDs. Keep Trigger IDs and scope short tab labels
-# to the native Material tab container containing that label; no tab indices.
-# https://github.com/software-mansion/react-native-screens/blob/4.26.2/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/host/TabsHostA11yCoordinator.kt
-# The label also makes the parent unique: childOf resolves one matching parent.
+# select-tab.yaml uses iOS tab testIDs and Android's scoped Material tab labels.
 
 # Home: open a loaded fixture Agent from the overview card.
 # Wait for loaded fixture data and visual idle before navigation. Cold Android
@@ -28,23 +24,21 @@ name: Fixture tabs and details
       id: agent-detail-c1a0de00-0001-4c00-8000-000000000001
     timeout: 30000
 - takeScreenshot: home-detail
-- back
-- tapOn:
-    text: Overview
-    childOf:
-      id: ${MAESTRO_APP_ID}:id/navigation_bar_item_content_container
-      containsDescendants:
-        - text: Overview
+- runFlow: navigate-back.yaml
+- runFlow:
+    file: select-tab.yaml
+    env:
+      TAB_LABEL: Overview
+      TAB_ID: overview
 - assertVisible:
     id: overview-screen
 
 # Agents: inventory and a different loaded fixture Agent detail.
-- tapOn:
-    text: Agents
-    childOf:
-      id: ${MAESTRO_APP_ID}:id/navigation_bar_item_content_container
-      containsDescendants:
-        - text: Agents
+- runFlow:
+    file: select-tab.yaml
+    env:
+      TAB_LABEL: Agents
+      TAB_ID: agents
 - extendedWaitUntil:
     visible:
       id: agent-card-c0de0000-0002-4c00-8000-000000000002
@@ -55,7 +49,7 @@ name: Fixture tabs and details
 - assertVisible:
     id: agent-detail-c0de0000-0002-4c00-8000-000000000002
 - takeScreenshot: agent-detail
-- back
+- runFlow: navigate-back.yaml
 
 # Agent hub: hosted overview rows reach Web's Tools and Settings sections.
 # Files offers the one-time browser handoff; CI cancels its native confirmation.
@@ -99,16 +93,15 @@ name: Fixture tabs and details
     text: (?s)https://files\.example\.test.*
 - assertVisible:
     text: Open Files
-- back
-- back
+- runFlow: navigate-back.yaml
+- runFlow: navigate-back.yaml
 
 # Sessions: loaded fixture inventory and an actual rendered transcript message.
-- tapOn:
-    text: Sessions
-    childOf:
-      id: ${MAESTRO_APP_ID}:id/navigation_bar_item_content_container
-      containsDescendants:
-        - text: Sessions
+- runFlow:
+    file: select-tab.yaml
+    env:
+      TAB_LABEL: Sessions
+      TAB_ID: sessions
 - extendedWaitUntil:
     visible:
       id: session-card-5e550000-0001-4000-8000-000000000001
@@ -127,15 +120,14 @@ name: Fixture tabs and details
 - assertVisible:
     id: session-message-0
 - takeScreenshot: session-detail
-- back
+- runFlow: navigate-back.yaml
 
 # Library: projects list and the loaded fixture project bundle.
-- tapOn:
-    text: Library
-    childOf:
-      id: ${MAESTRO_APP_ID}:id/navigation_bar_item_content_container
-      containsDescendants:
-        - text: Library
+- runFlow:
+    file: select-tab.yaml
+    env:
+      TAB_LABEL: Library
+      TAB_ID: library
 - assertVisible:
     id: library-screen
 - assertVisible:

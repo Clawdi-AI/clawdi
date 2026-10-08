@@ -14,6 +14,10 @@
 			"env": { "SENTRY_DISABLE_AUTO_UPLOAD": "true" },
 			"android": { "withoutCredentials": true }
 		},
+		"e2e-ios": {
+			"extends": "e2e",
+			"ios": { "simulator": true }
+		},
 		"preview": {
 			"distribution": "internal",
 			"android": { "buildType": "apk" },

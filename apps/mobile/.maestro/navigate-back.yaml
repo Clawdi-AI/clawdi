@@ -1,0 +1,21 @@
+appId: ${MAESTRO_APP_ID}
+name: Navigate back
+---
+# Maestro's system back command supports Android and Web only. iOS native
+# stacks enable the edge-back gesture; the button label depends on the previous
+# screen's title, so use the documented swipe command to pop the same stack.
+# https://docs.maestro.dev/reference/commands-available/back
+# https://docs.maestro.dev/reference/commands-available/swipe
+# https://reactnavigation.org/docs/native-stack-navigator/#gestureenabled
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - swipe:
+          start: 0%, 50%
+          end: 80%, 50%
