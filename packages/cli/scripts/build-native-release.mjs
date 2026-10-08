@@ -4,7 +4,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NATIVE_BUILD_TARGET_CATALOG } from "../src/lib/native-release-manifest.ts";
-import { writeNativeReleaseManifests } from "./native-publication.mjs";
+import { writeNativeReleaseManifest } from "./native-publication.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const cliRoot = resolve(scriptDir, "..");
@@ -24,7 +24,7 @@ for (const { target } of NATIVE_BUILD_TARGET_CATALOG) {
 	});
 }
 
-writeNativeReleaseManifests(releaseRoot, version);
+writeNativeReleaseManifest(releaseRoot, version);
 console.log(`built native release matrix for ${version}`);
 
 function run(command, args, extraEnv) {

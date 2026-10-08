@@ -1,7 +1,5 @@
 import { isValidSemver } from "./semver";
 
-export const NATIVE_RELEASE_MANIFEST_SCHEMA = "clawdi.nativeRelease.v1";
-export const NATIVE_RELEASE_MANIFEST_NAME = "clawdi-cli-manifest.txt";
 export const NATIVE_RELEASE_MANIFEST_V2_SCHEMA = "clawdi.nativeRelease.v2";
 export const NATIVE_RELEASE_MANIFEST_V2_NAME = "clawdi-cli-manifest-v2.txt";
 export const MAX_NATIVE_MANIFEST_BYTES = 64 * 1024;
@@ -19,7 +17,7 @@ export const NATIVE_TARGET_CATALOG = [
 export type NativeTarget = (typeof NATIVE_TARGET_CATALOG)[number]["target"];
 export const NATIVE_TARGETS = NATIVE_TARGET_CATALOG.map((entry) => entry.target);
 
-// The standalone v1 archive/manifest/update protocol retains its Unix catalog.
+// Native releases include Unix and Windows targets.
 export const NATIVE_BUILD_TARGET_CATALOG = [
 	...NATIVE_TARGET_CATALOG,
 	{ target: "win32-x64", bunTarget: "bun-windows-x64" },
@@ -38,18 +36,6 @@ export function nativeBuildTargetForPlatform(
 	return platform === "win32" && (arch === "x64" || arch === "arm64")
 		? `win32-${arch}`
 		: nativeTargetForPlatform(platform, arch);
-}
-
-export interface NativeReleaseArtifact {
-	target: NativeTarget;
-	asset: string;
-	sha256: string;
-}
-
-export interface NativeReleaseManifest {
-	schemaVersion: typeof NATIVE_RELEASE_MANIFEST_SCHEMA;
-	version: string;
-	artifacts: NativeReleaseArtifact[];
 }
 
 export interface NativeReleaseArtifactV2 {
@@ -82,54 +68,6 @@ export function nativeTargetForPlatform(
 	return os && cpu
 		? (`${os}-${cpu}${os === "linux" && libc === "musl" ? "-musl" : ""}` as NativeTarget)
 		: null;
-}
-
-export function parseNativeReleaseManifest(content: string): NativeReleaseManifest {
-	const lines = content.split("\n").filter((line) => line.length > 0);
-	if (lines[0] !== NATIVE_RELEASE_MANIFEST_SCHEMA) {
-		throw new Error("unsupported native release manifest schema");
-	}
-	const versionFields = lines[1]?.split("\t") ?? [];
-	if (
-		versionFields.length !== 2 ||
-		versionFields[0] !== "version" ||
-		!isValidSemver(versionFields[1] ?? "")
-	) {
-		throw new Error("native release manifest has an invalid version");
-	}
-	const version = versionFields[1];
-	if (!version) throw new Error("native release manifest has an invalid version");
-	const artifacts = lines.slice(2).map((line): NativeReleaseArtifact => {
-		const fields = line.split("\t");
-		const [recordType, target, asset, sha256] = fields;
-		if (
-			fields.length !== 4 ||
-			recordType !== "artifact" ||
-			!target ||
-			!isNativeTarget(target) ||
-			asset === undefined ||
-			sha256 === undefined ||
-			!/^[0-9a-f]{64}$/.test(sha256)
-		) {
-			throw new Error("native release manifest has an invalid artifact entry");
-		}
-		if (asset !== nativeAssetName(target)) {
-			throw new Error("native release manifest target and asset do not match");
-		}
-		return { target, asset, sha256 };
-	});
-	if (artifacts.length !== NATIVE_TARGETS.length) {
-		throw new Error("native release manifest does not contain the supported target matrix");
-	}
-	if (new Set(artifacts.map((artifact) => artifact.target)).size !== artifacts.length) {
-		throw new Error("native release manifest contains duplicate targets");
-	}
-	for (const target of NATIVE_TARGETS) {
-		if (!artifacts.some((artifact) => artifact.target === target)) {
-			throw new Error(`native release manifest is missing ${target}`);
-		}
-	}
-	return { schemaVersion: NATIVE_RELEASE_MANIFEST_SCHEMA, version, artifacts };
 }
 
 export function parseNativeReleaseManifestV2(content: string): NativeReleaseManifestV2 {

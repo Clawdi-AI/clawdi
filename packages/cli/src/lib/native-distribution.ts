@@ -1,14 +1,12 @@
-import { existsSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, resolve } from "node:path";
 import {
 	isNativeBuildTarget,
 	MAX_NATIVE_MANIFEST_BYTES,
 	NATIVE_BUILD_TARGET_CATALOG,
-	NATIVE_RELEASE_MANIFEST_NAME,
 	NATIVE_RELEASE_MANIFEST_V2_NAME,
 	type NativeBuildTarget,
 	nativeExecutableName,
-	parseNativeReleaseManifest,
 	parseNativeReleaseManifestV2,
 } from "./native-release-manifest";
 import { isValidSemver } from "./semver";
@@ -79,13 +77,10 @@ export function detectNativeInstall(
 		return null;
 	}
 	try {
-		const manifestPath = nativeInstallManifestPath(versionDir, identity.target);
+		const manifestPath = nativeInstallManifestPath(versionDir);
 		const manifestFile = lstatSync(manifestPath);
 		if (!manifestFile.isFile() || manifestFile.size > MAX_NATIVE_MANIFEST_BYTES) return null;
-		const manifest = parseNativeInstallManifest(
-			readFileSync(manifestPath, "utf8"),
-			identity.target,
-		);
+		const manifest = parseNativeReleaseManifestV2(readFileSync(manifestPath, "utf8"));
 		if (
 			manifest.version !== identity.version ||
 			!manifest.artifacts.some((artifact) => artifact.target === identity.target)
@@ -127,7 +122,7 @@ export function writeNativeInstallIdentity(
 	identity: NativeCompiledIdentity,
 	manifestContent: string,
 ): void {
-	const manifest = parseNativeInstallManifest(manifestContent, identity.target);
+	const manifest = parseNativeReleaseManifestV2(manifestContent);
 	const artifact = manifest.artifacts.find((entry) => entry.target === identity.target);
 	if (manifest.version !== identity.version || !artifact) {
 		throw new Error("native release manifest does not match executable identity");
@@ -149,11 +144,11 @@ export function writeNativeInstallIdentity(
 export function validateNativeInstallIdentity(
 	directory: string,
 	identity: NativeCompiledIdentity,
-	manifestContent: string | ReturnType<typeof parseNativeInstallManifest>,
+	manifestContent: string | ReturnType<typeof parseNativeReleaseManifestV2>,
 ): void {
 	const manifest =
 		typeof manifestContent === "string"
-			? parseNativeInstallManifest(manifestContent, identity.target)
+			? parseNativeReleaseManifestV2(manifestContent)
 			: manifestContent;
 	const artifact = manifest.artifacts.find((entry) => entry.target === identity.target);
 	if (manifest.version !== identity.version || !artifact) {
@@ -212,16 +207,6 @@ export function nativeInstallManifestName(): string {
 	return NATIVE_RELEASE_MANIFEST_V2_NAME;
 }
 
-export function nativeInstallManifestPath(directory: string, target: NativeBuildTarget): string {
-	const path = join(directory, nativeInstallManifestName());
-	// Old Unix installers and existing installations still carry frozen v1.
-	return !target.startsWith("win32-") && !existsSync(path)
-		? join(directory, NATIVE_RELEASE_MANIFEST_NAME)
-		: path;
-}
-
-export function parseNativeInstallManifest(content: string, target: NativeBuildTarget) {
-	return !target.startsWith("win32-") && content.startsWith("clawdi.nativeRelease.v1\n")
-		? parseNativeReleaseManifest(content)
-		: parseNativeReleaseManifestV2(content);
+export function nativeInstallManifestPath(directory: string): string {
+	return join(directory, nativeInstallManifestName());
 }

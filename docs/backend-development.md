@@ -696,11 +696,33 @@ existing admin key:
 curl -sS -X PUT http://localhost:8000/v1/admin/settings/clerk_cli_oauth \
   -H "X-Admin-Key: ${ADMIN_API_KEY}" \
   -H "Content-Type: application/json" \
-  -d '{"value":{"enabled":true,"schema_version":1,"issuer":"https://clerk.example","client_id":"client_cli","application_id":"oauthapp_cli","redirect_uri":"http://127.0.0.1:18473/oauth/callback","audience":"clawdi-cloud-api","authorized_parties":["https://accounts.example"]}}'
+  -d '{"value":{"enabled":true,"schema_version":1,"issuer":"https://clerk.example","client_id":"client_cli","application_id":"oauthapp_cli","audience":"clawdi-cloud-api","authorized_parties":["https://accounts.example"]}}'
 ```
 
 Done: the command returns HTTP 200 JSON containing
 `"key":"clerk_cli_oauth"` and the canonicalized whole value.
+
+Retire the stored CLI OAuth `redirect_uri` in two releases, using the normal
+migration-first deployment order for each:
+
+1. Deploy the model without the field, retaining a temporary Pydantic
+   [`model_validator(mode="before")`](https://docs.pydantic.dev/latest/concepts/validators/#model-validators)
+   that strips the key before `extra="forbid"`. This release includes no data
+   migration. Reads leave stored JSON untouched, so processes from the previous
+   release can still read configured rows during the rolling deployment.
+2. After the tolerant model is deployed, release the follow-up Alembic data
+   cleanup. The migration removes the key while serving processes still tolerate
+   both shapes; the follow-up also removes the temporary validator. This works
+   with automatic migration-first deployment. The dated 2026-10-08 TODO tracks
+   that validator removal.
+
+The previous model's empty field default does not make configured rows without
+this key valid: its after-validator requires a nonempty callback. The separate
+cleanup release avoids that deployment overlap. All other unknown keys remain
+invalid, and admin writes serialize only the current fields.
+
+Done: `scripts/test.sh backend tests/test_cli_oauth_auth.py tests/test_app_settings.py`
+passes against the isolated PostgreSQL runner.
 
 The value is strictly validated and canonicalized before the setting and its
 control-plane audit event commit together. JWT signatures are verified against

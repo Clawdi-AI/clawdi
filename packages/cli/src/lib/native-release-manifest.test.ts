@@ -1,11 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
 	NATIVE_BUILD_TARGET_CATALOG,
-	NATIVE_RELEASE_MANIFEST_SCHEMA,
 	NATIVE_RELEASE_MANIFEST_V2_SCHEMA,
-	NATIVE_TARGETS,
 	nativeAssetName,
-	parseNativeReleaseManifest,
 	parseNativeReleaseManifestV2,
 } from "./native-release-manifest";
 
@@ -16,20 +13,7 @@ const rows = NATIVE_BUILD_TARGET_CATALOG.map(
 const manifest = (schema: string, artifacts: string[]) =>
 	[schema, "version\t1.2.3", ...artifacts, ""].join("\n");
 
-describe("native release manifest compatibility", () => {
-	test("retains the six-target v1 contract and rejects v2", () => {
-		const v1 = manifest(NATIVE_RELEASE_MANIFEST_SCHEMA, rows.slice(0, 6));
-		expect(parseNativeReleaseManifest(v1).artifacts.map(({ target }) => target)).toEqual(
-			NATIVE_TARGETS,
-		);
-		expect(() =>
-			parseNativeReleaseManifest(manifest(NATIVE_RELEASE_MANIFEST_V2_SCHEMA, rows)),
-		).toThrow("unsupported native release manifest schema");
-		expect(() =>
-			parseNativeReleaseManifest(manifest(NATIVE_RELEASE_MANIFEST_SCHEMA, rows)),
-		).toThrow("invalid artifact entry");
-	});
-
+describe("native release manifest v2", () => {
 	test("round-trips all eight v2 targets with sha256 checksums", () => {
 		const content = manifest(NATIVE_RELEASE_MANIFEST_V2_SCHEMA, rows);
 		const parsed = parseNativeReleaseManifestV2(content);
@@ -77,7 +61,7 @@ describe("native release manifest compatibility", () => {
 	test("enforces v2 schema, semver, asset names and sha256", () => {
 		const valid = manifest(NATIVE_RELEASE_MANIFEST_V2_SCHEMA, rows);
 		for (const invalid of [
-			manifest(NATIVE_RELEASE_MANIFEST_SCHEMA, rows),
+			manifest("clawdi.nativeRelease.v1", rows),
 			valid.replace("version\t1.2.3", "version\tinvalid"),
 			valid.replace("clawdi-cli-win32-x64.tar.gz", "clawdi-cli-win32-x64.zip"),
 			valid.replace("0".repeat(64), "0".repeat(63)),

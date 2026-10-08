@@ -35,7 +35,6 @@ def _configured_value(**overrides: object) -> dict[str, object]:
         "issuer": "https://Clerk.Example.test:443/",
         "client_id": " client_cli ",
         "application_id": " oauthapp_cli ",
-        "redirect_uri": "http://127.0.0.1:18473/oauth/callback",
         "audience": " clawdi-cloud-api ",
         "authorized_parties": [
             "https://Accounts.Example.test:443/",
@@ -79,7 +78,6 @@ def test_clerk_cli_oauth_setting_is_strict_atomic_and_canonical() -> None:
         "issuer": "https://clerk.example.test",
         "client_id": "client_cli",
         "application_id": "oauthapp_cli",
-        "redirect_uri": "http://127.0.0.1:18473/oauth/callback",
         "audience": "clawdi-cloud-api",
         "authorized_parties": [
             "http://127.0.0.1:18473",
@@ -91,11 +89,7 @@ def test_clerk_cli_oauth_setting_is_strict_atomic_and_canonical() -> None:
         _configured_value(issuer=""),
         _configured_value(client_id=""),
         _configured_value(application_id=""),
-        _configured_value(redirect_uri=""),
         _configured_value(authorized_parties=["  "]),
-        _configured_value(redirect_uri="https://accounts.example.test/oauth/callback"),
-        _configured_value(redirect_uri="http://localhost:18473/callback"),
-        _configured_value(redirect_uri="http://localhost:80/oauth/callback"),
         _configured_value(schema_version=2),
         {**_configured_value(), "client_secret": "must-not-exist"},
     ):
@@ -107,6 +101,17 @@ def test_clerk_cli_oauth_setting_is_strict_atomic_and_canonical() -> None:
     )
     assert optional_claim_binding.audience == ""
     assert optional_claim_binding.authorized_parties == []
+
+
+@pytest.mark.parametrize("retired_value", ["http://127.0.0.1:18473/oauth/callback", "", None])
+def test_clerk_cli_oauth_setting_discards_only_retired_key(retired_value: object) -> None:
+    value = _configured_value(redirect_uri=retired_value)
+    validated = CLERK_CLI_OAUTH_SETTING_ADAPTER.validate_python(value)
+    assert "redirect_uri" not in validated.model_dump(mode="json")
+    assert value["redirect_uri"] == retired_value
+    assert "redirect_uri" not in validated.model_json_schema()["properties"]
+    with pytest.raises(ValidationError):
+        CLERK_CLI_OAUTH_SETTING_ADAPTER.validate_python({**value, "unexpected": True})
 
 
 @pytest.mark.asyncio
@@ -132,17 +137,22 @@ async def test_app_setting_resolver_fails_closed_for_missing_or_malformed_value(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("retired_key", [True, False])
 async def test_admin_app_setting_upsert_is_guarded_canonical_atomic_and_audited(
     app_settings_admin_client: httpx.AsyncClient,
     db_session: AsyncSession,
+    retired_key: bool,
 ) -> None:
     unauthorized = await app_settings_admin_client.get("/v1/admin/settings")
     assert unauthorized.status_code == 401
 
+    value = _configured_value(enabled=True)
+    if retired_key:
+        value["redirect_uri"] = "http://127.0.0.1:18473/oauth/callback"
     response = await app_settings_admin_client.put(
         f"/v1/admin/settings/{CLERK_CLI_OAUTH_SETTING_KEY}",
         headers=_ADMIN_HEADERS,
-        json={"value": _configured_value(enabled=True)},
+        json={"value": value},
     )
     assert response.status_code == 200, response.text
     expected = {
@@ -151,7 +161,6 @@ async def test_admin_app_setting_upsert_is_guarded_canonical_atomic_and_audited(
         "issuer": "https://clerk.example.test",
         "client_id": "client_cli",
         "application_id": "oauthapp_cli",
-        "redirect_uri": "http://127.0.0.1:18473/oauth/callback",
         "audience": "clawdi-cloud-api",
         "authorized_parties": [
             "http://127.0.0.1:18473",

@@ -4,43 +4,23 @@ import { resolve } from "node:path";
 import * as tar from "tar";
 import { validateNativeArchive } from "../src/lib/native-activation.ts";
 import {
-	isNativeTarget,
 	NATIVE_BUILD_TARGET_CATALOG,
-	NATIVE_RELEASE_MANIFEST_NAME,
-	NATIVE_RELEASE_MANIFEST_SCHEMA,
 	NATIVE_RELEASE_MANIFEST_V2_NAME,
 	NATIVE_RELEASE_MANIFEST_V2_SCHEMA,
 	nativeAssetName,
-	parseNativeReleaseManifest,
 	parseNativeReleaseManifestV2,
 } from "../src/lib/native-release-manifest.ts";
 
-export function writeNativeReleaseManifests(releaseDir, version) {
-	const artifacts = NATIVE_BUILD_TARGET_CATALOG.map(({ target }) => {
+export function writeNativeReleaseManifest(releaseDir, version) {
+	const rows = NATIVE_BUILD_TARGET_CATALOG.map(({ target }) => {
 		const asset = nativeAssetName(target);
 		const sha256 = createHash("sha256")
 			.update(readFileSync(resolve(releaseDir, asset)))
 			.digest("hex");
-		return { target, row: `artifact\t${target}\t${asset}\t${sha256}` };
+		return `artifact\t${target}\t${asset}\t${sha256}`;
 	});
-	// TODO (2026-10-07): stop generating frozen v1 after 2027-01-05, once a
-	// release with lenient v2 readers is the oldest supported auto-update path
-	// for 90 days. Keep v1 bytes unchanged until that migration is complete.
-	const v1 = [
-		NATIVE_RELEASE_MANIFEST_SCHEMA,
-		`version\t${version}`,
-		...artifacts.filter(({ target }) => isNativeTarget(target)).map(({ row }) => row),
-		"",
-	].join("\n");
-	const v2 = [
-		NATIVE_RELEASE_MANIFEST_V2_SCHEMA,
-		`version\t${version}`,
-		...artifacts.map(({ row }) => row),
-		"",
-	].join("\n");
-	parseNativeReleaseManifest(v1);
+	const v2 = [NATIVE_RELEASE_MANIFEST_V2_SCHEMA, `version\t${version}`, ...rows, ""].join("\n");
 	parseNativeReleaseManifestV2(v2);
-	writeFileSync(resolve(releaseDir, NATIVE_RELEASE_MANIFEST_NAME), v1);
 	writeFileSync(resolve(releaseDir, NATIVE_RELEASE_MANIFEST_V2_NAME), v2);
 }
 

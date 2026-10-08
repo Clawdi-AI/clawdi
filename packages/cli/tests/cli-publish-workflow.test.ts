@@ -103,14 +103,14 @@ describe("CLI pack inventory", () => {
 });
 
 describe("CLI publish workflow contract", () => {
-	test("publishes both manifests and verifies all eight native archives", () => {
+	test("publishes only v2 and verifies all eight native archives", () => {
 		const build = workflowDocument.jobs["build-immutable-artifact"];
 		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
 		expect(build.steps?.find((step) => step.id === "pack_release")?.run).toContain(
 			'cp dist-release/clawdi-cli-manifest-v2.txt "$release_dir/"',
 		);
 		const verification = publish.steps?.find((step) => step.id === "verify_release")?.run;
-		expect(verification).toContain("test -s clawdi-cli-manifest.txt");
+		expect(workflow).not.toContain("clawdi-cli-manifest.txt");
 		expect(verification).toContain("test -s clawdi-cli-manifest-v2.txt");
 		expect(verification).toContain(
 			"for target in linux-x64 linux-arm64 linux-x64-musl linux-arm64-musl darwin-x64 darwin-arm64 win32-x64 win32-arm64; do",
@@ -138,15 +138,14 @@ describe("CLI publish workflow contract", () => {
 		expect(release.match(/release\/install\.ps1/g)).toHaveLength(2);
 	});
 
-	test("attests native archives and both manifests after verification and before release", () => {
+	test("attests native archives and the v2 manifest after verification and before release", () => {
 		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
 		const steps = publish.steps ?? [];
 		const attestIndex = steps.findIndex((step) => step.uses === "actions/attest@v4");
 		expect(attestIndex).toBeGreaterThan(steps.findIndex((step) => step.id === "verify_release"));
 		expect(attestIndex).toBeLessThan(steps.findIndex((step) => step.id === "release"));
 		expect(steps[attestIndex]?.with).toEqual({
-			"subject-path":
-				"release/clawdi-cli-*.tar.gz\nrelease/clawdi-cli-manifest.txt\nrelease/clawdi-cli-manifest-v2.txt\n",
+			"subject-path": "release/clawdi-cli-*.tar.gz\nrelease/clawdi-cli-manifest-v2.txt\n",
 		});
 		for (const permission of ["id-token", "attestations", "artifact-metadata"]) {
 			expect(publish.permissions?.[permission]).toBe("write");

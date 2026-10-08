@@ -1,21 +1,27 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import * as tar from "tar";
 import {
 	validateNativePublicationArchive,
-	writeNativeReleaseManifests,
+	writeNativeReleaseManifest,
 } from "../scripts/native-publication.mjs";
 import { validateNativeArchive } from "../src/lib/native-activation";
 import {
 	NATIVE_BUILD_TARGET_CATALOG,
-	NATIVE_RELEASE_MANIFEST_NAME,
 	NATIVE_RELEASE_MANIFEST_V2_NAME,
 	nativeAssetName,
-	parseNativeReleaseManifest,
 	parseNativeReleaseManifestV2,
 } from "../src/lib/native-release-manifest";
 import { runNativeInstaller } from "./e2e/native-fixture";
@@ -103,29 +109,14 @@ describe("native publication inventory", () => {
 });
 
 describe("native publication manifests", () => {
-	test("generates byte-identical v1 fixture output accepted by the old parser", () => {
+	test("generates only v2 with all supported targets and checksums", () => {
 		const root = payload();
 		for (const { target } of NATIVE_BUILD_TARGET_CATALOG) {
 			writeFileSync(join(root, nativeAssetName(target)), `fixture ${target}\n`);
 		}
-		writeNativeReleaseManifests(root, "1.2.3");
-		const v1 = readFileSync(join(root, NATIVE_RELEASE_MANIFEST_NAME), "utf8");
-		expect(v1).toBe(
-			[
-				"clawdi.nativeRelease.v1",
-				"version\t1.2.3",
-				"artifact\tlinux-x64\tclawdi-cli-linux-x64.tar.gz\t9e7c61b8fae82b857fe4bce7d84dc35b223232e54188ee2081e01322cb382f77",
-				"artifact\tlinux-arm64\tclawdi-cli-linux-arm64.tar.gz\tfcabc470d6b449d8bf26f6adedb6bc0b5a508afb5a6d976676d633f99c93225d",
-				"artifact\tlinux-x64-musl\tclawdi-cli-linux-x64-musl.tar.gz\tbd72771abe0a63fe30bd5f825a5b57a912674de0e798bfd8d3c307e232fc7a6e",
-				"artifact\tlinux-arm64-musl\tclawdi-cli-linux-arm64-musl.tar.gz\t8e2a01fdf077638abfbb6d36977a7ea0d8be00d28c48ba3ef98a540e055fb4f7",
-				"artifact\tdarwin-x64\tclawdi-cli-darwin-x64.tar.gz\tbc09d9b038be87d2e9466fe7e43e45287dc128cfc53c2faa969ae82b02ea2950",
-				"artifact\tdarwin-arm64\tclawdi-cli-darwin-arm64.tar.gz\t95c2fd64a0624b30d63f61cf2328c99f48a25103c32539e751c7243a5b31f379",
-				"",
-			].join("\n"),
-		);
-		expect(parseNativeReleaseManifest(v1).artifacts).toHaveLength(6);
+		writeNativeReleaseManifest(root, "1.2.3");
+		expect(existsSync(join(root, "clawdi-cli-manifest.txt"))).toBe(false);
 		const v2 = readFileSync(join(root, NATIVE_RELEASE_MANIFEST_V2_NAME), "utf8");
-		expect(v2.split("\n").slice(1, 8)).toEqual(v1.split("\n").slice(1, 8));
 		const parsed = parseNativeReleaseManifestV2(v2);
 		expect(parsed.artifacts).toHaveLength(8);
 		for (const { asset, sha256 } of parsed.artifacts) {
@@ -137,7 +128,7 @@ describe("native publication manifests", () => {
 		}
 	});
 
-	test("checks both manifests, shared Unix rows, versions and Windows checksums", async () => {
+	test("checks the v2 manifest, target matrix, version and Windows checksums", async () => {
 		const root = await releaseFixture();
 		const check = () =>
 			spawnSync(
@@ -147,10 +138,8 @@ describe("native publication manifests", () => {
 			);
 		const valid = check();
 		expect(valid.status, valid.stderr).toBe(0);
-		expect(valid.stdout).toContain("v1: 6 targets, v2: 8 targets");
-		const v1Path = join(root, NATIVE_RELEASE_MANIFEST_NAME);
+		expect(valid.stdout).toContain("v2: 8 targets");
 		const v2Path = join(root, NATIVE_RELEASE_MANIFEST_V2_NAME);
-		const v1 = readFileSync(v1Path, "utf8");
 		const v2 = readFileSync(v2Path, "utf8");
 		rmSync(v2Path);
 		expect(check().status).not.toBe(0);
@@ -161,18 +150,11 @@ describe("native publication manifests", () => {
 		writeFileSync(v2Path, `${v2}artifact\tfreebsd-x64\tfuture\tunknown\n`);
 		expect(check().stderr).toContain("supported target matrix");
 		writeFileSync(v2Path, v2);
-		writeFileSync(v1Path, v1.replace("version\t1.2.3", "version\t1.2.4"));
-		expect(check().stderr).toContain("native release version mismatch");
-		writeFileSync(v1Path, v1.replace(/([0-9a-f]{64})/, "0".repeat(64)));
-		expect(check().stderr).toContain("v1 artifacts do not match v2 Unix artifacts");
-		writeFileSync(v1Path, v1.replace("artifact\tlinux-x64\t", "artifact\tunknown\t"));
-		expect(check().stderr).toContain("invalid artifact entry");
-		writeFileSync(v1Path, v1);
 		writeFileSync(join(root, nativeAssetName("win32-arm64")), "corrupted archive");
 		expect(check().stderr).toContain("checksum mismatch for clawdi-cli-win32-arm64.tar.gz");
 	});
 
-	test("the Unix installer accepts v2 from a release that still publishes both manifests", async () => {
+	test("the Unix installer accepts a release publishing only v2", async () => {
 		const root = await releaseFixture();
 		const home = join(root, "home");
 		mkdirSync(home);
@@ -186,7 +168,7 @@ describe("native publication manifests", () => {
 		expect(result.code, result.stderr).toBe(0);
 		expect(result.stdout).toContain("Installing clawdi v1.2.3 for linux-x64");
 		expect(result.curlLog).toContain(NATIVE_RELEASE_MANIFEST_V2_NAME);
-		expect(result.curlLog).not.toContain(`/${NATIVE_RELEASE_MANIFEST_NAME}`);
+		expect(result.curlLog).not.toContain("/clawdi-cli-manifest.txt");
 	});
 });
 
@@ -211,6 +193,6 @@ fi
 			target.startsWith("win32-") ? windowsArchive : unixArchive,
 		);
 	}
-	writeNativeReleaseManifests(root, "1.2.3");
+	writeNativeReleaseManifest(root, "1.2.3");
 	return root;
 }

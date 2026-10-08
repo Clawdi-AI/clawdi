@@ -169,7 +169,6 @@ jobs:
           tarball_sha=$(sha256sum "$tarball_path" | cut -d' ' -f1)
           printf '%s  %s\n' "$tarball_sha" "$tarball" > "$release_dir/$tarball.sha256"
           cp dist-release/clawdi-cli-*.tar.gz "$release_dir/"
-          cp dist-release/clawdi-cli-manifest.txt "$release_dir/"
           cp dist-release/clawdi-cli-manifest-v2.txt "$release_dir/"
           cp ../../install.sh "$release_dir/"
           cp ../../install.ps1 "$release_dir/"
@@ -247,7 +246,6 @@ jobs:
           tarball="$CLI_TARBALL_FILENAME"
           test -s "$tarball"
           test -s "$tarball.sha256"
-          test -s clawdi-cli-manifest.txt
           test -s clawdi-cli-manifest-v2.txt
           test -s install.sh
           test -s install.ps1
@@ -265,7 +263,6 @@ jobs:
         with:
           subject-path: |
             release/clawdi-cli-*.tar.gz
-            release/clawdi-cli-manifest.txt
             release/clawdi-cli-manifest-v2.txt
 
       - name: Create or complete GitHub release
@@ -314,7 +311,6 @@ jobs:
           if [ "$release_action" = "resume-draft" ]; then
             assets=(
               release/clawdi-cli-*.tar.gz
-              release/clawdi-cli-manifest.txt
               release/clawdi-cli-manifest-v2.txt
               release/install.sh
               release/install.ps1
@@ -361,7 +357,6 @@ jobs:
           args=(
             release create "$tag"
             release/clawdi-cli-*.tar.gz
-            release/clawdi-cli-manifest.txt
             release/clawdi-cli-manifest-v2.txt
             release/install.sh
             release/install.ps1

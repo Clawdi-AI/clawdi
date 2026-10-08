@@ -29,7 +29,6 @@ import {
 	nativeInstallManifestName,
 	nativeInstallManifestPath,
 	nativeVersionDirectoryName,
-	parseNativeInstallManifest,
 	validateNativeInstallIdentity,
 	writeNativeInstallIdentity,
 } from "./native-distribution";
@@ -39,6 +38,7 @@ import {
 	type NativeBuildTarget,
 	type NativeReleaseArtifactV2,
 	nativeExecutableName,
+	parseNativeReleaseManifestV2,
 } from "./native-release-manifest";
 import {
 	type PrivateDirectoryLockLease,
@@ -164,7 +164,7 @@ export async function downloadAndStageNativeRelease(input: {
 		const manifestText = new TextDecoder("utf-8", { fatal: true }).decode(
 			await readBoundedResponse(manifestResponse, MAX_NATIVE_MANIFEST_BYTES, "native manifest"),
 		);
-		const manifest = parseNativeInstallManifest(manifestText, input.target);
+		const manifest = parseNativeReleaseManifestV2(manifestText);
 		if (manifest.version !== input.version) {
 			throw new Error(
 				`native manifest version mismatch: expected ${input.version}, got ${manifest.version}`,
@@ -478,14 +478,14 @@ function validateInstalledVersion(directory: string, identity: NativeCompiledIde
 }
 
 function validateVersionManifest(directory: string, identity: NativeCompiledIdentity): string {
-	const path = nativeInstallManifestPath(directory, identity.target);
+	const path = nativeInstallManifestPath(directory);
 	const manifestFile = lstatSync(path);
 	if (!manifestFile.isFile()) throw new Error("native version manifest is not a regular file");
 	if (manifestFile.size > MAX_NATIVE_MANIFEST_BYTES) {
 		throw new Error("native version manifest exceeds the size limit");
 	}
 	const content = readFileSync(path, "utf8");
-	const manifest = parseNativeInstallManifest(content, identity.target);
+	const manifest = parseNativeReleaseManifestV2(content);
 	if (
 		manifest.version !== identity.version ||
 		!manifest.artifacts.some((artifact) => artifact.target === identity.target)
