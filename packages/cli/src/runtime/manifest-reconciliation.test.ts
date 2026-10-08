@@ -5815,7 +5815,6 @@ del list_profile_names
 		const command = writeFakeHermesCli(paths);
 		const nativeEnvPath = join(paths.userHome, ".hermes", ".env");
 		const nativeEnv = "TELEGRAM_BOT_TOKEN=native-telegram-token\n";
-		writeFileSync(nativeEnvPath, nativeEnv, { mode: 0o600 });
 		const desired = baseManifest(
 			paths,
 			{
@@ -5839,20 +5838,32 @@ del list_profile_names
 				},
 			},
 		);
+		const load = manifestLoad(desired, "hermes-native-env-conflict");
+		convergeRuntimeManifest(load, paths);
+		writeFileSync(nativeEnvPath, nativeEnv, { mode: 0o600 });
 		const warning = spyOn(log, "warn").mockImplementation(() => {});
 		try {
-			const result = convergeRuntimeManifest(
-				manifestLoad(desired, "hermes-native-env-conflict"),
-				paths,
-			);
-			expect(result.installErrors).toEqual([]);
-			expect(result.resourceProjectionErrors).toEqual([]);
-			expect(result.hermesNativeEnvConflicts).toEqual(["TELEGRAM_BOT_TOKEN"]);
-			expect(readFileSync(nativeEnvPath, "utf8")).toBe(nativeEnv);
-			expect(warning.mock.calls).toContainEqual([
+			for (let attempt = 0; attempt < 2; attempt++) {
+				const result = convergeRuntimeManifest(load, paths);
+				expect(result.installErrors).toEqual([]);
+				expect(result.resourceProjectionErrors).toEqual([]);
+				expect(result.hermesNativeEnvConflicts).toEqual(["TELEGRAM_BOT_TOKEN"]);
+				expect(readFileSync(nativeEnvPath, "utf8")).toBe(nativeEnv);
+			}
+			expect(warning).toHaveBeenCalledTimes(1);
+			expect(warning.mock.calls[0]).toEqual([
 				"runtime.hermes.native_env_conflicts",
 				{ keys: ["TELEGRAM_BOT_TOKEN"] },
 			]);
+			writeFileSync(nativeEnvPath, "");
+			expect(convergeRuntimeManifest(load, paths).hermesNativeEnvConflicts).toEqual([]);
+			expect(warning).toHaveBeenCalledTimes(1);
+			writeFileSync(nativeEnvPath, nativeEnv);
+			expect(convergeRuntimeManifest(load, paths).hermesNativeEnvConflicts).toEqual([
+				"TELEGRAM_BOT_TOKEN",
+			]);
+			expect(warning).toHaveBeenCalledTimes(2);
+			expect(readFileSync(nativeEnvPath, "utf8")).toBe(nativeEnv);
 		} finally {
 			warning.mockRestore();
 		}

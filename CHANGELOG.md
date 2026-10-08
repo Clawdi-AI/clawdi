@@ -49,6 +49,12 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.15.16
+
+- **Hosted Hermes:** native environment conflict warnings are logged only when
+  the conflicting keys change or reappear after clearing, avoiding repeated
+  warnings on the five-minute runtime watch repair cycle.
+
 ### CLI 0.15.15
 
 - **Hosted Hermes:** native values in `~/.hermes/.env` remain user-owned when
