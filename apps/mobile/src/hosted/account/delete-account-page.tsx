@@ -22,7 +22,7 @@ import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { currentStorePlatform } from "@/platform/store/store-policy";
+import { currentStorePlatform } from "@/platform/store/store-platform";
 import { useMobileStore } from "@/platform/store/store-provider";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 

@@ -196,7 +196,7 @@ export function resolveStoreSubscriptionActions({
 	if (isStoreManagementOnOtherStore(management, platform)) {
 		return {
 			actions: [],
-			managedElsewhere: management.provider as Exclude<StoreManagementProvider, "test_store">,
+			managedElsewhere: management.provider,
 		};
 	}
 	if (!isStoreManagementOnPlatform(management, platform)) {

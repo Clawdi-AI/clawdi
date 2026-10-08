@@ -48,7 +48,8 @@ import { usePaywall } from "@/platform/store/paywall-host";
 import type { PurchaseOutcome } from "@/platform/store/purchase-flow";
 import { StorePurchaseError, storePurchaseError } from "@/platform/store/store-error";
 import { canManageInApp } from "@/platform/store/store-management";
-import { computePurchaseAvailable, currentStorePlatform } from "@/platform/store/store-policy";
+import { currentStorePlatform } from "@/platform/store/store-platform";
+import { computePurchaseAvailable } from "@/platform/store/store-policy";
 import {
 	type ComputeSubscriptionPurchaseRequest,
 	useMobileStore,
@@ -67,13 +68,14 @@ function useRefreshCompute() {
 	const cache = useQueryClient();
 	const scope = useAccountScope();
 	const store = useMobileStore();
-	return () =>
-		Promise.all([
-			store.refresh(),
-			...(["billing-subscriptions", "deployments", "deployment", "creation-reusable"] as const).map(
+	return () => {
+		void store.refresh();
+		return Promise.all(
+			(["billing-subscriptions", "deployments", "deployment", "creation-reusable"] as const).map(
 				(key) => cache.invalidateQueries({ queryKey: accountQueryKey(scope, key) }),
 			),
-		]);
+		);
+	};
 }
 
 /**

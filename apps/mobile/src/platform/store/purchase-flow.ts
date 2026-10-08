@@ -379,7 +379,7 @@ export function createPurchaseFlow(options: {
 				busy = false;
 			}
 		},
-		/** Start/foreground recovery never opens a paywall or starts another store charge. */
+		/** Explicit Check status recovery never opens a paywall or starts another store charge. */
 		recover: async (callerSignal?: AbortSignal): Promise<PurchaseOutcome[]> => {
 			if (busy) return [];
 			busy = true;

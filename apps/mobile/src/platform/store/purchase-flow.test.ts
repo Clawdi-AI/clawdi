@@ -7,14 +7,15 @@ import {
 	type StorePurchaseAttempt,
 	type StorePurchaseAttemptRequest,
 	type StorePurchaseConfirmation,
+	validateAndBuildHostedDeployRequest,
 } from "@clawdi/shared/api";
+import { storeFundingHoldsAttempt } from "@/hosted/billing/deploy/deploy-request";
+import { readHostedStoreFunding } from "@/hosted/billing/deploy/store-funding";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
 import { createAccountScope } from "@/platform/auth/account-scope";
 import { createPurchaseAttemptStore, parsePurchaseAttempt } from "./purchase-attempt-storage";
 import { StorePurchaseError } from "./store-error";
-
-mock.module("react-native", () => ({ Platform: { OS: "ios" } }));
-const { isStoreBuild } = await import("./store-policy");
+import { isStoreBuild } from "./store-policy";
 
 const appUserId = "11111111-1111-4111-8111-111111111111";
 const otherAppUserId = "22222222-2222-4222-8222-222222222222";
@@ -1119,5 +1120,106 @@ describe("store errors and build policy", () => {
 		).toBe(true);
 		for (const environment of ["preview", "development", undefined])
 			expect(isStoreBuild({ environment })).toBe(false);
+	});
+});
+
+describe("post-purchase hosted observation", () => {
+	function pendingDraft() {
+		const draft = {
+			runtime: "hermes",
+			computePlanSlug: "compute_performance",
+			agentName: "Agent",
+			language: "en",
+			timezone: "",
+			ai: { mode: "unmanaged" },
+		} as const;
+		const result = validateAndBuildHostedDeployRequest(draft);
+		if (!result.ok) throw new Error("Invalid fixture");
+		return {
+			version: 1,
+			submission: "prepared",
+			id: computeIntent.pending_deploy_request_id,
+			draft,
+			request: { ...result.request, deploy_request_id: computeIntent.pending_deploy_request_id },
+			storeFunding: "purchase_pending",
+		} as const;
+	}
+
+	test("Ask-to-Buy/PENDING immediately keeps waiting without recovery, SDK sync or polling", async () => {
+		const f = fixture();
+		await f.initialize();
+		f.setAttemptFields(computeIntent);
+		const flow = f.makeFlow();
+		flow.recover = mock(flow.recover);
+		await expect(
+			flow.purchase(computeIntent, async () => {
+				throw new StorePurchaseError("payment_pending");
+			}),
+		).rejects.toMatchObject({ code: "payment_pending" });
+		const saved = pendingDraft();
+		f.listPurchaseAttempts.mockImplementationOnce(async () => [await f.getPurchaseAttempt()]);
+		f.bootstrap.mockClear();
+		const funding = await readHostedStoreFunding(
+			f.client,
+			"app_store",
+			saved,
+			() => null,
+			f.scope.signal,
+		);
+		expect(funding).toBe("purchase_pending");
+		expect(storeFundingHoldsAttempt({ storeFunding: funding ?? undefined })).toBe(true);
+		expect(flow.recover).not.toHaveBeenCalled();
+		expect(syncPurchases).not.toHaveBeenCalled();
+		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
+		expect(f.delays).toEqual([]);
+		expect(f.bootstrap).toHaveBeenCalledTimes(1);
+		expect(f.listPurchaseAttempts).toHaveBeenCalledTimes(1);
+		expect(flow.isBusy()).toBe(false);
+		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.purchaseStarted).toBe(true);
+	});
+
+	test("a hosted pending upgrade after settlement does not lock credits during hosted reads", async () => {
+		const f = fixture();
+		await f.initialize();
+		const upgrade = {
+			...computeIntent,
+			pending_deploy_request_id: null,
+			target_contract_id: otherAppUserId,
+		};
+		f.setAttemptFields(upgrade);
+		f.confirmPurchaseAttempt.mockImplementationOnce(async () => ({
+			state: "funding_applied",
+			correlation_id: "safe-correlation",
+		}));
+		const flow = f.makeFlow();
+		flow.recover = mock(flow.recover);
+		expect((await flow.purchase(upgrade, async () => transaction)).status).toBe("funding_applied");
+		expect(f.values.size).toBe(0);
+		f.setAttempt("verification_pending");
+		f.listPurchaseAttempts.mockImplementationOnce(async () => [await f.getPurchaseAttempt()]);
+		const bootstrap = deferred<Awaited<ReturnType<typeof f.bootstrap>>>();
+		f.bootstrap.mockImplementationOnce(() => bootstrap.promise);
+		const observation = readHostedStoreFunding(
+			f.client,
+			"app_store",
+			pendingDraft(),
+			() => null,
+			f.scope.signal,
+		);
+		expect(flow.isBusy()).toBe(false);
+		f.createPurchaseAttempt.mockImplementationOnce(async (body) => ({
+			...body,
+			attempt_id: otherAppUserId,
+			state: "prepared",
+			expires_at: "2099-01-01T00:00:00Z",
+		}));
+		const creditsPaywall = mock(async () => null);
+		expect((await flow.purchase(intent, creditsPaywall)).status).toBe("cancelled");
+		expect(creditsPaywall).toHaveBeenCalledTimes(1);
+		expect(flow.recover).not.toHaveBeenCalled();
+		expect(syncPurchases).not.toHaveBeenCalled();
+		expect(f.delays).toEqual([]);
+		bootstrap.resolve(await f.bootstrap());
+		await observation;
 	});
 });

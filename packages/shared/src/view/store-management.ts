@@ -40,7 +40,7 @@ export function isStoreManagementOnPlatform(
 export function isStoreManagementOnOtherStore(
 	management: StoreManagement | null | undefined,
 	platform: StorePlatform,
-): boolean {
+): management is StoreManagement & { provider: Exclude<StoreManagementProvider, "test_store"> } {
 	return (
 		management?.provider !== undefined &&
 		management.provider !== "test_store" &&

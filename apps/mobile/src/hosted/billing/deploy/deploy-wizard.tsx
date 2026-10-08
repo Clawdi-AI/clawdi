@@ -7,7 +7,6 @@ import {
 	hostedDeployAgentNameAfterRuntimeChange,
 	hostedDeployRuntimeLabel,
 	projectHostedDeployRequest,
-	type StoreComputeSlot,
 	validateAndBuildHostedDeployRequest,
 } from "@clawdi/shared/api";
 import {
@@ -79,11 +78,10 @@ import {
 	serverAllowsEntitledCreation,
 	storeAdmissionMessageKey,
 	storeAdmissionRecoveryAttempt,
-	storeFundingAfterCheck,
 	storeFundingHoldsAttempt,
-	unboundStoreSlotPlan,
 	validationTranslationKeys,
 } from "@/hosted/billing/deploy/deploy-request";
+import { readHostedStoreFunding } from "@/hosted/billing/deploy/store-funding";
 import { nextBillingCursor, subscriptionPrice, uniqueBillingItems } from "@/hosted/billing/format";
 import { AddCreditsAction } from "@/hosted/billing/store/add-credits";
 import {
@@ -117,7 +115,7 @@ import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { computeProductPlan } from "@/platform/store/compute-subscription";
 import type { PurchaseOutcome } from "@/platform/store/purchase-flow";
 import { StorePurchaseError, storePurchaseError } from "@/platform/store/store-error";
-import { currentStorePlatform } from "@/platform/store/store-policy";
+import { currentStorePlatform } from "@/platform/store/store-platform";
 import { useMobileStore, useStoreSurfaces } from "@/platform/store/store-provider";
 
 const initialDraft: HostedDeployWizardDraft = {
@@ -181,8 +179,6 @@ function CreationForm() {
 	const storeGate = useComputePurchaseGate();
 	const purchaseCompute = useComputePaywallPurchase();
 	const { flow: storeFlow, refresh: refreshStore } = useMobileStore();
-	const slotPlanOf = (slot: StoreComputeSlot | null | undefined) =>
-		unboundStoreSlotPlan(slot, (productId) => computeProductPlan(productId)?.planSlug ?? null);
 	const [storeNotice, setStoreNotice] = useState<StoreNotice | null>(null);
 	const [providerChoice, setProviderChoice] = useState("__managed__");
 	const [previewTerm, setPreviewTerm] = useState(1);
@@ -457,25 +453,20 @@ function CreationForm() {
 		}
 		if (current(owns)) await navigateRequest(saved.id, owns);
 	};
-	/** Reconcile and read hosted funding for the exact saved request. */
+	/** Read hosted funding for the exact saved request without starting recovery. */
 	const readStoreFunding = async (saved: CreationAttempt, owns: () => boolean) => {
 		const platform = currentStorePlatform();
 		if (!saved.storeFunding || !storeClient || !platform) return null;
-		if (storeFlow && !storeFlow.isBusy()) await storeFlow.recover().catch(() => []);
-		const [attempts, bootstrap] = await read((s) =>
-			Promise.all([
-				storeClient.listPurchaseAttempts(undefined, s),
-				storeClient.bootstrap(platform, s),
-			]),
+		const funding = await read((s) =>
+			readHostedStoreFunding(
+				storeClient,
+				platform,
+				saved,
+				(productId) => computeProductPlan(productId)?.planSlug ?? null,
+				s,
+			),
 		);
-		if (!current(owns)) return null;
-		return storeFundingAfterCheck(
-			saved.id,
-			attempts,
-			saved.storeFunding,
-			saved.draft.computePlanSlug,
-			slotPlanOf(bootstrap.compute_slot),
-		);
+		return current(owns) ? funding : null;
 	};
 	/**
 	 * Design §5.1: persist the deploy draft for the plan the Paywall selected, buy it with
@@ -589,6 +580,8 @@ function CreationForm() {
 			const saved = attempt;
 			if (!saved?.storeFunding || saved.storeFunding === "funded" || !storageKey) return;
 			setStoreNotice(null);
+			if (storeFlow && !storeFlow.isBusy()) await storeFlow.recover().catch(() => []);
+			if (!current(owns)) return;
 			const funding = await readStoreFunding(saved, owns);
 			if (!funding || !current(owns)) return;
 			if (funding !== saved.storeFunding) {

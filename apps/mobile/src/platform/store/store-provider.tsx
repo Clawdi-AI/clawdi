@@ -26,9 +26,9 @@ import { revenueCat } from "./revenuecat";
 import { StorePurchaseError } from "./store-error";
 import { createStoreIdentity } from "./store-identity";
 import { createStoreManagement, type StoreManagementController } from "./store-management";
+import { currentStorePlatform } from "./store-platform";
 import {
 	computePurchaseAvailable,
-	currentStorePlatform,
 	isStoreBuild,
 	type StoreSurfaces,
 	storeSurfaces,
@@ -110,7 +110,7 @@ export function StoreProvider({
 	const [state, setState] = useState<{ scope: AccountScope; value: MobileStore } | null>(null);
 	useEffect(() => {
 		let mounted = true;
-		let recovering = false;
+		let refreshing = false;
 		let lease: AbortController | null = null;
 		let latestValue: MobileStore | null = null;
 		const current = () => mounted && scope.isCurrent() && !scope.signal.aborted;
@@ -132,9 +132,10 @@ export function StoreProvider({
 		const identity = createStoreIdentity({ scope, client, sdk: revenueCat, config, platform });
 		const management = createStoreManagement({ scope, identity, sdk: revenueCat });
 		let flow: PurchaseFlow | null = null;
+		// Refresh observations only; recovery belongs to an explicit Check status action.
 		const refresh = async () => {
-			if (!current() || recovering || flow?.isBusy()) return;
-			recovering = true;
+			if (!current() || refreshing || flow?.isBusy()) return;
+			refreshing = true;
 			const controller = new AbortController();
 			lease = controller;
 			const abort = () => controller.abort();
@@ -248,13 +249,11 @@ export function StoreProvider({
 					restorePurchases,
 					management,
 				});
-				const recovery = await flow.recover(controller.signal).catch(() => []);
-				if (!controller.signal.aborted && latestValue) update({ ...latestValue, recovery });
 			} catch {
 				if (!controller.signal.aborted) update({ ...unavailable, refresh });
 			} finally {
 				scope.signal.removeEventListener("abort", abort);
-				recovering = false;
+				refreshing = false;
 				if (controller.signal.aborted && AppState.currentState === "active" && current())
 					void refresh();
 			}
