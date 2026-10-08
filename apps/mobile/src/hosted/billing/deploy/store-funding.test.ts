@@ -10,6 +10,7 @@ import {
 	canAdmitCreationAttempt,
 	canDiscardCreationAttempt,
 	canStartStorePurchase,
+	finishReservedRequest,
 	parseCreationAttempt,
 	reservedDeployResume,
 	storeFundingAfterCheck,
@@ -249,6 +250,67 @@ describe("reserved store requests and late webhooks", () => {
 		const restored = await journal.readSavedAttempt("account");
 		expect(restored).toEqual(resumed);
 		expect(reservedDeployResume(slot, restored, planOf)).toBeNull();
+	});
+
+	function reservedSteps(readStatus: () => Promise<unknown>, current = () => true) {
+		const calls: string[] = [];
+		return {
+			calls,
+			steps: {
+				readStatus,
+				admit: async () => {
+					calls.push("admit");
+				},
+				observe: async () => {
+					calls.push("observe");
+				},
+				current,
+			},
+		};
+	}
+
+	test("a by-request 404 admits the user's draft under the reserved id", async () => {
+		const { calls, steps } = reservedSteps(async () => {
+			throw new ApiClientError(404);
+		});
+		await finishReservedRequest(steps);
+		expect(calls).toEqual(["admit"]);
+	});
+
+	test("a request hosted already holds is observed, never re-sent", async () => {
+		const { calls, steps } = reservedSteps(async () => ({
+			deploy_request_id: id,
+			request_status: "pending",
+		}));
+		await finishReservedRequest(steps);
+		expect(calls).toEqual(["observe"]);
+	});
+
+	test("a failed pre-check admits nothing and surfaces the failure", async () => {
+		for (const failure of [
+			new ApiClientError(500),
+			new ApiClientError(409, "idempotency_key_reused"),
+			new Error("offline"),
+		]) {
+			const { calls, steps } = reservedSteps(async () => {
+				throw failure;
+			});
+			await expect(finishReservedRequest(steps)).rejects.toBe(failure);
+			expect(calls).toEqual([]);
+		}
+	});
+
+	test("an account switch during the pre-check admits and observes nothing", async () => {
+		let active = true;
+		const { calls, steps } = reservedSteps(
+			async () => {
+				active = false;
+				throw new ApiClientError(404);
+			},
+			() => active,
+		);
+		await finishReservedRequest(steps);
+		expect(calls).toEqual([]);
 	});
 
 	test("store_compute_unavailable re-reads the slot once and repeats the same request", async () => {

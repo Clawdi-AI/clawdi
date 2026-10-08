@@ -1,5 +1,4 @@
 import {
-	ApiClientError,
 	buildHostedDeploySubscriptionQuoteRequest,
 	HOSTED_DEPLOY_LANGUAGE_OPTIONS,
 	type HostedDeploySubscriptionQuote,
@@ -73,6 +72,7 @@ import {
 	canAdmitCreationAttempt,
 	canDiscardCreationAttempt,
 	canStartStorePurchase,
+	finishReservedRequest,
 	isDefinitiveAdmissionRejection,
 	offeredQuoteSelections,
 	type ReservedDeployResume,
@@ -400,30 +400,22 @@ function CreationForm() {
 			const saved = attempt ?? prepareAttempt(draft);
 			if (saved) await submit(saved, saved === attempt, owns);
 		});
-	/**
-	 * Hosted keeps no draft for a reserved request before admission and exposes none after,
-	 * so a request it already holds is only observed; a new payload would conflict.
-	 */
-	const finishReserved = async (reservedRequest: ReservedDeployResume, owns: () => boolean) => {
-		if (!hosted) return;
-		const known = await read((s) => hosted.getDeploymentByRequest(reservedRequest.id, s)).then(
-			() => true,
-			(error: unknown) => {
-				if (error instanceof ApiClientError && error.status === 404) return false;
-				throw error;
+	const finishReserved = (reservedRequest: ReservedDeployResume, owns: () => boolean) =>
+		finishReservedRequest({
+			readStatus: async () => {
+				if (!hosted) throw new Error("Hosted API unavailable");
+				return read((s) => hosted.getDeploymentByRequest(reservedRequest.id, s));
 			},
-		);
-		if (!current(owns)) return;
-		if (known) {
-			await navigateRequest(reservedRequest.id, owns);
-			return;
-		}
-		const prepared = prepareAttempt(
-			{ ...draft, computePlanSlug: reservedRequest.planSlug },
-			reservedRequest.id,
-		);
-		if (prepared) await submit({ ...prepared, storeFunding: "funded" }, false, owns);
-	};
+			observe: () => navigateRequest(reservedRequest.id, owns),
+			admit: async () => {
+				const prepared = prepareAttempt(
+					{ ...draft, computePlanSlug: reservedRequest.planSlug },
+					reservedRequest.id,
+				);
+				if (prepared) await submit({ ...prepared, storeFunding: "funded" }, false, owns);
+			},
+			current: () => current(owns),
+		});
 	const prepareAttempt = (
 		next: HostedDeployWizardDraft,
 		id: string = Crypto.randomUUID(),

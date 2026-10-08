@@ -258,6 +258,30 @@ export function storeAdmissionRecoveryAttempt(
 }
 
 /**
+ * Hosted keeps no draft for a reserved request before admission and exposes none after.
+ * Only a by-request 404 proves hosted holds no payload for it, so only then is the user's
+ * draft admitted; a request hosted already holds is observed, since a new payload would
+ * conflict. Any other pre-check failure admits nothing.
+ */
+export async function finishReservedRequest(steps: {
+	readStatus: () => Promise<unknown>;
+	admit: () => Promise<void>;
+	observe: () => Promise<void>;
+	current: () => boolean;
+}): Promise<void> {
+	let known: boolean;
+	try {
+		await steps.readStatus();
+		known = true;
+	} catch (error) {
+		if (!(error instanceof ApiClientError && error.status === 404)) throw error;
+		known = false;
+	}
+	if (!steps.current()) return;
+	await (known ? steps.observe() : steps.admit());
+}
+
+/**
  * Hosted S2: a late store webhook expires the deploy attempt and leaves an unbound slot,
  * so a refusal can precede the slot this request may bind. Re-read the slot once and
  * repeat the same request only when hosted would now bind it; otherwise keep the refusal.
