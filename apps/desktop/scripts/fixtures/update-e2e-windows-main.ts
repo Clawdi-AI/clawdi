@@ -45,7 +45,13 @@ const timer = setInterval(() => {
 					process.env.CLAWDI_DESKTOP_UPDATE_E2E_SHA512,
 			);
 			if (!downloaded) throw new Error("Missing SHA-512-pinned N+1 installer in updater cache.");
-			writeFileSync(result, JSON.stringify({ version: app.getVersion(), downloaded }));
+			const serviceStarts = readFileSync(join(root, "home/.clawdi/service-starts.log"), "utf8")
+				.trim()
+				.split("\n").length;
+			writeFileSync(
+				result,
+				JSON.stringify({ version: app.getVersion(), downloaded, serviceStarts }),
+			);
 			clearInterval(timer);
 			app.quit(); // Production stop-services path, then upstream silent install-on-quit.
 		} else if (
@@ -54,7 +60,12 @@ const timer = setInterval(() => {
 		) {
 			if (app.getVersion() !== "0.0.2") throw new Error("Installed NSIS app did not report N+1.");
 			const starts = join(root, "home/.clawdi/service-starts.log");
-			if (!existsSync(starts) || readFileSync(starts, "utf8").trim().split("\n").length < 2) return;
+			if (
+				!existsSync(starts) ||
+				readFileSync(starts, "utf8").trim().split("\n").length <=
+					Number(process.env.CLAWDI_DESKTOP_UPDATE_E2E_PREVIOUS_STARTS)
+			)
+				return;
 			writeFileSync(result, JSON.stringify({ version: app.getVersion(), serviceResumed: true }));
 			clearInterval(timer);
 			app.exit(0);

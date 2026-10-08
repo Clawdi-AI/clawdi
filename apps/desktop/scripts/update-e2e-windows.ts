@@ -318,7 +318,12 @@ $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new("$
 		CLAWDI_DESKTOP_UPDATE_E2E_SHA512: sha512,
 	});
 	const download: unknown = JSON.parse(readFileSync(join(root, "download.json"), "utf8"));
-	assert.ok(record(download) && download.version === "0.0.1");
+	assert.ok(
+		record(download) &&
+			download.version === "0.0.1" &&
+			typeof download.serviceStarts === "number" &&
+			download.serviceStarts >= 1,
+	);
 	assert.match(readFileSync(join(root, "cli.log"), "utf8"), /^daemon stop$/m);
 	// Wait for the detached NSIS installer to finish replacing the ASAR. It
 	// must not relaunch after install-on-quit (upstream BaseUpdater contract).
@@ -362,11 +367,12 @@ if (Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq "$env:C
 	);
 	assert.equal(
 		readFileSync(join(cliRoot, "service-starts.log"), "utf8").trim().split("\n").length,
-		1,
+		download.serviceStarts,
 	);
 	await run(executable, [], 180_000, {
 		CLAWDI_DESKTOP_UPDATE_E2E_PHASE: "verify",
 		CLAWDI_DESKTOP_UPDATE_E2E_RESULT: join(root, "verified.json"),
+		CLAWDI_DESKTOP_UPDATE_E2E_PREVIOUS_STARTS: String(download.serviceStarts),
 	});
 	const verified: unknown = JSON.parse(readFileSync(join(root, "verified.json"), "utf8"));
 	assert.ok(record(verified) && verified.version === "0.0.2" && verified.serviceResumed === true);
@@ -391,6 +397,12 @@ if (Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq "$env:C
 	console.log(
 		"Windows update e2e passed: trusted HTTPS, SHA-512, unsigned NSIS/blockmap, stop before install, N+1 launch and Task Scheduler resume.",
 	);
+} catch (error) {
+	// Preserve the actual assertion/installer error even if cleanup also fails.
+	console.error("Windows update e2e scenario failed", error);
+	const log = join(root, "cli.log");
+	if (existsSync(log)) console.error("Fixture CLI calls:\n", readFileSync(log, "utf8"));
+	throw error;
 } finally {
 	// Kill only processes running from this test's private directory, including
 	// detached updater installers; never use a name-wide taskkill.
@@ -404,7 +416,11 @@ Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.Executa
 		for (const child of children) child.kill();
 		try {
 			if (taskCreated) uninstallWindowsTask(cliRoot);
-			if (installedApp) await run(join(installed, "Uninstall Clawdi.exe"), ["/S"], 60_000);
+			// _?= runs the NSIS uninstaller in place so we await the real process,
+			// rather than its temporary-copy launcher. The argument must be last.
+			// https://nsis.sourceforge.io/Docs/Chapter3.html#uninstallerusage
+			if (installedApp)
+				await run(join(installed, "Uninstall Clawdi.exe"), ["/S", `_?=${installed}`], 60_000);
 		} finally {
 			try {
 				if (existsSync(join(root, "ca-thumbprint")))
@@ -417,7 +433,10 @@ if (Test-Path "Cert:\\LocalMachine\\Root\\$thumbprint") { Remove-Item "Cert:\\Lo
 					server.closeAllConnections();
 					await new Promise<void>((done) => server?.close(() => done()));
 				}
-				rmSync(root, { recursive: true, force: true });
+				// Windows releases process handles asynchronously; use Node's bounded
+				// EBUSY/EPERM retry support after stopping this test's processes.
+				// https://nodejs.org/api/fs.html#fsrmsyncpath-options
+				rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
 			}
 		}
 	}
