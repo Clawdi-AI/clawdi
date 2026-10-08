@@ -11,9 +11,17 @@ import { Modal } from "react-native";
 import type { PurchasesOffering } from "react-native-purchases";
 import RevenueCatUI from "react-native-purchases-ui";
 import { AppView } from "@/components/ui/view";
-import { createPaywallSession, type PaywallSession } from "./paywall-session";
+import {
+	createPaywallSession,
+	type PaywallSession,
+	type PaywallSessionOptions,
+} from "./paywall-session";
 
-type PresentPaywall = (offering: PurchasesOffering, signal: AbortSignal) => PaywallSession;
+export type PresentPaywall = (
+	offering: PurchasesOffering,
+	signal: AbortSignal,
+	options?: PaywallSessionOptions,
+) => PaywallSession;
 const PaywallContext = createContext<PresentPaywall | null>(null);
 
 /** A missing native PaywallView (for example an outdated dev client) throws during render. */
@@ -41,11 +49,14 @@ export function PaywallHost({ children }: { children: ReactNode }) {
 		offering: PurchasesOffering;
 		session: PaywallSession;
 	} | null>(null);
-	const present = useCallback<PresentPaywall>((offering, signal) => {
+	const present = useCallback<PresentPaywall>((offering, signal, options) => {
 		sequence.current += 1;
 		const id = sequence.current;
-		const session = createPaywallSession(signal, () =>
-			setActive((current) => (current?.id === id ? null : current)),
+		const session = createPaywallSession(
+			signal,
+			() => setActive((current) => (current?.id === id ? null : current)),
+			undefined,
+			options,
 		);
 		if (!signal.aborted) setActive({ id, offering, session });
 		return session;

@@ -13,7 +13,7 @@ import { assertStoreAccount, type StoreIdentity } from "./store-identity";
 
 type ComputeStoreSdk = Pick<
 	RevenueCat,
-	"getProducts" | "getOfferings" | "purchaseStoreProduct" | "purchasePackage"
+	"getProducts" | "getOfferings" | "purchaseStoreProduct" | "purchasePackage" | "withIdentity"
 >;
 type StoreIdentityReader = Pick<StoreIdentity, "requireReady">;
 
@@ -49,7 +49,35 @@ export type ComputeProduct = Readonly<{
 
 export type ComputeProductSelection =
 	| Readonly<{ kind: "product"; productIdentifier: ComputeProductIdentifier }>
-	| Readonly<{ kind: "package"; package: PurchasesPackage }>;
+	| Readonly<{ kind: "package"; package: PurchasesPackage }>
+	| Readonly<{
+			/** The official Paywall purchases the package it selected once the attempt exists. */
+			kind: "paywall";
+			package: PurchasesPackage;
+			purchase: (signal: AbortSignal) => Promise<StoreTransactionHint | null>;
+	  }>;
+
+export type ComputeProductPlan = Readonly<{
+	planSlug: "compute_basic" | "compute_performance";
+	billingTermMonths: 1 | 12;
+}>;
+
+/** Both catalogues list Basic monthly, Basic annual, Performance monthly, Performance annual. */
+const COMPUTE_PRODUCT_PLANS: readonly ComputeProductPlan[] = [
+	{ planSlug: "compute_basic", billingTermMonths: 1 },
+	{ planSlug: "compute_basic", billingTermMonths: 12 },
+	{ planSlug: "compute_performance", billingTermMonths: 1 },
+	{ planSlug: "compute_performance", billingTermMonths: 12 },
+];
+
+/** Plan and term of an App Store or Google Play compute product; null for anything else. */
+export function computeProductPlan(productIdentifier: string): ComputeProductPlan | null {
+	for (const identifiers of Object.values(COMPUTE_PRODUCT_IDENTIFIERS_BY_PLATFORM)) {
+		const index = identifiers.findIndex((identifier) => identifier === productIdentifier);
+		if (index !== -1) return COMPUTE_PRODUCT_PLANS[index] ?? null;
+	}
+	return null;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object";
@@ -225,6 +253,9 @@ export function createComputeSubscriptionPurchase(options: {
 			selection.kind === "product"
 				? selection.productIdentifier
 				: selection.package.product.identifier;
+		// Plan changes buy a specific product with the server's replacement mode.
+		if (selection.kind === "paywall" && attempt.target_contract_id)
+			throw new StorePurchaseError("invalid_purchase_request");
 		if (selectedIdentifier !== expectedIdentifier)
 			throw new StorePurchaseError("store_attempt_conflict");
 		if (platform === "play_store" && attempt.target_contract_id && !oldProductIdentifier)
@@ -234,6 +265,16 @@ export function createComputeSubscriptionPurchase(options: {
 				? googleProductChangeInfo(attempt, oldProductIdentifier)
 				: null;
 		try {
+			if (selection.kind === "paywall") {
+				const transaction = await sdk.withIdentity(
+					ready.appUserId,
+					() => assertStoreAccount(scope, signal),
+					selection.purchase,
+					signal,
+				);
+				assertStoreAccount(scope, signal);
+				return transaction ? transactionHint(transaction) : null;
+			}
 			let product: PurchasesStoreProduct | null = null;
 			if (selection.kind === "product") {
 				const products = await sdk.getProducts(

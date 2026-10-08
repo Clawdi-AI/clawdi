@@ -25,6 +25,8 @@ export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
 			revenueCatAppleKey: configuredValue("revenueCatAppleKey"),
 			revenueCatGoogleKey: configuredValue("revenueCatGoogleKey"),
 			revenueCatCustomerCenterEnabled: configuredValue("revenueCatCustomerCenterEnabled"),
+			termsOfUseUrl: configuredValue("termsOfUseUrl"),
+			privacyPolicyUrl: configuredValue("privacyPolicyUrl"),
 			linkHosts: configuredValue("linkHosts"),
 		},
 		{

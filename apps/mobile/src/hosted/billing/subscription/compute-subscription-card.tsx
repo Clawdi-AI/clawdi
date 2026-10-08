@@ -9,6 +9,7 @@ import {
 	agentIdentity,
 	computeSubscriptionCardView,
 	computeSubscriptionLifecycle,
+	storeSubscriptionCardView,
 } from "@clawdi/shared/view";
 import type { ReactNode } from "react";
 import { AgentFrameworkIcon } from "@/components/agent-framework-icon";
@@ -18,6 +19,7 @@ import { Text } from "@/components/ui/text";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
 import type { Subscription } from "@/hosted/billing/format";
+import { StoreSubscriptionNotice } from "@/hosted/billing/store/compute-store";
 import { creditPrice } from "@/hosted/billing/store/store-presentation";
 import { useI18n } from "@/lib/i18n";
 import { useStoreSurfaces } from "@/platform/store/store-provider";
@@ -26,10 +28,13 @@ export function ComputeSubscriptionCard({
 	item,
 	actions,
 	notice,
+	storeNotice = true,
 }: {
 	item: Subscription;
 	actions?: ReactNode;
 	notice?: ReactNode;
+	/** Store billing lines; details screens show them with the store actions instead. */
+	storeNotice?: boolean;
 }) {
 	const t = useI18n();
 	const { creditUnits } = useStoreSurfaces();
@@ -40,28 +45,39 @@ export function ComputeSubscriptionCard({
 	const agent = inventory.tiles.find((tile) => tile.id === deployment?.agent_id);
 	const identity = agentIdentity({ name: item.agent_name, agent_type: agent?.agentType ?? null });
 	const lifecycle = computeSubscriptionLifecycle(item);
-	const view = computeSubscriptionCardView({
-		status: { label: lifecycle.badgeLabel, tone: lifecycle.badgeTone },
-		planSlug: item.plan_slug,
-		fundingSource:
-			item.subscription_kind === "included_basic"
-				? "included"
-				: item.funding_source === "store"
-					? "unavailable"
-					: (item.funding_source ?? "unavailable"),
-		priceCents: item.price_cents,
-		currency: item.currency,
-		billingTermMonths: item.billing_term_months,
-		scheduleVerb: lifecycle.dateVerb,
-		scheduleAt: lifecycle.dateAt,
-		...(creditUnits
-			? {
-					formatPrice: (cents: number, currency: string) =>
-						creditPrice({ price_cents: cents, currency }, t("store.credits")) ??
-						t("billing.unknown"),
-				}
-			: {}),
-	});
+	const status = { label: lifecycle.badgeLabel, tone: lifecycle.badgeTone };
+	// Store prices are per storefront: store rows show the store contract, never a Clawdi price.
+	const store = item.funding_source === "store";
+	const showStoreNotice = store && storeNotice;
+	const view = store
+		? storeSubscriptionCardView({
+				planSlug: item.plan_slug,
+				billingTermMonths: item.billing_term_months,
+				management: item.store_management,
+				fallbackStatus: status,
+			})
+		: computeSubscriptionCardView({
+				status,
+				planSlug: item.plan_slug,
+				fundingSource:
+					item.subscription_kind === "included_basic"
+						? "included"
+						: item.funding_source === "store"
+							? "unavailable"
+							: (item.funding_source ?? "unavailable"),
+				priceCents: item.price_cents,
+				currency: item.currency,
+				billingTermMonths: item.billing_term_months,
+				scheduleVerb: lifecycle.dateVerb,
+				scheduleAt: lifecycle.dateAt,
+				...(creditUnits
+					? {
+							formatPrice: (cents: number, currency: string) =>
+								creditPrice({ price_cents: cents, currency }, t("store.credits")) ??
+								t("billing.unknown"),
+						}
+					: {}),
+			});
 	return (
 		<EntityCardChassis variant="compact" className={webView(styles.notices)}>
 			<WebView recipe={styles.heading} className="flex-row">
@@ -110,7 +126,12 @@ export function ComputeSubscriptionCard({
 					</WebView>
 				</WebView>
 			) : null}
-			{notice ? <WebView recipe={styles.price}>{notice}</WebView> : null}
+			{notice || showStoreNotice ? (
+				<WebView recipe={styles.price}>
+					{showStoreNotice ? <StoreSubscriptionNotice management={item.store_management} /> : null}
+					{notice}
+				</WebView>
+			) : null}
 			{actions ? (
 				<WebView recipe={styles.actions} className="flex-row">
 					{actions}

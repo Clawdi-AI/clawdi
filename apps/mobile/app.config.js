@@ -176,6 +176,8 @@ module.exports = ({ config }) => {
 				revenueCatGoogleKey: publicValue("EXPO_PUBLIC_REVENUECAT_GOOGLE_KEY"),
 				revenueCatCustomerCenterEnabled:
 					publicValue("EXPO_PUBLIC_REVENUECAT_CUSTOMER_CENTER_ENABLED") === "1",
+				termsOfUseUrl: publicValue("EXPO_PUBLIC_CLAWDI_TERMS_OF_USE_URL"),
+				privacyPolicyUrl: publicValue("EXPO_PUBLIC_CLAWDI_PRIVACY_POLICY_URL"),
 				clerkPublishableKey,
 				linkHosts: publicValue("EXPO_PUBLIC_CLAWDI_LINK_HOSTS"),
 			},

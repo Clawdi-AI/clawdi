@@ -24,6 +24,7 @@ import { createPurchaseFlow, type PurchaseFlow, type PurchaseOutcome } from "./p
 import { revenueCat } from "./revenuecat";
 import { StorePurchaseError, storePurchaseError } from "./store-error";
 import { createStoreIdentity, type StoreAvailability } from "./store-identity";
+import { createStoreManagement, type StoreManagementController } from "./store-management";
 import {
 	computePurchaseAvailable,
 	isStoreBuild,
@@ -49,8 +50,10 @@ type MobileStore = Readonly<{
 		signal?: AbortSignal,
 	) => Promise<PurchaseOutcome>;
 	restorePurchases: (signal?: AbortSignal) => Promise<StoreComputeReconcileResponse>;
+	management: StoreManagementController | null;
 }>;
-type MobileStoreContext = MobileStore & Readonly<{ storeBuild: boolean }>;
+type MobileStoreContext = MobileStore &
+	Readonly<{ storeBuild: boolean; customerCenterEnabled: boolean }>;
 
 export type ComputeSubscriptionPurchaseRequest = Readonly<{
 	store_product_id: string;
@@ -79,8 +82,13 @@ const unavailable: MobileStore = {
 	computeOffering: null,
 	purchaseComputeSubscription: unavailablePurchase,
 	restorePurchases: unavailableRestore,
+	management: null,
 };
-const StoreContext = createContext<MobileStoreContext>({ ...unavailable, storeBuild: false });
+const StoreContext = createContext<MobileStoreContext>({
+	...unavailable,
+	storeBuild: false,
+	customerCenterEnabled: false,
+});
 
 /** Mounts no UI. Account scope and foreground leases fence every async result. */
 export function StoreProvider({
@@ -116,6 +124,7 @@ export function StoreProvider({
 				mounted = false;
 			};
 		const identity = createStoreIdentity({ scope, client, sdk: revenueCat, config, platform });
+		const management = createStoreManagement({ scope, identity, sdk: revenueCat, platform });
 		let flow: PurchaseFlow | null = null;
 		const refresh = async () => {
 			if (!current() || recovering || flow?.isBusy()) return;
@@ -241,6 +250,7 @@ export function StoreProvider({
 							computeOffering,
 							purchaseComputeSubscription,
 							restorePurchases,
+							management,
 						});
 					return result;
 				};
@@ -256,6 +266,7 @@ export function StoreProvider({
 					computeOffering,
 					purchaseComputeSubscription,
 					restorePurchases,
+					management,
 				});
 				const recovered = await recoverStoreFlow(flow, controller.signal);
 				if (!controller.signal.aborted)
@@ -269,6 +280,7 @@ export function StoreProvider({
 						computeOffering,
 						purchaseComputeSubscription,
 						restorePurchases,
+						management,
 					});
 			} catch (error) {
 				if (!controller.signal.aborted)
@@ -293,7 +305,11 @@ export function StoreProvider({
 	}, [scope, client, config]);
 	const active = state?.scope === scope ? state.value : unavailable;
 	const storeBuild = isStoreBuild(config);
-	const value = useMemo(() => ({ ...active, storeBuild }), [active, storeBuild]);
+	const customerCenterEnabled = config.revenueCatCustomerCenterEnabled === true;
+	const value = useMemo(
+		() => ({ ...active, storeBuild, customerCenterEnabled }),
+		[active, storeBuild, customerCenterEnabled],
+	);
 	return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }
 

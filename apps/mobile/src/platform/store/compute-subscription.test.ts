@@ -59,6 +59,7 @@ const {
 	COMPUTE_OFFERING_IDENTIFIER,
 	COMPUTE_PLAY_PRODUCT_IDENTIFIERS,
 	COMPUTE_PRODUCT_IDENTIFIERS,
+	computeProductPlan,
 	createComputeSubscriptionPurchase,
 	googleProductChangeInfo,
 	loadComputeOffering,
@@ -171,6 +172,84 @@ describe("compute store catalogue", () => {
 			oldProductIdentifier: "ai.clawdi.app.compute",
 			replacementMode: "DEFERRED",
 		});
+	});
+});
+
+describe("Paywall compute purchases", () => {
+	test("maps both store catalogues to plan and term", () => {
+		expect(computeProductPlan("ai.clawdi.app.compute.performance.annual")).toEqual({
+			planSlug: "compute_performance",
+			billingTermMonths: 12,
+		});
+		expect(computeProductPlan("ai.clawdi.app.compute:basic-monthly")).toEqual({
+			planSlug: "compute_basic",
+			billingTermMonths: 1,
+		});
+		expect(computeProductPlan("ai.clawdi.app.credits.10")).toBeNull();
+	});
+
+	test("lets the Paywall buy the attempt's package under the store identity", async () => {
+		const scope = createAccountScope("user:session", "user", "session", 0, () => true);
+		const identity = {
+			requireReady: () => ({
+				appUserId: "11111111-1111-4111-8111-111111111111",
+				catalogueRevision: 1,
+			}),
+		};
+		const sdk = (await import("./revenuecat")).createRevenueCat();
+		await sdk.logIn("public-key", "11111111-1111-4111-8111-111111111111", () => {});
+		const purchase = createComputeSubscriptionPurchase({
+			scope,
+			identity,
+			sdk,
+			platform: "play_store",
+		});
+		const offering = await loadComputeOffering();
+		const selected = offering.availablePackages[0];
+		if (!selected) throw new Error("Missing compute package fixture");
+		const attempt = {
+			platform: "play_store" as const,
+			purpose: "compute_subscription" as const,
+			catalogue_revision: 1,
+			pending_deploy_request_id: "33333333-3333-4333-8333-333333333333",
+			target_contract_id: null,
+			target_deployment_id: null,
+			store_product_id: "ai.clawdi.app.compute:basic-monthly",
+			requested_store_product_id: "ai.clawdi.app.compute:basic-monthly",
+			attempt_id: "22222222-2222-4222-8222-222222222222",
+			state: "prepared" as const,
+			expires_at: "2099-01-01T00:00:00Z",
+		};
+		const signal = new AbortController().signal;
+		const paywall = mock(async () => ({ transactionIdentifier: "GPA.1" }));
+		expect(
+			await purchase(
+				attempt,
+				{ kind: "paywall", package: selected, purchase: paywall },
+				null,
+				signal,
+			),
+		).toEqual({ transactionIdentifier: "GPA.1" });
+		expect(paywall).toHaveBeenCalledTimes(1);
+		expect(purchasePackage).not.toHaveBeenCalled();
+
+		const otherProduct = {
+			...attempt,
+			requested_store_product_id: "ai.clawdi.app.compute:basic-annual",
+		};
+		await expect(
+			purchase(
+				otherProduct,
+				{ kind: "paywall", package: selected, purchase: paywall },
+				null,
+				signal,
+			),
+		).rejects.toMatchObject({ code: "store_attempt_conflict" });
+		const planChange = { ...attempt, target_contract_id: "11111111-1111-4111-8111-111111111111" };
+		await expect(
+			purchase(planChange, { kind: "paywall", package: selected, purchase: paywall }, null, signal),
+		).rejects.toMatchObject({ code: "invalid_purchase_request" });
+		expect(paywall).toHaveBeenCalledTimes(1);
 	});
 });
 

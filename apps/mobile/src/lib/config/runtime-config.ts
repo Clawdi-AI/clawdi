@@ -9,6 +9,9 @@ export type MobileRuntimeConfig = Readonly<{
 	revenueCatAppleKey?: string;
 	revenueCatGoogleKey?: string;
 	revenueCatCustomerCenterEnabled?: boolean;
+	/** Owner-provided legal pages shown with in-app subscription purchases. */
+	termsOfUseUrl?: string;
+	privacyPolicyUrl?: string;
 	linkHosts?: readonly string[];
 }>;
 
@@ -23,6 +26,8 @@ type RuntimeConfigValues = Readonly<{
 	revenueCatAppleKey?: unknown;
 	revenueCatGoogleKey?: unknown;
 	revenueCatCustomerCenterEnabled?: unknown;
+	termsOfUseUrl?: unknown;
+	privacyPolicyUrl?: unknown;
 	linkHosts?: unknown;
 }>;
 
@@ -52,6 +57,8 @@ export function parseMobileRuntimeConfig(
 	const revenueCatAppleKey = requiredString(values.revenueCatAppleKey);
 	const revenueCatGoogleKey = requiredString(values.revenueCatGoogleKey);
 	const revenueCatCustomerCenterEnabled = values.revenueCatCustomerCenterEnabled === true;
+	const termsOfUseUrl = requiredString(values.termsOfUseUrl);
+	const privacyPolicyUrl = requiredString(values.privacyPolicyUrl);
 	// RevenueCat Test Store public SDK keys start with `test_`; never ship them to stores.
 	if (
 		environment === "production" &&
@@ -87,6 +94,8 @@ export function parseMobileRuntimeConfig(
 				(computeApiUrl && new URL(computeApiUrl).protocol !== "https:"))
 		)
 			return { ok: false, reason: "invalid" };
+		if ([termsOfUseUrl, privacyPolicyUrl].some((url) => url && new URL(url).protocol !== "https:"))
+			return { ok: false, reason: "invalid" };
 		const linkHosts = readLinkHosts(values.linkHosts);
 		return {
 			ok: true,
@@ -99,6 +108,8 @@ export function parseMobileRuntimeConfig(
 				...(revenueCatAppleKey ? { revenueCatAppleKey } : {}),
 				...(revenueCatGoogleKey ? { revenueCatGoogleKey } : {}),
 				...(revenueCatCustomerCenterEnabled ? { revenueCatCustomerCenterEnabled: true } : {}),
+				...(termsOfUseUrl ? { termsOfUseUrl } : {}),
+				...(privacyPolicyUrl ? { privacyPolicyUrl } : {}),
 			},
 		};
 	} catch {

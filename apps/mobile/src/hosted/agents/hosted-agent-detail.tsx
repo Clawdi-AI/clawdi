@@ -54,6 +54,7 @@ import { FilesBrowser } from "@/hosted/agents/files-handoff";
 import { InitialDeploymentPage } from "@/hosted/agents/initial-deployment-page";
 import { RuntimeBrowser } from "@/hosted/agents/runtime-handoff";
 import { StartComputeAction } from "@/hosted/agents/start-compute-action";
+import { StoreUpgradeAction } from "@/hosted/billing/store/compute-store";
 import {
 	DEPLOYMENT_POLL_WINDOW_MS,
 	deploymentNeedsPolling,
@@ -358,6 +359,7 @@ function DeploymentDetail({
 				fallback={deployment?.agent_id ? `/agents/${deployment.agent_id}` : "/agents"}
 			>
 				{deployment ? <ComputeStatusDetails deployment={deployment} /> : null}
+				{deployment && !deletionReported ? <StoreUpgradeAction deployment={deployment} /> : null}
 				<ActionButton
 					label={t("deployments.refresh")}
 					disabled={query.isFetching || operation.isFetching}

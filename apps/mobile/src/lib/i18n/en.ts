@@ -213,6 +213,50 @@ const storeEn = {
 	shortfall:
 		"Add {amount} to cover this plan. The price preview refreshes after your credits arrive.",
 } as const;
+/** Compute subscriptions billed by the App Store or Google Play ({store}). */
+const storeComputeEn = {
+	subscribeTitle: "Subscribe with {store}",
+	subscribeDescription: "Choose a plan next. {store} bills this Agent's compute.",
+	subscribeDeploy: "Subscribe and deploy",
+	upgrade: "Upgrade with {store}",
+	upgradeDescription: "Move this Agent from Included Basic to a plan billed by {store}.",
+	purchasing: "Confirming subscription…",
+	waitingForApproval:
+		"Waiting for approval. Nothing is deployed until the purchase is approved; then retry the saved request.",
+	waitingForApprovalUpgrade:
+		"Waiting for approval. This Agent upgrades after the purchase is approved.",
+	waitingForApprovalChange:
+		"Waiting for approval. The plan change applies after the purchase is approved.",
+	processing:
+		"Your subscription is still being confirmed. This page updates automatically when it completes.",
+	submitted: "Subscription submitted. It applies automatically once {store} confirms it.",
+	unconfirmed:
+		"This purchase couldn't be confirmed yet. If you were charged, the subscription applies automatically, and trying again won't charge you twice.",
+	notCompleted: "The purchase wasn't completed. You weren't subscribed.",
+	upgraded: "Subscription active. This Agent now uses it.",
+	changed: "Plan change confirmed. {store} applies it on its own schedule; details update here.",
+	unavailable: "Subscriptions couldn't be loaded. Try again later.",
+	failed: "The subscription couldn't be started. Try again.",
+	planMismatch:
+		"This saved Agent request uses {plan}. Choose a {plan} plan, or discard the saved request first.",
+	changePlan: "Change plan",
+	changePlanDescription: "Choose a new plan. {store} decides when the change takes effect.",
+	autoRenew: "Renews automatically until cancelled in {store} settings.",
+	termsOfUse: "Terms of Use (EULA)",
+	privacyPolicy: "Privacy Policy",
+	manage: "Manage subscription",
+	restore: "Restore purchases",
+	restoring: "Restoring purchases…",
+	restored: "Purchases restored.",
+	restorePending: "Your purchases are still being checked. Try again in a few minutes.",
+	restoreFailed: "Purchases couldn't be restored. Try again.",
+	ownedByOtherAccount: "This {store} subscription is linked to a different Clawdi account.",
+	slotTitle: "{store} subscription",
+	slotBound: "Used by {agent}",
+	slotAvailable: "Available for your next Agent",
+	deletionManage: "Manage subscription",
+	deletionContinue: "I've cancelled — continue",
+} as const;
 const creationEn = {
 	savedProviderBoundary:
 		"This saved provider can be previewed here. Mobile creation currently supports Clawdi AI or configuration inside the agent; select either before deploying.",
@@ -673,6 +717,7 @@ export const en = {
 	billing: billingEn,
 	creation: creationEn,
 	store: storeEn,
+	storeCompute: storeComputeEn,
 	deployments: deploymentsEn,
 	navigation: {
 		backTo: "Back to",

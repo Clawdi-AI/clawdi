@@ -1,4 +1,5 @@
 import {
+	accountDeletionStoreNoticeCopy,
 	type DeletedAccountSessionEnd,
 	deleteAccountThenSignOut,
 	endDeletedAccountSession,
@@ -10,19 +11,28 @@ import { useState } from "react";
 import { Linking, Platform } from "react-native";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { ConfirmAction } from "@/components/ui/confirm-action";
+import { ConfirmAction, RichConfirmAction } from "@/components/ui/confirm-action";
 import { LoadingScreen, Spinner } from "@/components/ui/feedback";
 import { Text } from "@/components/ui/text";
 import { AppScrollView, AppView } from "@/components/ui/view";
+import { mobileAccountDeletionStoreNotice } from "@/hosted/account/account-deletion-store";
+import { uniqueBillingItems } from "@/hosted/billing/format";
+import { useSubscriptions } from "@/hosted/billing/hooks";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { useMobileStore } from "@/platform/store/store-provider";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 const STORE_SUBSCRIPTIONS = Platform.select({
-	ios: { url: STORE_SUBSCRIPTIONS_URL.appStore, label: "accountDeletion.manageAppStore" } as const,
+	ios: {
+		provider: "app_store",
+		url: STORE_SUBSCRIPTIONS_URL.appStore,
+		label: "accountDeletion.manageAppStore",
+	} as const,
 	android: {
+		provider: "play_store",
 		url: STORE_SUBSCRIPTIONS_URL.googlePlay,
 		label: "accountDeletion.manageGooglePlay",
 	} as const,
@@ -50,6 +60,36 @@ function DeleteAccount({ email }: { email: string }) {
 	const capture = useForegroundLease();
 	const action = useAuthAction(scope.identity);
 	const [outcome, setOutcome] = useState<"idle" | "deleting" | "uncertain" | "accepted">("idle");
+	const [storeStep, setStoreStep] = useState(false);
+	const [confirming, setConfirming] = useState(false);
+	// Apple 5.1.1(v): a live store contract adds a "cancel it first" step. Not a hard block.
+	const subscriptions = useSubscriptions();
+	const { computeSlot } = useMobileStore();
+	const storeNotice = mobileAccountDeletionStoreNotice(
+		subscriptions.data
+			? uniqueBillingItems(
+					subscriptions.data.pages.flatMap((page) => page.items ?? []),
+					(item) => item.subscription_id,
+				)
+			: null,
+		Boolean(subscriptions.data) && !subscriptions.hasNextPage,
+		computeSlot,
+	);
+	const storeCopy =
+		storeNotice.kind === "store" ? accountDeletionStoreNoticeCopy(storeNotice.provider) : null;
+	// Store links are only actionable for the store that bills on this device.
+	const manageLink =
+		storeNotice.kind === "store"
+			? storeNotice.provider === STORE_SUBSCRIPTIONS?.provider
+				? STORE_SUBSCRIPTIONS
+				: null
+			: storeNotice.kind === "generic"
+				? STORE_SUBSCRIPTIONS
+				: null;
+	const openManageLink = () => {
+		const visible = capture();
+		if (manageLink && visible()) void Linking.openURL(manageLink.url).catch(() => undefined);
+	};
 	// Sign-out reaches the auth gates through the synced JS session; the native view follows.
 	const endSession = async (): Promise<DeletedAccountSessionEnd> =>
 		scope.sessionId && scope.isCurrent()
@@ -89,40 +129,59 @@ function DeleteAccount({ email }: { email: string }) {
 			<Text className="text-sm text-muted-foreground">{email}</Text>
 			<Text className="text-sm">{t("accountDeletion.warning")}</Text>
 			<Text className="text-sm">{t("accountDeletion.billing")}</Text>
-			<Alert
-				variant="destructive"
-				icon={TriangleAlert}
-				title={t("accountDeletion.storeNoticeTitle")}
-			>
-				{t("accountDeletion.storeNotice")}
-			</Alert>
-			{STORE_SUBSCRIPTIONS ? (
-				<Button
-					variant="outline"
-					onPress={() => {
-						const visible = capture();
-						if (visible()) void Linking.openURL(STORE_SUBSCRIPTIONS.url).catch(() => undefined);
-					}}
+			{storeNotice.kind !== "none" ? (
+				<Alert
+					variant="destructive"
+					icon={TriangleAlert}
+					title={storeCopy?.title ?? t("accountDeletion.storeNoticeTitle")}
 				>
-					<Text>{t(STORE_SUBSCRIPTIONS.label)}</Text>
+					{storeCopy?.description ?? t("accountDeletion.storeNotice")}
+				</Alert>
+			) : null}
+			{manageLink ? (
+				<Button variant="outline" onPress={openManageLink}>
+					<Text>{t(manageLink.label)}</Text>
 				</Button>
 			) : null}
 			{outcome === "idle" ? (
 				!compute ? (
 					<Alert>{t("accountDeletion.unavailable")}</Alert>
 				) : (
-					<ConfirmAction
-						title={t("accountDeletion.confirmTitle")}
-						description={`${email}\n\n${t("accountDeletion.warning")}\n\n${t("accountDeletion.billing")}`}
-						cancelLabel={t("accountDeletion.cancel")}
-						confirmLabel={t("accountDeletion.confirm")}
-						destructive
-						onConfirm={confirm}
-					>
-						<Button variant="destructive" disabled={action.busy}>
+					<>
+						{storeCopy ? (
+							<RichConfirmAction
+								open={storeStep}
+								onOpenChange={setStoreStep}
+								title={storeCopy.title}
+								description={storeCopy.description}
+								cancelLabel={t("accountDeletion.cancel")}
+								secondaryAction={
+									manageLink
+										? { label: t("storeCompute.deletionManage"), onAction: openManageLink }
+										: undefined
+								}
+								confirmLabel={t("storeCompute.deletionContinue")}
+								onConfirm={() => setConfirming(true)}
+							/>
+						) : null}
+						<ConfirmAction
+							open={confirming}
+							onOpenChange={setConfirming}
+							title={t("accountDeletion.confirmTitle")}
+							description={`${email}\n\n${t("accountDeletion.warning")}\n\n${t("accountDeletion.billing")}`}
+							cancelLabel={t("accountDeletion.cancel")}
+							confirmLabel={t("accountDeletion.confirm")}
+							destructive
+							onConfirm={confirm}
+						/>
+						<Button
+							variant="destructive"
+							disabled={action.busy}
+							onPress={() => (storeCopy ? setStoreStep(true) : setConfirming(true))}
+						>
 							<Text>{t("accountDeletion.action")}</Text>
 						</Button>
-					</ConfirmAction>
+					</>
 				)
 			) : outcome === "deleting" ? (
 				<AppView className="flex-row items-center gap-2">

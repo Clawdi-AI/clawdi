@@ -141,6 +141,38 @@ neutral status while purchases are unavailable). Preview/development builds keep
 Web parity; they show Add credits only when a debug build has a usable store
 flow (Test Store key plus enabled hosted bootstrap).
 
+## Compute subscriptions (P2-M2)
+
+Entries render only on store builds while bootstrap reports
+`compute_subscriptions_enabled`; new purchases also need `compute_slot.available`,
+the loaded `compute` offering and the Paywall host (`useComputePurchaseGate`).
+
+- **Subscribe / upgrade** (deploy wizard source, Agent → Compute on Included Basic)
+  present the official Paywall for the `compute` offering. A compute attempt needs its
+  product up front, so `compute-paywall.ts` holds the Paywall's purchase in the
+  documented `onPurchasePackageInitiated` gate, lets M1 journal and create the attempt
+  for the selected package (deploy: the wizard first persists its draft with the
+  package's plan and passes `pending_deploy_request_id`; upgrade: `target_deployment_id`),
+  then resumes so the Paywall buys exactly that package. A refused attempt resumes
+  `false` and closes the Paywall. A cancelled store sheet closes it with no purchase;
+  Ask-to-Buy / Play `PENDING` shows "Waiting for approval" and never deploys. After
+  `funding_applied` the wizard runs the existing explicit admission with the same
+  `deploy_request_id`.
+- **Store rows** use the shared presentation and
+  `resolveStoreSubscriptionActions` (platform-aware; Web keeps store rows read-only).
+  Change plan buys another compute product through the M1 plan-change flow with the
+  live contract from `compute_slot` and the server's replacement mode. It requires the
+  owner-provided `EXPO_PUBLIC_CLAWDI_TERMS_OF_USE_URL` and
+  `EXPO_PUBLIC_CLAWDI_PRIVACY_POLICY_URL` (https); without them the action is hidden
+  and Manage subscription remains. Manage opens the Customer Center when the build flag
+  is on, otherwise `showManageSubscriptions()` (iOS, Apple link fallback) or the Play
+  link; rows billed by the other store show "Managed in … on your … device", no link.
+- **Billing**: store slot card and "Restore purchases" (`owned_by_other_account` is
+  reported, never transferred).
+- **Deletion**: store-funded Agents never offer cancellation choices; the custom
+  account-deletion page adds a "cancel it first" step using the shared rule over the
+  subscriptions list plus `compute_slot`.
+
 ## Recovery and official APIs
 
 `flow.recover()` reconciles the local journal and lists server attempts with
