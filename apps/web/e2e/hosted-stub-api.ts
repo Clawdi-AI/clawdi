@@ -70,6 +70,7 @@ export type DeploymentMutationFixture = {
 	/** A serving advisory projected as a current `Degraded=True` condition. */
 	serving_advisory?: "ProviderConflict" | "RuntimeUiUnavailable";
 	provider_conflicts?: DeploymentRead["provider_conflicts"];
+	provisioning_path?: DeploymentRead["provisioning_path"];
 	hermes_control_ui_url?: string | null;
 	openclaw_control_ui_url?: string | null;
 	last_funding_event?: {
@@ -212,7 +213,6 @@ export function mutationDeploymentReadFixture(
 
 	return {
 		agent_id: fixtureAgentId(deployment),
-		provisioning_path: "standard",
 		resource: {
 			id: deployment.id,
 			name: deployment.name,
@@ -321,6 +321,7 @@ export function mutationDeploymentReadFixture(
 		},
 		current_plan_slug: config.compute_plan_slug,
 		...(deployment.provider_conflicts ? { provider_conflicts: deployment.provider_conflicts } : {}),
+		provisioning_path: deployment.provisioning_path ?? "standard",
 		upgrade_available: deployment.upgrade_available,
 		upgrade_eligibility: deployment.upgrade_eligibility ?? {
 			eligible: deployment.upgrade_available,

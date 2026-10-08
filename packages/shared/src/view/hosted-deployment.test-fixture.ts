@@ -39,6 +39,7 @@ type HostedDeploymentFixtureOptions = {
 	/** Conditions appended after the fixture's Ready condition. */
 	extraConditions?: HostedDeploymentStatus["conditions"];
 	providerConflicts?: HostedDeployment["provider_conflicts"];
+	provisioningPath?: HostedDeployment["provisioning_path"];
 };
 
 const DEFAULT_CREATED_AT = "2026-01-01T00:00:00Z";
@@ -55,7 +56,6 @@ export function hostedDeploymentFixture(
 
 	return {
 		agent_id: options.agentId ?? "11111111-1111-4111-8111-111111111111",
-		provisioning_path: "standard",
 		resource: {
 			id: options.id ?? "dep_test",
 			name: options.name ?? "Test deployment",
@@ -123,6 +123,7 @@ export function hostedDeploymentFixture(
 		...(options.providerConflicts === undefined
 			? {}
 			: { provider_conflicts: options.providerConflicts }),
+		provisioning_path: options.provisioningPath ?? "standard",
 		upgrade_available: upgradeAvailable,
 		upgrade_eligibility: options.upgradeEligibility ?? {
 			eligible: upgradeAvailable,

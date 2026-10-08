@@ -5,7 +5,6 @@ import {
 	agentChannelSectionClasses,
 	computeStatusDetailsClasses,
 	hostedAgentOverviewClasses,
-	initialDeploymentClasses as progressClasses,
 } from "@clawdi/shared/ui";
 import {
 	AGENT_PROFILES_COPY,
@@ -14,13 +13,24 @@ import {
 	agentDisplayName,
 	agentFilesPresentation,
 	agentOverviewCopy,
+	agentOverviewSummary,
+	agentSectionAvailableDuringSetup,
 	aiBindingCopy,
 	canRetryInitialDeployment,
 	computeStatusDetailsCopy,
 	type DeploymentStatus,
+	deploymentAwaitingRuntimeUi,
+	deploymentProvisioningPath,
 	formatShortDate,
+	hostedDeploymentSetupInProgress,
+	INITIAL_DEPLOYMENT_COMPLETE_PAUSE_MS,
+	INITIAL_DEPLOYMENT_REVEAL_MS,
+	INITIAL_DEPLOYMENT_SUPPORT_LABEL,
+	type InitialDeploymentSupportState,
 	initialDeploymentCopy,
 	initialDeploymentPresentation,
+	initialDeploymentStartedAtMs,
+	initialDeploymentSupportContext,
 	RUNTIME_UI_WITHDRAWN_DESCRIPTION,
 	SUPPORT_MAILTO,
 	shouldShowInitialDeploymentProgress,
@@ -101,7 +111,6 @@ import { AgentProjectsTab } from "@/components/dashboard/agent-projects-tab";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { OverviewComputeBody } from "@/components/dashboard/overview-compute-body";
 import { useWorkspaceSkills } from "@/components/dashboard/workspace-skills-query";
-import { DetailPanel } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CHOICE_GRID_CLASS,
@@ -150,6 +159,10 @@ import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
+import {
+	InitialDeploymentLaunch,
+	InitialDeploymentStage,
+} from "@/hosted/agents/initial-deployment-launch";
 import { overviewComputePresentation } from "@/hosted/agents/overview-compute-presentation";
 import {
 	openClawRuntimeUiWindowTarget,
@@ -347,6 +360,7 @@ import {
 } from "@/lib/agent-routes";
 import { ApiError, toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
+import { CHATWOOT_LIVE_CHAT_AVAILABLE, openChatwootWithContext } from "@/lib/chatwoot";
 import { useDesktopBridge } from "@/lib/desktop";
 import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
 import {
@@ -605,7 +619,13 @@ export function HostedAgentDetail({
 	const parsedTab = parseHostedAgentTab(section) ?? "overview";
 	const filesUrl = deploymentFilesUrl(deployment);
 	const visibleSectionIds = hostedAgentVisibleSectionIds(filesUrl !== null);
-	const activeTab = visibleSectionIds.includes(parsedTab) ? parsedTab : "overview";
+	// Sections that need the runtime fall back to the setup screen until it is ready.
+	const setupInProgress = hostedDeploymentSetupInProgress(deployment);
+	const activeTab =
+		visibleSectionIds.includes(parsedTab) &&
+		(!setupInProgress || agentSectionAvailableDuringSetup(parsedTab))
+			? parsedTab
+			: "overview";
 	useSetBreadcrumbTitle(
 		activeTab === "overview" ? availableAgentTitle : agentSectionLabel(activeTab, runtime),
 	);
@@ -616,24 +636,183 @@ export function HostedAgentDetail({
 		...agentSessionDetailLink(environmentId, sessionId),
 	});
 
-	const sessions = useQuery({
-		...sessionListQueryOptions($api, { environment_id: environmentId, page_size: 3 }),
-		enabled: activeTab === "overview" && sessionsQueryable,
-	});
-
 	const activeNavItem = agentSectionNavigationItem(activeTab, runtime);
 	const activeTabLabel = activeNavItem.label;
 	const ActiveTabIcon = activeNavItem.icon;
 	const resourceScope = agentResourceScope(environmentId);
+	// Setup is done only when the agent runs and its web chat surface is published.
 	const showInitialDeploymentPage =
 		activeTab === "overview" &&
-		shouldShowInitialDeploymentProgress(deploymentStatus, deploymentFailure);
+		(shouldShowInitialDeploymentProgress(deploymentStatus, deploymentFailure) || setupInProgress);
+	// Runtime-backed overview data loads once the runtime runs, while chat is still opening.
+	const setupPreviewData = showInitialDeploymentPage && deploymentStatus.kind !== "running";
+	const initialDeploymentReady = useInitialDeploymentExit(
+		showInitialDeploymentPage,
+		deploymentStatus.kind === "running",
+	);
+	const initialDeploymentExit = activeTab === "overview" ? initialDeploymentReady.exit : "idle";
+	const staticOverview = showInitialDeploymentPage || initialDeploymentExit !== "idle";
+	const showInitialDeploymentLaunch = showInitialDeploymentPage || initialDeploymentExit !== "idle";
+	const sessions = useQuery({
+		...sessionListQueryOptions($api, { environment_id: environmentId, page_size: 3 }),
+		enabled: activeTab === "overview" && sessionsQueryable && !setupPreviewData,
+	});
 	const isLiveToolTab =
 		activeTab === "console" || activeTab === "files" || activeTab === "terminal";
 	// The persistent agent layout owns the ready OpenClaw surface and heading. Keep this
 	// route mounted for its breadcrumb and canonical Outlet lifecycle.
 	if (activeTab === "console" && runtime === "openclaw" && deploymentRuntimeUiIsReady(deployment))
 		return null;
+	const sectionContent = (
+		<section className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-6"}>
+			{isLiveToolTab ||
+			activeTab === "plugins" ||
+			(activeTab === "projects" && projection.status === "resolved") ? null : (
+				<PageHeader
+					title={activeTab === "overview" ? availableAgentTitle : activeTabLabel}
+					titleAdornment={
+						activeTab === "overview" ? <AgentSourceBadge source="hosted" compact /> : null
+					}
+					description={activeNavItem.description}
+					icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
+					actions={activeTab === "memories" ? <MemoriesPageActions scope={resourceScope} /> : null}
+				/>
+			)}
+			{isLiveToolTab || activeTab === "settings" || activeTab === "overview" ? null : (
+				<ComputeDunningBanner deployment={deployment} />
+			)}
+			{!deploymentStatus.known && activeTab !== "overview" ? (
+				<DeploymentStatusUnavailableState
+					deployment={deployment}
+					isRetrying={isCheckingDeployment}
+					onRetry={onCheckDeploymentAgain}
+				/>
+			) : null}
+			{deploymentStatus.known &&
+			deploymentProjectionQueryable &&
+			!(activeTab === "overview" && isStartingStatus(deploymentStatus)) &&
+			shouldShowHostedProjectionNotice(activeTab) ? (
+				<HostedProjectionNotice
+					projection={projection}
+					isChecking={isCheckingProjection}
+					onRetry={() => {
+						void checkProjectionAgain();
+					}}
+				/>
+			) : null}
+			<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
+				{activeTab === "overview" ? (
+					<OverviewTab
+						agentId={environmentId}
+						deployment={deployment}
+						agent={isAgentRouteId(environmentId) ? agent : null}
+						agentName={availableAgentTitle}
+						projectionStatus={projection.status}
+						sessions={sessions.data?.items ?? []}
+						// Behind the overlay the session list shows its empty state, not a skeleton.
+						sessionsLoading={!staticOverview && sessions.isLoading}
+						sessionsError={
+							shouldBlockQueryError(sessions.error, sessions.data) ? sessions.error : null
+						}
+						onRetrySessions={() => sessions.refetch()}
+						sessionLink={(session) => scopedSessionLink(session.id)}
+						eventStreamActive={eventStreamActive}
+						setupPreview={setupPreviewData}
+						staticPresentation={staticOverview}
+					/>
+				) : null}
+				{deploymentStatus.known && activeTab === "console" ? (
+					<ConsoleTab
+						key={JSON.stringify([
+							deployment.resource.id,
+							deployment.resource.metadata.generation,
+							runtimeConsoleUrl(deployment),
+							deploymentRuntimeUiIsReady(deployment),
+						])}
+						deployment={deployment}
+						runtime={runtime}
+						terminalHref={terminalHref}
+						channelsHref={agentSectionHref(environmentId, "channels")}
+						deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+						deploymentTransitionEscalated={deploymentTransitionEscalated}
+						isCheckingDeployment={isCheckingDeployment}
+						onCheckDeploymentAgain={onCheckDeploymentAgain}
+					/>
+				) : null}
+				{deploymentStatus.known && activeTab === "terminal" ? (
+					<TerminalTab
+						key={deployment.resource.id}
+						deployment={deployment}
+						agentName={availableAgentTitle}
+						terminalWindowHref={terminalWindowHref}
+						standalone={standalone}
+					/>
+				) : null}
+				{deploymentStatus.known && activeTab === "files" && filesUrl ? (
+					<FilesTab deployment={deployment} url={filesUrl} />
+				) : null}
+				{activeTab === "sessions" ? (
+					<HostedAgentSessionsTab environmentId={environmentId} agentName={availableAgentTitle} />
+				) : null}
+				{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
+				{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
+				{activeTab === "projects" ? (
+					projection.status === "resolved" ? (
+						<AgentProjectsTab
+							key={environmentId}
+							agentId={environmentId}
+							headerAdornment={<AgentSourceBadge source="hosted" compact />}
+							headerIcon={
+								ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
+							}
+						/>
+					) : (
+						<ProjectionDependentUnavailable label="Projects" />
+					)
+				) : null}
+				{activeTab === "plugins" ? (
+					<AgentPluginsSurface
+						agentId={environmentId}
+						runtime={runtime}
+						eventStreamActive={eventStreamActive}
+					/>
+				) : null}
+				{deploymentStatus.known && activeTab === "ai" ? (
+					<AiProviderTab deployment={deployment} runtime={runtime} environmentId={environmentId} />
+				) : null}
+				{deploymentStatus.known && activeTab === "channels" ? (
+					!deploymentProjectionQueryable ? (
+						<StoppedAgentState deployment={deployment} />
+					) : projection.status === "resolved" ? (
+						<ChannelsTab
+							environmentId={environmentId}
+							agentType={runtime}
+							agentName={availableAgentTitle}
+						/>
+					) : (
+						<ChannelsSyncState
+							isChecking={isCheckingDeployment || isCheckingProjection}
+							onCheckAgain={() => {
+								onCheckDeploymentAgain();
+								if (cloudAgentId) void checkProjectionAgain();
+							}}
+						/>
+					)
+				) : null}
+				{deploymentStatus.known && activeTab === "settings" ? (
+					<HostedAgentSettingsTab
+						environmentId={environmentId}
+						deployment={deployment}
+						agent={agent}
+						routeSearch={routeSearch}
+						onDeleteAccepted={onDeleteAccepted}
+						deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+						deploymentTransitionEscalated={deploymentTransitionEscalated}
+					/>
+				) : null}
+			</div>
+		</section>
+	);
 	return (
 		<div
 			data-hosted="true"
@@ -648,168 +827,31 @@ export function HostedAgentDetail({
 			)}
 		>
 			{isLiveToolTab ? <h1 className="sr-only">{availableAgentTitle}</h1> : null}
-			<section className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "flex flex-col gap-6"}>
-				{isLiveToolTab ||
-				activeTab === "plugins" ||
-				(activeTab === "projects" && projection.status === "resolved") ? null : (
-					<PageHeader
-						title={activeTab === "overview" ? availableAgentTitle : activeTabLabel}
-						titleAdornment={
-							activeTab === "overview" ? <AgentSourceBadge source="hosted" compact /> : null
-						}
-						description={activeNavItem.description}
-						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
-						actions={
-							activeTab === "memories" ? <MemoriesPageActions scope={resourceScope} /> : null
-						}
-					/>
-				)}
-				{isLiveToolTab ||
-				activeTab === "settings" ||
-				(activeTab === "overview" && !showInitialDeploymentPage) ? null : (
-					<ComputeDunningBanner deployment={deployment} />
-				)}
-				{!deploymentStatus.known && activeTab !== "overview" ? (
-					<DeploymentStatusUnavailableState
-						deployment={deployment}
-						isRetrying={isCheckingDeployment}
-						onRetry={onCheckDeploymentAgain}
-					/>
-				) : null}
-				{deploymentStatus.known &&
-				deploymentProjectionQueryable &&
-				!(activeTab === "overview" && isStartingStatus(deploymentStatus)) &&
-				shouldShowHostedProjectionNotice(activeTab) ? (
-					<HostedProjectionNotice
-						projection={projection}
-						isChecking={isCheckingProjection}
-						onRetry={() => {
-							void checkProjectionAgain();
-						}}
-					/>
-				) : null}
-				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
-					{showInitialDeploymentPage ? (
-						<InitialDeploymentPage
-							deployment={deployment}
-							failure={deploymentFailure}
-							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-							deploymentTransitionEscalated={deploymentTransitionEscalated}
-							isCheckingDeployment={isCheckingDeployment}
-							onCheckDeploymentAgain={onCheckDeploymentAgain}
-						/>
-					) : activeTab === "overview" ? (
-						<OverviewTab
-							agentId={environmentId}
-							deployment={deployment}
-							agent={isAgentRouteId(environmentId) ? agent : null}
-							agentName={availableAgentTitle}
-							projectionStatus={projection.status}
-							sessions={sessions.data?.items ?? []}
-							sessionsLoading={sessions.isLoading}
-							sessionsError={
-								shouldBlockQueryError(sessions.error, sessions.data) ? sessions.error : null
-							}
-							onRetrySessions={() => sessions.refetch()}
-							sessionLink={(session) => scopedSessionLink(session.id)}
-							eventStreamActive={eventStreamActive}
-						/>
-					) : null}
-					{deploymentStatus.known && activeTab === "console" ? (
-						<ConsoleTab
-							key={JSON.stringify([
-								deployment.resource.id,
-								deployment.resource.metadata.generation,
-								runtimeConsoleUrl(deployment),
-								deploymentRuntimeUiIsReady(deployment),
-							])}
-							deployment={deployment}
-							runtime={runtime}
-							terminalHref={terminalHref}
-							channelsHref={agentSectionHref(environmentId, "channels")}
-							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-							deploymentTransitionEscalated={deploymentTransitionEscalated}
-							isCheckingDeployment={isCheckingDeployment}
-							onCheckDeploymentAgain={onCheckDeploymentAgain}
-						/>
-					) : null}
-					{deploymentStatus.known && activeTab === "terminal" ? (
-						<TerminalTab
-							key={deployment.resource.id}
-							deployment={deployment}
-							agentName={availableAgentTitle}
-							terminalWindowHref={terminalWindowHref}
-							standalone={standalone}
-						/>
-					) : null}
-					{deploymentStatus.known && activeTab === "files" && filesUrl ? (
-						<FilesTab deployment={deployment} url={filesUrl} />
-					) : null}
-					{activeTab === "sessions" ? (
-						<HostedAgentSessionsTab environmentId={environmentId} agentName={availableAgentTitle} />
-					) : null}
-					{activeTab === "memories" ? <MemoriesSurface scope={resourceScope} /> : null}
-					{activeTab === "connectors" ? <ConnectorsSurface embedded scope={resourceScope} /> : null}
-					{activeTab === "projects" ? (
-						projection.status === "resolved" ? (
-							<AgentProjectsTab
-								key={environmentId}
-								agentId={environmentId}
-								headerAdornment={<AgentSourceBadge source="hosted" compact />}
-								headerIcon={
-									ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null
-								}
-							/>
-						) : (
-							<ProjectionDependentUnavailable label="Projects" />
-						)
-					) : null}
-					{activeTab === "plugins" ? (
-						<AgentPluginsSurface
-							agentId={environmentId}
-							runtime={runtime}
-							eventStreamActive={eventStreamActive}
-						/>
-					) : null}
-					{deploymentStatus.known && activeTab === "ai" ? (
-						<AiProviderTab
-							deployment={deployment}
-							runtime={runtime}
-							environmentId={environmentId}
-						/>
-					) : null}
-					{deploymentStatus.known && activeTab === "channels" ? (
-						!deploymentProjectionQueryable ? (
-							<StoppedAgentState deployment={deployment} />
-						) : projection.status === "resolved" ? (
-							<ChannelsTab
-								environmentId={environmentId}
-								agentType={runtime}
+			<p className="sr-only" role="status" aria-live="polite">
+				{initialDeploymentReady.announcement}
+			</p>
+			{activeTab === "overview" ? (
+				<InitialDeploymentStage
+					preview={showInitialDeploymentPage || initialDeploymentExit === "complete"}
+					leaving={initialDeploymentExit === "revealing"}
+					overlay={
+						showInitialDeploymentLaunch ? (
+							<InitialDeploymentPage
+								deployment={deployment}
 								agentName={availableAgentTitle}
+								avatarUrl={agent?.avatar_url}
+								failure={deploymentFailure}
+								deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+								deploymentTransitionEscalated={deploymentTransitionEscalated}
 							/>
-						) : (
-							<ChannelsSyncState
-								isChecking={isCheckingDeployment || isCheckingProjection}
-								onCheckAgain={() => {
-									onCheckDeploymentAgain();
-									if (cloudAgentId) void checkProjectionAgain();
-								}}
-							/>
-						)
-					) : null}
-					{deploymentStatus.known && activeTab === "settings" ? (
-						<HostedAgentSettingsTab
-							environmentId={environmentId}
-							deployment={deployment}
-							agent={agent}
-							routeSearch={routeSearch}
-							onDeleteAccepted={onDeleteAccepted}
-							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
-							deploymentTransitionEscalated={deploymentTransitionEscalated}
-						/>
-					) : null}
-				</div>
-			</section>
+						) : null
+					}
+				>
+					{sectionContent}
+				</InitialDeploymentStage>
+			) : (
+				sectionContent
+			)}
 		</div>
 	);
 }
@@ -1096,162 +1138,115 @@ export function OverviewComputeSummary({
 	);
 }
 
+function prefersReducedMotion(): boolean {
+	return (
+		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+	);
+}
+
+type InitialDeploymentExit = "idle" | "complete" | "revealing";
+
+/**
+ * When setup completes while its screen is open, the completed state stays readable
+ * for a moment, then the overlay fades into the agent overview on one reveal timeline.
+ * Reduced motion keeps the pause, which is information, and makes the reveal instant.
+ * Readiness is announced once, from a page-level region that outlives the screen.
+ */
+function useInitialDeploymentExit(showingProgress: boolean, running: boolean) {
+	const [wasShowingProgress, setWasShowingProgress] = useState(showingProgress);
+	const [exit, setExit] = useState<InitialDeploymentExit>("idle");
+	const [announcement, setAnnouncement] = useState<string | null>(null);
+	// Adjust during render so the screen never unmounts for a frame before the pause.
+	if (wasShowingProgress !== showingProgress) {
+		setWasShowingProgress(showingProgress);
+		if (wasShowingProgress && running) {
+			setAnnouncement(initialDeploymentCopy.ready);
+			setExit("complete");
+		}
+	}
+	useEffect(() => {
+		if (exit === "idle") return;
+		const timeout = window.setTimeout(
+			() => setExit(exit === "complete" && !prefersReducedMotion() ? "revealing" : "idle"),
+			exit === "complete" ? INITIAL_DEPLOYMENT_COMPLETE_PAUSE_MS : INITIAL_DEPLOYMENT_REVEAL_MS,
+		);
+		return () => window.clearTimeout(timeout);
+	}, [exit]);
+	return { exit: running ? exit : "idle", announcement };
+}
+
 export function InitialDeploymentPage({
 	deployment,
+	agentName,
+	avatarUrl = null,
 	failure = null,
 	deploymentTransitionTimedOut,
 	deploymentTransitionEscalated,
-	isCheckingDeployment,
-	onCheckDeploymentAgain,
 }: {
 	deployment: HostedDeployment;
+	agentName: string;
+	avatarUrl?: string | null;
 	failure?: DeploymentFailurePresentation | null;
 	deploymentTransitionTimedOut: boolean;
 	deploymentTransitionEscalated: boolean;
-	isCheckingDeployment: boolean;
-	onCheckDeploymentAgain: () => void;
 }) {
-	const status = deploymentStatusFromResource(deployment.resource.status);
-	const runtimeLabel = runtimeDisplayName(deployment.resource.spec.runtime);
+	const runtime = deployment.resource.spec.runtime;
+	// Polling and the automatic open continue while the visitor talks to support.
+	const contactSupport = (state: InitialDeploymentSupportState) =>
+		CHATWOOT_LIVE_CHAT_AVAILABLE ? (
+			<Button
+				type="button"
+				variant="outline"
+				size="sm"
+				onClick={() =>
+					openChatwootWithContext({
+						conversationAttributes: initialDeploymentSupportContext(deployment, state, Date.now()),
+						label: INITIAL_DEPLOYMENT_SUPPORT_LABEL,
+					})
+				}
+			>
+				<LifeBuoy />
+				{initialDeploymentCopy.contactSupport}
+			</Button>
+		) : null;
 	if (failure?.failedVerb === "create") {
-		const canRetry = canRetryInitialDeployment(failure);
 		return (
-			<DetailPanel className={progressClasses.failurePanel}>
-				<div
-					data-testid="hosted-initial-deployment-panel"
-					role="alert"
-					className={progressClasses.failureBody}
-				>
-					<div>
-						<h2 className={progressClasses.title}>
-							<AlertCircle className="size-5 text-destructive" />
-							{initialDeploymentCopy.failureTitle}
-						</h2>
-						<p className={progressClasses.description}>
-							{initialDeploymentCopy.failureDescription}
-						</p>
-					</div>
-					<Alert variant="destructive">
-						<AlertCircle />
-						<AlertTitle>{failure.title}</AlertTitle>
-						<AlertDescription className="space-y-1">
-							<p>{failure.reason}</p>
-							<p>{failure.description}</p>
-						</AlertDescription>
-					</Alert>
-					{canRetry ? (
-						<StartComputeAction deployment={deployment} label={initialDeploymentCopy.retry} />
-					) : null}
-				</div>
-			</DetailPanel>
+			<InitialDeploymentLaunch
+				agentName={agentName}
+				runtime={runtime}
+				avatarUrl={avatarUrl}
+				tone="failed"
+				title={initialDeploymentCopy.failureTitle}
+				detail={failure.reason}
+				actions={
+					<>
+						{canRetryInitialDeployment(failure) ? (
+							<StartComputeAction deployment={deployment} label={initialDeploymentCopy.retry} />
+						) : null}
+						{contactSupport("failed")}
+					</>
+				}
+			/>
 		);
 	}
-	const { stages, activeStageIndex, activeStage, title, description, step } =
-		initialDeploymentPresentation(
-			status,
-			runtimeLabel,
-			deploymentTransitionTimedOut,
-			deploymentTransitionEscalated,
-		);
+	const view = initialDeploymentPresentation(
+		deploymentStatusFromResource(deployment.resource.status),
+		deploymentTransitionTimedOut,
+		deploymentTransitionEscalated,
+		deploymentProvisioningPath(deployment),
+		deploymentAwaitingRuntimeUi(deployment),
+	);
 	return (
-		<DetailPanel
-			className={cn(
-				progressClasses.panel,
-				(deploymentTransitionTimedOut || deploymentTransitionEscalated) &&
-					progressClasses.warningPanel,
-			)}
-		>
-			<div
-				data-testid="hosted-initial-deployment-panel"
-				role={deploymentTransitionTimedOut || deploymentTransitionEscalated ? "alert" : undefined}
-				className={progressClasses.body}
-			>
-				<div>
-					<h2 className={progressClasses.title}>
-						{deploymentTransitionTimedOut || deploymentTransitionEscalated ? (
-							<AlertCircle className="size-5" />
-						) : null}
-						{title}
-					</h2>
-					<p className={progressClasses.description}>{description}</p>
-				</div>
-				<div>
-					<div className={progressClasses.stageHeader}>
-						<p
-							className={progressClasses.activeLabel}
-							role="status"
-							aria-live="polite"
-							aria-atomic="true"
-						>
-							{!deploymentTransitionTimedOut &&
-							!deploymentTransitionEscalated &&
-							status.kind !== "running" ? (
-								<span className="inline-flex" aria-hidden="true">
-									<Spinner className="size-3.5 shrink-0 text-primary" />
-								</span>
-							) : null}
-							{activeStage.label}
-						</p>
-						<p className={progressClasses.step}>{step}</p>
-					</div>
-					<p className={progressClasses.stageDescription}>{activeStage.description}</p>
-					<ol aria-label={initialDeploymentCopy.progress} className={progressClasses.stages}>
-						{stages.map((stage, index) => {
-							const stageState = stage.state;
-							return (
-								<li
-									key={stage.status}
-									data-deployment-stage={stage.status}
-									data-stage-state={stageState}
-									aria-current={index === activeStageIndex ? "step" : undefined}
-									aria-label={`${stage.label}, ${stageState}`}
-								>
-									<div
-										aria-hidden="true"
-										className={cn(
-											progressClasses.bar,
-											stageState === "active"
-												? progressClasses.activeBar
-												: stageState === "completed"
-													? progressClasses.completedBar
-													: progressClasses.pendingBar,
-										)}
-									/>
-									<p
-										aria-hidden="true"
-										className={cn(
-											progressClasses.stageLabel,
-											stageState === "pending"
-												? progressClasses.pendingLabel
-												: progressClasses.readyLabel,
-										)}
-									>
-										{stage.label}
-									</p>
-								</li>
-							);
-						})}
-					</ol>
-				</div>
-				{deploymentTransitionTimedOut || deploymentTransitionEscalated ? (
-					<div className={progressClasses.actions}>
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							disabled={isCheckingDeployment}
-							onClick={onCheckDeploymentAgain}
-						>
-							{isCheckingDeployment ? <Spinner className="size-3.5" /> : <RefreshCw />}
-							{initialDeploymentCopy.check}
-						</Button>
-						{deploymentTransitionEscalated ? (
-							<DeploymentCancelAction deployment={deployment} />
-						) : null}
-					</div>
-				) : null}
-			</div>
-		</DetailPanel>
+		<InitialDeploymentLaunch
+			agentName={agentName}
+			runtime={runtime}
+			avatarUrl={avatarUrl}
+			tone={view.tone}
+			title={view.title}
+			expectation={view.expectation}
+			startedAtMs={initialDeploymentStartedAtMs(deployment.accepted_operation)}
+			actions={view.tone === "delayed" || view.tone === "stuck" ? contactSupport(view.tone) : null}
+		/>
 	);
 }
 
@@ -1267,6 +1262,8 @@ function OverviewTab({
 	onRetrySessions,
 	sessionLink,
 	eventStreamActive,
+	setupPreview = false,
+	staticPresentation = false,
 }: {
 	agentId: string;
 	deployment: HostedDeployment;
@@ -1282,6 +1279,16 @@ function OverviewTab({
 		params: { id: string; sessionId: string };
 	};
 	eventStreamActive: boolean;
+	/**
+	 * Rendered behind the first-start card: runtime-backed modules stay in their
+	 * loading state, so they resolve in place once the agent is ready.
+	 */
+	setupPreview?: boolean;
+	/**
+	 * Behind the setup overlay: anything not known yet shows its empty presentation
+	 * rather than a skeleton, so the background is the static overview it becomes.
+	 */
+	staticPresentation?: boolean;
 }) {
 	const spec = deployment.resource.spec;
 	const primaryModel = spec.runtime_configuration.primary_model;
@@ -1355,6 +1362,7 @@ function OverviewTab({
 	const runtimeSkills = useQuery({
 		queryKey: billingKeys.workspaceSkills(deployment.resource.id),
 		queryFn: () => billingClient.listWorkspaceSkills(deployment.resource.id),
+		enabled: !setupPreview,
 		retry: billingQueryRetry,
 		refetchInterval: eventStreamFallbackInterval(10_000, eventStreamActive),
 	});
@@ -1364,19 +1372,23 @@ function OverviewTab({
 		workspaceProjectId,
 		workspaceResolution === "ready",
 	);
-	const pluginDesiredState = useQuery(
-		agentPluginDesiredStateQueryOptions(useOpenApi(), agentId, eventStreamActive),
-	);
+	const pluginDesiredState = useQuery({
+		...agentPluginDesiredStateQueryOptions(useOpenApi(), agentId, eventStreamActive),
+		enabled: !setupPreview,
+	});
 	const pluginOverview = agentPluginOverviewState({
 		plugins: pluginDesiredState.data?.plugins,
-		isLoading: pluginDesiredState.isLoading,
+		isLoading: setupPreview || pluginDesiredState.isLoading,
 		error: shouldBlockQueryError(pluginDesiredState.error, pluginDesiredState.data)
 			? pluginDesiredState.error
 			: null,
 	});
+	const noPlugins = agentPluginOverviewState({ plugins: [], isLoading: false, error: null });
 	const pluginsModule = {
 		description:
-			pluginOverview.kind === "loading" ? (
+			staticPresentation && pluginOverview.kind !== "ready" && noPlugins.kind === "ready" ? (
+				noPlugins.description
+			) : pluginOverview.kind === "loading" ? (
 				<OverviewDescriptionSkeleton label="plugins" />
 			) : pluginOverview.kind === "error" ? (
 				"Unavailable right now"
@@ -1384,38 +1396,58 @@ function OverviewTab({
 				pluginOverview.description
 			),
 	};
+	const skillsKnown =
+		!setupPreview &&
+		!runtimeSkills.isLoading &&
+		!managedSkills.isLoading &&
+		!workspaceSkills.isLoading &&
+		workspaceResolution === "ready";
 	const skillsModule =
-		runtimeSkills.isLoading ||
-		managedSkills.isLoading ||
-		workspaceSkills.isLoading ||
-		workspaceResolution === "loading"
-			? { description: <OverviewDescriptionSkeleton label="skills" /> }
-			: shouldBlockQueryError(runtimeSkills.error, runtimeSkills.data) ||
-					shouldBlockQueryError(managedSkills.error, managedSkills.data) ||
-					shouldBlockQueryError(workspaceSkills.error, workspaceSkills.data) ||
-					workspaceResolution === "unavailable"
-				? { description: "Unavailable right now" }
-				: overviewWorkspaceSkillsModule(
-						[
-							...(runtimeSkills.data?.items ?? []),
-							...(managedSkills.data?.skills ?? []),
-							...(workspaceSkills.data ?? []),
-						].map((skill) => skill.skill_key),
-					);
-	const vaultsModule = useOverviewVaultsModule({
+		staticPresentation && !skillsKnown
+			? overviewWorkspaceSkillsModule([])
+			: setupPreview ||
+					runtimeSkills.isLoading ||
+					managedSkills.isLoading ||
+					workspaceSkills.isLoading ||
+					workspaceResolution === "loading"
+				? { description: <OverviewDescriptionSkeleton label="skills" /> }
+				: shouldBlockQueryError(runtimeSkills.error, runtimeSkills.data) ||
+						shouldBlockQueryError(managedSkills.error, managedSkills.data) ||
+						shouldBlockQueryError(workspaceSkills.error, workspaceSkills.data) ||
+						workspaceResolution === "unavailable"
+					? { description: "Unavailable right now" }
+					: overviewWorkspaceSkillsModule(
+							[
+								...(runtimeSkills.data?.items ?? []),
+								...(managedSkills.data?.skills ?? []),
+								...(workspaceSkills.data ?? []),
+							].map((skill) => skill.skill_key),
+						);
+	const projectVaults = useOverviewVaultsModule({
 		projectIds: workspaceProjectId ? effectiveAgentProjectIds(projectBindings.data ?? []) : [],
 		resolution: workspaceResolution,
 	});
-	const memoriesModule = useOverviewMemoriesModule();
-	const connectorsModule = useOverviewConnectorsModule();
+	const vaultsModule =
+		staticPresentation && workspaceResolution !== "ready"
+			? { description: agentOverviewSummary("vaults", 0) }
+			: projectVaults;
+	const memoriesModule = useOverviewMemoriesModule({ staticWhileLoading: staticPresentation });
+	const connectorsModule = useOverviewConnectorsModule({ staticWhileLoading: staticPresentation });
+	const projectsKnown = Boolean(agent && projectBindings.data);
 	const overviewContent = {
 		projects: overviewProjectsModule({
-			bindings: {
-				count: agent && projectBindings.data ? linkedAgentProjectCount(projectBindings.data) : null,
-				isLoading: projectionLoading || projectBindings.isLoading,
-				isUnavailable: projectionUnavailable,
-				error: projectBindings.error,
-			},
+			bindings:
+				staticPresentation && !projectsKnown
+					? { count: 0, isLoading: false, isUnavailable: false, error: null }
+					: {
+							count:
+								agent && projectBindings.data
+									? linkedAgentProjectCount(projectBindings.data)
+									: null,
+							isLoading: projectionLoading || projectBindings.isLoading,
+							isUnavailable: projectionUnavailable,
+							error: projectBindings.error,
+						},
 		}),
 		skills: {
 			...skillsModule,
@@ -1450,7 +1482,9 @@ function OverviewTab({
 					icon={AGENT_SECTION_NAVIGATION_ITEMS.ai.icon}
 					tint={AGENT_SECTION_NAVIGATION_ITEMS.ai.tint}
 					description={
-						providers.isLoading || managedModelCatalog.isLoading ? (
+						staticPresentation && (providers.isLoading || managedModelCatalog.isLoading) ? (
+							model
+						) : providers.isLoading || managedModelCatalog.isLoading ? (
 							<OverviewDescriptionSkeleton label="model and provider" />
 						) : shouldBlockQueryError(providers.error, providers.data) ||
 							shouldBlockQueryError(managedModelCatalog.error, managedModelCatalog.data) ? (
@@ -2394,7 +2428,7 @@ function ChannelsSyncState({
 		<EmptyState
 			icon={isChecking ? <Spinner className="size-5" /> : Link2}
 			title="Getting channels ready"
-			description="Your agent is finishing setup. This usually takes a few minutes, and this page checks automatically."
+			description="Your agent is finishing setup. This page checks automatically and updates when channels are ready."
 			action={
 				<div className="flex flex-wrap justify-center gap-2">
 					<Button

@@ -1,5 +1,9 @@
 "use client";
 
+import {
+	agentSectionAvailableDuringSetup,
+	hostedDeploymentSetupInProgress,
+} from "@clawdi/shared/view";
 import { Navigate, useLocation, useRouter } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -84,7 +88,12 @@ export function AgentHome({
 	const hostedSectionIds = deployment
 		? hostedAgentVisibleSectionIds(deploymentFilesUrl(deployment) !== null)
 		: HOSTED_AGENT_SECTION_IDS;
-	const hostedSection = hostedSectionIds.some((candidate) => candidate === section);
+	// Sections that need the runtime redirect to the setup screen until it is ready.
+	const hostedSection =
+		hostedSectionIds.some((candidate) => candidate === section) &&
+		(!deployment ||
+			!hostedDeploymentSetupInProgress(deployment) ||
+			agentSectionAvailableDuringSetup(section));
 	const connectedSection = CONNECTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
 
 	// Canonicalize exact section roots and nested Plugins routes, while a stale

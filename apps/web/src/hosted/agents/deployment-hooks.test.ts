@@ -300,92 +300,103 @@ describe("overview Compute hierarchy", () => {
 });
 
 describe("deployment transition timeout rendering", () => {
-	test("maps creating, starting, and running onto three concise semantic stages", () => {
+	function renderInitialDeployment(
+		deployment: HostedDeployment,
+		{ timedOut = false, escalated = false } = {},
+	) {
 		if (!initialDeploymentPage) throw new Error("agent detail was not loaded");
+		return renderToStaticMarkup(
+			createElement(initialDeploymentPage, {
+				deployment,
+				agentName: "Research Agent",
+				deploymentTransitionTimedOut: timedOut,
+				deploymentTransitionEscalated: escalated,
+			}),
+		);
+	}
+
+	test("keeps one status line until chat is usable, with no step indicator", () => {
+		const chat = {
+			runtime: "openclaw",
+			role: "control_ui",
+			url: "https://runtime.example/",
+			auth_mode: "openclaw_token",
+			browser_mode: "embedded_and_top_level",
+			component_readiness: 1,
+			serving_ready: true,
+			serving_reason: "Ok",
+		} as const;
 		for (const fixture of [
-			{
-				status: "creating",
-				runtime: "hermes",
-				title: "Setting up Hermes",
-				activeLabel: "Preparing cloud resources",
-				step: "Step 1 of 3",
-				currentStage: "creating",
-				states: { creating: "active", starting: "pending", running: "pending" },
-			},
-			{
-				status: "starting",
-				runtime: "openclaw",
-				title: "Setting up OpenClaw",
-				activeLabel: "Installing and starting OpenClaw",
-				step: "Step 2 of 3",
-				currentStage: "starting",
-				states: { creating: "completed", starting: "active", running: "pending" },
-			},
-			{
-				status: "running",
-				runtime: "hermes",
-				title: "Setting up Hermes",
-				activeLabel: "Ready",
-				step: "Step 3 of 3",
-				currentStage: "running",
-				states: { creating: "completed", starting: "completed", running: "completed" },
-			},
+			{ status: "creating", title: "Setting up your agent…" },
+			{ status: "starting", title: "Setting up your agent…" },
+			// Running is not done until chat on the web is usable, and reads the same.
+			{ status: "running", title: "Setting up your agent…" },
+			{ status: "running", chatPublished: true, title: "Your agent is ready" },
 		] as const) {
-			const markup = renderToStaticMarkup(
-				createElement(initialDeploymentPage, {
-					deployment: hostedDeploymentFixture({
-						status: fixture.status,
-						runtime: fixture.runtime,
-					}),
-					deploymentTransitionTimedOut: false,
-					deploymentTransitionEscalated: false,
-					isCheckingDeployment: false,
-					onCheckDeploymentAgain: () => undefined,
+			const published = "chatPublished" in fixture;
+			const markup = renderInitialDeployment(
+				hostedDeploymentFixture({
+					status: fixture.status,
+					runtime: published ? "openclaw" : "hermes",
+					runtimeUiEndpoint: published ? chat : null,
 				}),
 			);
 
-			expect(markup).toContain(fixture.title);
-			expect(markup).toContain(fixture.activeLabel);
-			expect(markup).toContain(fixture.step);
-			expect(markup).toContain('aria-label="Setup progress"');
-			for (const [stage, state] of Object.entries(fixture.states)) {
-				expect(markup).toMatch(
-					new RegExp(
-						`data-deployment-stage="${stage}" data-stage-state="${state}"${stage === fixture.currentStage ? ' aria-current="step"' : ""}`,
-					),
-				);
-			}
-			if (fixture.status === "running") {
-				expect(markup).not.toContain('data-slot="spinner"');
+			expect(markup).toContain('<h1 class="sr-only">Research Agent</h1>');
+			expect(markup).toContain(`>${fixture.title}</h2>`);
+			expect(markup).not.toContain("Setup progress");
+			expect(markup).not.toContain("data-deployment-stage");
+			// The runtime is shown only by the agent mark, never repeated as text.
+			expect(markup).not.toContain(">Hermes<");
+			expect(markup).not.toContain("Open agent");
+			// Phase changes are announced from a settled live region, never on first render.
+			expect(markup).toContain('<p class="sr-only" role="status" aria-live="polite"></p>');
+			if (published) {
+				expect(markup).toContain("lucide-check");
+				expect(markup).not.toContain("Usually");
 			} else {
-				expect(markup).toContain('data-slot="spinner"');
-				expect(markup).toContain('aria-hidden="true"');
+				expect(markup).toContain("Usually 3–5 minutes");
+				expect(markup).not.toContain("lucide-check");
 			}
-			expect(markup).not.toContain("aria-valuenow");
-			expect(markup).not.toContain("RuntimeNotReady");
-			expect(markup).not.toContain("DriverApplying");
 		}
 	});
 
-	test("keeps the delayed-start retry accessible", () => {
-		if (!initialDeploymentPage) throw new Error("agent detail was not loaded");
-		const markup = renderToStaticMarkup(
-			createElement(initialDeploymentPage, {
-				deployment: hostedDeploymentFixture({ status: "starting" }),
-				deploymentTransitionTimedOut: true,
-				deploymentTransitionEscalated: false,
-				isCheckingDeployment: false,
-				onCheckDeploymentAgain: () => undefined,
-			}),
-		);
+	test("shows a warm start with its expectation and an inline timer", () => {
+		for (const status of ["creating", "starting"] as const) {
+			const markup = renderInitialDeployment(
+				hostedDeploymentFixture({
+					status,
+					provisioningPath: "warm",
+					acceptedOperation: acceptedOperation("create"),
+				}),
+			);
 
-		expect(markup).toContain('role="alert"');
-		expect(markup).toContain("Setup is taking longer than expected");
-		expect(markup).toContain("Check again");
-		expect(markup).toContain(">Installing and starting OpenClaw</p>");
-		expect(markup).toContain("Step 2 of 3");
-		expect(markup).toContain('data-deployment-stage="starting" data-stage-state="active"');
-		expect(markup).not.toContain('data-slot="spinner"');
+			expect(markup).toContain(">Starting your agent…</h2>");
+			expect(markup).toContain("Usually under a minute");
+			expect(markup).toMatch(/<span class="sr-only">Elapsed <\/span><time[^>]*>[\d:]+<\/time>/);
+			expect(markup).not.toContain("aria-valuenow");
+		}
+	});
+
+	test("drops check and cancel from a slow start; live chat stays hidden when unconfigured", () => {
+		for (const escalated of [false, true]) {
+			const markup = renderInitialDeployment(
+				hostedDeploymentFixture({ status: "starting", provisioningPath: "warm" }),
+				{ timedOut: true, escalated },
+			);
+
+			expect(markup).toContain(
+				escalated
+					? ">Setup appears to be stuck</h2>"
+					: ">Setup is taking longer than expected</h2>",
+			);
+			expect(markup).not.toContain("Check again");
+			expect(markup).not.toContain("Cancel");
+			// Unit tests run without a Chatwoot website token, so no broken action appears.
+			expect(markup).not.toContain("Contact support");
+			expect(markup).not.toContain("under a minute");
+			expect(markup).not.toContain('data-slot="spinner"');
+		}
 	});
 
 	test("keeps deployment progress on the agent surface after its env identity is projected", () => {
@@ -432,14 +443,14 @@ describe("deployment transition timeout rendering", () => {
 		const markup = renderToStaticMarkup(
 			createElement(initialDeploymentPage, {
 				deployment,
+				agentName: "Research Agent",
 				failure: nonRetryableFailure,
 				deploymentTransitionTimedOut: false,
 				deploymentTransitionEscalated: false,
-				isCheckingDeployment: false,
-				onCheckDeploymentAgain: () => undefined,
 			}),
 		);
 
+		expect(markup).toContain('role="alert"');
 		expect(markup).toContain("Agent setup failed");
 		expect(markup).not.toContain("Retry startup");
 		expect(markup).toContain("The Clawdi service couldn&#x27;t complete this request.");

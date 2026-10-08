@@ -85,8 +85,11 @@ export function useOverviewWorkspaceSkillsModule({
 
 export function useOverviewMemoriesModule({
 	enabled = true,
+	staticWhileLoading = false,
 }: {
 	enabled?: boolean;
+	/** Show the empty summary instead of a skeleton until the count arrives. */
+	staticWhileLoading?: boolean;
 } = {}): AgentOverviewModuleContent {
 	const api = useApi();
 	const query = useQuery({
@@ -95,6 +98,8 @@ export function useOverviewMemoriesModule({
 			unwrap(await api.GET("/v1/memories", { params: { query: { page: 1, page_size: 1 } } })),
 		enabled,
 	});
+	if (staticWhileLoading && !query.data)
+		return { description: agentOverviewSummary("memories", 0) };
 	if (query.isLoading) return { description: <OverviewDescriptionSkeleton label="memories" /> };
 	if (shouldBlockQueryError(query.error, query.data))
 		return { description: "Unavailable right now" };
@@ -127,8 +132,11 @@ export function useOverviewVaultsModule({
 
 export function useOverviewConnectorsModule({
 	enabled = true,
+	staticWhileLoading = false,
 }: {
 	enabled?: boolean;
+	/** Show the empty summary instead of a skeleton until connections arrive. */
+	staticWhileLoading?: boolean;
 } = {}): AgentOverviewModuleContent {
 	const connections = useConnections({ enabled });
 	const connectedAppCount = useMemo(
@@ -140,12 +148,15 @@ export function useOverviewConnectorsModule({
 			).size,
 		[connections.data],
 	);
-	const description = connections.isLoading ? (
-		<OverviewDescriptionSkeleton label="apps" />
-	) : shouldBlockQueryError(connections.error, connections.data) ? (
-		"Unavailable right now"
-	) : (
-		agentOverviewSummary("connectors", connectedAppCount)
-	);
+	const description =
+		staticWhileLoading && !connections.data ? (
+			agentOverviewSummary("connectors", 0)
+		) : connections.isLoading ? (
+			<OverviewDescriptionSkeleton label="apps" />
+		) : shouldBlockQueryError(connections.error, connections.data) ? (
+			"Unavailable right now"
+		) : (
+			agentOverviewSummary("connectors", connectedAppCount)
+		);
 	return { description };
 }

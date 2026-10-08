@@ -9,6 +9,8 @@ export type HeaderAction = {
 	label: string;
 	accessibilityLabel?: string;
 	disabled?: boolean;
+	/** Secondary menu text, e.g. why an item is unavailable (iOS menus only). */
+	subtitle?: string;
 	destructive?: boolean;
 	/** Single-choice state, shown as the platform menu checkmark. */
 	selected?: boolean;

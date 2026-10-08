@@ -33,6 +33,7 @@ function planChangeBillingEffect(changeKind: PlanChangeKind): PlanChangeBillingE
 declare global {
 	interface Window {
 		__chatwootToggleCalls?: number;
+		__chatwootCalls?: [method: string, argument: unknown][];
 		__stripeCheckoutClientSecrets?: string[];
 		__stripeCheckoutLoadCalls?: number;
 		__stripeConfirmCalls?: number;
