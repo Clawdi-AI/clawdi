@@ -9,12 +9,12 @@ import {
 	type AgentAdapterCore,
 	collectFromScan,
 	type RawSession,
-	type SessionBatchScan,
 	type SessionScanBatch,
 	type SessionScanIssue,
 	type SessionScanRequest,
 	type SessionScanResult,
 	type SyncReadContext,
+	scanFromCollect,
 } from "./base";
 import { getCodexHome, matchesProjectFilter } from "./paths";
 import {
@@ -38,12 +38,8 @@ import {
 import { flatSkillModule } from "./skill-dir";
 import { readCommandVersion } from "./version";
 
-// Bump when Codex identity or metadata parsing changes so stale confirmations re-parse.
-const CODEX_SOURCE_REVISION = "codex-v2";
-
-function codexRevision(revision: string | undefined): string | undefined {
-	return revision === undefined ? undefined : `${CODEX_SOURCE_REVISION}:${revision}`;
-}
+// bump when this adapter's identity/metadata parsing changes
+const CODEX_PARSER_VERSION = "codex-v2";
 
 function codexDir() {
 	return getCodexHome();
@@ -420,7 +416,7 @@ async function parseSessionFile(
 		durationSeconds: durationSecondsBetween(startedAt, endedAt),
 		summary: firstRealUser ? safeTruncate(firstRealUser.content, 200) : null,
 		...description.content,
-		sourceRevision: codexRevision(source.revision),
+		sourceRevision: source.revision(CODEX_PARSER_VERSION),
 		rawFilePath: filePath,
 	};
 }
@@ -463,19 +459,9 @@ export class CodexAdapter implements AgentAdapterCore {
 		return readCommandVersion("codex", ["--version"]);
 	}
 
-	private async scanSessions(
-		request: SessionScanRequest,
-		knownSourceRevisions: ReadonlyMap<string, string>,
-		context?: SyncReadContext,
-	): Promise<SessionBatchScan> {
-		const result = await this.collectSessions(request, knownSourceRevisions, context);
-		return {
-			coverage: result.coverage,
-			batches: (async function* () {
-				yield result;
-			})(),
-		};
-	}
+	private readonly scanSessions = scanFromCollect((request, revisions, context) =>
+		this.collectSessions(request, revisions, context),
+	);
 
 	private async collectSessions(
 		request: SessionScanRequest,
@@ -498,7 +484,10 @@ export class CodexAdapter implements AgentAdapterCore {
 			if (context) await setImmediate(undefined, { signal: context.signal });
 			try {
 				if (!request.projectFilter) {
-					const revision = codexRevision(jsonlStatRevision(await stat(filePath, { bigint: true })));
+					const revision = jsonlStatRevision(
+						await stat(filePath, { bigint: true }),
+						CODEX_PARSER_VERSION,
+					);
 					const id = revision === undefined ? undefined : byRevision.get(revision);
 					if (id !== undefined) {
 						if (!observed.has(id)) {

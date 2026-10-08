@@ -49,6 +49,12 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.3
+
+- **Session sync:** Pi and Claude Code re-read history once after upgrading so
+  future parser updates can refresh unchanged sessions' metadata. Codex keeps
+  its existing confirmations and does not re-read history for this upgrade.
+
 ### CLI 0.16.2
 
 - **Session sync:** Bound attachment metadata to the server contract so long

@@ -146,9 +146,11 @@ describe("JSONL stat revisions", () => {
 		const past = new Date(Date.now() - 10_000);
 		utimesSync(path, past, past);
 		const source = await JsonlSessionSource.open(path);
-		expect(source.revision).toBeUndefined();
+		expect(source.revision("test-v1")).toBeUndefined();
 		await records(source);
-		expect(source.revision).toBe(jsonlStatRevision(statSync(path, { bigint: true })));
+		expect(source.revision("test-v1")).toBe(
+			jsonlStatRevision(statSync(path, { bigint: true }), "test-v1"),
+		);
 		const stat = statSync(path, { bigint: true });
 		const now = BigInt(Date.now()) * 1_000_000n;
 		const supported = Object.assign(stat, {
@@ -156,10 +158,12 @@ describe("JSONL stat revisions", () => {
 			ctimeNs: now,
 			mtimeNs: now - RACY_CLEAN_WINDOW_NS,
 		});
-		expect(jsonlStatRevision(supported, now)).toStartWith("jsonl-stat-v1:");
+		expect(jsonlStatRevision(supported, "test-v1", now)).toStartWith("test-v1:jsonl-stat-v1:");
 		const recent = Object.assign(stat, { mtimeNs: now - RACY_CLEAN_WINDOW_NS + 1n });
-		expect(jsonlStatRevision(recent, now)).toBeUndefined();
-		expect(jsonlStatRevision(Object.assign(stat, { mtimeNs: now + 1n }), now)).toBeUndefined();
+		expect(jsonlStatRevision(recent, "test-v1", now)).toBeUndefined();
+		expect(
+			jsonlStatRevision(Object.assign(stat, { mtimeNs: now + 1n }), "test-v1", now),
+		).toBeUndefined();
 	});
 
 	test("falls back to parsing when a platform lacks a usable identity or timestamp", () => {
@@ -175,7 +179,7 @@ describe("JSONL stat revisions", () => {
 			{ size: undefined },
 		]) {
 			const stat = Object.assign(statSync(path, { bigint: true }), unavailable);
-			expect(jsonlStatRevision(stat)).toBeUndefined();
+			expect(jsonlStatRevision(stat, "test-v1")).toBeUndefined();
 		}
 	});
 });
