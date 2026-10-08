@@ -268,6 +268,12 @@ const creationEn = {
 	discard: "Discard this unsubmitted or rejected draft",
 	notAdmitted:
 		"The server rejected this request before admission. You may explicitly discard it and edit a new draft.",
+	reservedTitle: "Finish setting up your agent",
+	reservedDescription:
+		"Your {store} subscription is reserved for an Agent that hasn't been created yet. Choose its settings, then finish setup.",
+	reservedAction: "Finish setting up",
+	reservedNotice:
+		"This Agent uses your {store} subscription. Nothing new is purchased when you finish setup.",
 	storeComputeUnavailable:
 		"Your store subscription can't be used for this Agent. Check status, subscribe again, or discard this request.",
 	storeComputeDisabled:

@@ -71,6 +71,7 @@ async function catalogueFixture() {
 		requireReady: () => ({
 			appUserId: "11111111-1111-4111-8111-111111111111",
 			catalogueRevision: 1,
+			creditsEnabled: true,
 		}),
 	};
 	const sdk = (await import("./revenuecat")).createRevenueCat();
@@ -118,6 +119,7 @@ describe("compute store catalogue", () => {
 			requireReady: () => ({
 				appUserId: "11111111-1111-4111-8111-111111111111",
 				catalogueRevision: 1,
+				creditsEnabled: true,
 			}),
 		};
 		const sdk = (await import("./revenuecat")).createRevenueCat();
@@ -175,6 +177,7 @@ describe("Paywall compute purchases", () => {
 			requireReady: () => ({
 				appUserId: "11111111-1111-4111-8111-111111111111",
 				catalogueRevision: 1,
+				creditsEnabled: true,
 			}),
 		};
 		const sdk = (await import("./revenuecat")).createRevenueCat();
@@ -253,7 +256,9 @@ describe("restore purchases", () => {
 		};
 		const result = await restoreStorePurchases({
 			scope,
-			identity: { requireReady: () => ({ appUserId: "app-user", catalogueRevision: 1 }) },
+			identity: {
+				requireReady: () => ({ appUserId: "app-user", catalogueRevision: 1, creditsEnabled: true }),
+			},
 			sdk: {
 				restorePurchases: async () => {
 					calls.push("restore");

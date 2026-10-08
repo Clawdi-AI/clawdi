@@ -245,6 +245,56 @@ describe("store account identity", () => {
 		expect(paywall).not.toHaveBeenCalled();
 		expect(f.createPurchaseAttempt).not.toHaveBeenCalled();
 	});
+	test("a compute-only bootstrap initializes the SDK but never starts a credits purchase", async () => {
+		const f = fixture();
+		const computeOnly = {
+			purchases_enabled: false,
+			compute_subscriptions_enabled: true,
+			reason: "store_purchases_disabled",
+			app_user_id: appUserId,
+			catalogue_revision: 1,
+			compute_slot: { available: true },
+		};
+		f.client.bootstrap = async () => computeOnly;
+		expect(await f.initialize()).toEqual({ available: true, bootstrap: computeOnly });
+		expect(logIn).toHaveBeenCalledWith(appUserId);
+		const paywall = mock(async () => transaction);
+		await expect(f.makeFlow().purchase(intent, paywall)).rejects.toMatchObject({
+			code: "store_purchases_disabled",
+		});
+		expect(paywall).not.toHaveBeenCalled();
+		expect(f.createPurchaseAttempt).not.toHaveBeenCalled();
+		expect(f.values.size).toBe(0);
+		f.setAttemptFields(computeIntent);
+		await f.makeFlow().purchase(computeIntent, async () => null);
+		expect(f.createPurchaseAttempt).toHaveBeenCalledTimes(1);
+
+		// The next account has both switches off: no login under the previous identity.
+		f.switchAccount();
+		const newScope = createAccountScope("other:session", "other", "session", 1, () => true);
+		const next = createStoreIdentity({
+			scope: newScope,
+			client: {
+				...f.client,
+				bootstrap: async () => ({
+					purchases_enabled: false,
+					compute_subscriptions_enabled: false,
+					app_user_id: otherAppUserId,
+					catalogue_revision: null,
+					reason: "store_purchases_disabled",
+				}),
+			},
+			sdk: f.sdk,
+			config: f.config,
+			platform: "app_store",
+		});
+		expect(await next.initialize(newScope.signal)).toEqual({
+			available: false,
+			reason: "store_purchases_disabled",
+		});
+		expect(logIn).toHaveBeenCalledTimes(1);
+		expect(sdkUserId).toBe(appUserId);
+	});
 	test("unset platform keys keep store purchases unavailable", async () => {
 		const f = fixture({ revenueCatAppleKey: undefined, revenueCatGoogleKey: "google-key" });
 		expect(await f.initialize()).toEqual({

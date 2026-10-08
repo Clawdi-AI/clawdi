@@ -264,6 +264,9 @@ export function createPurchaseFlow(options: {
 				return await run(async (signal) => {
 					const deadline = clock.now() + 120_000;
 					const ready = await checkIdentity(signal);
+					// A compute-only identity never starts a credits purchase.
+					if (intent.purpose !== "compute_subscription" && !ready.creditsEnabled)
+						throw new StorePurchaseError("store_purchases_disabled");
 					let saved = await journal.readSavedAttempt(storageKey);
 					assertStoreAccount(scope, signal);
 					if (saved && (saved.appUserId !== ready.appUserId || saved.request.platform !== platform))
