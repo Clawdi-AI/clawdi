@@ -241,8 +241,9 @@ test("Pages isolates Windows and Linux architectures and rejects partial matrice
 	let id = 10;
 	const addPlatform = (platform: "linux" | "win32") => {
 		for (const arch of ["x64", "arm64"]) {
-			const artifact = `Clawdi-${platform}-${arch}.${platform === "win32" ? "exe" : "AppImage"}`;
+			const artifact = `Clawdi-${platform}-${arch}${platform === "win32" ? "-unsigned.exe" : ".AppImage"}`;
 			release.assets.push({ name: `beta-${platform}-${arch}.yml`, id }, { name: artifact });
+			if (platform === "win32") release.assets.push({ name: `${artifact}.blockmap` });
 			writeFileSync(
 				join(root, `asset-${id}.json`),
 				JSON.stringify({
@@ -279,10 +280,20 @@ esac
 			const metadata = parse(
 				readFileSync(join(root, `site/desktop/${platform}-${arch}/beta${suffix}.yml`), "utf8"),
 			);
-			expect(metadata.files[0].url).toContain(`Clawdi-${platform}-${arch}.`);
+			expect(metadata.files[0].url).toContain(
+				`Clawdi-${platform}-${arch}${platform === "win32" ? "-unsigned.exe" : ".AppImage"}`,
+			);
 		}
 	}
-	release.assets = release.assets.filter(
+	const completeAssets = release.assets;
+	release.assets = completeAssets.filter(
+		(asset: { name: string }) => asset.name !== "Clawdi-win32-x64-unsigned.exe.blockmap",
+	);
+	writeFileSync(join(root, "releases.json"), JSON.stringify(pages));
+	const missingBlockmap = await prepare(root);
+	expect(missingBlockmap.code).not.toBe(0);
+	expect(missingBlockmap.error).toContain("Missing NSIS blockmap");
+	release.assets = completeAssets.filter(
 		(asset: { name: string }) => asset.name !== "beta-win32-arm64.yml",
 	);
 	writeFileSync(join(root, "releases.json"), JSON.stringify(pages));

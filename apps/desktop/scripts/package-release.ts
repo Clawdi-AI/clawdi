@@ -156,49 +156,57 @@ async function run(
 async function verifyPlatformArtifacts(): Promise<void> {
 	const files = readdirSync(releaseRoot);
 	const windows = configuration.platform === "win32";
-	if (!windows || signedWindows) {
-		const metadata = parse(
-			readFileSync(
-				join(
-					releaseRoot,
-					standardUpdateMetadataName(
-						configuration.platform,
-						configuration.arch,
-						configuration.channel,
-					),
+	const metadata = parse(
+		readFileSync(
+			join(
+				releaseRoot,
+				standardUpdateMetadataName(
+					configuration.platform,
+					configuration.arch,
+					configuration.channel,
 				),
-				"utf8",
 			),
-		);
-		if (
-			!isRecord(metadata) ||
-			metadata.version !== configuration.version ||
-			!Array.isArray(metadata.files) ||
-			!metadata.files.length
-		)
-			throw new Error("Invalid update metadata.");
-		if (
-			!windows &&
-			(metadata.files.length !== 1 ||
-				!isRecord(metadata.files[0]) ||
-				typeof metadata.files[0].url !== "string" ||
-				!metadata.files[0].url.endsWith(".AppImage"))
-		) {
-			throw new Error("Linux update metadata must contain only the AppImage.");
-		}
-		for (const entry of metadata.files) {
-			if (!isRecord(entry) || typeof entry.url !== "string" || !files.includes(entry.url))
-				throw new Error("Missing update artifact.");
-			const bytes = readFileSync(join(releaseRoot, entry.url));
-			if (entry.sha512 !== createHash("sha512").update(bytes).digest("base64"))
-				throw new Error("Update checksum mismatch.");
-		}
-	} else if (
-		files.some(
-			(name) => name.endsWith(".blockmap") || /^(latest|beta)(?:-[\w-]+)?\.yml$/.test(name),
-		)
+			"utf8",
+		),
+	);
+	if (
+		!isRecord(metadata) ||
+		metadata.version !== configuration.version ||
+		!Array.isArray(metadata.files) ||
+		!metadata.files.length
+	)
+		throw new Error("Invalid update metadata.");
+	if (
+		!windows &&
+		(metadata.files.length !== 1 ||
+			!isRecord(metadata.files[0]) ||
+			typeof metadata.files[0].url !== "string" ||
+			!metadata.files[0].url.endsWith(".AppImage"))
 	) {
-		throw new Error("Unsigned Windows releases must not contain update metadata.");
+		throw new Error("Linux update metadata must contain only the AppImage.");
+	}
+	if (
+		windows &&
+		(metadata.files.length !== 1 ||
+			!isRecord(metadata.files[0]) ||
+			typeof metadata.files[0].url !== "string" ||
+			!metadata.files[0].url.endsWith(".exe") ||
+			metadata.path !== metadata.files[0].url ||
+			metadata.sha512 !== metadata.files[0].sha512)
+	) {
+		throw new Error("Windows metadata must describe the NSIS installer, including legacy fields.");
+	}
+	for (const entry of metadata.files) {
+		if (!isRecord(entry) || typeof entry.url !== "string" || !files.includes(entry.url))
+			throw new Error("Missing update artifact.");
+		const bytes = readFileSync(join(releaseRoot, entry.url));
+		if (entry.sha512 !== createHash("sha512").update(bytes).digest("base64"))
+			throw new Error("Update checksum mismatch.");
+		// NSIS defaults to differentialPackage=true; publish <installer>.blockmap
+		// beside the installer for electron-updater's differential download.
+		// https://www.electron.build/docs/nsis#differentialpackage
+		if (windows && !existsSync(join(releaseRoot, `${entry.url}.blockmap`)))
+			throw new Error(`Missing NSIS blockmap: ${entry.url}.blockmap`);
 	}
 	const extensions = windows ? [".exe"] : [".AppImage", ".deb", ".rpm"];
 	for (const extension of extensions) {
@@ -217,14 +225,6 @@ async function verifyPlatformArtifacts(): Promise<void> {
 	if (signedWindows) {
 		await verifyAuthenticode(cli);
 		await verifyAuthenticode(join(releaseRoot, unpacked, "Clawdi.exe"));
-		const config = parse(
-			readFileSync(join(releaseRoot, unpacked, "resources", "app-update.yml"), "utf8"),
-		);
-		const publishers = Array.isArray(config?.publisherName)
-			? config.publisherName
-			: [config?.publisherName];
-		if (!publishers.includes(configuration.windowsPublisher))
-			throw new Error("Missing update publisher pin.");
 	}
 	if (configuration.arch === process.arch) await run(cli, ["update", "--native-identity"]);
 }
@@ -258,11 +258,6 @@ function verifyPackagedUpdateConfiguration(): void {
 					"resources",
 				);
 	const configPath = join(resources, "app-update.yml");
-	if (configuration.platform === "win32" && !signedWindows) {
-		if (existsSync(configPath))
-			throw new Error("Unsigned Windows package must not contain app-update.yml.");
-		return;
-	}
 	const config: unknown = parse(readFileSync(configPath, "utf8"));
 	if (
 		!isRecord(config) ||
@@ -271,5 +266,18 @@ function verifyPackagedUpdateConfiguration(): void {
 		config.channel !== (configuration.channel === "stable" ? "latest" : "beta")
 	) {
 		throw new Error("Packaged app-update.yml does not match the release feed/channel.");
+	}
+	if (configuration.platform === "win32") {
+		const publishers = Array.isArray(config.publisherName)
+			? config.publisherName
+			: [config.publisherName];
+		if (
+			signedWindows
+				? !publishers.includes(configuration.windowsPublisher)
+				: config.publisherName != null
+		)
+			throw new Error(
+				"Packaged Windows publisher verification does not match signing configuration.",
+			);
 	}
 }

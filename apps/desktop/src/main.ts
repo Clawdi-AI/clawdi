@@ -190,7 +190,6 @@ async function initializeUpdates(): Promise<void> {
 		channel,
 		signature,
 		isAppImage: Boolean(process.env.APPIMAGE),
-		windowsPublisher: readPackageMetadataField("clawdiWindowsPublisher"),
 	});
 	if (!("channel" in policy)) {
 		console.info(`Desktop updates disabled: ${policy.reason}`);

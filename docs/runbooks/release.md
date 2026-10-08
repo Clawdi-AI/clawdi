@@ -40,7 +40,12 @@ macOS requires Developer ID/notarization. Windows signing is optional: configure
 `WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD` and the `CLAWDI_WINDOWS_PUBLISHER`
 repository variable together, or leave all three unset. Partial configuration
 fails closed. Without them, the workflow produces explicitly named `-unsigned`
-NSIS installers for manual installation and omits Windows update metadata.
+NSIS installers with auto-update metadata and `.exe.blockmap` assets. Windows
+now auto-updates without signing using HTTPS + electron-updater's SHA-512 checks.
+SmartScreen can warn about an unknown publisher; Defender may block or quarantine
+unsigned binaries. Desktop does not bypass either protection. TODO (2026-10-08):
+add signing and validate a signed beta-to-beta update; complete signing settings
+enable publisher verification through the standard builder config.
 Merge to `main` before dispatching a beta. All release jobs are guarded
 to `refs/heads/main`; feature refs use the unsigned Desktop Platform Packages
 workflow and cannot enter this workflow's signing jobs.
@@ -49,8 +54,9 @@ Its publish input defaults to false. Explicit publication creates an immutable
 `desktop-v<version>` GitHub Release, marks beta versions as prereleases, and never
 changes the monorepo's Latest release. Desktop Update Site then deploys standard
 electron-updater metadata to GitHub Pages, pointing to the platform's ZIP,
-signed NSIS or AppImage assets. Unsigned Windows installers never enter the
-update feed. DEB/RPM are manual package-manager downloads only;
+NSIS (including `-unsigned.exe`) or AppImage assets. Windows metadata references
+the exact installer filename, with its blockmap published beside it. DEB/RPM are
+manual package-manager downloads only;
 their target-specific `publish: null` excludes them from updater metadata.
 The GitHub Release contains one `SHA256SUMS` file covering every published asset.
 See [Desktop packaging](../../apps/desktop/README.md) for inputs and recovery.
@@ -71,16 +77,21 @@ Update-ready notifications and the menu use the documented default restart.
 Quitting uses `autoInstallOnAppQuit` without relaunching Desktop. macOS/Linux keep
 the daemon running; the next Desktop launch reconciles differing CLI versions or
 executable paths. Windows stops services before installation for file locks and
-keeps self-update disabled until signing. See
+preserves the Task Scheduler registration. Notification/menu updates use the
+default Desktop restart and startup reconciliation resumes Sync after account/Agent
+verification. Known limitation: install-on-quit does not relaunch; Windows Sync
+remains stopped until the next Desktop launch or task logon trigger. See
 [background services during updates](../../apps/desktop/README.md#background-services-during-updates).
-Windows signing and the first stable release remain owner gates. The new Linux
-AppImage e2e uses a trusted local HTTPS feed, and publishes no releases or Pages.
+The first stable release and signing credentials remain owner gates. Linux
+AppImage and Windows NSIS update e2e jobs use trusted local HTTPS feeds and
+publish no releases or Pages. Windows also verifies real Task Scheduler recovery.
 
-The signed application embeds its feed URL and stable or beta channel. Stable
+The release application embeds its feed URL and stable or beta channel. Stable
 reads `latest*` metadata; beta reads `beta*` metadata in isolated platform and
 architecture feeds (see the Desktop packaging matrix). Channels remain independent:
-publishing stable does not promote beta users. To leave beta, install the signed
-stable installer manually. Automatic downgrades are disabled. For macOS, no Team ID secret or
+publishing stable does not promote beta users. To leave beta, install the
+stable installer manually. Automatic downgrades are disabled. For macOS, no Team
+ID secret or
 metadata pin is required; codesign, notarization, and Gatekeeper validate the
 build, and Squirrel.Mac verifies update signatures against the installed app.
 

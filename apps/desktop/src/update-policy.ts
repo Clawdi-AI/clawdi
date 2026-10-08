@@ -21,7 +21,6 @@ export interface DesktopUpdatePolicyInput {
 	channel: unknown;
 	signature: DesktopCodeSignature | null;
 	isAppImage?: boolean;
-	windowsPublisher?: unknown;
 }
 
 export type DesktopUpdatePolicy =
@@ -42,8 +41,6 @@ export function evaluateDesktopUpdatePolicy(input: DesktopUpdatePolicyInput): De
 	}
 	if (input.platform === "linux" && !input.isAppImage)
 		return { enabled: false, reason: "package-manager", channel: input.channel };
-	if (input.platform === "win32" && !isDesktopWindowsPublisherDn(input.windowsPublisher))
-		return { enabled: false, reason: "unsigned" };
 	if (input.platform === "darwin" && !isDeveloperIdSignature(input.signature)) {
 		return { enabled: false, reason: "unsigned" };
 	}

@@ -90,7 +90,11 @@ export function readDesktopReleaseConfiguration(
 export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfiguration): string[] {
 	const signedWindows =
 		configuration.platform === "win32" && Boolean(configuration.windowsPublisher);
-	const updatesEnabled = configuration.platform !== "win32" || signedWindows;
+	// Unsigned NSIS updates use HTTPS and the generated metadata's SHA-512.
+	// verifyUpdateCodeSignature=false omits publisherName from app-update.yml:
+	// https://www.electron.build/docs/win#verifyupdatecodesignature
+	// TODO(2026-10-08): configure Windows signing credentials and the full publisher
+	// Subject to enable the package's signature verification default for releases.
 	const artifactNameOption =
 		configuration.platform === "darwin"
 			? "artifactName"
@@ -113,26 +117,17 @@ export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfigura
 					? [
 							"--config.forceCodeSigning=true",
 							`--config.win.signtoolOptions.publisherName=${configuration.windowsPublisher}`,
-							`--config.extraMetadata.clawdiWindowsPublisher=${configuration.windowsPublisher}`,
 						]
-					: [
-							"--config.forceCodeSigning=false",
-							"--config.win.verifyUpdateCodeSignature=false",
-							"--config.nsis.differentialPackage=false",
-						]
+					: ["--config.win.verifyUpdateCodeSignature=false"]
 				: []),
 		// electron-builder expands these placeholders after selecting the target.
 		`--config.${artifactNameOption}=Clawdi-\${version}-${configuration.platform}-\${arch}${configuration.platform === "win32" && !signedWindows ? "-unsigned" : ""}.\${ext}`,
 		`--config.extraMetadata.version=${configuration.version}`,
-		`--config.extraMetadata.clawdiUpdateChannel=${updatesEnabled ? configuration.channel : "disabled"}`,
-		...(updatesEnabled
-			? [
-					"--config.publish.provider=generic",
-					"--config.generateUpdatesFilesForAllChannels=false",
-					`--config.publish.channel=${configuration.channel === "stable" ? "latest" : "beta"}`,
-					`--config.publish.url=${configuration.updateFeedUrl}`,
-				]
-			: []),
+		`--config.extraMetadata.clawdiUpdateChannel=${configuration.channel}`,
+		"--config.publish.provider=generic",
+		"--config.generateUpdatesFilesForAllChannels=false",
+		`--config.publish.channel=${configuration.channel === "stable" ? "latest" : "beta"}`,
+		`--config.publish.url=${configuration.updateFeedUrl}`,
 	];
 }
 

@@ -109,6 +109,13 @@ for (const { channel, arch, platform, path: relative } of desktopUpdateSiteTarge
 			throw new Error("Invalid artifact filename.");
 		const artifact = assets.find((item: unknown) => record(item) && item.name === name);
 		if (!record(artifact)) throw new Error(`Missing artifact ${name}.`);
+		// NSIS requests blockmaps next to the installer URL (including -unsigned):
+		// https://www.electron.build/docs/nsis#differentialpackage
+		if (
+			platform === "win32" &&
+			!assets.some((item: unknown) => record(item) && item.name === `${name}.blockmap`)
+		)
+			throw new Error(`Missing NSIS blockmap ${name}.blockmap.`);
 		return `https://github.com/${repository}/releases/download/${release.tag_name}/${name}`;
 	};
 	for (const file of metadata.files) {
