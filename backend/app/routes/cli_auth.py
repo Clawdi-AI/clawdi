@@ -132,6 +132,7 @@ async def revoke_oauth_refresh_grant(
     return OAuthRevokeResponse(status="revoked")
 
 
+# TODO (2026-10-08): Remove after 2026-11-08; retained for released Desktop clients.
 @router.post(
     "/oauth/desktop-ticket",
     response_model=DesktopSessionTicketResponse,

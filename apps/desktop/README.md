@@ -91,6 +91,8 @@ the log BOM/content.
 The tray and the File menu show the signed-in account and offer Open Dashboard,
 Connect Agents…, Exclude Projects… and Sign Out; Fix Sync… appears while sync
 needs attention, and Help links to the docs, support and the log folder.
+Where `supportsDesktopLoginItems()` is true (macOS, Windows), Open Clawdi at Login
+appears in the tray and in the Clawdi menu (macOS) or File menu (Windows).
 Exclude Projects edits the CLI's `excludeProjects` setting through
 `clawdi config` (the same list as `clawdi config set excludeProjects`); it never
 touches credentials. Launching Clawdi shows the Connect window. The Dashboard
@@ -128,6 +130,39 @@ Native shell and CLI changes require an application update. Dashboard deployment
 take effect in the browser as normal. Packaged smoke tests verify the bundled
 wizard and remote navigation rejection without contacting the hosted Dashboard.
 Unit tests verify the system-browser handoff.
+
+## Main-process diagnostics and login items
+
+Desktop calls Electron's [`app.setAppLogsPath()`](https://www.electronjs.org/docs/latest/api/app#appsetapplogspathpath)
+and writes `main.log` in `app.getPath("logs")`. The default is
+`~/Library/Logs/Clawdi` on macOS and the logs directory under Electron's
+`userData` on Windows/Linux. Each file is capped at 1 MiB, with three rotated
+backups (`main.log.1` through `.3`). Synchronous Node file writes finish before
+quit without a background process or an additional logging dependency.
+
+Existing main-process console output, updater events and CLI invocation
+start/completion/failure events share this sink. CLI events record only fixed
+command names, elapsed time and cancellation; argv, stdin, stdout/stderr and
+sign-in progress are excluded. Credential fields, token formats, URL queries
+and device codes are redacted. Error records retain the error kind, OS error
+code and call sites, omitting upstream messages and causes. A file failure falls
+back to the redacted console output without interrupting the user's action.
+
+Menu/IPC integration: `getDesktopLogDirectory(app)` from
+[`logging.ts`](src/logging.ts) returns the directory for the Help menu's Show Logs
+handler. Any renderer invocation must use the existing sender validation.
+
+[`login-item.ts`](src/login-item.ts) exposes `supportsDesktopLoginItems()` for
+menu visibility, `readDesktopLoginItemSettings(app)` for the checkbox,
+`setDesktopLaunchAtLogin(app, enabled)` for the mutation, and
+`wasDesktopOpenedAtLogin(app)` for hidden startup. These use Electron's official
+[`login item APIs`](https://www.electronjs.org/docs/latest/api/app#appsetloginitemsettingssettings-macos-windows).
+macOS retains `mainAppService` and its move-to-Applications prerequisite.
+Windows NSIS uses the installed executable and `--clawdi-opened-at-login` in
+`args`; reading settings uses the same path and arguments. The startup flag
+opens only the tray, matching macOS login launches. Linux does not register an
+app autostart item; Sync remains independent as a user service. Development
+builds never change login items. The caller owns OS error presentation.
 
 ## Preview package
 

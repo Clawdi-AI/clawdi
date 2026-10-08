@@ -126,14 +126,27 @@ test.each(["darwin", "win32", "linux"] as const)(
 	},
 );
 
-test("the macOS login item stays in the tray", () => {
-	const handlers = actions();
-	const tray = trayMenuTemplate(
-		state({ loginItem: { checked: false, enabled: true, note: "Login Item Requires Approval" } }),
-		handlers,
-	);
-	const loginItem = find(tray, "Open Clawdi at Login");
-	expect(loginItem?.type).toBe("checkbox");
-	expect(find(tray, "Login Item Requires Approval")?.enabled).toBe(false);
-	expect(find(trayMenuTemplate(state(), handlers), "Open Clawdi at Login")).toBeUndefined();
+test.each(["darwin", "win32"] as const)(
+	"%s shows Open Clawdi at Login in the tray and the application menu",
+	(platform) => {
+		const handlers = actions();
+		const loginItem = { checked: false, enabled: true, note: "Login Item Requires Approval" };
+		for (const template of [
+			trayMenuTemplate(state({ platform, loginItem }), handlers),
+			applicationMenuTemplate(state({ platform, loginItem }), handlers),
+		]) {
+			const item = find(template, "Open Clawdi at Login");
+			expect(item?.type).toBe("checkbox");
+			expect(find(template, "Login Item Requires Approval")?.enabled).toBe(false);
+			(item?.click as ((menuItem: { checked: boolean }) => void) | undefined)?.({ checked: true });
+		}
+		expect(handlers.setLaunchAtLogin).toHaveBeenCalledWith(true);
+		expect(handlers.setLaunchAtLogin).toHaveBeenCalledTimes(2);
+	},
+);
+
+test("menus omit the login item where it is unsupported", () => {
+	const linux = state({ platform: "linux" });
+	expect(find(trayMenuTemplate(linux, actions()), "Open Clawdi at Login")).toBeUndefined();
+	expect(find(applicationMenuTemplate(linux, actions()), "Open Clawdi at Login")).toBeUndefined();
 });

@@ -26,6 +26,23 @@ const OAUTH_TIMEOUT_MS = 11 * 60_000;
 const PRODUCTION_CLOUD_API_URL = "https://cloud-api.clawdi.ai";
 const PRODUCTION_DEPLOY_API_URL = "https://api.clawdi.ai";
 
+const LOGGED_CLI_COMMANDS = new Set([
+	"auth login",
+	"auth logout",
+	"auth status",
+	"daemon install",
+	"daemon uninstall",
+	"daemon restart",
+	"daemon stop",
+	"daemon doctor",
+	"agent detect",
+	"agent reconnect",
+	"update --native-identity",
+	"setup",
+	"config get",
+	"config set",
+]);
+
 interface NativeIdentity {
 	version: string;
 	target: string;
@@ -102,12 +119,7 @@ export class DesktopCliService {
 		return false;
 	}
 
-	async getAuthState(): Promise<DesktopBootstrapState["auth"]> {
-		return this.authState(this.cli());
-	}
-
 	async authenticate(
-		force = false,
 		onProgress?: (progress: DesktopAuthenticationProgress) => void,
 	): Promise<AuthenticationResult> {
 		if (this.authentication) return this.authentication.completion;
@@ -115,7 +127,7 @@ export class DesktopCliService {
 		const controller = new AbortController();
 		const operation: AuthenticationOperation = {
 			controller,
-			completion: this.performAuthentication(controller.signal, force, onProgress),
+			completion: this.performAuthentication(controller.signal, onProgress),
 		};
 		this.authentication = operation;
 		try {
@@ -293,12 +305,10 @@ export class DesktopCliService {
 
 	private async performAuthentication(
 		signal: AbortSignal,
-		force: boolean,
 		onProgress?: (progress: DesktopAuthenticationProgress) => void,
 	): Promise<AuthenticationResult> {
 		try {
 			const args = ["auth", "login", "--desktop"];
-			if (force) args.push("--force");
 			const result = await this.runJson(this.cli(), args, {
 				signal,
 				timeoutMs: OAUTH_TIMEOUT_MS,
@@ -501,22 +511,42 @@ export class DesktopCliService {
 		return value;
 	}
 
-	private run(cli: string, args: string[], opts: CommandOptions = {}): Promise<CommandResult> {
-		return this.execute(cli, args, {
-			...opts,
-			env: {
-				...process.env,
-				CLAWDI_NO_AUTO_UPDATE: "1",
-				...(this.runtimeRoot ? { CLAWDI_DESKTOP_RUNTIME: this.runtimeRoot } : {}),
-				CLAWDI_NO_UPDATE_CHECK: "1",
-				...(this.application.isPackaged
-					? {
-							CLAWDI_API_URL: PRODUCTION_CLOUD_API_URL,
-							CLAWDI_DEPLOY_API_URL: PRODUCTION_DEPLOY_API_URL,
-						}
-					: {}),
-			},
-		});
+	private async run(
+		cli: string,
+		args: string[],
+		opts: CommandOptions = {},
+	): Promise<CommandResult> {
+		// Only fixed command names are diagnostic data; argv/stdin/output can contain secrets.
+		const name = args[0] === "setup" ? "setup" : args.slice(0, 2).join(" ");
+		const command = LOGGED_CLI_COMMANDS.has(name) ? name : "other";
+		const started = Date.now();
+		console.info("CLI invocation started", command);
+		try {
+			const result = await this.execute(cli, args, {
+				...opts,
+				env: {
+					...process.env,
+					CLAWDI_NO_AUTO_UPDATE: "1",
+					...(this.runtimeRoot ? { CLAWDI_DESKTOP_RUNTIME: this.runtimeRoot } : {}),
+					CLAWDI_NO_UPDATE_CHECK: "1",
+					...(this.application.isPackaged
+						? {
+								CLAWDI_API_URL: PRODUCTION_CLOUD_API_URL,
+								CLAWDI_DEPLOY_API_URL: PRODUCTION_DEPLOY_API_URL,
+							}
+						: {}),
+				},
+			});
+			console.info("CLI invocation completed", { command, elapsedMs: Date.now() - started });
+			return result;
+		} catch (error) {
+			console.warn("CLI invocation failed", {
+				command,
+				elapsedMs: Date.now() - started,
+				cancelled: error instanceof CommandCancelledError,
+			});
+			throw error;
+		}
 	}
 }
 

@@ -26,7 +26,7 @@ const csrfMiddleware = createCsrfMiddleware({
 
 const requestMiddleware: AnyRequestMiddleware[] = [];
 
-if (import.meta.env.PROD && !env.VITE_CLAWDI_DESKTOP_BUILD) {
+if (import.meta.env.PROD) {
 	const middleware = getSecurityHeaders();
 	if (middleware) requestMiddleware.push(middleware);
 }
@@ -35,7 +35,7 @@ if (env.VITE_SENTRY_DSN) {
 	requestMiddleware.push(sentryGlobalRequestMiddleware);
 }
 
-if (!env.VITE_DEV_AUTH_BYPASS && !env.VITE_CLAWDI_DESKTOP_BUILD) {
+if (!env.VITE_DEV_AUTH_BYPASS) {
 	const clerkRequestMiddleware = getClerkRequestMiddleware();
 	if (clerkRequestMiddleware) requestMiddleware.push(clerkRequestMiddleware);
 }

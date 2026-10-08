@@ -26,6 +26,7 @@ export default function SignInPage() {
 	);
 }
 
+// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
 function DesktopSignIn({ bridge }: { bridge: ClawdiDesktopShellBridge }) {
 	const [opening, setOpening] = useState<"retry" | "sign-in" | null>(null);
 	const [failed, setFailed] = useState(false);

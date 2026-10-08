@@ -20,7 +20,7 @@ export interface DesktopMenuState {
 	busy: boolean;
 	/** Update status and actions, built by the update controller owner. */
 	updateItems: MenuItemConstructorOptions[];
-	/** macOS login item; omitted on other platforms. */
+	/** Present where Electron supports login items (macOS and Windows). */
 	loginItem?: { checked: boolean; enabled: boolean; note: string | null };
 }
 
@@ -70,19 +70,7 @@ export function trayMenuTemplate(
 		...navigationItems(state, actions),
 		...withSeparator(state.updateItems),
 	];
-	if (state.loginItem) {
-		template.push(
-			{ type: "separator" },
-			{
-				type: "checkbox",
-				label: "Open Clawdi at Login",
-				checked: state.loginItem.checked,
-				enabled: state.loginItem.enabled,
-				click: (item) => actions.setLaunchAtLogin(item.checked),
-			},
-		);
-		if (state.loginItem.note) template.push({ label: state.loginItem.note, enabled: false });
-	}
+	template.push(...withSeparator(loginItems(state, actions)));
 	template.push(
 		{ type: "separator" },
 		{ label: "Help", submenu: helpItems(actions) },
@@ -104,7 +92,14 @@ export function applicationMenuTemplate(
 			...withTrailingSeparator(accountItems(state)),
 			...navigationItems(state, actions),
 			...withSeparator(signOutItems(state, actions)),
-			...(mac ? [] : [...withSeparator(state.updateItems), { type: "separator" as const }, quit]),
+			...(mac
+				? []
+				: [
+						...withSeparator(state.updateItems),
+						...withSeparator(loginItems(state, actions)),
+						{ type: "separator" as const },
+						quit,
+					]),
 		],
 	};
 	const template: MenuItemConstructorOptions[] = [
@@ -148,6 +143,7 @@ export function applicationMenuTemplate(
 			submenu: [
 				{ role: "about" },
 				...withSeparator(state.updateItems),
+				...withSeparator(loginItems(state, actions)),
 				{ type: "separator" },
 				{ role: "services" },
 				{ type: "separator" },
@@ -169,6 +165,23 @@ function accountItems(state: DesktopMenuState): MenuItemConstructorOptions[] {
 			label: state.account.email ? `Signed In as ${state.account.email}` : "Signed In",
 			enabled: false,
 		},
+	];
+}
+
+function loginItems(
+	state: DesktopMenuState,
+	actions: DesktopMenuActions,
+): MenuItemConstructorOptions[] {
+	if (!state.loginItem) return [];
+	return [
+		{
+			type: "checkbox",
+			label: "Open Clawdi at Login",
+			checked: state.loginItem.checked,
+			enabled: state.loginItem.enabled,
+			click: (item) => actions.setLaunchAtLogin(item.checked),
+		},
+		...(state.loginItem.note ? [{ label: state.loginItem.note, enabled: false }] : []),
 	];
 }
 

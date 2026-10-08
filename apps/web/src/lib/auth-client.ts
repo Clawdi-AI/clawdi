@@ -95,6 +95,7 @@ export function useAuthActions() {
 		};
 	}
 	const clerk = useClerk();
+	// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
 	const desktopBridge = typeof window === "undefined" ? undefined : window.clawdiDesktop;
 	if (desktopBridge) {
 		return {

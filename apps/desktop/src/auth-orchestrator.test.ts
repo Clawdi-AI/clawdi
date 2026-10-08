@@ -2,13 +2,11 @@ import { describe, expect, test } from "bun:test";
 import type { DesktopBootstrapState, DesktopDetectedAgent } from "@clawdi/shared/desktop";
 import {
 	authenticateDesktopAccount,
-	DesktopAuthenticationTransitionError,
 	prepareDesktopStartup,
 	reconcileDesktopStartupSync,
 } from "./auth-orchestrator";
 
 const AUTH_A = { authenticated: true, user: { id: "account-a" } } as const;
-const AUTH_B = { authenticated: true, user: { id: "account-b" } } as const;
 
 function state(
 	auth: DesktopBootstrapState["auth"] = AUTH_A,
@@ -17,143 +15,56 @@ function state(
 	return { platform: "darwin", cli: { status: "ready", version: "1.0.0" }, auth, daemon };
 }
 
-function authPort(options: {
-	preflight?: DesktopBootstrapState;
-	result?: { status: "authenticated"; user: { id: string } } | { status: "cancelled" };
-	restartFails?: boolean;
-	stopFails?: boolean;
-}) {
-	const calls: string[] = [];
-	const preflight = options.preflight ?? state();
-	return {
-		calls,
-		port: {
+describe("Desktop sign-in", () => {
+	test("reads the saved CLI state after authentication without changing sync", async () => {
+		const calls: string[] = [];
+		const authenticated = state(AUTH_A, { installed: true, running: false });
+		const result = await authenticateDesktopAccount({
+			authenticate: async () => {
+				calls.push("authenticate");
+				return { status: "authenticated", user: AUTH_A.user };
+			},
 			bootstrapState: async () => {
 				calls.push("bootstrap");
-				return preflight;
-			},
-			getAuthState: async () => {
-				calls.push("auth-state");
-				return preflight.auth;
-			},
-			authenticate: async () => {
-				calls.push("oauth");
-				return options.result ?? { status: "authenticated" as const, user: { id: "account-a" } };
-			},
-			stopDaemon: async () => {
-				calls.push("stop");
-				if (options.stopFails) throw new Error("stop failed");
-			},
-			restartDaemon: async () => {
-				calls.push("restart");
-				if (options.restartFails) throw new Error("restart failed");
-			},
-		},
-	};
-}
-
-describe("Desktop auth transition", () => {
-	test("same-account force sign-in stops before OAuth and restores installed sync intent", async () => {
-		const { port, calls } = authPort({});
-		const result = await authenticateDesktopAccount(port, {
-			force: true,
-			beforeAuthentication: async () => {
-				calls.push("suspend-dashboard");
+				return authenticated;
 			},
 		});
-		expect(calls).toEqual(["bootstrap", "stop", "suspend-dashboard", "oauth", "restart"]);
-		expect(result).toEqual({
-			status: "authenticated",
-			accountChanged: false,
-			requiresWizard: false,
-			needsAttention: false,
-		});
+		expect(calls).toEqual(["authenticate", "bootstrap"]);
+		expect(result).toEqual({ status: "authenticated", state: authenticated });
 	});
 
-	test("installed=false force sign-in never mutates daemon state", async () => {
-		const { port, calls } = authPort({
-			preflight: state(AUTH_A, { installed: false, running: false }),
-		});
-		await authenticateDesktopAccount(port, { force: true });
-		expect(calls).toEqual(["bootstrap", "oauth"]);
-	});
-
-	test("first sign-in never restarts an unowned pre-existing unit", async () => {
-		const { port, calls } = authPort({
-			preflight: state({ authenticated: false, user: null }, { installed: true, running: false }),
-		});
-		await authenticateDesktopAccount(port);
-		expect(calls).toEqual(["bootstrap", "oauth"]);
-	});
-
-	test("cross-account force sign-in enters Wizard without restarting the old unit", async () => {
-		const { port, calls } = authPort({
-			result: { status: "authenticated", user: { id: AUTH_B.user.id } },
-		});
-		const result = await authenticateDesktopAccount(port, { force: true });
-		expect(calls).toEqual(["bootstrap", "stop", "oauth"]);
-		expect(result).toMatchObject({
-			status: "authenticated",
-			accountChanged: true,
-			requiresWizard: true,
-		});
-	});
-
-	test("cancel restores the old installed daemon, while stop failure never starts OAuth", async () => {
-		const cancelled = authPort({ result: { status: "cancelled" } });
-		const result = await authenticateDesktopAccount(cancelled.port, { force: true });
-		expect(cancelled.calls).toEqual(["bootstrap", "stop", "oauth", "auth-state", "restart"]);
-		expect(result).toMatchObject({ status: "cancelled", restoreDashboard: true });
-
-		const failedStop = authPort({ stopFails: true });
-		await expect(authenticateDesktopAccount(failedStop.port, { force: true })).rejects.toThrow(
-			"stop failed",
-		);
-		expect(failedStop.calls).toEqual(["bootstrap", "stop"]);
-	});
-
-	test("failed compensation is explicit and requires Wizard recovery", async () => {
-		const { port } = authPort({ restartFails: true, result: { status: "cancelled" } });
-		const result = await authenticateDesktopAccount(port, { force: true });
-		expect(result).toMatchObject({
-			status: "cancelled",
-			restoreDashboard: true,
-			requiresWizard: true,
-			needsAttention: true,
-		});
-	});
-
-	test("OAuth failure exposes compensation state without losing the original cause", async () => {
-		const { port } = authPort({});
-		port.authenticate = async () => {
-			throw new Error("oauth failed");
-		};
-		try {
-			await authenticateDesktopAccount(port, { force: true });
-			throw new Error("expected auth transition failure");
-		} catch (error) {
-			expect(error).toBeInstanceOf(DesktopAuthenticationTransitionError);
-			expect((error as DesktopAuthenticationTransitionError).recovery).toEqual({
-				restoreDashboard: true,
-				requiresWizard: false,
-				needsAttention: false,
-			});
-			expect((error as Error).cause).toBeInstanceOf(Error);
-		}
-	});
-
-	test("dashboard suspension failure restores the stopped daemon before surfacing", async () => {
-		const { port, calls } = authPort({});
-		await expect(
-			authenticateDesktopAccount(port, {
-				force: true,
-				beforeAuthentication: async () => {
-					calls.push("suspend-dashboard");
-					throw new Error("session clear failed");
+	test("cancel does not read state or mutate a pre-existing daemon", async () => {
+		let reads = 0;
+		expect(
+			await authenticateDesktopAccount({
+				authenticate: async () => ({ status: "cancelled" }),
+				bootstrapState: async () => {
+					reads += 1;
+					return state();
 				},
 			}),
-		).rejects.toBeInstanceOf(DesktopAuthenticationTransitionError);
-		expect(calls).toEqual(["bootstrap", "stop", "suspend-dashboard", "auth-state", "restart"]);
+		).toEqual({ status: "cancelled" });
+		expect(reads).toBe(0);
+	});
+
+	test("authentication and post-login state failures reach the existing error boundary", async () => {
+		const cause = new Error("sign-in failed");
+		await expect(
+			authenticateDesktopAccount({
+				authenticate: async () => {
+					throw cause;
+				},
+				bootstrapState: async () => state(),
+			}),
+		).rejects.toBe(cause);
+		await expect(
+			authenticateDesktopAccount({
+				authenticate: async () => ({ status: "authenticated", user: AUTH_A.user }),
+				bootstrapState: async () => {
+					throw cause;
+				},
+			}),
+		).rejects.toBe(cause);
 	});
 });
 
@@ -192,7 +103,7 @@ describe("Desktop startup recovery", () => {
 		expect(result).toMatchObject({ needsAttention: false });
 	});
 
-	test("authenticated startup opens Dashboard before Agent inspection", async () => {
+	test("authenticated startup reads state before Agent inspection", async () => {
 		const calls: string[] = [];
 		const result = await prepareDesktopStartup({
 			bootstrapState: async () => {

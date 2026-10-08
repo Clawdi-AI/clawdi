@@ -287,7 +287,7 @@ test("Desktop forwards device code progress to the UI while the CLI owns sign-in
 		access_token: "must-not-reach-renderer",
 	});
 	const progress: DesktopAuthenticationProgress[] = [];
-	expect(await service.authenticate(false, (event) => progress.push(event))).toEqual({
+	expect(await service.authenticate((event) => progress.push(event))).toEqual({
 		status: "authenticated",
 		user: { id: "fixture" },
 	});
@@ -310,7 +310,7 @@ test.each([
 ])("Desktop rejects invalid device progress %j", async (overrides) => {
 	const { service } = serviceFixture(false, { ...deviceProgress, ...overrides });
 	const progress: DesktopAuthenticationProgress[] = [];
-	await expect(service.authenticate(false, (event) => progress.push(event))).rejects.toThrow();
+	await expect(service.authenticate((event) => progress.push(event))).rejects.toThrow();
 	expect(progress).toEqual([]);
 });
 

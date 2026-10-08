@@ -8,9 +8,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 const ChatwootClient =
-	import.meta.env.VITE_CLAWDI_DESKTOP_BUILD !== "true" &&
-	import.meta.env.VITE_CHATWOOT_BASE_URL &&
-	import.meta.env.VITE_CHATWOOT_WEBSITE_TOKEN
+	import.meta.env.VITE_CHATWOOT_BASE_URL && import.meta.env.VITE_CHATWOOT_WEBSITE_TOKEN
 		? lazy(() =>
 				import("@/components/chatwoot-client").then((module) => ({
 					default: module.ChatwootClient,

@@ -7,7 +7,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { signInActionHref } from "@/lib/auth-redirect";
-import { env } from "@/lib/env";
 
 export interface ApiErrorNormalizer {
 	isAuthError: (error: unknown) => boolean;
@@ -22,6 +21,7 @@ const DEFAULT_API_ERROR_NORMALIZER: ApiErrorNormalizer = {
 /** Restore Desktop auth from the CLI before asking for a new browser sign-in. */
 function reauthenticate() {
 	if (typeof window === "undefined") return;
+	// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
 	if (window.clawdiDesktop) {
 		void window.clawdiDesktop.retryDashboard().catch(() => {
 			window.location.href = "/sign-in";
@@ -57,7 +57,7 @@ export function ApiErrorPanel({
 				<div className={apiErrorPanelClasses.actions}>
 					{expired ? (
 						<Button size="sm" onClick={reauthenticate}>
-							<LogIn /> {env.VITE_CLAWDI_DESKTOP_BUILD ? "Reconnect" : "Sign in again"}
+							<LogIn /> Sign in again
 						</Button>
 					) : null}
 					{onRetry ? (

@@ -144,6 +144,7 @@ export function initHostedPostHog({
 			const feature = featureForPath(pathname);
 			const properties = {
 				...event.properties,
+				// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
 				source: window.clawdiDesktop ? "desktop" : "web",
 				schema_version: 1,
 				...(event.event === "$pageview" && (feature === "sign_up" || feature === "sign_in")

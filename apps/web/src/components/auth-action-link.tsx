@@ -8,8 +8,6 @@ type AuthActionLinkProps = ComponentProps<"a"> & { href: string };
 export function AuthActionLink({ href, ...props }: AuthActionLinkProps) {
 	const destination = sanitizeAuthRedirectPath(href);
 	if (env.VITE_DEV_AUTH_BYPASS) return <a {...props} href={destination} />;
-	// Desktop authentication belongs to the shell's external browser flow.
-	if (env.VITE_CLAWDI_DESKTOP_BUILD) return <a {...props} href={signInActionHref(destination)} />;
 	return <ClerkAuthActionLink {...props} href={destination} />;
 }
 
