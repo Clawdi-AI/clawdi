@@ -6,6 +6,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { useDesktopBridge } from "@/lib/desktop";
 import { routeHeadTitle } from "@/lib/document-title";
 
+// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
 export const Route = createFileRoute("/desktop-auth")({
 	head: () => routeHeadTitle("Open Clawdi in your browser"),
 	component: DesktopAuthPage,

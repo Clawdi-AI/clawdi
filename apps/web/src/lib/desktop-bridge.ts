@@ -1,5 +1,6 @@
 import type { ClawdiDesktopShellBridge } from "@clawdi/shared/desktop";
 
+// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
 const methods = [
 	"signIn",
 	"signOut",

@@ -25,6 +25,7 @@ export function AddAgentDialog({ open, onClose }: { open: boolean; onClose: () =
 				if (!cancelled)
 					sdk.trackEvent(
 						{ name: "agent_setup_opened", properties: {} },
+						// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
 						window.clawdiDesktop ? "desktop" : "web",
 					);
 			})

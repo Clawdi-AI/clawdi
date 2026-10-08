@@ -81,6 +81,7 @@ export function ConnectorConnectAction({
 
 	const startConnect = () => {
 		if (inflightRef.current || connect.isPending) return;
+		// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
 		const desktop = typeof window !== "undefined" && Boolean(window.clawdiDesktop);
 		const popup =
 			typeof window !== "undefined" && !desktop ? window.open("about:blank", "_blank") : null;

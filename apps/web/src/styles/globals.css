@@ -29,6 +29,7 @@
 	}
 }
 
+/* TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7. */
 html[data-clawdi-desktop="true"] [data-clawdi-window-drag-region] {
 	-webkit-app-region: drag;
 }
