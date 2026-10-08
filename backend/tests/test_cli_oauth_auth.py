@@ -581,14 +581,14 @@ async def test_oauth_and_session_issuers_cannot_rebind_the_same_clerk_sub(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("before_migration", [True, False])
+@pytest.mark.parametrize("stored_retired_key", [True, False])
 async def test_oauth_config_returns_only_public_values(
     raw_auth_client: httpx.AsyncClient,
     db_session: AsyncSession,
     clerk_oauth_signing_key: str,
-    before_migration: bool,
+    stored_retired_key: bool,
 ):
-    if before_migration:
+    if stored_retired_key:
         row = await db_session.get(AppSetting, CLERK_CLI_OAUTH_SETTING_KEY)
         assert row is not None
         row.value_json = {

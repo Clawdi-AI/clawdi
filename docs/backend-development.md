@@ -702,19 +702,26 @@ curl -sS -X PUT http://localhost:8000/v1/admin/settings/clerk_cli_oauth \
 Done: the command returns HTTP 200 JSON containing
 `"key":"clerk_cli_oauth"` and the canonicalized whole value.
 
-The CLI OAuth setting no longer stores `redirect_uri`. For this rollout, first
-replace all serving app processes with the new model while the stored row still
-has the key, then run Alembic revision `c4a8e2d6f913` to remove it from
-`app_settings.value_json`. The usual migration-first deployment order must not
-leave old model processes serving the migrated row: they require this callback
-for configured settings. The new model's Pydantic
-[`model_validator(mode="before")`](https://docs.pydantic.dev/latest/concepts/validators/#model-validators)
-strips the retired key before `extra="forbid"` runs, so new processes can serve
-`/v1/cli/auth/oauth/config` before or after the migration. Reads leave the stored
-JSON untouched and admin writes serialize only the current fields. All other
-unknown keys remain invalid. Downgrading cannot recover the removed value.
+Retire the stored CLI OAuth `redirect_uri` in two releases, using the normal
+migration-first deployment order for each:
 
-Done: `scripts/test.sh backend tests/test_cli_oauth_redirect_uri_migration.py tests/test_cli_oauth_auth.py tests/test_app_settings.py`
+1. Deploy the model without the field, retaining a temporary Pydantic
+   [`model_validator(mode="before")`](https://docs.pydantic.dev/latest/concepts/validators/#model-validators)
+   that strips the key before `extra="forbid"`. This release includes no data
+   migration. Reads leave stored JSON untouched, so processes from the previous
+   release can still read configured rows during the rolling deployment.
+2. After the tolerant model is deployed, release the follow-up Alembic data
+   cleanup. The migration removes the key while serving processes still tolerate
+   both shapes; the follow-up also removes the temporary validator. This works
+   with automatic migration-first deployment. The dated 2026-10-08 TODO tracks
+   that validator removal.
+
+The previous model's empty field default does not make configured rows without
+this key valid: its after-validator requires a nonempty callback. The separate
+cleanup release avoids that deployment overlap. All other unknown keys remain
+invalid, and admin writes serialize only the current fields.
+
+Done: `scripts/test.sh backend tests/test_cli_oauth_auth.py tests/test_app_settings.py`
 passes against the isolated PostgreSQL runner.
 
 The value is strictly validated and canonicalized before the setting and its
