@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { parse } from "yaml";
 
 interface WorkflowJob {
+	if?: string;
 	needs?: unknown;
 	permissions?: Record<string, string>;
 	steps?: Array<Record<string, unknown>>;
@@ -156,10 +158,13 @@ describe("CLI publish workflow contract", () => {
 		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
 
 		expect(Object.keys(workflowDocument.jobs)).toEqual([
+			"release-check",
 			"build-immutable-artifact",
 			"publish-immutable-artifact-with-oidc",
 		]);
 		expect(build.permissions).toEqual({ contents: "read" });
+		expect(build.needs).toBe("release-check");
+		expect(build.if).toBe("needs.release-check.outputs.publish == 'true'");
 		expect(publish.needs).toBe("build-immutable-artifact");
 		expect(publish.permissions).toEqual({
 			contents: "write",
@@ -332,5 +337,99 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain("latest) ;;");
 		expect(workflow).toContain('echo "unsupported npm release tag: $NPM_TAG" >&2');
 		expect(workflow).not.toContain("pull_request:");
+	});
+});
+describe("CLI publish eligibility", () => {
+	function checkRelease(options: {
+		previousVersion?: string;
+		publishedVersions?: string[];
+		eventName?: string;
+		npmFailure?: boolean;
+		gitFailure?: boolean;
+		invalidRegistryResponse?: boolean;
+	}) {
+		const run = workflowDocument.jobs["release-check"].steps?.find(
+			(step) => step.id === "check",
+		)?.run;
+		if (typeof run !== "string") throw new Error("release eligibility step is missing");
+		const directory = mkdtempSync(join(tmpdir(), "clawdi-release-check-"));
+		try {
+			const bin = join(directory, "bin");
+			mkdirSync(bin);
+			writeFileSync(join(directory, "package.json"), JSON.stringify(cliPackage));
+			writeFileSync(join(directory, "outputs"), "");
+			writeFileSync(
+				join(bin, "git"),
+				'#!/bin/sh\n[ "$GIT_FAILURE" != true ] || exit 1\nprintf \'%s\\n\' "$PREVIOUS_PACKAGE"\n',
+				{ mode: 0o755 },
+			);
+			writeFileSync(
+				join(bin, "npm"),
+				'#!/bin/sh\necho queried > "$NPM_CALL"\n[ "$NPM_FAILURE" != true ] || exit 1\nprintf \'%s\\n\' "$REGISTRY_VERSIONS"\n',
+				{ mode: 0o755 },
+			);
+			const result = spawnSync("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", run], {
+				cwd: directory,
+				encoding: "utf8",
+				env: {
+					...process.env,
+					PATH: `${bin}:${process.env.PATH ?? ""}`,
+					GITHUB_OUTPUT: join(directory, "outputs"),
+					EVENT_NAME: options.eventName ?? "push",
+					PREVIOUS_SHA: "previous-push-commit",
+					PREVIOUS_PACKAGE: JSON.stringify({ version: options.previousVersion ?? "0.0.0" }),
+					REGISTRY_VERSIONS: options.invalidRegistryResponse
+						? "null"
+						: JSON.stringify(options.publishedVersions ?? []),
+					NPM_CALL: join(directory, "npm-call"),
+					NPM_FAILURE: String(options.npmFailure ?? false),
+					GIT_FAILURE: String(options.gitFailure ?? false),
+				},
+			});
+			return {
+				...result,
+				outputs: readFileSync(join(directory, "outputs"), "utf8"),
+			};
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
+	}
+
+	test("skips non-version edits without querying npm", () => {
+		const result = checkRelease({ previousVersion: cliPackage.version, npmFailure: true });
+		expect(result.status).toBe(0);
+		expect(result.outputs).toBe("publish=false\n");
+		expect(result.stdout).toContain("did not change");
+	});
+
+	test("skips a version that npm already contains", () => {
+		const result = checkRelease({ publishedVersions: [cliPackage.version] });
+		expect(result.status).toBe(0);
+		expect(result.outputs).toBe("publish=false\n");
+		expect(result.stdout).toContain("is already on npm");
+	});
+
+	test("allows an unpublished bumped version", () => {
+		const result = checkRelease({});
+		expect(result.status).toBe(0);
+		expect(result.outputs).toBe("publish=true\n");
+	});
+
+	test("allows a manual retry of an unpublished version without a push baseline", () => {
+		const result = checkRelease({ eventName: "workflow_dispatch", gitFailure: true });
+		expect(result.status).toBe(0);
+		expect(result.outputs).toBe("publish=true\n");
+	});
+
+	test("fails closed on registry, baseline, or invalid response errors", () => {
+		for (const options of [
+			{ npmFailure: true },
+			{ gitFailure: true },
+			{ invalidRegistryResponse: true },
+		]) {
+			const result = checkRelease(options);
+			expect(result.status).not.toBe(0);
+			expect(result.outputs).toBe("");
+		}
 	});
 });

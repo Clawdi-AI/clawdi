@@ -1,65 +1,11 @@
 name: Backend CI
 
 on:
+  # Required workflows must start even when all heavy jobs will skip.
+  # https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/troubleshooting-required-status-checks#handling-skipped-but-required-checks
   pull_request:
-    paths:
-      - "backend/**"
-      - "packages/whatsapp-baileys-sidecar/**"
-      - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
-      - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
-      - "config/deploy.yml"
-      - "config/postgres-image.txt"
-      - "packages/shared/src/native-ai-providers.json"
-      - "docker-compose.test.yml"
-      - ".dockerignore"
-      - "packages/shared/src/api/api.generated.ts"
-      - "package.json"
-      - "bun.lock"
-      - "patches/libsignal@6.0.0.patch"
-      - "scripts/openapi-typescript.sh"
-      - "scripts/test-kamal-whatsapp-sidecar-render.sh"
-      - "scripts/deploy-backend.sh"
-      - "scripts/deploy-whatsapp-sidecar.sh"
-      - "scripts/whatsapp-sidecar-deployment-revision.ts"
-      - "scripts/clawdi-image-release-plan.ts"
-      - "scripts/test-deploy-whatsapp-sidecar.sh"
-      - "scripts/test-deploy-backend.sh"
-      - "scripts/check_postgres_image_parity.py"
-      - "tools/openapi-typescript/**"
-      - ".github/actions/setup-bun-ci/**"
-      - ".github/actions/setup-docker-hub-mirror/**"
-      - ".github/workflows/backend-ci.yml"
-      - ".github/workflows/clawdi-image-release.yml"
   push:
     branches: [main]
-    paths:
-      - "backend/**"
-      - "packages/whatsapp-baileys-sidecar/**"
-      - "packages/cli/tests/whatsapp-sidecar-deploy-contract.test.ts"
-      - "packages/cli/tests/clawdi-image-release-workflow.test.ts"
-      - "config/deploy.yml"
-      - "config/postgres-image.txt"
-      - "packages/shared/src/native-ai-providers.json"
-      - "docker-compose.test.yml"
-      - ".dockerignore"
-      - "packages/shared/src/api/api.generated.ts"
-      - "package.json"
-      - "bun.lock"
-      - "patches/libsignal@6.0.0.patch"
-      - "scripts/openapi-typescript.sh"
-      - "scripts/test-kamal-whatsapp-sidecar-render.sh"
-      - "scripts/deploy-backend.sh"
-      - "scripts/deploy-whatsapp-sidecar.sh"
-      - "scripts/whatsapp-sidecar-deployment-revision.ts"
-      - "scripts/clawdi-image-release-plan.ts"
-      - "scripts/test-deploy-whatsapp-sidecar.sh"
-      - "scripts/test-deploy-backend.sh"
-      - "scripts/check_postgres_image_parity.py"
-      - "tools/openapi-typescript/**"
-      - ".github/actions/setup-bun-ci/**"
-      - ".github/actions/setup-docker-hub-mirror/**"
-      - ".github/workflows/backend-ci.yml"
-      - ".github/workflows/clawdi-image-release.yml"
 
 permissions:
   contents: read
@@ -82,8 +28,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+      # Standard job routing: https://github.com/dorny/paths-filter#conditional-execution
       - id: filter
-        uses: dorny/paths-filter@v4
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         with:
           # Use the exact event endpoints so path routing stays on the bounded
           # git fallback instead of the pull-request files API.
@@ -91,6 +38,8 @@ jobs:
           base: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           ref: ${{ github.event_name == 'push' && github.sha || '' }}
           filters: |
+            # The OpenAPI generator installs its own tools/openapi-typescript/bun.lock;
+            # root JS dependency changes still exercise the sidecar lane below.
             backend:
               - "backend/**/*.py"
               - "backend/pyproject.toml"
@@ -98,8 +47,6 @@ jobs:
               - "backend/alembic.ini"
               - "backend/Dockerfile"
               - "packages/shared/src/api/api.generated.ts"
-              - "package.json"
-              - "bun.lock"
               - "scripts/openapi-typescript.sh"
               - "tools/openapi-typescript/**"
               - ".github/actions/setup-bun-ci/**"
@@ -302,3 +249,18 @@ jobs:
           load: true
           cache-from: type=gha,scope=clawdi-whatsapp-sidecar-ci
           cache-to: type=gha,mode=max,scope=clawdi-whatsapp-sidecar-ci
+
+  # Aggregate skipped/successful lanes into a stable required check.
+  # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idneeds
+  # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#always
+  ci-ok:
+    name: Backend CI OK
+    needs: [changes, lint-and-typecheck, test, sidecar]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject failed or cancelled jobs
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+      - name: Required jobs passed or skipped
+        run: echo "All required jobs passed or were skipped by change detection."

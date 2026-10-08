@@ -2,25 +2,49 @@ name: Desktop Platform Packages
 
 on:
   workflow_dispatch:
+  # Native packaging inputs: build.ts copies only the web logo; prepare-native.ts
+  # builds CLI src plus its shared imports and copies the addon and bundled skills.
+  # Root manifests/patches control installed build dependencies; tsconfig controls resolution.
+  # Standard path filters: https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onpushpull_requestpull_request_targetpathspaths-ignore
   pull_request:
     paths:
-      - 'apps/desktop/**'
-      - 'packages/cli/**'
-      - 'packages/shared/**'
-      - 'apps/web/**'
-      - 'bun.lock'
-      - '.github/workflows/desktop-platforms.yml'
-      - '.github/actions/setup-bun-ci/**'
+      - "apps/desktop/**"
+      - "apps/web/public/clawdi-logo-transparent.png"
+      - "packages/cli/src/**"
+      - "packages/cli/scripts/build-native.mjs"
+      - "packages/cli/package.json"
+      - "packages/cli/tsconfig.json"
+      - "packages/cli/skills/**"
+      - "packages/cli/egress-addon/clawdi_egress_addon.py"
+      - "packages/shared/src/**"
+      - "packages/shared/package.json"
+      - "packages/shared/tsconfig.json"
+      - "package.json"
+      - "bun.lock"
+      - "patches/**"
+      - "tsconfig.base.json"
+      - ".github/actions/setup-bun-ci/**"
+      - ".github/workflows/desktop-platforms.yml"
   push:
     branches: [main]
     paths:
-      - 'apps/desktop/**'
-      - 'packages/cli/**'
-      - 'packages/shared/**'
-      - 'apps/web/**'
-      - 'bun.lock'
-      - '.github/workflows/desktop-platforms.yml'
-      - '.github/actions/setup-bun-ci/**'
+      - "apps/desktop/**"
+      - "apps/web/public/clawdi-logo-transparent.png"
+      - "packages/cli/src/**"
+      - "packages/cli/scripts/build-native.mjs"
+      - "packages/cli/package.json"
+      - "packages/cli/tsconfig.json"
+      - "packages/cli/skills/**"
+      - "packages/cli/egress-addon/clawdi_egress_addon.py"
+      - "packages/shared/src/**"
+      - "packages/shared/package.json"
+      - "packages/shared/tsconfig.json"
+      - "package.json"
+      - "bun.lock"
+      - "patches/**"
+      - "tsconfig.base.json"
+      - ".github/actions/setup-bun-ci/**"
+      - ".github/workflows/desktop-platforms.yml"
 
 permissions:
   contents: read

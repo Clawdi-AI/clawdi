@@ -143,29 +143,15 @@ describe("backend image release workflow contract", () => {
 		for (const path of [
 			"packages/whatsapp-baileys-sidecar/**",
 			"scripts/deploy-whatsapp-sidecar.sh",
+			"package.json",
+			"bun.lock",
 		]) {
 			expect(backendFilter).not.toContain(`- "${path}"`);
 		}
 	});
 
-	test("coalesces main Backend CI only inside its image-input path gate", () => {
-		expect(backendCi.on?.push?.branches).toEqual(["main"]);
-		expect(backendCi.on?.push?.paths).toEqual(
-			expect.arrayContaining([
-				"backend/**",
-				"packages/whatsapp-baileys-sidecar/**",
-				"config/deploy.yml",
-				".dockerignore",
-				"packages/shared/src/api/api.generated.ts",
-				"package.json",
-				"bun.lock",
-				"scripts/whatsapp-sidecar-deployment-revision.ts",
-				".github/workflows/backend-ci.yml",
-				".github/workflows/clawdi-image-release.yml",
-			]),
-		);
-		expect(backendCi.on?.push?.paths).not.toContain("**");
-		expect(backendCi.on?.push?.paths).not.toContain("apps/web/src/**");
+	test("always starts the Backend CI release gate and only cancels superseded PR runs", () => {
+		expect(backendCi.on?.push).toEqual({ branches: ["main"] });
 		expect(backendCi.concurrency?.["cancel-in-progress"]).toBe(
 			`\${{ github.event_name == 'pull_request' }}`,
 		);
