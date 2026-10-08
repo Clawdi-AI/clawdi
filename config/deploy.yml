@@ -127,6 +127,9 @@ proxy:
     log_max_size: ""
     options:
       log-driver: none
+      # Bound half-open Cloudflare connections to ≈102 s (proxy namespace only).
+      # Requires `kamal proxy reboot`; keep both repos' shared-proxy options identical.
+      sysctl: net.ipv4.tcp_retries2=8
 
 deploy_timeout: 120 # api entrypoint runs alembic before listening
 
