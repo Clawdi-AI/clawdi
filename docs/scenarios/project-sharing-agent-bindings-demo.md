@@ -54,9 +54,9 @@ to the separate web PR. Folder links are CLI-only local preferences:
 | Recipient | List/accept/decline invitations | `clawdi inbox`, `accept`, `decline` | Inbox banner |
 | Recipient | List accessible projects | `clawdi project list --shared-with-me` | Projects list |
 | Recipient | Leave shared project | `clawdi project leave @owner/project` | Project detail |
-| Recipient | Attach accepted Project to Agent | `clawdi inbox accept --agent`, `agent projects attach` | Agent detail Projects tab |
+| Recipient | Attach accepted Project to Agent | `clawdi inbox accept --agent`, `agent projects link` | Agent detail Projects tab |
 | Agent operator | View the Agent Project and attached Projects | `clawdi agent projects list` | Agent detail Projects tab |
-| Agent operator | Attach/detach/move projects | `attach`, `detach`, `move` | Agent detail Projects tab |
+| Agent operator | Link/unlink/move projects | `link`, `unlink`, `move` | Agent detail Projects tab |
 | Local operator | Link a folder to a Project for `run` env selection | `clawdi project folder link`, `status`, `unlink` | None |
 | Local operator | Run with linked or explicit Project vault env | `clawdi run`, `run --project`, `run --no-project-folder` | None |
 | Security | Agent API keys cannot manage sharing | sharing routes reject Agent API keys | API guard display |
@@ -68,8 +68,8 @@ to the separate web PR. Folder links are CLI-only local preferences:
 | Role | What they want | Where the action lives | Invariant that prevents misuse |
 | --- | --- | --- | --- |
 | Project owner human | Share `engineering`, inspect who has access, and revoke access without controlling recipients' agents. | `clawdi project share`, `invite`, `members --remove`, `unshare`; dashboard equivalent in web PR. | Sharing grants Project membership only; it never attaches the Project to an Agent unless the recipient or operator explicitly asks. |
-| Recipient human | Accept, decline, or leave shared Project access, then decide whether an Agent should use it. | `clawdi inbox accept`, `decline`, `project leave`, optional `inbox accept --agent` or later `agent projects attach`; dashboard equivalent in web PR. | Accepting without an explicit Agent leaves all Agents unchanged; viewer access cannot become the Agent Project. |
-| Agent operator human | See Agent Project and attachments. | `clawdi agent projects list`, `attach`, `detach`, `move`; dashboard equivalent in web PR. | Agent Project handles default writes; Vault resolution priority is an advanced CLI concern. |
+| Recipient human | Accept, decline, or leave shared Project access, then decide whether an Agent should use it. | `clawdi inbox accept`, `decline`, `project leave`, optional `inbox accept --agent` or later `agent projects link`; dashboard equivalent in web PR. | Accepting without an explicit Agent leaves all Agents unchanged; viewer access cannot become the Agent Project. |
+| Agent operator human | See Agent Project and attachments. | `clawdi agent projects list`, `link`, `unlink`, `move`; dashboard equivalent in web PR. | Agent Project handles default writes; Vault resolution priority is an advanced CLI concern. |
 | Local operator human using `clawdi run` | Run a local command with vault env from an explicit or linked Project. | CLI only; `clawdi run --project`, `clawdi project folder link/status/unlink`, `clawdi run --no-project-folder`. | Folder links are local selection hints for `run`; they do not grant membership, change cloud state, or attach Projects to Agents. |
 | Agent runtime / automation consumer | Resolve reads deterministically, write to the right default Project, and debug provenance/conflicts. | Agent Project APIs; `clawdi vault resolve --agent --debug --json`, future agent runtime calls. | Precedence is the Agent Project first, then attached Projects by Vault resolution priority; conflicts block by default and include provenance without leaking plaintext. |
 | Security/admin revocation perspective | Stop future access and downstream Agent use when membership changes. | Project member removal, recipient leave, owner unshare, audit/admin views. | Project membership gates access; revocation removes affected attached Projects while preserving owner data and rejecting sharing changes from Agent API keys. |
@@ -125,7 +125,7 @@ Expected:
 - Skills and vault key names are readable; writes stay disabled.
 - Vault env values resolve through CLI/API-key runtime paths; web/JWT still cannot read plaintext.
 - Human CLI output names the exact follow-up command:
-  `clawdi agent projects attach <agent-id> --project @alice/engineering`.
+  `clawdi agent projects link <agent-id> --project @alice/engineering`.
 - No Project is attached to an Agent unless Bob passes `--agent`.
 
 Web PR follow-up: `/share/<token>` should preview the same Project
@@ -144,7 +144,7 @@ clawdi agent projects list <atlas-id> --json
 Or attach later:
 
 ```bash
-clawdi agent projects attach <atlas-id> --project @alice/engineering --order 10
+clawdi agent projects link <atlas-id> --project @alice/engineering --order 10
 clawdi agent projects list <atlas-id>
 ```
 
@@ -176,13 +176,13 @@ clawdi pull --project <project-id>
 Decline branch:
 
 ```bash
-clawdi inbox decline <invitation-id>
+clawdi inbox decline <invitation-id> --yes
 ```
 
 Owner cleanup branch:
 
 ```bash
-clawdi project invites engineering --cancel <invitation-id>
+clawdi project invites engineering --cancel <invitation-id> --yes
 ```
 
 Expected:
@@ -198,10 +198,10 @@ Dana reviews Agent Project and attachments, then changes advanced Vault resoluti
 
 ```bash
 clawdi agent projects list <atlas-id> --json
-clawdi agent projects attach <atlas-id> --project @alice/engineering --order 10
-clawdi agent projects attach <atlas-id> --project client-a --order 20
+clawdi agent projects link <atlas-id> --project @alice/engineering --order 10
+clawdi agent projects link <atlas-id> --project client-a --order 20
 clawdi agent projects move <atlas-id> --item <engineering-attachment-id>:20 --item <client-attachment-id>:10
-clawdi agent projects detach <atlas-id> --project @alice/engineering
+clawdi agent projects unlink <atlas-id> --project @alice/engineering --yes
 ```
 
 Expected:
@@ -316,19 +316,19 @@ Remove a single member:
 
 ```bash
 clawdi project members engineering
-clawdi project members engineering --remove evan@example.com --json
+clawdi project members engineering --remove evan@example.com --yes --json
 ```
 
 Recipient leaves:
 
 ```bash
-clawdi project leave @alice/engineering --json
+clawdi project leave @alice/engineering --yes --json
 ```
 
 Owner stops all sharing:
 
 ```bash
-clawdi project unshare engineering --json
+clawdi project unshare engineering --yes --json
 ```
 
 Expected:

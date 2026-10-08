@@ -29,7 +29,7 @@ async function runFixture(name: string, args: string[] = []) {
 	}
 }
 
-test("the complete Commander tree and help match the origin/main baseline", async () => {
+test("the complete Commander tree and help match the supported command snapshot", async () => {
 	const { stdout, stderr, code } = await runFixture("capture-command-tree.ts");
 	expect(code, stderr).toBe(0);
 	expect(stderr).toBe("");

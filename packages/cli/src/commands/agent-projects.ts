@@ -4,7 +4,6 @@ import { commandMessage, commandResult, emitJson } from "../lib/command-output";
 import { authedJson, projectAlias, requireProjectAuth } from "../lib/project-command-utils";
 import { listProjects, type ProjectBrief, resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
-import { isInteractive } from "../lib/tty";
 
 interface BindingRow {
 	id: string;
@@ -78,7 +77,7 @@ export async function agentProjectsListCommand(
 	);
 	console.log(
 		chalk.gray("Unlink:  ") +
-			chalk.cyan(`clawdi agent projects unlink ${agentId} --project <project>`),
+			chalk.cyan(`clawdi agent projects unlink ${agentId} --project <project> --yes`),
 	);
 }
 
@@ -132,7 +131,6 @@ export async function agentProjectsRemoveContextCommand(
 		return;
 	}
 	if (
-		isInteractive() &&
 		!(await confirmOrRequireYes(`Unlink project ${opts.project} from ${agentId}?`, {
 			yes: opts.yes,
 			action: "unlink this project",

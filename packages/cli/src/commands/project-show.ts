@@ -136,6 +136,6 @@ export async function projectShowCommand(
 		console.log(chalk.bold("Next actions"));
 		console.log("  Link to agent:");
 		console.log(`    ${chalk.cyan(`clawdi agent projects link <agent-id> --project ${alias}`)}`);
-		console.log(`  Leave: ${chalk.cyan(`clawdi project leave ${alias}`)}`);
+		console.log(`  Leave: ${chalk.cyan(`clawdi project leave ${alias} --yes`)}`);
 	}
 }

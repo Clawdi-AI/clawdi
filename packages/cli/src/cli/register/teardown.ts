@@ -14,11 +14,11 @@ export function registerTeardown(program: Command): void {
 			"after",
 			`
 Examples:
-  $ clawdi teardown --agent claude_code
+  $ clawdi teardown --agent claude_code --yes
   $ clawdi teardown --all --yes
   $ clawdi teardown --agent hermes --keep-skill
 
-Non-interactive teardown without --yes is deprecated; --yes will be required starting in 0.16.`,
+Teardown in a non-interactive shell requires --yes.`,
 		)
 		.option("--json", "Output as JSON")
 		.action(async (opts) => {

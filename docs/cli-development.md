@@ -75,10 +75,18 @@ New commands and new `--json` surfaces follow this contract:
 - Destructive commands use `confirmOrRequireYes`: prompt in a TTY and require
   `-y, --yes` in a non-interactive shell.
 
-Tier D commands currently warn and proceed without `--yes` in a non-interactive
-shell for compatibility; `--yes` will be required starting in 0.16. This
-applies to `agent skills rm`, `project share-links --revoke`,
-`project invites --cancel`, `vault detach`, and `inbox forget`.
+This applies to credential imports/materialization, vault imports/deletion/detachment,
+channel deletion, project member removal/leave/unsharing, teardown, skill and memory
+removal, AI provider removal, agent project unlinking, invitation decline/cancellation,
+share-link revocation, and local share removal. `--json` never implies `--yes`.
+
+Use `vault detach`, `agent projects link`/`unlink`, and `daemon`. AI provider live
+tests use `--live`; project lists include agent workspaces with `--include-workspaces`.
+`inbox accept`/`join --agent <agent-id>` always links the project as additional context.
+The former aliases and compatibility flags are rejected.
+
+`clawdi setup` keeps background-service installation enabled by default in
+non-interactive shells; its TTY installation prompt is unchanged.
 
 The new Cloud resource commands emit these envelopes:
 
@@ -894,17 +902,6 @@ production and Hosted never resolve an npm dist-tag.
 A manual run is available under `workflow_dispatch` if the auto-run needs a
 nudge. If release completion or npm publication failed, rerun that original
 workflow run so `GITHUB_SHA` and the artifact remain identical.
-
-### 0.16 confirmation checklist
-
-- Require `--yes` in non-TTY mode for Tier B commands that currently warn and
-  proceed: `project unshare`, `project members --remove`, `project leave`, and
-  `teardown`.
-- Require `--yes` in non-TTY mode for Tier C commands that currently confirm
-  only in a TTY: `memory rm`, `skill rm`, `ai-provider remove`,
-  `agent projects unlink`, and `inbox decline`.
-- Use `confirmOrRequireYes` without a TTY-only guard and update the focused
-  confirmation tests when shipping that behavior change.
 
 ### Smoke checks before bumping the version
 

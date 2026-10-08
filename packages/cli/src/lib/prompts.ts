@@ -5,9 +5,6 @@ import { isInteractive } from "./tty";
 
 export type SelectOption<T extends string> = { value: T; label: string; hint?: string };
 
-/** The announced release where non-interactive destructive actions require --yes. */
-export const NON_INTERACTIVE_YES_REQUIRED_VERSION = "0.16";
-
 function toClackOptions<T extends string>(options: SelectOption<T>[]): Option<T>[] {
 	// `Option<T>` is a conditional that doesn't reduce when T is a generic
 	// constrained to `string`, so the literal needs an explicit cast.
@@ -17,30 +14,12 @@ function toClackOptions<T extends string>(options: SelectOption<T>[]): Option<T>
 	});
 }
 
-export async function askYesNo(message: string, def = true): Promise<boolean> {
-	if (!isInteractive()) return def;
-	const result = await p.confirm({
-		output: process.stderr,
-		message,
-		initialValue: def,
-	});
-	if (p.isCancel(result)) {
-		p.cancel("Cancelled.", { output: process.stderr });
-		process.exit(0);
-	}
-	return result as boolean;
-}
-
 export async function confirmOrRequireYes(
 	message: string,
-	opts: { yes?: boolean; action: string; legacyNonInteractive?: boolean },
+	opts: { yes?: boolean; action: string },
 ): Promise<boolean> {
 	if (opts.yes) return true;
 	if (!isInteractive()) {
-		if (opts.legacyNonInteractive) {
-			warnNonInteractiveYesRequired();
-			return true;
-		}
 		throw new Error(
 			`Confirmation required to ${opts.action}. Re-run with --yes in a non-interactive shell.`,
 		);
@@ -51,13 +30,6 @@ export async function confirmOrRequireYes(
 		return false;
 	}
 	return result;
-}
-
-/** Preserve the pre-0.16 non-interactive transition for legacy commands. */
-export function warnNonInteractiveYesRequired(): void {
-	console.error(
-		`--yes will be required in a non-interactive shell starting in ${NON_INTERACTIVE_YES_REQUIRED_VERSION}`,
-	);
 }
 
 export async function askMulti<T extends string>(

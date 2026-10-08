@@ -8,7 +8,6 @@ import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { requireSearchQuery } from "../lib/search-query";
-import { isInteractive } from "../lib/tty";
 
 interface ListOpts {
 	json?: boolean;
@@ -129,7 +128,6 @@ export async function memoryAdd(content: string, opts: { category?: string; json
 export async function memoryRm(id: string, opts: { yes?: boolean; json?: boolean } = {}) {
 	requireAuth();
 	if (
-		isInteractive() &&
 		!(await confirmOrRequireYes(`Delete memory ${id}?`, {
 			yes: opts.yes,
 			action: "delete this memory",

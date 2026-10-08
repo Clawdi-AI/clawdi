@@ -680,7 +680,7 @@ function readCommandVersion(command: string, args: string[]): string | null {
 }
 
 function isLongLivedDaemonInvocation(args = process.argv.slice(2)): boolean {
-	const commandIndex = args.findIndex((arg) => arg === "daemon" || arg === "serve");
+	const commandIndex = args.findIndex((arg) => arg === "daemon");
 	if (commandIndex < 0) return false;
 	const rest = args.slice(commandIndex + 1);
 	for (let i = 0; i < rest.length; i++) {

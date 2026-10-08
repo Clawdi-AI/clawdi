@@ -54,7 +54,7 @@ export async function projectMembersCommand(
 		if (
 			!(await confirmOrRequireYes(
 				`Remove ${matches[0].user_email ?? matches[0].user_id} from ${projectArg}?`,
-				{ yes: opts.yes, action: "remove this project member", legacyNonInteractive: true },
+				{ yes: opts.yes, action: "remove this project member" },
 			))
 		) {
 			return;
@@ -104,18 +104,26 @@ export async function projectMembersCommand(
 	console.log();
 	console.log(
 		chalk.gray("Remove access: ") +
-			chalk.cyan(`clawdi project members ${projectArg} --remove <email|user_id>`),
+			chalk.cyan(`clawdi project members ${projectArg} --remove <email|user_id> --yes`),
 	);
 }
 
 export async function projectLeaveCommand(
 	projectArg: string,
-	opts: { json?: boolean },
+	opts: { json?: boolean; yes?: boolean },
 ): Promise<void> {
 	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
 
 	const projectId = await resolveProjectId(ctx.apiUrl, ctx.apiKey, projectArg);
+	if (
+		!(await confirmOrRequireYes(`Leave project ${projectArg}?`, {
+			yes: opts.yes,
+			action: "leave this project",
+		}))
+	) {
+		return;
+	}
 	const result = await authedJson<{ status: string }>(
 		ctx.apiUrl,
 		ctx.apiKey,
@@ -143,7 +151,7 @@ export async function projectUnshareCommand(
 	if (
 		!(await confirmOrRequireYes(
 			`Revoke all links, cancel all invites, and remove all viewers from ${projectArg}?`,
-			{ yes: opts.yes, action: "stop sharing this project", legacyNonInteractive: true },
+			{ yes: opts.yes, action: "stop sharing this project" },
 		))
 	) {
 		return;
