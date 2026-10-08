@@ -136,7 +136,7 @@ describe("CodexAdapter.collectSessions", () => {
 				.filter((part) => part.type === "attachment");
 			expect(attachments.map((part) => part.name ?? null)).toEqual(fixture.names);
 			for (const attachment of attachments) {
-				expect(attachment.name?.length ?? 0).toBeLessThanOrEqual(512);
+				expect(Array.from(attachment.name ?? "").length).toBeLessThanOrEqual(512);
 				expect(attachment.name ?? "").not.toContain("data:");
 				expect(attachment.name ?? "").not.toContain("/synthetic/");
 			}

@@ -49,6 +49,11 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.2
+
+- **Session sync:** Bound attachment metadata to the server contract so long
+  filenames, media types, and remote references cannot block session uploads.
+
 ### CLI 0.16.1
 
 - **Codex session sync:** fork and sub-agent threads now sync as their own

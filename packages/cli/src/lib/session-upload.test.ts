@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RawSession, SessionEvent } from "../adapters/base";
 import { PiAdapter } from "../adapters/pi";
+import { SESSION_PROJECTION_REVISION, visibleContentParts } from "../adapters/rich-event-mapping";
 import { ApiClient, ApiError } from "./api-client";
 import {
 	advanceEventHead,
 	EMPTY_EVENT_HEAD,
+	encodeEventNdjson,
 	projectEventsToMessages,
 	sequenceSessionEvents,
 } from "./session-events";
@@ -442,6 +444,127 @@ describe("events-v1 incremental upload", () => {
 			expect(readFencedSessionEntry(readSessionsLock(), fence)?.blocked).toBeUndefined();
 		},
 	);
+	it("re-uploads a rejected attachment after a CLI upgrade without changing its source revision", async () => {
+		const api = eventApi();
+		const inputAttachment = {
+			type: "file",
+			id: "attachment",
+			name: `${"a".repeat(600)}.pdf`,
+			size: 42,
+			sha256: "a".repeat(64),
+		};
+		const fixedEvents = sequenceSessionEvents([
+			{
+				type: "message",
+				role: "user",
+				source: { adapter: "codex", session_key: "fixture", record_id: "attachment" },
+				parts: visibleContentParts(inputAttachment),
+			},
+		]);
+		const oldEvents: SessionEvent[] = fixedEvents.map((event) =>
+			event.type === "message"
+				? {
+						...event,
+						parts: event.parts.map((part) =>
+							part.type === "attachment" ? { ...part, name: inputAttachment.name } : part,
+						),
+					}
+				: event,
+		);
+		const oldSession = rawSession(oldEvents, true);
+		oldSession.sourceRevision = `jsonl-stat-v1:p${SESSION_PROJECTION_REVISION}:42:1024:1000000000:1000000000`;
+		const oldPlan = await prepareSessionUpload(oldSession, "events-v1");
+		const fence = sessionFence(api, {
+			environmentId: "agent-codex",
+			adapter: "codex",
+			sourceSessionKey: oldSession.localSessionId,
+		});
+		api.getSessionEventHead = async () => ({
+			protocol: "events-v1",
+			generation: null,
+			revision: 0,
+			count: 0,
+			head_hash: EMPTY_EVENT_HEAD,
+		});
+		const staged: string[] = [];
+		api.stageSessionEventGeneration = async (_id, body) => {
+			staged.push(body.generation);
+			return { generation: body.generation, status: "staging" };
+		};
+		api.uploadSessionEventGenerationChunk = async () => {
+			throw new ApiError({
+				status: 422,
+				body: '{"detail":"event does not match events-v1 at seq 0: message.parts.0.attachment.name (string_too_long)"}',
+				hint: "validation failed",
+			});
+		};
+		expect(
+			(
+				await syncSessionContent({
+					api,
+					fence,
+					session: oldSession,
+					plan: oldPlan,
+					needsSnapshotContent: false,
+				})
+			).status,
+		).toBe("blocked");
+		const rejected = readFencedSessionEntry(readSessionsLock(), fence);
+		if (!rejected?.blocked) throw new Error("expected persisted attachment rejection");
+		expect(rejected.blocked.code).toBe("event_schema_invalid");
+		expect(rejected.source_revision).toBe(oldSession.sourceRevision);
+		expect(sessionPlanIsDurablyBlocked(fence, oldPlan)).toContain("attachment.name");
+		// Upgrade invalidates the block even when the source and projection revision
+		// are unchanged. The next upload reads the source through the new mapper.
+		persistFencedSessionEntry(fence, {
+			...rejected,
+			blocked: { ...rejected.blocked, cli_version: "before-upgrade" },
+		});
+		expect(sessionPlanIsDurablyBlocked(fence, oldPlan)).toBeNull();
+		const fixedSession = rawSession(fixedEvents, true);
+		fixedSession.sourceRevision = oldSession.sourceRevision;
+		const fixedPlan = await prepareSessionUpload(fixedSession, "events-v1");
+		expect(fixedPlan.localHash).not.toBe(oldPlan.localHash);
+		expect(sessionPlanIsDurablyBlocked(fence, fixedPlan)).toBeNull();
+		const uploaded: Buffer[] = [];
+		api.uploadSessionEventGenerationChunk = async (chunk) => {
+			uploaded.push(chunk.file);
+			return {
+				generation: chunk.generation,
+				start_seq: chunk.startSeq,
+				end_seq: chunk.startSeq,
+				count: 1,
+				content_hash: chunk.contentHash,
+				result_head_hash: fixedPlan.finalEventHead ?? "",
+			};
+		};
+		api.commitSessionEventGeneration = async (_id, generation, body) => ({
+			generation,
+			revision: 1,
+			count: body.final_count,
+			head_hash: body.final_head_hash,
+		});
+		expect(
+			(
+				await syncSessionContent({
+					api,
+					fence,
+					session: fixedSession,
+					plan: fixedPlan,
+					needsSnapshotContent: false,
+				})
+			).status,
+		).toBe("synced");
+		expect(uploaded).toHaveLength(1);
+		expect(uploaded[0]?.toString("ascii")).toBe(encodeEventNdjson(fixedEvents).toString("ascii"));
+		expect(staged).toHaveLength(2);
+		expect(staged[1]).not.toBe(staged[0]);
+		expect(readFencedSessionEntry(readSessionsLock(), fence)?.blocked).toBeUndefined();
+		expect(readFencedSessionEntry(readSessionsLock(), fence)?.source_revision).toBe(
+			oldSession.sourceRevision,
+		);
+	});
+
 	it.each([-1, 0, 1])(
 		"preserves canonical Unicode bytes at chunk budget boundary %i",
 		async (boundary) => {
