@@ -303,6 +303,17 @@ export function createPurchaseFlow(options: {
 							)
 								throw new StorePurchaseError("purchase_pending");
 							saved = null;
+						} else if (
+							existing.attempt.state === "prepared" &&
+							saved.cancelled &&
+							!saved.purchaseStarted &&
+							!saved.transactionHint &&
+							saved.request.purpose === "compute_subscription" &&
+							intent.purpose === "compute_subscription"
+						) {
+							// Hosted supersedes this unlinked prepared compute attempt when the new one is created.
+							await journal.clearAttempt(storageKey, saved, () => current(signal));
+							saved = null;
 						} else
 							throw new StorePurchaseError(
 								"purchase_pending",
