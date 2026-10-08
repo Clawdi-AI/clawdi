@@ -58,7 +58,6 @@ import {
 	pointManagedCliAt,
 	readSystemdEnvFile,
 	readSystemdSystemUnit,
-	readSystemdUserServiceConfig,
 	root,
 	runtimeWatch,
 	seedCurrentCliInstall,
@@ -416,13 +415,12 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it.each([
-		{ runtime: "openclaw" as const, publishCa: true, dashboardBuilds: true },
-		{ runtime: "hermes" as const, publishCa: true, dashboardBuilds: true },
-		{ runtime: "hermes" as const, publishCa: true, dashboardBuilds: false },
-		{ runtime: "openclaw" as const, publishCa: false, dashboardBuilds: true },
+		{ runtime: "openclaw" as const, publishCa: true },
+		{ runtime: "hermes" as const, publishCa: true },
+		{ runtime: "openclaw" as const, publishCa: false },
 	])(
-		"orders the cold $runtime installer after egress (publishCa=$publishCa, dashboardBuilds=$dashboardBuilds)",
-		async ({ runtime, publishCa, dashboardBuilds }) => {
+		"orders the cold $runtime installer after egress (publishCa=$publishCa)",
+		async ({ runtime, publishCa }) => {
 			setRuntimeApplyGeneration(41, CANONICAL_TEST_CONTEXT);
 			const home = join(root, "home", "clawdi");
 			const state = join(root, "var", "lib", "clawdi");
@@ -495,30 +493,6 @@ exit 0
 			chmodSync(runtimeBin, 0o700);
 			if (runtime === "hermes") {
 				writeHermesDashboardPython(home, true);
-				const appRoot = join(home, ".hermes", "hermes-agent");
-				const npm = join(bin, "npm");
-				mkdirSync(join(appRoot, "web"), { recursive: true });
-				writeFileSync(join(appRoot, "web", "package.json"), '{"scripts":{"build":"true"}}\n');
-				writeFileSync(
-					npm,
-					`#!/usr/bin/env bash
-set -euo pipefail
-printf 'official hermes dashboard prerequisite %s\n' "$*" >> '${systemctlLog}'
-test -r '${paths.egressSystemCaFile}'
-case "$*" in
-  "ci --include=dev --workspace web")
-    mkdir -p '${join(appRoot, "node_modules", ".bin")}'
-    ;;
-  "run build")
-    ${dashboardBuilds ? "" : "exit 1"}
-    mkdir -p '${join(appRoot, "hermes_cli", "web_dist")}'
-    printf '%s\n' '<html>Hermes dashboard</html>' > '${join(appRoot, "hermes_cli", "web_dist", "index.html")}'
-    ;;
-  *) exit 64 ;;
-esac
-`,
-				);
-				chmodSync(npm, 0o700);
 			}
 			seedCurrentCliInstall(state, TEST_RUNNING_CLI_VERSION);
 			writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
@@ -562,26 +536,6 @@ esac
 				).toBe(false);
 				return;
 			}
-			if (!dashboardBuilds) {
-				// The failed optional build withdraws the dashboard; the gateway still commits.
-				const event = JSON.parse(logs.at(-1) ?? "{}");
-				expect(event).toMatchObject({ status: "error", healthImpact: "resource_projection" });
-				expect(event.error).toContain(
-					"runtime hermes dashboard unavailable: Hermes dashboard prerequisite failed",
-				);
-				expect(readRuntimeAppliedState(paths)).toMatchObject({
-					generation: 41,
-					serviceWithdrawals: [{ runtime: "hermes", service: "dashboard" }],
-				});
-				const calls = readFileSync(systemctlLog, "utf8").trim().split("\n");
-				expect(calls).toContain("official hermes installer");
-				expect(
-					calls.some((call) => call.startsWith("--user start ") && call.includes(serviceName)),
-				).toBe(true);
-				expect(calls.some((call) => call.includes("clawdi-hermes-dashboard"))).toBe(false);
-				expect(readSystemdUserServiceConfig(paths, "clawdi-hermes-dashboard")).toBe("\n");
-				return;
-			}
 			if (runtimeExitCode !== undefined && runtimeExitCode !== 0) {
 				throw new Error(logs.join("\n"));
 			}
@@ -596,15 +550,6 @@ esac
 				(call) => call.startsWith("start") && call.includes("clawdi-daemon.service"),
 			);
 			expect(sidecarActivation).toBeGreaterThanOrEqual(0);
-			if (runtime === "hermes") {
-				const dependencyInstall = calls.indexOf(
-					"official hermes dashboard prerequisite ci --include=dev --workspace web",
-				);
-				const dashboardBuild = calls.indexOf("official hermes dashboard prerequisite run build");
-				expect(dependencyInstall).toBeGreaterThan(sidecarActivation);
-				expect(dashboardBuild).toBeGreaterThan(dependencyInstall);
-				expect(officialInstaller).toBeGreaterThan(dashboardBuild);
-			}
 			expect(officialInstaller).toBeGreaterThan(sidecarActivation);
 			expect(finalSystemActivation).toBeGreaterThan(officialInstaller);
 			if (runtime === "hermes") {

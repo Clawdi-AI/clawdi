@@ -15,7 +15,6 @@ import { parseEnv } from "node:util";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
-import { prepareHermesDashboardBuild } from "./hermes-dashboard-build";
 import type { RuntimeManifest } from "./manifest-contract";
 import {
 	runtimeCommandCurrentRevision,
@@ -78,8 +77,6 @@ import {
 	isGeneratedRuntimeSystemdFile,
 } from "./systemd-user";
 import { TRANSPARENT_EGRESS_PORT } from "./transparent-egress";
-
-export { HERMES_DASHBOARD_BUILD_REVISION_FILE } from "./hermes-dashboard-build";
 
 export interface RuntimeSystemdUserProgram {
 	programKind: "runtime" | "file-browser";
@@ -782,63 +779,6 @@ function officialRuntimeServiceInstallArgs(program: RuntimeSystemdUserProgram): 
 }
 
 const OFFICIAL_INSTALLER_MAX_BUFFER_BYTES = 64 * 1024;
-
-export function prepareOfficialRuntimeServiceDependencies(
-	programs: RuntimeSystemdUserProgram[],
-	plan: OfficialRuntimeServicePlan,
-	paths: RuntimePaths,
-	egressSystemCaFile?: string,
-): string | null {
-	// Hermes includes the dashboard's node_modules/.bin in its gateway unit.
-	// Finish the cold build first so gateway startup cannot rewrite the installed unit.
-	const preparesHermesGateway = plan.pending.some((item) => item.program.runtime === "hermes");
-	const hasHermesDashboard = programs.some(
-		(program) => program.runtime === "hermes" && program.service === "dashboard",
-	);
-	if (!preparesHermesGateway || !hasHermesDashboard) return null;
-
-	const descriptor = OFFICIAL_RUNTIME_SERVICE_DESCRIPTORS.find(
-		(candidate) => candidate.runtime === "hermes" && candidate.service === "gateway",
-	);
-	const commandRevision = descriptor
-		? runtimeCommandCurrentRevision(
-				officialRuntimeServiceCommand(descriptor, paths),
-				paths.userHome,
-				paths.userHome,
-			)
-		: null;
-	try {
-		prepareHermesDashboardBuild({
-			home: paths.userHome,
-			revision: commandRevision,
-			run(args, cwd, timeoutMs) {
-				let result: ReturnType<typeof spawnRuntimeUserCommand>;
-				try {
-					result = spawnRuntimeUserCommand("npm", args, paths.userHome, cwd, {
-						egressSystemCaFile,
-						maxBufferBytes: OFFICIAL_INSTALLER_MAX_BUFFER_BYTES,
-						timeoutMs,
-					});
-				} catch (error) {
-					const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", {
-						error,
-					});
-					throw new Error(`Hermes dashboard prerequisite failed; see ${logPath}`);
-				}
-				if (result.status !== 0 || result.error) {
-					const logPath = writeRuntimeInstallerLog(paths, "hermes-dashboard-prerequisite", result);
-					throw new Error(`Hermes dashboard prerequisite failed; see ${logPath}`);
-				}
-			},
-			writeRevision(path, contents) {
-				withRuntimeUserFileAccess(() => writePrivateFileAtomic(path, contents, { mode: 0o600 }));
-			},
-		});
-	} catch (error) {
-		return error instanceof Error ? error.message : "Hermes dashboard prerequisite failed";
-	}
-	return null;
-}
 
 function installOfficialRuntimeUserService(
 	program: RuntimeSystemdUserProgram,
