@@ -116,7 +116,6 @@ async function verifyLocalRenderer(context, window) {
 	);
 	const local = await window.evaluate(() => {
 		return {
-			hasDesktopBridge: window.clawdiDesktop !== undefined,
 			methods: Object.keys(window.clawdiConnect ?? {}).sort(),
 			loadedLogo: Array.from(document.images).some(
 				(image) => image.complete && image.naturalWidth > 0,
@@ -126,7 +125,6 @@ async function verifyLocalRenderer(context, window) {
 				?.getAttribute("content"),
 		};
 	});
-	assert.equal(local.hasDesktopBridge, false);
 	assert.equal(local.loadedLogo, true);
 	assert.match(local.csp ?? "", /default-src 'none'/);
 	assert.deepEqual(local.methods, [

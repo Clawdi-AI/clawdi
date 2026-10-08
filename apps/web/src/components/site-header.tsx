@@ -28,10 +28,7 @@ const HostedNotificationCenter = IS_HOSTED_BUILD
 export function SiteHeader({ actions }: { actions?: ReactNode }) {
 	const ready = Boolean(useAccountDataIdentity());
 	return (
-		<header
-			data-clawdi-window-drag-region
-			className={`${siteHeaderClasses.root} ${siteHeaderClasses.pageSurface}`}
-		>
+		<header className={`${siteHeaderClasses.root} ${siteHeaderClasses.pageSurface}`}>
 			<div className={siteHeaderClasses.content}>
 				<SidebarTrigger className={siteHeaderClasses.sidebarTrigger} />
 				<Separator orientation="vertical" className={siteHeaderClasses.sidebarSeparator} />

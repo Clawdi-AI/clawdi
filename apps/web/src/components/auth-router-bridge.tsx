@@ -20,7 +20,6 @@ export function AuthRouterBridge({ children }: { children: React.ReactNode }) {
 	const previousAuthKey = useRef(
 		admittedMatch?.status === "success" ? admittedMatch.context.authIdentity : undefined,
 	);
-	const previouslySignedIn = useRef(false);
 	const [scope, setScope] = useState(() => ({
 		identity,
 		queryClient: createAppQueryClient(),
@@ -39,17 +38,7 @@ export function AuthRouterBridge({ children }: { children: React.ReactNode }) {
 	useLayoutEffect(() => {
 		if (auth.status === "loading" || auth.status === "unavailable") return;
 		if (previousAuthKey.current === authKey) return;
-		const hadSession = previouslySignedIn.current;
-		if (auth.status === "signed-in" || auth.status === "signed-out") {
-			previouslySignedIn.current = auth.status === "signed-in";
-		}
 		previousAuthKey.current = authKey;
-		// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
-		if (hadSession && auth.status === "signed-out" && window.clawdiDesktop) {
-			void window.clawdiDesktop
-				.retryDashboard()
-				.catch(() => console.error("Failed to restore Desktop sign-in"));
-		}
 		router.clearCache({ filter: isProtectedMatch });
 		if (
 			![...router.state.matches, ...router.matchRoutes(router.state.location)].some(

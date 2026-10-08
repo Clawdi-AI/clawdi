@@ -6,7 +6,6 @@ import { AlertTriangle, RotateCcw } from "lucide-react";
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { isApiNetworkError } from "@/lib/api-errors";
-import { DesktopBridgeCompatibilityError } from "@/lib/desktop-bridge";
 
 const isDevelopment =
 	(import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.MODE !==
@@ -21,7 +20,6 @@ const isDevelopment =
  */
 export default function RootError({ error, reset }: { error: unknown; reset: () => void }) {
 	const router = useRouter();
-	const needsDesktopUpdate = error instanceof DesktopBridgeCompatibilityError;
 	const message = error instanceof Error ? error.message : String(error);
 	const digest =
 		typeof error === "object" && error !== null && "digest" in error
@@ -50,13 +48,9 @@ export default function RootError({ error, reset }: { error: unknown; reset: () 
 			<div className="max-w-md w-full text-center space-y-4">
 				<AlertTriangle className="size-10 text-destructive mx-auto" />
 				<div>
-					<h1 className="text-lg font-semibold">
-						{needsDesktopUpdate ? "Update Clawdi Desktop" : "Page unavailable"}
-					</h1>
+					<h1 className="text-lg font-semibold">Page unavailable</h1>
 					<p className="text-sm text-muted-foreground mt-1">
-						{needsDesktopUpdate
-							? "Install the latest Clawdi Desktop version to continue."
-							: "This page couldn't load. Try again, or contact support if this continues."}
+						This page couldn't load. Try again, or contact support if this continues.
 					</p>
 				</div>
 				{isDevelopment && (

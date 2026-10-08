@@ -37,7 +37,7 @@ export function safeEventProperties(
 	// Validate those values at the final boundary as well as in trackEvent.
 	const bounded: Record<string, readonly string[]> = {
 		feature: PRODUCT_FEATURES,
-		source: ["web", "desktop"],
+		source: ["web"],
 		acquisition_source: ["direct", "other", ...ACQUISITION_SOURCES],
 		utm_source: ["direct", "other", ...ACQUISITION_SOURCES],
 		referrer: ["direct", "other", ...ACQUISITION_SOURCES],
@@ -144,8 +144,7 @@ export function initHostedPostHog({
 			const feature = featureForPath(pathname);
 			const properties = {
 				...event.properties,
-				// TODO (2026-10-08): Remove after 2026-11-08; retained for Desktop beta.1–7.
-				source: window.clawdiDesktop ? "desktop" : "web",
+				source: "web",
 				schema_version: 1,
 				...(event.event === "$pageview" && (feature === "sign_up" || feature === "sign_in")
 					? acquisitionProperties(window.location.search, document.referrer)
@@ -314,14 +313,10 @@ export function canCaptureProductEvents(options: HostedPostHogOptions = {}): boo
 	return !posthog.has_opted_out_capturing();
 }
 
-export function trackEvent(
-	event: ProductEvent,
-	source: "web" | "desktop",
-	options: HostedPostHogOptions = {},
-): boolean {
+export function trackEvent(event: ProductEvent, options: HostedPostHogOptions = {}): boolean {
 	try {
 		if (!canCaptureProductEvents(options)) return false;
-		posthog.capture(event.name, { ...event.properties, source, schema_version: 1 });
+		posthog.capture(event.name, { ...event.properties, source: "web", schema_version: 1 });
 		return true;
 	} catch {
 		return false;

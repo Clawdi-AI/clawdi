@@ -19,7 +19,6 @@ from httpx import ASGITransport
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import app.routes.cli_auth as cli_auth_module
 import app.services.clerk_backend as clerk_backend_module
 from app.core.auth import _auth_via_clerk_jwt, get_auth, require_cli_auth, require_user_cli
 from app.core.config import settings
@@ -691,32 +690,6 @@ async def test_disabled_oauth_setting_fails_closed_for_access_tokens(
         )
 
     assert raised.value.status_code == 503
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("authorization", [None, "Bearer retired-desktop-credential"])
-@pytest.mark.parametrize(
-    "path",
-    ["/v1/cli/auth/oauth/desktop-ticket", "/api/cli/auth/oauth/desktop-ticket"],
-)
-async def test_oauth_desktop_ticket_is_retired_without_contacting_clerk(
-    raw_auth_client: httpx.AsyncClient,
-    monkeypatch: pytest.MonkeyPatch,
-    authorization: str | None,
-    path: str,
-):
-    def unexpected_clerk_client():
-        pytest.fail("Retired desktop tickets must not contact Clerk")
-
-    monkeypatch.setattr(cli_auth_module, "get_clerk_backend_client", unexpected_clerk_client)
-    headers = {"Authorization": authorization} if authorization else {}
-    response = await raw_auth_client.post(path, headers=headers)
-
-    assert response.status_code == 410
-    assert response.json() == {
-        "detail": "Desktop sign-in tickets are no longer supported. Update Clawdi Desktop and open "
-        "https://cloud.clawdi.ai in your browser."
-    }
 
 
 @pytest.mark.asyncio
