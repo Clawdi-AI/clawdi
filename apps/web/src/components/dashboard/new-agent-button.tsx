@@ -123,7 +123,7 @@ export function NewAgentButton({
 						<ChoiceCard
 							icon={<TerminalSquare />}
 							title="Connect your own agent"
-							description="Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode via the CLI."
+							description="Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode with Clawdi Desktop or the CLI."
 							onClick={chooseConnect}
 						/>
 					</div>

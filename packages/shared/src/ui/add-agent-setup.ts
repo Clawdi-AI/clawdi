@@ -1,6 +1,8 @@
 export const addAgentSetupClasses = {
 	actionIcon: "size-3.5",
 	root: "space-y-4",
+	manualDivider: "flex items-center gap-3 text-xs text-muted-foreground",
+	manualDividerLine: "h-px flex-1 bg-border",
 	tabsList: "w-full sm:w-auto",
 	commands: "mt-2 space-y-4",
 	title: "text-sm font-medium",
@@ -31,4 +33,25 @@ export const addAgentSetupClasses = {
 	command: "min-w-0 flex-1 overflow-x-auto font-mono text-xs",
 	stepNumber:
 		"flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary",
+} as const;
+
+/** Add agent hand-off to Clawdi Desktop and its `/desktop/connect` launch page. */
+export const desktopHandoffClasses = {
+	root: "rounded-lg border bg-muted/30 p-4",
+	row: "flex flex-col gap-3 sm:flex-row sm:items-center",
+	summary: "flex min-w-0 flex-1 items-start gap-3",
+	iconTint: "bg-primary/10 text-primary",
+	body: "min-w-0",
+	title: "text-sm font-medium",
+	description: "mt-0.5 text-xs text-muted-foreground",
+	openAction: "w-full sm:w-auto",
+	fallback: "mt-3 text-xs text-muted-foreground",
+	externalLink:
+		"inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-4",
+	externalIcon: "size-3",
+	launchPage: "flex min-h-dvh items-center justify-center bg-background p-6",
+	launchCard: "flex w-full max-w-sm flex-col items-center gap-4 text-center",
+	launchTitle: "text-lg font-semibold",
+	launchDescription: "text-sm text-muted-foreground",
+	launchFallbacks: "flex flex-col gap-2 text-xs text-muted-foreground",
 } as const;
