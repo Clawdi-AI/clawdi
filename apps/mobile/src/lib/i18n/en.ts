@@ -150,7 +150,7 @@ const storeEn = {
 	checkingPending: "Checking pending purchases…",
 	noPending: "No pending purchases found.",
 	lowBalance: "Low — add credits before Clawdi AI pauses",
-	recoveryStatus: "This subscription needs attention. Its status updates here automatically.",
+	recoveryStatus: "This subscription needs attention. Refresh to see its latest status.",
 	usdcInApp: "Browser-wallet USDC funding isn't available in this app.",
 	walletExplanation: "Pays for AI usage and credit-funded compute subscriptions.",
 	usageSummary: "LLM spend in credits, paid from wallet",
@@ -201,7 +201,7 @@ const storeComputeEn = {
 	waitingForApprovalChange:
 		"Waiting for approval. The plan change applies after the purchase is approved.",
 	processing:
-		"Your subscription is still being confirmed. This page updates automatically when it completes.",
+		"Your subscription is still being confirmed. Refresh to see the latest status, or check again later.",
 	submitted: "Subscription submitted. It applies automatically once {store} confirms it.",
 	unconfirmed:
 		"This purchase couldn't be confirmed yet. If you were charged, the subscription applies automatically, and trying again won't charge you twice.",
@@ -222,6 +222,7 @@ const storeComputeEn = {
 	restore: "Restore purchases",
 	restoring: "Restoring purchases…",
 	restored: "Purchases restored.",
+	nothingToRestore: "No subscriptions to restore.",
 	restorePending: "Your purchases are still being checked. Try again in a few minutes.",
 	restoreFailed: "Purchases couldn't be restored. Try again.",
 	checkStatus: "Check status",
@@ -267,6 +268,12 @@ const creationEn = {
 	discard: "Discard this unsubmitted or rejected draft",
 	notAdmitted:
 		"The server rejected this request before admission. You may explicitly discard it and edit a new draft.",
+	reservedTitle: "Finish setting up your agent",
+	reservedDescription:
+		"Your {store} subscription is reserved for an Agent that hasn't been created yet. Choose its settings, then finish setup.",
+	reservedAction: "Finish setting up",
+	reservedNotice:
+		"This Agent uses your {store} subscription. Nothing new is purchased when you finish setup.",
 	storeComputeUnavailable:
 		"Your store subscription can't be used for this Agent. Check status, subscribe again, or discard this request.",
 	storeComputeDisabled:

@@ -18,7 +18,7 @@ export type StoreSurfaces = Readonly<{
 /**
  * Store builds hide card-only surfaces (owner-approved, 2026-10-06) and always show
  * the credits entry, disabled while purchases are unavailable. Other builds keep Web
- * parity; they show the entry only when a debug build has a usable store flow.
+ * parity; they show the entry only when a debug build can buy credits.
  */
 export function storeSurfaces(storeBuild: boolean, purchasesAvailable: boolean): StoreSurfaces {
 	return {

@@ -151,6 +151,9 @@ function isComputeSlot(value: unknown): value is StoreComputeSlot {
 				slot.compute_subscription_id > 0)) &&
 		(slot.agent_id == null ||
 			(typeof slot.agent_id === "string" && /^hdep_.+/.test(slot.agent_id))) &&
+		(slot.reserved_deploy_request_id == null ||
+			(isNonemptyString(slot.reserved_deploy_request_id) &&
+				slot.reserved_deploy_request_id.length <= 191)) &&
 		(slot.store_management == null || isStoreManagement(slot.store_management))
 	);
 }

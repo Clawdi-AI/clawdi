@@ -564,15 +564,7 @@ exec /usr/bin/systemctl "$@"
 							runtime === "hermes"
 								? {
 										dashboard: {
-											args: [
-												"dashboard",
-												"--host",
-												"0.0.0.0",
-												"--port",
-												"9119",
-												"--no-open",
-												"--skip-build",
-											],
+											args: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"],
 										},
 									}
 								: {},
@@ -2624,15 +2616,7 @@ function behavioralGuardLoad(input: {
 					run: { args: ["gateway", "run"] },
 					services: {
 						dashboard: {
-							args: [
-								"dashboard",
-								"--host",
-								"0.0.0.0",
-								"--port",
-								"9119",
-								"--no-open",
-								"--skip-build",
-							],
+							args: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"],
 						},
 					},
 				},

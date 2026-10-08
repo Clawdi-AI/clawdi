@@ -21,25 +21,25 @@ const slot = (state: string, auto_renews = false): StoreComputeSlot => ({
 describe("mobile account deletion store pre-step", () => {
 	test("a renewable store row or slot names its store", () => {
 		const row = { funding_source: "store" as const, store_management: management };
-		expect(mobileAccountDeletionStoreNotice([row], true, null)).toEqual({
+		expect(mobileAccountDeletionStoreNotice([row], true, null)).toMatchObject({
 			kind: "store",
-			provider: "app_store",
+			management: { provider: "app_store" },
 		});
-		expect(mobileAccountDeletionStoreNotice([card], true, slot("conflict_hold"))).toEqual({
+		expect(mobileAccountDeletionStoreNotice([card], true, slot("conflict_hold"))).toMatchObject({
 			kind: "store",
-			provider: "app_store",
+			management: { provider: "app_store" },
 		});
 		// The list can still be loading; the slot alone is enough evidence.
-		expect(mobileAccountDeletionStoreNotice(null, false, slot("grace"))).toEqual({
+		expect(mobileAccountDeletionStoreNotice(null, false, slot("grace"))).toMatchObject({
 			kind: "store",
-			provider: "app_store",
+			management: { provider: "app_store" },
 		});
 	});
 
 	test("auto-renewal alone keeps the step even in a non-renewable state", () => {
-		expect(mobileAccountDeletionStoreNotice([card], true, slot("expired", true))).toEqual({
+		expect(mobileAccountDeletionStoreNotice([card], true, slot("expired", true))).toMatchObject({
 			kind: "store",
-			provider: "app_store",
+			management: { provider: "app_store" },
 		});
 	});
 

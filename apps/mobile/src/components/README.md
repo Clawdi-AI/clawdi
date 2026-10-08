@@ -20,9 +20,9 @@ editing recipes, run `bun run --cwd apps/mobile theme` and commit
   `bun apps/mobile/src/platform/generate-brand-assets.mjs` from the repository root
   to regenerate them. Channels use the same public PNG URLs as Web. Failed
   images fall back to the same monogram/device treatment.
-- Single-choice Web `Tabs`/`ToggleGroup` in content render `NativeSegments`
-  (`@expo/ui` segmented control) and conditionally render the selected panel.
-  `Tabs` remains only for billing surfaces. `Checkbox` is `@expo/ui`'s native
+- Single-choice Web `Tabs`/`ToggleGroup` in content, including billing-term
+  switchers, render `NativeSegments` (`@expo/ui` segmented control) and
+  conditionally render the selected panel. `Checkbox` is `@expo/ui`'s native
   checkbox; give it an `accessibilityLabel` and let the adjacent caption toggle
   it like Web's `<label>`. `Switch` keeps native geometry with shared theme tints.
 - `Select` and `DropdownMenu` accept direct Item/Group/Fragment descriptor

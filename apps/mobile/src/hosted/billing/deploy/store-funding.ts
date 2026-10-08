@@ -23,6 +23,6 @@ export async function readHostedStoreFunding(
 		attempts,
 		saved.storeFunding,
 		saved.draft.computePlanSlug,
-		unboundStoreSlotPlan(bootstrap.compute_slot, productPlan),
+		unboundStoreSlotPlan(bootstrap.compute_slot, productPlan, saved.id),
 	);
 }
