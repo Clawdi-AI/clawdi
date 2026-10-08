@@ -29,6 +29,8 @@ export default defineConfig({
 	// One dev server, lazy vite transforms: parallel workers race first-hit
 	// compiles against per-assertion timeouts and flake nondeterministically.
 	workers: 1,
+	retries: process.env.CI ? 1 : 0,
+	failOnFlakyTests: !!process.env.CI,
 	reporter: process.env.CI
 		? [["github"], ["html", { outputFolder: "playwright-report/oss", open: "never" }]]
 		: "list",

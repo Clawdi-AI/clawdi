@@ -6,13 +6,15 @@ export default defineConfig({
 	workers: 1,
 	timeout: 30000,
 	expect: { timeout: 10000 },
+	retries: process.env.CI ? 1 : 0,
+	failOnFlakyTests: !!process.env.CI,
 	reporter: process.env.CI
 		? [["github"], ["html", { outputFolder: "playwright-report/auth", open: "never" }]]
 		: "list",
 	outputDir: "test-results/auth",
 	use: {
 		baseURL: "http://127.0.0.1:3111",
-		trace: "retain-on-failure",
+		trace: "on-first-retry",
 		screenshot: "only-on-failure",
 	},
 	webServer: {
