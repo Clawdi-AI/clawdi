@@ -6,13 +6,15 @@
  *
  * - favicon.ico (16/32/48), favicon-16x16.png, favicon-32x32.png and the
  *   manifest's `any` icons are rounded squares with transparent corners.
- * - apple-touch-icon.png and the manifest's `maskable` icon stay full-bleed and
- *   opaque: iOS and Android launchers apply their own masks. The artwork's
- *   face already sits inside the maskable 80% safe-zone circle.
+ * - apple-touch-icon.png is full-bleed and opaque: iOS applies its own mask.
+ * - maskable-icon-512x512.png scales the whole mark into the maskable safe zone
+ *   (https://www.w3.org/TR/appmanifest/#icon-masks) on a full-bleed field of
+ *   the artwork's own red, so launcher masks of any shape keep it intact.
  *
- * Run `bun run icons` after changing the artwork, losslessly recompress the PNGs
- * (`oxipng -o 6 --strip safe public/*.png`), then copy the same files to
- * clawdi-hosted's apps/web/public so both sites ship identical icons.
+ * PNGs use sharp's lossless zlib settings only, so the output is reproducible
+ * from the repo. Run `bun run icons` after changing the artwork, then copy the
+ * same files to clawdi-hosted's apps/web/public so both sites ship identical
+ * icons.
  */
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -24,6 +26,9 @@ const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 /** Rounded-square corners, the iOS app icon proportion used across Clawdi surfaces. */
 const CORNER_RATIO = 0.2237;
 const ICO_SIZES = [16, 32, 48];
+/** Maskable safe zone: a centered circle whose radius is 40% of the icon. */
+const MASKABLE_SAFE_RADIUS = 0.4;
+const MASKABLE_SIZE = 512;
 
 const png = (image: sharp.Sharp) =>
 	image.png({ compressionLevel: 9, adaptiveFiltering: true }).toBuffer();
@@ -47,9 +52,35 @@ function ico(images: { size: number; data: Buffer }[]) {
 	return Buffer.concat([header, ...images.map(({ data }) => data)]);
 }
 
+/** The artwork is cream line art on a flat red field; find the field and the mark's reach. */
+async function measureArtwork() {
+	const { data, info } = await sharp(artworkPath)
+		.removeAlpha()
+		.raw()
+		.toBuffer({ resolveWithObject: true });
+	const { width, height, channels } = info;
+	if (width !== height) throw new Error("Expected square artwork");
+	const at = (x: number, y: number) => (y * width + x) * channels;
+	const field = { r: data[0] ?? 0, g: data[1] ?? 0, b: data[2] ?? 0 };
+	const differs = (index: number) =>
+		data[index] !== field.r || data[index + 1] !== field.g || data[index + 2] !== field.b;
+	if ([at(width - 1, 0), at(0, height - 1), at(width - 1, height - 1)].some(differs))
+		throw new Error("Expected a flat artwork background");
+	// Farthest corner of any non-field pixel from the center, in artwork widths.
+	let reach = 0;
+	const center = width / 2;
+	for (let y = 0; y < height; y++)
+		for (let x = 0; x < width; x++)
+			if (differs(at(x, y)))
+				reach = Math.max(
+					reach,
+					Math.hypot(Math.abs(x + 0.5 - center) + 0.5, Math.abs(y + 0.5 - center) + 0.5) / width,
+				);
+	return { width, field, reach };
+}
+
 async function generate() {
-	const { width, height } = await sharp(artworkPath).metadata();
-	if (!width || width !== height) throw new Error("Expected square artwork");
+	const { width, field, reach } = await measureArtwork();
 	const mask = Buffer.from(
 		`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${width}"><rect width="${width}" height="${width}" rx="${width * CORNER_RATIO}"/></svg>`,
 	);
@@ -73,7 +104,13 @@ async function generate() {
 	await write("android-chrome-192x192.png", png(resize(rounded, 192)));
 	await write("android-chrome-512x512.png", png(resize(rounded, 512)));
 	await write("apple-touch-icon.png", png(resize(artworkPath, 180).removeAlpha()));
-	await write("maskable-icon-512x512.png", png(resize(artworkPath, 512).removeAlpha()));
+	const markSize = Math.floor((MASKABLE_SIZE * MASKABLE_SAFE_RADIUS) / reach);
+	const maskable = sharp({
+		create: { width: MASKABLE_SIZE, height: MASKABLE_SIZE, channels: 3, background: field },
+	}).composite([
+		{ input: await resize(artworkPath, markSize).removeAlpha().toBuffer(), gravity: "center" },
+	]);
+	await write("maskable-icon-512x512.png", png(maskable));
 }
 
 if (import.meta.main) await generate();
