@@ -292,6 +292,16 @@ jobs:
           e2e/hosted-openclaw.pw.ts e2e/hosted-channels.pw.ts e2e/hosted-rail-nav.pw.ts
           e2e/hosted-channels-providers.pw.ts e2e/hosted-overview-hydration.pw.ts
           --grep "deploy wizard creates|cold load hydrates without a mismatch|Clawdi AI model selection|provider creation stays|Custom model ownership|renaming a native|editing and rotating an agent-owned|popular BYOK|native BYOK saves"
+      - name: Upload Playwright report and traces
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-e2e-playwright-diagnostics
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
 
   whatsapp-native-e2e:
     needs: changes
