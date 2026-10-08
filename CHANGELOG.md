@@ -49,6 +49,29 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.0
+
+- **Breaking scripting contract:** human output stays human-readable when piped;
+  machine output requires explicit `--json`. JSON is one versioned object with a
+  `schemaVersion` and named arrays. The `doctor`, `session list/search`,
+  `memory list/search`, `project list`, `deploy`, `wallet status/transactions/usage`,
+  and `ai-provider list/export` envelopes are now v2 with the documented fields
+  (`checks`, `sessions`, `memories`, split project arrays, deployment/payment
+  fields, wallet transactions and daily usage, and provider/default arrays).
+- **Confirmations:** destructive and revoking commands require `--yes` in
+  non-interactive shells. `--json` never confirms a mutation.
+- **Removed compatibility:** `vault unlink`, `agent projects attach/detach`,
+  `serve`, `ai-provider test --probe/--no-probe`,
+  `project list --include-envs`, and `inbox accept/join --use-as` are gone; use
+  the current command names and flags. Legacy device-code endpoints and the
+  OAuth `redirect_uri` config field are also removed.
+- **Local state:** legacy migrations are no longer attempted. Very old installs
+  may re-register the machine and re-upload some sessions or Skills; per-agent
+  daemons installed before 2026-06-04 need `clawdi daemon install`.
+- **Native updates:** releases publish only the v2 manifest. Native installs at
+  or below 0.15.8 cannot self-update; reinstall with
+  `curl -fsSL https://clawdi.ai/install.sh | sh`.
+
 ### CLI 0.15.18
 
 - **Session sync:** Codex, Claude Code, and Pi skip confirmed, unchanged JSONL
