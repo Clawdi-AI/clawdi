@@ -106,3 +106,5 @@ See [`AGENTS.md`](AGENTS.md) for repository workflows.
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
+
+<!-- Temporary docs-only CI routing verification. -->
