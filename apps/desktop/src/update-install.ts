@@ -22,7 +22,13 @@ export class DesktopUpdateInstallation {
 	}
 
 	shouldDeferQuit(): boolean {
-		return !this.allowQuit && (this.inProgress || this.options.isReady());
+		// macOS/Linux normally use the updater's quit listener directly. Calling
+		// app.quit() again from before-quit would reenter Electron's quit sequence.
+		return (
+			!this.allowQuit &&
+			(this.inProgress ||
+				(this.options.isReady() && (this.options.platform === "win32" || this.options.isBusy())))
+		);
 	}
 
 	async resumePendingQuit(): Promise<void> {

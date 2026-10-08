@@ -137,6 +137,7 @@ describe("background services during update installation", () => {
 		for (const platform of ["darwin", "linux"] as const) {
 			for (const onQuit of [true, false]) {
 				const f = installation(platform);
+				expect(f.controller.shouldDeferQuit()).toBe(false);
 				await f.controller.install(onQuit);
 				expect(f.calls).toEqual([onQuit ? "quit-for-auto-install" : "quitAndInstall"]);
 				expect(f.controller.shouldDeferQuit()).toBe(false);
@@ -144,7 +145,7 @@ describe("background services during update installation", () => {
 			const failed = installation(platform, () => false);
 			await expect(failed.controller.install(false)).rejects.toThrow("no longer ready");
 			expect(failed.calls).toEqual(["quitAndInstall"]);
-			expect(failed.controller.shouldDeferQuit()).toBe(true);
+			expect(failed.controller.shouldDeferQuit()).toBe(false);
 		}
 	});
 	test("a failed install restores services, cancels quitting, and permits retry", async () => {
@@ -153,32 +154,35 @@ describe("background services during update installation", () => {
 		expect(f.calls).toEqual(["stop", "quitAndInstall", "restore"]);
 		expect(f.controller.shouldDeferQuit()).toBe(true);
 	});
-	test("quitting during a critical operation waits, then follows install-on-quit", async () => {
-		let busy = true;
-		const calls: string[] = [];
-		const installation = new DesktopUpdateInstallation({
-			platform: "win32",
-			isReady: () => true,
-			isBusy: () => busy,
-			stopBackgroundServices: async () => {
-				calls.push("stop");
-				return false;
-			},
-			restoreBackgroundServices: async () => {
-				calls.push("restore");
-			},
-			install: (onQuit) => {
-				calls.push(onQuit ? "quit" : "restart");
-				return true;
-			},
-		});
-		expect(installation.shouldDeferQuit()).toBe(true);
-		await installation.install(true);
-		expect(calls).toEqual([]);
-		busy = false;
-		await installation.resumePendingQuit();
-		expect(calls).toEqual(["stop", "quit"]);
-	});
+	test.each(["darwin", "linux", "win32"] as const)(
+		"%s quit during a critical operation waits, then follows install-on-quit",
+		async (platform) => {
+			let busy = true;
+			const calls: string[] = [];
+			const installation = new DesktopUpdateInstallation({
+				platform,
+				isReady: () => true,
+				isBusy: () => busy,
+				stopBackgroundServices: async () => {
+					calls.push("stop");
+					return false;
+				},
+				restoreBackgroundServices: async () => {
+					calls.push("restore");
+				},
+				install: (onQuit) => {
+					calls.push(onQuit ? "quit" : "restart");
+					return true;
+				},
+			});
+			expect(installation.shouldDeferQuit()).toBe(true);
+			await installation.install(true);
+			expect(calls).toEqual([]);
+			busy = false;
+			await installation.resumePendingQuit();
+			expect(calls).toEqual(platform === "win32" ? ["stop", "quit"] : ["quit"]);
+		},
+	);
 	test("failed service shutdown aborts installation without starting an unrelated service", async () => {
 		const calls: string[] = [];
 		const installation = new DesktopUpdateInstallation({
