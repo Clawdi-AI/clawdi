@@ -131,8 +131,8 @@ if (!app.requestSingleInstanceLock()) {
 async function startApplication(): Promise<void> {
 	app.setName("Clawdi");
 	// https://www.electronjs.org/docs/latest/api/app#appsetapplogspathpath
-	app.setAppLogsPath();
 	try {
+		app.setAppLogsPath();
 		initializeDesktopLogging(getDesktopLogDirectory(app));
 	} catch {
 		console.error("Desktop file logging unavailable; using console output.");
