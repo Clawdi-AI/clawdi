@@ -7,7 +7,6 @@ import {
 	type StoreManagement,
 	storeAgentDeletionNotice,
 	storeBillingNotice,
-	storeManagementPresentation,
 	storeManagementProvider,
 	storeManagementState,
 	storeManagementUrl,
@@ -53,13 +52,6 @@ describe("store management presentation", () => {
 				"app_store",
 			),
 		).toBeNull();
-		expect(storeManagementPresentation(appStoreManagement, "app_store")).toEqual({
-			provider: "app_store",
-			state: "grace",
-			isOnThisPlatform: true,
-			isOnOtherStore: false,
-			managementUrl: STORE_MANAGEMENT_URLS.app_store,
-		});
 	});
 
 	test("renders each store state read-only without falling back to card billing", () => {

@@ -1,4 +1,4 @@
-import type { DeploymentRead } from "../api";
+import type { DeploymentMutation, DeploymentRead } from "../api";
 
 type HostedComputeSubscription = NonNullable<
 	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
@@ -7,13 +7,18 @@ type HostedComputeSubscription = NonNullable<
 import type { ComputeRecoveryTarget } from "../api/compute-recovery";
 import type { StorePlatform } from "../api/store-client";
 import type { ComputeSubscriptionManagementResult } from "./compute-subscription-management";
-import { computeFundingSource } from "./compute-subscriptions";
+import {
+	computeFundingMode,
+	computeFundingSource,
+	isComputeSubscriptionRenewing,
+} from "./compute-subscriptions";
 import {
 	isStoreManagementOnOtherStore,
 	isStoreManagementOnPlatform,
 	isStoreManagementTerminal,
 	type StoreManagement,
 	type StoreManagementProvider,
+	storeAgentDeletionNotice,
 } from "./store-management";
 
 export type ComputeSubscriptionActionKind =
@@ -191,7 +196,7 @@ export function resolveStoreSubscriptionActions({
 	if (isStoreManagementOnOtherStore(management, platform)) {
 		return {
 			actions: [],
-			managedElsewhere: management.provider === "test_store" ? null : management.provider,
+			managedElsewhere: management.provider as Exclude<StoreManagementProvider, "test_store">,
 		};
 	}
 	if (!isStoreManagementOnPlatform(management, platform)) {
@@ -203,5 +208,41 @@ export function resolveStoreSubscriptionActions({
 				? ["change_store_plan", "manage_store_subscription"]
 				: ["manage_store_subscription"],
 		managedElsewhere: null,
+	};
+}
+
+type DeleteTarget = {
+	current_plan_slug?: DeploymentRead["current_plan_slug"];
+	commercial_display?: { compute_subscription?: HostedComputeSubscription | null } | null;
+};
+type SubscriptionChoice = Extract<
+	DeploymentMutation,
+	{ action: "delete" }
+>["body"]["subscription_choice"];
+
+/**
+ * Included Basic is released with the Agent, a
+ * renewing card/Wallet subscription is the owner's choice, and anything else is kept.
+ * Deleting never cancels App Store/Google Play billing, so store rows offer no choice
+ * and show the store notice instead.
+ */
+export function deploymentDeleteSubscriptionPolicy(deployment: DeleteTarget | null | undefined): {
+	offerChoice: boolean;
+	defaultChoice: SubscriptionChoice;
+	storeNotice: string | null;
+} {
+	const subscription = deployment?.commercial_display?.compute_subscription;
+	const fundingMode = computeFundingMode(deployment?.current_plan_slug, subscription);
+	if (computeFundingSource(deployment?.current_plan_slug, subscription) === "store") {
+		return {
+			offerChoice: false,
+			defaultChoice: "keep_subscription",
+			storeNotice: storeAgentDeletionNotice(subscription?.store_management),
+		};
+	}
+	return {
+		offerChoice: fundingMode === "subscription" && isComputeSubscriptionRenewing(subscription),
+		defaultChoice: fundingMode === "included_basic" ? "cancel_subscription" : "keep_subscription",
+		storeNotice: null,
 	};
 }
