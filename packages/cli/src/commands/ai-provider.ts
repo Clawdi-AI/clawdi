@@ -40,7 +40,7 @@ import {
 import { ApiClient, unwrap } from "../lib/api-client";
 import { isClerkOAuthAuth } from "../lib/clerk-oauth";
 import { parsePositiveInteger } from "../lib/cli-options";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { getAuth } from "../lib/config";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
 import { PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
@@ -95,6 +95,7 @@ interface AiProviderExportOptions {
 	includeSecrets?: boolean;
 	secretPassphrase?: boolean;
 	secretPassphraseEnv?: string;
+	json?: boolean;
 }
 
 interface AiProviderImportOptions {
@@ -193,7 +194,11 @@ export async function aiProviderListCommand(opts: AiProviderListOptions = {}): P
 			.map((provider) => ({ ...provider, source: "local" })),
 	];
 	if (opts.json) {
-		emitJson({ ...catalog, providers });
+		emit({
+			schemaVersion: "clawdi.aiProviderList.v2",
+			providers,
+			defaults: catalog.defaults ?? null,
+		});
 		return;
 	}
 	if (providers.length === 0) {
@@ -299,7 +304,7 @@ export async function aiProviderEditCommand(
 			}
 		}
 		if (opts.json)
-			emitJson(
+			emit(
 				{
 					schemaVersion: "clawdi.aiProviderEdit.v1",
 					updated: providerId,
@@ -378,7 +383,7 @@ export async function aiProviderRemoveCommand(
 		}
 	}
 	if (opts.json) {
-		emitJson({
+		emit({
 			schemaVersion: "clawdi.aiProviderRemove.v1",
 			removed: providerId,
 			source: cloud ? "cloud" : "local",
@@ -398,7 +403,7 @@ export async function aiProviderValidateCommand(
 		allowNoAuthPublic: Boolean(opts.allowNoAuthPublic),
 	});
 	if (opts.json) {
-		emitJson(result);
+		emit(result);
 	}
 	for (const warning of result.warnings) {
 		if (!opts.json) console.error(chalk.yellow(`warning: ${warning}`));
@@ -441,7 +446,7 @@ export async function aiProviderExportCommand(opts: AiProviderExportOptions = {}
 		console.log(chalk.green(`✓ Exported AI provider catalog to ${opts.out}`));
 		return;
 	}
-	emitJson(exportPayload);
+	emit({ schemaVersion: "clawdi.aiProviderExport.v2", catalog: exportPayload });
 }
 
 export async function aiProviderImportCommand(
@@ -485,7 +490,7 @@ export async function aiProviderImportCommand(
 	writeAiProviderCatalog(next);
 	if (secretImport) writePrivateFile(secretImport.out, secretImport.content);
 	if (opts.json) {
-		emitJson({ imported: incoming.providers.length });
+		emit({ imported: incoming.providers.length });
 		return;
 	}
 	console.log(chalk.green(`✓ Imported ${incoming.providers.length} AI provider(s)`));
@@ -517,7 +522,7 @@ export async function aiProviderTestCommand(
 		provider_probe: providerProbe,
 	};
 	if (opts.json) {
-		emitJson(result);
+		emit(result);
 		return;
 	}
 	console.log(`Provider: ${provider.id}`);
@@ -562,7 +567,7 @@ export async function aiProviderImportAuthCommand(
 	const nextProvider = await storeAgentProfileForProvider(provider, collected);
 	writeAiProviderCatalog(upsertAiProvider(catalog, nextProvider, true));
 	if (opts.json) {
-		emitJson({
+		emit({
 			provider_id: providerId,
 			auth: nextProvider.auth,
 		});
@@ -623,7 +628,7 @@ export async function aiProviderConnectCommand(
 		dry_run: Boolean(opts.dryRun),
 	};
 	if (opts.dryRun) {
-		emitJson(request);
+		emit(request);
 		return;
 	}
 	try {
@@ -641,7 +646,7 @@ export async function aiProviderConnectCommand(
 			},
 		);
 		if (opts.json) {
-			emitJson(started);
+			emit(started);
 			return;
 		}
 		console.log(chalk.green(`✓ Started OAuth for ${providerId}`));
@@ -696,7 +701,7 @@ export async function aiProviderCompleteOAuthCommand(
 	const completion = parseOAuthCompletion(opts);
 	const updated = await completeProviderOAuth(providerId, completion);
 	if (opts.json) {
-		emitJson(updated);
+		emit(updated);
 		return;
 	}
 	console.log(chalk.green(`✓ Connected OAuth profile for ${providerId}`));
@@ -1710,7 +1715,7 @@ function printMutationResult(
 	schemaVersion?: string,
 ): void {
 	if (json) {
-		emitJson({ ...(schemaVersion ? { schemaVersion } : {}), [action]: provider.id, provider });
+		emit({ ...(schemaVersion ? { schemaVersion } : {}), [action]: provider.id, provider });
 		return;
 	}
 	console.log(chalk.green(`✓ ${capitalize(action)} AI provider ${provider.id}`));

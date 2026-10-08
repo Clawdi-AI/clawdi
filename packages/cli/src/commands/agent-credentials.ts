@@ -8,7 +8,7 @@ import chalk from "chalk";
 import { getClaudeHome, getCodexHome, getGhConfigHome } from "../adapters/paths";
 import { ApiClient } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { getConfig } from "../lib/config";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { resolveProjectId } from "../lib/project-resolver";
@@ -502,7 +502,7 @@ export async function collectAgentCredentialProfilePayload(
 	if (opts.quiet) {
 		// Used by higher-level commands that need one machine-readable JSON envelope.
 	} else if (opts.json) {
-		emitJson({
+		emit({
 			tool,
 			profile,
 			source: opts.source ?? "file",
@@ -628,7 +628,7 @@ export async function materializeAgentCredentialProfilePayload(
 	if (opts.quiet) {
 		// Used by provider-bound wrappers that print their own result.
 	} else if (opts.json) {
-		emitJson({
+		emit({
 			tool,
 			profile,
 			dry_run: Boolean(opts.dryRun),

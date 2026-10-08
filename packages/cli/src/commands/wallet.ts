@@ -1,11 +1,10 @@
 import type { HostedDeployWallet, HostedWalletBinding } from "@clawdi/shared/api";
 import { parsePositiveInteger } from "../lib/cli-options";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { isAuthorizationRequired, mapHttpError } from "../lib/errors";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
 import { AuthorizationRequiredError, requireAuth } from "../lib/require-auth";
-import { isInteractive } from "../lib/tty";
 
 export async function walletTransactionsCommand(
 	options: { limit?: string | number; json?: boolean } = {},
@@ -16,7 +15,18 @@ export async function walletTransactionsCommand(
 		new HostedDeployClient().getWalletTransactions(limit),
 	);
 	if (options.json) {
-		emitJson({ schemaVersion: "clawdi.walletTransactions.v1", ...result }, false);
+		emit({
+			schemaVersion: "clawdi.walletTransactions.v2",
+			transactions: result.items.map((item) => ({
+				id: item.id,
+				occurredAt: item.occurred_at,
+				direction: item.direction,
+				amount: item.amount,
+				kind: item.kind,
+				status: item.status,
+			})),
+			hasMore: result.has_more,
+		});
 		return;
 	}
 	if (result.items.length === 0) console.log("No wallet transactions.");
@@ -36,7 +46,15 @@ export async function walletUsageCommand(
 	const days = options.days === undefined ? undefined : parsePositiveInteger(options.days);
 	const result = await readWalletResult(() => new HostedDeployClient().getWalletUsage(days));
 	if (options.json) {
-		emitJson({ schemaVersion: "clawdi.walletUsage.v1", ...result }, false);
+		emit({
+			schemaVersion: "clawdi.walletUsage.v2",
+			periodStart: result.period_start,
+			periodEnd: result.period_end,
+			totalUsd: result.total_usd,
+			totalRequests: result.total_requests,
+			availability: result.availability,
+			byDay: result.by_day.map((item) => ({ date: item.date, amountUsd: item.amount_usd })),
+		});
 		return;
 	}
 	console.log(`Period: ${result.period_start} – ${result.period_end}`);
@@ -118,21 +136,21 @@ export async function walletStatusCommand(
 			? wallet.x402_payment_status
 			: "unavailable");
 	const result = {
-		schema_version: "clawdi.wallet.status.v1",
-		balance_usd: wallet.balance_usd,
-		x402_enabled: wallet.x402_enabled,
-		x402_payment_status: wallet.x402_payment_status,
-		x402_payment_attempt: wallet.x402_payment_attempt ?? null,
-		x402_payment_authority: wallet.x402_payment_authority,
+		schemaVersion: "clawdi.walletStatus.v2",
+		balanceUsd: wallet.balance_usd,
+		x402Enabled: wallet.x402_enabled,
+		x402PaymentStatus: wallet.x402_payment_status,
+		x402PaymentAttempt: wallet.x402_payment_attempt ?? null,
+		x402PaymentAuthority: wallet.x402_payment_authority,
 		binding: {
 			bound: binding.bound,
 			address,
-			verified_at: binding.verified_at ?? null,
+			verifiedAt: binding.verified_at ?? null,
 		},
 	};
 	const writeStdout = dependencies.writeStdout ?? console.log;
 	if (options.json) {
-		emitJson(result, true, writeStdout);
+		emit(result, true, writeStdout);
 	} else {
 		writeStdout(
 			[
@@ -180,9 +198,9 @@ export async function runWalletStatusCommand(
 	} catch (error) {
 		const safe = safeWalletStatusError(error);
 		const authorizationRequired = isAuthorizationRequired(error);
-		if (options.json || !(dependencies.interactive ?? isInteractive())) {
-			emitJson(
-				{ schema_version: "clawdi.wallet.error.v1", status: "error", error: safe },
+		if (options.json) {
+			emit(
+				{ schemaVersion: "clawdi.walletStatus.v2", status: "error", error: safe },
 				true,
 				dependencies.writeStdout ?? console.log,
 			);

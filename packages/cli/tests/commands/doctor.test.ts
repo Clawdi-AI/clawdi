@@ -37,7 +37,9 @@ describe("doctor --json", () => {
 			restore();
 		}
 
-		const checks = JSON.parse(captured) as Array<{ name: string; ok: boolean; hint?: string }>;
+		const checks = (
+			JSON.parse(captured) as { checks: Array<{ name: string; ok: boolean; hint?: string }> }
+		).checks;
 		const auth = checks.find((c) => c.name === "Auth");
 		expect(auth?.ok).toBe(false);
 		expect(auth?.hint).toContain("clawdi auth login");
@@ -90,12 +92,16 @@ describe("doctor --json", () => {
 			restore();
 		}
 
-		const checks = JSON.parse(captured) as Array<{
-			name: string;
-			ok: boolean;
-			skipped?: boolean;
-			detail?: string;
-		}>;
+		const checks = (
+			JSON.parse(captured) as {
+				checks: Array<{
+					name: string;
+					ok: boolean;
+					skipped?: boolean;
+					detail?: string;
+				}>;
+			}
+		).checks;
 		expect(checks.find((c) => c.name === "Auth")?.ok).toBe(true);
 		expect(checks.find((c) => c.name === "API reachability")?.ok).toBe(true);
 		expect(checks.find((c) => c.name === "Environments")?.ok).toBe(true);
@@ -158,7 +164,9 @@ describe("doctor --json", () => {
 			restore();
 		}
 
-		const checks = JSON.parse(captured) as Array<{ name: string; ok: boolean; hint?: string }>;
+		const checks = (
+			JSON.parse(captured) as { checks: Array<{ name: string; ok: boolean; hint?: string }> }
+		).checks;
 		const api = checks.find((c) => c.name === "API reachability");
 		expect(api?.ok).toBe(false);
 		expect(api?.hint).toContain("retry");
@@ -197,7 +205,9 @@ describe("doctor --json", () => {
 			restore();
 		}
 
-		const checks = JSON.parse(captured) as Array<{ name: string; ok: boolean; detail?: string }>;
+		const checks = (
+			JSON.parse(captured) as { checks: Array<{ name: string; ok: boolean; detail?: string }> }
+		).checks;
 		const mcp = checks.find((check) => check.name === "Clawdi MCP");
 		expect(mcp?.ok).toBe(false);
 		expect(mcp?.detail).toBe("Error: invalid JSON-RPC response");

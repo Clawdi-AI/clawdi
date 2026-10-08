@@ -1743,9 +1743,18 @@
 				"variadic": false,
 				"default": "CLAWDI_SECRET_EXPORT_PASSPHRASE",
 				"effectiveDefault": "CLAWDI_SECRET_EXPORT_PASSPHRASE"
+			},
+			{
+				"flags": "--json",
+				"description": "Output as JSON",
+				"hidden": false,
+				"required": false,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi ai-provider export [options]\n\nExport provider catalog metadata and refs\n\nOptions:\n  --out <file>                    Write to a file instead of stdout\n  --include-secrets               Include encrypted env-backed secrets in the\n                                  export\n  --secret-passphrase             Encrypt included secrets with a passphrase\n                                  from env\n  --secret-passphrase-env <name>  Env var holding the encrypted secret export\n                                  passphrase (default:\n                                  \"CLAWDI_SECRET_EXPORT_PASSPHRASE\")\n  -h, --help                      display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi ai-provider export [options]\n\nExport provider catalog metadata and refs\n\nOptions:\n  --out <file>                    Write to a file instead of stdout\n  --include-secrets               Include encrypted env-backed secrets in the\n                                  export\n  --secret-passphrase             Encrypt included secrets with a passphrase\n                                  from env\n  --secret-passphrase-env <name>  Env var holding the encrypted secret export\n                                  passphrase (default:\n                                  \"CLAWDI_SECRET_EXPORT_PASSPHRASE\")\n  --json                          Output as JSON\n  -h, --help                      display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi ai-provider import",

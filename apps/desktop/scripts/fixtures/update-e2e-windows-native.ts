@@ -56,6 +56,7 @@ if (args[0] === "--serve") {
 			const running = windowsTaskRunning();
 			console.log(
 				JSON.stringify({
+					schemaVersion: "clawdi.daemonDoctor.v2",
 					cli_version: "0.0.0-smoke",
 					singleton_unit_installed: windowsTaskInstalled(),
 					singleton_unit_running: running,

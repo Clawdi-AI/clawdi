@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -40,7 +40,7 @@ export async function projectRmCommand(
 	}
 
 	if (opts.json) {
-		emitJson({ schemaVersion: "clawdi.projectRm.v1", id: projectId, status: "archived" });
+		emit({ schemaVersion: "clawdi.projectRm.v1", id: projectId, status: "archived" });
 		return;
 	}
 	console.log(`${chalk.green("✓")} Archived project ${projectArg}.`);

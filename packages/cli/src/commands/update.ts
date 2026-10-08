@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import chalk from "chalk";
-import { emitJson, wantsJson } from "../lib/command-output";
+import { emit, wantsJson } from "../lib/command-output";
 import { getClawdiDir, getStoredConfig } from "../lib/config";
 import {
 	isDesktopManagedCurrentCli,
@@ -234,7 +234,7 @@ export async function update(
 	runtime: ForegroundUpdateRuntime = {},
 ) {
 	const current = getCliVersion();
-	const json = wantsJson(opts, { legacyImplicit: true });
+	const json = wantsJson(opts);
 	const managedBy = (runtime.isDesktopManaged ?? isDesktopManagedCurrentCli)()
 		? "desktop"
 		: (runtime.isHomebrewManaged ?? isHomebrewManagedCurrentCli)()
@@ -242,7 +242,13 @@ export async function update(
 			: null;
 	if (managedBy) {
 		if (json) {
-			emitJson({ current, latest: null, upgradeAvailable: false, managedBy });
+			emit({
+				schemaVersion: "clawdi.update.v2",
+				current,
+				latest: null,
+				upgradeAvailable: false,
+				managedBy,
+			});
 		} else {
 			console.log(chalk.gray(`current:  ${current}`));
 			console.log(
@@ -260,7 +266,12 @@ export async function update(
 	if (!latest) {
 		const message = `Could not reach ${REGISTRY_URL}`;
 		if (json) {
-			emitJson({ current, latest: null, error: { code: "registry_unreachable", message } });
+			emit({
+				schemaVersion: "clawdi.update.v2",
+				current,
+				latest: null,
+				error: { code: "registry_unreachable", message },
+			});
 		}
 		console.error(message);
 		process.exitCode = 1;
@@ -270,7 +281,7 @@ export async function update(
 	const upgradeAvailable = isNewer(latest, current);
 	const report = (installed: boolean) => {
 		if (json) {
-			emitJson({ current, latest, upgradeAvailable, installed });
+			emit({ schemaVersion: "clawdi.update.v2", current, latest, upgradeAvailable, installed });
 		}
 	};
 	const print = json ? console.error : console.log;

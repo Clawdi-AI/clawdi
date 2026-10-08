@@ -4,7 +4,7 @@ import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
-import { commandResult, emitJson, message, wantsJson } from "../lib/command-output";
+import { commandResult, emit, message, wantsJson } from "../lib/command-output";
 import { parseDotenvDetailed } from "../lib/dotenv";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -84,7 +84,7 @@ export async function vaultRequest(
 			status = polled.status;
 		}
 	}
-	if (opts.json) emitJson(result(), false);
+	if (opts.json) emit(result(), false);
 	else console.log(`Status: ${status}`);
 	if (opts.wait && status !== "supplied") {
 		throw new Error(
@@ -268,7 +268,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 			})
 			.then(unwrap);
 
-	if (wantsJson(opts, { legacyImplicit: true })) {
+	if (wantsJson(opts)) {
 		// Emit an array so tooling can inspect each vault with its
 		// attached Projects. Keys belong to the vault; project_ids are
 		// where that vault is available.
@@ -296,7 +296,7 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 					: [],
 			});
 		}
-		emitJson(out);
+		emit({ schemaVersion: "clawdi.vaultList.v2", vaults: out });
 		return;
 	}
 

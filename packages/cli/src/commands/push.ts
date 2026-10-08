@@ -8,7 +8,7 @@ import {
 import { profileSessionKey } from "../adapters/profiles";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { getConfig } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { createProfileSync } from "../lib/profile-sessions";
@@ -408,7 +408,7 @@ function printPushResult(
 			...(scan.modules.includes("skills") ? { skills } : {}),
 		};
 	});
-	emitJson({ schemaVersion: "clawdi.push.v1", dryRun, agents, totals, errors }, false);
+	emit({ schemaVersion: "clawdi.push.v1", dryRun, agents, totals, errors }, false);
 }
 
 /**

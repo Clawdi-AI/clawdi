@@ -441,7 +441,7 @@ describe("update --json", () => {
 			]);
 			try {
 				const { stdout, stderr } = await captureOutput(() =>
-					withStdoutTty(() => update({}), false),
+					withStdoutTty(() => update({ json: true }), false),
 				);
 				const result = JSON.parse(stdout);
 				expect(result).toMatchObject({
@@ -490,13 +490,16 @@ describe("update --json", () => {
 				const { stdout, stderr } = await captureOutput(() =>
 					withStdoutTty(
 						() =>
-							update(opts, {
-								detectOwnership: () => npmOwnership,
-								installRunner: () => {
-									installed = true;
-									return 0;
+							update(
+								{ ...opts, json: true },
+								{
+									detectOwnership: () => npmOwnership,
+									installRunner: () => {
+										installed = true;
+										return 0;
+									},
 								},
-							}),
+							),
 						false,
 					),
 				);
@@ -554,7 +557,7 @@ describe("update install", () => {
 					withStdoutTty(
 						() =>
 							update(
-								{ yes: true },
+								{ yes: true, json: true },
 								{
 									detectOwnership: () => ownership,
 									installRunner: (command, args) => {
@@ -623,6 +626,7 @@ describe("update install", () => {
 				throw new TypeError("fetch failed");
 			}),
 			undefined,
+			true,
 			true,
 		);
 		expect(JSON.parse(captured.stdout)).toMatchObject({ latest: "99.0.0", installed: false });
@@ -738,7 +742,7 @@ describe("update install", () => {
 					withStdoutTty(
 						() =>
 							update(
-								{ yes },
+								{ yes, json: yes },
 								{
 									detectOwnership: () => ownership,
 									nativeReleaseBaseUrl: "https://example.invalid/clawdi-cli-v99.0.0",
@@ -1911,7 +1915,12 @@ describe("maybeAutoUpdate", () => {
 	});
 });
 
-async function runNativeForegroundFailure(fetcher: typeof fetch, timeoutMs?: number, yes = false) {
+async function runNativeForegroundFailure(
+	fetcher: typeof fetch,
+	timeoutMs?: number,
+	yes = false,
+	json = false,
+) {
 	const prefix = join(tmpHome, "prefix");
 	const ownership = {
 		kind: "native" as const,
@@ -1935,7 +1944,7 @@ async function runNativeForegroundFailure(fetcher: typeof fetch, timeoutMs?: num
 			withStdoutTty(
 				() =>
 					update(
-						{ yes },
+						{ yes, json },
 						{
 							detectOwnership: () => ownership,
 							nativeReleaseBaseUrl: "https://example.invalid/clawdi-cli-v99.0.0",

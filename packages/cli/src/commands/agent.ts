@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { HostedDeployClient } from "../lib/hosted-deploy-client";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
@@ -45,7 +45,7 @@ export async function agentList(opts: { json?: boolean } = {}): Promise<void> {
 		};
 	});
 	if (opts.json) {
-		emitJson({
+		emit({
 			schemaVersion: "clawdi.agentList.v1",
 			agents: inventory,
 		});
@@ -116,7 +116,7 @@ export async function agentRm(agentId: string, opts: AgentRemoveOptions = {}): P
 		throw new Error("Could not remove the agent. Please retry or run `clawdi doctor`.");
 	}
 	if (opts.json) {
-		emitJson(
+		emit(
 			{
 				schemaVersion: "clawdi.agentRm.v1",
 				id: agentId,

@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 
 import { projectAlias, projectAuthOrExit } from "../lib/project-command-utils";
 import { listProjects } from "../lib/project-resolver";
@@ -45,43 +45,44 @@ export async function projectListCommand(opts: {
 			slug: s.slug,
 			name: s.name,
 			kind: s.kind,
-			is_owner: true,
-			owner_display: s.owner_display ?? null,
-			owner_handle: s.owner_handle ?? null,
+			isOwner: true,
+			ownerDisplay: s.owner_display ?? null,
+			ownerHandle: s.owner_handle ?? null,
 		}));
 		const sharedProjects = shared.map((s) => ({
 			id: s.id,
 			slug: s.slug,
 			name: s.name,
 			kind: s.kind,
-			is_owner: false,
-			owner_display: s.owner_display ?? null,
-			owner_handle: s.owner_handle ?? null,
+			isOwner: false,
+			ownerDisplay: s.owner_display ?? null,
+			ownerHandle: s.owner_handle ?? null,
 		}));
-		emitJson({
+		emit({
+			schemaVersion: "clawdi.projectList.v2",
 			projects: filteredVisibleProjects.map((s) => ({
 				id: s.id,
 				slug: s.slug,
 				name: s.name,
 				kind: s.kind,
-				is_owner: s.is_owner !== false,
-				owner_display: s.owner_display ?? null,
-				owner_handle: s.owner_handle ?? null,
+				isOwner: s.is_owner !== false,
+				ownerDisplay: s.owner_display ?? null,
+				ownerHandle: s.owner_handle ?? null,
 			})),
-			owned_projects: ownedProjects,
-			shared_projects: sharedProjects,
-			environment_projects: opts.includeWorkspaces
+			ownedProjects,
+			sharedProjects,
+			environmentProjects: opts.includeWorkspaces
 				? environmentProjects.map((s) => ({
 						id: s.id,
 						slug: s.slug,
 						name: s.name,
 						kind: s.kind,
-						is_owner: s.is_owner !== false,
-						owner_display: s.owner_display ?? null,
-						owner_handle: s.owner_handle ?? null,
+						isOwner: s.is_owner !== false,
+						ownerDisplay: s.owner_display ?? null,
+						ownerHandle: s.owner_handle ?? null,
 					}))
 				: [],
-			hidden_environment_project_count: opts.includeWorkspaces ? 0 : environmentProjects.length,
+			hiddenEnvironmentProjectCount: opts.includeWorkspaces ? 0 : environmentProjects.length,
 		});
 		return;
 	}
