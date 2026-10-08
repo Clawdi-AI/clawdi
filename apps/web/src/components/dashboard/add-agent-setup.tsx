@@ -5,12 +5,14 @@ import {
 	agentRegistrationDescription,
 	agentSurfaceCopy,
 	CLI_STEPS,
+	DESKTOP_HANDOFF_COPY,
 	INSTALLATION_DOCS_URL,
 } from "@clawdi/shared/view";
 import { Link } from "@tanstack/react-router";
 import { Bot, Check, Copy, Terminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AgentLabel, AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
+import { DesktopConnectHandoff } from "@/components/dashboard/desktop-connect-handoff";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
@@ -74,9 +76,10 @@ export function CopyButton({
 }
 
 /**
- * Shared setup body for every `AddAgentDialog`. Commands and the agent
- * hand-off prompt are peer paths; while the dialog is open, the setup also
- * watches for newly registered agents and surfaces an explicit success state.
+ * Shared setup body for every `AddAgentDialog`. Clawdi Desktop is the primary
+ * path; commands and the agent hand-off prompt are peer manual fallbacks. While
+ * the dialog is open, the setup also watches for newly registered agents and
+ * surfaces an explicit success state.
  */
 export function AddAgentSetup() {
 	const api = useOpenApi();
@@ -111,6 +114,12 @@ export function AddAgentSetup() {
 
 	return (
 		<div className={addAgentSetupClasses.root}>
+			<DesktopConnectHandoff />
+			<div className={addAgentSetupClasses.manualDivider}>
+				<span className={addAgentSetupClasses.manualDividerLine} />
+				{DESKTOP_HANDOFF_COPY.manualSetup}
+				<span className={addAgentSetupClasses.manualDividerLine} />
+			</div>
 			<Tabs defaultValue="prompt">
 				<TabsList className={addAgentSetupClasses.tabsList}>
 					<TabsTrigger value="commands">
