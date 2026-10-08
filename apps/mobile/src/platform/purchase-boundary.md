@@ -198,14 +198,19 @@ one two-minute polling budget across attempts.
 Backgrounding cancels recovery; foregrounding refreshes bootstrap
 and recovers again. Foreground events during a purchase preserve its SDK identity.
 
-Accepted residual behavior (C): a different-purpose purchase remains blocked by
-a locally cancelled `prepared` attempt until the server expires it (up to 15
-minutes), despite reading its current state. Hosted links store purchases by
-identity, product and attempt validity, so a second live attempt could turn the
-purchase into a `conflict_hold`; there is no hosted cancel route. The error carries
-that attempt's `expires_at` as `retryAt`, and M2 shows when to try again (this also
-covers choosing another compute product for the same deploy request). Accepted
-residual behavior (E):
+When switching compute products or targets after a locally cancelled `prepared`
+compute attempt with no purchase-start marker or transaction hint, M1 clears its
+journal and creates a new attempt. Hosted supersedes the same identity's other
+unlinked prepared compute attempts when creating that new attempt.
+
+Accepted residual behavior (C): a different-intent purchase remains blocked when
+it involves credits or the previous purchase has a start marker or transaction
+hint. Uncancelled prepared attempts also keep blocking. A `prepared` attempt
+blocks until the server expires it (up to 15 minutes), despite reading its current
+state. Hosted links store purchases by identity, product and attempt validity, so
+a second live attempt could turn the purchase into a `conflict_hold`; there is no
+hosted cancel route. The error carries that prepared attempt's `expires_at` as
+`retryAt`, and M2 shows when to try again. Accepted residual behavior (E):
 each foreground recovery of an interrupted `prepared` attempt without a hint
 calls `syncPurchases()` again; repeated foreground refreshes can repeat the sync.
 
