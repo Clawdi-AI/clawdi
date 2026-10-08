@@ -76,11 +76,7 @@ import {
 	OFFICIAL_INSTALL_URLS,
 	officialInstallArgs,
 } from "./manifest-contract";
-import {
-	freshInstallPin,
-	HERMES_FRESH_INSTALL_COMMIT,
-	runtimeCommandCurrentRevision,
-} from "./manifest-install";
+import { runtimeCommandCurrentRevision } from "./manifest-install";
 import { reconcileHostedHermesProfileMcp } from "./manifest-mcp";
 import { removeOpenClawManagedProviderAuthProfiles } from "./manifest-oauth";
 import { openClawGatewayHostedPatch } from "./manifest-providers";
@@ -1015,21 +1011,6 @@ afterEach(() => {
 });
 
 describe("runtime manifest reconciliation invariants", () => {
-	test("the Hermes fresh-install pin stays outside the manifest install policy", () => {
-		// The install policy feeds every running gateway's program revision, so
-		// changing it restarts existing Hermes Agents. The pin applies only to
-		// fresh installs.
-		const parsed = hostedRuntimeBundleV2ManifestSchema.parse(hostedHermesManifestFixture());
-		const install = parsed.runtimes.hermes.install;
-		expect(install?.url).toBe("https://hermes-agent.nousresearch.com/install.sh");
-		expect(install?.args).toEqual(["--skip-setup", "--skip-browser", "--non-interactive"]);
-		expect(freshInstallPin("hermes", install?.url ?? "")).toEqual({
-			url: `https://raw.githubusercontent.com/NousResearch/hermes-agent/${HERMES_FRESH_INSTALL_COMMIT}/scripts/install.sh`,
-			args: ["--commit", HERMES_FRESH_INSTALL_COMMIT, "--force-commit"],
-		});
-		expect(freshInstallPin("openclaw", OFFICIAL_INSTALL_URLS.openclaw)).toBeNull();
-	});
-
 	test.each([
 		["OpenClaw", hostedOpenClawV2ManifestFixture()],
 		["Hermes", hostedHermesManifestFixture()],

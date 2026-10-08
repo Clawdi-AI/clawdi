@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Upstream Hermes adapter contract.
 #
-# Installs Hermes with the CLI's official installer policy exactly as a
+# Installs the latest Hermes from the official, unpinned installer exactly as a
 # new Hosted Agent does, as the non-root runtime user, inside a disposable
 # container, then runs the CLI adapter contract against that install.
 #
@@ -38,13 +38,12 @@ in_container() {
 		return 1
 	}
 
-	# The CLI owns the official installer URL and arguments for Hosted installs,
-	# including any fresh-install pin applied when the executable is absent.
+	# The CLI owns the official installer URL and arguments for Hosted installs.
 	local installer_url hermes_install_args=()
 	installer_url="$(cd packages/cli && bun --eval \
-		'import { OFFICIAL_INSTALL_URLS } from "./src/runtime/manifest-contract"; import { freshInstallPin } from "./src/runtime/manifest-install"; const url = OFFICIAL_INSTALL_URLS.hermes; console.log(freshInstallPin("hermes", url)?.url ?? url)')"
+		'import { OFFICIAL_INSTALL_URLS } from "./src/runtime/manifest-contract"; console.log(OFFICIAL_INSTALL_URLS.hermes)')"
 	(cd packages/cli && bun --eval \
-		'import { OFFICIAL_INSTALL_URLS, officialInstallArgs } from "./src/runtime/manifest-contract"; import { freshInstallPin } from "./src/runtime/manifest-install"; const args = [...officialInstallArgs("hermes", process.env.HOME ?? ""), ...(freshInstallPin("hermes", OFFICIAL_INSTALL_URLS.hermes)?.args ?? [])]; for (const arg of args) process.stdout.write(`${arg}\0`);') \
+		'import { officialInstallArgs } from "./src/runtime/manifest-contract"; for (const arg of officialInstallArgs("hermes", process.env.HOME ?? "")) process.stdout.write(`${arg}\0`);') \
 		>"$report_dir/install-args"
 	mapfile -d '' hermes_install_args <"$report_dir/install-args"
 	if [[ -z "$installer_url" || "${#hermes_install_args[@]}" -eq 0 ]]; then
