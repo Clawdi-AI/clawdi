@@ -18,7 +18,7 @@ case "$1 ${2:-}" in
 		while :; do sleep 1; done
 		;;
 	"daemon doctor")
-		# An authenticated Desktop must still open Dashboard when sync is intentionally stopped.
+		# An authenticated Desktop must still start when sync is intentionally stopped.
 		printf '%s\n' '{"cli_version":"0.0.0-smoke","singleton_unit_installed":false,"singleton_unit_running":false,"agents":[]}'
 		;;
 	"agent detect")

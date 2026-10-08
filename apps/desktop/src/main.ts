@@ -1,10 +1,12 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
 	DesktopAgentConnection,
 	DesktopAgentType,
 	DesktopBootstrapState,
+	DesktopConnectView,
+	DesktopExcludedProjectAddResult,
 	DesktopInstallationState,
 	DesktopMoveToApplicationsResult,
 } from "@clawdi/shared/desktop";
@@ -20,6 +22,7 @@ import {
 	type MessageBoxOptions,
 	Notification,
 	nativeImage,
+	nativeTheme,
 	net,
 	powerMonitor,
 	protocol,
@@ -36,7 +39,20 @@ import {
 	reconcileDesktopStartupSync,
 } from "./auth-orchestrator";
 import { type DesktopCliCommandOptions, installDesktopCliCommand } from "./cli-command";
+import {
+	assertConnectSender,
+	readExcludedProjectRemoval,
+	verificationPageToOpen,
+} from "./connect-ipc";
 import { openDashboardInBrowser } from "./dashboard-browser";
+import {
+	applicationMenuTemplate,
+	type DesktopMenuActions,
+	type DesktopMenuState,
+	type DesktopSyncStatus,
+	desktopSyncStatusLabel,
+	trayMenuTemplate,
+} from "./desktop-menus";
 import { DESKTOP_IPC } from "./ipc";
 import { DesktopCliError, DesktopCliService } from "./native-cli";
 import { requireDesktopPlatform } from "./platform";
@@ -56,8 +72,14 @@ const APP_ASSETS = new Map([
 	["/connect-renderer.css", "connect-renderer.css"],
 	["/clawdi-logo.png", "clawdi-logo.png"],
 ]);
+const DOCS_URL = "https://docs.clawdi.ai";
+const SUPPORT_URL = "mailto:support@clawdi.ai";
+// --background from packages/shared/src/style/theme.css, shown before the renderer paints.
+const WINDOW_BACKGROUND = { light: "#fafaf8", dark: "#11100f" } as const;
 const cli = new DesktopCliService(app);
 let connectWindow: BrowserWindow | null = null;
+let requestedConnectView: DesktopConnectView = "connect";
+let verificationPage: string | null = null;
 let tray: Tray | null = null;
 let trayState: DesktopBootstrapState | null = null;
 let trayStateChecking = true;
@@ -147,10 +169,8 @@ async function startApplication(): Promise<void> {
 	} else {
 		const startup = await prepareDesktopStartup(cli);
 		setTrayState(startup.state);
-		if (!startHidden) {
-			if (startup.requiresWizard) await showConnectWindow();
-			else await openDashboard();
-		}
+		// The dashboard opens after sign-in and on explicit clicks, not on every launch.
+		if (!startHidden) await showConnectWindow();
 		if (!startup.requiresWizard) {
 			runAsync("reconcile sync after startup", reconcileBackgroundSyncAfterStartup());
 		}
@@ -288,18 +308,13 @@ function renderUpdateMenus(): void {
 	renderTrayMenu();
 }
 
-function updateMenuItems(): MenuItemConstructorOptions[] {
-	const items = updateActionMenuItems();
-	return items.length > 0 ? [{ type: "separator" }, ...items] : [];
-}
-
 function updateActionMenuItems(): MenuItemConstructorOptions[] {
 	if (updateState.status === "disabled") return [];
 	const status = desktopUpdateStatusLabel(updateState);
 	const items: MenuItemConstructorOptions[] = status ? [{ label: status, enabled: false }] : [];
 	if (updateState.status === "ready") {
 		items.push({
-			label: "Restart to Install Update",
+			label: "Restart to Update",
 			enabled: activeCriticalOperations === 0 && !updateInstallation?.isInProgress,
 			click: restartToInstallUpdate,
 		});
@@ -363,8 +378,7 @@ async function maybePromptForUpdate(): Promise<void> {
 		{
 			type: "info",
 			message: `Clawdi ${updateState.version} is ready`,
-			detail:
-				"Choose Later to keep working, then use Restart to Install Update from the Clawdi menu.",
+			detail: "Choose Later to keep working, then use Restart to Update from the Clawdi menu.",
 			buttons: ["Restart and Install", "Later"],
 			defaultId: 0,
 			cancelId: 1,
@@ -406,13 +420,54 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.authenticate, (event) =>
 		safeConnectAction(event, "sign in", async () => {
 			assertRuntimeLocation();
-			const result = await authenticateAndResumeSync();
+			let result: DesktopAuthenticationFlowResult;
+			try {
+				result = await authenticateAndResumeSync();
+			} finally {
+				verificationPage = null;
+			}
 			if (result.status === "cancelled") {
 				return { status: "cancelled" as const };
 			}
 			const state = await cli.bootstrapState();
 			setTrayState(state);
+			runAsync("open the dashboard after sign-in", openDashboard());
 			return { status: "authenticated" as const, state };
+		}),
+	);
+	ipcMain.handle(DESKTOP_IPC.reopenVerificationPage, (event) =>
+		safeConnectAction(event, "open the sign-in page", async () => {
+			const page = verificationPageToOpen(verificationPage);
+			if (!page) return { status: "not-active" as const };
+			await shell.openExternal(page);
+			return { status: "opened" as const };
+		}),
+	);
+	ipcMain.handle(DESKTOP_IPC.takeRequestedView, (event) =>
+		safeConnectAction(event, "open the requested view", async () => {
+			const view = requestedConnectView;
+			requestedConnectView = "connect";
+			return view;
+		}),
+	);
+	ipcMain.handle(DESKTOP_IPC.listExcludedProjects, (event) =>
+		safeConnectAction(event, "load excluded projects", () => {
+			assertRuntimeLocation();
+			return cli.listExcludedProjects();
+		}),
+	);
+	ipcMain.handle(DESKTOP_IPC.addExcludedProject, (event) =>
+		safeConnectAction(event, "exclude the project", () => {
+			assertRuntimeLocation();
+			return addExcludedProject();
+		}),
+	);
+	ipcMain.handle(DESKTOP_IPC.removeExcludedProject, (event, path: unknown) =>
+		safeConnectAction(event, "stop excluding the project", async () => {
+			assertRuntimeLocation();
+			const current = await cli.listExcludedProjects();
+			const removed = readExcludedProjectRemoval(path, current);
+			return cli.setExcludedProjects(current.filter((project) => project !== removed));
 		}),
 	);
 	ipcMain.handle(DESKTOP_IPC.cancelAuthentication, (event) =>
@@ -451,6 +506,7 @@ async function authenticateAndResumeSync(force = false): Promise<DesktopAuthenti
 			getAuthState: () => cli.getAuthState(),
 			authenticate: (forceAuthentication) =>
 				cli.authenticate(forceAuthentication, (progress) => {
+					verificationPage = progress.verificationUri;
 					if (connectWindow && !connectWindow.isDestroyed())
 						connectWindow.webContents.send(DESKTOP_IPC.authenticationProgress, progress);
 				}),
@@ -483,7 +539,7 @@ async function safeConnectAction<T>(
 	action: () => Promise<T>,
 ): Promise<T> {
 	try {
-		assertConnectSender(event);
+		assertConnectSender(event, connectWindow?.webContents, CONNECT_URL);
 		return await action();
 	} catch (error) {
 		console.error(`Could not ${label}`, error);
@@ -492,16 +548,21 @@ async function safeConnectAction<T>(
 	}
 }
 
-function assertConnectSender(event: IpcMainInvokeEvent): void {
-	if (event.sender !== connectWindow?.webContents)
-		throw new Error("Unexpected Connect an Agent client.");
-	const senderFrame = event.senderFrame;
-	if (!senderFrame || senderFrame !== event.sender.mainFrame)
-		throw new Error("Unexpected Connect an Agent frame.");
-	const senderUrl = senderFrame.url;
-	if (senderUrl !== CONNECT_URL) {
-		throw new Error("Unexpected Connect an Agent URL.");
-	}
+async function addExcludedProject(): Promise<DesktopExcludedProjectAddResult> {
+	const current = await cli.listExcludedProjects();
+	const parent = activeDialogParent();
+	const options = {
+		title: "Exclude a Project",
+		buttonLabel: "Exclude",
+		properties: ["openDirectory" as const],
+	};
+	const choice = parent
+		? await dialog.showOpenDialog(parent, options)
+		: await dialog.showOpenDialog(options);
+	const path = choice.filePaths[0];
+	if (choice.canceled || !path) return { status: "cancelled", projects: current };
+	if (current.includes(path)) return { status: "exists", projects: current };
+	return { status: "added", projects: await cli.setExcludedProjects([...current, path]) };
 }
 
 function readAgentConnections(value: unknown): DesktopAgentConnection[] {
@@ -551,72 +612,57 @@ function configurePermissions(): void {
 }
 
 function createApplicationMenu(): void {
-	const editMenu: MenuItemConstructorOptions = {
-		label: "Edit",
-		submenu: [
-			{ role: "undo" },
-			{ role: "redo" },
-			{ type: "separator" },
-			{ role: "cut" },
-			{ role: "copy" },
-			{ role: "paste" },
-			{ role: "selectAll" },
-		],
+	Menu.setApplicationMenu(
+		Menu.buildFromTemplate(applicationMenuTemplate(menuState(), menuActions)),
+	);
+}
+
+function menuState(): DesktopMenuState {
+	const loginItem = readLoginItemSettings();
+	return {
+		platform: process.platform,
+		appName: app.name,
+		account: trayState?.auth.authenticated ? { email: trayState.auth.user?.email ?? null } : null,
+		syncStatus: syncStatus(),
+		syncChecked: trayState?.daemon.installed === true,
+		syncToggleEnabled: trayState !== null && !trayStateChecking && activeCriticalOperations === 0,
+		busy: activeCriticalOperations > 0,
+		updateItems: updateActionMenuItems(),
+		...(process.platform === "darwin"
+			? {
+					loginItem: {
+						checked: loginItem?.openAtLogin === true,
+						enabled: app.isPackaged && loginItem !== null,
+						note: !loginItem
+							? "Login Item: Unavailable"
+							: loginItem.status === "requires-approval"
+								? "Login Item Requires Approval"
+								: null,
+					},
+				}
+			: {}),
 	};
-	const windowMenu: MenuItemConstructorOptions = {
-		label: "Window",
-		submenu: [
-			{ role: "close" },
-			{ role: "minimize" },
-			{ role: "zoom" },
-			...(process.platform === "darwin"
-				? ([{ type: "separator" }, { role: "front" }] satisfies MenuItemConstructorOptions[])
-				: []),
-		],
-	};
-	const viewMenu: MenuItemConstructorOptions = {
-		label: "View",
-		submenu: [
-			{
-				label: "Open Dashboard in Browser",
-				accelerator: "CmdOrCtrl+R",
-				click: () => runAsync("open Dashboard", openDashboard()),
-			},
-			{ type: "separator" },
-			{ role: "resetZoom" },
-			{ role: "zoomIn" },
-			{ role: "zoomOut" },
-			{ type: "separator" },
-			{ role: "togglefullscreen" },
-		],
-	};
-	const template: MenuItemConstructorOptions[] = [editMenu, viewMenu, windowMenu];
-	if (process.platform === "darwin") {
-		template.unshift({
-			label: app.name,
-			submenu: [
-				{ role: "about" },
-				...updateMenuItems(),
-				{ type: "separator" },
-				{ role: "services" },
-				{ type: "separator" },
-				{ role: "hide" },
-				{ role: "hideOthers" },
-				{ role: "unhide" },
-				{ type: "separator" },
-				{ role: "quit", enabled: activeCriticalOperations === 0 },
-			],
-		});
-	}
-	if (process.platform !== "darwin")
-		template.unshift({
-			label: "File",
-			submenu: [
-				...updateActionMenuItems(),
-				{ role: "quit", enabled: activeCriticalOperations === 0 },
-			],
-		});
-	Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+const menuActions: DesktopMenuActions = {
+	openDashboard: () => runAsync("open the dashboard", openDashboard()),
+	connectAgents: () => runAsync("open Connect Agents", showConnectWindow("connect")),
+	fixSync: () => runAsync("open Connect Agents to fix sync", showConnectWindow("connect")),
+	excludeProjects: () => runAsync("open Exclude Projects", showConnectWindow("exclude-projects")),
+	setSync: (enabled) => runAsync("change sync", setSyncEnabled(enabled)),
+	setLaunchAtLogin: (enabled) => runAsync("change the login item", setLaunchAtLogin(enabled)),
+	openDocs: () => runAsync("open the docs", shell.openExternal(DOCS_URL)),
+	contactSupport: () => runAsync("contact support", shell.openExternal(SUPPORT_URL)),
+	showLogs: () => runAsync("show logs", showLogs()),
+	signOut: () => runAsync("sign out of Desktop", signOutOfDesktop()),
+	quit: () => app.quit(),
+};
+
+async function showLogs(): Promise<void> {
+	const logs = app.getPath("logs");
+	mkdirSync(logs, { recursive: true });
+	const failure = await shell.openPath(logs);
+	if (failure) throw new Error(failure);
 }
 
 async function reconcileDesktopCliCommand(daemonInstalled: boolean): Promise<void> {
@@ -684,9 +730,14 @@ function hardenLocalWindow(
 	});
 }
 
-async function showConnectWindow(): Promise<void> {
+async function showConnectWindow(view?: DesktopConnectView): Promise<void> {
 	if (process.platform === "darwin") await app.dock?.show();
+	if (view) requestedConnectView = view;
 	if (connectWindow) {
+		if (view && !connectWindow.isDestroyed()) {
+			requestedConnectView = "connect";
+			connectWindow.webContents.send(DESKTOP_IPC.viewRequested, view);
+		}
 		if (connectWindow.isMinimized()) connectWindow.restore();
 		connectWindow.show();
 		connectWindow.focus();
@@ -701,8 +752,10 @@ async function showConnectWindow(): Promise<void> {
 		minWidth: 480,
 		minHeight: 560,
 		show: false,
-		backgroundColor: "#faf9f7",
-		title: "Connect an Agent",
+		backgroundColor: nativeTheme.shouldUseDarkColors
+			? WINDOW_BACKGROUND.dark
+			: WINDOW_BACKGROUND.light,
+		title: "Clawdi",
 		...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
 		...(icon.isEmpty() ? {} : { icon }),
 		webPreferences: {
@@ -714,7 +767,7 @@ async function showConnectWindow(): Promise<void> {
 		},
 	});
 	connectWindow = window;
-	hardenLocalWindow(window, CONNECT_URL, "Connect an Agent", 1);
+	hardenLocalWindow(window, CONNECT_URL, "Clawdi", 1);
 	window.once("ready-to-show", () => window.show());
 	window.on("closed", () => {
 		runAsync("cancel sign-in", cli.cancelAuthentication());
@@ -753,77 +806,22 @@ function createTray(): void {
 
 function renderTrayMenu(): void {
 	if (!tray) return;
-	tray.setToolTip(`Clawdi · ${trayStatus()}`);
-	const template: MenuItemConstructorOptions[] = [
-		{ label: trayStatus(), enabled: false },
-		{
-			type: "checkbox",
-			label: "Sync",
-			checked: trayState?.daemon.installed === true,
-			enabled: trayState !== null && !trayStateChecking && activeCriticalOperations === 0,
-			click: (item) => runAsync("change sync", setSyncEnabled(item.checked)),
-		},
-		{ type: "separator" },
-		{
-			label: "Open Dashboard",
-			click: () => runAsync("open Dashboard", openDashboard()),
-		},
-		{
-			label: "Connect an Agent…",
-			click: () => runAsync("open Connect an Agent", showConnectWindow()),
-		},
-		{
-			label: "Sign Out of Desktop",
-			enabled: trayState?.auth.authenticated === true && activeCriticalOperations === 0,
-			click: () => runAsync("sign out of Desktop", signOutOfDesktop()),
-		},
-	];
-	template.push(...updateMenuItems());
-
-	if (process.platform === "darwin") {
-		const loginItem = readLoginItemSettings();
-		template.push(
-			{ type: "separator" },
-			{
-				type: "checkbox",
-				label: "Open Clawdi at Login",
-				checked: loginItem?.openAtLogin === true,
-				enabled: app.isPackaged && loginItem !== null,
-				click: (item) => runAsync("change the login item", setLaunchAtLogin(item.checked)),
-			},
-		);
-		if (!loginItem) {
-			template.push({ label: "Login Item: Unavailable", enabled: false });
-		} else if (loginItem.status === "requires-approval") {
-			template.push({ label: "Login Item Requires Approval", enabled: false });
-		}
-	}
-
-	template.push(
-		{ type: "separator" },
-		{
-			label: "Quit Clawdi",
-			enabled: activeCriticalOperations === 0,
-			click: () => {
-				app.quit();
-			},
-		},
-	);
-	tray.setContextMenu(Menu.buildFromTemplate(template));
+	tray.setToolTip(`Clawdi · ${desktopSyncStatusLabel(syncStatus())}`);
+	tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate(menuState(), menuActions)));
 }
 
-function trayStatus(): string {
-	if (trayStateChecking) return "Sync: Checking…";
-	if (!trayState) return "Sync: Unavailable";
-	if (!trayState.auth.authenticated) return "Sync: Sign In Required";
-	if (!trayState.daemon.installed) return "Sync: Off";
-	return trayState.daemon.running ? "Sync: Running" : "Sync: Needs Attention";
+function syncStatus(): DesktopSyncStatus {
+	if (trayStateChecking) return "checking";
+	if (!trayState) return "unavailable";
+	if (!trayState.auth.authenticated) return "signed-out";
+	if (!trayState.daemon.installed) return "off";
+	return trayState.daemon.running ? "running" : "attention";
 }
 
 function setTrayState(state: DesktopBootstrapState | null): void {
 	trayState = state;
 	trayStateChecking = false;
-	renderTrayMenu();
+	renderUpdateMenus();
 }
 
 async function refreshTrayState(): Promise<void> {
@@ -872,7 +870,7 @@ async function setSyncEnabled(enabled: boolean): Promise<void> {
 		await showMessageBox({
 			type: "warning",
 			message: "Sync couldn't be enabled",
-			detail: "Open Connect an Agent to check the local setup.",
+			detail: "Open Connect Agents to check the local setup.",
 		});
 	} finally {
 		await refreshTrayState();
@@ -891,7 +889,7 @@ async function turnOffBackgroundSync(): Promise<void> {
 		await showMessageBox({
 			type: "warning",
 			message: "Sync couldn't be turned off",
-			detail: "Try again, or open Connect an Agent to inspect the local setup.",
+			detail: "Try again, or open Connect Agents to check the local setup.",
 		});
 	}
 }
@@ -1030,12 +1028,10 @@ async function showWindowFromTrayState(): Promise<void> {
 	}
 	const startup = await prepareDesktopStartup(cli);
 	setTrayState(startup.state);
-	if (startup.requiresWizard) {
-		await showConnectWindow();
-		return;
+	await showConnectWindow();
+	if (!startup.requiresWizard) {
+		runAsync("reconcile sync after opening Clawdi", reconcileBackgroundSyncAfterStartup());
 	}
-	await openDashboard();
-	runAsync("reconcile sync after opening Clawdi", reconcileBackgroundSyncAfterStartup());
 }
 
 async function reconcileBackgroundSyncAfterStartup(): Promise<void> {

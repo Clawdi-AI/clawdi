@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type {
 	DesktopAgentConnection,
 	DesktopAgentType,
@@ -242,6 +242,41 @@ export class DesktopCliService {
 
 	async uninstallDaemon(): Promise<void> {
 		await this.run(this.cli(), ["daemon", "uninstall"], { timeoutMs: 60_000 });
+	}
+
+	/** Project folders excluded from sync (`clawdi config get excludeProjects`). */
+	async listExcludedProjects(): Promise<string[]> {
+		const result = await this.runJson(this.cli(), ["config", "list", "--json"]);
+		const values = isRecord(result.values) ? result.values : null;
+		const entry = values && isRecord(values.excludeProjects) ? values.excludeProjects : null;
+		if (
+			result.schemaVersion !== "clawdi.config.v1" ||
+			!entry ||
+			!Array.isArray(entry.value) ||
+			!entry.value.every((path) => typeof path === "string")
+		) {
+			throw new Error("Clawdi returned invalid config data.");
+		}
+		return entry.value;
+	}
+
+	/** Writes the list through `clawdi config`, which owns path normalization. */
+	async setExcludedProjects(paths: readonly string[]): Promise<string[]> {
+		for (const path of paths) {
+			if (!isAbsolute(path) || path.length > 4_096) {
+				throw new DesktopCliError("Choose a project folder on this computer.");
+			}
+			// `config set excludeProjects` takes a comma-separated list.
+			if (path.includes(",")) {
+				throw new DesktopCliError("Folders with a comma in their path can't be excluded yet.");
+			}
+		}
+		const args =
+			paths.length > 0
+				? ["config", "set", "excludeProjects", paths.join(",")]
+				: ["config", "unset", "excludeProjects"];
+		await this.run(this.cli(), args, { timeoutMs: 20_000 });
+		return this.listExcludedProjects();
 	}
 
 	async shellCommandTarget(): Promise<string> {

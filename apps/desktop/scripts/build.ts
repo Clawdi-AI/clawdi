@@ -1,6 +1,7 @@
 import { cpSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import tailwind from "bun-plugin-tailwind";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = join(desktopRoot, "src");
@@ -47,6 +48,7 @@ async function bundle(
 		target,
 		format,
 		external: target === "node" ? ["electron", "electron-updater", "builder-util-runtime"] : [],
+		plugins: target === "browser" ? [tailwind] : [],
 		minify: true,
 		sourcemap: "none",
 	});
