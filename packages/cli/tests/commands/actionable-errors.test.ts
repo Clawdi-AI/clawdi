@@ -146,7 +146,7 @@ describe("actionable CLI errors", () => {
 		const result = run([entry, "wallet", "status", "--json"]);
 		expect(result.status).toBe(4);
 		expect(JSON.parse(result.stdout)).toMatchObject({
-			schema_version: "clawdi.wallet.error.v1",
+			schemaVersion: "clawdi.walletStatus.v2",
 			status: "error",
 			error: { code: "not_signed_in", message: "Not signed in. Run `clawdi auth login` first." },
 		});
@@ -185,7 +185,7 @@ describe("actionable CLI errors", () => {
 		const result = run([entry, "deploy", "--json"]);
 		expect(result.status).toBe(4);
 		expect(JSON.parse(result.stdout)).toEqual({
-			schema_version: "clawdi.deploy.v1",
+			schemaVersion: "clawdi.deploy.v2",
 			status: "authorization_required",
 			authorization: { command: "clawdi auth login" },
 		});

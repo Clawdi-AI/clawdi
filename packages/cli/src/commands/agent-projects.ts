@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import { parsePositiveInteger } from "../lib/cli-options";
-import { commandResult, emitJson, message } from "../lib/command-output";
+import { commandResult, emit, message } from "../lib/command-output";
 import { authedJson, projectAlias, requireProjectAuth } from "../lib/project-command-utils";
 import { listProjects, type ProjectBrief, resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -38,7 +38,7 @@ export async function agentProjectsListCommand(
 		projectsById.set(project.id, project);
 	}
 	if (opts.json) {
-		emitJson({
+		emit({
 			agent_id: agentId,
 			bindings: rows.map((row) => ({
 				...row,

@@ -3,7 +3,7 @@ import type { components } from "@clawdi/shared/api";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata } from "../lib/sanitize";
@@ -55,7 +55,7 @@ export async function agentPluginsList(
 		);
 		if (result.plugins.some((plugin) => plugin.convergence === "failed")) process.exitCode = 1;
 		if (opts.json) {
-			emitJson(
+			emit(
 				{
 					schemaVersion: "clawdi.agentPluginsList.v1",
 					agent_id: agentId,
@@ -139,7 +139,7 @@ export async function agentPluginsInstall(
 			}),
 		);
 		if (opts.json) {
-			emitJson(
+			emit(
 				{
 					schemaVersion: "clawdi.agentPluginsInstall.v1",
 					status: "accepted",
@@ -179,7 +179,7 @@ export async function agentPluginsRemove(
 			}),
 		);
 		if (opts.json) {
-			emitJson(
+			emit(
 				{
 					schemaVersion: "clawdi.agentPluginsRm.v1",
 					status: "accepted",

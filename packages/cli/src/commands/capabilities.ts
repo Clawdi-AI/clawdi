@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { emitJson, wantsJson } from "../lib/command-output";
+import { emit, wantsJson } from "../lib/command-output";
 import { isDesktopManagedCurrentCli } from "../lib/current-cli-invocation";
 import { getCliVersion } from "../lib/version";
 import { normalizeDeniedCommands, readHostPolicy } from "../runtime/host-policy";
@@ -56,8 +56,8 @@ function buildCapabilities(commands: string[]): Capabilities {
 
 export async function capabilitiesCommand(opts: { json?: boolean }, commands: string[]) {
 	const capabilities = buildCapabilities(commands);
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson(capabilities);
+	if (wantsJson(opts)) {
+		emit({ schemaVersion: "clawdi.capabilities.v1", capabilities });
 		return;
 	}
 

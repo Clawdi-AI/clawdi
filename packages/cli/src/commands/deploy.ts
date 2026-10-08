@@ -37,7 +37,7 @@ import chalk from "chalk";
 import { openInBrowser } from "../lib/browser";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
 import { requireUuid } from "../lib/cli-options";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { isAuthorizationRequired, mapHttpError } from "../lib/errors";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import {
@@ -1349,19 +1349,46 @@ export function safeDeployError(error: unknown): { code: string; message: string
 	};
 }
 
+function deployMachineResult(result: DeployAutomationResult): Record<string, unknown> {
+	const payment =
+		result.payment.kind === "wallet"
+			? {
+					kind: "wallet",
+					debitUsd: result.payment.debit_usd,
+					balanceAfterUsd: result.payment.balance_after_usd,
+					quoteExpiresAt: result.payment.quote_expires_at,
+				}
+			: result.payment.kind === "card"
+				? { kind: "card", checkoutUrl: result.payment.checkout_url }
+				: result.payment;
+	return {
+		schemaVersion: "clawdi.deploy.v2",
+		status: result.status,
+		requestId: result.request_id,
+		deploymentId: result.deployment_id,
+		operationName: result.operation_name,
+		deployRequestId: result.deploy_request_id,
+		runtime: result.runtime,
+		computePlanSlug: result.compute_plan_slug,
+		aiProvider: result.ai_provider,
+		primaryModel: result.primary_model,
+		payment,
+	};
+}
+
 export async function deployCommand(
 	options: DeployCommandOptions = {},
 	dependencies: DeployCommandDependencies = {},
 ): Promise<void> {
 	let parsed: ParsedDeployOptions | null = null;
 	const terminalInteractive = dependencies.interactive ?? isInteractive();
-	let machineOutput = options.json === true || !terminalInteractive;
+	let machineOutput = options.json === true;
 	const writeStdout = dependencies.writeStdout ?? console.log;
 	const writeStderr = dependencies.writeStderr ?? console.error;
 	try {
 		parsed = parseDeployCommandOptions(options);
 		const interactive = terminalInteractive && !parsed.json;
-		machineOutput = parsed.json || !interactive;
+		machineOutput = parsed.json;
 		const client = dependencies.client ?? new HostedDeployClient();
 		if (client instanceof HostedDeployClient) await client.checkAuthorization();
 		const result = await runDeployFlow(parsed, {
@@ -1373,20 +1400,27 @@ export async function deployCommand(
 						if (!interactive) writeStderr(chalk.gray(event.message));
 					},
 		});
-		if (machineOutput) emitJson(result, true, writeStdout);
+		if (machineOutput) emit(deployMachineResult(result), true, writeStdout);
+		else if (!interactive) {
+			writeStdout(
+				result.status === "succeeded"
+					? `Cloud Agent ${result.deployment_id ?? "request"} is ready.`
+					: `Cloud Agent request ${result.status}.`,
+			);
+		}
 	} catch (error) {
 		const safe = safeDeployError(error);
 		const authorizationRequired = isAuthorizationRequired(error);
 		if (machineOutput) {
-			emitJson(
+			emit(
 				authorizationRequired
 					? {
-							schema_version: "clawdi.deploy.v1",
+							schemaVersion: "clawdi.deploy.v2",
 							status: "authorization_required",
 							authorization: { command: "clawdi auth login" },
 						}
 					: {
-							schema_version: "clawdi.deploy.v1",
+							schemaVersion: "clawdi.deploy.v2",
 							status: "error",
 							error: safe,
 						},

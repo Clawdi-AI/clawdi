@@ -2,7 +2,7 @@ import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { parsePositiveInteger, requireUuid } from "../lib/cli-options";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 
@@ -78,7 +78,7 @@ export async function channelUnlinkCommand(
 		}),
 	);
 	if (opts.json) {
-		emitJson(
+		emit(
 			{
 				schemaVersion: "clawdi.channelUnlink.v1",
 				account_id: accountId,
@@ -112,7 +112,7 @@ export async function channelUnpairCommand(
 		}),
 	);
 	if (opts.json) {
-		emitJson(
+		emit(
 			{
 				schemaVersion: "clawdi.channelUnpair.v1",
 				account_id: accountId,
@@ -131,7 +131,7 @@ export async function channelListCommand(opts: JsonOption = {}): Promise<void> {
 	const api = new ApiClient();
 	const channels = unwrap(await api.GET("/v1/channels"));
 	if (opts.json) {
-		emitJson({ channels });
+		emit({ channels });
 		return;
 	}
 	if (channels.length === 0) {
@@ -157,7 +157,7 @@ export async function channelAvailableCommand(opts: JsonOption = {}): Promise<vo
 	const api = new ApiClient();
 	const pool = unwrap(await api.GET("/v1/channels/bot-pool"));
 	if (opts.json) {
-		emitJson({ bot_pool: pool });
+		emit({ bot_pool: pool });
 		return;
 	}
 	printBotPool(pool);
@@ -172,7 +172,7 @@ export async function channelGetCommand(accountId: string, opts: JsonOption = {}
 		}),
 	);
 	if (opts.json) {
-		emitJson({ channel });
+		emit({ channel });
 		return;
 	}
 	printChannel(channel);
@@ -195,7 +195,7 @@ export async function channelCreateCommand(
 	};
 	const channel = unwrap(await api.POST("/v1/channels", { body }));
 	if (opts.json) {
-		emitJson({ channel });
+		emit({ channel });
 		return;
 	}
 	printCreatedChannel(channel);
@@ -210,7 +210,7 @@ export async function channelLinksCommand(accountId: string, opts: JsonOption = 
 		}),
 	);
 	if (opts.json) {
-		emitJson({ account_id: accountId, links });
+		emit({ account_id: accountId, links });
 		return;
 	}
 	if (links.length === 0) {
@@ -237,7 +237,7 @@ export async function channelLinkCommand(
 		}),
 	);
 	if (opts.json) {
-		emitJson({ link });
+		emit({ link });
 		return;
 	}
 	printAgentLink(link);
@@ -255,7 +255,7 @@ export async function channelRotateTokenCommand(
 		}),
 	);
 	if (opts.json) {
-		emitJson({ link });
+		emit({ link });
 		return;
 	}
 	printRotatedAgentLink(link);
@@ -284,7 +284,7 @@ export async function channelPairCodeCommand(
 		}),
 	);
 	if (opts.json) {
-		emitJson({ pair_code: pairCode });
+		emit({ pair_code: pairCode });
 		return;
 	}
 	printPairCode(pairCode);
@@ -317,7 +317,7 @@ export async function channelSendCommand(
 		}),
 	);
 	if (opts.json) {
-		emitJson({ message });
+		emit({ message });
 		return;
 	}
 	printSentMessage(message);
@@ -335,7 +335,7 @@ export async function channelBindingsCommand(
 		}),
 	);
 	if (opts.json) {
-		emitJson({ account_id: accountId, bindings });
+		emit({ account_id: accountId, bindings });
 		return;
 	}
 	if (bindings.length === 0) {
@@ -370,7 +370,7 @@ export async function channelSyncCommandsCommand(
 		}),
 	);
 	if (opts.json) {
-		emitJson({ sync: synced });
+		emit({ sync: synced });
 		return;
 	}
 	printSyncedCommands(synced);
@@ -398,7 +398,7 @@ export async function channelDeleteCommand(
 		}),
 	);
 	if (opts.json) {
-		emitJson({ account_id: accountId, deleted: true });
+		emit({ account_id: accountId, deleted: true });
 		return;
 	}
 	console.log(`${chalk.green("✓")} Archived channel ${accountId}.`);

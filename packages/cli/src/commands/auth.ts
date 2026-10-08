@@ -22,7 +22,7 @@ import {
 	startClerkDeviceAuthorization,
 	verifyAndPersistClerkOAuthLogin,
 } from "../lib/clerk-oauth";
-import { emitJson, wantsJson } from "../lib/command-output";
+import { emit, wantsJson } from "../lib/command-output";
 import { getAuth, getConfig, getPendingAuth, isLoggedIn, type PendingAuth } from "../lib/config";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 
@@ -346,7 +346,7 @@ export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<
 				quiet: true,
 				signal: controller.signal,
 				progress: (pending) =>
-					emitJson(
+					emit(
 						{
 							schemaVersion: "clawdi.desktopLogin.progress.v1",
 							verificationUri: pending.verificationUriComplete ?? pending.verificationUri,
@@ -363,7 +363,7 @@ export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<
 				(error instanceof ClerkOAuthError &&
 					["oauth_denied", "oauth_cancelled"].includes(error.code))
 			) {
-				emitJson({ schemaVersion: "clawdi.desktopLogin.v1", status: "cancelled" }, false);
+				emit({ schemaVersion: "clawdi.desktopLogin.v1", status: "cancelled" }, false);
 				return;
 			}
 			throw error;
@@ -374,7 +374,7 @@ export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<
 	}
 	const auth = getAuth();
 	if (!isClerkOAuthAuth(auth)) throw new Error("Desktop sign-in did not save an OAuth session.");
-	emitJson(
+	emit(
 		{
 			schemaVersion: "clawdi.desktopLogin.v1",
 			status: "authenticated",
@@ -470,8 +470,8 @@ export async function authStatus(opts: { json?: boolean } = {}) {
 		},
 	};
 
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson(payload);
+	if (wantsJson(opts)) {
+		emit(payload);
 		return;
 	}
 

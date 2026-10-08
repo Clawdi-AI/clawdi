@@ -178,6 +178,7 @@ Examples:
 			"Env var holding the encrypted secret export passphrase",
 			"CLAWDI_SECRET_EXPORT_PASSPHRASE",
 		)
+		.option("--json", "Output as JSON")
 		.action(async (opts) => {
 			const { aiProviderExportCommand } = await import("../../commands/ai-provider.js");
 			await aiProviderExportCommand(opts);

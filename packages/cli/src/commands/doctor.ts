@@ -4,7 +4,7 @@ import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
 import { adapterRegistry, allAdapterEntries } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
-import { emitJson, wantsJson } from "../lib/command-output";
+import { emit, wantsJson } from "../lib/command-output";
 import { getAuth, getClawdiDir, getConfig, isLoggedIn } from "../lib/config";
 
 interface Check {
@@ -174,8 +174,13 @@ export async function doctor(opts: { json?: boolean } = {}) {
 
 	const failed = checks.filter((c) => !c.ok).length;
 
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson(checks);
+	if (wantsJson(opts)) {
+		emit({
+			schemaVersion: "clawdi.doctor.v2",
+			status: failed === 0 ? "ok" : "error",
+			checks,
+			failed,
+		});
 		if (failed > 0) process.exitCode = 1;
 		return;
 	}

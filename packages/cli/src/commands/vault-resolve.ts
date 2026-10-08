@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import { ApiClient, readJson } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { getConfig } from "../lib/config";
 import { resolveProjectId } from "../lib/project-resolver";
 import { requireAuth } from "../lib/require-auth";
@@ -88,7 +88,7 @@ export async function vaultResolveCommand(
 
 	if (!r.ok) {
 		if (opts.json) {
-			emitJson(body);
+			emit(body);
 		} else if (r.status === 404) {
 			if (isVaultProjectNotFoundBody(body)) {
 				console.error(chalk.red(VAULT_PROJECT_ACCESS_ERROR));
@@ -122,7 +122,7 @@ export async function vaultResolveCommand(
 	}
 
 	if (opts.json) {
-		emitJson(body);
+		emit(body);
 		return;
 	}
 

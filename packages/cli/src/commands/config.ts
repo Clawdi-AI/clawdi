@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { emitJson, wantsJson } from "../lib/command-output";
+import { emit, wantsJson } from "../lib/command-output";
 import {
 	CONFIG_KEYS,
 	type ConfigKey,
@@ -29,7 +29,7 @@ export function formatConfigValue(value: ConfigValue): string {
 export function configList(opts: { json?: boolean } = {}) {
 	const effective = getEffectiveConfig();
 	if (opts.json) {
-		emitJson({ schemaVersion: "clawdi.config.v1", values: effective });
+		emit({ schemaVersion: "clawdi.config.v1", values: effective });
 		return;
 	}
 
@@ -110,8 +110,8 @@ export function configPaths(opts: { json?: boolean } = {}) {
 		},
 	};
 
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson(payload);
+	if (wantsJson(opts)) {
+		emit(payload);
 		return;
 	}
 
