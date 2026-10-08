@@ -10,6 +10,7 @@ import { useState } from "react";
 import { SettingsSection } from "@/components/settings/settings-panel-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
+import { AppView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { formatCreditCents } from "@/hosted/billing/store/store-presentation";
 import { useI18n } from "@/lib/i18n";
@@ -47,17 +48,20 @@ export function PlanComparison({ plans }: { plans: Plan[] }) {
 			)}
 			actions={
 				common.length > 1 ? (
-					<NativeSegments
-						value={String(selected)}
-						options={common.map((offer) => ({
-							value: String(offer.billing_term_months),
-							label: billingTermLabel(offer.billing_term_months),
-						}))}
-						onChange={(value) => {
-							const offer = common.find((item) => String(item.billing_term_months) === value);
-							if (offer) setTerm(offer.billing_term_months);
-						}}
-					/>
+					// The actions row sizes to content; the native control needs the full width.
+					<AppView className="w-full">
+						<NativeSegments
+							value={String(selected)}
+							options={common.map((offer) => ({
+								value: String(offer.billing_term_months),
+								label: billingTermLabel(offer.billing_term_months),
+							}))}
+							onChange={(value) => {
+								const offer = common.find((item) => String(item.billing_term_months) === value);
+								if (offer) setTerm(offer.billing_term_months);
+							}}
+						/>
+					</AppView>
 				) : null
 			}
 		>
