@@ -165,6 +165,8 @@ import { SystemdReobservationRequiredError } from "./systemd-transaction";
 type RuntimeManifest = RuntimeManifestLoad["manifest"];
 type RuntimeEntry = [string, RuntimeManifest["runtimes"][string]];
 
+let lastLoggedHermesNativeEnvConflicts = "";
+
 interface RuntimeConvergenceContext {
 	load: RuntimeManifestLoad;
 	manifest: RuntimeManifest;
@@ -1054,10 +1056,14 @@ function applyRuntimeEntryProjections(
 		});
 		if (profileEnvironment.changed) state.nativeCredentialChangedRuntimes.add("hermes");
 		state.hermesNativeEnvConflicts.push(...profileEnvironment.conflicts);
-		if (profileEnvironment.conflicts.length > 0) {
-			log.warn("runtime.hermes.native_env_conflicts", {
-				keys: profileEnvironment.conflicts,
-			});
+		const conflictKeys = [...profileEnvironment.conflicts].sort().join(",");
+		if (lastLoggedHermesNativeEnvConflicts !== conflictKeys) {
+			lastLoggedHermesNativeEnvConflicts = conflictKeys;
+			if (profileEnvironment.conflicts.length > 0) {
+				log.warn("runtime.hermes.native_env_conflicts", {
+					keys: profileEnvironment.conflicts,
+				});
+			}
 		}
 	}
 	for (const [name, runtime] of runtimeEntries) {
