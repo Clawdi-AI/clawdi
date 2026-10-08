@@ -36,7 +36,7 @@ const timer = setInterval(() => {
 		const items = menuItems(Menu.getApplicationMenu()?.items ?? []);
 		if (
 			process.env.CLAWDI_DESKTOP_UPDATE_E2E_PHASE === "download" &&
-			items.some((item) => item.label === "Restart to Install Update")
+			items.some((item) => item.label === "Restart to Update")
 		) {
 			if (app.getVersion() !== "0.0.1") throw new Error("Unexpected automatic relaunch.");
 			const downloaded = installers(join(root, "local")).find(

@@ -34,7 +34,7 @@ const timer = setInterval(() => {
 		// involved. Notification/menu and the production before-quit still run.
 		for (const window of BrowserWindow.getAllWindows()) window.hide();
 		const items = menuItems(Menu.getApplicationMenu()?.items ?? []);
-		if (phase === "download" && items.some((item) => item.label === "Restart to Install Update")) {
+		if (phase === "download" && items.some((item) => item.label === "Restart to Update")) {
 			if (app.getVersion() !== "0.0.1") throw new Error("Unexpected automatic relaunch.");
 			const images = downloadedImages(join(app.getPath("home"), ".cache"));
 			const downloaded = images.find(

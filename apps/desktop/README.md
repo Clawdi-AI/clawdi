@@ -5,7 +5,7 @@ The checkbox reflects the installed service (the user's persistent sync choice);
 health is shown above the checkbox and in the tooltip, refreshed every minute.
 Turning Sync off removes the service but retains
 Agent bindings and credentials. Turning it on restores the service for verified
-bindings or opens Connect an Agent when setup is needed.
+bindings or opens Connect Agents when setup is needed.
 
 Download the DMG for first installation. The ZIP is the same application packaged
 for electron-updater/Squirrel.Mac and must remain a release asset; users do not
@@ -88,6 +88,28 @@ the desktop filename from it. Windows launchers use a UTF-8 BOM for PowerShell
 read that encoding. The native Windows lifecycle test checks a Unicode path and
 the log BOM/content.
 
+The tray and the File menu show the signed-in account and offer Open Dashboard,
+Connect Agents…, Exclude Projects… and Sign Out; Fix Sync… appears while sync
+needs attention, and Help links to the docs, support and the log folder.
+Where `supportsDesktopLoginItems()` is true (macOS, Windows), Open Clawdi at Login
+appears in the tray and in the Clawdi menu (macOS) or File menu (Windows).
+Exclude Projects edits the CLI's `excludeProjects` setting through
+`clawdi config` (the same list as `clawdi config set excludeProjects`); it never
+touches credentials. Launching Clawdi shows the Connect window. The Dashboard
+opens automatically once, after the first completed agent connection on the
+computer (a `first-connection` marker in Electron `userData`), and whenever the
+user chooses Open Dashboard; relaunching or signing in again never opens it.
+
+The Connect window is styled like the Dashboard: Tailwind CSS v4 compiled by the
+official `@tailwindcss/cli` (the same catalog version as `apps/web`),
+`@clawdi/shared/style/theme.css`, Geist from Fontsource, and the
+`@clawdi/shared/ui` recipes with Base UI controls. The build copies the Geist
+files referenced by the stylesheet to `dist/files/`, which the `clawdi-app://`
+protocol serves by an exact filename pattern, so the CSP stays `font-src 'self'`.
+The CSP has no inline styles, so Base UI's injected style element is disabled
+with `CSPProvider` and the equivalent rule lives in `connect-renderer.css`.
+Screen headings and window titles share one Title Case page title.
+
 Clawdi Desktop opens the Dashboard in the system browser at `https://cloud.clawdi.ai`.
 Set `CLAWDI_DESKTOP_WEB_URL` to a self-hosted HTTPS dashboard URL (or an HTTP
 loopback URL for local development). Dashboard entry points never load remote
@@ -152,7 +174,7 @@ Preview packages are unsigned or ad-hoc signed and carry
 `clawdiUpdateChannel=disabled`, so the updater skips them deterministically.
 Release builds download updates in the background. A native notification announces
 `Clawdi Desktop <version> is ready — restart to update`; clicking it or the
-Restart to Install Update menu item uses electron-updater's default restart.
+Restart to Update menu item uses electron-updater's default restart.
 Quitting instead uses `autoInstallOnAppQuit` and does not relaunch Desktop.
 macOS/Linux leave background services running through either installation path.
 On the next Desktop launch, the existing reconciliation replaces a live daemon
@@ -160,7 +182,7 @@ whose version or executable path differs from the bundled CLI. Windows waits for
 the existing service-stop operation to release executable locks before installing.
 Its preserved Sync task resumes through account-verified reconciliation on the
 next Desktop launch, or its next logon trigger. Install-on-quit leaves Windows
-Sync stopped until then; choose Restart to Install Update to reopen Desktop.
+Sync stopped until then; choose Restart to Update to reopen Desktop.
 DEB/RPM installations only check for a newer version and show a non-blocking
 notification and a Download New Version menu link to the GitHub release page.
 They never download or install an update through electron-updater.

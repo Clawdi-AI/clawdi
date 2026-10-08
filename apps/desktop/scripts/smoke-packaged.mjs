@@ -93,7 +93,7 @@ async function verifyInstallGate(context, desktop, output, cliLog) {
 	const moveToApplications = window.getByRole("heading", {
 		name: "Move Clawdi to Applications",
 	});
-	const failure = window.getByRole("heading", { name: "Couldn't finish setup" });
+	const failure = window.getByRole("heading", { name: "Couldn't Finish Setup" });
 	await Promise.race([
 		moveToApplications.waitFor({ state: "visible", timeout: 20_000 }),
 		failure.waitFor({ state: "visible", timeout: 20_000 }).then(async () => {
@@ -130,22 +130,29 @@ async function verifyLocalRenderer(context, window) {
 	assert.equal(local.loadedLogo, true);
 	assert.match(local.csp ?? "", /default-src 'none'/);
 	assert.deepEqual(local.methods, [
+		"addExcludedProject",
 		"authenticate",
 		"cancelAuthentication",
 		"connectAgents",
 		"detectAgents",
 		"getBootstrapState",
 		"getInstallationState",
+		"listExcludedProjects",
 		"listReconnectableAgents",
 		"moveToApplicationsFolder",
 		"onAuthenticationProgress",
+		"onViewRequested",
 		"openDashboard",
+		"removeExcludedProject",
+		"reopenVerificationPage",
+		"takeRequestedView",
 	]);
-	await window.getByRole("button", { name: "Sign in to continue" }).click();
+	await window.getByRole("button", { name: "Sign in", exact: true }).click();
 	await window.getByRole("status").getByText("ABCD-EFGH", { exact: true }).waitFor();
-	assert.match(await window.locator("body").innerText(), /Confirm the browser shows the same code/);
+	assert.match(await window.locator("body").innerText(), /Check that your browser shows this code/);
+	assert.equal(await window.title(), "Continue in Your Browser");
 	assert.match(readFileSync(cliLog, "utf8"), /^auth login --desktop$/m);
-	await window.getByRole("button", { name: "Cancel sign-in", exact: true }).click();
+	await window.getByRole("button", { name: "Cancel", exact: true }).click();
 	await window.getByRole("heading", { name: "Welcome to Clawdi" }).waitFor();
 	const originalUrl = window.url();
 	await window.evaluate(() => {

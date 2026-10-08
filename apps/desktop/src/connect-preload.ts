@@ -17,6 +17,17 @@ const bridge: ClawdiDesktopConnectBridge = {
 		return () => ipcRenderer.removeListener(DESKTOP_IPC.authenticationProgress, handle);
 	},
 	cancelAuthentication: () => ipcRenderer.invoke(DESKTOP_IPC.cancelAuthentication),
+	reopenVerificationPage: () => ipcRenderer.invoke(DESKTOP_IPC.reopenVerificationPage),
+	takeRequestedView: () => ipcRenderer.invoke(DESKTOP_IPC.takeRequestedView),
+	onViewRequested: (listener) => {
+		const handle = () => listener();
+		ipcRenderer.on(DESKTOP_IPC.viewRequested, handle);
+		return () => ipcRenderer.removeListener(DESKTOP_IPC.viewRequested, handle);
+	},
+	listExcludedProjects: () => ipcRenderer.invoke(DESKTOP_IPC.listExcludedProjects),
+	addExcludedProject: () => ipcRenderer.invoke(DESKTOP_IPC.addExcludedProject),
+	removeExcludedProject: (path: string) =>
+		ipcRenderer.invoke(DESKTOP_IPC.removeExcludedProject, path),
 	detectAgents: () => ipcRenderer.invoke(DESKTOP_IPC.detectAgents),
 	listReconnectableAgents: () => ipcRenderer.invoke(DESKTOP_IPC.listReconnectableAgents),
 	connectAgents: (connections: DesktopAgentConnection[]) =>

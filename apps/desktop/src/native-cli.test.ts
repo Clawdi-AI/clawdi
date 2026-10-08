@@ -37,6 +37,7 @@ function serviceFixture(failFirstInstall = false, loginProgress?: unknown, mount
 		daemonVersion: "1.2.0",
 		live: false,
 		executable: join(resourcesPath, "native", cliName),
+		excludedProjects: [] as string[],
 	};
 	const execute: typeof runCommand = async (_command, args, options) => {
 		const command = args.join(" ");
@@ -113,7 +114,20 @@ function serviceFixture(failFirstInstall = false, loginProgress?: unknown, mount
 				break;
 			case "daemon restart":
 				break;
+			case "config list --json":
+				result = {
+					schemaVersion: "clawdi.config.v1",
+					values: { excludeProjects: { value: state.excludedProjects, source: "config.json" } },
+				};
+				break;
+			case "config unset excludeProjects":
+				state.excludedProjects = [];
+				break;
 			default:
+				if (args.length === 4 && args.slice(0, 3).join(" ") === "config set excludeProjects") {
+					state.excludedProjects = args[3]?.split(",") ?? [];
+					break;
+				}
 				throw new Error(`Unexpected command: ${command}`);
 		}
 		return { stdout: JSON.stringify(result ?? {}), stderr: "" };
@@ -298,4 +312,25 @@ test.each([
 	const progress: DesktopAuthenticationProgress[] = [];
 	await expect(service.authenticate((event) => progress.push(event))).rejects.toThrow();
 	expect(progress).toEqual([]);
+});
+
+test("Desktop reads and writes excluded projects through the CLI config", async () => {
+	const { service, calls } = serviceFixture();
+	expect(await service.listExcludedProjects()).toEqual([]);
+	const root = process.platform === "win32" ? "C:\\work" : "/work";
+	const paths = [join(root, "client"), join(root, "scratch")];
+	expect(await service.setExcludedProjects(paths)).toEqual(paths);
+	expect(calls).toContain(`config set excludeProjects ${paths.join(",")}`);
+	expect(await service.setExcludedProjects([])).toEqual([]);
+	expect(calls).toContain("config unset excludeProjects");
+});
+
+test.each([
+	"relative/project",
+	"--api-url=https://attacker.test",
+	join(process.platform === "win32" ? "C:\\work" : "/work", "a,b"),
+])("Desktop rejects an excluded project the CLI can't store: %s", async (path) => {
+	const { service, calls } = serviceFixture();
+	await expect(service.setExcludedProjects([path])).rejects.toThrow();
+	expect(calls.some((command) => command.startsWith("config set"))).toBe(false);
 });
