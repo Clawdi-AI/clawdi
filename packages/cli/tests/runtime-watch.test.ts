@@ -18,12 +18,17 @@ import { dirname, join } from "node:path";
 
 import { parseEnv } from "node:util";
 
-import { runtimeAppliedContentIdentity, runtimeWatchPollDelayMs } from "../src/commands/runtime";
+import {
+	runtimeAppliedContentIdentity,
+	runtimeWatchEventForOutcome,
+	runtimeWatchPollDelayMs,
+} from "../src/commands/runtime";
 
 import { readRuntimeAppliedState } from "../src/runtime/applied-state";
 import { hostedManifestEgressProfiles } from "../src/runtime/hosted-egress-profiles";
 import { cacheRuntimeLastGoodManifest } from "../src/runtime/manifest";
 import { runtimeCommandCurrentRevision } from "../src/runtime/manifest-install";
+import { runtimeConvergenceWithoutApply } from "../src/runtime/manifest-planning";
 
 import { HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE } from "../src/runtime/manifest-source";
 
@@ -104,6 +109,55 @@ describe("runtime watch poll delay", () => {
 		expect([0, 0.5, 1].map((value) => runtimeWatchPollDelayMs(15_000, () => value))).toEqual([
 			7_500, 15_000, 22_500,
 		]);
+	});
+
+	it("applied events carry Hermes native environment conflicts", () => {
+		const home = join(root, "home", "clawdi");
+		const paths = seedRuntimeWatchLocaleBaseline(
+			home,
+			join(root, "var", "lib", "clawdi"),
+			join(root, "run", "clawdi"),
+		);
+		const load = hostedHermesDashboardCapabilityLoad(home);
+		const convergence = runtimeConvergenceWithoutApply({
+			load,
+			paths,
+			workspaceRoot: home,
+			enabledRuntimes: ["hermes"],
+			installErrors: [],
+			projectedProviderIds: {},
+		});
+		convergence.hermesNativeEnvConflicts = ["TELEGRAM_BOT_TOKEN"];
+		const event = runtimeWatchEventForOutcome(
+			{
+				kind: "converged",
+				load,
+				convergence,
+				cliUpdate: {
+					status: "not_requested",
+					packageSpec: null,
+					registry: null,
+					npmPrefix: paths.cliNpmPrefix,
+					npmCache: paths.cliNpmCache,
+					activePath: paths.cliManagedBin,
+					activeTarget: null,
+					version: null,
+					retryAt: null,
+					selfReexec: false,
+				},
+				systemdApply: { applied: true, systemUnitsChanged: [], userUnitsChanged: [] },
+				runtimeErrors: [],
+				resourceProjectionErrors: [],
+				cliRollback: null,
+				cliRollbackErrors: [],
+				selfReexec: false,
+			},
+			paths,
+		);
+		expect(event).toMatchObject({
+			status: "applied",
+			hermesNativeEnvConflicts: ["TELEGRAM_BOT_TOKEN"],
+		});
 	});
 });
 

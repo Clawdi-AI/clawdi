@@ -1,0 +1,24 @@
+appId: ${MAESTRO_APP_ID}
+name: Select native tab
+---
+# Android exports tab testIDs only as Espresso tags. iOS exposes the existing
+# NativeTabs.Trigger testID as an accessibility identifier.
+# https://github.com/software-mansion/react-native-screens/blob/4.26.2/android/src/main/java/com/swmansion/rnscreens/gamma/tabs/host/TabsHostA11yCoordinator.kt
+# https://github.com/software-mansion/react-native-screens/blob/4.26.2/ios/tabs/host/RNSTabBarController.mm
+# https://docs.maestro.dev/maestro-flows/flow-control-and-logic/conditions
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn:
+          text: ${TAB_LABEL}
+          childOf:
+            id: ${MAESTRO_APP_ID}:id/navigation_bar_item_content_container
+            containsDescendants:
+              - text: ${TAB_LABEL}
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          id: tab-${TAB_ID}
