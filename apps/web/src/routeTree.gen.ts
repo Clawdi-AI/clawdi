@@ -21,6 +21,7 @@ import { Route as DotwellKnownAppleAppSiteAssociationRouteImport } from './route
 import { Route as DotwellKnownAssetlinksDotjsonRouteImport } from './routes/[.]well-known/assetlinks[.]json'
 import { Route as ProtectedDashboardRouteImport } from './routes/_protected/_dashboard'
 import { Route as ProtectedRuntimeHandoffRouteImport } from './routes/_protected/runtime-handoff'
+import { Route as DesktopConnectRouteImport } from './routes/desktop.connect'
 import { Route as SIdRouteImport } from './routes/s/$id'
 import { Route as SChar123idChar125DotjsonRouteImport } from './routes/s/{$id}[.]json'
 import { Route as SChar123idChar125DotmdRouteImport } from './routes/s/{$id}[.]md'
@@ -127,6 +128,11 @@ const ProtectedRuntimeHandoffRoute = ProtectedRuntimeHandoffRouteImport.update({
   id: '/runtime-handoff',
   path: '/runtime-handoff',
   getParentRoute: () => ProtectedRoute,
+} as any)
+const DesktopConnectRoute = DesktopConnectRouteImport.update({
+  id: '/desktop/connect',
+  path: '/desktop/connect',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const SIdRoute = SIdRouteImport.update({
   id: '/s/$id',
@@ -409,6 +415,7 @@ export interface FileRoutesByFullPath {
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/assetlinks.json': typeof DotwellKnownAssetlinksDotjsonRoute
   '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
+  '/desktop/connect': typeof DesktopConnectRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
   '/s/{$id}.md': typeof SChar123idChar125DotmdRoute
@@ -467,6 +474,7 @@ export interface FileRoutesByTo {
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
   '/.well-known/assetlinks.json': typeof DotwellKnownAssetlinksDotjsonRoute
   '/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
+  '/desktop/connect': typeof DesktopConnectRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
   '/s/{$id}.md': typeof SChar123idChar125DotmdRoute
@@ -525,6 +533,7 @@ export interface FileRoutesById {
   '/.well-known/assetlinks.json': typeof DotwellKnownAssetlinksDotjsonRoute
   '/_protected/_dashboard': typeof ProtectedDashboardRouteWithChildren
   '/_protected/runtime-handoff': typeof ProtectedRuntimeHandoffRoute
+  '/desktop/connect': typeof DesktopConnectRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
   '/s/{$id}.md': typeof SChar123idChar125DotmdRoute
@@ -586,6 +595,7 @@ export interface FileRouteTypes {
     | '/.well-known/apple-app-site-association'
     | '/.well-known/assetlinks.json'
     | '/runtime-handoff'
+    | '/desktop/connect'
     | '/s/$id'
     | '/s/{$id}.json'
     | '/s/{$id}.md'
@@ -644,6 +654,7 @@ export interface FileRouteTypes {
     | '/.well-known/apple-app-site-association'
     | '/.well-known/assetlinks.json'
     | '/runtime-handoff'
+    | '/desktop/connect'
     | '/s/$id'
     | '/s/{$id}.json'
     | '/s/{$id}.md'
@@ -701,6 +712,7 @@ export interface FileRouteTypes {
     | '/.well-known/assetlinks.json'
     | '/_protected/_dashboard'
     | '/_protected/runtime-handoff'
+    | '/desktop/connect'
     | '/s/$id'
     | '/s/{$id}.json'
     | '/s/{$id}.md'
@@ -760,6 +772,7 @@ export interface RootRouteChildren {
   VaultRequestRoute: typeof VaultRequestRoute
   DotwellKnownAppleAppSiteAssociationRoute: typeof DotwellKnownAppleAppSiteAssociationRoute
   DotwellKnownAssetlinksDotjsonRoute: typeof DotwellKnownAssetlinksDotjsonRoute
+  DesktopConnectRoute: typeof DesktopConnectRoute
   SIdRoute: typeof SIdRoute
   SChar123idChar125DotjsonRoute: typeof SChar123idChar125DotjsonRoute
   SChar123idChar125DotmdRoute: typeof SChar123idChar125DotmdRoute
@@ -853,6 +866,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/runtime-handoff'
       preLoaderRoute: typeof ProtectedRuntimeHandoffRouteImport
       parentRoute: typeof ProtectedRoute
+    }
+    '/desktop/connect': {
+      id: '/desktop/connect'
+      path: '/desktop/connect'
+      fullPath: '/desktop/connect'
+      preLoaderRoute: typeof DesktopConnectRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/s/$id': {
       id: '/s/$id'
@@ -1349,6 +1369,7 @@ const rootRouteChildren: RootRouteChildren = {
   DotwellKnownAppleAppSiteAssociationRoute:
     DotwellKnownAppleAppSiteAssociationRoute,
   DotwellKnownAssetlinksDotjsonRoute: DotwellKnownAssetlinksDotjsonRoute,
+  DesktopConnectRoute: DesktopConnectRoute,
   SIdRoute: SIdRoute,
   SChar123idChar125DotjsonRoute: SChar123idChar125DotjsonRoute,
   SChar123idChar125DotmdRoute: SChar123idChar125DotmdRoute,

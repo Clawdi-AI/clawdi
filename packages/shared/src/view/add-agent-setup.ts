@@ -1,3 +1,5 @@
+import { DESKTOP_DEEP_LINK_SCHEME } from "../desktop";
+
 // Tests keep these install steps in sync with the READMEs and get-started.md.
 export const CLI_STEPS = [
 	{
@@ -24,6 +26,32 @@ export const CLI_STEPS = [
 ];
 
 export const INSTALLATION_DOCS_URL = "https://docs.clawdi.ai/installation";
+
+/** Opens Clawdi Desktop's Connect window; the only link Desktop accepts. */
+export const DESKTOP_CONNECT_DEEP_LINK = `${DESKTOP_DEEP_LINK_SCHEME}://connect`;
+
+/** Dashboard page that opens the deep link in its own tab, away from the dashboard. */
+export const DESKTOP_CONNECT_LAUNCH_PATH = "/desktop/connect";
+
+/** Clawdi Desktop installers are published as GitHub releases tagged `desktop-v*`. */
+export const DESKTOP_DOWNLOAD_URL =
+	"https://github.com/Clawdi-AI/clawdi/releases?q=desktop&expanded=true";
+
+/** Copy for the Add agent hand-off to Clawdi Desktop's Connect window. */
+export const DESKTOP_HANDOFF_COPY = {
+	title: "Connect with Clawdi Desktop",
+	description: "Finds the agents on this computer, connects them, and turns on sync.",
+	open: "Open Clawdi Desktop",
+	downloadPrompt: "Don't have it?",
+	download: "Download Clawdi Desktop",
+	manualSetup: "Or set up manually",
+	launchTitle: "Opening Clawdi Desktop…",
+	launchDescription:
+		"If your browser asks, allow it to open Clawdi Desktop, then continue in its Connect window.",
+	launchManualPrompt: "Prefer the command line?",
+	launchManual: "Use the manual setup",
+	launchManualHint: "The Add agent dialog in your dashboard tab has the same steps.",
+} as const;
 
 /** Origin of the hosted marketing site that publishes the agent-facing files. */
 export const HOSTED_PUBLIC_SITE_ORIGIN = "https://clawdi.ai";

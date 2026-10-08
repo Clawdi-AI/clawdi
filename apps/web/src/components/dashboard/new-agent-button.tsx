@@ -136,7 +136,7 @@ export function NewAgentButton({
 							description={
 								desktopBridge
 									? "Find and connect Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode."
-									: "Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode via the CLI."
+									: "Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode with Clawdi Desktop or the CLI."
 							}
 							onClick={chooseConnect}
 						/>
