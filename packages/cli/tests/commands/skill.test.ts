@@ -253,7 +253,7 @@ describe("Agent-authoritative manual Skill mutations", () => {
 			},
 		]);
 		try {
-			await skillRm("demo", { agent: "claude_code" });
+			await skillRm("demo", { agent: "claude_code", yes: true });
 		} finally {
 			restore();
 		}
@@ -284,7 +284,7 @@ describe("Agent-authoritative manual Skill mutations", () => {
 			},
 		]);
 		try {
-			await expect(skillRm("demo", { agent: "claude_code" })).rejects.toThrow(/503/);
+			await expect(skillRm("demo", { agent: "claude_code", yes: true })).rejects.toThrow(/503/);
 		} finally {
 			restore();
 		}

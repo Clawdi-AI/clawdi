@@ -8,7 +8,7 @@ import {
 import { useClerk, useUser } from "@clerk/expo";
 import { TriangleAlert } from "lucide-react-native";
 import { useState } from "react";
-import { Linking, Platform } from "react-native";
+import { Linking } from "react-native";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction, RichConfirmAction } from "@/components/ui/confirm-action";
@@ -22,21 +22,22 @@ import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { currentStorePlatform } from "@/platform/store/store-platform";
 import { useMobileStore } from "@/platform/store/store-provider";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
-const STORE_SUBSCRIPTIONS = Platform.select({
-	ios: {
+const STORE_SUBSCRIPTIONS = {
+	app_store: {
 		provider: "app_store",
 		url: STORE_SUBSCRIPTIONS_URL.appStore,
 		label: "accountDeletion.manageAppStore",
 	} as const,
-	android: {
+	play_store: {
 		provider: "play_store",
 		url: STORE_SUBSCRIPTIONS_URL.googlePlay,
 		label: "accountDeletion.manageGooglePlay",
 	} as const,
-});
+};
 
 /** Clerk `UserProfileView` custom page that replaces the built-in delete once self-deletion is off. */
 export function DeleteAccountPage() {
@@ -77,14 +78,16 @@ function DeleteAccount({ email }: { email: string }) {
 	);
 	const storeCopy =
 		storeNotice.kind === "store" ? accountDeletionStoreNoticeCopy(storeNotice.provider) : null;
+	const platform = currentStorePlatform();
+	const deviceStore = platform ? STORE_SUBSCRIPTIONS[platform] : null;
 	// Store links are only actionable for the store that bills on this device.
 	const manageLink =
 		storeNotice.kind === "store"
-			? storeNotice.provider === STORE_SUBSCRIPTIONS?.provider
-				? STORE_SUBSCRIPTIONS
+			? storeNotice.provider === deviceStore?.provider
+				? deviceStore
 				: null
 			: storeNotice.kind === "generic"
-				? STORE_SUBSCRIPTIONS
+				? deviceStore
 				: null;
 	const openManageLink = () => {
 		const visible = capture();
@@ -157,7 +160,7 @@ function DeleteAccount({ email }: { email: string }) {
 								cancelLabel={t("accountDeletion.cancel")}
 								secondaryAction={
 									manageLink
-										? { label: t("storeCompute.deletionManage"), onAction: openManageLink }
+										? { label: t("storeCompute.manage"), onAction: openManageLink }
 										: undefined
 								}
 								confirmLabel={t("storeCompute.deletionContinue")}

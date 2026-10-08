@@ -3,9 +3,8 @@ import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { parsePositiveInteger, requireUuid } from "../lib/cli-options";
 import { emitJson } from "../lib/command-output";
-import { askYesNo, confirmOrRequireYes } from "../lib/prompts";
+import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
-import { isInteractive } from "../lib/tty";
 
 type ChannelAccount = components["schemas"]["ChannelAccountResponse"];
 type ChannelAccountCreated = components["schemas"]["ChannelAccountCreatedResponse"];
@@ -382,18 +381,16 @@ export async function channelDeleteCommand(
 	opts: ChannelDeleteOptions = {},
 ): Promise<void> {
 	requireAuth();
-	if (!opts.yes) {
-		if (!isInteractive()) {
-			throw new Error(
-				"Cannot prompt for channel deletion in a non-interactive shell. Pass --yes to confirm explicitly.",
-			);
-		}
-		const ok = await askYesNo(`Archive channel ${accountId}?`, false);
-		if (!ok) {
-			console.log("Cancelled.");
-			return;
-		}
+	if (
+		!(await confirmOrRequireYes(`Archive channel ${accountId}?`, {
+			yes: opts.yes,
+			action: "archive this channel",
+		}))
+	) {
+		console.log("Cancelled.");
+		return;
 	}
+
 	const api = new ApiClient();
 	unwrap(
 		await api.DELETE("/v1/channels/{account_id}", {

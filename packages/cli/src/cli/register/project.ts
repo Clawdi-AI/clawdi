@@ -1,4 +1,4 @@
-import { type Command, Option } from "commander";
+import type { Command } from "commander";
 
 export function registerProject(program: Command): void {
 	const projectCmd = program
@@ -40,7 +40,6 @@ Notes:
 		.option("--shared-with-me", "Show only projects shared with you")
 		.option("--owned", "Show only projects you own")
 		.option("--include-workspaces", "Include agent workspaces")
-		.addOption(new Option("--include-envs").hideHelp())
 		.addHelpText(
 			"after",
 			"\nExamples:\n  $ clawdi project list\n  $ clawdi project list --include-workspaces\n  $ clawdi project list --shared-with-me --json",
@@ -50,14 +49,10 @@ Notes:
 				json?: boolean;
 				sharedWithMe?: boolean;
 				owned?: boolean;
-				includeEnvs?: boolean;
 				includeWorkspaces?: boolean;
 			}) => {
 				const { projectListCommand } = await import("../../commands/project-list.js");
-				await projectListCommand({
-					...opts,
-					includeEnvs: opts.includeWorkspaces === true || opts.includeEnvs === true,
-				});
+				await projectListCommand(opts);
 			},
 		);
 
@@ -186,7 +181,7 @@ Examples:
 		.option("--json", "Output as JSON")
 		.addHelpText(
 			"after",
-			"\nExample:\n  $ clawdi project members engineering --remove bob@example.com --yes\n\nNon-interactive removal without --yes is deprecated; --yes will be required starting in 0.16.",
+			"\nExample:\n  $ clawdi project members engineering --remove bob@example.com --yes\n\nRemoving a member in a non-interactive shell requires --yes.",
 		)
 		.action(async (project: string, opts: { remove?: string; json?: boolean; yes?: boolean }) => {
 			const { projectMembersCommand } = await import("../../commands/project-members.js");
@@ -196,9 +191,10 @@ Examples:
 	projectCmd
 		.command("leave <project>")
 		.description("Leave a project shared with you")
+		.option("-y, --yes", "Confirm leaving the project without prompting")
 		.option("--json", "Output as JSON")
-		.addHelpText("after", "\nExample:\n  $ clawdi project leave @alice-cdbf/engineering")
-		.action(async (project: string, opts: { json?: boolean }) => {
+		.addHelpText("after", "\nExample:\n  $ clawdi project leave @alice-cdbf/engineering --yes")
+		.action(async (project: string, opts: { json?: boolean; yes?: boolean }) => {
 			const { projectLeaveCommand } = await import("../../commands/project-members.js");
 			await projectLeaveCommand(project, opts);
 		});
@@ -210,7 +206,7 @@ Examples:
 		.option("--json", "Output as JSON")
 		.addHelpText(
 			"after",
-			"\nExample:\n  $ clawdi project unshare engineering --yes\n\nNon-interactive sharing revocation without --yes is deprecated; --yes will be required starting in 0.16.",
+			"\nExample:\n  $ clawdi project unshare engineering --yes\n\nRevoking sharing in a non-interactive shell requires --yes.",
 		)
 		.action(async (project: string, opts: { json?: boolean; yes?: boolean }) => {
 			const { projectUnshareCommand } = await import("../../commands/project-members.js");

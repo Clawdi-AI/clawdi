@@ -1,9 +1,8 @@
-import type { StorePlatform } from "@clawdi/shared/api";
+import { isUuid, type StorePlatform } from "@clawdi/shared/api";
 import Purchases, {
 	type CustomerInfo,
 	type MakePurchaseResult,
 	type PurchasesOffering,
-	type PurchasesPackage,
 	type PurchasesStoreProduct,
 	type PurchasesStoreTransaction,
 	type StoreProductChangeInfo,
@@ -98,8 +97,7 @@ export function createRevenueCat(identityTimeoutMs = 300_000) {
 		logIn: (apiKey: string, appUserId: string, assertCurrent: () => void) =>
 			serialize(async () => {
 				assertCurrent();
-				if (!/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i.test(appUserId))
-					throw new StorePurchaseError("store_identity_unavailable");
+				if (!isUuid(appUserId)) throw new StorePurchaseError("store_identity_unavailable");
 				if (configuredKey && configuredKey !== apiKey)
 					throw new StorePurchaseError("store_configuration_invalid");
 				if (!configuredKey) {
@@ -136,19 +134,6 @@ export function createRevenueCat(identityTimeoutMs = 300_000) {
 				appUserId,
 				assertCurrent,
 				() => Purchases.purchaseStoreProduct(product, changeInfo),
-				signal,
-			),
-		purchasePackage: (
-			appUserId: string,
-			assertCurrent: () => void,
-			pkg: PurchasesPackage,
-			changeInfo: StoreProductChangeInfo | null,
-			signal: AbortSignal,
-		): Promise<MakePurchaseResult> =>
-			withIdentity(
-				appUserId,
-				assertCurrent,
-				() => Purchases.purchasePackage(pkg, null, changeInfo),
 				signal,
 			),
 		restorePurchases: (

@@ -631,7 +631,7 @@ describe("vault attach/detach", () => {
 		};
 
 		try {
-			await vaultDetach("providers", { project: OTHER_PROJECT_ID });
+			await vaultDetach("providers", { project: OTHER_PROJECT_ID, yes: true });
 		} finally {
 			console.log = origLog;
 			restore();
@@ -1006,7 +1006,18 @@ describe("vaultSet", () => {
 	});
 
 	it("rejects interactive deletion prompts outside a TTY", async () => {
-		const { captured, restore } = mockFetch([]);
+		const { captured, restore } = mockFetch([
+			...mockDefaultProjectResolution(),
+			{
+				method: "GET",
+				path: "/v1/vault",
+				response: () =>
+					jsonResponse({
+						items: [{ id: "vault-1", slug: "default", project_ids: [PROJECT_ID] }],
+						total: 1,
+					}),
+			},
+		]);
 		const stdinTtyDesc = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
 		const stdoutTtyDesc = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
 		Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
@@ -1014,7 +1025,7 @@ describe("vaultSet", () => {
 
 		try {
 			await expect(vaultRm("SECRET_KEY")).rejects.toThrow(
-				"Cannot prompt for vault deletion in a non-interactive shell. Pass --yes",
+				"Confirmation required to delete this vault key. Re-run with --yes",
 			);
 		} finally {
 			if (stdinTtyDesc) Object.defineProperty(process.stdin, "isTTY", stdinTtyDesc);
@@ -1024,7 +1035,7 @@ describe("vaultSet", () => {
 			restore();
 		}
 
-		expect(captured).toHaveLength(0);
+		expect(captured.every((request) => request.method === "GET")).toBe(true);
 	});
 
 	it("rejects ambiguous vault keys before writing", async () => {

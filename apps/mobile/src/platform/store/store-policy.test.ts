@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+
 import { computePurchaseAvailable, storeRecoveryAction, storeSurfaces } from "./store-policy";
 
 describe("store build surfaces", () => {

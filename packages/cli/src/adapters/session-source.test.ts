@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { appendFileSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	mkdtempSync,
+	renameSync,
+	rmSync,
+	statSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SyncReadContext } from "./base";
@@ -7,6 +15,8 @@ import {
 	addSessionModel,
 	describeSessionContent,
 	JsonlSessionSource,
+	jsonlStatRevision,
+	RACY_CLEAN_WINDOW_NS,
 	readBoundedJsonFile,
 	SESSION_RECORD_MAX_BYTES,
 } from "./session-source";
@@ -127,5 +137,45 @@ describe("bounded session sources", () => {
 		addSessionModel(models, "model-0");
 		expect(() => addSessionModel(models, "new-model")).toThrow("metadata exceeds");
 		expect(() => addSessionModel(new Set(), "x".repeat(8193))).toThrow("metadata exceeds");
+	});
+});
+
+describe("JSONL stat revisions", () => {
+	test("requires a completed read and a non-racy mtime, but allows a recent ctime", async () => {
+		const path = fixture('{"n":1}\n');
+		const past = new Date(Date.now() - 10_000);
+		utimesSync(path, past, past);
+		const source = await JsonlSessionSource.open(path);
+		expect(source.revision).toBeUndefined();
+		await records(source);
+		expect(source.revision).toBe(jsonlStatRevision(statSync(path, { bigint: true })));
+		const stat = statSync(path, { bigint: true });
+		const now = BigInt(Date.now()) * 1_000_000n;
+		const supported = Object.assign(stat, {
+			ino: 1n,
+			ctimeNs: now,
+			mtimeNs: now - RACY_CLEAN_WINDOW_NS,
+		});
+		expect(jsonlStatRevision(supported, now)).toStartWith("jsonl-stat-v1:");
+		const recent = Object.assign(stat, { mtimeNs: now - RACY_CLEAN_WINDOW_NS + 1n });
+		expect(jsonlStatRevision(recent, now)).toBeUndefined();
+		expect(jsonlStatRevision(Object.assign(stat, { mtimeNs: now + 1n }), now)).toBeUndefined();
+	});
+
+	test("falls back to parsing when a platform lacks a usable identity or timestamp", () => {
+		const path = fixture('{"n":1}\n');
+		const past = new Date(Date.now() - 10_000);
+		utimesSync(path, past, past);
+		for (const unavailable of [
+			{ ino: 0n },
+			{ ino: undefined },
+			{ ctimeNs: 0n },
+			{ ctimeNs: undefined },
+			{ mtimeNs: undefined },
+			{ size: undefined },
+		]) {
+			const stat = Object.assign(statSync(path, { bigint: true }), unavailable);
+			expect(jsonlStatRevision(stat)).toBeUndefined();
+		}
 	});
 });

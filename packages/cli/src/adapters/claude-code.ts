@@ -1,18 +1,22 @@
 import { existsSync, readdirSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { type SessionEventDraft, sequenceSessionEvents } from "../lib/session-events";
 import { log } from "../serve/log";
-import type {
-	AgentAdapterCore,
-	RawSession,
-	SessionEventSemantics,
-	SessionScanIssue,
-	SessionScanRequest,
-	SessionScanResult,
-	SyncReadContext,
+import {
+	type AgentAdapterCore,
+	collectFromScan,
+	type RawSession,
+	type SessionBatchScan,
+	type SessionEventSemantics,
+	type SessionScanBatch,
+	type SessionScanIssue,
+	type SessionScanRequest,
+	type SessionScanResult,
+	type SyncReadContext,
 } from "./base";
 import { getClaudeHome, matchesProjectFilter } from "./paths";
 import {
@@ -30,6 +34,7 @@ import {
 	addSessionModel,
 	describeSessionContent,
 	JsonlSessionSource,
+	jsonlStatRevision,
 	SessionSourceBlockedError,
 } from "./session-source";
 import { flatSkillModule } from "./skill-dir";
@@ -192,13 +197,23 @@ type ParsedSession = Omit<RawSession, "localSessionId" | "rawFilePath">;
 
 export class ClaudeCodeAdapter implements AgentAdapterCore {
 	readonly agentType = "claude_code" as const;
+	private projectScans = new Map<
+		string,
+		{ signature: string; emitted: Array<[localSessionId: string, revision: string]> }
+	>();
 	readonly sessions = {
 		contentProtocol: async (context?: SyncReadContext) => {
 			context?.signal.throwIfAborted();
 			return "events-v1" as const;
 		},
-		collect: (request: SessionScanRequest, context?: SyncReadContext) =>
-			this.collectSessions(request, context),
+		collect: collectFromScan((request, revisions, context) =>
+			this.scanSessions(request, revisions, context),
+		),
+		scan: (
+			request: SessionScanRequest,
+			knownSourceRevisions: ReadonlyMap<string, string>,
+			context?: SyncReadContext,
+		) => this.scanSessions(request, knownSourceRevisions, context),
 		resolve: (localSessionId: string, context?: SyncReadContext) =>
 			this.resolveSession(localSessionId, context),
 		watchPaths: () => this.getSessionsWatchPaths(),
@@ -236,13 +251,29 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		return absPath.replace(/\//g, "-");
 	}
 
+	private async scanSessions(
+		request: SessionScanRequest,
+		knownSourceRevisions: ReadonlyMap<string, string>,
+		context?: SyncReadContext,
+	): Promise<SessionBatchScan> {
+		const result = await this.collectSessions(request, knownSourceRevisions, context);
+		return {
+			coverage: result.coverage,
+			batches: (async function* () {
+				yield result;
+			})(),
+		};
+	}
+
 	private async collectSessions(
 		request: SessionScanRequest,
+		knownSourceRevisions: ReadonlyMap<string, string>,
 		context?: SyncReadContext,
-	): Promise<SessionScanResult> {
+	): Promise<SessionScanResult & Pick<SessionScanBatch, "observedLocalSessionIds">> {
 		context?.signal.throwIfAborted();
 		if (!existsSync(projectsDir())) {
-			return { sessions: [], dedupedCount: 0, coverage: "complete" };
+			this.projectScans.clear();
+			return { sessions: [], observedLocalSessionIds: [], dedupedCount: 0, coverage: "complete" };
 		}
 
 		const { projectFilter } = request;
@@ -250,7 +281,12 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		if (request.kind === "paths") {
 			const root = resolve(projectsDir());
 			const paths = jsonlPathsWithin(request, [root]);
-			if (!paths) return this.collectSessions({ kind: "complete", projectFilter }, context);
+			if (!paths)
+				return this.collectSessions(
+					{ kind: "complete", projectFilter },
+					knownSourceRevisions,
+					context,
+				);
 			const projectDirNames = new Set<string>();
 			for (const path of paths) {
 				const parts = relative(root, path).split(/[\\/]/);
@@ -258,10 +294,20 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 					parts.length !== 2 &&
 					!(parts.length === 4 && parts[2] === "subagents" && parts[3].startsWith("agent-"))
 				)
-					return this.collectSessions({ kind: "complete", projectFilter }, context);
+					return this.collectSessions(
+						{ kind: "complete", projectFilter },
+						knownSourceRevisions,
+						context,
+					);
 				projectDirNames.add(parts[0]);
 			}
-			return this.collectProjectSessions([...projectDirNames], absFilter, "partial", context);
+			return this.collectProjectScan(
+				[...projectDirNames],
+				absFilter,
+				"partial",
+				knownSourceRevisions,
+				context,
+			);
 		}
 
 		let projectDirs = readdirSync(projectsDir(), { withFileTypes: true }).filter((d) =>
@@ -280,12 +326,100 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			);
 		}
 
-		return this.collectProjectSessions(
+		if (!absFilter) {
+			const present = new Set(projectDirs.map((dir) => dir.name));
+			for (const name of this.projectScans.keys()) {
+				if (!present.has(name)) this.projectScans.delete(name);
+			}
+		}
+		return this.collectProjectScan(
 			projectDirs.map((projectDir) => projectDir.name),
 			absFilter,
 			"complete",
+			knownSourceRevisions,
 			context,
 		);
+	}
+
+	private async projectSignature(
+		projectDirName: string,
+		context?: SyncReadContext,
+	): Promise<string | undefined> {
+		const projectPath = join(projectsDir(), projectDirName);
+		const entries: string[] = [];
+		try {
+			for (const { filePath } of projectSessionFiles(projectPath)) {
+				context?.signal.throwIfAborted();
+				const revision = jsonlStatRevision(await stat(filePath, { bigint: true }));
+				if (revision === undefined) return undefined;
+				entries.push(`${relative(projectPath, filePath)}\0${revision}`);
+			}
+			return JSON.stringify(entries.sort());
+		} catch {
+			context?.signal.throwIfAborted();
+			// An incomplete inventory cannot confirm an unchanged directory.
+			return undefined;
+		}
+	}
+
+	private async collectProjectScan(
+		projectDirNames: readonly string[],
+		absFilter: string | null,
+		coverage: SessionScanResult["coverage"],
+		knownSourceRevisions: ReadonlyMap<string, string>,
+		context?: SyncReadContext,
+	): Promise<SessionScanResult & Pick<SessionScanBatch, "observedLocalSessionIds">> {
+		const signatures = new Map<string, string>();
+		const toParse: string[] = [];
+		const observed: string[] = [];
+		for (const name of projectDirNames) {
+			context?.signal.throwIfAborted();
+			const signature = absFilter ? undefined : await this.projectSignature(name, context);
+			const previous = this.projectScans.get(name);
+			if (
+				signature !== undefined &&
+				previous?.signature === signature &&
+				previous.emitted.every(([id, revision]) => knownSourceRevisions.get(id) === revision)
+			) {
+				observed.push(...previous.emitted.map(([id]) => id));
+				continue;
+			}
+			toParse.push(name);
+			if (signature !== undefined) signatures.set(name, signature);
+			if (!absFilter) this.projectScans.delete(name);
+		}
+		const result = toParse.length
+			? await this.collectProjectSessions(toParse, absFilter, coverage, context)
+			: { sessions: [], dedupedCount: 0, coverage, scanIssues: [] };
+		if (!absFilter) {
+			const projectName = (path: string) => relative(projectsDir(), path).split(/[\\/]/)[0];
+			const emitted = new Map<string, RawSession[]>();
+			for (const session of result.sessions) {
+				const name = projectName(session.rawFilePath);
+				const group = emitted.get(name) ?? [];
+				group.push(session);
+				emitted.set(name, group);
+			}
+			const issueDirs = new Set((result.scanIssues ?? []).map((issue) => projectName(issue.path)));
+			for (const [name, signature] of signatures) {
+				if (issueDirs.has(name)) continue;
+				const confirmed: Array<[string, string]> = [];
+				const sessions = emitted.get(name) ?? [];
+				for (const session of sessions) {
+					if (session.sourceRevision !== undefined)
+						confirmed.push([session.localSessionId, session.sourceRevision]);
+				}
+				if (confirmed.length === sessions.length)
+					this.projectScans.set(name, { signature, emitted: confirmed });
+			}
+		}
+		return {
+			...result,
+			observedLocalSessionIds: [
+				...observed,
+				...result.sessions.map((session) => session.localSessionId),
+			],
+		};
 	}
 
 	private async resolveSession(
@@ -312,7 +446,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		if (matches.length !== 1) {
 			if (matches.length === 0) return null;
 			return (
-				(await this.collectSessions({ kind: "complete" }, context)).sessions.find(
+				(await this.sessions.collect({ kind: "complete" }, context)).sessions.find(
 					(session) => session.localSessionId === localSessionId,
 				) ?? null
 			);

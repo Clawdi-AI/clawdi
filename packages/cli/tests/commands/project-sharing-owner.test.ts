@@ -172,7 +172,7 @@ describe("owner project sharing commands", () => {
 		]);
 		const consoleCapture = captureConsole();
 		try {
-			await projectShareLinksCommand("engineering", { revoke: "abc" });
+			await projectShareLinksCommand("engineering", { revoke: "abc", yes: true });
 		} finally {
 			consoleCapture.restore();
 			restore();
@@ -273,7 +273,7 @@ describe("owner project sharing commands", () => {
 		]);
 		const consoleCapture = captureConsole();
 		try {
-			await projectShareLinksCommand("engineering", { revoke: "abc" });
+			await projectShareLinksCommand("engineering", { revoke: "abc", yes: true });
 		} finally {
 			consoleCapture.restore();
 			restore();
@@ -418,7 +418,7 @@ describe("owner project sharing commands", () => {
 		]);
 		const consoleCapture = captureConsole();
 		try {
-			await projectInvitesCommand("engineering", { cancel: "invite-1" });
+			await projectInvitesCommand("engineering", { cancel: "invite-1", yes: true });
 		} finally {
 			consoleCapture.restore();
 			restore();

@@ -86,7 +86,6 @@ export async function projectShareLinksCommand(
 			!(await confirmOrRequireYes(`Revoke share link ${linkId}?`, {
 				yes: opts.yes,
 				action: "revoke this project share link",
-				legacyNonInteractive: true,
 			}))
 		) {
 			commandResult(opts.json, "clawdi.projectShareLinks.v1", {
@@ -141,6 +140,6 @@ export async function projectShareLinksCommand(
 	console.log();
 	console.log(
 		chalk.gray("Revoke: ") +
-			chalk.cyan(`clawdi project share-links ${projectArg} --revoke <prefix>`),
+			chalk.cyan(`clawdi project share-links ${projectArg} --revoke <prefix> --yes`),
 	);
 }

@@ -14,8 +14,6 @@ import {
 	type StorePurchaseAttempt,
 	validateAndBuildHostedDeployRequest,
 } from "@clawdi/shared/api";
-import type { PurchaseOutcome } from "@/platform/store/purchase-flow";
-import type { PurchaseErrorCode } from "@/platform/store/store-error";
 
 /**
  * Store-funded attempts send compute_source "store" at admission; hosted refuses
@@ -137,20 +135,6 @@ export function storeFundingHoldsAttempt(attempt: Pick<CreationAttempt, "storeFu
 	return attempt.storeFunding === "purchase_pending" || attempt.storeFunding === "funded";
 }
 
-/** Purchase errors that prove no store charge was started for this attempt. */
-const NO_PURCHASE_ERRORS = new Set<PurchaseErrorCode>([
-	"store_offering_unavailable",
-	"paywall_unavailable",
-	"invalid_purchase_request",
-	"store_attempt_conflict",
-	"store_purchases_disabled",
-	"store_configuration_missing",
-	"store_identity_unavailable",
-	"identity_mismatch",
-	// M1 refused before opening the store sheet: an earlier attempt still blocks it.
-	"purchase_pending",
-]);
-
 /** Attempt states that may still produce or confirm a store purchase. */
 const ACTIVE_ATTEMPT_STATES = new Set<StorePurchaseAttempt["state"]>([
 	"prepared",
@@ -177,28 +161,6 @@ export function unboundStoreSlotPlan(
  */
 function settledStoreFunding(planSlug: string, slotPlan: string | null): StoreFunding {
 	return slotPlan === planSlug ? "funded" : "awaiting_purchase";
-}
-
-/** Store funding after a purchase; anything that may have charged stays pending. */
-export function storeFundingAfterPurchase(
-	result:
-		| {
-				outcome: Pick<PurchaseOutcome, "status"> & { attempt: Pick<StorePurchaseAttempt, "state"> };
-		  }
-		| { error: PurchaseErrorCode },
-	planSlug: string,
-	slotPlan: string | null,
-): StoreFunding {
-	if ("error" in result)
-		return NO_PURCHASE_ERRORS.has(result.error) ? "awaiting_purchase" : "purchase_pending";
-	const { status, attempt } = result.outcome;
-	if (status === "funding_applied") return "funded";
-	if (status === "cancelled") return "awaiting_purchase";
-	if (status === "terminal")
-		return attempt.state === "reconciliation_required"
-			? "review_required"
-			: settledStoreFunding(planSlug, slotPlan);
-	return "purchase_pending";
 }
 
 /** Store funding after an explicit status check of this request's hosted attempts. */
@@ -255,6 +217,17 @@ export function storeAdmissionMessageKey(attempt: CreationAttempt, error: unknow
 	}
 }
 
+/** Only a first-send refusal can release store funding for another purchase or discard. */
+export function storeAdmissionRecoveryAttempt(
+	attempt: CreationAttempt,
+	error: unknown,
+): CreationAttempt | null {
+	return storeAdmissionMessageKey(attempt, error) === "creation.storeComputeUnavailable" &&
+		canDiscardCreationAttempt(attempt)
+		? { ...attempt, storeFunding: "awaiting_purchase" }
+		: null;
+}
+
 function waitForAdmissionRetry(delayMs: number, signal: AbortSignal): Promise<void> {
 	return new Promise((resolve, reject) => {
 		if (signal.aborted) {
@@ -292,6 +265,7 @@ export async function retryStoreAdmission<Data>(
 				(error.code !== "compute_entitlement_pending" &&
 					error.code !== "deployment_plan_release_pending") ||
 				error.retryAfterMs === null ||
+				error.retryAfterMs > 30_000 ||
 				retries >= 3
 			)
 				throw error;

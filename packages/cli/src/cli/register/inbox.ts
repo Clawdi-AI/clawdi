@@ -30,7 +30,6 @@ export function registerInbox(program: Command): void {
 			collectCsvValues,
 			[] as string[],
 		)
-		.option("--use-as <attached>", "Link to --agent (compatibility value: attached)")
 		.option("--json", "Output as JSON")
 		.addHelpText(
 			"after",
@@ -58,7 +57,6 @@ Examples:
 			collectCsvValues,
 			[] as string[],
 		)
-		.option("--use-as <attached>", "Link to --agent (compatibility value: attached)")
 		.option("--json", "Output as JSON")
 		.addHelpText(
 			"after",

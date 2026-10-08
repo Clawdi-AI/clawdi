@@ -1,3 +1,6 @@
+/** OS protocol that Clawdi Desktop registers; `clawdi-desktop://connect` opens Connect. */
+export const DESKTOP_DEEP_LINK_SCHEME = "clawdi-desktop";
+
 export const DESKTOP_AGENT_TYPES = [
 	"claude_code",
 	"codex",

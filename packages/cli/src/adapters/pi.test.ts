@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
 	appendFileSync,
 	copyFileSync,
@@ -7,14 +7,16 @@ import {
 	readFileSync,
 	renameSync,
 	rmSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { prepareSessionUpload } from "../lib/session-upload";
+import { type RawSession, type SessionScanRequest, scanSessionModule } from "./base";
 import { PiAdapter } from "./pi";
 import { assertSessionGolden } from "./session-golden.test-support";
-import { SESSION_RECORD_MAX_BYTES } from "./session-source";
+import { JsonlSessionSource, SESSION_RECORD_MAX_BYTES } from "./session-source";
 
 const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
 const originalSessionDir = process.env.PI_CODING_AGENT_SESSION_DIR;
@@ -160,7 +162,7 @@ describe("Pi session adapter", () => {
 			const { adapter, file, root } = fixtureSession();
 			rmSync(file);
 			copyFixture(root, `session-${version}.jsonl`, "golden.jsonl");
-			await assertSessionGolden(`pi-${version}`, adapter.sessions);
+			await assertSessionGolden(`pi-${version}`, adapter.sessions, { statRevision: true });
 		},
 	);
 	test("uploads private reasoning while projecting only the active visible tail", async () => {
@@ -281,5 +283,87 @@ describe("Pi session adapter", () => {
 				payload_json: '{"signature":"private"}',
 			}),
 		);
+	});
+});
+
+async function scanPi(
+	adapter: PiAdapter,
+	known: ReadonlyMap<string, string> = new Map(),
+	request: SessionScanRequest = { kind: "complete" },
+) {
+	const scan = await scanSessionModule(adapter.sessions, request, known);
+	for await (const batch of scan.batches) return batch;
+	throw new Error("expected Pi scan batch");
+}
+
+function confirmedPi(sessions: RawSession[]): Map<string, string> {
+	return new Map(
+		sessions.flatMap((session) =>
+			session.sourceRevision === undefined
+				? []
+				: [[session.localSessionId, session.sourceRevision]],
+		),
+	);
+}
+
+describe("Pi stat-skip scans", () => {
+	test("skips unchanged confirmed files without invoking the parser and still observes ids", async () => {
+		const { adapter, file } = fixtureSession();
+		const past = new Date(Date.now() - 10_000);
+		utimesSync(file, past, past);
+		const first = await scanPi(adapter);
+		const known = confirmedPi(first.sessions);
+		const parser = spyOn(JsonlSessionSource, "open");
+		try {
+			const restarted = new PiAdapter();
+			for (const request of [
+				{ kind: "complete" } as const,
+				{ kind: "paths", paths: [file] } as const,
+			]) {
+				parser.mockClear();
+				const result = await scanPi(restarted, known, request);
+				expect(result.sessions).toHaveLength(known.size ? 0 : 1);
+				expect(result.observedLocalSessionIds).toEqual(first.observedLocalSessionIds);
+				if (known.size) expect(parser).not.toHaveBeenCalled();
+				else expect(parser).toHaveBeenCalled();
+			}
+			expect(
+				(await scanPi(restarted, known, { kind: "complete", projectFilter: "/workspace/demo" }))
+					.sessions,
+			).toHaveLength(1);
+			expect((await restarted.sessions.collect({ kind: "complete" })).sessions).toHaveLength(1);
+		} finally {
+			parser.mockRestore();
+		}
+	});
+
+	test("re-parses appends, racy sources and removed files", async () => {
+		const { adapter, file } = fixtureSession();
+		const past = new Date(Date.now() - 10_000);
+		utimesSync(file, past, past);
+		const first = await scanPi(adapter);
+		const known = confirmedPi(first.sessions);
+		appendFileSync(
+			file,
+			`${JSON.stringify({
+				type: "message",
+				id: "appended",
+				parentId: "e8",
+				timestamp: "2026-08-25T10:00:09.000Z",
+				message: { role: "user", content: [{ type: "text", text: "new question" }] },
+			})}\n`,
+		);
+		utimesSync(file, past, past);
+		const appended = await scanPi(adapter, known);
+		expect(appended.sessions).toHaveLength(1);
+		expect(appended.sessions[0]?.messageCount).toBe((first.sessions[0]?.messageCount ?? 0) + 1);
+		const now = new Date();
+		utimesSync(file, now, now);
+		const racy = await scanPi(adapter, confirmedPi(appended.sessions));
+		expect(racy.sessions).toHaveLength(1);
+		expect(racy.sessions[0]?.sourceRevision).toBeUndefined();
+		expect((await scanPi(adapter, known)).sessions).toHaveLength(1);
+		rmSync(file);
+		expect((await scanPi(adapter, known)).observedLocalSessionIds).toEqual([]);
 	});
 });

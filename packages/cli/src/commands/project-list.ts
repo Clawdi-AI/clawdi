@@ -13,7 +13,7 @@ export async function projectListCommand(opts: {
 	json?: boolean;
 	sharedWithMe?: boolean;
 	owned?: boolean;
-	includeEnvs?: boolean;
+	includeWorkspaces?: boolean;
 }): Promise<void> {
 	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
@@ -26,16 +26,16 @@ export async function projectListCommand(opts: {
 
 	const projects = await listProjects(apiUrl, apiKey);
 	const environmentProjects = projects.filter((s) => s.kind === "environment");
-	const defaultProjects = opts.includeEnvs
+	const defaultProjects = opts.includeWorkspaces
 		? projects
 		: projects.filter((s) => s.kind !== "environment");
 	const owned = defaultProjects.filter((s) => s.is_owner !== false && s.kind !== "environment");
 	const shared = defaultProjects.filter((s) => s.is_owner === false);
-	const machines = opts.includeEnvs
+	const machines = opts.includeWorkspaces
 		? projects.filter((s) => s.kind === "environment" && s.is_owner !== false)
 		: [];
 	const visibleProjects = opts.sharedWithMe ? shared : opts.owned ? owned : projects;
-	const filteredVisibleProjects = opts.includeEnvs
+	const filteredVisibleProjects = opts.includeWorkspaces
 		? visibleProjects
 		: visibleProjects.filter((s) => s.kind !== "environment");
 
@@ -70,7 +70,7 @@ export async function projectListCommand(opts: {
 			})),
 			owned_projects: ownedProjects,
 			shared_projects: sharedProjects,
-			environment_projects: opts.includeEnvs
+			environment_projects: opts.includeWorkspaces
 				? environmentProjects.map((s) => ({
 						id: s.id,
 						slug: s.slug,
@@ -81,7 +81,7 @@ export async function projectListCommand(opts: {
 						owner_handle: s.owner_handle ?? null,
 					}))
 				: [],
-			hidden_environment_project_count: opts.includeEnvs ? 0 : environmentProjects.length,
+			hidden_environment_project_count: opts.includeWorkspaces ? 0 : environmentProjects.length,
 		});
 		return;
 	}
@@ -98,7 +98,7 @@ export async function projectListCommand(opts: {
 			console.log("No projects yet.");
 			console.log(`Create one: ${chalk.cyan('clawdi project create "Engineering"')}`);
 		}
-		if (!opts.includeEnvs && environmentProjects.length > 0 && !opts.sharedWithMe) {
+		if (!opts.includeWorkspaces && environmentProjects.length > 0 && !opts.sharedWithMe) {
 			console.log(
 				chalk.gray(
 					`Hidden agent workspaces: ${environmentProjects.length}. Show them with \`clawdi project list --include-workspaces\`.`,
@@ -159,7 +159,7 @@ export async function projectListCommand(opts: {
 		}
 	}
 
-	if (!opts.includeEnvs && environmentProjects.length > 0 && !opts.sharedWithMe) {
+	if (!opts.includeWorkspaces && environmentProjects.length > 0 && !opts.sharedWithMe) {
 		if (owned.length > 0 || shared.length > 0) console.log();
 		console.log(
 			chalk.gray(

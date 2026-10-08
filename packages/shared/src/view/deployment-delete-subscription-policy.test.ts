@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DeploymentRead } from "@clawdi/shared/api";
-import { deploymentDeleteSubscriptionPolicy } from "./delete-subscription-policy";
+import { deploymentDeleteSubscriptionPolicy } from "./compute-subscription-actions";
 
 type HostedComputeSubscription = NonNullable<
 	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
@@ -26,6 +26,25 @@ function policy(compute_subscription: HostedComputeSubscription) {
 }
 
 describe("Agent delete subscription policy", () => {
+	test("releases Included Basic and keeps non-renewing paid subscriptions", () => {
+		expect(
+			deploymentDeleteSubscriptionPolicy({
+				current_plan_slug: "compute_basic",
+				commercial_display: {
+					compute_subscription: { ...card, funding_source: null, price_cents: 0 },
+				},
+			}),
+		).toEqual({
+			offerChoice: false,
+			defaultChoice: "cancel_subscription",
+			storeNotice: null,
+		});
+		expect(policy({ ...card, cancel_at_period_end: true })).toEqual({
+			offerChoice: false,
+			defaultChoice: "keep_subscription",
+			storeNotice: null,
+		});
+	});
 	test("keeps the cancel choice for a renewing card subscription", () => {
 		expect(policy(card)).toEqual({
 			offerChoice: true,

@@ -5,7 +5,7 @@ import type { StoreTransactionHint } from "./revenuecat";
 import { StorePurchaseError } from "./store-error";
 
 /** Starts the M1 compute purchase for the package the Paywall selected. */
-export type ComputePaywallPurchase = (
+type ComputePaywallPurchase = (
 	selected: PurchasesPackage,
 	paywall: (signal: AbortSignal) => Promise<StoreTransactionHint | null>,
 ) => Promise<PurchaseOutcome>;

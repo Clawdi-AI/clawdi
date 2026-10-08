@@ -13,7 +13,6 @@ import { join, resolve } from "node:path";
 
 const entry = resolve(import.meta.dir, "../../src/index.ts");
 const projectId = "00000000-0000-0000-0000-000000000123";
-const notice = "--yes will be required in a non-interactive shell starting in 0.16";
 let testHome: string;
 let server: Bun.Server<undefined>;
 let mutations: string[];
@@ -71,7 +70,11 @@ beforeEach(() => {
 					return Response.json({ id: projectId, kind: "shared" });
 				case `GET /v1/projects/${projectId}/members`:
 					return Response.json([{ user_id: "user-bob", user_email: "bob@example.test" }]);
-				case "GET /v1/agents/agent-test/project-bindings":
+				case "GET /v1/agents/00000000-0000-0000-0000-000000000101/skills":
+					return Response.json({
+						skills: [{ skill_key: "library-key", authority: "cloud", skill_id: "library-test" }],
+					});
+				case "GET /v1/agents/00000000-0000-0000-0000-000000000101/project-bindings":
 					return Response.json([
 						{ id: "binding-test", binding_type: "context", project_id: projectId },
 					]);
@@ -94,13 +97,20 @@ beforeEach(() => {
 						provider_id: "openai-test",
 						auth: { type: "agent_profile", tool: "codex", profile: "default" },
 					});
+				case `POST /v1/projects/${projectId}/leave`:
+					return Response.json({ status: "left" });
 				case `POST /v1/projects/${projectId}/unshare`:
 					return Response.json({ links_revoked: 1, members_removed: 1, invitations_cancelled: 1 });
+				case "DELETE /v1/vault/default/items":
 				case "PUT /v1/vault/default/items":
 				case `DELETE /v1/projects/${projectId}/members/user-bob`:
 				case `DELETE /v1/projects/${projectId}/skills/test-skill`:
+				case `DELETE /v1/projects/${projectId}/share-links/00000000-0000-0000-0000-000000000124`:
+				case `DELETE /v1/projects/${projectId}/invitations/invitation-test`:
+				case "DELETE /v1/agents/00000000-0000-0000-0000-000000000101/skill-references/library-test":
+				case "DELETE /v1/vault/default":
 				case "DELETE /v1/memories/memory-test":
-				case "DELETE /v1/agents/agent-test/project-bindings/binding-test":
+				case "DELETE /v1/agents/00000000-0000-0000-0000-000000000101/project-bindings/binding-test":
 				case "DELETE /v1/channels/channel-test":
 				case "POST /v1/me/invitations/invitation-test/decline":
 					return Response.json({ status: "ok" });
@@ -120,11 +130,32 @@ beforeEach(() => {
 	);
 	writeFileSync(
 		join(testHome, ".clawdi", "environments", "claude_code.json"),
-		JSON.stringify({ id: "agent-test", agentType: "claude_code" }),
+		JSON.stringify({ id: "00000000-0000-0000-0000-000000000101", agentType: "claude_code" }),
+	);
+	writeFileSync(
+		join(testHome, ".clawdi", "share-tokens.json"),
+		JSON.stringify({
+			version: 1,
+			tokens: [
+				{
+					project_id: projectId,
+					project_name: "Engineering",
+					owner_display: "Alice",
+					owner_handle: "alice",
+					token: "a".repeat(43),
+					redeemed_at: "2026-08-27T12:00:00Z",
+					last_seen_skill_keys: [],
+				},
+			],
+		}),
 	);
 	writeFileSync(join(testHome, "credential.txt"), "test-credential");
 	writeFileSync(join(testHome, "target.txt"), "old-auth");
 	writeFileSync(join(testHome, ".env"), "EXAMPLE_KEY=test-value\n");
+	writeFileSync(
+		join(testHome, "SKILL.md"),
+		"---\nname: Test\ndescription: Test skill\n---\n# Test\n",
+	);
 	catalogPath = join(testHome, ".clawdi", "ai-providers", "catalog.json");
 	initialCatalog = JSON.stringify({
 		schema_version: 1,
@@ -179,6 +210,11 @@ async function runCli(args: string[], stdin: "ignore" | "pipe" = "ignore") {
 }
 
 const promptCommands = [
+	{
+		name: "vault rm",
+		args: ["vault", "rm", "EXAMPLE_KEY"],
+		mutation: "DELETE /v1/vault/default/items",
+	},
 	{
 		name: "agent credentials import",
 		args: [
@@ -253,63 +289,119 @@ describe("non-interactive confirmations", () => {
 		});
 	}
 
-	for (const args of [
+	const destructiveCommands = [
 		["project", "unshare", projectId, "--json"],
 		["project", "members", projectId, "--remove", "bob@example.test", "--json"],
+		["project", "leave", projectId, "--json"],
 		["teardown", "--agent", "claude_code", "--keep-skill", "--keep-mcp"],
-	]) {
-		it.each([{ flags: [] }, { flags: ["--yes"] }, { flags: ["-y"] }])(
-			`${args.join(" ")} preserves script behavior with %j`,
-			async ({ flags }) => {
-				const result = await runCli([...args, ...flags]);
-				expect(result.code).toBe(0);
-				if (flags.length === 0) expect(result.stderr).toContain(notice);
-				else expect(result.stderr).not.toContain(notice);
-				expect(result.stdout).not.toContain(notice);
-				if (args[0] === "teardown") {
-					expect(existsSync(join(testHome, ".clawdi", "environments", "claude_code.json"))).toBe(
-						false,
-					);
-				} else {
-					expect(JSON.parse(result.stdout).project_id).toBe(projectId);
-					expect(mutations).toHaveLength(1);
-				}
-			},
-		);
-	}
-
-	it("does not warn when listing project members", async () => {
-		const result = await runCli(["project", "members", projectId, "--json"]);
-		expect(result.code).toBe(0);
-		expect(result.stderr).not.toContain(notice);
-		expect(mutations).toEqual([]);
-	});
-
-	for (const args of [
 		["memory", "rm", "memory-test"],
 		["skill", "rm", "test-skill", "--project", projectId],
 		["ai-provider", "remove", "openai-test", "--json"],
-		["agent", "projects", "unlink", "agent-test", "--project", projectId],
+		["agent", "projects", "unlink", "00000000-0000-0000-0000-000000000101", "--project", projectId],
 		["inbox", "decline", "invitation-test"],
-	]) {
-		it.each([{ flags: [] }, { flags: ["-y"] }])(
-			`${args.join(" ")} preserves non-TTY deletion with %j`,
-			async ({ flags }) => {
-				const result = await runCli([...args, ...flags]);
-				expect(result.code).toBe(0);
-				expect(result.stderr).not.toContain(notice);
-				if (args[0] === "ai-provider") {
-					expect(JSON.parse(readFileSync(catalogPath, "utf8")).providers).toEqual([]);
-				} else {
-					expect(mutations).toHaveLength(1);
-				}
+		["channel", "delete", "channel-test"],
+		["agent", "skills", "rm", "00000000-0000-0000-0000-000000000101", "library-key"],
+		["project", "share-links", projectId, "--revoke", "00000000-0000-0000-0000-000000000124"],
+		["project", "invites", projectId, "--cancel", "invitation-test"],
+		["vault", "detach", "default", "--project", projectId],
+		["inbox", "forget", projectId],
+	];
+
+	for (const args of destructiveCommands) {
+		it.each(["ignore", "pipe"] as const)(
+			`${args.join(" ")} requires --yes with stdin %s`,
+			async (stdin) => {
+				const result = await runCli(args, stdin);
+				expect(result.code).toBe(1);
+				expect(result.stdout).toBe("");
+				expect(result.stderr).toContain("Confirmation required to ");
+				expect(result.stderr).toContain("Re-run with --yes in a non-interactive shell.");
+				expect(mutations).toEqual([]);
+				expect(readFileSync(catalogPath, "utf8")).toBe(initialCatalog);
+				expect(existsSync(join(testHome, ".clawdi", "environments", "claude_code.json"))).toBe(
+					true,
+				);
 			},
 		);
+
+		it.each(["--yes", "-y"])(`${args.join(" ")} proceeds with %s`, async (yes) => {
+			const result = await runCli([...args, yes]);
+			expect(result.code).toBe(0);
+			expect(result.stderr).not.toContain("Confirmation required");
+			if (args[0] === "teardown") {
+				expect(existsSync(join(testHome, ".clawdi", "environments", "claude_code.json"))).toBe(
+					false,
+				);
+			} else if (args[0] === "inbox" && args[1] === "forget") {
+				expect(mutations).toEqual([]);
+				expect(
+					JSON.parse(readFileSync(join(testHome, ".clawdi", "share-tokens.json"), "utf8")).tokens,
+				).toEqual([]);
+			} else if (args[0] === "ai-provider") {
+				expect(JSON.parse(readFileSync(catalogPath, "utf8")).providers).toEqual([]);
+			} else {
+				expect(mutations).toHaveLength(1);
+			}
+		});
 	}
 
-	it("accepts -y for channel deletion", async () => {
-		const result = await runCli(["channel", "delete", "channel-test", "-y"]);
+	it("lists project members without confirmation", async () => {
+		const result = await runCli(["project", "members", projectId, "--json"]);
 		expect(result.code).toBe(0);
-		expect(mutations).toEqual(["DELETE /v1/channels/channel-test"]);
+		expect(result.stderr).toBe("");
+		expect(mutations).toEqual([]);
 	});
+
+	const removedSurfaces = [
+		{
+			args: ["vault", "unlink", "default", "--project", projectId],
+			error: "unknown command 'unlink'",
+		},
+		{
+			args: [
+				"agent",
+				"projects",
+				"attach",
+				"00000000-0000-0000-0000-000000000101",
+				"--project",
+				projectId,
+			],
+			error: "unknown command 'attach'",
+		},
+		{
+			args: [
+				"agent",
+				"projects",
+				"detach",
+				"00000000-0000-0000-0000-000000000101",
+				"--project",
+				projectId,
+			],
+			error: "unknown command 'detach'",
+		},
+		{ args: ["serve", "status"], error: "unknown command 'serve'" },
+		{ args: ["ai-provider", "test", "openai-test", "--probe"], error: "unknown option '--probe'" },
+		{
+			args: ["ai-provider", "test", "openai-test", "--no-probe"],
+			error: "unknown option '--no-probe'",
+		},
+		{ args: ["project", "list", "--include-envs"], error: "unknown option '--include-envs'" },
+		{
+			args: ["inbox", "accept", "invitation-test", "--use-as", "attached"],
+			error: "unknown option '--use-as'",
+		},
+		{
+			args: ["inbox", "join", projectId, "--use-as", "attached"],
+			error: "unknown option '--use-as'",
+		},
+	];
+	for (const surface of removedSurfaces) {
+		it(`rejects ${surface.args.join(" ")} before dispatch`, async () => {
+			const result = await runCli(surface.args);
+			expect(result.code).toBe(1);
+			expect(result.stdout).toBe("");
+			expect(result.stderr).toContain(surface.error);
+			expect(mutations).toEqual([]);
+		});
+	}
 });

@@ -157,7 +157,7 @@ describe("projectListCommand", () => {
 			expect(hiddenOut).toContain("Hidden agent workspaces: 1");
 
 			lines.length = 0;
-			await projectListCommand({ includeEnvs: true });
+			await projectListCommand({ includeWorkspaces: true });
 			const includedOut = lines.join("\n");
 			expect(includedOut).toContain("Agent workspaces (1)");
 			expect(includedOut).toContain("env-abc123");
@@ -194,7 +194,7 @@ describe("projectListCommand", () => {
 			expect(hidden.environment_projects).toEqual([]);
 			expect(hidden.hidden_environment_project_count).toBe(1);
 
-			await projectListCommand({ json: true, includeEnvs: true });
+			await projectListCommand({ json: true, includeWorkspaces: true });
 			const included = JSON.parse(out);
 			expect(included.projects.map((p: { slug: string }) => p.slug)).toEqual([
 				"personal",

@@ -31,12 +31,23 @@ export async function openSessionIndex(): Promise<SessionIndexDatabase> {
 			typeof (globalThis as { Bun?: unknown }).Bun !== "undefined"
 				? new (await import("bun:sqlite")).Database(path, { create: true })
 				: new (await import("node:sqlite")).DatabaseSync(path);
-		close = () => db.close();
+		const statements: ReturnType<typeof db.prepare>[] = [];
+		close = () => {
+			try {
+				for (const statement of statements.splice(0)) {
+					// Node 24 StatementSync has no public finalizer; DatabaseSync.close() finalizes it.
+					if ("finalize" in statement) statement.finalize();
+				}
+			} finally {
+				db.close();
+			}
+		};
 		db.exec("PRAGMA cache_size=-4096; PRAGMA temp_store=FILE; PRAGMA journal_mode=OFF;");
 		return {
 			exec: (sql) => db.exec(sql),
 			prepare: (sql) => {
 				const statement = db.prepare(sql);
+				statements.push(statement);
 				return {
 					all: (...params) => statement.all(...params),
 					get: (...params) => statement.get(...params),
@@ -81,17 +92,25 @@ export async function openReadonlySqlite(path: string): Promise<ReadonlySqliteDa
 	if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
 		const { Database } = await import("bun:sqlite");
 		const db = new Database(path, { readonly: true });
+		const statements: ReturnType<typeof db.prepare>[] = [];
 		return {
 			exec: (sql) => db.exec(sql),
 			prepare: (sql) => {
 				const statement = db.prepare(sql);
+				statements.push(statement);
 				return {
 					all: (...params) => statement.all(...params),
 					get: (...params) => statement.get(...params),
 					iterate: (...params) => statement.iterate(...params),
 				};
 			},
-			close: () => db.close(),
+			close: () => {
+				try {
+					for (const statement of statements.splice(0)) statement.finalize();
+				} finally {
+					db.close();
+				}
+			},
 		};
 	}
 	const { DatabaseSync } = await import("node:sqlite");

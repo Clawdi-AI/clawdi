@@ -27,14 +27,11 @@ export type Translator = (
 	values?: Record<string, string | number | null | undefined>,
 ) => string;
 
-const I18nContext = createContext<Translator>((key, values) => readTranslation(en, key, values));
+const translator: Translator = (key, values) => readTranslation(en, key, values);
+const I18nContext = createContext<Translator>(translator);
 
 export function I18nProvider({ children }: { children: React.ReactNode }) {
-	return (
-		<I18nContext.Provider value={(key, values) => readTranslation(en, key, values)}>
-			{children}
-		</I18nContext.Provider>
-	);
+	return <I18nContext.Provider value={translator}>{children}</I18nContext.Provider>;
 }
 
 export function useI18n(): Translator {

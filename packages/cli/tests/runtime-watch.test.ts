@@ -26,7 +26,6 @@ import {
 import { readRuntimeAppliedState } from "../src/runtime/applied-state";
 import { hostedManifestEgressProfiles } from "../src/runtime/hosted-egress-profiles";
 import { cacheRuntimeLastGoodManifest } from "../src/runtime/manifest";
-import { runtimeCommandCurrentRevision } from "../src/runtime/manifest-install";
 import { runtimeConvergenceWithoutApply } from "../src/runtime/manifest-planning";
 
 import { HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE } from "../src/runtime/manifest-source";
@@ -35,10 +34,7 @@ import { readHostedRuntimeObserved } from "../src/runtime/observed";
 
 import { getRuntimePaths } from "../src/runtime/paths";
 
-import {
-	HERMES_DASHBOARD_BUILD_REVISION_FILE,
-	runtimeSystemdCommonEnvironment,
-} from "../src/runtime/runtime-systemd-reconciliation";
+import { runtimeSystemdCommonEnvironment } from "../src/runtime/runtime-systemd-reconciliation";
 
 import {
 	applySystemdRuntimeUpdate,
@@ -170,13 +166,7 @@ describe("runtime manifest datasource", () => {
 			join(root, "run", "clawdi"),
 		);
 		setRuntimeApplyGeneration(2, CANONICAL_TEST_CONTEXT);
-		const command = writeHermesVersionBinary(home, "0.21.5");
-		const webDist = join(home, ".hermes", "hermes-agent", "hermes_cli", "web_dist");
-		mkdirSync(webDist, { recursive: true });
-		writeFileSync(join(webDist, "index.html"), "<html>dashboard fixture</html>");
-		const revision = runtimeCommandCurrentRevision(command, home, home);
-		if (!revision) throw new Error("missing Hermes fixture revision");
-		writeFileSync(join(webDist, HERMES_DASHBOARD_BUILD_REVISION_FILE), revision);
+		writeHermesVersionBinary(home, "0.21.5");
 		rmSync(join(home, ".hermes", "hermes-agent", "venv"), { recursive: true });
 		installHermesNativeFixture(home);
 		const unit = join(paths.systemdUserRoot, "hermes-gateway.service");

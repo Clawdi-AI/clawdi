@@ -11,7 +11,7 @@ import { commandResult } from "../lib/command-output";
 import { getClawdiDir } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { progress as p } from "../lib/progress";
-import { askMulti, askYesNo, warnNonInteractiveYesRequired } from "../lib/prompts";
+import { askMulti, confirmOrRequireYes } from "../lib/prompts";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
 import { releaseManagedSkill } from "../runtime/managed-skill-reservation";
@@ -39,10 +39,12 @@ export async function teardown(opts: {
 	}
 
 	if (!opts.yes) {
-		if (!isInteractive()) warnNonInteractiveYesRequired();
 		const labels = targets.map((t) => adapterRegistry[t].displayName).join(", ");
 		p.log.info(`Will tear down: ${labels}`, { output: process.stderr });
-		const ok = await askYesNo("Proceed?");
+		const ok = await confirmOrRequireYes("Proceed?", {
+			yes: opts.yes,
+			action: "tear down these agents",
+		});
 		if (!ok) {
 			p.outro(chalk.gray("Cancelled."));
 			commandResult(opts.json, "clawdi.teardown.v1", { status: "cancelled", agents: [] });

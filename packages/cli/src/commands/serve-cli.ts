@@ -55,7 +55,6 @@ export function registerServeCommand(program: Command, handlers?: ServeHandlers)
 	const get = handlers ? () => Promise.resolve(handlers) : defaultHandlers;
 	const serveCmd = program
 		.command("daemon")
-		.alias("serve")
 		.option("--host <host>", "Control HTTP RPC host")
 		.option("--port <port>", "Control HTTP RPC port")
 		.option("--allow-remote", "Allow the control HTTP RPC listener to bind a non-loopback host")
@@ -86,9 +85,10 @@ Examples:
   $ clawdi daemon status --agent claude_code    # health + supervisor state`,
 		)
 		.action(async (opts) => {
-			// `clawdi daemon` (or `clawdi serve`) with no subcommand
-			// runs the daemon in the foreground. `daemon run` is the
-			// clearer spelling for new users.
+			// `clawdi daemon` with no
+			// subcommand still runs the daemon in the foreground for
+			// backward compatibility. `daemon run` is the clearer
+			// spelling for new users.
 			const h = await get();
 			await h.serve(opts);
 		});

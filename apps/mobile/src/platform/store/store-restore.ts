@@ -12,33 +12,6 @@ type RestoreSdk = {
 type RestoreIdentity = Pick<StoreIdentity, "requireReady">;
 type RestoreClient = Pick<HostedStoreClient, "reconcileComputeSubscriptions">;
 
-/** A response without compute_slot carries no new slot observation. */
-export function restoredComputeSlot(
-	previous: StoreComputeReconcileResponse["compute_slot"] | null | undefined,
-	response: Pick<StoreComputeReconcileResponse, "compute_slot">,
-): NonNullable<StoreComputeReconcileResponse["compute_slot"]> | null {
-	return response.compute_slot ?? previous ?? null;
-}
-
-/** Restore updates only observations returned by Hosted; startup state stays visible. */
-export function preserveRestoreState<TRecovery, TError>(
-	previous: Readonly<{
-		computeSlot: NonNullable<StoreComputeReconcileResponse["compute_slot"]> | null;
-		recovery: TRecovery;
-		error: TError;
-	}>,
-	response: Pick<StoreComputeReconcileResponse, "compute_slot">,
-): Readonly<{
-	computeSlot: NonNullable<StoreComputeReconcileResponse["compute_slot"]> | null;
-	recovery: TRecovery;
-	error: TError;
-}> {
-	return {
-		...previous,
-		computeSlot: restoredComputeSlot(previous.computeSlot, response),
-	};
-}
-
 /** Restores native purchases, then asks Hosted to reconcile every subscription. */
 export function restoreStorePurchases(options: {
 	scope: AccountScope;

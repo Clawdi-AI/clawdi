@@ -46,7 +46,6 @@ import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-c
 import { PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
-import { isInteractive } from "../lib/tty";
 import { collectAgentCredentialProfilePayload } from "./agent-credentials";
 
 interface AiProviderAddOptions {
@@ -112,7 +111,6 @@ interface AiProviderTestOptions {
 	model?: string;
 	timeout?: string | number;
 	live?: boolean;
-	probe?: boolean;
 	json?: boolean;
 }
 
@@ -354,7 +352,6 @@ export async function aiProviderRemoveCommand(
 			);
 	}
 	if (
-		isInteractive() &&
 		!(await confirmOrRequireYes(`Remove AI provider ${providerId}?`, {
 			yes: opts.yes,
 			action: "remove this AI provider",
@@ -508,7 +505,7 @@ export async function aiProviderTestCommand(
 		throw new Error(`AI provider is invalid:\n${validation.errors.join("\n")}`);
 	}
 	const authStatus = await inspectAiProviderAuth(provider);
-	const shouldProbe = opts.live === true || opts.probe === true;
+	const shouldProbe = opts.live === true;
 	const providerProbe = shouldProbe
 		? await probeAiProvider(provider, authStatus, parseAiProviderTestTimeout(opts.timeout))
 		: { status: "skipped", detail: "live probe disabled; pass --live to call provider" };

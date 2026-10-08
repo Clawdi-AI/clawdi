@@ -161,7 +161,6 @@ export async function agentSkillsRemove(
 		!(await confirmOrRequireYes(`Remove remote skill ${sanitizeMetadata(skillKey)}?`, {
 			yes: opts.yes,
 			action: "remove this remote skill",
-			legacyNonInteractive: true,
 		}))
 	) {
 		return;

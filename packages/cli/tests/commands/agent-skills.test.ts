@@ -188,7 +188,7 @@ test("Library install/read/remove follows Cloud authority and protects linked Sk
 	try {
 		await agentSkillsInstall(agentId, { library: "library-id", json: true });
 		await agentSkillsRead(agentId, "library-review", { json: true });
-		await agentSkillsRemove(agentId, "library-review", { json: true });
+		await agentSkillsRemove(agentId, "library-review", { json: true, yes: true });
 		await expect(agentSkillsRemove(agentId, "linked")).rejects.toThrow("cannot be removed");
 		expect(captured.filter((item) => item.method === "DELETE")).toHaveLength(1);
 		expect(

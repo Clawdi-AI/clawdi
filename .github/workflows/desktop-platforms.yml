@@ -186,6 +186,7 @@ jobs:
           sudo apt-get install -y ./apps/desktop/release/*.deb
           test -x /opt/Clawdi/resources/native/clawdi
           test -x /opt/Clawdi/clawdi-desktop
+          grep -q '^MimeType=.*x-scheme-handler/clawdi-desktop;' /usr/share/applications/clawdi-desktop.desktop
           xvfb-run -a node apps/desktop/scripts/smoke-packaged.mjs \
             /opt/Clawdi/clawdi-desktop "$RUNNER_TEMP/linux-smoke" welcome
           sudo apt-get remove -y clawdi-desktop
@@ -198,6 +199,8 @@ jobs:
           bundle=mac
           if [ '${{ matrix.arch }}' = arm64 ]; then bundle=mac-arm64; fi
           codesign --verify --deep --strict "apps/desktop/release/$bundle/Clawdi.app"
+          test "$(plutil -extract CFBundleURLTypes.0.CFBundleURLSchemes.0 raw \
+            "apps/desktop/release/$bundle/Clawdi.app/Contents/Info.plist")" = clawdi-desktop
           node apps/desktop/scripts/smoke-packaged.mjs \
             "$PWD/apps/desktop/release/$bundle/Clawdi.app/Contents/MacOS/Clawdi" \
             "$RUNNER_TEMP/mac-smoke" install
@@ -210,6 +213,7 @@ jobs:
           $runtimeRoot = Join-Path $env:RUNNER_TEMP 'windows-smoke'
           $launcherBin = Join-Path $env:LOCALAPPDATA 'Clawdi/bin'
           $launcher = Join-Path $launcherBin 'clawdi.cmd'
+          $protocolKey = 'HKCU:\Software\Classes\clawdi-desktop'
           $env:CLAWDI_DESKTOP_SMOKE_LOCAL_APP_DATA = $env:LOCALAPPDATA
           $process = Start-Process $installer -ArgumentList @('/S', "/D=$destination") -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw 'NSIS install failed' }
@@ -217,11 +221,14 @@ jobs:
             node apps/desktop/scripts/smoke-packaged.mjs "$destination/Clawdi.exe" $runtimeRoot welcome
             if ($LASTEXITCODE -ne 0) { throw 'Packaged smoke failed' }
             if (!(Test-Path -LiteralPath $launcher)) { throw 'Desktop did not install the CLI launcher' }
+            $command = (Get-Item -LiteralPath "$protocolKey\shell\open\command").GetValue('')
+            if ($command -notlike "*$destination\Clawdi.exe*") { throw "Desktop did not register clawdi-desktop links: $command" }
           } finally {
             $process = Start-Process "$destination/Uninstall Clawdi.exe" -ArgumentList '/S' -Wait -PassThru
             if ($process.ExitCode -ne 0) { throw 'NSIS uninstall failed' }
             if (Test-Path "$destination/Clawdi.exe") { throw 'NSIS left the application installed' }
             if (Test-Path -LiteralPath $launcher) { throw 'NSIS left the CLI launcher installed' }
+            if (Test-Path -LiteralPath $protocolKey) { throw 'NSIS left the clawdi-desktop link handler' }
             $environment = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')
             try {
               $userPath = [string]$environment.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)

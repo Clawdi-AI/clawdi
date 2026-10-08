@@ -11,10 +11,12 @@
  *   (https://www.w3.org/TR/appmanifest/#icon-masks) on a full-bleed field of
  *   the artwork's own red, so launcher masks of any shape keep it intact.
  *
- * PNGs use sharp's lossless zlib settings only, so the output is reproducible
- * from the repo. Run `bun run icons` after changing the artwork, then copy the
- * same files to clawdi-hosted's apps/web/public so both sites ship identical
- * icons.
+ * PNGs use sharp's lossless zlib settings only. Outputs are byte-identical in
+ * the verified generation environment (Linux x64, sharp 0.34.5, libvips 8.17.3);
+ * cross-platform byte reproducibility is unverified. Run `bun run icons` after
+ * changing the artwork, then copy the same files to clawdi-hosted's apps/web/public
+ * so both sites ship identical icons. Hosted verifies these copies via
+ * `apps/web/brand-icons.sha256`.
  */
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -90,8 +92,7 @@ async function generate() {
 		.composite([{ input: mask, blend: "dest-in" }])
 		.png()
 		.toBuffer();
-	const resize = (input: Buffer | string, size: number) =>
-		sharp(input).resize(size, size, { kernel: "lanczos3" });
+	const resize = (input: Buffer | string, size: number) => sharp(input).resize(size, size);
 	const write = async (file: string, data: Promise<Buffer> | Buffer) =>
 		writeFileSync(`${publicDir}${file}`, await data);
 

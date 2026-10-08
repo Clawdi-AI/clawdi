@@ -179,29 +179,7 @@ describe("inboxAcceptCommand", () => {
 		]);
 	});
 
-	it("rejects attachment mode without --agent before posting", async () => {
-		const { captured, restore } = mockFetch([
-			{
-				method: "POST",
-				path: "/v1/me/invitations/invite-mode/accept",
-				response: () => jsonResponse({}),
-			},
-		]);
-		try {
-			await expect(
-				inboxAcceptCommand(undefined, {
-					invite: "invite-mode",
-					useAs: "attached",
-				}),
-			).rejects.toThrow(/Pass --agent/);
-		} finally {
-			restore();
-		}
-
-		expect(captured).toEqual([]);
-	});
-
-	it("sends --use-as attached using project language", async () => {
+	it("links --agent as additional project context", async () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
@@ -224,7 +202,6 @@ describe("inboxAcceptCommand", () => {
 			await inboxAcceptCommand(undefined, {
 				invite: "invite-attached",
 				agent: ["agent-1"],
-				useAs: "attached",
 				json: true,
 			});
 		} finally {
@@ -239,29 +216,6 @@ describe("inboxAcceptCommand", () => {
 		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
 			"POST /v1/me/invitations/invite-attached/accept",
 		]);
-	});
-
-	it("rejects --use-as home before posting", async () => {
-		const { captured, restore } = mockFetch([
-			{
-				method: "POST",
-				path: "/v1/me/invitations/invite-home/accept",
-				response: () => jsonResponse({}),
-			},
-		]);
-		try {
-			await expect(
-				inboxAcceptCommand(undefined, {
-					invite: "invite-home",
-					agent: ["agent-1"],
-					useAs: "home",
-				}),
-			).rejects.toThrow(/fixed/);
-		} finally {
-			restore();
-		}
-
-		expect(captured).toEqual([]);
 	});
 
 	it("joins staged projects without pulling content and discloses ticket removal", async () => {
@@ -456,7 +410,7 @@ describe("inboxForgetCommand", () => {
 		const origLog = console.log;
 		console.log = () => {};
 		try {
-			await inboxForgetCommand("project-a");
+			await inboxForgetCommand("project-a", { yes: true });
 		} finally {
 			console.log = origLog;
 		}

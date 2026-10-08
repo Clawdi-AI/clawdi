@@ -18,6 +18,8 @@ import { usePaywall } from "@/platform/store/paywall-host";
 import { loadCreditsOffering } from "@/platform/store/revenuecat";
 import { type PurchaseErrorCode, storePurchaseError } from "@/platform/store/store-error";
 import { useMobileStore } from "@/platform/store/store-provider";
+import { refreshRecoveredWallet } from "@/platform/store/store-refresh";
+import { StoreNoticeText } from "./store-notice";
 
 /** Wallet reads that a store top-up can change. */
 function useRefreshWallet() {
@@ -35,26 +37,9 @@ function useRefreshWallet() {
 export function useStoreRecoveryRefresh() {
 	const { recovery } = useMobileStore();
 	const refresh = useRefreshWallet();
-	const funded = recovery.some(
-		(outcome) => outcome.status === "funding_applied" || outcome.status === "submitted",
-	);
 	useEffect(() => {
-		if (funded) void refresh();
-	}, [recovery, funded]);
-}
-
-function NoticeText({ notice }: { notice: StoreNotice }) {
-	const t = useI18n();
-	return (
-		<Text
-			accessibilityRole={notice.tone === "warning" ? "alert" : undefined}
-			className={
-				notice.tone === "success" ? "text-success-muted-foreground" : "text-muted-foreground"
-			}
-		>
-			{t(notice.key)}
-		</Text>
-	);
+		void refreshRecoveredWallet(recovery, refresh);
+	}, [recovery]);
 }
 
 /**
@@ -95,7 +80,7 @@ export function CheckPendingPurchasesAction() {
 			>
 				<Text>{t(action.busy ? "store.checkingPending" : "store.checkPending")}</Text>
 			</Button>
-			{notice ? <NoticeText notice={notice} /> : null}
+			{notice ? <StoreNoticeText notice={notice} /> : null}
 		</AppView>
 	);
 }
@@ -154,7 +139,7 @@ export function AddCreditsAction({
 			{!available ? (
 				<Text className="text-muted-foreground">{t("store.unavailable")}</Text>
 			) : notice ? (
-				<NoticeText notice={notice} />
+				<StoreNoticeText notice={notice} />
 			) : action.error ? (
 				<Text accessibilityRole="alert" className="text-muted-foreground">
 					{t("store.failed")}

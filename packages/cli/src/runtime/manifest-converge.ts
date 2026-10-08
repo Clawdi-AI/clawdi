@@ -143,7 +143,6 @@ import { runtimeImpactRevision, runtimeProviderRevision } from "./runtime-impact
 import {
 	installOfficialRuntimeService,
 	planOfficialRuntimeServices,
-	prepareOfficialRuntimeServiceDependencies,
 	publishRetainedOpenClawEnvironment,
 	type RuntimeSystemdStaleFilePlan,
 	type RuntimeSystemdUserProgram,
@@ -1213,7 +1212,6 @@ interface RuntimeActivationPlan {
 	publishSystemdUnits: (
 		deferredRuntimeUserUnitNames?: readonly string[],
 	) => ReturnType<typeof writeRuntimeSystemdState>;
-	withdrawHermesDashboard: (error: string) => ReturnType<typeof writeRuntimeSystemdState>;
 }
 
 function prepareRuntimeActivation(
@@ -1290,26 +1288,6 @@ function prepareRuntimeActivation(
 		systemdUnits,
 		officialServicePlan,
 		publishSystemdUnits,
-		withdrawHermesDashboard: (error) => {
-			// The dashboard is optional. Unpublish only its unit so the gateway still starts.
-			state.runtimeSystemdUserPrograms = state.runtimeSystemdUserPrograms.filter(
-				(program) => program.runtime !== "hermes" || program.service !== "dashboard",
-			);
-			withdrawRuntimeService(state, "hermes", "dashboard", error);
-			const republished = publishSystemdUnits(deferredUnitNames);
-			const stale = republished.staleFiles;
-			state.staleSystemdFiles = {
-				platformFiles: [
-					...new Set([...state.staleSystemdFiles.platformFiles, ...stale.platformFiles]),
-				],
-				userFiles: [...new Set([...state.staleSystemdFiles.userFiles, ...stale.userFiles])],
-				systemUnits: [...new Set([...state.staleSystemdFiles.systemUnits, ...stale.systemUnits])],
-				userUnits: [...new Set([...state.staleSystemdFiles.userUnits, ...stale.userUnits])],
-			};
-			const staleErrors = removeStaleRuntimeSystemdFiles(stale);
-			if (staleErrors.length > 0) throw new Error(staleErrors.join("; "));
-			return republished;
-		},
 	};
 }
 
@@ -1338,16 +1316,6 @@ function activateRuntimeServices(
 			throw new Error("transparent-egress system prerequisites did not reach readiness");
 		}
 	}
-	const dependencyError = prepareOfficialRuntimeServiceDependencies(
-		state.runtimeSystemdUserPrograms,
-		officialServicePlan,
-		paths,
-		systemdUnits.egressSidecarActive ? paths.egressSystemCaFile : undefined,
-	);
-	// Only the optional dashboard build is a prerequisite; its failure withdraws the dashboard.
-	if (dependencyError)
-		activationPlan.systemdUnits = activationPlan.withdrawHermesDashboard(dependencyError);
-
 	for (const item of officialServicePlan.pending) {
 		const error = installOfficialRuntimeService(item, paths, hostedRuntimeContract.identity);
 		if (error) throw new Error(error);
