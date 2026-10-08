@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -12,6 +13,8 @@ from sqlalchemy import delete, func, select, text, update
 from app.core.database import async_session_factory
 from app.models.distributed_state import SharedRateLimitBucket, SyncSubscriptionLease
 from app.models.user import User
+
+log = logging.getLogger(__name__)
 
 _RATE_LIMIT_BUCKET_CREATION_LOCK = int.from_bytes(
     hashlib.sha256(b"clawdi-shared-rate-limit-buckets-v1").digest()[:8],
@@ -133,14 +136,20 @@ async def acquire_sync_subscription_lease(
     max_per_user: int,
     max_per_key: int,
     ttl: timedelta,
+    evict_bound_key_min_age: timedelta | None = None,
     now: datetime | None = None,
 ) -> UUID | None:
-    """Acquire a short, renewable SSE slot under the authoritative user row lock."""
+    """Acquire an SSE slot under the authoritative user row lock.
+
+    Opt-in bound-key eviction replaces the oldest eligible leases at the key
+    cap. The per-user cap always rejects excess subscriptions without eviction.
+    """
     if max_per_user <= 0 or max_per_key <= 0 or ttl <= timedelta(0):
         raise ValueError("subscription lease bounds must be positive")
 
     current = now or datetime.now(UTC)
     lease_id = uuid4()
+    evicted_leases: list[SyncSubscriptionLease] = []
     async with async_session_factory() as db:
         user_exists = (
             await db.execute(select(User.id).where(User.id == user_id).with_for_update())
@@ -177,8 +186,36 @@ async def acquire_sync_subscription_lease(
                 )
             ).scalar_one()
             if active_for_key >= max_per_key:
-                await db.commit()
-                return None
+                if evict_bound_key_min_age is None:
+                    await db.commit()
+                    return None
+                needed = active_for_key - max_per_key + 1
+                evicted_leases = list(
+                    (
+                        await db.scalars(
+                            select(SyncSubscriptionLease)
+                            .where(
+                                SyncSubscriptionLease.user_id == user_id,
+                                SyncSubscriptionLease.bound_api_key_id == bound_api_key_id,
+                                SyncSubscriptionLease.created_at
+                                <= current - evict_bound_key_min_age,
+                            )
+                            .order_by(
+                                SyncSubscriptionLease.created_at,
+                                SyncSubscriptionLease.id,
+                            )
+                            .limit(needed)
+                        )
+                    ).all()
+                )
+                if len(evicted_leases) < needed:
+                    await db.commit()
+                    return None
+                await db.execute(
+                    delete(SyncSubscriptionLease).where(
+                        SyncSubscriptionLease.id.in_([lease.id for lease in evicted_leases])
+                    )
+                )
 
         db.add(
             SyncSubscriptionLease(
@@ -186,9 +223,16 @@ async def acquire_sync_subscription_lease(
                 user_id=user_id,
                 bound_api_key_id=bound_api_key_id,
                 expires_at=current + ttl,
+                created_at=current,
             )
         )
         await db.commit()
+    for lease in evicted_leases:
+        log.info(
+            "sync events: evicted oldest bound-key subscription lease id=%s age=%.1fs",
+            str(lease.id)[:8],
+            (current - lease.created_at).total_seconds(),
+        )
     return lease_id
 
 

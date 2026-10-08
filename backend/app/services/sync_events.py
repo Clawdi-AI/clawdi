@@ -152,20 +152,12 @@ class _Subscriber:
     # owned by the event's user.
     environment_id: UUID | None = None
     # Identity of the api_key (or None for Clerk JWT) that owns
-    # this subscription. Used for per-key fan-out caps so a leaked
-    # deploy key can't open all `max_per_user` slots and starve
-    # legit dashboard tabs.
+    # this subscription. Connection caps are enforced by PostgreSQL leases.
     api_key_id: UUID | None = None
 
 
 # Per-user list of subscribers, one per active SSE connection.
 _subscribers: dict[UUID, list[_Subscriber]] = defaultdict(list)
-# Cap-and-subscribe must be atomic: without a lock, two concurrent
-# handshakes both pass the count check, both subscribe, and the
-# user is silently above the cap. Race-free via a synchronous
-# lock around read+write — these calls don't await between
-# count and append.
-_subscribe_lock = asyncio.Lock()
 
 # Visibility and revocation mutations wake only streams owned by the affected
 # user. PostgreSQL carries the signal across workers; this keyed process-local
@@ -189,48 +181,22 @@ async def try_subscribe(
     user_id: UUID,
     visible_project_ids: frozenset[UUID],
     *,
-    max_per_user: int,
     api_key_id: UUID | None = None,
-    is_env_bound: bool = False,
     environment_id: UUID | None = None,
-    max_per_key: int = 3,
-) -> tuple[SyncEventQueue, _Subscriber] | None:
-    """Atomic check-and-subscribe. Returns `(queue, subscriber)` on
-    success, `None` if EITHER the per-user OR the per-key cap is
-    at limit. The subscriber handle is exposed so the SSE route
-    can update its `visible_project_ids` field as the user's project
-    view changes.
+) -> tuple[SyncEventQueue, _Subscriber]:
+    """Register a subscriber after its authoritative PostgreSQL lease is acquired.
 
-    Per-key cap defends against a leaked Agent API key
-    opening all `max_per_user` slots. `max_per_key` defaults to 3:
-    one daemon skill-sync stream, one runtime-watch invalidation
-    stream, and one debug/diagnostic stream. Bypasses:
-      - Clerk JWT (api_key_id=None)
-      - Unbound personal CLI keys (`is_env_bound=False`) — multi-
-        agent setups run `clawdi daemon install --all` which spawns
-        N daemons, all sharing the user's device-flow auth key
-        from `~/.clawdi/auth.json`. A small fixed per-key cap would
-        silently break realtime sync once the user registers more
-        agents than the cap allows.
-    Bound deploy keys remain capped by both limits. The per-user
-    cap is still authoritative when aggregate connections across
-    keys reach `max_per_user`, even if a key has fewer than three.
+    An evicted stream may remain registered until its next lease refresh, so
+    process-local counts must not reject its replacement. The handle lets the
+    SSE route update project visibility as the user's view changes.
     """
-    async with _subscribe_lock:
-        existing = _subscribers.get(user_id, [])
-        if len(existing) >= max_per_user:
-            return None
-        if api_key_id is not None and is_env_bound:
-            existing_for_key = sum(1 for s in existing if s.api_key_id == api_key_id)
-            if existing_for_key >= max_per_key:
-                return None
-        sub = _Subscriber(
-            visible_project_ids=visible_project_ids,
-            environment_id=environment_id,
-            api_key_id=api_key_id,
-        )
-        _subscribers[user_id].append(sub)
-        return sub.queue, sub
+    sub = _Subscriber(
+        visible_project_ids=visible_project_ids,
+        environment_id=environment_id,
+        api_key_id=api_key_id,
+    )
+    _subscribers[user_id].append(sub)
+    return sub.queue, sub
 
 
 def subscribe(
@@ -239,9 +205,10 @@ def subscribe(
     *,
     environment_id: UUID | None = None,
 ) -> SyncEventQueue:
-    """Non-atomic subscribe — exposed for tests and callers that
-    don't need to enforce a cap. Production SSE callers use
-    `try_subscribe` for atomic cap-and-subscribe."""
+    """Register a queue for tests and internal callers.
+
+    Production SSE callers acquire a PostgreSQL lease before `try_subscribe`.
+    """
     sub = _Subscriber(
         visible_project_ids=visible_project_ids,
         environment_id=environment_id,
