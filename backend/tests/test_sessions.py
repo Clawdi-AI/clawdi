@@ -1244,7 +1244,7 @@ async def test_sessions_list_supports_pagination_and_search(client: httpx.AsyncC
     assert len(items) > 0
     assert all("Ship feature" in s["summary"] for s in items)
 
-    # Invalid sort key should be rejected by the regex-constrained param.
+    # Invalid sort key should be rejected by the enum-constrained param.
     r = await client.get("/v1/sessions?sort=summary")
     assert r.status_code == 422
 
@@ -1252,6 +1252,52 @@ async def test_sessions_list_supports_pagination_and_search(client: httpx.AsyncC
     # `input_tokens + output_tokens` so the display column and sort agree.
     r = await client.get("/v1/sessions?sort=tokens&order=desc&page_size=5")
     assert r.status_code == 200
+
+
+def test_sessions_list_openapi_sort_enums():
+    from app.main import app
+
+    parameters = {
+        param["name"]: param["schema"]
+        for param in app.openapi()["paths"]["/v1/sessions"]["get"]["parameters"]
+        if param["in"] == "query"
+    }
+    assert parameters["sort"]["enum"] == [
+        "last_activity_at",
+        "updated_at",
+        "started_at",
+        "message_count",
+        "tokens",
+        "relevance",
+    ]
+    assert parameters["sort"]["default"] == "last_activity_at"
+    assert parameters["order"]["enum"] == ["asc", "desc"]
+    assert parameters["order"]["default"] == "desc"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/v1/sessions", "/api/sessions"])
+@pytest.mark.parametrize(
+    "sort", ["last_activity_at", "updated_at", "started_at", "message_count", "tokens", "relevance"]
+)
+async def test_sessions_list_accepts_sort_enums(client: httpx.AsyncClient, path: str, sort: str):
+    for order in ("asc", "desc"):
+        response = await client.get(path, params={"sort": sort, "order": order})
+        assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/v1/sessions", "/api/sessions"])
+@pytest.mark.parametrize(
+    ("parameter", "value"),
+    [("sort", "last_activity"), ("sort", "summary"), ("order", "descending")],
+)
+async def test_sessions_list_rejects_invalid_sort_enums(
+    client: httpx.AsyncClient, path: str, parameter: str, value: str
+):
+    response = await client.get(path, params={parameter: value})
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["query", parameter]
 
 
 @pytest.mark.asyncio

@@ -2803,11 +2803,10 @@ async def list_sessions(
             "mute them visually."
         ),
     ),
-    sort: str = Query(
-        default="last_activity_at",
-        pattern=r"^(last_activity_at|updated_at|started_at|message_count|tokens|relevance)$",
-    ),
-    order: str = Query(default="desc", pattern=r"^(asc|desc)$"),
+    sort: Literal[
+        "last_activity_at", "updated_at", "started_at", "message_count", "tokens", "relevance"
+    ] = Query(default="last_activity_at"),
+    order: Literal["asc", "desc"] = Query(default="desc"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=200),
     # Date-range filters operate on the same column the page sorted

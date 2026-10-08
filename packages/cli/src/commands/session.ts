@@ -4,7 +4,12 @@ import chalk from "chalk";
 import type { RawSession } from "../adapters/base";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
-import type { SessionDetail, SessionListItem, SessionMessage } from "../lib/api-schemas";
+import type {
+	SessionDetail,
+	SessionListItem,
+	SessionListQuery,
+	SessionMessage,
+} from "../lib/api-schemas";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
 import { parsePositiveInteger, requireUuid } from "../lib/cli-options";
 import { emit, wantsJson } from "../lib/command-output";
@@ -210,18 +215,17 @@ async function sessionListUploaded(opts: SessionListOpts): Promise<void> {
 	requireAuth();
 	const api = new ApiClient();
 	const agentId = opts.agentId ? requireUuid(opts.agentId, "Agent ID") : undefined;
+	const query: SessionListQuery = {
+		agent: opts.agent || undefined,
+		environment_id: agentId,
+		since: cloudSessionSince(opts.since),
+		page_size: cloudSessionLimit(opts.limit),
+		sort: "last_activity_at",
+		order: "desc",
+	};
 	const page = unwrap(
 		await api.GET("/v1/sessions", {
-			params: {
-				query: {
-					agent: opts.agent || undefined,
-					environment_id: agentId,
-					since: cloudSessionSince(opts.since),
-					page_size: cloudSessionLimit(opts.limit),
-					sort: "last_activity",
-					order: "desc",
-				},
-			},
+			params: { query },
 		}),
 	);
 	if (page.items.length < page.total) {
@@ -275,18 +279,17 @@ export async function sessionSearch(query: string, opts: CloudSessionOpts = {}):
 	const trimmedQuery = requireSearchQuery(query, "Session");
 
 	const api = new ApiClient();
+	const searchQuery: SessionListQuery = {
+		q: trimmedQuery,
+		agent: opts.agent || undefined,
+		since: cloudSessionSince(opts.since),
+		page_size: cloudSessionLimit(opts.limit),
+		sort: "relevance",
+		order: "desc",
+	};
 	const page = unwrap(
 		await api.GET("/v1/sessions", {
-			params: {
-				query: {
-					q: trimmedQuery,
-					agent: opts.agent || undefined,
-					since: cloudSessionSince(opts.since),
-					page_size: cloudSessionLimit(opts.limit),
-					sort: "relevance",
-					order: "desc",
-				},
-			},
+			params: { query: searchQuery },
 		}),
 	);
 	if (page.items.length < page.total) {

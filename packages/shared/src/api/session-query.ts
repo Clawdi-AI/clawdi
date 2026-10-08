@@ -28,7 +28,7 @@ export function normalizeSessionListQuery(
 	const normalized: NonNullable<SessionListQuery> = {
 		page: query.page ?? 1,
 		page_size: query.page_size ?? 25,
-		sort: cleanString(query.sort) ?? "last_activity_at",
+		sort: query.sort ?? "last_activity_at",
 		order: query.order === "asc" ? "asc" : "desc",
 	};
 	const q = cleanString(query.q);

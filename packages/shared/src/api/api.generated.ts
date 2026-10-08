@@ -13489,8 +13489,8 @@ export interface operations {
                 has_pr?: boolean | null;
                 /** @description Filter cron/heartbeat sessions. Automated = summary starts with 'Cron:' or '[' — the same heuristic the dashboard feed uses to mute them visually. */
                 automated?: boolean | null;
-                sort?: string;
-                order?: string;
+                sort?: "last_activity_at" | "updated_at" | "started_at" | "message_count" | "tokens" | "relevance";
+                order?: "asc" | "desc";
                 page?: number;
                 page_size?: number;
                 /** @description Filter to last_activity_at >= since */

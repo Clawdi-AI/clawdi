@@ -141,7 +141,7 @@ describe("Cloud read client over HTTP", () => {
 						automated: false,
 						has_pr: true,
 						min_messages: 0,
-						sort: " relevance ",
+						sort: "relevance",
 						order: "asc",
 					}),
 				),
