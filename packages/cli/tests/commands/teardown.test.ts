@@ -1,22 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import {
-	chmodSync,
-	cpSync,
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { AgentType } from "../../src/adapters/agent-types";
-import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
 import { teardown } from "../../src/commands/teardown";
-import { managedSkillDirectoryDigest } from "../../src/runtime/hosted-bundled-skill";
 import {
 	managedSkillReservationState,
-	migrateLegacyLocalSetupSkill,
 	reserveManagedSkill,
 } from "../../src/runtime/managed-skill-reservation";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
@@ -73,12 +62,6 @@ function setup(
 			version: 1,
 			digest: "a".repeat(64),
 			manager: "local-setup",
-		});
-		migrateLegacyLocalSetupSkill({
-			targetDir: dirname(skillPath),
-			id: "clawdi",
-			version: 1,
-			digest: managedSkillDirectoryDigest,
 		});
 	}
 
@@ -204,36 +187,6 @@ describe("teardown — flag behavior", () => {
 		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
 	});
 
-	it("adopts and removes a genuine pre-ledger bundle on direct teardown only once", async () => {
-		const { skillPath } = setup("claude_code", { managed: false });
-		const target = dirname(skillPath);
-		rmSync(target, { recursive: true, force: true });
-		cpSync(resolve(import.meta.dir, "../fixtures/legacy-local-clawdi"), target, {
-			recursive: true,
-		});
-
-		await teardown({ agent: "claude_code", yes: true, keepMcp: true });
-
-		expect(existsSync(target)).toBe(false);
-		expect(
-			migrateLegacyLocalSetupSkill({
-				targetDir: target,
-				id: "clawdi",
-				version: 1,
-				digest: managedSkillDirectoryDigest,
-			}),
-		).toBe("already_migrated");
-
-		seedAuthAndEnv(tmpHome, "claude_code");
-		mkdirSync(target, { recursive: true });
-		writeFileSync(skillPath, "---\nname: clawdi\ndescription: User Skill\n---\n");
-		const adapter = new ClaudeCodeAdapter();
-		expect((await adapter.skills.collect()).map((skill) => skill.skillKey)).toContain("clawdi");
-		await teardown({ agent: "claude_code", yes: true, keepMcp: true });
-		expect(existsSync(skillPath)).toBe(true);
-		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
-	});
-
 	it("preserves an unproven custom same-name Skill on direct teardown", async () => {
 		const { skillPath } = setup("claude_code", { managed: false });
 		const target = dirname(skillPath);
@@ -243,14 +196,6 @@ describe("teardown — flag behavior", () => {
 
 		expect(existsSync(skillPath)).toBe(true);
 		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
-		expect(
-			migrateLegacyLocalSetupSkill({
-				targetDir: target,
-				id: "clawdi",
-				version: 1,
-				digest: managedSkillDirectoryDigest,
-			}),
-		).toBe("already_migrated");
 	});
 
 	it("releases a stale reservation even when the managed target is already absent", async () => {
@@ -264,14 +209,6 @@ describe("teardown — flag behavior", () => {
 		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, "SKILL.md"), "# Future user Skill\n");
-		expect(
-			migrateLegacyLocalSetupSkill({
-				targetDir: target,
-				id: "clawdi",
-				version: 1,
-				digest: managedSkillDirectoryDigest,
-			}),
-		).toBe("already_migrated");
 		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
 	});
 

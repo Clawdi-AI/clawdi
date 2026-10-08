@@ -12,7 +12,7 @@ import {
 	syncRuntimeSnapshotDirectory,
 	writeRuntimeManifestSnapshot,
 } from "./manifest-source";
-import { legacyRuntimeManifestPaths, type RuntimePaths } from "./paths";
+import type { RuntimePaths } from "./paths";
 import { runningAsRoot, runtimeEgressGid, runtimeEgressUid } from "./runtime-user-command";
 import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 
@@ -24,13 +24,9 @@ export function writeLastGoodManifest(
 	excludedSecretRefs: readonly string[] = egressSidecarOnlySecretRefs(secretScopeManifest),
 ): string | null {
 	if (secretScopeManifest.recovery.cacheManifest === false) {
-		for (const candidate of paths.mode === "hosted"
-			? [paths, legacyRuntimeManifestPaths(paths)]
-			: [paths]) {
-			rmSync(candidate.manifestLastGood, { force: true });
-			rmSync(candidate.managedSecretCacheFile, { force: true });
-			syncRuntimeSnapshotDirectory(paths, dirname(candidate.manifestLastGood));
-		}
+		rmSync(paths.manifestLastGood, { force: true });
+		rmSync(paths.managedSecretCacheFile, { force: true });
+		syncRuntimeSnapshotDirectory(paths, dirname(paths.manifestLastGood));
 		pruneRuntimeSnapshots(paths);
 		return null;
 	}

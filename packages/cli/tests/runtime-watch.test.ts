@@ -4,7 +4,6 @@ import { createHash } from "node:crypto";
 
 import {
 	chmodSync,
-	copyFileSync,
 	existsSync,
 	mkdirSync,
 	readFileSync,
@@ -34,7 +33,7 @@ import { HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE } from "../src/runtime/manifest-sou
 
 import { readHostedRuntimeObserved } from "../src/runtime/observed";
 
-import { getRuntimePaths, legacyRuntimeManifestPaths } from "../src/runtime/paths";
+import { getRuntimePaths } from "../src/runtime/paths";
 
 import {
 	HERMES_DASHBOARD_BUILD_REVISION_FILE,
@@ -1722,16 +1721,6 @@ exit 64
 			} finally {
 				initial.restore();
 			}
-			// Emulate an upgrade from 0.14.82: only its exact legacy pair survives.
-			const legacy = legacyRuntimeManifestPaths(paths);
-			for (const [current, old] of [
-				[paths.manifestLastGood, legacy.manifestLastGood],
-				[paths.managedSecretCacheFile, legacy.managedSecretCacheFile],
-			]) {
-				copyFileSync(current, old);
-				rmSync(current);
-			}
-			rmSync(dirname(paths.manifestLastGood), { recursive: true, force: true });
 			const baselineAuthority = readFileSync(paths.appliedState, "utf8");
 			const baselineRevision = systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"));
 			const baselineMitmSecrets = JSON.parse(
@@ -1768,12 +1757,6 @@ exit 64
 				expect(watchFetch.captured[0].headers["if-none-match"]).toBe(stableBundleEtag);
 				const event = JSON.parse(logs[0]);
 				expect(event.status).toBe(responseStatus === 200 && !hotApply ? "applied" : "not_modified");
-				expect(readFileSync(paths.manifestLastGood, "utf8")).toBe(
-					readFileSync(legacy.manifestLastGood, "utf8"),
-				);
-				expect(readFileSync(paths.managedSecretCacheFile, "utf8")).toBe(
-					readFileSync(legacy.managedSecretCacheFile, "utf8"),
-				);
 				if (responseStatus === 200 && !hotApply)
 					expect(readFileSync(paths.appliedState, "utf8")).not.toBe(baselineAuthority);
 				else expect(readFileSync(paths.appliedState, "utf8")).toBe(baselineAuthority);
@@ -1800,17 +1783,15 @@ exit 64
 				expect(systemdEnvDigest(readSystemdEnvFile(paths, "openclaw-gateway"))).toBe(
 					baselineRevision,
 				);
-				// Re-run the same 304 with exact legacy history but a blocked durable destination.
+				// Re-run the same 304 with a blocked durable destination.
 				rmSync(dirname(paths.manifestLastGood), { recursive: true, force: true });
 				writeFileSync(dirname(paths.manifestLastGood), "blocked", { mode: 0o600 });
 				logs.length = 0;
 				await runtimeWatch({ once: true, json: true });
 				const failed = JSON.parse(logs[0]);
 				expect(failed.status).toBe("error");
-				if (responseStatus !== 200 || hotApply)
-					expect(JSON.stringify(failed)).toContain(
-						"could not persist verified committed runtime snapshot",
-					);
+				if (responseStatus !== 200 && !hotApply)
+					expect(JSON.stringify(failed)).toContain("could not persist runtime snapshot");
 				if (responseStatus === 200 && !hotApply)
 					expect(readFileSync(paths.appliedState, "utf8")).not.toBe(baselineAuthority);
 				else expect(readFileSync(paths.appliedState, "utf8")).toBe(baselineAuthority);

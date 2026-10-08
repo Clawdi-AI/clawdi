@@ -103,14 +103,12 @@ describe("share-tokens.json", () => {
 		expect(readFileSync(path, "utf8")).toBe("not-json");
 	});
 
-	it("round-trips upgraded_at + last_seen_skill_keys", async () => {
+	it("preserves current share metadata", async () => {
 		await addToken({
 			...sample,
-			upgraded_at: "2026-05-12T10:00:00Z",
 			last_seen_skill_keys: ["git-tools", "k8s-helpers"],
 		});
 		const [restored] = listTokens();
-		expect(restored.upgraded_at).toBe("2026-05-12T10:00:00Z");
 		expect(restored.last_seen_skill_keys).toEqual(["git-tools", "k8s-helpers"]);
 	});
 
@@ -175,7 +173,7 @@ describe("share-tokens.json", () => {
 		expect(restored.project_name).toBe("Legacy Toolkit");
 		expect(restored).not.toHaveProperty("scope_id");
 		expect(restored).not.toHaveProperty("scope_name");
-		await addToken({ ...restored, upgraded_at: "2026-05-12T11:00:00Z" });
+		await addToken(restored);
 
 		const raw = JSON.parse(readFileSync(path, "utf-8")) as {
 			tokens: Array<Record<string, unknown>>;

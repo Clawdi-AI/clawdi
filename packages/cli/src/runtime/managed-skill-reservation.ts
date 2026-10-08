@@ -21,24 +21,6 @@ const LEDGER_FILE = "managed-skills.json";
 const LEDGER_SCHEMA = "clawdi.managedSkillReservations.v1";
 const MANAGED_SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
-// Exact local bundled Skill trees shipped by published CLI releases before the
-// ownership ledger. Pre-ledger installs had no marker, so content is the only
-// durable identity proof available for one-time adoption.
-// SUNSET: remove with the local setup migration after its supported upgrade window.
-const LEGACY_LOCAL_SETUP_SKILL_DIGESTS = new Set([
-	"d71c123874e7b43b5d182bf9367af372dc3e3a5c9ed1f0b273478a06204b1299",
-	"aa26ff9fe7784855e220aa35a7c0e84c131b5c7e470b308c9faab1bcd3e77079",
-	"2ca7b416cc72e101d1a117eda67043c31043bcbe6987ce8f52f797042bfde3f9",
-	"0d4a6e0091493116211bbfd767ede540b510f627138c4e6714c1f3209ffa881c",
-	"3337f4aca269a9ff3fd5e1b086607092052799bc88ecb599da57b9888f4d9230",
-	"f8b4f8a999a46c7599771cda089d6d056c9abe65dc8b37411fa8f2080a13b9f6",
-	"4f635dd155cb3a67a2955c5a83954b24514d8e40c5d72a36e2e3c60f4e495ca1",
-	"cfce9adc538b4538829a23767fc171db62e474e28fd89ef5ce494b26223d31a0",
-	"4aee715a987cad84716ca71a6e1d7da80e9c1eca103c0c41aefdee31ed77974d",
-	"a6114f592aca24f0cd556c6929980151e83f062759e484771dca87fb74ab21ca",
-	"af4fff56451253a3d9f6ab1b1c9dbf6dceeba0ff7a22707eed668b7fdee75b57",
-	"27230fda71e178f7301bec27e428047558321afd71ec6d1ebaf8ea8a9659f5e4",
-]);
 
 export type ManagedSkillReservationManager = "hosted-manifest" | "local-setup";
 
@@ -64,7 +46,6 @@ interface ManagedSkillReservationLedger {
 	schemaVersion: typeof LEDGER_SCHEMA;
 	reservations: Record<string, ManagedSkillReservation>;
 	pendingReservations: Record<string, PendingManagedSkillReservation>;
-	localSetupMigrations: Record<string, { target: string; id: string }>;
 }
 
 type PendingManagedSkillReservation = ManagedSkillReservation;
@@ -91,7 +72,6 @@ function emptyLedger(): ManagedSkillReservationLedger {
 		schemaVersion: LEDGER_SCHEMA,
 		reservations: {},
 		pendingReservations: {},
-		localSetupMigrations: {},
 	};
 }
 
@@ -141,8 +121,7 @@ function readLedger(path: string): ManagedSkillReservationLedger {
 		!isRecord(value) ||
 		value.schemaVersion !== LEDGER_SCHEMA ||
 		!isRecord(value.reservations) ||
-		(value.pendingReservations !== undefined && !isRecord(value.pendingReservations)) ||
-		(value.localSetupMigrations !== undefined && !isRecord(value.localSetupMigrations))
+		(value.pendingReservations !== undefined && !isRecord(value.pendingReservations))
 	) {
 		throw new Error("managed Skill ownership state is invalid");
 	}
@@ -156,21 +135,7 @@ function readLedger(path: string): ManagedSkillReservationLedger {
 		const reservation = parseReservation(target, raw);
 		if (reservation) pendingReservations[target] = reservation;
 	}
-	const localSetupMigrations: Record<string, { target: string; id: string }> = {};
-	for (const [target, raw] of Object.entries(value.localSetupMigrations ?? {})) {
-		if (
-			!isRecord(raw) ||
-			raw.target !== target ||
-			resolve(target) !== target ||
-			typeof raw.id !== "string" ||
-			basename(target) !== raw.id ||
-			!MANAGED_SKILL_ID_PATTERN.test(raw.id)
-		) {
-			throw new Error("managed Skill ownership state is invalid");
-		}
-		localSetupMigrations[target] = { target, id: raw.id };
-	}
-	return { schemaVersion: LEDGER_SCHEMA, reservations, pendingReservations, localSetupMigrations };
+	return { schemaVersion: LEDGER_SCHEMA, reservations, pendingReservations };
 }
 
 function writeLedger(path: string, ledger: ManagedSkillReservationLedger): void {
@@ -316,60 +281,6 @@ export function mutateUserSkillTarget<T>(targetDir: string, skillId: string, mut
 		return withRuntimeConvergeLock(getRuntimePaths({ mode: "hosted" }), commit);
 	}
 	return withPrivateDirectoryLockSync(join(getClawdiDir(), "locks", "managed-skills.lock"), commit);
-}
-
-export function migrateLegacyLocalSetupSkill(input: {
-	targetDir: string;
-	id: string;
-	version: number;
-	digest: (targetDir: string) => string;
-}): "adopted" | "already_migrated" | "absent" | "unmanaged" | "hosted" {
-	if (detectRuntimeMode() === "hosted") return "hosted";
-	const path = ledgerPath();
-	const target = resolve(input.targetDir);
-	if (
-		input.id !== "clawdi" ||
-		basename(target) !== input.id ||
-		!MANAGED_SKILL_ID_PATTERN.test(input.id) ||
-		!Number.isSafeInteger(input.version) ||
-		input.version <= 0
-	) {
-		throw new Error("managed Skill migration identity is invalid");
-	}
-	return withLedgerWriteLock("local-setup", () => {
-		const ledger = readLedger(path);
-		if (ledger.localSetupMigrations[target]) return "already_migrated";
-		const existing = ledger.reservations[target];
-		let outcome: "adopted" | "absent" | "unmanaged" = "absent";
-		if (!existing && existsSync(target)) {
-			let digest: string | undefined;
-			try {
-				digest = input.digest(target);
-			} catch {
-				// Unsupported entries cannot prove legacy bundled identity. Complete
-				// migration without claiming user-owned content so scans can proceed.
-				outcome = "unmanaged";
-			}
-			if (digest !== undefined && !SHA256_PATTERN.test(digest)) {
-				throw new Error("managed Skill migration digest is invalid");
-			}
-			if (digest !== undefined && LEGACY_LOCAL_SETUP_SKILL_DIGESTS.has(digest)) {
-				ledger.reservations[target] = {
-					target,
-					id: input.id,
-					version: input.version,
-					digest,
-					manager: "local-setup",
-				};
-				outcome = "adopted";
-			} else if (digest !== undefined) {
-				outcome = "unmanaged";
-			}
-		}
-		ledger.localSetupMigrations[target] = { target, id: input.id };
-		writeLedger(path, ledger);
-		return outcome;
-	});
 }
 
 export function reserveManagedSkill(input: {

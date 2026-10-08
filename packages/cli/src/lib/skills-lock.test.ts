@@ -56,11 +56,11 @@ function writeRaw(value: unknown): void {
 }
 
 describe("skills-lock projection authority", () => {
-	it("migrates v1 and v2 hashes as baselines without deletion authority", () => {
+	it("discards retired v1 and v2 lock shapes", () => {
 		writeRaw({ version: 1, skills: { alpha: { hash: "v1-hash" } } });
 		let state = readSkillProjectionState("claude_code", "agent-a", "project-a");
 		expect(state.claims.size).toBe(0);
-		expect(state.legacyBaselines.get("alpha")).toBe("v1-hash");
+		expect(readSkillsLock().skills).toEqual({});
 
 		writeFileSync(
 			lockPath(),
@@ -74,23 +74,7 @@ describe("skills-lock projection authority", () => {
 		);
 		state = readSkillProjectionState("claude_code", "agent-a", "project-a");
 		expect(state.claims.size).toBe(0);
-		expect(state.legacyBaselines.get("alpha")).toBe("v2-hash");
-		expect([...state.legacyBaselines.values()]).not.toContain("other-adapter");
-	});
-
-	it("keeps the most specific released baseline when legacy shapes coexist", () => {
-		writeRaw({
-			version: 2,
-			skills: {
-				alpha: { hash: "v1-hash" },
-				[skillCacheKey("claude_code", "alpha")]: { hash: "v2-agent-hash" },
-				"claude_code:project-a:alpha": { hash: "v2-project-hash" },
-			},
-		});
-
-		const state = readSkillProjectionState("claude_code", "agent-a", "project-a");
-		expect(state.claims.size).toBe(0);
-		expect(state.legacyBaselines.get("alpha")).toBe("v2-project-hash");
+		expect(readSkillsLock().skills).toEqual({});
 	});
 
 	it("records and reads claims only under the exact identity and Project fence", () => {
@@ -158,7 +142,7 @@ describe("skills-lock projection authority", () => {
 
 		const state = readSkillProjectionState("claude_code", "agent-a", "project-a");
 		expect(state.claims.size).toBe(0);
-		expect(state.legacyBaselines.get("alpha")).toBe("baseline-only");
+		expect(readSkillsLock().skills).toEqual({});
 	});
 
 	it("preserves a concurrently committed claim through a stale baseline write", () => {

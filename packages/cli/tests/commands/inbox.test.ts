@@ -177,35 +177,6 @@ describe("inboxAcceptCommand", () => {
 		expect(inboxFetch.captured.map((request) => `${request.method} ${request.path}`)).toEqual([
 			"GET /v1/me/invitations",
 		]);
-		const staged = findToken("project-shared");
-		expect(staged).toBeDefined();
-		if (!staged) throw new Error("Expected staged share fixture");
-		await addToken({ ...staged, upgraded_at: "2026-05-19T00:00:00.000Z" });
-		rmSync(join(tmpHome, ".clawdi", "auth.json"), { force: true });
-		const legacyFetch = mockFetch([]);
-		const legacyLines: string[] = [];
-		console.log = (...args: unknown[]) => legacyLines.push(args.map(String).join(" "));
-		try {
-			await inboxAcceptCommand(`https://clawdi.ai/share/${rawToken}`, {});
-			await inboxListCommand({});
-			await inboxAcceptCommand(`https://clawdi.ai/share/${rawToken}`, { json: true });
-			await inboxListCommand({ json: true });
-		} finally {
-			console.log = originalLog;
-			legacyFetch.restore();
-		}
-		const legacyOutput = legacyLines.join("\n");
-		expect(legacyOutput).toContain("was handled by an older Clawdi CLI");
-		expect(legacyOutput).toContain("No account or project membership was changed now.");
-		expect(legacyOutput).toContain("clawdi project list --shared-with-me");
-		expect(legacyOutput).toContain("Old local share records — cleanup only (1)");
-		expect(legacyOutput).toContain("No automatic action occurs for these records.");
-		expect(legacyOutput).toContain('"status": "legacy_local_share_record"');
-		expect(legacyOutput).not.toContain('"legacy_local_share_records": [');
-		expect(legacyOutput).toContain('"cleanup_command": "clawdi inbox forget project-shared"');
-		expect(legacyOutput).not.toContain("clawdi inbox join");
-		expect(legacyOutput).not.toContain(rawToken);
-		expect(legacyFetch.captured).toEqual([]);
 	});
 
 	it("rejects attachment mode without --agent before posting", async () => {

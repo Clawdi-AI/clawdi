@@ -35,7 +35,7 @@ import {
 	validateUnmanagedProviderSecretValues,
 } from "./manifest-contract";
 import { writeRuntimePrivateFileAtomic } from "./manifest-shared";
-import { legacyRuntimeManifestPaths, type RuntimePaths } from "./paths";
+import type { RuntimePaths } from "./paths";
 import {
 	canonicalSecretRefSchema,
 	normalizeSecretValues,
@@ -546,17 +546,7 @@ function loadLastGoodManifest(
 		}
 	}
 	const current = readLastGoodManifest(paths, requireOfflineBoot, applyContext);
-	if ("manifest" in current || paths.mode !== "hosted") return current;
-	const legacyPaths = legacyRuntimeManifestPaths(paths);
-	if (
-		legacyPaths.manifestLastGood === paths.manifestLastGood ||
-		!existsSync(legacyPaths.manifestLastGood)
-	)
-		return current;
-	const legacy = readLastGoodManifest(legacyPaths, requireOfflineBoot, applyContext);
-	return "manifest" in legacy
-		? legacy
-		: { ...current, errors: [...current.errors, ...legacy.errors] };
+	return current;
 }
 
 export function runtimeSnapshotPath(paths: RuntimePaths, sha256: string): string {
@@ -567,7 +557,6 @@ export function runtimeSnapshotPath(paths: RuntimePaths, sha256: string): string
 export function runtimeSnapshotExists(paths: RuntimePaths): boolean {
 	if (existsSync(paths.manifestLastGood)) return true;
 	if (paths.mode !== "hosted") return false;
-	if (existsSync(legacyRuntimeManifestPaths(paths).manifestLastGood)) return true;
 	const applied = readRuntimeAppliedState(paths);
 	return applied !== null && existsSync(runtimeSnapshotPath(paths, applied.contentIdentity.sha256));
 }
@@ -647,11 +636,7 @@ export function writeRuntimeManifestSnapshot(
 	secretValues: Record<string, string>,
 ): void {
 	try {
-		if (
-			paths.mode === "hosted" &&
-			paths.manifestLastGood !== legacyRuntimeManifestPaths(paths).manifestLastGood
-		) {
-			// Preserve an exact legacy/pair authority before replacing either mirror.
+		if (paths.mode === "hosted") {
 			const previous = loadCommittedRuntimeManifest(paths);
 			if ("manifest" in previous)
 				writeContentSnapshot(paths, previous.sourceBundle, previous.secretValues ?? {});

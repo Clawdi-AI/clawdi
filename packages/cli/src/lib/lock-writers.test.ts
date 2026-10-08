@@ -40,7 +40,19 @@ describe("writeSessionsLock", () => {
 
 		// Force the module to re-resolve HOME by importing inside the test.
 		const { writeSessionsLock } = await import("./sessions-lock");
-		writeSessionsLock({ version: 1, sessions: { "claude_code:abc": { hash: "x" } } });
+		writeSessionsLock({
+			version: 2,
+			sessions: {
+				"v2:abc": {
+					api_origin: "https://cloud.example",
+					environment_id: "env",
+					adapter: "claude_code",
+					source_session_key: "abc",
+					protocol: "snapshot-v1",
+					local_hash: "x",
+				},
+			},
+		});
 
 		expect(existsSync(clawdiDir)).toBe(true);
 		expect(existsSync(join(clawdiDir, "sessions-lock.json"))).toBe(true);
@@ -57,7 +69,12 @@ describe("writeSkillsLock", () => {
 		expect(existsSync(clawdiDir)).toBe(false);
 
 		const { writeSkillsLock } = await import("./skills-lock");
-		writeSkillsLock({ version: 2, skills: { "claude_code:foo": { hash: "x" } } });
+		writeSkillsLock({
+			version: 5,
+			skills: { "claude_code:foo": { hash: "x" } },
+			claims: {},
+			materializations: {},
+		});
 
 		expect(existsSync(clawdiDir)).toBe(true);
 		expect(existsSync(join(clawdiDir, "skills-lock.json"))).toBe(true);

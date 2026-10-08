@@ -1826,34 +1826,21 @@ only the subsequent applied-record commit promotes the next content. Successful
 commits remove obsolete content files. An interrupted write cannot promote a
 mixed pair or uncommitted snapshot.
 
-CLIs through 0.14.82 wrote the pair below `/var/cache/clawdi`. Pure readers try
-the SHA-selected snapshot, the durable compatibility pair, then the legacy
-pair, checking the same applied content hash, generation, apply generation and
-instance. Only a private, platform-owned exact legacy pair can be recovered.
-Convergence migrates it under its existing lock, including conditional watch
-304 responses; migration write failures are errors. Without exact history,
-watch fetches the full desired bundle to resolve cache policy and converge;
-it never claims to have migrated missing history.
+Hosted readers use the SHA-selected snapshot and the durable pair under
+`/var/lib/clawdi/committed-runtime`, checking the applied content hash,
+generation, apply generation, and instance. Older cache files under
+`/var/cache/clawdi` are not imported; an instance with only those files must
+fetch and converge a fresh manifest before it can recover offline state.
 
-`clawdi runtime verify --json` reports the selected snapshot in `manifestCache.path`
-and marks its `storage` as `durable`, `legacy`, or `local` (`null` without a verified
-candidate). Verification is read-only: a valid legacy snapshot still requires
-migration before rootfs replacement. Every Hosted candidate must satisfy the
-same private ownership, mode, and non-symlink checks as well as the content SHA.
-Public boot/watch status retains the non-secret logical path; use verification
-to inspect the selected physical snapshot path.
-
-Deploy the new reader and verify its durable snapshot **before** discarding a
-rootfs/cache. A recorded next-start CLI target alone does not migrate files.
-Missing old bytes (including already-stopped instances) cannot be recovered
-from native configuration or reconstructed from the current desired manifest.
-A successful new commit does not update the old disposable paths: an older CLI
-cannot read the durable location after cache loss, and may use surviving legacy
-files only when they still match its applied record. Keep the new reader for
-replacement/recovery; do not downgrade and assume channel ownership survived.
+`clawdi runtime verify --json` reports the selected snapshot in
+`manifestCache.path` and marks its `storage` as `durable` or `local` (`null`
+without a verified candidate). Verification is read-only. Every Hosted
+candidate must satisfy the same private ownership, mode, non-symlink, and
+content SHA checks. Public boot/watch status retains the non-secret logical
+path; use verification to inspect the selected physical snapshot path.
 
 `recovery.cacheManifest: false` commits the new authority before removing all
-snapshots and both pair locations. Deletion failure is reported and retried by
+snapshots and the durable pair. Deletion failure is reported and retried by
 subsequent convergence; retained old bytes no longer match the applied hash.
 `allowOfflineBoot` and exact current boot/apply identity still gate
 offline startup. Internal committed replay can recover previous channel

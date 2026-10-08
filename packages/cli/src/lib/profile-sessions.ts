@@ -13,7 +13,6 @@ import {
 import {
 	discoverAgentProfiles,
 	type LocalAgentProfile,
-	legacyProfileDiscovery,
 	parseProfileSessionKey,
 	profileDiscoveryWatchPaths,
 	profileSessionKey,
@@ -73,7 +72,7 @@ export function createProfileSync(
 	watchPaths(): string[];
 	sessions?: SessionModule;
 } {
-	let profiles = legacyProfileDiscovery(adapter).profiles;
+	let profiles: LocalAgentProfile[] = [];
 	let initialized = false;
 	let refreshing: Promise<void> | null = null;
 	let discoveryPaths = profileDiscoveryWatchPaths(adapter);
@@ -86,7 +85,7 @@ export function createProfileSync(
 	const attributed = new Map<string, Set<string>>();
 	let supported = false;
 	const fallback = () => {
-		profiles = legacyProfileDiscovery(adapter).profiles;
+		profiles = [];
 		supported = false;
 	};
 	const signature = async () => {

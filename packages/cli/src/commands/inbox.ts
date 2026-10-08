@@ -20,7 +20,7 @@ import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { isUuid } from "../lib/cli-options";
-import { commandMessage, commandResult, emitJson } from "../lib/command-output";
+import { commandResult, emitJson, message } from "../lib/command-output";
 import { getAuth, getConfig } from "../lib/config";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
@@ -126,23 +126,12 @@ function parseShareUpgradeResponse(value: unknown): ShareUpgradeResponse | null 
 }
 
 function localPendingShares(): ShareToken[] {
-	return listTokens().filter((token) => !token.upgraded_at);
-}
-
-function localLegacyShares(): ShareToken[] {
-	return listTokens().filter((token) => token.upgraded_at);
+	return listTokens();
 }
 
 function safeLocalShare(token: ShareToken): Omit<ShareToken, "token"> & { join_command: string } {
 	const { token: _rawToken, ...safe } = token;
 	return { ...safe, join_command: `clawdi inbox join ${token.project_id}` };
-}
-
-function safeLegacyLocalShare(
-	token: ShareToken,
-): Omit<ShareToken, "token"> & { cleanup_command: string } {
-	const { token: _rawToken, ...safe } = token;
-	return { ...safe, cleanup_command: `clawdi inbox forget ${token.project_id}` };
 }
 
 function renderLocalPendingShares(shares: ShareToken[], signedIn: boolean): void {
@@ -158,16 +147,6 @@ function renderLocalPendingShares(shares: ShareToken[], signedIn: boolean): void
 			),
 		);
 	}
-}
-
-function renderLegacyLocalShares(shares: ShareToken[]): void {
-	console.log(chalk.bold(`Old local share records — cleanup only (${shares.length}):`));
-	for (const share of shares) {
-		console.log(`  ${chalk.bold(share.project_name)}  ${chalk.gray(`(@${share.owner_handle})`)}`);
-		console.log(chalk.gray(`    project_id: ${share.project_id}`));
-		console.log(chalk.gray(`    Cleanup: clawdi inbox forget ${share.project_id}`));
-	}
-	console.log(chalk.gray("No automatic action occurs for these records."));
 }
 
 function normalizeAgentIds(values?: string[]): string[] {
@@ -217,7 +196,6 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 	const { apiUrl } = getConfig();
 	const auth = getAuth();
 	const localShares = localPendingShares();
-	const legacyLocalShares = localLegacyShares();
 
 	// Server invitations require auth. Local share records are always listed,
 	// but never joined or cleaned up as a side effect of opening the inbox.
@@ -227,14 +205,12 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 			process.exitCode = 4;
 			return;
 		}
-		if (localShares.length === 0 && legacyLocalShares.length === 0) {
+		if (localShares.length === 0) {
 			console.log("Nothing in your inbox.");
 			console.log(chalk.gray("Sign in with `clawdi auth login` to see server invitations."));
 			return;
 		}
 		if (localShares.length > 0) renderLocalPendingShares(localShares, false);
-		if (localShares.length > 0 && legacyLocalShares.length > 0) console.log();
-		if (legacyLocalShares.length > 0) renderLegacyLocalShares(legacyLocalShares);
 		console.log();
 		if (localShares.length > 0) {
 			console.log(chalk.gray("First sign in: ") + chalk.cyan("clawdi auth login"));
@@ -261,12 +237,11 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 		emitJson({
 			invitations: items,
 			local_share_tokens: localShares.map(safeLocalShare),
-			legacy_local_share_records: legacyLocalShares.map(safeLegacyLocalShare),
 		});
 		return;
 	}
 
-	if (items.length === 0 && localShares.length === 0 && legacyLocalShares.length === 0) {
+	if (items.length === 0 && localShares.length === 0) {
 		console.log("Nothing in your inbox.");
 		return;
 	}
@@ -281,12 +256,10 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 			console.log(chalk.gray(`    Accept: clawdi inbox accept ${inv.id}`));
 		}
 	}
-	if (items.length > 0 && (localShares.length > 0 || legacyLocalShares.length > 0)) console.log();
+	if (items.length > 0 && localShares.length > 0) console.log();
 	if (localShares.length > 0) {
 		renderLocalPendingShares(localShares, true);
 	}
-	if (localShares.length > 0 && legacyLocalShares.length > 0) console.log();
-	if (legacyLocalShares.length > 0) renderLegacyLocalShares(legacyLocalShares);
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -549,7 +522,7 @@ export async function inboxDeclineCommand(
 		},
 	);
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-	commandMessage(opts.json, `${chalk.green("✓")} Invitation declined.`);
+	message(opts.json, `${chalk.green("✓")} Invitation declined.`);
 	commandResult(opts.json, "clawdi.inboxDecline.v1", { id: invitationId, status: "declined" });
 }
 
@@ -610,17 +583,17 @@ export async function inboxForgetCommand(
 		throw new Error("local share changed while it was being forgotten; retry the command");
 	}
 
-	commandMessage(
+	message(
 		opts.json,
 		`${chalk.green("✓")} Forgot local share for "${chalk.bold(token.project_name)}".`,
 	);
 	if (removed > 0) {
-		commandMessage(
+		message(
 			opts.json,
 			chalk.gray(`  Removed ${removed} local skill folder${removed === 1 ? "" : "s"}.`),
 		);
 	}
-	commandMessage(
+	message(
 		opts.json,
 		chalk.gray(
 			"  This only affects this device. To leave the project on the server, run `clawdi project leave <project>`.",
@@ -646,34 +619,6 @@ async function acceptAnonymousUrl(
 	const apiOrigin = normalizeCloudApiBaseUrl(apiUrl);
 
 	const existing = listTokens().find((t) => t.token === token);
-	if (existing?.upgraded_at) {
-		const cleanupCommand = `clawdi inbox forget ${existing.project_id}`;
-		if (opts.json) {
-			emitJson({
-				status: "legacy_local_share_record",
-				membership_changed: false,
-				action:
-					"This share was handled by an older CLI. Review current access, then explicitly remove the local record if it is no longer needed.",
-				local_share_record: safeLegacyLocalShare(existing),
-				next_commands: [
-					"clawdi auth login",
-					"clawdi project list --shared-with-me",
-					cleanupCommand,
-				],
-			});
-			return;
-		}
-		console.log(
-			chalk.gray(
-				`This share for ${existing.project_name} (@${existing.owner_handle}) was handled by an older Clawdi CLI.`,
-			),
-		);
-		console.log(chalk.gray("No account or project membership was changed now."));
-		console.log(`Next: ${chalk.cyan("clawdi auth login")}`);
-		console.log(`Then: ${chalk.cyan("clawdi project list --shared-with-me")}`);
-		console.log(`Cleanup: ${chalk.cyan(cleanupCommand)}`);
-		return;
-	}
 	if (existing) {
 		if (opts.json) {
 			emitJson({
