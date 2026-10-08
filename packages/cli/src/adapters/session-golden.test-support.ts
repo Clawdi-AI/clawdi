@@ -33,7 +33,11 @@ const goldens: Record<
 	),
 );
 
-export async function assertSessionGolden(fixture: string, module: SessionModule): Promise<void> {
+export async function assertSessionGolden(
+	fixture: string,
+	module: SessionModule,
+	options: { statRevision?: boolean } = {},
+): Promise<void> {
 	const protocol = await module.contentProtocol();
 	for (const streaming of [false, true]) {
 		const { sessions } = await module.collect(
@@ -41,7 +45,7 @@ export async function assertSessionGolden(fixture: string, module: SessionModule
 			{ streaming, signal: new AbortController().signal },
 		);
 		expect(sessions.length).toBeGreaterThan(0);
-		const actual = [];
+		const actual: (typeof goldens)[string] = [];
 		for (const session of sessions) {
 			const plan = await prepareSessionUpload(session, protocol);
 			let eventNdjson = "";
@@ -55,7 +59,12 @@ export async function assertSessionGolden(fixture: string, module: SessionModule
 			});
 		}
 		actual.sort((a, b) => a.id.localeCompare(b.id));
-		expect(actual).toEqual(goldens[fixture]);
+		// Stat revisions depend on the temporary file identity, unlike content digests.
+		const projected = ({ sourceRevision: _revision, ...content }: (typeof actual)[number]) =>
+			content;
+		expect(options.statRevision ? actual.map(projected) : actual).toEqual(
+			options.statRevision ? goldens[fixture].map(projected) : goldens[fixture],
+		);
 		assertProjectionGolden(
 			fixture,
 			actual.map(({ sourceRevision: _revision, ...projected }) => projected),
