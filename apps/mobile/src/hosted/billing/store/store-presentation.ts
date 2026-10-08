@@ -228,14 +228,12 @@ export function restorePurchasesNotices(
 	return notices;
 }
 
-/** The live store contract behind a store-funded row; one per account. */
+/** Match a subscription row to the slot's explicit store contract identity. */
 export function storeContractIdForRow(
 	item: Pick<Subscription, "deployment_id" | "store_management">,
 	slot: StoreComputeSlot | null,
 ): string | null {
 	const management = item.store_management;
 	if (!slot || slot.available || !slot.contract_id || !management) return null;
-	if (slot.store_management?.product_id !== management.product_id) return null;
-	if (slot.agent_id && slot.agent_id !== item.deployment_id) return null;
-	return slot.contract_id;
+	return management.contract_id === slot.contract_id ? slot.contract_id : null;
 }

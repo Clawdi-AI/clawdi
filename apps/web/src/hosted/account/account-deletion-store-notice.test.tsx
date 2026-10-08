@@ -45,6 +45,7 @@ const appStoreRow = row({
 	funding_source: "store",
 	price_cents: null,
 	store_management: {
+		contract_id: "11111111-1111-4111-8111-111111111111",
 		provider: "app_store",
 		product_id: "ai.clawdi.app.compute.basic.monthly",
 		management_url: "https://apps.apple.com/account/subscriptions",

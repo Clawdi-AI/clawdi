@@ -294,6 +294,12 @@ const creationEn = {
 	discard: "Discard this unsubmitted or rejected draft",
 	notAdmitted:
 		"The server rejected this request before admission. You may explicitly discard it and edit a new draft.",
+	storeComputeUnavailable:
+		"Your store subscription isn't available for this Agent yet. Your saved request is preserved. Check status, then retry the same request.",
+	storeComputeDisabled:
+		"Store subscription deployment is temporarily unavailable. Your saved request is preserved. Check status, then retry later.",
+	storeComputePending:
+		"Your store subscription is still being prepared for this Agent. Check status, then retry the same saved request later.",
 	saved:
 		"A saved request exists. Check its status before retrying. No request is replayed automatically.",
 	wait: "The server has not projected a deployment yet. Check again later.",

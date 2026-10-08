@@ -12,6 +12,7 @@ export class ApiClientError extends Error {
 	constructor(
 		public readonly status: number,
 		public readonly code: string | null = null,
+		public readonly retryAfterMs: number | null = null,
 	) {
 		super(`API request failed (${status})`);
 		this.name = "ApiClientError";
@@ -44,6 +45,25 @@ export class ApiClientResponseError extends Error {
 
 type ReadResult<Data> = { data?: Data; error?: unknown; response: Response };
 type AuthenticatedReadOptions = { headers: { Authorization: string }; signal: AbortSignal };
+
+// RFC HTTP-date formats, matching the CLI's Retry-After parser.
+const HTTP_DATE_PATTERN = new RegExp(
+	"^(?:(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \\d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \\d{4} \\d{2}:\\d{2}:\\d{2} GMT|" +
+		"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), \\d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\\d{2} \\d{2}:\\d{2}:\\d{2} GMT|" +
+		"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?:\\d{2}| \\d) \\d{2}:\\d{2}:\\d{2} \\d{4})$",
+);
+
+function retryAfterMs(response: Response): number | null {
+	const header = response.headers.get("Retry-After")?.trim();
+	if (!header) return null;
+	const delay = /^\d+$/.test(header)
+		? Number(header) * 1000
+		: HTTP_DATE_PATTERN.test(header)
+			? Math.max(0, Date.parse(header) - Date.now())
+			: Number.NaN;
+	// Timers cannot represent longer delays. Leave those responses for an explicit retry.
+	return Number.isFinite(delay) && delay >= 0 && delay <= 2_147_483_647 ? delay : null;
+}
 
 function errorCode(value: unknown): string | null {
 	if (typeof value !== "object" || value === null) return null;
@@ -155,7 +175,11 @@ export function createReadTransport(options: ApiClientOptions) {
 			});
 			checkAborted();
 			if (!result.response.ok) {
-				throw new ApiClientError(result.response.status, errorCode(result.error));
+				throw new ApiClientError(
+					result.response.status,
+					errorCode(result.error),
+					retryAfterMs(result.response),
+				);
 			}
 			if (result.data === undefined) throw new ApiClientResponseError();
 			return result.data;

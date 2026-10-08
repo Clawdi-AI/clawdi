@@ -306,6 +306,7 @@ describe("restore purchases", () => {
 describe("store management resolver", () => {
 	test("uses same-platform links and suppresses cross-platform/test-store links", async () => {
 		const appStore = {
+			contract_id: "11111111-1111-4111-8111-111111111111",
 			provider: "app_store" as const,
 			product_id: "compute",
 			management_url: null,

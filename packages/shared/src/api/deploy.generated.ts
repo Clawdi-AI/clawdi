@@ -1781,7 +1781,12 @@ export interface components {
             /** Results */
             results?: components["schemas"]["StoreComputeSubscriptionReconcileResult"][];
         };
-        /** StoreComputeSlot */
+        /**
+         * StoreComputeSlot
+         * @description Caller-owned slot; map subscription rows via store_management.contract_id.
+         *
+         *     compute_subscription_id retains its raw integer representation for compatibility.
+         */
         StoreComputeSlot: {
             /** Available */
             available: boolean;
@@ -1807,6 +1812,11 @@ export interface components {
         };
         /** StoreManagement */
         StoreManagement: {
+            /**
+             * Contract Id
+             * Format: uuid
+             */
+            contract_id: string;
             /**
              * Provider
              * @enum {string}
@@ -2785,6 +2795,8 @@ export interface components {
              * @enum {string}
              */
             compute_plan_slug: "compute_basic" | "compute_performance";
+            /** Compute Source */
+            compute_source?: "store" | null;
             /** Plugin Bundle */
             plugin_bundle?: "sui" | null;
             /** Primary Model */

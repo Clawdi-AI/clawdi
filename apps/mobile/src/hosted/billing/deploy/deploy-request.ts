@@ -18,9 +18,9 @@ import type { PurchaseOutcome } from "@/platform/store/purchase-flow";
 import type { PurchaseErrorCode } from "@/platform/store/store-error";
 
 /**
- * Store funding of a request paid through the App Store/Google Play. Hosted keeps no
- * pending deploy request for store attempts, so admission before `funded` would bind
- * other compute and leave the later store purchase without an Agent.
+ * Store-funded attempts send compute_source "store" at admission; hosted refuses
+ * any fallback to other compute. Keep that transport option out of the persisted
+ * request, and admit only after the store purchase is funded or covered by a slot.
  */
 export type StoreFunding = "awaiting_purchase" | "purchase_pending" | "funded" | "review_required";
 
@@ -232,10 +232,72 @@ export function storeFundingAfterCheck(
 export function isDefinitiveAdmissionRejection(attempt: CreationAttempt, error: unknown): boolean {
 	return (
 		canDiscardCreationAttempt(attempt) &&
+		attempt.storeFunding === undefined &&
 		error instanceof ApiClientError &&
 		error.status === 409 &&
 		error.code === "compute_entitlement_required"
 	);
+}
+
+/** Store admission failures preserve the purchase and direct recovery of the same request. */
+export function storeAdmissionMessageKey(attempt: CreationAttempt, error: unknown) {
+	if (!attempt.storeFunding || !(error instanceof ApiClientError)) return null;
+	switch (error.code) {
+		case "store_compute_unavailable":
+			return "creation.storeComputeUnavailable";
+		case "store_compute_subscriptions_disabled":
+			return "creation.storeComputeDisabled";
+		case "compute_entitlement_pending":
+		case "deployment_plan_release_pending":
+			return "creation.storeComputePending";
+		default:
+			return null;
+	}
+}
+
+function waitForAdmissionRetry(delayMs: number, signal: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal.aborted) {
+			reject(signal.reason ?? new Error("Creation action cancelled"));
+			return;
+		}
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(signal.reason ?? new Error("Creation action cancelled"));
+		};
+		const timer = setTimeout(() => {
+			signal.removeEventListener("abort", onAbort);
+			resolve();
+		}, delayMs);
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
+/** Only explicit store pending responses with Retry-After permit up to three same-key retries. */
+export async function retryStoreAdmission<Data>(
+	attempt: CreationAttempt,
+	send: (signal: AbortSignal) => Promise<Data>,
+	signal: AbortSignal,
+	wait: (delayMs: number, signal: AbortSignal) => Promise<void> = waitForAdmissionRetry,
+): Promise<Data> {
+	for (let retries = 0; ; retries++) {
+		if (signal.aborted) throw signal.reason ?? new Error("Creation action cancelled");
+		try {
+			return await send(signal);
+		} catch (error) {
+			if (
+				attempt.storeFunding !== "funded" ||
+				!(error instanceof ApiClientError) ||
+				error.status !== 409 ||
+				(error.code !== "compute_entitlement_pending" &&
+					error.code !== "deployment_plan_release_pending") ||
+				error.retryAfterMs === null ||
+				retries >= 3
+			)
+				throw error;
+			await wait(error.retryAfterMs, signal);
+		}
+	}
 }
 
 /** Eligible reads expose inventory; POST remains the final permission boundary. */
