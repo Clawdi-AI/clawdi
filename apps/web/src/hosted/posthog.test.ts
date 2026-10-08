@@ -96,9 +96,7 @@ describe("isHostedPostHogEnabled", () => {
 			expect(initHostedPostHog(options)).toBe(false);
 			expect(identifyHostedUser("user_fixture", options)).toBe(false);
 			expect(resetHostedPostHog(options)).toBe(false);
-			expect(trackEvent({ name: "agent_setup_opened", properties: {} }, "web", options)).toBe(
-				false,
-			);
+			expect(trackEvent({ name: "agent_setup_opened", properties: {} }, options)).toBe(false);
 		}
 		window.location.hostname = productionLocation.hostname;
 		window.location.protocol = "http:";
@@ -121,9 +119,7 @@ describe("isHostedPostHogEnabled", () => {
 			expect(initHostedPostHog(options)).toBe(false);
 			expect(identifyHostedUser("user_fixture", options)).toBe(false);
 			expect(resetHostedPostHog(options)).toBe(false);
-			expect(trackEvent({ name: "agent_setup_opened", properties: {} }, "web", options)).toBe(
-				false,
-			);
+			expect(trackEvent({ name: "agent_setup_opened", properties: {} }, options)).toBe(false);
 		}
 		expect(init).not.toHaveBeenCalled();
 		expect(identify).not.toHaveBeenCalled();
@@ -252,20 +248,20 @@ describe("product analytics events", () => {
 		const optedOut = spyOn(posthog, "has_opted_out_capturing").mockReturnValue(false);
 		const options = { isHosted: true, token: "phc_test" };
 		const event = { name: "agent_setup_opened", properties: {} } as const;
-		expect(trackEvent(event, "desktop", options)).toBe(true);
+		expect(trackEvent(event, options)).toBe(true);
 		expect(capture).toHaveBeenCalledWith("agent_setup_opened", {
-			source: "desktop",
+			source: "web",
 			schema_version: 1,
 		});
 		optedOut.mockReturnValue(true);
-		expect(trackEvent(event, "web", options)).toBe(false);
+		expect(trackEvent(event, options)).toBe(false);
 		optedOut.mockReturnValue(false);
 		Object.defineProperty(globalThis, "navigator", {
 			configurable: true,
 			value: { doNotTrack: "1" },
 		});
-		expect(trackEvent(event, "web", options)).toBe(false);
-		expect(trackEvent(event, "web", { isHosted: false, token: "phc_test" })).toBe(false);
+		expect(trackEvent(event, options)).toBe(false);
+		expect(trackEvent(event, { isHosted: false, token: "phc_test" })).toBe(false);
 		expect(capture).toHaveBeenCalledTimes(1);
 	});
 	test("final SDK properties retain alias/session identity and remove automatic PII", () => {

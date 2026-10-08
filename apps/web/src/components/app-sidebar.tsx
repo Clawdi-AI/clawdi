@@ -1133,10 +1133,7 @@ function FocusRailContent({
 
 	return (
 		<>
-			<SidebarHeader
-				data-clawdi-window-drag-region
-				className="h-(--clawdi-rail-width) items-center justify-center p-0"
-			>
+			<SidebarHeader className="h-(--clawdi-rail-width) items-center justify-center p-0">
 				<SidebarMenu className="items-center">
 					<SidebarMenuItem>
 						<a

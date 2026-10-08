@@ -747,26 +747,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/cli/auth/oauth/desktop-ticket": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Desktop Session Ticket
-         * @deprecated
-         */
-        post: operations["create_desktop_session_ticket_v1_cli_auth_oauth_desktop_ticket_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/sessions/{session_id}/content-events": {
         parameters: {
             query?: never;
@@ -6079,16 +6059,6 @@ export interface components {
         DefaultProjectResponse: {
             /** Project Id */
             project_id: string;
-        };
-        /**
-         * DesktopSessionTicketResponse
-         * @description Legacy success shape retained while the Desktop 410 stub remains.
-         */
-        DesktopSessionTicketResponse: {
-            /** Ticket */
-            ticket: string;
-            /** Expires In */
-            expires_in: number;
         };
         /** EmbedBackfillResponse */
         EmbedBackfillResponse: {
@@ -12168,33 +12138,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
-            };
-        };
-    };
-    create_desktop_session_ticket_v1_cli_auth_oauth_desktop_ticket_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DesktopSessionTicketResponse"];
-                };
-            };
-            /** @description Desktop sign-in tickets are no longer supported. Update Clawdi Desktop and open https://cloud.clawdi.ai in your browser. */
-            410: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };
