@@ -465,7 +465,7 @@ export class DesktopCliService {
 		DesktopBootstrapState["daemon"] & { needsRuntimeRefresh: boolean; supervisorRunning: boolean }
 	> {
 		const result = await this.runJson(cli, ["daemon", "doctor", "--json"]);
-		if (result.cli_version !== version)
+		if (result.schemaVersion !== "clawdi.daemonDoctor.v2" || result.cli_version !== version)
 			throw new Error("Clawdi doctor returned an unexpected CLI version.");
 		const installed = result.singleton_unit_installed === true;
 		const agents = Array.isArray(result.agents) ? result.agents : [];

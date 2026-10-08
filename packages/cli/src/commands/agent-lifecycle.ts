@@ -3,7 +3,7 @@ import * as p from "@clack/prompts";
 import type { DeployComponents, HostedDeployOperation } from "@clawdi/shared/api";
 import { computeFundingMode, isComputeSubscriptionRenewing } from "@clawdi/shared/view";
 import { requireUuid } from "../lib/cli-options";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { isAuthorizationRequired, mapHttpError } from "../lib/errors";
 import { HostedDeployAuthorizationError } from "../lib/hosted-deploy-auth";
 import { HostedDeployApiError, HostedDeployClient } from "../lib/hosted-deploy-client";
@@ -87,7 +87,7 @@ export async function agentLifecycle(
 		if (opts.wait !== false) operation = await waitForOperation(client, operation);
 		const status = operation.done ? "succeeded" : "accepted";
 		if (opts.json) {
-			emitJson(
+			emit(
 				{
 					schemaVersion: `clawdi.agent${action[0]?.toUpperCase()}${action.slice(1)}.v1`,
 					id: agentId,
@@ -153,7 +153,7 @@ export async function removeCloudAgent(agentId: string, opts: AgentRemoveOptions
 		if (operation) checkOperation(operation);
 		const status = operation && !operation.done ? "accepted" : "deleted";
 		if (opts.json) {
-			emitJson(
+			emit(
 				{
 					schemaVersion: "clawdi.agentRm.v1",
 					id: agentId,

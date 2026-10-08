@@ -7,7 +7,7 @@ import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import type { SessionDetail, SessionListItem, SessionMessage } from "../lib/api-schemas";
 import { ClerkOAuthError } from "../lib/clerk-oauth";
 import { parsePositiveInteger, requireUuid } from "../lib/cli-options";
-import { emitJson, wantsJson } from "../lib/command-output";
+import { emit, wantsJson } from "../lib/command-output";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
 import { sanitizeMetadata, stripTerminalEscapes } from "../lib/sanitize";
@@ -121,7 +121,7 @@ export async function sessionList(opts: SessionListOpts) {
 	}
 
 	if (opts.json) {
-		emitJson(shown);
+		emit({ schemaVersion: "clawdi.sessionList.v2", sessions: shown, total: collected.length });
 		return;
 	}
 
@@ -227,8 +227,8 @@ async function sessionListUploaded(opts: SessionListOpts): Promise<void> {
 	if (page.items.length < page.total) {
 		console.error(`Showing ${page.items.length} of ${page.total}; pass --limit to see more.`);
 	}
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson({ schemaVersion: "clawdi.sessionList.v1", sessions: page.items, total: page.total });
+	if (wantsJson(opts)) {
+		emit({ schemaVersion: "clawdi.sessionList.v2", sessions: page.items, total: page.total });
 		return;
 	}
 	if (page.items.length === 0) {
@@ -293,8 +293,13 @@ export async function sessionSearch(query: string, opts: CloudSessionOpts = {}):
 		console.error(`Showing ${page.items.length} of ${page.total}; pass --limit to see more.`);
 	}
 
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson(page.items);
+	if (wantsJson(opts)) {
+		emit({
+			schemaVersion: "clawdi.sessionSearch.v2",
+			sessions: page.items,
+			total: page.total,
+			query: trimmedQuery,
+		});
 		return;
 	}
 	if (page.items.length === 0) {
@@ -320,8 +325,8 @@ export async function sessionRead(sessionId: string, opts: { json?: boolean } = 
 			)
 		: [];
 
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson({ session: detail, messages });
+	if (wantsJson(opts)) {
+		emit({ schemaVersion: "clawdi.sessionRead.v2", session: detail, messages });
 		return;
 	}
 
@@ -360,8 +365,8 @@ export async function sessionExtract(sessionId: string, opts: SessionExtractOpts
 			}),
 		);
 
-		if (wantsJson(opts, { legacyImplicit: true })) {
-			emitJson({ session_id: sessionId, ...result }, false);
+		if (wantsJson(opts)) {
+			emit({ schemaVersion: "clawdi.sessionExtract.v2", sessionId, ...result });
 			return;
 		}
 
@@ -371,10 +376,11 @@ export async function sessionExtract(sessionId: string, opts: SessionExtractOpts
 		// 503 means the deployment hasn't configured a memory-extraction LLM.
 		// Exit 2 so onboarding scripts can branch on it without parsing stderr.
 		if (e instanceof ApiError && e.status === 503) {
-			if (wantsJson(opts, { legacyImplicit: true })) {
-				emitJson(
+			if (wantsJson(opts)) {
+				emit(
 					{
-						session_id: sessionId,
+						schemaVersion: "clawdi.sessionExtract.v2",
+						sessionId,
 						error: "not_configured",
 						message: e.body || e.hint,
 					},
@@ -424,7 +430,7 @@ export async function sessionRm(
 		throw new Error("Could not delete the uploaded session. Please retry or run `clawdi doctor`.");
 	}
 	if (opts.json) {
-		emitJson({ schemaVersion: "clawdi.sessionRm.v1", id: sessionId, status: "deleted" }, false);
+		emit({ schemaVersion: "clawdi.sessionRm.v1", id: sessionId, status: "deleted" }, false);
 	} else {
 		console.log(`Permanently deleted uploaded session ${sessionId}.`);
 	}
@@ -473,7 +479,7 @@ export async function sessionShareCreate(
 			body: { scope, position },
 		}),
 	);
-	if (wantsJson(opts, { legacyImplicit: true })) emitJson(share);
+	if (wantsJson(opts)) emit({ schemaVersion: "clawdi.sessionShare.v2", share });
 	else console.log(share.share_url);
 }
 
@@ -495,8 +501,8 @@ export async function sessionShareList(
 	if (result.items.length < result.total) {
 		console.error(`Showing ${result.items.length} of ${result.total}; pass --limit to see more.`);
 	}
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson(result);
+	if (wantsJson(opts)) {
+		emit({ schemaVersion: "clawdi.sessionShares.v2", ...result });
 		return;
 	}
 	for (const link of result.items) {
@@ -525,8 +531,8 @@ export async function sessionShareRevoke(
 			params: { path: { share_id: shareId }, query: { kind: opts.legacy ? "live" : "snapshot" } },
 		}),
 	);
-	if (wantsJson(opts, { legacyImplicit: true })) {
-		emitJson({ id: shareId, status: "revoked" }, false);
+	if (wantsJson(opts)) {
+		emit({ schemaVersion: "clawdi.sessionUnshare.v2", id: shareId, status: "revoked" });
 	} else {
 		console.log(
 			`Revoked ${opts.legacy ? "legacy live" : "snapshot"} link ${sanitizeMetadata(shareId)}.`,

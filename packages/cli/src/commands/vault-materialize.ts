@@ -1,6 +1,6 @@
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 import { getConfig } from "../lib/config";
 import { updateVaultEnv, validateVaultMaterial } from "../lib/vault-env";
 
@@ -68,5 +68,5 @@ export async function vaultMaterialize(options: MaterializeOptions): Promise<voi
 		}
 		return { apiUrl, material };
 	});
-	emitJson({ status: "synced", ...result }, false);
+	emit({ status: "synced", ...result }, false);
 }

@@ -43,9 +43,10 @@ describe("wallet status command", () => {
 
 		expect(calls.sort()).toEqual(["binding", "wallet"]);
 		expect(JSON.parse(output[0] ?? "")).toMatchObject({
-			balance_usd: "12.50",
-			x402_payment_status: "idle",
-			x402_payment_attempt: null,
+			schemaVersion: "clawdi.walletStatus.v2",
+			balanceUsd: "12.50",
+			x402PaymentStatus: "idle",
+			x402PaymentAttempt: null,
 			binding: { bound: true, address: `0x${"1".repeat(40)}` },
 		});
 	});

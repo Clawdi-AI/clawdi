@@ -179,14 +179,15 @@ describe("AI provider Cloud parity", () => {
 		expect(result.stdout).toBe("");
 		expect(calls.every((call) => call.method === "GET")).toBe(true);
 	});
-	test("merges Cloud and local-only entries while preserving the legacy envelope", async () => {
+	test("merges Cloud and local-only entries in the versioned envelope", async () => {
 		seedCatalog();
 		handler = () => jsonResponse({ providers: [provider] });
 		const result = await cli(["ai-provider", "list", "--json"]);
 		expect({ code: result.code, stderr: result.stderr }).toMatchObject({ code: 0 });
 		expect(result.stderr).toBe("");
 		expect(JSON.parse(result.stdout)).toMatchObject({
-			schema_version: 1,
+			schemaVersion: "clawdi.aiProviderList.v2",
+			defaults: null,
 			providers: [
 				{ id: "openai-main", source: "cloud", label: "Cloud provider" },
 				{ id: "local-only", source: "local" },
@@ -347,9 +348,9 @@ describe("wallet reads", () => {
 		const result = await cli(["wallet", "transactions", "--limit", "20", "--json"]);
 		expect({ code: result.code, stderr: result.stderr }).toMatchObject({ code: 0 });
 		expect(JSON.parse(result.stdout)).toMatchObject({
-			schemaVersion: "clawdi.walletTransactions.v1",
-			items: [{ id: "txn-test" }],
-			next_cursor: "next",
+			schemaVersion: "clawdi.walletTransactions.v2",
+			transactions: [{ id: "txn-test" }],
+			hasMore: true,
 		});
 		expect(calls[0]).toMatchObject({ path: "/v2/wallet/transactions", query: "?limit=20" });
 	});
@@ -368,9 +369,9 @@ describe("wallet reads", () => {
 		const result = await cli(["wallet", "usage", "--days", "7", "--json"]);
 		expect({ code: result.code, stderr: result.stderr }).toMatchObject({ code: 0 });
 		expect(JSON.parse(result.stdout)).toMatchObject({
-			schemaVersion: "clawdi.walletUsage.v1",
-			period_start: "2026-10-01",
-			period_end: "2026-10-06",
+			schemaVersion: "clawdi.walletUsage.v2",
+			periodStart: "2026-10-01",
+			periodEnd: "2026-10-06",
 		});
 		expect(calls[0]).toMatchObject({ path: "/v2/usage", query: "?days=7" });
 	});

@@ -90,6 +90,7 @@ function serviceFixture(failFirstInstall = false, loginProgress?: unknown, mount
 			case "daemon doctor --json":
 				// A stopped installed unit has no live health to identify its old path.
 				result = {
+					schemaVersion: "clawdi.daemonDoctor.v2",
 					cli_version: state.cliVersion,
 					singleton_unit_installed: true,
 					singleton_unit_running: state.live,

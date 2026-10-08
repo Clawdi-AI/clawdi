@@ -1,4 +1,4 @@
-import { emitJson } from "../lib/command-output";
+import { emit } from "../lib/command-output";
 /**
  * `clawdi daemon` entry.
  *
@@ -126,6 +126,7 @@ interface DaemonStatusReport {
 }
 
 interface DaemonDoctorReport {
+	schemaVersion: "clawdi.daemonDoctor.v2";
 	entrypoint: string | null;
 	node: string;
 	cli_version: string;
@@ -423,7 +424,7 @@ export async function serveStatus(opts: ServeStatusOpts): Promise<void> {
 	}
 	const agents = targets.map(buildStatusReport);
 	if (opts.json) {
-		emitJson({ schemaVersion: "clawdi.daemonStatus.v1", agents }, false);
+		emit({ schemaVersion: "clawdi.daemonStatus.v1", agents }, false);
 		return;
 	}
 	for (const [i, report] of agents.entries()) {
@@ -561,7 +562,7 @@ export async function serveDoctor(opts: ServeDoctorOpts): Promise<void> {
 	// programmatic callers.
 	const summary = buildDoctorReport();
 	if (opts.json) {
-		emitJson(summary);
+		emit(summary);
 		return;
 	}
 	console.log(`entrypoint:  ${summary.entrypoint ?? "?"}`);
@@ -629,6 +630,7 @@ function buildDoctorReport(): DaemonDoctorReport {
 		};
 	});
 	return {
+		schemaVersion: "clawdi.daemonDoctor.v2",
 		entrypoint: process.argv[1] ?? null,
 		node: process.execPath,
 		cli_version: cliVersion,
@@ -659,7 +661,7 @@ export async function serveRpc(method: string, opts: ServeRpcOpts): Promise<void
 	);
 	const rpcTarget = resolveRpcClientConfig(opts);
 	const result = await callControlRpc(normalizedMethod, {}, rpcTarget);
-	emitJson(result);
+	emit(result);
 }
 
 function normalizeRpcMethod(method: string): string {

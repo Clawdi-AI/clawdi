@@ -118,15 +118,15 @@ describe("projectListCommand", () => {
 		}
 
 		const parsed = JSON.parse(out);
-		expect(parsed.owned_projects.map((p: { slug: string }) => p.slug)).toEqual([
+		expect(parsed.ownedProjects.map((p: { slug: string }) => p.slug)).toEqual([
 			"personal",
 			"engineering",
 		]);
-		expect(parsed.shared_projects.map((p: { slug: string }) => p.slug)).toEqual(["shared-toolkit"]);
-		expect(parsed.shared_projects[0].owner_handle).toBe("alice-a3b4");
+		expect(parsed.sharedProjects.map((p: { slug: string }) => p.slug)).toEqual(["shared-toolkit"]);
+		expect(parsed.sharedProjects[0].ownerHandle).toBe("alice-a3b4");
 		expect(parsed.projects).toHaveLength(3);
-		expect(parsed.environment_projects).toEqual([]);
-		expect(parsed.hidden_environment_project_count).toBe(0);
+		expect(parsed.environmentProjects).toEqual([]);
+		expect(parsed.hiddenEnvironmentProjectCount).toBe(0);
 	});
 
 	it("hides Agent Workspace projects by default and can include them", async () => {
@@ -191,8 +191,8 @@ describe("projectListCommand", () => {
 			await projectListCommand({ json: true });
 			const hidden = JSON.parse(out);
 			expect(hidden.projects.map((p: { slug: string }) => p.slug)).toEqual(["personal"]);
-			expect(hidden.environment_projects).toEqual([]);
-			expect(hidden.hidden_environment_project_count).toBe(1);
+			expect(hidden.environmentProjects).toEqual([]);
+			expect(hidden.hiddenEnvironmentProjectCount).toBe(1);
 
 			await projectListCommand({ json: true, includeWorkspaces: true });
 			const included = JSON.parse(out);
@@ -200,10 +200,10 @@ describe("projectListCommand", () => {
 				"personal",
 				"env-abc123",
 			]);
-			expect(included.environment_projects.map((p: { slug: string }) => p.slug)).toEqual([
+			expect(included.environmentProjects.map((p: { slug: string }) => p.slug)).toEqual([
 				"env-abc123",
 			]);
-			expect(included.hidden_environment_project_count).toBe(0);
+			expect(included.hiddenEnvironmentProjectCount).toBe(0);
 		} finally {
 			console.log = orig;
 			restore();
