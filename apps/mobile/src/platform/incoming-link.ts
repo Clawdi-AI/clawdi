@@ -46,6 +46,18 @@ export function createVaultLinkInbox(now = Date.now) {
 
 export const incomingVaultLink = createVaultLinkInbox();
 
+/**
+ * SDK 57 dev-launcher URL (`<scheme>://expo-development-client/?url=…`), matched by host like
+ * expo-dev-launcher and Expo Router, which extracts the app path from it.
+ */
+export function isDevelopmentClientLaunchUrl(path: string): boolean {
+	try {
+		return new URL(path).hostname === "expo-development-client";
+	} catch {
+		return false;
+	}
+}
+
 /** Only verified HTTPS machine-readable files may bypass native navigation. */
 export function mobileBrowserLink(path: string, hosts: readonly string[]): string | null {
 	if (typeof path !== "string" || path.length > 8192 || /[\r\n\\]/.test(path)) return null;

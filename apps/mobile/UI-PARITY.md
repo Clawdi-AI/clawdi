@@ -200,9 +200,11 @@ return <><Stack.Screen options={{ headerSearchBarOptions: search }} />
 `/skills/[key]/archive`, `/channels/whatsapp`. `/skills/archive` is the
 unkeyed archive-upload form. There are no `/native/*` routes/page duplicates.
 The URL-transparent `(sheets)` group sits above NativeTabs in the root Stack,
-so tabs remain beneath the modal. Its inner native Stack supplies the header:
-Android formSheet itself does not create an AppBarLayout. Configure presentation
-in `root-layout.tsx` before opening; Android accepts at most three sorted detents.
+so tabs remain beneath the modal. Its inner native Stack supplies the header.
+iOS uses a formSheet with detents; Android uses a full-height `modal`, because
+Android form sheets support neither a nested Stack nor its header
+([Expo Router modals](https://docs.expo.dev/router/advanced/modals/#android-limitations)).
+Configure presentation in `root-layout.tsx` before opening.
 Content is an ordinary page, never an additional Dialog/Modal.
 Use `SheetPage` for title/cancel/scroll; pass `scroll={false}` when a
 `NativeList` owns the route scroll (the Provider chooser is the pilot). Its

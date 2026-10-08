@@ -53,14 +53,8 @@ cite the upstream limitation. Settings menu rows use `settings-row-<panel>` test
 The first card is on the initial viewport: the launch flow waits for its loaded
 fixture ID without scrolling during data loading. Visibility waits share the
 same startup budget because Maestro 2.11.0 deducts time since the last
-interaction from subsequent waits. The navigation flow waits for visual idle,
-then permits at most three tap attempts only while the original card remains
-visible, followed by the loaded detail header assertion. Maestro's documented
-`retryTapIfNoChange` (two attempts) also failed in a separate cold-start run. In a
-cold-start diagnostic, the first tap attempt produced no React Native touch
-or press event despite a settled screen, correct app focus, and unfrozen input
-dispatch. The underlying native cause remains unconfirmed; idle alone did not
-resolve it. No diagnostic hooks remain in product code. Maestro is limited to ten
+interaction from subsequent waits. The navigation flow taps the card once, followed
+by the loaded detail header assertion. Maestro is limited to ten
 minutes, service readiness/install/downloads have separate bounds, and exit
 traps stop only processes started by this run, including on failure or
 interruption. The emulator receives its own shutdown signal so SDK helpers

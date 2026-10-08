@@ -2,7 +2,11 @@ import { randomUUID } from "expo-crypto";
 import { getCustomTabsSupportingBrowsersAsync, openBrowserAsync } from "expo-web-browser";
 import { Platform } from "react-native";
 import { loadMobileRuntimeConfig } from "@/lib/config/runtime";
-import { incomingVaultLink, routeMobileIncomingLink } from "@/platform/incoming-link";
+import {
+	incomingVaultLink,
+	isDevelopmentClientLaunchUrl,
+	routeMobileIncomingLink,
+} from "@/platform/incoming-link";
 
 /** Custom Tabs pinned to the browser package, so a link host never resolves back to this app. */
 export async function openBrowserLink(url: string) {
@@ -18,6 +22,8 @@ export async function openBrowserLink(url: string) {
 }
 
 export function redirectSystemPath({ path, initial }: { path: string; initial: boolean }) {
+	// Expo Router resolves the dev-client launch URL itself; release builds keep the allowlist.
+	if (__DEV__ && isDevelopmentClientLaunchUrl(path)) return path;
 	// Read-only presentation stories are reachable only in development builds.
 	if (__DEV__ && /^clawdi:\/\/\/?dev\/account\?panel=[a-z-]+$/.test(path)) {
 		return `/dev/account?panel=${path.split("?panel=")[1]}`;
