@@ -166,6 +166,7 @@ describe("store-funded creation admission", () => {
 
 	test("unbound store slots are matched by plan and supplying state only", () => {
 		const management = {
+			contract_id: "11111111-1111-4111-8111-111111111111",
 			provider: "app_store" as const,
 			product_id: "ai.clawdi.app.compute.performance.monthly",
 			management_url: null,

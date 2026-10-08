@@ -36,6 +36,7 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 		body: HostedDeployRequest,
 		idempotencyKey: string,
 		signal?: AbortSignal,
+		options?: { computeSource?: "store" },
 	) => {
 		if (
 			typeof idempotencyKey !== "string" ||
@@ -53,7 +54,7 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 			(init) =>
 				api.POST("/v2/deployments", {
 					...init,
-					body,
+					body: options?.computeSource ? { ...body, compute_source: options.computeSource } : body,
 					params: { header: { "Idempotency-Key": idempotencyKey } },
 				}),
 			signal,

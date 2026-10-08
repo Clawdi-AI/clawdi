@@ -49,6 +49,90 @@ const operation: components["schemas"]["LongRunningOperation"] = {
 };
 
 describe("Hosted compute client", () => {
+	test("store-only admission changes only the HTTP body and preserves key and caller signal", async () => {
+		const requests: { body: unknown; key: string | null }[] = [];
+		const client = createHostedComputeClient({
+			...options,
+			fetch: async (request) => {
+				requests.push({ body: await request.json(), key: request.headers.get("Idempotency-Key") });
+				return Response.json(operation, { status: 202 });
+			},
+		});
+		const request = Object.freeze({ ...body, deploy_request_id: "store-key" });
+		const before = JSON.stringify(request);
+		await client.createEntitledDeployment(request, "store-key", undefined, {
+			computeSource: "store",
+		});
+		await client.createEntitledDeployment(request, "store-key");
+		await client.createEntitledDeployment(request, "store-key", undefined, {});
+		expect(requests).toEqual([
+			{ body: { ...request, compute_source: "store" }, key: "store-key" },
+			{ body: request, key: "store-key" },
+			{ body: request, key: "store-key" },
+		]);
+		expect(JSON.stringify(request)).toBe(before);
+		const controller = new AbortController();
+		controller.abort(new Error("Account changed"));
+		await expect(
+			client.createEntitledDeployment(request, "store-key", controller.signal, {
+				computeSource: "store",
+			}),
+		).rejects.toBe(controller.signal.reason);
+		expect(requests).toHaveLength(3);
+	});
+
+	test("exposes validated Retry-After guidance without retrying admission in the shared client", async () => {
+		for (const [header, expected] of [
+			["5", 5000],
+			["0", 0],
+			["invalid", null],
+			["-1", null],
+			["1.5", null],
+			["2026-10-08T00:00:00Z", null],
+			["Wed, 21 Oct 2015 07:28:00 GMT", 0],
+			["999999999999999", null],
+			[null, null],
+		] as const) {
+			let sends = 0;
+			const client = createHostedComputeClient({
+				...options,
+				fetch: async () => {
+					sends++;
+					return Response.json(
+						{ code: "compute_entitlement_pending" },
+						{
+							status: 409,
+							headers: header === null ? {} : { "Retry-After": header },
+						},
+					);
+				},
+			});
+			await expect(
+				client.createEntitledDeployment(body, "store-key", undefined, { computeSource: "store" }),
+			).rejects.toMatchObject({ code: "compute_entitlement_pending", retryAfterMs: expected });
+			expect(sends).toBe(1);
+		}
+		const client = createHostedComputeClient({
+			...options,
+			fetch: async () =>
+				Response.json(
+					{ code: "deployment_plan_release_pending" },
+					{
+						status: 409,
+						headers: { "Retry-After": new Date(Date.now() + 60_000).toUTCString() },
+					},
+				),
+		});
+		try {
+			await client.createEntitledDeployment(body, "store-key");
+			throw new Error("Expected rejection");
+		} catch (error) {
+			if (!(error instanceof ApiClientError)) throw error;
+			expect(error.retryAfterMs).toBeGreaterThan(58_000);
+			expect(error.retryAfterMs).toBeLessThanOrEqual(60_000);
+		}
+	});
+
 	test("account termination requires authenticated DELETE and exact 204, without retrying failures", async () => {
 		let status = 204;
 		const requests: { method: string; path: string; auth: string | null; body: string }[] = [];

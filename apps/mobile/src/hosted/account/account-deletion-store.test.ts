@@ -3,6 +3,7 @@ import type { StoreComputeSlot } from "@clawdi/shared/api";
 import { mobileAccountDeletionStoreNotice } from "./account-deletion-store";
 
 const management = {
+	contract_id: "11111111-1111-4111-8111-111111111111",
 	provider: "app_store" as const,
 	product_id: "ai.clawdi.app.compute.basic.monthly",
 	management_url: null,
