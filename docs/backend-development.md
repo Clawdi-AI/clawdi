@@ -710,18 +710,20 @@ migration-first deployment order for each:
    that strips the key before `extra="forbid"`. This release includes no data
    migration. Reads leave stored JSON untouched, so processes from the previous
    release can still read configured rows during the rolling deployment.
-2. After the tolerant model is deployed, release the follow-up Alembic data
-   cleanup. The migration removes the key while serving processes still tolerate
-   both shapes; the follow-up also removes the temporary validator. This works
-   with automatic migration-first deployment. The dated 2026-10-08 TODO tracks
-   that validator removal.
+2. After #1799's tolerant model is deployed, release Alembic revision
+   `c4a8e2d6f913`. The migration removes the key while serving processes still
+   tolerate both shapes; this same follow-up removes the temporary validator,
+   completing its dated 2026-10-08 TODO. Automatic deployment runs the data
+   migration before replacing the serving processes with the strict model.
+   The cleanup preserves other settings and fields and is idempotent. Downgrade
+   cannot reconstruct the removed callback value.
 
 The previous model's empty field default does not make configured rows without
 this key valid: its after-validator requires a nonempty callback. The separate
 cleanup release avoids that deployment overlap. All other unknown keys remain
 invalid, and admin writes serialize only the current fields.
 
-Done: `scripts/test.sh backend tests/test_cli_oauth_auth.py tests/test_app_settings.py`
+Done: `scripts/test.sh backend tests/test_cli_oauth_redirect_uri_migration.py tests/test_cli_oauth_auth.py tests/test_app_settings.py`
 passes against the isolated PostgreSQL runner.
 
 The value is strictly validated and canonicalized before the setting and its

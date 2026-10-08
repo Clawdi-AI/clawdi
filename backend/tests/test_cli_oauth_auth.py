@@ -598,6 +598,10 @@ async def test_oauth_config_returns_only_public_values(
         await db_session.commit()
     response = await raw_auth_client.get("/v1/cli/auth/oauth/config")
 
+    if stored_retired_key:
+        assert response.status_code == 503
+        assert response.json() == {"detail": "OAuth CLI authentication is not configured"}
+        return
     assert response.status_code == 200
     assert response.json() == {
         "issuer": _ISSUER,
