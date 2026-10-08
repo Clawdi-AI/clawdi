@@ -79,6 +79,8 @@ class ClerkCliOAuthSetting(BaseModel):
     def canonicalize_authorized_parties(cls, value: object) -> object:
         return _canonical_authorized_parties(value)
 
+    # TODO (2026-10-08): remove this transition validator once revision
+    # c4a8e2d6f913 has run in production and no unmigrated settings rows remain.
     @model_validator(mode="before")
     @classmethod
     def discard_retired_redirect_uri(cls, value: object) -> object:
