@@ -8,7 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import AuthContext, require_oauth_cli_auth
 from app.core.config import settings
 from app.core.database import get_session
-from app.schemas.cli_auth import OAuthConfigResponse, OAuthRevokeRequest, OAuthRevokeResponse
+from app.schemas.cli_auth import (
+    DesktopSessionTicketResponse,
+    OAuthConfigResponse,
+    OAuthRevokeRequest,
+    OAuthRevokeResponse,
+)
 from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
 from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
 from app.services.clerk_backend import (
@@ -21,6 +26,11 @@ from app.services.clerk_backend import (
 from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
 
 router = APIRouter(prefix="/cli/auth", tags=["cli-auth"])
+
+_RETIRED_DESKTOP_TICKET_DETAIL = (
+    "Desktop sign-in tickets are no longer supported. Update Clawdi Desktop and open "
+    "https://cloud.clawdi.ai in your browser."
+)
 
 
 async def _oauth_setting_or_503(db: AsyncSession) -> ClerkCliOAuthSetting:
@@ -105,3 +115,18 @@ async def revoke_oauth_refresh_grant(
     if not 200 <= response.status_code < 300:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OAuth CLI revocation failed")
     return OAuthRevokeResponse(status="revoked")
+
+
+# Keep upgrade guidance for Desktop beta.1–7 until beta.8 is released.
+@router.post(
+    "/oauth/desktop-ticket",
+    response_model=DesktopSessionTicketResponse,
+    deprecated=True,
+    responses={
+        status.HTTP_410_GONE: {
+            "description": _RETIRED_DESKTOP_TICKET_DETAIL,
+        }
+    },
+)
+async def create_desktop_session_ticket():
+    raise HTTPException(status.HTTP_410_GONE, _RETIRED_DESKTOP_TICKET_DETAIL)

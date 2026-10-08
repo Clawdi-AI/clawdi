@@ -22,3 +22,10 @@ class OAuthRevokeRequest(BaseModel):
 
 class OAuthRevokeResponse(BaseModel):
     status: Literal["revoked"]
+
+
+class DesktopSessionTicketResponse(BaseModel):
+    """Legacy success shape retained while the Desktop 410 stub remains."""
+
+    ticket: str
+    expires_in: int
