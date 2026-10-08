@@ -25,6 +25,16 @@ export const CLI_STEPS = [
 
 export const INSTALLATION_DOCS_URL = "https://docs.clawdi.ai/installation";
 
+/** Copy for the Add agent hand-off to Clawdi Desktop's Connect window. */
+export const DESKTOP_HANDOFF_COPY = {
+	title: "Connect with Clawdi Desktop",
+	description: "Finds the agents on this computer, connects them, and turns on sync.",
+	open: "Open Clawdi Desktop",
+	downloadPrompt: "Don't have it?",
+	download: "Download Clawdi Desktop",
+	manualSetup: "Or set up manually",
+} as const;
+
 /** Origin of the hosted marketing site that publishes the agent-facing files. */
 export const HOSTED_PUBLIC_SITE_ORIGIN = "https://clawdi.ai";
 

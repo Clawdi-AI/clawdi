@@ -20,6 +20,22 @@ declared as production dependencies of the Electron shell.
 | Linux with systemd user services | x64, arm64 | AppImage, DEB and RPM | AppImage auto-update; package manager for DEB/RPM |
 | Windows | x64, arm64 | per-user NSIS; signed when credentials are configured | electron-updater over HTTPS + SHA-512; publisher verification when signed |
 
+## Deep link
+
+The dashboard's Add agent dialog links to `clawdi-desktop://connect`, which opens
+or focuses the Connect window. Desktop accepts only that exact link: no query,
+fragment, path or other host, and it never passes link data to the CLI. Other
+links are ignored. A request made while signing in or connecting waits, as for
+the tray's Connect Agents… item.
+
+Packaged builds register the scheme: electron-builder `protocols` writes the
+macOS `CFBundleURLTypes` and the DEB/RPM desktop entry's
+`x-scheme-handler/clawdi-desktop`, and `app.setAsDefaultProtocolClient` registers
+it on Windows. Development runs and AppImages without desktop integration don't
+register it; the dialog's download link and manual steps remain available. Links
+arrive through `open-url` on macOS and the command line on Windows and Linux
+([Electron deep links](https://www.electronjs.org/docs/latest/tutorial/launch-app-from-url-in-another-app)).
+
 ## Terminal command
 
 Packaged builds include the matching native `clawdi` CLI. On each packaged
