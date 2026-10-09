@@ -1,7 +1,8 @@
 import chalk from "chalk";
+import { ApiClient, unwrap } from "../lib/api-client";
 import { requireUuid } from "../lib/cli-options";
 import { commandResult, message } from "../lib/command-output";
-import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
+import { projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
 
@@ -17,19 +18,6 @@ import { confirmOrRequireYes } from "../lib/prompts";
  * canonical recipient surface (publishes the same backend endpoints).
  * Recipient-side listing also lives under `clawdi inbox`.
  */
-
-interface InvitationItem {
-	id: string;
-	project_id: string;
-	project_name: string;
-	project_kind: string;
-	owner_display: string;
-	owner_handle: string;
-	invitee_email: string;
-	invited_by_user_id: string;
-	invited_by_display: string | null;
-	created_at: string;
-}
 
 export async function projectInvitesCommand(
 	projectArg: string,
@@ -56,11 +44,13 @@ export async function projectInvitesCommand(
 			});
 			return;
 		}
-		await authedJson<{ status: string }>(
-			apiUrl,
-			apiKey,
-			`/v1/projects/${encodeURIComponent(projectId)}/invitations/${encodeURIComponent(invitationId)}`,
-			{ method: "DELETE" },
+		unwrap(
+			await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).DELETE(
+				"/v1/projects/{project_id}/invitations/{invitation_id}",
+				{
+					params: { path: { project_id: projectId, invitation_id: invitationId } },
+				},
+			),
 		);
 		message(opts.json, `${chalk.green("✓")} Invitation canceled.`);
 		message(opts.json, chalk.gray("  The recipient will no longer see it in their inbox."));
@@ -72,10 +62,11 @@ export async function projectInvitesCommand(
 		return;
 	}
 
-	const items = await authedJson<InvitationItem[]>(
-		apiUrl,
-		apiKey,
-		`/v1/projects/${encodeURIComponent(projectId)}/invitations`,
+	const items = unwrap(
+		await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).GET(
+			"/v1/projects/{project_id}/invitations",
+			{ params: { path: { project_id: projectId } } },
+		),
 	);
 	if (opts.json) {
 		commandResult(true, "clawdi.projectInvites.v1", { project_id: projectId, invitations: items });

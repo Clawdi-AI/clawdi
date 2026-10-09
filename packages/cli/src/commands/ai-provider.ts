@@ -148,23 +148,6 @@ interface AiProviderCompleteOAuthOptions {
 	json?: boolean;
 }
 
-interface AiProviderBackendResponse {
-	provider_id: string;
-	auth: AiProviderAuth;
-	models?: AiProvider["models"] | null;
-	runtime_env_name?: string | null;
-}
-
-interface AiProviderOAuthStartBackendResponse {
-	provider_id: string;
-	oauth_provider: string;
-	profile: string;
-	auth_url: string;
-	state: string;
-	redirect_uri: string;
-	expires_at: string;
-}
-
 interface OAuthLoopbackOptions {
 	host: string;
 	path: string;
@@ -635,17 +618,17 @@ export async function aiProviderConnectCommand(
 	}
 	try {
 		const api = new ApiClient();
-		await api.postJsonBody<AiProviderBackendResponse>(
-			"/v1/ai-providers",
-			providerToBackendUpsert(provider),
-			{ replace: "true" },
+		unwrap(
+			await api.POST("/v1/ai-providers", {
+				body: providerToBackendUpsert(provider),
+				params: { query: { replace: true } },
+			}),
 		);
-		const started = await api.postJsonBody<AiProviderOAuthStartBackendResponse>(
-			`/v1/ai-providers/${encodeURIComponent(providerId)}/auth/oauth/start`,
-			{
-				provider: oauthProvider,
-				redirect_uri: request.redirect_uri,
-			},
+		const started = unwrap(
+			await api.POST("/v1/ai-providers/{provider_id}/auth/oauth/start", {
+				params: { path: { provider_id: providerId } },
+				body: { provider: oauthProvider, redirect_uri: request.redirect_uri },
+			}),
 		);
 		if (opts.json) {
 			emit({ schemaVersion: "clawdi.aiProviderOAuthStart.v1", ...started });
@@ -740,13 +723,15 @@ async function completeProviderOAuth(
 	completion: OAuthCompletionInput,
 ): Promise<AiProvider> {
 	const api = new ApiClient();
-	const response = await api.postJsonBody<AiProviderBackendResponse>(
-		`/v1/ai-providers/${encodeURIComponent(providerId)}/auth/oauth/complete`,
-		{
-			code: completion.code,
-			state: completion.state,
-			...(completion.redirectUri ? { redirect_uri: completion.redirectUri } : {}),
-		},
+	const response = unwrap(
+		await api.POST("/v1/ai-providers/{provider_id}/auth/oauth/complete", {
+			params: { path: { provider_id: providerId } },
+			body: {
+				code: completion.code,
+				state: completion.state,
+				...(completion.redirectUri ? { redirect_uri: completion.redirectUri } : {}),
+			},
+		}),
 	);
 	const catalog = readAiProviderCatalog({ allowNoAuthPublic: true });
 	const provider = findProvider(catalog, providerId);
@@ -1004,24 +989,30 @@ async function storeAgentProfileForProvider(
 	collected: NonNullable<Awaited<ReturnType<typeof collectAgentCredentialProfilePayload>>>,
 ): Promise<AiProvider> {
 	const api = new ApiClient();
-	await api.postJsonBody<AiProviderBackendResponse>(
-		"/v1/ai-providers",
-		providerToBackendUpsert(provider),
-		{ replace: "true" },
+	unwrap(
+		await api.POST("/v1/ai-providers", {
+			body: providerToBackendUpsert(provider),
+			params: { query: { replace: true } },
+		}),
 	);
-	const response = await api.postJsonBody<AiProviderBackendResponse>(
-		`/v1/ai-providers/${encodeURIComponent(provider.id)}/auth/import`,
-		{
-			type: "agent_profile",
-			tool: collected.tool,
-			profile: collected.profile,
-			payload: collected.payload,
-		},
+	const response = unwrap(
+		await api.POST("/v1/ai-providers/{provider_id}/auth/import", {
+			params: { path: { provider_id: provider.id } },
+			body: {
+				type: "agent_profile",
+				tool: collected.tool,
+				profile: collected.profile,
+				payload: collected.payload,
+			},
+		}),
 	);
 	return providerFromBackendResponse(provider, response);
 }
 
-function providerToBackendUpsert(provider: AiProvider): Record<string, unknown> {
+function providerToBackendUpsert(provider: AiProvider): components["schemas"]["AiProviderUpsert"] {
+	if (provider.auth.type === "oauth_profile") {
+		throw new Error("Use ai-provider connect to edit OAuth authentication.");
+	}
 	return {
 		provider_id: provider.id,
 		type: provider.type,
@@ -1031,14 +1022,14 @@ function providerToBackendUpsert(provider: AiProvider): Record<string, unknown> 
 		auth: provider.auth,
 		managed_by: provider.managed_by ?? "user",
 		runtime_env_name: provider.runtime_env_name,
-		capabilities: provider.capabilities,
+		capabilities: provider.capabilities ? { ...provider.capabilities } : undefined,
 		models: provider.models,
 	};
 }
 
 function providerFromBackendResponse(
 	provider: AiProvider,
-	response: AiProviderBackendResponse,
+	response: components["schemas"]["AiProviderResponse"],
 ): AiProvider {
 	const next: AiProvider = {
 		...provider,

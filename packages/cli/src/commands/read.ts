@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { emit } from "../lib/command-output";
+import { isAuthorizationRequired } from "../lib/errors";
 import { applyLinkedProjectContext } from "../lib/reference-context";
 import {
 	previewClawdiReference,
@@ -36,6 +37,7 @@ export async function readCommand(
 		console.log(hit.value);
 		if (opts.debug) printDebug(hit);
 	} catch (e) {
+		if (isAuthorizationRequired(e)) throw e;
 		console.error(chalk.red(e instanceof Error ? e.message : String(e)));
 		process.exitCode = 1;
 	}
@@ -43,9 +45,11 @@ export async function readCommand(
 
 function printDebug(hit: VaultReferenceHit | VaultReferencePreview): void {
 	console.error(chalk.gray(`from ${hit.source_alias}`));
-	if (!hit.precedence) return;
+	if (!Array.isArray(hit.precedence)) return;
 	console.error(chalk.gray("searched:"));
-	for (const entry of hit.precedence) {
+	for (const value of hit.precedence) {
+		if (typeof value !== "object" || value === null) continue;
+		const entry: Record<string, unknown> = value;
 		console.error(chalk.gray(`  ${entry.alias} ${entry.reason}`));
 	}
 }

@@ -1,34 +1,22 @@
+import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
+import { ApiClient, unwrap } from "../lib/api-client";
 import { emit } from "../lib/command-output";
-import { authedJson, projectAlias, projectAuthOrExit } from "../lib/project-command-utils";
-import { listProjects, type ProjectBrief, resolveProjectId } from "../lib/project-resolver";
+import { projectAlias, projectAuthOrExit } from "../lib/project-command-utils";
+import { listProjects, resolveProjectId } from "../lib/project-resolver";
 
-interface ProjectDetail extends ProjectBrief {
-	origin_environment_id?: string | null;
-	archived_at?: string | null;
-	created_at?: string;
-}
-
-interface SkillRow {
-	project_id?: string | null;
-	skill_key: string;
-}
-
-interface VaultRow {
-	project_ids: string[];
-	slug: string;
-	name: string;
-}
+type SkillRow = components["schemas"]["SkillSummaryResponse"];
+type VaultRow = components["schemas"]["VaultResponse"];
 
 async function fetchAllSkills(apiUrl: string, bearer: string): Promise<SkillRow[]> {
 	const items: SkillRow[] = [];
 	let page = 1;
 	const pageSize = 200;
 	while (page <= 50) {
-		const body = await authedJson<{ items: SkillRow[]; total?: number }>(
-			apiUrl,
-			bearer,
-			`/v1/skills?page=${page}&page_size=${pageSize}`,
+		const body = unwrap(
+			await new ApiClient({ baseUrl: apiUrl, authToken: bearer }).GET("/v1/skills", {
+				params: { query: { page, page_size: pageSize } },
+			}),
 		);
 		items.push(...body.items);
 		if (items.length >= (body.total ?? items.length) || body.items.length === 0) break;
@@ -43,11 +31,10 @@ async function fetchAllVaults(apiUrl: string, bearer: string): Promise<VaultRow[
 	let page = 1;
 	const pageSize = 200;
 	while (page <= 50) {
-		const pageParam = page === 1 ? "" : `page=${page}&`;
-		const body = await authedJson<{ items: VaultRow[]; total?: number }>(
-			apiUrl,
-			bearer,
-			`/v1/vault?${pageParam}page_size=${pageSize}`,
+		const body = unwrap(
+			await new ApiClient({ baseUrl: apiUrl, authToken: bearer }).GET("/v1/vault", {
+				params: { query: { ...(page > 1 ? { page } : {}), page_size: pageSize } },
+			}),
 		);
 		items.push(...body.items);
 		if (items.length >= (body.total ?? items.length) || body.items.length === 0) break;
@@ -66,7 +53,7 @@ export async function projectShowCommand(
 	const { apiUrl, apiKey } = ctx;
 
 	const projectId = await resolveProjectId(apiUrl, apiKey, projectArg);
-	const projects = (await listProjects(apiUrl, apiKey)) as ProjectDetail[];
+	const projects = await listProjects(apiUrl, apiKey);
 	const project = projects.find((s) => s.id === projectId);
 	if (!project) {
 		console.error(chalk.red(`No project matches '${projectArg}'. Try \`clawdi project list\`.`));

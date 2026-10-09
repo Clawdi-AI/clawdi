@@ -1,8 +1,10 @@
+import type { components, paths } from "@clawdi/shared/api";
 import chalk from "chalk";
-import { ApiClient, readJson } from "../lib/api-client";
+import { ApiClient, apiErrorField, unwrap } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { emit } from "../lib/command-output";
 import { getConfig } from "../lib/config";
+import { mapHttpError } from "../lib/errors";
 import { resolveProjectId } from "../lib/project-resolver";
 import { requireAuth } from "../lib/require-auth";
 import { getEnvIdByAgent } from "../lib/select-adapter";
@@ -12,31 +14,7 @@ import {
 	VAULT_PROJECT_ACCESS_HINT,
 } from "../lib/vault-errors";
 
-interface VaultResolveHit {
-	key: string;
-	value?: string;
-	source_project_id: string;
-	source_alias: string;
-	vault_slug?: string | null;
-	section?: string;
-	item_name?: string;
-	precedence?: Array<{
-		project_id: string;
-		alias: string;
-		hit: boolean;
-		reason: "match" | "not-found" | "skipped" | "conflict";
-		binding_type?: string;
-		priority?: number;
-	}>;
-	conflicts?: Array<{
-		project_id: string;
-		alias: string;
-		display?: string;
-		binding_type?: string;
-		priority?: number;
-		vault_slug?: string | null;
-	}>;
-}
+type VaultResolveHit = components["schemas"]["VaultResolveResponse"];
 
 export async function vaultResolveCommand(
 	key: string,
@@ -58,36 +36,28 @@ export async function vaultResolveCommand(
 		return;
 	}
 
-	const params = new URLSearchParams({
-		key,
-	});
+	const query: NonNullable<paths["/v1/vault/resolve"]["post"]["parameters"]["query"]> = { key };
 	if (opts.project) {
 		const projectId = await resolveProjectId(apiUrl, accessToken, opts.project);
-		params.set("project_id", projectId);
+		query.project_id = projectId;
 	}
 	if (opts.agent) {
-		params.set("agent_id", resolveAgentId(opts.agent));
+		query.agent_id = resolveAgentId(opts.agent);
 	}
-	if (opts.allowConflicts) params.set("allow_conflicts", "true");
-	if (opts.debug) params.set("debug", "true");
-	if (opts.dryRun) params.set("preview", "true");
+	if (opts.allowConflicts) query.allow_conflicts = true;
+	if (opts.debug) query.debug = true;
+	if (opts.dryRun) query.preview = true;
 
-	const r = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).request(
-		`/v1/vault/resolve?${params.toString()}`,
-		{
-			method: "POST",
-		},
+	const result = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).POST(
+		"/v1/vault/resolve",
+		{ params: { query } },
 	);
-	let body: VaultResolveHit | { detail?: unknown };
-	try {
-		body = await readJson<VaultResolveHit | { detail?: unknown }>(r, "/v1/vault/resolve");
-	} catch (e) {
-		if (r.ok) throw e;
-		body = {};
-	}
-
+	const r = result.response;
+	const body = result.error;
 	if (!r.ok) {
-		const detail = (body as { detail?: { code?: string } }).detail;
+		const mapped = mapHttpError({ status: r.status });
+		if (mapped?.exitCode === 4) unwrap(result);
+		const code = apiErrorField(body, "code");
 		const safeMessage =
 			r.status === 404
 				? isVaultProjectNotFoundBody(body)
@@ -96,7 +66,7 @@ export async function vaultResolveCommand(
 				: r.status === 403
 					? "Vault resolve requires CLI authentication."
 					: r.status === 409
-						? detail?.code === "ambiguous_vault_reference_slug"
+						? code === "ambiguous_vault_reference_slug"
 							? "Vault namespace is ambiguous."
 							: "Vault conflict blocked."
 						: `Vault resolve failed (HTTP ${r.status}).`;
@@ -120,7 +90,7 @@ export async function vaultResolveCommand(
 			console.error(chalk.red("vault resolve requires CLI authentication."));
 		} else if (r.status === 409) {
 			console.error(chalk.red(safeMessage));
-			if (detail?.code === "ambiguous_vault_reference_slug") {
+			if (code === "ambiguous_vault_reference_slug") {
 				console.error(
 					chalk.gray(
 						"Repair or rename the conflicting vault namespace before resolving this reference.",
@@ -140,12 +110,12 @@ export async function vaultResolveCommand(
 		return;
 	}
 
+	const hit = unwrap(result);
 	if (opts.json) {
-		emit({ schemaVersion: "clawdi.vaultResolve.v1", ...(body as VaultResolveHit) });
+		emit({ schemaVersion: "clawdi.vaultResolve.v1", ...hit });
 		return;
 	}
 
-	const hit = body as VaultResolveHit;
 	if (opts.dryRun) {
 		console.log(
 			`${chalk.green("✓")} ${key} resolves from ${hit.source_alias} ${chalk.gray("(redacted)")}`,
@@ -168,9 +138,11 @@ export async function vaultResolveCommand(
 }
 
 function printPrecedence(hit: VaultResolveHit): void {
-	if (!hit.precedence) return;
+	if (!Array.isArray(hit.precedence)) return;
 	console.log(chalk.gray("  searched:"));
-	for (const entry of hit.precedence) {
+	for (const value of hit.precedence) {
+		if (typeof value !== "object" || value === null) continue;
+		const entry: Record<string, unknown> = value;
 		const suffix =
 			entry.reason === "match"
 				? chalk.green("match")
@@ -180,7 +152,7 @@ function printPrecedence(hit: VaultResolveHit): void {
 						? chalk.yellow("skipped")
 						: chalk.gray("not found");
 		const agentUse = entry.binding_type
-			? chalk.gray(` ${formatAgentUse(entry.binding_type)}:${entry.priority}`)
+			? chalk.gray(` ${formatAgentUse(String(entry.binding_type))}:${entry.priority}`)
 			: "";
 		console.log(`    ${entry.alias} ${suffix}${agentUse}`);
 	}

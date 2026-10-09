@@ -325,7 +325,6 @@ export class ApiClient {
 	private readonly abortSignal: AbortSignal | undefined;
 	private readonly requireAuth: boolean;
 	private readonly accessTokenProvider: (() => Promise<string>) | undefined;
-	private readonly requestFetch: (request: Request) => Promise<Response>;
 	private readonly includeSkillSyncProtocol: boolean;
 	private readonly machineId: string | undefined;
 	private readonly authToken: string | undefined;
@@ -384,7 +383,6 @@ export class ApiClient {
 		const requestFetch =
 			opts.fetch ??
 			((request: Request) => retryingFetch(request, DEFAULT_TIMEOUT_MS, this.abortSignal));
-		this.requestFetch = requestFetch;
 		this.client = createClient<paths>({
 			baseUrl: this.baseUrl,
 			fetch: requestFetch,
@@ -401,7 +399,7 @@ export class ApiClient {
 					}
 					const token = opts.accessTokenProvider
 						? await opts.accessTokenProvider()
-						: await getClawdiAccessToken(baseUrl);
+						: (opts.authToken ?? (await getClawdiAccessToken(baseUrl)));
 					request.headers.set("Authorization", `Bearer ${token}`);
 				}
 				request.headers.set("User-Agent", USER_AGENT);
@@ -440,7 +438,7 @@ export class ApiClient {
 		return this.requireAuth ? (this.authToken ?? (await getClawdiAccessToken(this.baseUrl))) : "";
 	}
 
-	/** Send an untyped API request through the same auth and timeout pipeline. */
+	/** Build the authenticated request for streaming responses. */
 	private async buildRequest(path: string, init: RequestInit): Promise<Request> {
 		const url = new URL(path, this.baseUrl);
 		if (url.origin !== new URL(this.baseUrl).origin) {
@@ -461,10 +459,6 @@ export class ApiClient {
 		}
 		if (!headers.has("X-Request-ID")) headers.set("X-Request-ID", randomUUID());
 		return new Request(url, { ...init, headers });
-	}
-
-	async request(path: string, init: RequestInit = {}): Promise<Response> {
-		return this.requestFetch(await this.buildRequest(path, init));
 	}
 
 	/** Return an unbuffered response. Retries and the default timeout cover
@@ -778,38 +772,11 @@ export class ApiClient {
 		}
 	}
 
-	async postJson<T>(path: string, query?: Record<string, string | undefined>): Promise<T> {
+	// This JSON-RPC endpoint is absent from public OpenAPI. Keep its existing
+	// transport confined to that route until the schema includes it.
+	async postJsonBody<T>(path: "/v1/mcp/clawdi", body: unknown): Promise<T> {
 		const accessToken = await this.getAccessToken();
 		const url = new URL(`${this.baseUrl}${path}`);
-		for (const [key, value] of Object.entries(query ?? {})) {
-			if (value !== undefined) url.searchParams.set(key, value);
-		}
-		const req = new Request(url, {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${accessToken}`,
-				"X-Request-ID": randomUUID(),
-				...(this.machineId ? { [MACHINE_ID_HEADER]: this.machineId } : {}),
-			},
-		});
-		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal);
-		if (!res.ok) {
-			const body = await res.text();
-			throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });
-		}
-		return await readJson<T>(res, path);
-	}
-
-	async postJsonBody<T>(
-		path: string,
-		body: unknown,
-		query?: Record<string, string | undefined>,
-	): Promise<T> {
-		const accessToken = await this.getAccessToken();
-		const url = new URL(`${this.baseUrl}${path}`);
-		for (const [key, value] of Object.entries(query ?? {})) {
-			if (value !== undefined) url.searchParams.set(key, value);
-		}
 		const req = new Request(url, {
 			method: "POST",
 			headers: {
@@ -858,6 +825,14 @@ export async function readJson<T>(res: Response, context = "API response"): Prom
 	}
 }
 
+/** Read a command-specific discriminator from an otherwise unknown API error detail. */
+export function apiErrorField(error: unknown, field: string): unknown {
+	if (typeof error !== "object" || error === null || !("detail" in error)) return undefined;
+	const detail = error.detail;
+	if (typeof detail !== "object" || detail === null) return undefined;
+	return (detail as Record<string, unknown>)[field];
+}
+
 /**
  * Unwrap an openapi-fetch result: throw `ApiError` on non-2xx, return
  * `data` otherwise. Mirrors the web helper so call sites look identical.
@@ -869,7 +844,7 @@ export async function readJson<T>(res: Response, context = "API response"): Prom
  * contract violation.
  */
 export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
-	if (result.error !== undefined) {
+	if (!result.response.ok || result.error !== undefined) {
 		throw new ApiError({
 			status: result.response.status,
 			body: extractApiDetail(result.error),

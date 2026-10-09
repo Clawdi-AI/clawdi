@@ -17,6 +17,7 @@ import {
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { z } from "zod";
+import { ApiClient } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import {
 	withPrivateDirectoryLock,
@@ -714,9 +715,33 @@ async function syncVaultSnapshot(
 	try {
 		const config = { ...input, apiUrl: normalizeCloudApiBaseUrl(input.apiUrl) };
 		config.connected?.assertCurrent();
-		const request = config.connected?.request ?? fetch;
+		const fetchVaultResponse = config.connected?.request ?? fetch;
+		const api = new ApiClient({
+			baseUrl: config.apiUrl,
+			requireAuth: false,
+			includeMachineId: false,
+			includeSkillSyncProtocol: false,
+			async fetch(request) {
+				const headers = new Headers(request.headers);
+				if (!config.connected) headers.set("Authorization", `Bearer ${config.apiKey}`);
+				const response = await fetchVaultResponse(request.url, {
+					method: request.method,
+					headers,
+					body: request.method === "POST" ? await request.text() : undefined,
+					redirect: "error",
+					signal: request.signal,
+				});
+				// Runtime failures are status-only. Cancel before openapi-fetch
+				// consumes an error body, preserving the bounded stream transport.
+				if (!response.ok) {
+					await response.body?.cancel();
+					return new Response(null, { status: response.status, headers: response.headers });
+				}
+				return response;
+			},
+		});
 		if (!config.connected && !config.apiKey) fail();
-		const query = config.connected ? `?agent_id=${encodeURIComponent(config.agentId)}` : "";
+		const query = config.connected ? { agent_id: config.agentId } : {};
 		let receipt = readReceipt(config);
 		const intact =
 			receipt &&
@@ -728,14 +753,16 @@ async function syncVaultSnapshot(
 			intact && receipt?.inventory.every((vault) => vault.content_version !== undefined)
 				? receipt.etag
 				: null;
-		const response = await request(`${config.apiUrl}/v1/runtime/vaults${query}`, {
-			headers: {
-				...(config.connected ? {} : { Authorization: `Bearer ${config.apiKey}` }),
-				...(etag ? { "If-None-Match": etag } : {}),
-			},
+		// Keep bounded stream consumption: runtime snapshots may contain secrets
+		// and must never be buffered without the existing 16 MiB limit.
+		const metadataResult = await api.GET("/v1/runtime/vaults", {
+			params: { query },
+			headers: etag ? { "If-None-Match": etag } : {},
+			parseAs: "stream",
 			redirect: "error",
 			signal: AbortSignal.timeout(10000),
 		});
+		const response = metadataResult.response;
 		config.connected?.assertCurrent();
 		if (response.status === 304) {
 			if (!etag) fail();
@@ -749,6 +776,8 @@ async function syncVaultSnapshot(
 			await response.body?.cancel();
 			fail();
 		}
+		const snapshotEtag = response.headers.get("etag");
+		if (snapshotEtag === null) fail();
 		const metadata = await readSnapshot(response);
 		config.connected?.assertCurrent();
 		if (
@@ -757,23 +786,21 @@ async function syncVaultSnapshot(
 		)
 			fail();
 		receipt = pruneRevoked(config, receipt, metadata);
-		const material = await request(`${config.apiUrl}/v1/runtime/vaults/material${query}`, {
-			method: "POST",
+		const materialResult = await api.POST("/v1/runtime/vaults/material", {
+			params: { query },
+			parseAs: "stream",
 			redirect: "error",
 			signal: AbortSignal.timeout(10000),
-			headers: {
-				...(config.connected ? {} : { Authorization: `Bearer ${config.apiKey}` }),
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify({
-				etag: response.headers.get("etag"),
+			body: {
+				etag: snapshotEtag,
 				revisions: intact
 					? Object.fromEntries(
 							(receipt?.inventory ?? []).map((vault) => [vault.id, vault.revision]),
 						)
 					: {},
-			}),
+			},
 		});
+		const material = materialResult.response;
 		config.connected?.assertCurrent();
 		if (material.status === 401 || material.status === 403) {
 			await material.body?.cancel();
@@ -831,7 +858,7 @@ async function syncVaultSnapshot(
 				]),
 			),
 			inventory,
-			etag: response.headers.get("etag"),
+			etag: snapshotEtag,
 		});
 		return "synced";
 	} catch {

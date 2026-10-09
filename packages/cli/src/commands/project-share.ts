@@ -1,6 +1,6 @@
 import { buildShareAgentHandoffPrompt } from "@clawdi/shared/sharing";
 import chalk from "chalk";
-import { ApiClient, ApiError, readJson } from "../lib/api-client";
+import { ApiClient, apiErrorField, unwrap } from "../lib/api-client";
 import { commandResult } from "../lib/command-output";
 import { projectAuthOrExit } from "../lib/project-command-utils";
 import { listProjects, resolveProjectId } from "../lib/project-resolver";
@@ -22,17 +22,6 @@ import { listProjects, resolveProjectId } from "../lib/project-resolver";
  *   - 404 → project not yours / doesn't exist.
  */
 
-interface ShareLinkCreated {
-	id: string;
-	raw_token: string;
-	url: string;
-	prefix: string;
-	owner_handle: string;
-	label: string | null;
-	created_at: string;
-	expires_at: string | null;
-}
-
 export async function projectShareCommand(
 	projectArg: string | undefined,
 	opts: { label?: string; json?: boolean },
@@ -52,21 +41,15 @@ export async function projectShareCommand(
 	// by the caller's network stack if they already hit /api/projects
 	// via resolveProjectId moments ago.
 	const projectSlug = (await listProjects(apiUrl, apiKey)).find((s) => s.id === projectId)?.slug;
-	const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
-		`/v1/projects/${encodeURIComponent(projectId)}/share-links`,
+	const result = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).POST(
+		"/v1/projects/{project_id}/share-links",
 		{
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify({ label: opts.label ?? null }),
+			params: { path: { project_id: projectId } },
+			body: { label: opts.label ?? null },
 		},
 	);
-	if (r.status === 409) {
-		const body = (await r.json().catch(() => ({}))) as {
-			detail?: { error?: string };
-		};
-		if (body?.detail?.error === "display_name_required") {
+	if (result.response.status === 409) {
+		if (apiErrorField(result.error, "error") === "display_name_required") {
 			console.error(
 				chalk.red(
 					"Set a display name on your profile before sharing. " +
@@ -76,12 +59,8 @@ export async function projectShareCommand(
 			process.exitCode = 1;
 			return;
 		}
-		throw new ApiError({ status: r.status, body: JSON.stringify(body), hint: "" });
 	}
-	if (!r.ok) {
-		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-	}
-	const body = await readJson<ShareLinkCreated>(r, "create share link");
+	const body = unwrap(result);
 
 	if (opts.json) {
 		console.error("✓ Viewer project link ready");

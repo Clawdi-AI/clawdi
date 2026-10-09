@@ -1,19 +1,13 @@
+import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
+import { ApiClient, unwrap } from "../lib/api-client";
 import { parsePositiveInteger, requireUuid } from "../lib/cli-options";
 import { commandResult, emit, message } from "../lib/command-output";
-import { authedJson, projectAlias, requireProjectAuth } from "../lib/project-command-utils";
+import { projectAlias, requireProjectAuth } from "../lib/project-command-utils";
 import { listProjects, type ProjectBrief, resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
 
-interface BindingRow {
-	id: string;
-	agent_id: string;
-	project_id: string;
-	binding_type: "primary" | "context";
-	priority: number;
-	default_write_enabled: boolean;
-	created_at: string;
-}
+type BindingRow = components["schemas"]["AgentProjectBindingResponse"];
 
 function parseOrder(raw: string | number, errorMessage: string): number {
 	try {
@@ -29,10 +23,11 @@ export async function agentProjectsListCommand(
 ): Promise<void> {
 	requireUuid(agentId, "Agent ID");
 	const { apiUrl, apiKey } = await requireProjectAuth();
-	const rows = await authedJson<BindingRow[]>(
-		apiUrl,
-		apiKey,
-		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings`,
+	const rows = unwrap(
+		await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).GET(
+			"/v1/agents/{agent_id}/project-bindings",
+			{ params: { path: { agent_id: agentId } } },
+		),
 	);
 	const projectsById = new Map<string, ProjectBrief>();
 	for (const project of await listProjects(apiUrl, apiKey).catch(() => [])) {
@@ -94,15 +89,14 @@ export async function agentProjectsAddContextCommand(
 	if (opts.order !== undefined) {
 		priority = parseOrder(opts.order, "--order <order> must be an integer >= 1.");
 	}
-	const binding = await authedJson<BindingRow>(
-		apiUrl,
-		apiKey,
-		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings/context`,
-		{
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ project_id: projectId, priority }),
-		},
+	const binding = unwrap(
+		await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).POST(
+			"/v1/agents/{agent_id}/project-bindings/context",
+			{
+				params: { path: { agent_id: agentId } },
+				body: { project_id: projectId, priority },
+			},
+		),
 	);
 	message(opts.json, `${chalk.green("✓")} Linked to ${agentId}.`);
 	message(opts.json, chalk.gray("  Vaults resolve after the workspace."));
@@ -116,10 +110,11 @@ export async function agentProjectsRemoveContextCommand(
 	requireUuid(agentId, "Agent ID");
 	const { apiUrl, apiKey } = await requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
-	const rows = await authedJson<BindingRow[]>(
-		apiUrl,
-		apiKey,
-		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings`,
+	const rows = unwrap(
+		await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).GET(
+			"/v1/agents/{agent_id}/project-bindings",
+			{ params: { path: { agent_id: agentId } } },
+		),
 	);
 	const matches = rows.filter(
 		(row) => row.binding_type === "context" && row.project_id === projectId,
@@ -147,11 +142,13 @@ export async function agentProjectsRemoveContextCommand(
 		});
 		return;
 	}
-	await authedJson<{ status: string }>(
-		apiUrl,
-		apiKey,
-		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings/${encodeURIComponent(matches[0].id)}`,
-		{ method: "DELETE" },
+	unwrap(
+		await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).DELETE(
+			"/v1/agents/{agent_id}/project-bindings/{binding_id}",
+			{
+				params: { path: { agent_id: agentId, binding_id: matches[0].id } },
+			},
+		),
 	);
 	message(opts.json, `${chalk.green("✓")} Unlinked from ${agentId}.`);
 	message(opts.json, chalk.gray("  Project membership unchanged."));
@@ -182,15 +179,14 @@ export async function agentProjectsReorderCommand(
 	if (items.length === 0) {
 		throw new Error("Pass at least one --item <id>:<order>.");
 	}
-	await authedJson<{ status: string }>(
-		apiUrl,
-		apiKey,
-		`/v1/agents/${encodeURIComponent(agentId)}/project-bindings/context/reorder`,
-		{
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ items }),
-		},
+	unwrap(
+		await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).PATCH(
+			"/v1/agents/{agent_id}/project-bindings/context/reorder",
+			{
+				params: { path: { agent_id: agentId } },
+				body: { items },
+			},
+		),
 	);
 	message(opts.json, `${chalk.green("✓")} Updated vault resolution priority for ${agentId}.`);
 	commandResult(opts.json, "clawdi.agentProjectsMove.v1", {
