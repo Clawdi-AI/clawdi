@@ -41,8 +41,27 @@ export function getEnvIdByAgent(agentType: string): string | null {
 export async function fetchDefaultProjectId(
 	api: import("./api-client").ApiClient,
 ): Promise<string> {
-	const body = unwrap(await api.GET("/v1/projects/default"));
-	if (body.project_id) return body.project_id;
+	const result = await api.GET("/v1/projects/default").catch((error: unknown) => {
+		if (error instanceof SyntaxError) {
+			throw new Error("Failed to resolve default project: missing project_id in response");
+		}
+		throw error;
+	});
+	if (result.response.status === 401) unwrap(result);
+	// Preserve the existing default-project compatibility behavior: older
+	// servers can return a usable project_id with a non-401 error status.
+	const body: unknown = result.response.ok ? result.data : result.error;
+	if (
+		typeof body === "object" &&
+		body !== null &&
+		"project_id" in body &&
+		typeof body.project_id === "string" &&
+		body.project_id
+	)
+		return body.project_id;
+	if (!result.response.ok) {
+		throw new Error(`Failed to resolve default project: HTTP ${result.response.status}`);
+	}
 	throw new Error("Failed to resolve default project: missing project_id in response");
 }
 
