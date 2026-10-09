@@ -272,7 +272,7 @@ function SharesView({
 	const revoke = async (share: SessionShare) => {
 		const visible = capture();
 		if (!scope.isCurrent() || !visible()) return;
-		await read((signal) => sessionSharing.revoke(share.id, share.kind, signal));
+		await read((signal) => sessionSharing.revoke(share.id, signal));
 		if (scope.isCurrent()) await refresh();
 	};
 	const row = (share: SessionShare, compact = false) => (

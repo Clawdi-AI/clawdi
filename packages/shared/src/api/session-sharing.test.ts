@@ -57,7 +57,7 @@ test("share revocation accepts actual 204 responses and Markdown export preserve
 			fetch: (request) => fetch(request),
 		});
 		await client.create("session", { scope: "response", position: 17 });
-		await expect(client.revoke("link", "snapshot")).resolves.toBeNull();
+		await expect(client.revoke("link")).resolves.toBeNull();
 		await expect(client.exportMarkdown("session")).resolves.toBe(markdown);
 		expect(requests[0]?.body).toEqual({ scope: "response", position: 17 });
 		expect(requests[1]).toEqual({
