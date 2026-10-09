@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { agentFilePaths } from "@clawdi/shared/linking";
+import { agentFilePaths, webLinkPaths } from "@clawdi/shared/linking";
+import type { Href } from "expo-router";
 import {
 	mobileBrowserLink,
 	mobileLinkDestination,
@@ -108,6 +109,26 @@ test("Web paths resolve identically for custom scheme and verified universal lin
 			"/settings/wallet",
 		);
 	}
+});
+
+test("settings app links land on the Account tab's native Settings menu", () => {
+	// app/(tabs)/(account)/settings/index.tsx renders pages/settings/menu-page.
+	const settingsMenu = "/settings" satisfies Href;
+	const stage = () => {
+		throw new Error("Settings links must not stage capabilities");
+	};
+	expect(webLinkPaths).toContainEqual({ path: settingsMenu });
+	for (const path of [
+		"/settings",
+		"clawdi://settings",
+		"clawdi:///settings",
+		"https://links.example.test/settings",
+	]) {
+		expect(mobileLinkDestination(path, ["links.example.test"], stage)).toBe(settingsMenu);
+	}
+	expect(mobileLinkDestination("https://unverified.example.test/settings", [], stage)).toBe(
+		"/open-share",
+	);
 });
 
 test("dashboard links open Overview through verified HTTPS and the custom scheme", () => {

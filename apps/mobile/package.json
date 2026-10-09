@@ -14,7 +14,7 @@
 	},
 	"dependencies": {
 		"@clawdi/shared": "workspace:*",
-		"@clerk/expo": "4.10.0",
+		"@clerk/expo": "4.8.0",
 		"@expo-google-fonts/geist": "0.4.2",
 		"@expo-google-fonts/geist-mono": "0.4.3",
 		"@expo/dom-webview": "catalog:expo57",

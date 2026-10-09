@@ -68,6 +68,7 @@ transactions and breadcrumbs involving `/vault-request`; replay is disabled.
 | Email / Clerk and Cloud account | Contact Info: Email Address | Personal info: Email address | App functionality, account management | Linked; required for email login |
 | Name / Clerk account | Contact Info: Name | Personal info: Name | App functionality, profile | Linked; optional profile field |
 | User id / Clerk and Cloud APIs | Identifiers: User ID | Personal info: User IDs | App functionality, account management | Linked; required |
+| WhatsApp manual-pairing phone number and linked-account identifiers / Cloud API, Baileys sidecar and WhatsApp (third party) | Contact Info: Phone Number; Identifiers: User ID | Personal info: Phone number, User IDs | App functionality, linked-device authentication and channel account identification | Linked to the Clawdi account; optional WhatsApp connection feature; phone input required for manual-code pairing; authenticated identifiers retained after pairing |
 | Purchase history / RevenueCat, StoreKit and Play Billing | Purchases: Purchase History | Financial info: Purchase history | App functionality, purchases, entitlement verification and restoration | Linked via RevenueCat appUserID and credits funding the hosted Wallet; required when purchasing |
 | Memories, skill content, Vault entries and user-authored session/channel configuration / Cloud APIs and connected agents | User Content: Other User Content | App activity: Other user-generated content | App functionality, content storage/sync and agent configuration | Linked; optional, collected when using the feature |
 | Skill archive uploads / Cloud skill library and connected agents | User Content: Other User Content | Files and docs: Files and docs | App functionality, skill import/sync | Linked; optional upload |
@@ -89,8 +90,7 @@ subscription-management UI or link (`useManageStoreSubscription` in
 `apps/mobile/src/hosted/billing/store/compute-store.tsx`). Consumable credits
 cannot be restored; subscriptions have Restore purchases, and pending purchases
 use explicit recovery. Keep the purchase-history declaration. Purchase history
-is linked to the
-Clawdi account through RevenueCat appUserID and credits funding the hosted Wallet;
+is linked to the Clawdi account through RevenueCat appUserID and credits funding the hosted Wallet;
 the app manifest therefore declares `NSPrivacyCollectedDataTypeLinked: true`.
 Confirm payment data handled exclusively by Apple/Google versus data received by
 the app or RevenueCat; do not claim the app collects card details without evidence.
@@ -103,10 +103,8 @@ under Google's definitions, rather than only other user-generated content.
 User-initiated sharing and connected-agent transfers still require the owner's
 review of recipients, retention/deletion and Google's sharing exceptions.
 
-Phone collection is not assumed: the owner must confirm whether the production
-Clerk instance enables phone sign-in or editable phone fields. If enabled, add
-`NSPrivacyCollectedDataTypePhoneNumber` and the matching Apple Contact Info:
-Phone Number / Play Personal info: Phone number disclosure before submission.
+WhatsApp pairing sends phone numbers independently of Clerk phone settings;
+see the verified data path and remaining phone-disclosure gate below.
 Session/channel **messages** have dedicated categories (Apple User Content:
 Emails or Text Messages; Play Messages: Other in-app messages), distinct from
 the configuration row above. Other User Content alone does not cover messages.
@@ -127,10 +125,49 @@ release APK, including dependency permissions, before submission.
 
 ## Owner inputs and submission gates
 
+WhatsApp manual-code pairing sends the entered number from
+`apps/mobile/src/hosted/v2/channels/whatsapp-device-onboarding.tsx` through
+`whatsapp.pairingCode` (`packages/shared/src/api/whatsapp-client.ts`) in the
+`phone_number` request body. The backend's
+`request_whatsapp_pairing_code` in
+`backend/app/services/whatsapp_device_onboarding.py` forwards it to
+`client.pairing_code`; the Baileys sidecar calls
+`socket.requestPairingCode(phoneNumber)` in
+`packages/whatsapp-baileys-sidecar/src/runtime.ts`, transferring the number to
+WhatsApp, a third party, for linked-device authentication (App Functionality).
+The mobile input is held in component state and cleared on blur/background;
+`ChannelWhatsAppOnboardingSession` (`backend/app/models/channel.py`) stores
+ownership/lifecycle metadata, not the entered number, QR, pairing code or auth state.
+This does not establish that all phone-related data is unretained.
+
+After successful pairing, `_finalize_connected_account` stores the authenticated
+phone-number JID as `ChannelAccount.config.self_identity.id` and the LID as
+`ChannelAccount.config.self_identity.lid`. `config` is a JSONB column and the
+Custom channel account's `user_id` links these identifiers to its Clawdi owner;
+`sidecar_account_id` separately identifies the opaque provider-session UUID.
+The PN JID contains the WhatsApp phone digits and can be parsed back into a
+number (`whatsapp_phone_number_from_pn_jid`), so it is phone-bearing data even
+when no raw input is kept in the onboarding row. The sidecar also persists the
+authenticated `creds.me` identity in its SQLite `auth_creds` state;
+`credentialsForPersistence` in
+`packages/whatsapp-baileys-sidecar/src/sqlite-state.ts` drops the pairing code
+and excludes the temporary pre-authentication `me` identity. Authenticated
+PN/LID identifiers are retained for QR pairing as well as manual-code pairing.
+
+Phone data therefore belongs in the submission inventory as Apple Contact Info:
+Phone Number (`NSPrivacyCollectedDataTypePhoneNumber`) / Play Personal info:
+Phone number, alongside the linked-account User ID categories. The owner must
+finalize the phone manifest/label declaration, retention and deletion periods
+for the Cloud identifiers, sidecar auth state, backups and WhatsApp's handling.
+For Play, assess the WhatsApp transfer and any applicable user-initiated-sharing
+exception; neither the onboarding-row omission nor Clerk settings establish
+"no collection" or "no sharing". Confirm any additional Clerk phone collection
+separately.
+
 | Input | Status / requirement |
 | --- | --- |
 | Final privacy labels / Data safety answers | Owner confirms optionality, recipients, retention/deletion, processor sharing exceptions and enabled SDKs for the submitted binary; the manifest does not submit store forms |
-| Clerk phone fields | Owner confirms production Clerk configuration; add the phone manifest and label categories if enabled |
+| Phone numbers and WhatsApp identifiers | Confirm the Phone Number manifest/Apple label and Play Phone number/User IDs answers for the verified WhatsApp pairing path, App Functionality purpose and third-party WhatsApp transfer; confirm Cloud/sidecar/backup/provider retention and deletion, linked PN/LID storage and sharing exceptions. Check Clerk phone fields as an additional source, not the only source. |
 | Session/channel message collection | Owner confirms native/embedded-runtime message collection and the dedicated message categories above; configuration metadata alone is covered here |
 | Privacy policy URL | Owner must supply a public URL covering app and service processing, retention and deletion |
 | Support URL | Owner must supply a public support URL |
