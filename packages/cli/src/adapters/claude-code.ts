@@ -10,13 +10,13 @@ import {
 	type AgentAdapterCore,
 	collectFromScan,
 	type RawSession,
-	type SessionBatchScan,
 	type SessionEventSemantics,
 	type SessionScanBatch,
 	type SessionScanIssue,
 	type SessionScanRequest,
 	type SessionScanResult,
 	type SyncReadContext,
+	scanFromCollect,
 } from "./base";
 import { getClaudeHome, matchesProjectFilter } from "./paths";
 import {
@@ -40,6 +40,9 @@ import {
 import { flatSkillModule } from "./skill-dir";
 import { withSessionIndex } from "./sqlite";
 import { readCommandVersion } from "./version";
+
+// bump when this adapter's identity/metadata parsing changes
+const CLAUDE_PARSER_VERSION = "claude-v1";
 
 function claudeDir() {
 	return getClaudeHome();
@@ -251,19 +254,9 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		return absPath.replace(/\//g, "-");
 	}
 
-	private async scanSessions(
-		request: SessionScanRequest,
-		knownSourceRevisions: ReadonlyMap<string, string>,
-		context?: SyncReadContext,
-	): Promise<SessionBatchScan> {
-		const result = await this.collectSessions(request, knownSourceRevisions, context);
-		return {
-			coverage: result.coverage,
-			batches: (async function* () {
-				yield result;
-			})(),
-		};
-	}
+	private readonly scanSessions = scanFromCollect((request, revisions, context) =>
+		this.collectSessions(request, revisions, context),
+	);
 
 	private async collectSessions(
 		request: SessionScanRequest,
@@ -350,7 +343,10 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 		try {
 			for (const { filePath } of projectSessionFiles(projectPath)) {
 				context?.signal.throwIfAborted();
-				const revision = jsonlStatRevision(await stat(filePath, { bigint: true }));
+				const revision = jsonlStatRevision(
+					await stat(filePath, { bigint: true }),
+					CLAUDE_PARSER_VERSION,
+				);
 				if (revision === undefined) return undefined;
 				entries.push(`${relative(projectPath, filePath)}\0${revision}`);
 			}
@@ -661,7 +657,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 			summary: customTitle ?? aiTitle ?? firstUserPrompt,
 			localHashMetadata: customTitle ?? aiTitle ?? firstUserPrompt ?? "",
 			...description.content,
-			sourceRevision: source.revision,
+			sourceRevision: source.revision(CLAUDE_PARSER_VERSION),
 			durationSeconds,
 		};
 	}

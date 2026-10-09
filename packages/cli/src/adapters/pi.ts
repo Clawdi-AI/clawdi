@@ -14,13 +14,13 @@ import {
 	type AgentAdapterCore,
 	collectFromScan,
 	type RawSession,
-	type SessionBatchScan,
 	type SessionEvent,
 	type SessionScanBatch,
 	type SessionScanIssue,
 	type SessionScanRequest,
 	type SessionScanResult,
 	type SyncReadContext,
+	scanFromCollect,
 } from "./base";
 import { getPiHome, getPiSessionsDir, matchesProjectFilter } from "./paths";
 import { piMessageDrafts } from "./pi-message-drafts";
@@ -35,6 +35,9 @@ import {
 import { flatSkillModule } from "./skill-dir";
 import { openSessionIndex } from "./sqlite";
 import { readCommandVersion } from "./version";
+
+// bump when this adapter's identity/metadata parsing changes
+const PI_PARSER_VERSION = "pi-v1";
 
 interface ParsedPiEntry {
 	data: JsonObject;
@@ -461,7 +464,7 @@ async function parseSession(
 			? safeTruncate(description.firstUser.content, 200)
 			: basename(filePath, ".jsonl"),
 		...description.content,
-		sourceRevision: sourceFile.revision,
+		sourceRevision: sourceFile.revision(PI_PARSER_VERSION),
 		rawFilePath: filePath,
 	};
 }
@@ -495,19 +498,9 @@ export class PiAdapter implements AgentAdapterCore {
 		return readCommandVersion("pi", ["--version"]);
 	}
 
-	private async scanSessions(
-		request: SessionScanRequest,
-		knownSourceRevisions: ReadonlyMap<string, string>,
-		context?: SyncReadContext,
-	): Promise<SessionBatchScan> {
-		const result = await this.collectSessions(request, knownSourceRevisions, context);
-		return {
-			coverage: result.coverage,
-			batches: (async function* () {
-				yield result;
-			})(),
-		};
-	}
+	private readonly scanSessions = scanFromCollect((request, revisions, context) =>
+		this.collectSessions(request, revisions, context),
+	);
 
 	private async collectSessions(
 		request: SessionScanRequest,
@@ -525,7 +518,7 @@ export class PiAdapter implements AgentAdapterCore {
 			if (context) await setImmediate(undefined, { signal: context.signal });
 			try {
 				if (!request.projectFilter) {
-					const revision = jsonlStatRevision(await stat(path, { bigint: true }));
+					const revision = jsonlStatRevision(await stat(path, { bigint: true }), PI_PARSER_VERSION);
 					const id = revision === undefined ? undefined : byRevision.get(revision);
 					if (id !== undefined) {
 						observed.add(id);
