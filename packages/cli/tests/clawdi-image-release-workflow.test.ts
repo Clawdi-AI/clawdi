@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { runInNewContext } from "node:vm";
 import { parse } from "yaml";
 import {
 	calculateClawdiImageRevisions,
@@ -99,6 +100,214 @@ const releaseClassifierSource = readFileSync(
 	"utf8",
 );
 
+interface ReleaseRun {
+	id: number;
+	status: string;
+	conclusion: string | null;
+	event?: string;
+	head_sha?: string;
+}
+
+interface DeployJob {
+	name: string;
+	conclusion: string;
+	completed_at?: string;
+}
+
+async function resolveDeploymentAuthority(
+	pages: ReleaseRun[][],
+	jobsByRun: Map<number, DeployJob[]>,
+) {
+	const outputs: Record<string, string> = {};
+	const failures: string[] = [];
+	const runRequests: Record<string, unknown>[] = [];
+	const jobRequests: Record<string, unknown>[] = [];
+	const authority = imageRelease.jobs.build?.steps?.find(
+		(step) => step.id === "deployment-authority",
+	);
+	expect(typeof authority?.with?.script).toBe("string");
+	await runInNewContext(
+		`(async () => {\n${authority?.with?.script}\n})()`,
+		{
+			context: { repo: { owner: "Clawdi-AI", repo: "clawdi" } },
+			github: {
+				rest: {
+					actions: {
+						listWorkflowRuns: async (params: { page: number } & Record<string, unknown>) => {
+							runRequests.push(params);
+							const runs = pages[params.page - 1];
+							if (!runs) throw new Error(`Unexpected workflow page ${params.page}`);
+							return { data: { workflow_runs: runs } };
+						},
+						listJobsForWorkflowRun: async (
+							params: { run_id: number } & Record<string, unknown>,
+						) => {
+							jobRequests.push(params);
+							const jobs = jobsByRun.get(params.run_id);
+							if (!jobs) throw new Error(`Unexpected jobs request for run ${params.run_id}`);
+							return { data: { jobs } };
+						},
+					},
+				},
+			},
+			core: {
+				setOutput: (name: string, value: string) => {
+					outputs[name] = value;
+				},
+				setFailed: (message: string) => {
+					failures.push(message);
+				},
+			},
+		},
+		{ timeout: 1000 },
+	);
+	return { outputs, failures, runRequests, jobRequests };
+}
+
+describe("release deployment authority lookup", () => {
+	const successfulRun: ReleaseRun = {
+		id: 1,
+		status: "completed",
+		conclusion: "success",
+		event: "workflow_run",
+		head_sha: "a".repeat(40),
+	};
+	const deployedSha = "c".repeat(40);
+	const deployJob: DeployJob = {
+		name: `deploy-vps ${deployedSha}`,
+		conclusion: "success",
+		completed_at: "2026-10-09T12:00:00Z",
+	};
+
+	test("filters successful completed runs locally and selects the latest deployment in the page", async () => {
+		const result = await resolveDeploymentAuthority(
+			[
+				[
+					{ id: 6, status: "completed", conclusion: "failure" },
+					{ id: 5, status: "in_progress", conclusion: null },
+					{ id: 4, status: "in_progress", conclusion: "success" },
+					{ ...successfulRun, id: 3 },
+					{ ...successfulRun, id: 2 },
+					{ ...successfulRun, event: "workflow_dispatch" },
+				],
+			],
+			new Map([
+				[3, [{ ...deployJob, conclusion: "skipped" }]],
+				[
+					2,
+					[
+						{
+							...deployJob,
+							name: `deploy-vps ${"b".repeat(40)}`,
+							completed_at: "2026-10-09T11:00:00Z",
+						},
+					],
+				],
+				[1, [deployJob]],
+			]),
+		);
+
+		expect(result.outputs).toEqual({ found: "true", base_sha: deployedSha });
+		expect(result.failures).toEqual([]);
+		expect(result.runRequests).toEqual([
+			{
+				owner: "Clawdi-AI",
+				repo: "clawdi",
+				workflow_id: "clawdi-image-release.yml",
+				per_page: 20,
+				page: 1,
+			},
+		]);
+		expect(result.jobRequests.map((request) => request.run_id)).toEqual([3, 2, 1]);
+		expect(result.jobRequests[0]).toEqual({
+			owner: "Clawdi-AI",
+			repo: "clawdi",
+			run_id: 3,
+			filter: "latest",
+			per_page: 100,
+		});
+	});
+
+	test("paginates past runs without deployments and stops after the first page with authority", async () => {
+		const firstPage = Array.from({ length: 20 }, (_, index) => ({
+			...successfulRun,
+			id: 40 - index,
+		}));
+		const secondPage = Array.from({ length: 20 }, (_, index) => ({
+			...successfulRun,
+			id: 20 - index,
+		}));
+		const jobs = new Map<number, DeployJob[]>(
+			[...firstPage, ...secondPage].map((run) => [run.id, []]),
+		);
+		jobs.set(20, [deployJob]);
+		const result = await resolveDeploymentAuthority([firstPage, secondPage], jobs);
+
+		expect(result.outputs).toEqual({ found: "true", base_sha: deployedSha });
+		expect(result.failures).toEqual([]);
+		expect(result.runRequests.map((request) => request.page)).toEqual([1, 2]);
+		for (const request of result.runRequests) expect(request).not.toHaveProperty("status");
+	});
+
+	test("reports no authority after exhausting unfiltered pages", async () => {
+		const firstPage = Array.from({ length: 20 }, (_, index) => ({
+			id: 20 - index,
+			status: "completed",
+			conclusion: "failure",
+		}));
+		const result = await resolveDeploymentAuthority([firstPage, []], new Map());
+
+		expect(result.outputs).toEqual({ found: "false" });
+		expect(result.failures).toEqual([]);
+		expect(result.runRequests.map((request) => request.page)).toEqual([1, 2]);
+		expect(result.jobRequests).toEqual([]);
+	});
+
+	test("keeps legacy automatic SHA authority while skipping plain manual deploy jobs", async () => {
+		const legacyJob = { ...deployJob, name: "deploy-vps" };
+		const result = await resolveDeploymentAuthority(
+			[[{ ...successfulRun, id: 2, event: "workflow_dispatch" }, successfulRun]],
+			new Map([
+				[2, [legacyJob]],
+				[1, [legacyJob]],
+			]),
+		);
+
+		expect(result.outputs).toEqual({ found: "true", base_sha: successfulRun.head_sha });
+		expect(result.failures).toEqual([]);
+	});
+
+	test.each([
+		{ jobs: [deployJob, deployJob], error: "Release run 1 has ambiguous deploy-vps history" },
+		{
+			jobs: [{ ...deployJob, name: "deploy-vps invalid" }],
+			error: "Release run 1 has invalid named deployment authority",
+		},
+		{
+			jobs: [{ ...deployJob, completed_at: undefined }],
+			error: "Release run 1 has invalid deployment authority metadata",
+		},
+	])("rejects invalid authority: $error", async ({ jobs, error }) => {
+		const result = await resolveDeploymentAuthority([[successfulRun]], new Map([[1, jobs]]));
+
+		expect(result.outputs).toEqual({});
+		expect(result.failures).toEqual([error]);
+	});
+
+	test("rejects equal latest deployment completion times within the authority page", async () => {
+		const result = await resolveDeploymentAuthority(
+			[[{ ...successfulRun, id: 2 }, successfulRun]],
+			new Map([
+				[2, [deployJob]],
+				[1, [{ ...deployJob, name: `deploy-vps ${"b".repeat(40)}` }]],
+			]),
+		);
+
+		expect(result.outputs).toEqual({});
+		expect(result.failures).toEqual(["Latest successful deploy-vps authority is ambiguous"]);
+	});
+});
+
 describe("backend image release workflow contract", () => {
 	test("keeps manual GitHub releases on the runner that supplies GitHub CLI", () => {
 		const releaseJob = clawdiRelease.jobs.release;
@@ -188,7 +397,8 @@ describe("backend image release workflow contract", () => {
 		expect(authority?.with?.retries).toBe(3);
 		const authorityScript = String(authority?.with?.script ?? "");
 		expect(authorityScript).toContain("listWorkflowRuns");
-		expect(authorityScript).toContain('status: "success"');
+		expect(authorityScript).not.toContain('status: "success"');
+		expect(authorityScript).toContain('run.status !== "completed" || run.conclusion !== "success"');
 		expect(authorityScript).toContain("per_page: 20");
 		expect(authorityScript).not.toContain("github.paginate");
 		expect(authorityScript).toContain("listJobsForWorkflowRun");
