@@ -8,13 +8,17 @@ it("uses generated clients for Cloud JSON calls", async () => {
 	for await (const file of new Bun.Glob("**/*.ts").scan(sourceRoot)) {
 		if (file.endsWith(".test.ts")) continue;
 		const source = await readFile(join(sourceRoot, file), "utf8");
-		if (/\bauthedJson\b|\.\s*request\s*(?:<[^>]*>)?\s*\(|\bawait\s+request\s*\(/.test(source)) {
+		if (
+			/\bauthedJson\b|\.\s*request\s*(?:<[\s\S]*?>)?\s*\(|\bawait\s+request\s*(?:<[\s\S]*?>)?\s*\(/.test(
+				source,
+			)
+		) {
 			violations.push(file);
 		}
 		// /v1/mcp/clawdi is hidden from OpenAPI. Doctor's existing JSON-RPC
 		// ping is the only remaining caller, and the helper accepts only that path.
 		if (file !== "lib/api-client.ts") {
-			const calls = source.match(/\.postJson(?:Body)?\s*(?:<[^>]*>)?\s*\(/g) ?? [];
+			const calls = source.match(/\.postJson(?:Body)?\b/g) ?? [];
 			if (
 				calls.length &&
 				!(
