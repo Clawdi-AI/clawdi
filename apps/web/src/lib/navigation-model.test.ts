@@ -5,7 +5,6 @@ import {
 	consoleNavigationGroups,
 	consoleNavigationItemIsActive,
 	hostedAgentVisibleSectionIds,
-	isOverviewPath,
 } from "@/lib/navigation-model";
 
 function expectNavigationHeadings(
@@ -58,10 +57,8 @@ describe("sidebar navigation model", () => {
 
 	test("recognizes both Overview paths and keeps their navigation active", () => {
 		for (const pathname of ["/", "/dashboard"]) {
-			expect(isOverviewPath(pathname)).toBe(true);
 			expect(consoleNavigationItemIsActive(pathname, "/")).toBe(true);
 		}
-		expect(isOverviewPath("/agents")).toBe(false);
 		expect(consoleNavigationItemIsActive("/agents", "/")).toBe(false);
 	});
 

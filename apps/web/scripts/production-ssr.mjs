@@ -167,7 +167,7 @@ for (const [path, title] of [
 	});
 }
 
-for (const path of ["/", "/agents", "/dashboard", "/dashboard?deploy_profile=sui"]) {
+for (const path of ["/", "/agents"]) {
 	test(`production SSR renders signed-in ${path} without a session loading replacement`, async (t) => {
 		// Disabled dashboard queries still schedule cache GC; keep those timers
 		// scoped to this SSR request instead of retaining them in the test worker.
@@ -178,9 +178,6 @@ for (const path of ["/", "/agents", "/dashboard", "/dashboard?deploy_profile=sui
 		assert.equal(response.headers.get("location"), null);
 		assert.match(html, /data-testid="dashboard-page-content"/);
 		assert.doesNotMatch(html, /Loading session/);
-		if (path.startsWith("/dashboard")) {
-			assert.match(html, /<title>Overview · Clawdi<\/title>/);
-		}
 	});
 }
 
@@ -274,6 +271,7 @@ for (const search of ["", "?deploy_profile=sui&settings=billing-wallet"]) {
 		assert.equal(response.status, 200, html);
 		assert.equal(response.headers.get("location"), null);
 		assert.match(html, /data-testid="dashboard-page-content"/);
+		assert.doesNotMatch(html, /Loading session/);
 		assert.match(html, /<title>Overview · Clawdi<\/title>/);
 	});
 }
