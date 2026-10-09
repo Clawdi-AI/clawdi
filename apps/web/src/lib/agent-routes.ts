@@ -1,8 +1,15 @@
+import {
+	agentSectionSegment,
+	parseAgentSectionSegment,
+	agentSectionHref as sharedAgentSectionHref,
+} from "@clawdi/shared/view";
+
 import { defaultStringifySearch, linkOptions } from "@tanstack/react-router";
 import type { AgentSectionId } from "@/lib/navigation-model";
 import { agentSectionNavigationItem } from "@/lib/navigation-model";
 import { parseSessionTimelineView, type SessionTimelineView } from "@/lib/session-search-anchor";
 
+export { agentSectionSegment, parseAgentSectionSegment } from "@clawdi/shared/view";
 export type { AgentSectionId } from "@/lib/navigation-model";
 export { CONNECTED_AGENT_SECTION_IDS, HOSTED_AGENT_SECTION_IDS } from "@/lib/navigation-model";
 
@@ -13,29 +20,6 @@ export type AgentRouteSearch = Record<string, unknown> & {
 	timelineView?: SessionTimelineView;
 	subscription_action?: "start_new";
 };
-
-const AGENT_SECTION_SEGMENTS = {
-	overview: "",
-	sessions: "sessions",
-	memories: "memories",
-	skills: "skills",
-	projects: "project-access",
-	vaults: "vaults",
-	console: "console",
-	files: "files",
-	terminal: "terminal",
-	connectors: "connectors",
-	ai: "model-provider",
-	channels: "channel-links",
-	plugins: "plugins",
-	settings: "settings",
-} as const satisfies Record<AgentSectionId, string>;
-
-const AGENT_SEGMENT_TO_SECTION = Object.fromEntries(
-	Object.entries(AGENT_SECTION_SEGMENTS)
-		.filter(([, segment]) => segment)
-		.map(([section, segment]) => [segment, section]),
-) as Record<string, AgentSectionId>;
 
 export type ParsedAgentPathname = {
 	agentId: string;
@@ -52,10 +36,6 @@ export type ParsedAgentPathname = {
 
 export type AgentProjectResourceSection = "skills" | "vaults";
 
-export function agentSectionSegment(section: AgentSectionId): string {
-	return AGENT_SECTION_SEGMENTS[section];
-}
-
 export function agentSectionLabel(section: AgentSectionId, runtime?: string | null): string {
 	return agentSectionNavigationItem(section, runtime).label;
 }
@@ -67,11 +47,6 @@ export function agentSectionLabelFromSegment(
 	const section = parseAgentSectionSegment(segment);
 	if (!section) return null;
 	return agentSectionLabel(section, runtime);
-}
-
-export function parseAgentSectionSegment(value: string | null | undefined): AgentSectionId | null {
-	if (!value) return "overview";
-	return AGENT_SEGMENT_TO_SECTION[value.toLowerCase()] ?? null;
 }
 
 export function parseAgentPathname(pathname: string): ParsedAgentPathname | null {
@@ -244,9 +219,7 @@ export function agentSectionHref(
 	section: AgentSectionId = "overview",
 	search?: AgentRouteSearch,
 ): string {
-	const encodedAgentId = encodeURIComponent(agentId);
-	const segment = agentSectionSegment(section);
-	const path = segment ? `/agents/${encodedAgentId}/${segment}` : `/agents/${encodedAgentId}`;
+	const path = sharedAgentSectionHref(agentId, section);
 	const queryString = routeSearchQueryString(search);
 	return queryString ? `${path}?${queryString}` : path;
 }

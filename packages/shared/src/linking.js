@@ -17,6 +17,7 @@ export function readLinkHosts(value) {
 // Shared by Android intent filters and Web's AASA components. Keep URL paths here.
 export const webLinkPaths = [
 	{ path: "/" },
+	{ path: "/dashboard" },
 	...[
 		"agents",
 		"sessions",

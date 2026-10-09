@@ -28,10 +28,24 @@ dependency. Re-audit manifests after native dependency changes. CocoaPods/Xcode
 are not available in the Linux verification environment: installed pod aggregation
 and the signed archive must still be checked on the iOS builder.
 
-From `apps/mobile`, run:
+Expo's documented [`ios.privacyManifests`](https://docs.expo.dev/versions/latest/config/app/#privacymanifests)
+configuration supplies the app manifest through its prebuild config plugin;
+see [Apple privacy manifests](https://docs.expo.dev/guides/apple-privacy/) and
+[config plugin introspection](https://docs.expo.dev/config-plugins/development-and-debugging/#introspection).
+Introspection retains the declared privacy settings but skips the Xcode project
+mod that writes the manifest; use prebuild to verify the file and Resources entry.
+Apple defines the exact [collected data type keys](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacycollecteddatatypes/nsprivacycollecteddatatype)
+and [purpose keys](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacycollecteddatatypes/nsprivacycollecteddatatypepurposes).
+User content and avatars use `NSPrivacyCollectedDataTypeOtherUserContent` and
+`NSPrivacyCollectedDataTypePhotosorVideos`, respectively, linked to the account,
+with `NSPrivacyCollectedDataTypeTracking: false` and
+`NSPrivacyCollectedDataTypePurposeAppFunctionality`.
+
+From `apps/mobile`, inspect the plugin output, then generate the native project:
 
 ```bash
-npx expo prebuild --platform ios --no-install
+bun expo config --type introspect
+bun expo prebuild --platform ios --no-install
 ```
 
 Done: `ios/Clawdi/PrivacyInfo.xcprivacy` contains the declared reasons and
@@ -41,7 +55,9 @@ report no ITMS-91053 warnings; check the archive's merged privacy report too.
 ## Store disclosures
 
 Use this table as the shared draft for App Store privacy labels and Play Data
-safety. All rows have no advertising, tracking or sale purpose. The identity
+safety. Category names follow Apple's [App privacy details](https://developer.apple.com/app-store/app-privacy-details/)
+and Google's [Data safety definitions](https://support.google.com/googleplay/android-developer/answer/10787469?hl=en).
+All rows have no advertising, tracking or sale purpose. The identity
 rows are linked to the account. Diagnostics are not explicitly associated with
 an account by the app: no Sentry user identity is set and outgoing identities,
 request bodies, queries and token parameters are removed. Sentry drops events,
@@ -53,6 +69,9 @@ transactions and breadcrumbs involving `/vault-request`; replay is disabled.
 | Name / Clerk account | Contact Info: Name | Personal info: Name | App functionality, profile | Linked; optional profile field |
 | User id / Clerk and Cloud APIs | Identifiers: User ID | Personal info: User IDs | App functionality, account management | Linked; required |
 | Purchase history / RevenueCat, StoreKit and Play Billing | Purchases: Purchase History | Financial info: Purchase history | App functionality, purchases, entitlement verification and restoration | Linked via RevenueCat appUserID and credits funding the hosted Wallet; required when purchasing |
+| Memories, skill content, Vault entries and user-authored session/channel configuration / Cloud APIs and connected agents | User Content: Other User Content | App activity: Other user-generated content | App functionality, content storage/sync and agent configuration | Linked; optional, collected when using the feature |
+| Skill archive uploads / Cloud skill library and connected agents | User Content: Other User Content | Files and docs: Files and docs | App functionality, skill import/sync | Linked; optional upload |
+| Agent avatars and optional Clerk profile images / Cloud agent API or Clerk | User Content: Photos or Videos | Photos and videos: Photos | App functionality, profile/agent personalization | Linked; optional upload; system picker does not grant general photo-library access |
 | Crash reports / Sentry when DSN configured | Diagnostics: Crash Data | App info and performance: Crash logs | App functionality, reliability | Not explicitly linked; conditional on DSN |
 | Performance and diagnostic metadata / Sentry when DSN configured | Diagnostics: Performance Data, Other Diagnostic Data | App info and performance: Diagnostics | App functionality, reliability | Not explicitly linked; conditional on DSN |
 
@@ -63,23 +82,37 @@ HTTPS). Account deletion can be requested in the app. Confirm whether Clerk,
 Sentry and other processors qualify for Play's service-provider sharing exception
 against the owner's contracts; do not infer a blanket "no sharing" answer.
 
-Store builds use RevenueCat Paywalls for consumable Clawdi Credits and Customer
-Center is planned for store subscriptions but is not wired yet. Consumable
-credits cannot be restored; pending purchases use explicit recovery. Keep the
-purchase-history declaration. Purchase history is linked to the
+Store builds use RevenueCat Paywalls for consumable Clawdi Credits and compute
+subscriptions. Store subscription management uses the official Customer Center
+when enabled by build configuration, with a fallback to the purchasing store's
+subscription-management UI or link (`useManageStoreSubscription` in
+`apps/mobile/src/hosted/billing/store/compute-store.tsx`). Consumable credits
+cannot be restored; subscriptions have Restore purchases, and pending purchases
+use explicit recovery. Keep the purchase-history declaration. Purchase history
+is linked to the
 Clawdi account through RevenueCat appUserID and credits funding the hosted Wallet;
 the app manifest therefore declares `NSPrivacyCollectedDataTypeLinked: true`.
 Confirm payment data handled exclusively by Apple/Google versus data received by
 the app or RevenueCat; do not claim the app collects card details without evidence.
 
-This is the approved identity/purchase/diagnostics inventory, not a complete certification
-of all product content. Before submission, reconcile user-created messages,
-files, Vault data, optional avatar/phone/profile fields, connected runtime content,
-and all remaining SDKs with backend retention and processing practices. The
-hosted store client owns purchase attempts and Wallet settlement. Recheck the
-native manifests and actual purchase-data/account linkage before submission.
-Analytics,
-push notifications and session replay are deferred.
+The content rows cover the app's memory writes, skill archive imports, Vault
+writes and avatar uploads. Selecting an avatar through `File.pickFileAsync`
+sends the selected image to the authenticated agent API; this is collection even
+without camera or photo-library permissions. Imported skill archives are files
+under Google's definitions, rather than only other user-generated content.
+User-initiated sharing and connected-agent transfers still require the owner's
+review of recipients, retention/deletion and Google's sharing exceptions.
+
+Phone collection is not assumed: the owner must confirm whether the production
+Clerk instance enables phone sign-in or editable phone fields. If enabled, add
+`NSPrivacyCollectedDataTypePhoneNumber` and the matching Apple Contact Info:
+Phone Number / Play Personal info: Phone number disclosure before submission.
+Session/channel **messages** have dedicated categories (Apple User Content:
+Emails or Text Messages; Play Messages: Other in-app messages), distinct from
+the configuration row above. Other User Content alone does not cover messages.
+Confirm whether the native app or its embedded runtime sends user messages off
+device before adding the dedicated message declaration.
+Analytics, push notifications and session replay are deferred.
 
 ## Permissions and encryption
 
@@ -96,6 +129,9 @@ release APK, including dependency permissions, before submission.
 
 | Input | Status / requirement |
 | --- | --- |
+| Final privacy labels / Data safety answers | Owner confirms optionality, recipients, retention/deletion, processor sharing exceptions and enabled SDKs for the submitted binary; the manifest does not submit store forms |
+| Clerk phone fields | Owner confirms production Clerk configuration; add the phone manifest and label categories if enabled |
+| Session/channel message collection | Owner confirms native/embedded-runtime message collection and the dedicated message categories above; configuration metadata alone is covered here |
 | Privacy policy URL | Owner must supply a public URL covering app and service processing, retention and deletion |
 | Support URL | Owner must supply a public support URL |
 | Play account-deletion web URL | Owner must confirm an existing public deletion-request page or provide one; no page is assumed to exist |

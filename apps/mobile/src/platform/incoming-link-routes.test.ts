@@ -110,7 +110,24 @@ test("Web paths resolve identically for custom scheme and verified universal lin
 	}
 });
 
+test("dashboard links open Overview through verified HTTPS and the custom scheme", () => {
+	const stage = () => {
+		throw new Error("Dashboard links must not stage capabilities");
+	};
+	expect(mobileLinkDestination("clawdi://dashboard", [], stage)).toBe("/");
+	expect(
+		mobileLinkDestination("https://links.example.test/dashboard", ["links.example.test"], stage),
+	).toBe("/");
+	expect(mobileLinkDestination("https://unverified.example.test/dashboard", [], stage)).toBe(
+		"/open-share",
+	);
+});
+
 test.each([
+	["/dashboard", "/"],
+	["/dashboard?agent=a", "/?agent=a"],
+	["/dashboard?settings=billing-plan", "/settings/compute"],
+	["/dashboard/agents", "/open-share"],
 	["/?settings=billing-plan", "/settings/compute"],
 	["/deploy?checkout=cancel", "/deploy?checkout=cancel"],
 	["/?settings=billing-plan&checkout=cancel", "/settings/compute"],

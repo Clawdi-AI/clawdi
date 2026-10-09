@@ -217,8 +217,9 @@ from `@clerk/expo/native` (clerk-ios / clerk-android), matching Web's Clerk
   real device, with self-delete disabled, a real deletion against a dev hosted
   environment returns to sign-in. That check has not happened yet.
 
-The native views are **Beta** in `@clerk/expo` 4.8.0 and need a development
-build (not Expo Go). The `@clerk/expo` config plugin raises the iOS deployment
+The native views are **Beta** in `@clerk/expo` 4.10.0 and need a development
+build (not Expo Go). This version pins clerk-android API/UI 1.1.11; the
+account-deletion gate above still applies. The `@clerk/expo` config plugin raises the iOS deployment
 target to 17.0, adds the Sign in with Apple entitlement and Android packaging
 and Kotlin settings, and embeds `clerk-theme.generated.json`. `bun run theme`
 generates that theme from the shared Web tokens (OKLCH → sRGB via culori);

@@ -190,11 +190,12 @@ export function mobileLinkDestination(
 			const query = url.searchParams.toString();
 			return `/vault/${encodeURIComponent(slug)}${query ? `?${query}` : ""}`;
 		}
-		if (isWebPath(pathname) && url.searchParams.has("settings")) {
+		const destination = pathname === "/dashboard" ? "/" : pathname;
+		if (isWebPath(destination) && url.searchParams.has("settings")) {
 			return settingsDestinations.get(url.searchParams.get("settings") ?? "") ?? "/settings";
 		}
-		if (!isWebPath(pathname)) return "/open-share";
-		return `${pathname}${url.search}`;
+		if (!isWebPath(destination)) return "/open-share";
+		return `${destination}${url.search}`;
 	} catch {
 		return "/open-share";
 	}
