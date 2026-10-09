@@ -150,7 +150,7 @@ async def acquire_sync_subscription_lease(
 
     current = now or datetime.now(UTC)
     lease_id = uuid4()
-    evicted_leases: list[SyncSubscriptionLease] = []
+    evictable_leases: list[SyncSubscriptionLease] = []
     async with async_session_factory() as db:
         user_exists = (
             await db.execute(select(User.id).where(User.id == user_id).with_for_update())
@@ -171,6 +171,7 @@ async def acquire_sync_subscription_lease(
                 .where(SyncSubscriptionLease.user_id == user_id)
             )
         ).scalar_one()
+        active_for_key = 0
         if bound_api_key_id is not None:
             active_for_key = (
                 await db.execute(
@@ -182,12 +183,9 @@ async def acquire_sync_subscription_lease(
                     )
                 )
             ).scalar_one()
-            if active_for_key >= max_per_key:
-                if evict_bound_key_min_age is None:
-                    await db.commit()
-                    return None
+            if active_for_key >= max_per_key and evict_bound_key_min_age is not None:
                 needed = active_for_key - max_per_key + 1
-                evicted_leases = list(
+                evictable_leases = list(
                     (
                         await db.scalars(
                             select(SyncSubscriptionLease)
@@ -205,21 +203,20 @@ async def acquire_sync_subscription_lease(
                         )
                     ).all()
                 )
-                if len(evicted_leases) < needed:
-                    await db.commit()
-                    return None
-                if active_for_user - len(evicted_leases) >= max_per_user:
-                    await db.commit()
-                    return None
-                await db.execute(
-                    delete(SyncSubscriptionLease).where(
-                        SyncSubscriptionLease.id.in_([lease.id for lease in evicted_leases])
-                    )
-                )
 
-        if active_for_user >= max_per_user and not evicted_leases:
+        if not (
+            active_for_user - len(evictable_leases) < max_per_user
+            and active_for_key - len(evictable_leases) < max_per_key
+        ):
             await db.commit()
             return None
+
+        if evictable_leases:
+            await db.execute(
+                delete(SyncSubscriptionLease).where(
+                    SyncSubscriptionLease.id.in_([lease.id for lease in evictable_leases])
+                )
+            )
 
         db.add(
             SyncSubscriptionLease(
@@ -231,7 +228,7 @@ async def acquire_sync_subscription_lease(
             )
         )
         await db.commit()
-    for lease in evicted_leases:
+    for lease in evictable_leases:
         log.info(
             "sync events: evicted oldest bound-key subscription lease id=%s age=%.1fs",
             str(lease.id)[:8],
