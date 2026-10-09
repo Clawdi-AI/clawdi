@@ -292,7 +292,7 @@ jobs:
           e2e/hosted-openclaw.pw.ts e2e/hosted-channels.pw.ts e2e/hosted-rail-nav.pw.ts
           e2e/hosted-channels-providers.pw.ts e2e/hosted-overview-hydration.pw.ts
           --grep "deploy wizard creates|cold load hydrates without a mismatch|Clawdi AI model selection|provider creation stays|Custom model ownership|renaming a native|editing and rotating an agent-owned|popular BYOK|native BYOK saves"
-      # Follow GitHub's documented artifact pattern: upload after failures, but skip cancelled jobs.
+      # Follow GitHub's documented artifact pattern: upload on every non-cancelled run.
       - name: Upload auth Playwright report and traces
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
