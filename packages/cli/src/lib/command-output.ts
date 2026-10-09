@@ -12,7 +12,7 @@ export function emit<T extends { schemaVersion: string }>(
 	value: T,
 	write: (text: string) => void = console.log,
 ): void {
-	write(JSON.stringify(value, null, 2));
+	write(JSON.stringify(value));
 }
 
 /** Keep human messages out of machine-readable stdout. */

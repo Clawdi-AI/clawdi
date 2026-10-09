@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DesktopAuthenticationProgress } from "@clawdi/shared/desktop";
+import { emit } from "../../../packages/cli/src/lib/command-output";
 import type { runCommand } from "./command-runner";
 import { DesktopCliService } from "./native-cli";
 
@@ -14,7 +15,11 @@ afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function serviceFixture(failFirstInstall = false, loginProgress?: unknown, mounted = false) {
+function serviceFixture(
+	failFirstInstall = false,
+	loginProgress?: { schemaVersion: string; [key: string]: unknown },
+	mounted = false,
+) {
 	const root = mkdtempSync(join(tmpdir(), "desktop-cli-runtime-"));
 	roots.push(root);
 	const appImagePath = join(root, "Clawdi.AppImage");
@@ -47,7 +52,10 @@ function serviceFixture(failFirstInstall = false, loginProgress?: unknown, mount
 		let result: unknown;
 		switch (command) {
 			case "auth login --desktop":
-				if (loginProgress) options?.onStderrLine?.(JSON.stringify(loginProgress));
+				if (loginProgress)
+					emit(loginProgress, (output) => {
+						for (const line of output.split("\n")) options?.onStderrLine?.(line);
+					});
 				result = {
 					schemaVersion: "clawdi.desktopLogin.v1",
 					status: loginProgress ? "authenticated" : "cancelled",

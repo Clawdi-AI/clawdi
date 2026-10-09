@@ -64,6 +64,8 @@ All commands and every `--json` surface follow this contract:
 
 - Emit exactly one JSON object with a string `schemaVersion` such as
   `"clawdi.<name>.v1"`. Lists belong in a named array inside that object.
+- Format each JSON object on one line, including Desktop sign-in progress on
+  stderr, so consumers can read streaming events one line at a time.
 - Write results to stdout. Write errors, progress, and prompts to stderr so
   stdout remains parseable JSON.
 - Exit non-zero on failure; describe the failure on stderr without exposing
