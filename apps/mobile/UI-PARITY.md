@@ -53,7 +53,10 @@ grant bootstrap need the dashboard origin, so mobile never embeds Files.
 The Account tab root `/settings` is a native grouped settings menu: General,
 Account (Clerk's native `UserProfileView`), API Keys, then Wallet, Compute and
 AI Usage when a compute API is configured. Each row pushes a natively headed
-`/settings/{general,account,api-keys,wallet,compute,usage}` page. AI Usage is
+`/settings/{general,account,api-keys,wallet,compute,usage}` page. A last section
+carries Web's Help menu (Docs, email support, Telegram) plus the Privacy Policy
+and Terms of Use from the shared `CLAWDI_HELP_URLS`/`CLAWDI_LEGAL_URLS`; links
+open in `expo-web-browser` and email in the mail app. AI Usage is
 read-only; its Agent and time-range filters are native menus (a deleted Agent
 shows a "· Deleted" suffix instead of Web's badge), and store builds show
 amounts as credits. Web's `?settings=<panel>` opens the matching
@@ -298,8 +301,11 @@ Sessions and Library use this pattern; bounded settings/forms use ScrollView.
 uses SDK 57's native community segmented control on iOS and Compose
 segmented buttons with shared colors/Geist on Android.
 For longer option sets, `scrollable` uses Compose's documented horizontal-scroll
-modifier and single-line labels; Project detail and Memory categories use it
-for their longer option sets. Single-choice Web `Tabs` in content (channel
+modifier and single-line labels; Project detail uses it. Memory categories (six
+options, too many for an iPhone segmented control) are a single-choice section of
+the screen's native header menu. The deploy wizard seeds language and timezone from
+`Intl` like Web; Hermes has no `Intl.supportedValuesOf`, so the timezone menu offers
+the shared fallback zones plus the device zone, grouped into region submenus. Single-choice Web `Tabs` in content (channel
 detail, Discord pairing path, agent setup, tool payloads, compute-plan and
 deployment billing-term selection) render `NativeSegments` and conditionally
 render the selected panel. Store credit

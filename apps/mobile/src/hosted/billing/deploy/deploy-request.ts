@@ -1,6 +1,8 @@
 import {
 	ApiClientError,
+	buildHostedDeployRequest,
 	type DeployComponents,
+	type HostedDeployAiFields,
 	type HostedDeployComputePlanSlug,
 	type HostedDeployPlan,
 	type HostedDeployRequest,
@@ -14,6 +16,7 @@ import {
 	type StoreComputeSlot,
 	type StorePurchaseAttempt,
 	validateAndBuildHostedDeployRequest,
+	validateHostedDeployPersona,
 } from "@clawdi/shared/api";
 
 /**
@@ -23,6 +26,16 @@ import {
  */
 export type StoreFunding = "awaiting_purchase" | "purchase_pending" | "funded" | "review_required";
 
+type ReusableSubscription = DeployComponents["schemas"]["V2ComputeReusableSubscriptionItem"];
+
+/** One exact reusable card or Wallet subscription, assigned through Web's `existing` selection. */
+export type ReusableSubscriptionChoice = {
+	id: string;
+	planSlug: HostedDeployComputePlanSlug;
+	billingTermMonths: 1 | 12;
+	fundingSource: "stripe" | "wallet";
+};
+
 export type CreationAttempt = {
 	version: 1;
 	submission: "prepared" | "uncertain" | "entitlement_rejected";
@@ -30,7 +43,48 @@ export type CreationAttempt = {
 	draft: HostedDeployWizardDraft;
 	request: HostedDeployRequest;
 	storeFunding?: StoreFunding;
+	/** Absent: hosted selects the entitlement (Included Basic or a store slot). */
+	subscription?: ReusableSubscriptionChoice;
 };
+
+/**
+ * Card and Wallet rows are assigned by id. Store rows have no exact key between the
+ * subscription list and the store slot yet, so hosted admission keeps selecting them.
+ */
+export function reusableSubscriptionChoice(
+	item: ReusableSubscription,
+): ReusableSubscriptionChoice | null {
+	if (item.funding_source !== "stripe" && item.funding_source !== "wallet") return null;
+	return {
+		id: item.subscription_id,
+		planSlug: item.plan_slug,
+		billingTermMonths: item.billing_term_months,
+		fundingSource: item.funding_source,
+	};
+}
+
+const SUBSCRIPTION_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+function parseSubscriptionChoice(
+	value: unknown,
+	planSlug: HostedDeployComputePlanSlug,
+): ReusableSubscriptionChoice | null {
+	if (
+		!record(value) ||
+		typeof value.id !== "string" ||
+		!SUBSCRIPTION_ID.test(value.id) ||
+		value.planSlug !== planSlug ||
+		(value.billingTermMonths !== 1 && value.billingTermMonths !== 12) ||
+		(value.fundingSource !== "stripe" && value.fundingSource !== "wallet")
+	)
+		return null;
+	return {
+		id: value.id,
+		planSlug,
+		billingTermMonths: value.billingTermMonths,
+		fundingSource: value.fundingSource,
+	};
+}
 
 function isStoreFunding(value: unknown): value is StoreFunding {
 	return (
@@ -46,6 +100,53 @@ const CREATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 
 function record(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A saved-provider request embeds provider metadata current at preparation time, so a
+ * replay must reuse the persisted binding exactly. Accept it only when it binds the draft's
+ * provider alone, then rebuild the rest of the request from the draft.
+ */
+function savedProviderFields(
+	request: unknown,
+	providerId: string,
+	model: string,
+): HostedDeployAiFields | null {
+	if (!record(request)) return null;
+	const {
+		ai_provider_auth_kind: authKind,
+		ai_provider_id,
+		provider_ids,
+		primary_model,
+		ai_provider_bootstrap: bootstrap,
+	} = request;
+	if (
+		(authKind !== "api_key" && authKind !== "codex_oauth") ||
+		ai_provider_id !== providerId ||
+		!Array.isArray(provider_ids) ||
+		provider_ids.length !== 1 ||
+		provider_ids[0] !== providerId ||
+		!record(bootstrap) ||
+		bootstrap.schema_version !== 1 ||
+		bootstrap.selected_provider_id !== providerId
+	)
+		return null;
+	if (
+		primary_model !== null &&
+		!(
+			record(primary_model) &&
+			primary_model.provider_id === providerId &&
+			primary_model.model === model
+		)
+	)
+		return null;
+	return {
+		ai_provider_auth_kind: authKind,
+		ai_provider_id: providerId,
+		provider_ids: [providerId],
+		primary_model: primary_model === null ? null : { provider_id: providerId, model },
+		ai_provider_bootstrap: bootstrap,
+	};
 }
 
 export function parseCreationAttempt(raw: string): CreationAttempt | null {
@@ -72,22 +173,47 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 		)
 			return null;
 		const ai = draft.ai;
-		if (ai.mode !== "unmanaged" && !(ai.mode === "managed" && typeof ai.model === "string"))
-			return null;
+		const restoredAi: HostedDeployWizardDraft["ai"] | null =
+			ai.mode === "unmanaged"
+				? { mode: "unmanaged" }
+				: ai.mode === "managed" && typeof ai.model === "string"
+					? { mode: "managed", model: ai.model }
+					: ai.mode === "configured" &&
+							typeof ai.providerId === "string" &&
+							ai.providerId &&
+							typeof ai.model === "string"
+						? { mode: "configured", providerId: ai.providerId, model: ai.model }
+						: null;
+		if (!restoredAi) return null;
 		const restoredDraft: HostedDeployWizardDraft = {
 			runtime: draft.runtime,
 			computePlanSlug: draft.computePlanSlug,
 			agentName: draft.agentName,
 			language: draft.language,
 			timezone: draft.timezone,
-			ai:
-				ai.mode === "managed" && typeof ai.model === "string"
-					? { mode: "managed", model: ai.model }
-					: { mode: "unmanaged" },
+			ai: restoredAi,
 		};
-		const validated = validateAndBuildHostedDeployRequest(restoredDraft);
-		if (!validated.ok) return null;
-		const request = { ...validated.request, deploy_request_id: value.id };
+		let built: HostedDeployRequest;
+		if (restoredAi.mode === "configured") {
+			const aiFields = savedProviderFields(value.request, restoredAi.providerId, restoredAi.model);
+			const persona = {
+				agentName: restoredDraft.agentName,
+				language: restoredDraft.language,
+				timezone: restoredDraft.timezone,
+			};
+			if (!aiFields || validateHostedDeployPersona(persona).length > 0) return null;
+			built = buildHostedDeployRequest({
+				computePlanSlug: restoredDraft.computePlanSlug,
+				runtime: restoredDraft.runtime,
+				persona,
+				aiFields,
+			});
+		} else {
+			const validated = validateAndBuildHostedDeployRequest(restoredDraft);
+			if (!validated.ok) return null;
+			built = validated.request;
+		}
+		const request = { ...built, deploy_request_id: value.id };
 		// Reject any persisted payload drift, including missing/mismatched lineage IDs.
 		// Never silently migrate or reconstruct a different request for a retry.
 		if (JSON.stringify(value.request) !== JSON.stringify(request)) return null;
@@ -100,6 +226,12 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 		)
 			return null;
 		if (value.storeFunding !== undefined && !isStoreFunding(value.storeFunding)) return null;
+		const subscription =
+			value.subscription === undefined
+				? undefined
+				: parseSubscriptionChoice(value.subscription, restoredDraft.computePlanSlug);
+		// A store-funded request is admitted by its store row, never by a card or Wallet one.
+		if (subscription === null || (subscription && value.storeFunding !== undefined)) return null;
 		return {
 			version: 1,
 			submission,
@@ -107,6 +239,7 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 			draft: restoredDraft,
 			request,
 			...(value.storeFunding !== undefined ? { storeFunding: value.storeFunding } : {}),
+			...(subscription ? { subscription } : {}),
 		};
 	} catch {
 		return null;
@@ -226,7 +359,8 @@ export function isDefinitiveAdmissionRejection(attempt: CreationAttempt, error: 
 		attempt.storeFunding === undefined &&
 		error instanceof ApiClientError &&
 		error.status === 409 &&
-		error.code === "compute_entitlement_required"
+		(error.code === "compute_entitlement_required" ||
+			(attempt.subscription !== undefined && error.code === "reusable_subscription_unavailable"))
 	);
 }
 
@@ -401,4 +535,5 @@ export const validationTranslationKeys = {
 	language: "creation.invalidLanguage",
 	timezone: "creation.invalidTimezone",
 	"ai.model": "creation.invalidModel",
+	"ai.provider": "creation.invalidProvider",
 } as const satisfies Record<HostedDeployValidationIssue["field"], string>;

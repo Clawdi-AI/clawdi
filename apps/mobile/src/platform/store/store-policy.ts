@@ -1,4 +1,5 @@
 import type { ComputeRecoveryTarget, StoreBootstrap } from "@clawdi/shared/api";
+import type { ComputeSubscriptionAction } from "@clawdi/shared/view";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
 
 /** M2 uses this policy for card-only surfaces, independently of IAP availability. */
@@ -55,4 +56,34 @@ export function storeRecoveryAction(
 	if ((target?.kind === "invoice" || target?.kind === "fix_payment") && !surfaces.cardBilling)
 		return "card_status";
 	return "default";
+}
+
+/** Card/Wallet commands the app offers; plan changes and recovery stay on their existing paths. */
+export type AppSubscriptionActionKind = Extract<
+	ComputeSubscriptionAction["kind"],
+	"cancel" | "end_trial" | "resume" | "cancel_scheduled_change"
+>;
+
+/**
+ * Store builds (owner decision D-1, 2026-10-09) may cancel card/Wallet subscriptions:
+ * cancelling purchases nothing. Resume, end trial and scheduled plan-change removal start
+ * or continue non-IAP billing, so only other builds offer them, like Web.
+ */
+export function appSubscriptionActions(
+	surfaces: StoreSurfaces,
+	actions: readonly ComputeSubscriptionAction[],
+): AppSubscriptionActionKind[] {
+	return actions.flatMap((action): AppSubscriptionActionKind[] => {
+		if (action.disabledReason !== null) return [];
+		switch (action.kind) {
+			case "cancel":
+				return [action.kind];
+			case "end_trial":
+			case "resume":
+			case "cancel_scheduled_change":
+				return surfaces.cardBilling ? [action.kind] : [];
+			default:
+				return [];
+		}
+	});
 }

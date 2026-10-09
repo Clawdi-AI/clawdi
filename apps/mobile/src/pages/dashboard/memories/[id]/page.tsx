@@ -2,6 +2,7 @@ import { memoryDetailClasses } from "@clawdi/shared/ui";
 import {
 	memoryFormCopy as formCopy,
 	MEMORY_CATEGORY_COLORS,
+	memoryRecallLabel,
 	RESOURCE_TINT_CLASSES,
 	relativeTime,
 } from "@clawdi/shared/view";
@@ -113,9 +114,7 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 								</Badge>
 								<Text>
 									{memory.source} {t("memories.savedSeparator")} {relativeTime(memory.created_at)} ·{" "}
-									{(memory.access_count ?? 0) > 0
-										? `Recalled ${memory.access_count} ${memory.access_count === 1 ? "time" : "times"}`
-										: t("memories.neverRecalled")}
+									{memoryRecallLabel(memory.access_count)}
 								</Text>
 							</DetailMeta>
 						}

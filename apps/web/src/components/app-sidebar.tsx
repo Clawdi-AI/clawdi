@@ -9,12 +9,15 @@ import {
 	agentSectionAvailableDuringSetup,
 	agentSourceKindLabel,
 	agentTypeLabel,
+	CLAWDI_HELP_COPY,
+	CLAWDI_HELP_URLS,
 	compareAgentTiles,
 	type DaemonStatusSource,
 	errorMessage,
 	INITIAL_DEPLOYMENT_COMPLETE_PAUSE_MS,
 	initialDeploymentCopy,
 	relativeTime,
+	SUPPORT_EMAIL,
 	selfManagedAgentTiles,
 } from "@clawdi/shared/view";
 import {
@@ -1438,7 +1441,7 @@ function HelpMenuItems() {
 			<DropdownMenuItem
 				render={
 					<a
-						href="https://docs.clawdi.ai"
+						href={CLAWDI_HELP_URLS.docs}
 						target="_blank"
 						rel="noopener noreferrer"
 						aria-label="Open Docs"
@@ -1446,13 +1449,13 @@ function HelpMenuItems() {
 				}
 			>
 				<BookOpen />
-				Docs
+				{CLAWDI_HELP_COPY.docs}
 				<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
 			</DropdownMenuItem>
 			<DropdownMenuItem
 				render={
 					<a
-						href="https://github.com/Clawdi-AI/clawdi"
+						href={CLAWDI_HELP_URLS.github}
 						target="_blank"
 						rel="noopener noreferrer"
 						aria-label="Open GitHub"
@@ -1460,17 +1463,19 @@ function HelpMenuItems() {
 				}
 			>
 				<GitHubIcon />
-				GitHub
+				{CLAWDI_HELP_COPY.github}
 				<ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
 			</DropdownMenuItem>
-			<DropdownMenuItem render={<a href="mailto:support@clawdi.ai" aria-label="Email support" />}>
+			<DropdownMenuItem
+				render={<a href={`mailto:${SUPPORT_EMAIL}`} aria-label={CLAWDI_HELP_COPY.emailSupport} />}
+			>
 				<Mail />
-				support@clawdi.ai
+				{SUPPORT_EMAIL}
 			</DropdownMenuItem>
 			<DropdownMenuItem
 				render={
 					<a
-						href="https://t.me/clawdiofficial"
+						href={CLAWDI_HELP_URLS.telegram}
 						target="_blank"
 						rel="noopener noreferrer"
 						aria-label="Open Telegram"
@@ -1478,7 +1483,7 @@ function HelpMenuItems() {
 				}
 			>
 				<MessageCircle />
-				Telegram @clawdiofficial
+				{CLAWDI_HELP_COPY.telegram}
 			</DropdownMenuItem>
 		</DropdownMenuGroup>
 	);

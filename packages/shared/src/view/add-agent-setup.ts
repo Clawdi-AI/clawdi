@@ -62,6 +62,20 @@ export const CLAWDI_LEGAL_URLS = {
 	privacyPolicy: `${HOSTED_PUBLIC_SITE_ORIGIN}/privacy`,
 } as const;
 
+/** Help destinations shared by the Web help menu and the mobile Settings help rows. */
+export const CLAWDI_HELP_URLS = {
+	docs: "https://docs.clawdi.ai",
+	github: "https://github.com/Clawdi-AI/clawdi",
+	telegram: "https://t.me/clawdiofficial",
+} as const;
+
+export const CLAWDI_HELP_COPY = {
+	docs: "Docs",
+	github: "GitHub",
+	telegram: "Telegram @clawdiofficial",
+	emailSupport: "Email support",
+} as const;
+
 /** Path of the published onboarding guide (Web `AGENT_FILES.getStarted`). */
 const GET_STARTED_PATH = "/get-started.md";
 

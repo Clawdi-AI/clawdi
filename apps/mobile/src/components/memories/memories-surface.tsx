@@ -14,7 +14,6 @@ import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCardSkeleton } from "@/components/entity-card";
-import { ListToolbar } from "@/components/list-toolbar";
 import { MemoryCard } from "@/components/memories/memory-card";
 import { MemorySettings } from "@/components/memories/memory-settings";
 import { PageHeader } from "@/components/page-header";
@@ -39,7 +38,6 @@ import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { useHeaderSearch } from "@/platform/navigation/native-header";
-import { NativeSegments } from "@/platform/navigation/segmented-control";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
@@ -155,17 +153,20 @@ function MemoriesView() {
 										onPress: () => router.push("/memories/new"),
 									},
 								],
+								// Six categories exceed an iPhone segmented control; a single-choice menu fits.
+								sections: [
+									{
+										id: "category",
+										title: copy.category,
+										items: MEMORY_CATEGORIES.map((c) => ({
+											id: `category-${c.value}`,
+											label: c.label,
+											selected: c.value === category,
+											onPress: () => setCategory(c.value),
+										})),
+									},
+								],
 							}}
-						/>
-						<ListToolbar
-							filters={
-								<NativeSegments
-									scrollable
-									value={category}
-									onChange={setCategory}
-									options={MEMORY_CATEGORIES.map((c) => ({ value: c.value, label: c.label }))}
-								/>
-							}
 						/>
 						{memories.error ? (
 							<ApiErrorPanel error={memories.error} onRetry={() => void memories.refetch()} />

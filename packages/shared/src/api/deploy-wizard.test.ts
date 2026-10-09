@@ -3,6 +3,7 @@ import type {
 	HostedDeployCheckoutUiMode,
 	HostedDeployPlan,
 	HostedDeployRequestStatus,
+	HostedDeployWizardDraft,
 } from "./deploy-wizard";
 import {
 	buildHostedDeployCheckoutRequest,
@@ -14,6 +15,7 @@ import {
 	selectHostedDeployOfferForTerm,
 	validateAndBuildHostedDeployRequest,
 } from "./deploy-wizard";
+import type { HostedSavedAiProvider } from "./hosted-ai-binding";
 
 type Equal<Left, Right> =
 	(<Value>() => Value extends Left ? 1 : 2) extends <Value>() => Value extends Right ? 1 : 2
@@ -164,6 +166,67 @@ describe("hosted deploy request contract", () => {
 				timezone: null,
 			},
 		});
+	});
+});
+
+describe("hosted deploy saved provider selection", () => {
+	const provider = {
+		id: "row-api",
+		provider_id: "openai-main",
+		scope: "user",
+		type: "openai",
+		label: "OpenAI",
+		base_url: "https://api.openai.com/v1",
+		api_mode: "openai_responses",
+		managed_by: "user",
+		runtime_env_name: "OPENAI_API_KEY",
+		models: [{ id: "gpt-catalog" }],
+		auth: { type: "api_key", source: "managed", profile: "work" },
+		usable: true,
+		readiness: {
+			credential_material: "available",
+			runtime_compatibility: { openclaw: true, hermes: true, codex: true },
+			deployable: true,
+			endpoint_reachability: "not_tested",
+			inference_verification: "not_tested",
+		},
+		created_at: "2026-01-01T00:00:00Z",
+		updated_at: "2026-01-01T00:00:00Z",
+	} satisfies HostedSavedAiProvider;
+	const draft = {
+		runtime: "hermes",
+		computePlanSlug: "compute_basic",
+		agentName: "Hermes",
+		language: "",
+		timezone: "",
+		ai: { mode: "configured", providerId: "openai-main", model: "gpt-catalog" },
+	} satisfies HostedDeployWizardDraft;
+
+	test("binds the saved provider with its bootstrap like Web and the CLI", () => {
+		const result = validateAndBuildHostedDeployRequest(draft, [], [provider]);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.request).toMatchObject({
+			ai_provider_auth_kind: "api_key",
+			ai_provider_id: "openai-main",
+			provider_ids: ["openai-main"],
+			primary_model: { provider_id: "openai-main", model: "gpt-catalog" },
+			ai_provider_bootstrap: { selected_provider_id: "openai-main", auth_kind: "api_key" },
+		});
+	});
+
+	test("reports a missing provider or model as validation issues", () => {
+		expect(validateAndBuildHostedDeployRequest(draft)).toMatchObject({
+			ok: false,
+			issues: [{ field: "ai.provider" }],
+		});
+		expect(
+			validateAndBuildHostedDeployRequest(
+				{ ...draft, ai: { ...draft.ai, model: "" } },
+				[],
+				[{ ...provider, models: [] }],
+			),
+		).toMatchObject({ ok: false, issues: [{ field: "ai.model" }] });
 	});
 });
 

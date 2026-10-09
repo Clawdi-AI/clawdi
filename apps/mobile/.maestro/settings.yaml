@@ -56,3 +56,18 @@ name: Account settings and fixture API keys
 - assertVisible:
     id: api-key-a9100000-0002-4000-8000-000000000002
 - takeScreenshot: api-keys
+- runFlow: navigate-back.yaml
+# Help and legal rows (Web's Help menu, Privacy Policy and Terms) close the menu.
+- scrollUntilVisible:
+    element:
+      id: settings-row-terms
+    direction: DOWN
+- assertVisible:
+    id: settings-row-docs
+- assertVisible:
+    id: settings-row-support
+- assertVisible:
+    id: settings-row-telegram
+- assertVisible:
+    id: settings-row-privacy
+- takeScreenshot: settings-help

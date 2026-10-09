@@ -1,6 +1,15 @@
 "use client";
 
 import { HOSTED_DEPLOY_LANGUAGE_OPTIONS, normalizeHostedDeployLanguage } from "@clawdi/shared/api";
+import {
+	fallbackTimezones,
+	hostedDeployLanguageFromLocales,
+	isValidTimezone,
+	mergeTimezoneOptions,
+	resolvedTimezone,
+	supportedTimezones,
+	timezoneLabel,
+} from "@clawdi/shared/view";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -39,106 +48,20 @@ export function browserLanguage(): HostedLanguage | "" {
 			typeof navigator !== "undefined"
 				? (navigator.languages?.length ? navigator.languages : [navigator.language]).filter(Boolean)
 				: [];
-		for (const raw of preferred) {
-			const exact = normalizeHostedLanguage(raw);
-			if (exact) return exact;
-			const base = raw.toLowerCase().split("-")[0];
-			const byBase = LANGUAGE_OPTIONS.find(
-				(option) => option.code.toLowerCase().split("-")[0] === base,
-			);
-			if (byBase) return byBase.code;
-		}
+		return hostedDeployLanguageFromLocales(preferred);
 	} catch {
 		// Ignore: fall through to the unset default.
 	}
 	return "";
 }
 
-const FALLBACK_TIMEZONES = [
-	"UTC",
-	"Africa/Johannesburg",
-	"America/Chicago",
-	"America/Los_Angeles",
-	"America/New_York",
-	"America/Sao_Paulo",
-	"Asia/Dubai",
-	"Asia/Hong_Kong",
-	"Asia/Kolkata",
-	"Asia/Shanghai",
-	"Asia/Singapore",
-	"Asia/Tokyo",
-	"Australia/Sydney",
-	"Europe/Berlin",
-	"Europe/London",
-	"Pacific/Auckland",
-] as const;
-
-function timezoneSort(left: string, right: string): number {
-	return left < right ? -1 : left > right ? 1 : 0;
-}
-
-export function isValidTimezone(value: string | null | undefined): value is string {
-	if (!value) return false;
-	try {
-		new Intl.DateTimeFormat("en-US", { timeZone: value }).format(0);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function runtimeTimezones(): readonly string[] | null {
-	const intl = Intl as typeof Intl & {
-		supportedValuesOf?: (key: "timeZone") => string[];
-	};
-	if (typeof intl.supportedValuesOf !== "function") return null;
-	try {
-		return intl.supportedValuesOf("timeZone");
-	} catch {
-		return null;
-	}
-}
-
-function validatedTimezones(values: readonly string[]): string[] {
-	return [...new Set(values.filter(isValidTimezone))].sort(timezoneSort);
-}
-
-/**
- * Runtime IANA data with a standards-valid fallback. Passing `null` explicitly
- * exercises the fallback path; additional valid values preserve browser or
- * persisted choices omitted by a runtime's enumeration.
- */
-export function supportedTimezones(
-	additional: readonly string[] = [],
-	runtimeValues: readonly string[] | null = runtimeTimezones(),
-): string[] {
-	return validatedTimezones([...(runtimeValues ?? FALLBACK_TIMEZONES), "UTC", ...additional]);
-}
-
-/** Stable initial options for SSR and the first client render. */
-export function fallbackTimezones(additional: readonly string[] = []): string[] {
-	return supportedTimezones(additional, null);
-}
-
-export function browserTimezone(): string {
-	try {
-		const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
-		return isValidTimezone(timezone) ? timezone : "";
-	} catch {
-		return "";
-	}
-}
-
-export function mergeTimezoneOptions(
-	options: readonly string[],
-	additional: readonly string[],
-): string[] {
-	return validatedTimezones([...options, ...additional]);
-}
-
-function timezoneLabel(timezone: string): string {
-	return timezone.replaceAll("_", " ");
-}
+export {
+	fallbackTimezones,
+	isValidTimezone,
+	mergeTimezoneOptions,
+	resolvedTimezone as browserTimezone,
+	supportedTimezones,
+};
 
 export function TimezoneCombobox({
 	id = "agent-timezone",

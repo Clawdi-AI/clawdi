@@ -22,6 +22,7 @@ import { Text } from "@/components/ui/text";
 import { WebIcon, WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useCloudSessions } from "@/hooks/cloud-inventory";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
+import { WelcomeWalletCard } from "@/hosted/billing/subscription/welcome-wallet-card";
 import { useHeaderWalletBalance } from "@/hosted/global-wallet-balance";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
@@ -113,7 +114,10 @@ export default function HomeRoute() {
 						)}
 						<WebView recipe={styles.grid}>
 							{empty ? (
-								<OnboardingCard canDeployOnClawdi={canDeploy} />
+								<WebView recipe="gap-4">
+									<OnboardingCard canDeployOnClawdi={canDeploy} />
+									{hasHosted ? <WelcomeWalletCard /> : null}
+								</WebView>
 							) : (
 								<AgentsCard
 									agents={tiles}

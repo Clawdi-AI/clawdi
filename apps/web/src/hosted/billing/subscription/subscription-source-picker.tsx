@@ -1,11 +1,7 @@
 import { subscriptionSourcePickerClasses as styles } from "@clawdi/shared/ui";
 import {
 	subscriptionSourceCopy as copy,
-	formatShortDate,
-	storeProviderLabel,
-	storeSubscriptionCopy,
-	storeSubscriptionDate,
-	storeSubscriptionStatus,
+	reusableSubscriptionChoiceView,
 } from "@clawdi/shared/view";
 import { Cpu, CreditCard, Plus, Smartphone, WalletCards, Zap } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -16,12 +12,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { StatusBadge } from "@/components/ui/status-badge";
 import type { ReusableSubscription } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import { billingTermLabel, billingTermSuffix, formatCurrencyCents } from "@/hosted/billing/format";
 import {
 	isWebSelectableSubscription,
 	type SubscriptionSource,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
-import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
 
 export function SubscriptionSourcePicker({
 	disabled = false,
@@ -126,41 +120,13 @@ function ExistingSubscriptionChoice({
 	selected: boolean;
 	subscription: ReusableSubscription;
 }) {
-	const store = subscription.funding_source === "store";
-	const storeManagement = store ? subscription.store_management : null;
-	const paymentLabel = store
-		? storeProviderLabel(storeManagement)
-		: subscription.funding_source === "wallet"
-			? "Wallet"
-			: "Card";
-	const PaymentIcon = store
-		? Smartphone
-		: subscription.funding_source === "wallet"
-			? WalletCards
-			: CreditCard;
-	const canceling = subscription.status === "canceling" || subscription.cancel_at_period_end;
-	const storeDate = storeSubscriptionDate(storeManagement);
-	const dateLabel = formatShortDate(
-		storeDate?.at ?? subscription.current_period_end ?? subscription.entitled_until,
-	);
-	const dateTitle = store
-		? storeDate?.kind === "renews"
-			? "Renews"
-			: "Ends"
-		: canceling
-			? "Ends"
-			: "Renews";
-	// Store prices are set per storefront; Web shows no Clawdi price for them.
-	const priceLabel =
-		store || subscription.price_cents == null
-			? null
-			: `${formatCurrencyCents(subscription.price_cents, subscription.currency)}${billingTermSuffix(subscription.billing_term_months)}`;
-	const fallbackStatus = canceling
-		? ({ label: "Canceling", tone: "warning" } as const)
-		: subscription.status === "trialing"
-			? ({ label: "Trial", tone: "info" } as const)
-			: ({ label: "Active", tone: "success" } as const);
-	const status = store ? storeSubscriptionStatus(storeManagement, fallbackStatus) : fallbackStatus;
+	const view = reusableSubscriptionChoiceView(subscription);
+	const PaymentIcon =
+		view.payment.kind === "store"
+			? Smartphone
+			: view.payment.kind === "wallet"
+				? WalletCards
+				: CreditCard;
 	return (
 		<EntityChoiceCard
 			selected={selected}
@@ -178,35 +144,27 @@ function ExistingSubscriptionChoice({
 					{subscription.plan_slug === "compute_performance" ? <Zap /> : <Cpu />}
 				</IconChip>
 			}
-			title={computeTierLabel(subscription.plan_slug)}
-			description={store ? storeSubscriptionCopy.availableInApp : copy.dueNow}
-			badge={<StatusBadge status={status.tone}>{status.label}</StatusBadge>}
+			title={view.title}
+			description={view.description}
+			badge={<StatusBadge status={view.status.tone}>{view.status.label}</StatusBadge>}
 			detailsPlacement="responsive"
 			details={
 				<dl className={styles.existingFacts}>
-					<div className={styles.fact}>
-						<dt className={styles.factLabel}>Term</dt>
-						<dd className={styles.factValue}>
-							{billingTermLabel(subscription.billing_term_months)}
-						</dd>
-					</div>
-					<div className={styles.fact}>
-						<dt className={styles.factLabel}>Payment</dt>
-						<dd className={styles.payment}>
-							<PaymentIcon className={styles.paymentIcon} />
-							<span className={styles.price}>{paymentLabel}</span>
-						</dd>
-					</div>
-					<div className={styles.fact}>
-						<dt className={styles.factLabel}>{dateTitle}</dt>
-						<dd className={styles.factValue}>{dateLabel}</dd>
-					</div>
-					{priceLabel ? (
-						<div className={styles.fact}>
-							<dt className={styles.factLabel}>Plan price</dt>
-							<dd className={styles.nowrap}>{priceLabel}</dd>
+					{view.facts.map((fact) => (
+						<div key={fact.id} className={styles.fact}>
+							<dt className={styles.factLabel}>{fact.label}</dt>
+							{fact.id === "payment" ? (
+								<dd className={styles.payment}>
+									<PaymentIcon className={styles.paymentIcon} />
+									<span className={styles.price}>{fact.value}</span>
+								</dd>
+							) : (
+								<dd className={fact.id === "price" ? styles.nowrap : styles.factValue}>
+									{fact.value}
+								</dd>
+							)}
 						</div>
-					) : null}
+					))}
 				</dl>
 			}
 			className={styles.choice}

@@ -78,6 +78,8 @@ Additional CLI flags:
 | `--mem0-configured` | `false` | `true` renders configured Mem0; `false` renders its key form when Mem0 is selected. |
 | `--whatsapp-state` | `ready` | State returned by new/retried/repaired sessions: `generating`, `ready`, `scanned`, `connected`, `expired`, `canceled`, or `error`. |
 | `--account-state` | `active` | `suspended` answers every authenticated request with the `account_suspended` problem: 401 on cloud paths, 403 on hosted paths (`/v2/*` except `/v2/runtime/*`, `/v1/me`, `/v1/agent-environments`, `/v1/me/notifications*`), as the two APIs do. Exercises the full-screen suspended state on Web and mobile. |
+| `--reusable-subscriptions` | `none` | `mixed` lists unassigned card, Wallet and store subscriptions in the deploy wizard's Compute section. |
+| `--subscription-actions` | `false` | `true` adds hosted's per-row `actions` (cancel or resume) to paid subscriptions and answers `POST /v2/subscription/{cancel,resume}`. |
 
 Settings PATCH persists the provider and configured/unconfigured toggle.
 Submitted Mem0 values are discarded; GET returns only a fixed synthetic marker

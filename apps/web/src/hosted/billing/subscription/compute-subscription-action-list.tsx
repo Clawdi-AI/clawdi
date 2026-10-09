@@ -1,5 +1,10 @@
 "use client";
 
+import {
+	computeSubscriptionActionCopy as copy,
+	scheduledPlanCancellationNotice,
+	subscriptionMutationNotice,
+} from "@clawdi/shared/view";
 import { CalendarX2, Link2Off, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
@@ -22,7 +27,6 @@ import {
 	ComputeSubscriptionRecoveryAction,
 	type ComputeSubscriptionStartNewAction,
 } from "@/hosted/billing/subscription/compute-subscription-recovery-action";
-import { isComputeSubscriptionActionUnconfirmed } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 
 export type ComputeSubscriptionActionTarget =
@@ -36,75 +40,14 @@ export type ComputeSubscriptionCancelCopy = {
 	successDescription?: (result: ComputeSubscriptionActionResult) => string | undefined;
 };
 
+export { scheduledPlanCancellationNotice, subscriptionMutationNotice };
+
 export function computeSubscriptionActionRequest(
 	target: ComputeSubscriptionActionTarget,
 ): ComputeCancelScheduledPlanChangeRequest {
 	return target.kind === "deployment"
 		? { deployment_id: target.deploymentId }
 		: { subscription_id: target.subscriptionId };
-}
-
-export function scheduledPlanCancellationNotice(result: ComputeSubscriptionActionResult): {
-	kind: "success" | "info";
-	title: string;
-	description: string;
-} {
-	switch (result.action_state) {
-		case "removed":
-			return {
-				kind: "success",
-				title: "Scheduled plan change canceled",
-				description: "Your current plan will stay in place.",
-			};
-		case "pending":
-			return {
-				kind: "info",
-				title: "Cancellation is still processing",
-				description:
-					"The scheduled plan change is still being removed. Subscription details will refresh automatically.",
-			};
-		case "reconciling":
-			return {
-				kind: "info",
-				title: "Subscription details are updating",
-				description:
-					"The cancellation was accepted, but subscription details are still updating. Check again in a moment.",
-			};
-		default:
-			return {
-				kind: "info",
-				title: "Cancellation status is still updating",
-				description: "Refresh the subscription details before trying again.",
-			};
-	}
-}
-
-export function subscriptionMutationNotice(
-	result: ComputeSubscriptionActionResult,
-	action: "cancel" | "resume",
-	successDescription?: string,
-): { kind: "success" | "info"; title: string; description?: string } {
-	const confirmed =
-		action === "cancel"
-			? result.cancel_at_period_end || result.status === "canceled"
-			: !result.cancel_at_period_end && ["active", "trialing", "past_due"].includes(result.status);
-	if (isComputeSubscriptionActionUnconfirmed(result) || !confirmed) {
-		return {
-			kind: "info",
-			title: action === "cancel" ? "Cancellation is still processing" : "Renewal is still updating",
-			description: "Check the latest subscription details in a moment before trying again.",
-		};
-	}
-	return {
-		kind: "success",
-		title:
-			action === "resume"
-				? "Subscription renewal restored"
-				: result.cancel_at_period_end
-					? "Cancellation scheduled"
-					: "Subscription canceled",
-		description: successDescription,
-	};
 }
 
 export function ComputeSubscriptionActionList({
@@ -147,7 +90,7 @@ export function ComputeSubscriptionActionList({
 			);
 			toast[notice.kind](notice.title, { description: notice.description });
 		} catch (error) {
-			toast.error("Couldn't cancel subscription", { description: normalizeBillingError(error) });
+			toast.error(copy.cancelFailed, { description: normalizeBillingError(error) });
 			throw error;
 		}
 	}
@@ -158,7 +101,7 @@ export function ComputeSubscriptionActionList({
 			const notice = subscriptionMutationNotice(result, "resume");
 			toast[notice.kind](notice.title, { description: notice.description });
 		} catch (error) {
-			toast.error("Couldn't resume subscription", { description: normalizeBillingError(error) });
+			toast.error(copy.resumeFailed, { description: normalizeBillingError(error) });
 			throw error;
 		}
 	}
@@ -169,7 +112,7 @@ export function ComputeSubscriptionActionList({
 			const notice = scheduledPlanCancellationNotice(result);
 			toast[notice.kind](notice.title, { description: notice.description });
 		} catch (error) {
-			toast.error("Couldn't cancel scheduled plan change", {
+			toast.error(copy.cancelScheduledChangeFailed, {
 				description: normalizeBillingError(error),
 			});
 			throw error;
@@ -245,7 +188,7 @@ export function ComputeSubscriptionActionList({
 						onClick={() => void runAction(resume).catch(() => undefined)}
 					>
 						{resumeSubscription.isPending ? <Spinner /> : <RefreshCw />}
-						Keep subscription
+						{copy.resume}
 					</Button>
 				);
 			case "end_trial":
@@ -268,7 +211,7 @@ export function ComputeSubscriptionActionList({
 							disabled={pending || candidate.disabledReason !== null}
 						>
 							{cancelSubscription.isPending ? <Spinner /> : <Link2Off />}
-							{candidate.kind === "end_trial" ? "End trial now" : "Cancel subscription"}
+							{candidate.kind === "end_trial" ? copy.endTrial : copy.cancel}
 						</Button>
 					</ConfirmAction>
 				);
@@ -284,7 +227,7 @@ export function ComputeSubscriptionActionList({
 						onClick={() => void runAction(cancelScheduledChange).catch(() => undefined)}
 					>
 						{cancelScheduledPlanChange.isPending ? <Spinner /> : <CalendarX2 />}
-						Cancel scheduled change
+						{copy.cancelScheduledChange}
 					</Button>
 				);
 		}

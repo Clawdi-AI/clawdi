@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
 	fallbackTimezones,
+	hostedDeployLanguageFromLocales,
 	isValidTimezone,
 	mergeTimezoneOptions,
 	supportedTimezones,
-} from "@/hosted/billing/deploy/language-timezone-controls";
+} from "./deploy-locale";
 
 describe("timezone options", () => {
 	test("uses validated, sorted, deduplicated runtime IANA data and always includes UTC", () => {
@@ -27,5 +28,17 @@ describe("timezone options", () => {
 
 	test("preserves valid current values omitted from runtime enumeration", () => {
 		expect(mergeTimezoneOptions(["UTC"], ["Etc/UTC", "Not/AZone"])).toEqual(["Etc/UTC", "UTC"]);
+	});
+});
+
+describe("hostedDeployLanguageFromLocales", () => {
+	test("matches exact codes, then base languages, in preference order", () => {
+		expect(hostedDeployLanguageFromLocales(["zh-TW"])).toBe("zh-TW");
+		expect(hostedDeployLanguageFromLocales(["en-US"])).toBe("en");
+		expect(hostedDeployLanguageFromLocales(["xx-YY", "fr-FR"])).toBe("fr");
+	});
+
+	test("returns unset when nothing is supported", () => {
+		expect(hostedDeployLanguageFromLocales(["xx-YY", ""])).toBe("");
 	});
 });
