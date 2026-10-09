@@ -49,6 +49,12 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.6
+
+- **Skill sync:** reconcile continues after a Skill directory disappears during
+  hashing, queues claimed absences, and clears stale per-key scan errors after a
+  successful inventory.
+
 ### CLI 0.16.5
 
 - **Hosted authentication:** systemd daemon units bind token-file credentials to
