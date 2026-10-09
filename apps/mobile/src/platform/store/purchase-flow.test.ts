@@ -41,7 +41,7 @@ const logOut = mock(async () => {
 	return {};
 });
 const getAppUserID = mock(async () => sdkUserId);
-const syncPurchases = mock(async () => {});
+const syncPurchasesForResult = mock(async () => ({ customerInfo: {} }));
 const getOfferings = mock(async (): Promise<unknown> => ({ all: {}, current: null }));
 // Shared shape: Bun keeps one module mock for every store test file.
 mock.module("react-native-purchases", () => ({
@@ -50,7 +50,7 @@ mock.module("react-native-purchases", () => ({
 		logIn,
 		logOut,
 		getAppUserID,
-		syncPurchases,
+		syncPurchasesForResult,
 		getOfferings,
 		PURCHASES_ERROR_CODE: { PURCHASE_CANCELLED_ERROR: "1", PAYMENT_PENDING_ERROR: "20" },
 	},
@@ -61,7 +61,7 @@ const { createPurchaseFlow } = await import("./purchase-flow");
 
 beforeEach(() => {
 	sdkUserId = appUserId;
-	for (const fn of [configure, logIn, logOut, getAppUserID, syncPurchases]) fn.mockClear();
+	for (const fn of [configure, logIn, logOut, getAppUserID, syncPurchasesForResult]) fn.mockClear();
 });
 
 function deferred<T>() {
@@ -613,7 +613,7 @@ describe("durable store attempts", () => {
 		expect(result.status).toBe("pending");
 		expect(secondPaywall).not.toHaveBeenCalled();
 		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
-		expect(syncPurchases).toHaveBeenCalledTimes(1);
+		expect(syncPurchasesForResult).toHaveBeenCalledTimes(1);
 		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.purchaseStarted).toBe(true);
 	});
 	test("restart syncs an interrupted prepared purchase and only reads until the unpaid attempt expires", async () => {
@@ -624,9 +624,12 @@ describe("durable store attempts", () => {
 				throw new Error("App stopped during the paywall");
 			}),
 		).rejects.toMatchObject({ code: "store_request_failed" });
-		syncPurchases.mockImplementationOnce(async () => f.setAttempt("expired"));
+		syncPurchasesForResult.mockImplementationOnce(async () => {
+			f.setAttempt("expired");
+			return { customerInfo: {} };
+		});
 		expect((await f.makeFlow().recover())[0]?.status).toBe("terminal");
-		expect(syncPurchases).toHaveBeenCalledTimes(1);
+		expect(syncPurchasesForResult).toHaveBeenCalledTimes(1);
 		expect(f.getPurchaseAttempt).toHaveBeenCalledTimes(2);
 		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
 		expect(f.values.size).toBe(0);
@@ -639,7 +642,10 @@ describe("durable store attempts", () => {
 				throw new Error("Deferred purchase");
 			}),
 		).rejects.toMatchObject({ code: "store_request_failed" });
-		syncPurchases.mockImplementationOnce(async () => f.setAttempt("funding_applied"));
+		syncPurchasesForResult.mockImplementationOnce(async () => {
+			f.setAttempt("funding_applied");
+			return { customerInfo: {} };
+		});
 		expect((await f.makeFlow().recover())[0]?.status).toBe("funding_applied");
 		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
 		expect(f.values.size).toBe(0);
@@ -650,7 +656,7 @@ describe("durable store attempts", () => {
 		await f.makeFlow().purchase(intent, async () => null);
 		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.cancelled).toBe(true);
 		expect((await f.makeFlow().recover())[0]?.status).toBe("cancelled");
-		expect(syncPurchases).not.toHaveBeenCalled();
+		expect(syncPurchasesForResult).not.toHaveBeenCalled();
 		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
 		await f.makeFlow().purchase(intent, async () => transaction);
 		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.cancelled).toBe(false);
@@ -1230,7 +1236,7 @@ describe("post-purchase hosted observation", () => {
 		expect(funding).toBe("purchase_pending");
 		expect(storeFundingHoldsAttempt({ storeFunding: funding ?? undefined })).toBe(true);
 		expect(flow.recover).not.toHaveBeenCalled();
-		expect(syncPurchases).not.toHaveBeenCalled();
+		expect(syncPurchasesForResult).not.toHaveBeenCalled();
 		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
 		expect(f.delays).toEqual([]);
 		expect(f.bootstrap).toHaveBeenCalledTimes(1);
@@ -1278,7 +1284,7 @@ describe("post-purchase hosted observation", () => {
 		expect((await flow.purchase(intent, creditsPaywall)).status).toBe("cancelled");
 		expect(creditsPaywall).toHaveBeenCalledTimes(1);
 		expect(flow.recover).not.toHaveBeenCalled();
-		expect(syncPurchases).not.toHaveBeenCalled();
+		expect(syncPurchasesForResult).not.toHaveBeenCalled();
 		expect(f.delays).toEqual([]);
 		bootstrap.resolve(await f.bootstrap());
 		await observation;

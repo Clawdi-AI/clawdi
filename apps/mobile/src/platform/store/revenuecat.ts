@@ -149,7 +149,7 @@ export function createRevenueCat(identityTimeoutMs = 300_000) {
 		): Promise<void> =>
 			withIdentity(appUserId, assertCurrent, () => Purchases.showManageSubscriptions(), signal),
 		syncPurchases: (appUserId: string, assertCurrent: () => void, signal: AbortSignal) =>
-			withIdentity(appUserId, assertCurrent, () => Purchases.syncPurchases(), signal),
+			withIdentity(appUserId, assertCurrent, () => Purchases.syncPurchasesForResult(), signal),
 	};
 }
 
