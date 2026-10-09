@@ -360,7 +360,7 @@ describe("events-v1 incremental upload", () => {
 		api.commitSessionEventGeneration = reject;
 		await expect(
 			syncSessionContent({ api, fence, session, plan, needsSnapshotContent: false }),
-		).rejects.toThrow("invalid generation");
+		).rejects.toThrow("API error 422: validation");
 		expect(readFencedSessionEntry(readSessionsLock(), fence)?.blocked).toBeUndefined();
 	});
 
@@ -411,7 +411,7 @@ describe("events-v1 incremental upload", () => {
 			});
 			expect(readFencedSessionEntry(readSessionsLock(), fence)?.event_head_hash).toBeUndefined();
 			// A fresh lock read represents the next daemon cycle or process restart.
-			expect(sessionPlanIsDurablyBlocked(fence, plan)).toContain("attachment.name");
+			expect(sessionPlanIsDurablyBlocked(fence, plan)).toContain("validation failed");
 			expect(await syncSessionContent(input)).toEqual(result);
 			expect({ reads, uploads }).toEqual({ reads: 1, uploads: 1 });
 			const fixed = rawSession(events(["one", "first"], ["two", "after fix"]), true);
@@ -513,7 +513,7 @@ describe("events-v1 incremental upload", () => {
 		if (!rejected?.blocked) throw new Error("expected persisted attachment rejection");
 		expect(rejected.blocked.code).toBe("event_schema_invalid");
 		expect(rejected.source_revision).toBe(oldSession.sourceRevision);
-		expect(sessionPlanIsDurablyBlocked(fence, oldPlan)).toContain("attachment.name");
+		expect(sessionPlanIsDurablyBlocked(fence, oldPlan)).toContain("validation failed");
 		// Upgrade invalidates the block even when the source and projection revision
 		// are unchanged. The next upload reads the source through the new mapper.
 		persistFencedSessionEntry(fence, {
@@ -891,7 +891,7 @@ it.each([
 		};
 	};
 	const input = { api, fence, session, plan, needsSnapshotContent: false };
-	await expect(syncSessionContent(input)).rejects.toThrow("interrupted upload");
+	await expect(syncSessionContent(input)).rejects.toThrow("API error 503: Service unavailable");
 	const pending = readFencedSessionEntry(readSessionsLock(), fence)?.pending;
 	if (!pending) throw new Error("expected durable staged upload");
 	const result = await syncSessionContent(input);
