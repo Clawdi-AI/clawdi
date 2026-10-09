@@ -93,9 +93,9 @@
 		"utf-8-validate"
 	],
 	"devDependencies": {
-		"@biomejs/biome": "^2.5.14",
-		"lefthook": "^2.1.14",
-		"turbo": "^2.11.4",
+		"@biomejs/biome": "^2.5.15",
+		"lefthook": "^2.1.17",
+		"turbo": "^2.11.7",
 		"typescript": "catalog:"
 	},
 	"engines": {
