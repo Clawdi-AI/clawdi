@@ -20,6 +20,7 @@ import {
 } from "@/lib/agent-ownership";
 import { parseAgentPathname } from "@/lib/agent-routes";
 import { shouldHideChatwoot } from "@/lib/chatwoot";
+import { isOverviewPath } from "@/lib/navigation-model";
 import {
 	LOADING_PRODUCT_ACCESS,
 	type ProductAccess,
@@ -187,9 +188,7 @@ function DashboardAccountLayout({ children }: { children: ReactNode }) {
 									>
 										<AccountDataBoundary
 											loadingFallback={
-												pathname === "/" || pathname === "/dashboard" ? (
-													<DashboardPageSkeleton />
-												) : undefined
+												isOverviewPath(pathname) ? <DashboardPageSkeleton /> : undefined
 											}
 										>
 											{children}

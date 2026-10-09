@@ -128,6 +128,11 @@ export const CONSOLE_NAVIGATION_ITEMS = Object.fromEntries(
 		{ ...item, icon: CONSOLE_ICONS[item.id] },
 	]),
 ) as Record<ConsoleNavigationItemId, ConsoleNavigationItemMetadata>;
+
+export function isOverviewPath(pathname: string): boolean {
+	return pathname === "/" || pathname === "/dashboard";
+}
+
 export function consoleNavigationGroups(showCloudFeatures: boolean): ConsoleNavigationGroup[] {
 	return sharedConsoleNavigationGroups(showCloudFeatures).map((group) => ({
 		...group,
@@ -137,7 +142,7 @@ export function consoleNavigationGroups(showCloudFeatures: boolean): ConsoleNavi
 
 export function consoleNavigationItemIsActive(pathname: string, itemHref: string): boolean {
 	return itemHref === "/"
-		? pathname === "/" || pathname === "/dashboard"
+		? isOverviewPath(pathname)
 		: pathname === itemHref || pathname.startsWith(`${itemHref}/`);
 }
 export function consoleCommandPaletteItems(showCloudFeatures: boolean) {
