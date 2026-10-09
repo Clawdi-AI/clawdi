@@ -164,7 +164,7 @@ export function classifyClawdiImageRelease(input: {
 	return { ...input, changed, releaseRequired: Object.values(changed).some(Boolean) };
 }
 
-function gitSnapshot(repositoryRoot: string, revision: string): RevisionSnapshot {
+export function gitSnapshot(repositoryRoot: string, revision: string): RevisionSnapshot {
 	if (!/^[a-f0-9]{40}$/.test(revision)) throw new Error(`invalid Git revision: ${revision}`);
 	return {
 		listFiles: (root) =>
