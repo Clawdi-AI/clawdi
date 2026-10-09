@@ -46,7 +46,7 @@
 		"react-native": "catalog:expo57",
 		"react-native-gesture-handler": "catalog:expo57",
 		"react-native-purchases": "catalog:",
-		"react-native-purchases-ui": "10.11.0",
+		"react-native-purchases-ui": "10.12.2",
 		"react-native-reanimated": "catalog:expo57",
 		"react-native-safe-area-context": "catalog:expo57",
 		"react-native-screens": "catalog:expo57",
