@@ -7,6 +7,7 @@ import {
 	transactionStatusLabel as statusLabel,
 	transactionStatusTone as statusTone,
 	transactionDocumentAction,
+	transactionsCountLabel,
 } from "@clawdi/shared/view";
 import { ExternalLink, Receipt } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -213,7 +214,7 @@ export function TransactionsSection() {
 							</Table>
 						</div>
 						<p className={transactionsSectionClasses.description}>
-							{billingCopy.transactionsCount.replace("{count}", String(rows.length))}
+							{transactionsCountLabel(rows.length)}
 						</p>
 						{loadMore}
 					</>

@@ -616,7 +616,7 @@ function ChannelDetail({
 			<NativeHeader
 				title={bot?.name ?? ownedBot?.name ?? t("channels.title")}
 				menu={{
-					label: t("sessionFilters.options"),
+					label: t("sessionDetail.more"),
 					items: [
 						...(ownedBot ||
 						(bot?.access === "owner" && bot.capabilities.manage_account && !pool.isError)

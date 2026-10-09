@@ -12,13 +12,13 @@ import { Text } from "@/components/ui/text";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { uniqueBillingItems } from "@/hosted/billing/format";
 import { useSubscriptions } from "@/hosted/billing/hooks";
+import { useCreditsNotice } from "@/hosted/billing/store/add-credits";
 import { StoreComputeBillingSection } from "@/hosted/billing/store/compute-store";
 import { ComputeSubscriptionCard } from "@/hosted/billing/subscription/compute-subscription-card";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
-import { useStoreSurfaces } from "@/platform/store/store-provider";
 export function BillingScreen() {
 	const scope = useAccountScope();
 	return <BillingView key={`${scope.accountKey}:${scope.generation}`} />;
@@ -29,7 +29,7 @@ function BillingView() {
 	const { compute } = useMobileApi();
 	const read = useAccountRead();
 	const router = useRouter();
-	const surfaces = useStoreSurfaces();
+	const creditsNotice = useCreditsNotice();
 	const subscriptions = useSubscriptions();
 	const plans = useQuery({
 		queryKey: accountQueryKey(scope, "billing-plans"),
@@ -124,9 +124,9 @@ function BillingView() {
 								<PlanComparison plans={plans.data ?? []} />
 							)
 						) : null}
-						<WebText recipe={transactionsSectionClasses.description}>
-							{t(surfaces.addCredits ? "store.creditsNotice" : "billing.noStore")}
-						</WebText>
+						{creditsNotice ? (
+							<WebText recipe={transactionsSectionClasses.description}>{t(creditsNotice)}</WebText>
+						) : null}
 					</WebView>
 				}
 			/>

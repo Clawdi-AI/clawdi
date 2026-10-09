@@ -4,6 +4,7 @@ import {
 	archiveProjectTitle,
 	canManageCustomProject,
 	compareProjectsForUse,
+	displayProjectName,
 	formatResourceCount,
 	createProjectDialogCopy as formCopy,
 	getProjectResourceDefinition,
@@ -154,7 +155,7 @@ function ProjectsView() {
 							title={t("projects.title")}
 							description={getProjectResourceDefinition("projects").managementDescription}
 							headerMenu={{
-								label: t("projects.title"),
+								label: t("sessionDetail.more"),
 								items: [
 									{
 										id: "create",
@@ -197,7 +198,13 @@ function ProjectsView() {
 								<DropdownMenuTrigger
 									disabled={action.busy}
 									render={
-										<Button variant="ghost" size="icon-sm" accessibilityLabel={project.name}>
+										<Button
+											variant="ghost"
+											size="icon-sm"
+											accessibilityLabel={t("labels.actionsFor", {
+												name: displayProjectName(project),
+											})}
+										>
 											<Icon as={MoreHorizontal} />
 										</Button>
 									}
@@ -244,12 +251,25 @@ function ProjectsView() {
 						<EmptyState
 							title={t(search.trim() ? "libraryPort.noProjectMatches" : "libraryPort.noProjects")}
 							description={t("libraryPort.emptyProjects")}
+							action={search.trim() ? undefined : <CreateProjectButton disabled={action.busy} />}
 						/>
 					) : null
 				}
 			/>
 			{confirmationDialog.dialog}
 		</SafeAreaScreen>
+	);
+}
+
+/** Empty-state entry to the same create sheet as the header menu, like Web's Skills chooser. */
+export function CreateProjectButton({ disabled }: { disabled?: boolean }) {
+	const t = useI18n();
+	const router = useRouter();
+	return (
+		<Button disabled={disabled} onPress={() => router.push("/projects/new")}>
+			<Icon as={Plus} />
+			<Text>{t("libraryPort.createProject")}</Text>
+		</Button>
 	);
 }
 

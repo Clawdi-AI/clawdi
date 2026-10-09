@@ -160,7 +160,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 							</IconChip>
 						}
 						headerMenu={{
-							label: displayProjectName(project),
+							label: t("sessionDetail.more"),
 							items: [
 								{
 									id: "agents",

@@ -148,7 +148,7 @@ function MemoriesView() {
 							title={t("memories.title")}
 							description={getProjectResourceDefinition("memories").managementDescription}
 							headerMenu={{
-								label: t("memories.title"),
+								label: t("sessionDetail.more"),
 								items: [
 									{
 										id: "create",
@@ -205,13 +205,20 @@ function MemoriesView() {
 					memories.isPending ? (
 						<HeroCardSkeleton />
 					) : !memories.error ? (
-						<EmptyState
-							description={t(
-								search || category !== "all"
-									? "libraryPort.noMemoryMatches"
-									: "libraryPort.noMemories",
-							)}
-						/>
+						search || category !== "all" ? (
+							<EmptyState description={t("libraryPort.noMemoryMatches")} />
+						) : (
+							<EmptyState
+								title={t("libraryPort.noMemories")}
+								description={t("libraryPort.emptyMemories")}
+								action={
+									<Button onPress={() => router.push("/memories/new")}>
+										<Icon as={Plus} />
+										<Text>{t("libraryPort.createMemory")}</Text>
+									</Button>
+								}
+							/>
+						)
 					) : null
 				}
 			/>

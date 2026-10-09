@@ -1,4 +1,5 @@
 import { billingPageClass, transactionsSectionClasses } from "@clawdi/shared/ui";
+import { transactionsCountLabel } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -8,7 +9,7 @@ import { SettingsShell } from "@/components/settings/shell";
 import { NativeList } from "@/components/ui/native-list";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { nextBillingCursor, uniqueBillingItems } from "@/hosted/billing/format";
-import { useStoreRecoveryRefresh } from "@/hosted/billing/store/add-credits";
+import { useCreditsNotice, useStoreRecoveryRefresh } from "@/hosted/billing/store/add-credits";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
 import { TransactionRow } from "@/hosted/billing/wallet/transactions-section";
 import { WalletSettingsSections } from "@/hosted/billing/wallet/wallet-sections";
@@ -30,6 +31,7 @@ function WalletView() {
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const surfaces = useStoreSurfaces();
+	const creditsNotice = useCreditsNotice();
 	useStoreRecoveryRefresh();
 	const wallet = useQuery({
 		queryKey: accountQueryKey(scope, "billing-wallet"),
@@ -75,7 +77,11 @@ function WalletView() {
 					<WebView recipe={billingPageClass}>
 						<SettingsPanelHeader
 							title={t("billingParity.wallet")}
-							description={t("billingParity.walletDescription")}
+							description={t(
+								surfaces.cardBilling
+									? "billingParity.walletDescription"
+									: "store.walletDescription",
+							)}
 						/>
 						{!compute ? (
 							<EmptyState variant="inset" title={t("billing.unavailable")} />
@@ -124,12 +130,12 @@ function WalletView() {
 						) : null}
 						{rows.length ? (
 							<WebText recipe={transactionsSectionClasses.description}>
-								{t("billingParity.transactionsCount", { count: rows.length })}
+								{transactionsCountLabel(rows.length)}
 							</WebText>
 						) : null}
-						<WebText recipe={transactionsSectionClasses.description}>
-							{t(surfaces.addCredits ? "store.creditsNotice" : "billing.noStore")}
-						</WebText>
+						{creditsNotice ? (
+							<WebText recipe={transactionsSectionClasses.description}>{t(creditsNotice)}</WebText>
+						) : null}
 					</WebView>
 				}
 			/>

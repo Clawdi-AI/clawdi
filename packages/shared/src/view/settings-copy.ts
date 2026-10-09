@@ -35,6 +35,11 @@ export const settingsCopy = {
 	revokeDescription:
 		"Requests using this key will stop working. This can’t be undone; reconnect the client with clawdi auth login.",
 } as const;
+/** Wallet transactions footer, e.g. "Showing 1 transaction". */
+export function transactionsCountLabel(count: number): string {
+	return `Showing ${count} ${count === 1 ? "transaction" : "transactions"}`;
+}
+
 export const billingCopy = {
 	usedBy: "Used by",
 	edit: "Edit",
@@ -82,7 +87,6 @@ export const billingCopy = {
 		"Pays for AI usage and wallet-funded compute subscriptions. Card-paid subscriptions do not use this balance.",
 	transactions: "Transactions",
 	transactionsDescription: "Top-ups, compute payments, credits, and adjustments.",
-	transactionsCount: "Showing {count} transactions",
 	emptyTransactions: "No transactions yet",
 	emptyTransactionsDescription:
 		"Top-ups, grants, compute charges, and other money movements will appear here.",
