@@ -9,7 +9,8 @@ import {
 } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, Stack, useLocalSearchParams } from "expo-router";
-import { Plus, X } from "lucide-react-native";
+import Plus from "lucide-react-native/icons/plus";
+import X from "lucide-react-native/icons/x";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";

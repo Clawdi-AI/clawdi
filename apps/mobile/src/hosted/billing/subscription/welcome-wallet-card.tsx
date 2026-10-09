@@ -8,7 +8,9 @@ import {
 	welcomeWalletTitle,
 } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Gift, PartyPopper, RefreshCw } from "lucide-react-native";
+import Gift from "lucide-react-native/icons/gift";
+import PartyPopper from "lucide-react-native/icons/party-popper";
+import RefreshCw from "lucide-react-native/icons/refresh-cw";
 import { useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";

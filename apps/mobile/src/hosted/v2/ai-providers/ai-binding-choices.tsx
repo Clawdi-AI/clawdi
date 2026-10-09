@@ -17,7 +17,8 @@ import {
 	providerAvailabilityIssue,
 	providerPresentation,
 } from "@clawdi/shared/view";
-import { Settings, SlidersHorizontal } from "lucide-react-native";
+import Settings from "lucide-react-native/icons/settings";
+import SlidersHorizontal from "lucide-react-native/icons/sliders-horizontal";
 import type { ReactNode } from "react";
 import { EntityAddCard, EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";

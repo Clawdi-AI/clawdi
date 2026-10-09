@@ -16,7 +16,8 @@ import {
 	sessionListEmptyMessage,
 } from "@clawdi/shared/view";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { PlusCircle, X } from "lucide-react-native";
+import PlusCircle from "lucide-react-native/icons/circle-plus";
+import X from "lucide-react-native/icons/x";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {

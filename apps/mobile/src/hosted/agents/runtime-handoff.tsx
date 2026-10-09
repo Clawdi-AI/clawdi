@@ -11,7 +11,7 @@ import {
 	runtimeBrowserUiLabel,
 } from "@clawdi/shared/view";
 import * as WebBrowser from "expo-web-browser";
-import { PanelsTopLeft } from "lucide-react-native";
+import PanelsTopLeft from "lucide-react-native/icons/panels-top-left";
 import { useRef } from "react";
 import { OverviewNavigationCard } from "@/components/dashboard/agent-overview-layout";
 import { ActionButton } from "@/components/dashboard/controls";

@@ -6,7 +6,8 @@ import {
 	settingsCopy,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Terminal, Trash2 } from "lucide-react-native";
+import Terminal from "lucide-react-native/icons/terminal";
+import Trash2 from "lucide-react-native/icons/trash";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";

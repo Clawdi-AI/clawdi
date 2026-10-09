@@ -35,24 +35,22 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
-import {
-	ArrowUp,
-	Blocks,
-	Brain,
-	BrainCircuit,
-	Cpu,
-	CreditCard,
-	FolderKanban,
-	FolderOpen,
-	KeyRound,
-	Laptop,
-	MessagesSquare,
-	Plug,
-	Settings,
-	Sparkles,
-	TerminalSquare,
-	WalletCards,
-} from "lucide-react-native";
+import ArrowUp from "lucide-react-native/icons/arrow-up";
+import Blocks from "lucide-react-native/icons/blocks";
+import Brain from "lucide-react-native/icons/brain";
+import BrainCircuit from "lucide-react-native/icons/brain-circuit";
+import Cpu from "lucide-react-native/icons/cpu";
+import CreditCard from "lucide-react-native/icons/credit-card";
+import FolderKanban from "lucide-react-native/icons/folder-kanban";
+import FolderOpen from "lucide-react-native/icons/folder-open";
+import KeyRound from "lucide-react-native/icons/key-round";
+import Laptop from "lucide-react-native/icons/laptop";
+import MessagesSquare from "lucide-react-native/icons/messages-square";
+import Plug from "lucide-react-native/icons/plug";
+import Settings from "lucide-react-native/icons/settings";
+import Sparkles from "lucide-react-native/icons/sparkles";
+import TerminalSquare from "lucide-react-native/icons/square-terminal";
+import WalletCards from "lucide-react-native/icons/wallet-cards";
 import type { ReactNode } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {

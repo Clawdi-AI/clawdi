@@ -12,15 +12,13 @@ import {
 	parseSlashCommand,
 	sessionDateLabel,
 } from "@clawdi/shared/view";
-import {
-	CheckCircle2,
-	ChevronRight,
-	CircleX,
-	ListEnd,
-	Share2,
-	Terminal,
-	Wrench,
-} from "lucide-react-native";
+import ChevronRight from "lucide-react-native/icons/chevron-right";
+import CheckCircle2 from "lucide-react-native/icons/circle-check";
+import CircleX from "lucide-react-native/icons/circle-x";
+import ListEnd from "lucide-react-native/icons/list-end";
+import Share2 from "lucide-react-native/icons/share-2";
+import Terminal from "lucide-react-native/icons/terminal";
+import Wrench from "lucide-react-native/icons/wrench";
 import { useMemo, useState } from "react";
 import { AgentFrameworkIcon } from "@/components/agent-framework-icon";
 import { Markdown } from "@/components/markdown";

@@ -9,7 +9,10 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
-import { ChevronDown, ChevronRight, Link2, UserMinus } from "lucide-react-native";
+import ChevronDown from "lucide-react-native/icons/chevron-down";
+import ChevronRight from "lucide-react-native/icons/chevron-right";
+import Link2 from "lucide-react-native/icons/link-2";
+import UserMinus from "lucide-react-native/icons/user-minus";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Share } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";

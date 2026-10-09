@@ -2,7 +2,7 @@ import { dashboardPageClasses as styles } from "@clawdi/shared/ui";
 import { currentDaypart, dashboardGreeting, OVERVIEW_COPY } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { ArrowRight } from "lucide-react-native";
+import ArrowRight from "lucide-react-native/icons/arrow-right";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentsCard } from "@/components/dashboard/agents-card";
 import {

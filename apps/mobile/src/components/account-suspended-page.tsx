@@ -1,6 +1,8 @@
 import { accountSuspendedPageClasses as styles } from "@clawdi/shared/ui";
 import { accountSuspendedCopy as copy } from "@clawdi/shared/view";
-import { LogOut, Mail, ShieldOff } from "lucide-react-native";
+import LogOut from "lucide-react-native/icons/log-out";
+import Mail from "lucide-react-native/icons/mail";
+import ShieldOff from "lucide-react-native/icons/shield-off";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/feedback";
 import { Icon } from "@/components/ui/icon";

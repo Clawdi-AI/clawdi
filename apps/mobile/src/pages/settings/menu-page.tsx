@@ -5,19 +5,17 @@ import {
 	SUPPORT_EMAIL,
 } from "@clawdi/shared/view";
 import { type Href, useRouter } from "expo-router";
-import {
-	BarChart3,
-	BookOpen,
-	CreditCard,
-	FileText,
-	Key,
-	Mail,
-	MessageCircle,
-	Shield,
-	SlidersHorizontal,
-	UserCog,
-	WalletCards,
-} from "lucide-react-native";
+import BookOpen from "lucide-react-native/icons/book-open";
+import BarChart3 from "lucide-react-native/icons/chart-column";
+import CreditCard from "lucide-react-native/icons/credit-card";
+import FileText from "lucide-react-native/icons/file-text";
+import Key from "lucide-react-native/icons/key";
+import Mail from "lucide-react-native/icons/mail";
+import MessageCircle from "lucide-react-native/icons/message-circle";
+import Shield from "lucide-react-native/icons/shield";
+import SlidersHorizontal from "lucide-react-native/icons/sliders-horizontal";
+import UserCog from "lucide-react-native/icons/user-cog";
+import WalletCards from "lucide-react-native/icons/wallet-cards";
 import { Alert, Linking } from "react-native";
 import {
 	SettingsMenu,

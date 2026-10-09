@@ -16,7 +16,8 @@ import {
 import { onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { randomUUID } from "expo-crypto";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { QrCode, TriangleAlert } from "lucide-react-native";
+import QrCode from "lucide-react-native/icons/qr-code";
+import TriangleAlert from "lucide-react-native/icons/triangle-alert";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { ActionButton, NativeSwitch } from "@/components/dashboard/controls";

@@ -12,7 +12,8 @@ import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypt
 import { Directory, File, Paths } from "expo-file-system";
 import { useLocalSearchParams } from "expo-router";
 import { isAvailableAsync, shareAsync } from "expo-sharing";
-import { ArrowRight, Copy } from "lucide-react-native";
+import ArrowRight from "lucide-react-native/icons/arrow-right";
+import Copy from "lucide-react-native/icons/copy";
 import { useRef, useState } from "react";
 import { ChoiceSelect } from "@/components/detail/choice-select";
 import { useCloudProjects } from "@/components/projects/projects-surface";

@@ -6,7 +6,8 @@ import {
 	computeDunningState,
 } from "@clawdi/shared/view";
 import { router } from "expo-router";
-import { Info, TriangleAlert } from "lucide-react-native";
+import Info from "lucide-react-native/icons/info";
+import TriangleAlert from "lucide-react-native/icons/triangle-alert";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";

@@ -6,7 +6,7 @@ import {
 	type ProviderGroup,
 } from "@clawdi/shared/view";
 import { Stack, useNavigation } from "expo-router";
-import { ChevronRight } from "lucide-react-native";
+import ChevronRight from "lucide-react-native/icons/chevron-right";
 import { useEffect, useState } from "react";
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";

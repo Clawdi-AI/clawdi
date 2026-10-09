@@ -6,7 +6,7 @@ import {
 	STORE_MANAGEMENT_URLS,
 } from "@clawdi/shared/view";
 import { useClerk, useUser } from "@clerk/expo";
-import { TriangleAlert } from "lucide-react-native";
+import TriangleAlert from "lucide-react-native/icons/triangle-alert";
 import { useState } from "react";
 import { Linking } from "react-native";
 import { Alert } from "@/components/ui/alert";

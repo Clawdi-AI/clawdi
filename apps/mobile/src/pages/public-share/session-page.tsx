@@ -10,7 +10,8 @@ import { detailLayoutClasses, publicSessionClasses as styles } from "@clawdi/sha
 import { publicSessionScopeLabel, relativeTime } from "@clawdi/shared/view";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
-import { Clock, MessageSquare } from "lucide-react-native";
+import Clock from "lucide-react-native/icons/clock";
+import MessageSquare from "lucide-react-native/icons/message-square";
 import { useEffect, useRef, useState } from "react";
 import { AppState, Share } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";

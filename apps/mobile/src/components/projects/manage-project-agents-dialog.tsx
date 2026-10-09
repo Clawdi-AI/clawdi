@@ -8,7 +8,8 @@ import {
 } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams } from "expo-router";
-import { Bot, Save } from "lucide-react-native";
+import Bot from "lucide-react-native/icons/bot";
+import Save from "lucide-react-native/icons/save";
 import { Fragment, useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";

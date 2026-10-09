@@ -2,7 +2,7 @@ import { createProjectDialogClasses as styles } from "@clawdi/shared/ui";
 import { createProjectDialogCopy as copy } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams } from "expo-router";
-import { Plus } from "lucide-react-native";
+import Plus from "lucide-react-native/icons/plus";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";

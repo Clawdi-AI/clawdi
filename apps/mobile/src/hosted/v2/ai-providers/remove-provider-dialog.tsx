@@ -3,7 +3,7 @@ import { aiProvidersPageClasses } from "@clawdi/shared/ui";
 import { providerRemovalCopy as copy, settingsCopy } from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { router, useLocalSearchParams } from "expo-router";
-import { Trash2 } from "lucide-react-native";
+import Trash2 from "lucide-react-native/icons/trash";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { ActionButton } from "@/components/dashboard/controls";

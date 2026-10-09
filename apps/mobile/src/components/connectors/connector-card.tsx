@@ -1,6 +1,6 @@
 import { connectorCardClasses } from "@clawdi/shared/ui";
 import { connectorSearchSupportingText } from "@clawdi/shared/view";
-import { Check } from "lucide-react-native";
+import Check from "lucide-react-native/icons/check";
 import type { ReactNode } from "react";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { EntityRow } from "@/components/entity-card";

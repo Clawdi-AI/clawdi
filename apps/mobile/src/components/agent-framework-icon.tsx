@@ -1,6 +1,6 @@
 import { agentFrameworkIconClasses as styles } from "@clawdi/shared/ui";
 import { cn } from "cn";
-import { Laptop } from "lucide-react-native";
+import Laptop from "lucide-react-native/icons/laptop";
 import { useState } from "react";
 import { Image } from "react-native";
 import { withUniwind } from "uniwind";

@@ -10,7 +10,10 @@ import {
 	sessionTitle,
 } from "@clawdi/shared/view";
 import { useLocalSearchParams } from "expo-router";
-import { Clock, Hash, MessageSquare, Zap } from "lucide-react-native";
+import Clock from "lucide-react-native/icons/clock";
+import Hash from "lucide-react-native/icons/hash";
+import MessageSquare from "lucide-react-native/icons/message-square";
+import Zap from "lucide-react-native/icons/zap";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";

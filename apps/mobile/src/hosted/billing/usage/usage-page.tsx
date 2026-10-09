@@ -30,7 +30,7 @@ import {
 } from "@clawdi/shared/view";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
-import { RefreshCw } from "lucide-react-native";
+import RefreshCw from "lucide-react-native/icons/refresh-cw";
 import { type ReactNode, useState } from "react";
 import { RefreshControl } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";

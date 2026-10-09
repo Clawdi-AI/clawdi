@@ -5,7 +5,9 @@ import {
 	cardTrialPricePresentation,
 	computePlanComparisonView,
 } from "@clawdi/shared/view";
-import { Check, Cpu, Zap } from "lucide-react-native";
+import Check from "lucide-react-native/icons/check";
+import Cpu from "lucide-react-native/icons/cpu";
+import Zap from "lucide-react-native/icons/zap";
 import { useState } from "react";
 import { SettingsSection } from "@/components/settings/settings-panel-header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

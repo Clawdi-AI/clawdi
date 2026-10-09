@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Coins } from "lucide-react-native";
+import Coins from "lucide-react-native/icons/coins";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";

@@ -11,16 +11,14 @@ import {
 	PROVIDER_BRAND_ICON_IDS,
 	relativeTime,
 } from "@clawdi/shared/view";
-import {
-	Archive,
-	Folder,
-	KeyRound,
-	MoreHorizontal,
-	Plus,
-	Search,
-	Settings,
-	TriangleAlert,
-} from "lucide-react-native";
+import Archive from "lucide-react-native/icons/archive";
+import MoreHorizontal from "lucide-react-native/icons/ellipsis";
+import Folder from "lucide-react-native/icons/folder";
+import KeyRound from "lucide-react-native/icons/key-round";
+import Plus from "lucide-react-native/icons/plus";
+import Search from "lucide-react-native/icons/search";
+import Settings from "lucide-react-native/icons/settings";
+import TriangleAlert from "lucide-react-native/icons/triangle-alert";
 import { type ReactNode, useState } from "react";
 import { FlatList } from "react-native";
 import { AgentFrameworkIcon } from "@/components/agent-framework-icon";

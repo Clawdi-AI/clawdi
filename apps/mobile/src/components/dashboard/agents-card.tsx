@@ -7,7 +7,7 @@ import {
 } from "@clawdi/shared/view";
 import { cn } from "cn";
 import { router } from "expo-router";
-import { Cloud } from "lucide-react-native";
+import Cloud from "lucide-react-native/icons/cloud";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { AgentSourceBadge } from "@/components/dashboard/agent-source-badge";
