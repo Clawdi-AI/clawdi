@@ -158,7 +158,7 @@ describe("AI provider Cloud parity", () => {
 			updated: "local-only",
 			provider: { source: "local", label: "Local" },
 		});
-		const removed = await cli(["ai-provider", "remove", "local-only", "--yes", "--json"]);
+		const removed = await cli(["ai-provider", "rm", "local-only", "--yes", "--json"]);
 		expect({ code: removed.code, stderr: removed.stderr }).toMatchObject({ code: 0 });
 		expect(JSON.parse(removed.stdout)).toMatchObject({
 			schemaVersion: "clawdi.aiProviderRemove.v1",
@@ -174,7 +174,7 @@ describe("AI provider Cloud parity", () => {
 			call.path.endsWith("removal-impact")
 				? jsonResponse({ detail: "Forbidden" }, 403)
 				: jsonResponse({ providers: [provider] });
-		const result = await cli(["ai-provider", "remove", "openai-main", "--yes", "--json"]);
+		const result = await cli(["ai-provider", "rm", "openai-main", "--yes", "--json"]);
 		expect(result.code).not.toBe(0);
 		expect(result.stdout).toBe("");
 		expect(calls.every((call) => call.method === "GET")).toBe(true);
@@ -249,7 +249,7 @@ describe("AI provider Cloud parity", () => {
 		signIn(true);
 		handler = (call) =>
 			jsonResponse(call.path.endsWith("removal-impact") ? impact : { providers: [provider] });
-		const result = await cli(["ai-provider", "remove", "openai-main", "--json"]);
+		const result = await cli(["ai-provider", "rm", "openai-main", "--json"]);
 		expect(result.code).not.toBe(0);
 		expect(result.stdout).toBe("");
 		expect(result.stderr).toContain("hdep_test");
@@ -268,7 +268,7 @@ describe("AI provider Cloud parity", () => {
 						? impact
 						: { providers: [provider] },
 			);
-		const result = await cli(["ai-provider", "remove", "openai-main", "--yes", "--json"]);
+		const result = await cli(["ai-provider", "rm", "openai-main", "--yes", "--json"]);
 		expect({ code: result.code, stderr: result.stderr }).toMatchObject({ code: 0 });
 		expect(JSON.parse(result.stdout)).toMatchObject({
 			schemaVersion: "clawdi.aiProviderRemove.v1",
@@ -296,7 +296,7 @@ describe("AI provider Cloud parity", () => {
 							? { providers: [provider] }
 							: { status: "deleted", provider_id: "openai-main" },
 					);
-		const result = await cli(["ai-provider", "remove", "openai-main", "--yes", "--json"]);
+		const result = await cli(["ai-provider", "rm", "openai-main", "--yes", "--json"]);
 		expect({ code: result.code, stderr: result.stderr }).toMatchObject({ code: 0 });
 		expect(calls.find((call) => call.method === "DELETE")?.path).toBe(
 			"/v1/ai-providers/openai-main",
@@ -315,7 +315,7 @@ describe("AI provider Cloud parity", () => {
 			call.method === "DELETE"
 				? jsonResponse({ detail: "Impact changed" }, 409)
 				: jsonResponse(call.path.endsWith("removal-impact") ? impact : { providers: [provider] });
-		const result = await cli(["ai-provider", "remove", "openai-main", "--yes", "--json"]);
+		const result = await cli(["ai-provider", "rm", "openai-main", "--yes", "--json"]);
 		expect(result.code).not.toBe(0);
 		expect(result.stdout).toBe("");
 		expect(

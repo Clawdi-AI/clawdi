@@ -71,12 +71,6 @@ export function oauthCredentialFingerprint(
 		.digest("hex")}`;
 }
 
-export function nativeOAuthCredentialEvidenceFingerprint(value: unknown): string {
-	return `sha256:${createHash("sha256")
-		.update(JSON.stringify(["clawdi.nativeOAuthCredentialEvidence.v1", value]))
-		.digest("hex")}`;
-}
-
 export const OPENCLAW_SDK_EXPORT_PATHS = {
 	configMutation: "config-mutation",
 	deviceBootstrap: "device-bootstrap",

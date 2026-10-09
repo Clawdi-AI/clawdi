@@ -40,8 +40,9 @@ export async function projectInvitesCommand(
 			commandResult(opts.json, "clawdi.projectInvites.v1", {
 				project_id: projectId,
 				id: invitationId,
-				status: "canceled",
+				status: "declined",
 			});
+			process.exitCode = 1;
 			return;
 		}
 		unwrap(

@@ -1,7 +1,8 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import * as p from "@clack/prompts";
+import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
-import { ApiError, readJson } from "../lib/api-client";
+import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { openInBrowser } from "../lib/browser";
 import {
@@ -26,11 +27,7 @@ import { emit, wantsJson } from "../lib/command-output";
 import { getAuth, getConfig, getPendingAuth, isLoggedIn, type PendingAuth } from "../lib/config";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 
-interface MeResponse {
-	id: string;
-	email: string;
-	name: string;
-}
+type MeResponse = components["schemas"]["CurrentUserResponse"];
 
 async function verifyAndSaveLegacy(
 	apiKey: string,
@@ -38,20 +35,21 @@ async function verifyAndSaveLegacy(
 	expectedCredential: StoredCredentialIdentity,
 ): Promise<MeResponse | null> {
 	const endpointBinding = createCredentialEndpointBinding(apiUrl);
-	const res = await fetch(`${endpointBinding.cloudApiOrigin}/v1/auth/me`, {
-		headers: { Authorization: `Bearer ${apiKey}` },
-	});
-	if (res.status === 401 || res.status === 410) {
+	const result = await new ApiClient({
+		baseUrl: endpointBinding.cloudApiOrigin,
+		authToken: apiKey,
+	}).GET("/v1/auth/me");
+	if (result.response.status === 401 || result.response.status === 410) {
 		throw new ApiError({
-			status: res.status,
-			body: await res.text(),
+			status: result.response.status,
+			body: JSON.stringify(result.error ?? {}),
 			hint: "Verify your existing key, or run `clawdi auth login` (use `--no-open` on a server).",
 		});
 	}
-	if (!res.ok) return null;
-	const me = await readJson<MeResponse>(res, "/v1/auth/me");
+	if (!result.response.ok) return null;
+	const me = unwrap(result);
 	await commitClawdiCredential(
-		{ apiKey, userId: me.id, email: me.email, endpointBinding },
+		{ apiKey, userId: me.id, email: me.email ?? undefined, endpointBinding },
 		expectedCredential,
 	);
 	return me;

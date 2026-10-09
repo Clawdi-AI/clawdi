@@ -40,10 +40,6 @@ export function ensureRuntimeAuthTokenFile(
 	return null;
 }
 
-export function runtimeAuthTokenFileLabel(paths: RuntimePaths): string {
-	return paths.daemonAuthToken;
-}
-
 function normalizeRuntimeAuthToken(token: string): string | null {
 	const normalized = token.trim();
 	if (!normalized) return null;

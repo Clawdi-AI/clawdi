@@ -41,11 +41,6 @@ export function canonicalJson(value: unknown): string {
 	return `{${fields.join(",")}}`;
 }
 
-export function canonicalPayloadJson(value: unknown): string | undefined {
-	if (value === undefined) return undefined;
-	return canonicalJson(value);
-}
-
 export function sequenceSessionEvents(
 	drafts: readonly SessionEventDraft[],
 	startSeq = 0,

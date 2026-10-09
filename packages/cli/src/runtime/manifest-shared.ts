@@ -1,4 +1,3 @@
-import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import type { RuntimeProviderConflict, RuntimeServiceWithdrawal } from "./applied-state";
 import type { HostedSkillEvidence } from "./hosted-skill-evidence";
@@ -83,11 +82,6 @@ export function writeRuntimePrivateFileAtomic(
 	if (trustedRoot) writeRuntimePlatformFileAtomic(paths, path, content, options);
 	else writePrivateFileAtomic(path, content, options);
 }
-export function writeJsonFile(path: string, payload: unknown, paths?: RuntimePaths): void {
-	const content = `${JSON.stringify(payload, null, 2)}\n`;
-	if (paths) writeRuntimePrivateFileAtomic(paths, path, content);
-	else writePrivateFileAtomic(path, content);
-}
 export function recordValue(value: unknown): Record<string, unknown> | null {
 	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 	return value as Record<string, unknown>;
@@ -120,30 +114,4 @@ export function canonicalJsonValue(value: unknown): unknown {
 }
 export function isPlainRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-export function mutationAncestorMetadataTargets(
-	targets: readonly string[],
-	boundaries: readonly string[],
-): string[] {
-	const resolvedBoundaries = boundaries.map((boundary) => resolve(boundary));
-	const metadata = new Set<string>();
-	for (const target of targets) {
-		const resolvedTarget = resolve(target);
-		const resolvedBoundary = resolvedBoundaries.find((boundary) => {
-			const relativeTarget = relative(boundary, resolvedTarget);
-			return (
-				relativeTarget === "" || (!relativeTarget.startsWith("..") && !isAbsolute(relativeTarget))
-			);
-		});
-		if (!resolvedBoundary) {
-			throw new Error(`runtime mutation target is outside managed user roots: ${resolvedTarget}`);
-		}
-		if (resolvedTarget === resolvedBoundary) continue;
-		let parent = dirname(resolvedTarget);
-		while (parent !== resolvedBoundary) {
-			metadata.add(parent);
-			parent = dirname(parent);
-		}
-	}
-	return [...metadata];
 }

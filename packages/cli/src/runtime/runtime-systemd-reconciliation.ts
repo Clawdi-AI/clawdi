@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { parseEnv } from "node:util";
+import { canonicalApiOrigin, normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureDirectoryWithinTrustedRoot } from "../lib/trusted-directory";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
@@ -1378,6 +1379,9 @@ export function writeRuntimeSystemdState(input: {
 		desiredSystemUnitNames,
 		desiredUserUnitNames,
 	);
+	const daemonAuthTokenOrigin = daemonAuthTokenFile
+		? canonicalApiOrigin(normalizeCloudApiBaseUrl(manifest.controlPlane.apiUrl))
+		: undefined;
 	if (daemonAuthTokenFile) {
 		systemUnits.push(
 			writeSystemdSystemUnit({
@@ -1412,6 +1416,7 @@ export function writeRuntimeSystemdState(input: {
 					CLAWDI_SERVE_MODE: "container",
 					CLAWDI_STATE_DIR: paths.daemonStateRoot,
 					CLAWDI_API_URL: manifest.controlPlane.apiUrl,
+					CLAWDI_AUTH_TOKEN_ORIGIN: daemonAuthTokenOrigin ?? "",
 					CLAWDI_NO_AUTO_UPDATE: "1",
 					CLAWDI_NO_UPDATE_CHECK: "1",
 					CLAWDI_MANAGED_CONTENT_DIGEST: runtimeImpactRevision({

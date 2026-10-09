@@ -358,7 +358,7 @@ export class ApiClient {
 		const requireAuth = opts.requireAuth ?? true;
 		const config = getConfig();
 		const auth = getAuth();
-		if (requireAuth && !auth) {
+		if (requireAuth && !auth && !opts.authToken && !opts.accessTokenProvider) {
 			throw new ApiError({
 				status: 401,
 				body: "",
@@ -782,6 +782,7 @@ export class ApiClient {
 			headers: {
 				Authorization: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
+				"User-Agent": USER_AGENT,
 				"X-Request-ID": randomUUID(),
 				...(this.machineId ? { [MACHINE_ID_HEADER]: this.machineId } : {}),
 			},

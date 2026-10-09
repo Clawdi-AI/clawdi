@@ -181,11 +181,11 @@ export function registerChannel(program: Command): void {
 		});
 
 	channelCmd
-		.command("delete <channel-id>")
+		.command("rm <channel-id>")
 		.description("Archive one of your private channel bots")
 		.option("-y, --yes", "Confirm deletion without prompting")
 		.option("--json", "Output as JSON")
-		.addHelpText("after", "\nExample:\n  $ clawdi channel delete <channel-id> --yes")
+		.addHelpText("after", "\nExample:\n  $ clawdi channel rm <channel-id> --yes")
 		.action(async (channelId: string, opts: { yes?: boolean; json?: boolean }) => {
 			const { channelDeleteCommand } = await import("../../commands/channel.js");
 			await channelDeleteCommand(channelId, opts);

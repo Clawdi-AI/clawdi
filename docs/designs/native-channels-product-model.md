@@ -604,9 +604,9 @@ CLI control plane:
 | `clawdi channel pair-code <channel-id> --link <link-id>` | Creates a pair code for an existing caller-owned link. |
 | `clawdi channel bindings <channel-id>` | Lists only the caller's active chat bindings. |
 
-`clawdi bot` is an alias for `clawdi channel`. Public bot publishing and
-provider credential rotation remain admin API operations, not user CLI
-operations.
+The former `clawdi bot` alias is retired; use `clawdi channel`. Public bot
+publishing and provider credential rotation remain admin API operations, not
+user CLI operations.
 
 Ordinary channel setup uses the imperative `clawdi channel ...` commands above.
 Managed Hosted runtimes receive channel intent through controller desired state

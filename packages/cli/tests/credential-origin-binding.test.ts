@@ -181,9 +181,9 @@ describe("Cloud bearer origin binding", () => {
 	test("requires an explicit custom origin for environment credentials", async () => {
 		process.env.CLAWDI_AUTH_TOKEN = "environment-secret";
 		await expect(getClawdiAccessToken(PRODUCTION_CLOUD_ORIGIN)).rejects.toThrow(
-			"clawdi auth login",
+			"CLAWDI_AUTH_TOKEN_ORIGIN",
 		);
-		await expect(getClawdiAccessToken(CLOUD_ORIGIN)).rejects.toThrow("clawdi auth login");
+		await expect(getClawdiAccessToken(CLOUD_ORIGIN)).rejects.toThrow("CLAWDI_AUTH_TOKEN_ORIGIN");
 		process.env.CLAWDI_AUTH_TOKEN_ORIGIN = "https://CLOUD.Example.Test:443/";
 		expect(await getClawdiAccessToken(CLOUD_ORIGIN)).toBe("environment-secret");
 		await expect(getClawdiAccessToken("https://attacker.example.test")).rejects.toThrow(

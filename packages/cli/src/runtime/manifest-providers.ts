@@ -36,15 +36,12 @@ import { runtimeSecretValue } from "./secret-values";
 export { buildOpenClawHostedProviderPatch } from "./catalog-provider-config";
 export {
 	applyHostedCodexManagedProviderProjection,
-	CODEX_MANAGED_PROVIDER_CONFIG_FILE,
 	ensureHostedCodexCli,
-	hostedCodexHome,
 	hostedCodexManagedConfigToml,
 	hostedCodexManagedProvider,
 } from "./managed-codex-provider";
 export {
 	type OpenClawHostedProviderPatch,
-	openClawConfigPatchIsApplied,
 	openClawGatewayHostedPatch,
 } from "./openclaw-provider-config";
 

@@ -5,7 +5,6 @@ export type {
 	RuntimeConvergenceOptions,
 	RuntimeResourcePreparationFailures,
 } from "./manifest-planning";
-export { planHostedAgentPluginConvergence } from "./manifest-planning";
 export type { OpenClawHostedProviderPatch } from "./manifest-providers";
 export { buildOpenClawHostedProviderPatch } from "./manifest-providers";
 export { cacheRuntimeLastGoodManifest, runtimeRecoverableSecretValues } from "./manifest-secrets";

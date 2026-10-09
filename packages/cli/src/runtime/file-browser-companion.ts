@@ -360,18 +360,6 @@ export function ensureFileBrowserCompanion(
 	};
 }
 
-/**
- * Place one pinned, SHA256-verified release binary where tenant convergence looks
- * for its content-addressed candidate. Anonymous preinstallation only.
- */
-export function prefetchFileBrowserAsset(paths: RuntimePaths, asset: FileBrowserAsset): void {
-	ensureOwnedDirectory(paths.fileBrowserInstallRoot, managedRootIdentity(), 0o755);
-	ensureOwnedDirectory(candidatesRoot(paths), managedRootIdentity(), 0o755);
-	installCandidate(null, paths, asset, {});
-	if (!candidateIsValid(paths, asset.sha256))
-		throw new Error("Files companion candidate did not pass verification");
-}
-
 export function fileBrowserCompanionProgram(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,

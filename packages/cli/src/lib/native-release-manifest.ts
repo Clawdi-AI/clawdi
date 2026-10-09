@@ -50,10 +50,6 @@ export interface NativeReleaseManifestV2 {
 	artifacts: NativeReleaseArtifactV2[];
 }
 
-export function isNativeTarget(value: string): value is NativeTarget {
-	return (NATIVE_TARGETS as readonly string[]).includes(value);
-}
-
 export function nativeAssetName(target: NativeBuildTarget): string {
 	return `clawdi-cli-${target}.tar.gz`;
 }

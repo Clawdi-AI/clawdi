@@ -2451,6 +2451,7 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			expect(watchUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "watch"`);
 			expect(daemonEnv).toContain('CLAWDI_ENVIRONMENT_ID="env_test"');
 			expect(daemonEnv).toContain('CLAWDI_SERVE_MODE="container"');
+			expect(daemonEnv).toContain('CLAWDI_AUTH_TOKEN_ORIGIN="https://cloud-api.test"');
 			expect(watchUnit).not.toContain("sk-runtime");
 			expect(watchEnv).not.toContain("sk-runtime");
 			expect(readFileSync(getRuntimePaths().manifestLastGood, "utf-8")).not.toContain("sk-runtime");
