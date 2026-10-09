@@ -8,7 +8,7 @@ import {
 	allAdapterEntries,
 	getAdapterEntry,
 } from "../adapters/registry";
-import { ApiError, readJson } from "./api-client";
+import { unwrap } from "./api-client";
 import { getAuth, getClawdiDir } from "./config";
 import { readEnvironmentRegistration } from "./environment-registration";
 
@@ -41,18 +41,8 @@ export function getEnvIdByAgent(agentType: string): string | null {
 export async function fetchDefaultProjectId(
 	api: import("./api-client").ApiClient,
 ): Promise<string> {
-	const projectRes = await api.request("/v1/projects/default");
-	if (!projectRes.ok && projectRes.status === 401) {
-		throw new ApiError({ status: 401, body: await projectRes.text(), hint: "" });
-	}
-	const body: { project_id?: string } = await readJson<{ project_id?: string }>(
-		projectRes,
-		"/v1/projects/default",
-	).catch(() => ({}));
+	const body = unwrap(await api.GET("/v1/projects/default"));
 	if (body.project_id) return body.project_id;
-	if (!projectRes.ok) {
-		throw new Error(`Failed to resolve default project: HTTP ${projectRes.status}`);
-	}
 	throw new Error("Failed to resolve default project: missing project_id in response");
 }
 

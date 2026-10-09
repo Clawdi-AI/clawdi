@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { getClaudeHome, getCodexHome, getGhConfigHome } from "../adapters/paths";
-import { ApiClient } from "../lib/api-client";
+import { ApiClient, unwrap } from "../lib/api-client";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { emit } from "../lib/command-output";
 import { getConfig } from "../lib/config";
@@ -69,18 +69,6 @@ export interface CredentialProfileEnvelope {
 	profile: string;
 	importedAt: string;
 	files: CredentialFileSnapshot[];
-}
-
-interface CredentialProfileResponse {
-	id: string;
-	project_id: string;
-	tool: string;
-	profile: string;
-	updated_at: string;
-}
-
-interface CredentialProfileResolveResponse extends CredentialProfileResponse {
-	payload: string;
 }
 
 export interface AgentCredentialProfilePayloadResult {
@@ -566,10 +554,11 @@ export async function agentCredentialsImportCommand(
 	if (!collected) return;
 	const projectId = await resolveProjectOption(opts.project);
 	const api = new ApiClient();
-	const response = await api.postJsonBody<CredentialProfileResponse>(
-		"/v1/vault/credential-profiles",
-		{ tool: collected.tool, profile: collected.profile, payload: collected.payload },
-		projectId ? { project_id: projectId } : undefined,
+	const response = unwrap(
+		await api.POST("/v1/vault/credential-profiles", {
+			body: { tool: collected.tool, profile: collected.profile, payload: collected.payload },
+			params: { query: projectId ? { project_id: projectId } : {} },
+		}),
 	);
 
 	if (!opts.json && !opts.quiet) {
@@ -590,13 +579,10 @@ export async function agentCredentialsMaterializeCommand(
 	const profile = normalizeName(opts.profile ?? "default", "profile", 120);
 	const projectId = await resolveProjectOption(opts.project);
 	const api = new ApiClient();
-	const resolved = await api.postJsonBody<CredentialProfileResolveResponse>(
-		"/v1/vault/credential-profiles/resolve",
-		{
-			tool,
-			profile,
-			project_id: projectId,
-		},
+	const resolved = unwrap(
+		await api.POST("/v1/vault/credential-profiles/resolve", {
+			body: { tool, profile, project_id: projectId },
+		}),
 	);
 	await materializeAgentCredentialProfilePayload(tool, profile, resolved.payload, opts);
 }

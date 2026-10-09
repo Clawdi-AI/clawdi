@@ -1,6 +1,8 @@
-import { ApiClient, readJson } from "./api-client";
+import type { components, paths } from "@clawdi/shared/api";
+import { ApiClient, unwrap } from "./api-client";
 import { getClawdiAccessToken } from "./clerk-oauth";
 import { getConfig } from "./config";
+import { mapHttpError } from "./errors";
 import { resolveProjectId } from "./project-resolver";
 import { getEnvIdByAgent } from "./select-adapter";
 import {
@@ -27,40 +29,12 @@ export interface ClawdiReferenceUse {
 	column: number;
 }
 
-export interface VaultReferencePreview {
+// Vault resolve currently exposes an open response record in OpenAPI. Keep that
+// generated contract and narrow only the value needed by local materialization.
+export type VaultReferencePreview = components["schemas"]["VaultResolveResponse"] & {
 	reference: string;
-	source_project_id: string;
-	source_alias: string;
-	source_display?: string;
-	source_binding_type?: string;
-	source_priority?: number;
-	vault_slug?: string | null;
-	section?: string;
-	item_name?: string;
-	precedence?: Array<{
-		project_id: string;
-		alias: string;
-		display?: string;
-		hit: boolean;
-		reason: "match" | "not-found" | "skipped" | "conflict";
-		binding_type?: string;
-		priority?: number;
-	}>;
-	conflicts?: Array<{
-		project_id: string;
-		alias: string;
-		display?: string;
-		binding_type?: string;
-		priority?: number;
-		vault_slug?: string | null;
-		section?: string;
-		item_name?: string;
-	}>;
-}
-
-export interface VaultReferenceHit extends VaultReferencePreview {
-	value: string;
-}
+};
+export type VaultReferenceHit = VaultReferencePreview & { value: string };
 
 export interface ResolveReferenceOptions {
 	project?: string;
@@ -70,17 +44,7 @@ export interface ResolveReferenceOptions {
 	debug?: boolean;
 }
 
-interface VaultReferenceResolveInput {
-	reference: string;
-	vault_slug: string;
-	section: string;
-	field: string;
-	project_id?: string;
-}
-
-interface VaultBulkResolveResponse<T extends VaultReferencePreview> {
-	results?: Record<string, T>;
-}
+type VaultReferenceResolveInput = components["schemas"]["VaultReferenceResolveInput"];
 
 export function parseClawdiReference(input: string): ClawdiReference {
 	let url: URL;
@@ -194,25 +158,25 @@ export async function resolveClawdiReference(
 	input: string,
 	opts: ResolveReferenceOptions = {},
 ): Promise<VaultReferenceHit> {
-	const hit = await requestClawdiReference<VaultReferenceHit>(input, opts, false);
+	const hit = await requestClawdiReference(input, opts, false);
 	if (typeof hit.value !== "string") {
 		throw new Error("vault resolve returned no value.");
 	}
-	return hit;
+	return { ...hit, value: hit.value };
 }
 
 export async function previewClawdiReference(
 	input: string,
 	opts: ResolveReferenceOptions = {},
 ): Promise<VaultReferencePreview> {
-	return await requestClawdiReference<VaultReferencePreview>(input, opts, true);
+	return await requestClawdiReference(input, opts, true);
 }
 
-async function requestClawdiReference<T extends VaultReferencePreview>(
+async function requestClawdiReference(
 	input: string,
 	opts: ResolveReferenceOptions,
 	preview: boolean,
-): Promise<T> {
+): Promise<VaultReferencePreview> {
 	if (opts.project && opts.agent) {
 		throw new Error("Pass either --project or --agent, not both.");
 	}
@@ -220,11 +184,11 @@ async function requestClawdiReference<T extends VaultReferencePreview>(
 	const { apiUrl } = getConfig();
 	const accessToken = await getClawdiAccessToken(apiUrl);
 
-	const params = new URLSearchParams({
+	const query: NonNullable<paths["/v1/vault/resolve"]["post"]["parameters"]["query"]> = {
 		vault_slug: ref.vault,
 		section: ref.section,
 		field: ref.field,
-	});
+	};
 	if (ref.project) {
 		const referenceProjectId = await resolveProjectId(apiUrl, accessToken, ref.project);
 		if (opts.project) {
@@ -235,51 +199,51 @@ async function requestClawdiReference<T extends VaultReferencePreview>(
 				);
 			}
 		}
-		params.set("project_id", referenceProjectId);
+		query.project_id = referenceProjectId;
 	} else if (opts.project) {
-		params.set("project_id", await resolveProjectId(apiUrl, accessToken, opts.project));
+		query.project_id = await resolveProjectId(apiUrl, accessToken, opts.project);
 	} else if (opts.projectId) {
-		params.set("project_id", opts.projectId);
+		query.project_id = opts.projectId;
 	}
 	if (opts.agent) {
-		params.set("agent_id", resolveAgentId(opts.agent));
+		query.agent_id = resolveAgentId(opts.agent);
 	}
-	if (opts.allowConflicts) params.set("allow_conflicts", "true");
-	if (opts.debug) params.set("debug", "true");
-	if (preview) params.set("preview", "true");
+	if (opts.allowConflicts) query.allow_conflicts = true;
+	if (opts.debug) query.debug = true;
+	if (preview) query.preview = true;
 
 	const api = new ApiClient({ baseUrl: apiUrl, authToken: accessToken });
-	const response = await api.request(`/v1/vault/resolve?${params.toString()}`, {
-		method: "POST",
-	});
-	const body = await readJson<T | { detail?: unknown }>(response, "/v1/vault/resolve");
-	if (!response.ok) {
-		throw new VaultReferenceResolveError(response.status, body);
+	const result = await api.POST("/v1/vault/resolve", { params: { query } });
+	if (!result.response.ok) {
+		if (mapHttpError({ status: result.response.status })?.exitCode === 4) unwrap(result);
+		throw new VaultReferenceResolveError(result.response.status, result.error);
 	}
+	const body = unwrap(result);
 	if (preview) {
-		return stripPreviewValue(body as T, input);
+		return stripPreviewValue(body, input);
 	}
-	return { ...(body as T), reference: input };
+	return { ...body, reference: input };
 }
 
 export async function resolveReferenceMap(
 	refs: ClawdiReference[],
 	opts: ResolveReferenceOptions = {},
 ): Promise<Map<string, VaultReferenceHit>> {
-	const hits = await requestClawdiReferenceBulk<VaultReferenceHit>(refs, opts, false);
-	for (const hit of hits) {
-		if (typeof hit.value !== "string") {
-			throw new Error(`vault resolve returned no value for ${hit.reference}.`);
-		}
-	}
-	return new Map(hits.map((hit) => [hit.reference, hit]));
+	const hits = await requestClawdiReferenceBulk(refs, opts, false);
+	return new Map(
+		hits.map((hit) => {
+			if (typeof hit.value !== "string")
+				throw new Error(`vault resolve returned no value for ${hit.reference}.`);
+			return [hit.reference, { ...hit, value: hit.value }];
+		}),
+	);
 }
 
 export async function previewReferenceMap(
 	refs: ClawdiReference[],
 	opts: ResolveReferenceOptions = {},
 ): Promise<Map<string, VaultReferencePreview>> {
-	const hits = await requestClawdiReferenceBulk<VaultReferencePreview>(refs, opts, true);
+	const hits = await requestClawdiReferenceBulk(refs, opts, true);
 	return new Map(hits.map((hit) => [hit.reference, hit]));
 }
 
@@ -341,11 +305,11 @@ function extractDetail(body: unknown): { message?: string } {
 	return typeof message === "string" ? { message } : {};
 }
 
-async function requestClawdiReferenceBulk<T extends VaultReferencePreview>(
+async function requestClawdiReferenceBulk(
 	refs: ClawdiReference[],
 	opts: ResolveReferenceOptions,
 	preview: boolean,
-): Promise<T[]> {
+): Promise<VaultReferencePreview[]> {
 	const unique = uniqueReferences(refs);
 	if (unique.length === 0) return [];
 	if (opts.project && opts.agent) {
@@ -386,42 +350,39 @@ async function requestClawdiReferenceBulk<T extends VaultReferencePreview>(
 		});
 	}
 
-	const results: Record<string, T> = {};
+	const results: components["schemas"]["VaultBulkResolveResponse"]["results"] = {};
 	for (const chunk of chunkArray(references, MAX_BULK_REFERENCES)) {
 		const chunkProjectId = chunk.some((ref) => !ref.project_id) ? explicitProjectId : undefined;
 		const api = new ApiClient({ baseUrl: apiUrl, authToken: accessToken });
-		const response = await api.request("/v1/vault/resolve/bulk", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
+		const result = await api.POST("/v1/vault/resolve/bulk", {
+			body: {
 				references: chunk,
 				project_id: chunkProjectId,
 				agent_id: opts.agent ? resolveAgentId(opts.agent) : undefined,
 				allow_conflicts: Boolean(opts.allowConflicts),
 				debug: Boolean(opts.debug),
 				preview,
-			}),
+			},
 		});
-		const body = await readJson<VaultBulkResolveResponse<T> | { detail?: unknown }>(
-			response,
-			"/v1/vault/resolve/bulk",
-		);
+		const response = result.response;
 		if (!response.ok) {
-			if (response.status === 404 && shouldFallbackToSingleResolve(body)) {
+			if (mapHttpError({ status: response.status })?.exitCode === 4) unwrap(result);
+			if (response.status === 404 && shouldFallbackToSingleResolve(result.error)) {
 				return await Promise.all(
-					unique.map((ref) => requestClawdiReference<T>(ref.raw, opts, preview)),
+					unique.map((ref) => requestClawdiReference(ref.raw, opts, preview)),
 				);
 			}
-			throw new VaultReferenceResolveError(response.status, body);
+			throw new VaultReferenceResolveError(response.status, result.error);
 		}
+		const body = unwrap(result);
 		if (!isRecord(body)) {
 			throw new Error("vault resolve returned an invalid bulk response.");
 		}
-		const resultsValue = (body as Record<string, unknown>).results;
+		const resultsValue = body.results;
 		if (!isRecord(resultsValue)) {
 			throw new Error("vault resolve returned an invalid bulk response.");
 		}
-		Object.assign(results, resultsValue as Record<string, T>);
+		Object.assign(results, resultsValue);
 	}
 
 	return unique.map((ref) => {
@@ -430,9 +391,9 @@ async function requestClawdiReferenceBulk<T extends VaultReferencePreview>(
 			throw new Error(`vault resolve returned no result for ${ref.raw}.`);
 		}
 		if (preview) {
-			return stripPreviewValue(hit as T, ref.raw);
+			return stripPreviewValue(hit, ref.raw);
 		}
-		return { ...(hit as T), reference: ref.raw };
+		return { ...hit, reference: ref.raw };
 	});
 }
 
@@ -467,9 +428,12 @@ function chunkArray<T>(items: T[], size: number): T[][] {
 	return chunks;
 }
 
-function stripPreviewValue<T extends VaultReferencePreview>(body: T, reference: string): T {
-	const { value: _value, ...preview } = body as T & { value?: unknown };
-	return { ...preview, reference } as T;
+function stripPreviewValue(
+	body: components["schemas"]["VaultResolveResponse"],
+	reference: string,
+): VaultReferencePreview {
+	const { value: _value, ...preview } = body;
+	return { ...preview, reference };
 }
 
 function resolveAgentId(agent: string): string {

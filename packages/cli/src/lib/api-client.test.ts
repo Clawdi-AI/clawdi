@@ -154,13 +154,12 @@ describe("ApiClient machine fence", () => {
 			"demo.tar.gz",
 		);
 		await api.deleteAgentSkill("agent-1", "demo", "project-1");
-		await api.postJson<Record<string, unknown>>("/post");
-		await api.postJsonBody<Record<string, unknown>>("/post-body", { ok: true });
+		await api.POST("/v1/projects", { body: { name: "demo" } });
 		await api.getBytes("/bytes");
 		const streamed = await api.requestStream("/bytes");
 		await streamed.body?.cancel();
 
-		expect(captured).toHaveLength(7);
+		expect(captured).toHaveLength(6);
 		expect(
 			captured.every((request) => request.headers.get("X-Clawdi-Machine-Id") === "machine-1"),
 		).toBe(true);

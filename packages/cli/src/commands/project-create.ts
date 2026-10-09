@@ -1,15 +1,7 @@
 import chalk from "chalk";
-import { ApiClient, ApiError, readJson } from "../lib/api-client";
+import { ApiClient, unwrap } from "../lib/api-client";
 import { emit } from "../lib/command-output";
 import { projectAuthOrExit } from "../lib/project-command-utils";
-
-interface ProjectRow {
-	id: string;
-	name: string;
-	slug: string;
-	kind: string;
-	is_owner?: boolean;
-}
 
 function normalizeSlugInput(value: string | undefined): string | undefined {
 	if (!value) return undefined;
@@ -30,23 +22,12 @@ export async function projectCreateCommand(
 	if (!ctx) return;
 	const { apiUrl, apiKey } = ctx;
 
-	const payload: { name: string; slug?: string } = { name };
 	const slug = normalizeSlugInput(opts.slug);
-	if (slug) payload.slug = slug;
-
-	const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request("/v1/projects", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify(payload),
-	});
-
-	if (!r.ok) {
-		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-	}
-
-	const project = await readJson<ProjectRow>(r, "create project");
+	const project = unwrap(
+		await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).POST("/v1/projects", {
+			body: { name, ...(slug ? { slug } : {}) },
+		}),
+	);
 	if (opts.json) {
 		emit({ schemaVersion: "clawdi.projectCreate.v1", status: "created", project });
 		return;
