@@ -206,3 +206,46 @@ The web app imports API types from `@clawdi/shared/api`, which re-exports
 `packages/shared/src/api/api.generated.ts`. Do not edit the generated file by
 hand. Backend schema changes must follow the workflow in
 [`backend-development.md`](backend-development.md#generated-api-client).
+
+## Desktop download handoff
+
+Owner: the Clawdi Web maintainers. `DESKTOP_DOWNLOAD_URL` in
+`packages/shared/src/view/add-agent-setup.ts` points to the GitHub Desktop release
+search until `https://clawdi.ai/download` exists with maintained platform assets.
+Replace the shared URL when that page is available. The hosted marketing owner
+is responsible for adding the Desktop CTA and moving install-script delivery
+from `main` to release artifacts in the hosted repository.
+
+Done: `rg -n 'DESKTOP_DOWNLOAD_URL' packages/shared/src/view/add-agent-setup.ts`
+locates the shared handoff used by the dashboard.
+
+## Unused-code gate
+
+```bash
+bun run check:unused
+```
+
+Done: the command exits 0 and reports `Unused-code gate passed`. Client CI routes
+monorepo source, manifests, scripts, and Knip config changes through `unused-code`;
+`Client CI OK` includes that lane.
+
+`knip.json` lists TanStack routes and custom client/server entries, Expo routes,
+Electron main/preload/renderers, build/release scripts, fixture bundles, and
+package entry points. It checks unused files, exports, dependencies and unresolved
+imports. Generated clients/routes and vendored UI sub-exports are excluded.
+Exports used in their own file are implementation details. CSS imports and
+script-invoked binaries have explicit dependency exceptions: Web/Desktop fonts,
+Tailwind, animation styles, shadcn, Electron Builder and the Tailwind CLI.
+The unused Mobile font packages are temporarily excluded because concurrent
+Mobile work owns that manifest; owner: root, remove them in that cleanup.
+
+`knip-baseline.json` names each existing unused export and its owner/reason.
+These are deferred CLI/Web export cleanup findings, not file-wide exclusions.
+The checker fails on any new symbol, unused file or dependency, including new
+exports in a baseline file. Remove baseline entries when their exports are
+removed; additions require a concrete owner and retention reason.
+
+`@vercel/nft` is not used by the installed Nitro `3.0.260610-beta` builder: its
+`dist/_build/common.mjs` calls `nf3.traceNodeModules`. The Web direct dependency
+and its unused lock entries were removed along with redundant `remark-breaks`
+and `remark-gfm` declarations; Shared still owns the Markdown plugins.

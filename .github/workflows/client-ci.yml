@@ -19,6 +19,7 @@ concurrency:
 env:
   DOCKER_BUILD_RECORD_UPLOAD: "false"
   TURBO_TELEMETRY_DISABLED: "1"
+  BIOME_THREADS: "2"
 
 jobs:
   changes:
@@ -32,6 +33,7 @@ jobs:
       cli: ${{ steps.filter.outputs.cli == 'true' || steps.filter.outputs.shared == 'true' || steps.filter.outputs.workspace == 'true' }}
       sidecar: ${{ steps.filter.outputs.sidecar == 'true' || steps.filter.outputs.workspace == 'true' }}
       web_e2e: ${{ steps.filter.outputs.web == 'true' || steps.filter.outputs.shared == 'true' || steps.filter.outputs.workspace == 'true' }}
+      unused: ${{ steps.filter.outputs.unused }}
       deploy_contract: ${{ steps.filter.outputs.deploy_contract }}
       whatsapp_native_e2e: ${{ steps.filter.outputs.whatsapp_native_e2e }}
     steps:
@@ -67,6 +69,17 @@ jobs:
               - "turbo.json"
               - "tsconfig.base.json"
               - "biome.json"
+              - ".github/actions/setup-bun-ci/**"
+              - ".github/workflows/client-ci.yml"
+            unused:
+              - "apps/**"
+              - "packages/**"
+              - "scripts/**"
+              - "tools/**"
+              - "package.json"
+              - "bun.lock"
+              - "knip*.json"
+              - "tsconfig*.json"
               - ".github/actions/setup-bun-ci/**"
               - ".github/workflows/client-ci.yml"
             deploy_contract:
@@ -239,6 +252,17 @@ jobs:
             [[ "$status" == 1 ]] || exit "$status"
           fi
 
+  unused-code:
+    needs: changes
+    if: github.event_name != 'schedule' && needs.changes.outputs.unused == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-bun-ci
+      - name: Reject new unused files, exports, and dependencies
+        run: bun run check:unused
+
   deploy-contract-drift:
     needs: changes
     if: >-
@@ -404,7 +428,7 @@ jobs:
   # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#always
   ci-ok:
     name: Client CI OK
-    needs: [changes, verify, deploy-contract-drift, web-e2e, whatsapp-native-e2e, deploy-contract-drift-daily]
+    needs: [changes, verify, unused-code, deploy-contract-drift, web-e2e, whatsapp-native-e2e, deploy-contract-drift-daily]
     if: always()
     runs-on: ubuntu-latest
     steps:
