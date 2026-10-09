@@ -156,7 +156,7 @@ Other current catalog commands are:
 ```bash
 clawdi ai-provider list
 clawdi ai-provider edit openai-main --default-model gpt-5.3
-clawdi ai-provider remove openai-main
+clawdi ai-provider rm openai-main
 ```
 
 The local CLI does not activate or materialize provider configuration into a

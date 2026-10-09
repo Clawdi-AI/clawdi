@@ -93,8 +93,6 @@ export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfigura
 	// Unsigned NSIS updates use HTTPS and the generated metadata's SHA-512.
 	// verifyUpdateCodeSignature=false omits publisherName from app-update.yml:
 	// https://www.electron.build/docs/win#verifyupdatecodesignature
-	// TODO(2026-10-08): configure Windows signing credentials and the full publisher
-	// Subject to enable the package's signature verification default for releases.
 	const artifactNameOption =
 		configuration.platform === "darwin"
 			? "artifactName"

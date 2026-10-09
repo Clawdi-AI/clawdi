@@ -44,10 +44,6 @@ export function compareSemver(a: string, b: string): number {
 	return 0;
 }
 
-export function isSemverLessThan(a: string, b: string): boolean {
-	return compareSemver(a, b) < 0;
-}
-
 function parseSemver(value: string): ParsedSemver | null {
 	const match = SEMVER_RE.exec(value);
 	if (!match) return null;

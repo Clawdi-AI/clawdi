@@ -119,6 +119,12 @@ function unboundCredentialError(auth: ClawdiAuth, targetOrigin: string): ClerkOA
 		);
 	}
 	if (process.env.CLAWDI_AUTH_TOKEN) {
+		if (!process.env[ENV_CREDENTIAL_ORIGIN]?.trim()) {
+			return bindingError(
+				"oauth_login_required",
+				`CLAWDI_AUTH_TOKEN requires CLAWDI_AUTH_TOKEN_ORIGIN bound to ${targetOrigin}. Set CLAWDI_AUTH_TOKEN_ORIGIN, or run \`clawdi auth login\`.`,
+			);
+		}
 		return bindingError(
 			"oauth_login_required",
 			`CLAWDI_AUTH_TOKEN is not bound to ${targetOrigin}. Run \`clawdi auth login\`.`,

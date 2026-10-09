@@ -1,12 +1,10 @@
 import { chmodSync, chownSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { runtimeContentSha256 } from "./applied-state";
-import type { RuntimeApplyContext } from "./apply-identity";
 import { egressProfileSecretRefs } from "./egress-profiles";
 import type { RuntimeManifest } from "./manifest-contract";
 import { recordValue, stringValue, writeRuntimePrivateFileAtomic } from "./manifest-shared";
 import {
-	loadCommittedRuntimeManifest,
 	manifestSecretRefs,
 	pruneRuntimeSnapshots,
 	syncRuntimeSnapshotDirectory,
@@ -163,18 +161,6 @@ export function writeEgressSecretFile(
 		material,
 		previousRevision: egressSecretRevisionFromContent(previousContent),
 	};
-}
-export function verifiedCommittedEgressSecretMaterial(
-	paths: RuntimePaths,
-	applyContext: RuntimeApplyContext,
-): RuntimeEgressSecretMaterial | null {
-	try {
-		const committed = loadCommittedRuntimeManifest(paths, applyContext);
-		if ("errors" in committed) return null;
-		return egressSecretMaterial(committed.manifest, committed.secretValues);
-	} catch {
-		return null;
-	}
 }
 function egressSecretRefs(manifest: RuntimeManifest): string[] {
 	return egressProfileSecretRefs(manifest.egressProfiles);

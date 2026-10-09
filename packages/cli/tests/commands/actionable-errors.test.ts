@@ -153,7 +153,7 @@ describe("actionable CLI errors", () => {
 	});
 
 	it.each([
-		["daemon", "install"],
+		["daemon", "run"],
 		["inbox", "join", "00000000-0000-4000-8000-000000000001"],
 		["agent", "reconnect"],
 	])("uses exit 4 when signed out: %s", (...args) => {

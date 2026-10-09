@@ -134,9 +134,9 @@ Failed convergence returns a non-zero exit code. Plugin removal requires
 
 Write commands also support explicit `--json`. Successful mutations emit one
 object; human messages and prompts move to stderr. `--json` preserves the
-command's existing confirmation policy and never implies `--yes`. Canceling
-a prompt emits `status: "cancelled"` without performing the mutation;
-`project invites` consistently uses the US spelling `status: "canceled"`.
+command's existing confirmation policy and never implies `--yes`. Declining a
+prompt emits `status: "declined"` and exits 1 without performing the mutation;
+successful mutations emit their command-specific success status.
 
 | Command | Schema version and result fields |
 | --- | --- |
@@ -146,7 +146,7 @@ a prompt emits `status: "cancelled"` without performing the mutation;
 | `vault attach`, `vault detach` | `clawdi.vaultAttach.v1`, `clawdi.vaultDetach.v1` (`project_id`, `vault_id`, `vault`, `status`, `attached_project_count` when changed) |
 | `project share`, `project invite` | `clawdi.projectShare.v1` (`project_id` and link metadata, including the one-time `url`); `clawdi.projectInvite.v1` (invitation metadata) |
 | `project share-links` | `clawdi.projectShareLinks.v1` (`project_id`, `links` for listing; `project_id`, `id`, `status: "revoked"` for revocation) |
-| `project invites` | `clawdi.projectInvites.v1` (`project_id`, `invitations` for listing; `project_id`, `id`, `status: "canceled"` for cancellation) |
+| `project invites` | `clawdi.projectInvites.v1` (`project_id`, `invitations` for listing; `project_id`, `id`, `status: "canceled"` for cancellation or `status: "declined"` on a declined prompt) |
 | `agent projects link`, `agent projects unlink`, `agent projects move` | `clawdi.agentProjectsLink.v1` (binding metadata); `clawdi.agentProjectsUnlink.v1` (`agent_id`, `project_id`, `id`, `status`); `clawdi.agentProjectsMove.v1` (`agent_id`, `items`, `status`) |
 | `inbox decline`, `inbox forget` | `clawdi.inboxDecline.v1` (`id`, `status`); `clawdi.inboxForget.v1` (`project_id`, `status`, `removed_skill_count`) |
 | `daemon status` | `clawdi.daemonStatus.v1` (`agents`, each containing `agent`, `state_dir`, `health`, `supervisor`) |

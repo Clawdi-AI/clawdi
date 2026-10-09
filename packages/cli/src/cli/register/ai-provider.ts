@@ -74,12 +74,12 @@ Examples:
 		});
 
 	aiProviderCmd
-		.command("remove <provider-id>")
+		.command("rm <provider-id>")
 		.description("Remove an AI provider")
 		.option("--force", "Remove even if defaults reference it")
 		.option("-y, --yes", "Skip the interactive confirmation prompt")
 		.option("--json", "Output as JSON")
-		.addHelpText("after", "\nExample:\n  $ clawdi ai-provider remove <provider-id> --yes")
+		.addHelpText("after", "\nExample:\n  $ clawdi ai-provider rm <provider-id> --yes")
 		.action(async (providerId: string, opts) => {
 			const { aiProviderRemoveCommand } = await import("../../commands/ai-provider.js");
 			await aiProviderRemoveCommand(providerId, opts);

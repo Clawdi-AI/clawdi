@@ -28,9 +28,6 @@ import {
 	withRuntimeUserFileAccess,
 } from "./runtime-user-command";
 
-export function hostedMcpProjectionDeclared(manifest: RuntimeManifest): boolean {
-	return manifest.projection?.mcp !== undefined;
-}
 interface HostedMcpIntent {
 	servers: Record<string, HostedMcpServerDesiredState>;
 }

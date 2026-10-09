@@ -16,8 +16,6 @@ import {
 
 export type AgentTarget = "openclaw" | "hermes" | "codex";
 
-export const CODEX_PROFILE_NAME = "clawdi-ai-provider";
-
 export const AGENT_TARGET_CONTRACTS: Record<
 	AgentTarget,
 	{

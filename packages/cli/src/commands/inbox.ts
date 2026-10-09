@@ -248,35 +248,20 @@ export async function inboxAcceptCommand(
 	if (!auth?.apiKey) {
 		// Anonymous: only URL path makes sense (invitations require auth).
 		if (normalizeAgentIds(opts.agent).length > 0) {
-			console.error(
-				chalk.red(
-					"Sign in before linking an accepted project to an agent. " +
-						"Run `clawdi auth login`, then re-run with --agent.",
-				),
+			throw new AuthorizationRequiredError(
+				"Sign in before linking an accepted project to an agent. Run `clawdi auth login`, then re-run with --agent.",
 			);
-			process.exitCode = 1;
-			return;
 		}
 		if (!posArg && !opts.url) {
-			console.error(
-				chalk.red(
-					"Not signed in. For invitations, run `clawdi auth login` first. " +
-						"For share URLs, pass the link as the positional argument.",
-				),
+			throw new AuthorizationRequiredError(
+				"Not signed in. For invitations, run `clawdi auth login` first. For share URLs, pass the link as the positional argument.",
 			);
-			process.exitCode = 1;
-			return;
 		}
 		const normalized = opts.url ?? normalizeAcceptArg(posArg ?? "");
 		if (detectAcceptArgShape(normalized) === "uuid" && !opts.url) {
-			console.error(
-				chalk.red(
-					"That looks like an invitation ID. Invitations require an account — " +
-						"run `clawdi auth login` first, then re-run.",
-				),
+			throw new AuthorizationRequiredError(
+				"That looks like an invitation ID. Invitations require an account — run `clawdi auth login` first, then re-run.",
 			);
-			process.exitCode = 1;
-			return;
 		}
 		await acceptAnonymousUrl(apiUrl, normalized, opts);
 		return;

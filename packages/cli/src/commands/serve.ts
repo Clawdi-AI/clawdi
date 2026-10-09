@@ -26,7 +26,9 @@ import { emit } from "../lib/command-output";
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import type { components } from "@clawdi/shared/api";
 import { AGENT_TYPES, type AgentType } from "../adapters/registry";
+import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { loadAuthTokenFile } from "../lib/auth-token-file";
 import {
 	ClerkOAuthError,
@@ -46,7 +48,7 @@ import {
 	verifyAndPersistClerkOAuthLogin,
 } from "../lib/clerk-oauth";
 import { getAuth, getClawdiDir, getConfig, getPendingAuth, isLoggedIn } from "../lib/config";
-import { requireAuth } from "../lib/require-auth";
+import { AuthorizationRequiredError, requireAuth } from "../lib/require-auth";
 import { adapterForType, getEnvIdByAgent, listRegisteredAgentTypes } from "../lib/select-adapter";
 import { getCliVersion } from "../lib/version";
 import { evaluateHostPolicyForCommand } from "../runtime/host-policy";
@@ -203,7 +205,9 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 		log.error("serve.no_auth", {
 			hint: "Set CLAWDI_AUTH_TOKEN env or run `clawdi auth login`.",
 		});
-		process.exit(1);
+		throw new AuthorizationRequiredError(
+			"Not signed in. Set CLAWDI_AUTH_TOKEN with CLAWDI_AUTH_TOKEN_ORIGIN, or run `clawdi auth login`.",
+		);
 	}
 
 	const hostedRuntime = detectRuntimeMode() === "hosted";
@@ -1030,11 +1034,7 @@ async function runCommandRpc(options: RpcCommandOptions): Promise<unknown> {
 	return response;
 }
 
-interface AuthMeResponse {
-	id: string;
-	email?: string;
-	name?: string;
-}
+type AuthMeResponse = components["schemas"]["CurrentUserResponse"];
 
 async function verifyAndSaveRpcAuth(
 	apiUrl: string,
@@ -1042,15 +1042,22 @@ async function verifyAndSaveRpcAuth(
 	expectedCredential: StoredCredentialIdentity,
 ): Promise<AuthMeResponse> {
 	const endpointBinding = createCredentialEndpointBinding(apiUrl);
-	const response = await fetch(`${endpointBinding.cloudApiOrigin}/v1/auth/me`, {
-		headers: { Authorization: `Bearer ${apiKey}` },
-	});
-	if (!response.ok) {
-		throw new Error(`API key verification failed with HTTP ${response.status}`);
+	let me: AuthMeResponse;
+	try {
+		me = unwrap(
+			await new ApiClient({
+				baseUrl: endpointBinding.cloudApiOrigin,
+				authToken: apiKey,
+			}).GET("/v1/auth/me"),
+		);
+	} catch (error) {
+		if (error instanceof ApiError) {
+			throw new Error(`API key verification failed with HTTP ${error.status}`);
+		}
+		throw error;
 	}
-	const me = await readJsonObject<AuthMeResponse>(response, isAuthMeResponse, "/v1/auth/me");
 	await commitClawdiCredential(
-		{ apiKey, userId: me.id, email: me.email, endpointBinding },
+		{ apiKey, userId: me.id, email: me.email ?? undefined, endpointBinding },
 		expectedCredential,
 	);
 	return me;
@@ -1083,21 +1090,6 @@ async function startOAuthAuthRpc(
 		expires_at: pending.expiresAt,
 		api_url: pending.apiUrl,
 	};
-}
-
-async function readJsonObject<T>(
-	response: Response,
-	guard: (value: unknown) => value is T,
-	label: string,
-): Promise<T> {
-	const value: unknown = await response.json();
-	if (!guard(value)) throw new Error(`Unexpected response body from ${label}`);
-	return value;
-}
-
-function isAuthMeResponse(value: unknown): value is AuthMeResponse {
-	if (!isRecord(value)) return false;
-	return typeof value.id === "string";
 }
 
 function daemonInstallRpc(params: unknown): unknown {
@@ -1283,10 +1275,6 @@ function rpcParamsRecord(params: unknown): Record<string, unknown> {
 		throw new Error("RPC params must be a JSON object");
 	}
 	return params as Record<string, unknown>;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function requiredStringParam(record: Record<string, unknown>, key: string): string {

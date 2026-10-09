@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PendingAuth } from "../lib/config";
+import { AuthorizationRequiredError } from "../lib/require-auth";
 import { adapterForType } from "../lib/select-adapter";
 import { rejectUnsupportedOpts, runDaemonWorkers, startDaemonControlRpc } from "./serve";
 
@@ -732,7 +733,7 @@ describe("daemon HTTP RPC listener safety", () => {
 		const { serve } = await import("./serve");
 
 		await expect(serve({ host: "127.0.0.1" } as Record<string, unknown>)).rejects.toThrow(
-			ExitCalled,
+			AuthorizationRequiredError,
 		);
 	});
 
@@ -750,7 +751,7 @@ describe("daemon HTTP RPC listener safety", () => {
 					port: "17654",
 					allowRemote: true,
 				} as Record<string, unknown>),
-			).rejects.toThrow(ExitCalled);
+			).rejects.toThrow(AuthorizationRequiredError);
 		} finally {
 			if (originalHome === undefined) delete process.env.CLAWDI_HOME;
 			else process.env.CLAWDI_HOME = originalHome;

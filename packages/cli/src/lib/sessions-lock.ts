@@ -122,12 +122,6 @@ export function writeFencedSessionEntry(
 	return current;
 }
 
-export function removeFencedSessionEntry(lock: SessionsLock, fence: SessionFence): SessionsLock {
-	const current = toCurrentLock(lock);
-	delete current.sessions[sessionFenceKey(fence)];
-	return current;
-}
-
 export function persistFencedSessionEntry(
 	fence: SessionFence,
 	entry: Omit<
@@ -136,10 +130,6 @@ export function persistFencedSessionEntry(
 	>,
 ): void {
 	writeSessionsLock(writeFencedSessionEntry(readSessionsLock(), fence, entry));
-}
-
-export function clearFencedSessionEntry(fence: SessionFence): void {
-	writeSessionsLock(removeFencedSessionEntry(readSessionsLock(), fence));
 }
 
 export function persistFencedSessionSourceRevisions(

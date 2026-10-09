@@ -99,23 +99,11 @@ afterEach(() => {
 describe("inboxAcceptCommand", () => {
 	it("rejects signed-out --agent before redeeming a share URL", async () => {
 		rmSync(join(tmpHome, ".clawdi", "auth.json"), { force: true });
-		const orig = console.error;
-		const errors: string[] = [];
-		console.error = (...args: unknown[]) => {
-			errors.push(args.map(String).join(" "));
-		};
-		try {
-			await inboxAcceptCommand(`https://clawdi.ai/share/${rawToken}`, {
+		await expect(
+			inboxAcceptCommand(`https://clawdi.ai/share/${rawToken}`, {
 				agent: ["agent-1"],
-			});
-		} finally {
-			console.error = orig;
-		}
-
-		const exitCode = process.exitCode;
-		process.exitCode = 0;
-		expect(exitCode).toBe(1);
-		expect(errors.join("\n")).toContain("Sign in before linking an accepted project to an agent");
+			}),
+		).rejects.toThrow("Sign in before linking an accepted project to an agent");
 	});
 
 	it("stages signed-out access and lists the redacted ticket after sign-in", async () => {
