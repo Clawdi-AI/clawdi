@@ -340,7 +340,7 @@ describe("auth status endpoint metadata", () => {
 			console.log = priorLog;
 		}
 		const rendered = output.join("\n");
-		expect(rendered).toContain('"apiUrl": "<invalid>"');
+		expect(JSON.parse(rendered)).toMatchObject({ apiUrl: "<invalid>" });
 		expect(rendered).not.toContain("operator-password");
 	});
 });
