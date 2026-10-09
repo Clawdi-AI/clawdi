@@ -14,7 +14,7 @@
 	},
 	"dependencies": {
 		"@clawdi/shared": "workspace:*",
-		"@clerk/expo": "4.8.0",
+		"@clerk/expo": "4.8.1",
 		"@expo-google-fonts/geist": "0.4.2",
 		"@expo-google-fonts/geist-mono": "0.4.3",
 		"@expo/ui": "catalog:expo57",
@@ -63,7 +63,7 @@
 		"@types/culori": "catalog:",
 		"@types/react": "catalog:expo57",
 		"culori": "catalog:",
-		"sharp": "0.34.5",
+		"sharp": "0.35.5",
 		"typescript": "catalog:"
 	},
 	"expo": {
