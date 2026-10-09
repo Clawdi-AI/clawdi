@@ -527,11 +527,7 @@ class SessionListItemResponse(BaseModel):
     content_hash: str | None = None
     content_protocol: Literal["snapshot-v1", "events-v1"] = "snapshot-v1"
     event_head_hash: str | None = None
-    # True when an active `kind='link'` row exists in `session_permissions`
-    # for this session. Computed via EXISTS subquery in the list/detail
-    # query — there is NO denormalized `sessions.visibility` column.
-    # Default False so old generated clients that don't expect the field
-    # still deserialize cleanly.
+    # Computed from active snapshot shares in the list/detail query.
     is_shared: bool = False
     # Present only when a message body contributed to a `q` search result.
     # It is a bounded excerpt, never a second copy of the transcript.
@@ -545,78 +541,8 @@ class SessionListItemResponse(BaseModel):
     related_refs: dict[str, list[str]] | None = None
 
 
-class PublicSessionResponse(BaseModel):
-    """Public-safe session detail payload for `/v1/public/sessions/{id}`."""
-
-    id: str
-    summary: str | None
-    project_path: str | None
-    agent_type: str | None
-    model: str | None
-    models_used: list[str] | None
-    started_at: datetime
-    ended_at: datetime | None
-    last_activity_at: datetime | None
-    duration_seconds: int | None
-    message_count: int
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    tags: list[str] | None
-    status: str
-    related_refs: dict[str, list[str] | None] | None = None
-    owner_name: str | None
-    owner_avatar_url: str | None
-
-
 class SessionDetailResponse(SessionListItemResponse):
     has_content: bool
-
-
-class SessionPermissionResponse(BaseModel):
-    """One row from `session_permissions`.
-
-    Returned by `GET /v1/sessions/{id}/permissions` and as the body of
-    `POST /v1/sessions/{id}/permissions`. Identifier columns mirror
-    Google Drive's `permissions` resource: a `kind` discriminator plus
-    explicit fields for whichever principal type is populated.
-    """
-
-    id: str
-    kind: Literal["link", "user", "email"]
-    # Mutually exclusive based on `kind`. Both NULL for `kind='link'`.
-    user_id: str | None = None
-    email: str | None = None
-    role: Literal["viewer"]
-    invited_by: str | None = None
-    accepted_at: datetime | None = None
-    expires_at: datetime | None = None
-    created_at: datetime
-
-
-class SessionPermissionsResponse(BaseModel):
-    """`GET /v1/sessions/{id}/permissions` — active permissions for a
-    session, newest-first. Preserves legacy live-link management and can
-    later support a "people with access" list.
-    """
-
-    permissions: list[SessionPermissionResponse]
-
-
-class SessionPermissionCreate(BaseModel):
-    """`POST /v1/sessions/{id}/permissions` body.
-
-    Legacy live-link access uses `{"kind": "link"}`. Future
-    invite-by-email sends `{"kind": "email",
-    "email": "alice@x.com"}`; future direct user grant sends
-    `{"kind": "user", "user_id": "..."}`.
-    """
-
-    kind: Literal["link", "user", "email"]
-    user_id: str | None = None
-    email: str | None = None
-    # Optional in the request body — server defaults to 'viewer'.
-    role: Literal["viewer"] | None = None
 
 
 class SessionShareCreate(BaseModel):
@@ -653,7 +579,7 @@ class SessionShareListItemResponse(BaseModel):
     """One active Session link in the owner's cross-Session inventory."""
 
     id: str
-    kind: Literal["snapshot", "live"]
+    kind: Literal["snapshot"]
     session_id: str
     session_title: str
     scope: Literal["session", "through", "response"]
@@ -744,13 +670,6 @@ SessionTimelineItemResponse = Annotated[
     SessionTimelineMessageResponse | SessionToolCallResponse | SessionToolResultResponse,
     Field(discriminator="kind"),
 ]
-
-
-class PublicSessionExportResponse(PublicSessionResponse):
-    """Public-safe structured session export payload."""
-
-    messages: list[SessionMessageResponse]
-    share_url: str
 
 
 class SessionMessagesPage(BaseModel):

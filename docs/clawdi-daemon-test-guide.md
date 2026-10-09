@@ -283,8 +283,7 @@ curl -s http://127.0.0.1:17654/rpc \
 `user_code`, `expires_at`, `interval`, and `api_url`. Relay only the printed link
 and user code; verify the same code on Clerk's page and approve only a sign-in
 just started on this machine. `auth.status.pending_auth` contains
-`verification_uri`, `user_code`, `expires_at`, and `api_url` (or `null` for an old
-PKCE transaction). `auth.complete` accepts no parameters and makes one token
+`verification_uri`, `user_code`, `expires_at`, and `api_url`. `auth.complete` accepts no parameters and makes one token
 poll, returning `pending`, `logged_in`, `denied`, `expired`, or `no_pending_auth`.
 Poll no faster than `interval` seconds; `slow_down` increases it by five seconds.
 A `logged_in` result includes `cloud_verified: false` when the grant is saved

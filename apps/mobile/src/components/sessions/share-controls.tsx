@@ -276,7 +276,7 @@ function SharesView({
 	const revoke = async (share: SessionShare) => {
 		const visible = capture();
 		if (!scope.isCurrent() || !visible()) return;
-		await read((signal) => sessionSharing.revoke(share.id, share.kind, signal));
+		await read((signal) => sessionSharing.revoke(share.id, signal));
 		if (scope.isCurrent()) await refresh();
 	};
 	const row = (share: SessionShare, compact = false) => (
@@ -294,17 +294,11 @@ function SharesView({
 								})
 							}
 						>
-							{compact
-								? share.kind === "live"
-									? t("sessionDetailMobile.liveLink")
-									: shareLabel(share)
-								: share.session_title}
+							{compact ? shareLabel(share) : share.session_title}
 						</WebText>
 						{!compact ? (
 							<Badge variant="outline">
-								<Text>
-									{t(share.kind === "live" ? "sessionDetail.live" : "sessionDetail.snapshot")}
-								</Text>
+								<Text>{t("sessionDetail.snapshot")}</Text>
 							</Badge>
 						) : null}
 					</WebView>
@@ -318,9 +312,6 @@ function SharesView({
 									time: relativeTime(share.created_at),
 								})}
 					</WebText>
-					{share.kind === "live" ? (
-						<WebText recipe={styles.meta}>{t("sessionDetail.liveDescription")}</WebText>
-					) : null}
 				</WebView>
 				{compact ? (
 					<ConfirmAction

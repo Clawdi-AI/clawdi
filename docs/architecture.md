@@ -647,7 +647,7 @@ Core tables verified under `backend/app/models/`:
 | `v2_runtime_environment_fences`, `v2_runtime_observation_inbox`, `v2_runtime_observation_heads`, `v2_runtime_observation_consumer_cursors` | Additive declarative-v2 runtime evidence under direct `/v2/runtime/*` routes, permanent retirement fencing, boot-session high-waters/tombstones, and Hosted workload-bound replay cursors. Inbox rows record semantic changes; unchanged heartbeats refresh the compact head. Retention compacts eligible private payloads while permanent change-evidence identities preserve replay boundaries. The compatible v1 heartbeat applies the same append-on-change rule to its observation projection. |
 | `projects`, `project_memberships`, `project_share_links`, `project_invitations`, `share_redeem_attempts` | Project ownership, viewer access, share links, directed invites, and redeem throttling/idempotency. |
 | `agent_project_bindings` | One fixed `primary` Agent Project plus ordered `context` linked Projects. |
-| `sessions`, `session_permissions` | Conversation metadata, object-store body pointer, public/user/email sharing permissions. |
+| `sessions`, `session_shares` | Conversation metadata, object-store body pointer, immutable public snapshot shares. |
 | `skills` | Project-scoped skill metadata and object-store tarball pointer. |
 | `vaults`, `vault_project_attachments`, `vault_project_slug_aliases`, `vault_items`, `vault_credential_profiles` | Account-owned vaults, Project access attachments, compatibility slug aliases, encrypted secret fields, encrypted local auth profiles. |
 | `memories` | Built-in memory text, tags, direct Agent or legacy Session provenance, metadata, access counters, and optional embedding vector. |

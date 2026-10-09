@@ -1714,14 +1714,14 @@ async def test_clawdi_mcp_session_get_share_url_respects_env_binding(
     seed_user,
     monkeypatch,
 ):
-    """An env-bound agent key must not use a share URL to owner-bypass
-    into same-user sessions from other environments. Own-env sessions and
-    actively link-shared sessions stay readable."""
+    """Share URLs resolve only snapshot IDs; raw session IDs keep the env fence."""
+    import hashlib
+
     from app.core.auth import AuthContext, get_auth_short_session
     from app.core.database import get_session
     from app.models.api_key import ApiKey
     from app.models.session import Session
-    from app.models.session_permission import PERMISSION_KIND_LINK, SessionPermission
+    from app.models.session_share import SessionShare
     from app.routes import mcp_bridge
     from tests.conftest import create_env_with_project
 
@@ -1801,16 +1801,31 @@ async def test_clawdi_mcp_session_get_share_url_respects_env_binding(
             own_env = await read_share(ac, session_a.id)
             cross_env = await read_share(ac, session_b.id)
 
-            db_session.add(SessionPermission(session_id=session_b.id, kind=PERMISSION_KIND_LINK))
+            share = SessionShare(
+                session_id=session_b.id,
+                scope="session",
+                end_position=0,
+                source_protocol="snapshot-v1",
+                source_revision=hashlib.sha256(b'[{"role":"user","content":"hello"}]').hexdigest(),
+                snapshot_file_key=session_b_file_key,
+                public_metadata={
+                    "title": "Shared snapshot",
+                    "agent_type": "hermes",
+                    "model": None,
+                    "started_at": now.isoformat(),
+                    "message_count": 1,
+                },
+            )
+            db_session.add(share)
             await db_session.commit()
-            linked = await read_share(ac, session_b.id)
+            linked = await read_share(ac, share.id)
     finally:
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_auth_short_session, None)
         for file_key in (session_a_file_key, session_b_file_key):
             await mcp_bridge.file_store.delete(file_key)
 
-    assert not own_env.get("isError"), own_env
+    assert own_env["isError"] is True, own_env
     assert cross_env["isError"] is True, cross_env
     assert not linked.get("isError"), linked
 

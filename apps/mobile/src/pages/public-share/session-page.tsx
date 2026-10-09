@@ -180,10 +180,7 @@ function PublicSession({ id }: { id: string | null }) {
 	const last = currentView?.pages.at(-1);
 	const more = Boolean(last?.items.length && items.length < last.total);
 	const status = error instanceof ApiClientError ? error.status : 0;
-	const title =
-		currentView?.metadata.source === "snapshot"
-			? currentView.metadata.detail.title
-			: currentView?.metadata.detail.summary;
+	const title = currentView?.metadata.detail.title;
 	const runtime = useMobileRuntimeConfig();
 	const shareLink = () => {
 		const visible = capture();
@@ -314,11 +311,7 @@ function PublicSession({ id }: { id: string | null }) {
 										</WebText>
 										<WebText recipe={detailLayoutClasses.meta}>·</WebText>
 										<WebText recipe={detailLayoutClasses.meta}>
-											{publicSessionScopeLabel(
-												currentView.metadata.source === "snapshot"
-													? currentView.metadata.detail.scope
-													: "session",
-											)}
+											{publicSessionScopeLabel(currentView.metadata.detail.scope)}
 										</WebText>
 									</DetailMeta>
 								</WebView>
@@ -331,14 +324,12 @@ function PublicSession({ id }: { id: string | null }) {
 										count: currentView.metadata.detail.message_count,
 									})}
 								/>
-								{currentView.metadata.source === "snapshot" ? (
-									<Stat
-										icon={Clock}
-										label={t("labels.sharedTime", {
-											time: relativeTime(currentView.metadata.detail.created_at),
-										})}
-									/>
-								) : null}
+								<Stat
+									icon={Clock}
+									label={t("labels.sharedTime", {
+										time: relativeTime(currentView.metadata.detail.created_at),
+									})}
+								/>
 							</DetailStats>
 						</WebView>
 					) : loading ? (

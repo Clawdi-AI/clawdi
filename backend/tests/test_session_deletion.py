@@ -16,7 +16,7 @@ from app.main import app
 from app.models.api_key import ApiKey
 from app.models.memory import Memory
 from app.models.session import Session, SessionSyncSuppression
-from app.models.session_permission import PERMISSION_KIND_LINK, SessionPermission
+from app.models.session_share import SessionShare
 from app.models.user import User
 from app.routes.memories import attach_source_machines
 from app.schemas.session import SessionBatchRequest
@@ -134,25 +134,33 @@ async def test_delete_session_is_durable_and_preserves_memories(
         local_session_id=local_session_id,
         file_key=None,
     )
-    permission = SessionPermission(
-        session_id=session.id,
-        kind=PERMISSION_KIND_LINK,
-        role="viewer",
-        invited_by=seed_user.id,
-        accepted_at=datetime.now(UTC),
-    )
     memory = Memory(
         user_id=seed_user.id,
         content="Keep this extracted memory",
         source="session",
         source_session_id=session.id,
     )
-    db_session.add_all([permission, memory])
+    share = SessionShare(
+        session_id=session.id,
+        scope="session",
+        end_position=0,
+        source_protocol="snapshot-v1",
+        source_revision="a" * 64,
+        snapshot_file_key=content_key,
+        public_metadata={
+            "title": "Snapshot",
+            "agent_type": None,
+            "model": None,
+            "started_at": session.started_at.isoformat(),
+            "message_count": 0,
+        },
+    )
+    db_session.add_all([share, memory])
     await db_session.commit()
     session_id = session.id
-    permission_id = permission.id
+    share_id = share.id
     memory_id = memory.id
-    assert (await anon_client.get(f"/v1/public/sessions/{session_id}")).status_code == 200
+    assert (await anon_client.get(f"/v1/public/session-shares/{share_id}")).status_code == 200
 
     dashboard_auth = app.dependency_overrides[get_auth]
 
@@ -182,10 +190,7 @@ async def test_delete_session_is_durable_and_preserves_memories(
     assert response.status_code == 204
     assert not await sessions_route.file_store.exists(content_key)
     assert (
-        await db_session.scalar(
-            select(SessionPermission.id).where(SessionPermission.id == permission_id)
-        )
-        is None
+        await db_session.scalar(select(SessionShare.id).where(SessionShare.id == share_id)) is None
     )
     preserved_memory = (
         await db_session.execute(
@@ -194,7 +199,7 @@ async def test_delete_session_is_durable_and_preserves_memories(
     ).one()
     assert preserved_memory == ("Keep this extracted memory", None)
     assert await _is_suppressed(db_session, seed_user.id, local_session_id)
-    assert (await anon_client.get(f"/v1/public/sessions/{session_id}")).status_code == 404
+    assert (await anon_client.get(f"/v1/public/session-shares/{share_id}")).status_code == 404
 
     second_suppressed_id = f"a-delete-{uuid.uuid4().hex}"
     db_session.add(

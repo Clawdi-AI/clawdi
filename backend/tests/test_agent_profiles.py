@@ -219,8 +219,6 @@ async def test_hermes_rename_moves_metadata_in_place(client, db_session, seed_us
             )
         )
     ).scalar_one()
-    # Old CLIs publish the new inventory before requesting the rename.
-    assert (await inventory(client, env, ["default", "job"])).status_code == 200
     path = f"/v1/agents/{env.id}/profiles/work/rename"
     res = await client.post(path, json={"new_upstream_key": "job"})
     assert res.status_code == 200, res.text
@@ -473,7 +471,9 @@ async def test_rename_rejects_occupied_target_without_partial_updates(
 
 
 @pytest.mark.asyncio
-async def test_rename_into_empty_target_preserves_profile_uuid(client, db_session, seed_user):
+async def test_rename_rejects_existing_empty_target_without_changing_profiles(
+    client, db_session, seed_user
+):
     env = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
@@ -487,15 +487,10 @@ async def test_rename_into_empty_target_preserves_profile_uuid(client, db_sessio
     res = await client.post(
         f"/v1/agents/{env.id}/profiles/work/rename", json={"new_upstream_key": "job"}
     )
-    assert res.status_code == 200, res.text
-    assert res.json() == {"sessions_moved": 0, "suppressions_moved": 0}
-    res = await client.get(f"/v1/agents/{env.id}/profiles")
-    assert res.status_code == 200, res.text
-    profiles = {p["profile_key"]: p for p in res.json()}
-    assert set(profiles) == {"", "job"}
-    assert profiles["job"]["id"] == original["work"]
-    assert profiles["job"]["id"] != original["job"]
-    assert profiles["job"]["state"] == "active"
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["code"] == "profile_conflict"
+    profiles = (await client.get(f"/v1/agents/{env.id}/profiles")).json()
+    assert {p["profile_key"]: p["id"] for p in profiles} == original
 
 
 @pytest.mark.asyncio

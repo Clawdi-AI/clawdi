@@ -1,0 +1,338 @@
+[
+	{
+		"file": "packages/cli/src/lib/native-release-manifest.ts",
+		"category": "exports",
+		"name": "isNativeTarget",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/runtime/manifest.ts",
+		"category": "exports",
+		"name": "planHostedAgentPluginConvergence",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/runtime/manifest-source.ts",
+		"category": "exports",
+		"name": "HOSTED_RUNTIME_CAPABILITIES_HEADER",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/lib/sessions-lock.ts",
+		"category": "exports",
+		"name": "clearFencedSessionEntry",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/lib/codex-oauth-native-store.ts",
+		"category": "exports",
+		"name": "nativeOAuthCredentialEvidenceFingerprint",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/lib/session-events.ts",
+		"category": "exports",
+		"name": "canonicalPayloadJson",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/runtime/manifest-providers.ts",
+		"category": "exports",
+		"name": "CODEX_MANAGED_PROVIDER_CONFIG_FILE",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/runtime/manifest-providers.ts",
+		"category": "exports",
+		"name": "hostedCodexHome",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/runtime/manifest-providers.ts",
+		"category": "exports",
+		"name": "openClawConfigPatchIsApplied",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/lib/ai-provider-projection.ts",
+		"category": "exports",
+		"name": "CODEX_PROFILE_NAME",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/lib/semver.ts",
+		"category": "exports",
+		"name": "isSemverLessThan",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/runtime/auth-token.ts",
+		"category": "exports",
+		"name": "runtimeAuthTokenFileLabel",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/runtime/manifest-secrets.ts",
+		"category": "exports",
+		"name": "verifiedCommittedEgressSecretMaterial",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/runtime/manifest-shared.ts",
+		"category": "exports",
+		"name": "writeJsonFile",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/runtime/manifest-shared.ts",
+		"category": "exports",
+		"name": "mutationAncestorMetadataTargets",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/runtime/file-browser-companion.ts",
+		"category": "exports",
+		"name": "prefetchFileBrowserAsset",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "packages/cli/src/runtime/manifest-mcp.ts",
+		"category": "exports",
+		"name": "hostedMcpProjectionDeclared",
+		"reason": "Owner: CLI maintainers. Existing audit finding retained because this PR cannot edit the concurrent CLI implementation; remove the unused export in the CLI cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/errors.ts",
+		"category": "exports",
+		"name": "toastBillingError",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/deployment-status.ts",
+		"category": "exports",
+		"name": "hasCurrentRuntimeHealthDegradation",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/deployment-status.ts",
+		"category": "exports",
+		"name": "boundedSettlingPollState",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/deployment-status.ts",
+		"category": "exports",
+		"name": "DEPLOYMENT_SERVING_ADVISORY_REASONS",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/hosted-agent-resolution.ts",
+		"category": "exports",
+		"name": "isHostedDeploymentMember",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/runtimes.ts",
+		"category": "exports",
+		"name": "HOSTED_RUNTIMES",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/agents/deployment-hooks.ts",
+		"category": "exports",
+		"name": "useResetRuntimeUiAccess",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/components/dashboard/agent-overview-capabilities.tsx",
+		"category": "exports",
+		"name": "OverviewModuleUnavailable",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/lib/navigation-model.ts",
+		"category": "exports",
+		"name": "AGENT_WORKSPACE_SECTION_IDS",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/lib/session-search-anchor.ts",
+		"category": "exports",
+		"name": "normalizeSessionListReturnTo",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/lib/session-search-anchor.ts",
+		"category": "exports",
+		"name": "SESSION_TIMELINE_CATEGORIES",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/hooks.ts",
+		"category": "exports",
+		"name": "useHostedUser",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/stripe-client-secret.ts",
+		"category": "exports",
+		"name": "stripeReturnPaymentIntentClientSecret",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/format.ts",
+		"category": "exports",
+		"name": "addDecimals",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/format.ts",
+		"category": "exports",
+		"name": "formatUsd",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/wallet/wallet-constants.ts",
+		"category": "exports",
+		"name": "LOW_BALANCE_USD",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/v2/agent-plugins/agent-plugin-model.ts",
+		"category": "exports",
+		"name": "pluginVersion",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/v2/ai-providers/add-provider-dialog.logic.ts",
+		"category": "exports",
+		"name": "providerEditOperation",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/v2/ai-providers/provider-presets.ts",
+		"category": "exports",
+		"name": "PROVIDER_PRESETS",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/v2/ai-providers/codex-oauth.ts",
+		"category": "exports",
+		"name": "CLAWDI_CODEX_OAUTH_PROVIDER_ID",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/v2/ai-providers/provider-types.ts",
+		"category": "exports",
+		"name": "toProviderId",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/components/entity-card.tsx",
+		"category": "exports",
+		"name": "ENTITY_CARD_ACTIONS_CLASS",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/components/entity-card.tsx",
+		"category": "exports",
+		"name": "ENTITY_CARD_CHASSIS_CLASS",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/components/entity-card.tsx",
+		"category": "exports",
+		"name": "ENTITY_CARD_GRID_CLASS",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/components/entity-card.tsx",
+		"category": "exports",
+		"name": "ENTITY_CARD_STRETCHED_LINK_CLASS",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/components/entity-card.tsx",
+		"category": "exports",
+		"name": "HERO_CARD_BASE",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/components/entity-card.tsx",
+		"category": "exports",
+		"name": "HERO_STRETCHED_LINK_CLASS",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/components/compute-dunning.logic.ts",
+		"category": "exports",
+		"name": "fallbackReasonSentence",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/subscription/plan-change-controller.tsx",
+		"category": "exports",
+		"name": "planChangeTargetUnavailableReason",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/subscription/subscription-utils.ts",
+		"category": "exports",
+		"name": "commonExplicitBillingOffers",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/subscription/subscription-utils.ts",
+		"category": "exports",
+		"name": "computeFundingMode",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/subscription/subscription-utils.ts",
+		"category": "exports",
+		"name": "computeSubscriptionId",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/subscription/subscription-utils.ts",
+		"category": "exports",
+		"name": "isBasicCompute",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/subscription/subscription-utils.ts",
+		"category": "exports",
+		"name": "isComputeSubscriptionRenewing",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/hosted/billing/subscription/subscription-utils.ts",
+		"category": "exports",
+		"name": "isIncludedBasicSubscription",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/lib/session-queries.ts",
+		"category": "exports",
+		"name": "normalizeSessionListQuery",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/components/dashboard/section.tsx",
+		"category": "exports",
+		"name": "DashboardSectionToolbar",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/components/dashboard/section.tsx",
+		"category": "exports",
+		"name": "DashboardEmptyLine",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	},
+	{
+		"file": "apps/web/src/components/projects/project-metadata.tsx",
+		"category": "exports",
+		"name": "ProjectScopePicker",
+		"reason": "Owner: Web maintainers. Existing unused public hook or shared re-export retained to keep this auth/share cleanup focused; remove in the separate Web export cleanup."
+	}
+]

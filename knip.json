@@ -1,0 +1,83 @@
+{
+	"$schema": "https://unpkg.com/knip@6/schema.json",
+	"include": ["files", "exports", "dependencies", "unlisted", "unresolved"],
+	"ignoreExportsUsedInFile": true,
+	"ignore": ["**/routeTree.gen.ts", "**/*.generated.ts", ".task-tmp/**"],
+	"workspaces": {
+		".": {
+			"entry": ["scripts/**/*.{ts,mjs,js}", "tools/*/package.json"],
+			"project": ["scripts/**/*.{ts,mjs,js}"],
+			"ignoreBinaries": ["docker", "python3", "uv", "pdm", "gh", "curl", "jq", "tsr"]
+		},
+		"apps/web": {
+			"entry": [
+				"src/router.tsx",
+				"src/routes/**/*.{ts,tsx}",
+				"src/client.tsx",
+				"src/instrument.client.ts",
+				"src/wallet-stripe-return.bootstrap.ts",
+				"scripts/**/*.{ts,mjs}",
+				"e2e/**/*.ts",
+				"src/**/*.test.{ts,tsx}",
+				"src/server.ts"
+			],
+			"project": ["src/**/*.{ts,tsx}", "scripts/**/*.{ts,mjs}", "e2e/**/*.ts"],
+			"ignoreDependencies": [
+				"@fontsource/geist-mono",
+				"@fontsource/geist-sans",
+				"tw-animate-css",
+				"tailwindcss",
+				"shadcn"
+			],
+			"ignoreIssues": {
+				"src/components/ui/**": ["exports"]
+			}
+		},
+		"apps/desktop": {
+			"entry": [
+				"src/main.ts",
+				"src/connect-preload.ts",
+				"src/connect-renderer.tsx",
+				"scripts/**/*.{ts,mjs,cjs}",
+				"src/**/*.test.ts"
+			],
+			"project": ["src/**/*.{ts,tsx}", "scripts/**/*.{ts,mjs,cjs}"],
+			"ignoreDependencies": [
+				"@fontsource/geist-mono",
+				"@fontsource/geist-sans",
+				"tailwindcss",
+				"tw-animate-css",
+				"electron-builder",
+				"@tailwindcss/cli",
+				"shadcn"
+			]
+		},
+		"apps/mobile": {
+			"entry": ["src/app/**/*.{ts,tsx}", "scripts/**/*.ts", "src/**/*.test.{ts,tsx}"],
+			"project": ["src/**/*.{ts,tsx}", "scripts/**/*.ts"],
+			"ignoreDependencies": ["@expo-google-fonts/geist", "@expo-google-fonts/geist-mono"]
+		},
+		"packages/cli": {
+			"entry": [
+				"src/index.ts",
+				"scripts/**/*.{ts,mjs}",
+				"tests/**/*.ts",
+				"src/**/*.test.ts",
+				"egress-addon/**/*.js"
+			],
+			"project": ["src/**/*.ts", "scripts/**/*.{ts,mjs}", "tests/**/*.ts", "egress-addon/**/*.js"]
+		},
+		"packages/shared": {
+			"entry": ["src/**/*.test.ts"],
+			"project": ["src/**/*.{ts,tsx,js}"],
+			"ignoreIssues": {
+				"src/ui/**": ["exports"]
+			}
+		},
+		"packages/whatsapp-baileys-sidecar": {
+			"entry": ["src/index.ts", "scripts/**/*.ts", "src/**/*.test.ts", "tests/**/*.ts"],
+			"project": ["src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"]
+		}
+	},
+	"ignoreWorkspaces": [".task-tmp/**"]
+}

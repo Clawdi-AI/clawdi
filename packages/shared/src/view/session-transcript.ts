@@ -95,7 +95,6 @@ export function sessionShareDialogCopy(target: SessionShareTarget) {
 
 export function shareScopeLabel(share: SessionShare): string {
 	const scope = sessionShareScope(share);
-	if (scope === "live") return "Full session, live";
 	if (scope === "response") return "Single agent response";
 	if (scope === "through") return "Conversation excerpt";
 	return "Full session snapshot";
@@ -165,9 +164,7 @@ export const sessionDetailCopy = {
 	revokeTitle: "Turn off this share link?",
 	revokeDescription:
 		"Anyone using this link will immediately lose access. The original session stays unchanged.",
-	live: "Live",
 	snapshot: "Snapshot",
-	liveDescription: "Updates when the session is uploaded again.",
 	sharedError: "Couldn't load shared links",
 	linksError: "Couldn't load share links",
 	activityError: "Couldn't load activity",

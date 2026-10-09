@@ -4,7 +4,6 @@ import { HOSTED_DEPLOY_LANGUAGE_OPTIONS, normalizeHostedDeployLanguage } from "@
 import {
 	fallbackTimezones,
 	hostedDeployLanguageFromLocales,
-	isValidTimezone,
 	mergeTimezoneOptions,
 	resolvedTimezone,
 	supportedTimezones,
@@ -57,7 +56,6 @@ export function browserLanguage(): HostedLanguage | "" {
 
 export {
 	fallbackTimezones,
-	isValidTimezone,
 	mergeTimezoneOptions,
 	resolvedTimezone as browserTimezone,
 	supportedTimezones,

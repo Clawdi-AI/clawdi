@@ -8,8 +8,7 @@ import { env } from "@/lib/env";
  * Visitor-facing URL is `/s/{id}.md` (and `.json`); TanStack Start routes
  * those extension paths directly to this handler.
  *
- * `id` is a frozen share UUID. A 404 falls back to the legacy Session UUID
- * route so links created before immutable shares remain valid.
+ * `id` is an immutable snapshot share UUID.
  *
  * **Anonymous-only proxy**: no Clerk token is forwarded to the backend.
  * TanStack Start may still run Clerk request middleware for browser state,
@@ -19,7 +18,7 @@ import { env } from "@/lib/env";
  * `/v1/sessions/{id}/export.md` instead.
  *
  * Backend status codes pass through verbatim, including 410 for revoked
- * frozen links and the legacy route's authorization responses.
+ * snapshot links.
  */
 
 const ALLOWED_FORMATS = new Set(["md", "json"]);
@@ -69,7 +68,7 @@ export async function GET(
 	}
 
 	const api = createClient<paths>({ baseUrl: env.VITE_CLAWDI_API_URL });
-	const frozen =
+	const result =
 		format === "md"
 			? await api.GET("/v1/public/session-shares/{share_id}/export.md", {
 					params: { path: { share_id: id } },
@@ -81,20 +80,6 @@ export async function GET(
 					parseAs: "text",
 					cache: "no-store",
 				});
-	const result =
-		frozen.error === undefined || frozen.response.status !== 404
-			? frozen
-			: format === "md"
-				? await api.GET("/v1/public/sessions/{session_id}/export.md", {
-						params: { path: { session_id: id } },
-						parseAs: "text",
-						cache: "no-store",
-					})
-				: await api.GET("/v1/public/sessions/{session_id}/export.json", {
-						params: { path: { session_id: id } },
-						parseAs: "text",
-						cache: "no-store",
-					});
 
 	if (result.error !== undefined) {
 		return new Response(publicSessionExportErrorMessage(result.response.status), {

@@ -581,40 +581,24 @@ async def test_oauth_and_session_issuers_cannot_rebind_the_same_clerk_sub(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stored_retired_key", [True, False])
 async def test_oauth_config_returns_only_public_values(
     raw_auth_client: httpx.AsyncClient,
     db_session: AsyncSession,
     clerk_oauth_signing_key: str,
-    stored_retired_key: bool,
 ):
-    if stored_retired_key:
-        row = await db_session.get(AppSetting, CLERK_CLI_OAUTH_SETTING_KEY)
-        assert row is not None
-        row.value_json = {
-            **row.value_json,
-            "redirect_uri": "http://127.0.0.1:18473/oauth/callback",
-        }
-        await db_session.commit()
     response = await raw_auth_client.get("/v1/cli/auth/oauth/config")
 
-    if stored_retired_key:
-        assert response.status_code == 503
-        assert response.json() == {"detail": "OAuth CLI authentication is not configured"}
-        return
     assert response.status_code == 200
     assert response.json() == {
         "issuer": _ISSUER,
         "client_id": _CLIENT_ID,
-        "audience": _AUDIENCE,
-        "authorized_parties": [_AUTHORIZED_PARTY],
     }
     assert _SECRET_KEY not in response.text
     assert _APPLICATION_ID not in response.text
 
 
 @pytest.mark.asyncio
-async def test_oauth_config_canonicalizes_public_issuer_and_authorized_parties(
+async def test_oauth_config_canonicalizes_public_issuer(
     raw_auth_client: httpx.AsyncClient,
     db_session: AsyncSession,
     clerk_oauth_signing_key: str,
@@ -632,10 +616,7 @@ async def test_oauth_config_canonicalizes_public_issuer_and_authorized_parties(
 
     assert response.status_code == 200
     assert response.json()["issuer"] == "https://xn--bcher-kva.example"
-    assert response.json()["authorized_parties"] == [
-        "http://127.0.0.1:18473",
-        "https://accounts.clawdi.test",
-    ]
+    assert set(response.json()) == {"issuer", "client_id"}
 
 
 @pytest.mark.asyncio
@@ -837,15 +818,12 @@ async def test_oauth_revoke_hides_upstream_failure_details(
 
 
 @pytest.mark.asyncio
-async def test_session_share_cli_auth_ownership_and_exact_legacy_revocation(
+async def test_session_share_cli_auth_ownership_and_revocation(
     raw_auth_client, db_session, seed_user, clerk_oauth_signing_key
 ):
     from app.models.session import Session
     from tests.test_session_shares import _seed_session
 
-    browser = _session_token(
-        clerk_oauth_signing_key, seed_user.clerk_id, {"iss": _ISSUER, "aud": _AUDIENCE}
-    )
     token = _oauth_access_token(clerk_oauth_signing_key, seed_user.clerk_id)
     raw_auth_client.headers["Authorization"] = f"Bearer {token}"
     session_id, _, _ = await _seed_session(raw_auth_client)
@@ -877,7 +855,6 @@ async def test_session_share_cli_auth_ownership_and_exact_legacy_revocation(
             for method, path, kwargs in (
                 ("POST", f"/v1/sessions/{session_id}/shares", {"json": {}}),
                 ("DELETE", f"/v1/session-shares/{share_id}", {}),
-                ("DELETE", f"/v1/session-shares/{share_id}?kind=live", {}),
             ):
                 denied = await raw_auth_client.request(method, path, headers=headers, **kwargs)
                 assert denied.status_code == 403, denied.text
@@ -899,36 +876,8 @@ async def test_session_share_cli_auth_ownership_and_exact_legacy_revocation(
         )
     ).status_code == 404
 
-    live = await raw_auth_client.post(
-        f"/v1/sessions/{session_id}/permissions",
-        json={"kind": "link"},
-        headers={"Authorization": f"Bearer {browser}"},
-    )
-    assert live.status_code == 200, live.text
-    live_id = live.json()["id"]
-    assert (await raw_auth_client.delete(f"/v1/session-shares/{live_id}")).status_code == 404
-    assert (
-        await raw_auth_client.delete(
-            f"/v1/session-shares/{live_id}?kind=live", headers=foreign_headers
-        )
-    ).status_code == 404
-    assert (
-        await raw_auth_client.delete(f"/v1/session-shares/{live_id}?kind=live")
-    ).status_code == 204
-    new_live = await raw_auth_client.post(
-        f"/v1/sessions/{session_id}/permissions",
-        json={"kind": "link"},
-        headers={"Authorization": f"Bearer {browser}"},
-    )
-    assert new_live.status_code == 200
-    assert new_live.json()["id"] != live_id
-    assert (
-        await raw_auth_client.delete(f"/v1/session-shares/{live_id}?kind=live")
-    ).status_code == 204
-    remaining = (
-        await raw_auth_client.get("/v1/session-shares", params={"session_id": session_id})
-    ).json()
-    assert {item["id"] for item in remaining["items"]} == {share_id, new_live.json()["id"]}
+    assert (await raw_auth_client.delete(f"/v1/session-shares/{share_id}")).status_code == 204
+    assert (await raw_auth_client.get("/v1/session-shares")).json()["items"] == []
 
 
 @pytest.mark.asyncio

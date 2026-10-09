@@ -43,8 +43,7 @@ from app.models.runtime_observation import (
     RUNTIME_ENVIRONMENT_ACTIVE,
     V2RuntimeEnvironmentFence,
 )
-from app.models.session import AgentEnvironment, Session
-from app.models.session_permission import SessionPermission
+from app.models.session import AgentEnvironment
 from app.models.skill import AgentSkillReference, Skill
 from app.models.user import PRINCIPAL_KIND_CLERK, User
 from app.services.ai_provider_auth_transition import transition_ai_provider_auth
@@ -118,7 +117,6 @@ class PrincipalCleanupResult:
     runtime_environments_retired: int = 0
     channel_accounts_disabled: int = 0
     project_access_revoked: int = 0
-    session_access_revoked: int = 0
     ai_providers_archived: int = 0
     oauth_revoke_pending: int = 0
     revoked_api_key_ids: tuple[UUID, ...] = ()
@@ -969,24 +967,6 @@ async def complete_principal_cleanup(
             )
         ).all()
     )
-    owned_session_ids = select(Session.id).where(Session.user_id == user.id)
-    revoked_permission_ids = tuple(
-        (
-            await db.scalars(
-                update(SessionPermission)
-                .where(
-                    or_(
-                        SessionPermission.user_id == user.id,
-                        SessionPermission.invited_by == user.id,
-                        SessionPermission.session_id.in_(owned_session_ids),
-                    ),
-                    SessionPermission.revoked_at.is_(None),
-                )
-                .values(revoked_at=current_time)
-                .returning(SessionPermission.id)
-            )
-        ).all()
-    )
     providers = list(
         (
             await db.scalars(
@@ -1049,7 +1029,6 @@ async def complete_principal_cleanup(
         runtime_environments_retired=runtime_environments_retired,
         channel_accounts_disabled=len(channel_account_ids),
         project_access_revoked=project_access_revoked,
-        session_access_revoked=len(revoked_permission_ids),
         ai_providers_archived=len(providers),
         oauth_revoke_pending=oauth_revoke_pending,
         revoked_api_key_ids=key_ids,

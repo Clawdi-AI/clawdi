@@ -56,18 +56,13 @@ from app.routes.metrics import router as metrics_router
 from app.routes.platform import router as platform_router
 from app.routes.plugin_catalog import router as plugin_catalog_router
 from app.routes.projects import router as projects_router
-from app.routes.public_sessions import (
-    PUBLIC_SESSION_EXPORT_CACHE_CONTROL,
-    is_public_session_export_path,
-)
-from app.routes.public_sessions import (
-    router as public_sessions_router,
-)
 from app.routes.runtime import router as runtime_router
 from app.routes.runtime_observation_v2 import router as runtime_observation_v2_router
 from app.routes.search import router as search_router
 from app.routes.session_content_events import router as session_content_events_router
 from app.routes.session_events import router as session_events_router
+from app.routes.session_shares import NO_STORE as PUBLIC_SESSION_EXPORT_CACHE_CONTROL
+from app.routes.session_shares import is_public_session_export_path
 from app.routes.session_shares import router as session_shares_router
 from app.routes.sessions import router as sessions_router
 from app.routes.settings import router as settings_router
@@ -371,10 +366,6 @@ async def request_validation_exception_handler(
 # versioning sits at the root). Older APIs also retain the legacy /api alias;
 # unlaunched runtime and platform contracts are canonical-only.
 #
-# Note for public_sessions_router: share routes live at
-# /v1/public/sessions/{id}/..., auth is optional (signed-in owners +
-# active link permissions get served; anon hits 401, signed-in
-# non-grantees hit 403). See routes/public_sessions.py.
 _VERSIONED_ROUTERS = (
     auth_router,
     admin_router,
@@ -387,7 +378,6 @@ _VERSIONED_ROUTERS = (
     session_shares_router,
     sessions_router,
     agent_profiles_router,
-    public_sessions_router,
     dashboard_router,
     projects_router,
     runtime_router,

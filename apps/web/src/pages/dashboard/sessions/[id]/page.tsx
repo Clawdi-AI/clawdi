@@ -179,9 +179,6 @@ export function SessionDetailContent({
 					queryClient.removeQueries({
 						queryKey: ["session-messages", sessionId],
 					});
-					queryClient.removeQueries({
-						queryKey: ["session-permissions", sessionId],
-					});
 				},
 				() => window.location.replace(sessionsHref),
 			);

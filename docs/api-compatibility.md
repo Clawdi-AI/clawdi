@@ -62,6 +62,22 @@ mounted only under `/v2/runtime/*`; they have no `/v1` or `/api` alias. Public
 OpenAPI therefore advertises `/v1/*`, the explicit `/v2/runtime/*` companion,
 and `/health`.
 
+These aliases are an intentional v1 exception. Owner: the Clawdi backend
+maintainers. Remove `/api/*`, `/v1/environments*`, and `/v1/admin/environments*`
+when the hosted v1 control plane and its pinned clients are retired. The hosted
+Web access gate (`legacyHostedAccessStatus`) has the same owner milestone.
+
+The owner has approved removing obsolete compatibility paths in this cleanup.
+`AGENTS.md` still requires additive-only changes for released surfaces; that
+repository-wide process rule is unchanged and needs owner reconciliation.
+
+## Intentional leftovers
+
+- v2 managed-provider legacy IDs (`clawdi-v2` / `clawdi-managed-v2`) and
+  `openai_chat` compat: removal needs a production data migration of stored
+  providers. Owner: root; tracked separately. `TODO(#425)` code remains until
+  that migration and the coordinated client updates are complete.
+
 ## Additive-only contract
 
 Compatibility surfaces are additive-only:
@@ -132,6 +148,18 @@ scripts/test.sh backend tests/test_agent_profiles.py tests/test_agent_profiles_m
 Done: both test files pass, including unchanged stored content and old-client
 resolution with zero, one, and multiple matching sessions.
 
+## Retired live Session shares
+
+Session sharing uses immutable snapshots from `/v1/sessions/{id}/shares`.
+Old live URLs keyed by the Session UUID no longer resolve. The
+`/public/sessions/{id}` and `/sessions/{id}/permissions` routes are removed,
+and migration `d5f9a2b7c813` drops `session_permissions`, including its grants.
+Snapshot URLs, scoped creation, exports and revocation remain available.
+Downgrade restores an empty permissions schema; it cannot restore old grants.
+
+Done: `scripts/test.sh backend tests/test_session_shares.py tests/test_live_session_shares_retirement_migration.py`
+passes against the isolated PostgreSQL runner.
+
 ## Personal-key issuance exception
 
 `POST /v1/auth/keys` and its `/api` alias permanently return 410. Users can no
@@ -140,15 +168,16 @@ longer create personal API keys. The detail directs users to `clawdi auth login`
 revoked. This is an intentional security exception to additive compatibility.
 The dashboard now offers only key listing and revocation.
 
-Legacy CLI `/cli/auth/device` and `/cli/auth/approve` also return 410 with upgrade
-guidance. OAuth login and existing keys remain supported. List and internal
+The retired CLI `/cli/auth/device`, `/poll`, `/lookup`, `/approve`, and `/deny`
+routes have no `/v1` or `/api` registration and return 404. CLI login uses Clerk
+OAuth device authorization. List and internal
 creation responses include nullable `scopes` and `expires_at`; `scopes: null`
 denotes full access for legacy/internal keys. Admin issuance still permits
 omitted scopes and expiry, with optional `expires_in_days` between 1 and 365.
 See the [backend key contract](backend-development.md#api-key-issuance) for the
 exact retirement message and retained operations.
 
-Done: `scripts/test.sh backend tests/test_auth_keys.py tests/test_cli_auth_device_flow.py tests/test_admin_endpoints.py`
+Done: `scripts/test.sh backend tests/test_auth_keys.py tests/test_cli_oauth_auth.py tests/test_admin_endpoints.py`
 passes for canonical and legacy issuance routes.
 
 ## Generated clients
