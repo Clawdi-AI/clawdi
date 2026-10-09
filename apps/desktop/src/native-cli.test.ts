@@ -54,6 +54,7 @@ function serviceFixture(failFirstInstall = false, loginProgress?: unknown, mount
 				break;
 			case "agent detect --json":
 				result = {
+					schemaVersion: "clawdi.agentDetection.v1",
 					agents: [
 						{
 							type: "dsh",
@@ -66,7 +67,7 @@ function serviceFixture(failFirstInstall = false, loginProgress?: unknown, mount
 					],
 				};
 				break;
-			case "agent reconnect --desktop-list":
+			case "agent reconnect --json":
 				result = {
 					schemaVersion: "clawdi.agentReconnectCandidates.v1",
 					agents: [
@@ -85,7 +86,12 @@ function serviceFixture(failFirstInstall = false, loginProgress?: unknown, mount
 			case "update --native-identity":
 				return { stdout: `${state.cliVersion}\t${process.platform}-${process.arch}\n`, stderr: "" };
 			case "auth status --json":
-				result = { authenticated: true, credentialType: "clerk-oauth", user: { id: "fixture" } };
+				result = {
+					schemaVersion: "clawdi.authStatus.v1",
+					authenticated: true,
+					credentialType: "clerk-oauth",
+					user: { id: "fixture" },
+				};
 				break;
 			case "daemon doctor --json":
 				// A stopped installed unit has no live health to identify its old path.

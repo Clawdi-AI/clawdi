@@ -12,6 +12,20 @@ for electron-updater/Squirrel.Mac and must remain a release asset; users do not
 need both. Renderer dependencies are bundled at build time and must not also be
 declared as production dependencies of the Electron shell.
 
+## Intentional release leftovers
+
+- The macOS entitlements in `build/entitlements.mac.plist` (`allow-jit`,
+  `allow-unsigned-executable-memory`, and `disable-library-validation`) remain
+  required by the current Electron/Bun runtime. The Desktop owner should trim
+  any entitlement that is no longer needed after a signed preview proves launch,
+  sign-in, and daemon installation on macOS.
+- Windows signing remains an owner action. The unsigned path is supported for
+  previews; remove the owner note in the release section after a signed
+  beta-to-beta update is verified.
+- The Desktop download action currently points to the GitHub releases search
+  page. Keep it until `clawdi.ai/download` exists, then switch the action and
+  remove this note.
+
 ## Platform coverage
 
 | Platform | Architectures | Packages | Updates |
@@ -78,9 +92,8 @@ InteractiveToken and LeastPrivilege. It requires neither a stored password nor
 LocalSystem. A private ACL protects its captured environment. Stop preserves
 the task (Sync intent); restart starts it again; uninstall stops and deletes it.
 NSIS removes the task on uninstall, preserving it during an upgrade. Windows CLI
-targets compile with the pinned Bun 1.4.0 and ship through Desktop. The standalone
-Unix v1 release manifest remains six entries so released CLI updaters and
-`install.sh` remain compatible.
+targets compile with the pinned Bun 1.4.0 and ship through Desktop. Native CLI
+installation and updates use the v2 release manifest only.
 
 Before removing a macOS bundle, AppImage, DEB or RPM, turn Sync off in the tray
 (or run the bundled `clawdi daemon uninstall`). Those OS package removers cannot
@@ -237,9 +250,10 @@ Unsigned Windows installers may show SmartScreen's unknown-publisher warning,
 and Defender may scan, quarantine, or block the installer or bundled CLI. Check
 the official release source and your organization's policy; Desktop does not
 bypass these protections. Publisher authenticity is not verified until signing
-is configured. TODO (2026-10-08): provision the three signing settings above and
-validate a signed beta-to-beta update; that configuration turns publisher
-verification on without a client verifier change. Existing unsigned clients
+is configured. Owner action: provision the three signing settings above and
+validate a signed beta-to-beta update; remove this note after that verification
+passes. The configuration turns publisher verification on without a client
+verifier change. Existing unsigned clients
 accept that signed successor over the same HTTPS/checksum feed, and the new
 installed client then pins the publisher.
 
