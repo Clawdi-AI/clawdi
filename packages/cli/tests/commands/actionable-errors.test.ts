@@ -145,7 +145,8 @@ describe("actionable CLI errors", () => {
 	it("returns a useful signed-out wallet JSON error", () => {
 		const result = run([entry, "wallet", "status", "--json"]);
 		expect(result.status).toBe(4);
-		expect(JSON.parse(result.stdout)).toMatchObject({
+		expect(result.stdout).toBe("");
+		expect(JSON.parse(result.stderr)).toMatchObject({
 			schemaVersion: "clawdi.walletStatus.v2",
 			status: "error",
 			error: { code: "not_signed_in", message: "Not signed in. Run `clawdi auth login` first." },
@@ -184,12 +185,12 @@ describe("actionable CLI errors", () => {
 	it("preserves the deploy authorization JSON envelope", () => {
 		const result = run([entry, "deploy", "--json"]);
 		expect(result.status).toBe(4);
-		expect(JSON.parse(result.stdout)).toEqual({
+		expect(result.stdout).toBe("");
+		expect(JSON.parse(result.stderr)).toEqual({
 			schemaVersion: "clawdi.deploy.v2",
 			status: "authorization_required",
 			authorization: { command: "clawdi auth login" },
 		});
-		expect(result.stderr).toBe("");
 	});
 
 	it("does not expose sign-in provider internals in deploy errors", () => {

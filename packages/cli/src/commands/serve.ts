@@ -422,7 +422,7 @@ export async function serveStatus(opts: ServeStatusOpts): Promise<void> {
 	}
 	const agents = targets.map(buildStatusReport);
 	if (opts.json) {
-		emit({ schemaVersion: "clawdi.daemonStatus.v1", agents }, false);
+		emit({ schemaVersion: "clawdi.daemonStatus.v1", agents });
 		return;
 	}
 	for (const [i, report] of agents.entries()) {

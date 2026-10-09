@@ -78,15 +78,12 @@ export async function channelUnlinkCommand(
 		}),
 	);
 	if (opts.json) {
-		emit(
-			{
-				schemaVersion: "clawdi.channelUnlink.v1",
-				account_id: accountId,
-				link_id: opts.link,
-				status: "unlinked",
-			},
-			false,
-		);
+		emit({
+			schemaVersion: "clawdi.channelUnlink.v1",
+			account_id: accountId,
+			link_id: opts.link,
+			status: "unlinked",
+		});
 	} else {
 		console.log(`Unlinked agent link ${opts.link} from channel ${accountId}.`);
 	}
@@ -112,15 +109,12 @@ export async function channelUnpairCommand(
 		}),
 	);
 	if (opts.json) {
-		emit(
-			{
-				schemaVersion: "clawdi.channelUnpair.v1",
-				account_id: accountId,
-				binding_id: opts.binding,
-				status: "unpaired",
-			},
-			false,
-		);
+		emit({
+			schemaVersion: "clawdi.channelUnpair.v1",
+			account_id: accountId,
+			binding_id: opts.binding,
+			status: "unpaired",
+		});
 	} else {
 		console.log(`Unpaired chat binding ${opts.binding} from channel ${accountId}.`);
 	}

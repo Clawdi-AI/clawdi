@@ -304,14 +304,11 @@ export async function aiProviderEditCommand(
 			}
 		}
 		if (opts.json)
-			emit(
-				{
-					schemaVersion: "clawdi.aiProviderEdit.v1",
-					updated: providerId,
-					provider: { ...saved, source: "cloud" },
-				},
-				false,
-			);
+			emit({
+				schemaVersion: "clawdi.aiProviderEdit.v1",
+				updated: providerId,
+				provider: { ...saved, source: "cloud" },
+			});
 		else console.log(chalk.green(`✓ Updated Cloud AI provider ${providerId}`));
 		return;
 	}

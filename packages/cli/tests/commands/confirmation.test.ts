@@ -69,7 +69,9 @@ beforeEach(() => {
 				case `GET /v1/projects/${projectId}`:
 					return Response.json({ id: projectId, kind: "shared" });
 				case `GET /v1/projects/${projectId}/members`:
-					return Response.json([{ user_id: "user-bob", user_email: "bob@example.test" }]);
+					return Response.json([
+						{ user_id: "00000000-0000-0000-0000-000000000102", user_email: "bob@example.test" },
+					]);
 				case "GET /v1/agents/00000000-0000-0000-0000-000000000101/skills":
 					return Response.json({
 						skills: [{ skill_key: "library-key", authority: "cloud", skill_id: "library-test" }],
@@ -103,16 +105,16 @@ beforeEach(() => {
 					return Response.json({ links_revoked: 1, members_removed: 1, invitations_cancelled: 1 });
 				case "DELETE /v1/vault/default/items":
 				case "PUT /v1/vault/default/items":
-				case `DELETE /v1/projects/${projectId}/members/user-bob`:
+				case `DELETE /v1/projects/${projectId}/members/00000000-0000-0000-0000-000000000102`:
 				case `DELETE /v1/projects/${projectId}/skills/test-skill`:
 				case `DELETE /v1/projects/${projectId}/share-links/00000000-0000-0000-0000-000000000124`:
-				case `DELETE /v1/projects/${projectId}/invitations/invitation-test`:
+				case `DELETE /v1/projects/${projectId}/invitations/00000000-0000-0000-0000-000000000125`:
 				case "DELETE /v1/agents/00000000-0000-0000-0000-000000000101/skill-references/library-test":
 				case "DELETE /v1/vault/default":
-				case "DELETE /v1/memories/memory-test":
+				case "DELETE /v1/memories/00000000-0000-0000-0000-000000000126":
 				case "DELETE /v1/agents/00000000-0000-0000-0000-000000000101/project-bindings/binding-test":
 				case "DELETE /v1/channels/channel-test":
-				case "POST /v1/me/invitations/invitation-test/decline":
+				case "POST /v1/me/invitations/00000000-0000-0000-0000-000000000125/decline":
 					return Response.json({ status: "ok" });
 				default:
 					return Response.json({ detail: `Unexpected test request: ${route}` }, { status: 404 });
@@ -294,15 +296,15 @@ describe("non-interactive confirmations", () => {
 		["project", "members", projectId, "--remove", "bob@example.test", "--json"],
 		["project", "leave", projectId, "--json"],
 		["teardown", "--agent", "claude_code", "--keep-skill", "--keep-mcp"],
-		["memory", "rm", "memory-test"],
+		["memory", "rm", "00000000-0000-0000-0000-000000000126"],
 		["skill", "rm", "test-skill", "--project", projectId],
 		["ai-provider", "remove", "openai-test", "--json"],
 		["agent", "projects", "unlink", "00000000-0000-0000-0000-000000000101", "--project", projectId],
-		["inbox", "decline", "invitation-test"],
+		["inbox", "decline", "00000000-0000-0000-0000-000000000125"],
 		["channel", "delete", "channel-test"],
 		["agent", "skills", "rm", "00000000-0000-0000-0000-000000000101", "library-key"],
 		["project", "share-links", projectId, "--revoke", "00000000-0000-0000-0000-000000000124"],
-		["project", "invites", projectId, "--cancel", "invitation-test"],
+		["project", "invites", projectId, "--cancel", "00000000-0000-0000-0000-000000000125"],
 		["vault", "detach", "default", "--project", projectId],
 		["inbox", "forget", projectId],
 	];
@@ -387,7 +389,7 @@ describe("non-interactive confirmations", () => {
 		},
 		{ args: ["project", "list", "--include-envs"], error: "unknown option '--include-envs'" },
 		{
-			args: ["inbox", "accept", "invitation-test", "--use-as", "attached"],
+			args: ["inbox", "accept", "00000000-0000-0000-0000-000000000125", "--use-as", "attached"],
 			error: "unknown option '--use-as'",
 		},
 		{

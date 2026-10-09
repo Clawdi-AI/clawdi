@@ -151,7 +151,7 @@ export async function walletStatusCommand(
 	};
 	const writeStdout = dependencies.writeStdout ?? console.log;
 	if (options.json) {
-		emit(result, true, writeStdout);
+		emit(result, writeStdout);
 	} else {
 		writeStdout(
 			[
@@ -202,7 +202,6 @@ export async function runWalletStatusCommand(
 		if (options.json) {
 			emit(
 				{ schemaVersion: "clawdi.walletStatus.v2", status: "error", error: safe },
-				true,
 				dependencies.writeStderr ?? console.error,
 			);
 			process.exitCode = authorizationRequired ? 4 : 1;

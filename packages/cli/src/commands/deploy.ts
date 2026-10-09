@@ -1349,7 +1349,10 @@ export function safeDeployError(error: unknown): { code: string; message: string
 	};
 }
 
-function deployMachineResult(result: DeployAutomationResult): Record<string, unknown> {
+function deployMachineResult(result: DeployAutomationResult): {
+	schemaVersion: string;
+	[key: string]: unknown;
+} {
 	const payment =
 		result.payment.kind === "wallet"
 			? {
@@ -1400,7 +1403,7 @@ export async function deployCommand(
 						if (!interactive) writeStderr(chalk.gray(event.message));
 					},
 		});
-		if (machineOutput) emit(deployMachineResult(result), true, writeStdout);
+		if (machineOutput) emit(deployMachineResult(result), writeStdout);
 		else if (!interactive) {
 			writeStdout(
 				result.status === "succeeded"
@@ -1424,7 +1427,6 @@ export async function deployCommand(
 							status: "error",
 							error: safe,
 						},
-				true,
 				writeStderr,
 			);
 			process.exitCode = authorizationRequired ? 4 : 1;

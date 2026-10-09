@@ -14,8 +14,3 @@ export type AgentProfile = Schemas["AgentProfileResponse"];
 export type SessionListItem = Schemas["SessionListItemResponse"];
 export type SessionDetail = Schemas["SessionDetailResponse"];
 export type SessionMessage = Schemas["SessionTimelineMessageResponse"];
-
-// ── Write responses ───────────────────────────────────────────────────────
-// `/v1/vault/resolve` has richer single-reference/debug shapes in OpenAPI.
-// The legacy all-env CLI path still validates and narrows it to string env vars.
-export type VaultResolved = Record<string, string>;

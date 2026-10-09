@@ -56,29 +56,26 @@ export async function agentReconnect(
 	}
 	if (opts.json) {
 		const currentMachineId = readMachineId();
-		emit(
-			{
-				schemaVersion: DESKTOP_CANDIDATES_SCHEMA,
-				agents: agents.flatMap((agent) => {
-					const type = AGENT_TYPES.includes(agent.agent_type as AgentType)
-						? (agent.agent_type as AgentType)
-						: null;
-					if (!type) return [];
-					return [
-						{
-							id: agent.id,
-							type,
-							displayName: adapterRegistry[type].displayName,
-							name: agent.name,
-							machineName: agent.machine_name,
-							isThisMachine: currentMachineId !== null && agent.machine_id === currentMachineId,
-							lastSyncAt: agent.last_sync_at ?? null,
-						},
-					];
-				}),
-			},
-			false,
-		);
+		emit({
+			schemaVersion: DESKTOP_CANDIDATES_SCHEMA,
+			agents: agents.flatMap((agent) => {
+				const type = AGENT_TYPES.includes(agent.agent_type as AgentType)
+					? (agent.agent_type as AgentType)
+					: null;
+				if (!type) return [];
+				return [
+					{
+						id: agent.id,
+						type,
+						displayName: adapterRegistry[type].displayName,
+						name: agent.name,
+						machineName: agent.machine_name,
+						isThisMachine: currentMachineId !== null && agent.machine_id === currentMachineId,
+						lastSyncAt: agent.last_sync_at ?? null,
+					},
+				];
+			}),
+		});
 		return;
 	}
 

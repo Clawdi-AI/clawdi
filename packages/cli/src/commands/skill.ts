@@ -186,7 +186,7 @@ export async function skillShow(
 		}),
 	);
 	if (opts.json) {
-		emit({ schemaVersion: "clawdi.skillShow.v1", project_id: projectId, skill }, false);
+		emit({ schemaVersion: "clawdi.skillShow.v1", project_id: projectId, skill });
 	} else {
 		console.log(
 			`${skill.name} (${skill.skill_key}, v${skill.version})\n${skill.content ?? "No skill content available."}`,

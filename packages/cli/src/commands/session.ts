@@ -385,9 +385,9 @@ export async function sessionExtract(sessionId: string, opts: SessionExtractOpts
 						schemaVersion: "clawdi.sessionExtract.v2",
 						sessionId,
 						error: "not_configured",
-						message: e.body || e.hint,
+						message: "Memory extraction is not configured on this deployment.",
 					},
-					false,
+					console.error,
 				);
 			} else {
 				console.error(chalk.yellow(`Memory extraction is not configured on this deployment.`));
@@ -433,7 +433,7 @@ export async function sessionRm(
 		throw new Error("Could not delete the uploaded session. Please retry or run `clawdi doctor`.");
 	}
 	if (opts.json) {
-		emit({ schemaVersion: "clawdi.sessionRm.v1", id: sessionId, status: "deleted" }, false);
+		emit({ schemaVersion: "clawdi.sessionRm.v1", id: sessionId, status: "deleted" });
 	} else {
 		console.log(`Permanently deleted uploaded session ${sessionId}.`);
 	}
