@@ -3852,7 +3852,7 @@ def _related_refs_response(
     return _RELATED_REFS_ADAPTER.validate_python(value)
 
 
-# --- Permission helpers ----------------------------------------------------
+# --- Snapshot share marker -------------------------------------------------
 
 
 def _session_is_shared_subq():
@@ -3867,26 +3867,3 @@ def _session_is_shared_subq():
         .exists()
     )
     return frozen_share.label("is_shared")
-
-
-async def _load_session_for_owner(
-    db: AsyncSession,
-    auth: AuthContext,
-    session_id: UUID,
-) -> Session:
-    """Fetch a session the current caller is allowed to mutate.
-
-    404s rather than 403s on visibility violations (env-binding mismatch)
-    to avoid leaking which session-ids exist outside the caller's project.
-    """
-    bound_env = _bound_env_id(auth)
-    stmt = select(Session).where(
-        Session.user_id == auth.user_id,
-        Session.id == session_id,
-    )
-    if bound_env is not None:
-        stmt = stmt.where(Session.environment_id == bound_env)
-    row = (await db.execute(stmt)).scalar_one_or_none()
-    if row is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
-    return row
