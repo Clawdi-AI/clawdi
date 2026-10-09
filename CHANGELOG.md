@@ -62,6 +62,8 @@ only renames unmerged PR series and never-emitted definitions. See
   `delete` verbs.
 - **Project invites:** `project invites --cancel --json` reports `declined`
   (exit 1) when confirmation is declined and `canceled` on success.
+- **Session sharing:** existing live Session links are retired; CLI shares are
+  immutable snapshots.
 
 ### CLI 0.16.4
 
