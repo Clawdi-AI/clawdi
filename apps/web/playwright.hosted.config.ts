@@ -32,6 +32,8 @@ export default defineConfig({
 	use: { baseURL, trace: "on-first-retry", screenshot: "only-on-failure" },
 	webServer: [
 		{
+			// Hosted stays on Vite dev so React reports hydration mismatches; production
+			// build compatibility is outside this suite's scope.
 			command: `bun run dev -- --host 127.0.0.1 --port ${hostedPort}`,
 			url: baseURL,
 			reuseExistingServer: Boolean(process.env.E2E_HOSTED_BASE_URL),

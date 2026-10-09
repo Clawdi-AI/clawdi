@@ -30,12 +30,7 @@ export default defineConfig(({ mode }) => {
 			: [];
 
 	return {
-		server: {
-			port: 3000,
-			warmup: {
-				clientFiles: ["./src/routes/**/*.tsx", "./src/router.tsx"],
-			},
-		},
+		server: { port: 3000 },
 		ssr: {
 			// Published leaf components use extensionless internal ESM imports,
 			// so Vite must transform this package before Node evaluates SSR.
