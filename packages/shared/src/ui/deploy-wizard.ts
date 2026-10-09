@@ -1,3 +1,8 @@
+// Named parts let the app drop Web-only page gutters without stripping classes by pattern.
+const BILLING_TERM_LAYOUT = "flex flex-col gap-1.5";
+const ACTION_BAR_SURFACE =
+	"sticky bottom-0 z-10 border-t bg-background/90 px-4 pt-3 pb-[calc(--spacing(3)+env(safe-area-inset-bottom))] backdrop-blur lg:px-6";
+
 export const deployWizardClasses = {
 	performanceTint: "bg-identity-8-bg text-identity-8-fg",
 	planPrice: "flex min-w-0 flex-col items-end text-right tabular-nums",
@@ -13,7 +18,9 @@ export const deployWizardClasses = {
 	compute: "flex min-w-0 flex-col gap-4",
 	loadingPlans: "flex items-center gap-2 text-sm text-muted-foreground",
 	actionIcon: "size-3.5",
-	billingTerm: "flex max-w-xs flex-col gap-1.5",
+	billingTerm: `${BILLING_TERM_LAYOUT} max-w-xs`,
+	/** Term switcher without Web's width cap; the native control spans the form. */
+	billingTermLayout: BILLING_TERM_LAYOUT,
 	fieldLabel: "text-xs text-muted-foreground",
 	computeChoice: "items-center p-3",
 	paymentMethods: "flex flex-col gap-3",
@@ -25,8 +32,9 @@ export const deployWizardClasses = {
 	screenReaderOnly: "sr-only",
 	languageField: "flex flex-col gap-1.5",
 	timezoneField: "flex w-64 min-w-0 flex-col gap-1.5",
-	actionBar:
-		"sticky bottom-0 z-10 -mx-4 border-t bg-background/90 px-4 pt-3 pb-[calc(--spacing(3)+env(safe-area-inset-bottom))] backdrop-blur lg:-mx-6 lg:px-6",
+	actionBar: `${ACTION_BAR_SURFACE} -mx-4 lg:-mx-6`,
+	/** Action bar without the negative margins that cancel Web's page padding. */
+	actionBarSurface: ACTION_BAR_SURFACE,
 	hydrationError: "mb-3",
 	actionBarContent:
 		"flex flex-col gap-2 @2xl/main:flex-row @2xl/main:items-center @2xl/main:justify-between",

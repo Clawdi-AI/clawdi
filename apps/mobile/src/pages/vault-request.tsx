@@ -17,7 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
 import { Text as AppText, Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
-import { AppScrollView } from "@/components/ui/view";
+import { AppImage, AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { SecretInput } from "@/components/vault/secret-input";
 import { useMobileApi } from "@/lib/api-provider";
@@ -28,6 +28,9 @@ import { incomingVaultLink } from "@/platform/incoming-link";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
+
+// The pre-rounded v2 mark, as on the account-suspended page.
+const logo = require("../../assets/splash-icon.png");
 
 type Context = components["schemas"]["VaultSecretRequestStatus"];
 export function VaultSupplyScreen() {
@@ -228,7 +231,16 @@ function VaultSupply({ intake }: { intake: string | null }) {
 				<NativeHeader title={VAULT_REQUEST_COPY.title} />
 				<Card className={webView(vaultRequestClasses.card)}>
 					<CardHeader className={webView(vaultRequestClasses.header)}>
-						<WebText recipe={vaultRequestClasses.brandName}>{t("sessionDetail.brand")}</WebText>
+						<WebView recipe={vaultRequestClasses.brand} className="flex-row">
+							<AppImage
+								source={logo}
+								accessibilityIgnoresInvertColors
+								importantForAccessibility="no"
+								className={webView(vaultRequestClasses.brandIcon)}
+								resizeMode="contain"
+							/>
+							<WebText recipe={vaultRequestClasses.brandName}>{t("sessionDetail.brand")}</WebText>
+						</WebView>
 						<CardTitle className={webBoth(vaultRequestClasses.title)}>
 							{phase === "done"
 								? VAULT_REQUEST_COPY.saved

@@ -1,8 +1,10 @@
 import createClient from "openapi-fetch";
-import type { paths as DeployPaths } from "./deploy.generated";
+import type { components as DeployComponents, paths as DeployPaths } from "./deploy.generated";
 import {
+	buildHostedDeployCheckoutRequest,
 	type HostedDeployRequest,
 	type HostedDeploySubscriptionQuoteRequest,
+	type HostedDeploySubscriptionSelection,
 	isHostedDeployComputePlan,
 } from "./deploy-wizard";
 import {
@@ -21,6 +23,8 @@ export type ComputeReusableSubscriptionsQuery =
 export type ComputeWalletTransactionsQuery =
 	DeployPaths["/v2/wallet/transactions"]["get"]["parameters"]["query"];
 export type ComputeUsageQuery = DeployPaths["/v2/usage"]["get"]["parameters"]["query"];
+export type ComputeSubscriptionTarget =
+	DeployComponents["schemas"]["V2ComputeSubscriptionCancelRequest"];
 export type AccountNotificationsQuery = NonNullable<
 	DeployPaths["/v1/me/notifications"]["get"]["parameters"]["query"]
 >;
@@ -31,13 +35,7 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 		baseUrl: readApiBaseUrl(options.baseUrl, true),
 		fetch: transport.fetch,
 	});
-	/** Admission consumes an existing entitlement; it never initiates checkout or a Wallet debit. */
-	const createEntitledDeployment = async (
-		body: HostedDeployRequest,
-		idempotencyKey: string,
-		signal?: AbortSignal,
-		options?: { computeSource?: "store" },
-	) => {
+	const validateCreation = (body: HostedDeployRequest, idempotencyKey: string) => {
 		if (
 			typeof idempotencyKey !== "string" ||
 			idempotencyKey.length < 1 ||
@@ -50,6 +48,15 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 			throw new ApiClientError(400, "invalid_compute_plan");
 		if (body.deploy_request_id != null && body.deploy_request_id !== idempotencyKey)
 			throw new ApiClientError(409, "deploy_request_id_mismatch");
+	};
+	/** Admission consumes an existing entitlement; it never initiates checkout or a Wallet debit. */
+	const createEntitledDeployment = async (
+		body: HostedDeployRequest,
+		idempotencyKey: string,
+		signal?: AbortSignal,
+		options?: { computeSource?: "store" },
+	) => {
+		validateCreation(body, idempotencyKey);
 		return transport.read(
 			(init) =>
 				api.POST("/v2/deployments", {
@@ -73,9 +80,46 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 		/**
 		 * Basic/Performance admission against existing server-selected entitlement.
 		 * Reads are advisory: the server decides availability and does not buy missing capacity.
-		 * No subscription-ID selection exists in this wire contract. Preserve request/key on uncertainty.
+		 * This wire contract selects no subscription ID; `assignReusableSubscription` picks one.
+		 * Preserve request/key on uncertainty.
 		 */
 		createEntitledDeployment,
+		/**
+		 * Assigns one exact reusable card or Wallet subscription to a new Agent through the
+		 * endpoint Web uses for `subscription_selection.mode = "existing"`. Reuse never starts
+		 * a checkout or a debit, so any response other than an activation is rejected.
+		 */
+		assignReusableSubscription: async (
+			body: HostedDeployRequest,
+			idempotencyKey: string,
+			subscription: HostedDeploySubscriptionSelection & { subscriptionId: string },
+			signal?: AbortSignal,
+		) => {
+			validateCreation(body, idempotencyKey);
+			if (subscription.planSlug !== body.compute_plan_slug)
+				throw new ApiClientError(409, "subscription_plan_mismatch");
+			const result = await transport.read(
+				(init) =>
+					api.POST("/v2/subscription/checkout", {
+						...init,
+						body: buildHostedDeployCheckoutRequest({
+							selection: subscription,
+							subscriptionSelection: {
+								mode: "existing",
+								subscription_id: readResourceId(subscription.subscriptionId),
+							},
+							target: { kind: "new_deployment", deployRequest: body },
+							idempotencyKey,
+							quote: null,
+							uiMode: "custom",
+						}),
+						params: { header: { "Idempotency-Key": idempotencyKey } },
+					}),
+				signal,
+			);
+			if (result?.flow_type !== "subscription_activation") throw new ApiClientResponseError();
+			return result;
+		},
 		/** Ownership protection only; this does not expose legacy product actions. */
 		getLegacyAgentIds: async (signal?: AbortSignal) => {
 			const result = await transport.read(
@@ -153,6 +197,20 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 				});
 				return { ...result, data: result.response.ok ? null : undefined };
 			}, signal),
+		/**
+		 * Card/Wallet subscription commands (Web's subscription actions). None purchases:
+		 * cancel stops renewal (or ends a trial), resume restores renewal, and cancelling a
+		 * scheduled plan change keeps the current plan. Never retried automatically.
+		 */
+		cancelSubscription: (body: ComputeSubscriptionTarget, signal?: AbortSignal) =>
+			transport.read((init) => api.POST("/v2/subscription/cancel", { ...init, body }), signal),
+		resumeSubscription: (body: ComputeSubscriptionTarget, signal?: AbortSignal) =>
+			transport.read((init) => api.POST("/v2/subscription/resume", { ...init, body }), signal),
+		cancelScheduledPlanChange: (body: ComputeSubscriptionTarget, signal?: AbortSignal) =>
+			transport.read(
+				(init) => api.POST("/v2/subscription/plan/cancel-scheduled-change", { ...init, body }),
+				signal,
+			),
 		/**
 		 * Explicitly requested preview: no purchase or debit. The server may initialize
 		 * customer/wallet profiles and commit, so this is not a pure read operation.

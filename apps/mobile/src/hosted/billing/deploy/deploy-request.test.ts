@@ -6,6 +6,7 @@ import {
 	type HostedDeployPlan,
 	type HostedDeployWizardDraft,
 	type HostedIncludedBasicAvailability,
+	type SavedAiProvider,
 	validateAndBuildHostedDeployRequest,
 } from "@clawdi/shared/api";
 import {
@@ -208,6 +209,85 @@ describe("durable creation boundary", () => {
 			),
 		).toBeNull();
 		expect(parseCreationAttempt("{broken")).toBeNull();
+	});
+
+	test("restores saved-provider and exact-subscription requests only as persisted", () => {
+		const provider: SavedAiProvider = {
+			id: "row-api",
+			provider_id: "openai-main",
+			scope: "user",
+			type: "openai",
+			label: "OpenAI",
+			base_url: "https://api.openai.com/v1",
+			api_mode: "openai_responses",
+			managed_by: "user",
+			runtime_env_name: "OPENAI_API_KEY",
+			models: [{ id: "gpt-catalog" }],
+			auth: { type: "api_key", source: "managed", profile: "work" },
+			usable: true,
+			readiness: {
+				credential_material: "available",
+				runtime_compatibility: { openclaw: true, hermes: true, codex: true },
+				deployable: true,
+				endpoint_reachability: "not_tested",
+				inference_verification: "not_tested",
+			},
+			created_at: "2026-01-01T00:00:00Z",
+			updated_at: "2026-01-01T00:00:00Z",
+		};
+		const draft: HostedDeployWizardDraft = {
+			runtime: "hermes",
+			computePlanSlug: "compute_performance",
+			agentName: "Hermes",
+			language: "",
+			timezone: "America/Los_Angeles",
+			ai: { mode: "configured", providerId: "openai-main", model: "gpt-catalog" },
+		};
+		const built = validateAndBuildHostedDeployRequest(draft, [], [provider]);
+		if (!built.ok) throw new Error("Invalid fixture");
+		const id = "8e244ab3-2222-4222-8222-222222222222";
+		const saved: CreationAttempt = {
+			version: 1,
+			submission: "uncertain",
+			id,
+			draft,
+			request: { ...built.request, deploy_request_id: id },
+			subscription: {
+				id: "csub_K8fJ3pQm",
+				planSlug: "compute_performance",
+				billingTermMonths: 12,
+				fundingSource: "wallet",
+			},
+		};
+		// Provider metadata may change later; the persisted binding replays unchanged.
+		expect(parseCreationAttempt(JSON.stringify(saved))).toEqual(saved);
+		expect(
+			parseCreationAttempt(
+				JSON.stringify({ ...saved, request: { ...saved.request, ai_provider_id: "other" } }),
+			),
+		).toBeNull();
+		expect(
+			parseCreationAttempt(
+				JSON.stringify({ ...saved, draft: { ...draft, ai: { ...draft.ai, providerId: "other" } } }),
+			),
+		).toBeNull();
+		expect(
+			parseCreationAttempt(
+				JSON.stringify({
+					...saved,
+					subscription: { ...saved.subscription, planSlug: "compute_basic" },
+				}),
+			),
+		).toBeNull();
+		expect(parseCreationAttempt(JSON.stringify({ ...saved, storeFunding: "funded" }))).toBeNull();
+		const gone = new ApiClientError(409, "reusable_subscription_unavailable");
+		expect(isDefinitiveAdmissionRejection({ ...saved, submission: "prepared" }, gone)).toBe(true);
+		expect(
+			isDefinitiveAdmissionRejection(
+				{ ...saved, submission: "prepared", subscription: undefined },
+				gone,
+			),
+		).toBe(false);
 	});
 });
 

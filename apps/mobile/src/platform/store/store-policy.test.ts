@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { computePurchaseAvailable, storeRecoveryAction, storeSurfaces } from "./store-policy";
+import {
+	appSubscriptionActions,
+	computePurchaseAvailable,
+	storeRecoveryAction,
+	storeSurfaces,
+} from "./store-policy";
 
 describe("store build surfaces", () => {
 	test("compute purchases require the store build, server flag, and an available slot", () => {
@@ -71,5 +76,37 @@ describe("store build surfaces", () => {
 		expect(storeRecoveryAction(store, null)).toBe("default");
 		for (const target of [topUp, invoice, fix, startNew])
 			expect(storeRecoveryAction(preview, target)).toBe("default");
+	});
+});
+
+describe("card and Wallet subscription commands (D-1)", () => {
+	const actions = [
+		{ kind: "cancel_scheduled_change", disabledReason: null },
+		{ kind: "resume", disabledReason: null },
+		{ kind: "end_trial", disabledReason: null },
+		{ kind: "cancel", disabledReason: null },
+		{ kind: "manage", disabledReason: null },
+	] as const;
+
+	test("store builds offer every command that charges nothing, but not resume", () => {
+		expect(appSubscriptionActions(storeSurfaces(true, true), actions)).toEqual([
+			"cancel_scheduled_change",
+			"end_trial",
+			"cancel",
+		]);
+	});
+
+	test("other builds offer Web's direct commands, skipping disabled ones", () => {
+		expect(appSubscriptionActions(storeSurfaces(false, false), actions)).toEqual([
+			"cancel_scheduled_change",
+			"resume",
+			"end_trial",
+			"cancel",
+		]);
+		expect(
+			appSubscriptionActions(storeSurfaces(false, false), [
+				{ kind: "cancel", disabledReason: "Busy" },
+			]),
+		).toEqual([]);
 	});
 });

@@ -1,18 +1,26 @@
-import { addAgentSetupClasses as styles, tabsContentClassName } from "@clawdi/shared/ui";
+import {
+	desktopHandoffClasses,
+	addAgentSetupClasses as styles,
+	tabsContentClassName,
+} from "@clawdi/shared/ui";
 import {
 	agentDisplayName,
 	agentRegistrationDescription,
 	agentSetupPrompt,
 	agentSurfaceCopy,
 	CLI_STEPS,
+	DESKTOP_HANDOFF_COPY,
 	HOSTED_PUBLIC_SITE_ORIGIN,
 	INSTALLATION_DOCS_URL,
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
+import { Laptop } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Linking } from "react-native";
+import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
@@ -46,6 +54,23 @@ export function AddAgentSetup() {
 	);
 	return (
 		<WebView recipe={styles.root}>
+			{/* Web's Desktop hand-off as a note: a phone can't open Clawdi Desktop's Connect window. */}
+			<WebView recipe={desktopHandoffClasses.root}>
+				<WebView recipe={desktopHandoffClasses.summary} className="flex-row">
+					<IconChip size="sm" tint={desktopHandoffClasses.iconTint}>
+						<Icon as={Laptop} />
+					</IconChip>
+					<WebView recipe={desktopHandoffClasses.body} className="flex-1">
+						<WebText recipe={desktopHandoffClasses.title}>{DESKTOP_HANDOFF_COPY.title}</WebText>
+						<WebText recipe={desktopHandoffClasses.description}>{t("agents.desktopHint")}</WebText>
+					</WebView>
+				</WebView>
+			</WebView>
+			<WebView recipe={styles.manualDivider} className="flex-row">
+				<WebView recipe={styles.manualDividerLine} />
+				<WebText recipe={styles.manualDivider}>{DESKTOP_HANDOFF_COPY.manualSetup}</WebText>
+				<WebView recipe={styles.manualDividerLine} />
+			</WebView>
 			<NativeSegments
 				value={tab}
 				onChange={setTab}

@@ -1,5 +1,10 @@
 import { CLAWDI_MANAGED_PROVIDER_ID } from "../ai-provider";
 import type { components as DeployComponents } from "./deploy.generated";
+import {
+	buildHostedAiBindingFields,
+	HostedAiBindingError,
+	type HostedSavedAiProvider,
+} from "./hosted-ai-binding";
 
 type Schemas = DeployComponents["schemas"];
 
@@ -151,7 +156,9 @@ export function buildHostedDeployRequest({
 
 export type HostedDeployWizardAiSelection =
 	| { mode: "managed"; model: string }
-	| { mode: "unmanaged" };
+	| { mode: "unmanaged" }
+	/** A saved AI provider; `model` is empty when the provider manages its own models. */
+	| { mode: "configured"; providerId: string; model: string };
 
 export type HostedDeployWizardDraft = {
 	runtime: HostedDeployRuntime;
@@ -163,7 +170,7 @@ export type HostedDeployWizardDraft = {
 };
 
 export type HostedDeployValidationIssue = {
-	field: "runtime" | "compute" | "agentName" | "language" | "timezone" | "ai.model";
+	field: "runtime" | "compute" | "agentName" | "language" | "timezone" | "ai.model" | "ai.provider";
 	message: string;
 };
 
@@ -194,10 +201,14 @@ export function validateHostedDeployPersona(
 	return issues;
 }
 
-/** Validate the CLI/Web wizard boundary and build the generated request type. */
+/**
+ * Validate the CLI/Web wizard boundary and build the generated request type.
+ * A configured (saved) provider needs the current secret-free provider inventory.
+ */
 export function validateAndBuildHostedDeployRequest(
 	draft: HostedDeployWizardDraft,
 	managedModels: readonly HostedDeployManagedModel[] = [],
+	providers: readonly HostedSavedAiProvider[] = [],
 ): HostedDeployValidationResult {
 	const agentName = draft.agentName.trim();
 	const issues = validateHostedDeployPersona({
@@ -209,6 +220,22 @@ export function validateAndBuildHostedDeployRequest(
 	let aiFields: HostedDeployAiFields;
 	if (draft.ai.mode === "unmanaged") {
 		aiFields = { ai_provider_auth_kind: "unmanaged" };
+	} else if (draft.ai.mode === "configured") {
+		try {
+			aiFields = buildHostedAiBindingFields({
+				managedModels,
+				mode: "create",
+				providers,
+				selection: { mode: "saved", providerId: draft.ai.providerId, model: draft.ai.model },
+			});
+		} catch (error) {
+			if (!(error instanceof HostedAiBindingError)) throw error;
+			issues.push({
+				field: error.code === "model_required" ? "ai.model" : "ai.provider",
+				message: error.message,
+			});
+			aiFields = { ai_provider_auth_kind: "unmanaged" };
+		}
 	} else {
 		const model = draft.ai.model.trim();
 		if (!model) {

@@ -2,7 +2,12 @@
 
 import { detailLayoutClasses, memoryDetailClasses } from "@clawdi/shared/ui";
 
-import { MEMORY_CATEGORY_COLORS, memoryDisplayName, relativeTime } from "@clawdi/shared/view";
+import {
+	MEMORY_CATEGORY_COLORS,
+	memoryDisplayName,
+	memoryRecallLabel,
+	relativeTime,
+} from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import { Brain, Laptop, Trash2 } from "lucide-react";
@@ -130,9 +135,7 @@ export default function MemoryDetailPage({
 								    fact that decides keep-vs-delete — surface it. */}
 								<span>·</span>
 								<span className={memoryDetailClasses.metadataValue}>
-									{(memory.access_count ?? 0) > 0
-										? `Recalled ${memory.access_count} ${memory.access_count === 1 ? "time" : "times"}`
-										: "Never recalled yet"}
+									{memoryRecallLabel(memory.access_count)}
 								</span>
 							</DetailMeta>
 						}

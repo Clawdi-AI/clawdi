@@ -1,3 +1,9 @@
+// Named parts for native wrappers: RN draws rings as borders and lays out the hero
+// in two views, so the app composes these instead of stripping classes by pattern.
+const CHOICE_SELECTED_FILL = "border-primary bg-primary/5";
+const HERO_FRAME = "flex min-h-36 flex-col";
+const ADD_SURFACE = "border-dashed bg-card";
+
 /** Verbatim Web recipes from components/entity-card; shared with native wrappers. */
 export const entityCardClasses = {
 	resourceChassis: "min-w-0 rounded-xl border bg-card p-5",
@@ -25,7 +31,8 @@ export const entityCardClasses = {
 	choiceRoot: "flex w-full text-left transition-colors",
 	choiceCompactLayout: "items-center gap-2.5",
 	choiceLayout: "items-start gap-3",
-	choiceSelected: "border-primary bg-primary/5 ring-1 ring-primary/30",
+	choiceSelected: `${CHOICE_SELECTED_FILL} ring-1 ring-primary/30`,
+	choiceSelectedFill: CHOICE_SELECTED_FILL,
 	compactChoiceInteractive: "hover:bg-muted/60",
 	choiceInteractive: "hover:bg-muted/50",
 	disabled: "pointer-events-none opacity-60",
@@ -73,7 +80,9 @@ export const entityCardClasses = {
 	headerCenter: "items-center",
 	headerTitleRow: "flex min-w-0 items-center gap-2",
 	title: "min-w-0 flex-1 truncate text-sm font-medium",
-	hero: "flex min-h-36 flex-col gap-3",
+	hero: `${HERO_FRAME} gap-3`,
+	heroFrame: HERO_FRAME,
+	heroStack: "flex flex-col gap-3",
 	heroTop: "flex items-start justify-between gap-2",
 	heroBody: "min-w-0",
 	heroBadges: "flex shrink-0 items-center gap-1.5",
@@ -99,7 +108,8 @@ export const entityCardClasses = {
 	choiceIndicator: "flex size-4 shrink-0 self-center items-center justify-center",
 	choiceCheck: "size-4 text-primary",
 	addTint: "bg-muted text-muted-foreground",
-	add: "h-full border-dashed bg-card",
+	add: `h-full ${ADD_SURFACE}`,
+	addSurface: ADD_SURFACE,
 } as const;
 
 export type EntityCardVariant = "resource" | "compact";
