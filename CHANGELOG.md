@@ -49,6 +49,11 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.4
+
+- **Hermes session sync:** Empty tool call identifiers now use a deterministic
+  fallback so valid sessions are accepted by Cloud.
+
 ### CLI 0.16.3
 
 - **Session sync:** Pi and Claude Code re-read history once after upgrading so
