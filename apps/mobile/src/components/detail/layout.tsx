@@ -1,7 +1,7 @@
 import { detailLayoutClasses } from "@clawdi/shared/ui";
 import { type Href, router } from "expo-router";
 import { HeaderHeightContext } from "expo-router/react-navigation";
-import { ArrowLeft } from "lucide-react-native";
+import ArrowLeft from "lucide-react-native/icons/arrow-left";
 import type { ReactNode } from "react";
 import { useContext } from "react";
 import { Button } from "@/components/ui/button";

@@ -32,16 +32,14 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, Stack, useLocalSearchParams, useNavigation } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
-import {
-	BookOpen,
-	Bot,
-	FileText,
-	FolderKanban,
-	Plus,
-	Save,
-	Sparkles,
-	Tag,
-} from "lucide-react-native";
+import BookOpen from "lucide-react-native/icons/book-open";
+import Bot from "lucide-react-native/icons/bot";
+import FileText from "lucide-react-native/icons/file-text";
+import FolderKanban from "lucide-react-native/icons/folder-kanban";
+import Plus from "lucide-react-native/icons/plus";
+import Save from "lucide-react-native/icons/save";
+import Sparkles from "lucide-react-native/icons/sparkles";
+import Tag from "lucide-react-native/icons/tag";
 import { useRef, useState } from "react";
 import { ChoiceSelect } from "@/components/detail/choice-select";
 import { DetailBackLink, DetailMeta, DetailPanel } from "@/components/detail/layout";

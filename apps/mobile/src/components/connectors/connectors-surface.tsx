@@ -23,7 +23,10 @@ import {
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { openBrowserAsync } from "expo-web-browser";
-import { Check, Plug, Unplug, Wrench } from "lucide-react-native";
+import Check from "lucide-react-native/icons/check";
+import Plug from "lucide-react-native/icons/plug";
+import Unplug from "lucide-react-native/icons/unplug";
+import Wrench from "lucide-react-native/icons/wrench";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { AppState } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";

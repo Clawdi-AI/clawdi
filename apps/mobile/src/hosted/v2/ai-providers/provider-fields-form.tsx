@@ -7,7 +7,10 @@ import {
 	providerFieldsFormClasses as styles,
 } from "@clawdi/shared/ui";
 import { providerFieldsFormCopy as copy } from "@clawdi/shared/view";
-import { ExternalLink, Eye, EyeOff, UserRound } from "lucide-react-native";
+import ExternalLink from "lucide-react-native/icons/external-link";
+import Eye from "lucide-react-native/icons/eye";
+import EyeOff from "lucide-react-native/icons/eye-off";
+import UserRound from "lucide-react-native/icons/user-round";
 import { type ReactNode, useState } from "react";
 import { ChoiceSelect } from "@/components/detail/choice-select";
 import { Button } from "@/components/ui/button";

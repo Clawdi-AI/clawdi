@@ -3,7 +3,7 @@ import {
 	agentOverviewCapabilitiesClasses as styles,
 } from "@clawdi/shared/ui";
 import type { LucideIcon } from "lucide-react-native";
-import { ArrowRight } from "lucide-react-native";
+import ArrowRight from "lucide-react-native/icons/arrow-right";
 import type { ReactNode } from "react";
 import { IconChip } from "@/components/icon-chip";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

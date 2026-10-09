@@ -8,7 +8,8 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Brain, Laptop } from "lucide-react-native";
+import Brain from "lucide-react-native/icons/brain";
+import Laptop from "lucide-react-native/icons/laptop";
 import { useRef } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { DetailBackLink, DetailMeta, DetailPanel, LibraryPage } from "@/components/detail/layout";

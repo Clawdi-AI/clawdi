@@ -1,7 +1,7 @@
 import type { ChannelAccount } from "@clawdi/shared/api";
 import { ENTITY_CARD_BASE, channelCardClasses as styles } from "@clawdi/shared/ui";
 import { DISCORD_CONNECTION_ISSUE_COPY, providerMeta } from "@clawdi/shared/view";
-import { TriangleAlert } from "lucide-react-native";
+import TriangleAlert from "lucide-react-native/icons/triangle-alert";
 import type { ReactNode } from "react";
 import { EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";

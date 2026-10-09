@@ -1,7 +1,8 @@
 import { type components, searchExcerpt } from "@clawdi/shared/api";
 import { memoriesSurfaceClasses } from "@clawdi/shared/ui";
 import { MEMORY_CATEGORY_COLORS, memoryDisplayName, relativeTime } from "@clawdi/shared/view";
-import { Laptop, Trash2 } from "lucide-react-native";
+import Laptop from "lucide-react-native/icons/laptop";
+import Trash2 from "lucide-react-native/icons/trash";
 import {
 	EntityCardActions,
 	EntityCardChassis,

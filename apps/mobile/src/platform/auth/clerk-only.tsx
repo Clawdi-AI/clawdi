@@ -1,4 +1,4 @@
-import { ShieldCheck } from "lucide-react-native";
+import ShieldCheck from "lucide-react-native/icons/shield-check";
 import type { ReactNode } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { SettingsBackButton } from "@/components/settings/back-button";

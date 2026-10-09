@@ -16,7 +16,9 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { BrainCircuit, CheckCircle2, ShieldCheck } from "lucide-react-native";
+import BrainCircuit from "lucide-react-native/icons/brain-circuit";
+import CheckCircle2 from "lucide-react-native/icons/circle-check";
+import ShieldCheck from "lucide-react-native/icons/shield-check";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentCollection } from "@/components/dashboard/collection";

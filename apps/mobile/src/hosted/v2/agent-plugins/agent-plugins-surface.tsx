@@ -11,7 +11,7 @@ import { agentSectionCopy, agentSurfaceCopy, identityFor } from "@clawdi/shared/
 import { focusManager, onlineManager, useQuery } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
-import { Blocks } from "lucide-react-native";
+import Blocks from "lucide-react-native/icons/blocks";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentCollection } from "@/components/dashboard/collection";

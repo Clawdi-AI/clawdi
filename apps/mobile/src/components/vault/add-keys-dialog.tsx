@@ -11,7 +11,8 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect } from "expo-router";
-import { AlertCircle, Check } from "lucide-react-native";
+import Check from "lucide-react-native/icons/check";
+import AlertCircle from "lucide-react-native/icons/circle-alert";
 import { useCallback, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";

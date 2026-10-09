@@ -29,7 +29,10 @@ import {
 } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
-import { KeyRound, RefreshCw, TriangleAlert, Unplug } from "lucide-react-native";
+import KeyRound from "lucide-react-native/icons/key-round";
+import RefreshCw from "lucide-react-native/icons/refresh-cw";
+import TriangleAlert from "lucide-react-native/icons/triangle-alert";
+import Unplug from "lucide-react-native/icons/unplug";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Linking } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";

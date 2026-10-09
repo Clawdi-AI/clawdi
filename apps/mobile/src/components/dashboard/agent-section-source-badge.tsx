@@ -1,7 +1,8 @@
 import { type AgentOwnership, agentOwnershipKindFromId } from "@clawdi/shared/client";
 import { agentSourceBadgeClasses as styles } from "@clawdi/shared/ui";
 import { agentSourceKindLabel } from "@clawdi/shared/view";
-import { Cloud, Laptop } from "lucide-react-native";
+import Cloud from "lucide-react-native/icons/cloud";
+import Laptop from "lucide-react-native/icons/laptop";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/ui/status-badge";

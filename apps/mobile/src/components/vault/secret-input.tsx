@@ -5,7 +5,8 @@ import {
 	vaultRequestClasses,
 } from "@clawdi/shared/ui";
 import { VAULT_REQUEST_COPY } from "@clawdi/shared/view";
-import { Eye, EyeOff } from "lucide-react-native";
+import Eye from "lucide-react-native/icons/eye";
+import EyeOff from "lucide-react-native/icons/eye-off";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";

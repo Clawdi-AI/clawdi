@@ -12,7 +12,8 @@ import {
 	initialDeploymentPresentation,
 	type ProvisioningPath,
 } from "@clawdi/shared/view";
-import { AlertCircle, Check } from "lucide-react-native";
+import Check from "lucide-react-native/icons/check";
+import AlertCircle from "lucide-react-native/icons/circle-alert";
 import { type ReactNode, useEffect, useState } from "react";
 import { AccessibilityInfo } from "react-native";
 import Svg, { Circle, Defs, RadialGradient, Stop } from "react-native-svg";

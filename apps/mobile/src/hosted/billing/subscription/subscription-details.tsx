@@ -13,7 +13,9 @@ import {
 	subscriptionMutationNotice,
 } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
-import { CalendarX2, Link2Off, RefreshCw } from "lucide-react-native";
+import CalendarX2 from "lucide-react-native/icons/calendar-x-2";
+import Link2Off from "lucide-react-native/icons/link-2-off";
+import RefreshCw from "lucide-react-native/icons/refresh-cw";
 import { useState } from "react";
 import { DetailAction } from "@/components/detail/detail-action";
 import { Button } from "@/components/ui/button";

@@ -14,7 +14,9 @@ import {
 	channelHealthTone,
 	nativeTransportSummary,
 } from "@clawdi/shared/view";
-import { CircleAlert, CircleCheck, TriangleAlert } from "lucide-react-native";
+import CircleAlert from "lucide-react-native/icons/circle-alert";
+import CircleCheck from "lucide-react-native/icons/circle-check";
+import TriangleAlert from "lucide-react-native/icons/triangle-alert";
 import { EmptyState } from "@/components/empty-state";
 import { SectionLabel } from "@/components/section-label";
 import { Icon } from "@/components/ui/icon";

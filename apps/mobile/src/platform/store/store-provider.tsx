@@ -13,6 +13,7 @@ import { useMobileApi } from "@/lib/api-provider";
 import type { MobileRuntimeConfig } from "@/lib/config/runtime-config";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import type { AccountScope } from "@/platform/auth/account-scope";
+import { reportStoreSyncFailure } from "@/platform/observability";
 import {
 	type ComputeProduct,
 	type ComputeProductSelection,
@@ -171,6 +172,7 @@ export function StoreProvider({
 						journal,
 						storageKey: `clawdi.store.v1.${digest}`,
 						newKey: Crypto.randomUUID,
+						onSyncFailure: reportStoreSyncFailure,
 					});
 				}
 				let computeProducts: readonly ComputeProduct[] = [];

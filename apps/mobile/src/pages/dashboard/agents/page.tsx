@@ -8,7 +8,7 @@ import {
 	selfManagedAgentTiles,
 } from "@clawdi/shared/view";
 import { router } from "expo-router";
-import { Cloud } from "lucide-react-native";
+import Cloud from "lucide-react-native/icons/cloud";
 import { AgentsCard, AgentTileView } from "@/components/dashboard/agents-card";
 import { PageHeader } from "@/components/page-header";
 import { ProjectResourceBoundary } from "@/components/projects/project-scope";

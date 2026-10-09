@@ -22,7 +22,11 @@ import {
 } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
-import { ExternalLink, Link2, MoreHorizontal, Share2, Trash2 } from "lucide-react-native";
+import MoreHorizontal from "lucide-react-native/icons/ellipsis";
+import ExternalLink from "lucide-react-native/icons/external-link";
+import Link2 from "lucide-react-native/icons/link-2";
+import Share2 from "lucide-react-native/icons/share-2";
+import Trash2 from "lucide-react-native/icons/trash";
 import { useState } from "react";
 import { Share } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";

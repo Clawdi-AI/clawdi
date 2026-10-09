@@ -2,7 +2,7 @@ import type { Vault as VaultSummary } from "@clawdi/shared/api";
 import { vaultsSurfaceClasses } from "@clawdi/shared/ui";
 import { formatResourceCount, identityFor, vaultSearchSupportingText } from "@clawdi/shared/view";
 import { router } from "expo-router";
-import { Lock } from "lucide-react-native";
+import Lock from "lucide-react-native/icons/lock";
 import type { ReactNode } from "react";
 import { HeroCard } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
