@@ -158,13 +158,10 @@ function normalizeAgentIds(values?: string[]): string[] {
 
 async function buildAcceptRequestBody(
 	opts: AcceptOpts,
-): Promise<components["schemas"]["UpgradeBody"]> {
-	const reqBody: components["schemas"]["UpgradeBody"] = { use_as: "attached" };
+): Promise<components["schemas"]["UpgradeBody"] | undefined> {
 	const agentIds = normalizeAgentIds(opts.agent);
-	if (agentIds.length === 0) return reqBody;
-	reqBody.agent_ids = agentIds;
-	reqBody.use_as = "attached";
-	return reqBody;
+	if (agentIds.length === 0) return undefined;
+	return { agent_ids: agentIds, use_as: "attached" };
 }
 
 // ────────────────────────────────────────────────────────────────
