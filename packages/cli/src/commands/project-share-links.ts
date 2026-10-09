@@ -1,8 +1,9 @@
+import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
-import { ApiClient, ApiError } from "../lib/api-client";
+import { ApiClient, unwrap } from "../lib/api-client";
 import { requireUuid } from "../lib/cli-options";
 import { commandResult, message } from "../lib/command-output";
-import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
+import { projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
 
@@ -15,26 +16,14 @@ import { confirmOrRequireYes } from "../lib/prompts";
  * `--revoke <id>`: soft-revoke that link. Idempotent on an already-revoked one.
  */
 
-interface ShareLinkRow {
-	id: string;
-	prefix: string;
-	label: string | null;
-	created_at: string;
-	expires_at: string | null;
-	revoked_at: string | null;
-	redeem_count: number;
-	last_redeemed_at: string | null;
-}
+type ShareLinkRow = components["schemas"]["ShareLinkResponse"];
 
-async function fetchLinks(
-	apiUrl: string,
-	bearer: string,
-	projectId: string,
-): Promise<ShareLinkRow[]> {
-	return authedJson<ShareLinkRow[]>(
-		apiUrl,
-		bearer,
-		`/v1/projects/${encodeURIComponent(projectId)}/share-links`,
+async function fetchLinks(apiUrl: string, bearer: string, projectId: string) {
+	return unwrap(
+		await new ApiClient({ baseUrl: apiUrl, authToken: bearer }).GET(
+			"/v1/projects/{project_id}/share-links",
+			{ params: { path: { project_id: projectId } } },
+		),
 	);
 }
 
@@ -78,18 +67,18 @@ export async function projectShareLinksCommand(
 			});
 			return;
 		}
-		const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
-			`/v1/projects/${encodeURIComponent(projectId)}/share-links/${encodeURIComponent(linkId)}`,
+		const result = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).DELETE(
+			"/v1/projects/{project_id}/share-links/{link_id}",
 			{
-				method: "DELETE",
+				params: { path: { project_id: projectId, link_id: linkId } },
 			},
 		);
-		if (r.status === 404) {
+		if (result.response.status === 404) {
 			console.error(chalk.red("Link not found on that project."));
 			process.exitCode = 1;
 			return;
 		}
-		if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
+		unwrap(result);
 		message(opts.json, `${chalk.green("✓")} Share link revoked.`);
 		message(opts.json, chalk.gray("  Existing members keep access until you remove them."));
 		commandResult(opts.json, "clawdi.projectShareLinks.v1", {

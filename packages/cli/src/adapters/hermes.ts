@@ -482,7 +482,7 @@ function hermesEventDrafts(
 	if (row.role === "tool") {
 		drafts.push({
 			type: "tool_result",
-			call_id: row.tool_call_id ?? `hermes:${sessionKey}:${row.id}:tool-result`,
+			call_id: jsonString(row.tool_call_id) ?? `hermes:${sessionKey}:${row.id}:tool-result`,
 			...(row.tool_name ? { name: row.tool_name } : {}),
 			status: "completed",
 			...toolResultContent(safeHermesContent(row.content, false)),

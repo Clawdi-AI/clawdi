@@ -16,7 +16,7 @@ import { rmSync } from "node:fs";
 import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
 import { allAdapterEntries } from "../adapters/registry";
-import { ApiClient, ApiError, readJson } from "../lib/api-client";
+import { ApiClient, apiErrorField, unwrap } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { isUuid, requireUuid } from "../lib/cli-options";
@@ -85,9 +85,6 @@ interface AcceptOpts {
 type JoinOpts = Pick<AcceptOpts, "agent" | "json">;
 
 type ShareUpgradeResponse = components["schemas"]["ShareUpgradeResponse"];
-type SharePreview = components["schemas"]["ShareRedeemResponse"];
-type InvitationItem = components["schemas"]["InvitationResponse"];
-type InvitationAcceptResponse = components["schemas"]["InvitationAcceptResponse"];
 type JoinedProject = Pick<
 	ShareUpgradeResponse,
 	"project_id" | "resolved_owner_handle" | "bound_agent_ids"
@@ -159,13 +156,12 @@ function normalizeAgentIds(values?: string[]): string[] {
 	return [...new Set(out)];
 }
 
-async function buildAcceptRequestBody(opts: AcceptOpts): Promise<Record<string, unknown>> {
-	const reqBody: Record<string, unknown> = {};
+async function buildAcceptRequestBody(
+	opts: AcceptOpts,
+): Promise<components["schemas"]["UpgradeBody"] | undefined> {
 	const agentIds = normalizeAgentIds(opts.agent);
-	if (agentIds.length === 0) return reqBody;
-	reqBody.agent_ids = agentIds;
-	reqBody.use_as = "attached";
-	return reqBody;
+	if (agentIds.length === 0) return undefined;
+	return { agent_ids: agentIds, use_as: "attached" };
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -205,13 +201,9 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 	}
 	const accessToken = await getClawdiAccessToken(apiUrl);
 
-	const r = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).request(
-		"/v1/me/invitations",
+	const items = unwrap(
+		await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).GET("/v1/me/invitations"),
 	);
-	if (!r.ok) {
-		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-	}
-	const items = await readJson<InvitationItem[]>(r, "/v1/me/invitations");
 
 	if (opts.json) {
 		emit({
@@ -373,24 +365,24 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 		);
 	}
 
-	let response: Response;
-	try {
-		response = await new ApiClient({ baseUrl: apiOrigin, authToken: bearer }).request(
-			`/v1/share/${encodeURIComponent(ticket.token)}/upgrade`,
-			{
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"Idempotency-Key": upgradeIdempotencyKey(ticket.token),
-				},
-				body: JSON.stringify(reqBody),
-			},
-		);
-	} catch {
-		throw new Error(
-			"Could not reach Clawdi to join this project. The local share was kept; check your connection and retry.",
-		);
-	}
+	const result = await new ApiClient({ baseUrl: apiOrigin, authToken: bearer })
+		.POST("/v1/share/{token}/upgrade", {
+			params: { path: { token: ticket.token } },
+			headers: { "Idempotency-Key": upgradeIdempotencyKey(ticket.token) },
+			body: reqBody,
+		})
+		.catch((error: unknown) => {
+			if (isAuthorizationRequired(error)) throw error;
+			if (error instanceof SyntaxError) {
+				throw new Error(
+					"Clawdi returned an invalid project join response. The local share was kept; retry or contact support.",
+				);
+			}
+			throw new Error(
+				"Could not reach Clawdi to join this project. The local share was kept; check your connection and retry.",
+			);
+		});
+	const response = result.response;
 
 	if (response.status === 404 || response.status === 410) {
 		await removeToken(ticket.project_id, ticket.token);
@@ -410,10 +402,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 	}
 
 	if (response.status === 409) {
-		const conflict = (await response.json().catch(() => null)) as {
-			detail?: { error?: unknown };
-		} | null;
-		if (conflict?.detail?.error === "already_owner") {
+		if (apiErrorField(result.error, "error") === "already_owner") {
 			await removeToken(ticket.project_id, ticket.token);
 			if (opts.json) {
 				emit({
@@ -448,7 +437,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 
 	let body: ShareUpgradeResponse | null = null;
 	try {
-		body = parseShareUpgradeResponse(await readJson<unknown>(response, "join shared project"));
+		body = parseShareUpgradeResponse(unwrap(result));
 	} catch {
 		// The server may already have created membership, but without a canonical
 		// response the CLI cannot safely decide which exact local ticket to remove.
@@ -497,13 +486,14 @@ export async function inboxDeclineCommand(
 		return;
 	}
 	const accessToken = await getClawdiAccessToken(apiUrl);
-	const r = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).request(
-		`/v1/me/invitations/${encodeURIComponent(validatedInvitationId)}/decline`,
-		{
-			method: "POST",
-		},
+	unwrap(
+		await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).POST(
+			"/v1/me/invitations/{invitation_id}/decline",
+			{
+				params: { path: { invitation_id: validatedInvitationId } },
+			},
+		),
 	);
-	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	message(opts.json, `${chalk.green("✓")} Invitation declined.`);
 	commandResult(opts.json, "clawdi.inboxDecline.v1", {
 		id: validatedInvitationId,
@@ -623,13 +613,14 @@ async function acceptAnonymousUrl(
 		return;
 	}
 
-	const r = await new ApiClient({ baseUrl: apiOrigin, requireAuth: false }).request(
-		`/v1/share/${encodeURIComponent(token)}/redeem`,
+	const result = await new ApiClient({ baseUrl: apiOrigin, requireAuth: false }).POST(
+		"/v1/share/{token}/redeem",
 		{
-			method: "POST",
+			params: { path: { token } },
 			headers: { "Idempotency-Key": redeemIdempotencyKey(token) },
 		},
 	);
+	const r = result.response;
 	if (r.status === 404) {
 		throw new Error("Share link not found. Ask the owner for a fresh one.");
 	}
@@ -637,7 +628,7 @@ async function acceptAnonymousUrl(
 		throw new Error("Share link has been revoked or expired.");
 	}
 	if (!r.ok) throw new Error(`Redeem failed: HTTP ${r.status}`);
-	const body = await readJson<SharePreview>(r, "redeem share link");
+	const body = unwrap(result);
 
 	const record: ShareToken = {
 		project_id: body.project_id,
@@ -710,21 +701,17 @@ async function acceptUrl(
 	}
 	const reqBody = await buildAcceptRequestBody(opts);
 
-	const r = await new ApiClient({ baseUrl: apiOrigin, authToken: bearer }).request(
-		`/v1/share/${encodeURIComponent(token)}/upgrade`,
+	const result = await new ApiClient({ baseUrl: apiOrigin, authToken: bearer }).POST(
+		"/v1/share/{token}/upgrade",
 		{
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"Idempotency-Key": upgradeIdempotencyKey(token),
-			},
-			body: JSON.stringify(reqBody),
+			params: { path: { token } },
+			headers: { "Idempotency-Key": upgradeIdempotencyKey(token) },
+			body: reqBody,
 		},
 	);
-
+	const r = result.response;
 	if (r.status === 409) {
-		const detail = (await r.json().catch(() => ({})))?.detail ?? {};
-		if (detail.error === "already_owner") {
+		if (apiErrorField(result.error, "error") === "already_owner") {
 			if (localTicket) await removeToken(localTicket.project_id, localTicket.token);
 			if (opts.json) {
 				emit({
@@ -743,7 +730,7 @@ async function acceptUrl(
 			);
 			return;
 		}
-		throw new ApiError({ status: r.status, body: JSON.stringify(detail), hint: "" });
+		unwrap(result);
 	}
 	if (r.status === 404 || r.status === 410) {
 		if (localTicket) await removeToken(localTicket.project_id, localTicket.token);
@@ -753,9 +740,9 @@ async function acceptUrl(
 				: "Share link revoked or expired. Any matching local ticket was removed.",
 		);
 	}
-	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
+	if (!r.ok) unwrap(result);
 
-	const body = parseShareUpgradeResponse(await readJson<unknown>(r, "upgrade share link"));
+	const body = parseShareUpgradeResponse(unwrap(result));
 	if (!body || (localTicket && localTicket.project_id !== body.project_id)) {
 		throw new Error("Clawdi returned an invalid project join response.");
 	}
@@ -782,23 +769,23 @@ async function acceptInvitation(
 	const reqBody = await buildAcceptRequestBody(opts);
 	const validatedInvitationId = requireUuid(invitationId, "Invitation ID");
 
-	const r = await new ApiClient({ baseUrl: apiUrl, authToken: bearer }).request(
-		`/v1/me/invitations/${encodeURIComponent(validatedInvitationId)}/accept`,
+	const result = await new ApiClient({ baseUrl: apiUrl, authToken: bearer }).POST(
+		"/v1/me/invitations/{invitation_id}/accept",
 		{
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(reqBody),
+			params: { path: { invitation_id: validatedInvitationId } },
+			body: reqBody,
 		},
 	);
+	const r = result.response;
 
 	if (r.status === 410) {
 		console.error(chalk.red("This invitation was revoked or already accepted."));
 		process.exitCode = 1;
 		return;
 	}
-	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
+	if (!r.ok) unwrap(result);
 
-	const body = await readJson<InvitationAcceptResponse>(r, "accept project invitation");
+	const body = unwrap(result);
 	if (opts.json) {
 		emit({
 			schemaVersion: "clawdi.inboxAccept.v1",

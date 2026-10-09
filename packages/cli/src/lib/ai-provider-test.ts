@@ -1,5 +1,5 @@
 import type { AiProvider } from "@clawdi/shared";
-import { ApiClient } from "./api-client";
+import { ApiClient, unwrap } from "./api-client";
 import { parsePositiveInteger } from "./cli-options";
 import { resolveClawdiReference } from "./secret-references";
 
@@ -51,12 +51,12 @@ export async function inspectAiProviderAuth(provider: AiProvider): Promise<AiPro
 			};
 		}
 		try {
-			const resolved = await new ApiClient().postJsonBody<{
-				value?: string | null;
-				profile?: string | null;
-			}>(`/v1/ai-providers/${encodeURIComponent(provider.id)}/auth/resolve`, {
-				profile: "default",
-			});
+			const resolved = unwrap(
+				await new ApiClient().POST("/v1/ai-providers/{provider_id}/auth/resolve", {
+					params: { path: { provider_id: provider.id } },
+					body: { profile: "default" },
+				}),
+			);
 			if (resolved.value) {
 				return {
 					status: "available",

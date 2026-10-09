@@ -1,4 +1,5 @@
-import { ApiClient, ApiError, readJson } from "./api-client";
+import type { components } from "@clawdi/shared/api";
+import { ApiClient, unwrap } from "./api-client";
 import { isUuid } from "./cli-options";
 
 /**
@@ -6,7 +7,7 @@ import { isUuid } from "./cli-options";
  *
  * Accepts:
  *   - A full UUID → returned as-is (no round-trip).
- *   - A slug (matches `Project.slug`) → resolved via GET /api/projects.
+ *   - A slug (matches `Project.slug`) → resolved via GET /v1/projects.
  *   - A human name → matched against `Project.name` (case-insensitive)
  *     after slug match fails.
  *   - `default` or omitted → returns the user's default-write project.
@@ -14,19 +15,10 @@ import { isUuid } from "./cli-options";
  * Throws on ambiguity (multiple matches) or no match.
  *
  * The caller passes the raw `apiUrl` + bearer instead of an
- * `ApiClient` instance because this helper is also used in early
- * bootstrap flows before typed clients are available.
+ * `ApiClient` instance so callers can supply their credential and API origin.
  */
 
-export interface ProjectBrief {
-	id: string;
-	name: string;
-	slug: string;
-	kind: string;
-	is_owner?: boolean;
-	owner_display?: string | null;
-	owner_handle?: string | null;
-}
+export type ProjectBrief = components["schemas"]["ProjectResponse"];
 
 export async function resolveProjectId(
 	apiUrl: string,
@@ -35,11 +27,7 @@ export async function resolveProjectId(
 ): Promise<string> {
 	const api = new ApiClient({ authToken: bearer, baseUrl: apiUrl });
 	if (!input || input === "default") {
-		const r = await api.request("/v1/projects/default");
-		if (!r.ok) {
-			throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
-		}
-		const def = await readJson<{ project_id: string }>(r, "/v1/projects/default");
+		const def = unwrap(await api.GET("/v1/projects/default"));
 		return def.project_id;
 	}
 	if (isUuid(input)) return input;
@@ -81,15 +69,5 @@ function parseOwnerQualifiedProject(
 }
 
 export async function listProjects(apiUrl: string, bearer: string): Promise<ProjectBrief[]> {
-	const projectResponse = await new ApiClient({ authToken: bearer, baseUrl: apiUrl }).request(
-		"/v1/projects",
-	);
-	if (!projectResponse.ok) {
-		throw new ApiError({
-			status: projectResponse.status,
-			body: await projectResponse.text(),
-			hint: "",
-		});
-	}
-	return await readJson<ProjectBrief[]>(projectResponse, "/v1/projects");
+	return unwrap(await new ApiClient({ authToken: bearer, baseUrl: apiUrl }).GET("/v1/projects"));
 }

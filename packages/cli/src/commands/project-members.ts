@@ -1,30 +1,17 @@
 import chalk from "chalk";
+import { ApiClient, unwrap } from "../lib/api-client";
 import { requireUuid } from "../lib/cli-options";
 import { emit } from "../lib/command-output";
-import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
+import { projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
 
-interface MemberRow {
-	id: string;
-	user_id: string;
-	user_email: string | null;
-	user_display: string | null;
-	role: string;
-	joined_via: string;
-	joined_at: string;
-	resolved_owner_handle: string;
-}
-
-async function fetchMembers(
-	apiUrl: string,
-	apiKey: string,
-	projectId: string,
-): Promise<MemberRow[]> {
-	return authedJson<MemberRow[]>(
-		apiUrl,
-		apiKey,
-		`/v1/projects/${encodeURIComponent(projectId)}/members`,
+async function fetchMembers(apiUrl: string, apiKey: string, projectId: string) {
+	return unwrap(
+		await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).GET(
+			"/v1/projects/{project_id}/members",
+			{ params: { path: { project_id: projectId } } },
+		),
 	);
 }
 
@@ -64,11 +51,13 @@ export async function projectMembersCommand(
 			return;
 		}
 		const memberUserId = requireUuid(matches[0].user_id, "Member user ID");
-		const removed = await authedJson<{ status: string }>(
-			ctx.apiUrl,
-			ctx.apiKey,
-			`/v1/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(memberUserId)}`,
-			{ method: "DELETE" },
+		const removed = unwrap(
+			await new ApiClient({ baseUrl: ctx.apiUrl, authToken: ctx.apiKey }).DELETE(
+				"/v1/projects/{project_id}/members/{member_user_id}",
+				{
+					params: { path: { project_id: projectId, member_user_id: memberUserId } },
+				},
+			),
 		);
 		if (opts.json) {
 			emit({
@@ -130,11 +119,11 @@ export async function projectLeaveCommand(
 	) {
 		return;
 	}
-	const result = await authedJson<{ status: string }>(
-		ctx.apiUrl,
-		ctx.apiKey,
-		`/v1/projects/${encodeURIComponent(projectId)}/leave`,
-		{ method: "POST" },
+	const result = unwrap(
+		await new ApiClient({ baseUrl: ctx.apiUrl, authToken: ctx.apiKey }).POST(
+			"/v1/projects/{project_id}/leave",
+			{ params: { path: { project_id: projectId } } },
+		),
 	);
 	if (opts.json) {
 		emit({ schemaVersion: "clawdi.projectLeave.v1", project_id: projectId, ...result });
@@ -162,13 +151,12 @@ export async function projectUnshareCommand(
 	) {
 		return;
 	}
-	const result = await authedJson<{
-		links_revoked: number;
-		members_removed: number;
-		invitations_cancelled: number;
-	}>(ctx.apiUrl, ctx.apiKey, `/v1/projects/${encodeURIComponent(projectId)}/unshare`, {
-		method: "POST",
-	});
+	const result = unwrap(
+		await new ApiClient({ baseUrl: ctx.apiUrl, authToken: ctx.apiKey }).POST(
+			"/v1/projects/{project_id}/unshare",
+			{ params: { path: { project_id: projectId } } },
+		),
+	);
 	if (opts.json) {
 		emit({ schemaVersion: "clawdi.projectUnshare.v1", project_id: projectId, ...result });
 		return;

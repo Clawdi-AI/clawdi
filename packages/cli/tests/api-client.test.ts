@@ -104,6 +104,46 @@ describe("ApiClient error classification", () => {
 		}
 	});
 
+	it("maps an empty unauthorized response through the central HTTP error mapper", async () => {
+		fakeLogin("http://127.0.0.1:0");
+		const origFetch = globalThis.fetch;
+		globalThis.fetch = async () =>
+			new Response(null, { status: 401, headers: { "Content-Length": "0" } });
+		try {
+			const { ApiClient, unwrap } = await import("../src/lib/api-client");
+			const { mapHttpError } = await import("../src/lib/errors");
+			let caught: unknown;
+			try {
+				unwrap(await new ApiClient().GET("/v1/projects"));
+			} catch (error) {
+				caught = error;
+			}
+			expect(caught).toBeInstanceOf(ApiError);
+			if (!(caught instanceof ApiError)) throw new Error("Expected ApiError");
+			expect(mapHttpError(caught)?.exitCode).toBe(4);
+		} finally {
+			globalThis.fetch = origFetch;
+		}
+	});
+
+	it("uses the supplied bearer for generated calls", async () => {
+		fakeLogin("http://127.0.0.1:0");
+		const origFetch = globalThis.fetch;
+		let bearer: string | null = null;
+		globalThis.fetch = async (input) => {
+			const request = input instanceof Request ? input : new Request(input);
+			bearer = request.headers.get("Authorization");
+			return Response.json([]);
+		};
+		try {
+			const { ApiClient, unwrap } = await import("../src/lib/api-client");
+			unwrap(await new ApiClient({ authToken: "supplied-token" }).GET("/v1/projects"));
+			expect(bearer).toBe("Bearer supplied-token");
+		} finally {
+			globalThis.fetch = origFetch;
+		}
+	});
+
 	it("keeps a suspension Problem recognizable to existing CLI callers", async () => {
 		fakeLogin("http://127.0.0.1:0");
 		const origFetch = globalThis.fetch;

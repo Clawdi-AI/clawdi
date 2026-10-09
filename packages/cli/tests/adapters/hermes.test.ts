@@ -465,6 +465,32 @@ describe("HermesAdapter.collectSessions", () => {
 		expect(JSON.stringify(session)).not.toContain("sk-");
 	});
 
+	it("falls back to a non-empty call id for empty tool call ids", async () => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		db.run(
+			"INSERT INTO messages (session_id, role, content, tool_call_id, tool_name, timestamp, active, compacted) VALUES (?, ?, ?, ?, ?, ?, 1, 0)",
+			"s-modern",
+			"tool",
+			"Tool output with an empty call id",
+			"",
+			"read_file",
+			1776247230,
+		);
+		db.close();
+
+		const session = await new HermesAdapter().sessions.resolve("s-modern");
+		if (!session) throw new Error("Expected Hermes session fixture");
+		const events = session.events ?? [];
+		const toolResult = events.find((event) => event.source.record_seq === 13);
+		expect(toolResult).toMatchObject({
+			type: "tool_result",
+			call_id: "hermes:s-modern:13:tool-result",
+		});
+		if (toolResult?.type !== "tool_result") throw new Error("Expected Hermes tool result");
+		expect(toolResult.call_id.length).toBeGreaterThan(0);
+		await prepareSessionUpload(session, "events-v1");
+	});
+
 	it("keeps prior identities as an append-only prefix when a row is added", async () => {
 		const adapter = new HermesAdapter();
 		const before = (await adapter.sessions.resolve("s-modern"))?.events ?? [];
