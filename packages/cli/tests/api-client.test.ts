@@ -166,7 +166,7 @@ describe("ApiClient error classification", () => {
 		}
 	});
 
-	it("preserves the server's 410 message for typed and raw API requests", async () => {
+	it("uses safe recovery guidance for retired endpoints in typed and raw requests", async () => {
 		fakeLogin("http://127.0.0.1:0");
 		const origFetch = globalThis.fetch;
 		const detail =
@@ -188,8 +188,9 @@ describe("ApiClient error classification", () => {
 				expect(caught).toBeInstanceOf(ApiError);
 				if (!(caught instanceof ApiError)) throw new Error("Expected API error");
 				expect(caught.status).toBe(410);
-				expect(caught.hint).toBe(detail);
-				expect(caught.message).toBe(`API error 410: ${detail}`);
+				expect(caught.hint).toContain("This endpoint is no longer available.");
+				expect(caught.message).toContain("clawdi auth login");
+				expect(caught.message).not.toContain(detail);
 			}
 		} finally {
 			globalThis.fetch = origFetch;

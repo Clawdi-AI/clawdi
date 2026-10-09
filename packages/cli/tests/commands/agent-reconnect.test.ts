@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentReconnect } from "../../src/commands/agent-reconnect";
+import { isAuthorizationRequired } from "../../src/lib/errors";
 import { jsonResponse, mockFetch } from "./helpers";
 
 const tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-agent-reconnect-test-"));
@@ -59,6 +60,25 @@ afterEach(() => {
 });
 
 describe("agent reconnect", () => {
+	it("preserves sign-in-required errors from the agent listing", async () => {
+		const mock = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/agents",
+				response: () => jsonResponse({ detail: "expired" }, 401),
+			},
+		]);
+		restoreFetch = mock.restore;
+		let failure: unknown;
+		try {
+			await agentReconnect(undefined, { json: true });
+		} catch (error) {
+			failure = error;
+		}
+		expect(isAuthorizationRequired(failure)).toBe(true);
+		expect(output).toEqual([]);
+	});
+
 	it("emits the stable Desktop candidate contract without mutating bindings", async () => {
 		const agentId = "00000000-0000-0000-0000-000000000123";
 		const mock = mockFetch([

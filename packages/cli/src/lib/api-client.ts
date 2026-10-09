@@ -73,8 +73,8 @@ export class ApiError extends Error {
 		const detail = apiResponseDetail(opts.body);
 		const expiredApiKey = opts.status === 401 && detail === "API key has expired";
 		const hint =
-			opts.status === 410 && detail
-				? detail
+			opts.status === 410
+				? "This endpoint is no longer available. Update Clawdi and run `clawdi auth login` (use `--no-open` on a server)."
 				: expiredApiKey
 					? "Your API key has expired. Run `clawdi auth login` (use `--no-open` on a server). API keys can no longer be created."
 					: opts.hint;
@@ -85,7 +85,7 @@ export class ApiError extends Error {
 				? expiredApiKey
 					? hint
 					: "Not signed in, or your session expired. Run `clawdi auth login`."
-				: `API error ${opts.status}: ${(opts.status === 410 ? detail : opts.body) || hint}`;
+				: `API error ${opts.status}: ${hint || hintFor(opts.status) || "Request failed. Please retry or run `clawdi doctor`."}`;
 		super(message);
 		this.name = "ApiError";
 		this.status = opts.status;

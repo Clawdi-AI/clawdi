@@ -8,7 +8,7 @@ import { ApiClient, unwrap } from "../lib/api-client";
 import { requireUuid } from "../lib/cli-options";
 import { emit } from "../lib/command-output";
 import { writeEnvironmentRegistration } from "../lib/environment-registration";
-import { errMessage } from "../lib/errors";
+import { errMessage, isAuthorizationRequired } from "../lib/errors";
 import { getOrCreateMachineId, readMachineId } from "../lib/machine-identity";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { AuthorizationRequiredError, requireAuth } from "../lib/require-auth";
@@ -50,6 +50,7 @@ export async function agentReconnect(
 			}),
 		);
 	} catch (error) {
+		if (isAuthorizationRequired(error)) throw error;
 		console.error(chalk.red(`Could not list agents: ${errMessage(error)}`));
 		process.exitCode = 1;
 		return;
@@ -168,6 +169,7 @@ export async function agentReconnect(
 			}),
 		);
 	} catch (error) {
+		if (isAuthorizationRequired(error)) throw error;
 		console.error(
 			chalk.red(
 				`Could not reconnect ${adapterRegistry[agentType].displayName}: ${errMessage(error)}`,

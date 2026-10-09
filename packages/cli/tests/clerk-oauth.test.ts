@@ -166,15 +166,12 @@ afterEach(() => {
 });
 
 describe("Clerk public OAuth device authorization", () => {
-	test("ignores legacy audience, authorized-party and redirect response fields", async () => {
+	test("reads the current OAuth client configuration", async () => {
 		const config = await fetchClerkOAuthClientConfig("https://cloud.example.test", {
 			fetch: async () =>
 				Response.json({
 					issuer: CONFIG.issuer,
 					client_id: CONFIG.clientId,
-					audience: "legacy-audience",
-					authorized_parties: ["https://legacy.example.test"],
-					redirect_uri: "http://127.0.0.1:18473/oauth/callback",
 				}),
 		});
 		expect(config).toEqual(CONFIG);
@@ -197,7 +194,6 @@ describe("Clerk public OAuth device authorization", () => {
 				Response.json({
 					issuer,
 					client_id: CONFIG.clientId,
-					redirect_uri: "ignored-by-device-flow",
 				}),
 		});
 
@@ -229,7 +225,6 @@ describe("Clerk public OAuth device authorization", () => {
 					Response.json({
 						issuer,
 						client_id: CONFIG.clientId,
-						redirect_uri: "ignored-by-device-flow",
 					}),
 			}),
 		).rejects.toThrow("OAuth issuer");

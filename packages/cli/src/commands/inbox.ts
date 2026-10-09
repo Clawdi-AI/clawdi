@@ -22,8 +22,9 @@ import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { isUuid, requireUuid } from "../lib/cli-options";
 import { commandResult, emit, message } from "../lib/command-output";
 import { getAuth, getConfig } from "../lib/config";
+import { isAuthorizationRequired } from "../lib/errors";
 import { confirmOrRequireYes } from "../lib/prompts";
-import { requireAuth } from "../lib/require-auth";
+import { AuthorizationRequiredError, requireAuth } from "../lib/require-auth";
 import { addToken, findToken, listTokens, removeToken, type ShareToken } from "../share/tokens";
 
 const RAW_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -365,7 +366,8 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 	let bearer: string;
 	try {
 		bearer = await getClawdiAccessToken(apiOrigin);
-	} catch {
+	} catch (error) {
+		if (isAuthorizationRequired(error)) throw error;
 		throw new Error(
 			"Could not authenticate to join this project. The local share was kept; sign in and retry.",
 		);
@@ -433,6 +435,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 	}
 
 	if (!response.ok) {
+		if (response.status === 401) throw new AuthorizationRequiredError();
 		if (response.status >= 500) {
 			throw new Error(
 				"Project joining is temporarily unavailable. The local share was kept; try again later.",

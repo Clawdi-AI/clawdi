@@ -16,14 +16,14 @@ declared as production dependencies of the Electron shell.
 
 - The macOS entitlements in `build/entitlements.mac.plist` (`allow-jit`,
   `allow-unsigned-executable-memory`, and `disable-library-validation`) remain
-  required by the current Electron/Bun runtime. The Desktop owner should trim
+  in the preview configuration. The Desktop owner should trim
   any entitlement that is no longer needed after a signed preview proves launch,
   sign-in, and daemon installation on macOS.
-- Windows signing remains an owner action. The unsigned path is supported for
+- Windows signing remains an action for the release owner. The unsigned path is supported for
   previews; remove the owner note in the release section after a signed
   beta-to-beta update is verified.
-- The Desktop download action currently points to the GitHub releases search
-  page. Keep it until `clawdi.ai/download` exists, then switch the action and
+- The Desktop owner maintains the download action, which currently points to
+  the GitHub releases search page. Keep it until `clawdi.ai/download` exists, then switch the action and
   remove this note.
 
 ## Platform coverage
@@ -250,7 +250,7 @@ Unsigned Windows installers may show SmartScreen's unknown-publisher warning,
 and Defender may scan, quarantine, or block the installer or bundled CLI. Check
 the official release source and your organization's policy; Desktop does not
 bypass these protections. Publisher authenticity is not verified until signing
-is configured. Owner action: provision the three signing settings above and
+is configured. Release owner action: provision the three signing settings above and
 validate a signed beta-to-beta update; remove this note after that verification
 passes. The configuration turns publisher verification on without a client
 verifier change. Existing unsigned clients

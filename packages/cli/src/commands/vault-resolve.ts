@@ -87,8 +87,28 @@ export async function vaultResolveCommand(
 	}
 
 	if (!r.ok) {
+		const detail = (body as { detail?: { code?: string } }).detail;
+		const safeMessage =
+			r.status === 404
+				? isVaultProjectNotFoundBody(body)
+					? VAULT_PROJECT_ACCESS_ERROR
+					: "No vault value was found for this key."
+				: r.status === 403
+					? "Vault resolve requires CLI authentication."
+					: r.status === 409
+						? detail?.code === "ambiguous_vault_reference_slug"
+							? "Vault namespace is ambiguous."
+							: "Vault conflict blocked."
+						: `Vault resolve failed (HTTP ${r.status}).`;
 		if (opts.json) {
-			console.error(chalk.red(`vault resolve failed (${r.status}).`));
+			emit(
+				{
+					schemaVersion: "clawdi.vaultResolve.v1",
+					status: "error",
+					error: { code: "vault_resolve_failed", status: r.status, message: safeMessage },
+				},
+				console.error,
+			);
 		} else if (r.status === 404) {
 			if (isVaultProjectNotFoundBody(body)) {
 				console.error(chalk.red(VAULT_PROJECT_ACCESS_ERROR));
@@ -99,8 +119,7 @@ export async function vaultResolveCommand(
 		} else if (r.status === 403) {
 			console.error(chalk.red("vault resolve requires CLI authentication."));
 		} else if (r.status === 409) {
-			const detail = (body as { detail?: { code?: string; message?: string } }).detail;
-			console.error(chalk.red(detail?.message ?? "Vault conflict blocked."));
+			console.error(chalk.red(safeMessage));
 			if (detail?.code === "ambiguous_vault_reference_slug") {
 				console.error(
 					chalk.gray(

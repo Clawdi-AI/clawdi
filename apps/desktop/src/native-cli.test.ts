@@ -33,6 +33,8 @@ function serviceFixture(failFirstInstall = false, loginProgress?: unknown, mount
 	}
 	const calls: string[] = [];
 	const state = {
+		detectionSchema: "clawdi.agentDetection.v1" as string | undefined,
+		authStatusSchema: "clawdi.authStatus.v1" as string | undefined,
 		cliVersion: "1.2.0",
 		daemonVersion: "1.2.0",
 		live: false,
@@ -54,7 +56,7 @@ function serviceFixture(failFirstInstall = false, loginProgress?: unknown, mount
 				break;
 			case "agent detect --json":
 				result = {
-					schemaVersion: "clawdi.agentDetection.v1",
+					schemaVersion: state.detectionSchema,
 					agents: [
 						{
 							type: "dsh",
@@ -87,7 +89,7 @@ function serviceFixture(failFirstInstall = false, loginProgress?: unknown, mount
 				return { stdout: `${state.cliVersion}\t${process.platform}-${process.arch}\n`, stderr: "" };
 			case "auth status --json":
 				result = {
-					schemaVersion: "clawdi.authStatus.v1",
+					schemaVersion: state.authStatusSchema,
 					authenticated: true,
 					credentialType: "clerk-oauth",
 					user: { id: "fixture" },
@@ -210,6 +212,24 @@ test("accepts dsh detection and reconnect candidates from the CLI", async () => 
 		},
 	]);
 });
+
+test.each([undefined, "clawdi.agentDetection.v2"])(
+	"rejects agent detection with unsupported schema %s",
+	async (schemaVersion) => {
+		const { service, state } = serviceFixture();
+		state.detectionSchema = schemaVersion;
+		await expect(service.detectAgents()).rejects.toThrow("invalid agent detection data");
+	},
+);
+
+test.each([undefined, "clawdi.authStatus.v2"])(
+	"rejects authentication with unsupported schema %s",
+	async (schemaVersion) => {
+		const { service, state } = serviceFixture();
+		state.authStatusSchema = schemaVersion;
+		await expect(service.bootstrapState()).rejects.toThrow("invalid authentication data");
+	},
+);
 
 test.skipIf(process.platform !== "linux")(
 	"bootstrap is read-only; verified stopped AppImage reconciliation installs once",

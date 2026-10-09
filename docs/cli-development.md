@@ -70,8 +70,8 @@ All commands and every `--json` surface follow this contract:
   internal errors.
 - Exit codes: `0` means success, `1` means a command or API error, `2` means
   `session extract` is not configured, and `4` means authorization is required.
-- Keep released contracts additive-only: preserve field names, types, and
-  meanings. Consumers must tolerate additional fields.
+- Consumers must check the supported `schemaVersion` before parsing the payload.
+  Change that version when field names, types, or meanings change.
 - Human tables print full IDs accepted by the corresponding read/remove
   commands.
 - Destructive commands use `confirmOrRequireYes`: prompt in a TTY and require
@@ -791,9 +791,9 @@ bun run --cwd packages/cli test:watch:local                    # opt-in host-loc
 Desktop release leftovers have explicit owners and removal conditions. The
 Desktop owner keeps the macOS Electron entitlements until a signed preview
 proves launch, sign-in, and daemon installation, then trims any entitlement the
-runtime no longer needs. Windows signing is an owner action; remove the stale
+runtime no longer needs. Windows signing is a release owner action; remove the stale
 release note after a signed beta-to-beta update passes. Desktop download links
-continue to use the GitHub releases search page until `clawdi.ai/download`
+are maintained by the Desktop owner and continue to use the GitHub releases search page until `clawdi.ai/download`
 exists, then switch the link and delete this note.
 
 Use `docs/runbooks/release.md` for the full app/backend/web/CLI release
