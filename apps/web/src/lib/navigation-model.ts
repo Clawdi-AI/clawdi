@@ -134,6 +134,12 @@ export function consoleNavigationGroups(showCloudFeatures: boolean): ConsoleNavi
 		items: group.items.map((item) => CONSOLE_NAVIGATION_ITEMS[item.id]),
 	}));
 }
+
+export function consoleNavigationItemIsActive(pathname: string, itemHref: string): boolean {
+	return itemHref === "/"
+		? pathname === "/" || pathname === "/dashboard"
+		: pathname === itemHref || pathname.startsWith(`${itemHref}/`);
+}
 export function consoleCommandPaletteItems(showCloudFeatures: boolean) {
 	return sharedConsoleCommandPaletteItems(showCloudFeatures).map((item) => ({
 		...item,

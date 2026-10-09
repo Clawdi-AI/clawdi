@@ -186,7 +186,11 @@ function DashboardAccountLayout({ children }: { children: ReactNode }) {
 										)}
 									>
 										<AccountDataBoundary
-											loadingFallback={pathname === "/" ? <DashboardPageSkeleton /> : undefined}
+											loadingFallback={
+												pathname === "/" || pathname === "/dashboard" ? (
+													<DashboardPageSkeleton />
+												) : undefined
+											}
 										>
 											{children}
 										</AccountDataBoundary>

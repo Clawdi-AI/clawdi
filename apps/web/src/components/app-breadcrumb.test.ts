@@ -30,6 +30,10 @@ function labels(
 }
 
 describe("AppBreadcrumb semantic trail", () => {
+	test("labels the dashboard handoff alias as Overview", () => {
+		expect(labels("/dashboard")).toEqual(["Overview"]);
+	});
+
 	test("omits the implicit Workspace layer from Agent breadcrumbs", () => {
 		const segmentTitles = {
 			[`/agents/${agentId}/project-access/${workspaceId}`]: {

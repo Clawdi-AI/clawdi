@@ -34,6 +34,7 @@ const SEGMENT_LABELS: Record<string, string> = {
 	deploy: "Deploy an Agent",
 	agents: "Agents",
 	"ai-providers": "AI Providers",
+	dashboard: "Overview",
 };
 
 const DETAIL_COLLECTION_SEGMENTS = new Set([
