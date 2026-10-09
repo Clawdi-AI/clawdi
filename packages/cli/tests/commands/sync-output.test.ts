@@ -381,11 +381,12 @@ describe("push/pull output contracts", () => {
 					agent: "claude_code",
 					module: "sessions",
 					key: localSessionId,
-					message: expect.stringContaining("Metadata refused"),
+					message: expect.stringContaining("API error 400"),
 				},
 			],
 		});
-		expect(result.stderr).toContain("Metadata refused");
+		expect(result.stderr).toContain("API error 400");
+		expect(result.stdout + result.stderr).not.toContain("Metadata refused");
 	});
 
 	it("counts failed push content syncs and writes their errors to stderr", async () => {
@@ -419,11 +420,12 @@ describe("push/pull output contracts", () => {
 					agent: "claude_code",
 					module: "sessions",
 					key: localSessionId,
-					message: expect.stringContaining("Content refused"),
+					message: expect.stringContaining("API error 400"),
 				},
 			],
 		});
 		expect(result.stderr).toContain("Content sync failed");
+		expect(result.stdout + result.stderr).not.toContain("Content refused");
 	});
 
 	it("reports server-rejected push sessions as item failures", async () => {
@@ -571,11 +573,12 @@ describe("push/pull output contracts", () => {
 					agent: "claude_code",
 					module: "sessions",
 					key: "bad",
-					message: expect.stringContaining("Content refused"),
+					message: expect.stringContaining("API error 400"),
 				},
 			],
 		});
 		expect(result.stderr).toContain("bad failed");
+		expect(result.stdout + result.stderr).not.toContain("Content refused");
 		expectPlain(result.stderr);
 	});
 
@@ -603,11 +606,12 @@ describe("push/pull output contracts", () => {
 					agent: "claude_code",
 					module: "skills",
 					key: "bad",
-					message: expect.stringContaining("Download refused"),
+					message: expect.stringContaining("API error 400"),
 				},
 			],
 		});
 		expect(result.stderr).toContain("bad failed");
+		expect(result.stdout + result.stderr).not.toContain("Download refused");
 	});
 
 	it("keeps stdout empty on pull errors before the scan completes", async () => {
@@ -625,7 +629,8 @@ describe("push/pull output contracts", () => {
 		]);
 		expect(result.exitCode).toBe(1);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("Session list refused");
+		expect(result.stderr).toContain("API error 400");
+		expect(result.stderr).not.toContain("Session list refused");
 	});
 
 	it.each(["push", "pull"])("keeps stdout empty on signed-out %s --json", async (command) => {

@@ -4,8 +4,7 @@ import { dirname } from "node:path";
 import chalk from "chalk";
 import { readAiProviderCatalog } from "../lib/ai-provider-catalog";
 import { inspectAiProviderAuth } from "../lib/ai-provider-test";
-import { ApiClient, ApiError } from "../lib/api-client";
-import type { VaultResolved } from "../lib/api-schemas";
+import { ApiClient } from "../lib/api-client";
 import { isLoggedIn } from "../lib/config";
 import { parseDotenv } from "../lib/dotenv";
 import { errMessage } from "../lib/errors";
@@ -21,12 +20,6 @@ import {
 	scanClawdiReferences,
 	type VaultReferencePreview,
 } from "../lib/secret-references";
-import { getEnvIdByAgent } from "../lib/select-adapter";
-import {
-	isVaultProjectNotFoundBody,
-	VAULT_PROJECT_ACCESS_ERROR,
-	VAULT_PROJECT_ACCESS_HINT,
-} from "../lib/vault-errors";
 import { applyEgressTransparentRuntimeEnv } from "../runtime/egress-env";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 import { clearPlatformCredentialEnv } from "../runtime/platform-credential-env";
@@ -49,7 +42,6 @@ interface RunOpts {
 	projectFolder?: boolean;
 	envFile?: string[];
 	inheritEnv?: boolean;
-	allVaultEnv?: boolean;
 	allowConflicts?: boolean;
 	dryRun?: boolean;
 	runtimeService?: string;
@@ -140,7 +132,7 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 
 	const api = new ApiClient();
 	const selectedProject = await selectProject(api, opts);
-	let vaultEnv: VaultResolved = {};
+	const vaultEnv: Record<string, string> = {};
 
 	if (opts.dryRun) {
 		const baseEnv = opts.inheritEnv === false ? {} : { ...process.env };
@@ -148,44 +140,6 @@ export async function run(args: string[], opts: RunOpts = {}, spawnImpl: SpawnFn
 		const envWithReferences = { ...baseEnv, ...envFileVars };
 		await previewRun(args, envWithReferences, selectedProject, opts);
 		return;
-	}
-
-	if (opts.allVaultEnv) {
-		try {
-			if (selectedProject) {
-				console.log(
-					chalk.green(`✓ Using project ${selectedProject.label} for vault env injection.`),
-				);
-			}
-			const resolved = await api.postJson<unknown>(
-				"/v1/vault/resolve",
-				opts.agent
-					? { agent_id: resolveAgentId(opts.agent), allow_conflicts: conflictQuery(opts) }
-					: selectedProject
-						? { project_id: selectedProject.projectId }
-						: undefined,
-			);
-			vaultEnv = assertVaultResolved(resolved);
-		} catch (e) {
-			if (e instanceof ApiError && e.status === 403) {
-				console.error(chalk.red("vault/resolve requires CLI authentication (ApiKey)."));
-				process.exit(1);
-			}
-			if (e instanceof ApiError && e.status === 404 && isVaultProjectNotFoundBody(e.body)) {
-				console.error(
-					chalk.yellow(`⚠ Could not fetch vault secrets: ${VAULT_PROJECT_ACCESS_ERROR}`),
-				);
-				console.error(chalk.gray(`  ${VAULT_PROJECT_ACCESS_HINT}`));
-			} else {
-				console.error(chalk.yellow(`⚠ Could not fetch vault secrets: ${errMessage(e)}`));
-			}
-			console.error(chalk.gray("  Running without vault injection."));
-		}
-
-		const injectedCount = Object.keys(vaultEnv).length;
-		if (injectedCount > 0) {
-			console.log(chalk.green(`✓ Injected ${injectedCount} vault secrets`));
-		}
 	}
 
 	const baseEnv = opts.inheritEnv === false ? {} : { ...process.env };
@@ -275,11 +229,7 @@ async function resolveManagedAiProviderEnv(
 
 function requiresCloudResolution(opts: RunOpts): boolean {
 	return Boolean(
-		opts.project ||
-			opts.agent ||
-			opts.allVaultEnv ||
-			opts.dryRun ||
-			(opts.envFile && opts.envFile.length > 0),
+		opts.project || opts.agent || opts.dryRun || (opts.envFile && opts.envFile.length > 0),
 	);
 }
 
@@ -467,11 +417,6 @@ async function previewRun(
 	} else {
 		console.log(chalk.gray("  Project context: default write project"));
 	}
-	if (opts.allVaultEnv) {
-		console.error(
-			chalk.yellow("  Legacy all-vault-env requested; broad env values were not fetched."),
-		);
-	}
 	if (resolved.size === 0) {
 		console.log(chalk.gray("  No clawdi references found in env input."));
 		return;
@@ -494,18 +439,6 @@ function formatPreview(hit: VaultReferencePreview): string {
 	const path = [hit.vault_slug, hit.section, hit.item_name].filter(Boolean).join("/");
 	const suffix = path ? ` ${path}` : "";
 	return `${hit.reference} -> ${hit.source_alias}${suffix} (redacted)`;
-}
-
-function assertVaultResolved(value: unknown): VaultResolved {
-	if (value === null || typeof value !== "object" || Array.isArray(value)) {
-		throw new Error("vault/resolve returned an invalid response");
-	}
-	for (const [key, val] of Object.entries(value)) {
-		if (typeof val !== "string") {
-			throw new Error(`vault/resolve returned a non-string value for ${key}`);
-		}
-	}
-	return value as VaultResolved;
 }
 
 async function selectProject(api: ApiClient, opts: RunOpts): Promise<SelectedProject | null> {
@@ -534,14 +467,6 @@ async function projectLabel(api: ApiClient, projectId: string): Promise<string |
 		return `@${project.owner_handle}/${project.slug}`;
 	}
 	return project.slug;
-}
-
-function resolveAgentId(agent: string): string {
-	return getEnvIdByAgent(agent) ?? agent;
-}
-
-function conflictQuery(opts: RunOpts): string | undefined {
-	return opts.allowConflicts ? "true" : undefined;
 }
 
 function loadEnvFiles(paths: string[]): Record<string, string> {

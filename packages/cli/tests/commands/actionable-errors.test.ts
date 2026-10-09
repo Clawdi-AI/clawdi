@@ -103,7 +103,7 @@ describe("actionable CLI errors", () => {
 			status: 410,
 			detail:
 				"API keys can no longer be created. Run `clawdi auth login` (use `--no-open` on a server).",
-			expected: "API keys can no longer be created.",
+			expected: "This endpoint is no longer available.",
 		},
 	])(
 		"prints the API key migration guidance once for HTTP $status",
@@ -142,10 +142,50 @@ describe("actionable CLI errors", () => {
 		expect(result.stderr.trim()).toBe("✗ Invalid input.");
 	});
 
+	it.each([400, 422, 500])("does not expose raw HTTP %s backend errors", (status) => {
+		const result = runError(`
+			import {ApiError} from ${source("lib/api-client.ts")};
+			handleError(new ApiError({status: ${status}, body: "private backend internals", hint: ""}));
+		`);
+		expect(result.status).toBe(1);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).not.toContain("private backend internals");
+	});
+
+	it.each([
+		["daemon", "install"],
+		["inbox", "join", "00000000-0000-4000-8000-000000000001"],
+		["agent", "reconnect"],
+	])("uses exit 4 when signed out: %s", (...args) => {
+		const result = run([entry, ...args]);
+		expect(result.status).toBe(4);
+		expect(result.stdout).toBe("");
+		expect(result.stderr).toContain("clawdi auth login");
+	});
+
+	it.each([false, true])(
+		"uses exit 4 for unbound production credentials (environment=%s)",
+		(environment) => {
+			const result = runError(`
+			import {ApiClient} from ${source("lib/api-client.ts")};
+			import {setAuth} from ${source("lib/config.ts")};
+			${environment ? 'process.env.CLAWDI_AUTH_TOKEN = "unbound-secret";' : 'setAuth({apiKey: "unbound-secret"});'}
+			globalThis.fetch = async () => { throw new Error("must not send credentials"); };
+			await new ApiClient({baseUrl: "https://cloud-api.clawdi.ai"}).GET("/v1/auth/me").catch(handleError);
+		`);
+			expect(result.status).toBe(4);
+			expect(result.stdout).toBe("");
+			expect(result.stderr).toContain("clawdi auth login");
+			expect(result.stderr).not.toContain("unbound-secret");
+			expect(result.stderr).not.toContain("must not send credentials");
+		},
+	);
+
 	it("returns a useful signed-out wallet JSON error", () => {
 		const result = run([entry, "wallet", "status", "--json"]);
 		expect(result.status).toBe(4);
-		expect(JSON.parse(result.stdout)).toMatchObject({
+		expect(result.stdout).toBe("");
+		expect(JSON.parse(result.stderr)).toMatchObject({
 			schemaVersion: "clawdi.walletStatus.v2",
 			status: "error",
 			error: { code: "not_signed_in", message: "Not signed in. Run `clawdi auth login` first." },
@@ -184,12 +224,12 @@ describe("actionable CLI errors", () => {
 	it("preserves the deploy authorization JSON envelope", () => {
 		const result = run([entry, "deploy", "--json"]);
 		expect(result.status).toBe(4);
-		expect(JSON.parse(result.stdout)).toEqual({
+		expect(result.stdout).toBe("");
+		expect(JSON.parse(result.stderr)).toEqual({
 			schemaVersion: "clawdi.deploy.v2",
 			status: "authorization_required",
 			authorization: { command: "clawdi auth login" },
 		});
-		expect(result.stderr).toBe("");
 	});
 
 	it("does not expose sign-in provider internals in deploy errors", () => {

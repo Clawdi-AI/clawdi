@@ -8,11 +8,16 @@ surfaces in `src/hosted/`. Domain clients, view models and Web copy come from
 
 Sign-in and account management use Clerk native UI. `/settings` is a grouped
 native menu that pushes General, Account, API Keys, Wallet, Compute and AI Usage
-(the last three require a compute API). RevenueCat Paywalls sell consumable
+(the last three require a compute API), followed by Help and legal links.
+RevenueCat Paywalls sell consumable
 Clawdi Credits into the hosted Wallet; pending purchases have explicit recovery.
 Consumable credits cannot be restored. Customer Center management is planned
 for store subscriptions and is not wired in the current app. New paid compute
-subscriptions remain unavailable in the deployment wizard. Agent overview rows
+subscriptions remain unavailable in the deployment wizard; it deploys with Included
+Basic, an exact reusable card/Wallet subscription (Web's `existing` selection),
+a store subscription, Clawdi AI, a saved AI provider, or configuration inside the
+agent. Card/Wallet subscriptions can be cancelled, end a trial or drop a scheduled
+plan change in every build; resume appears only outside store builds. Agent overview rows
 reach every section; Files opens through the hosted one-time browser handoff,
 while Terminal uses Expo DOM. See
 [UI parity](../apps/mobile/UI-PARITY.md) and

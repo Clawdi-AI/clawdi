@@ -81,6 +81,90 @@ describe("Hosted compute client", () => {
 		expect(requests).toHaveLength(3);
 	});
 
+	test("assigns one exact reusable subscription and rejects anything but an activation", async () => {
+		const requests: { url: string; body: unknown; key: string | null }[] = [];
+		let response: unknown = {
+			flow_type: "subscription_activation",
+			funding_source: "stripe",
+			action_url: null,
+			checkout_url: "",
+			client_secret: null,
+			subscription_id: "csub_a",
+			invoice_id: null,
+			deploy_request_id: "reuse-key",
+		};
+		const client = createHostedComputeClient({
+			...options,
+			fetch: async (request) => {
+				requests.push({
+					url: request.url,
+					body: await request.json(),
+					key: request.headers.get("Idempotency-Key"),
+				});
+				return Response.json(response);
+			},
+		});
+		const request = { ...body, deploy_request_id: "reuse-key" };
+		const subscription = {
+			subscriptionId: "csub_a",
+			planSlug: "compute_basic",
+			billingTermMonths: 12,
+			fundingSource: "stripe",
+		} as const;
+		await client.assignReusableSubscription(request, "reuse-key", subscription);
+		expect(requests).toEqual([
+			{
+				url: "https://compute.example.test/v2/subscription/checkout",
+				key: "reuse-key",
+				body: {
+					plan_slug: "compute_basic",
+					billing_term_months: 12,
+					funding_source: "stripe",
+					ui_mode: "custom",
+					subscription_selection: { mode: "existing", subscription_id: "csub_a" },
+					deploy_config: request,
+				},
+			},
+		]);
+		await expect(
+			client.assignReusableSubscription(request, "reuse-key", {
+				...subscription,
+				planSlug: "compute_performance",
+			}),
+		).rejects.toMatchObject({ code: "subscription_plan_mismatch" });
+		response = { flow_type: "checkout_session", checkout_url: "https://checkout.example" };
+		await expect(
+			client.assignReusableSubscription(request, "reuse-key", subscription),
+		).rejects.toBeInstanceOf(ApiClientResponseError);
+	});
+
+	test("sends card and Wallet subscription commands once, to Web's endpoints", async () => {
+		const requests: { url: string; body: unknown }[] = [];
+		const client = createHostedComputeClient({
+			...options,
+			fetch: async (request) => {
+				requests.push({ url: request.url, body: await request.json() });
+				return Response.json({
+					subscription_id: "csub_a",
+					status: "active",
+					cancel_at_period_end: true,
+					action_state: "applied",
+				});
+			},
+		});
+		const target = { subscription_id: "csub_a" };
+		await client.cancelSubscription(target);
+		await client.resumeSubscription(target);
+		await client.cancelScheduledPlanChange(target);
+		expect(requests).toEqual(
+			[
+				"subscription/cancel",
+				"subscription/resume",
+				"subscription/plan/cancel-scheduled-change",
+			].map((path) => ({ url: `https://compute.example.test/v2/${path}`, body: target })),
+		);
+	});
+
 	test("exposes validated Retry-After guidance without retrying admission in the shared client", async () => {
 		for (const [header, expected] of [
 			["5", 5000],

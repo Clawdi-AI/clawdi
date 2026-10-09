@@ -8,8 +8,10 @@ import type { ComputeRecoveryTarget } from "../api/compute-recovery";
 import type { StorePlatform } from "../api/store-client";
 import type { ComputeSubscriptionManagementResult } from "./compute-subscription-management";
 import {
+	type ComputeSubscriptionActionResult,
 	computeFundingMode,
 	computeFundingSource,
+	isComputeSubscriptionActionUnconfirmed,
 	isComputeSubscriptionRenewing,
 } from "./compute-subscriptions";
 import {
@@ -245,4 +247,82 @@ export function deploymentDeleteSubscriptionPolicy(deployment: DeleteTarget | nu
 		defaultChoice: fundingMode === "included_basic" ? "cancel_subscription" : "keep_subscription",
 		storeNotice: null,
 	};
+}
+
+export function scheduledPlanCancellationNotice(result: ComputeSubscriptionActionResult): {
+	kind: "success" | "info";
+	title: string;
+	description: string;
+} {
+	switch (result.action_state) {
+		case "removed":
+			return {
+				kind: "success",
+				title: "Scheduled plan change canceled",
+				description: "Your current plan will stay in place.",
+			};
+		case "pending":
+			return {
+				kind: "info",
+				title: "Cancellation is still processing",
+				description:
+					"The scheduled plan change is still being removed. Subscription details will refresh automatically.",
+			};
+		case "reconciling":
+			return {
+				kind: "info",
+				title: "Subscription details are updating",
+				description:
+					"The cancellation was accepted, but subscription details are still updating. Check again in a moment.",
+			};
+		default:
+			return {
+				kind: "info",
+				title: "Cancellation status is still updating",
+				description: "Refresh the subscription details before trying again.",
+			};
+	}
+}
+
+export function subscriptionMutationNotice(
+	result: ComputeSubscriptionActionResult,
+	action: "cancel" | "resume",
+	successDescription?: string,
+): { kind: "success" | "info"; title: string; description?: string } {
+	const confirmed =
+		action === "cancel"
+			? result.cancel_at_period_end || result.status === "canceled"
+			: !result.cancel_at_period_end && ["active", "trialing", "past_due"].includes(result.status);
+	if (isComputeSubscriptionActionUnconfirmed(result) || !confirmed) {
+		return {
+			kind: "info",
+			title: action === "cancel" ? "Cancellation is still processing" : "Renewal is still updating",
+			description: "Check the latest subscription details in a moment before trying again.",
+		};
+	}
+	return {
+		kind: "success",
+		title:
+			action === "resume"
+				? "Subscription renewal restored"
+				: result.cancel_at_period_end
+					? "Cancellation scheduled"
+					: "Subscription canceled",
+		description: successDescription,
+	};
+}
+
+/** Labels for the card/Wallet subscription commands shared by Web and the app. */
+export const computeSubscriptionActionCopy = {
+	resume: "Keep subscription",
+	cancel: "Cancel subscription",
+	endTrial: "End trial now",
+	cancelScheduledChange: "Cancel scheduled change",
+	cancelFailed: "Couldn't cancel subscription",
+	resumeFailed: "Couldn't resume subscription",
+	cancelScheduledChangeFailed: "Couldn't cancel scheduled plan change",
+} as const;
+
+export function computeSubscriptionCancelTitle(planLabel: string): string {
+	return `Cancel ${planLabel} subscription?`;
 }

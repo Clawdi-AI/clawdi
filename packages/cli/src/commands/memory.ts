@@ -2,7 +2,7 @@ import { findLikelySecret, formatSecretMemoryWarning } from "@clawdi/shared";
 import chalk from "chalk";
 import { ApiClient, unwrap } from "../lib/api-client";
 import type { Memory } from "../lib/api-schemas";
-import { parsePositiveInteger } from "../lib/cli-options";
+import { parsePositiveInteger, requireUuid } from "../lib/cli-options";
 import { commandResult, emit, message, wantsJson } from "../lib/command-output";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { requireAuth } from "../lib/require-auth";
@@ -132,6 +132,7 @@ export async function memoryAdd(content: string, opts: { category?: string; json
 
 export async function memoryRm(id: string, opts: { yes?: boolean; json?: boolean } = {}) {
 	requireAuth();
+	requireUuid(id, "Memory ID");
 	if (
 		!(await confirmOrRequireYes(`Delete memory ${id}?`, {
 			yes: opts.yes,
@@ -149,6 +150,7 @@ export async function memoryRm(id: string, opts: { yes?: boolean; json?: boolean
 
 export async function memoryUpdate(id: string, content: string, opts: { json?: boolean } = {}) {
 	requireAuth();
+	requireUuid(id, "Memory ID");
 	if (!content.trim() || content.length > 100_000) {
 		throw new Error("Memory content must contain text and be at most 100000 characters.");
 	}

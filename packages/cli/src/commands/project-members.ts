@@ -1,6 +1,6 @@
 import chalk from "chalk";
+import { requireUuid } from "../lib/cli-options";
 import { emit } from "../lib/command-output";
-
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -21,7 +21,11 @@ async function fetchMembers(
 	apiKey: string,
 	projectId: string,
 ): Promise<MemberRow[]> {
-	return authedJson<MemberRow[]>(apiUrl, apiKey, `/v1/projects/${projectId}/members`);
+	return authedJson<MemberRow[]>(
+		apiUrl,
+		apiKey,
+		`/v1/projects/${encodeURIComponent(projectId)}/members`,
+	);
 }
 
 export async function projectMembersCommand(
@@ -59,16 +63,18 @@ export async function projectMembersCommand(
 		) {
 			return;
 		}
+		const memberUserId = requireUuid(matches[0].user_id, "Member user ID");
 		const removed = await authedJson<{ status: string }>(
 			ctx.apiUrl,
 			ctx.apiKey,
-			`/v1/projects/${projectId}/members/${matches[0].user_id}`,
+			`/v1/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(memberUserId)}`,
 			{ method: "DELETE" },
 		);
 		if (opts.json) {
 			emit({
+				schemaVersion: "clawdi.projectMembers.v1",
 				project_id: projectId,
-				removed_user_id: matches[0].user_id,
+				removed_user_id: memberUserId,
 				...removed,
 			});
 			return;
@@ -80,7 +86,7 @@ export async function projectMembersCommand(
 
 	const members = await fetchMembers(ctx.apiUrl, ctx.apiKey, projectId);
 	if (opts.json) {
-		emit({ project_id: projectId, members });
+		emit({ schemaVersion: "clawdi.projectMembers.v1", project_id: projectId, members });
 		return;
 	}
 	if (members.length === 0) {
@@ -127,11 +133,11 @@ export async function projectLeaveCommand(
 	const result = await authedJson<{ status: string }>(
 		ctx.apiUrl,
 		ctx.apiKey,
-		`/v1/projects/${projectId}/leave`,
+		`/v1/projects/${encodeURIComponent(projectId)}/leave`,
 		{ method: "POST" },
 	);
 	if (opts.json) {
-		emit({ project_id: projectId, ...result });
+		emit({ schemaVersion: "clawdi.projectLeave.v1", project_id: projectId, ...result });
 		return;
 	}
 	console.log(`${chalk.green("✓")} Left ${projectArg}.`);
@@ -160,9 +166,11 @@ export async function projectUnshareCommand(
 		links_revoked: number;
 		members_removed: number;
 		invitations_cancelled: number;
-	}>(ctx.apiUrl, ctx.apiKey, `/v1/projects/${projectId}/unshare`, { method: "POST" });
+	}>(ctx.apiUrl, ctx.apiKey, `/v1/projects/${encodeURIComponent(projectId)}/unshare`, {
+		method: "POST",
+	});
 	if (opts.json) {
-		emit({ project_id: projectId, ...result });
+		emit({ schemaVersion: "clawdi.projectUnshare.v1", project_id: projectId, ...result });
 		return;
 	}
 	console.log(`${chalk.green("✓")} Stopped project sharing for ${projectArg}.`);

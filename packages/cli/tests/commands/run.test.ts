@@ -742,200 +742,6 @@ describe("run command project folder selection", () => {
 		expect(calls[0].env.PATH).toBe("/usr/local/bin:/usr/bin");
 	});
 
-	it("does not inject cloud-managed AI provider keys into hosted runtime commands", async () => {
-		const serviceStateRoot = join(tmpRoot, "var", "lib", "clawdi");
-		const runRoot = join(tmpRoot, "run", "clawdi");
-		const egressProfileBundle = join(tmpRoot, "run", "clawdi", "egress", "profiles.json");
-		const catalogDir = join(fakeClawdiHome, "ai-providers");
-		mkdirSync(join(tmpRoot, "run", "clawdi", "egress"), { recursive: true });
-		mkdirSync(catalogDir, { recursive: true });
-		writeFileSync(
-			egressProfileBundle,
-			JSON.stringify({
-				schemaVersion: "clawdi.egressProfiles.v1",
-				generatedAt: "2026-06-05T00:00:00Z",
-				generation: 1,
-				instanceId: "iid_test",
-				profiles: [],
-			}),
-		);
-		writeFileSync(
-			join(catalogDir, "catalog.json"),
-			JSON.stringify({
-				schema_version: 1,
-				providers: [
-					{
-						id: "managed-openai",
-						type: "openai",
-						label: "Managed OpenAI",
-						base_url: "https://provider.test/v1",
-						default_model: "gpt-5.5",
-						api_mode: "openai_responses",
-						auth: { type: "api_key", source: "managed" },
-						managed_by: "user",
-						runtime_env_name: "CLAWDI_OPENAI_API_KEY",
-					},
-				],
-				defaults: { chat_provider_id: "managed-openai" },
-			}),
-		);
-		const { calls, spawnImpl } = recordSpawn();
-		const { captured, restore } = mockFetch([
-			{
-				method: "POST",
-				path: "/v1/vault/resolve",
-				response: () => jsonResponse({ RUNTIME_VALUE: "from-vault" }),
-			},
-		]);
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = serviceStateRoot;
-		process.env.CLAWDI_RUN_DIR = runRoot;
-		try {
-			await run(["codex", "exec", "hello"], { allVaultEnv: true, projectFolder: false }, spawnImpl);
-		} finally {
-			restore();
-		}
-
-		expect(captured.map((request) => request.path)).toEqual(["/v1/vault/resolve"]);
-		expect(calls).toHaveLength(1);
-		expect(calls[0].env.RUNTIME_VALUE).toBe("from-vault");
-		expect(calls[0].env.CLAWDI_OPENAI_API_KEY).toBeUndefined();
-		expect(calls[0].env.CLAWDI_EGRESS_SECRET_FILE).toBeUndefined();
-	});
-
-	it("uses the linked Project folder when resolving vault env", async () => {
-		linkCurrentProjectFolder();
-		const { calls, spawnImpl } = recordSpawn();
-		const { captured, restore } = mockFetch([
-			{
-				method: "POST",
-				path: "/v1/vault/resolve",
-				response: () => jsonResponse({ DEPLOY_TOKEN: "vault-secret" }),
-			},
-		]);
-		const origLog = console.log;
-		const lines: string[] = [];
-		console.log = (...args: unknown[]) => {
-			lines.push(args.map(String).join(" "));
-		};
-
-		try {
-			await run(["npm", "run", "deploy"], { allVaultEnv: true }, spawnImpl);
-		} finally {
-			console.log = origLog;
-			restore();
-		}
-
-		expect(captured).toHaveLength(1);
-		expect(captured[0].method).toBe("POST");
-		expect(captured[0].path).toContain("/v1/vault/resolve");
-		expect(captured[0].path).toContain("project_id=project-linked");
-		expect(calls).toHaveLength(1);
-		expect(calls[0]).toMatchObject({ command: "npm", args: ["run", "deploy"] });
-		expect(calls[0].env.DEPLOY_TOKEN).toBe("vault-secret");
-
-		const out = lines.join("\n");
-		expect(out).toContain("Using project engineering");
-		expect(out).toContain("Injected 1 vault secrets");
-		expect(out).not.toContain("vault-secret");
-	});
-
-	it("skips linked-folder lookup when --no-project-folder is passed", async () => {
-		linkCurrentProjectFolder();
-		const { calls, spawnImpl } = recordSpawn();
-		const { captured, restore } = mockFetch([
-			{
-				method: "POST",
-				path: "/v1/vault/resolve",
-				response: () => jsonResponse({ API_TOKEN: "from-default-project" }),
-			},
-		]);
-		const origLog = console.log;
-		const lines: string[] = [];
-		console.log = (...args: unknown[]) => {
-			lines.push(args.map(String).join(" "));
-		};
-
-		try {
-			await run(["node", "server.js"], { projectFolder: false, allVaultEnv: true }, spawnImpl);
-		} finally {
-			console.log = origLog;
-			restore();
-		}
-
-		expect(captured).toHaveLength(1);
-		expect(captured[0].path).toContain("/v1/vault/resolve");
-		expect(captured[0].path).not.toContain("project_id=");
-		expect(calls).toHaveLength(1);
-		expect(calls[0]).toMatchObject({ command: "node", args: ["server.js"] });
-		expect(calls[0].env.API_TOKEN).toBe("from-default-project");
-		expect(lines.join("\n")).not.toContain("Using project");
-	});
-
-	it("runs without vault injection when resolve returns an invalid body", async () => {
-		const { calls, spawnImpl } = recordSpawn();
-		const { restore } = mockFetch([
-			{
-				method: "POST",
-				path: "/v1/vault/resolve",
-				response: () =>
-					new Response("null", {
-						status: 200,
-						headers: { "content-type": "application/json" },
-					}),
-			},
-		]);
-		const origError = console.error;
-		const lines: string[] = [];
-		console.error = (...args: unknown[]) => {
-			lines.push(args.map(String).join(" "));
-		};
-
-		try {
-			await run(["node", "server.js"], { projectFolder: false, allVaultEnv: true }, spawnImpl);
-		} finally {
-			console.error = origError;
-			restore();
-		}
-
-		expect(calls).toHaveLength(1);
-		expect(calls[0]).toMatchObject({ command: "node", args: ["server.js"] });
-		expect(lines.join("\n")).toContain("Could not fetch vault secrets");
-		expect(lines.join("\n")).not.toContain("Injected");
-	});
-
-	it("explains shared project backend drift when all-vault resolve returns project not found", async () => {
-		const { calls, spawnImpl } = recordSpawn();
-		const { restore } = mockFetch([
-			{
-				method: "POST",
-				path: "/v1/vault/resolve",
-				response: () => jsonResponse({ detail: "project not found" }, 404),
-			},
-		]);
-		const origError = console.error;
-		const lines: string[] = [];
-		console.error = (...args: unknown[]) => {
-			lines.push(args.map(String).join(" "));
-		};
-
-		try {
-			await run(["node", "server.js"], { projectFolder: false, allVaultEnv: true }, spawnImpl);
-		} finally {
-			console.error = origError;
-			restore();
-		}
-
-		expect(calls).toHaveLength(1);
-		const out = lines.join("\n");
-		expect(out).toContain("Could not fetch vault secrets");
-		expect(out).toContain("Vault resolve could not access the selected project.");
-		expect(out).toContain("shared project");
-		expect(out).toContain("update the Clawdi backend");
-		expect(out).not.toContain("API error 404");
-		expect(out).not.toContain("Injected");
-	});
-
 	it("resolves clawdi references from env files without all-vault injection", async () => {
 		const envFile = join(tmpRoot, ".env");
 		writeFileSync(
@@ -1127,27 +933,18 @@ describe("run command project folder selection", () => {
 						},
 					}),
 			},
-			{
-				method: "POST",
-				path: "/v1/vault/resolve",
-				response: () => jsonResponse({ OPENAI_API_KEY: "sk-broad" }),
-			},
 		]);
 		const origLog = console.log;
 		console.log = () => {};
 
 		try {
-			await run(
-				["node", "server.js"],
-				{ envFile: [envFile], projectFolder: false, allVaultEnv: true },
-				spawnImpl,
-			);
+			await run(["node", "server.js"], { envFile: [envFile], projectFolder: false }, spawnImpl);
 		} finally {
 			console.log = origLog;
 			restore();
 		}
 
-		expect(captured).toHaveLength(2);
+		expect(captured).toHaveLength(1);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].env.OPENAI_API_KEY).toBe("sk-explicit");
 	});

@@ -84,14 +84,7 @@ Examples:
   $ clawdi daemon rotate-token                  # rotate the local control token
   $ clawdi daemon status --agent claude_code    # health + supervisor state`,
 		)
-		.action(async (opts) => {
-			// `clawdi daemon` with no
-			// subcommand still runs the daemon in the foreground for
-			// backward compatibility. `daemon run` is the clearer
-			// spelling for new users.
-			const h = await get();
-			await h.serve(opts);
-		});
+		.action((_opts, command) => command.help());
 	serveCmd
 		.command("run")
 		.description("Run the sync daemon in the foreground")

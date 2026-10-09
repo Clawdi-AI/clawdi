@@ -3,7 +3,7 @@ import type { DeployComponents, DeploymentRead } from "../api";
 type Schemas = DeployComponents["schemas"];
 type BillingOffer = Schemas["V2BillingOfferResponse"];
 type ComputePlanSlug = Schemas["V2HostedDeployRequest"]["compute_plan_slug"];
-type ComputeSubscriptionActionResult = Schemas["V2ComputeSubscriptionActionResponse"];
+export type ComputeSubscriptionActionResult = Schemas["V2ComputeSubscriptionActionResponse"];
 type ComputeSubscriptionListItem = Schemas["V2ComputeSubscriptionListItem"];
 type Plan = Schemas["V2PlanResponse"];
 type HostedComputeSubscription = NonNullable<

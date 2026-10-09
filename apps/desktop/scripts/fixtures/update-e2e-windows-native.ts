@@ -30,6 +30,7 @@ if (args[0] === "--serve") {
 		case "auth status":
 			console.log(
 				JSON.stringify({
+					schemaVersion: "clawdi.authStatus.v1",
 					authenticated: true,
 					credentialType: "clerk-oauth",
 					user: { id: "update-e2e" },
@@ -39,6 +40,7 @@ if (args[0] === "--serve") {
 		case "agent detect":
 			console.log(
 				JSON.stringify({
+					schemaVersion: "clawdi.agentDetection.v1",
 					agents: [
 						{
 							type: "claude_code",

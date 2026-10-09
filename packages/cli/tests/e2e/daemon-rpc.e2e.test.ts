@@ -134,9 +134,11 @@ if (process.platform !== "win32") {
 				);
 				expect(defaultPing.code).toBe(0);
 				expect(defaultPing.stderr).toBe("");
-				const defaultResult = JSON.parse(defaultPing.stdout) as { pid?: number; version?: string };
-				expect(defaultResult.pid).toBe(daemon.pid);
-				expect(defaultResult.version).toBeString();
+				const defaultResult = JSON.parse(defaultPing.stdout);
+				expect(defaultResult.schemaVersion).toBe("clawdi.daemonRpc.v1");
+				expect(defaultResult.method).toBe("ping");
+				expect(defaultResult.result.pid).toBe(daemon.pid);
+				expect(defaultResult.result.version).toBeString();
 
 				const httpPing = await runCli(
 					fixture,
@@ -145,9 +147,11 @@ if (process.platform !== "win32") {
 				);
 				expect(httpPing.code).toBe(0);
 				expect(httpPing.stderr).toBe("");
-				const httpResult = JSON.parse(httpPing.stdout) as { pid?: number; version?: string };
-				expect(httpResult.pid).toBe(daemon.pid);
-				expect(httpResult.version).toBe(defaultResult.version);
+				const httpResult = JSON.parse(httpPing.stdout);
+				expect(httpResult.schemaVersion).toBe("clawdi.daemonRpc.v1");
+				expect(httpResult.method).toBe("ping");
+				expect(httpResult.result.pid).toBe(daemon.pid);
+				expect(httpResult.result.version).toBe(defaultResult.result.version);
 
 				const tokenPath = join(fixture.stateDir, "control", "control-token");
 				const oldToken = readFileSync(tokenPath, "utf-8").trim();
@@ -158,11 +162,13 @@ if (process.platform !== "win32") {
 				);
 				expect(rotate.code).toBe(0);
 				expect(rotate.stderr).toBe("");
-				const rotateResult = JSON.parse(rotate.stdout) as { token?: string; rotated?: boolean };
-				expect(rotateResult.rotated).toBe(true);
-				expect(rotateResult.token).toBeString();
-				expect(rotateResult.token).not.toBe(oldToken);
-				expect(readFileSync(tokenPath, "utf-8").trim()).toBe(rotateResult.token);
+				const rotateResult = JSON.parse(rotate.stdout);
+				expect(rotateResult.schemaVersion).toBe("clawdi.daemonRpc.v1");
+				expect(rotateResult.method).toBe("rotate_token");
+				expect(rotateResult.result.rotated).toBe(true);
+				expect(rotateResult.result.token).toBeString();
+				expect(rotateResult.result.token).not.toBe(oldToken);
+				expect(readFileSync(tokenPath, "utf-8").trim()).toBe(rotateResult.result.token);
 				const staleToken = await postRpcWithToken(rpcPort, oldToken);
 				expect(staleToken.status).toBe(401);
 

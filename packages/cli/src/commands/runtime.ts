@@ -607,7 +607,7 @@ const NO_SYSTEMD_APPLY = {
 
 function emitRuntimeWatchEvent(event: RuntimeWatchEvent, json: boolean | undefined): void {
 	if (json) {
-		emit(event, false);
+		emit(event);
 		return;
 	}
 	if (event.status === "applied") {

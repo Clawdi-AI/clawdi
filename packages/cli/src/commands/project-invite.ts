@@ -43,7 +43,7 @@ export async function projectInviteCommand(
 
 	const projectId = await resolveProjectId(apiUrl, apiKey, projectArg);
 	const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
-		`/v1/projects/${projectId}/invitations`,
+		`/v1/projects/${encodeURIComponent(projectId)}/invitations`,
 		{
 			method: "POST",
 			headers: {
@@ -55,7 +55,7 @@ export async function projectInviteCommand(
 
 	if (r.status === 400 || r.status === 404 || r.status === 409) {
 		const body = (await r.json().catch(() => ({}))) as {
-			detail?: { error?: string; message?: string };
+			detail?: { error?: string };
 		};
 		const err = body.detail?.error;
 		if (err === "already_owner") {
@@ -73,7 +73,7 @@ export async function projectInviteCommand(
 		} else if (err === "display_name_required") {
 			console.error(chalk.red("Set a display name on your profile first — invitees see the name."));
 		} else {
-			console.error(chalk.red(`Failed: ${body.detail?.message ?? r.status}`));
+			throw new ApiError({ status: r.status, body: JSON.stringify(body), hint: "" });
 		}
 		process.exitCode = 1;
 		return;

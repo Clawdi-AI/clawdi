@@ -1,4 +1,5 @@
 import posthog from "posthog-js";
+import { isOverviewPath } from "@/lib/navigation-model";
 
 const POSTHOG_PROXY_PATH = "/_cdi/px";
 const POSTHOG_PROPERTY_DENYLIST = ["auth", "cookie", "password", "secret"];
@@ -275,7 +276,7 @@ export function featureForPath(pathname: string): ProductFeature | null {
 	if (pathname === "/sign-up" || pathname.startsWith("/sign-up/")) return "sign_up";
 	if (pathname === "/sign-in" || pathname.startsWith("/sign-in/")) return "sign_in";
 	if (pathname === "/deploy") return "deploy";
-	if (pathname === "/" || pathname === "/dashboard") return "overview";
+	if (isOverviewPath(pathname)) return "overview";
 	const segments = pathname.split("/");
 	for (const segment of segments.slice(1).reverse()) {
 		switch (segment) {

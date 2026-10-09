@@ -21,7 +21,7 @@ export async function readCommand(
 		if (opts.dryRun) {
 			const hit = await previewClawdiReference(reference, applyLinkedProjectContext(opts));
 			if (opts.json) {
-				emit(hit);
+				emit({ schemaVersion: "clawdi.read.v1", ...hit });
 				return;
 			}
 			console.log(chalk.green(`✓ Reference resolves from ${hit.source_alias} (redacted)`));
@@ -30,7 +30,7 @@ export async function readCommand(
 		}
 		const hit = await resolveClawdiReference(reference, applyLinkedProjectContext(opts));
 		if (opts.json) {
-			emit(hit);
+			emit({ schemaVersion: "clawdi.read.v1", ...hit });
 			return;
 		}
 		console.log(hit.value);

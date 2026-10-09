@@ -157,13 +157,13 @@ export class DesktopCliService {
 	async detectAgents(): Promise<DesktopDetectedAgent[]> {
 		const cli = this.cli();
 		const result = await this.runJson(cli, ["agent", "detect", "--json"]);
-		if (!Array.isArray(result.agents))
+		if (result.schemaVersion !== "clawdi.agentDetection.v1" || !Array.isArray(result.agents))
 			throw new Error("Clawdi returned invalid agent detection data.");
 		return result.agents.map(parseDetectedAgent);
 	}
 
 	async listReconnectableAgents(): Promise<DesktopReconnectCandidate[]> {
-		const result = await this.runJson(this.cli(), ["agent", "reconnect", "--desktop-list"]);
+		const result = await this.runJson(this.cli(), ["agent", "reconnect", "--json"]);
 		if (
 			result.schemaVersion !== "clawdi.agentReconnectCandidates.v1" ||
 			!Array.isArray(result.agents)
@@ -449,6 +449,8 @@ export class DesktopCliService {
 		} catch (cause) {
 			throw new DesktopCliError("Couldn't read the local sign-in state.", { cause });
 		}
+		if (result.schemaVersion !== "clawdi.authStatus.v1")
+			throw new Error("Clawdi returned invalid authentication data.");
 		const authenticated =
 			result.authenticated === true && readString(result.credentialType) === "clerk-oauth";
 		const email = isRecord(result.user) ? readString(result.user.email) : null;

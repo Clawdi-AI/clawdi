@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentReconnect } from "../../src/commands/agent-reconnect";
+import { isAuthorizationRequired } from "../../src/lib/errors";
 import { jsonResponse, mockFetch } from "./helpers";
 
 const tmpRoot = mkdtempSync(join(tmpdir(), "clawdi-agent-reconnect-test-"));
@@ -59,6 +60,25 @@ afterEach(() => {
 });
 
 describe("agent reconnect", () => {
+	it("preserves sign-in-required errors from the agent listing", async () => {
+		const mock = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/agents",
+				response: () => jsonResponse({ detail: "expired" }, 401),
+			},
+		]);
+		restoreFetch = mock.restore;
+		let failure: unknown;
+		try {
+			await agentReconnect(undefined, { json: true });
+		} catch (error) {
+			failure = error;
+		}
+		expect(isAuthorizationRequired(failure)).toBe(true);
+		expect(output).toEqual([]);
+	});
+
 	it("emits the stable Desktop candidate contract without mutating bindings", async () => {
 		const agentId = "00000000-0000-0000-0000-000000000123";
 		const mock = mockFetch([
@@ -78,7 +98,7 @@ describe("agent reconnect", () => {
 		]);
 		restoreFetch = mock.restore;
 
-		await agentReconnect(undefined, { desktopList: true });
+		await agentReconnect(undefined, { json: true });
 
 		expect(JSON.parse(output.join("\n"))).toEqual({
 			schemaVersion: "clawdi.agentReconnectCandidates.v1",
@@ -117,11 +137,11 @@ describe("agent reconnect", () => {
 		]);
 		restoreFetch = mock.restore;
 
-		await agentReconnect(agentId, { agent: "pi", daemon: false });
+		await expect(agentReconnect(agentId, { agent: "pi", daemon: false })).rejects.toThrow(
+			"Confirmation required to reconnect this agent",
+		);
 
 		expect(mock.captured.some((request) => request.method === "POST")).toBe(false);
-		expect(output.some((line) => line.includes("requires explicit confirmation"))).toBe(true);
-		expect(process.exitCode).toBe(1);
 	});
 
 	it("rebuilds the local binding around the current installation identity", async () => {

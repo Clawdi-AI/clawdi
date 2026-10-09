@@ -503,6 +503,7 @@ export async function collectAgentCredentialProfilePayload(
 		// Used by higher-level commands that need one machine-readable JSON envelope.
 	} else if (opts.json) {
 		emit({
+			schemaVersion: "clawdi.agentCredentialsImport.v1",
 			tool,
 			profile,
 			source: opts.source ?? "file",
@@ -629,6 +630,7 @@ export async function materializeAgentCredentialProfilePayload(
 		// Used by provider-bound wrappers that print their own result.
 	} else if (opts.json) {
 		emit({
+			schemaVersion: "clawdi.agentCredentialsMaterialize.v1",
 			tool,
 			profile,
 			dry_run: Boolean(opts.dryRun),

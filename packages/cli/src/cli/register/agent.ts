@@ -1,4 +1,4 @@
-import { type Command, Option } from "commander";
+import type { Command } from "commander";
 import { AGENT_TYPE_HELP_LABEL } from "../../adapters/registry.js";
 import { parsePositiveInteger } from "../../lib/cli-options.js";
 import { collectValues } from "../option-values.js";
@@ -174,7 +174,7 @@ export function registerAgent(program: Command): void {
 		.option("-y, --yes", "Skip confirmation when the target is unambiguous")
 		.option("--confirm-takeover", "Confirm disconnecting a recently active installation")
 		.option("--no-daemon", "Skip installing/starting background sync daemons")
-		.addOption(new Option("--desktop-list").hideHelp())
+		.option("--json", "Output as JSON")
 		.addHelpText(
 			"after",
 			"\nExamples:\n  $ clawdi agent reconnect --agent codex\n  $ clawdi agent reconnect <agent-id>\n  $ clawdi agent reconnect <agent-id> --no-daemon",

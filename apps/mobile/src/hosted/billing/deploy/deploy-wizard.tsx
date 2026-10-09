@@ -1,13 +1,13 @@
 import {
 	buildHostedDeploySubscriptionQuoteRequest,
 	HOSTED_DEPLOY_LANGUAGE_OPTIONS,
-	type HostedDeploySubscriptionQuote,
 	type HostedDeploySubscriptionSelection,
 	type HostedDeployWizardDraft,
 	hostedDeployAgentNameAfterRuntimeChange,
 	hostedDeployRuntimeLabel,
 	projectHostedDeployRequest,
 	validateAndBuildHostedDeployRequest,
+	validateHostedDeployPersona,
 } from "@clawdi/shared/api";
 import {
 	agentsIndexClasses,
@@ -27,26 +27,43 @@ import {
 	explicitPlanOffers,
 	firstModelForProvider,
 	formatUsdExact,
+	hostedDeployLanguageFromLocales,
+	isValidTimezone,
+	mergeTimezoneOptions,
 	modelDisplayName,
 	modelOptionsForProvider,
-	negativeDecimalMagnitude,
 	planOffers,
+	providerAvailabilityIssue,
 	providerDisplayLabel,
+	resolvedLocale,
+	resolvedTimezone,
+	reusableSubscriptionChoiceView,
 	runtimeBlurb,
+	storeProviderLabel,
 	subscriptionSourceCopy,
+	supportedTimezones,
+	timezoneLabel,
+	type WalletDebitSummary,
+	walletDebitShortfallUsd,
+	walletDeployAmountPresentation,
 } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Crypto from "expo-crypto";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Cpu, CreditCard, Plus, Rocket, Store, WalletCards, Zap } from "lucide-react-native";
-import { useEffect, useRef, useState } from "react";
+import {
+	Cpu,
+	CreditCard,
+	Plus,
+	Rocket,
+	Smartphone,
+	Store,
+	WalletCards,
+	Zap,
+} from "lucide-react-native";
+import { useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AddAgentSetup } from "@/components/dashboard/add-agent-setup";
-import {
-	ActionButton,
-	ChoiceSelect as NativePicker,
-	NativeSwitch,
-} from "@/components/dashboard/controls";
+import { ActionButton, ChoiceSelect as NativePicker } from "@/components/dashboard/controls";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CHOICE_GRID_CLASS,
@@ -62,10 +79,20 @@ import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Input as AppTextInput } from "@/components/ui/input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectSub,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Text as AppText } from "@/components/ui/text";
 import { AppScrollView, AppView } from "@/components/ui/view";
-import { WebText, WebView, webView } from "@/components/ui/web-layout";
+import { WebIcon, WebText, WebView, webView } from "@/components/ui/web-layout";
 import { formatDate } from "@/hooks/cloud-inventory";
+import { WalletDebitEquation } from "@/hosted/billing/components/wallet-debit-equation";
 import {
 	admitWithStoreSlotRefresh,
 	type CreationAttempt,
@@ -76,8 +103,11 @@ import {
 	isDefinitiveAdmissionRejection,
 	offeredQuoteSelections,
 	type ReservedDeployResume,
+	type ReusableSubscriptionChoice,
 	reservedDeployResume,
 	retryStoreAdmission,
+	reusableStoreRowPlan,
+	reusableSubscriptionChoice,
 	serverAllowsEntitledCreation,
 	storeAdmissionMessageKey,
 	storeAdmissionRecoveryAttempt,
@@ -85,7 +115,7 @@ import {
 	validationTranslationKeys,
 } from "@/hosted/billing/deploy/deploy-request";
 import { readHostedStoreFunding } from "@/hosted/billing/deploy/store-funding";
-import { nextBillingCursor, subscriptionPrice, uniqueBillingItems } from "@/hosted/billing/format";
+import { nextBillingCursor, uniqueBillingItems } from "@/hosted/billing/format";
 import { AddCreditsAction } from "@/hosted/billing/store/add-credits";
 import {
 	useComputePaywallPurchase,
@@ -121,14 +151,36 @@ import { StorePurchaseError, storePurchaseError } from "@/platform/store/store-e
 import { currentStorePlatform } from "@/platform/store/store-platform";
 import { useMobileStore, useStoreSurfaces } from "@/platform/store/store-provider";
 
-const initialDraft: HostedDeployWizardDraft = {
-	runtime: "hermes",
-	computePlanSlug: "compute_basic",
-	agentName: "Hermes",
-	language: "en",
-	timezone: "UTC",
-	ai: { mode: "managed", model: "" },
-};
+/** A new draft seeded like Web: the device language and timezone, when supported. */
+function newDraft(): HostedDeployWizardDraft {
+	return {
+		runtime: "hermes",
+		computePlanSlug: "compute_basic",
+		agentName: "Hermes",
+		language: hostedDeployLanguageFromLocales([resolvedLocale()]),
+		timezone: resolvedTimezone(),
+		ai: { mode: "managed", model: "" },
+	};
+}
+
+/** IANA zones grouped by region for a two-level native menu; "UTC" stays top-level. */
+function timezoneMenuGroups(options: readonly string[]) {
+	const groups = new Map<string, string[]>();
+	for (const timezone of options) {
+		const slash = timezone.indexOf("/");
+		const region = slash > 0 ? timezone.slice(0, slash) : "";
+		groups.set(region, [...(groups.get(region) ?? []), timezone]);
+	}
+	return [...groups.entries()];
+}
+
+function providerChoiceFor(ai: HostedDeployWizardDraft["ai"]): string {
+	return ai.mode === "managed"
+		? "__managed__"
+		: ai.mode === "unmanaged"
+			? "__unmanaged__"
+			: ai.providerId;
+}
 
 export function CreateAgentScreen() {
 	const t = useI18n();
@@ -176,8 +228,10 @@ function CreationForm() {
 	const fundingDefault: HostedDeploySubscriptionSelection["fundingSource"] = surfaces.cardBilling
 		? "stripe"
 		: "wallet";
-	const [draft, setDraft] = useState(initialDraft);
+	const [draft, setDraft] = useState(newDraft);
 	const [source, setSource] = useState<"included" | "existing" | "new" | "store" | null>(null);
+	// The reusable subscription row chosen for `existing`.
+	const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
 	// Store builds: subscribe through the official Paywall when the M1 gate allows it.
 	const storeGate = useComputePurchaseGate();
 	const purchaseCompute = useComputePaywallPurchase();
@@ -189,9 +243,7 @@ function CreationForm() {
 	const [storageKey, setStorageKey] = useState<string | null>(null);
 	const [storageReady, setStorageReady] = useState(false);
 	const [storageError, setStorageError] = useState(false);
-	const [confirmed, setConfirmed] = useState(false);
 	const [message, setMessage] = useState("");
-	const [quote, setQuote] = useState<HostedDeploySubscriptionQuote | null>(null);
 	const [quoteSelection, setQuoteSelection] = useState<HostedDeploySubscriptionSelection | null>(
 		null,
 	);
@@ -250,9 +302,11 @@ function CreationForm() {
 				setAttempt(saved);
 				if (saved) {
 					setDraft(saved.draft);
-					setProviderChoice(saved.draft.ai.mode === "managed" ? "__managed__" : "__unmanaged__");
+					setProviderChoice(providerChoiceFor(saved.draft.ai));
 					// A store-funded request stays on the store path until its purchase is funded.
-					setSource(saved.storeFunding ? "store" : "existing");
+					// Other saved requests replay as saved; only an exact subscription is shown.
+					setSource(saved.storeFunding ? "store" : saved.subscription ? "existing" : null);
+					setSubscriptionId(saved.subscription?.id ?? null);
 				}
 				setStorageReady(true);
 			} catch {
@@ -304,6 +358,59 @@ function CreationForm() {
 				option.planSlug === quoteSelection.planSlug &&
 				option.billingTermMonths === quoteSelection.billingTermMonths,
 		);
+	const selectedReusable =
+		source === "existing"
+			? (reusableItems.find((item) => item.subscription_id === subscriptionId) ?? null)
+			: null;
+	// Like Web, only a Wallet subscription is quoted (exact debit); card shows the plan price.
+	const walletQuoteSelection =
+		source === "new" && quoteAvailable && quoteSelection?.fundingSource === "wallet"
+			? quoteSelection
+			: null;
+	const quote = useQuery({
+		queryKey: accountQueryKey(
+			scope,
+			"creation-quote",
+			walletQuoteSelection?.planSlug,
+			walletQuoteSelection?.billingTermMonths,
+		),
+		queryFn: ({ signal }) =>
+			read((s) => {
+				if (!compute || !walletQuoteSelection) throw new Error("Quote unavailable");
+				return compute.quoteSubscription(
+					buildHostedDeploySubscriptionQuoteRequest(walletQuoteSelection),
+					s,
+				);
+			}, signal),
+		enabled: scope.isReady && Boolean(compute) && walletQuoteSelection !== null,
+		staleTime: 30_000,
+		retry: false,
+	});
+	const walletDebit: WalletDebitSummary | null =
+		walletQuoteSelection &&
+		quote.data?.funding_source === "wallet" &&
+		quote.data.balance_before_usd &&
+		quote.data.debit_amount_usd &&
+		quote.data.balance_after_usd
+			? {
+					balanceBeforeUsd: quote.data.balance_before_usd,
+					debitAmountUsd: quote.data.debit_amount_usd,
+					balanceAfterUsd: quote.data.balance_after_usd,
+				}
+			: null;
+	const formatWalletAmount = (usd: string) =>
+		surfaces.creditUnits ? formatCredits(usd, credits) : formatUsdExact(usd);
+	const personaIssues = validateHostedDeployPersona({
+		agentName: draft.agentName,
+		language: draft.language,
+		timezone: draft.timezone,
+	});
+	// The full IANA list is validated zone by zone; build it once per form.
+	const [runtimeTimezoneList] = useState(() => supportedTimezones());
+	const timezoneOptions = mergeTimezoneOptions(
+		runtimeTimezoneList,
+		draft.timezone ? [draft.timezone] : [],
+	);
 	const current = (owns: () => boolean) => owns() && scope.isCurrent() && !scope.signal.aborted;
 	// The store purchase for the saved or reserved request exists; admission selects its store row.
 	const storeAdmission =
@@ -357,9 +464,10 @@ function CreationForm() {
 				!hosted ||
 				!storageReady ||
 				!storageKey ||
-				(!confirmed && !storeAdmission) ||
-				(providerChoice !== "__managed__" && providerChoice !== "__unmanaged__") ||
-				(source !== "included" && source !== "existing" && !storeAdmission) ||
+				(!attempt &&
+					source !== "included" &&
+					!(source === "existing" && selectedReusable) &&
+					!storeAdmission) ||
 				!eligible ||
 				!current(owns)
 			)
@@ -395,9 +503,40 @@ function CreationForm() {
 				await finishReserved(resuming, owns);
 				return;
 			}
+			if (!attempt && selectedReusable?.funding_source === "store") {
+				// Re-read the slot at the mutation boundary; only an exact, unbound match is admitted.
+				const platform = currentStorePlatform();
+				const bootstrap =
+					storeClient && platform ? await read((s) => storeClient.bootstrap(platform, s)) : null;
+				if (!current(owns)) return;
+				if (
+					reusableStoreRowPlan(selectedReusable, bootstrap?.compute_slot, productPlan) !==
+					draft.computePlanSlug
+				) {
+					setSubscriptionId(null);
+					setMessage(t("creation.subscriptionUnavailable"));
+					return;
+				}
+				const prepared = prepareAttempt(draft);
+				// Store funding admits with compute_source "store", exactly like a funded purchase.
+				if (prepared) await submit({ ...prepared, storeFunding: "funded" }, false, owns);
+				return;
+			}
+			const chosen =
+				!attempt && selectedReusable ? reusableSubscriptionChoice(selectedReusable) : null;
+			if (
+				chosen &&
+				!refreshedReusable?.data?.pages.some((page) =>
+					page.items?.some((item) => item.subscription_id === chosen.id),
+				)
+			) {
+				setSubscriptionId(null);
+				setMessage(t("creation.subscriptionUnavailable"));
+				return;
+			}
 			// A saved request is already validated. Catalog changes must not rewrite
 			// or prevent same-key replay of an uncertain, previously admitted POST.
-			const saved = attempt ?? prepareAttempt(draft);
+			const saved = attempt ?? prepareAttempt(draft, undefined, chosen ?? undefined);
 			if (saved) await submit(saved, saved === attempt, owns);
 		});
 	const finishReserved = (reservedRequest: ReservedDeployResume, owns: () => boolean) =>
@@ -419,8 +558,13 @@ function CreationForm() {
 	const prepareAttempt = (
 		next: HostedDeployWizardDraft,
 		id: string = Crypto.randomUUID(),
+		subscription?: ReusableSubscriptionChoice,
 	): CreationAttempt | null => {
-		const validated = validateAndBuildHostedDeployRequest(next, models);
+		const validated = validateAndBuildHostedDeployRequest(
+			next,
+			models,
+			inventory.data?.providers ?? [],
+		);
 		if (!validated.ok) {
 			setMessage(
 				validated.issues.map((issue) => t(validationTranslationKeys[issue.field])).join("\n"),
@@ -435,6 +579,7 @@ function CreationForm() {
 			id,
 			draft: next,
 			request: { ...validated.request, deploy_request_id: id },
+			...(subscription ? { subscription } : {}),
 		};
 	};
 	/** Explicit admission of a persisted request; the server is the final permission boundary. */
@@ -457,25 +602,42 @@ function CreationForm() {
 			return current(owns) ? bootstrap.compute_slot : null;
 		};
 		try {
+			const subscription = submitting.subscription;
 			// The same request id and payload: hosted admits it at most once.
-			await admitWithStoreSlotRefresh(
-				submitting,
-				() =>
-					read((signal) =>
-						retryStoreAdmission(
-							submitting,
-							(s) => {
-								if (!current(owns)) throw new Error("Creation action expired");
-								return compute.createEntitledDeployment(submitting.request, submitting.id, s, {
-									computeSource: submitting.storeFunding ? "store" : undefined,
-								});
-							},
-							signal,
+			if (subscription)
+				await read((s) => {
+					if (!current(owns)) throw new Error("Creation action expired");
+					return compute.assignReusableSubscription(
+						submitting.request,
+						submitting.id,
+						{
+							subscriptionId: subscription.id,
+							planSlug: subscription.planSlug,
+							billingTermMonths: subscription.billingTermMonths,
+							fundingSource: subscription.fundingSource,
+						},
+						s,
+					);
+				});
+			else
+				await admitWithStoreSlotRefresh(
+					submitting,
+					() =>
+						read((signal) =>
+							retryStoreAdmission(
+								submitting,
+								(s) => {
+									if (!current(owns)) throw new Error("Creation action expired");
+									return compute.createEntitledDeployment(submitting.request, submitting.id, s, {
+										computeSource: submitting.storeFunding ? "store" : undefined,
+									});
+								},
+								signal,
+							),
 						),
-					),
-				readSlot,
-				productPlan,
-			);
+					readSlot,
+					productPlan,
+				);
 		} catch (error) {
 			const storeMessage = storeAdmissionMessageKey(saved, error);
 			if (current(owns) && storeMessage) {
@@ -493,7 +655,10 @@ function CreationForm() {
 				await replaceAttempt(storageKey, submitting, rejected, () => current(owns));
 				if (current(owns)) {
 					setAttempt(rejected);
-					setMessage(t("creation.notAdmitted"));
+					setMessage(
+						t(saved.subscription ? "creation.subscriptionUnavailable" : "creation.notAdmitted"),
+					);
+					if (saved.subscription) void reusable.refetch();
 				}
 			}
 			throw error;
@@ -525,7 +690,6 @@ function CreationForm() {
 				!storageKey ||
 				source !== "store" ||
 				!storeGate.available ||
-				(providerChoice !== "__managed__" && providerChoice !== "__unmanaged__") ||
 				!canStartStorePurchase(attempt) ||
 				!current(owns)
 			)
@@ -644,27 +808,11 @@ function CreationForm() {
 			);
 			await refreshStore({ recover: false });
 		});
-	const requestQuote = () =>
-		action.run(async (owns) => {
-			if (!compute || !quoteSelection || !quoteAvailable) return;
-			const result = await read((s) =>
-				compute.quoteSubscription(buildHostedDeploySubscriptionQuoteRequest(quoteSelection), s),
-			);
-			if (current(owns)) setQuote(result);
-		});
-	// Funding finishes later; re-quote the selection current at that time.
-	const requote = useRef(requestQuote);
-	requote.current = requestQuote;
 	// A Wallet quote below the debit can be funded through the store, then re-quoted.
-	const shortfall =
-		quote?.funding_source === "wallet" && quote.balance_after_usd
-			? negativeDecimalMagnitude(quote.balance_after_usd)
-			: null;
+	const shortfall = walletDebitShortfallUsd(walletDebit);
 	const update = (patch: Partial<HostedDeployWizardDraft>) => {
 		setDraft((previous) => ({ ...previous, ...patch }));
 		setMessage("");
-		setQuote(null);
-		setConfirmed(false);
 	};
 	const locked = action.busy || Boolean(attempt) || !storageReady;
 
@@ -687,9 +835,32 @@ function CreationForm() {
 	const amount = selectedOffer ? cardDeployAmountPresentation(selectedOffer) : null;
 	const aiSelection = draft.ai;
 	const selectedModel =
-		aiSelection.mode === "managed" && models.some((model) => model.id === aiSelection.model)
+		aiSelection.mode === "configured" ||
+		(aiSelection.mode === "managed" && models.some((model) => model.id === aiSelection.model))
 			? aiSelection.model
 			: "";
+	const walletAmount =
+		walletQuoteSelection !== null
+			? walletDeployAmountPresentation({
+					billingTermMonths: walletQuoteSelection.billingTermMonths,
+					state: quote.isError ? "error" : walletDebit ? "ready" : "loading",
+					walletDebit,
+					format: formatWalletAmount,
+				})
+			: null;
+	const personaIssue = personaIssues[0];
+	const blockingReason =
+		attempt || resuming
+			? null
+			: source === null || (source === "existing" && !selectedReusable)
+				? deployFormCopy.chooseSource
+				: personaIssue
+					? t(validationTranslationKeys[personaIssue.field])
+					: source === "new"
+						? t("creation.newUnavailable")
+						: source !== "store" && !eligible
+							? t("creation.blocked")
+							: null;
 	return (
 		<AppView className="flex-1">
 			<AppScrollView
@@ -734,7 +905,24 @@ function CreationForm() {
 										key={runtime}
 										selected={draft.runtime === runtime}
 										disabled={locked}
-										onClick={() =>
+										onClick={() => {
+											const provider =
+												draft.ai.mode === "configured"
+													? inventory.data?.providers.find(
+															(item) =>
+																draft.ai.mode === "configured" &&
+																item.provider_id === draft.ai.providerId,
+														)
+													: undefined;
+											// Like Web, a saved provider this runtime can't use falls back to Clawdi AI.
+											const providerUnusable =
+												draft.ai.mode === "configured" &&
+												(!provider ||
+													providerAvailabilityIssue(provider, {
+														runtime,
+														environmentId: null,
+													}) !== null);
+											if (providerUnusable) setProviderChoice("__managed__");
 											update({
 												runtime,
 												agentName: hostedDeployAgentNameAfterRuntimeChange({
@@ -743,8 +931,16 @@ function CreationForm() {
 														draft.agentName !== hostedDeployRuntimeLabel(draft.runtime),
 													runtime,
 												}),
-											})
-										}
+												...(providerUnusable
+													? {
+															ai: {
+																mode: "managed" as const,
+																model: firstModelForProvider("__managed__", [], models),
+															},
+														}
+													: {}),
+											});
+										}}
 										title={hostedDeployRuntimeLabel(runtime)}
 										description={runtimeBlurb(runtime)}
 										icon={
@@ -776,12 +972,20 @@ function CreationForm() {
 								recommended
 								onChoice={(choice) => {
 									setProviderChoice(choice);
-									setConfirmed(false);
-									if (choice === "__managed__")
-										update({
-											ai: { mode: "managed", model: firstModelForProvider(choice, [], models) },
-										});
-									else if (choice === "__unmanaged__") update({ ai: { mode: "unmanaged" } });
+									const providers = inventory.data?.providers ?? [];
+									update({
+										ai:
+											choice === "__managed__"
+												? { mode: "managed", model: firstModelForProvider(choice, [], models) }
+												: choice === "__unmanaged__"
+													? { mode: "unmanaged" }
+													: {
+															mode: "configured",
+															providerId: choice,
+															// Web binds a saved provider's first catalog model.
+															model: firstModelForProvider(choice, providers, models),
+														},
+									});
 								}}
 								onModel={(model) => update({ ai: { mode: "managed", model } })}
 								onAdd={() => router.push("/ai-providers")}
@@ -800,9 +1004,6 @@ function CreationForm() {
 								onRetry={() => void inventory.refetch()}
 								error={inventory.error}
 							/>
-							{providerChoice !== "__managed__" && providerChoice !== "__unmanaged__" ? (
-								<AppText>{t("creation.savedProviderBoundary")}</AppText>
-							) : null}
 						</SettingsSection>
 						<SettingsSection title={agentSurfaceCopy.compute}>
 							<WebView recipe={styles.compute}>
@@ -813,6 +1014,7 @@ function CreationForm() {
 											disabled={locked || resuming !== null}
 											onClick={() => {
 												setSource("included");
+												setSubscriptionId(null);
 												update({ computePlanSlug: "compute_basic" });
 											}}
 											icon={
@@ -835,35 +1037,117 @@ function CreationForm() {
 											className={webView(subscriptionSourcePickerClasses.choice)}
 										/>
 									) : null}
-									{reusableItems.length ? (
-										<EntityChoiceCard
-											selected={source === "existing"}
-											disabled={locked || resuming !== null}
-											onClick={() => {
-												setSource("existing");
-												update({
-													computePlanSlug:
-														reusableItems[0]?.plan_slug === "compute_performance"
-															? "compute_performance"
-															: "compute_basic",
-												});
-											}}
-											icon={
-												<IconChip>
-													<Icon as={Cpu} />
-												</IconChip>
-											}
-											title={t("creation.reusable")}
-											description={t("creation.selectionNotice")}
-										/>
-									) : null}
+									{reusableItems.map((item) => {
+										const view = reusableSubscriptionChoiceView(item);
+										const performance = item.plan_slug === "compute_performance";
+										// A store row is usable only as this account's unbound store slot.
+										const storeRowBlocked =
+											item.funding_source === "store" &&
+											reusableStoreRowPlan(item, computeSlot, productPlan) === null;
+										return (
+											<EntityChoiceCard
+												key={item.subscription_id}
+												selected={source === "existing" && subscriptionId === item.subscription_id}
+												disabled={locked || resuming !== null || storeRowBlocked}
+												onClick={() => {
+													setSource("existing");
+													setSubscriptionId(item.subscription_id);
+													update({ computePlanSlug: item.plan_slug });
+												}}
+												icon={
+													<IconChip
+														size="sm"
+														tint={
+															performance
+																? styles.performanceTint
+																: hostedAgentOverviewClasses.includedTint
+														}
+													>
+														<Icon as={performance ? Zap : Cpu} />
+													</IconChip>
+												}
+												title={
+													performance ? agentSurfaceCopy.performance : t("billingParity.basic")
+												}
+												// Web says store rows are "available in the Clawdi app"; here every row is.
+												description={
+													storeRowBlocked
+														? t("creation.storeRowUnavailable", {
+																store: storeProviderLabel(item.store_management),
+															})
+														: surfaces.creditUnits
+															? t("store.dueNow")
+															: subscriptionSourceCopy.dueNow
+												}
+												badge={
+													<StatusBadge status={view.status.tone}>
+														<AppText>{view.status.label}</AppText>
+													</StatusBadge>
+												}
+												detailsPlacement="responsive"
+												details={
+													// Web's two-column grid: RN has no CSS grid, so facts wrap at just under
+													// half width (the column gap counts toward each line).
+													<WebView
+														recipe={subscriptionSourcePickerClasses.existingFacts}
+														className="flex-row flex-wrap"
+													>
+														{view.facts.map((fact) => (
+															<WebView
+																key={fact.id}
+																recipe={subscriptionSourcePickerClasses.fact}
+																className="basis-[45%] grow"
+															>
+																<WebText recipe={subscriptionSourcePickerClasses.factLabel}>
+																	{fact.label}
+																</WebText>
+																{fact.id === "payment" ? (
+																	<WebView
+																		recipe={subscriptionSourcePickerClasses.payment}
+																		className="flex-row"
+																	>
+																		<WebIcon
+																			as={
+																				view.payment.kind === "store"
+																					? Smartphone
+																					: view.payment.kind === "wallet"
+																						? WalletCards
+																						: CreditCard
+																			}
+																			recipe={subscriptionSourcePickerClasses.paymentIcon}
+																		/>
+																		<WebText recipe={subscriptionSourcePickerClasses.price}>
+																			{fact.value}
+																		</WebText>
+																	</WebView>
+																) : (
+																	<WebText
+																		recipe={
+																			fact.id === "price"
+																				? subscriptionSourcePickerClasses.nowrap
+																				: subscriptionSourcePickerClasses.factValue
+																		}
+																	>
+																		{fact.id === "price" && surfaces.creditUnits
+																			? (creditPrice(item, credits) ?? fact.value)
+																			: fact.value}
+																	</WebText>
+																)}
+															</WebView>
+														))}
+													</WebView>
+												}
+												className={webView(subscriptionSourcePickerClasses.choice)}
+											/>
+										);
+									})}
 									{storeGate.available || source === "store" ? (
 										<EntityChoiceCard
 											selected={source === "store"}
 											disabled={locked || !storeGate.available}
 											onClick={() => {
 												setSource("store");
-												setConfirmed(false);
+												setSubscriptionId(null);
 												setStoreNotice(null);
 											}}
 											icon={
@@ -892,7 +1176,7 @@ function CreationForm() {
 										}
 										onClick={() => {
 											setSource("new");
-											setConfirmed(false);
+											setSubscriptionId(null);
 											setQuoteSelection(
 												quoteOptions.find(
 													(option) =>
@@ -946,7 +1230,7 @@ function CreationForm() {
 								{source === "new" ? (
 									<WebView recipe={styles.compute}>
 										{/* Web caps the term switcher at max-w-xs; the native control spans the form like plan comparison. */}
-										<WebView recipe={styles.billingTerm.replace(/(?:^|\s)max-w-xs(?=\s|$)/g, " ")}>
+										<WebView recipe={styles.billingTermLayout}>
 											<WebText recipe={styles.fieldLabel}>{deployFormCopy.billingTerm}</WebText>
 											<AppView className="w-full">
 												<NativeSegments
@@ -971,7 +1255,6 @@ function CreationForm() {
 																...option,
 																fundingSource: quoteSelection?.fundingSource ?? fundingDefault,
 															});
-															setQuote(null);
 														}
 													}}
 												/>
@@ -1100,49 +1383,23 @@ function CreationForm() {
 																		...quoteSelection,
 																		fundingSource: payment.source,
 																	});
-																	setQuote(null);
 																}
 															}}
 														/>
 													))}
 											</WebView>
 										</WebView>
-										<AppText>{t("creation.quoteNotice")}</AppText>
-										<ActionButton
-											label={t("creation.quote")}
-											disabled={action.busy || !quoteAvailable || inventory.isError}
-											onPress={() => void requestQuote()}
-										/>
-										{quote ? (
-											<AppText>
-												{t("creation.preview")}:{" "}
-												{(surfaces.creditUnits
-													? creditPrice(
-															{ price_cents: quote.term_price_cents, currency: quote.currency },
-															credits,
-														)
-													: subscriptionPrice({
-															price_cents: quote.term_price_cents,
-															currency: quote.currency,
-														})) ?? t("billing.unknown")}{" "}
-												· {formatDate(quote.expires_at) ?? t("billing.unknown")}
-											</AppText>
-										) : null}
-										{quote && surfaces.creditUnits && quote.balance_after_usd ? (
-											<AppText>
-												{t("store.quoteBalance")}: {formatCredits(quote.balance_after_usd, credits)}
-											</AppText>
+										{walletQuoteSelection && quote.isError ? (
+											<ApiErrorPanel error={quote.error} onRetry={() => void quote.refetch()} />
+										) : walletDebit ? (
+											<WalletDebitEquation debit={walletDebit} format={formatWalletAmount} />
 										) : null}
 										{shortfall && surfaces.addCredits ? (
 											<>
 												<AppText>
-													{t("store.shortfall", {
-														amount: surfaces.creditUnits
-															? formatCredits(shortfall, credits)
-															: formatUsdExact(shortfall),
-													})}
+													{t("store.shortfall", { amount: formatWalletAmount(shortfall) })}
 												</AppText>
-												<AddCreditsAction onFunded={() => void requote.current()} />
+												<AddCreditsAction onFunded={() => void quote.refetch()} />
 											</>
 										) : null}
 									</WebView>
@@ -1162,40 +1419,60 @@ function CreationForm() {
 								<AppText>{t("creation.language")}</AppText>
 								<NativePicker
 									value={draft.language}
-									options={HOSTED_DEPLOY_LANGUAGE_OPTIONS.map((language) => ({
-										value: language.code,
-										label: language.label,
-									}))}
+									options={[
+										{ value: "", label: agentSurfaceCopy.default },
+										...HOSTED_DEPLOY_LANGUAGE_OPTIONS.map((language) => ({
+											value: language.code,
+											label: language.label,
+										})),
+									]}
 									disabled={locked}
 									onValueChange={(language) => {
-										if (HOSTED_DEPLOY_LANGUAGE_OPTIONS.some((option) => option.code === language))
+										if (
+											language === "" ||
+											HOSTED_DEPLOY_LANGUAGE_OPTIONS.some((option) => option.code === language)
+										)
 											update({ language });
 									}}
 								/>
 								<AppText>{deployFormCopy.timezone}</AppText>
-								<AppTextInput
-									accessibilityLabel={deployFormCopy.timezone}
+								{/* Hundreds of IANA zones: region submenus keep the native menu short. */}
+								<Select
 									value={draft.timezone}
-									editable={!locked}
-									autoCapitalize="none"
-									onChangeText={(timezone) => update({ timezone })}
-								/>
+									disabled={locked}
+									onValueChange={(timezone) => {
+										if (isValidTimezone(timezone)) update({ timezone });
+									}}
+								>
+									<SelectTrigger className="w-full">
+										<SelectValue placeholder={t("creation.selectTimezone")} />
+									</SelectTrigger>
+									<SelectContent>
+										{timezoneMenuGroups(timezoneOptions).map(([region, zones]) =>
+											region ? (
+												<SelectSub key={region} label={region}>
+													{zones.map((zone) => (
+														<SelectItem key={zone} value={zone} label={timezoneLabel(zone)}>
+															{timezoneLabel(zone)}
+														</SelectItem>
+													))}
+												</SelectSub>
+											) : (
+												zones.map((zone) => (
+													<SelectItem key={zone} value={zone} label={timezoneLabel(zone)}>
+														{timezoneLabel(zone)}
+													</SelectItem>
+												))
+											),
+										)}
+									</SelectContent>
+								</Select>
 							</WebView>
 						</SettingsSection>
-						{/* Subscribing is its own explicit consent; this confirms reuse of entitlements. */}
-						{source !== "store" ? (
-							<NativeSwitch
-								label={t("creation.confirm")}
-								value={confirmed}
-								disabled={action.busy || !eligible}
-								onValueChange={setConfirmed}
-							/>
-						) : null}
 						{message ? <AppText>{message}</AppText> : null}
 						{attempt ? (
 							<>
 								<AppText>{t("creation.saved")}</AppText>
-								<AppText selectable>{attempt.id}</AppText>
 								{/* Only a sent admission can be recovered; store funding uses the footer Check status. */}
 								{attempt.submission === "uncertain" ? (
 									<ActionButton
@@ -1217,11 +1494,11 @@ function CreationForm() {
 												await clearAttempt(storageKey, attempt, () => current(owns));
 												if (current(owns)) {
 													setAttempt(null);
-													setDraft(initialDraft);
+													setDraft(newDraft());
 													setSource(null);
+													setSubscriptionId(null);
 													setProviderChoice("__managed__");
 													setResolved(false);
-													setConfirmed(false);
 													setMessage("");
 												}
 											});
@@ -1234,7 +1511,7 @@ function CreationForm() {
 				)}
 			</AppScrollView>
 			{compute && hosted ? (
-				<WebView recipe={styles.actionBar.replace(/(?:^|\s)-mx-4(?=\s|$)/g, " ")}>
+				<WebView recipe={styles.actionBarSurface}>
 					<WebText recipe={styles.configurationSummary}>
 						{deployConfigurationSummary(
 							hostedDeployRuntimeLabel(draft.runtime),
@@ -1270,6 +1547,16 @@ function CreationForm() {
 								<WebText recipe={styles.amountCaption}>{amount.caption}</WebText>
 							) : null}
 						</WebView>
+					) : walletAmount ? (
+						<WebView recipe={styles.amount} accessibilityLiveRegion="polite">
+							<WebText recipe={styles.amountValue}>{walletAmount.amount}</WebText>
+							{walletAmount.caption ? (
+								<WebText recipe={styles.amountCaption}>{walletAmount.caption}</WebText>
+							) : null}
+							{walletAmount.detail ? (
+								<WebText recipe={styles.amountError}>{walletAmount.detail}</WebText>
+							) : null}
+						</WebView>
 					) : null}
 					{source === "included" || source === "existing" ? (
 						<WebText recipe={styles.amountValue}>
@@ -1301,7 +1588,7 @@ function CreationForm() {
 							disabled={
 								action.busy ||
 								resolved ||
-								(providerChoice !== "__managed__" && providerChoice !== "__unmanaged__") ||
+								personaIssue !== undefined ||
 								!storeGate.available ||
 								!canStartStorePurchase(attempt) ||
 								!storageReady ||
@@ -1326,9 +1613,11 @@ function CreationForm() {
 							disabled={
 								action.busy ||
 								resolved ||
-								(!confirmed && !storeAdmission) ||
-								(providerChoice !== "__managed__" && providerChoice !== "__unmanaged__") ||
-								(source !== "included" && source !== "existing" && !storeAdmission) ||
+								(!attempt &&
+									(personaIssue !== undefined ||
+										(source !== "included" &&
+											!(source === "existing" && selectedReusable) &&
+											!storeAdmission))) ||
 								!eligible ||
 								!storageReady ||
 								storageError ||
@@ -1339,12 +1628,13 @@ function CreationForm() {
 							}}
 						/>
 					)}
-					{source === null ? (
-						<WebText recipe={`${styles.blockingReason} ${styles.configurationSummary}`}>
-							{deployFormCopy.chooseSource}
+					{blockingReason ? (
+						<WebText
+							recipe={`${styles.blockingReason} ${styles.configurationSummary}`}
+							accessibilityRole="text"
+						>
+							{blockingReason}
 						</WebText>
-					) : source !== "store" && !eligible ? (
-						<AppText>{t("creation.blocked")}</AppText>
 					) : null}
 				</WebView>
 			) : null}

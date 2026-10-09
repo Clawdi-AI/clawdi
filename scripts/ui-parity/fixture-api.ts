@@ -69,6 +69,8 @@ for (const [name, allowed, fallback] of [
 		"ready",
 	],
 	["account-state", ["active", "suspended"], "active"],
+	["reusable-subscriptions", ["none", "mixed"], "none"],
+	["subscription-actions", ["false", "true"], "false"],
 ] satisfies [string, string[], string][]) {
 	if (!allowed.includes(readFlag(name, fallback))) {
 		console.error(`Invalid --${name}; expected ${allowed.join("|")}`);
@@ -2091,11 +2093,81 @@ const computeSubscriptions = {
 				recovery_action:
 					deployment.commercial_display?.compute_subscription?.recovery_action ?? null,
 				pending_plan_slug: null,
+				// Hosted's per-row commands; opt-in so default screenshots stay unchanged.
+				...(readFlag("subscription-actions", "false") === "true" && index > 0
+					? {
+							actions: {
+								cancel: deployment.commercial_display?.compute_subscription?.cancel_at_period_end
+									? null
+									: "cancel_at_period_end",
+								resume:
+									deployment.commercial_display?.compute_subscription?.cancel_at_period_end ??
+									false,
+								command_state: null,
+							},
+						}
+					: {}),
 			}) satisfies DeploySchemas["V2ComputeSubscriptionListItem"],
 	),
 	has_more: false,
 	next_cursor: null,
 } satisfies DeployGetOk<"/v2/subscriptions">;
+
+/** `--reusable-subscriptions mixed`: unassigned card, Wallet and store rows for the deploy wizard. */
+const reusableSubscriptions = {
+	items:
+		readFlag("reusable-subscriptions", "none") === "mixed"
+			? [
+					{
+						subscription_id: "csub_ReuseCard",
+						plan_slug: "compute_performance",
+						billing_term_months: 12,
+						funding_source: "stripe",
+						status: "active",
+						price_cents: 20_000,
+						currency: "usd",
+						current_period_end: ago(-200 * DAY),
+						entitled_until: ago(-200 * DAY),
+						cancel_at_period_end: false,
+					},
+					{
+						subscription_id: "csub_ReuseWallet",
+						plan_slug: "compute_basic",
+						billing_term_months: 1,
+						funding_source: "wallet",
+						status: "canceling",
+						price_cents: 1_000,
+						currency: "usd",
+						current_period_end: ago(-12 * DAY),
+						entitled_until: ago(-12 * DAY),
+						cancel_at_period_end: true,
+					},
+					{
+						subscription_id: "csub_ReuseStore",
+						plan_slug: "compute_basic",
+						billing_term_months: 1,
+						funding_source: "store",
+						status: "active",
+						price_cents: null,
+						currency: "usd",
+						current_period_end: ago(-25 * DAY),
+						entitled_until: ago(-25 * DAY),
+						cancel_at_period_end: false,
+						store_management: {
+							contract_id: "5a0e0000-0001-4000-8000-000000000001",
+							provider: "play_store",
+							product_id: "ai.clawdi.app.compute.basic.monthly",
+							management_url: null,
+							auto_renews: true,
+							renews_or_ends_at: ago(-25 * DAY),
+							state: "active",
+						},
+					},
+				]
+			: [],
+	has_more: false,
+	next_cursor: null,
+} satisfies DeployGetOk<"/v2/subscriptions/reusable">;
 
 const wallet = {
 	balance_usd: "42.50",
@@ -2428,7 +2500,7 @@ const computeGetRoutes = {
 				item.deployment_id === url.searchParams.get("deployment_id"),
 		),
 	}),
-	"/v2/subscriptions/reusable": () => ({ items: [], has_more: false, next_cursor: null }),
+	"/v2/subscriptions/reusable": () => reusableSubscriptions,
 	"/v2/subscriptions/included-basic": () => ({ total_slots: 2, used_slots: 1, available_slots: 1 }),
 	"/v2/wallet": () => wallet,
 	"/v2/wallet/transactions": () => walletTransactions,
@@ -2473,6 +2545,24 @@ on("POST", "/v2/deployments/{deployment_id}/files/handoff", ({ params, request }
 		deployment_resource_version: deployment.resource.metadata.resourceVersion,
 	} satisfies DeploySchemas["V2HostedFilesHandoff"];
 });
+for (const [path, resume] of [
+	["/v2/subscription/cancel", false],
+	["/v2/subscription/resume", true],
+] as const)
+	on("POST", path, async ({ request }) => {
+		const body = await bodyObject(request);
+		const item = computeSubscriptions.items.find(
+			(candidate) => candidate.subscription_id === body.subscription_id,
+		);
+		if (!item) return notFound("Subscription not found");
+		return {
+			status: resume ? "active" : "canceling",
+			funding_source: item.funding_source,
+			billing_term_months: item.billing_term_months,
+			cancel_at_period_end: !resume,
+			current_period_end: item.current_period_end,
+		} satisfies DeploySchemas["V2ComputeSubscriptionActionResponse"];
+	});
 on("POST", "/v2/subscription/quote", async ({ request }) => {
 	let body: unknown;
 	try {

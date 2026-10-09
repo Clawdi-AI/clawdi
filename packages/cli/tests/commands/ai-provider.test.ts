@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import {
 	chmodSync,
 	existsSync,
@@ -112,6 +112,47 @@ describe("ai-provider commands", () => {
 			restore();
 		}
 	});
+
+	it.each([false, true])(
+		"writes validation JSON to the correct stream (allow public=%s)",
+		async (allowNoAuthPublic) => {
+			mkdirSync(join(tmpHome, ".clawdi", "ai-providers"), { recursive: true });
+			writeFileSync(
+				aiProviderCatalogPath(),
+				JSON.stringify({
+					schema_version: 1,
+					providers: [
+						{
+							id: "public",
+							type: "custom_openai_compatible",
+							base_url: "https://example.com/v1",
+							api_mode: "openai_chat",
+							managed_by: "user",
+							auth: { type: "none" },
+						},
+					],
+				}),
+			);
+			const stdout = spyOn(console, "log").mockImplementation(() => {});
+			const stderr = spyOn(console, "error").mockImplementation(() => {});
+			process.exitCode = 0;
+			try {
+				await aiProviderValidateCommand("public", { json: true, allowNoAuthPublic });
+				const output = allowNoAuthPublic ? stdout : stderr;
+				expect(stdout).toHaveBeenCalledTimes(allowNoAuthPublic ? 1 : 0);
+				expect(stderr).toHaveBeenCalledTimes(allowNoAuthPublic ? 0 : 1);
+				expect(JSON.parse(String(output.mock.calls[0]?.[0]))).toMatchObject({
+					schemaVersion: "clawdi.aiProviderValidate.v1",
+					valid: allowNoAuthPublic,
+				});
+				expect(process.exitCode).toBe(allowNoAuthPublic ? 0 : 1);
+			} finally {
+				stdout.mockRestore();
+				stderr.mockRestore();
+				process.exitCode = 0;
+			}
+		},
+	);
 
 	it("protects defaults on remove unless forced", async () => {
 		const cloudMock = mockFetch([
@@ -277,7 +318,10 @@ describe("ai-provider commands", () => {
 			provider: "codex",
 			redirect_uri: "http://localhost:1455/auth/callback",
 		});
-		expect(output()).toContain('"auth_url": "https://oauth.example/authorize?state=state-123"');
+		expect(lastCommandJson(output())).toMatchObject({
+			schemaVersion: "clawdi.aiProviderOAuthStart.v1",
+			auth_url: "https://oauth.example/authorize?state=state-123",
+		});
 		expect(output()).not.toContain("codex login");
 	});
 
@@ -573,7 +617,10 @@ describe("ai-provider commands", () => {
 		expect(captured).toHaveLength(1);
 		expect(captured[0].url).toBe("https://api.openai.com/v1/models");
 		expect(captured[0].headers.authorization).toBe("Bearer sk-test-secret");
-		expect(output()).toContain('"status": "ok"');
+		expect(lastCommandJson(output())).toMatchObject({
+			schemaVersion: "clawdi.aiProviderTest.v1",
+			provider_probe: { status: "ok" },
+		});
 		expect(output()).not.toContain("sk-test-secret");
 	});
 
@@ -602,7 +649,10 @@ describe("ai-provider commands", () => {
 		}
 
 		expect(captured).toHaveLength(0);
-		expect(output()).toContain('"status": "available"');
+		expect(lastCommandJson(output())).toMatchObject({
+			schemaVersion: "clawdi.aiProviderTest.v1",
+			auth: { status: "available" },
+		});
 		expect(output()).toContain("live probe disabled");
 		expect(output()).not.toContain("sk-test-secret");
 	});
@@ -646,7 +696,10 @@ describe("ai-provider commands", () => {
 		);
 		const providerProbe = captured.find((request) => request.path === "/v1/models");
 		expect(providerProbe?.headers.authorization).toBe("Bearer sk-vault-secret");
-		expect(output()).toContain('"status": "ok"');
+		expect(lastCommandJson(output())).toMatchObject({
+			schemaVersion: "clawdi.aiProviderTest.v1",
+			provider_probe: { status: "ok" },
+		});
 		expect(output()).toContain("clawdi://...");
 		expect(output()).not.toContain("sk-vault-secret");
 	});
@@ -702,7 +755,10 @@ describe("ai-provider commands", () => {
 		expect(captured[0].body).toEqual({ profile: "default" });
 		const providerProbe = captured.find((request) => request.path === "/v1/models");
 		expect(providerProbe?.headers.authorization).toBe("Bearer sk-managed-secret");
-		expect(output()).toContain('"status": "ok"');
+		expect(lastCommandJson(output())).toMatchObject({
+			schemaVersion: "clawdi.aiProviderTest.v1",
+			provider_probe: { status: "ok" },
+		});
 		expect(output()).not.toContain("sk-managed-secret");
 	});
 
@@ -756,7 +812,10 @@ describe("ai-provider commands", () => {
 		).toBe(false);
 		const providerProbe = captured.find((request) => request.path === "/v1/models");
 		expect(providerProbe?.headers.authorization).toBe("Bearer sk-runtime-managed");
-		expect(output()).toContain('"status": "ok"');
+		expect(lastCommandJson(output())).toMatchObject({
+			schemaVersion: "clawdi.aiProviderTest.v1",
+			provider_probe: { status: "ok" },
+		});
 		expect(output()).toContain("managed api_key:env:CLAWDI_AI_API_KEY");
 		expect(output()).not.toContain("sk-runtime-managed");
 	});
@@ -1387,6 +1446,10 @@ describe("ai-provider commands", () => {
 		).rejects.toThrow("--import-secrets requires an AI provider export file");
 	});
 });
+
+function lastCommandJson(output: string): unknown {
+	return JSON.parse(output.trim().split("\n").at(-1) ?? "");
+}
 
 function captureConsole(): { output: () => string; restore: () => void } {
 	const origLog = console.log;

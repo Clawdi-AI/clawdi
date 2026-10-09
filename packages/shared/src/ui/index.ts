@@ -340,5 +340,7 @@ export * from "./toggle-group";
 export * from "./transactions-section";
 export * from "./usage-page";
 export * from "./vault-request";
+export * from "./wallet-debit-equation";
+export * from "./welcome-wallet-card";
 export * from "./whatsapp-device-onboarding";
 export * from "./workspace-skills-panel";

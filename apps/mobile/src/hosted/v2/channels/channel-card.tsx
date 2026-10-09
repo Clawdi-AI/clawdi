@@ -19,7 +19,7 @@ export function ChannelCard({
 	actions?: ReactNode;
 }) {
 	return (
-		<WebView recipe={`${ENTITY_CARD_BASE} ${styles.card.replace(/\bh-full\b/g, "")}`}>
+		<WebView recipe={`${ENTITY_CARD_BASE} ${styles.cardLayout}`}>
 			<WebView recipe={styles.header}>
 				<EntityHeader
 					align="start"

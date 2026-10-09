@@ -337,7 +337,7 @@ describe("deploy option parsing", () => {
 });
 
 describe("deploy orchestration", () => {
-	test("uses one JSON stdout object when --json is explicit", async () => {
+	test("writes JSON success to stdout and JSON errors to stderr", async () => {
 		const cases: Array<{
 			options: Parameters<typeof deployCommand>[0];
 			client: FakeDeployGateway;
@@ -379,14 +379,15 @@ describe("deploy orchestration", () => {
 				writeStdout: (value) => stdout.push(value),
 				writeStderr: (value) => stderr.push(value),
 			});
-			expect(stdout).toHaveLength(1);
-			const result: unknown = JSON.parse(stdout[0] ?? "");
+			const output = testCase.status === "succeeded" ? stdout : stderr;
+			expect(stdout).toHaveLength(testCase.status === "succeeded" ? 1 : 0);
+			expect(stderr).toHaveLength(testCase.status === "succeeded" ? 0 : 1);
+			const result: unknown = JSON.parse(output[0] ?? "");
 			expect(result).toMatchObject({
 				schemaVersion: "clawdi.deploy.v2",
 				status: testCase.status,
 				...(testCase.code ? { error: { code: testCase.code } } : {}),
 			});
-			expect(stderr.join("\n")).not.toContain("schemaVersion");
 		}
 		process.exitCode = 0;
 	});

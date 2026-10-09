@@ -75,7 +75,6 @@ Examples:
 
 	aiProviderCmd
 		.command("remove <provider-id>")
-		.alias("rm")
 		.description("Remove an AI provider")
 		.option("--force", "Remove even if defaults reference it")
 		.option("-y, --yes", "Skip the interactive confirmation prompt")

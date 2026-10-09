@@ -10,7 +10,7 @@ case "$1 ${2:-}" in
 		printf '0.0.0-smoke\tdarwin-arm64\n'
 		;;
 	"auth status")
-        printf '%s\n' '{"authenticated":false,"source":"none"}'
+        printf '%s\n' '{"schemaVersion":"clawdi.authStatus.v1","authenticated":false,"source":"none"}'
         ;;
 	"auth login")
 		printf '%s\n' '{"schemaVersion":"clawdi.desktopLogin.progress.v1","verificationUri":"https://accounts.example.test/device?user_code=ABCD-EFGH","userCode":"ABCD-EFGH","expiresAt":"2099-01-01T00:00:00.000Z"}' >&2
@@ -22,7 +22,7 @@ case "$1 ${2:-}" in
 		printf '%s\n' '{"schemaVersion":"clawdi.daemonDoctor.v2","cli_version":"0.0.0-smoke","singleton_unit_installed":false,"singleton_unit_running":false,"agents":[]}'
 		;;
 	"agent detect")
-		printf '%s\n' '{"agents":[{"type":"codex","displayName":"Codex","detected":true,"registered":true,"version":"1.0.0","inspection":"complete"}]}'
+		printf '%s\n' '{"schemaVersion":"clawdi.agentDetection.v1","agents":[{"type":"codex","displayName":"Codex","detected":true,"registered":true,"version":"1.0.0","inspection":"complete"}]}'
 		;;
 	*)
 		printf 'Unexpected smoke command: %s\n' "$*" >&2

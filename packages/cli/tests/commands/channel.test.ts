@@ -539,7 +539,11 @@ describe("channel commands", () => {
 		restore();
 
 		expect(captured[0]).toMatchObject({ method: "DELETE", path: "/v1/channels/channel-1" });
-		expect(JSON.parse(out)).toEqual({ account_id: "channel-1", deleted: true });
+		expect(JSON.parse(out)).toEqual({
+			schemaVersion: "clawdi.channelDelete.v1",
+			account_id: "channel-1",
+			deleted: true,
+		});
 	});
 });
 

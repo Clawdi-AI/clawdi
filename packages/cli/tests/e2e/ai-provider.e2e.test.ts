@@ -77,8 +77,11 @@ describe("ai-provider CLI process e2e", () => {
 				OPENAI_API_KEY: SECRET,
 			});
 			expect(tested.code).toBe(0);
-			expect(tested.stdout).toContain('"status": "available"');
-			expect(tested.stdout).toContain('"status": "skipped"');
+			expect(JSON.parse(tested.stdout)).toMatchObject({
+				schemaVersion: "clawdi.aiProviderTest.v1",
+				auth: { status: "available" },
+				provider_probe: { status: "skipped" },
+			});
 			expect(tested.stdout).not.toContain(SECRET);
 			expect(tested.stderr).not.toContain(SECRET);
 			expect(providerRequests).toEqual([]);
@@ -89,7 +92,10 @@ describe("ai-provider CLI process e2e", () => {
 				{ OPENAI_API_KEY: SECRET },
 			);
 			expect(liveTested.code).toBe(0);
-			expect(liveTested.stdout).toContain('"status": "ok"');
+			expect(JSON.parse(liveTested.stdout)).toMatchObject({
+				schemaVersion: "clawdi.aiProviderTest.v1",
+				provider_probe: { status: "ok" },
+			});
 			expect(liveTested.stdout).not.toContain(SECRET);
 			expect(liveTested.stderr).not.toContain(SECRET);
 			expect(providerRequests).toEqual([{ path: "/v1/models", auth: `Bearer ${SECRET}` }]);

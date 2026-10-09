@@ -1,7 +1,12 @@
 "use client";
 
 import type { AgentTile } from "@clawdi/shared/view";
-import { billingCopy, formatShortDate, storeSubscriptionCardView } from "@clawdi/shared/view";
+import {
+	billingCopy,
+	computeSubscriptionCancelTitle,
+	formatShortDate,
+	storeSubscriptionCardView,
+} from "@clawdi/shared/view";
 import { CreditCard, History } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -313,7 +318,9 @@ export function SubscriptionRow({
 									: null
 							}
 							cancelCopy={{
-								title: `Cancel ${computeSubscriptionPlanLabel(subscription.plan_slug)} subscription?`,
+								title: computeSubscriptionCancelTitle(
+									computeSubscriptionPlanLabel(subscription.plan_slug),
+								),
 								description: <p>{cancellationCopy.description}</p>,
 								confirmLabel: cancellationCopy.confirmLabel,
 								successDescription: (result) =>

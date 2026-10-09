@@ -16,7 +16,7 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi [options] [command]\n\nThe best home for all your AI agents. Run them in the cloud or connect your\nown—with their context and tools in one place.\n\nOptions:\n  -V, --version               output the version number\n  -h, --help                  display help for command\n\nGet started\n  auth                        Sign in to Clawdi\n  status [options]            Show current auth and module activity\n  setup [options]             Detect installed agents, register this machine,\n                              and install daemons\n  doctor [options]            Diagnose auth, agents, vault, and MCP connectivity\n\nSync\n  push [options]              Push local data (sessions, skills) to the cloud\n  pull [options]              Mirror sessions, or explicitly import skills from\n                              a Clawdi-owned workspace or personal project\n  daemon [options]            Manage the background sync daemon — syncs local\n                              agent skills to Clawdi and mirrors sessions\n  session                     Inspect local and uploaded agent sessions\n\nContext\n  vault                       Manage secrets\n  skill                       Manage skills\n  memory                      Manage memories\n  project                     Manage projects, people, invites, links, and\n                              shared access\n  inbox [options]             Incoming project invites and share links\n\nSecrets\n  read [options] <reference>  Read one clawdi:// secret reference\n  inject [options]            Render clawdi:// references in a template\n  run [options] <command...>  Run a command with clawdi:// references resolved\n\nCloud Agents\n  deploy [options]            Create a Cloud Agent with an interactive,\n                              payment-aware wizard\n  wallet                      Inspect Clawdi wallet\n  ai-provider                 Manage AI providers\n  channel|bot                 Manage channel bots and pair external chats to\n                              agents\n  agent                       Manage agents\n\nMaintenance\n  config                      Read or write CLI configuration\n                              (~/.clawdi/config.json)\n  teardown [options]          Reverse setup: remove env file, bundled skill, and\n                              MCP entry\n  update [options]            Install the latest CLI through the current\n                              installation owner\n  mcp [options]               Start MCP server (stdio transport, used by agents)\n\nCommands:\n  help [command]              display help for command\n\nExamples:\n  $ clawdi auth login               Sign in to Clawdi\n  $ clawdi deploy                   Create a Cloud Agent with the deploy wizard\n  $ clawdi auth status --json       Inspect credential source without printing secrets\n  $ clawdi setup                    Detect agents and register the current machine\n  $ clawdi session list             Preview local sessions before pushing\n  $ clawdi push --all               Upload everything (every agent, project, module)\n  $ clawdi pull --all               Mirror sessions for all registered agents\n  $ clawdi skill list --json        Machine-readable skill listing\n  $ clawdi memory search \"redis\"    Search memories by text\n  $ clawdi vault set OPENAI_API_KEY Store a secret\n  $ clawdi project folder link --project engineering  Use this folder with a project\n  $ clawdi run --env-file .env.clawdi -- npm run dev  Resolve clawdi:// refs at runtime\n\nEnvironment:\n  CLAWDI_API_URL           Override the Clawdi API endpoint\n  CLAWDI_DEPLOY_API_URL    Override the deploy API endpoint\n  CLAWDI_AUTH_TOKEN_ORIGIN CLAWDI_API_URL origin that CLAWDI_AUTH_TOKEN is bound to\n  CLAWDI_DEBUG             Print stack traces on error\n  CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check\n  CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via `config set autoUpdate false`)\n  CLAWDI_AUTH_TOKEN        Authenticate non-interactive Cloud API requests\n  NO_COLOR                Disable color output when non-empty\n  CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)\n  CODEX_HOME               Custom Codex home (else ~/.codex)\n  HERMES_HOME              Custom Hermes home (else ~/.hermes)\n  OPENCLAW_STATE_DIR       Custom OpenClaw state dir (else auto-detect)\n  OPENCLAW_AGENT_ID        OpenClaw agent id (else \"main\")\n  PI_CODING_AGENT_DIR      Custom Pi agent home (else ~/.pi/agent)\n  OPENCODE_DB              Custom OpenCode SQLite path (else XDG data/opencode/opencode.db)\n  CI / GITHUB_ACTIONS / …  Disable interactive prompts in known CI\n\nDocs: https://github.com/Clawdi-AI/clawdi\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi [options] [command]\n\nThe best home for all your AI agents. Run them in the cloud or connect your\nown—with their context and tools in one place.\n\nOptions:\n  -V, --version               output the version number\n  -h, --help                  display help for command\n\nGet started\n  auth                        Sign in to Clawdi\n  status [options]            Show current auth and module activity\n  setup [options]             Detect installed agents, register this machine,\n                              and install daemons\n  doctor [options]            Diagnose auth, agents, vault, and MCP connectivity\n\nSync\n  push [options]              Push local data (sessions, skills) to the cloud\n  pull [options]              Mirror sessions, or explicitly import skills from\n                              a Clawdi-owned workspace or personal project\n  daemon [options]            Manage the background sync daemon — syncs local\n                              agent skills to Clawdi and mirrors sessions\n  session                     Inspect local and uploaded agent sessions\n\nContext\n  vault                       Manage secrets\n  skill                       Manage skills\n  memory                      Manage memories\n  project                     Manage projects, people, invites, links, and\n                              shared access\n  inbox [options]             Incoming project invites and share links\n\nSecrets\n  read [options] <reference>  Read one clawdi:// secret reference\n  inject [options]            Render clawdi:// references in a template\n  run [options] <command...>  Run a command with clawdi:// references resolved\n\nCloud Agents\n  deploy [options]            Create a Cloud Agent with an interactive,\n                              payment-aware wizard\n  wallet                      Inspect Clawdi wallet\n  ai-provider                 Manage AI providers\n  channel                     Manage channel bots and pair external chats to\n                              agents\n  agent                       Manage agents\n\nMaintenance\n  config                      Read or write CLI configuration\n                              (~/.clawdi/config.json)\n  teardown [options]          Reverse setup: remove env file, bundled skill, and\n                              MCP entry\n  update [options]            Install the latest CLI through the current\n                              installation owner\n  mcp [options]               Start MCP server (stdio transport, used by agents)\n\nCommands:\n  help [command]              display help for command\n\nExamples:\n  $ clawdi auth login               Sign in to Clawdi\n  $ clawdi deploy                   Create a Cloud Agent with the deploy wizard\n  $ clawdi auth status --json       Inspect credential source without printing secrets\n  $ clawdi setup                    Detect agents and register the current machine\n  $ clawdi session list             Preview local sessions before pushing\n  $ clawdi push --all               Upload everything (every agent, project, module)\n  $ clawdi pull --all               Mirror sessions for all registered agents\n  $ clawdi skill list --json        Machine-readable skill listing\n  $ clawdi memory search \"redis\"    Search memories by text\n  $ clawdi vault set OPENAI_API_KEY Store a secret\n  $ clawdi project folder link --project engineering  Use this folder with a project\n  $ clawdi run --env-file .env.clawdi -- npm run dev  Resolve clawdi:// refs at runtime\n\nEnvironment:\n  CLAWDI_API_URL           Override the Clawdi API endpoint\n  CLAWDI_DEPLOY_API_URL    Override the deploy API endpoint\n  CLAWDI_AUTH_TOKEN_ORIGIN CLAWDI_API_URL origin that CLAWDI_AUTH_TOKEN is bound to\n  CLAWDI_DEBUG             Print stack traces on error\n  CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check\n  CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via `config set autoUpdate false`)\n  CLAWDI_AUTH_TOKEN        Authenticate non-interactive Cloud API requests\n  NO_COLOR                Disable color output when non-empty\n  CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)\n  CODEX_HOME               Custom Codex home (else ~/.codex)\n  HERMES_HOME              Custom Hermes home (else ~/.hermes)\n  OPENCLAW_STATE_DIR       Custom OpenClaw state dir (else auto-detect)\n  OPENCLAW_AGENT_ID        OpenClaw agent id (else \"main\")\n  PI_CODING_AGENT_DIR      Custom Pi agent home (else ~/.pi/agent)\n  OPENCODE_DB              Custom OpenCode SQLite path (else XDG data/opencode/opencode.db)\n  CI / GITHUB_ACTIONS / …  Disable interactive prompts in known CI\n\nDocs: https://github.com/Clawdi-AI/clawdi\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi deploy",
@@ -1049,7 +1049,7 @@
 		"hidden": false,
 		"arguments": [],
 		"options": [],
-		"help": "Usage: clawdi ai-provider [options] [command]\n\nManage AI providers\n\nOptions:\n  -h, --help                              display help for command\n\nCommands:\n  list [options]                          List Cloud and local AI providers\n  add [options] <provider-id>             Add an AI provider to the local provider catalog\n  edit [options] <provider-id>            Edit a Cloud or local AI provider\n  remove|rm [options] <provider-id>       Remove an AI provider\n  validate [options] [provider-id]        Validate the AI provider catalog\n  test [options] <provider-id>            Check provider config and auth availability\n  connect [options] <provider-id>         Connect provider auth through an OAuth/device-code flow\n  complete-oauth [options] <provider-id>  Complete AI provider OAuth with a pasted redirect URL or code/state\n  import-auth [options] <provider-id>     Import a local auth profile and bind it to an AI provider\n  export [options]                        Export provider catalog metadata and refs\n  import [options] [file]                 Import and merge a provider catalog file\n  help [command]                          display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi ai-provider [options] [command]\n\nManage AI providers\n\nOptions:\n  -h, --help                              display help for command\n\nCommands:\n  list [options]                          List Cloud and local AI providers\n  add [options] <provider-id>             Add an AI provider to the local provider catalog\n  edit [options] <provider-id>            Edit a Cloud or local AI provider\n  remove [options] <provider-id>          Remove an AI provider\n  validate [options] [provider-id]        Validate the AI provider catalog\n  test [options] <provider-id>            Check provider config and auth availability\n  connect [options] <provider-id>         Connect provider auth through an OAuth/device-code flow\n  complete-oauth [options] <provider-id>  Complete AI provider OAuth with a pasted redirect URL or code/state\n  import-auth [options] <provider-id>     Import a local auth profile and bind it to an AI provider\n  export [options]                        Export provider catalog metadata and refs\n  import [options] [file]                 Import and merge a provider catalog file\n  help [command]                          display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi ai-provider list",
@@ -1299,9 +1299,7 @@
 	},
 	{
 		"path": "clawdi ai-provider remove",
-		"aliases": [
-			"rm"
-		],
+		"aliases": [],
 		"description": "Remove an AI provider",
 		"hidden": false,
 		"arguments": [
@@ -1341,7 +1339,7 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi ai-provider remove|rm [options] <provider-id>\n\nRemove an AI provider\n\nOptions:\n  --force     Remove even if defaults reference it\n  -y, --yes   Skip the interactive confirmation prompt\n  --json      Output as JSON\n  -h, --help  display help for command\n\nExample:\n  $ clawdi ai-provider remove <provider-id> --yes\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi ai-provider remove [options] <provider-id>\n\nRemove an AI provider\n\nOptions:\n  --force     Remove even if defaults reference it\n  -y, --yes   Skip the interactive confirmation prompt\n  --json      Output as JSON\n  -h, --help  display help for command\n\nExample:\n  $ clawdi ai-provider remove <provider-id> --yes\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi ai-provider validate",
@@ -1840,14 +1838,12 @@
 	},
 	{
 		"path": "clawdi channel",
-		"aliases": [
-			"bot"
-		],
+		"aliases": [],
 		"description": "Manage channel bots and pair external chats to agents",
 		"hidden": false,
 		"arguments": [],
 		"options": [],
-		"help": "Usage: clawdi channel|bot [options] [command]\n\nManage channel bots and pair external chats to agents\n\nOptions:\n  -h, --help                            display help for command\n\nCommands:\n  unpair [options] <channel-id>         Unpair a chat from a channel\n  unlink [options] <channel-id>         Unlink an agent from a channel\n  list [options]                        List your private channel bots\n  available [options]                   List available channel bots\n  get [options] <channel-id>            Show channel bot details\n  create [options] <provider> <name>    Create a private channel bot\n  links [options] <channel-id>          List your bot-agent links for a channel\n  link [options] <channel-id>           Link an accessible bot to one of your\n                                        agents\n  rotate-token [options] <channel-id>   Rotate the agent SDK token for one of\n                                        your bot-agent links\n  pair-code [options] <channel-id>      Create a one-time code to pair an\n                                        external chat to an agent link\n  send [options] <channel-id>           Queue an outbound message to a paired\n                                        chat or explicit chat id\n  bindings [options] <channel-id>       List your paired external chats for a\n                                        channel\n  sync-commands [options] <channel-id>  Sync provider slash commands for one of\n                                        your private bots\n  delete [options] <channel-id>         Archive one of your private channel bots\n  help [command]                        display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi channel [options] [command]\n\nManage channel bots and pair external chats to agents\n\nOptions:\n  -h, --help                            display help for command\n\nCommands:\n  unpair [options] <channel-id>         Unpair a chat from a channel\n  unlink [options] <channel-id>         Unlink an agent from a channel\n  list [options]                        List your private channel bots\n  available [options]                   List available channel bots\n  get [options] <channel-id>            Show channel bot details\n  create [options] <provider> <name>    Create a private channel bot\n  links [options] <channel-id>          List your bot-agent links for a channel\n  link [options] <channel-id>           Link an accessible bot to one of your\n                                        agents\n  rotate-token [options] <channel-id>   Rotate the agent SDK token for one of\n                                        your bot-agent links\n  pair-code [options] <channel-id>      Create a one-time code to pair an\n                                        external chat to an agent link\n  send [options] <channel-id>           Queue an outbound message to a paired\n                                        chat or explicit chat id\n  bindings [options] <channel-id>       List your paired external chats for a\n                                        channel\n  sync-commands [options] <channel-id>  Sync provider slash commands for one of\n                                        your private bots\n  delete [options] <channel-id>         Archive one of your private channel bots\n  help [command]                        display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi channel unpair",
@@ -2611,7 +2607,7 @@
 		"hidden": false,
 		"arguments": [],
 		"options": [],
-		"help": "Usage: clawdi vault [options] [command]\n\nManage secrets\n\nOptions:\n  -h, --help                  display help for command\n\nCommands:\n  request [options] <key>     Request a secret through the browser without\n                              reading its value\n  materialize|pull [options]  Bind one vault to a local dotenv file, or pull its\n                              saved binding\n  set [options] <key>         Store a secret\n  list [options]              List stored keys and exact references\n  import [options] <file>     Import from .env file\n  attach [options] <vault>    Make an existing vault available in a project\n  detach [options] <vault>    Remove a project's access to a vault without\n                              deleting keys\n  rm|delete [options] <key>   Delete a key from a vault\n  resolve [options] <key>     Resolve one vault key\n  help [command]              display help for command\n\nScope:\n  Vaults are account-level key bundles. Projects attach to a vault to use the\n  same shared key set. set/import update the vault for every attached project.\n  rm deletes a key from the vault; detach only removes one project's access.\n  Key paths are KEY, vault/KEY, or vault/section/KEY.\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi vault [options] [command]\n\nManage secrets\n\nOptions:\n  -h, --help                display help for command\n\nCommands:\n  request [options] <key>   Request a secret through the browser without reading\n                            its value\n  materialize [options]     Bind one vault to a local dotenv file, or pull its\n                            saved binding\n  set [options] <key>       Store a secret\n  list [options]            List stored keys and exact references\n  import [options] <file>   Import from .env file\n  attach [options] <vault>  Make an existing vault available in a project\n  detach [options] <vault>  Remove a project's access to a vault without\n                            deleting keys\n  rm [options] <key>        Delete a key from a vault\n  resolve [options] <key>   Resolve one vault key\n  help [command]            display help for command\n\nScope:\n  Vaults are account-level key bundles. Projects attach to a vault to use the\n  same shared key set. set/import update the vault for every attached project.\n  rm deletes a key from the vault; detach only removes one project's access.\n  Key paths are KEY, vault/KEY, or vault/section/KEY.\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi vault request",
@@ -2659,9 +2655,7 @@
 	},
 	{
 		"path": "clawdi vault materialize",
-		"aliases": [
-			"pull"
-		],
+		"aliases": [],
 		"description": "Bind one vault to a local dotenv file, or pull its saved binding",
 		"hidden": false,
 		"arguments": [],
@@ -2703,7 +2697,7 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi vault materialize|pull [options]\n\nBind one vault to a local dotenv file, or pull its saved binding\n\nOptions:\n  --out <absolute-path>  Explicit local dotenv target (must be Git-ignored in a\n                         repository)\n  --vault <uuid>         Exact vault identity; required on first pull\n  --project <uuid>       Exact project attachment; required on first pull\n  --section <name>       Limit to one section (empty string selects unsectioned\n                         keys)\n  -h, --help             display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi vault materialize [options]\n\nBind one vault to a local dotenv file, or pull its saved binding\n\nOptions:\n  --out <absolute-path>  Explicit local dotenv target (must be Git-ignored in a\n                         repository)\n  --vault <uuid>         Exact vault identity; required on first pull\n  --project <uuid>       Exact project attachment; required on first pull\n  --section <name>       Limit to one section (empty string selects unsectioned\n                         keys)\n  -h, --help             display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi vault set",
@@ -2949,9 +2943,7 @@
 	},
 	{
 		"path": "clawdi vault rm",
-		"aliases": [
-			"delete"
-		],
+		"aliases": [],
 		"description": "Delete a key from a vault",
 		"hidden": false,
 		"arguments": [
@@ -3000,7 +2992,7 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi vault rm|delete [options] <key>\n\nDelete a key from a vault\n\nOptions:\n  -p, --project <id-or-slug>  Select the project used to locate the vault\n                              (default: your default-write project)\n  -y, --yes                   Skip the confirmation prompt\n  --global                    Allow deleting a key from a vault attached to\n                              multiple projects (affects every project using it)\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nExamples:\n  $ clawdi vault rm OPENAI_API_KEY\n  $ clawdi vault delete prod/stripe/SECRET_KEY --project engineering --yes\n  $ clawdi vault rm OPENAI_API_KEY --project engineering --global --yes\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi vault rm [options] <key>\n\nDelete a key from a vault\n\nOptions:\n  -p, --project <id-or-slug>  Select the project used to locate the vault\n                              (default: your default-write project)\n  -y, --yes                   Skip the confirmation prompt\n  --global                    Allow deleting a key from a vault attached to\n                              multiple projects (affects every project using it)\n  --json                      Output as JSON\n  -h, --help                  display help for command\n\nExamples:\n  $ clawdi vault rm OPENAI_API_KEY\n  $ clawdi vault rm prod/stripe/SECRET_KEY --project engineering --yes\n  $ clawdi vault rm OPENAI_API_KEY --project engineering --global --yes\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi vault resolve",
@@ -3475,7 +3467,7 @@
 		"hidden": false,
 		"arguments": [],
 		"options": [],
-		"help": "Usage: clawdi session [options] [command]\n\nInspect local and uploaded agent sessions\n\nOptions:\n  -h, --help                      display help for command\n\nCommands:\n  list [options]                  List local agent sessions, or uploaded\n                                  sessions with --uploaded\n  search [options] <query>        Search uploaded session summaries, messages,\n                                  projects, and IDs\n  read [options] <session-id>     Read one uploaded session and its message\n                                  content\n  rm [options] <session-id>       Permanently delete an uploaded session\n  export [options] <session-id>   Export an uploaded session as Markdown to\n                                  stdout\n  share [options] <session-id>    Publish an immutable public snapshot\n                                  (user-level auth)\n  shares [options] [session-id]   List active snapshot and legacy links\n  unshare [options] <share-id>    Revoke the exact snapshot or legacy link ID\n                                  from session shares\n  extract [options] <session-id>  Extract memories from a session via the\n                                  cloud's configured LLM\n  help [command]                  display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi session [options] [command]\n\nInspect local and uploaded agent sessions\n\nOptions:\n  -h, --help                      display help for command\n\nCommands:\n  list [options]                  List local agent sessions, or uploaded\n                                  sessions with --uploaded\n  search [options] <query>        Search uploaded session summaries, messages,\n                                  projects, and IDs\n  read [options] <session-id>     Read one uploaded session and its message\n                                  content\n  rm [options] <session-id>       Permanently delete an uploaded session\n  export [options] <session-id>   Export an uploaded session as Markdown to\n                                  stdout\n  share [options] <session-id>    Publish an immutable public snapshot\n                                  (user-level auth)\n  shares [options] [session-id]   List active snapshot links\n  unshare [options] <share-id>    Revoke the exact snapshot link ID from session\n                                  shares\n  extract [options] <session-id>  Extract memories from a session via the\n                                  cloud's configured LLM\n  help [command]                  display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi session list",
@@ -3768,7 +3760,7 @@
 	{
 		"path": "clawdi session shares",
 		"aliases": [],
-		"description": "List active snapshot and legacy links",
+		"description": "List active snapshot links",
 		"hidden": false,
 		"arguments": [
 			{
@@ -3811,12 +3803,12 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi session shares [options] [session-id]\n\nList active snapshot and legacy links\n\nOptions:\n  --page <n>   Page number (default: 1)\n  --limit <n>  Page size (1-100) (default: 25)\n  --json       Output as JSON\n  -h, --help   display help for command\n\nExamples:\n  $ clawdi session shares\n  $ clawdi session shares <session-id> --json\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi session shares [options] [session-id]\n\nList active snapshot links\n\nOptions:\n  --page <n>   Page number (default: 1)\n  --limit <n>  Page size (1-100) (default: 25)\n  --json       Output as JSON\n  -h, --help   display help for command\n\nExamples:\n  $ clawdi session shares\n  $ clawdi session shares <session-id> --json\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi session unshare",
 		"aliases": [],
-		"description": "Revoke the exact snapshot or legacy link ID from session shares",
+		"description": "Revoke the exact snapshot link ID from session shares",
 		"hidden": false,
 		"arguments": [
 			{
@@ -3827,15 +3819,6 @@
 			}
 		],
 		"options": [
-			{
-				"flags": "--legacy",
-				"description": "Revoke a legacy live link (kind=live in session shares)",
-				"hidden": false,
-				"required": false,
-				"optional": false,
-				"mandatory": false,
-				"variadic": false
-			},
 			{
 				"flags": "-y, --yes",
 				"description": "Confirm revocation without prompting",
@@ -3855,7 +3838,7 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi session unshare [options] <share-id>\n\nRevoke the exact snapshot or legacy link ID from session shares\n\nOptions:\n  --legacy    Revoke a legacy live link (kind=live in session shares)\n  -y, --yes   Confirm revocation without prompting\n  --json      Output as JSON\n  -h, --help  display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi session unshare [options] <share-id>\n\nRevoke the exact snapshot link ID from session shares\n\nOptions:\n  -y, --yes   Confirm revocation without prompting\n  --json      Output as JSON\n  -h, --help  display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi session extract",
@@ -4321,15 +4304,6 @@
 				"variadic": false
 			},
 			{
-				"flags": "--all-vault-env",
-				"description": "Legacy mode: inject every vault env value from the selected project",
-				"hidden": false,
-				"required": false,
-				"optional": false,
-				"mandatory": false,
-				"variadic": false
-			},
-			{
 				"flags": "--allow-conflicts",
 				"description": "Allow first-match wins for workspace and linked-project vault conflicts",
 				"hidden": false,
@@ -4366,7 +4340,7 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi run [options] <command...>\n\nRun a command with clawdi:// references resolved\n\nArguments:\n  command                         Command to run\n\nOptions:\n  -p, --project <id-or-slug>      Resolve references from an explicit project\n  -a, --agent <agent-id-or-type>  Resolve through workspace and linked projects\n  --env-file <file>               Load dotenv-like file and resolve clawdi://\n                                  references (default: [])\n  --no-inherit-env                Do not inherit the parent process environment\n  --all-vault-env                 Legacy mode: inject every vault env value from\n                                  the selected project\n  --allow-conflicts               Allow first-match wins for workspace and\n                                  linked-project vault conflicts\n  --no-project-folder             Skip linked-folder project lookup\n  --dry-run                       Show reference resolution plan without\n                                  launching the command\n  -h, --help                      display help for command\n\nExamples:\n  $ clawdi project folder link --project engineering\n  $ clawdi run --dry-run --env-file .env.clawdi -- npm run dev\n  $ clawdi run --env-file .env.clawdi -- npm run dev\n  ✓ Resolved 2 clawdi references\n\n  $ clawdi run --project @alice/engineering --env-file .env.clawdi -- npm run dev\n  $ clawdi run --all-vault-env -- npm run dev\n  $ clawdi run --no-project-folder -- python main.py\n\nScope resolution:\n  Exact clawdi://project/... references carry their own project.\n  Otherwise --project wins, then --agent, then linked folder, then default-write project.\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi run [options] <command...>\n\nRun a command with clawdi:// references resolved\n\nArguments:\n  command                         Command to run\n\nOptions:\n  -p, --project <id-or-slug>      Resolve references from an explicit project\n  -a, --agent <agent-id-or-type>  Resolve through workspace and linked projects\n  --env-file <file>               Load dotenv-like file and resolve clawdi://\n                                  references (default: [])\n  --no-inherit-env                Do not inherit the parent process environment\n  --allow-conflicts               Allow first-match wins for workspace and\n                                  linked-project vault conflicts\n  --no-project-folder             Skip linked-folder project lookup\n  --dry-run                       Show reference resolution plan without\n                                  launching the command\n  -h, --help                      display help for command\n\nExamples:\n  $ clawdi project folder link --project engineering\n  $ clawdi run --dry-run --env-file .env.clawdi -- npm run dev\n  $ clawdi run --env-file .env.clawdi -- npm run dev\n  ✓ Resolved 2 clawdi references\n\n  $ clawdi run --project @alice/engineering --env-file .env.clawdi -- npm run dev\n  $ clawdi run --no-project-folder -- python main.py\n\nScope resolution:\n  Exact clawdi://project/... references carry their own project.\n  Otherwise --project wins, then --agent, then linked folder, then default-write project.\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi project",
@@ -5428,16 +5402,16 @@
 				"variadic": false
 			},
 			{
-				"flags": "--desktop-list",
-				"description": "",
-				"hidden": true,
+				"flags": "--json",
+				"description": "Output as JSON",
+				"hidden": false,
 				"required": false,
 				"optional": false,
 				"mandatory": false,
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi agent reconnect [options] [agent-id]\n\nRecover a local agent binding without creating a new cloud identity\n\nOptions:\n  --agent <type>      Agent type (claude_code, codex, openclaw, hermes, pi,\n                      opencode, dsh)\n  -y, --yes           Skip confirmation when the target is unambiguous\n  --confirm-takeover  Confirm disconnecting a recently active installation\n  --no-daemon         Skip installing/starting background sync daemons\n  -h, --help          display help for command\n\nExamples:\n  $ clawdi agent reconnect --agent codex\n  $ clawdi agent reconnect <agent-id>\n  $ clawdi agent reconnect <agent-id> --no-daemon\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi agent reconnect [options] [agent-id]\n\nRecover a local agent binding without creating a new cloud identity\n\nOptions:\n  --agent <type>      Agent type (claude_code, codex, openclaw, hermes, pi,\n                      opencode, dsh)\n  -y, --yes           Skip confirmation when the target is unambiguous\n  --confirm-takeover  Confirm disconnecting a recently active installation\n  --no-daemon         Skip installing/starting background sync daemons\n  --json              Output as JSON\n  -h, --help          display help for command\n\nExamples:\n  $ clawdi agent reconnect --agent codex\n  $ clawdi agent reconnect <agent-id>\n  $ clawdi agent reconnect <agent-id> --no-daemon\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi agent credentials",

@@ -59,6 +59,11 @@ export function Select({
 					},
 				});
 			} else if (node.type === SelectSeparator) entries.push(null);
+			else if (node.type === SelectSub)
+				entries.push({
+					action: { id: `select-sub-${sequence++}`, title: node.props.label ?? "" },
+					children: collect(node.props.children),
+				});
 			else if (node.type === SelectGroup) {
 				const label = findMenuElement(node.props.children, SelectLabel);
 				entries.push({
@@ -148,6 +153,10 @@ export function SelectGroup(_props: SlotProps) {
 export function SelectItem(
 	_props: SlotProps & { value: string; label?: string; disabled?: boolean },
 ) {
+	return null;
+}
+/** Mobile-only nested submenu for long option sets (e.g. timezones grouped by region). */
+export function SelectSub(_props: SlotProps & { label: string }) {
 	return null;
 }
 export function SelectLabel(_props: SlotProps) {

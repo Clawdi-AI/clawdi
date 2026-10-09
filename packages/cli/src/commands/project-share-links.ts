@@ -1,20 +1,18 @@
 import chalk from "chalk";
 import { ApiClient, ApiError } from "../lib/api-client";
+import { requireUuid } from "../lib/cli-options";
 import { commandResult, message } from "../lib/command-output";
 import { authedJson, projectAuthOrExit } from "../lib/project-command-utils";
 import { resolveProjectId } from "../lib/project-resolver";
 import { confirmOrRequireYes } from "../lib/prompts";
 
 /**
- * `clawdi project share-links <project> [--revoke <id|prefix>]`
+ * `clawdi project share-links <project> [--revoke <id>]`
  *
  * Default = list all links on the project, freshest first, with
  * revoke status + redeem counts + last-used timestamps.
  *
- * `--revoke <id-or-prefix>`: soft-revoke that link. Idempotent on
- * an already-revoked one. The `<prefix>` shorthand matches when
- * exactly one link in the listing starts with that prefix — saves
- * the user from copy-pasting full UUIDs from a fresh list.
+ * `--revoke <id>`: soft-revoke that link. Idempotent on an already-revoked one.
  */
 
 interface ShareLinkRow {
@@ -33,7 +31,11 @@ async function fetchLinks(
 	bearer: string,
 	projectId: string,
 ): Promise<ShareLinkRow[]> {
-	return authedJson<ShareLinkRow[]>(apiUrl, bearer, `/v1/projects/${projectId}/share-links`);
+	return authedJson<ShareLinkRow[]>(
+		apiUrl,
+		bearer,
+		`/v1/projects/${encodeURIComponent(projectId)}/share-links`,
+	);
 }
 
 function formatRow(link: ShareLinkRow): string {
@@ -44,7 +46,7 @@ function formatRow(link: ShareLinkRow): string {
 		: "";
 	const label = link.label ? ` ${chalk.dim(`[${link.label}]`)}` : "";
 	return (
-		`  ${chalk.bold(link.prefix)}…${label}  ` +
+		`  ${chalk.bold(link.id)}  ${chalk.gray(`${link.prefix}…`)}${label}  ` +
 		`${status}  ${chalk.gray(created)}  ` +
 		`${chalk.gray(`${link.redeem_count} accept${link.redeem_count === 1 ? "" : "s"}`)}` +
 		last
@@ -62,26 +64,7 @@ export async function projectShareLinksCommand(
 	const projectId = await resolveProjectId(apiUrl, apiKey, projectArg);
 
 	if (opts.revoke) {
-		// Resolve the link-id from a prefix shorthand if necessary.
-		let linkId = opts.revoke;
-		const looksLikeUUID = /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(linkId);
-		if (!looksLikeUUID) {
-			const all = await fetchLinks(apiUrl, apiKey, projectId);
-			const matches = all.filter((l) => l.prefix.startsWith(linkId));
-			if (matches.length === 0) {
-				console.error(chalk.red(`No link starts with prefix '${linkId}'.`));
-				process.exitCode = 1;
-				return;
-			}
-			if (matches.length > 1) {
-				console.error(
-					chalk.red(`Prefix '${linkId}' matches ${matches.length} links. Use the full id.`),
-				);
-				process.exitCode = 1;
-				return;
-			}
-			linkId = matches[0].id;
-		}
+		const linkId = requireUuid(opts.revoke, "Share link ID");
 		if (
 			!(await confirmOrRequireYes(`Revoke share link ${linkId}?`, {
 				yes: opts.yes,
@@ -96,7 +79,7 @@ export async function projectShareLinksCommand(
 			return;
 		}
 		const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
-			`/v1/projects/${projectId}/share-links/${linkId}`,
+			`/v1/projects/${encodeURIComponent(projectId)}/share-links/${encodeURIComponent(linkId)}`,
 			{
 				method: "DELETE",
 			},
@@ -140,6 +123,6 @@ export async function projectShareLinksCommand(
 	console.log();
 	console.log(
 		chalk.gray("Revoke: ") +
-			chalk.cyan(`clawdi project share-links ${projectArg} --revoke <prefix> --yes`),
+			chalk.cyan(`clawdi project share-links ${projectArg} --revoke <id> --yes`),
 	);
 }
