@@ -1,5 +1,3 @@
-const PRODUCTION_CLOUD_API_ORIGIN = "https://cloud-api.clawdi.ai";
-
 type ParsedApiBaseUrl = {
 	url: URL;
 	rawPath: string;
@@ -90,8 +88,4 @@ export function normalizeHostedDeployApiBaseUrl(raw: string): string {
 /** Canonical URL origin: lower-case host, effective port, and no trailing slash. */
 export function canonicalApiOrigin(normalizedBaseUrl: string): string {
 	return new URL(normalizedBaseUrl).origin;
-}
-
-export function isProductionCloudApiOrigin(origin: string): boolean {
-	return origin === PRODUCTION_CLOUD_API_ORIGIN;
 }
