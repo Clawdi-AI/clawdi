@@ -1,17 +1,17 @@
 import { Button, Host } from "@expo/ui";
 import type { ReactNode } from "react";
 import { useUniwind } from "uniwind";
+import { AppView } from "@/components/ui/view";
 
 function NativeControlHost({ children }: { children: ReactNode }) {
 	const { theme } = useUniwind();
 	return (
-		<Host
-			colorScheme={theme === "dark" ? "dark" : "light"}
-			matchContents={{ vertical: true }}
-			style={{ width: "100%" }}
-		>
-			{children}
-		</Host>
+		// Keep a native parent so list subview clipping never attaches the Host mid-layout (0×0 Host).
+		<AppView className="w-full" collapsable={false}>
+			<Host colorScheme={theme === "dark" ? "dark" : "light"} matchContents={{ vertical: true }}>
+				{children}
+			</Host>
+		</AppView>
 	);
 }
 
