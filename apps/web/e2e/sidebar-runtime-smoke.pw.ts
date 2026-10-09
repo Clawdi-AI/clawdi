@@ -1995,6 +1995,12 @@ test("agent Skill details resolve only through effective Projects", async ({ pag
 	}
 });
 
+// dnd-kit 6.3.1's KeyboardSensor attaches its document keydown listener in
+// setTimeout after pickup; HTML timer ordering runs this later timer after it.
+async function afterPendingTimers(page: Page) {
+	await page.evaluate(() => new Promise<void>((resolve) => setTimeout(resolve)));
+}
+
 test("agent rail preserves keyboard sorting and primes agent switches", async ({ page }) => {
 	const agentOrderRequests: string[] = [];
 	const agentDetailRequests: string[] = [];
@@ -2015,6 +2021,7 @@ test("agent rail preserves keyboard sorting and primes agent switches", async ({
 	await firstButton.focus();
 	await page.keyboard.down("Space");
 	await expect(firstButton).toHaveAttribute("aria-pressed", "true");
+	await afterPendingTimers(page);
 	await page.keyboard.up("Space");
 	await page.keyboard.press("ArrowDown");
 	await page.keyboard.press("Escape");
@@ -2026,10 +2033,12 @@ test("agent rail preserves keyboard sorting and primes agent switches", async ({
 	await firstButton.focus();
 	await page.keyboard.down("Space");
 	await expect(firstButton).toHaveAttribute("aria-pressed", "true");
+	await afterPendingTimers(page);
 	await expect(page).toHaveURL("/");
 	await page.keyboard.up("Space");
 	await expect(page).toHaveURL("/");
 	await page.keyboard.press("ArrowDown");
+	await expect(tiles.nth(0)).toContainText("Smoke Hermes");
 	await page.keyboard.down("Space");
 	await expect(firstButton).not.toHaveAttribute("aria-pressed", "true");
 	await expect(page).toHaveURL("/");
