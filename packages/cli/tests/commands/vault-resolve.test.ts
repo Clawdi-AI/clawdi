@@ -215,6 +215,33 @@ describe("vaultResolveCommand", () => {
 		expect(err).not.toContain("No vault value found");
 	});
 
+	it("writes a versioned safe error envelope to stderr in JSON mode", async () => {
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/vault/resolve",
+				response: () => jsonResponse({ detail: "private backend internals" }, 500),
+			},
+		]);
+		const origError = console.error;
+		let err = "";
+		console.error = (...args: unknown[]) => {
+			err += `${args.map(String).join(" ")}\n`;
+		};
+		try {
+			await vaultResolveCommand("OPENAI_API_KEY", { json: true });
+		} finally {
+			console.error = origError;
+			restore();
+		}
+		expect(JSON.parse(err)).toMatchObject({
+			schemaVersion: "clawdi.vaultResolve.v1",
+			status: "error",
+			error: { code: "vault_resolve_failed", status: 500 },
+		});
+		expect(err).not.toContain("private backend internals");
+	});
+
 	it("does not recommend allow-conflicts for an ambiguous Vault namespace", async () => {
 		const { restore } = mockFetch([
 			{

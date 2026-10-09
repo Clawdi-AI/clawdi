@@ -102,7 +102,7 @@ export async function projectShowCommand(
 	};
 
 	if (opts.json) {
-		emit(payload);
+		emit({ schemaVersion: "clawdi.projectShow.v1", ...payload });
 		return;
 	}
 

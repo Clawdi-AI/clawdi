@@ -116,14 +116,11 @@ export async function agentRm(agentId: string, opts: AgentRemoveOptions = {}): P
 		throw new Error("Could not remove the agent. Please retry or run `clawdi doctor`.");
 	}
 	if (opts.json) {
-		emit(
-			{
-				schemaVersion: "clawdi.agentRm.v1",
-				id: agentId,
-				status: "disconnected",
-			},
-			false,
-		);
+		emit({
+			schemaVersion: "clawdi.agentRm.v1",
+			id: agentId,
+			status: "disconnected",
+		});
 	} else {
 		console.log(`Disconnected agent ${agentId} and archived its workspace.`);
 	}

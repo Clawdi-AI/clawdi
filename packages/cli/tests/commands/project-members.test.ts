@@ -68,7 +68,7 @@ describe("project member lifecycle commands", () => {
 					jsonResponse([
 						{
 							id: "member-1",
-							user_id: "user-bob",
+							user_id: "00000000-0000-4000-8000-0000000000b0",
 							user_email: "bob@example.test",
 							user_display: "Bob",
 							role: "viewer",
@@ -80,7 +80,7 @@ describe("project member lifecycle commands", () => {
 			},
 			{
 				method: "DELETE",
-				path: "/v1/projects/project-owned/members/user-bob",
+				path: "/v1/projects/project-owned/members/00000000-0000-4000-8000-0000000000b0",
 				response: () => jsonResponse({ status: "removed" }),
 			},
 			{ method: "GET", path: "/v1/projects", response: () => jsonResponse(projects) },
@@ -104,11 +104,12 @@ describe("project member lifecycle commands", () => {
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
 			"GET /v1/projects",
 			"GET /v1/projects/project-owned/members",
-			"DELETE /v1/projects/project-owned/members/user-bob",
+			"DELETE /v1/projects/project-owned/members/00000000-0000-4000-8000-0000000000b0",
 		]);
 		expect(JSON.parse(out)).toEqual({
 			project_id: "project-owned",
-			removed_user_id: "user-bob",
+			schemaVersion: "clawdi.projectMembers.v1",
+			removed_user_id: "00000000-0000-4000-8000-0000000000b0",
 			status: "removed",
 		});
 	});
@@ -135,6 +136,7 @@ describe("project member lifecycle commands", () => {
 		}
 
 		expect(JSON.parse(out)).toEqual({
+			schemaVersion: "clawdi.projectLeave.v1",
 			project_id: "project-shared",
 			status: "left",
 		});
@@ -167,6 +169,7 @@ describe("project member lifecycle commands", () => {
 		}
 
 		expect(JSON.parse(out)).toEqual({
+			schemaVersion: "clawdi.projectUnshare.v1",
 			project_id: "project-owned",
 			links_revoked: 1,
 			members_removed: 2,

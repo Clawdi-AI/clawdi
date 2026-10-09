@@ -22,34 +22,6 @@ function normalizeSlugInput(value: string | undefined): string | undefined {
 	return slug || undefined;
 }
 
-function formatDetail(body: unknown): string {
-	if (typeof body === "string") return body;
-	if (!body || typeof body !== "object") return "Unknown error";
-	const detail = (body as { detail?: unknown }).detail;
-	if (typeof detail === "string") return detail;
-	if (Array.isArray(detail)) {
-		return detail
-			.map((item) => {
-				if (!item || typeof item !== "object") return String(item);
-				const msg = (item as { msg?: unknown }).msg;
-				const loc = (item as { loc?: unknown }).loc;
-				return `${Array.isArray(loc) ? `${loc.join(".")}: ` : ""}${String(msg ?? item)}`;
-			})
-			.join("; ");
-	}
-	return JSON.stringify(detail);
-}
-
-async function parseErrorBody(r: Response): Promise<unknown> {
-	const text = await r.text();
-	if (!text) return "";
-	try {
-		return JSON.parse(text);
-	} catch {
-		return text;
-	}
-}
-
 export async function projectCreateCommand(
 	name: string,
 	opts: { slug?: string; json?: boolean } = {},
@@ -71,18 +43,12 @@ export async function projectCreateCommand(
 	});
 
 	if (!r.ok) {
-		const body = await parseErrorBody(r);
-		if (r.status === 400 || r.status === 403 || r.status === 409 || r.status === 422) {
-			console.error(chalk.red(`Failed to create project: ${formatDetail(body)}`));
-			process.exitCode = 1;
-			return;
-		}
-		throw new ApiError({ status: r.status, body: JSON.stringify(body), hint: "" });
+		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	}
 
 	const project = await readJson<ProjectRow>(r, "create project");
 	if (opts.json) {
-		emit({ status: "created", project });
+		emit({ schemaVersion: "clawdi.projectCreate.v1", status: "created", project });
 		return;
 	}
 

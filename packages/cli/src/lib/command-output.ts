@@ -7,24 +7,12 @@ export function wantsJson(opts: JsonOutputOptions | boolean | undefined): boolea
 	return typeof opts === "boolean" ? opts : opts?.json === true;
 }
 
-/**
- * Emit one JSON value to stdout. The object form is the only supported
- * command contract: callers should include a schemaVersion and named arrays.
- * The two-argument form adds a schemaVersion for commandResult callers.
- */
-export function emit(value: unknown, pretty?: boolean, write?: (text: string) => void): void;
-export function emit(schemaVersion: string, result: Record<string, unknown>): void;
-export function emit(
-	valueOrSchema: unknown,
-	prettyOrResult: boolean | Record<string, unknown> = true,
+/** Emit a versioned JSON envelope, formatted consistently for every command. */
+export function emit<T extends { schemaVersion: string }>(
+	value: T,
 	write: (text: string) => void = console.log,
 ): void {
-	const value =
-		typeof prettyOrResult === "object" && prettyOrResult !== null
-			? { ...prettyOrResult, schemaVersion: valueOrSchema }
-			: valueOrSchema;
-	const pretty = typeof prettyOrResult === "boolean" ? prettyOrResult : false;
-	write(JSON.stringify(value, null, pretty ? 2 : undefined));
+	write(JSON.stringify(value));
 }
 
 /** Keep human messages out of machine-readable stdout. */
@@ -39,5 +27,5 @@ export function commandResult(
 	schemaVersion: string,
 	result: Record<string, unknown>,
 ): void {
-	if (json) emit(schemaVersion, result);
+	if (json) emit({ ...result, schemaVersion });
 }

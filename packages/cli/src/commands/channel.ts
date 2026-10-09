@@ -78,15 +78,12 @@ export async function channelUnlinkCommand(
 		}),
 	);
 	if (opts.json) {
-		emit(
-			{
-				schemaVersion: "clawdi.channelUnlink.v1",
-				account_id: accountId,
-				link_id: opts.link,
-				status: "unlinked",
-			},
-			false,
-		);
+		emit({
+			schemaVersion: "clawdi.channelUnlink.v1",
+			account_id: accountId,
+			link_id: opts.link,
+			status: "unlinked",
+		});
 	} else {
 		console.log(`Unlinked agent link ${opts.link} from channel ${accountId}.`);
 	}
@@ -112,15 +109,12 @@ export async function channelUnpairCommand(
 		}),
 	);
 	if (opts.json) {
-		emit(
-			{
-				schemaVersion: "clawdi.channelUnpair.v1",
-				account_id: accountId,
-				binding_id: opts.binding,
-				status: "unpaired",
-			},
-			false,
-		);
+		emit({
+			schemaVersion: "clawdi.channelUnpair.v1",
+			account_id: accountId,
+			binding_id: opts.binding,
+			status: "unpaired",
+		});
 	} else {
 		console.log(`Unpaired chat binding ${opts.binding} from channel ${accountId}.`);
 	}
@@ -131,7 +125,7 @@ export async function channelListCommand(opts: JsonOption = {}): Promise<void> {
 	const api = new ApiClient();
 	const channels = unwrap(await api.GET("/v1/channels"));
 	if (opts.json) {
-		emit({ channels });
+		emit({ schemaVersion: "clawdi.channelList.v1", channels });
 		return;
 	}
 	if (channels.length === 0) {
@@ -157,7 +151,7 @@ export async function channelAvailableCommand(opts: JsonOption = {}): Promise<vo
 	const api = new ApiClient();
 	const pool = unwrap(await api.GET("/v1/channels/bot-pool"));
 	if (opts.json) {
-		emit({ bot_pool: pool });
+		emit({ schemaVersion: "clawdi.channelAvailable.v1", bot_pool: pool });
 		return;
 	}
 	printBotPool(pool);
@@ -172,7 +166,7 @@ export async function channelGetCommand(accountId: string, opts: JsonOption = {}
 		}),
 	);
 	if (opts.json) {
-		emit({ channel });
+		emit({ schemaVersion: "clawdi.channelGet.v1", channel });
 		return;
 	}
 	printChannel(channel);
@@ -195,7 +189,7 @@ export async function channelCreateCommand(
 	};
 	const channel = unwrap(await api.POST("/v1/channels", { body }));
 	if (opts.json) {
-		emit({ channel });
+		emit({ schemaVersion: "clawdi.channelCreate.v1", channel });
 		return;
 	}
 	printCreatedChannel(channel);
@@ -210,7 +204,7 @@ export async function channelLinksCommand(accountId: string, opts: JsonOption = 
 		}),
 	);
 	if (opts.json) {
-		emit({ account_id: accountId, links });
+		emit({ schemaVersion: "clawdi.channelLinks.v1", account_id: accountId, links });
 		return;
 	}
 	if (links.length === 0) {
@@ -237,7 +231,7 @@ export async function channelLinkCommand(
 		}),
 	);
 	if (opts.json) {
-		emit({ link });
+		emit({ schemaVersion: "clawdi.channelLink.v1", link });
 		return;
 	}
 	printAgentLink(link);
@@ -255,7 +249,7 @@ export async function channelRotateTokenCommand(
 		}),
 	);
 	if (opts.json) {
-		emit({ link });
+		emit({ schemaVersion: "clawdi.channelRotateToken.v1", link });
 		return;
 	}
 	printRotatedAgentLink(link);
@@ -284,7 +278,7 @@ export async function channelPairCodeCommand(
 		}),
 	);
 	if (opts.json) {
-		emit({ pair_code: pairCode });
+		emit({ schemaVersion: "clawdi.channelPairCode.v1", pair_code: pairCode });
 		return;
 	}
 	printPairCode(pairCode);
@@ -317,7 +311,7 @@ export async function channelSendCommand(
 		}),
 	);
 	if (opts.json) {
-		emit({ message });
+		emit({ schemaVersion: "clawdi.channelSend.v1", message });
 		return;
 	}
 	printSentMessage(message);
@@ -335,7 +329,7 @@ export async function channelBindingsCommand(
 		}),
 	);
 	if (opts.json) {
-		emit({ account_id: accountId, bindings });
+		emit({ schemaVersion: "clawdi.channelBindings.v1", account_id: accountId, bindings });
 		return;
 	}
 	if (bindings.length === 0) {
@@ -370,7 +364,7 @@ export async function channelSyncCommandsCommand(
 		}),
 	);
 	if (opts.json) {
-		emit({ sync: synced });
+		emit({ schemaVersion: "clawdi.channelSyncCommands.v1", sync: synced });
 		return;
 	}
 	printSyncedCommands(synced);
@@ -398,7 +392,7 @@ export async function channelDeleteCommand(
 		}),
 	);
 	if (opts.json) {
-		emit({ account_id: accountId, deleted: true });
+		emit({ schemaVersion: "clawdi.channelDelete.v1", account_id: accountId, deleted: true });
 		return;
 	}
 	console.log(`${chalk.green("✓")} Archived channel ${accountId}.`);

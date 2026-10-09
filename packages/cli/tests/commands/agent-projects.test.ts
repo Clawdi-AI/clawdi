@@ -93,12 +93,12 @@ describe("agent project commands", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/v1/agents/agent-1/project-bindings",
+				path: "/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings",
 				response: () =>
 					jsonResponse([
 						{
 							id: "attach-primary",
-							agent_id: "agent-1",
+							agent_id: "00000000-0000-4000-8000-000000000001",
 							project_id: "project-1",
 							binding_type: "primary",
 							priority: 0,
@@ -107,7 +107,7 @@ describe("agent project commands", () => {
 						},
 						{
 							id: "attach-shared",
-							agent_id: "agent-1",
+							agent_id: "00000000-0000-4000-8000-000000000001",
 							project_id: "project-2",
 							binding_type: "context",
 							priority: 1,
@@ -146,21 +146,23 @@ describe("agent project commands", () => {
 			lines.push(args.map(String).join(" "));
 		};
 		try {
-			await agentProjectsListCommand("agent-1");
+			await agentProjectsListCommand("00000000-0000-4000-8000-000000000001");
 		} finally {
 			console.log = orig;
 			restore();
 		}
 
 		const out = lines.join("\n");
-		expect(out).toContain("Projects for agent-1");
+		expect(out).toContain("Projects for 00000000-0000-4000-8000-000000000001");
 		expect(out).toContain("Workspace");
 		expect(out).toContain("Linked projects (1)");
 		expect(out).toContain("@alice-a3b4/shared-toolkit");
 		expect(out).toContain("viewer");
 		expect(out).toContain("Vault resolution: workspace, then linked projects.");
 		expect(out).toContain("id=attach-shared");
-		expect(out).toContain("Move:   clawdi agent projects move agent-1 --item attach-shared:1");
+		expect(out).toContain(
+			"Move:   clawdi agent projects move 00000000-0000-4000-8000-000000000001 --item attach-shared:1",
+		);
 		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);
 		expect(out).not.toContain("context project");
 	});
@@ -169,12 +171,12 @@ describe("agent project commands", () => {
 		const { restore } = mockFetch([
 			{
 				method: "GET",
-				path: "/v1/agents/agent-1/project-bindings",
+				path: "/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings",
 				response: () =>
 					jsonResponse([
 						{
 							id: "binding-1",
-							agent_id: "agent-1",
+							agent_id: "00000000-0000-4000-8000-000000000001",
 							project_id: "project-1",
 							binding_type: "primary",
 							priority: 0,
@@ -204,7 +206,7 @@ describe("agent project commands", () => {
 			out = args.map(String).join(" ");
 		};
 		try {
-			await agentProjectsListCommand("agent-1", { json: true });
+			await agentProjectsListCommand("00000000-0000-4000-8000-000000000001", { json: true });
 		} finally {
 			console.log = orig;
 			restore();
@@ -231,11 +233,11 @@ describe("agent project commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/v1/agents/agent-1/project-bindings/context",
+				path: "/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context",
 				response: () =>
 					jsonResponse({
 						id: "attach-1",
-						agent_id: "agent-1",
+						agent_id: "00000000-0000-4000-8000-000000000001",
 						project_id: "project-1",
 						binding_type: "context",
 						priority: 10,
@@ -245,7 +247,7 @@ describe("agent project commands", () => {
 			},
 		]);
 		try {
-			await agentProjectsAddContextCommand("agent-1", {
+			await agentProjectsAddContextCommand("00000000-0000-4000-8000-000000000001", {
 				project: "engineering",
 				order: "10",
 			});
@@ -277,13 +279,13 @@ describe("agent project commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/v1/agents/agent-1/project-bindings/context",
+				path: "/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context",
 				response: () => jsonResponse({}),
 			},
 		]);
 		try {
 			await expect(
-				agentProjectsAddContextCommand("agent-1", {
+				agentProjectsAddContextCommand("00000000-0000-4000-8000-000000000001", {
 					project: "engineering",
 					order: "abc",
 				}),
@@ -296,7 +298,8 @@ describe("agent project commands", () => {
 			.filter(
 				(request) =>
 					request.method === "POST" &&
-					request.path === "/v1/agents/agent-1/project-bindings/context",
+					request.path ===
+						"/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context",
 			)
 			.map((request) => request.body);
 		expect(postBodies).toEqual([]);
@@ -320,13 +323,13 @@ describe("agent project commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/v1/agents/agent-1/project-bindings/context",
+				path: "/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context",
 				response: () => jsonResponse({}),
 			},
 		]);
 		try {
 			await expect(
-				agentProjectsAddContextCommand("agent-1", {
+				agentProjectsAddContextCommand("00000000-0000-4000-8000-000000000001", {
 					project: "engineering",
 					order: "",
 				}),
@@ -339,7 +342,8 @@ describe("agent project commands", () => {
 			.filter(
 				(request) =>
 					request.method === "POST" &&
-					request.path === "/v1/agents/agent-1/project-bindings/context",
+					request.path ===
+						"/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context",
 			)
 			.map((request) => request.body);
 		expect(postBodies).toEqual([]);
@@ -363,13 +367,13 @@ describe("agent project commands", () => {
 			},
 			{
 				method: "POST",
-				path: "/v1/agents/agent-1/project-bindings/context",
+				path: "/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context",
 				response: () => jsonResponse({}),
 			},
 		]);
 		try {
 			await expect(
-				agentProjectsAddContextCommand("agent-1", {
+				agentProjectsAddContextCommand("00000000-0000-4000-8000-000000000001", {
 					project: "engineering",
 					order: "0",
 				}),
@@ -382,7 +386,8 @@ describe("agent project commands", () => {
 			.filter(
 				(request) =>
 					request.method === "POST" &&
-					request.path === "/v1/agents/agent-1/project-bindings/context",
+					request.path ===
+						"/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context",
 			)
 			.map((request) => request.body);
 		expect(postBodies).toEqual([]);
@@ -392,13 +397,13 @@ describe("agent project commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "PATCH",
-				path: "/v1/agents/agent-1/project-bindings/context/reorder",
+				path: "/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context/reorder",
 				response: () => jsonResponse({ status: "reordered" }),
 			},
 		]);
 		try {
-			await agentProjectsReorderCommand("agent-1", {
-				item: ["binding-a:2", "binding-b:1"],
+			await agentProjectsReorderCommand("00000000-0000-4000-8000-000000000001", {
+				item: ["00000000-0000-4000-8000-000000000002:2", "00000000-0000-4000-8000-000000000003:1"],
 			});
 		} finally {
 			restore();
@@ -406,8 +411,8 @@ describe("agent project commands", () => {
 
 		expect(captured[0].body).toEqual({
 			items: [
-				{ binding_id: "binding-a", priority: 2 },
-				{ binding_id: "binding-b", priority: 1 },
+				{ binding_id: "00000000-0000-4000-8000-000000000002", priority: 2 },
+				{ binding_id: "00000000-0000-4000-8000-000000000003", priority: 1 },
 			],
 		});
 	});
@@ -416,14 +421,14 @@ describe("agent project commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "PATCH",
-				path: "/v1/agents/agent-1/project-bindings/context/reorder",
+				path: "/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context/reorder",
 				response: () => jsonResponse({ status: "reordered" }),
 			},
 		]);
 		try {
 			await expect(
-				agentProjectsReorderCommand("agent-1", {
-					item: ["binding-a:1abc"],
+				agentProjectsReorderCommand("00000000-0000-4000-8000-000000000001", {
+					item: ["00000000-0000-4000-8000-000000000002:1abc"],
 				}),
 			).rejects.toThrow(/<order>/);
 		} finally {
@@ -434,7 +439,8 @@ describe("agent project commands", () => {
 			.filter(
 				(request) =>
 					request.method === "PATCH" &&
-					request.path === "/v1/agents/agent-1/project-bindings/context/reorder",
+					request.path ===
+						"/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context/reorder",
 			)
 			.map((request) => request.body);
 		expect(patchBodies).toEqual([]);
@@ -444,14 +450,14 @@ describe("agent project commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "PATCH",
-				path: "/v1/agents/agent-1/project-bindings/context/reorder",
+				path: "/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context/reorder",
 				response: () => jsonResponse({ status: "reordered" }),
 			},
 		]);
 		try {
 			await expect(
-				agentProjectsReorderCommand("agent-1", {
-					item: ["binding-a:1:bad"],
+				agentProjectsReorderCommand("00000000-0000-4000-8000-000000000001", {
+					item: ["00000000-0000-4000-8000-000000000002:1:bad"],
 				}),
 			).rejects.toThrow(/<order>/);
 		} finally {
@@ -462,7 +468,8 @@ describe("agent project commands", () => {
 			.filter(
 				(request) =>
 					request.method === "PATCH" &&
-					request.path === "/v1/agents/agent-1/project-bindings/context/reorder",
+					request.path ===
+						"/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context/reorder",
 			)
 			.map((request) => request.body);
 		expect(patchBodies).toEqual([]);
@@ -472,14 +479,14 @@ describe("agent project commands", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "PATCH",
-				path: "/v1/agents/agent-1/project-bindings/context/reorder",
+				path: "/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context/reorder",
 				response: () => jsonResponse({ status: "reordered" }),
 			},
 		]);
 		try {
 			await expect(
-				agentProjectsReorderCommand("agent-1", {
-					item: ["binding-a:1.5"],
+				agentProjectsReorderCommand("00000000-0000-4000-8000-000000000001", {
+					item: ["00000000-0000-4000-8000-000000000002:1.5"],
 				}),
 			).rejects.toThrow(/<order>/);
 		} finally {
@@ -490,7 +497,8 @@ describe("agent project commands", () => {
 			.filter(
 				(request) =>
 					request.method === "PATCH" &&
-					request.path === "/v1/agents/agent-1/project-bindings/context/reorder",
+					request.path ===
+						"/v1/agents/00000000-0000-4000-8000-000000000001/project-bindings/context/reorder",
 			)
 			.map((request) => request.body);
 		expect(patchBodies).toEqual([]);

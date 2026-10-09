@@ -131,7 +131,11 @@ describe("agent credential profiles", () => {
 		}
 
 		expect(captured).toHaveLength(0);
-		expect(out).toContain('"source": "keychain"');
+		expect(JSON.parse(out)).toMatchObject({
+			schemaVersion: "clawdi.agentCredentialsImport.v1",
+			source: "keychain",
+			dry_run: true,
+		});
 		expect(out).toContain("keychain://com.example.ClaudeCode/user@example.test");
 		expect(out).not.toContain("secret");
 	});

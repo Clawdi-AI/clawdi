@@ -73,7 +73,8 @@ CLI fallback: `clawdi session search "query" --json`, then `clawdi session read 
 publishing. Publish only with user authorization: `session share <cloud-session-id> --yes`.
 For `--through` or `--response`, use the returned canonical message `position`, never a
 filtered array index. `session shares --json` lists active links; revoke the exact link
-ID with `session unshare <share-id> --yes` (add `--legacy` for `kind=live`).
+ID with `session unshare <share-id> --yes`; session sharing exposes immutable
+snapshot links only.
 
 Remote Skill operations use `clawdi agent skills list/read/install/rm <agent-id>`; local
 `skill --agent <type>` remains separate. Use `install --github owner/repo --path skills/name`
@@ -186,7 +187,7 @@ Choose a target outside the generated `.clawdi/vaults` directory:
 
 ```bash
 clawdi vault materialize --vault <vault-uuid> --project <project-uuid> --out /absolute/project/.env
-clawdi vault pull --out /absolute/project/.env
+clawdi vault materialize --out /absolute/project/.env
 ```
 
 The first command binds the exact source; later pulls reuse it and preserve unrelated

@@ -55,14 +55,11 @@ export async function agentPluginsList(
 		);
 		if (result.plugins.some((plugin) => plugin.convergence === "failed")) process.exitCode = 1;
 		if (opts.json) {
-			emit(
-				{
-					schemaVersion: "clawdi.agentPluginsList.v1",
-					agent_id: agentId,
-					...result,
-				},
-				false,
-			);
+			emit({
+				schemaVersion: "clawdi.agentPluginsList.v1",
+				agent_id: agentId,
+				...result,
+			});
 			return;
 		}
 		if (result.plugins.length === 0) console.log("No plugins requested for this agent.");
@@ -139,14 +136,11 @@ export async function agentPluginsInstall(
 			}),
 		);
 		if (opts.json) {
-			emit(
-				{
-					schemaVersion: "clawdi.agentPluginsInstall.v1",
-					status: "accepted",
-					...result,
-				},
-				false,
-			);
+			emit({
+				schemaVersion: "clawdi.agentPluginsInstall.v1",
+				status: "accepted",
+				...result,
+			});
 		} else {
 			console.log(
 				`Plugin ${sanitizeMetadata(result.plugin_name)} installation request accepted. Run \`clawdi agent plugins list ${agentId}\` to check application.`,
@@ -179,14 +173,11 @@ export async function agentPluginsRemove(
 			}),
 		);
 		if (opts.json) {
-			emit(
-				{
-					schemaVersion: "clawdi.agentPluginsRm.v1",
-					status: "accepted",
-					...result,
-				},
-				false,
-			);
+			emit({
+				schemaVersion: "clawdi.agentPluginsRm.v1",
+				status: "accepted",
+				...result,
+			});
 		} else {
 			console.log(
 				`Plugin ${sanitizeMetadata(result.plugin_name)} removal request accepted. Run \`clawdi agent plugins list ${agentId}\` to check application.`,

@@ -5,11 +5,13 @@ import chalk from "chalk";
 import { adapterModuleNames } from "../adapters/base";
 import { AGENT_TYPES, type AgentType, adapterRegistry } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
+import { requireUuid } from "../lib/cli-options";
 import { emit } from "../lib/command-output";
-import { getAuth } from "../lib/config";
 import { writeEnvironmentRegistration } from "../lib/environment-registration";
-import { errMessage } from "../lib/errors";
+import { errMessage, isAuthorizationRequired } from "../lib/errors";
 import { getOrCreateMachineId, readMachineId } from "../lib/machine-identity";
+import { confirmOrRequireYes } from "../lib/prompts";
+import { AuthorizationRequiredError, requireAuth } from "../lib/require-auth";
 import { getEnvIdByAgent } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
 import { type LocalAgentSetupOpts, maybeInstallDaemons, reconcileAgentIntegrations } from "./setup";
@@ -18,7 +20,7 @@ type AgentResponse = components["schemas"]["AgentResponse"];
 
 interface AgentReconnectOpts extends LocalAgentSetupOpts {
 	agent?: string;
-	desktopList?: boolean;
+	json?: boolean;
 	confirmTakeover?: boolean;
 }
 
@@ -28,15 +30,16 @@ export async function agentReconnect(
 	agentId: string | undefined,
 	opts: AgentReconnectOpts,
 ): Promise<void> {
-	const auth = getAuth();
+	const auth = requireAuth();
 	if (auth?.authType !== "clerk_oauth") {
-		console.error(chalk.red("Reconnect requires Clerk OAuth. Run `clawdi auth login` first."));
-		process.exitCode = 1;
-		return;
+		throw new AuthorizationRequiredError(
+			"Reconnect requires Clerk OAuth. Run `clawdi auth login` first.",
+		);
 	}
 
 	const requestedType = parseAgentType(opts.agent);
 	if (opts.agent && !requestedType) return;
+	if (agentId) requireUuid(agentId, "Agent ID");
 
 	const api = new ApiClient();
 	let agents: AgentResponse[];
@@ -47,35 +50,33 @@ export async function agentReconnect(
 			}),
 		);
 	} catch (error) {
+		if (isAuthorizationRequired(error)) throw error;
 		console.error(chalk.red(`Could not list agents: ${errMessage(error)}`));
 		process.exitCode = 1;
 		return;
 	}
-	if (opts.desktopList) {
+	if (opts.json) {
 		const currentMachineId = readMachineId();
-		emit(
-			{
-				schemaVersion: DESKTOP_CANDIDATES_SCHEMA,
-				agents: agents.flatMap((agent) => {
-					const type = AGENT_TYPES.includes(agent.agent_type as AgentType)
-						? (agent.agent_type as AgentType)
-						: null;
-					if (!type) return [];
-					return [
-						{
-							id: agent.id,
-							type,
-							displayName: adapterRegistry[type].displayName,
-							name: agent.name,
-							machineName: agent.machine_name,
-							isThisMachine: currentMachineId !== null && agent.machine_id === currentMachineId,
-							lastSyncAt: agent.last_sync_at ?? null,
-						},
-					];
-				}),
-			},
-			false,
-		);
+		emit({
+			schemaVersion: DESKTOP_CANDIDATES_SCHEMA,
+			agents: agents.flatMap((agent) => {
+				const type = AGENT_TYPES.includes(agent.agent_type as AgentType)
+					? (agent.agent_type as AgentType)
+					: null;
+				if (!type) return [];
+				return [
+					{
+						id: agent.id,
+						type,
+						displayName: adapterRegistry[type].displayName,
+						name: agent.name,
+						machineName: agent.machine_name,
+						isThisMachine: currentMachineId !== null && agent.machine_id === currentMachineId,
+						lastSyncAt: agent.last_sync_at ?? null,
+					},
+				];
+			}),
+		});
 		return;
 	}
 
@@ -120,13 +121,6 @@ export async function agentReconnect(
 		process.exitCode = 1;
 		return;
 	}
-	if (!opts.yes && !isInteractive()) {
-		console.error(
-			chalk.red("Non-interactive reconnect requires explicit confirmation with --yes."),
-		);
-		process.exitCode = 1;
-		return;
-	}
 
 	const adapter = adapterRegistry[agentType].create();
 	let agentVersion: string | null;
@@ -149,19 +143,15 @@ export async function agentReconnect(
 		return;
 	}
 
-	if (!opts.yes && isInteractive()) {
-		const confirmed = await p.confirm({
-			output: process.stderr,
-			message: recentOtherMachine
+	if (
+		!(await confirmOrRequireYes(
+			recentOtherMachine
 				? `Take over “${candidate.name}” from “${candidate.machine_name}”? Its daemon on that machine stops syncing immediately.`
 				: `Reconnect ${adapterRegistry[agentType].displayName} to “${candidate.name}” and replace its previous installation binding?`,
-			initialValue: true,
-		});
-		if (p.isCancel(confirmed) || !confirmed) {
-			p.cancel("Cancelled.", { output: process.stderr });
-			return;
-		}
-	}
+			{ yes: opts.yes, action: "reconnect this agent" },
+		))
+	)
+		return;
 
 	let rebound: components["schemas"]["EnvironmentCreatedResponse"];
 	try {
@@ -179,6 +169,7 @@ export async function agentReconnect(
 			}),
 		);
 	} catch (error) {
+		if (isAuthorizationRequired(error)) throw error;
 		console.error(
 			chalk.red(
 				`Could not reconnect ${adapterRegistry[agentType].displayName}: ${errMessage(error)}`,

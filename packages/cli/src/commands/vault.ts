@@ -84,7 +84,7 @@ export async function vaultRequest(
 			status = polled.status;
 		}
 	}
-	if (opts.json) emit(result(), false);
+	if (opts.json) emit(result());
 	else console.log(`Status: ${status}`);
 	if (opts.wait && status !== "supplied") {
 		throw new Error(

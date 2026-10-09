@@ -79,8 +79,7 @@ export async function fetchProjectIdForEnv(
 			params: { path: { agent_id: envId } },
 		}),
 	);
-	const legacy = env as { default_project_id?: string };
-	const projectId = env.default_project_id ?? legacy.default_project_id;
+	const projectId = env.default_project_id;
 	if (!projectId) {
 		throw new Error(`Agent ${envId} has no workspace`);
 	}

@@ -60,18 +60,20 @@ in the isolated runner.
 
 ## Machine output
 
-New commands and new `--json` surfaces follow this contract:
+All commands and every `--json` surface follow this contract:
 
 - Emit exactly one JSON object with a string `schemaVersion` such as
   `"clawdi.<name>.v1"`. Lists belong in a named array inside that object.
+- Format each JSON object on one line, including Desktop sign-in progress on
+  stderr, so consumers can read streaming events one line at a time.
 - Write results to stdout. Write errors, progress, and prompts to stderr so
   stdout remains parseable JSON.
 - Exit non-zero on failure; describe the failure on stderr without exposing
   internal errors.
 - Exit codes: `0` means success, `1` means a command or API error, `2` means
   `session extract` is not configured, and `4` means authorization is required.
-- Keep released contracts additive-only: preserve field names, types, and
-  meanings. Consumers must tolerate additional fields.
+- Consumers must check the supported `schemaVersion` before parsing the payload.
+  Change that version when field names, types, or meanings change.
 - Human tables print full IDs accepted by the corresponding read/remove
   commands.
 - Destructive commands use `confirmOrRequireYes`: prompt in a TTY and require
@@ -132,8 +134,9 @@ Failed convergence returns a non-zero exit code. Plugin removal requires
 
 Write commands also support explicit `--json`. Successful mutations emit one
 object; human messages and prompts move to stderr. `--json` preserves the
-command's existing confirmation policy and never implies `--yes`. Cancelling
-a prompt emits `status: "cancelled"` without performing the mutation.
+command's existing confirmation policy and never implies `--yes`. Canceling
+a prompt emits `status: "cancelled"` without performing the mutation;
+`project invites` consistently uses the US spelling `status: "canceled"`.
 
 | Command | Schema version and result fields |
 | --- | --- |
@@ -149,6 +152,15 @@ a prompt emits `status: "cancelled"` without performing the mutation.
 | `daemon status` | `clawdi.daemonStatus.v1` (`agents`, each containing `agent`, `state_dir`, `health`, `supervisor`) |
 | `setup` | `clawdi.setup.v1` (`status`, `agents`, `daemon: {installed}`, `dashboard_url`) |
 | `teardown` | `clawdi.teardown.v1` (`status`, `agents`) |
+
+Project share-link inventories display the complete link UUID. Revocation uses
+`project share-links <project> --revoke <uuid>`; token prefixes are not accepted.
+`daemon rpc` wraps its response in `clawdi.daemonRpc.v1` with `method` and `result`.
+
+`agent reconnect --json` lists candidates in `clawdi.agentReconnectCandidates.v1`.
+Reconnecting an Agent uses the shared confirmation prompt or `--yes`;
+`--confirm-takeover` separately authorizes disconnecting a recently active
+installation on another machine.
 
 Vault results contain key names and target metadata only, never secret values.
 An empty import reports `keys: []` and `status: "empty"`, without project or
@@ -445,18 +457,19 @@ before expiry, and rotates the persisted refresh value when Clerk returns one.
 The verified login is bound to the canonical Cloud and Hosted API origins that
 were active when the grant was created. The CLI checks the exact request origin
 before adding an Authorization header; changing either endpoint requires a new
-login. Process-injected `CLAWDI_AUTH_TOKEN` credentials retain production Cloud
-compatibility, while custom Cloud endpoints must also set the explicit
-`CLAWDI_AUTH_TOKEN_ORIGIN` binding.
+login. Every API credential must be explicitly bound to the configured Cloud origin.
+Process-injected `CLAWDI_AUTH_TOKEN` credentials therefore require
+`CLAWDI_AUTH_TOKEN_ORIGIN`; an unbound credential is rejected and the CLI asks
+the user to run `clawdi auth login`.
 `clawdi auth logout` asks the Cloud backend to revoke the refresh grant before
 removing local state. The `--manual` API-key path remains Cloud-only and only
 pastes an existing key. Users can no longer create API keys; use OAuth login,
 including `clawdi auth login --no-open` on a server. `CLAWDI_AUTH_TOKEN` continues
-to accept existing and internally issued keys. Settings → API Keys only lists
-and revokes keys. Personal `POST /auth/keys` returns 410 with OAuth login
-guidance. The retired browser-approved `/cli/auth/device` and `/cli/auth/approve`
-endpoints also return 410 with CLI upgrade guidance. The CLI displays the
-server's 410 detail.
+to accept existing and internally issued keys. Settings → API Keys only lists and revokes keys. Personal `POST /auth/keys`
+and the retired browser-approved `/cli/auth/device` and `/cli/auth/approve`
+endpoints are removed and return 404 because they are no longer registered.
+The CLI does not depend on their response bodies. The OAuth redirect URI rollout
+is complete: new device authorization is the only supported browser sign-in path.
 The Clerk Public OAuth Application must allow `openid`, `profile`, `email`, and
 `offline_access`; the last scope is required for the persisted refresh grant.
 At the Clerk instance level, `oauth_jwt_access_tokens` must be enabled through
@@ -633,7 +646,6 @@ clawdi session share <cloud-session-id> --through <position> --yes --json
 clawdi session share <cloud-session-id> --response <position> --yes --json
 clawdi session shares <cloud-session-id> --json
 clawdi session unshare <share-id> --yes
-clawdi session unshare <legacy-link-id> --legacy --yes
 clawdi memory update <full-memory-id> "Prefer tabs" --json
 ```
 
@@ -641,11 +653,12 @@ Sharing publishes an immutable whole-session snapshot by default. Scoped shares
 use the canonical `position` returned by `session read --json`; these positions
 may have gaps from hidden/tool events, so never enumerate the filtered messages.
 `--response` requires an assistant message. Publication and revocation prompt
-unless `--yes` is supplied; automation requires it. `shares` includes both active
-snapshot and legacy live links, with `--page` and `--limit` pagination. Revoke
-uses the exact inventory link ID; `--legacy` selects a legacy link explicitly
-and retrying it cannot revoke a newly created replacement. Sharing requires
-OAuth CLI or a fully unbound account key; scoped and Agent-bound keys are denied.
+unless `--yes` is supplied; automation requires it. `shares` lists active snapshot
+links with `--page` and `--limit` pagination. Revoke uses the exact snapshot link
+UUID from that inventory. Live session links are no longer a CLI surface. Sharing
+requires OAuth CLI or an unscoped account key; scoped and Agent-bound keys are
+denied. Every credential must be bound to the configured Cloud endpoint; run
+`clawdi auth login` when endpoint binding is missing or stale.
 Memory update requires `memories:write`, retains metadata through the configured
 provider service, and rejects likely secrets on both client and server.
 
@@ -685,7 +698,7 @@ bash scripts/test.sh backend tests/test_cli_oauth_auth.py tests/test_session_sha
 ```
 
 Done: both commands exit 0. The backend tests cover real OAuth/API-key gates,
-exact legacy revocation, hidden/tool position gaps and Memory metadata/ownership.
+exact snapshot revocation, hidden/tool position gaps and Memory metadata/ownership.
 
 ## Typecheck / test / build
 
@@ -788,6 +801,14 @@ bun run --cwd packages/cli test:watch:local                    # opt-in host-loc
 
 ## Releasing
 
+Desktop release leftovers have explicit owners and removal conditions. The
+Desktop owner keeps the macOS Electron entitlements until a signed preview
+proves launch, sign-in, and daemon installation, then trims any entitlement the
+runtime no longer needs. Windows signing is a release owner action; remove the stale
+release note after a signed beta-to-beta update passes. Desktop download links
+are maintained by the Desktop owner and continue to use the GitHub releases search page until `clawdi.ai/download`
+exists, then switch the link and delete this note.
+
 Use `docs/runbooks/release.md` for the full app/backend/web/CLI release
 checklist. This section covers the CLI/npm release line in detail.
 
@@ -804,7 +825,7 @@ the native target matrix once. It verifies the npm package after installation
 and runs the compiled Linux artifact through the installer/daemon lifecycle.
 The exact-version native manifest is the checksum contract for all native
 assets. Unix installation reads the v2 `clawdi-cli-manifest-v2.txt` manifest;
-the v1 manifest remains published while older native clients are retired. The
+only the v2 manifest is published. The
 workflow transfers the same artifacts to the protected npm job and
 publishes the npm tarball exactly once to the
 standard npm channel derived from the package version: prereleases use `beta`
@@ -1018,7 +1039,7 @@ The standalone CLI also supports explicit absolute local dotenv files:
 
 ```bash
 clawdi vault materialize --vault <vault-uuid> --project <project-uuid> --out /absolute/project/.env
-clawdi vault pull --out /absolute/project/.env
+clawdi vault materialize --out /absolute/project/.env
 ```
 
 The first synchronization records the canonical API URL, authenticated account, exact Project/Vault

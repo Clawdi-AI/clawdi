@@ -87,16 +87,13 @@ export async function agentLifecycle(
 		if (opts.wait !== false) operation = await waitForOperation(client, operation);
 		const status = operation.done ? "succeeded" : "accepted";
 		if (opts.json) {
-			emit(
-				{
-					schemaVersion: `clawdi.agent${action[0]?.toUpperCase()}${action.slice(1)}.v1`,
-					id: agentId,
-					deployment_id: deployment.resource.id,
-					operation_name: operation.name,
-					status,
-				},
-				false,
-			);
+			emit({
+				schemaVersion: `clawdi.agent${action[0]?.toUpperCase()}${action.slice(1)}.v1`,
+				id: agentId,
+				deployment_id: deployment.resource.id,
+				operation_name: operation.name,
+				status,
+			});
 		} else {
 			console.log(
 				`Cloud Agent ${agentId}: ${action} ${status}. Operation: ${sanitizeMetadata(operation.name)}.`,
@@ -153,17 +150,14 @@ export async function removeCloudAgent(agentId: string, opts: AgentRemoveOptions
 		if (operation) checkOperation(operation);
 		const status = operation && !operation.done ? "accepted" : "deleted";
 		if (opts.json) {
-			emit(
-				{
-					schemaVersion: "clawdi.agentRm.v1",
-					id: agentId,
-					status,
-					deployment_id: deployment.resource.id,
-					operation_name: operation?.name ?? null,
-					subscription_choice: choice,
-				},
-				false,
-			);
+			emit({
+				schemaVersion: "clawdi.agentRm.v1",
+				id: agentId,
+				status,
+				deployment_id: deployment.resource.id,
+				operation_name: operation?.name ?? null,
+				subscription_choice: choice,
+			});
 		} else {
 			console.log(
 				status === "accepted"

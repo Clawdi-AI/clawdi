@@ -474,9 +474,6 @@ describe("full control RPC handler surface", () => {
 					return Response.json({
 						issuer: "https://clerk.example.test",
 						client_id: "clawdi-cli",
-						audience: "clawdi-api",
-						authorized_parties: [],
-						redirect_uri: "ignored",
 					});
 				if (path === "/.well-known/oauth-authorization-server")
 					return Response.json({

@@ -183,7 +183,7 @@ describe("inboxAcceptCommand", () => {
 		const { captured, restore } = mockFetch([
 			{
 				method: "POST",
-				path: "/v1/me/invitations/invite-attached/accept",
+				path: "/v1/me/invitations/00000000-0000-4000-8000-0000000000a1/accept",
 				response: () =>
 					jsonResponse({
 						id: "membership-attached",
@@ -200,7 +200,7 @@ describe("inboxAcceptCommand", () => {
 		console.log = () => {};
 		try {
 			await inboxAcceptCommand(undefined, {
-				invite: "invite-attached",
+				invite: "00000000-0000-4000-8000-0000000000a1",
 				agent: ["agent-1"],
 				json: true,
 			});
@@ -214,7 +214,7 @@ describe("inboxAcceptCommand", () => {
 			use_as: "attached",
 		});
 		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
-			"POST /v1/me/invitations/invite-attached/accept",
+			"POST /v1/me/invitations/00000000-0000-4000-8000-0000000000a1/accept",
 		]);
 	});
 

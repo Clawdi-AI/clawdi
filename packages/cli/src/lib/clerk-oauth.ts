@@ -2,7 +2,6 @@ import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
 import {
 	canonicalApiOrigin,
-	isProductionCloudApiOrigin,
 	normalizeCloudApiBaseUrl,
 	normalizeHostedDeployApiBaseUrl,
 } from "./api-origin";
@@ -115,19 +114,19 @@ export function createCredentialEndpointBinding(
 function unboundCredentialError(auth: ClawdiAuth, targetOrigin: string): ClerkOAuthError {
 	if (auth.authType === "clerk_oauth") {
 		return bindingError(
-			"oauth_endpoint_binding_required",
-			"This saved sign-in predates endpoint binding and can't be used safely. Run `clawdi auth logout`, then `clawdi auth login`.",
+			"oauth_login_required",
+			"This saved sign-in is not bound to the configured endpoint. Run `clawdi auth login`.",
 		);
 	}
 	if (process.env.CLAWDI_AUTH_TOKEN) {
 		return bindingError(
-			"environment_endpoint_binding_required",
-			`CLAWDI_AUTH_TOKEN is not bound to ${targetOrigin}. Set ${ENV_CREDENTIAL_ORIGIN} to the CLAWDI_API_URL origin it belongs to, or remove the override.`,
+			"oauth_login_required",
+			`CLAWDI_AUTH_TOKEN is not bound to ${targetOrigin}. Run \`clawdi auth login\`.`,
 		);
 	}
 	return bindingError(
-		"legacy_endpoint_binding_required",
-		`This legacy API key is not bound to ${targetOrigin}. Run \`clawdi auth logout\`, then re-import it with \`clawdi auth login --manual\` for this CLAWDI_API_URL.`,
+		"oauth_login_required",
+		"This API key is not bound to the configured endpoint. Run `clawdi auth login`.",
 	);
 }
 
@@ -150,9 +149,6 @@ export function assertCloudCredentialEndpoint(auth: ClawdiAuth, cloudApiUrl: str
 	}
 	const boundOrigin = boundCloudOrigin(auth);
 	if (!boundOrigin) {
-		if (auth.authType !== "clerk_oauth" && isProductionCloudApiOrigin(targetOrigin)) {
-			return targetOrigin;
-		}
 		throw unboundCredentialError(auth, targetOrigin);
 	}
 	if (boundOrigin !== targetOrigin) {
@@ -183,7 +179,7 @@ export function assertClerkOAuthEndpointProfile(
 }
 
 export type CredentialEndpointBindingMetadata = {
-	state: "bound" | "invalid" | "legacy-production-compatible" | "unbound";
+	state: "bound" | "invalid" | "unbound";
 	cloudApiOrigin?: string;
 	hostedApiOrigin?: string;
 	currentProfileMatches?: boolean;
@@ -237,13 +233,6 @@ export function describeCredentialEndpointBinding(
 							(binding.hostedApiOrigin === undefined || binding.hostedApiOrigin === hostedOrigin),
 					}
 				: {}),
-		};
-	}
-	if (auth.authType !== "clerk_oauth" && cloudOrigin && isProductionCloudApiOrigin(cloudOrigin)) {
-		return {
-			state: "legacy-production-compatible",
-			cloudApiOrigin: cloudOrigin,
-			currentProfileMatches: true,
 		};
 	}
 	return { state: "unbound", ...(cloudOrigin ? { currentProfileMatches: false } : {}) };

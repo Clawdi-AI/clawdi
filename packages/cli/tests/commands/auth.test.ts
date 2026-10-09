@@ -107,8 +107,6 @@ function startHandlers() {
 				jsonResponse({
 					issuer: "https://clerk.example.test",
 					client_id: "clawdi-cli",
-					authorized_parties: ["https://accounts.clawdi.test"],
-					redirect_uri: "ignored-by-device-flow",
 				}),
 		},
 		{
@@ -236,7 +234,10 @@ describe("authLogin authentication boundary", () => {
 			expect(messages.join("\n")).toContain("API keys can no longer be created");
 			expect(messages.join("\n")).toContain("clawdi auth login");
 			expect(messages.join("\n")).toContain("--no-open");
-			if (status === 410) expect(messages.join("\n")).toContain(detail);
+			if (status === 410) {
+				expect(messages.join("\n")).toContain("This endpoint is no longer available.");
+				expect(messages.join("\n")).not.toContain(detail);
+			}
 		} finally {
 			passwordSpy.mockRestore();
 			messageSpy.mockRestore();

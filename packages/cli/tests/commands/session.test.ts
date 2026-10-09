@@ -342,12 +342,14 @@ describe("cloud session commands", () => {
 	});
 });
 
-it("publishes only with confirmation and keeps canonical positions and legacy IDs", async () => {
+it("publishes only with confirmation and revokes snapshot IDs", async () => {
+	const sessionId = "00000000-0000-0000-0000-000000000001";
+	const shareId = "00000000-0000-0000-0000-000000000002";
 	const { captured, restore } = mockFetch([
 		{
 			method: "POST",
-			path: "/v1/sessions/cloud-id/shares",
-			response: () => jsonResponse({ id: "snapshot-id", scope: "response", position: 3 }, 201),
+			path: `/v1/sessions/${sessionId}/shares`,
+			response: () => jsonResponse({ id: shareId, scope: "response", position: 3 }, 201),
 		},
 		{
 			method: "GET",
@@ -356,24 +358,24 @@ it("publishes only with confirmation and keeps canonical positions and legacy ID
 		},
 		{
 			method: "DELETE",
-			path: "/v1/session-shares/legacy-id",
+			path: `/v1/session-shares/${shareId}`,
 			response: () => new Response(null, { status: 204 }),
 		},
 	]);
 	const originalLog = console.log;
 	console.log = () => {};
 	try {
-		await expect(sessionShareCreate("cloud-id", { response: "3" })).rejects.toThrow("--yes");
+		await expect(sessionShareCreate(sessionId, { response: "3" })).rejects.toThrow("--yes");
 		await expect(
-			sessionShareCreate("cloud-id", { through: "1", response: "3", yes: true }),
+			sessionShareCreate(sessionId, { through: "1", response: "3", yes: true }),
 		).rejects.toThrow("only one");
 		expect(captured).toHaveLength(0);
-		await sessionShareCreate("cloud-id", { response: "3", yes: true, json: true });
-		await sessionShareList("cloud-id", { json: true });
-		await sessionShareRevoke("legacy-id", { legacy: true, yes: true, json: true });
+		await sessionShareCreate(sessionId, { response: "3", yes: true, json: true });
+		await sessionShareList(sessionId, { json: true });
+		await sessionShareRevoke(shareId, { yes: true, json: true });
 		expect(captured[0]?.body).toEqual({ scope: "response", position: 3 });
-		expect(new URL(captured[1]?.url ?? "").searchParams.get("session_id")).toBe("cloud-id");
-		expect(new URL(captured[2]?.url ?? "").searchParams.get("kind")).toBe("live");
+		expect(new URL(captured[1]?.url ?? "").searchParams.get("session_id")).toBe(sessionId);
+		expect(new URL(captured[2]?.url ?? "").searchParams.get("kind")).toBeNull();
 	} finally {
 		console.log = originalLog;
 		restore();
@@ -381,17 +383,18 @@ it("publishes only with confirmation and keeps canonical positions and legacy ID
 });
 
 it("exports owner Markdown without publishing a link", async () => {
+	const sessionId = "00000000-0000-0000-0000-000000000003";
 	const { captured, restore } = mockFetch([
 		{
 			method: "GET",
-			path: "/v1/sessions/cloud-id/export.md",
+			path: `/v1/sessions/${sessionId}/export.md`,
 			response: () =>
 				new Response("# Private session\n", { headers: { "Content-Type": "text/markdown" } }),
 		},
 	]);
 	const write = spyOn(process.stdout, "write").mockImplementation(() => true);
 	try {
-		await sessionExport("cloud-id");
+		await sessionExport(sessionId);
 		expect(write).toHaveBeenCalledWith("# Private session\n");
 		expect(captured.map((item) => item.method)).toEqual(["GET"]);
 	} finally {

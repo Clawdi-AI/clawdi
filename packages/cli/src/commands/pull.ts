@@ -337,7 +337,7 @@ function printPullResult(
 			...(scan.modules.includes("skills") ? { skills } : {}),
 		};
 	});
-	emit({ schemaVersion: "clawdi.pull.v1", dryRun, agents, totals, errors }, false);
+	emit({ schemaVersion: "clawdi.pull.v1", dryRun, agents, totals, errors });
 }
 
 /**
