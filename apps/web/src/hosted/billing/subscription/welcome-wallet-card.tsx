@@ -1,5 +1,13 @@
 "use client";
 
+import { welcomeWalletCardClasses as styles } from "@clawdi/shared/ui";
+import {
+	welcomeWalletCopy as copy,
+	WELCOME_GRANT_RECHECK_INTERVAL_MS,
+	WELCOME_GRANT_TIMEOUT_MS,
+	welcomeWalletDescription,
+	welcomeWalletTitle,
+} from "@clawdi/shared/view";
 import { Gift, PartyPopper, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -10,12 +18,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { formatUsdExact } from "@/hosted/billing/format";
 import { useWalletTransactions } from "@/hosted/billing/hooks";
-import { welcomeWalletDescription } from "@/hosted/billing/subscription/welcome-wallet-card.logic";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { shouldBlockQueryError } from "@/lib/query-state";
-
-const WELCOME_GRANT_RECHECK_INTERVAL_MS = 5_000;
-const WELCOME_GRANT_TIMEOUT_MS = 60_000;
 
 /**
  * Pure-$0 welcome + signup-grant feedback.
@@ -109,11 +113,11 @@ export function WelcomeWalletCard() {
 
 	if (transactions.isLoading || wallet.isLoading) {
 		return (
-			<Card data-hosted="true" aria-label="Loading welcome balance">
+			<Card data-hosted="true" aria-label={copy.loading}>
 				<CardContent>
-					<div className="flex flex-1 flex-col gap-2">
-						<Skeleton className="h-5 w-56 max-w-full" />
-						<Skeleton className="h-4 w-96 max-w-full" />
+					<div className={styles.skeletonBody}>
+						<Skeleton className={styles.skeletonTitle} />
+						<Skeleton className={styles.skeletonLine} />
 					</div>
 				</CardContent>
 			</Card>
@@ -131,7 +135,7 @@ export function WelcomeWalletCard() {
 							if (blockingWalletError) void wallet.refetch();
 							if (blockingTransactionsError) void transactions.refetch();
 						}}
-						title="Couldn't load welcome balance"
+						title={copy.loadError}
 					/>
 				</CardContent>
 			</Card>
@@ -140,40 +144,22 @@ export function WelcomeWalletCard() {
 	if (!wallet.data) return null;
 
 	const grantAmount = grant ? formatUsdExact(grant.amount) : null;
-	const description = welcomeWalletDescription({
-		grantApplied,
-		grantPending,
-		grantCheckTimedOut,
-		grantAmount,
-	});
+	const state = { grantApplied, grantPending, grantCheckTimedOut, grantAmount };
+	const description = welcomeWalletDescription(state);
 
 	return (
-		<Card data-hosted="true" className="border-primary/30 bg-primary/5">
-			<CardContent className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-				<div className="flex items-start gap-3">
-					<div className="mt-0.5 text-primary [&>svg]:size-6">
-						{grantApplied ? <PartyPopper /> : <Gift />}
-					</div>
-					<div className="space-y-1">
-						<p className="font-medium">
-							{grantApplied
-								? grantAmount
-									? `You're all set — ${grantAmount} added to your wallet`
-									: "You're all set — your welcome balance was added to your wallet"
-								: grantPending
-									? grantCheckTimedOut
-										? "Your welcome balance is taking longer than expected"
-										: "Adding your welcome balance…"
-									: "Welcome to Clawdi"}
-						</p>
-						<p className="text-sm text-muted-foreground">{description}</p>
+		<Card data-hosted="true" className={styles.card}>
+			<CardContent className={styles.content}>
+				<div className={styles.summary}>
+					<div className={styles.icon}>{grantApplied ? <PartyPopper /> : <Gift />}</div>
+					<div className={styles.body}>
+						<p className={styles.title}>{welcomeWalletTitle(state)}</p>
+						<p className={styles.description}>{description}</p>
 					</div>
 				</div>
 				{grantPending ? (
-					<div className="flex flex-wrap items-center gap-2">
-						{grantPending && !grantCheckTimedOut ? (
-							<Spinner className="size-4 text-muted-foreground" />
-						) : null}
+					<div className={styles.actions}>
+						{grantPending && !grantCheckTimedOut ? <Spinner className={styles.spinner} /> : null}
 						{grantPending && grantCheckTimedOut ? (
 							<Button
 								type="button"
@@ -182,7 +168,7 @@ export function WelcomeWalletCard() {
 								disabled={manualRefreshing}
 							>
 								{manualRefreshing ? <Spinner /> : <RefreshCw />}
-								Refresh balance
+								{copy.refresh}
 							</Button>
 						) : null}
 					</div>

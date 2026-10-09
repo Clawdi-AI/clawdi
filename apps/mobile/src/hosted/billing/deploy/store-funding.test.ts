@@ -13,6 +13,7 @@ import {
 	finishReservedRequest,
 	parseCreationAttempt,
 	reservedDeployResume,
+	reusableStoreRowPlan,
 	storeFundingAfterCheck,
 	storeFundingHoldsAttempt,
 	unboundStoreSlotPlan,
@@ -185,6 +186,59 @@ describe("store-funded creation admission", () => {
 		expect(parseCreationAttempt(JSON.stringify(storeAttempt(undefined)))).toEqual(
 			storeAttempt(undefined),
 		);
+	});
+});
+
+describe("reusable store rows", () => {
+	const planOf = (productId: string) =>
+		productId.includes("performance") ? "compute_performance" : "compute_basic";
+	const contract = "11111111-1111-4111-8111-111111111111";
+	const management = {
+		contract_id: contract,
+		provider: "play_store" as const,
+		product_id: "ai.clawdi.app.compute.basic.monthly",
+		management_url: null,
+		auto_renews: true,
+		renews_or_ends_at: null,
+		state: "active",
+	};
+	const slot: StoreComputeSlot = {
+		available: false,
+		contract_id: contract,
+		agent_id: null,
+		reserved_deploy_request_id: null,
+		store_management: management,
+	};
+	const row = {
+		funding_source: "store" as const,
+		plan_slug: "compute_basic" as const,
+		store_management: management,
+	};
+
+	test("the caller's unbound slot is admitted as store funding for its plan", () => {
+		expect(reusableStoreRowPlan(row, slot, planOf)).toBe("compute_basic");
+		// Contract ids compare case-insensitively, like the shared UUID guards.
+		expect(
+			reusableStoreRowPlan(row, { ...slot, contract_id: contract.toUpperCase() }, planOf),
+		).toBe("compute_basic");
+		// The funded attempt this enables is store-only and may be admitted at once.
+		const attempt = storeAttempt("funded");
+		expect(canAdmitCreationAttempt(attempt)).toBe(true);
+		expect(storeFundingHoldsAttempt(attempt)).toBe(true);
+	});
+
+	test("rows that are not this caller's free slot are never offered", () => {
+		for (const [candidateRow, candidateSlot] of [
+			[row, null],
+			[row, { ...slot, contract_id: "22222222-2222-4222-8222-222222222222" }],
+			[row, { ...slot, agent_id: "hdep_bound" }],
+			[row, { ...slot, reserved_deploy_request_id: id }],
+			[row, { ...slot, store_management: { ...management, state: "lapsed" } }],
+			[{ ...row, plan_slug: "compute_performance" as const }, slot],
+			[{ ...row, funding_source: "wallet" as const }, slot],
+			[{ ...row, store_management: null }, slot],
+		] as const)
+			expect(reusableStoreRowPlan(candidateRow, candidateSlot, planOf)).toBeNull();
 	});
 });
 

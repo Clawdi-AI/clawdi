@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { memoryDisplayName } from "@clawdi/shared/view";
+import { memoryDisplayName, memoryRecallLabel } from "@clawdi/shared/view";
 
 describe("memoryDisplayName", () => {
 	test("uses readable content identity without exposing storage ids", () => {
@@ -16,5 +16,14 @@ describe("memoryDisplayName", () => {
 
 	test("keeps an empty memory label user-facing", () => {
 		expect(memoryDisplayName(" \n ")).toBe("Memory");
+	});
+});
+
+describe("memoryRecallLabel", () => {
+	test("pluralises the recall count and covers never-recalled memories", () => {
+		expect(memoryRecallLabel(null)).toBe("Never recalled yet");
+		expect(memoryRecallLabel(0)).toBe("Never recalled yet");
+		expect(memoryRecallLabel(1)).toBe("Recalled 1 time");
+		expect(memoryRecallLabel(3)).toBe("Recalled 3 times");
 	});
 });

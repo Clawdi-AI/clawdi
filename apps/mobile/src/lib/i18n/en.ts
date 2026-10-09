@@ -8,12 +8,11 @@ const agentExtensionsEn = {
 	remove: "Remove Library reference",
 	removeWarning:
 		"Remove this reference from the Agent? The original Library Skill is preserved. Runtime cleanup may finish later.",
-	accepted:
-		"Desired-state request accepted. Refresh to check runtime observation. Removal can remain pending after disappearing from this list.",
-	installed: "Observed installed",
-	not_observed: "Not yet observed",
-	failedState: "Runtime reported a failure",
-	removalFailed: "The runtime reported a Skill removal failure. Refresh after checking the Agent.",
+	accepted: "Change requested. It may take a moment to apply.",
+	installed: agentSurfaceCopy.installed,
+	not_observed: "Installing…",
+	failedState: "Couldn't install",
+	removalFailed: "Couldn't remove this Skill. Check the agent, then refresh.",
 	view: "View Library Skill",
 };
 const agentSettingsEn = {
@@ -26,7 +25,7 @@ const agentSettingsEn = {
 	unsavedMessage: "Your Agent name changes have not been saved.",
 	discard: "Discard changes",
 	failed:
-		"The change was not confirmed. Refresh before making another change: an earlier request may already have succeeded. Check permissions and the file format/size if uploading an avatar.",
+		"We couldn't confirm this change. Refresh before trying again — it may already be saved. For avatars, check the image format and size.",
 };
 const billingEn = {
 	cpuSeparator: "vCPU ·",
@@ -46,8 +45,7 @@ const billingEn = {
 	retries: "Next payment retry",
 	cancellation: "Cancellation is scheduled for the end of the current period.",
 	pendingPlan: "Pending compute plan",
-	providerRecovery:
-		"Resolve billing through the purchasing provider. This app cannot initiate payment recovery yet.",
+	providerRecovery: "Resolve this payment on the Clawdi web dashboard.",
 	unavailable: "The v2 compute API is not configured.",
 	unknown: "Unavailable",
 	details: "Subscription details",
@@ -62,10 +60,8 @@ const billingEn = {
 	included: "Included Basic",
 	agent: "Agent",
 	deployment: "View deployment",
-	management:
-		"Manage this subscription through its purchasing provider. Native billing management and purchases are not connected yet.",
-	walletNotice:
-		"Wallet-funded compute currently uses Stripe invoice orchestration. It is not a store subscription.",
+	management: "Change plans and payment methods on the Clawdi web dashboard.",
+	walletNotice: "This subscription is paid from your Wallet balance.",
 	noStore: "Store purchases, top-ups, restore and refunds are not available in this build.",
 	moreToSearch:
 		"This subscription was not on the loaded pages. Load more before concluding it is unavailable.",
@@ -113,9 +109,9 @@ const whatsappEn = {
 	leaving:
 		"Switching apps hides pairing secrets and pauses checking. Return to this screen to resume. Leaving this screen does not cancel an already sent request; use Cancel connection to stop it explicitly. Unfinished sessions expire on the server.",
 	approve: "I own this WhatsApp account and approve linking this device.",
-	retryStart: "Recover previous start request",
+	retryStart: "Retry last request",
 	uncertain:
-		"The previous request may have started. Recovery reuses its original identity; it does not create a fresh request.",
+		"We couldn't confirm the last request. Retry it to continue — this won't start a second connection.",
 	unavailable:
 		"Linked-device availability or account ownership is not confirmed. Refresh to check.",
 	offline: "Offline. Checking pauses until connectivity returns.",
@@ -175,7 +171,7 @@ const storeEn = {
 	accountChanged: "Your account changed during the purchase. Check your Wallet after signing in.",
 	failed: "The purchase couldn't be started. Try again.",
 	creditsNotice: "Credits bought in this app are added to your Wallet and don't expire.",
-	cardBillingStatus: "Card billing for this subscription can't be managed in this app.",
+	cardBillingStatus: "This subscription is billed by card.",
 	cardDunning:
 		"Payment for this subscription needs attention. Card payments can't be updated in this app.",
 	walletDunning:
@@ -242,33 +238,31 @@ const storeComputeEn = {
 	deletionContinue: "I've cancelled — continue",
 } as const;
 const creationEn = {
-	savedProviderBoundary:
-		"This saved provider can be previewed here. Mobile creation currently supports Clawdi AI or configuration inside the agent; select either before deploying.",
 	unavailable: "Cloud creation is not configured.",
 	language: "Language",
-	selectionNotice:
-		"Choose the compute plan for this Agent. The server selects a matching unbound entitlement; this does not select or purchase a specific subscription.",
-	reusable: "Existing reusable subscriptions",
-	quote: "Request price preview",
-	quoteNotice:
-		"A preview may initialize your billing profile. It does not pay an invoice or debit your wallet.",
-	preview: "Invoice preview, not a payment",
-	confirm:
-		"I confirm the server may assign an existing entitlement for the selected plan, including an already-paid unbound subscription. This action does not purchase new compute.",
+	selectTimezone: "Select a timezone",
+	storeRowUnavailable:
+		"This {store} subscription isn't free for a new agent from this account right now. Check Compute for its status.",
+	subscriptionUnavailable:
+		"Subscription no longer available. Choose a current reusable subscription or start a new one.",
+	newUnavailable:
+		"A new subscription can't be started from this option yet. Choose another option above.",
 	blocked:
-		"Creation requires the selected plan in the catalog and matching reusable inventory (or an available included Basic slot). Load more subscriptions if needed. The server verifies permission when you submit.",
+		"This compute choice isn't available for a new agent. Choose another subscription or plan.",
 	invalidRuntime: "Choose a supported runtime.",
 	invalidCompute: "Choose an available compute plan.",
 	invalidName: "Enter an Agent name with 1–64 characters.",
 	invalidLanguage: "Choose a supported language.",
 	invalidTimezone: "Use a valid IANA timezone or leave it empty.",
-	invalidModel: "Choose a model from the current managed catalog.",
-	recover: "Check saved creation request",
-	retry: "Retry the same saved request",
-	clear: "Finish recovery and start a new draft",
-	discard: "Discard this unsubmitted or rejected draft",
+	invalidModel: "Choose an available primary model.",
+	invalidProvider:
+		"This AI provider can't be used for a new agent. Refresh providers or choose Clawdi AI.",
+	recover: "Check status",
+	retry: "Retry",
+	clear: "Start over",
+	discard: "Discard setup",
 	notAdmitted:
-		"The server rejected this request before admission. You may explicitly discard it and edit a new draft.",
+		"This agent couldn't be created with the selected compute. Discard this setup to change your choices.",
 	reservedTitle: "Finish setting up your agent",
 	reservedDescription:
 		"Your {store} subscription is reserved for an Agent that hasn't been created yet. Choose its settings, then finish setup.",
@@ -278,18 +272,15 @@ const creationEn = {
 	storeComputeUnavailable:
 		"Your store subscription can't be used for this Agent. Check status, subscribe again, or discard this request.",
 	storeComputeDisabled:
-		"Store subscription deployment is temporarily unavailable. Your saved request is preserved. Check status, then retry later.",
+		"Deploying with a store subscription is temporarily unavailable. Your setup is saved. Check status, then retry later.",
 	storeComputePending:
-		"Your store subscription is still being prepared for this Agent. Check status, then retry the same saved request later.",
-	saved:
-		"A saved request exists. Check its status before retrying. No request is replayed automatically.",
-	wait: "The server has not projected a deployment yet. Check again later.",
-	failed:
-		"The saved creation request is terminal. Review its status before starting another request.",
-	error:
-		"The action could not be completed. Your saved request is preserved; check its status before retrying.",
+		"Your subscription is still being prepared for this agent. Check status, then retry in a moment.",
+	saved: "This agent's setup is saved on this device. Check its status before retrying.",
+	wait: "Your agent is still being set up. Check again in a moment.",
+	failed: "This setup didn't finish. Start over to try again.",
+	error: "Something went wrong. Your setup is saved — check its status before retrying.",
 	storageError:
-		"Saved creation data is unavailable or invalid. Creation is paused to avoid duplicating a request.",
+		"We couldn't read your saved setup. Deploying is paused so nothing is created twice.",
 } as const;
 const runtimeEn = {
 	stoppedLabel: "Stopped",
@@ -317,21 +308,17 @@ const runtimeEn = {
 	deleteReported:
 		"The server reports this Agent deleted for your account. Cleanup may still be in progress.",
 	supportFailed: "Couldn't open your email app. Email support@clawdi.ai.",
-	paymentRequired:
-		"Starting requires a server-approved subscription or payment action. No payment is made by these controls.",
+	paymentRequired: "Starting needs an active subscription. These controls never charge you.",
 	uncertain:
-		"The operation may already have been accepted. Its original request is saved on this device for this account and Agent. Retry that exact request to recover, even after reopening the app. Do not issue a replacement action from another device.",
-	prepared:
-		"The confirmed request was saved before sending. Retry it or discard this unsent request.",
+		"We couldn't confirm the last change. Retry it before making another — retrying won't apply it twice.",
+	prepared: "Your change wasn't sent. Retry it or discard it.",
 	storageError:
-		"The saved operation could not be read. Runtime changes are disabled. Retry loading it; do not clear app data to bypass an uncertain operation.",
-	reloadAttempt: "Reload saved operation",
-	retry: "Retry original operation",
-	conflict:
-		"The server rejected the first request because the Agent version changed. Refresh and explicitly review a new change; no automatic overwrite occurs.",
-	review: "Discard unsent or rejected request",
-	failed:
-		"The action was not confirmed. Refresh status and review permissions, provider readiness or the original request before retrying.",
+		"We couldn't read the last change saved on this device. Changes are paused until it loads.",
+	reloadAttempt: "Reload",
+	retry: "Retry last change",
+	conflict: "This agent changed since you started. Refresh and review before trying again.",
+	review: "Discard change",
+	failed: "We couldn't confirm this change. Refresh and try again.",
 	locale: "Language and timezone",
 	default: "Agent default",
 	timezone: "IANA timezone (for example America/Los_Angeles)",
@@ -386,29 +373,23 @@ const workspaceSkillsEn = {
 	inventoryEmpty: "No Skills have synced from this Agent yet.",
 	title: "Workspace GitHub Skills",
 	source: "GitHub owner/repo or owner/repo/path",
-	install: "Request installation",
+	install: "Install",
 	confirm: "Change Workspace Skills?",
 	warning:
-		"This updates the Agent's desired Skill manifest. Runtime application may complete later. Existing Cloud library Skills are not modified.",
-	unavailable:
-		"New changes are unavailable until the Agent's capability and current version are confirmed.",
+		"This updates the Skills installed on this agent. It may take a moment to apply. Your Library Skills aren't changed.",
+	unavailable: "Changes are unavailable until this agent finishes loading. Refresh to try again.",
 	managed: "Managed",
-	requested: "Requested — refresh to check runtime status",
-	failed: "Runtime application failed — refresh to review status",
-	accepted:
-		"Desired state accepted. Refresh to inspect runtime status; this is not proof the runtime has finished applying it.",
+	requested: "Installing…",
+	failed: "Couldn't install — refresh to check",
+	accepted: "Change requested. It may take a moment to apply.",
 	open: "Read Skill",
-	uncertain:
-		"An unresolved request is saved. Retry its exact body, resource version and key; refreshing does not prove whether it was accepted.",
-	retry: "Retry saved request",
-	discard: "Discard unsubmitted or rejected request",
-	discardWarning:
-		"Discard this local request and reload the current manifest? No uncertain request can be discarded here.",
-	storageError:
-		"Saved request could not be read or changed. Reload recovery before starting another change.",
-	reload: "Reload recovery",
-	error:
-		"The action was not confirmed. Review current state and the saved request before continuing.",
+	uncertain: "We couldn't confirm the last change. Retry it before making another.",
+	retry: "Retry last change",
+	discard: "Discard change",
+	discardWarning: "Discard this change and reload this agent's Skills?",
+	storageError: "We couldn't read the last change saved on this device. Reload to continue.",
+	reload: "Reload",
+	error: "We couldn't confirm this change. Refresh and try again.",
 };
 const skillArchiveEn = {
 	title: "Skill packages",
@@ -530,6 +511,7 @@ const vaultEn = {
 
 import {
 	accountDeletionCopy,
+	agentSurfaceCopy,
 	billingCopy,
 	LIBRARY_COPY,
 	sessionDetailCopy,
@@ -646,6 +628,9 @@ export const en = {
 		unavailable: "Settings unavailable",
 		generalSummary: "Appearance",
 		generalDescription: "Appearance preferences for this device.",
+		privacyPolicy: "Privacy Policy",
+		termsOfUse: "Terms of Use",
+		linkFailed: "Couldn't open this link. Try again.",
 	},
 	publicSession: {
 		open: "Open a shared Session",
@@ -749,6 +734,8 @@ export const en = {
 		unavailable: "Agent unavailable",
 		add: "Add an agent",
 		runCommands: "Run commands",
+		desktopHint:
+			"On your computer, Clawdi Desktop finds your agents, connects them, and turns on sync.",
 		askAgent: "Ask your agent",
 		waitingForConnection: "Waiting for your agent to connect…",
 		loadError: "Couldn't load Agent",
@@ -822,7 +809,6 @@ export const en = {
 		empty: "No skills are available for this account.",
 	},
 	memories: {
-		neverRecalled: "Never recalled yet",
 		learnedFromSession: "Learned from a session",
 		savedSeparator: "· Saved",
 		tags: "Tags:",

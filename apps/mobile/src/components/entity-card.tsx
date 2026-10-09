@@ -175,7 +175,7 @@ function entityChoiceCardClass({
 			? webView(entityCardClasses.choiceCompactLayout)
 			: webView(entityCardClasses.choiceLayout),
 		selected
-			? webView(entityCardClasses.choiceSelected.replace(/\bring-\S+/g, ""))
+			? webView(entityCardClasses.choiceSelectedFill)
 			: interactive &&
 					(variant === "compact"
 						? webView(entityCardClasses.compactChoiceInteractive)
@@ -322,7 +322,7 @@ export function HeroCard({
 		<EntityCardChassis
 			variant="resource"
 			interactive={Boolean(link || onClick)}
-			className={cn(webView(entityCardClasses.hero.replace(/gap-\S+/g, "")), className)}
+			className={cn(webView(entityCardClasses.heroFrame), className)}
 		>
 			{link ? (
 				<EntityCardLink
@@ -340,10 +340,7 @@ export function HeroCard({
 					className={HERO_STRETCHED_LINK_CLASS}
 				/>
 			) : null}
-			<AppView
-				pointerEvents="box-none"
-				className={webView(entityCardClasses.hero.replace(/min-h-\S+/g, ""))}
-			>
+			<AppView pointerEvents="box-none" className={webView(entityCardClasses.heroStack)}>
 				{icon || actions ? (
 					<AppView pointerEvents="box-none" className={webView(entityCardClasses.heroTop)}>
 						{icon ? (
@@ -602,7 +599,7 @@ export function EntityAddCard({
 			}
 			title={title}
 			description={description}
-			className={webView(entityCardClasses.add.replace(/\bh-full\b/g, ""))}
+			className={webView(entityCardClasses.addSurface)}
 		/>
 	);
 }
