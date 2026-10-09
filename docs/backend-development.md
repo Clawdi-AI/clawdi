@@ -404,14 +404,13 @@ omitted expiry/scopes retain non-expiring/full-access issuance, and audit
 details include `has_expiry`. Internal creation returns `ApiKeyCreated`, the
 same metadata as the list plus `raw_key` (once only).
 
-Legacy CLI `POST /v1/cli/auth/device` and dashboard-authenticated
-`POST /v1/cli/auth/approve` return 410 with
-`{"detail":"This sign-in method is no longer supported. Update the Clawdi CLI and run `clawdi auth login`."}`.
-Their `/api` aliases do the same. They create no keys or new authorizations.
-Existing `/poll`, `/lookup`, `/deny`, and `/oauth/*` behavior is preserved.
+The retired CLI `/cli/auth/device`, `/poll`, `/lookup`, `/approve`, and `/deny`
+routes are not registered under either `/v1` or `/api`; requests return 404.
+CLI login uses Clerk OAuth device authorization. The backend exposes only
+`/v1/cli/auth/oauth/config` and `/oauth/revoke` for that flow.
 See [API compatibility](api-compatibility.md#personal-key-issuance-exception).
 
-Done: `scripts/test.sh backend tests/test_auth_keys.py tests/test_cli_auth_device_flow.py tests/test_admin_endpoints.py`
+Done: `scripts/test.sh backend tests/test_auth_keys.py tests/test_cli_oauth_auth.py tests/test_admin_endpoints.py`
 exits 0 against the runner's throwaway database.
 
 ## Credential-kind request metrics
@@ -702,26 +701,10 @@ curl -sS -X PUT http://localhost:8000/v1/admin/settings/clerk_cli_oauth \
 Done: the command returns HTTP 200 JSON containing
 `"key":"clerk_cli_oauth"` and the canonicalized whole value.
 
-Retire the stored CLI OAuth `redirect_uri` in two releases, using the normal
-migration-first deployment order for each:
-
-1. Deploy the model without the field, retaining a temporary Pydantic
-   [`model_validator(mode="before")`](https://docs.pydantic.dev/latest/concepts/validators/#model-validators)
-   that strips the key before `extra="forbid"`. This release includes no data
-   migration. Reads leave stored JSON untouched, so processes from the previous
-   release can still read configured rows during the rolling deployment.
-2. After #1799's tolerant model is deployed, release Alembic revision
-   `c4a8e2d6f913`. The migration removes the key while serving processes still
-   tolerate both shapes; this same follow-up removes the temporary validator,
-   completing its dated 2026-10-08 TODO. Automatic deployment runs the data
-   migration before replacing the serving processes with the strict model.
-   The cleanup preserves other settings and fields and is idempotent. Downgrade
-   cannot reconstruct the removed callback value.
-
-The previous model's empty field default does not make configured rows without
-this key valid: its after-validator requires a nonempty callback. The separate
-cleanup release avoids that deployment overlap. All other unknown keys remain
-invalid, and admin writes serialize only the current fields.
+The CLI OAuth `redirect_uri` retirement is complete: revision `c4a8e2d6f913`
+removed stored callbacks after the tolerant model shipped, and the current
+strict model rejects that field. The cleanup preserves other settings and is
+idempotent; downgrade cannot reconstruct the removed callback.
 
 Done: `scripts/test.sh backend tests/test_cli_oauth_redirect_uri_migration.py tests/test_cli_oauth_auth.py tests/test_app_settings.py`
 passes against the isolated PostgreSQL runner.

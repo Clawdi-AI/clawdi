@@ -504,7 +504,7 @@ managed runtime Skill/plugin actions, remaining provider and Vault workflows,
 native builds and real store payments remain separate
 acceptance work. Existing Session transcripts remain read-only by design.
 
-Session link management now includes paginated snapshot/live inventory, explicit
+Session link management now includes paginated snapshot inventory, explicit
 public snapshot confirmation, canonical-position excerpts and individual Agent
 responses, exact-kind revocation, and native sharing of Web/Markdown/JSON links.
 Owner Markdown export uses the authenticated server serializer and the native
@@ -769,13 +769,11 @@ Done: the filtered generated client matches exactly; the HTTP client regression
 accepts 204, rejects an unexpected 200 and does not retry 403/500 responses.
 
 Public Session routes (`/s/[shareId]`, `/open-share`) support anonymous snapshots,
-legacy live links with optional account authentication, explicit pagination and
-native Markdown/JSON sharing. Web's initial metadata/message reads reuse the same
-generated Shared client. Only a snapshot metadata 404 enables legacy fallback;
-revocation (410) never does. Snapshot requests omit account tokens and cookies.
-The native view clears content on blur/background and revalidates on return.
-Pagination rejects changed totals or revisions; when the public API omits a
-revision, same-count live edits cannot be detected. Live links are not snapshots.
+explicit pagination and native Markdown/JSON sharing. Snapshot requests omit
+account tokens and cookies; missing shares return 404 and revoked shares return
+410. The native view clears content on blur/background and revalidates on return.
+Pagination rejects changed totals or revisions. Retired live Session links no
+longer resolve.
 Sign-in continuation accepts only a validated share UUID, not arbitrary redirects.
 Manual HTTPS/custom-scheme input extracts the ID and uses the configured Cloud
 API; it never fetches a pasted hostname.
@@ -1098,7 +1096,7 @@ until each surface has implementation, focused verification and device evidence:
 | --- | --- | --- |
 | Account/settings | Grouped settings menu, Clerk native AuthView/UserProfileView, API keys, AI Usage and persisted appearance; conditional custom account-deletion page | End-to-end account termination and real Clerk/device acceptance |
 | Agents/Projects | Inventories, context bindings, Project CRUD/sharing, scoped resource navigation, runtime start/stop/restart/access reset with durable request recovery, operation cancellation, deletion preserving subscription, language/timezone and provider/model settings, Agent name/avatar with unsaved-name protection and ownership-protected local disconnect | Provider-aware delete-and-cancel flow and device persistence/navigation/permission acceptance |
-| Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot/live sharing, public viewing with sign-in continuation and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
+| Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot sharing, anonymous public viewing and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search and details with recall metadata/source Session navigation | Remaining Skill detail parity and native file/share/managed-runtime acceptance |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools with shared Web/native identifier/name/description search | Device/provider OAuth verification and keyboard/list accessibility acceptance |
 | Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport and configured HTTPS intake | Signed domain association and device acceptance |
@@ -1255,7 +1253,7 @@ On an authorized simulator/device build, verify:
    journal. Verify capability loss, source changes and background/offline polling.
 9. Create full/excerpt/response Session snapshots after explicit confirmation;
    use event-backed transcripts with gaps between canonical positions. Check
-   exact-kind revocation of both snapshot and legacy live links, export links,
+   snapshot revocation, export links,
    and owner Markdown text sharing. Blur/background during a create/export and
    confirm a late result never opens a native share sheet. These operations must
    be exercised only with explicitly authorized test content/accounts.

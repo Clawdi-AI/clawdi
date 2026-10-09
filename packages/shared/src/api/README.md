@@ -43,7 +43,7 @@ captured hash. HTTP 412 must preserve the draft until explicit discard/reload.
 GitHub input parsing rejects non-HTTPS URLs and ambiguous traversal. Skill
 provenance and Project ownership remain server-enforced, regardless of UI policy.
 
-`createSessionSharingClient` lists active snapshot/live links, creates explicit
+`createSessionSharingClient` lists active snapshot links, creates explicit
 public snapshots, revokes the exact `(kind, id)` link, and reads owner Markdown.
 Revocation handles the generated 204 contract without changing empty-body rules
 for other endpoints. Markdown uses the existing server serializer, not a client
