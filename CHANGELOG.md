@@ -49,6 +49,23 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.5
+
+- **Hosted authentication:** systemd daemon units bind token-file credentials to
+  the Cloud API origin with `CLAWDI_AUTH_TOKEN_ORIGIN`, fixing hosted-daemon
+  sign-in binding; environment tokens without that variable are rejected with an
+  error naming the missing variable.
+- **Authentication:** all sign-in-required failures exit 4 and direct users to
+  `clawdi auth login`.
+- **Commands:** `ai-provider rm` and `channel rm` replace the `remove` and
+  `delete` verbs. Bare `clawdi daemon` shows help; use `clawdi daemon run` for
+  foreground execution.
+- **Project invites:** `project invites --cancel --json` reports `declined`
+  (exit 1) when confirmation is declined and `canceled` on success.
+- **Scripting and sharing:** more commands now emit versioned one-line JSON
+  envelopes with safe errors on stderr; session shares are snapshot-only and
+  require complete UUIDs.
+
 ### CLI 0.16.4
 
 - **Hermes session sync:** Empty tool call identifiers now use a deterministic
