@@ -46,7 +46,7 @@ function formatRow(link: ShareLinkRow): string {
 		: "";
 	const label = link.label ? ` ${chalk.dim(`[${link.label}]`)}` : "";
 	return (
-		`  ${chalk.bold(link.prefix)}…${label}  ` +
+		`  ${chalk.bold(link.id)}  ${chalk.gray(`${link.prefix}…`)}${label}  ` +
 		`${status}  ${chalk.gray(created)}  ` +
 		`${chalk.gray(`${link.redeem_count} accept${link.redeem_count === 1 ? "" : "s"}`)}` +
 		last

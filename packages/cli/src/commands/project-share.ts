@@ -64,7 +64,7 @@ export async function projectShareCommand(
 	);
 	if (r.status === 409) {
 		const body = (await r.json().catch(() => ({}))) as {
-			detail?: { error?: string; message?: string };
+			detail?: { error?: string };
 		};
 		if (body?.detail?.error === "display_name_required") {
 			console.error(
@@ -76,9 +76,7 @@ export async function projectShareCommand(
 			process.exitCode = 1;
 			return;
 		}
-		console.error(chalk.red(`Couldn't create link: ${body.detail?.message ?? r.status}`));
-		process.exitCode = 1;
-		return;
+		throw new ApiError({ status: r.status, body: JSON.stringify(body), hint: "" });
 	}
 	if (!r.ok) {
 		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });

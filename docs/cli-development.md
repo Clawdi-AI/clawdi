@@ -132,8 +132,9 @@ Failed convergence returns a non-zero exit code. Plugin removal requires
 
 Write commands also support explicit `--json`. Successful mutations emit one
 object; human messages and prompts move to stderr. `--json` preserves the
-command's existing confirmation policy and never implies `--yes`. Cancelling
-a prompt emits `status: "cancelled"` without performing the mutation.
+command's existing confirmation policy and never implies `--yes`. Canceling
+a prompt emits `status: "cancelled"` without performing the mutation;
+`project invites` consistently uses the US spelling `status: "canceled"`.
 
 | Command | Schema version and result fields |
 | --- | --- |
@@ -149,6 +150,15 @@ a prompt emits `status: "cancelled"` without performing the mutation.
 | `daemon status` | `clawdi.daemonStatus.v1` (`agents`, each containing `agent`, `state_dir`, `health`, `supervisor`) |
 | `setup` | `clawdi.setup.v1` (`status`, `agents`, `daemon: {installed}`, `dashboard_url`) |
 | `teardown` | `clawdi.teardown.v1` (`status`, `agents`) |
+
+Project share-link inventories display the complete link UUID. Revocation uses
+`project share-links <project> --revoke <uuid>`; token prefixes are not accepted.
+`daemon rpc` wraps its response in `clawdi.daemonRpc.v1` with `method` and `result`.
+
+`agent reconnect --json` lists candidates in `clawdi.agentReconnectCandidates.v1`.
+Reconnecting an Agent uses the shared confirmation prompt or `--yes`;
+`--confirm-takeover` separately authorizes disconnecting a recently active
+installation on another machine.
 
 Vault results contain key names and target metadata only, never secret values.
 An empty import reports `keys: []` and `status: "empty"`, without project or
@@ -644,8 +654,9 @@ may have gaps from hidden/tool events, so never enumerate the filtered messages.
 unless `--yes` is supplied; automation requires it. `shares` lists active snapshot
 links with `--page` and `--limit` pagination. Revoke uses the exact snapshot link
 UUID from that inventory. Live session links are no longer a CLI surface. Sharing
-requires a credential bound to the configured Cloud endpoint; run `clawdi auth login`
-when binding is missing or stale.
+requires OAuth CLI or an unscoped account key; scoped and Agent-bound keys are
+denied. Every credential must be bound to the configured Cloud endpoint; run
+`clawdi auth login` when endpoint binding is missing or stale.
 Memory update requires `memories:write`, retains metadata through the configured
 provider service, and rejects likely secrets on both client and server.
 

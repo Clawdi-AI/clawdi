@@ -400,20 +400,21 @@ export async function aiProviderValidateCommand(
 		allowNoAuthPublic: Boolean(opts.allowNoAuthPublic),
 	});
 	if (opts.json) {
-		emit({ schemaVersion: "clawdi.aiProviderValidate.v1", ...result });
+		emit(
+			{ schemaVersion: "clawdi.aiProviderValidate.v1", ...result },
+			result.valid ? console.log : console.error,
+		);
+		if (!result.valid) process.exitCode = 1;
+		return;
 	}
 	for (const warning of result.warnings) {
-		if (!opts.json) console.error(chalk.yellow(`warning: ${warning}`));
+		console.error(chalk.yellow(`warning: ${warning}`));
 	}
 	if (!result.valid) {
-		if (!opts.json) {
-			for (const error of result.errors) console.error(chalk.red(`error: ${error}`));
-		}
+		for (const error of result.errors) console.error(chalk.red(`error: ${error}`));
 		throw new Error("AI provider validation failed.");
 	}
-	if (!opts.json) {
-		console.log(chalk.green("✓ AI provider catalog is valid"));
-	}
+	console.log(chalk.green("✓ AI provider catalog is valid"));
 }
 
 export async function aiProviderExportCommand(opts: AiProviderExportOptions = {}): Promise<void> {

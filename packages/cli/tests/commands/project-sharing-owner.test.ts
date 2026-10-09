@@ -170,7 +170,7 @@ describe("owner project sharing commands", () => {
 				response: () =>
 					jsonResponse([
 						{
-							id: "link-aaaaaaaa",
+							id: "00000000-0000-4000-8000-0000000000a1",
 							prefix: "abc123",
 							label: "client",
 							created_at: "2026-05-15T10:00:00Z",
@@ -180,7 +180,7 @@ describe("owner project sharing commands", () => {
 							last_redeemed_at: "2026-05-15T11:00:00Z",
 						},
 						{
-							id: "link-bbbbbbbb",
+							id: "00000000-0000-4000-8000-0000000000a2",
 							prefix: "xyz987",
 							label: null,
 							created_at: "2026-05-15T12:00:00Z",
@@ -206,6 +206,8 @@ describe("owner project sharing commands", () => {
 		]);
 		const out = consoleCapture.lines.join("\n");
 		expect(out).toContain("Project share links (2)");
+		expect(out).toContain("00000000-0000-4000-8000-0000000000a1");
+		expect(out).toContain("00000000-0000-4000-8000-0000000000a2");
 		expect(out).toContain("abc123");
 		expect(out).toContain("xyz987");
 		expect(out).toContain("client");
@@ -291,6 +293,43 @@ describe("owner project sharing commands", () => {
 		expect(err).toContain("No clawdi account found");
 		expect(err).toContain("clawdi project share engineering");
 	});
+
+	it.each(["share", "invite"])(
+		"keeps unknown project %s error details private",
+		async (command) => {
+			const { restore } = mockFetch([
+				{ method: "GET", path: /^\/v1\/projects$/, response: () => jsonResponse(projects) },
+				{
+					method: "POST",
+					path:
+						command === "share"
+							? "/v1/projects/project-owned/share-links"
+							: "/v1/projects/project-owned/invitations",
+					response: () =>
+						jsonResponse(
+							{ detail: { error: "unknown", message: "private backend internals" } },
+							409,
+						),
+				},
+			]);
+			const consoleCapture = captureConsole();
+			try {
+				const operation =
+					command === "share"
+						? projectShareCommand("engineering", { json: true })
+						: projectInviteCommand("engineering", { email: "bob@example.test", json: true });
+				await expect(operation).rejects.toThrow("API error 409");
+				await expect(operation).rejects.toMatchObject({
+					message: expect.not.stringContaining("private backend internals"),
+				});
+			} finally {
+				consoleCapture.restore();
+				restore();
+			}
+			expect(consoleCapture.lines).toEqual([]);
+			expect(consoleCapture.errors).toEqual([]);
+		},
+	);
 
 	it("lists pending invitations for an owned project", async () => {
 		const { captured, restore } = mockFetch([

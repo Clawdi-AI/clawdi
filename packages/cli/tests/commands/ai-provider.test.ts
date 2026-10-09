@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import {
 	chmodSync,
 	existsSync,
@@ -112,6 +112,47 @@ describe("ai-provider commands", () => {
 			restore();
 		}
 	});
+
+	it.each([false, true])(
+		"writes validation JSON to the correct stream (allow public=%s)",
+		async (allowNoAuthPublic) => {
+			mkdirSync(join(tmpHome, ".clawdi", "ai-providers"), { recursive: true });
+			writeFileSync(
+				aiProviderCatalogPath(),
+				JSON.stringify({
+					schema_version: 1,
+					providers: [
+						{
+							id: "public",
+							type: "custom_openai_compatible",
+							base_url: "https://example.com/v1",
+							api_mode: "openai_chat",
+							managed_by: "user",
+							auth: { type: "none" },
+						},
+					],
+				}),
+			);
+			const stdout = spyOn(console, "log").mockImplementation(() => {});
+			const stderr = spyOn(console, "error").mockImplementation(() => {});
+			process.exitCode = 0;
+			try {
+				await aiProviderValidateCommand("public", { json: true, allowNoAuthPublic });
+				const output = allowNoAuthPublic ? stdout : stderr;
+				expect(stdout).toHaveBeenCalledTimes(allowNoAuthPublic ? 1 : 0);
+				expect(stderr).toHaveBeenCalledTimes(allowNoAuthPublic ? 0 : 1);
+				expect(JSON.parse(String(output.mock.calls[0]?.[0]))).toMatchObject({
+					schemaVersion: "clawdi.aiProviderValidate.v1",
+					valid: allowNoAuthPublic,
+				});
+				expect(process.exitCode).toBe(allowNoAuthPublic ? 0 : 1);
+			} finally {
+				stdout.mockRestore();
+				stderr.mockRestore();
+				process.exitCode = 0;
+			}
+		},
+	);
 
 	it("protects defaults on remove unless forced", async () => {
 		const cloudMock = mockFetch([
