@@ -17,6 +17,12 @@ describe("timezone options", () => {
 		).toEqual(["America/New_York", "Europe/London", "UTC"]);
 	});
 
+	test("falls back when the runtime enumerates no valid zone", () => {
+		expect(supportedTimezones([], [])).toEqual(fallbackTimezones());
+		expect(supportedTimezones([], ["Not/AZone"])).toEqual(fallbackTimezones());
+		expect(supportedTimezones(["Asia/Tokyo"], [])).toEqual(fallbackTimezones(["Asia/Tokyo"]));
+	});
+
 	test("uses a standards-valid fallback without supportedValuesOf", () => {
 		const fallback = fallbackTimezones();
 		expect(fallback).toContain("UTC");

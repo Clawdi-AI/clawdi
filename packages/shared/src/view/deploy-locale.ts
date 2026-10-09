@@ -76,13 +76,19 @@ function validatedTimezones(values: readonly string[]): string[] {
 /**
  * Runtime IANA data with a standards-valid fallback. Passing `null` explicitly
  * exercises the fallback path; additional valid values preserve device or
- * persisted choices omitted by a runtime's enumeration.
+ * persisted choices omitted by a runtime's enumeration. A runtime (or polyfill)
+ * that enumerates nothing valid also falls back, so the picker never offers UTC alone.
  */
 export function supportedTimezones(
 	additional: readonly string[] = [],
 	runtimeValues: readonly string[] | null = runtimeTimezones(),
 ): string[] {
-	return validatedTimezones([...(runtimeValues ?? FALLBACK_TIMEZONES), "UTC", ...additional]);
+	const runtime = runtimeValues ? validatedTimezones(runtimeValues) : [];
+	return validatedTimezones([
+		...(runtime.length ? runtime : FALLBACK_TIMEZONES),
+		"UTC",
+		...additional,
+	]);
 }
 
 /** Stable initial options for SSR and the first client render. */
