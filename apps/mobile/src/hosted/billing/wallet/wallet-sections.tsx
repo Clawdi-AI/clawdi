@@ -6,7 +6,9 @@ import {
 } from "@clawdi/shared/ui";
 import { paymentMethodPresentation, paymentMethodsCopy } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
-import { CreditCard, Link2, Pencil } from "lucide-react-native";
+import CreditCard from "lucide-react-native/icons/credit-card";
+import Link2 from "lucide-react-native/icons/link-2";
+import Pencil from "lucide-react-native/icons/pencil";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { SettingsSection } from "@/components/settings/settings-panel-header";
 import { Badge } from "@/components/ui/badge";

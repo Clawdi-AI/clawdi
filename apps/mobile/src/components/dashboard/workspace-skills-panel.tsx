@@ -7,7 +7,8 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
-import { Sparkles, Trash2 } from "lucide-react-native";
+import Sparkles from "lucide-react-native/icons/sparkles";
+import Trash2 from "lucide-react-native/icons/trash";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentCollection } from "@/components/dashboard/collection";
 import { AgentSectionNavigation } from "@/components/dashboard/navigation";

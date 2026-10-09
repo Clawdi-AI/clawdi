@@ -50,16 +50,14 @@ import {
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Crypto from "expo-crypto";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import {
-	Cpu,
-	CreditCard,
-	Plus,
-	Rocket,
-	Smartphone,
-	Store,
-	WalletCards,
-	Zap,
-} from "lucide-react-native";
+import Cpu from "lucide-react-native/icons/cpu";
+import CreditCard from "lucide-react-native/icons/credit-card";
+import Plus from "lucide-react-native/icons/plus";
+import Rocket from "lucide-react-native/icons/rocket";
+import Smartphone from "lucide-react-native/icons/smartphone";
+import Store from "lucide-react-native/icons/store";
+import WalletCards from "lucide-react-native/icons/wallet-cards";
+import Zap from "lucide-react-native/icons/zap";
 import { useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AddAgentSetup } from "@/components/dashboard/add-agent-setup";

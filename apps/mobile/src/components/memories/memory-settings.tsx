@@ -1,7 +1,7 @@
 import { memoriesSurfaceClasses } from "@clawdi/shared/ui";
 import { memoryFormCopy as copy } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Key } from "lucide-react-native";
+import Key from "lucide-react-native/icons/key";
 import { useEffect, useState } from "react";
 import { AppState } from "react-native";
 import { Button } from "@/components/ui/button";

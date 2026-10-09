@@ -10,7 +10,7 @@ import {
 	transactionStatusTone,
 } from "@clawdi/shared/view";
 import { openBrowserAsync } from "expo-web-browser";
-import { ExternalLink } from "lucide-react-native";
+import ExternalLink from "lucide-react-native/icons/external-link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";

@@ -1,6 +1,6 @@
 import { selectClasses as styles } from "@clawdi/shared/ui";
 import { cn } from "cn";
-import { ChevronDown } from "lucide-react-native";
+import ChevronDown from "lucide-react-native/icons/chevron-down";
 import { createContext, type ReactNode, useContext, useState } from "react";
 import {
 	findMenuElement,

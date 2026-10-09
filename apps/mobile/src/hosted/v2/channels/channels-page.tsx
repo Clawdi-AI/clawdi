@@ -22,7 +22,10 @@ import {
 	sharedBotsFromPool,
 } from "@clawdi/shared/view";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { Link2, Link2Off, QrCode, Trash2 } from "lucide-react-native";
+import Link2 from "lucide-react-native/icons/link-2";
+import Link2Off from "lucide-react-native/icons/link-2-off";
+import QrCode from "lucide-react-native/icons/qr-code";
+import Trash2 from "lucide-react-native/icons/trash";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentSectionNavigation } from "@/components/dashboard/navigation";

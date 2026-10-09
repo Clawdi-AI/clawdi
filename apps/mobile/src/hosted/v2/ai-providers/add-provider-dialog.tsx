@@ -19,7 +19,7 @@ import {
 } from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { router, useFocusEffect } from "expo-router";
-import { Plus } from "lucide-react-native";
+import Plus from "lucide-react-native/icons/plus";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Linking } from "react-native";
 import { ActionButton, ChoiceSelect } from "@/components/dashboard/controls";

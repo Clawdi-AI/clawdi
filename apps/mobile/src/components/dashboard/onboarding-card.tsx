@@ -1,7 +1,8 @@
 import { dashboardPageClasses as page, onboardingCardClasses as styles } from "@clawdi/shared/ui";
 import { OVERVIEW_COPY, onboardingCardModel } from "@clawdi/shared/view";
 import { router } from "expo-router";
-import { Rocket, TerminalSquare } from "lucide-react-native";
+import Rocket from "lucide-react-native/icons/rocket";
+import TerminalSquare from "lucide-react-native/icons/square-terminal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Text } from "@/components/ui/text";

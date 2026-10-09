@@ -7,7 +7,8 @@ import {
 	emptyStateClasses as styles,
 } from "@clawdi/shared/ui";
 import { cn } from "cn";
-import { Inbox, type LucideIcon } from "lucide-react-native";
+import type { LucideIcon } from "lucide-react-native";
+import Inbox from "lucide-react-native/icons/inbox";
 import { isValidElement, type ReactNode } from "react";
 import { WebContent, WebIcon, WebView } from "@/components/ui/web-layout";
 

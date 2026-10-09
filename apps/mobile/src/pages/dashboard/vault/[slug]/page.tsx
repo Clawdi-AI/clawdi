@@ -32,7 +32,12 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { AlertCircle, ArrowRight, Check, ListChecks, Plus, Trash2 } from "lucide-react-native";
+import ArrowRight from "lucide-react-native/icons/arrow-right";
+import Check from "lucide-react-native/icons/check";
+import AlertCircle from "lucide-react-native/icons/circle-alert";
+import ListChecks from "lucide-react-native/icons/list-checks";
+import Plus from "lucide-react-native/icons/plus";
+import Trash2 from "lucide-react-native/icons/trash";
 import { type ReactElement, useCallback, useState } from "react";
 import { AppState } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";

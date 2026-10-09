@@ -32,9 +32,10 @@ is historical V0 evidence, not a native-build or real-device acceptance claim.
 The root workspace uses Bun `1.4.2` and a named `expo57` catalog for the
 approved SDK 57 runtime exception. A bounded Bun 1.4.2 install generated the
 root lock and a frozen reinstall passed. Mobile and Shared TypeScript 7 strict
-checks, Biome, and iOS/Android Expo exports passed. `expo install --check`
-still reports only the deliberate TypeScript 7 versus Expo's `~6.0.3` checker
-expectation; TypeScript 7 remains an explicit project decision. Expo export is
+checks, Biome, and iOS/Android Expo exports passed. TypeScript 7 remains an
+explicit project decision; `apps/mobile/package.json` records it in
+`expo.install.exclude` so Expo's dependency checker validates the SDK packages
+without requiring its expected TypeScript `~6.0.3`. Expo export is
 Metro bundling evidence, not native compilation or store-readiness evidence.
 
 The product uses SDK 57 / RN 0.86.3's default TypeScript declarations with
@@ -66,6 +67,11 @@ Use the root `packageManager` (`bun@1.4.2`) and committed root lock. Common
 versions belong in the root Bun catalog; SDK-constrained native packages use
 `catalog:expo57`. Do not flatten the Web/Desktop and native React versions or
 install an independent mobile lockfile.
+
+Import Lucide runtime icons from the official per-icon entries, for example
+`import Camera from "lucide-react-native/icons/camera"`, to keep Metro from
+bundling unused icons. Type-only imports can use the package entry point. See
+[Lucide's React Native optimization guide](https://lucide.dev/guide/react-native/advanced/optimizations).
 
 Set `EXPO_PUBLIC_CLAWDI_API_URL` and `EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY` for the
 development build, then run:

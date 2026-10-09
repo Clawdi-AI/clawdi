@@ -2,7 +2,7 @@ import { type components, type Project, skillCapabilities } from "@clawdi/shared
 import { LIBRARY_COPY, skillRemovalDescription, skillRemovalTitle } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { MoreHorizontal } from "lucide-react-native";
+import MoreHorizontal from "lucide-react-native/icons/ellipsis";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";

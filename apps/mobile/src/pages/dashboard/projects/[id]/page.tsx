@@ -11,7 +11,9 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
-import { ArrowRight, Plus, Share2 } from "lucide-react-native";
+import ArrowRight from "lucide-react-native/icons/arrow-right";
+import Plus from "lucide-react-native/icons/plus";
+import Share2 from "lucide-react-native/icons/share-2";
 import { type ReactElement, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";

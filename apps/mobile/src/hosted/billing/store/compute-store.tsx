@@ -16,7 +16,10 @@ import {
 	storeSubscriptionStatus,
 } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, RotateCcw, Settings, TriangleAlert } from "lucide-react-native";
+import ArrowUp from "lucide-react-native/icons/arrow-up";
+import RotateCcw from "lucide-react-native/icons/rotate-ccw";
+import Settings from "lucide-react-native/icons/settings";
+import TriangleAlert from "lucide-react-native/icons/triangle-alert";
 import { useState } from "react";
 import { Linking } from "react-native";
 import type { PurchasesPackage } from "react-native-purchases";

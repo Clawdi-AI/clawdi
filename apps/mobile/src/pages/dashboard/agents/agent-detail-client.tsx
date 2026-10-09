@@ -2,7 +2,7 @@ import { agentsIndexClasses, connectedAgentDetailClasses as styles } from "@claw
 import { agentDisplayName, agentOverviewCopy, agentSurfaceCopy } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { Redirect, useLocalSearchParams } from "expo-router";
-import { LayoutDashboard } from "lucide-react-native";
+import LayoutDashboard from "lucide-react-native/icons/layout-dashboard";
 import { useState } from "react";
 import { RefreshControl } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";

@@ -1,7 +1,7 @@
 import type { SavedAiProvider } from "@clawdi/shared/api";
 import { aiProvidersUiClasses } from "@clawdi/shared/ui";
 import { providerPresentation } from "@clawdi/shared/view";
-import { BrainCircuit } from "lucide-react-native";
+import BrainCircuit from "lucide-react-native/icons/brain-circuit";
 import { EntityIcon } from "@/components/entity-icon";
 import { IconChip } from "@/components/icon-chip";
 import { Icon } from "@/components/ui/icon";

@@ -1,7 +1,9 @@
 import type { DeployComponents } from "@clawdi/shared/api";
 import { balanceCardClasses as balance } from "@clawdi/shared/ui";
 import { formatUsdExact, isLowBalance } from "@clawdi/shared/view";
-import { Coins, CreditCard, TriangleAlert } from "lucide-react-native";
+import Coins from "lucide-react-native/icons/coins";
+import CreditCard from "lucide-react-native/icons/credit-card";
+import TriangleAlert from "lucide-react-native/icons/triangle-alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";

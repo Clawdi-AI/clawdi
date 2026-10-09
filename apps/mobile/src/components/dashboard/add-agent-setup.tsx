@@ -15,7 +15,7 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
-import { Laptop } from "lucide-react-native";
+import Laptop from "lucide-react-native/icons/laptop";
 import { useEffect, useRef, useState } from "react";
 import { Linking } from "react-native";
 import { IconChip } from "@/components/icon-chip";

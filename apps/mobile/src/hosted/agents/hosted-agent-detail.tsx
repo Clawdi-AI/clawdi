@@ -34,7 +34,9 @@ import {
 } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Redirect, useRouter } from "expo-router";
-import { FolderOpen, MonitorPlay, TerminalSquare } from "lucide-react-native";
+import FolderOpen from "lucide-react-native/icons/folder-open";
+import MonitorPlay from "lucide-react-native/icons/monitor-play";
+import TerminalSquare from "lucide-react-native/icons/square-terminal";
 import { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, Alert, Linking } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";

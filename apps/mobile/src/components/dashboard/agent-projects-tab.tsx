@@ -14,7 +14,8 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams } from "expo-router";
-import { FolderKanban, MoreHorizontal } from "lucide-react-native";
+import MoreHorizontal from "lucide-react-native/icons/ellipsis";
+import FolderKanban from "lucide-react-native/icons/folder-kanban";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentCollection } from "@/components/dashboard/collection";

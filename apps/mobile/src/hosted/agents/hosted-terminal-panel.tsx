@@ -180,8 +180,6 @@ function Terminal({ deploymentId }: { deploymentId: string | undefined }) {
 						}}
 						dom={{
 							style: { flex: 1 },
-							useExpoDOMWebView: true,
-							unstable_useExpoModulesBridge: false,
 							onContentProcessDidTerminate: disconnect,
 							onRenderProcessGone: disconnect,
 						}}

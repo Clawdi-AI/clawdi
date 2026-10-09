@@ -16,7 +16,7 @@ import {
 } from "@clawdi/shared/view";
 import { cn } from "cn";
 import { router } from "expo-router";
-import { MessageSquare } from "lucide-react-native";
+import MessageSquare from "lucide-react-native/icons/message-square";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE } from "@/components/entity-card";

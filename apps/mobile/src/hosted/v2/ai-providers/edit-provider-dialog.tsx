@@ -18,7 +18,8 @@ import {
 } from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { Pencil, RefreshCw } from "lucide-react-native";
+import Pencil from "lucide-react-native/icons/pencil";
+import RefreshCw from "lucide-react-native/icons/refresh-cw";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Linking } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";

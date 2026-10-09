@@ -33,7 +33,7 @@
 			"@tailwindcss/cli": "^4.3.3",
 			"@tailwindcss/postcss": "^4.3.3",
 			"@tailwindcss/vite": "^4.3.3",
-			"@tanstack/react-query": "^5.102.8",
+			"@tanstack/react-query": "^5.104.1",
 			"react-native-purchases": "10.11.0",
 			"lucide-react": "^1.39.0",
 			"viem": "2.56.9",
@@ -44,14 +44,13 @@
 		},
 		"catalogs": {
 			"expo57": {
-				"@expo/dom-webview": "57.0.1",
 				"@babel/core": "7.29.7",
-				"@expo/ui": "57.0.21",
+				"@expo/ui": "57.0.22",
 				"@react-native/metro-config": "0.86.3",
 				"@types/react": "19.2.18",
-				"expo": "57.0.26",
+				"expo": "57.0.27",
 				"expo-file-system": "57.0.7",
-				"expo-router": "57.0.24",
+				"expo-router": "57.0.25",
 				"expo-sharing": "57.0.22",
 				"expo-system-ui": "57.0.4",
 				"react": "19.2.3",
@@ -67,7 +66,9 @@
 				"expo-font": "57.0.4",
 				"expo-updates": "57.0.25",
 				"expo-dev-client": "57.0.19",
-				"@sentry/react-native": "7.11.0"
+				"@sentry/react-native": "7.11.0",
+				"expo-constants": "57.0.21",
+				"expo-linking": "57.0.12"
 			}
 		}
 	},

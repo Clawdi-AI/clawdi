@@ -16,17 +16,15 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
 import { type Href, router, useFocusEffect } from "expo-router";
-import {
-	Bell,
-	CheckCircle2,
-	CircleAlert,
-	ExternalLink,
-	FolderInput,
-	MailOpen,
-	MoreHorizontal,
-	RefreshCw,
-	XCircle,
-} from "lucide-react-native";
+import Bell from "lucide-react-native/icons/bell";
+import CircleAlert from "lucide-react-native/icons/circle-alert";
+import CheckCircle2 from "lucide-react-native/icons/circle-check";
+import XCircle from "lucide-react-native/icons/circle-x";
+import MoreHorizontal from "lucide-react-native/icons/ellipsis";
+import ExternalLink from "lucide-react-native/icons/external-link";
+import FolderInput from "lucide-react-native/icons/folder-input";
+import MailOpen from "lucide-react-native/icons/mail-open";
+import RefreshCw from "lucide-react-native/icons/refresh-cw";
 import { type ReactElement, useCallback, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { IconChip } from "@/components/icon-chip";

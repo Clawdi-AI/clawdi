@@ -11,7 +11,10 @@ import {
 	RESOURCE_TINT_TOKENS,
 } from "@clawdi/shared/view";
 import { type Href, router } from "expo-router";
-import { FolderKanban, Key, Plug, Sparkles } from "lucide-react-native";
+import FolderKanban from "lucide-react-native/icons/folder-kanban";
+import Key from "lucide-react-native/icons/key";
+import Plug from "lucide-react-native/icons/plug";
+import Sparkles from "lucide-react-native/icons/sparkles";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";

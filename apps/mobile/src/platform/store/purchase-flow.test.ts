@@ -41,7 +41,7 @@ const logOut = mock(async () => {
 	return {};
 });
 const getAppUserID = mock(async () => sdkUserId);
-const syncPurchases = mock(async () => {});
+const syncPurchasesForResult = mock(async () => ({ customerInfo: {} }));
 const getOfferings = mock(async (): Promise<unknown> => ({ all: {}, current: null }));
 // Shared shape: Bun keeps one module mock for every store test file.
 mock.module("react-native-purchases", () => ({
@@ -50,7 +50,7 @@ mock.module("react-native-purchases", () => ({
 		logIn,
 		logOut,
 		getAppUserID,
-		syncPurchases,
+		syncPurchasesForResult,
 		getOfferings,
 		PURCHASES_ERROR_CODE: { PURCHASE_CANCELLED_ERROR: "1", PAYMENT_PENDING_ERROR: "20" },
 	},
@@ -61,7 +61,7 @@ const { createPurchaseFlow } = await import("./purchase-flow");
 
 beforeEach(() => {
 	sdkUserId = appUserId;
-	for (const fn of [configure, logIn, logOut, getAppUserID, syncPurchases]) fn.mockClear();
+	for (const fn of [configure, logIn, logOut, getAppUserID, syncPurchasesForResult]) fn.mockClear();
 });
 
 function deferred<T>() {
@@ -129,7 +129,7 @@ function fixture(configOverrides: Partial<MobileRuntimeConfig> = {}, identityTim
 			return { state: "verification_pending" as const, correlation_id: "safe-correlation" };
 		},
 	);
-	const getPurchaseAttempt = mock(async () => attempt);
+	const getPurchaseAttempt = mock(async (_id?: string) => attempt);
 	const listPurchaseAttempts = mock(async () => [] as StorePurchaseAttempt[]);
 	const reconcileComputeSubscriptions = mock(
 		async (): Promise<StoreComputeReconcileResponse> => ({
@@ -158,6 +158,7 @@ function fixture(configOverrides: Partial<MobileRuntimeConfig> = {}, identityTim
 	const sdk = createRevenueCat(identityTimeoutMs);
 	const identity = createStoreIdentity({ scope, client, sdk, config, platform: "app_store" });
 	const newKey = mock(() => "persisted-idempotency-key");
+	const onSyncFailure = mock((_error: StorePurchaseError) => {});
 	const makeFlow = (processSdk = sdk, processIdentity = identity) =>
 		createPurchaseFlow({
 			scope,
@@ -168,6 +169,7 @@ function fixture(configOverrides: Partial<MobileRuntimeConfig> = {}, identityTim
 			journal: createPurchaseAttemptStore(store),
 			storageKey: "journal",
 			newKey,
+			onSyncFailure,
 			clock,
 		});
 	return {
@@ -184,6 +186,7 @@ function fixture(configOverrides: Partial<MobileRuntimeConfig> = {}, identityTim
 		getPurchaseAttempt,
 		listPurchaseAttempts,
 		newKey,
+		onSyncFailure,
 		makeFlow,
 		delays,
 		advanceTime: (ms: number) => {
@@ -613,7 +616,7 @@ describe("durable store attempts", () => {
 		expect(result.status).toBe("pending");
 		expect(secondPaywall).not.toHaveBeenCalled();
 		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
-		expect(syncPurchases).toHaveBeenCalledTimes(1);
+		expect(syncPurchasesForResult).toHaveBeenCalledTimes(1);
 		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.purchaseStarted).toBe(true);
 	});
 	test("restart syncs an interrupted prepared purchase and only reads until the unpaid attempt expires", async () => {
@@ -624,9 +627,12 @@ describe("durable store attempts", () => {
 				throw new Error("App stopped during the paywall");
 			}),
 		).rejects.toMatchObject({ code: "store_request_failed" });
-		syncPurchases.mockImplementationOnce(async () => f.setAttempt("expired"));
+		syncPurchasesForResult.mockImplementationOnce(async () => {
+			f.setAttempt("expired");
+			return { customerInfo: {} };
+		});
 		expect((await f.makeFlow().recover())[0]?.status).toBe("terminal");
-		expect(syncPurchases).toHaveBeenCalledTimes(1);
+		expect(syncPurchasesForResult).toHaveBeenCalledTimes(1);
 		expect(f.getPurchaseAttempt).toHaveBeenCalledTimes(2);
 		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
 		expect(f.values.size).toBe(0);
@@ -639,10 +645,70 @@ describe("durable store attempts", () => {
 				throw new Error("Deferred purchase");
 			}),
 		).rejects.toMatchObject({ code: "store_request_failed" });
-		syncPurchases.mockImplementationOnce(async () => f.setAttempt("funding_applied"));
+		syncPurchasesForResult.mockImplementationOnce(async () => {
+			f.setAttempt("funding_applied");
+			return { customerInfo: {} };
+		});
 		expect((await f.makeFlow().recover())[0]?.status).toBe("funding_applied");
 		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
 		expect(f.values.size).toBe(0);
+	});
+	test("a failed sync still polls the interrupted purchase and remaining server attempts", async () => {
+		const f = fixture();
+		await f.initialize();
+		await expect(
+			f.makeFlow().purchase(intent, async () => {
+				throw new Error("App stopped during the paywall");
+			}),
+		).rejects.toMatchObject({ code: "store_request_failed" });
+		const prepared = await f.getPurchaseAttempt();
+		f.getPurchaseAttempt.mockClear();
+		const pending = { ...prepared, state: "verification_pending" } as const;
+		f.listPurchaseAttempts.mockResolvedValueOnce([
+			{ ...pending, attempt_id: otherAppUserId },
+			{ ...pending, attempt_id: "44444444-4444-4444-8444-444444444444" },
+		]);
+		let localReads = 0;
+		f.getPurchaseAttempt.mockImplementation(async (id) => {
+			if (id === attemptId && ++localReads <= 2) return prepared;
+			return { ...pending, attempt_id: id ?? attemptId, state: "funding_applied" };
+		});
+		syncPurchasesForResult.mockRejectedValueOnce(new Error("Private SDK/server response"));
+		const results = await f.makeFlow().recover();
+		expect(results.map((result) => result.status)).toEqual([
+			"funding_applied",
+			"funding_applied",
+			"funding_applied",
+		]);
+		expect(f.getPurchaseAttempt.mock.calls.map(([id]) => id)).toEqual([
+			attemptId,
+			attemptId,
+			attemptId,
+			otherAppUserId,
+			"44444444-4444-4444-8444-444444444444",
+		]);
+		expect(f.onSyncFailure).toHaveBeenCalledTimes(1);
+		expect(f.onSyncFailure.mock.calls[0]?.[0]).toMatchObject({ code: "store_request_failed" });
+		expect(f.onSyncFailure.mock.calls[0]?.[0].message).not.toContain("Private SDK/server response");
+		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
+		expect(f.values.size).toBe(0);
+	});
+	test("a sync rejection after account retirement stops recovery without reporting or polling", async () => {
+		const f = fixture();
+		await f.initialize();
+		await expect(
+			f.makeFlow().purchase(intent, async () => {
+				throw new Error("App stopped during the paywall");
+			}),
+		).rejects.toMatchObject({ code: "store_request_failed" });
+		syncPurchasesForResult.mockImplementationOnce(async () => {
+			f.switchAccount();
+			throw new Error("Sync rejected after sign-out");
+		});
+		await expect(f.makeFlow().recover()).rejects.toMatchObject({ code: "account_changed" });
+		expect(f.onSyncFailure).not.toHaveBeenCalled();
+		expect(f.listPurchaseAttempts).not.toHaveBeenCalled();
+		expect(f.getPurchaseAttempt).toHaveBeenCalledTimes(1);
 	});
 	test("recovery preserves cancelled prepared status across restart and retries the same intent", async () => {
 		const f = fixture();
@@ -650,7 +716,7 @@ describe("durable store attempts", () => {
 		await f.makeFlow().purchase(intent, async () => null);
 		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.cancelled).toBe(true);
 		expect((await f.makeFlow().recover())[0]?.status).toBe("cancelled");
-		expect(syncPurchases).not.toHaveBeenCalled();
+		expect(syncPurchasesForResult).not.toHaveBeenCalled();
 		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
 		await f.makeFlow().purchase(intent, async () => transaction);
 		expect(parsePurchaseAttempt(f.values.get("journal") ?? "")?.cancelled).toBe(false);
@@ -1230,7 +1296,7 @@ describe("post-purchase hosted observation", () => {
 		expect(funding).toBe("purchase_pending");
 		expect(storeFundingHoldsAttempt({ storeFunding: funding ?? undefined })).toBe(true);
 		expect(flow.recover).not.toHaveBeenCalled();
-		expect(syncPurchases).not.toHaveBeenCalled();
+		expect(syncPurchasesForResult).not.toHaveBeenCalled();
 		expect(f.confirmPurchaseAttempt).not.toHaveBeenCalled();
 		expect(f.delays).toEqual([]);
 		expect(f.bootstrap).toHaveBeenCalledTimes(1);
@@ -1278,7 +1344,7 @@ describe("post-purchase hosted observation", () => {
 		expect((await flow.purchase(intent, creditsPaywall)).status).toBe("cancelled");
 		expect(creditsPaywall).toHaveBeenCalledTimes(1);
 		expect(flow.recover).not.toHaveBeenCalled();
-		expect(syncPurchases).not.toHaveBeenCalled();
+		expect(syncPurchasesForResult).not.toHaveBeenCalled();
 		expect(f.delays).toEqual([]);
 		bootstrap.resolve(await f.bootstrap());
 		await observation;

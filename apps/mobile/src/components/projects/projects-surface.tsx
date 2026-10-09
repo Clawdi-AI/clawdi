@@ -15,7 +15,9 @@ import {
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { MoreHorizontal, Pencil, Plus } from "lucide-react-native";
+import MoreHorizontal from "lucide-react-native/icons/ellipsis";
+import Pencil from "lucide-react-native/icons/pencil";
+import Plus from "lucide-react-native/icons/plus";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";

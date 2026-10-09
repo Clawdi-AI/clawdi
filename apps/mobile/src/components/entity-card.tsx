@@ -14,7 +14,9 @@ import {
 } from "@clawdi/shared/ui";
 import { cn } from "cn";
 import { type Href, router } from "expo-router";
-import { Check, ChevronRight, Plus } from "lucide-react-native";
+import Check from "lucide-react-native/icons/check";
+import ChevronRight from "lucide-react-native/icons/chevron-right";
+import Plus from "lucide-react-native/icons/plus";
 import type { ReactNode } from "react";
 import { IconChip } from "@/components/icon-chip";
 import { TruncatedText } from "@/components/truncated-text";

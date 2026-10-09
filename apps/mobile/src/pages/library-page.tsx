@@ -6,15 +6,13 @@ import {
 } from "@clawdi/shared/view";
 import type { Href } from "expo-router";
 import { router } from "expo-router";
-import {
-	Brain,
-	BrainCircuit,
-	FolderKanban,
-	Key,
-	MessagesSquare,
-	Plug,
-	Sparkles,
-} from "lucide-react-native";
+import Brain from "lucide-react-native/icons/brain";
+import BrainCircuit from "lucide-react-native/icons/brain-circuit";
+import FolderKanban from "lucide-react-native/icons/folder-kanban";
+import Key from "lucide-react-native/icons/key";
+import MessagesSquare from "lucide-react-native/icons/messages-square";
+import Plug from "lucide-react-native/icons/plug";
+import Sparkles from "lucide-react-native/icons/sparkles";
 import { IconChip } from "@/components/icon-chip";
 import { SectionLabel } from "@/components/section-label";
 import { Icon } from "@/components/ui/icon";
