@@ -58,7 +58,7 @@ module.exports = ({ config }) => {
 		config: { ...config.ios?.config, usesNonExemptEncryption: false },
 		privacyManifests: {
 			NSPrivacyTracking: false,
-			// Union of the RN/Expo manifests, Sentry Cocoa 8.58.0 and RevenueCat iOS 5.92.0.
+			// Union of the RN/Expo manifests, Sentry Cocoa 8.58.0 and RevenueCat iOS 5.94.0.
 			NSPrivacyAccessedAPITypes: [
 				{
 					NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryFileTimestamp",

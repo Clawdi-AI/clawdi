@@ -1,0 +1,46 @@
+name: Clawdi Deployment Lag
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/clawdi-deployment-lag.yml"
+      - "scripts/clawdi-deployment-lag.ts"
+      - "scripts/clawdi-image-release-plan.ts"
+      - "scripts/whatsapp-sidecar-deployment-revision.ts"
+      - ".github/workflows/clawdi-image-release.yml"
+      - "packages/cli/tests/clawdi-deployment-lag.test.ts"
+
+concurrency:
+  group: clawdi-deployment-lag-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  check:
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.sha || 'main' }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-bun-ci
+        if: github.event_name == 'pull_request'
+      - name: Verify deployment lag contracts
+        if: github.event_name == 'pull_request'
+        run: bun run --cwd packages/cli test:internal tests/clawdi-deployment-lag.test.ts tests/clawdi-image-release-workflow.test.ts
+      - uses: oven-sh/setup-bun@v2
+        if: github.event_name != 'pull_request'
+        with:
+          bun-version-file: package.json
+      - name: Check Cloud deployment lag
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bun run scripts/clawdi-deployment-lag.ts

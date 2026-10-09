@@ -90,52 +90,56 @@ jobs:
         with:
           retries: 3
           script: |
-            const { data: { workflow_runs: runs } } = await github.rest.actions.listWorkflowRuns({
-              ...context.repo,
-              workflow_id: "clawdi-image-release.yml",
-              status: "success",
-              per_page: 20,
-            });
-            const deployed = [];
-            for (const run of runs) {
-              const { data: { jobs } } = await github.rest.actions.listJobsForWorkflowRun({
+            for (let page = 1; ; page += 1) {
+              const { data: { workflow_runs: runs } } = await github.rest.actions.listWorkflowRuns({
                 ...context.repo,
-                run_id: run.id,
-                filter: "latest",
-                per_page: 100,
+                workflow_id: "clawdi-image-release.yml",
+                per_page: 20,
+                page,
               });
-              const deployJobs = jobs.filter(
-                (job) => job.name === "deploy-vps" || job.name.startsWith("deploy-vps "),
-              );
-              if (deployJobs.length > 1) {
-                core.setFailed(`Release run ${run.id} has ambiguous deploy-vps history`);
+              const deployed = [];
+              for (const run of runs) {
+                if (run.status !== "completed" || run.conclusion !== "success") continue;
+                const { data: { jobs } } = await github.rest.actions.listJobsForWorkflowRun({
+                  ...context.repo,
+                  run_id: run.id,
+                  filter: "latest",
+                  per_page: 100,
+                });
+                const deployJobs = jobs.filter(
+                  (job) => job.name === "deploy-vps" || job.name.startsWith("deploy-vps "),
+                );
+                if (deployJobs.length > 1) {
+                  core.setFailed(`Release run ${run.id} has ambiguous deploy-vps history`);
+                  return;
+                }
+                const deploy = deployJobs[0];
+                if (!deploy || deploy.conclusion !== "success") continue;
+                const namedSha = /^deploy-vps ([0-9a-f]{40})$/.exec(deploy.name)?.[1];
+                if (deploy.name !== "deploy-vps" && !namedSha) {
+                  core.setFailed(`Release run ${run.id} has invalid named deployment authority`);
+                  return;
+                }
+                const legacyAutomaticSha = run.event === "workflow_run" ? run.head_sha : undefined;
+                if (!namedSha && legacyAutomaticSha === undefined) continue;
+                const deployedSha = namedSha ?? legacyAutomaticSha;
+                if (!/^[0-9a-f]{40}$/.test(deployedSha) || !deploy.completed_at) {
+                  core.setFailed(`Release run ${run.id} has invalid deployment authority metadata`);
+                  return;
+                }
+                deployed.push({ completedAt: deploy.completed_at, sha: deployedSha });
+              }
+              deployed.sort((left, right) => right.completedAt.localeCompare(left.completedAt));
+              if (deployed.length > 1 && deployed[0].completedAt === deployed[1].completedAt) {
+                core.setFailed("Latest successful deploy-vps authority is ambiguous");
                 return;
               }
-              const deploy = deployJobs[0];
-              if (!deploy || deploy.conclusion !== "success") continue;
-              const namedSha = /^deploy-vps ([0-9a-f]{40})$/.exec(deploy.name)?.[1];
-              if (deploy.name !== "deploy-vps" && !namedSha) {
-                core.setFailed(`Release run ${run.id} has invalid named deployment authority`);
+              if (deployed.length > 0) {
+                core.setOutput("found", "true");
+                core.setOutput("base_sha", deployed[0].sha);
                 return;
               }
-              const legacyAutomaticSha = run.event === "workflow_run" ? run.head_sha : undefined;
-              if (!namedSha && legacyAutomaticSha === undefined) continue;
-              const deployedSha = namedSha ?? legacyAutomaticSha;
-              if (!/^[0-9a-f]{40}$/.test(deployedSha) || !deploy.completed_at) {
-                core.setFailed(`Release run ${run.id} has invalid deployment authority metadata`);
-                return;
-              }
-              deployed.push({ completedAt: deploy.completed_at, sha: deployedSha });
-            }
-            deployed.sort((left, right) => right.completedAt.localeCompare(left.completedAt));
-            if (deployed.length > 1 && deployed[0].completedAt === deployed[1].completedAt) {
-              core.setFailed("Latest successful deploy-vps authority is ambiguous");
-              return;
-            }
-            if (deployed.length > 0) {
-              core.setOutput("found", "true");
-              core.setOutput("base_sha", deployed[0].sha);
-              return;
+              if (runs.length < 20) break;
             }
             core.setOutput("found", "false");
 

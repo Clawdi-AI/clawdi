@@ -6,6 +6,7 @@ import {
 } from "@expo/ui/jetpack-compose";
 import { horizontalScroll } from "@expo/ui/jetpack-compose/modifiers";
 import { useCSSVariable, useUniwind } from "uniwind";
+import { AppView } from "@/components/ui/view";
 import type { NativeSegmentsProps } from "@/platform/navigation/segmented-control";
 
 /** The community adapter exposes only tint; Compose also supports Web tokens and Geist. */
@@ -25,31 +26,34 @@ export function NativeSegments({
 	]);
 	const color = (v: string | number | undefined) => (typeof v === "string" ? v : undefined);
 	return (
-		<Host matchContents={{ vertical: true }} colorScheme={theme === "dark" ? "dark" : "light"}>
-			<SingleChoiceSegmentedButtonRow modifiers={scrollable ? [horizontalScroll()] : undefined}>
-				{options.map((option) => (
-					<SegmentedButton
-						key={option.value}
-						selected={option.value === value}
-						enabled={!disabled}
-						onClick={() => onChange(option.value)}
-						colors={{
-							activeContainerColor: color(accent),
-							inactiveContainerColor: color(background),
-							activeContentColor: color(foreground),
-							inactiveContentColor: color(foreground),
-							activeBorderColor: color(border),
-							inactiveBorderColor: color(border),
-						}}
-					>
-						<SegmentedButton.Label>
-							<Text maxLines={1} style={{ fontFamily: "Geist-Medium", fontSize: 14 }}>
-								{option.label}
-							</Text>
-						</SegmentedButton.Label>
-					</SegmentedButton>
-				))}
-			</SingleChoiceSegmentedButtonRow>
-		</Host>
+		// Keep a native parent so list subview clipping never attaches the Host mid-layout (0×0 Host).
+		<AppView collapsable={false}>
+			<Host matchContents={{ vertical: true }} colorScheme={theme === "dark" ? "dark" : "light"}>
+				<SingleChoiceSegmentedButtonRow modifiers={scrollable ? [horizontalScroll()] : undefined}>
+					{options.map((option) => (
+						<SegmentedButton
+							key={option.value}
+							selected={option.value === value}
+							enabled={!disabled}
+							onClick={() => onChange(option.value)}
+							colors={{
+								activeContainerColor: color(accent),
+								inactiveContainerColor: color(background),
+								activeContentColor: color(foreground),
+								inactiveContentColor: color(foreground),
+								activeBorderColor: color(border),
+								inactiveBorderColor: color(border),
+							}}
+						>
+							<SegmentedButton.Label>
+								<Text maxLines={1} style={{ fontFamily: "Geist-Medium", fontSize: 14 }}>
+									{option.label}
+								</Text>
+							</SegmentedButton.Label>
+						</SegmentedButton>
+					))}
+				</SingleChoiceSegmentedButtonRow>
+			</Host>
+		</AppView>
 	);
 }
