@@ -344,7 +344,7 @@ function VaultDetail({
 	const remove = () => {
 		if (!identity) return;
 		confirm(
-			`Delete ${current?.name ?? identity.slug}?`,
+			t("vault.deleteTitle", { name: current?.name ?? identity.slug }),
 			formCopy.deleteVaultDescription,
 			async (isCurrent) => {
 				await read((s) => vault.remove(identity, s));
@@ -749,7 +749,7 @@ function VaultDetail({
 									onPress={() => {
 										if (!identity) return;
 										confirm(
-											`Delete ${key}?`,
+											t("vault.deleteTitle", { name: key }),
 											formCopy.deleteKeyDescription,
 											async (isCurrent) => {
 												await read((s) =>

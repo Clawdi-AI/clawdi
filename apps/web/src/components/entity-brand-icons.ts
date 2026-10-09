@@ -1,5 +1,10 @@
-import { entityBrandIconClasses } from "@clawdi/shared/ui";
-import type { FrameworkBrandIconId, ProviderBrandIconId } from "@clawdi/shared/view";
+import {
+	type EntityBrandIconMetadata,
+	type FrameworkBrandIconId,
+	frameworkBrandIconMetadata,
+	type ProviderBrandIconId,
+	providerBrandIconMetadata,
+} from "@clawdi/shared/view";
 import Anthropic from "@lobehub/icons/es/Anthropic/components/Mono.js";
 import ClaudeCode from "@lobehub/icons/es/ClaudeCode/components/Color.js";
 import Codex from "@lobehub/icons/es/Codex/components/Inner.js";
@@ -29,119 +34,55 @@ import XiaomiMiMo from "@lobehub/icons/es/XiaomiMiMo/components/Mono.js";
 import ZAI from "@lobehub/icons/es/ZAI/components/Mono.js";
 import type { BrandIconComponent } from "@/components/brand-icon-tile";
 
-export type BrandIconMetadata = {
-	icon: BrandIconComponent;
-	iconClassName?: string;
-	iconScale?: number;
-	label: string;
-	tileClassName?: string;
-};
+export type BrandIconMetadata = EntityBrandIconMetadata & { icon: BrandIconComponent };
 
-const FRAMEWORK_BRAND_ICON_DEFINITIONS = {
-	openclaw: { icon: OpenClaw, iconScale: 0.75, label: "OpenClaw" },
-	hermes: {
-		icon: HermesAgent,
-		// LobeHub's Hermes avatar is intentionally a black mark on white.
-		iconClassName: entityBrandIconClasses.blackGlyph,
-		iconScale: 0.75,
-		label: "Hermes Agent",
-		tileClassName: entityBrandIconClasses.whiteTile,
-	},
-	"claude-code": {
-		icon: ClaudeCode,
-		iconScale: 0.7,
-		label: "Claude Code",
-	},
-	codex: {
-		icon: Codex,
-		iconScale: 0.7,
-		label: "Codex",
-		tileClassName: entityBrandIconClasses.whiteTile,
-	},
-	pi: {
-		icon: Pi,
-		iconClassName: entityBrandIconClasses.whiteGlyph,
-		iconScale: 0.65,
-		label: "Pi",
-		tileClassName: entityBrandIconClasses.blackTile,
-	},
-	opencode: {
-		icon: OpenCode,
-		iconClassName: entityBrandIconClasses.whiteGlyph,
-		iconScale: 0.75,
-		label: "OpenCode",
-		tileClassName: entityBrandIconClasses.blackTile,
-	},
-	dsh: { icon: DeepSeek, iconScale: 0.75, label: "DeepSeek Harness" },
-} satisfies Readonly<Record<FrameworkBrandIconId, BrandIconMetadata>>;
+const FRAMEWORK_BRAND_ICON_COMPONENTS = {
+	openclaw: OpenClaw,
+	hermes: HermesAgent,
+	"claude-code": ClaudeCode,
+	codex: Codex,
+	pi: Pi,
+	opencode: OpenCode,
+	dsh: DeepSeek,
+} satisfies Readonly<Record<FrameworkBrandIconId, BrandIconComponent>>;
 
-const FRAMEWORK_BRAND_ICONS: Readonly<Record<string, BrandIconMetadata>> = {
-	...FRAMEWORK_BRAND_ICON_DEFINITIONS,
-	claude_code: FRAMEWORK_BRAND_ICON_DEFINITIONS["claude-code"],
-};
+const PROVIDER_BRAND_ICON_COMPONENTS = {
+	anthropic: Anthropic,
+	deepinfra: DeepInfra,
+	deepseek: DeepSeek,
+	fireworks: Fireworks,
+	gemini: Gemini,
+	grok: Grok,
+	groq: Groq,
+	huggingface: HuggingFace,
+	kimi: Kimi,
+	minimax: Minimax,
+	mistral: Mistral,
+	nvidia: Nvidia,
+	openai: OpenAI,
+	opencode: OpenCode,
+	openrouter: OpenRouter,
+	qwen: Qwen,
+	stepfun: Stepfun,
+	tencent: Tencent,
+	together: Together,
+	xai: XAI,
+	xiaomi: XiaomiMiMo,
+	zai: ZAI,
+} satisfies Readonly<Record<ProviderBrandIconId, BrandIconComponent>>;
 
-const PROVIDER_BRAND_ICON_DEFINITIONS = {
-	anthropic: { icon: Anthropic, label: "Anthropic" },
-	deepinfra: { icon: DeepInfra, label: "DeepInfra" },
-	deepseek: { icon: DeepSeek, label: "DeepSeek" },
-	fireworks: { icon: Fireworks, label: "Fireworks AI" },
-	gemini: { icon: Gemini, label: "Gemini" },
-	grok: { icon: Grok, label: "Grok" },
-	groq: { icon: Groq, label: "Groq" },
-	huggingface: { icon: HuggingFace, label: "Hugging Face" },
-	kimi: { icon: Kimi, label: "Kimi", tileClassName: entityBrandIconClasses.blackTile },
-	minimax: { icon: Minimax, label: "MiniMax" },
-	mistral: { icon: Mistral, label: "Mistral AI" },
-	nvidia: { icon: Nvidia, label: "NVIDIA NIM" },
-	openai: { icon: OpenAI, label: "OpenAI" },
-	opencode: {
-		icon: OpenCode,
-		label: "OpenCode",
-		iconClassName: entityBrandIconClasses.whiteGlyph,
-		tileClassName: entityBrandIconClasses.blackTile,
-	},
-	openrouter: { icon: OpenRouter, label: "OpenRouter" },
-	qwen: { icon: Qwen, label: "Qwen" },
-	stepfun: { icon: Stepfun, label: "StepFun" },
-	tencent: { icon: Tencent, label: "Tencent Cloud" },
-	together: { icon: Together, label: "Together AI" },
-	xai: { icon: XAI, label: "xAI" },
-	xiaomi: { icon: XiaomiMiMo, label: "Xiaomi MiMo" },
-	zai: { icon: ZAI, label: "Z.ai" },
-} satisfies Readonly<Record<ProviderBrandIconId, BrandIconMetadata>>;
-
-const PROVIDER_BRAND_ICONS: Readonly<Record<string, BrandIconMetadata>> =
-	PROVIDER_BRAND_ICON_DEFINITIONS;
-
-const PROVIDER_ICON_ALIASES: Readonly<Record<string, ProviderBrandIconId>> = {
-	alibaba: "qwen",
-	"alibaba-coding-plan": "qwen",
-	"kimi-coding-cn": "kimi",
-	"minimax-cn": "minimax",
-	"openai-api": "openai",
-	"opencode-zen": "opencode",
-	"opencode-go": "opencode",
-	"stepfun-plan": "stepfun",
-	"tencent-tokenhub": "tencent",
-	"tencent-tokenplan": "tencent",
-	togetherai: "together",
-	xiaomimimo: "xiaomi",
-	"google-gemini-openai": "gemini",
-	google: "gemini",
-	"kimi-coding": "kimi",
-	moonshot: "kimi",
-	"openai-codex": "openai",
-	"qwen-dashscope": "qwen",
-	"together-ai": "together",
-	"xai-grok": "grok",
-	"zhipu-glm": "zai",
-};
-
-export function frameworkBrandIcon(id: string | null | undefined): BrandIconMetadata | undefined {
-	return FRAMEWORK_BRAND_ICONS[id?.toLowerCase() ?? ""];
+export function frameworkBrandIcon(
+	value: string | null | undefined,
+): BrandIconMetadata | undefined {
+	const metadata = frameworkBrandIconMetadata(value);
+	if (!metadata) return undefined;
+	const { id, ...appearance } = metadata;
+	return { ...appearance, icon: FRAMEWORK_BRAND_ICON_COMPONENTS[id] };
 }
 
-export function providerBrandIcon(id: string | null | undefined): BrandIconMetadata | undefined {
-	const key = id?.toLowerCase() ?? "";
-	return PROVIDER_BRAND_ICONS[PROVIDER_ICON_ALIASES[key] ?? key];
+export function providerBrandIcon(value: string | null | undefined): BrandIconMetadata | undefined {
+	const metadata = providerBrandIconMetadata(value);
+	if (!metadata) return undefined;
+	const { id, ...appearance } = metadata;
+	return { ...appearance, icon: PROVIDER_BRAND_ICON_COMPONENTS[id] };
 }

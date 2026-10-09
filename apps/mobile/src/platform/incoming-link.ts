@@ -190,11 +190,12 @@ export function mobileLinkDestination(
 			const query = url.searchParams.toString();
 			return `/vault/${encodeURIComponent(slug)}${query ? `?${query}` : ""}`;
 		}
-		if (isWebPath(pathname) && url.searchParams.has("settings")) {
+		const destination = pathname === "/dashboard" ? "/" : pathname;
+		if (isWebPath(destination) && url.searchParams.has("settings")) {
 			return settingsDestinations.get(url.searchParams.get("settings") ?? "") ?? "/settings";
 		}
-		if (!isWebPath(pathname)) return "/open-share";
-		return `${pathname}${url.search}`;
+		if (!isWebPath(destination)) return "/open-share";
+		return `${destination}${url.search}`;
 	} catch {
 		return "/open-share";
 	}
@@ -282,6 +283,7 @@ function isWebPath(path: string): boolean {
 		);
 	if (root === "terminal") return pieces.length === 2;
 	if (root === "share") return pieces.length === 2 && /^[A-Za-z0-9_-]{43}$/.test(id ?? "");
+	// /settings is the Account tab's native menu; descendants are its panels.
 	if (root === "settings") return pieces.length <= 4;
 	return (
 		pieces.length === 1 &&

@@ -1,6 +1,7 @@
 import { hostedAgentOverviewClasses } from "@clawdi/shared/ui";
 import {
 	AGENT_NAVIGATION_GROUPS,
+	type AgentSectionId,
 	agentSectionCopy,
 	agentToolSectionCopy,
 	type ConsoleNavigationItemId,
@@ -26,21 +27,7 @@ import {
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 
-export type AgentSectionId =
-	| "overview"
-	| "sessions"
-	| "memories"
-	| "skills"
-	| "projects"
-	| "vaults"
-	| "console"
-	| "files"
-	| "terminal"
-	| "connectors"
-	| "ai"
-	| "channels"
-	| "plugins"
-	| "settings";
+export type { AgentSectionId } from "@clawdi/shared/view";
 
 export type AgentNavigationVariant = "connected" | "hosted";
 

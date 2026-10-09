@@ -454,7 +454,7 @@ function ChannelDetail({
 								/>
 							}
 							title={linkedAgent ? agentDisplayName(linkedAgent) : t("agents.unavailable")}
-							meta={[`Linked ${relativeTime(link.created_at)}`]}
+							meta={[t("channels.linkedAt", { time: relativeTime(link.created_at) })]}
 						/>
 						<ActionButton
 							label={t("channels.bindings")}
