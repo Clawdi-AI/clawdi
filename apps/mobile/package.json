@@ -17,7 +17,6 @@
 		"@clerk/expo": "4.8.0",
 		"@expo-google-fonts/geist": "0.4.2",
 		"@expo-google-fonts/geist-mono": "0.4.3",
-		"@expo/dom-webview": "catalog:expo57",
 		"@expo/ui": "catalog:expo57",
 		"@formatjs/intl-supportedvaluesof": "2.3.11",
 		"@sentry/react-native": "catalog:expo57",
@@ -26,13 +25,12 @@
 		"class-variance-authority": "^0.7.1",
 		"cn": "^0.4.0",
 		"expo": "catalog:expo57",
-		"expo-auth-session": "57.0.13",
-		"expo-constants": "57.0.20",
+		"expo-constants": "catalog:expo57",
 		"expo-crypto": "57.0.3",
 		"expo-dev-client": "catalog:expo57",
 		"expo-file-system": "catalog:expo57",
 		"expo-font": "catalog:expo57",
-		"expo-linking": "57.0.11",
+		"expo-linking": "catalog:expo57",
 		"expo-network": "57.0.2",
 		"expo-router": "catalog:expo57",
 		"expo-secure-store": "57.0.4",
@@ -56,7 +54,7 @@
 		"react-native-web": "catalog:expo57",
 		"react-native-worklets": "catalog:expo57",
 		"tailwindcss": "catalog:",
-		"uniwind": "1.12.1"
+		"uniwind": "1.12.2"
 	},
 	"devDependencies": {
 		"@babel/core": "catalog:expo57",
@@ -64,9 +62,15 @@
 		"@types/bun": "catalog:",
 		"@types/culori": "catalog:",
 		"@types/react": "catalog:expo57",
-		"babel-preset-expo": "57.0.13",
 		"culori": "catalog:",
 		"sharp": "0.34.5",
 		"typescript": "catalog:"
+	},
+	"expo": {
+		"install": {
+			"exclude": [
+				"typescript"
+			]
+		}
 	}
 }
