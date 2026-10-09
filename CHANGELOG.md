@@ -54,6 +54,7 @@ only renames unmerged PR series and never-emitted definitions. See
 - **Session sync:** Pi and Claude Code re-read history once after upgrading so
   future parser updates can refresh unchanged sessions' metadata. Codex keeps
   its existing confirmations and does not re-read history for this upgrade.
+- **Sessions:** `clawdi session list --uploaded` works again (it sent an invalid sort value and failed with an API error).
 
 ### CLI 0.16.2
 
