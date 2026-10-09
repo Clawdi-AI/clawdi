@@ -303,9 +303,15 @@ segmented buttons with shared colors/Geist on Android.
 For longer option sets, `scrollable` uses Compose's documented horizontal-scroll
 modifier and single-line labels; Project detail uses it. Memory categories (six
 options, too many for an iPhone segmented control) are a single-choice section of
-the screen's native header menu. The deploy wizard seeds language and timezone from
-`Intl` like Web; Hermes has no `Intl.supportedValuesOf`, so the timezone menu offers
-the shared fallback zones plus the device zone, grouped into region submenus. Single-choice Web `Tabs` in content (channel
+the screen's native header menu; an applied category shows as a clearable filter chip,
+like the Sessions profile filter. The deploy wizard seeds language and timezone from
+`Intl` like Web. Hermes has no `Intl.supportedValuesOf`, so `app/_layout.tsx` loads the
+official FormatJS `@formatjs/intl-supportedvaluesof` polyfill (it patches only when the
+API is missing); the timezone menu lists every supported IANA zone, grouped into region
+submenus, and the shared fallback list remains only a fallback. Reusable card/Wallet
+subscriptions are assigned by id; a store row is selectable only when its
+`store_management.contract_id` is this account's unbound, unreserved `compute_slot`,
+and is then admitted with store funding (`compute_source: "store"`). Single-choice Web `Tabs` in content (channel
 detail, Discord pairing path, agent setup, tool payloads, compute-plan and
 deployment billing-term selection) render `NativeSegments` and conditionally
 render the selected panel. Store credit

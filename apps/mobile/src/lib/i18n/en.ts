@@ -241,6 +241,8 @@ const creationEn = {
 	unavailable: "Cloud creation is not configured.",
 	language: "Language",
 	selectTimezone: "Select a timezone",
+	storeRowUnavailable:
+		"This {store} subscription isn't free for a new agent from this account right now. Check Compute for its status.",
 	subscriptionUnavailable:
 		"Subscription no longer available. Choose a current reusable subscription or start a new one.",
 	newUnavailable:

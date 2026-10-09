@@ -16,8 +16,8 @@ for store subscriptions and is not wired in the current app. New paid compute
 subscriptions remain unavailable in the deployment wizard; it deploys with Included
 Basic, an exact reusable card/Wallet subscription (Web's `existing` selection),
 a store subscription, Clawdi AI, a saved AI provider, or configuration inside the
-agent. Card/Wallet subscriptions can be cancelled in every build; resume, end trial
-and scheduled-change removal appear only outside store builds. Agent overview rows
+agent. Card/Wallet subscriptions can be cancelled, end a trial or drop a scheduled
+plan change in every build; resume appears only outside store builds. Agent overview rows
 reach every section; Files opens through the hosted one-time browser handoff,
 while Terminal uses Expo DOM. See
 [UI parity](../apps/mobile/UI-PARITY.md) and

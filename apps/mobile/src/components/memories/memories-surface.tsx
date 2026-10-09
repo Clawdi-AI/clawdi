@@ -9,11 +9,13 @@ import {
 } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, Stack, useLocalSearchParams } from "expo-router";
-import { Plus } from "lucide-react-native";
+import { Plus, X } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCardSkeleton } from "@/components/entity-card";
+import { FilterChip } from "@/components/filter-chip";
+import { ListToolbar } from "@/components/list-toolbar";
 import { MemoryCard } from "@/components/memories/memory-card";
 import { MemorySettings } from "@/components/memories/memory-settings";
 import { PageHeader } from "@/components/page-header";
@@ -168,6 +170,19 @@ function MemoriesView() {
 								],
 							}}
 						/>
+						{/* The applied category stays visible and clearable, like the Sessions profile filter. */}
+						{category !== "all" ? (
+							<ListToolbar
+								filters={
+									<FilterChip active onClick={() => setCategory("all")}>
+										<Text>{`${copy.category} · ${
+											MEMORY_CATEGORIES.find((c) => c.value === category)?.label ?? category
+										}`}</Text>
+										<Icon as={X} />
+									</FilterChip>
+								}
+							/>
+						) : null}
 						{memories.error ? (
 							<ApiErrorPanel error={memories.error} onRetry={() => void memories.refetch()} />
 						) : null}

@@ -65,9 +65,9 @@ export type AppSubscriptionActionKind = Extract<
 >;
 
 /**
- * Store builds (owner decision D-1, 2026-10-09) may cancel card/Wallet subscriptions:
- * cancelling purchases nothing. Resume, end trial and scheduled plan-change removal start
- * or continue non-IAP billing, so only other builds offer them, like Web.
+ * Store builds (owner decision D-1, revised 2026-10-09) may cancel card/Wallet subscriptions,
+ * end a trial and drop a scheduled plan change: none of them charges. Resume continues
+ * non-IAP billing, so only other builds offer it, like Web. Plan changes keep their own path.
  */
 export function appSubscriptionActions(
 	surfaces: StoreSurfaces,
@@ -77,10 +77,10 @@ export function appSubscriptionActions(
 		if (action.disabledReason !== null) return [];
 		switch (action.kind) {
 			case "cancel":
-				return [action.kind];
 			case "end_trial":
-			case "resume":
 			case "cancel_scheduled_change":
+				return [action.kind];
+			case "resume":
 				return surfaces.cardBilling ? [action.kind] : [];
 			default:
 				return [];

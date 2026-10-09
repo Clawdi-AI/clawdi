@@ -88,8 +88,12 @@ describe("card and Wallet subscription commands (D-1)", () => {
 		{ kind: "manage", disabledReason: null },
 	] as const;
 
-	test("store builds offer only cancellation", () => {
-		expect(appSubscriptionActions(storeSurfaces(true, true), actions)).toEqual(["cancel"]);
+	test("store builds offer every command that charges nothing, but not resume", () => {
+		expect(appSubscriptionActions(storeSurfaces(true, true), actions)).toEqual([
+			"cancel_scheduled_change",
+			"end_trial",
+			"cancel",
+		]);
 	});
 
 	test("other builds offer Web's direct commands, skipping disabled ones", () => {

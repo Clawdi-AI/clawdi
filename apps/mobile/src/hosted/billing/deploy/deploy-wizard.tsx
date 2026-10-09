@@ -39,6 +39,7 @@ import {
 	resolvedTimezone,
 	reusableSubscriptionChoiceView,
 	runtimeBlurb,
+	storeProviderLabel,
 	subscriptionSourceCopy,
 	supportedTimezones,
 	timezoneLabel,
@@ -105,6 +106,7 @@ import {
 	type ReusableSubscriptionChoice,
 	reservedDeployResume,
 	retryStoreAdmission,
+	reusableStoreRowPlan,
 	reusableSubscriptionChoice,
 	serverAllowsEntitledCreation,
 	storeAdmissionMessageKey,
@@ -403,8 +405,10 @@ function CreationForm() {
 		language: draft.language,
 		timezone: draft.timezone,
 	});
+	// The full IANA list is validated zone by zone; build it once per form.
+	const [runtimeTimezoneList] = useState(() => supportedTimezones());
 	const timezoneOptions = mergeTimezoneOptions(
-		supportedTimezones(),
+		runtimeTimezoneList,
 		draft.timezone ? [draft.timezone] : [],
 	);
 	const current = (owns: () => boolean) => owns() && scope.isCurrent() && !scope.signal.aborted;
@@ -497,6 +501,25 @@ function CreationForm() {
 			}
 			if (!attempt && resuming) {
 				await finishReserved(resuming, owns);
+				return;
+			}
+			if (!attempt && selectedReusable?.funding_source === "store") {
+				// Re-read the slot at the mutation boundary; only an exact, unbound match is admitted.
+				const platform = currentStorePlatform();
+				const bootstrap =
+					storeClient && platform ? await read((s) => storeClient.bootstrap(platform, s)) : null;
+				if (!current(owns)) return;
+				if (
+					reusableStoreRowPlan(selectedReusable, bootstrap?.compute_slot, productPlan) !==
+					draft.computePlanSlug
+				) {
+					setSubscriptionId(null);
+					setMessage(t("creation.subscriptionUnavailable"));
+					return;
+				}
+				const prepared = prepareAttempt(draft);
+				// Store funding admits with compute_source "store", exactly like a funded purchase.
+				if (prepared) await submit({ ...prepared, storeFunding: "funded" }, false, owns);
 				return;
 			}
 			const chosen =
@@ -1017,11 +1040,15 @@ function CreationForm() {
 									{reusableItems.map((item) => {
 										const view = reusableSubscriptionChoiceView(item);
 										const performance = item.plan_slug === "compute_performance";
+										// A store row is usable only as this account's unbound store slot.
+										const storeRowBlocked =
+											item.funding_source === "store" &&
+											reusableStoreRowPlan(item, computeSlot, productPlan) === null;
 										return (
 											<EntityChoiceCard
 												key={item.subscription_id}
 												selected={source === "existing" && subscriptionId === item.subscription_id}
-												disabled={locked || resuming !== null}
+												disabled={locked || resuming !== null || storeRowBlocked}
 												onClick={() => {
 													setSource("existing");
 													setSubscriptionId(item.subscription_id);
@@ -1044,7 +1071,13 @@ function CreationForm() {
 												}
 												// Web says store rows are "available in the Clawdi app"; here every row is.
 												description={
-													surfaces.creditUnits ? t("store.dueNow") : subscriptionSourceCopy.dueNow
+													storeRowBlocked
+														? t("creation.storeRowUnavailable", {
+																store: storeProviderLabel(item.store_management),
+															})
+														: surfaces.creditUnits
+															? t("store.dueNow")
+															: subscriptionSourceCopy.dueNow
 												}
 												badge={
 													<StatusBadge status={view.status.tone}>

@@ -47,10 +47,7 @@ export type CreationAttempt = {
 	subscription?: ReusableSubscriptionChoice;
 };
 
-/**
- * Card and Wallet rows are assigned by id. Store rows have no exact key between the
- * subscription list and the store slot yet, so hosted admission keeps selecting them.
- */
+/** Card and Wallet rows are assigned by id; store rows use `reusableStoreRowPlan`. */
 export function reusableSubscriptionChoice(
 	item: ReusableSubscription,
 ): ReusableSubscriptionChoice | null {
@@ -294,6 +291,29 @@ export function unboundStoreSlotPlan(
 		return null;
 	if (!["active", "grace", "canceled_pending_end"].includes(management.state)) return null;
 	return productPlan(management.product_id);
+}
+
+/**
+ * A store-funded reusable row funds a new Agent only when it is this caller's store slot
+ * (`store_management.contract_id` = `compute_slot.contract_id`, the documented mapping) and
+ * that slot is unbound and unreserved. Its request is then admitted with store funding, so
+ * hosted binds exactly this contract and never falls back to other compute.
+ */
+export function reusableStoreRowPlan(
+	item: Pick<ReusableSubscription, "funding_source" | "plan_slug" | "store_management">,
+	slot: StoreComputeSlot | null | undefined,
+	productPlan: (productId: string) => string | null,
+): HostedDeployComputePlanSlug | null {
+	const contract = item.store_management?.contract_id;
+	if (
+		item.funding_source !== "store" ||
+		!contract ||
+		!slot?.contract_id ||
+		slot.contract_id.toLowerCase() !== contract.toLowerCase() ||
+		slot.reserved_deploy_request_id
+	)
+		return null;
+	return unboundStoreSlotPlan(slot, productPlan, "") === item.plan_slug ? item.plan_slug : null;
 }
 
 export type ReservedDeployResume = Readonly<{ id: string; planSlug: HostedDeployComputePlanSlug }>;
