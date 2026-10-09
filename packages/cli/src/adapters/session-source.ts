@@ -15,6 +15,7 @@ export const RACY_CLEAN_WINDOW_NS = 2_000_000_000n;
 /** Only stable, supported file identities can confirm an unchanged JSONL source. */
 export function jsonlStatRevision(
 	stat: BigIntStats,
+	parserVersion: string,
 	capturedAtNs = BigInt(Date.now()) * 1_000_000n,
 ): string | undefined {
 	if (
@@ -30,7 +31,7 @@ export function jsonlStatRevision(
 		capturedAtNs - stat.mtimeNs < RACY_CLEAN_WINDOW_NS
 	)
 		return undefined;
-	return `jsonl-stat-v1:p${SESSION_PROJECTION_REVISION}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+	return `${parserVersion}:jsonl-stat-v1:p${SESSION_PROJECTION_REVISION}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
 }
 
 export function addSessionModel(models: Set<string>, model: string): void {
@@ -89,8 +90,10 @@ export class JsonlSessionSource {
 		return !this.context?.streaming && this.stat.size <= BigInt(EAGER_SESSION_MAX_BYTES);
 	}
 
-	get revision(): string | undefined {
-		return this.digest === undefined ? undefined : jsonlStatRevision(this.stat, this.capturedAtNs);
+	revision(parserVersion: string): string | undefined {
+		return this.digest === undefined
+			? undefined
+			: jsonlStatRevision(this.stat, parserVersion, this.capturedAtNs);
 	}
 
 	async unchanged(): Promise<boolean> {

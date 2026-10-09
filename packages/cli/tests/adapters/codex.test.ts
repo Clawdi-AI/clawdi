@@ -653,7 +653,10 @@ describe("CodexAdapter copied fork sessions", () => {
 
 	it("re-parses a legacy lock that confirmed a child file under its parent id", async () => {
 		const fixture = codexForkFixture();
-		const legacyRevision = jsonlStatRevision(statSync(fixture.child.file, { bigint: true }));
+		const legacyRevision = jsonlStatRevision(
+			statSync(fixture.child.file, { bigint: true }),
+			"codex-v2",
+		)?.replace(/^codex-v2:/, "");
 		if (!legacyRevision) throw new Error("expected a stable child file stat revision");
 		const result = await scanCodex(
 			new CodexAdapter(),

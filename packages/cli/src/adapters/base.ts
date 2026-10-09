@@ -228,6 +228,25 @@ export function collectFromScan(
 	};
 }
 
+/** Adapt a single inventory result to a batch scan without changing its coverage or observations. */
+export function scanFromCollect(
+	collect: (
+		request: SessionScanRequest,
+		knownSourceRevisions: ReadonlyMap<string, string>,
+		context?: SyncReadContext,
+	) => Promise<SessionScanResult & Pick<SessionScanBatch, "observedLocalSessionIds">>,
+): NonNullable<SessionModule["scan"]> {
+	return async (request, knownSourceRevisions, context) => {
+		const result = await collect(request, knownSourceRevisions, context);
+		return {
+			coverage: result.coverage,
+			batches: (async function* () {
+				yield result;
+			})(),
+		};
+	};
+}
+
 export async function scanSessionModule(
 	module: SessionModule,
 	request: SessionScanRequest,
