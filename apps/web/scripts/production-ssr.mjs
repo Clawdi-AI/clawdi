@@ -167,7 +167,7 @@ for (const [path, title] of [
 	});
 }
 
-for (const path of ["/", "/agents"]) {
+for (const path of ["/", "/agents", "/dashboard", "/dashboard?deploy_profile=sui"]) {
 	test(`production SSR renders signed-in ${path} without a session loading replacement`, async (t) => {
 		// Disabled dashboard queries still schedule cache GC; keep those timers
 		// scoped to this SSR request instead of retaining them in the test worker.
@@ -175,8 +175,12 @@ for (const path of ["/", "/agents"]) {
 		const response = await server.fetch(authenticatedRequest(path));
 		const html = await response.text();
 		assert.equal(response.status, 200, html);
+		assert.equal(response.headers.get("location"), null);
 		assert.match(html, /data-testid="dashboard-page-content"/);
 		assert.doesNotMatch(html, /Loading session/);
+		if (path.startsWith("/dashboard")) {
+			assert.match(html, /<title>Overview · Clawdi<\/title>/);
+		}
 	});
 }
 
@@ -219,9 +223,9 @@ test("only association files bypass Clerk while consecutive dashboard requests r
 			const response = await server.fetch(authenticatedRequest(path));
 			if (path === "/dashboard") {
 				// Only Clerk's authenticated context can admit the protected alias.
-				assert.equal(response.status, 307);
-				assert.equal(response.headers.get("location"), "/");
-				assert.equal(await response.text(), "");
+				assert.equal(response.status, 200);
+				assert.equal(response.headers.get("location"), null);
+				assert.match(await response.text(), /data-testid="dashboard-page-content"/);
 			} else {
 				assert.equal(response.status, 200);
 				assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
@@ -264,11 +268,12 @@ for (const path of ["/.well-known/unknown", "/.well-known/assetlinks.json/extra"
 }
 
 for (const search of ["", "?deploy_profile=sui&settings=billing-wallet"]) {
-	test(`production SSR admits dashboard alias ${search} before redirecting to overview`, async () => {
+	test(`production SSR renders dashboard alias ${search} as the overview`, async () => {
 		const response = await server.fetch(authenticatedRequest(`/dashboard${search}`));
-		assert.equal(response.status, 307);
-		assert.equal(response.headers.get("location"), `/${search}`);
-		assert.equal(response.headers.get("cache-control"), "private, no-store");
-		assert.equal(await response.text(), "");
+		const html = await response.text();
+		assert.equal(response.status, 200, html);
+		assert.equal(response.headers.get("location"), null);
+		assert.match(html, /data-testid="dashboard-page-content"/);
+		assert.match(html, /<title>Overview · Clawdi<\/title>/);
 	});
 }

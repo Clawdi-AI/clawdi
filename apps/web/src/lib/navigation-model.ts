@@ -128,11 +128,22 @@ export const CONSOLE_NAVIGATION_ITEMS = Object.fromEntries(
 		{ ...item, icon: CONSOLE_ICONS[item.id] },
 	]),
 ) as Record<ConsoleNavigationItemId, ConsoleNavigationItemMetadata>;
+
+export function isOverviewPath(pathname: string): boolean {
+	return pathname === "/" || pathname === "/dashboard";
+}
+
 export function consoleNavigationGroups(showCloudFeatures: boolean): ConsoleNavigationGroup[] {
 	return sharedConsoleNavigationGroups(showCloudFeatures).map((group) => ({
 		...group,
 		items: group.items.map((item) => CONSOLE_NAVIGATION_ITEMS[item.id]),
 	}));
+}
+
+export function consoleNavigationItemIsActive(pathname: string, itemHref: string): boolean {
+	return itemHref === "/"
+		? isOverviewPath(pathname)
+		: pathname === itemHref || pathname.startsWith(`${itemHref}/`);
 }
 export function consoleCommandPaletteItems(showCloudFeatures: boolean) {
 	return sharedConsoleCommandPaletteItems(showCloudFeatures).map((item) => ({
