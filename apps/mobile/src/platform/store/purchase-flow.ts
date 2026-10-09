@@ -66,6 +66,7 @@ export function createPurchaseFlow(options: {
 	journal: PurchaseAttemptStore;
 	storageKey: string;
 	newKey: () => string;
+	onSyncFailure?: (error: StorePurchaseError) => void;
 	clock?: { now: () => number; sleep: (ms: number, signal: AbortSignal) => Promise<void> };
 }) {
 	const { scope, client, identity, sdk, platform, journal, storageKey, newKey } = options;
@@ -218,7 +219,12 @@ export function createPurchaseFlow(options: {
 		if (!saved?.transactionHint) {
 			if (attempt.state === "prepared") {
 				if (!saved?.purchaseStarted) return finish(attempt, saved, signal);
-				await sdk.syncPurchases(ready.appUserId, () => assertStoreAccount(scope, signal), signal);
+				try {
+					await sdk.syncPurchases(ready.appUserId, () => assertStoreAccount(scope, signal), signal);
+				} catch (error) {
+					assertStoreAccount(scope, signal);
+					options.onSyncFailure?.(storePurchaseError(error));
+				}
 				attempt = await client.getPurchaseAttempt(attempt.attempt_id, signal);
 				assertStoreAccount(scope, signal);
 			}

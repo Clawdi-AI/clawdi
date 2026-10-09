@@ -38,4 +38,9 @@ export function reportRootError(error: Error, currentPathname: string) {
 	Sentry.captureException(error);
 }
 
+export function reportStoreSyncFailure(error: Error) {
+	if (!dsn) return;
+	Sentry.captureException(error, { tags: { operation: "store.syncPurchases" } });
+}
+
 export const wrapRootLayout: typeof Sentry.wrap = dsn ? Sentry.wrap : (component) => component;
