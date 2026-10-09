@@ -6,8 +6,19 @@ export default defineConfig({
 	workers: 1,
 	timeout: 30000,
 	expect: { timeout: 10000 },
-	use: { baseURL: "http://127.0.0.1:3111", trace: "retain-on-failure" },
+	retries: process.env.CI ? 1 : 0,
+	failOnFlakyTests: !!process.env.CI,
+	reporter: process.env.CI
+		? [["github"], ["html", { outputFolder: "playwright-report/auth", open: "never" }]]
+		: "list",
+	outputDir: "test-results/auth",
+	use: {
+		baseURL: "http://127.0.0.1:3111",
+		trace: "on-first-retry",
+		screenshot: "only-on-failure",
+	},
 	webServer: {
+		// Auth stays on Vite dev because its fixture uses configureServer/ssrLoadModule.
 		command:
 			"bun x --no-install vite --config e2e/auth/vite.config.ts --host 127.0.0.1 --port 3111 --strictPort",
 		url: "http://127.0.0.1:3111/__auth-hydration",

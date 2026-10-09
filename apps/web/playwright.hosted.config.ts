@@ -23,10 +23,17 @@ export default defineConfig({
 	expect: { timeout: 12_000 },
 	fullyParallel: false,
 	workers: 1,
-	reporter: "list",
-	use: { baseURL, trace: "on-first-retry" },
+	retries: process.env.CI ? 1 : 0,
+	failOnFlakyTests: !!process.env.CI,
+	reporter: process.env.CI
+		? [["github"], ["html", { outputFolder: "playwright-report/hosted", open: "never" }]]
+		: "list",
+	outputDir: "test-results/hosted",
+	use: { baseURL, trace: "on-first-retry", screenshot: "only-on-failure" },
 	webServer: [
 		{
+			// Hosted stays on Vite dev so React reports hydration mismatches; production
+			// build compatibility is outside this suite's scope.
 			command: `bun run dev -- --host 127.0.0.1 --port ${hostedPort}`,
 			url: baseURL,
 			reuseExistingServer: Boolean(process.env.E2E_HOSTED_BASE_URL),
