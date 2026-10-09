@@ -1,9 +1,12 @@
 import {
 	claimedEnvIdsFromDeployments,
+	deploymentPollingState,
 	deploymentToTiles,
+	type SettlingTracker,
 	selectUnifiedAgentList,
 } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
+import { useRef } from "react";
 import { useCloudAgents } from "@/hooks/cloud-inventory";
 import { useMobileApi } from "@/lib/api-provider";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -13,6 +16,7 @@ export function useDashboardAgents() {
 	const { hosted, compute } = useMobileApi(),
 		scope = useAccountScope(),
 		read = useAccountRead();
+	const trackers = useRef<ReadonlyMap<string, SettlingTracker>>(new Map());
 	const inventory = useQuery({
 		queryKey: accountQueryKey(scope, "deployments"),
 		queryFn: ({ signal }) =>
@@ -22,6 +26,13 @@ export function useDashboardAgents() {
 			}, signal),
 		enabled: scope.isReady && Boolean(hosted),
 		retry: false,
+		refetchInterval: (query) => {
+			if (query.state.error) return false;
+			const polling = deploymentPollingState(query.state.data, trackers.current, Date.now());
+			trackers.current = polling.trackers;
+			return polling.refetchInterval;
+		},
+		refetchIntervalInBackground: false,
 	});
 	const capabilities = useQuery({
 		queryKey: accountQueryKey(scope, "product-capabilities"),

@@ -1,6 +1,7 @@
 import { hostedAgentOverviewClasses } from "@clawdi/shared/ui";
 import {
 	AGENT_NAVIGATION_GROUPS,
+	type AgentSectionId,
 	agentSectionCopy,
 	agentToolSectionCopy,
 	type ConsoleNavigationItemId,
@@ -26,21 +27,7 @@ import {
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
 
-export type AgentSectionId =
-	| "overview"
-	| "sessions"
-	| "memories"
-	| "skills"
-	| "projects"
-	| "vaults"
-	| "console"
-	| "files"
-	| "terminal"
-	| "connectors"
-	| "ai"
-	| "channels"
-	| "plugins"
-	| "settings";
+export type { AgentSectionId } from "@clawdi/shared/view";
 
 export type AgentNavigationVariant = "connected" | "hosted";
 
@@ -128,11 +115,22 @@ export const CONSOLE_NAVIGATION_ITEMS = Object.fromEntries(
 		{ ...item, icon: CONSOLE_ICONS[item.id] },
 	]),
 ) as Record<ConsoleNavigationItemId, ConsoleNavigationItemMetadata>;
+
+export function isOverviewPath(pathname: string): boolean {
+	return pathname === "/" || pathname === "/dashboard";
+}
+
 export function consoleNavigationGroups(showCloudFeatures: boolean): ConsoleNavigationGroup[] {
 	return sharedConsoleNavigationGroups(showCloudFeatures).map((group) => ({
 		...group,
 		items: group.items.map((item) => CONSOLE_NAVIGATION_ITEMS[item.id]),
 	}));
+}
+
+export function consoleNavigationItemIsActive(pathname: string, itemHref: string): boolean {
+	return itemHref === "/"
+		? isOverviewPath(pathname)
+		: pathname === itemHref || pathname.startsWith(`${itemHref}/`);
 }
 export function consoleCommandPaletteItems(showCloudFeatures: boolean) {
 	return sharedConsoleCommandPaletteItems(showCloudFeatures).map((item) => ({

@@ -3,6 +3,7 @@ import {
 	agentNavigationGroups,
 	consoleCommandPaletteItems,
 	consoleNavigationGroups,
+	consoleNavigationItemIsActive,
 	hostedAgentVisibleSectionIds,
 } from "@/lib/navigation-model";
 
@@ -52,6 +53,13 @@ describe("sidebar navigation model", () => {
 			"skills",
 			"vaults",
 		]);
+	});
+
+	test("recognizes both Overview paths and keeps their navigation active", () => {
+		for (const pathname of ["/", "/dashboard"]) {
+			expect(consoleNavigationItemIsActive(pathname, "/")).toBe(true);
+		}
+		expect(consoleNavigationItemIsActive("/agents", "/")).toBe(false);
 	});
 
 	test("keeps Agent resource groups populated and gates Files on availability", () => {

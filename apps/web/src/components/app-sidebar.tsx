@@ -127,6 +127,7 @@ import {
 	agentNavigationGroups,
 	CANONICAL_NAVIGATION_IDENTITIES,
 	consoleNavigationGroups,
+	consoleNavigationItemIsActive,
 	hostedAgentVisibleSectionIds,
 } from "@/lib/navigation-model";
 import { useProductAccess } from "@/lib/product-access";
@@ -391,10 +392,7 @@ function ConsoleNavigationSections({
 			label={group.label}
 			items={group.items.map((item) => ({
 				...item,
-				active:
-					item.href === "/"
-						? pathname === item.href
-						: pathname === item.href || pathname.startsWith(`${item.href}/`),
+				active: consoleNavigationItemIsActive(pathname, item.href),
 				prefetch: item.id === "connectors" ? prefetchConnectorsCatalog : undefined,
 			}))}
 			separated={group.separated}

@@ -79,9 +79,12 @@ module.exports = ({ config }) => {
 			],
 			NSPrivacyCollectedDataTypes: [
 				["EmailAddress", true],
+				["PhoneNumber", true],
 				["Name", true],
 				["UserID", true],
 				["PurchaseHistory", true],
+				["OtherUserContent", true],
+				["PhotosorVideos", true],
 				["CrashData", false],
 				["PerformanceData", false],
 				["OtherDiagnosticData", false],

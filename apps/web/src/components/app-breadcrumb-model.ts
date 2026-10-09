@@ -8,6 +8,7 @@ import {
 	agentSectionLabel,
 	parseAgentPathname,
 } from "@/lib/agent-routes";
+import { isOverviewPath } from "@/lib/navigation-model";
 
 export type AppBreadcrumbTrailItem = {
 	key: string;
@@ -175,7 +176,7 @@ function buildGenericBreadcrumbTrail(
 	segmentTitles: BreadcrumbSegmentTitles,
 ): AppBreadcrumbTrailItem[] {
 	const segments = pathname.split("/").filter(Boolean);
-	if (segments.length === 0) return [{ key: "overview", label: "Overview" }];
+	if (isOverviewPath(pathname)) return [{ key: "overview", label: "Overview" }];
 	return segments.map((segment, index) => {
 		const href = `/${segments.slice(0, index + 1).join("/")}`;
 		const isLast = index === segments.length - 1;

@@ -49,18 +49,19 @@ test("signed-in marketing root enters the canonical Cloud overview through hando
 	const destinations: URL[] = [];
 	observeCloudHandoff(context, destinations);
 	await page.goto(`${marketing}/`);
-	await expect(page).toHaveURL(`${cloud}/`);
+	await expect(page).toHaveURL(`${cloud}/dashboard`);
 	await expect(page.getByTestId("dashboard-page-content")).toBeVisible();
 	expect(destinations.map((url) => url.pathname)).toEqual(["/dashboard"]);
 });
 
-test("authenticated dashboard alias preserves channel, settings and hash on overview", async ({
+test("authenticated dashboard renders the overview with channel, settings and hash", async ({
 	context,
 	page,
 }) => {
 	await context.addCookies([{ name: "test-user", value: "account-a", url: cloud }]);
 	await page.goto(`${cloud}/dashboard?deploy_profile=sui&settings=general#details`);
-	await expect(page).toHaveURL(`${cloud}/?deploy_profile=sui&settings=general#details`);
+	await expect(page).toHaveURL(`${cloud}/dashboard?deploy_profile=sui&settings=general#details`);
+	await expect(page.getByTestId("dashboard-page-content")).toBeVisible();
 	await expect(page.getByRole("dialog")).toBeVisible();
 });
 
@@ -98,7 +99,7 @@ for (const channel of [null, "sui"] as const) {
 		expect(destinations[0]?.pathname).toBe("/dashboard");
 		// Completing native auth returns through protected admission, then overview.
 		await page.getByRole("button", { name: "Complete simulated auth return" }).click();
-		await expect(page).toHaveURL(`${cloud}/${search}`);
+		await expect(page).toHaveURL(`${cloud}/dashboard${search}`);
 		await expect(page.getByTestId("dashboard-page-content")).toBeVisible();
 		await page.getByRole("button", { name: "Deploy a Cloud Agent", exact: true }).click();
 		await expect(page).toHaveURL(`${cloud}/deploy${search}`);
