@@ -152,7 +152,7 @@ describe("Hosted deploy auth boundary", () => {
 			});
 		};
 		const cloud = new ApiClient();
-		await unwrap(cloud.GET("/v1/auth/me"));
+		unwrap(await cloud.GET("/v1/auth/me"));
 
 		const hosted = new HostedDeployClient({
 			baseUrl: "https://deploy.example.test",
