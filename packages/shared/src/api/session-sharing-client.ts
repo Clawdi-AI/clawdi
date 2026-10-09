@@ -1,5 +1,5 @@
 import createClient from "openapi-fetch";
-import type { paths } from "./api.generated";
+import type { components, paths } from "./api.generated";
 import {
 	type ApiClientOptions,
 	ApiClientResponseError,
@@ -12,9 +12,7 @@ import { buildSessionShareRequest, type SessionShareTarget } from "./session-sha
 export type SessionSharesQuery = NonNullable<
 	paths["/v1/session-shares"]["get"]["parameters"]["query"]
 >;
-export type SessionShareKind = NonNullable<
-	NonNullable<paths["/v1/session-shares/{share_id}"]["delete"]["parameters"]["query"]>["kind"]
->;
+export type SessionShareKind = components["schemas"]["SessionShareListItemResponse"]["kind"];
 export function createSessionSharingClient(options: ApiClientOptions) {
 	const transport = createReadTransport(options);
 	const api = createClient<paths>({
@@ -56,11 +54,11 @@ export function createSessionSharingClient(options: ApiClientOptions) {
 				signal,
 			);
 		},
-		revoke: (shareId: string, kind: SessionShareKind, signal?: AbortSignal) =>
+		revoke: (shareId: string, _kind: SessionShareKind, signal?: AbortSignal) =>
 			transport.read(async (init) => {
 				const result = await api.DELETE("/v1/session-shares/{share_id}", {
 					...init,
-					params: { path: { share_id: readResourceId(shareId) }, query: { kind } },
+					params: { path: { share_id: readResourceId(shareId) } },
 				});
 				return { ...result, data: result.response.status === 204 ? null : undefined };
 			}, signal),

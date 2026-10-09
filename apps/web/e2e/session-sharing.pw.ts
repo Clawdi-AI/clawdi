@@ -43,8 +43,7 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 	});
 }
 
-test("uses direct message actions and keeps older live links revocable", async ({ page }) => {
-	let legacyLinkActive = true;
+test("uses direct message actions to create and revoke snapshot links", async ({ page }) => {
 	let shares: Array<Record<string, unknown>> = [];
 	let createdBody: unknown;
 	let failRefresh = false;
@@ -112,23 +111,12 @@ test("uses direct message actions and keeps older live links revocable", async (
 			failRefresh = true;
 			return fulfillJson(route, created, 201);
 		}
-		if (url.pathname === `/v1/sessions/${SESSION_ID}/permissions`) {
-			if (route.request().method() === "DELETE") {
-				legacyLinkActive = false;
-				return route.fulfill({ status: 204 });
-			}
-			return fulfillJson(route, {
-				permissions: legacyLinkActive
-					? [
-							{
-								id: "legacy-link",
-								kind: "link",
-								role: "viewer",
-								created_at: now,
-							},
-						]
-					: [],
-			});
+		if (
+			url.pathname === `/v1/session-shares/${SHARE_ID}` &&
+			route.request().method() === "DELETE"
+		) {
+			shares = [];
+			return route.fulfill({ status: 204 });
 		}
 		return fulfillJson(route, {});
 	});
@@ -170,19 +158,16 @@ test("uses direct message actions and keeps older live links revocable", async (
 
 	await page.getByRole("button", { name: "Share", exact: true }).click();
 	const sessionDialog = page.getByRole("dialog", { name: "Share session" });
-	await expect(sessionDialog.getByText("Older link")).not.toBeVisible();
-	await sessionDialog.getByText("Other active links (2)", { exact: true }).click();
-	await expect(sessionDialog.getByText("Older link")).toBeVisible();
-	const legacyRow = sessionDialog
-		.getByText("Live session link", { exact: true })
+	await sessionDialog.getByText("Other active links (1)", { exact: true }).click();
+	const snapshotRow = sessionDialog
+		.getByText("Single response snapshot", { exact: true })
 		.locator("xpath=ancestor::div[contains(@class,'rounded-lg')][1]");
-	await expect(legacyRow).toContainText("Reflects future uploads");
-	await legacyRow.getByRole("button", { name: "Turn off share link" }).click();
-	const confirmation = page.getByRole("alertdialog", {
-		name: "Turn off this share link?",
-	});
-	await confirmation.getByRole("button", { name: "Turn off link" }).click();
-	await expect(sessionDialog.getByText("Live session link", { exact: true })).not.toBeVisible();
+	await snapshotRow.getByRole("button", { name: "Turn off share link" }).click();
+	await page
+		.getByRole("alertdialog", { name: "Turn off this share link?" })
+		.getByRole("button", { name: "Turn off link" })
+		.click();
+	await expect(sessionDialog.getByLabel("Session share URL")).toHaveCount(0);
 });
 
 test("manages active Session links from one page", async ({ page }) => {

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
@@ -47,6 +47,14 @@ router = APIRouter(tags=["session-shares"])
 file_store = get_file_store()
 NO_STORE = "no-store"
 NO_STORE_HEADERS = {"Cache-Control": NO_STORE}
+_PUBLIC_SESSION_EXPORT_PATH = re.compile(
+    r"^/(?:v1|api)/public/session-shares/[^/]+/export\.(?:md|json)$"
+)
+
+
+def is_public_session_export_path(path: str) -> bool:
+    """Match snapshot exports, including invalid IDs that need no-store errors."""
+    return _PUBLIC_SESSION_EXPORT_PATH.fullmatch(path) is not None
 
 
 async def _owned_session(
@@ -147,16 +155,14 @@ async def create_share(
 @router.delete("/session-shares/{share_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_share(
     share_id: UUID,
-    kind: Literal["snapshot", "live"] = Query(default="snapshot"),
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> None:
-    """Revoke one owned snapshot or legacy live link by its exact inventory ID."""
+    """Revoke one owned snapshot by its exact inventory ID."""
     revoked = await revoke_session_share_link(
         db,
         user_id=auth.user_id,
         share_id=share_id,
-        kind=kind,
     )
     if not revoked:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session share not found")

@@ -5,13 +5,13 @@ import {
 	ApiClientError,
 	type ApiClientOptions,
 	ApiClientResponseError,
-	createReadTransport,
 	readApiBaseUrl,
 } from "./read-transport";
 
-export type PublicSessionView =
-	| { source: "snapshot"; detail: components["schemas"]["PublicSessionShareResponse"] }
-	| { source: "live"; detail: components["schemas"]["PublicSessionResponse"] };
+export type PublicSessionView = {
+	source: "snapshot";
+	detail: components["schemas"]["PublicSessionShareResponse"];
+};
 export function publicSessionId(value: string): string | null {
 	return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
 		? value.toLowerCase()
@@ -57,129 +57,62 @@ export function createPublicSessionClient(
 	options: PublicApiClientOptions & { getToken?: ApiClientOptions["getToken"] },
 ) {
 	const anonymous = createPublicTransport(options);
-	const authenticated = options.getToken
-		? createReadTransport({
-				...options,
-				getToken: options.getToken,
-				fetch: (request, init) =>
-					options.fetch(request, {
-						...init,
-						credentials: "omit",
-						cache: "no-store",
-						redirect: "error",
-						referrerPolicy: "no-referrer",
-					}),
-			})
-		: null;
 	const baseUrl = readApiBaseUrl(options.baseUrl);
 	const api = createClient<paths>({ baseUrl, fetch: anonymous.fetch });
-	const legacyApi = createClient<paths>({
-		baseUrl,
-		fetch: authenticated?.fetch ?? anonymous.fetch,
-	});
-	// Only the legacy/live resource may use an explicitly supplied account token.
-	const legacyRead = authenticated?.read ?? anonymous.read;
 	return {
 		exportJson: async (
 			value: string,
-			source: PublicSessionView["source"],
+			_source: PublicSessionView["source"],
 			signal?: AbortSignal,
 		) => {
 			const id = requireId(value);
-			const result =
-				source === "snapshot"
-					? await anonymous.read(
-							(init) =>
-								api.GET("/v1/public/session-shares/{share_id}/export.json", {
-									...init,
-									params: { path: { share_id: id } },
-								}),
-							signal,
-						)
-					: await legacyRead(
-							(init) =>
-								legacyApi.GET("/v1/public/sessions/{session_id}/export.json", {
-									...init,
-									credentials: "omit",
-									cache: "no-store",
-									redirect: "error",
-									params: { path: { session_id: id } },
-								}),
-							signal,
-						);
+			const result = await anonymous.read(
+				(init) =>
+					api.GET("/v1/public/session-shares/{share_id}/export.json", {
+						...init,
+						params: { path: { share_id: id } },
+					}),
+				signal,
+			);
 			if (!result || result.id !== id || !Array.isArray(result.messages))
 				throw new ApiClientResponseError();
 			return result;
 		},
 		resolve: async (value: string, signal?: AbortSignal): Promise<PublicSessionView> => {
 			const id = requireId(value);
-			try {
-				const detail = await anonymous.read(
-					(init) =>
-						api.GET("/v1/public/session-shares/{share_id}", {
-							...init,
-							params: { path: { share_id: id } },
-						}),
-					signal,
-				);
-				if (
-					!validMetadata(detail, id) ||
-					typeof detail.title !== "string" ||
-					!["session", "through", "response"].includes(detail.scope)
-				)
-					throw new ApiClientResponseError();
-				return { source: "snapshot", detail };
-			} catch (error) {
-				if (!(error instanceof ApiClientError) || error.status !== 404) throw error;
-			}
-			const detail = await legacyRead(
+			const detail = await anonymous.read(
 				(init) =>
-					legacyApi.GET("/v1/public/sessions/{session_id}", {
+					api.GET("/v1/public/session-shares/{share_id}", {
 						...init,
-						cache: "no-store",
-						credentials: "omit",
-						redirect: "error",
-						params: { path: { session_id: id } },
+						params: { path: { share_id: id } },
 					}),
 				signal,
 			);
 			if (
 				!validMetadata(detail, id) ||
-				(detail.summary !== null && typeof detail.summary !== "string")
+				typeof detail.title !== "string" ||
+				!["session", "through", "response"].includes(detail.scope)
 			)
 				throw new ApiClientResponseError();
-			return { source: "live", detail };
+			return { source: "snapshot", detail };
 		},
 		messages: async (
 			value: string,
-			source: PublicSessionView["source"],
+			_source: PublicSessionView["source"],
 			offset: number,
 			signal?: AbortSignal,
 		) => {
 			const id = requireId(value);
 			if (!Number.isSafeInteger(offset) || offset < 0) throw new ApiClientError(422);
 			const query = { offset, limit: 50 };
-			const page =
-				source === "snapshot"
-					? await anonymous.read(
-							(init) =>
-								api.GET("/v1/public/session-shares/{share_id}/messages", {
-									...init,
-									params: { path: { share_id: id }, query },
-								}),
-							signal,
-						)
-					: await legacyRead(
-							(init) =>
-								legacyApi.GET("/v1/public/sessions/{session_id}/messages", {
-									...init,
-									credentials: "omit",
-									cache: "no-store",
-									redirect: "error",
-									params: { path: { session_id: id }, query: { ...query, direction: "asc" } },
-								}),
-							signal,
-						);
+			const page = await anonymous.read(
+				(init) =>
+					api.GET("/v1/public/session-shares/{share_id}/messages", {
+						...init,
+						params: { path: { share_id: id }, query },
+					}),
+				signal,
+			);
 			if (
 				!page ||
 				!Array.isArray(page.items) ||
@@ -200,41 +133,23 @@ export function createPublicSessionClient(
 		},
 		exportMarkdown: async (
 			value: string,
-			source: PublicSessionView["source"],
+			_source: PublicSessionView["source"],
 			signal?: AbortSignal,
 		) => {
 			const id = requireId(value);
-			const result =
-				source === "snapshot"
-					? await anonymous.read(async (init) => {
-							const result = await api.GET("/v1/public/session-shares/{share_id}/export.md", {
-								...init,
-								params: { path: { share_id: id } },
-								parseAs: "text",
-							});
-							if (
-								result.response.ok &&
-								!result.response.headers.get("content-type")?.startsWith("text/markdown")
-							)
-								throw new ApiClientResponseError();
-							return result;
-						}, signal)
-					: await legacyRead(async (init) => {
-							const result = await legacyApi.GET("/v1/public/sessions/{session_id}/export.md", {
-								...init,
-								credentials: "omit",
-								cache: "no-store",
-								redirect: "error",
-								params: { path: { session_id: id } },
-								parseAs: "text",
-							});
-							if (
-								result.response.ok &&
-								!result.response.headers.get("content-type")?.startsWith("text/markdown")
-							)
-								throw new ApiClientResponseError();
-							return result;
-						}, signal);
+			const result = await anonymous.read(async (init) => {
+				const result = await api.GET("/v1/public/session-shares/{share_id}/export.md", {
+					...init,
+					params: { path: { share_id: id } },
+					parseAs: "text",
+				});
+				if (
+					result.response.ok &&
+					!result.response.headers.get("content-type")?.startsWith("text/markdown")
+				)
+					throw new ApiClientResponseError();
+				return result;
+			}, signal);
 			return result;
 		},
 	};

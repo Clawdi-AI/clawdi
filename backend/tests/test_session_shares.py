@@ -190,12 +190,14 @@ async def test_session_shares_freeze_scope_and_revoke(
 ) -> None:
     session_id, local_id, original = await _seed_session(client)
 
+    assert (await client.get(f"/v1/sessions/{session_id}")).json()["is_shared"] is False
     full = await client.post(
         f"/v1/sessions/{session_id}/shares",
         json={"scope": "session"},
     )
     assert full.status_code == 201, full.text
     full_share = full.json()
+    assert (await client.get(f"/v1/sessions/{session_id}")).json()["is_shared"] is True
     assert full_share["message_count"] == 3
     assert full_share["share_url"].endswith(f"/s/{full_share['id']}")
 
@@ -265,6 +267,11 @@ async def test_session_shares_freeze_scope_and_revoke(
     assert expired.status_code == 410
     assert expired.headers["cache-control"] == "no-store"
 
+    assert (await client.get(f"/v1/sessions/{session_id}")).json()["is_shared"] is True
+    for share_id in (response_share["id"], through.json()["id"]):
+        assert (await client.delete(f"/v1/session-shares/{share_id}")).status_code == 204
+    assert (await client.get(f"/v1/sessions/{session_id}")).json()["is_shared"] is False
+
 
 @pytest.mark.asyncio
 async def test_owner_can_manage_all_active_session_links(
@@ -276,12 +283,10 @@ async def test_owner_can_manage_all_active_session_links(
         json={"scope": "session"},
     )
     assert snapshot.status_code == 201, snapshot.text
-    live = await client.post(
-        f"/v1/sessions/{session_id}/permissions",
-        json={"kind": "link"},
+    second_snapshot = await client.post(
+        f"/v1/sessions/{session_id}/shares", json={"scope": "response", "position": 1}
     )
-    assert live.status_code == 200, live.text
-
+    assert second_snapshot.status_code == 201, second_snapshot.text
     response = await client.get("/v1/session-shares", params={"page_size": 1})
     assert response.status_code == 200, response.text
     first_page = response.json()
@@ -293,20 +298,13 @@ async def test_owner_can_manage_all_active_session_links(
         await client.get("/v1/session-shares", params={"page": 2, "page_size": 1})
     ).json()
     links = first_page["items"] + second_page["items"]
-    assert {item["kind"] for item in links} == {"snapshot", "live"}
+    assert {item["kind"] for item in links} == {"snapshot"}
     assert {item["session_id"] for item in links} == {session_id}
     assert {item["session_title"] for item in links} == {"Immutable share"}
-    assert next(item for item in links if item["kind"] == "snapshot")["share_url"].endswith(
-        f"/s/{snapshot.json()['id']}"
-    )
-    assert next(item for item in links if item["kind"] == "live")["share_url"].endswith(
-        f"/s/{session_id}"
-    )
-
-    revoked = await client.delete(
-        f"/v1/sessions/{session_id}/permissions",
-        params={"kind": "link"},
-    )
+    assert next(item for item in links if item["id"] == snapshot.json()["id"])[
+        "share_url"
+    ].endswith(f"/s/{snapshot.json()['id']}")
+    revoked = await client.delete(f"/v1/session-shares/{second_snapshot.json()['id']}")
     assert revoked.status_code == 204
     remaining = (await client.get("/v1/session-shares")).json()
     assert remaining["total"] == 1

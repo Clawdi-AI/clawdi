@@ -8,7 +8,6 @@ import {
 import { shareControlsClasses } from "@clawdi/shared/ui";
 import {
 	errorMessage,
-	relativeTime,
 	sessionDetailQueryKey,
 	sessionShareDialogCopy,
 	shareDetail,
@@ -47,7 +46,6 @@ import { cn } from "@/lib/utils";
 export type { SessionShareTarget } from "@clawdi/shared/api";
 
 type SessionShareItem = components["schemas"]["SessionShareResponse"];
-type SessionPermission = components["schemas"]["SessionPermissionResponse"];
 
 export function SessionShareButton({ onClick }: { onClick: () => void }) {
 	return (
@@ -97,21 +95,9 @@ function SessionShareDialogContent({
 			),
 		enabled: open,
 	});
-	const permissionsKey = ["session-permissions", sessionId] as const;
-	const permissionsQuery = useQuery({
-		queryKey: permissionsKey,
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/sessions/{session_id}/permissions", {
-					params: { path: { session_id: sessionId } },
-				}),
-			),
-		enabled: open && target.scope === "session",
-	});
 
 	const refreshShares = () => {
 		void queryClient.invalidateQueries({ queryKey: sharesKey });
-		void queryClient.invalidateQueries({ queryKey: permissionsKey });
 		void queryClient.invalidateQueries({
 			queryKey: sessionDetailQueryKey(sessionId),
 		});
@@ -144,31 +130,11 @@ function SessionShareDialogContent({
 	const previousShares = matchingShares.filter((share) => share.id !== latestShare?.id);
 	const otherShares =
 		target.scope === "session" ? shares.filter((share) => share.scope !== "session") : [];
-	const legacyLink =
-		target.scope === "session"
-			? permissionsQuery.data?.permissions.find(
-					(permission: SessionPermission) => permission.kind === "link",
-				)
-			: undefined;
-	const isLoading =
-		sharesQuery.isLoading || (target.scope === "session" && permissionsQuery.isLoading);
-	const loadError =
-		sharesQuery.error ?? (target.scope === "session" ? permissionsQuery.error : null);
-	const legacyUrl = typeof window === "undefined" ? "" : `${window.location.origin}/s/${sessionId}`;
+	const isLoading = sharesQuery.isLoading;
+	const loadError = sharesQuery.error;
 	const revokeShare = async (shareId: string) => {
 		const result = await api.DELETE("/v1/session-shares/{share_id}", {
 			params: { path: { share_id: shareId } },
-		});
-		if (result.error !== undefined) {
-			throw new ApiError(result.response.status, JSON.stringify(result.error));
-		}
-	};
-	const revokeLegacyLink = async () => {
-		const result = await api.DELETE("/v1/sessions/{session_id}/permissions", {
-			params: {
-				path: { session_id: sessionId },
-				query: { kind: "link" },
-			},
 		});
 		if (result.error !== undefined) {
 			throw new ApiError(result.response.status, JSON.stringify(result.error));
@@ -201,7 +167,6 @@ function SessionShareDialogContent({
 							title="Couldn't load share links"
 							onRetry={() => {
 								void sharesQuery.refetch();
-								if (target.scope === "session") void permissionsQuery.refetch();
 							}}
 						/>
 					) : null}
@@ -217,11 +182,10 @@ function SessionShareDialogContent({
 						/>
 					) : null}
 
-					{previousShares.length + otherShares.length + (legacyLink ? 1 : 0) > 0 ? (
+					{previousShares.length + otherShares.length > 0 ? (
 						<details className={shareControlsClasses.body}>
 							<summary className={shareControlsClasses.older}>
-								Other active links (
-								{previousShares.length + otherShares.length + (legacyLink ? 1 : 0)})
+								Other active links ({previousShares.length + otherShares.length})
 							</summary>
 							{[...previousShares, ...otherShares].map((share) => (
 								<ShareLinkRow
@@ -233,18 +197,6 @@ function SessionShareDialogContent({
 									onRevoked={refreshShares}
 								/>
 							))}
-							{legacyLink ? (
-								<div className="border-t pt-3">
-									<p className="mb-2 text-xs font-medium text-muted-foreground">Older link</p>
-									<ShareLinkRow
-										url={legacyUrl}
-										label="Live session link"
-										detail={`Reflects future uploads · created ${relativeTime(legacyLink.created_at)}`}
-										onRevoke={revokeLegacyLink}
-										onRevoked={refreshShares}
-									/>
-								</div>
-							) : null}
 						</details>
 					) : null}
 				</div>

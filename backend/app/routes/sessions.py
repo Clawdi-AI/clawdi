@@ -6,7 +6,7 @@ import mimetypes
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, overload
 from uuid import UUID, uuid4
 
 from fastapi import (
@@ -53,11 +53,6 @@ from app.models.session import (
     SessionEventChunk,
     SessionSyncSuppression,
 )
-from app.models.session_permission import (
-    PERMISSION_KIND_LINK,
-    PERMISSION_KINDS,
-    SessionPermission,
-)
 from app.models.session_share import SessionShare
 from app.schemas.agent_profile import ProfileKey
 from app.schemas.common import Paginated
@@ -101,9 +96,6 @@ from app.schemas.session import (
     SessionExtractResponse,
     SessionListItemResponse,
     SessionMessagesPage,
-    SessionPermissionCreate,
-    SessionPermissionResponse,
-    SessionPermissionsResponse,
     SessionSearchAnchorResponse,
     SessionSearchMatchResponse,
     SessionSearchNavigationResponse,
@@ -2832,13 +2824,7 @@ async def list_sessions(
             "api key bound to a different environment",
         )
 
-    # `is_shared` is a correlated EXISTS — true when an active (non-revoked)
-    # `kind='link'` row in `session_permissions` exists for this session.
-    # Computing inline avoids a denormalized `sessions.visibility` column
-    # (which would require app-code discipline to keep in sync on every
-    # toggle). The partial unique index on
-    # `session_permissions(session_id, kind, COALESCE(...)) WHERE revoked_at
-    # IS NULL` makes this lookup index-only.
+    # Active immutable snapshots determine the shared marker.
     is_shared_subq = _session_is_shared_subq()
 
     if q:
@@ -3738,9 +3724,6 @@ async def extract_session_memories(
 # — it serves both the dashboard and the MCP `session_get` tool's UUID
 # branch (which authenticates as the CLI api-key user).
 #
-# The `/permissions` routes use `require_user_session`: browser sessions and
-# first-party CLI OAuth tokens can manage visibility grants on their own data.
-# API keys stay blocked so leaked daemon keys cannot grant or revoke access.
 
 
 @router.get("/sessions/{session_id}/export.md")
@@ -3804,185 +3787,6 @@ async def export_owned_session_markdown(
         # content_hash) cache in load_session_messages is the only layer
         # we actually want serving stale-but-correct bytes.
     )
-
-
-@router.get("/sessions/{session_id}/permissions")
-async def list_session_permissions(
-    session_id: UUID,
-    auth: AuthContext = Depends(require_user_session),
-    db: AsyncSession = Depends(get_session),
-) -> SessionPermissionsResponse:
-    """List active permissions for a session — drives the Share popover.
-
-    Returns rows in newest-first order. Today the popover only renders
-    the `kind='link'` row (if any); when invite-by-people lands, the
-    same response shape powers the "people with access" list.
-    """
-    await _load_session_for_owner(db, auth, session_id)
-
-    rows = (
-        (
-            await db.execute(
-                select(SessionPermission)
-                .where(
-                    SessionPermission.session_id == session_id,
-                    SessionPermission.revoked_at.is_(None),
-                )
-                .order_by(SessionPermission.created_at.desc())
-            )
-        )
-        .scalars()
-        .all()
-    )
-    return SessionPermissionsResponse(permissions=[_permission_to_response(p) for p in rows])
-
-
-@router.post("/sessions/{session_id}/permissions")
-async def create_session_permission(
-    session_id: UUID,
-    body: SessionPermissionCreate,
-    auth: AuthContext = Depends(require_user_session),
-    db: AsyncSession = Depends(get_session),
-) -> SessionPermissionResponse:
-    """Idempotent permission grant.
-
-    For today's "Public access" toggle the body is just
-    `{"kind": "link"}`. The handler:
-      - normalises the body (lowercases email, validates kind matches the
-        identifier columns),
-      - returns the existing active row if one already matches the
-        composite key (so toggling on twice is a no-op),
-      - inserts a new row otherwise. The
-        `uq_active_permission_per_principal` partial unique index closes
-        the race between concurrent callers — the loser's INSERT raises
-        IntegrityError and we re-read.
-    """
-    await _load_session_for_owner(db, auth, session_id)
-    kind, user_id, email = _validate_permission_create(body)
-
-    # Fast path: active row already matches.
-    existing = await _find_active_permission(db, session_id, kind, user_id, email)
-    if existing is not None:
-        return _permission_to_response(existing)
-
-    new_perm = SessionPermission(
-        session_id=session_id,
-        kind=kind,
-        user_id=user_id,
-        email=email,
-        role=body.role or "viewer",
-        invited_by=auth.user_id,
-        accepted_at=datetime.now(UTC) if kind != "email" else None,
-    )
-    db.add(new_perm)
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        winner = await _find_active_permission(db, session_id, kind, user_id, email)
-        if winner is None:
-            # Index conflict but no row found — shouldn't happen with the
-            # partial unique index. Surface as 500 so it can be debugged.
-            raise HTTPException(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "Permission insert raced and the winning row could not be located",
-            )
-        return _permission_to_response(winner)
-
-    await db.refresh(new_perm)
-    return _permission_to_response(new_perm)
-
-
-@router.delete(
-    "/sessions/{session_id}/permissions",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def revoke_session_permission(
-    session_id: UUID,
-    kind: str,
-    user_id: UUID | None = None,
-    email: str | None = None,
-    auth: AuthContext = Depends(require_user_session),
-    db: AsyncSession = Depends(get_session),
-) -> None:
-    """Revoke the active permission matching the composite key.
-
-    Toggle-off path: `DELETE …/permissions?kind=link`. Soft-delete
-    (`revoked_at = now()`) preserves the row for future audit.
-    """
-    await _load_session_for_owner(db, auth, session_id)
-
-    if kind not in PERMISSION_KINDS:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown permission kind: {kind}")
-    normalized_email = email.strip().lower() if email else None
-
-    active = await _find_active_permission(db, session_id, kind, user_id, normalized_email)
-    if active is not None:
-        active.revoked_at = datetime.now(UTC)
-        await db.commit()
-
-
-def _validate_permission_create(
-    body: SessionPermissionCreate,
-) -> tuple[str, UUID | None, str | None]:
-    """Validate the request body's kind/identifier consistency and
-    normalise the email column. Returns (kind, user_id, email).
-
-    Pydantic's Literal types already reject unknown `kind` / `role`
-    values before this runs (422); we only enforce the cross-field
-    invariants that Pydantic can't express declaratively.
-    """
-    kind = body.kind
-    user_id = UUID(body.user_id) if body.user_id else None
-    email = body.email.strip().lower() if body.email else None
-
-    if kind == "link":
-        if user_id is not None or email is not None:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                "kind=link must not carry a user_id or email",
-            )
-    elif kind == "user":
-        if user_id is None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "kind=user requires user_id")
-        if email is not None:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                "kind=user must not carry an email",
-            )
-    elif kind == "email":
-        if email is None:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "kind=email requires email")
-        if user_id is not None:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                "kind=email must not carry a user_id",
-            )
-    return kind, user_id, email
-
-
-async def _find_active_permission(
-    db: AsyncSession,
-    session_id: UUID,
-    kind: str,
-    user_id: UUID | None,
-    email: str | None,
-) -> SessionPermission | None:
-    """Locate the single active row matching the composite key, or None."""
-    stmt = select(SessionPermission).where(
-        SessionPermission.session_id == session_id,
-        SessionPermission.kind == kind,
-        SessionPermission.revoked_at.is_(None),
-    )
-    if user_id is None:
-        stmt = stmt.where(SessionPermission.user_id.is_(None))
-    else:
-        stmt = stmt.where(SessionPermission.user_id == user_id)
-    if email is None:
-        stmt = stmt.where(SessionPermission.email.is_(None))
-    else:
-        stmt = stmt.where(SessionPermission.email == email)
-    return (await db.execute(stmt)).scalar_one_or_none()
 
 
 def _session_to_response(
@@ -4052,22 +3856,7 @@ def _related_refs_response(
 
 
 def _session_is_shared_subq():
-    """Correlated EXISTS used in list/detail queries to compute
-    `Session.is_shared`. True when an active `kind='link'` permission
-    row exists for the session. Index-only via the partial unique
-    index on `session_permissions(session_id, kind, COALESCE(...))
-    WHERE revoked_at IS NULL`.
-    """
-    legacy_link = (
-        select(1)
-        .where(
-            SessionPermission.session_id == Session.id,
-            SessionPermission.kind == PERMISSION_KIND_LINK,
-            SessionPermission.revoked_at.is_(None),
-        )
-        .correlate(Session)
-        .exists()
-    )
+    """True when at least one active snapshot share exists for the session."""
     frozen_share = (
         select(1)
         .where(
@@ -4077,21 +3866,7 @@ def _session_is_shared_subq():
         .correlate(Session)
         .exists()
     )
-    return or_(legacy_link, frozen_share).label("is_shared")
-
-
-def _permission_to_response(p: SessionPermission) -> SessionPermissionResponse:
-    return SessionPermissionResponse(
-        id=str(p.id),
-        kind=cast(Literal["link", "user", "email"], p.kind),
-        user_id=str(p.user_id) if p.user_id else None,
-        email=p.email,
-        role=cast(Literal["viewer"], p.role),
-        invited_by=str(p.invited_by) if p.invited_by else None,
-        accepted_at=p.accepted_at,
-        expires_at=p.expires_at,
-        created_at=p.created_at,
-    )
+    return frozen_share.label("is_shared")
 
 
 async def _load_session_for_owner(

@@ -38,7 +38,7 @@ export function sessionShareIdentity(
 export function sessionShareScope(
 	share: Pick<components["schemas"]["SessionShareListItemResponse"], "kind" | "scope">,
 ) {
-	return share.kind === "live" ? "live" : share.scope;
+	return share.scope;
 }
 
 /** Export links belong to the public Web share, never an authenticated API URL. */

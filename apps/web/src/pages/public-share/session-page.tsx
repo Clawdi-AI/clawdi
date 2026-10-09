@@ -10,17 +10,13 @@ import { Stat } from "@/components/meta/stat";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { PublicSessionTimeline } from "@/components/sessions/public-session-timeline";
 import { ShareHeaderUser } from "@/components/share/header-user";
-import { NoAccess } from "@/components/share/no-access";
 import { PublicShareControls } from "@/components/share/public-share-controls";
-import { SignInToView } from "@/components/share/sign-in-to-view";
 import { TimeTooltip } from "@/components/time-tooltip";
 import type { PublicShareResult } from "./session-page.functions";
 
 type PublicSharePageResult = Exclude<PublicShareResult, { kind: "not-found" }>;
 
 export default function PublicSharePage({ result }: { result: PublicSharePageResult }) {
-	if (result.kind === "unauthorized") return <SignInToView />;
-	if (result.kind === "forbidden") return <NoAccess />;
 	if (result.kind === "expired") {
 		return (
 			<>
@@ -66,7 +62,6 @@ export default function PublicSharePage({ result }: { result: PublicSharePageRes
 				) : (
 					<PublicSessionTimeline
 						shareId={share.id}
-						source={share.source}
 						initialPage={messagesPage}
 						agentType={share.agent_type}
 					/>

@@ -55,7 +55,6 @@ from app.models.session import AgentEnvironment, Session
 from app.models.session_share import SessionShare
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.routes.memories import attach_source_machines
-from app.routes.public_sessions import resolve_session_for_view
 from app.schemas.session import SessionShareCreate
 from app.schemas.vault import VaultCreate, VaultItemDelete, VaultItemUpsert
 from app.schemas.vault_requests import VaultSecretRequestCreate
@@ -237,7 +236,7 @@ class _SessionShareListArguments(_ToolArguments):
 
 class _SessionShareRevokeArguments(_ToolArguments):
     share_id: UUID
-    kind: Literal["snapshot", "live"] = "snapshot"
+    kind: Literal["snapshot"] = "snapshot"
 
 
 class _ProjectListArguments(_ToolArguments):
@@ -601,7 +600,7 @@ _NATIVE_TOOL_REGISTRY: dict[str, _NativeToolSpec] = {
     ),
     "session_share_list": _NativeToolSpec(
         description=(
-            "List active snapshot and legacy live links for visible Clawdi sessions. Optionally "
+            "List active snapshot links for visible Clawdi sessions. Optionally "
             "filter by session UUID. Returns exact link IDs and kinds for session_share_revoke."
         ),
         input_schema=_SessionShareListArguments.model_json_schema(),
@@ -1313,21 +1312,7 @@ async def _tool_session_get(
                     messages=view.messages,
                 )
             )
-        if is_env_bound_api_key(auth) and not is_runtime_deployment_principal(auth):
-            # No owner-bypass for env-bound agent keys: a share URL for a
-            # same-user session in another environment must not sidestep
-            # the bare-UUID env filter. Own-environment sessions resolve
-            # directly; everything else needs an active public link
-            # (anonymous share semantics).
-            row = (
-                await db.execute(_user_sessions_stmt(auth).where(Session.id == parsed_id))
-            ).first()
-            if row is not None:
-                session, agent_type = row
-            else:
-                session, agent_type, _ = await resolve_session_for_view(db, parsed_id, None)
-        else:
-            session, agent_type, _ = await resolve_session_for_view(db, parsed_id, auth)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Session share not found")
     else:
         stmt = _user_sessions_stmt(auth).where(Session.id == parsed_id)
         row = (await db.execute(stmt)).first()
@@ -1354,8 +1339,7 @@ async def _tool_session_get(
             session,
             projection.messages,
             agent_type=agent_type,
-            public=bool(match),
-            source_positions=None if match else projection.source_positions,
+            source_positions=projection.source_positions,
         )
     )
 
@@ -1421,7 +1405,6 @@ async def _tool_session_share_revoke(
         db,
         user_id=auth.user_id,
         share_id=parsed.share_id,
-        kind=parsed.kind,
         environment_id=_session_environment_fence(auth),
     )
     if not revoked:

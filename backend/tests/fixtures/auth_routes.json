@@ -203,13 +203,6 @@
       "app.core.database.get_session"
     ]
   ],
-  "DELETE /api/sessions/{session_id}/permissions": [
-    [
-      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
-      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
-    ]
-  ],
   "DELETE /api/skills/{skill_key:path}": [
     [
       "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:write\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
@@ -455,13 +448,6 @@
     ]
   ],
   "DELETE /v1/sessions/{session_id}": [
-    [
-      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
-      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
-    ]
-  ],
-  "DELETE /v1/sessions/{session_id}/permissions": [
     [
       "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
       "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
@@ -958,34 +944,6 @@
       "app.core.database.get_session"
     ]
   ],
-  "GET /api/public/sessions/{session_id}": [
-    [
-      "app.core.auth.optional_web_auth -> app.core.database.get_session",
-      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
-    ]
-  ],
-  "GET /api/public/sessions/{session_id}/export.json": [
-    [
-      "app.core.auth.optional_web_auth -> app.core.database.get_session",
-      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
-    ]
-  ],
-  "GET /api/public/sessions/{session_id}/export.md": [
-    [
-      "app.core.auth.optional_web_auth -> app.core.database.get_session",
-      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
-    ]
-  ],
-  "GET /api/public/sessions/{session_id}/messages": [
-    [
-      "app.core.auth.optional_web_auth -> app.core.database.get_session",
-      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
-    ]
-  ],
   "GET /api/scopes/{scope_id}/skills/{skill_key:path}": [
     [
       "app.core.auth.require_scope_short_session.<locals>._check[needed=[\"skills:read\"]] -> app.core.auth.get_auth_short_session -> fastapi.security.http.HTTPBearer",
@@ -1070,13 +1028,6 @@
     [
       "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
       "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
-    ]
-  ],
-  "GET /api/sessions/{session_id}/permissions": [
-    [
-      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
-      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
       "app.core.database.get_session"
     ]
   ],
@@ -1671,34 +1622,6 @@
       "app.core.database.get_session"
     ]
   ],
-  "GET /v1/public/sessions/{session_id}": [
-    [
-      "app.core.auth.optional_web_auth -> app.core.database.get_session",
-      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
-    ]
-  ],
-  "GET /v1/public/sessions/{session_id}/export.json": [
-    [
-      "app.core.auth.optional_web_auth -> app.core.database.get_session",
-      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
-    ]
-  ],
-  "GET /v1/public/sessions/{session_id}/export.md": [
-    [
-      "app.core.auth.optional_web_auth -> app.core.database.get_session",
-      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
-    ]
-  ],
-  "GET /v1/public/sessions/{session_id}/messages": [
-    [
-      "app.core.auth.optional_web_auth -> app.core.database.get_session",
-      "app.core.auth.optional_web_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
-    ]
-  ],
   "GET /v1/runtime/manifest": [
     [
       "app.core.database.get_runtime_manifest_sessions",
@@ -1802,13 +1725,6 @@
     [
       "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> app.core.database.get_session",
       "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:read\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
-    ]
-  ],
-  "GET /v1/sessions/{session_id}/permissions": [
-    [
-      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
-      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
       "app.core.database.get_session"
     ]
   ],
@@ -2609,13 +2525,6 @@
       "app.services.connected_agent_fence.connected_agent_fence_headers"
     ]
   ],
-  "POST /api/sessions/{session_id}/permissions": [
-    [
-      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
-      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
-    ]
-  ],
   "POST /api/sessions/{session_id}/shares": [
     [
       "app.core.auth.require_user_auth_unbound -> app.core.auth.require_user_auth -> app.core.auth.get_auth -> app.core.database.get_session",
@@ -3302,13 +3211,6 @@
       "app.core.auth.require_scope.<locals>._check[needed=[\"sessions:write\"]] -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
       "app.core.database.get_session",
       "app.services.connected_agent_fence.connected_agent_fence_headers"
-    ]
-  ],
-  "POST /v1/sessions/{session_id}/permissions": [
-    [
-      "app.core.auth.require_user_session -> app.core.auth.get_auth -> app.core.database.get_session",
-      "app.core.auth.require_user_session -> app.core.auth.get_auth -> fastapi.security.http.HTTPBearer",
-      "app.core.database.get_session"
     ]
   ],
   "POST /v1/sessions/{session_id}/shares": [

@@ -8,8 +8,6 @@ class OAuthConfigResponse(BaseModel):
 
     issuer: str
     client_id: str
-    audience: str
-    authorized_parties: list[str] = Field(default_factory=list)
 
 
 class OAuthRevokeRequest(BaseModel):

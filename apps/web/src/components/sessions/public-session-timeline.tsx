@@ -16,36 +16,24 @@ const PAGE_SIZE = 100;
 
 export function PublicSessionTimeline({
 	shareId,
-	source,
 	initialPage,
 	agentType,
 }: {
 	shareId: string;
-	source: "share" | "legacy";
 	initialPage: SessionMessagesPage;
 	agentType: string | null;
 }) {
 	const api = useApi();
 	const query = useInfiniteQuery({
-		queryKey: ["public-session-share-messages", source, shareId],
+		queryKey: ["public-session-share-messages", shareId],
 		initialPageParam: 0,
 		initialData: { pages: [initialPage], pageParams: [0] },
 		queryFn: async ({ pageParam }) => {
-			if (source === "share") {
-				return unwrap(
-					await api.GET("/v1/public/session-shares/{share_id}/messages", {
-						params: {
-							path: { share_id: shareId },
-							query: { offset: pageParam, limit: PAGE_SIZE },
-						},
-					}),
-				);
-			}
 			return unwrap(
-				await api.GET("/v1/public/sessions/{session_id}/messages", {
+				await api.GET("/v1/public/session-shares/{share_id}/messages", {
 					params: {
-						path: { session_id: shareId },
-						query: { offset: pageParam, limit: PAGE_SIZE, direction: "asc" },
+						path: { share_id: shareId },
+						query: { offset: pageParam, limit: PAGE_SIZE },
 					},
 				}),
 			);

@@ -48,8 +48,6 @@ async def _oauth_public_config_or_503(db: AsyncSession) -> OAuthConfigResponse:
     return OAuthConfigResponse(
         issuer=oauth_setting.issuer,
         client_id=oauth_setting.client_id,
-        audience=oauth_setting.audience,
-        authorized_parties=oauth_setting.authorized_parties,
     )
 
 

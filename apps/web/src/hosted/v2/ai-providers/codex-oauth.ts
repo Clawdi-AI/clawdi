@@ -2,12 +2,6 @@ export { codexProviderBody } from "@clawdi/shared/api";
 
 export const CLAWDI_CODEX_OAUTH_PROVIDER_ID = "openai-codex";
 
-/**
- * Compatibility-only relay for authorization-code flows started by the previous
- * Web release. Keep the route for at least the 10-minute backend state TTL after
- * the device-flow release is fully deployed; new connections never use it.
- */
-export const CODEX_OAUTH_CALLBACK_COMPATIBILITY_TTL_SECONDS = 10 * 60;
 export const CODEX_OAUTH_CHANNEL = "clawdi-codex-oauth";
 
 export type CodexOAuthResult = {

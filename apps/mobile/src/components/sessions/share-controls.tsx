@@ -290,17 +290,11 @@ function SharesView({
 								})
 							}
 						>
-							{compact
-								? share.kind === "live"
-									? t("sessionDetailMobile.liveLink")
-									: shareLabel(share)
-								: share.session_title}
+							{compact ? shareLabel(share) : share.session_title}
 						</WebText>
 						{!compact ? (
 							<Badge variant="outline">
-								<Text>
-									{t(share.kind === "live" ? "sessionDetail.live" : "sessionDetail.snapshot")}
-								</Text>
+								<Text>{t("sessionDetail.snapshot")}</Text>
 							</Badge>
 						) : null}
 					</WebView>
@@ -314,9 +308,6 @@ function SharesView({
 									time: relativeTime(share.created_at),
 								})}
 					</WebText>
-					{share.kind === "live" ? (
-						<WebText recipe={styles.meta}>{t("sessionDetail.liveDescription")}</WebText>
-					) : null}
 				</WebView>
 				{compact ? (
 					<ConfirmAction

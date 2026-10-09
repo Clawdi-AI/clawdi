@@ -131,20 +131,9 @@ function SharedLinkRow({
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const revoke = useMutation({
 		mutationFn: async () => {
-			if (share.kind === "snapshot") {
-				unwrap(
-					await api.DELETE("/v1/session-shares/{share_id}", {
-						params: { path: { share_id: share.id } },
-					}),
-				);
-				return;
-			}
 			unwrap(
-				await api.DELETE("/v1/sessions/{session_id}/permissions", {
-					params: {
-						path: { session_id: share.session_id },
-						query: { kind: "link" },
-					},
+				await api.DELETE("/v1/session-shares/{share_id}", {
+					params: { path: { share_id: share.id } },
 				}),
 			);
 		},
@@ -171,17 +160,12 @@ function SharedLinkRow({
 					>
 						{share.session_title}
 					</Link>
-					<Badge variant="outline">{share.kind === "live" ? "Live" : "Snapshot"}</Badge>
+					<Badge variant="outline">Snapshot</Badge>
 				</div>
 				<p className={sharedSessionLinksClasses.meta}>
 					{scope} · {share.message_count} {share.message_count === 1 ? "message" : "messages"} ·
 					Created {relativeTime(share.created_at)}
 				</p>
-				{share.kind === "live" ? (
-					<p className={sharedSessionLinksClasses.meta}>
-						Updates when the session is uploaded again.
-					</p>
-				) : null}
 			</div>
 			<div className={sharedSessionLinksClasses.actions}>
 				<Button variant="outline" size="sm" onClick={() => void copy(share.share_url)}>

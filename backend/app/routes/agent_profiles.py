@@ -1,7 +1,7 @@
 from uuid import UUID, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException, Path
-from sqlalchemy import CursorResult, delete, func, select, update
+from sqlalchemy import CursorResult, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -263,30 +263,13 @@ async def rename_profile(
         return ProfileSessionMoveResponse(sessions_moved=0, suppressions_moved=0)
     target = profiles.get(new)
     if target is not None:
-        # CLIs before 0.15.5 PUT inventory before rename, creating an empty target.
-        # Retain this compatibility branch until the CLI floor reaches 0.15.5.
-        for model in (Session, SessionSyncSuppression):
-            occupied = (
-                await db.execute(
-                    select(model.id)
-                    .where(
-                        model.user_id == auth.user_id,
-                        model.origin_environment_id == agent_id,
-                        model.origin_profile_key == new,
-                    )
-                    .limit(1)
-                )
-            ).first()
-            if occupied:
-                raise HTTPException(
-                    409,
-                    detail={
-                        "code": "profile_conflict",
-                        "message": "The destination profile is already in use.",
-                    },
-                )
-        await db.execute(delete(AgentProfile).where(AgentProfile.id == target.id))
-        await db.flush()
+        raise HTTPException(
+            409,
+            detail={
+                "code": "profile_conflict",
+                "message": "The destination profile already exists.",
+            },
+        )
     result = await _move(db, auth, agent_id, profile_key, new)
     source.profile_key = new
     source.state = "active"

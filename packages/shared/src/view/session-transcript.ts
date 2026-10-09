@@ -95,7 +95,6 @@ export function sessionShareDialogCopy(target: SessionShareTarget) {
 
 export function shareScopeLabel(share: SessionShare): string {
 	const scope = sessionShareScope(share);
-	if (scope === "live") return "Full session, live";
 	if (scope === "response") return "Single agent response";
 	if (scope === "through") return "Conversation excerpt";
 	return "Full session snapshot";

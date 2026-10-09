@@ -933,7 +933,7 @@ export interface paths {
         post?: never;
         /**
          * Revoke Share
-         * @description Revoke one owned snapshot or legacy live link by its exact inventory ID.
+         * @description Revoke one owned snapshot by its exact inventory ID.
          */
         delete: operations["revoke_share_v1_session_shares__share_id__delete"];
         options?: never;
@@ -1514,52 +1514,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/sessions/{session_id}/permissions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Session Permissions
-         * @description List active permissions for a session — drives the Share popover.
-         *
-         *     Returns rows in newest-first order. Today the popover only renders
-         *     the `kind='link'` row (if any); when invite-by-people lands, the
-         *     same response shape powers the "people with access" list.
-         */
-        get: operations["list_session_permissions_v1_sessions__session_id__permissions_get"];
-        put?: never;
-        /**
-         * Create Session Permission
-         * @description Idempotent permission grant.
-         *
-         *     For today's "Public access" toggle the body is just
-         *     `{"kind": "link"}`. The handler:
-         *       - normalises the body (lowercases email, validates kind matches the
-         *         identifier columns),
-         *       - returns the existing active row if one already matches the
-         *         composite key (so toggling on twice is a no-op),
-         *       - inserts a new row otherwise. The
-         *         `uq_active_permission_per_principal` partial unique index closes
-         *         the race between concurrent callers — the loser's INSERT raises
-         *         IntegrityError and we re-read.
-         */
-        post: operations["create_session_permission_v1_sessions__session_id__permissions_post"];
-        /**
-         * Revoke Session Permission
-         * @description Revoke the active permission matching the composite key.
-         *
-         *     Toggle-off path: `DELETE …/permissions?kind=link`. Soft-delete
-         *     (`revoked_at = now()`) preserves the row for future audit.
-         */
-        delete: operations["revoke_session_permission_v1_sessions__session_id__permissions_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/agents/{agent_id}/profiles": {
         parameters: {
             query?: never;
@@ -1606,109 +1560,6 @@ export interface paths {
         put?: never;
         /** Rename Profile */
         post: operations["rename_profile_v1_agents__agent_id__profiles__profile_key__rename_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/public/sessions/{session_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Shared Session Detail
-         * @description Detail payload for the public HTML share page.
-         *
-         *     Server-side rendered by `/s/[id]/page.tsx` so the page works
-         *     without JS (curl, link unfurlers, agents that don't run a browser).
-         *     Field allow-list lives in `public_session_base_fields` — same shape
-         *     the `.json` export serializes, so a new Session column added without
-         *     updating that helper can't silently leak.
-         */
-        get: operations["get_shared_session_detail_v1_public_sessions__session_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/public/sessions/{session_id}/messages": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Shared Session Messages
-         * @description Paginated messages, mirroring the authed `/messages` endpoint.
-         *
-         *     Reuses the same `session_content.load_session_messages` cache so a
-         *     popular shared link doesn't re-parse the source JSON per visitor.
-         */
-        get: operations["get_shared_session_messages_v1_public_sessions__session_id__messages_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/public/sessions/{session_id}/export.md": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Export Shared Session Markdown
-         * @description Agent-friendly Markdown export.
-         *
-         *     Body opens with a YAML front-matter block declaring source / agent
-         *     / model / project / counts — that's how an LLM ingesting the page
-         *     knows it's reading a Clawdi session and which agent / project it
-         *     came from.
-         *
-         *     `Content-Type: text/markdown; charset=utf-8` and `Cache-Control: no-store`:
-         *     revoke-immediacy beats CDN saving — the
-         *     `(file_key, content_hash)` cache in `load_session_messages`
-         *     already absorbs the parse cost.
-         */
-        get: operations["export_shared_session_markdown_v1_public_sessions__session_id__export_md_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/public/sessions/{session_id}/export.json": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Export Shared Session Json
-         * @description Structured JSON export — public-stripped variant.
-         *
-         *     `include_owner_metadata=False`: drops local_session_id,
-         *     machine_name, and any other field the share link is not meant
-         *     to expose.
-         */
-        get: operations["export_shared_session_json_v1_public_sessions__session_id__export_json_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -7341,10 +7192,6 @@ export interface components {
             issuer: string;
             /** Client Id */
             client_id: string;
-            /** Audience */
-            audience: string;
-            /** Authorized Parties */
-            authorized_parties?: string[];
         };
         /**
          * OAuthRevokeRequest
@@ -7966,108 +7813,6 @@ export interface components {
              * Format: uuid
              */
             expected_incarnation_id: string;
-        };
-        /**
-         * PublicSessionExportResponse
-         * @description Public-safe structured session export payload.
-         */
-        PublicSessionExportResponse: {
-            /** Id */
-            id: string;
-            /** Summary */
-            summary: string | null;
-            /** Project Path */
-            project_path: string | null;
-            /** Agent Type */
-            agent_type: string | null;
-            /** Model */
-            model: string | null;
-            /** Models Used */
-            models_used: string[] | null;
-            /**
-             * Started At
-             * Format: date-time
-             */
-            started_at: string;
-            /** Ended At */
-            ended_at: string | null;
-            /** Last Activity At */
-            last_activity_at: string | null;
-            /** Duration Seconds */
-            duration_seconds: number | null;
-            /** Message Count */
-            message_count: number;
-            /** Input Tokens */
-            input_tokens: number;
-            /** Output Tokens */
-            output_tokens: number;
-            /** Cache Read Tokens */
-            cache_read_tokens: number;
-            /** Tags */
-            tags: string[] | null;
-            /** Status */
-            status: string;
-            /** Related Refs */
-            related_refs?: {
-                [key: string]: string[] | null;
-            } | null;
-            /** Owner Name */
-            owner_name: string | null;
-            /** Owner Avatar Url */
-            owner_avatar_url: string | null;
-            /** Messages */
-            messages: components["schemas"]["SessionMessageResponse"][];
-            /** Share Url */
-            share_url: string;
-        };
-        /**
-         * PublicSessionResponse
-         * @description Public-safe session detail payload for `/v1/public/sessions/{id}`.
-         */
-        PublicSessionResponse: {
-            /** Id */
-            id: string;
-            /** Summary */
-            summary: string | null;
-            /** Project Path */
-            project_path: string | null;
-            /** Agent Type */
-            agent_type: string | null;
-            /** Model */
-            model: string | null;
-            /** Models Used */
-            models_used: string[] | null;
-            /**
-             * Started At
-             * Format: date-time
-             */
-            started_at: string;
-            /** Ended At */
-            ended_at: string | null;
-            /** Last Activity At */
-            last_activity_at: string | null;
-            /** Duration Seconds */
-            duration_seconds: number | null;
-            /** Message Count */
-            message_count: number;
-            /** Input Tokens */
-            input_tokens: number;
-            /** Output Tokens */
-            output_tokens: number;
-            /** Cache Read Tokens */
-            cache_read_tokens: number;
-            /** Tags */
-            tags: string[] | null;
-            /** Status */
-            status: string;
-            /** Related Refs */
-            related_refs?: {
-                [key: string]: string[] | null;
-            } | null;
-            /** Owner Name */
-            owner_name: string | null;
-            /** Owner Avatar Url */
-            owner_avatar_url: string | null;
         };
         /** PublicSessionShareExportResponse */
         PublicSessionShareExportResponse: {
@@ -9436,76 +9181,6 @@ export interface components {
             anchor_offset?: number | null;
             search_navigation?: components["schemas"]["SessionSearchNavigationResponse"] | null;
         };
-        /**
-         * SessionPermissionCreate
-         * @description `POST /v1/sessions/{id}/permissions` body.
-         *
-         *     Legacy live-link access uses `{"kind": "link"}`. Future
-         *     invite-by-email sends `{"kind": "email",
-         *     "email": "alice@x.com"}`; future direct user grant sends
-         *     `{"kind": "user", "user_id": "..."}`.
-         */
-        SessionPermissionCreate: {
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "link" | "user" | "email";
-            /** User Id */
-            user_id?: string | null;
-            /** Email */
-            email?: string | null;
-            /** Role */
-            role?: "viewer" | null;
-        };
-        /**
-         * SessionPermissionResponse
-         * @description One row from `session_permissions`.
-         *
-         *     Returned by `GET /v1/sessions/{id}/permissions` and as the body of
-         *     `POST /v1/sessions/{id}/permissions`. Identifier columns mirror
-         *     Google Drive's `permissions` resource: a `kind` discriminator plus
-         *     explicit fields for whichever principal type is populated.
-         */
-        SessionPermissionResponse: {
-            /** Id */
-            id: string;
-            /**
-             * Kind
-             * @enum {string}
-             */
-            kind: "link" | "user" | "email";
-            /** User Id */
-            user_id?: string | null;
-            /** Email */
-            email?: string | null;
-            /**
-             * Role
-             * @constant
-             */
-            role: "viewer";
-            /** Invited By */
-            invited_by?: string | null;
-            /** Accepted At */
-            accepted_at?: string | null;
-            /** Expires At */
-            expires_at?: string | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-        };
-        /**
-         * SessionPermissionsResponse
-         * @description `GET /v1/sessions/{id}/permissions` — active permissions for a
-         *     session, newest-first. Preserves legacy live-link management and can
-         *     later support a "people with access" list.
-         */
-        SessionPermissionsResponse: {
-            /** Permissions */
-            permissions: components["schemas"]["SessionPermissionResponse"][];
-        };
         /** SessionReasoningEvent */
         SessionReasoningEvent: {
             /** Seq */
@@ -9589,9 +9264,9 @@ export interface components {
             id: string;
             /**
              * Kind
-             * @enum {string}
+             * @constant
              */
-            kind: "snapshot" | "live";
+            kind: "snapshot";
             /** Session Id */
             session_id: string;
             /** Session Title */
@@ -12509,9 +12184,7 @@ export interface operations {
     };
     revoke_share_v1_session_shares__share_id__delete: {
         parameters: {
-            query?: {
-                kind?: "snapshot" | "live";
-            };
+            query?: never;
             header?: never;
             path: {
                 share_id: string;
@@ -13762,105 +13435,6 @@ export interface operations {
             };
         };
     };
-    list_session_permissions_v1_sessions__session_id__permissions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionPermissionsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_session_permission_v1_sessions__session_id__permissions_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SessionPermissionCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionPermissionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    revoke_session_permission_v1_sessions__session_id__permissions_delete: {
-        parameters: {
-            query: {
-                kind: string;
-                user_id?: string | null;
-                email?: string | null;
-            };
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_agent_profiles_v1_agents__agent_id__profiles_get: {
         parameters: {
             query?: never;
@@ -13992,134 +13566,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProfileSessionMoveResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_shared_session_detail_v1_public_sessions__session_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PublicSessionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_shared_session_messages_v1_public_sessions__session_id__messages_get: {
-        parameters: {
-            query?: {
-                offset?: number;
-                limit?: number;
-                direction?: "asc" | "desc";
-            };
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionMessagesPage"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    export_shared_session_markdown_v1_public_sessions__session_id__export_md_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    export_shared_session_json_v1_public_sessions__session_id__export_json_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                session_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["PublicSessionExportResponse"];
                 };
             };
             /** @description Validation Error */
