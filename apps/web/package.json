@@ -67,7 +67,7 @@
 		"@playwright/test": "catalog:",
 		"@tailwindcss/postcss": "catalog:",
 		"@tailwindcss/vite": "catalog:",
-		"@tanstack/router-cli": "^1.167.33",
+		"@tanstack/router-cli": "^1.167.40",
 		"@types/bun": "catalog:",
 		"@types/node": "catalog:",
 		"@types/react": "catalog:",
