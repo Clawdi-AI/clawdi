@@ -40,6 +40,9 @@ User content and avatars use `NSPrivacyCollectedDataTypeOtherUserContent` and
 `NSPrivacyCollectedDataTypePhotosorVideos`, respectively, linked to the account,
 with `NSPrivacyCollectedDataTypeTracking: false` and
 `NSPrivacyCollectedDataTypePurposeAppFunctionality`.
+WhatsApp phone numbers use `NSPrivacyCollectedDataTypePhoneNumber` with the
+same linked, non-tracking App Functionality declaration: stored authenticated
+PN JIDs can be mapped back to phone numbers.
 
 From `apps/mobile`, inspect the plugin output, then generate the native project:
 
@@ -49,6 +52,7 @@ bun expo prebuild --platform ios --no-install
 ```
 
 Done: `ios/Clawdi/PrivacyInfo.xcprivacy` contains the declared reasons and
+the Phone Number entry with linked=true, tracking=false and App Functionality;
 `NSPrivacyTracking` is false. After the owner signs/uploads, TestFlight must
 report no ITMS-91053 warnings; check the archive's merged privacy report too.
 
@@ -68,7 +72,7 @@ transactions and breadcrumbs involving `/vault-request`; replay is disabled.
 | Email / Clerk and Cloud account | Contact Info: Email Address | Personal info: Email address | App functionality, account management | Linked; required for email login |
 | Name / Clerk account | Contact Info: Name | Personal info: Name | App functionality, profile | Linked; optional profile field |
 | User id / Clerk and Cloud APIs | Identifiers: User ID | Personal info: User IDs | App functionality, account management | Linked; required |
-| WhatsApp manual-pairing phone number and linked-account identifiers / Cloud API, Baileys sidecar and WhatsApp (third party) | Contact Info: Phone Number; Identifiers: User ID | Personal info: Phone number, User IDs | App functionality, linked-device authentication and channel account identification | Linked to the Clawdi account; optional WhatsApp connection feature; phone input required for manual-code pairing; authenticated identifiers retained after pairing |
+| WhatsApp phone number and linked-account identifiers / Cloud API, Baileys sidecar and WhatsApp (third party) | Contact Info: Phone Number (collected); Identifiers: User ID | Personal info: Phone number (collected and shared with WhatsApp), User IDs | App functionality, linked-device authentication and channel account identification | Linked to the Clawdi account; phone number collection required for the optional WhatsApp channel; manual-code pairing requires phone input, and QR pairing also retains phone-bearing identifiers |
 | Purchase history / RevenueCat, StoreKit and Play Billing | Purchases: Purchase History | Financial info: Purchase history | App functionality, purchases, entitlement verification and restoration | Linked via RevenueCat appUserID and credits funding the hosted Wallet; required when purchasing |
 | Memories, skill content, Vault entries and user-authored session/channel configuration / Cloud APIs and connected agents | User Content: Other User Content | App activity: Other user-generated content | App functionality, content storage/sync and agent configuration | Linked; optional, collected when using the feature |
 | Skill archive uploads / Cloud skill library and connected agents | User Content: Other User Content | Files and docs: Files and docs | App functionality, skill import/sync | Linked; optional upload |
@@ -104,7 +108,7 @@ User-initiated sharing and connected-agent transfers still require the owner's
 review of recipients, retention/deletion and Google's sharing exceptions.
 
 WhatsApp pairing sends phone numbers independently of Clerk phone settings;
-see the verified data path and remaining phone-disclosure gate below.
+see the verified data path and remaining retention/deletion gates below.
 Session/channel **messages** have dedicated categories (Apple User Content:
 Emails or Text Messages; Play Messages: Other in-app messages), distinct from
 the configuration row above. Other User Content alone does not cover messages.
@@ -154,20 +158,21 @@ authenticated `creds.me` identity in its SQLite `auth_creds` state;
 and excludes the temporary pre-authentication `me` identity. Authenticated
 PN/LID identifiers are retained for QR pairing as well as manual-code pairing.
 
-Phone data therefore belongs in the submission inventory as Apple Contact Info:
-Phone Number (`NSPrivacyCollectedDataTypePhoneNumber`) / Play Personal info:
-Phone number, alongside the linked-account User ID categories. The owner must
-finalize the phone manifest/label declaration, retention and deletion periods
-for the Cloud identifiers, sidecar auth state, backups and WhatsApp's handling.
-For Play, assess the WhatsApp transfer and any applicable user-initiated-sharing
-exception; neither the onboarding-row omission nor Clerk settings establish
-"no collection" or "no sharing". Confirm any additional Clerk phone collection
-separately.
+Phone numbers are collected because stored authenticated PN JIDs can be mapped
+back to them. The iOS manifest declares `NSPrivacyCollectedDataTypePhoneNumber`
+with linked=true, tracking=false and App Functionality. App Store labels must
+declare Contact Info: Phone Number as collected and linked to the user; Play
+Data safety must declare Personal info: Phone number as collected and shared
+with WhatsApp for pairing. This collection is required for the optional WhatsApp
+channel and accompanies the linked-account User ID categories. The owner must
+confirm retention and deletion periods for the Cloud identifiers, sidecar auth
+state, backups and WhatsApp's handling. Confirm any additional Clerk phone
+collection separately.
 
 | Input | Status / requirement |
 | --- | --- |
 | Final privacy labels / Data safety answers | Owner confirms optionality, recipients, retention/deletion, processor sharing exceptions and enabled SDKs for the submitted binary; the manifest does not submit store forms |
-| Phone numbers and WhatsApp identifiers | Confirm the Phone Number manifest/Apple label and Play Phone number/User IDs answers for the verified WhatsApp pairing path, App Functionality purpose and third-party WhatsApp transfer; confirm Cloud/sidecar/backup/provider retention and deletion, linked PN/LID storage and sharing exceptions. Check Clerk phone fields as an additional source, not the only source. |
+| Phone numbers and WhatsApp identifiers | Phone Number is declared in the manifest and collected for App Store labels; Play declares phone number collected and shared with WhatsApp for pairing. Linked to the user, no tracking, App Functionality, required for the optional WhatsApp channel. Owner confirms Cloud/sidecar/backup/provider retention and deletion; check additional Clerk phone fields separately. |
 | Session/channel message collection | Owner confirms native/embedded-runtime message collection and the dedicated message categories above; configuration metadata alone is covered here |
 | Privacy policy URL | Owner must supply a public URL covering app and service processing, retention and deletion |
 | Support URL | Owner must supply a public support URL |
