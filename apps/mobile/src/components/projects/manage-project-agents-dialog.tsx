@@ -145,10 +145,6 @@ function ManageProjectAgents({
 						: ordered
 				}
 				keyExtractor={(agent) => agent.id}
-				// FlatList clips subviews by default on Android. The flattened rows put each Checkbox's
-				// `@expo/ui` Host straight into that clipping container, which attaches it mid-layout on
-				// first mount, so Compose never measures it and the checkbox stays 0×0.
-				removeClippedSubviews={false}
 				refreshing={allAgents.isRefetching || ownership.isRefetching}
 				onRefresh={() => {
 					void allAgents.refetch();

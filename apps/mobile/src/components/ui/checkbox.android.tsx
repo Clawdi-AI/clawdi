@@ -20,7 +20,8 @@ export function Checkbox({
 	]);
 	const color = (v: string | number | undefined) => (typeof v === "string" ? v : undefined);
 	return (
-		<AppView className={className}>
+		// Keep a native parent so list subview clipping never attaches the Host mid-layout (0×0 Host).
+		<AppView className={className} collapsable={false}>
 			<Host matchContents colorScheme={theme === "dark" ? "dark" : "light"}>
 				<NativeCheckbox
 					value={checked}
