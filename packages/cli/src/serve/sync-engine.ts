@@ -934,6 +934,7 @@ async function prepareSkillSync(
 					});
 				}
 				syncHealth.clear("push", "skills_scan");
+				syncHealth.clearAbsent("push", "skill_scan:", new Set());
 			} catch (error) {
 				if (isAuthFailure(error)) {
 					triggerAuthFailureAbort("skill_sync");
@@ -997,6 +998,7 @@ async function prepareSkillSync(
 				trustedLegacyRemoteKeys: new Set([invalidatedSkillKey]),
 			});
 			syncHealth.clear("push", scanResource);
+			syncHealth.clearAbsent("push", "skill_scan:", new Set());
 		} catch (error) {
 			if (isAuthFailure(error)) {
 				triggerAuthFailureAbort("skill_sync");
@@ -1071,6 +1073,7 @@ async function prepareSkillSync(
 								claims: lastPushedHash,
 								projectId: defaultProjectId,
 							});
+							syncHealth.clearAbsent("push", "skill_scan:", new Set());
 							const catchUp = await reconcileAgentSkillProjectionListing({
 								api,
 								opts,
@@ -2450,6 +2453,33 @@ export async function reconcileAgentSkillProjection(input: {
 		...exactClaimKeys,
 		...(input.trustedLegacyRemoteKeys ?? []),
 	]);
+	const enqueueAbsentSkill = (skillKey: string): void => {
+		if (
+			claims.has(skillKey) ||
+			exactClaimKeys.has(skillKey) ||
+			input.trustedLegacyRemoteKeys?.has(skillKey)
+		) {
+			const pendingDelete = queue
+				.all()
+				.some(
+					(item) =>
+						item.kind === "skill_delete" &&
+						item.skill_key === skillKey &&
+						item.agent_id === opts.environmentId &&
+						item.project_id === projectId,
+				);
+			if (!pendingDelete) {
+				queue.enqueue({
+					kind: "skill_delete",
+					skill_key: skillKey,
+					agent_id: opts.environmentId,
+					project_id: projectId,
+					enqueued_at: new Date().toISOString(),
+					attempts: 0,
+				});
+			}
+		}
+	};
 
 	for (const skillKey of filterValidSkillKeysForSync(allKeys).sort()) {
 		opts.abort?.throwIfAborted();
@@ -2464,35 +2494,20 @@ export async function reconcileAgentSkillProjection(input: {
 		}
 		const reserved = shouldIgnoreUserSkill(join(rootDir, skillKey), skillKey);
 		if (reserved || !localKeys.has(skillKey)) {
-			if (
-				claims.has(skillKey) ||
-				exactClaimKeys.has(skillKey) ||
-				input.trustedLegacyRemoteKeys?.has(skillKey)
-			) {
-				const pendingDelete = queue
-					.all()
-					.some(
-						(item) =>
-							item.kind === "skill_delete" &&
-							item.skill_key === skillKey &&
-							item.agent_id === opts.environmentId &&
-							item.project_id === projectId,
-					);
-				if (!pendingDelete) {
-					queue.enqueue({
-						kind: "skill_delete",
-						skill_key: skillKey,
-						agent_id: opts.environmentId,
-						project_id: projectId,
-						enqueued_at: new Date().toISOString(),
-						attempts: 0,
-					});
-				}
-			}
+			enqueueAbsentSkill(skillKey);
 			continue;
 		}
 
-		const hash = await computeSkillFolderHash(join(rootDir, skillKey), undefined, skillKey);
+		let hash: string;
+		try {
+			hash = await computeSkillFolderHash(join(rootDir, skillKey), undefined, skillKey);
+		} catch (error) {
+			if (!existsSync(join(rootDir, skillKey))) {
+				enqueueAbsentSkill(skillKey);
+				continue;
+			}
+			throw error;
+		}
 		const pendingOperation = queue
 			.all()
 			.find(

@@ -776,6 +776,88 @@ describe("Agent filesystem projection reconcile", () => {
 		});
 	});
 
+	it("continues reconciling when a claimed key vanishes between inventory and hash", async () => {
+		await withProjectionCase(async ({ root, skills, queue, reconcile }) => {
+			for (const key of ["a/one", "b/two", "c/three"]) {
+				const dir = join(root, key);
+				mkdirSync(dir, { recursive: true });
+				writeFileSync(join(dir, "SKILL.md"), `# ${key}\n`);
+			}
+			const originalListKeys = skills.listKeys;
+			const listKeys = spyOn(skills, "listKeys").mockImplementation(async (context) => {
+				const listed = await originalListKeys.call(skills, context);
+				rmSync(join(root, "b/two"), { recursive: true, force: true });
+				return listed;
+			});
+			try {
+				await reconcile(new Map([["b/two", "claimed-hash"]]));
+			} finally {
+				listKeys.mockRestore();
+			}
+			expect(
+				queue
+					.all()
+					.map((item) => ("skill_key" in item ? `${item.kind}:${item.skill_key}` : item.kind)),
+			).toEqual(["skill_push:a/one", "skill_delete:b/two", "skill_push:c/three"]);
+		});
+	});
+
+	it("does not enqueue a delete when an unclaimed key vanishes between inventory and hash", async () => {
+		await withProjectionCase(async ({ root, skills, queue, reconcile }) => {
+			for (const key of ["a/one", "b/two", "c/three"]) {
+				const dir = join(root, key);
+				mkdirSync(dir, { recursive: true });
+				writeFileSync(join(dir, "SKILL.md"), `# ${key}\n`);
+			}
+			const originalListKeys = skills.listKeys;
+			const listKeys = spyOn(skills, "listKeys").mockImplementation(async (context) => {
+				const listed = await originalListKeys.call(skills, context);
+				rmSync(join(root, "b/two"), { recursive: true, force: true });
+				return listed;
+			});
+			try {
+				await reconcile(new Map());
+			} finally {
+				listKeys.mockRestore();
+			}
+			expect(
+				queue
+					.all()
+					.map((item) => ("skill_key" in item ? `${item.kind}:${item.skill_key}` : item.kind)),
+			).toEqual(["skill_push:a/one", "skill_push:c/three"]);
+		});
+	});
+
+	it("still propagates escaping symlink errors for an existing skill directory", async () => {
+		await withProjectionCase(async ({ root, reconcile }) => {
+			const local = join(root, "a/one");
+			mkdirSync(local, { recursive: true });
+			writeFileSync(join(local, "SKILL.md"), "# one\n");
+			const outside = mkdtempSync(join(tmpdir(), "agent-skill-outside-"));
+			try {
+				writeFileSync(join(outside, "body.md"), "outside\n");
+				symlinkSync(join(outside, "body.md"), join(local, "outside.md"));
+				await expect(reconcile(new Map())).rejects.toThrow();
+			} finally {
+				rmSync(outside, { recursive: true, force: true });
+			}
+		});
+	});
+
+	it("clears stale per-key skill scan health after a successful full reconcile", () => {
+		const health = new SyncHealth();
+		health.set("push", "skill_scan:a", "stale a");
+		health.set("push", "skill_scan:b", "stale b");
+		health.set("push", "skills_scan", "skills scan");
+		health.set("push", "session:one", "session scan");
+
+		health.clearAbsent("push", "skill_scan:", new Set());
+
+		expect(health.project()).toBe("session scan");
+		health.clear("push", "session:one");
+		expect(health.project()).toBe("skills scan");
+	});
+
 	it("retains the delete queue item and claim on a dedicated 404, then releases both on 204", async () => {
 		await withProjectionCase(async ({ queue }) => {
 			recordSkillProjectionClaim({
