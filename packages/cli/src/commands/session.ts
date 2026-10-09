@@ -1,5 +1,4 @@
 import { homedir } from "node:os";
-import * as p from "@clack/prompts";
 import chalk from "chalk";
 import type { RawSession } from "../adapters/base";
 import { type AgentType, adapterRegistry } from "../adapters/registry";
@@ -22,7 +21,6 @@ import {
 	listRegisteredAgentTypes,
 	resolveTargetAgentTypes,
 } from "../lib/select-adapter";
-import { isInteractive } from "../lib/tty";
 
 interface SessionListOpts {
 	uploaded?: boolean;
@@ -314,6 +312,7 @@ export async function sessionSearch(query: string, opts: CloudSessionOpts = {}):
 
 export async function sessionRead(sessionId: string, opts: { json?: boolean } = {}): Promise<void> {
 	requireAuth();
+	requireUuid(sessionId, "Uploaded session ID");
 	const api = new ApiClient();
 	const detail: SessionDetail = unwrap(
 		await api.GET("/v1/sessions/{session_id}", {
@@ -360,6 +359,7 @@ interface SessionExtractOpts {
  */
 export async function sessionExtract(sessionId: string, opts: SessionExtractOpts = {}) {
 	requireAuth();
+	requireUuid(sessionId, "Uploaded session ID");
 	const api = new ApiClient();
 	try {
 		const result = unwrap(
@@ -442,6 +442,7 @@ export async function sessionRm(
 export async function sessionExport(sessionId: string, opts: { json?: boolean } = {}) {
 	if (opts.json) return sessionRead(sessionId, { json: true });
 	requireAuth();
+	requireUuid(sessionId, "Uploaded session ID");
 	const markdown = unwrap(
 		await new ApiClient().GET("/v1/sessions/{session_id}/export.md", {
 			params: { path: { session_id: sessionId } },
@@ -456,6 +457,7 @@ export async function sessionShareCreate(
 	opts: { through?: string; response?: string; json?: boolean; yes?: boolean } = {},
 ) {
 	requireAuth();
+	requireUuid(sessionId, "Uploaded session ID");
 	if (opts.through !== undefined && opts.response !== undefined) {
 		throw new Error("Use only one of --through or --response.");
 	}
@@ -470,9 +472,9 @@ export async function sessionShareCreate(
 		throw new Error("Message position must be a non-negative integer from `session read --json`.");
 	}
 	if (
-		!(await confirmSessionLink(
+		!(await confirmOrRequireYes(
 			`Publish a public ${scope} snapshot of session ${sanitizeMetadata(sessionId)}? Anyone with the link can read it.`,
-			opts.yes,
+			{ yes: opts.yes, action: "publish this session snapshot" },
 		))
 	)
 		return;
@@ -491,6 +493,7 @@ export async function sessionShareList(
 	opts: { page?: string | number; limit?: string | number; json?: boolean } = {},
 ) {
 	requireAuth();
+	if (sessionId) requireUuid(sessionId, "Uploaded session ID");
 	const page = opts.page === undefined ? 1 : parsePositiveInteger(opts.page);
 	const limit = opts.limit === undefined ? 25 : parsePositiveInteger(opts.limit);
 	if (limit > 100) {
@@ -519,42 +522,25 @@ export async function sessionShareList(
 
 export async function sessionShareRevoke(
 	shareId: string,
-	opts: { yes?: boolean; legacy?: boolean; json?: boolean } = {},
+	opts: { yes?: boolean; json?: boolean } = {},
 ) {
 	requireAuth();
+	requireUuid(shareId, "Share link ID");
 	if (
-		!(await confirmSessionLink(
-			`Revoke ${opts.legacy ? "legacy live" : "snapshot"} link ${sanitizeMetadata(shareId)}?`,
-			opts.yes,
-		))
+		!(await confirmOrRequireYes(`Revoke snapshot link ${sanitizeMetadata(shareId)}?`, {
+			yes: opts.yes,
+			action: "revoke this session snapshot",
+		}))
 	)
 		return;
 	unwrap(
 		await new ApiClient().DELETE("/v1/session-shares/{share_id}", {
-			params: { path: { share_id: shareId }, query: { kind: opts.legacy ? "live" : "snapshot" } },
+			params: { path: { share_id: shareId } },
 		}),
 	);
 	if (wantsJson(opts)) {
 		emit({ schemaVersion: "clawdi.sessionUnshare.v2", id: shareId, status: "revoked" });
 	} else {
-		console.log(
-			`Revoked ${opts.legacy ? "legacy live" : "snapshot"} link ${sanitizeMetadata(shareId)}.`,
-		);
+		console.log(`Revoked snapshot link ${sanitizeMetadata(shareId)}.`);
 	}
-}
-
-async function confirmSessionLink(message: string, yes?: boolean): Promise<boolean> {
-	if (yes) return true;
-	if (!isInteractive())
-		throw new Error("Pass --yes to confirm this session link change in non-interactive mode.");
-	const confirmed = await p.confirm({
-		output: process.stderr,
-		message,
-		initialValue: false,
-	});
-	if (p.isCancel(confirmed) || !confirmed) {
-		process.exitCode = 1;
-		return false;
-	}
-	return true;
 }

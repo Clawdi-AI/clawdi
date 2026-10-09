@@ -68,5 +68,5 @@ export async function vaultMaterialize(options: MaterializeOptions): Promise<voi
 		}
 		return { apiUrl, material };
 	});
-	emit({ status: "synced", ...result }, false);
+	emit({ schemaVersion: "clawdi.vaultMaterialize.v1", status: "synced", ...result }, false);
 }

@@ -14,10 +14,6 @@ export function registerRun(program: Command): void {
 		)
 		.option("--no-inherit-env", "Do not inherit the parent process environment")
 		.option(
-			"--all-vault-env",
-			"Legacy mode: inject every vault env value from the selected project",
-		)
-		.option(
 			"--allow-conflicts",
 			"Allow first-match wins for workspace and linked-project vault conflicts",
 		)
@@ -40,7 +36,6 @@ Examples:
   ✓ Resolved 2 clawdi references
 
   $ clawdi run --project @alice/engineering --env-file .env.clawdi -- npm run dev
-  $ clawdi run --all-vault-env -- npm run dev
   $ clawdi run --no-project-folder -- python main.py
 
 Scope resolution:

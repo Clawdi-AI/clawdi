@@ -82,7 +82,7 @@ export async function projectCreateCommand(
 
 	const project = await readJson<ProjectRow>(r, "create project");
 	if (opts.json) {
-		emit({ status: "created", project });
+		emit({ schemaVersion: "clawdi.projectCreate.v1", status: "created", project });
 		return;
 	}
 

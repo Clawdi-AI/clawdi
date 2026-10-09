@@ -19,7 +19,7 @@ import { allAdapterEntries } from "../adapters/registry";
 import { ApiClient, ApiError, readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
-import { isUuid } from "../lib/cli-options";
+import { isUuid, requireUuid } from "../lib/cli-options";
 import { commandResult, emit, message } from "../lib/command-output";
 import { getAuth, getConfig } from "../lib/config";
 import { confirmOrRequireYes } from "../lib/prompts";
@@ -214,6 +214,7 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 
 	if (opts.json) {
 		emit({
+			schemaVersion: "clawdi.inboxList.v1",
 			invitations: items,
 			local_share_tokens: localShares.map(safeLocalShare),
 		});
@@ -336,14 +337,7 @@ export async function inboxAcceptCommand(
 
 export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promise<void> {
 	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		console.error(
-			chalk.red("Not signed in. Run `clawdi auth login`, then run this join command again."),
-		);
-		process.exitCode = 1;
-		return;
-	}
+	requireAuth();
 
 	const ticket = localPendingShares().find((entry) => entry.project_id === projectId);
 	if (!ticket) {
@@ -400,6 +394,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 		await removeToken(ticket.project_id, ticket.token);
 		if (opts.json) {
 			emit({
+				schemaVersion: "clawdi.inboxJoin.v1",
 				status: "unavailable",
 				project_id: ticket.project_id,
 				local_ticket_removed: true,
@@ -420,6 +415,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 			await removeToken(ticket.project_id, ticket.token);
 			if (opts.json) {
 				emit({
+					schemaVersion: "clawdi.inboxJoin.v1",
 					status: "already_owner",
 					project_id: ticket.project_id,
 					local_ticket_removed: true,
@@ -463,6 +459,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 	await removeToken(ticket.project_id, ticket.token);
 	if (opts.json) {
 		emit({
+			schemaVersion: "clawdi.inboxJoin.v1",
 			status: "joined",
 			...body,
 			local_ticket_removed: true,
@@ -483,25 +480,32 @@ export async function inboxDeclineCommand(
 ): Promise<void> {
 	const { apiUrl } = getConfig();
 	requireAuth();
+	const validatedInvitationId = requireUuid(invitationId, "Invitation ID");
 	if (
 		!(await confirmOrRequireYes(`Decline invitation ${invitationId}?`, {
 			yes: opts.yes,
 			action: "decline this invitation",
 		}))
 	) {
-		commandResult(opts.json, "clawdi.inboxDecline.v1", { id: invitationId, status: "cancelled" });
+		commandResult(opts.json, "clawdi.inboxDecline.v1", {
+			id: validatedInvitationId,
+			status: "cancelled",
+		});
 		return;
 	}
 	const accessToken = await getClawdiAccessToken(apiUrl);
 	const r = await new ApiClient({ baseUrl: apiUrl, authToken: accessToken }).request(
-		`/v1/me/invitations/${invitationId}/decline`,
+		`/v1/me/invitations/${encodeURIComponent(validatedInvitationId)}/decline`,
 		{
 			method: "POST",
 		},
 	);
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	message(opts.json, `${chalk.green("✓")} Invitation declined.`);
-	commandResult(opts.json, "clawdi.inboxDecline.v1", { id: invitationId, status: "declined" });
+	commandResult(opts.json, "clawdi.inboxDecline.v1", {
+		id: validatedInvitationId,
+		status: "declined",
+	});
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -599,6 +603,7 @@ async function acceptAnonymousUrl(
 	if (existing) {
 		if (opts.json) {
 			emit({
+				schemaVersion: "clawdi.inboxAccept.v1",
 				status: "already_redeemed",
 				membership_changed: false,
 				local_share_token: safeLocalShare(existing),
@@ -616,7 +621,7 @@ async function acceptAnonymousUrl(
 	}
 
 	const r = await new ApiClient({ baseUrl: apiOrigin, requireAuth: false }).request(
-		`/v1/share/${token}/redeem`,
+		`/v1/share/${encodeURIComponent(token)}/redeem`,
 		{
 			method: "POST",
 			headers: { "Idempotency-Key": redeemIdempotencyKey(token) },
@@ -643,6 +648,7 @@ async function acceptAnonymousUrl(
 	await addToken(record);
 	if (opts.json) {
 		emit({
+			schemaVersion: "clawdi.inboxAccept.v1",
 			status: "redeemed",
 			membership_changed: false,
 			share: body,
@@ -702,7 +708,7 @@ async function acceptUrl(
 	const reqBody = await buildAcceptRequestBody(opts);
 
 	const r = await new ApiClient({ baseUrl: apiOrigin, authToken: bearer }).request(
-		`/v1/share/${token}/upgrade`,
+		`/v1/share/${encodeURIComponent(token)}/upgrade`,
 		{
 			method: "POST",
 			headers: {
@@ -719,6 +725,7 @@ async function acceptUrl(
 			if (localTicket) await removeToken(localTicket.project_id, localTicket.token);
 			if (opts.json) {
 				emit({
+					schemaVersion: "clawdi.inboxJoin.v1",
 					status: "already_owner",
 					local_ticket_removed: Boolean(localTicket),
 				});
@@ -752,6 +759,7 @@ async function acceptUrl(
 	if (localTicket) await removeToken(localTicket.project_id, localTicket.token);
 	if (opts.json) {
 		emit({
+			schemaVersion: "clawdi.inboxJoin.v1",
 			status: "joined",
 			...body,
 			local_ticket_removed: Boolean(localTicket),
@@ -769,9 +777,10 @@ async function acceptInvitation(
 	opts: AcceptOpts,
 ): Promise<void> {
 	const reqBody = await buildAcceptRequestBody(opts);
+	const validatedInvitationId = requireUuid(invitationId, "Invitation ID");
 
 	const r = await new ApiClient({ baseUrl: apiUrl, authToken: bearer }).request(
-		`/v1/me/invitations/${invitationId}/accept`,
+		`/v1/me/invitations/${encodeURIComponent(validatedInvitationId)}/accept`,
 		{
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -789,6 +798,7 @@ async function acceptInvitation(
 	const body = await readJson<InvitationAcceptResponse>(r, "accept project invitation");
 	if (opts.json) {
 		emit({
+			schemaVersion: "clawdi.inboxAccept.v1",
 			status: "joined",
 			...body,
 			next_command: `clawdi pull --project ${body.project_id}`,

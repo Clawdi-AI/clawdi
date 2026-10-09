@@ -158,15 +158,16 @@ describe("Cloud bearer origin binding", () => {
 			requests += 1;
 			return Response.json({});
 		};
-		await expect(new ApiClient().GET("/v1/auth/me")).rejects.toThrow("predates endpoint binding");
+		await expect(new ApiClient().GET("/v1/auth/me")).rejects.toThrow("clawdi auth login");
 		expect(requests).toBe(0);
 		expect(getStoredAuth()?.endpointBinding).toBeUndefined();
 	});
 
-	test("preserves old API keys only at production Cloud and supports explicit custom binding", async () => {
+	test("requires endpoint binding for API keys, including production Cloud", async () => {
 		setAuth({ apiKey: "legacy-production-secret" });
-		expect(await getClawdiAccessToken(PRODUCTION_CLOUD_ORIGIN)).toBe("legacy-production-secret");
-		await expect(getClawdiAccessToken(CLOUD_ORIGIN)).rejects.toThrow("re-import it");
+		await expect(getClawdiAccessToken(PRODUCTION_CLOUD_ORIGIN)).rejects.toThrow(
+			"clawdi auth login",
+		);
 
 		setAuth({
 			apiKey: "legacy-custom-secret",
@@ -179,10 +180,10 @@ describe("Cloud bearer origin binding", () => {
 
 	test("requires an explicit custom origin for environment credentials", async () => {
 		process.env.CLAWDI_AUTH_TOKEN = "environment-secret";
-		expect(await getClawdiAccessToken(PRODUCTION_CLOUD_ORIGIN)).toBe("environment-secret");
-		await expect(getClawdiAccessToken(CLOUD_ORIGIN)).rejects.toThrow(
-			"CLAWDI_AUTH_TOKEN is not bound",
+		await expect(getClawdiAccessToken(PRODUCTION_CLOUD_ORIGIN)).rejects.toThrow(
+			"clawdi auth login",
 		);
+		await expect(getClawdiAccessToken(CLOUD_ORIGIN)).rejects.toThrow("clawdi auth login");
 		process.env.CLAWDI_AUTH_TOKEN_ORIGIN = "https://CLOUD.Example.Test:443/";
 		expect(await getClawdiAccessToken(CLOUD_ORIGIN)).toBe("environment-secret");
 		await expect(getClawdiAccessToken("https://attacker.example.test")).rejects.toThrow(

@@ -43,7 +43,7 @@ export async function projectInviteCommand(
 
 	const projectId = await resolveProjectId(apiUrl, apiKey, projectArg);
 	const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
-		`/v1/projects/${projectId}/invitations`,
+		`/v1/projects/${encodeURIComponent(projectId)}/invitations`,
 		{
 			method: "POST",
 			headers: {

@@ -88,7 +88,7 @@ export async function vaultResolveCommand(
 
 	if (!r.ok) {
 		if (opts.json) {
-			emit(body);
+			console.error(chalk.red(`vault resolve failed (${r.status}).`));
 		} else if (r.status === 404) {
 			if (isVaultProjectNotFoundBody(body)) {
 				console.error(chalk.red(VAULT_PROJECT_ACCESS_ERROR));
@@ -122,7 +122,7 @@ export async function vaultResolveCommand(
 	}
 
 	if (opts.json) {
-		emit(body);
+		emit({ schemaVersion: "clawdi.vaultResolve.v1", ...(body as VaultResolveHit) });
 		return;
 	}
 

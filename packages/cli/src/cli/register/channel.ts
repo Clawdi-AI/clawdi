@@ -5,7 +5,6 @@ import { collectValues } from "../option-values.js";
 export function registerChannel(program: Command): void {
 	const channelCmd = program
 		.command("channel")
-		.alias("bot")
 		.description("Manage channel bots and pair external chats to agents");
 
 	channelCmd

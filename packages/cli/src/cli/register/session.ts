@@ -105,7 +105,7 @@ Examples:
 		});
 	sessionCmd
 		.command("shares [session-id]")
-		.description("List active snapshot and legacy links")
+		.description("List active snapshot links")
 		.option("--page <n>", "Page number", parsePositiveInteger, 1)
 		.option("--limit <n>", "Page size (1-100)", parsePositiveInteger, 25)
 		.option("--json", "Output as JSON")
@@ -119,9 +119,8 @@ Examples:
 		});
 	sessionCmd
 		.command("unshare <share-id>")
-		.option("--legacy", "Revoke a legacy live link (kind=live in session shares)")
 		.option("-y, --yes", "Confirm revocation without prompting")
-		.description("Revoke the exact snapshot or legacy link ID from session shares")
+		.description("Revoke the exact snapshot link ID from session shares")
 		.option("--json", "Output as JSON")
 		.action(async (id, opts) => {
 			const { sessionShareRevoke } = await import("../../commands/session.js");

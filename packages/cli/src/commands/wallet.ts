@@ -93,6 +93,7 @@ export type WalletStatusDependencies = {
 	client?: WalletStatusGateway;
 	interactive?: boolean;
 	writeStdout?: (value: string) => void;
+	writeStderr?: (value: string) => void;
 };
 
 export class WalletStatusError extends Error {
@@ -202,7 +203,7 @@ export async function runWalletStatusCommand(
 			emit(
 				{ schemaVersion: "clawdi.walletStatus.v2", status: "error", error: safe },
 				true,
-				dependencies.writeStdout ?? console.log,
+				dependencies.writeStderr ?? console.error,
 			);
 			process.exitCode = authorizationRequired ? 4 : 1;
 			return;

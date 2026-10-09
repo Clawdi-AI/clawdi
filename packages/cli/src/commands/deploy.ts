@@ -1425,7 +1425,7 @@ export async function deployCommand(
 							error: safe,
 						},
 				true,
-				writeStdout,
+				writeStderr,
 			);
 			process.exitCode = authorizationRequired ? 4 : 1;
 			return;

@@ -46,6 +46,7 @@ import {
 	verifyAndPersistClerkOAuthLogin,
 } from "../lib/clerk-oauth";
 import { getAuth, getClawdiDir, getConfig, getPendingAuth, isLoggedIn } from "../lib/config";
+import { requireAuth } from "../lib/require-auth";
 import { adapterForType, getEnvIdByAgent, listRegisteredAgentTypes } from "../lib/select-adapter";
 import { getCliVersion } from "../lib/version";
 import { evaluateHostPolicyForCommand } from "../runtime/host-policy";
@@ -324,10 +325,7 @@ type ServeInstallOpts = Record<string, unknown>;
 export async function serveInstall(opts: ServeInstallOpts): Promise<void> {
 	rejectUnsupportedOpts("install", opts as Record<string, unknown>, INSTALL_ALLOWED);
 	const rpcListen = resolveRpcListenConfig(opts as RpcListenOpts);
-	if (!isLoggedIn()) {
-		console.error("Not signed in. Run `clawdi auth login` first — the daemon needs an api key.");
-		process.exit(1);
-	}
+	requireAuth();
 	const registered = listRegisteredAgentTypes();
 	if (registered.length === 0) {
 		console.error("No agents registered. Run `clawdi setup` first.");
@@ -661,7 +659,7 @@ export async function serveRpc(method: string, opts: ServeRpcOpts): Promise<void
 	);
 	const rpcTarget = resolveRpcClientConfig(opts);
 	const result = await callControlRpc(normalizedMethod, {}, rpcTarget);
-	emit(result);
+	emit({ schemaVersion: "clawdi.daemonRpc.v1", method: normalizedMethod, result });
 }
 
 function normalizeRpcMethod(method: string): string {

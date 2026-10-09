@@ -1,5 +1,5 @@
 import chalk from "chalk";
-import { parsePositiveInteger } from "../lib/cli-options";
+import { parsePositiveInteger, requireUuid } from "../lib/cli-options";
 import { commandResult, emit, message } from "../lib/command-output";
 import { authedJson, projectAlias, requireProjectAuth } from "../lib/project-command-utils";
 import { listProjects, type ProjectBrief, resolveProjectId } from "../lib/project-resolver";
@@ -27,6 +27,7 @@ export async function agentProjectsListCommand(
 	agentId: string,
 	opts: { json?: boolean } = {},
 ): Promise<void> {
+	requireUuid(agentId, "Agent ID");
 	const { apiUrl, apiKey } = await requireProjectAuth();
 	const rows = await authedJson<BindingRow[]>(
 		apiUrl,
@@ -39,6 +40,7 @@ export async function agentProjectsListCommand(
 	}
 	if (opts.json) {
 		emit({
+			schemaVersion: "clawdi.agentProjectsList.v1",
 			agent_id: agentId,
 			bindings: rows.map((row) => ({
 				...row,
@@ -85,6 +87,7 @@ export async function agentProjectsAddContextCommand(
 	agentId: string,
 	opts: { project: string; order?: string | number; json?: boolean },
 ): Promise<void> {
+	requireUuid(agentId, "Agent ID");
 	const { apiUrl, apiKey } = await requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
 	let priority: number | undefined;
@@ -110,6 +113,7 @@ export async function agentProjectsRemoveContextCommand(
 	agentId: string,
 	opts: { project: string; yes?: boolean; json?: boolean },
 ): Promise<void> {
+	requireUuid(agentId, "Agent ID");
 	const { apiUrl, apiKey } = await requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
 	const rows = await authedJson<BindingRow[]>(
@@ -163,6 +167,7 @@ export async function agentProjectsReorderCommand(
 	agentId: string,
 	opts: { item?: string[]; json?: boolean },
 ): Promise<void> {
+	requireUuid(agentId, "Agent ID");
 	const { apiUrl, apiKey } = await requireProjectAuth();
 	const itemError = "--item must use <id>:<order> with order >= 1.";
 	const items = (opts.item ?? []).map((raw) => {
@@ -172,7 +177,7 @@ export async function agentProjectsReorderCommand(
 		}
 		const [bindingId, priorityRaw] = parts;
 		const priority = parseOrder(priorityRaw, itemError);
-		return { binding_id: bindingId, priority };
+		return { binding_id: requireUuid(bindingId, "Binding ID"), priority };
 	});
 	if (items.length === 0) {
 		throw new Error("Pass at least one --item <id>:<order>.");

@@ -134,45 +134,21 @@ describe("owner project sharing commands", () => {
 		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);
 	});
 
-	it("revokes a share link by unique prefix", async () => {
+	it("revokes a share link by its complete UUID", async () => {
 		const { captured, restore } = mockFetch([
 			{ method: "GET", path: /^\/v1\/projects$/, response: () => jsonResponse(projects) },
 			{
-				method: "GET",
-				path: "/v1/projects/project-owned/share-links",
-				response: () =>
-					jsonResponse([
-						{
-							id: "link-aaaaaaaa",
-							prefix: "abc123",
-							label: null,
-							created_at: "2026-05-15T10:00:00Z",
-							expires_at: null,
-							revoked_at: null,
-							redeem_count: 1,
-							last_redeemed_at: "2026-05-15T11:00:00Z",
-						},
-						{
-							id: "link-bbbbbbbb",
-							prefix: "xyz987",
-							label: "partner",
-							created_at: "2026-05-15T12:00:00Z",
-							expires_at: null,
-							revoked_at: null,
-							redeem_count: 0,
-							last_redeemed_at: null,
-						},
-					]),
-			},
-			{
 				method: "DELETE",
-				path: "/v1/projects/project-owned/share-links/link-aaaaaaaa",
+				path: "/v1/projects/project-owned/share-links/00000000-0000-4000-8000-0000000000a2",
 				response: () => jsonResponse({ status: "revoked" }),
 			},
 		]);
 		const consoleCapture = captureConsole();
 		try {
-			await projectShareLinksCommand("engineering", { revoke: "abc", yes: true });
+			await projectShareLinksCommand("engineering", {
+				revoke: "00000000-0000-4000-8000-0000000000a2",
+				yes: true,
+			});
 		} finally {
 			consoleCapture.restore();
 			restore();
@@ -180,8 +156,7 @@ describe("owner project sharing commands", () => {
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
 			"GET /v1/projects",
-			"GET /v1/projects/project-owned/share-links",
-			"DELETE /v1/projects/project-owned/share-links/link-aaaaaaaa",
+			"DELETE /v1/projects/project-owned/share-links/00000000-0000-4000-8000-0000000000a2",
 		]);
 		expect(consoleCapture.lines.join("\n")).toContain("Share link revoked");
 	});
@@ -236,57 +211,8 @@ describe("owner project sharing commands", () => {
 		expect(out).toContain("client");
 		expect(out).toContain("2 accepts");
 		expect(out).toContain("revoked");
-		expect(out).toContain("clawdi project share-links engineering --revoke <prefix>");
+		expect(out).toContain("clawdi project share-links engineering --revoke <id>");
 		expect(out).not.toContain("tok_raw_secret");
-	});
-
-	it("rejects an ambiguous share link prefix before deleting", async () => {
-		const { captured, restore } = mockFetch([
-			{ method: "GET", path: /^\/v1\/projects$/, response: () => jsonResponse(projects) },
-			{
-				method: "GET",
-				path: "/v1/projects/project-owned/share-links",
-				response: () =>
-					jsonResponse([
-						{
-							id: "link-1",
-							prefix: "abc123",
-							label: null,
-							created_at: "2026-05-15T10:00:00Z",
-							expires_at: null,
-							revoked_at: null,
-							redeem_count: 0,
-							last_redeemed_at: null,
-						},
-						{
-							id: "link-2",
-							prefix: "abc999",
-							label: null,
-							created_at: "2026-05-15T10:00:00Z",
-							expires_at: null,
-							revoked_at: null,
-							redeem_count: 0,
-							last_redeemed_at: null,
-						},
-					]),
-			},
-		]);
-		const consoleCapture = captureConsole();
-		try {
-			await projectShareLinksCommand("engineering", { revoke: "abc", yes: true });
-		} finally {
-			consoleCapture.restore();
-			restore();
-		}
-
-		const exitCode = process.exitCode;
-		process.exitCode = 0;
-		expect(exitCode).toBe(1);
-		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			"GET /v1/projects",
-			"GET /v1/projects/project-owned/share-links",
-		]);
-		expect(consoleCapture.errors.join("\n")).toContain("matches 2 links");
 	});
 
 	it("sends an invitation to an existing user", async () => {
@@ -375,7 +301,7 @@ describe("owner project sharing commands", () => {
 				response: () =>
 					jsonResponse([
 						{
-							id: "invite-12345678",
+							id: "00000000-0000-4000-8000-0000000000a3",
 							project_id: "project-owned",
 							project_name: "Engineering",
 							project_kind: "workspace",
@@ -412,13 +338,16 @@ describe("owner project sharing commands", () => {
 			{ method: "GET", path: /^\/v1\/projects$/, response: () => jsonResponse(projects) },
 			{
 				method: "DELETE",
-				path: "/v1/projects/project-owned/invitations/invite-1",
+				path: "/v1/projects/project-owned/invitations/00000000-0000-4000-8000-0000000000a4",
 				response: () => jsonResponse({ status: "cancelled" }),
 			},
 		]);
 		const consoleCapture = captureConsole();
 		try {
-			await projectInvitesCommand("engineering", { cancel: "invite-1", yes: true });
+			await projectInvitesCommand("engineering", {
+				cancel: "00000000-0000-4000-8000-0000000000a4",
+				yes: true,
+			});
 		} finally {
 			consoleCapture.restore();
 			restore();
@@ -426,7 +355,7 @@ describe("owner project sharing commands", () => {
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
 			"GET /v1/projects",
-			"DELETE /v1/projects/project-owned/invitations/invite-1",
+			"DELETE /v1/projects/project-owned/invitations/00000000-0000-4000-8000-0000000000a4",
 		]);
 		expect(consoleCapture.lines.join("\n")).toContain("Invitation canceled");
 	});

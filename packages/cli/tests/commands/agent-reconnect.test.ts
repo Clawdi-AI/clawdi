@@ -78,7 +78,7 @@ describe("agent reconnect", () => {
 		]);
 		restoreFetch = mock.restore;
 
-		await agentReconnect(undefined, { desktopList: true });
+		await agentReconnect(undefined, { json: true });
 
 		expect(JSON.parse(output.join("\n"))).toEqual({
 			schemaVersion: "clawdi.agentReconnectCandidates.v1",
@@ -117,11 +117,11 @@ describe("agent reconnect", () => {
 		]);
 		restoreFetch = mock.restore;
 
-		await agentReconnect(agentId, { agent: "pi", daemon: false });
+		await expect(agentReconnect(agentId, { agent: "pi", daemon: false })).rejects.toThrow(
+			"Confirmation required to reconnect this agent",
+		);
 
 		expect(mock.captured.some((request) => request.method === "POST")).toBe(false);
-		expect(output.some((line) => line.includes("requires explicit confirmation"))).toBe(true);
-		expect(process.exitCode).toBe(1);
 	});
 
 	it("rebuilds the local binding around the current installation identity", async () => {

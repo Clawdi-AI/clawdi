@@ -31,7 +31,6 @@ Scope:
 
 	vaultCmd
 		.command("materialize")
-		.alias("pull")
 		.description("Bind one vault to a local dotenv file, or pull its saved binding")
 		.requiredOption(
 			"--out <absolute-path>",
@@ -142,7 +141,6 @@ Scope:
 
 	vaultCmd
 		.command("rm <key>")
-		.alias("delete")
 		.description("Delete a key from a vault")
 		.option(
 			"-p, --project <id-or-slug>",
@@ -155,7 +153,7 @@ Scope:
 		)
 		.addHelpText(
 			"after",
-			"\nExamples:\n  $ clawdi vault rm OPENAI_API_KEY\n  $ clawdi vault delete prod/stripe/SECRET_KEY --project engineering --yes\n  $ clawdi vault rm OPENAI_API_KEY --project engineering --global --yes",
+			"\nExamples:\n  $ clawdi vault rm OPENAI_API_KEY\n  $ clawdi vault rm prod/stripe/SECRET_KEY --project engineering --yes\n  $ clawdi vault rm OPENAI_API_KEY --project engineering --global --yes",
 		)
 		.option("--json", "Output as JSON")
 		.action(async (key, opts) => {

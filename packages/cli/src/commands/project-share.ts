@@ -53,7 +53,7 @@ export async function projectShareCommand(
 	// via resolveProjectId moments ago.
 	const projectSlug = (await listProjects(apiUrl, apiKey)).find((s) => s.id === projectId)?.slug;
 	const r = await new ApiClient({ baseUrl: apiUrl, authToken: apiKey }).request(
-		`/v1/projects/${projectId}/share-links`,
+		`/v1/projects/${encodeURIComponent(projectId)}/share-links`,
 		{
 			method: "POST",
 			headers: {
