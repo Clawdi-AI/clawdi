@@ -18,7 +18,7 @@ import {
 import {
 	skillFormCopy as copy,
 	createSkillDescription,
-	formatResourceCount,
+	formatCount,
 	identityFor,
 	isProjectOwner,
 	ownedProjectKindText,
@@ -534,8 +534,12 @@ function SkillEditor({
 						<DetailMeta>
 							<Icon as={Tag} />
 							<Text>v{detail.data?.version}</Text>
-							<Icon as={FileText} />
-							<Text>{formatResourceCount(detail.data?.file_count, "file")}</Text>
+							{detail.data?.file_count != null ? (
+								<>
+									<Icon as={FileText} />
+									<Text>{formatCount(detail.data.file_count, "file")}</Text>
+								</>
+							) : null}
 						</DetailMeta>
 						{projectPanel}
 						<DetailPanel className={webView(skillDetailClasses.instructionPanel)}>
@@ -612,8 +616,12 @@ function SkillEditor({
 						<DetailMeta>
 							<Icon as={Tag} />
 							<Text>v{detail.data.version}</Text>
-							<Icon as={FileText} />
-							<Text>{formatResourceCount(detail.data.file_count, "file")}</Text>
+							{detail.data.file_count !== null ? (
+								<>
+									<Icon as={FileText} />
+									<Text>{formatCount(detail.data.file_count, "file")}</Text>
+								</>
+							) : null}
 						</DetailMeta>
 						{projectPanel}
 						<DetailPanel className={webView(skillDetailClasses.instructionPanel)}>
@@ -628,9 +636,11 @@ function SkillEditor({
 									{t("libraryPort.instructionDescription")}
 								</WebText>
 							</WebView>
-							<Badge variant="secondary">
-								<Text>{formatResourceCount(detail.data.file_count, "file")}</Text>
-							</Badge>
+							{detail.data.file_count !== null ? (
+								<Badge variant="secondary">
+									<Text>{formatCount(detail.data.file_count, "file")}</Text>
+								</Badge>
+							) : null}
 							{detail.data.content !== null ? (
 								<Markdown content={stripFrontmatter(detail.data.content)} />
 							) : (

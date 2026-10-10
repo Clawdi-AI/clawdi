@@ -13,7 +13,6 @@ import {
 	displayProjectName,
 	errorMessage,
 	formatCount,
-	formatResourceCount,
 	LIBRARY_COPY,
 	projectResourceHref,
 	relativeTime,
@@ -722,7 +721,9 @@ export function SkillDetailContent({
 											: "This instruction file belongs to the project. Linked agents use updates automatically."}
 									</p>
 								</div>
-								<Badge variant="secondary">{formatResourceCount(skill.file_count, "file")}</Badge>
+								{skill.file_count !== null ? (
+									<Badge variant="secondary">{formatCount(skill.file_count, "file")}</Badge>
+								) : null}
 							</div>
 							{skillBody ? (
 								<div className={skillDetailClasses.markdown}>
@@ -749,7 +750,9 @@ export function SkillDetailContent({
 											: "This project skill has no editable instruction body."}
 									</p>
 								</div>
-								<Badge variant="secondary">{formatResourceCount(skill.file_count, "file")}</Badge>
+								{skill.file_count !== null ? (
+									<Badge variant="secondary">{formatCount(skill.file_count, "file")}</Badge>
+								) : null}
 							</div>
 							<EmptyState
 								variant="inset"
