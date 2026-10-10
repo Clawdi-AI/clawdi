@@ -35,7 +35,10 @@ export function createSerializedAttemptStore<T>(
 		if (!isCurrent()) throw new Error(options.ownerError);
 		const saved = await read(key);
 		if (!isCurrent()) throw new Error(options.ownerError);
-		if (JSON.stringify(saved) !== JSON.stringify(expected))
+		// Compare canonical forms: an equal attempt may be built with another key order.
+		const canonical = expected === null ? null : options.parse(JSON.stringify(expected));
+		if (expected !== null && canonical === null) throw new Error("Invalid saved attempt");
+		if (JSON.stringify(saved) !== JSON.stringify(canonical))
 			throw new Error("Saved request changed");
 	}
 	return {

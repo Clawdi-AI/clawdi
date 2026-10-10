@@ -118,6 +118,7 @@ import {
 	storeAdmissionMessageKey,
 	storeAdmissionRecoveryAttempt,
 	validationTranslationKeys,
+	waitForDeployRequest,
 	walletCreationErrorCopy,
 	walletQuoteConfirmation,
 	walletRequestNeedsQuote,
@@ -457,7 +458,26 @@ function CreationForm() {
 	// The store purchase for the saved or reserved request exists; admission selects its store row.
 	const storeAdmission =
 		source === "store" && (attempt?.storeFunding === "funded" || resuming !== null);
-	const navigateDeployment = async (deploymentId: string, owns: () => boolean) => {
+	/** Back to a new draft, as after Start over. */
+	const resetForm = () => {
+		setAttempt(null);
+		setDraft(newDraft());
+		setSource(null);
+		setSubscriptionId(null);
+		setProviderChoice("__managed__");
+		setResolved(false);
+		setMessage("");
+	};
+	/**
+	 * Like Web's accepted-deployment handoff: hydrate the deployment, forget the settled
+	 * request, then replace the wizard with the Agent so no Retry is left behind. The
+	 * journal stays until the deployment is read, so Check status can finish the handoff.
+	 */
+	const navigateDeployment = async (
+		deploymentId: string,
+		owns: () => boolean,
+		journal?: CreationAttempt,
+	) => {
 		if (!hosted) throw new Error("Hosted API unavailable");
 		const deployment = await read((lease) => hosted.getDeployment(deploymentId, lease));
 		if (!current(owns)) return;
@@ -470,16 +490,36 @@ function CreationForm() {
 				deployment,
 			],
 		);
-		router.push(`/agents/${encodeURIComponent(deployment.agent_id)}`);
-	};
-	const navigateRequest = async (id: string, owns: () => boolean) => {
-		if (!hosted) throw new Error("Hosted API unavailable");
-		const status = await read((s) => hosted.getDeploymentByRequest(id, s));
+		void cache.invalidateQueries({ queryKey: accountQueryKey(scope, "cloud-agents") });
+		if (journal && storageKey) {
+			try {
+				await clearAttempt(storageKey, journal, () => current(owns));
+			} catch {
+				// Hosted already holds this request; reopening the wizard re-checks it.
+			}
+		}
 		if (!current(owns)) return;
-		const projection = projectHostedDeployRequest(status);
+		resetForm();
+		router.replace(`/agents/${encodeURIComponent(deployment.agent_id)}`);
+	};
+	/**
+	 * Reads this request's lineage. After an accepted send it follows it like Web; an
+	 * explicit Check status reads once so its 404 can release an unsent Wallet request.
+	 */
+	const navigateRequest = async (
+		id: string,
+		owns: () => boolean,
+		{ journal, follow = false }: { journal?: CreationAttempt; follow?: boolean } = {},
+	) => {
+		if (!hosted) throw new Error("Hosted API unavailable");
+		const readStatus = () => read((s) => hosted.getDeploymentByRequest(id, s));
+		const projection = follow
+			? await waitForDeployRequest(readStatus, () => current(owns))
+			: projectHostedDeployRequest(await readStatus());
+		if (!projection || !current(owns)) return;
 		if (projection.kind === "terminal" || projection.kind === "deployment") setResolved(true);
 		if (projection.kind === "deployment") {
-			await navigateDeployment(projection.deploymentId, owns);
+			await navigateDeployment(projection.deploymentId, owns, journal);
 		} else if (projection.kind === "operation" || projection.kind === "operation_name") {
 			const operationId = operationIdFromName(
 				projection.kind === "operation" ? projection.operation.name : projection.operationName,
@@ -489,7 +529,7 @@ function CreationForm() {
 				projection.kind === "operation"
 					? projection.operation
 					: await read((s) => hosted.getOperation(operationId, s));
-			if (current(owns)) await navigateDeployment(operation.metadata.deploymentId, owns);
+			if (current(owns)) await navigateDeployment(operation.metadata.deploymentId, owns, journal);
 		} else
 			setMessage(
 				t(
@@ -795,8 +835,12 @@ function CreationForm() {
 		if (!current(owns)) return;
 		if (accepted?.kind === "deployment") {
 			setResolved(true);
-			await navigateDeployment(accepted.deploymentId, owns);
-		} else await navigateRequest(accepted?.deployRequestId ?? saved.id, owns);
+			await navigateDeployment(accepted.deploymentId, owns, submitting);
+		} else
+			await navigateRequest(accepted?.deployRequestId ?? saved.id, owns, {
+				journal: submitting,
+				follow: true,
+			});
 	};
 	/** Read hosted funding for the exact saved request without starting recovery. */
 	const readStoreFunding = async (saved: CreationAttempt, owns: () => boolean) => {
@@ -1607,9 +1651,19 @@ function CreationForm() {
 							</WebView>
 						</SettingsSection>
 						{message ? <AppText>{message}</AppText> : null}
-						{attempt ? (
+						{attempt && action.busy && attempt.submission === "uncertain" ? (
+							<AppText accessibilityLiveRegion="polite">{t("creation.creating")}</AppText>
+						) : attempt ? (
 							<>
-								<AppText>{t("creation.saved")}</AppText>
+								{resolved ? null : (
+									<AppText>
+										{t(
+											attempt.submission === "uncertain"
+												? "creation.unconfirmed"
+												: "creation.saved",
+										)}
+									</AppText>
+								)}
 								{/* Only a sent admission can be recovered; store funding uses the footer Check status. */}
 								{creationAttemptControls(attempt, resolved).checkStatus ? (
 									<ActionButton
@@ -1618,7 +1672,7 @@ function CreationForm() {
 										onPress={() => {
 											void action.run(async (owns) => {
 												try {
-													await navigateRequest(attempt.id, owns);
+													await navigateRequest(attempt.id, owns, { journal: attempt });
 												} catch (error) {
 													const released = releaseWalletRequest(attempt, error);
 													if (!storageKey || !released) throw error;
@@ -1640,15 +1694,7 @@ function CreationForm() {
 											void action.run(async (owns) => {
 												if (!storageKey) return;
 												await clearAttempt(storageKey, attempt, () => current(owns));
-												if (current(owns)) {
-													setAttempt(null);
-													setDraft(newDraft());
-													setSource(null);
-													setSubscriptionId(null);
-													setProviderChoice("__managed__");
-													setResolved(false);
-													setMessage("");
-												}
+												if (current(owns)) resetForm();
 											});
 										}}
 									/>
@@ -1688,7 +1734,10 @@ function CreationForm() {
 						)}
 					</WebText>
 
-					{source === "new" && quoteSelection?.fundingSource === "stripe" && amount ? (
+					{/* A settled request charges and sends nothing more, so it shows neither. */}
+					{resolved ? null : source === "new" &&
+						quoteSelection?.fundingSource === "stripe" &&
+						amount ? (
 						<WebView recipe={styles.amount}>
 							<WebText recipe={styles.amountValue}>{amount.amount}</WebText>
 							{amount.caption ? (
@@ -1706,7 +1755,7 @@ function CreationForm() {
 							) : null}
 						</WebView>
 					) : null}
-					{source === "included" || source === "existing" ? (
+					{!resolved && (source === "included" || source === "existing") ? (
 						<WebText recipe={styles.amountValue}>
 							{source === "included"
 								? t("labels.free")
@@ -1716,9 +1765,9 @@ function CreationForm() {
 						</WebText>
 					) : null}
 
-					{source === "store" &&
-					(attempt?.storeFunding === "purchase_pending" ||
-						attempt?.storeFunding === "review_required") ? (
+					{resolved ? null : source === "store" &&
+						(attempt?.storeFunding === "purchase_pending" ||
+							attempt?.storeFunding === "review_required") ? (
 						<ActionButton
 							label={t(action.busy ? "storeCompute.checkingStatus" : "storeCompute.checkStatus")}
 							icon={<Icon as={Store} />}
@@ -1750,13 +1799,15 @@ function CreationForm() {
 					) : (
 						<ActionButton
 							label={
-								attempt && !walletRequestNeedsQuote(attempt)
-									? t("creation.retry")
-									: resuming
-										? t("creation.reservedAction")
-										: walletSelected
-											? deployFormCopy.payAndDeploy
-											: deployFormCopy.deploy
+								action.busy && attempt?.submission === "uncertain"
+									? deployFormCopy.deploying
+									: attempt && !walletRequestNeedsQuote(attempt)
+										? t("creation.retry")
+										: resuming
+											? t("creation.reservedAction")
+											: walletSelected
+												? deployFormCopy.payAndDeploy
+												: deployFormCopy.deploy
 							}
 							icon={<Icon as={Rocket} />}
 							variant="default"

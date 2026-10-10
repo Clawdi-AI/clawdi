@@ -2,9 +2,11 @@ import { computeSubscriptionRecoveryPresentation } from "@clawdi/shared/api";
 import { transactionsSectionClasses } from "@clawdi/shared/ui";
 import {
 	computeSubscriptionActionCopy as actionCopy,
+	billingTermLabel,
 	computeSubscriptionCancellationCopy,
 	computeSubscriptionCancellationSuccessCopy,
 	computeSubscriptionCancelTitle,
+	computeSubscriptionLifecycle,
 	computeSubscriptionPlanLabel,
 	formatShortDate,
 	pendingComputePlanSlug,
@@ -30,7 +32,10 @@ import { subscriptionPrice } from "@/hosted/billing/format";
 import { AddCreditsAction } from "@/hosted/billing/store/add-credits";
 import { StoreSubscriptionPanel } from "@/hosted/billing/store/compute-store";
 import { creditPrice } from "@/hosted/billing/store/store-presentation";
-import { ComputeSubscriptionCard } from "@/hosted/billing/subscription/compute-subscription-card";
+import {
+	ComputeSubscriptionCard,
+	useSubscriptionAgent,
+} from "@/hosted/billing/subscription/compute-subscription-card";
 import { useMobileApi } from "@/lib/api-provider";
 import { type Translator, useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
@@ -100,7 +105,10 @@ function SubscriptionRecovery({ item }: { item: Subscription }) {
 				<Text className="text-muted-foreground">{t("billing.cancellation")}</Text>
 			) : null}
 			{item.pending_plan_slug ? (
-				<BillingFact label={t("billing.pendingPlan")} value={item.pending_plan_slug} />
+				<BillingFact
+					label={t("billing.pendingPlan")}
+					value={computeSubscriptionPlanLabel(item.pending_plan_slug)}
+				/>
 			) : null}
 			{recoveryAction === "add_credits" ? (
 				<>
@@ -205,6 +213,7 @@ function SubscriptionActions({ item }: { item: Subscription }) {
 							title={computeSubscriptionCancelTitle(computeSubscriptionPlanLabel(item.plan_slug))}
 							description={cancellation.description}
 							confirmLabel={cancellation.confirmLabel}
+							cancelLabel={cancellation.dismissLabel}
 							destructive
 							onConfirm={() => execute(kind)}
 						>
@@ -260,14 +269,21 @@ export function SubscriptionDetails({
 	const t = useI18n();
 	// Store builds: credits instead of dollars, and no card management instructions.
 	const { cardBilling, creditUnits } = useStoreSurfaces();
+	const agent = useSubscriptionAgent(item);
 	if (item.funding_source === "store")
 		return <StoreSubscriptionDetails item={item} onDeployment={onDeployment} />;
 	return (
 		<AppView className={webView(transactionsSectionClasses.section)}>
 			<ComputeSubscriptionCard item={item} />
-			<BillingFact label={t("billing.agent")} value={item.agent_name ?? t("billing.unknown")} />
-			<BillingFact label={t("billing.plan")} value={item.plan_slug} />
-			<BillingFact label={t("billing.status")} value={item.status} />
+			<BillingFact
+				label={t("billing.agent")}
+				value={agent?.name ?? item.agent_name ?? t("billing.unknown")}
+			/>
+			<BillingFact label={t("billing.plan")} value={computeSubscriptionPlanLabel(item.plan_slug)} />
+			<BillingFact
+				label={t("billing.status")}
+				value={computeSubscriptionLifecycle(item).badgeLabel}
+			/>
 			<SubscriptionRecovery item={item} />
 			<BillingFact
 				label={t("billing.price")}
@@ -276,7 +292,7 @@ export function SubscriptionDetails({
 					t("billing.unknown")
 				}
 			/>
-			<BillingFact label={t("billing.term")} value={String(item.billing_term_months)} />
+			<BillingFact label={t("billing.term")} value={billingTermLabel(item.billing_term_months)} />
 			<BillingFact
 				label={t("billing.source")}
 				value={
@@ -321,10 +337,14 @@ function StoreSubscriptionDetails({
 	onDeployment: () => void;
 }) {
 	const t = useI18n();
+	const agent = useSubscriptionAgent(item);
 	return (
 		<AppView className={webView(transactionsSectionClasses.section)}>
 			<ComputeSubscriptionCard item={item} storeNotice={false} />
-			<BillingFact label={t("billing.agent")} value={item.agent_name ?? t("billing.unknown")} />
+			<BillingFact
+				label={t("billing.agent")}
+				value={agent?.name ?? item.agent_name ?? t("billing.unknown")}
+			/>
 			{item.pending_plan_slug ? (
 				<BillingFact
 					label={t("billing.pendingPlan")}

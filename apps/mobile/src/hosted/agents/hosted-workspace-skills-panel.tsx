@@ -153,8 +153,8 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 	const refresh = async () => {
 		await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
 	};
-	const submit = (attempt: SkillAttempt, fresh = false, guarded = false) =>
-		(guarded ? action.runOrThrow : action.run)(async (current) => {
+	const submit = (attempt: SkillAttempt, fresh = false) =>
+		action.run(async (current) => {
 			if (!client || !storageKey || storageError || attempt.status === "rejected") return;
 			const visible = capture();
 			const owns = () => current() && scope.isCurrent() && !scope.signal.aborted;
@@ -218,8 +218,10 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 			mutation,
 			status: "prepared",
 		};
+		// Failures close the confirmation: the journaled attempt's Retry/Discard controls drive
+		// recovery, since repeating a fresh save over that journal can only fail.
 		confirm(t("workspaceSkills.confirm"), t("workspaceSkills.warning"), () =>
-			submit(attempt, true, true),
+			submit(attempt, true),
 		);
 	};
 	let installRequest: WorkspaceSkillMutation | null = null;

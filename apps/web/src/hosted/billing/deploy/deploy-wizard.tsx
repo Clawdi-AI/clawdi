@@ -1671,7 +1671,7 @@ export function DeployWizard() {
 										<Rocket data-icon="inline-start" />
 									)}
 									{submitting
-										? "Deploying…"
+										? deployFormCopy.deploying
 										: acceptedDeploymentHydrationFailed
 											? "Retry"
 											: deployLabel}

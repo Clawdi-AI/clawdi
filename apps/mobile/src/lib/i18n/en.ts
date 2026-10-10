@@ -57,7 +57,7 @@ const billingEn = {
 	status: "Status",
 	plan: "Compute plan",
 	price: "Price per billing term",
-	term: "Billing term (months)",
+	term: "Billing term",
 	periodEnd: "Current period ends",
 	source: "Funding source",
 	stripe: "Stripe",
@@ -285,6 +285,9 @@ const creationEn = {
 	storeComputePending:
 		"Your subscription is still being prepared for this agent. Check status, then retry in a moment.",
 	saved: "This agent's setup is saved on this device. Check its status before retrying.",
+	creating: "Creating your agent…",
+	unconfirmed:
+		"We couldn't confirm this agent yet. Check its status before retrying — retrying sends the same request, so nothing is created or charged twice.",
 	wait: "Your agent is still being set up. Check again in a moment.",
 	failed: "This setup didn't finish. Start over to try again.",
 	error: "Something went wrong. Your setup is saved — check its status before retrying.",
@@ -293,7 +296,11 @@ const creationEn = {
 } as const;
 const runtimeEn = {
 	stoppedLabel: "Stopped",
-	title: "Agent runtime and settings",
+	controlsTitle: "Agent controls",
+	controlsDescription: "Restart, stop, or start this agent.",
+	dangerTitle: "Danger zone",
+	dangerDescription: "Permanently delete this agent.",
+	localeDescription: "Language and time zone used by this agent.",
 	confirm: "Apply Agent change?",
 	warning:
 		"Changes may interrupt active work and channel connections. Stopping compute does not cancel its subscription. Resetting dashboard access invalidates existing browser access.",

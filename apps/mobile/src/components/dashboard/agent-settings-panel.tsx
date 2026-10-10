@@ -38,6 +38,8 @@ import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { type CloudAgent, isNotFound, useCloudAgent } from "@/hooks/cloud-inventory";
 import { useAgentOwnership } from "@/hooks/use-agent-ownership";
+import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
+import { DeploymentDetailScreen } from "@/hosted/agents/hosted-agent-detail";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
@@ -97,6 +99,9 @@ function Settings({ id }: { id: string | undefined }) {
 		previous.current = serverName;
 	}, [serverName, agent.data]);
 	const ownership = useAgentOwnership();
+	// A Cloud Agent's runtime controls follow its profile, like Web's Settings tab.
+	const deployments = useDashboardAgents().inventory.data?.filter((item) => item.agent_id === id);
+	const deploymentId = deployments?.length === 1 ? deployments[0]?.resource.id : undefined;
 	const resolvedOwnership =
 		ownership.isError || ownership.isPending ? null : (ownership.data ?? null);
 	const canDisconnect = agentDisconnectEligibility({
@@ -313,6 +318,9 @@ function Settings({ id }: { id: string | undefined }) {
 								</WebView>
 							</WebView>
 						</SettingsSection>
+						{deploymentId ? (
+							<DeploymentDetailScreen deploymentId={deploymentId} management />
+						) : null}
 						{canDisconnect ? (
 							<SettingsSection
 								title={agentSurfaceCopy.disconnect}

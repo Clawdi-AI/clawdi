@@ -69,7 +69,8 @@ function NativeConfirmAction({
 						onPress: confirm,
 					},
 				],
-				{ cancelable: false },
+				// Android Back dismisses like the cancel button; a running confirm ignores it.
+				{ cancelable: true, onDismiss: cancel },
 			);
 		}),
 	);
