@@ -22,7 +22,7 @@ export function useSubscriptions(enabled = true) {
 			}, signal),
 		getNextPageParam: nextBillingCursor,
 		enabled: scope.isReady && Boolean(compute) && enabled,
-		retry: false,
+		...transientQueryRetry,
 	});
 }
 

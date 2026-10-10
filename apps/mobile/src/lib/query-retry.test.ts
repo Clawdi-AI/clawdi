@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ApiClientError, ApiClientNetworkError } from "@clawdi/shared/api";
-import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import { InfiniteQueryObserver, QueryClient, QueryObserver } from "@tanstack/react-query";
 import { transientQueryRetry } from "@/lib/query-retry";
 import { AccountScopeChangedError } from "@/platform/auth/account-scope";
 
@@ -53,6 +53,32 @@ describe("transientQueryRetry", () => {
 			expect(result.status).toBe("error");
 			expect(result.calls).toBe(1);
 		}
+	});
+
+	test("paginated reads such as Subscriptions ride out a busy reply too", async () => {
+		const client = new QueryClient();
+		let calls = 0;
+		const observer = new InfiniteQueryObserver(client, {
+			queryKey: ["subscriptions"],
+			initialPageParam: undefined as string | undefined,
+			queryFn: async () => {
+				if (calls++ === 0) throw busy();
+				return { items: ["sub"], next_cursor: null };
+			},
+			getNextPageParam: (page) => page.next_cursor ?? undefined,
+			...transientQueryRetry,
+		});
+		const result = await new Promise<{ status: string }>((resolve) => {
+			const unsubscribe = observer.subscribe((next) => {
+				if (next.status !== "pending") {
+					unsubscribe();
+					resolve(next);
+				}
+			});
+		});
+		client.clear();
+		expect(result.status).toBe("success");
+		expect(calls).toBe(2);
 	});
 
 	test("network failures get the longer Web budget", () => {
