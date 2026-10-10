@@ -117,15 +117,24 @@ def test_catalog_v2_rejects_duplicate_json_keys() -> None:
 async def test_catalog_fetch_resolves_head_then_uses_the_exact_commit() -> None:
     revision = "b" * 40
     requests: list[httpx.Request] = []
+    large_commit = {"sha": revision, "files": [{"patch": "x" * (256 * 1024 + 1)}]}
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if request.url.host == "api.github.com":
-            return httpx.Response(200, json={"sha": revision}, headers={"etag": '"head"'})
+            if request.headers.get("accept") == "application/vnd.github.sha":
+                return httpx.Response(
+                    200,
+                    text=revision,
+                    headers={"etag": '"head"', "content-type": "application/vnd.github.sha"},
+                )
+            return httpx.Response(200, json=large_commit, headers={"etag": '"head"'})
         return httpx.Response(200, content=_catalog_bytes(), headers={"etag": '"catalog"'})
 
     claim = _SyncClaim(attempted_at=datetime.now(UTC), current_revision=None, head_etag=None)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), headers={"Accept": "application/vnd.github+json"}
+    ) as client:
         resolved, head_etag = await _resolve_github_head(client, claim)
         document, catalog_etag = await _fetch_catalog_document(client, resolved)
 
@@ -133,9 +142,101 @@ async def test_catalog_fetch_resolves_head_then_uses_the_exact_commit() -> None:
     assert head_etag == '"head"'
     assert catalog_etag == '"catalog"'
     assert document.plugins[0].name == "clawdi"
+    assert requests[0].url == httpx.URL("https://api.github.com/repos/Clawdi-AI/store/commits/main")
+    assert requests[0].headers["accept"] == "application/vnd.github.sha"
     assert requests[1].url == httpx.URL(
         f"https://raw.githubusercontent.com/Clawdi-AI/store/{revision}/v2/catalog.json"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        (b"", "head_revision_invalid"),
+        (b"b" * 39, "head_revision_invalid"),
+        (b"b" * 41, "head_revision_invalid"),
+        (b"B" * 40, "head_revision_invalid"),
+        (b"g" * 40, "head_revision_invalid"),
+        (json.dumps({"sha": "b" * 40}).encode(), "head_revision_invalid"),
+        (b"\xff" * 40, "head_response_invalid"),
+        ("é".encode() * 20, "head_response_invalid"),
+    ],
+    ids=["empty", "short", "long", "uppercase", "non-hex", "json", "non-utf8", "non-ascii"],
+)
+async def test_catalog_head_rejects_malformed_sha(body: bytes, error: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["accept"] == "application/vnd.github.sha"
+        return httpx.Response(200, content=body)
+
+    claim = _SyncClaim(attempted_at=datetime.now(UTC), current_revision=None, head_etag=None)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(PluginCatalogSyncError, match=f"^{error}$"):
+            await _resolve_github_head(client, claim)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("declared_length", [True, False], ids=["declared", "streamed"])
+async def test_catalog_head_rejects_oversized_sha(declared_length: bool) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        body = b"b" * 40 + b" " * 89
+        headers = {"content-length": str(len(body))} if declared_length else {}
+        return httpx.Response(200, stream=httpx.ByteStream(body), headers=headers)
+
+    claim = _SyncClaim(attempted_at=datetime.now(UTC), current_revision=None, head_etag=None)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(PluginCatalogSyncError, match="^upstream_response_too_large$"):
+            await _resolve_github_head(client, claim)
+
+
+@pytest.mark.asyncio
+async def test_catalog_head_etag_is_reused_for_not_modified_response() -> None:
+    revision = "b" * 40
+    etag = '"head-sha"'
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.headers["accept"] == "application/vnd.github.sha"
+        if request.headers.get("if-none-match") == etag:
+            return httpx.Response(304)
+        return httpx.Response(200, text=revision, headers={"etag": etag})
+
+    claim = _SyncClaim(attempted_at=datetime.now(UTC), current_revision=None, head_etag=None)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        resolved, head_etag = await _resolve_github_head(client, claim)
+        cached_claim = _SyncClaim(
+            attempted_at=datetime.now(UTC), current_revision=resolved, head_etag=head_etag
+        )
+        cached_result = await _resolve_github_head(client, cached_claim)
+
+    assert (resolved, head_etag) == (revision, etag)
+    assert cached_result == (revision, etag)
+    assert "if-none-match" not in requests[0].headers
+    assert requests[1].headers["if-none-match"] == etag
+
+
+@pytest.mark.asyncio
+async def test_catalog_head_not_modified_requires_a_snapshot() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(304)
+
+    claim = _SyncClaim(attempted_at=datetime.now(UTC), current_revision=None, head_etag='"head"')
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(PluginCatalogSyncError, match="^head_not_modified_without_snapshot$"):
+            await _resolve_github_head(client, claim)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [301, 403, 404, 422, 429, 500, 503])
+async def test_catalog_head_preserves_http_error_codes(status: int) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"message": "upstream unavailable"})
+
+    claim = _SyncClaim(attempted_at=datetime.now(UTC), current_revision=None, head_etag=None)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(PluginCatalogSyncError, match=f"^head_http_{status}$"):
+            await _resolve_github_head(client, claim)
 
 
 @pytest.mark.asyncio
