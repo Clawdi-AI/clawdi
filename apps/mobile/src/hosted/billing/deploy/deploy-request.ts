@@ -7,6 +7,8 @@ import {
 	type HostedDeployComputePlanSlug,
 	type HostedDeployPlan,
 	type HostedDeployRequest,
+	type HostedDeployRequestProjection,
+	type HostedDeployRequestStatus,
 	type HostedDeploySubscriptionQuote,
 	type HostedDeploySubscriptionSelection,
 	type HostedDeployValidationIssue,
@@ -17,6 +19,7 @@ import {
 	isHostedDeployBillingTerm,
 	isHostedDeployComputePlan,
 	isHostedDeployRuntime,
+	projectHostedDeployRequest,
 	type StoreComputeSlot,
 	type StorePurchaseAttempt,
 	sameHostedSubscriptionQuoteTerms,
@@ -560,6 +563,58 @@ export function deploySubmissionFailure(error: unknown): DeploySubmissionFailure
 				? DEPLOY_SESSION_EXPIRED_RECOVERY
 				: deploySubmissionRecoveryCopy({ code: error.code }),
 	};
+}
+
+/** Web's `waitForDeploymentRequest` cadence for an accepted request's lineage. */
+export const DEPLOY_REQUEST_POLL_MS = 1_000;
+export const DEPLOY_REQUEST_WAIT_MS = 120_000;
+
+/** Like Web, a lagging or briefly unavailable status read is retried, not reported. */
+function isTransientDeployRequestRead(error: unknown): boolean {
+	return (
+		error instanceof ApiClientNetworkError ||
+		(error instanceof ApiClientError &&
+			(error.status >= 500 ||
+				error.status === 429 ||
+				error.status === 404 ||
+				error.status === 408 ||
+				error.status === 425))
+	);
+}
+
+/**
+ * Follows an accepted request until hosted links it to a deployment or ends it, like
+ * Web's `waitForDeploymentRequest`. Returns `wait` at the deadline and null once the
+ * caller no longer owns the screen; only reads, so it never repeats the admission.
+ */
+export async function waitForDeployRequest(
+	readStatus: () => Promise<HostedDeployRequestStatus>,
+	current: () => boolean,
+	{
+		intervalMs = DEPLOY_REQUEST_POLL_MS,
+		timeoutMs = DEPLOY_REQUEST_WAIT_MS,
+		now = Date.now,
+		sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+	}: {
+		intervalMs?: number;
+		timeoutMs?: number;
+		now?: () => number;
+		sleep?: (ms: number) => Promise<void>;
+	} = {},
+): Promise<HostedDeployRequestProjection | null> {
+	const deadline = now() + timeoutMs;
+	for (;;) {
+		if (!current()) return null;
+		try {
+			const projection = projectHostedDeployRequest(await readStatus());
+			if (projection.kind !== "wait") return projection;
+		} catch (error) {
+			if (!isTransientDeployRequestRead(error)) throw error;
+		}
+		const remaining = deadline - now();
+		if (remaining <= 0) return { kind: "wait" };
+		await sleep(Math.min(intervalMs, remaining));
+	}
 }
 
 /** Store admission failures preserve the purchase and direct recovery of the same request. */

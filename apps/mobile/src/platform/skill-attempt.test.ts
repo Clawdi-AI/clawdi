@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { ApiClientError } from "@clawdi/shared/api";
+import { ApiClientError, parseWorkspaceSkillGitHubInput } from "@clawdi/shared/api";
 import {
 	createSkillAttemptStore,
 	parseSkillAttempt,
@@ -61,4 +61,38 @@ test("Workspace Skill recovery preserves uncertain intent and rejects stale dest
 			}),
 		),
 	).toBeNull();
+});
+
+test("a GitHub install journaled in the panel's field order reaches its send", async () => {
+	const memory = new Map<string, string>();
+	const store = createSkillAttemptStore({
+		getItemAsync: async (key) => memory.get(key) ?? null,
+		setItemAsync: async (key, value) => {
+			memory.set(key, value);
+		},
+		deleteItemAsync: async (key) => {
+			memory.delete(key);
+		},
+	});
+	// Built like the install panel: version before key, unlike parseSkillAttempt's output.
+	const prepared: SkillAttempt = {
+		format: 1,
+		deploymentId: "dep",
+		version: "rv1",
+		key: "fixed-key",
+		mutation: {
+			action: "install",
+			request: parseWorkspaceSkillGitHubInput("anthropics/skills/skills/brand-guidelines"),
+		},
+		status: "prepared",
+	};
+	await store.saveAttempt("account-dep", prepared, () => true);
+	const sending: SkillAttempt = { ...prepared, status: "uncertain" };
+	await store.replaceAttempt("account-dep", prepared, sending, () => true);
+	expect(await store.readSavedAttempt("account-dep")).toEqual(sending);
+	await store.clearAttempt("account-dep", sending, () => true);
+	expect(await store.readSavedAttempt("account-dep")).toBeNull();
+	await expect(
+		store.clearAttempt("account-dep", { ...sending, key: "bad key" }, () => true),
+	).rejects.toThrow("Invalid saved attempt");
 });

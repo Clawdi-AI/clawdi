@@ -6,6 +6,7 @@ import { ActionButton } from "@/components/dashboard/controls";
 import { Text } from "@/components/ui/text";
 import { DeploymentControls } from "@/hosted/agents/deployment-controls";
 import { AddCreditsAction } from "@/hosted/billing/store/add-credits";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { useI18n } from "@/lib/i18n";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -73,12 +74,7 @@ export function StartComputeAction({
 		<ActionButton
 			label={action.label}
 			disabled={!action.enabled}
-			onPress={() =>
-				router.push({
-					pathname: "/agents/[id]/compute",
-					params: { id: deployment.agent_id ?? "" },
-				})
-			}
+			onPress={() => router.push(agentSectionHref(deployment.agent_id ?? "", "settings"))}
 		/>
 	);
 }

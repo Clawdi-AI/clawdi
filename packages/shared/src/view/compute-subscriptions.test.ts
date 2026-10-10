@@ -195,6 +195,7 @@ describe("compute subscription cancellation copy", () => {
 		).toEqual({
 			description: "The trial ends immediately and the agent stops. Your saved data is kept.",
 			confirmLabel: "End trial now",
+			dismissLabel: "Keep trial",
 		});
 		expect(
 			computeSubscriptionCancellationCopy({
@@ -206,6 +207,7 @@ describe("compute subscription cancellation copy", () => {
 			description:
 				"The subscription will stop renewing and remain active through Sep 12, 2026. The agent stops when the period ends. Your saved data is kept.",
 			confirmLabel: "Cancel at period end",
+			dismissLabel: "Keep subscription",
 		});
 		expect(
 			computeSubscriptionCancellationSuccessCopy({
@@ -243,6 +245,7 @@ describe("compute subscription cancellation copy", () => {
 			description:
 				"The subscription will stop renewing at the end of the current billing period. This cannot restore a deleted agent.",
 			confirmLabel: "Cancel at period end",
+			dismissLabel: "Keep subscription",
 		});
 		expect(
 			computeSubscriptionCancellationCopy({
@@ -253,6 +256,7 @@ describe("compute subscription cancellation copy", () => {
 		).toEqual({
 			description: "The trial ends immediately. This cannot restore a deleted agent.",
 			confirmLabel: "End trial now",
+			dismissLabel: "Keep trial",
 		});
 	});
 });

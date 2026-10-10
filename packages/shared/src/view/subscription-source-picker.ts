@@ -33,6 +33,7 @@ export const deployFormCopy = {
 	walletTitle: "Wallet balance",
 	walletDescription: "Paid upfront from your wallet balance. Renews from wallet.",
 	payAndDeploy: "Pay & deploy",
+	deploying: "Deploying…",
 	topUpWallet: "Top up wallet",
 	walletLoading: "Loading your wallet balance.",
 	walletRetry: "Retry loading your wallet balance above.",

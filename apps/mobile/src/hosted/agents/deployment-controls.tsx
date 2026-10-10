@@ -28,9 +28,10 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ActionButton, ChoiceSelect as NativePicker } from "@/components/dashboard/controls";
 import { EntityAddCard } from "@/components/entity-card";
+import { SettingsSection } from "@/components/settings-section";
 import { RichConfirmAction } from "@/components/ui/confirm-action";
 import { Input as AppTextInput } from "@/components/ui/input";
 import { Text as AppText } from "@/components/ui/text";
@@ -59,9 +60,10 @@ export function DeploymentControls({
 	transitioning,
 	onAccepted,
 	onAbsent,
-	section = "all",
+	section = "settings",
 	onBusyChange,
 	startLabel,
+	statusDetails,
 }: {
 	deployment: DeploymentRead | undefined;
 	deploymentId: string;
@@ -69,9 +71,12 @@ export function DeploymentControls({
 	transitioning: boolean;
 	onAccepted: (operation: HostedDeployOperation) => Promise<void>;
 	onAbsent: () => Promise<void>;
-	section?: "all" | "ai" | "startup";
+	/** `settings` groups Web's Settings tab: language, agent controls, then danger zone. */
+	section?: "settings" | "ai" | "startup";
 	onBusyChange?: (busy: boolean) => void;
 	startLabel?: string;
+	/** Status shown at the top of Agent controls, like Web's ComputeStatusDetails. */
+	statusDetails?: ReactNode;
 }) {
 	const t = useI18n();
 	const scope = useAccountScope();
@@ -251,69 +256,13 @@ export function DeploymentControls({
 		);
 	};
 	const stable = state === "running" || state === "stopped" || state === "failed";
-	return (
-		<AppView className="gap-3">
-			{nativeConfirmation.dialog}
-			{section === "all" && deployment ? (
-				<RichConfirmAction
-					open={deleteChoice !== null}
-					onOpenChange={(open) => {
-						if (!open) {
-							confirmation.current++;
-							setDeleteChoice(null);
-						}
-					}}
-					title={deleteTitle}
-					description={
-						<AppView className="gap-3">
-							<AppText>{t("runtime.deleteWarning")}</AppText>
-							<NativeSegments
-								value={deleteChoice?.choice ?? "cancel_subscription"}
-								disabled={action.busy}
-								options={[
-									{ value: "keep_subscription", label: t("runtime.deleteKeepChoice") },
-									{ value: "cancel_subscription", label: t("runtime.deleteCancelChoice") },
-								]}
-								onChange={(value) => {
-									if (value === "keep_subscription" || value === "cancel_subscription")
-										setDeleteChoice((current) => current && { ...current, choice: value });
-								}}
-							/>
-							<AppText>
-								{deleteChoice?.choice === "keep_subscription"
-									? periodEndLabel
-										? `${t("runtime.deleteKeepDescription")} ${t("runtime.deleteValidThrough", { date: periodEndLabel })}`
-										: t("runtime.deleteKeepDescription")
-									: computeSubscriptionCancellationCopy({
-											isTrial: subscription?.status === "trialing",
-											periodEndLabel,
-											hasRetainedDeployment: false,
-										}).description}
-							</AppText>
-						</AppView>
-					}
-					cancelLabel={t("account.cancel")}
-					confirmLabel={t(
-						deleteChoice?.choice === "keep_subscription"
-							? "runtime.deleteKeepConfirm"
-							: "runtime.deleteCancelConfirm",
-					)}
-					destructive
-					onConfirm={() => deleteChoice?.confirm(deleteChoice.choice)}
-				/>
-			) : null}
-			{section === "all" ? (
-				<>
-					<AppText accessibilityRole="header" className="text-xl font-semibold text-foreground">
-						{t("runtime.title")}
-					</AppText>
-					<AppText>{t("runtime.warning")}</AppText>
-				</>
-			) : null}
+	const controls = (
+		<>
+			{section === "settings" ? <AppText>{t("runtime.warning")}</AppText> : null}
 			{storageError ? (
 				<AppText accessibilityRole="alert">{t("runtime.storageError")}</AppText>
 			) : null}
-			{section === "all" || attempt || storageError ? (
+			{section === "settings" || attempt || storageError ? (
 				<ActionButton
 					label={t("runtime.reloadAttempt")}
 					disabled={action.busy}
@@ -367,73 +316,149 @@ export function DeploymentControls({
 					onPress={() => confirm({ action: "start" })}
 				/>
 			) : null}
-			{section === "all" && state === "stopped" && deployment?.start_action !== "start" ? (
+			{section === "settings" && state === "stopped" && deployment?.start_action !== "start" ? (
 				<AppText>{t("runtime.paymentRequired")}</AppText>
 			) : null}
-			{section === "all" && deploymentLifecycleAvailable("stop", state) ? (
+			{section === "settings" && deploymentLifecycleAvailable("stop", state) ? (
 				<ActionButton
 					label={t("runtime.stop")}
 					disabled={busy}
 					onPress={() => confirm({ action: "stop" })}
 				/>
 			) : null}
-			{section === "all" && deploymentLifecycleAvailable("restart", state) ? (
+			{section === "settings" && deploymentLifecycleAvailable("restart", state) ? (
 				<ActionButton
 					label={t("runtime.restart")}
 					disabled={busy}
 					onPress={() => confirm({ action: "restart" })}
 				/>
 			) : null}
-			{section === "all" && stable ? (
+			{section === "settings" && stable ? (
 				<ActionButton
 					label={t("runtime.resetAccess")}
 					disabled={busy}
 					onPress={() => confirm({ action: "reset_runtime_ui_access" })}
 				/>
 			) : null}
-			{section === "all" && deploymentLifecycleAvailable("delete", state) ? (
-				<ActionButton
-					label={t("runtime.deleteAgent")}
-					disabled={writeBlocked}
-					onPress={() =>
-						confirm({
-							action: "delete",
-							body: { subscription_choice: defaultChoice },
-						})
+		</>
+	);
+	return (
+		<AppView className="gap-3">
+			{nativeConfirmation.dialog}
+			{section === "settings" && deployment ? (
+				<RichConfirmAction
+					open={deleteChoice !== null}
+					onOpenChange={(open) => {
+						if (!open) {
+							confirmation.current++;
+							setDeleteChoice(null);
+						}
+					}}
+					title={deleteTitle}
+					description={
+						<AppView className="gap-3">
+							<AppText>{t("runtime.deleteWarning")}</AppText>
+							<NativeSegments
+								value={deleteChoice?.choice ?? "cancel_subscription"}
+								disabled={action.busy}
+								options={[
+									{ value: "keep_subscription", label: t("runtime.deleteKeepChoice") },
+									{ value: "cancel_subscription", label: t("runtime.deleteCancelChoice") },
+								]}
+								onChange={(value) => {
+									if (value === "keep_subscription" || value === "cancel_subscription")
+										setDeleteChoice((current) => current && { ...current, choice: value });
+								}}
+							/>
+							<AppText>
+								{deleteChoice?.choice === "keep_subscription"
+									? periodEndLabel
+										? `${t("runtime.deleteKeepDescription")} ${t("runtime.deleteValidThrough", { date: periodEndLabel })}`
+										: t("runtime.deleteKeepDescription")
+									: computeSubscriptionCancellationCopy({
+											isTrial: subscription?.status === "trialing",
+											periodEndLabel,
+											hasRetainedDeployment: false,
+										}).description}
+							</AppText>
+						</AppView>
 					}
+					cancelLabel={t("account.cancel")}
+					confirmLabel={t(
+						deleteChoice?.choice === "keep_subscription"
+							? "runtime.deleteKeepConfirm"
+							: "runtime.deleteCancelConfirm",
+					)}
+					destructive
+					onConfirm={() => deleteChoice?.confirm(deleteChoice.choice)}
 				/>
 			) : null}
-			{attempt?.mutation.action === "delete" ? (
-				<AppText accessibilityRole="alert">
-					{attempt.mutation.body.subscription_choice === "cancel_subscription" &&
-					fundingMode !== "included_basic"
-						? `${t("runtime.deleteWarning")} ${t("runtime.deleteCancelsSubscription")}`
-						: t("runtime.deleteWarning")}
-				</AppText>
-			) : null}
-			{deployment && section !== "startup" ? (
-				<>
-					{section === "all" ? (
-						<LocaleSettings
-							key={JSON.stringify([
-								deployment.resource.spec.runtime_configuration.language,
-								deployment.resource.spec.runtime_configuration.timezone,
-							])}
-							deployment={deployment}
-							disabled={busy || !stable}
-							apply={(body) => confirm({ action: "update", body })}
-						/>
-					) : null}
-					<ModelSettings
+			{section === "settings" && deployment ? (
+				<SettingsSection title={t("runtime.locale")} description={t("runtime.localeDescription")}>
+					<LocaleSettings
 						key={JSON.stringify([
-							deployment.resource.spec.runtime_configuration.providers,
-							deployment.resource.spec.runtime_configuration.primary_model,
+							deployment.resource.spec.runtime_configuration.language,
+							deployment.resource.spec.runtime_configuration.timezone,
 						])}
 						deployment={deployment}
 						disabled={busy || !stable}
 						apply={(body) => confirm({ action: "update", body })}
 					/>
-				</>
+				</SettingsSection>
+			) : null}
+			{section === "settings" ? (
+				<SettingsSection
+					title={t("runtime.controlsTitle")}
+					description={t("runtime.controlsDescription")}
+				>
+					<AppView className="gap-3">
+						{statusDetails}
+						{controls}
+					</AppView>
+				</SettingsSection>
+			) : (
+				controls
+			)}
+			{section === "settings" &&
+			(deploymentLifecycleAvailable("delete", state) || attempt?.mutation.action === "delete") ? (
+				<SettingsSection
+					title={t("runtime.dangerTitle")}
+					description={t("runtime.dangerDescription")}
+					destructive
+				>
+					{deploymentLifecycleAvailable("delete", state) ? (
+						<ActionButton
+							label={t("runtime.deleteAgent")}
+							variant="destructive"
+							disabled={writeBlocked}
+							onPress={() =>
+								confirm({
+									action: "delete",
+									body: { subscription_choice: defaultChoice },
+								})
+							}
+						/>
+					) : null}
+					{attempt?.mutation.action === "delete" ? (
+						<AppText accessibilityRole="alert">
+							{attempt.mutation.body.subscription_choice === "cancel_subscription" &&
+							fundingMode !== "included_basic"
+								? `${t("runtime.deleteWarning")} ${t("runtime.deleteCancelsSubscription")}`
+								: t("runtime.deleteWarning")}
+						</AppText>
+					) : null}
+				</SettingsSection>
+			) : null}
+			{deployment && section === "ai" ? (
+				<ModelSettings
+					key={JSON.stringify([
+						deployment.resource.spec.runtime_configuration.providers,
+						deployment.resource.spec.runtime_configuration.primary_model,
+					])}
+					deployment={deployment}
+					disabled={busy || !stable}
+					apply={(body) => confirm({ action: "update", body })}
+				/>
 			) : null}
 		</AppView>
 	);
@@ -457,7 +482,6 @@ function LocaleSettings({
 		(!timezone.trim() || isValidHostedDeployTimezone(timezone.trim()));
 	return (
 		<AppView className="gap-3">
-			<AppText accessibilityRole="header">{t("runtime.locale")}</AppText>
 			<NativePicker
 				value={language}
 				options={[

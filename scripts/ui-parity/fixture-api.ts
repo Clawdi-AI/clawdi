@@ -2553,6 +2553,26 @@ on("POST", "/v2/deployments/{deployment_id}/files/handoff", ({ params, request }
 		deployment_resource_version: deployment.resource.metadata.resourceVersion,
 	} satisfies DeploySchemas["V2HostedFilesHandoff"];
 });
+// GitHub Workspace Skill install: checks the request's ETag and records nothing.
+on("POST", "/v2/deployments/{deployment_id}/workspace-skills", async ({ params, request }) => {
+	const deployment = deployments.find((item) => item.resource.id === params.deployment_id);
+	if (!deployment) return notFound("Deployment not found");
+	const version = deployment.resource.metadata.resourceVersion;
+	if (request.headers.get("if-match") !== `"${version}"` || !request.headers.get("idempotency-key"))
+		return new Reply(412, { detail: "Workspace Skill request does not match the deployment" });
+	const body = await bodyObject(request);
+	if (typeof body.repo !== "string" || !body.repo.includes("/"))
+		return new Reply(400, { detail: "Invalid Workspace Skill source" });
+	const path = typeof body.path === "string" ? body.path : "";
+	return {
+		deployment_id: deployment.resource.id,
+		deployment_resource_version: version,
+		manifest_generation: 2,
+		skill_key: path.split("/").pop() || body.repo.split("/")[1] || "skill",
+		desired_state: "present",
+		status: "requested",
+	} satisfies DeploySchemas["V2WorkspaceSkillMutationResponse"];
+});
 for (const [path, resume] of [
 	["/v2/subscription/cancel", false],
 	["/v2/subscription/resume", true],

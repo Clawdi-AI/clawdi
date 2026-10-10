@@ -24,6 +24,15 @@ import { creditPrice } from "@/hosted/billing/store/store-presentation";
 import { useI18n } from "@/lib/i18n";
 import { useStoreSurfaces } from "@/platform/store/store-provider";
 
+/** The Agent tile a subscription funds; like Web, its current name wins over the billing row's. */
+export function useSubscriptionAgent(item: Subscription) {
+	const inventory = useDashboardAgents();
+	const deployment = inventory.inventory.data?.find(
+		(entry) => entry.resource.id === item.deployment_id,
+	);
+	return inventory.tiles.find((tile) => tile.id === deployment?.agent_id);
+}
+
 export function ComputeSubscriptionCard({
 	item,
 	actions,
@@ -38,12 +47,11 @@ export function ComputeSubscriptionCard({
 }) {
 	const t = useI18n();
 	const { creditUnits } = useStoreSurfaces();
-	const inventory = useDashboardAgents();
-	const deployment = inventory.inventory.data?.find(
-		(entry) => entry.resource.id === item.deployment_id,
-	);
-	const agent = inventory.tiles.find((tile) => tile.id === deployment?.agent_id);
-	const identity = agentIdentity({ name: item.agent_name, agent_type: agent?.agentType ?? null });
+	const agent = useSubscriptionAgent(item);
+	const identity = agentIdentity({
+		name: agent?.name ?? item.agent_name,
+		agent_type: agent?.agentType ?? null,
+	});
 	const lifecycle = computeSubscriptionLifecycle(item);
 	const status = { label: lifecycle.badgeLabel, tone: lifecycle.badgeTone };
 	// Store prices are per storefront: store rows show the store contract, never a Clawdi price.
