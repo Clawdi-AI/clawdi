@@ -1,7 +1,7 @@
 "use client";
 
 import { formatShortDate } from "@clawdi/shared/view";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Terminal, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -38,10 +38,9 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
-import { toastApiError, useApi } from "@/lib/api";
+import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
 import { shouldBlockQueryError } from "@/lib/query-state";
-import { unwrapReverifiable, useReverifiedRequest } from "@/lib/reverification";
 
 const REVOKE_API_KEY_MUTATION_KEY = ["revoke-api-key"] as const;
 
@@ -52,6 +51,7 @@ type RevokeContext = {
 /** API Keys settings — review and revoke existing bearer tokens; new keys are internal only. */
 export function ApiKeysPanel() {
 	const api = useApi();
+	const $api = useOpenApi();
 	const queryClient = useQueryClient();
 	const [revokeOpen, setRevokeOpen] = useState(false);
 	const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
@@ -62,31 +62,17 @@ export function ApiKeysPanel() {
 	});
 	const renderedRevokeTarget = revokeExit.renderedValue;
 
-	// Listing and revoking keys require a recently verified session; Clerk prompts, then retries.
-	const listKeys = useReverifiedRequest(async (signal: AbortSignal) =>
-		unwrapReverifiable(await api.GET("/v1/auth/keys", { signal })),
-	);
-	const revoke = useReverifiedRequest(async (keyId: string) =>
-		unwrapReverifiable(
-			await api.DELETE("/v1/auth/keys/{key_id}", { params: { path: { key_id: keyId } } }),
-		),
-	);
-	const {
-		data: listedKeys,
-		error,
-		isLoading,
-		refetch,
-	} = useQuery({
-		queryKey: API_KEYS_QUERY_KEY,
-		queryFn: ({ signal }) => listKeys(signal),
-		// Listing can prompt for verification, so don't refetch behind the user's back.
-		refetchOnWindowFocus: false,
-	});
+	const { data: listedKeys, error, isLoading, refetch } = $api.useQuery("get", "/v1/auth/keys");
 	const keys = useMemo(() => activeApiKeys(listedKeys), [listedKeys]);
 
 	const revokeKey = useMutation({
 		mutationKey: REVOKE_API_KEY_MUTATION_KEY,
-		mutationFn: revoke,
+		mutationFn: async (keyId: string) =>
+			unwrap(
+				await api.DELETE("/v1/auth/keys/{key_id}", {
+					params: { path: { key_id: keyId } },
+				}),
+			),
 		onMutate: async (keyId): Promise<RevokeContext> => {
 			await queryClient.cancelQueries({ queryKey: API_KEYS_QUERY_KEY });
 			const currentKeys = queryClient.getQueryData<ApiKey[]>(API_KEYS_QUERY_KEY);

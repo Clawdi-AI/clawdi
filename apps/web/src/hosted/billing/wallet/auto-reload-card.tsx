@@ -6,7 +6,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CreditCard } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { OpenInBrowserAction } from "@/components/open-in-browser-action";
 import { useSettingsEditState } from "@/components/settings-edit-state";
 import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -51,7 +50,6 @@ import {
 	AUTORELOAD_MONTHLY_CAP_MAX_CENTS,
 	AUTORELOAD_THRESHOLD_MIN_USD,
 } from "@/hosted/billing/wallet/wallet-constants";
-import { useDesktopShell } from "@/lib/desktop-shell";
 
 type AutoReloadField = "threshold" | "amount" | "cap";
 type BlurredFields = Record<AutoReloadField, boolean>;
@@ -71,8 +69,6 @@ export function AutoReloadCard({
 	const finalizeSetup = useSensitiveFinalizeWalletAutoReloadSetup();
 	const queryClient = useQueryClient();
 	const runAction = useActionLock();
-	// Inside Clawdi Desktop, card authorization and auto-reload edits run in the system browser.
-	const { inDesktop } = useDesktopShell();
 	const initialDraft = autoReloadDraftFromWallet(wallet);
 	const [baseline, setBaseline] = useState<AutoReloadDraft>(initialDraft);
 	const [draft, setDraft] = useState<AutoReloadDraft>(initialDraft);
@@ -217,8 +213,9 @@ export function AutoReloadCard({
 			: status.description
 		: null;
 	const card = wallet.auto_reload_card;
-	const showForm = (draft.enabled || dirty) && !inDesktop;
-	const hasBody = Boolean(card || wallet.auto_reload_action || requestError || showForm);
+	const hasBody = Boolean(
+		card || wallet.auto_reload_action || requestError || draft.enabled || dirty,
+	);
 	const cardBrand = card
 		? `${card.brand.charAt(0).toUpperCase()}${card.brand.slice(1)} ending in ${card.last4}`
 		: null;
@@ -255,21 +252,15 @@ export function AutoReloadCard({
 					draft.enabled ? enabledDetail : "Automatically add funds when your balance is low."
 				}
 				actions={
-					inDesktop ? (
-						<OpenInBrowserAction align="end">
-							{baseline.enabled ? "Edit" : "Turn on"}
-						</OpenInBrowserAction>
-					) : (
-						<Switch
-							id="ar-enabled"
-							aria-label="Auto-reload"
-							aria-controls="auto-reload-form"
-							data-auto-reload-primary
-							checked={draft.enabled}
-							onCheckedChange={(checked) => updateDraft("enabled", checked)}
-							disabled={busy}
-						/>
-					)
+					<Switch
+						id="ar-enabled"
+						aria-label="Auto-reload"
+						aria-controls="auto-reload-form"
+						data-auto-reload-primary
+						checked={draft.enabled}
+						onCheckedChange={(checked) => updateDraft("enabled", checked)}
+						disabled={busy}
+					/>
 				}
 			>
 				{hasBody ? (
@@ -292,19 +283,15 @@ export function AutoReloadCard({
 										</p>
 									</div>
 								</div>
-								{inDesktop ? (
-									<OpenInBrowserAction>Replace card</OpenInBrowserAction>
-								) : (
-									<Button
-										type="button"
-										size="sm"
-										variant="outline"
-										onClick={() => openCardSetup(true)}
-										disabled={!setupRequest || busy}
-									>
-										Replace card
-									</Button>
-								)}
+								<Button
+									type="button"
+									size="sm"
+									variant="outline"
+									onClick={() => openCardSetup(true)}
+									disabled={!setupRequest || busy}
+								>
+									Replace card
+								</Button>
 							</div>
 						) : null}
 
@@ -329,7 +316,7 @@ export function AutoReloadCard({
 							</Alert>
 						) : null}
 
-						{showForm ? (
+						{draft.enabled || dirty ? (
 							<form
 								id="auto-reload-form"
 								className={autoReloadCardClasses.form}

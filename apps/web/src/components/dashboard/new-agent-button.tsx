@@ -4,7 +4,7 @@ import { useRouter } from "@tanstack/react-router";
 import { CirclePlus, Loader2, Rocket, TerminalSquare } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
+import { useConnectAgent } from "@/components/dashboard/use-connect-agent";
 import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/dialog";
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useDesktopShell } from "@/lib/desktop-shell";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useProductAccess } from "@/lib/product-access";
 import { useHydrated } from "@/lib/use-hydrated";
@@ -36,9 +35,8 @@ export function NewAgentButton({
 	const router = useRouter();
 	const hostedAccess = useProductAccess();
 	const hydrated = useHydrated();
-	const desktop = useDesktopShell();
 	const [chooserOpen, setChooserOpen] = useState(false);
-	const [connectOpen, setConnectOpen] = useState(false);
+	const { connect, dialog: connectDialog } = useConnectAgent();
 	const canDeployOnClawdi = hydrated && IS_HOSTED && hostedAccess.canCreateCloudAgents;
 	const checkingDeployAccess = hydrated && IS_HOSTED && hostedAccess.isLoading;
 	const deployAccessError = hydrated && IS_HOSTED && hostedAccess.isError;
@@ -55,12 +53,6 @@ export function NewAgentButton({
 	function chooseConnect() {
 		setChooserOpen(false);
 		connect();
-	}
-
-	function connect() {
-		// Clawdi Desktop's Connect window replaces the dialog's manual steps.
-		if (desktop.inDesktop) desktop.openConnector();
-		else setConnectOpen(true);
 	}
 
 	function chooseDeploy() {
@@ -138,7 +130,7 @@ export function NewAgentButton({
 				</DialogContent>
 			</Dialog>
 
-			<AddAgentDialog open={connectOpen} onClose={() => setConnectOpen(false)} />
+			{connectDialog}
 		</SidebarMenuItem>
 	);
 }

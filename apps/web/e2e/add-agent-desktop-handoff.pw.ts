@@ -102,27 +102,47 @@ for (const width of [1440, 375]) {
 	});
 }
 
-test("Inside Clawdi Desktop, every connect entry point opens its Connect window", async ({
-	context,
-	page,
-}) => {
-	await injectDesktopBridge(page);
-	let agents: unknown[] = [];
-	await context.route("**/v1/**", (route) =>
-		route.fulfill({ json: stubResponse(new URL(route.request().url()).pathname, agents) }),
-	);
-	await page.goto("/");
+for (const inDesktop of [false, true]) {
+	test(`Every connect entry point ${inDesktop ? "opens Clawdi Desktop's Connect window inside Desktop" : "opens the Add agent dialog in a browser"}`, async ({
+		context,
+		page,
+	}) => {
+		if (inDesktop) await injectDesktopBridge(page);
+		let agents: unknown[] = [];
+		await context.route("**/v1/**", (route) =>
+			route.fulfill({ json: stubResponse(new URL(route.request().url()).pathname, agents) }),
+		);
+		const dialog = page.getByRole("dialog", { name: "Add an agent" });
+		const entryPoints = [
+			// Overview zero state, then the sidebar's New agent.
+			() => page.getByRole("button", { name: "Connect your own agent" }).click(),
+			() => page.getByRole("button", { name: "New agent", exact: true }).click(),
+		];
+		await page.goto("/");
+		for (const open of entryPoints) {
+			await open();
+			if (!inDesktop) {
+				await expect(dialog).toBeVisible();
+				await page.keyboard.press("Escape");
+				await expect(dialog).toBeHidden();
+			}
+		}
+		if (inDesktop) {
+			await expect
+				.poll(() => desktopBridgeCalls(page))
+				.toEqual([["openConnector"], ["openConnector"]]);
+			await expect(page.getByRole("dialog")).toHaveCount(0);
+		}
 
-	// Overview zero state, then the sidebar's New agent.
-	await page.getByRole("button", { name: "Connect your own agent" }).click();
-	await page.getByRole("button", { name: "New agent", exact: true }).click();
-	await expect.poll(() => desktopBridgeCalls(page)).toEqual([["openConnector"], ["openConnector"]]);
-	await expect(page.getByRole("dialog")).toHaveCount(0);
-
-	// "Connect another machine" once an agent exists. Reloading resets the recorded calls.
-	agents = [existingAgent];
-	await page.reload();
-	await page.getByRole("button", { name: "Add agent", exact: true }).click();
-	await expect.poll(() => desktopBridgeCalls(page)).toEqual([["openConnector"]]);
-	await expect(page.getByRole("dialog")).toHaveCount(0);
-});
+		// "Connect another machine" once an agent exists. Reloading resets the recorded calls.
+		agents = [existingAgent];
+		await page.reload();
+		await page.getByRole("button", { name: "Add agent", exact: true }).click();
+		if (inDesktop) {
+			await expect.poll(() => desktopBridgeCalls(page)).toEqual([["openConnector"]]);
+			await expect(page.getByRole("dialog")).toHaveCount(0);
+		} else {
+			await expect(dialog).toBeVisible();
+		}
+	});
+}

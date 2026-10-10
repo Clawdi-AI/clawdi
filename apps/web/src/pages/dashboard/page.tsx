@@ -12,12 +12,12 @@ import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import { lazy, type ReactNode, Suspense, useEffect, useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { AgentsCard } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
+import { useConnectAgent } from "@/components/dashboard/use-connect-agent";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SessionFeed } from "@/components/sessions/session-feed";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
-import { useDesktopShell } from "@/lib/desktop-shell";
 import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -351,23 +350,18 @@ function ActivityGraphSkeleton() {
 }
 
 /** Slim replacement for the embedded wizard duplicate (taste audit round
- * 2): one line + one button that opens the same Add-agent dialog. */
+ * 2): one line + one button that starts the same connect flow. */
 function ConnectAnotherCard() {
-	const desktop = useDesktopShell();
-	const [open, setOpen] = useState(false);
+	const { connect, dialog } = useConnectAgent();
 	return (
 		<Card className={dashboardPageClasses.connectCard}>
 			<CardContent className={dashboardPageClasses.connectCardContent}>
 				<div className={dashboardPageClasses.connectCardTitle}>{OVERVIEW_COPY.connectAnother}</div>
-				<Button
-					size="sm"
-					variant="outline"
-					onClick={() => (desktop.inDesktop ? desktop.openConnector() : setOpen(true))}
-				>
+				<Button size="sm" variant="outline" onClick={connect}>
 					{OVERVIEW_COPY.addAgent}
 				</Button>
 			</CardContent>
-			<AddAgentDialog open={open} onClose={() => setOpen(false)} />
+			{dialog}
 		</Card>
 	);
 }
