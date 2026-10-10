@@ -150,9 +150,11 @@ export function TransactionsSection() {
 									<div className={transactionsSectionClasses.mobileCopy}>
 										<TransactionDescription transaction={transaction} />
 										<div className={transactionsSectionClasses.mobileHeading}>
-											<Badge variant="outline">
-												{transactionPaymentSourceLabel(transaction.funding)}
-											</Badge>
+											{transaction.funding ? (
+												<Badge variant="outline">
+													{transactionPaymentSourceLabel(transaction.funding)}
+												</Badge>
+											) : null}
 											<StatusBadge status={statusTone(transaction.status)}>
 												{statusLabel(transaction.status)}
 											</StatusBadge>

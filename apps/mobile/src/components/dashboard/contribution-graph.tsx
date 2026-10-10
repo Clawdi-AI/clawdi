@@ -59,7 +59,13 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 										style={{ width: CELL, height: CELL }}
 										accessibilityLabel={
 											day.date
-												? t("labels.sessionsOnDate", { count: day.count, date: day.date })
+												? t(
+														day.count === 1 ? "labels.sessionsOnDateOne" : "labels.sessionsOnDate",
+														{
+															count: day.count,
+															date: day.date,
+														},
+													)
 												: undefined
 										}
 									/>

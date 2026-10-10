@@ -57,6 +57,7 @@ export default function SessionDetailRoute() {
 			</SafeAreaScreen>
 		);
 	const profile = profileLabel(session);
+	const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
 	const header = (
 		<WebView recipe={styles.header}>
 			<PageHeader
@@ -95,12 +96,15 @@ export default function SessionDetailRoute() {
 						<ModelBadge modelId={session.model} />
 						<Stat
 							icon={MessageSquare}
-							label={t("labels.messageCount", { count: session.message_count })}
+							label={t(
+								session.message_count === 1 ? "labels.messageCountOne" : "labels.messageCount",
+								{ count: session.message_count },
+							)}
 						/>
 						<Stat
 							icon={Zap}
-							label={t("labels.tokenCount", {
-								count: formatNumber((session.input_tokens ?? 0) + (session.output_tokens ?? 0)),
+							label={t(totalTokens === 1 ? "labels.tokenCountOne" : "labels.tokenCount", {
+								count: formatNumber(totalTokens),
 							})}
 						/>
 						{session.duration_seconds ? (

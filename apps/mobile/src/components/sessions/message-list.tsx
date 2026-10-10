@@ -149,9 +149,12 @@ export function SessionTimelineRowView({
 											<WebText recipe={styles.skillTrigger}>
 												{t("sessionDetail.skill")}
 												{!skillVisible
-													? t("labels.characterCount", {
-															count: message.content.length.toLocaleString(),
-														})
+													? t(
+															message.content.length === 1
+																? "labels.characterCountOne"
+																: "labels.characterCount",
+															{ count: message.content.length.toLocaleString() },
+														)
 													: ""}
 											</WebText>
 										</Button>

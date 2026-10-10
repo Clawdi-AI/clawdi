@@ -320,9 +320,12 @@ function PublicSession({ id }: { id: string | null }) {
 								<ModelBadge modelId={currentView.metadata.detail.model} />
 								<Stat
 									icon={MessageSquare}
-									label={t("labels.messageCount", {
-										count: currentView.metadata.detail.message_count,
-									})}
+									label={t(
+										currentView.metadata.detail.message_count === 1
+											? "labels.messageCountOne"
+											: "labels.messageCount",
+										{ count: currentView.metadata.detail.message_count },
+									)}
 								/>
 								<Stat
 									icon={Clock}

@@ -1,6 +1,7 @@
 import { billingPageClass, transactionsSectionClasses } from "@clawdi/shared/ui";
 import { transactionsCountLabel } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { cn } from "cn";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
@@ -64,7 +65,12 @@ function WalletView() {
 			<NativeList
 				data={wallet.data && !wallet.isError ? rows : []}
 				keyExtractor={(item) => item.id}
-				renderItem={({ item }) => <TransactionRow item={item} />}
+				// Rows, states and footer share the header's inset, so they align with the balance card.
+				renderItem={({ item }) => (
+					<WebView recipe={billingPageClass}>
+						<TransactionRow item={item} />
+					</WebView>
+				)}
 				refreshing={wallet.isRefetching || transactions.isRefetching}
 				onRefresh={() => {
 					void wallet.refetch();
@@ -103,24 +109,26 @@ function WalletView() {
 				}
 				empty={
 					wallet.data && !wallet.isError ? (
-						transactions.isPending ? (
-							<RouteLoadingSkeleton />
-						) : transactions.isError ? (
-							<ApiErrorPanel
-								error={transactions.error}
-								onRetry={() => void transactions.refetch()}
-							/>
-						) : (
-							<EmptyState
-								variant="inset"
-								title={t("billingParity.emptyTransactions")}
-								description={t("billingParity.emptyTransactionsDescription")}
-							/>
-						)
+						<WebView recipe={billingPageClass}>
+							{transactions.isPending ? (
+								<RouteLoadingSkeleton />
+							) : transactions.isError ? (
+								<ApiErrorPanel
+									error={transactions.error}
+									onRetry={() => void transactions.refetch()}
+								/>
+							) : (
+								<EmptyState
+									variant="inset"
+									title={t("billingParity.emptyTransactions")}
+									description={t("billingParity.emptyTransactionsDescription")}
+								/>
+							)}
+						</WebView>
 					) : null
 				}
 				footer={
-					<WebView recipe={transactionsSectionClasses.section}>
+					<WebView recipe={cn(billingPageClass, transactionsSectionClasses.section)}>
 						{transactions.isFetchingNextPage ? <RouteLoadingSkeleton /> : null}
 						{transactions.isError && transactions.data ? (
 							<ApiErrorPanel

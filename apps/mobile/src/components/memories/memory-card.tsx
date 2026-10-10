@@ -1,6 +1,11 @@
 import { type components, searchExcerpt } from "@clawdi/shared/api";
 import { memoriesSurfaceClasses } from "@clawdi/shared/ui";
-import { MEMORY_CATEGORY_COLORS, memoryDisplayName, relativeTime } from "@clawdi/shared/view";
+import {
+	MEMORY_CATEGORY_COLORS,
+	memoryCategoryLabel,
+	memoryDisplayName,
+	relativeTime,
+} from "@clawdi/shared/view";
 import Laptop from "lucide-react-native/icons/laptop";
 import Trash2 from "lucide-react-native/icons/trash";
 import {
@@ -59,7 +64,7 @@ export function MemoryCard({
 							variant="secondary"
 							className={webBoth(MEMORY_CATEGORY_COLORS[memory.category] ?? "")}
 						>
-							<Text>{memory.category}</Text>
+							<Text>{memoryCategoryLabel(memory.category)}</Text>
 						</Badge>,
 						...(memory.tags?.slice(0, 3).map((tag) => `#${tag}`) ?? []),
 						memory.created_at ? relativeTime(memory.created_at) : null,

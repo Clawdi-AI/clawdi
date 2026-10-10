@@ -469,13 +469,16 @@ function SkillEditor({
 										void save(true);
 									}}
 								>
-									<Text>{t("skills.import")}</Text>
+									<Text>{t("skills.importSubmit")}</Text>
 								</Button>
 							</AppView>
 						) : null}
-						<Button variant="ghost" onPress={() => setImportOpen(!importOpen)}>
-							<Text>{t("skills.import")}</Text>
-						</Button>
+						{/* One entry opens the import form; its own submit is "Import skill", as on Web. */}
+						{!importOpen ? (
+							<Button variant="ghost" onPress={() => setImportOpen(true)}>
+								<Text>{t("skills.import")}</Text>
+							</Button>
+						) : null}
 						{action.error ? <ErrorState /> : null}
 					</WebView>
 				) : draft ? (
@@ -532,7 +535,8 @@ function SkillEditor({
 							<Text>v{detail.data?.version}</Text>
 							<Icon as={FileText} />
 							<Text>
-								{detail.data?.file_count} {t("skills.files")}
+								{detail.data?.file_count}{" "}
+								{t(detail.data?.file_count === 1 ? "skills.file" : "skills.files")}
 							</Text>
 						</DetailMeta>
 						{projectPanel}
@@ -612,7 +616,8 @@ function SkillEditor({
 							<Text>v{detail.data.version}</Text>
 							<Icon as={FileText} />
 							<Text>
-								{detail.data.file_count} {t("skills.files")}
+								{detail.data.file_count}{" "}
+								{t(detail.data.file_count === 1 ? "skills.file" : "skills.files")}
 							</Text>
 						</DetailMeta>
 						{projectPanel}
@@ -630,7 +635,8 @@ function SkillEditor({
 							</WebView>
 							<Badge variant="secondary">
 								<Text>
-									{detail.data.file_count} {t("skills.files")}
+									{detail.data.file_count}{" "}
+									{t(detail.data.file_count === 1 ? "skills.file" : "skills.files")}
 								</Text>
 							</Badge>
 							{detail.data.content !== null ? (

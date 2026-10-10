@@ -125,7 +125,10 @@ export function SessionCard({
 			key: "messages",
 			value: `${session.message_count} ${session.message_count === 1 ? "message" : "messages"}`,
 		},
-		{ key: "tokens", value: `${formatNumber(totalTokens)} tokens` },
+		{
+			key: "tokens",
+			value: `${formatNumber(totalTokens)} ${totalTokens === 1 ? "token" : "tokens"}`,
+		},
 		{ key: "time", value: relativeTime(session.last_activity_at) },
 	].filter((item) => item !== null);
 	return (

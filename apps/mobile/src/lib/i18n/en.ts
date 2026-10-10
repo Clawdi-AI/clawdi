@@ -488,7 +488,7 @@ const vaultEn = {
 		"Invalid import. Check key names, duplicates, and quoting. Nothing will be imported.",
 	clear: "Clear pasted secrets",
 	failed: "The operation could not be confirmed. Refresh before trying again.",
-	saved: "Operation completed.",
+	saved: "Changes saved.",
 	deleteKey: "Delete key",
 	deleteTitle: "Delete {name}?",
 	detach: "Detach Project",
@@ -523,8 +523,10 @@ import {
 export const en = {
 	labels: {
 		tokenCount: "{count} tokens",
+		tokenCountOne: "{count} token",
 		free: "Free",
 		messageCount: "{count} messages",
+		messageCountOne: "{count} message",
 		sharedTime: "Shared {time}",
 		usedBy: "used by {names}{remaining}",
 		openVault: "Open vault {name}",
@@ -534,6 +536,7 @@ export const en = {
 		hide: "Hide",
 		show: "Show",
 		sessionsOnDate: "{count} sessions on {date}",
+		sessionsOnDateOne: "{count} session on {date}",
 		projectOwner: "by {name}",
 		uninstallSkill: "Uninstall {name} from agent",
 		openAgent: "Open {name}{status}",
@@ -544,6 +547,7 @@ export const en = {
 		messages: "messages",
 		shareProject: "Share {name}",
 		characterCount: " ({count} chars)",
+		characterCountOne: " ({count} char)",
 		shareDetails: "{scope} · {count} {unit} · Created {time}",
 		openMemory: "Open memory: {name}",
 		deleteMemory: "Delete memory: {name}",
@@ -789,6 +793,7 @@ export const en = {
 	},
 	skills: {
 		singular: "Skill",
+		file: "file",
 		files: "files",
 		projectContext: "Project Skill · in",
 		addedSeparator: "· added",
@@ -803,6 +808,7 @@ export const en = {
 			"Only owned cloud Projects can be edited. Agent-synced and shared Skills are read-only.",
 		noContent: "No text content is available.",
 		import: "Import from GitHub",
+		importSubmit: "Import skill",
 		github: "owner/repository/path or an HTTPS GitHub URL",
 		conflict:
 			"This Skill changed while you were editing. Your draft is preserved. Copy your changes before discarding and reloading.",

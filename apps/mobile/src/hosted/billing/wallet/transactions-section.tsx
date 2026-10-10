@@ -46,7 +46,7 @@ export function TransactionRow({ item }: { item: Transaction }) {
 			await openBrowserAsync(documentUrl);
 		});
 	return (
-		<WebView recipe={transactions.mobileRow} className="flex-row">
+		<WebView recipe={transactions.mobileRow} className="flex-row px-0">
 			<WebView recipe={transactions.mobileCopy} className="flex-1">
 				<WebText recipe={transactions.label}>{transactionKindLabel(item.kind)}</WebText>
 				{transactionComputeDetails(item).map((detail) => (
@@ -55,9 +55,11 @@ export function TransactionRow({ item }: { item: Transaction }) {
 					</WebText>
 				))}
 				<WebView recipe={transactions.mobileHeading} className="flex-row">
-					<Badge variant="outline">
-						<Text>{transactionPaymentSourceLabel(item.funding)}</Text>
-					</Badge>
+					{item.funding ? (
+						<Badge variant="outline">
+							<Text>{transactionPaymentSourceLabel(item.funding)}</Text>
+						</Badge>
+					) : null}
 					<StatusBadge status={transactionStatusTone(item.status)}>
 						<Text>{transactionStatusLabel(item.status)}</Text>
 					</StatusBadge>

@@ -37,6 +37,11 @@ export const MEMORY_CATEGORIES = [
 	{ value: "context", label: "Context" },
 ] as const;
 
+/** Display label for a stored category, e.g. `fact` → "Fact"; unknown values stay as stored. */
+export function memoryCategoryLabel(category: string): string {
+	return MEMORY_CATEGORIES.find((option) => option.value === category)?.label ?? category;
+}
+
 /** How often agents recalled a memory; Web and the app share this wording. */
 export function memoryRecallLabel(accessCount: number | null | undefined): string {
 	const count = accessCount ?? 0;
