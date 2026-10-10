@@ -150,34 +150,71 @@ test("a failed send settles by what the server proves, whether or not an earlier
 	expect(await store.readSavedAttempt("account-dep")).toEqual(uncertain);
 });
 
-test("a rejected request explains the server's reason; only a 412 says the Skills changed", () => {
-	const rejected: SkillAttempt = {
+test("a rejected record keeps its reason across a restart; a 412 or an older record says the Skills changed", async () => {
+	const memory = new Map<string, string>();
+	const storage = {
+		getItemAsync: async (key: string) => memory.get(key) ?? null,
+		setItemAsync: async (key: string, value: string) => {
+			memory.set(key, value);
+		},
+		deleteItemAsync: async (key: string) => {
+			memory.delete(key);
+		},
+	};
+	const sending: SkillAttempt = {
 		format: 1,
 		deploymentId: "dep",
 		key: "fixed-key",
 		version: "rv1",
 		mutation: { action: "install", request: { repo: "owner/repo", path: "skills/missing" } },
-		status: "rejected",
+		status: "uncertain",
 	};
-	expect(
-		skillRejectionReason(rejected, new ApiClientError(404, "workspace_skill_source_invalid")),
-	).toContain("Couldn't find a valid skill at this GitHub path");
+	const store = createSkillAttemptStore(storage);
+	await store.saveAttempt("account-dep", sending, () => true);
+	const rejected = skillAttemptAfterFailure(
+		sending,
+		new ApiClientError(404, "workspace_skill_source_invalid"),
+	);
+	await store.replaceAttempt("account-dep", sending, rejected, () => true);
+	// After a restart, the saved record still explains the wrong GitHub path.
+	const restored = await createSkillAttemptStore(storage).readSavedAttempt("account-dep");
+	expect(restored?.status).toBe("rejected");
+	expect(skillRejectionReason(restored?.rejectionCode)).toContain(
+		"Couldn't find a valid skill at this GitHub path",
+	);
+	await store.clearAttempt("account-dep", rejected, () => true);
+	expect(await store.readSavedAttempt("account-dep")).toBeNull();
+
 	for (const code of [
 		"workspace_skill_source_conflict",
 		"workspace_skill_reserved",
 		"workspace_skills_capability_unavailable",
 	])
-		expect(skillRejectionReason(rejected, new ApiClientError(409, code))).not.toBeNull();
-	// A version conflict keeps the "Skills changed" copy.
+		expect(
+			skillRejectionReason(
+				skillAttemptAfterFailure(sending, new ApiClientError(409, code)).rejectionCode,
+			),
+		).not.toBeNull();
+	// A version conflict, an older record without a code and an unknown code keep the
+	// "Skills changed" copy.
+	const conflict = skillAttemptAfterFailure(
+		sending,
+		new ApiClientError(412, "resource_version_mismatch"),
+	);
+	expect(conflict.rejectionCode).toBe("resource_version_mismatch");
+	expect(skillRejectionReason(conflict.rejectionCode)).toBeNull();
+	expect(skillRejectionReason(undefined)).toBeNull();
+	expect(skillRejectionReason("future_code")).toBeNull();
+	// Only a rejection records a code.
 	expect(
-		skillRejectionReason(rejected, new ApiClientError(412, "resource_version_mismatch")),
-	).toBeNull();
-	// Without the failure (e.g. after a restart) the reason is unknown.
-	expect(skillRejectionReason(rejected, null)).toBeNull();
-	expect(
-		skillRejectionReason(
-			{ ...rejected, status: "uncertain" },
-			new ApiClientError(404, "workspace_skill_source_invalid"),
+		skillAttemptAfterFailure(
+			sending,
+			new ApiClientError(503, "workspace_skill_source_unavailable"),
 		),
-	).toBeNull();
+	).not.toHaveProperty("rejectionCode");
+
+	// Older records parse without the field; a non-string code fails closed.
+	const older = { ...sending, status: "rejected" };
+	expect(parseSkillAttempt(JSON.stringify(older))).toEqual({ ...sending, status: "rejected" });
+	expect(parseSkillAttempt(JSON.stringify({ ...older, rejectionCode: 404 }))).toBeNull();
 });
