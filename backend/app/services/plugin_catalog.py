@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -40,23 +40,17 @@ _GITHUB_RAW_CATALOG_URL = (
     f"https://raw.githubusercontent.com/Clawdi-AI/store/{{revision}}/{TRUSTED_PLUGIN_CATALOG_PATH}"
 )
 _HTTP_HEADERS = {
-    "Accept": "application/vnd.github+json",
+    "Accept": "application/vnd.github.sha",
     "User-Agent": "clawdi-plugin-catalog/1",
     "X-GitHub-Api-Version": "2022-11-28",
 }
-_MAX_HEAD_RESPONSE_BYTES = 256 * 1024
+_MAX_HEAD_SHA_RESPONSE_BYTES = 128
 _MAX_CATALOG_RESPONSE_BYTES = 4 * 1024 * 1024
 _SNAPSHOT_RETENTION = 20
 
 
 class PluginCatalogSyncError(RuntimeError):
     pass
-
-
-class _GitHubHeadResponse(BaseModel):
-    model_config = ConfigDict(extra="ignore", strict=True)
-
-    sha: str
 
 
 @dataclass(frozen=True)
@@ -217,14 +211,14 @@ async def _resolve_github_head(
                 raise PluginCatalogSyncError(f"head_http_{response.status_code}")
             body = await _bounded_response_bytes(
                 response,
-                maximum=_MAX_HEAD_RESPONSE_BYTES,
+                maximum=_MAX_HEAD_SHA_RESPONSE_BYTES,
             )
             head_etag = response.headers.get("etag")
     except httpx.HTTPError as exc:
         raise PluginCatalogSyncError("head_network_error") from exc
     try:
-        revision = _GitHubHeadResponse.model_validate_json(body).sha
-    except ValidationError as exc:
+        revision = body.decode("ascii").strip()
+    except UnicodeDecodeError as exc:
         raise PluginCatalogSyncError("head_response_invalid") from exc
     if len(revision) != 40 or any(character not in "0123456789abcdef" for character in revision):
         raise PluginCatalogSyncError("head_revision_invalid")
