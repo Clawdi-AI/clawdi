@@ -4,7 +4,7 @@ import { useRouter } from "@tanstack/react-router";
 import { CirclePlus, Loader2, Rocket, TerminalSquare } from "lucide-react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
+import { useConnectAgent } from "@/components/dashboard/use-connect-agent";
 import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,7 +36,7 @@ export function NewAgentButton({
 	const hostedAccess = useProductAccess();
 	const hydrated = useHydrated();
 	const [chooserOpen, setChooserOpen] = useState(false);
-	const [connectOpen, setConnectOpen] = useState(false);
+	const { connect, dialog: connectDialog } = useConnectAgent();
 	const canDeployOnClawdi = hydrated && IS_HOSTED && hostedAccess.canCreateCloudAgents;
 	const checkingDeployAccess = hydrated && IS_HOSTED && hostedAccess.isLoading;
 	const deployAccessError = hydrated && IS_HOSTED && hostedAccess.isError;
@@ -47,12 +47,12 @@ export function NewAgentButton({
 			setChooserOpen(true);
 			return;
 		}
-		setConnectOpen(true);
+		connect();
 	}
 
 	function chooseConnect() {
 		setChooserOpen(false);
-		setConnectOpen(true);
+		connect();
 	}
 
 	function chooseDeploy() {
@@ -130,7 +130,7 @@ export function NewAgentButton({
 				</DialogContent>
 			</Dialog>
 
-			<AddAgentDialog open={connectOpen} onClose={() => setConnectOpen(false)} />
+			{connectDialog}
 		</SidebarMenuItem>
 	);
 }

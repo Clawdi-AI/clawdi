@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { desktopBridgeCalls, injectDesktopBridge } from "./support/desktop-bridge";
 
 const existingAgent = {
 	id: "22222222-2222-4222-8222-222222222222",
@@ -98,5 +99,50 @@ for (const width of [1440, 375]) {
 		await page.bringToFront();
 		await expect(dialog.getByText("Agent registered")).toBeVisible({ timeout: 15_000 });
 		await expect(dialog.getByText("Desktop Codex")).toBeVisible();
+	});
+}
+
+for (const inDesktop of [false, true]) {
+	test(`Every connect entry point ${inDesktop ? "opens Clawdi Desktop's Connect window inside Desktop" : "opens the Add agent dialog in a browser"}`, async ({
+		context,
+		page,
+	}) => {
+		if (inDesktop) await injectDesktopBridge(page);
+		let agents: unknown[] = [];
+		await context.route("**/v1/**", (route) =>
+			route.fulfill({ json: stubResponse(new URL(route.request().url()).pathname, agents) }),
+		);
+		const dialog = page.getByRole("dialog", { name: "Add an agent" });
+		const entryPoints = [
+			// Overview zero state, then the sidebar's New agent.
+			() => page.getByRole("button", { name: "Connect your own agent" }).click(),
+			() => page.getByRole("button", { name: "New agent", exact: true }).click(),
+		];
+		await page.goto("/");
+		for (const open of entryPoints) {
+			await open();
+			if (!inDesktop) {
+				await expect(dialog).toBeVisible();
+				await page.keyboard.press("Escape");
+				await expect(dialog).toBeHidden();
+			}
+		}
+		if (inDesktop) {
+			await expect
+				.poll(() => desktopBridgeCalls(page))
+				.toEqual([["openConnector"], ["openConnector"]]);
+			await expect(page.getByRole("dialog")).toHaveCount(0);
+		}
+
+		// "Connect another machine" once an agent exists. Reloading resets the recorded calls.
+		agents = [existingAgent];
+		await page.reload();
+		await page.getByRole("button", { name: "Add agent", exact: true }).click();
+		if (inDesktop) {
+			await expect.poll(() => desktopBridgeCalls(page)).toEqual([["openConnector"]]);
+			await expect(page.getByRole("dialog")).toHaveCount(0);
+		} else {
+			await expect(dialog).toBeVisible();
+		}
 	});
 }
