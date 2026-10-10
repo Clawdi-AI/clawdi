@@ -495,7 +495,7 @@ function validateVersionManifest(directory: string, identity: NativeCompiledIden
 	return content;
 }
 
-function readNativeExecutableIdentity(command: string): NativeCompiledIdentity | null {
+export function readNativeExecutableIdentity(command: string): NativeCompiledIdentity | null {
 	const result = spawnSync(command, ["update", "--native-identity"], {
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "ignore"],

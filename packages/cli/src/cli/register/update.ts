@@ -13,6 +13,8 @@ export function registerUpdate(program: Command): void {
 		.addOption(new Option("--background-worker").hideHelp())
 		.addOption(new Option("--current-version <version>").hideHelp())
 		.addOption(new Option("--native-identity").hideHelp())
+		.addOption(new Option("--native-bootstrap").hideHelp())
+		.addOption(new Option("--min-version <version>").hideHelp())
 		.addOption(new Option("--native-activate").hideHelp())
 		.addOption(new Option("--native-auto-update").hideHelp())
 		.addOption(new Option("--native-stage <path>").hideHelp())
@@ -25,6 +27,19 @@ export function registerUpdate(program: Command): void {
 			"\nExamples:\n  $ clawdi update\n  $ clawdi update --yes\n  $ clawdi update --yes --json\n  $ clawdi update --check --json",
 		)
 		.action(async (opts) => {
+			if (opts.nativeBootstrap) {
+				if (!opts.json) throw new Error("native bootstrap requires --json");
+				const { nativeBootstrap } = await import("../../commands/update.js");
+				await nativeBootstrap({
+					json: true,
+					minVersion: opts.minVersion,
+					nativePrefix: opts.nativePrefix,
+					nativeVersion: opts.nativeVersion,
+					nativeTarget: opts.nativeTarget,
+					nativeLockTimeoutMs: opts.nativeLockTimeoutMs,
+				});
+				return;
+			}
 			if (opts.nativeIdentity) {
 				const { nativeIdentityOutput } = await import("../../lib/native-activation.js");
 				console.log(nativeIdentityOutput());
