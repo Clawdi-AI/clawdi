@@ -12,18 +12,23 @@ import {
 	type HostedDeployValidationIssue,
 	type HostedDeployWizardDraft,
 	type HostedIncludedBasicAvailability,
+	hostedCheckoutSends,
+	hostedSubscriptionQuoteWalletDebit,
 	isHostedDeployBillingTerm,
 	isHostedDeployComputePlan,
 	isHostedDeployRuntime,
 	type StoreComputeSlot,
 	type StorePurchaseAttempt,
+	sameHostedSubscriptionQuoteTerms,
 	validateAndBuildHostedDeployRequest,
 	validateHostedDeployPersona,
 } from "@clawdi/shared/api";
 import {
 	DEPLOY_SESSION_EXPIRED_RECOVERY,
 	type DeploySubmissionFailure,
+	deploySubmissionErrorCopy,
 	deploySubmissionRecoveryCopy,
+	walletDebitShortfallUsd,
 } from "@clawdi/shared/view";
 
 /**
@@ -45,7 +50,11 @@ export type ReusableSubscriptionChoice = {
 
 export type CreationAttempt = {
 	version: 1;
-	submission: "prepared" | "uncertain" | "entitlement_rejected";
+	/**
+	 * `released`: an uncertain Wallet request hosted proved it never received, confirmed
+	 * again on a fresh quote under the same id. Like `uncertain`, it is never discarded.
+	 */
+	submission: "prepared" | "uncertain" | "released" | "entitlement_rejected";
 	id: string;
 	draft: HostedDeployWizardDraft;
 	request: HostedDeployRequest;
@@ -279,6 +288,7 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 		if (
 			submission !== "prepared" &&
 			submission !== "uncertain" &&
+			submission !== "released" &&
 			submission !== "entitlement_rejected"
 		)
 			return null;
@@ -294,7 +304,11 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 				? undefined
 				: canonicalWalletQuote(value.walletQuote, restoredDraft.computePlanSlug);
 		// A new Wallet subscription is its own funding; it never assigns or uses the store.
-		if (walletQuote === null || (walletQuote && (subscription || value.storeFunding !== undefined)))
+		if (
+			walletQuote === null ||
+			(walletQuote && (subscription || value.storeFunding !== undefined)) ||
+			(submission === "released" && !walletQuote)
+		)
 			return null;
 		return {
 			version: 1,
@@ -312,7 +326,7 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 }
 
 export function canDiscardCreationAttempt(attempt: CreationAttempt): boolean {
-	return attempt.submission !== "uncertain";
+	return attempt.submission !== "uncertain" && attempt.submission !== "released";
 }
 
 /** Only a store-funded request whose purchase is funded (or covered by a slot) may be admitted. */
@@ -324,7 +338,7 @@ export function canAdmitCreationAttempt(attempt: Pick<CreationAttempt, "storeFun
 export function canStartStorePurchase(attempt: CreationAttempt | null): boolean {
 	return (
 		!attempt ||
-		(attempt.submission !== "uncertain" &&
+		(canDiscardCreationAttempt(attempt) &&
 			(attempt.storeFunding === undefined || attempt.storeFunding === "awaiting_purchase"))
 	);
 }
@@ -453,30 +467,83 @@ export function isDefinitiveAdmissionRejection(attempt: CreationAttempt, error: 
 	);
 }
 
+/** Hosted's structured by-request 404 for a deploy request it holds no record of. */
+export const DEPLOY_REQUEST_NOT_FOUND_CODE = "deploy_request_not_found";
+/** Far beyond hosted's longest Wallet create transaction, including its 2 s lock waits. */
+export const WALLET_RELEASE_GRACE_MS = 10 * 60_000;
+
 /**
- * Hosted's proof that an uncertain new-Wallet request was never charged and never can be.
- * clawdi-hosted `place_wallet_subscription_create`
- * (backend/app/v2/compute/subscription_creation_dispatch.py) first refuses a quote whose
- * `expires_at` has passed, then stores the request's PendingDeployRequest
- * (`attach_compute_deploy_metadata` -> `store_pending_hosted_deploy_request`) and the
- * Wallet dispatch in one ordered transaction; the debit runs only from that committed
- * dispatch. `get_deploy_request_status` (backend/app/v2/hosted/service.py) answers 404
- * only when that row is absent. A 404 dated by the server after the quote expired
- * therefore means no dispatch exists and none can be placed for this quote.
+ * Releases an uncertain new-Wallet request hosted never received. clawdi-hosted
+ * `place_wallet_subscription_create` (backend/app/v2/compute/subscription_creation_dispatch.py)
+ * refuses a quote whose `expires_at` has passed, then stores the request's
+ * PendingDeployRequest and the Wallet dispatch in one ordered transaction; the debit runs
+ * only from that committed dispatch. `get_deploy_request_status`
+ * (backend/app/v2/hosted/service.py) answers 404 without that row. Only hosted's typed
+ * `deploy_request_not_found` 404 counts (a gateway or principal 404 does not), and only
+ * once the server's clock is a grace period past the quote's expiry. The request keeps
+ * its id, so hosted still admits at most one dispatch for it.
  */
-export function walletRequestNeverCharged(attempt: CreationAttempt, error: unknown): boolean {
+export function releaseWalletRequest(
+	attempt: CreationAttempt,
+	error: unknown,
+): CreationAttempt | null {
+	if (
+		attempt.submission !== "uncertain" ||
+		attempt.walletQuote === undefined ||
+		!(error instanceof ApiClientError) ||
+		error.status !== 404 ||
+		error.code !== DEPLOY_REQUEST_NOT_FOUND_CODE ||
+		error.serverDateMs === null ||
+		error.serverDateMs < Date.parse(attempt.walletQuote.expires_at) + WALLET_RELEASE_GRACE_MS
+	)
+		return null;
+	return { ...attempt, submission: "released" };
+}
+
+/** A Wallet request no send of which can still charge is confirmed on a fresh quote. */
+export function walletRequestNeedsQuote(attempt: CreationAttempt | null): boolean {
 	return (
-		attempt.walletQuote !== undefined &&
-		error instanceof ApiClientError &&
-		error.status === 404 &&
-		error.serverDateMs !== null &&
-		error.serverDateMs > Date.parse(attempt.walletQuote.expires_at)
+		attempt?.walletQuote !== undefined &&
+		(attempt.submission === "prepared" || attempt.submission === "released")
 	);
 }
 
-/** A journaled Wallet request with no send that can still charge is confirmed on a fresh quote. */
-export function walletRequestNeedsQuote(attempt: CreationAttempt | null): boolean {
-	return attempt?.walletQuote !== undefined && attempt.submission === "prepared";
+/**
+ * The wizard's confirmation of a fresh Wallet quote against the one the user saw: send
+ * only identical terms with no shortfall; otherwise show the new amount and send nothing.
+ */
+export function walletQuoteConfirmation(
+	shown: HostedDeploySubscriptionQuote | null | undefined,
+	fresh: HostedDeploySubscriptionQuote,
+): "confirmed" | "changed" {
+	return shown &&
+		sameHostedSubscriptionQuoteTerms(fresh, shown) &&
+		walletDebitShortfallUsd(hostedSubscriptionQuoteWalletDebit(fresh)) === null
+		? "confirmed"
+		: "changed";
+}
+
+/** The saved request's recovery controls. */
+export function creationAttemptControls(attempt: CreationAttempt, resolved: boolean) {
+	return {
+		checkStatus: attempt.submission === "uncertain",
+		discard: resolved || (canDiscardCreationAttempt(attempt) && !storeFundingHoldsAttempt(attempt)),
+	};
+}
+
+/**
+ * Copy for a failed new-Wallet send. "No wallet payment was made" only for a definitive
+ * refusal of the request's first send: never after an earlier uncertain or released send,
+ * nor when the shared transport already repeated it.
+ */
+export function walletCreationErrorCopy(saved: CreationAttempt, error: unknown) {
+	return deploySubmissionErrorCopy(
+		{
+			...deploySubmissionFailure(error),
+			firstSend: saved.submission === "prepared" && hostedCheckoutSends(error) === 1,
+		},
+		"wallet_creation",
+	);
 }
 
 /** The shared Deploy CTA reading of a mobile API failure, like Web's billing errors. */

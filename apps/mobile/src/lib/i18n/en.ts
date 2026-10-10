@@ -250,8 +250,7 @@ const creationEn = {
 	cardUnavailable:
 		"Card checkout isn't available in the app yet. Choose Wallet balance or another option above.",
 	walletQuoteChanged: "The wallet quote changed. Review the new amount, then confirm again.",
-	walletNeverCharged:
-		"This payment never reached Clawdi and nothing was charged. Review the new amount, then confirm to deploy.",
+	walletNotFound: "We couldn't find this payment — you can try again.",
 	blocked:
 		"This compute choice isn't available for a new agent. Choose another subscription or plan.",
 	invalidRuntime: "Choose a supported runtime.",

@@ -754,7 +754,7 @@ export function DeployWizard() {
 		}
 	}
 
-	function showDeploySubmissionError(error: unknown) {
+	function showDeploySubmissionError(error: unknown, options: { firstSend?: boolean } = {}) {
 		const presentation = deploySubmissionErrorPresentation(
 			error,
 			subscriptionSource?.mode === "existing"
@@ -764,6 +764,7 @@ export function DeployWizard() {
 						? "wallet_creation"
 						: "card_checkout"
 					: "included_creation",
+			options,
 		);
 		toast.error(presentation.title, {
 			id: "deploy-submit-error",
@@ -842,6 +843,8 @@ export function DeployWizard() {
 	async function onDeploy() {
 		if (!canSubmit || !subscriptionSource) return;
 		setSubmitting(true);
+		// True only while this Wallet attempt's key was minted for this send, i.e. never sent before.
+		let walletFirstSend = false;
 		try {
 			const aiFields = aiDeployFields();
 			if (!aiFields) return;
@@ -911,7 +914,10 @@ export function DeployWizard() {
 						walletCreateAttemptRef.current,
 						"subscription-wallet-deploy",
 						fingerprint,
-						newIdempotencyKey,
+						(prefix) => {
+							walletFirstSend = true;
+							return newIdempotencyKey(prefix);
+						},
 					);
 					walletCreateAttemptRef.current = attempt;
 					const outcome = await createSubscription
@@ -1032,7 +1038,7 @@ export function DeployWizard() {
 				void subscriptionCreateQuote.refetch();
 				if (walletTopUp.handleFundingError(e)) return;
 			}
-			showDeploySubmissionError(e);
+			showDeploySubmissionError(e, { firstSend: walletFirstSend });
 		} finally {
 			setSubmitting(false);
 		}

@@ -106,12 +106,14 @@ import {
 	canDiscardCreationAttempt,
 	canonicalWalletQuote,
 	canStartStorePurchase,
+	creationAttemptControls,
 	deploySubmissionFailure,
 	finishReservedRequest,
 	isDefinitiveAdmissionRejection,
 	offeredQuoteSelections,
 	type ReservedDeployResume,
 	type ReusableSubscriptionChoice,
+	releaseWalletRequest,
 	reservedDeployResume,
 	retryStoreAdmission,
 	reusableStoreRowPlan,
@@ -121,8 +123,9 @@ import {
 	storeAdmissionRecoveryAttempt,
 	storeFundingHoldsAttempt,
 	validationTranslationKeys,
+	walletCreationErrorCopy,
+	walletQuoteConfirmation,
 	walletRequestNeedsQuote,
-	walletRequestNeverCharged,
 } from "@/hosted/billing/deploy/deploy-request";
 import { readHostedStoreFunding } from "@/hosted/billing/deploy/store-funding";
 import { nextBillingCursor, uniqueBillingItems } from "@/hosted/billing/format";
@@ -562,12 +565,7 @@ function CreationForm() {
 				}
 				if (!current(owns)) return;
 				cache.setQueryData(quoteKey, fresh);
-				const freshDebit = hostedSubscriptionQuoteWalletDebit(fresh);
-				if (
-					!confirmed ||
-					!sameHostedSubscriptionQuoteTerms(fresh, confirmed) ||
-					walletDebitShortfallUsd(freshDebit)
-				) {
+				if (walletQuoteConfirmation(confirmed, fresh) === "changed") {
 					setMessage(t("creation.walletQuoteChanged"));
 					return;
 				}
@@ -756,7 +754,7 @@ function CreationForm() {
 					);
 					return;
 				}
-				const copy = deploySubmissionErrorCopy(deploySubmissionFailure(error), "wallet_creation");
+				const copy = walletCreationErrorCopy(saved, error);
 				setMessage(`${copy.title}\n${copy.description}`);
 				return;
 			}
@@ -1618,7 +1616,7 @@ function CreationForm() {
 							<>
 								<AppText>{t("creation.saved")}</AppText>
 								{/* Only a sent admission can be recovered; store funding uses the footer Check status. */}
-								{attempt.submission === "uncertain" ? (
+								{creationAttemptControls(attempt, resolved).checkStatus ? (
 									<ActionButton
 										label={t("creation.recover")}
 										disabled={action.busy}
@@ -1627,21 +1625,19 @@ function CreationForm() {
 												try {
 													await navigateRequest(attempt.id, owns);
 												} catch (error) {
-													if (!storageKey || !walletRequestNeverCharged(attempt, error))
-														throw error;
-													// Nothing was charged: confirm this request again on a fresh quote.
-													const released: CreationAttempt = { ...attempt, submission: "prepared" };
+													const released = releaseWalletRequest(attempt, error);
+													if (!storageKey || !released) throw error;
+													// Hosted holds no record of it: confirm the same request on a fresh quote.
 													await replaceAttempt(storageKey, attempt, released, () => current(owns));
 													if (!current(owns)) return;
 													setAttempt(released);
-													setMessage(t("creation.walletNeverCharged"));
+													setMessage(t("creation.walletNotFound"));
 												}
 											});
 										}}
 									/>
 								) : null}
-								{resolved ||
-								(canDiscardCreationAttempt(attempt) && !storeFundingHoldsAttempt(attempt)) ? (
+								{creationAttemptControls(attempt, resolved).discard ? (
 									<ActionButton
 										label={t(resolved ? "creation.clear" : "creation.discard")}
 										disabled={action.busy}

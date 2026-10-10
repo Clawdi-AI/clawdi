@@ -3,6 +3,7 @@ import { createHostedComputeClient } from "./compute-client";
 import type { components } from "./deploy.generated";
 import type { HostedDeployRequest, HostedDeploySubscriptionQuoteRequest } from "./deploy-wizard";
 import { ApiClientError, type ApiClientOptions, ApiClientResponseError } from "./read-transport";
+import { hostedCheckoutSends } from "./subscription-create";
 
 const body: HostedDeployRequest = {
 	compute_plan_slug: "compute_basic",
@@ -289,6 +290,8 @@ describe("Hosted compute client", () => {
 		const exhausted = await run([busy(503, "0"), busy(503, "0"), busy(503, "0")]);
 		expect(exhausted.sends).toBe(3);
 		expect(exhausted.result).toMatchObject({ status: 503 });
+		expect(hostedCheckoutSends(exhausted.result)).toBe(3);
+		expect(hostedCheckoutSends((await run([busy(422, null)])).result)).toBe(1);
 		for (const reply of [busy(409, null), busy(409, "3"), busy(502, "0"), busy(402, "0")])
 			expect((await run([reply])).sends).toBe(1);
 	});

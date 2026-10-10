@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { recordHostedCheckoutSends } from "@clawdi/shared/api";
 import {
 	BillingApiError,
 	BillingNetworkError,
@@ -240,11 +241,34 @@ describe("deploySubmissionErrorPresentation", () => {
 		const presentation = deploySubmissionErrorPresentation(
 			new BillingApiError(422, "internal validation trace"),
 			"wallet_creation",
+			{ firstSend: true },
 		);
 
 		expect(presentation.title).toBe("Payment and creation didn’t start");
 		expect(presentation.description).toContain("No wallet payment was made");
 		expect(presentation.description).not.toContain("internal validation trace");
+	});
+
+	test("a refusal after an earlier or repeated wallet send never claims nothing was paid", () => {
+		const unconfirmed = "We couldn’t confirm the payment — check status before trying again.";
+		const busy = new BillingApiError(409, "A billing operation is already in progress");
+		const conflict = new BillingApiError(409, "Conflict", {
+			detail: { code: "idempotency_key_reused" },
+		});
+		// A manual retry of the same attempt (its key was not minted for this send).
+		for (const error of [busy, conflict])
+			expect(deploySubmissionErrorPresentation(error, "wallet_creation").description).toBe(
+				unconfirmed,
+			);
+		// A first send the shared checkout retry already repeated.
+		const repeated = recordHostedCheckoutSends(
+			new BillingApiError(409, "A billing operation is already in progress"),
+			3,
+		);
+		expect(
+			deploySubmissionErrorPresentation(repeated, "wallet_creation", { firstSend: true })
+				.description,
+		).toBe(unconfirmed);
 	});
 
 	test("acceptance pending after a funded checkout never claims nothing was paid", () => {

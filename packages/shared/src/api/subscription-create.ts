@@ -117,3 +117,16 @@ export function hostedCheckoutRetryDelayMs(
 	if (retryAfterMs === null || !Number.isFinite(retryAfterMs) || retryAfterMs < 0) return null;
 	return retryAfterMs <= HOSTED_CHECKOUT_MAX_RETRY_AFTER_MS ? retryAfterMs : null;
 }
+
+const checkoutSends = new WeakMap<object, number>();
+
+/** Notes how many sends the shared checkout retry made before this result or error. */
+export function recordHostedCheckoutSends<T>(value: T, sends: number): T {
+	if (typeof value === "object" && value !== null) checkoutSends.set(value, sends);
+	return value;
+}
+
+/** Sends behind a checkout result or error: more than one means the first went uncertain. */
+export function hostedCheckoutSends(value: unknown): number {
+	return typeof value === "object" && value !== null ? (checkoutSends.get(value) ?? 1) : 1;
+}

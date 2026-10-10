@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { hostedCheckoutSends } from "@clawdi/shared/api";
 import {
 	acceptDeclarativeOperation,
 	createBillingClient,
@@ -17,6 +18,7 @@ import {
 	BillingNetworkError,
 	DEPLOYMENT_CONFLICT_MESSAGE,
 	DeploymentConflictError,
+	deploySubmissionErrorPresentation,
 	PlanChangePendingError,
 	PlanChangeTerminalError,
 } from "@/hosted/billing/errors";
@@ -95,6 +97,63 @@ describe("idempotent billing transport", () => {
 			{ body: '{"plan_slug":"compute_basic"}', key: "checkout-1" },
 			{ body: '{"plan_slug":"compute_basic"}', key: "checkout-1" },
 		]);
+	});
+
+	it("tells the shared copy when checkout's refusal followed repeated sends", async () => {
+		const scenarios = [
+			{
+				replies: [() => jsonResponse({ detail: "Invalid plan" }, 422)],
+				sends: 1,
+			},
+			{
+				replies: [
+					() => {
+						throw new BillingNetworkError("timeout");
+					},
+					() =>
+						jsonResponse({ detail: "A billing operation is already in progress" }, 409, {
+							"Retry-After": "1",
+						}),
+					() =>
+						jsonResponse({ detail: "A billing operation is already in progress" }, 409, {
+							"Retry-After": "1",
+						}),
+				],
+				sends: 3,
+			},
+		];
+		for (const scenario of scenarios) {
+			let sent = 0;
+			const client = testClient(async () => {
+				const reply = scenario.replies[sent++];
+				if (!reply) throw new Error("Unexpected send");
+				return reply();
+			});
+			const error = await client
+				.checkout(
+					{
+						plan_slug: "compute_basic",
+						billing_term_months: 1,
+						funding_source: "wallet",
+						ui_mode: "custom",
+					},
+					"wallet-key",
+				)
+				.then(
+					() => null,
+					(failure: unknown) => failure,
+				);
+			expect(error).toBeInstanceOf(BillingApiError);
+			expect(hostedCheckoutSends(error)).toBe(scenario.sends);
+			const copy = deploySubmissionErrorPresentation(error, "wallet_creation", {
+				firstSend: true,
+			});
+			if (scenario.sends === 1) expect(copy.description).toContain("No wallet payment was made");
+			else
+				expect(copy.description).toBe(
+					"We couldn’t confirm the payment — check status before trying again.",
+				);
+		}
 	});
 
 	it("does not retry responses, aborts, or a second network failure", async () => {

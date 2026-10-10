@@ -18,7 +18,11 @@ import {
 	readApiBaseUrl,
 	readResourceId,
 } from "./read-transport";
-import { HOSTED_CHECKOUT_MAX_ATTEMPTS, hostedCheckoutRetryDelayMs } from "./subscription-create";
+import {
+	HOSTED_CHECKOUT_MAX_ATTEMPTS,
+	hostedCheckoutRetryDelayMs,
+	recordHostedCheckoutSends,
+} from "./subscription-create";
 
 function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
 	return new Promise((resolve, reject) => {
@@ -105,13 +109,14 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 			try {
 				result = await sendCheckout(body, idempotencyKey, signal);
 			} catch (error) {
-				if (attempt >= HOSTED_CHECKOUT_MAX_ATTEMPTS || signal?.aborted) throw error;
+				if (attempt >= HOSTED_CHECKOUT_MAX_ATTEMPTS || signal?.aborted)
+					throw recordHostedCheckoutSends(error, attempt);
 				if (error instanceof ApiClientNetworkError) continue;
 				const delay =
 					error instanceof ApiClientError
 						? hostedCheckoutRetryDelayMs(error.status, error.retryAfterMs)
 						: null;
-				if (delay === null) throw error;
+				if (delay === null) throw recordHostedCheckoutSends(error, attempt);
 				await waitForRetry(delay, signal);
 				continue;
 			}

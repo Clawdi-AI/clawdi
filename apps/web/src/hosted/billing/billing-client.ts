@@ -7,7 +7,9 @@ import {
 	extractApiDetail,
 	HOSTED_CHECKOUT_MAX_ATTEMPTS,
 	hostedCheckoutRetryDelayMs,
+	hostedCheckoutSends,
 	projectHostedDeployRequest,
+	recordHostedCheckoutSends,
 	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
@@ -165,13 +167,14 @@ export function retryIdempotentBillingTransport(
 					request.signal.aborted ||
 					attempt === attempts.length - 1
 				) {
-					throw error;
+					throw recordHostedCheckoutSends(error, attempt + 1);
 				}
 				continue;
 			}
 
 			const delayMs = path === CHECKOUT_PATH ? checkoutRetryDelay(response) : null;
-			if (delayMs === null || attempt === attempts.length - 1) return response;
+			if (delayMs === null || attempt === attempts.length - 1)
+				return recordHostedCheckoutSends(response, attempt + 1);
 			await sleep(delayMs);
 		}
 		throw new BillingNetworkError("offline");
@@ -908,13 +911,18 @@ export function createBillingClient(
 			unwrapDeploy(
 				await api.GET("/v2/subscription/trial-offer", { params: { query: { channel } } }),
 			),
-		checkout: async (body: CheckoutRequest, idempotencyKey: string) =>
-			unwrapDeploy(
-				await api.POST("/v2/subscription/checkout", {
-					params: { header: { "Idempotency-Key": idempotencyKey } },
-					body,
-				}),
-			),
+		checkout: async (body: CheckoutRequest, idempotencyKey: string) => {
+			const result = await api.POST("/v2/subscription/checkout", {
+				params: { header: { "Idempotency-Key": idempotencyKey } },
+				body,
+			});
+			try {
+				return unwrapDeploy(result);
+			} catch (error) {
+				// Keep the transport's send count for the shared "nothing was paid" rule.
+				throw recordHostedCheckoutSends(error, hostedCheckoutSends(result.response));
+			}
+		},
 		quoteSubscription: async (body: ComputeSubscriptionQuoteRequest) =>
 			unwrapDeploy(await api.POST("/v2/subscription/quote", { body })),
 		quotePlanChange: async (body: ComputePlanChangeQuoteRequest) =>

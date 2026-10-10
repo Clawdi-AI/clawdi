@@ -103,6 +103,10 @@ export function NativeMenu({
 				typeof (entry.action.attributes?.destructive ? destructive : foreground) === "string"
 					? String(entry.action.attributes?.destructive ? destructive : foreground)
 					: undefined,
+			// A disabled menu also disables every action through MenuView's documented attribute.
+			attributes: disabled
+				? { ...entry.action.attributes, disabled: true }
+				: entry.action.attributes,
 			subactions: entry.children ? actions(entry.children) : undefined,
 		}));
 	const menu = (
@@ -114,7 +118,7 @@ export function NativeMenu({
 			onCloseMenu={() => onOpenChange?.(false)}
 			onPressAction={({ nativeEvent }) => {
 				const entry = findEntry(entries, nativeEvent.event);
-				if (!entry || entry.action.attributes?.disabled) return;
+				if (disabled || !entry || entry.action.attributes?.disabled) return;
 				entry.onPress?.();
 				onOpenChange?.(false);
 			}}
@@ -133,7 +137,7 @@ export function NativeMenu({
 		menu
 	);
 	// MenuView has no disabled prop. Keep its host so the trigger measures exactly as when
-	// enabled, and stop touches from reaching it.
+	// enabled, stop touches from reaching it, and disable each action above.
 	return disabled ? (
 		<AppView
 			accessibilityState={{ disabled }}

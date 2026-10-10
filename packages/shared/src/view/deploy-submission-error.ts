@@ -14,6 +14,12 @@ export type DeploySubmissionFailure = {
 	recovery: string | null;
 	/** Hosted's structured error code, when the response carried one. */
 	code?: string | null;
+	/**
+	 * True only when this response answers the attempt's first and only send. A refusal
+	 * after an earlier uncertain send, a manual retry or a transport retry proves nothing
+	 * about that earlier send, so it never reads as "nothing was paid".
+	 */
+	firstSend?: boolean;
 };
 
 /**
@@ -57,7 +63,7 @@ export function deploySubmissionRecoveryCopy({
  * attempt instead of claiming that nothing happened.
  */
 export function deploySubmissionErrorCopy(
-	{ kind, recovery, code }: DeploySubmissionFailure,
+	{ kind, recovery, code, firstSend }: DeploySubmissionFailure,
 	context: DeploySubmissionContext,
 ): DeploySubmissionErrorPresentation {
 	if (code === DEPLOY_ACCEPTANCE_PENDING_CODE && context === "wallet_creation") {
@@ -108,6 +114,12 @@ export function deploySubmissionErrorCopy(
 	}
 
 	if (context === "wallet_creation") {
+		if (kind === "rejected" && firstSend !== true) {
+			return {
+				title: "We couldn’t confirm this attempt",
+				description: "We couldn’t confirm the payment — check status before trying again.",
+			};
+		}
 		if (kind === "rejected") {
 			return {
 				title: "Payment and creation didn’t start",

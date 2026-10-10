@@ -9,6 +9,7 @@
  * from the upstream provider.
  */
 
+import { hostedCheckoutSends } from "@clawdi/shared/api";
 import {
 	DEPLOY_SESSION_EXPIRED_RECOVERY,
 	type DeploySubmissionContext,
@@ -255,6 +256,7 @@ function deploySubmissionErrorCode(error: unknown): string | null {
 export function deploySubmissionErrorPresentation(
 	error: unknown,
 	context: DeploySubmissionContext,
+	options: { firstSend?: boolean } = {},
 ): DeploySubmissionErrorPresentation {
 	return deploySubmissionErrorCopy(
 		{
@@ -267,6 +269,9 @@ export function deploySubmissionErrorPresentation(
 						: "unknown",
 			recovery: knownBillingRecovery(error),
 			code: deploySubmissionErrorCode(error),
+			// A refusal answers the first send only if this attempt was never sent before and
+			// the shared checkout retry did not repeat it.
+			firstSend: options.firstSend === true && hostedCheckoutSends(error) === 1,
 		},
 		context,
 	);
