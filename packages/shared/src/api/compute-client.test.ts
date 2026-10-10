@@ -138,6 +138,93 @@ describe("Hosted compute client", () => {
 		).rejects.toBeInstanceOf(ApiClientResponseError);
 	});
 
+	test("starts a new Wallet subscription with Web's request and the confirmed quote", async () => {
+		const requests: { url: string; body: unknown; key: string | null }[] = [];
+		let response: unknown = {
+			flow_type: "subscription_activation",
+			funding_source: "wallet",
+			action_url: null,
+			checkout_url: "",
+			client_secret: null,
+			subscription_id: "csub_w",
+			invoice_id: "in_w",
+			deployment_id: "hdep_w",
+			deploy_request_id: "wallet-key",
+		};
+		let sends = 0;
+		const client = createHostedComputeClient({
+			...options,
+			fetch: async (request) => {
+				sends++;
+				requests.push({
+					url: request.url,
+					body: await request.json(),
+					key: request.headers.get("Idempotency-Key"),
+				});
+				return response instanceof Response ? response : Response.json(response);
+			},
+		});
+		const request = { ...body, deploy_request_id: "wallet-key" };
+		const walletQuote = {
+			plan_slug: "compute_basic",
+			billing_term_months: 1,
+			funding_source: "wallet",
+			currency: "usd",
+			term_price_cents: 1000,
+			preview_invoice_id: "upcoming_in",
+			expires_at: "2026-10-09T00:15:00Z",
+			debit_amount_usd: "10.00",
+			balance_before_usd: "30.00",
+			balance_after_usd: "20.00",
+		} as const;
+		await expect(
+			client.createWalletSubscriptionDeployment(request, "wallet-key", walletQuote),
+		).resolves.toMatchObject({ deployment_id: "hdep_w" });
+		expect(requests).toEqual([
+			{
+				url: "https://compute.example.test/v2/subscription/checkout",
+				key: "wallet-key",
+				body: {
+					plan_slug: "compute_basic",
+					billing_term_months: 1,
+					funding_source: "wallet",
+					ui_mode: "custom",
+					subscription_selection: { mode: "new" },
+					deploy_config: request,
+					quote: walletQuote,
+				},
+			},
+		]);
+		await expect(
+			client.createWalletSubscriptionDeployment(request, "wallet-key", {
+				...walletQuote,
+				plan_slug: "compute_performance",
+			}),
+		).rejects.toMatchObject({ code: "subscription_plan_mismatch" });
+		await expect(
+			client.createWalletSubscriptionDeployment(request, "wallet-key", {
+				...walletQuote,
+				funding_source: "stripe",
+			}),
+		).rejects.toMatchObject({ code: "wallet_quote_required" });
+		await expect(
+			client.createWalletSubscriptionDeployment(request, "other-key", walletQuote),
+		).rejects.toMatchObject({ code: "deploy_request_id_mismatch" });
+		expect(sends).toBe(1);
+		response = Response.json(
+			{ detail: { code: "insufficient_wallet_balance", shortfall_usd: "5.00" } },
+			{ status: 402 },
+		);
+		await expect(
+			client.createWalletSubscriptionDeployment(request, "wallet-key", walletQuote),
+		).rejects.toMatchObject({ status: 402, code: "insufficient_wallet_balance" });
+		response = { flow_type: "checkout_session", checkout_url: "https://checkout.example" };
+		await expect(
+			client.createWalletSubscriptionDeployment(request, "wallet-key", walletQuote),
+		).rejects.toBeInstanceOf(ApiClientResponseError);
+		expect(sends).toBe(3);
+	});
+
 	test("sends card and Wallet subscription commands once, to Web's endpoints", async () => {
 		const requests: { url: string; body: unknown }[] = [];
 		const client = createHostedComputeClient({

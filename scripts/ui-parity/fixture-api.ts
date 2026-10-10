@@ -70,6 +70,7 @@ for (const [name, allowed, fallback] of [
 	],
 	["account-state", ["active", "suspended"], "active"],
 	["reusable-subscriptions", ["none", "mixed"], "none"],
+	["included-basic", ["available", "none"], "available"],
 	["subscription-actions", ["false", "true"], "false"],
 ] satisfies [string, string[], string][]) {
 	if (!allowed.includes(readFlag(name, fallback))) {
@@ -2447,8 +2448,12 @@ const computeGetRoutes = {
 				}
 			: deployments,
 	"/v2/deployments/by-request/{deploy_request_id}": ({ params }) => {
+		const walletDeploymentId = walletCheckouts.get(params.deploy_request_id ?? "")?.response
+			.deployment_id;
 		const deployment = deployments.find(
-			(item) => params.deploy_request_id === `request-${item.resource.id}`,
+			(item) =>
+				params.deploy_request_id === `request-${item.resource.id}` ||
+				item.resource.id === walletDeploymentId,
 		);
 		if (!deployment) return notFound("Deploy request not found");
 		return {
@@ -2501,7 +2506,10 @@ const computeGetRoutes = {
 		),
 	}),
 	"/v2/subscriptions/reusable": () => reusableSubscriptions,
-	"/v2/subscriptions/included-basic": () => ({ total_slots: 2, used_slots: 1, available_slots: 1 }),
+	"/v2/subscriptions/included-basic": () =>
+		readFlag("included-basic", "available") === "none"
+			? { total_slots: 1, used_slots: 1, available_slots: 0 }
+			: { total_slots: 2, used_slots: 1, available_slots: 1 },
 	"/v2/wallet": () => wallet,
 	"/v2/wallet/transactions": () => walletTransactions,
 	"/v2/wallet/payment-methods": () => ({ items: [], has_more: false }),
@@ -2599,6 +2607,143 @@ on("POST", "/v2/subscription/quote", async ({ request }) => {
 		balance_after_usd:
 			funding === "wallet" ? (Number(wallet.balance_usd) - debit).toFixed(2) : null,
 	} satisfies DeploySchemas["V2ComputeSubscriptionQuoteResponse-Output"];
+});
+
+/**
+ * Web's and the app's new Wallet subscription for a new Agent: hosted checks the confirmed
+ * quote, debits the Wallet once per deploy request and accepts the deployment, which starts
+ * and becomes ready a few seconds later. The same key and body replay the activation.
+ */
+const walletCheckouts = new Map<
+	string,
+	{ body: string; response: DeploySchemas["V2SubscriptionActivationResponse"] }
+>();
+on("POST", "/v2/subscription/checkout", async ({ request }) => {
+	const key = request.headers.get("idempotency-key")?.trim();
+	if (!key) return new Reply(400, { detail: { code: "idempotency_key_required" } });
+	const body = await bodyObject(request);
+	const replay = walletCheckouts.get(key);
+	if (replay)
+		return replay.body === JSON.stringify(body)
+			? new Reply(202, replay.response)
+			: new Reply(409, { detail: { code: "idempotency_key_reused" } });
+	const config = body.deploy_config;
+	const selection = body.subscription_selection;
+	const quote = body.quote;
+	if (
+		body.funding_source !== "wallet" ||
+		typeof selection !== "object" ||
+		selection === null ||
+		Reflect.get(selection, "mode") !== "new" ||
+		typeof config !== "object" ||
+		config === null ||
+		typeof quote !== "object" ||
+		quote === null
+	)
+		return new Reply(400, { detail: "Only new Wallet subscriptions are simulated" });
+	if (Reflect.get(config, "deploy_request_id") !== key)
+		return new Reply(409, { detail: { code: "deploy_request_id_mismatch" } });
+	const planSlug = body.plan_slug;
+	const term = body.billing_term_months;
+	const offer = computePlans
+		.find((plan) => plan.slug === planSlug)
+		?.offers.find((item) => item.billing_term_months === term);
+	if (!offer || Reflect.get(config, "compute_plan_slug") !== planSlug)
+		return new Reply(400, { detail: "Plan offer unavailable" });
+	const debit = offer.price_cents / 100;
+	const balance = Number(wallet.balance_usd);
+	const expiresAt = Reflect.get(quote, "expires_at");
+	if (typeof expiresAt !== "string" || Date.parse(expiresAt) <= Date.now())
+		return new Reply(409, { detail: "The wallet quote expired; request a fresh quote" });
+	if (
+		Number(Reflect.get(quote, "debit_amount_usd")) !== debit ||
+		Number(Reflect.get(quote, "balance_before_usd")) !== balance
+	)
+		return new Reply(409, {
+			detail: "The wallet quote changed; review a fresh quote before confirming",
+		});
+	if (balance < debit)
+		return new Reply(402, {
+			detail: {
+				code: "insufficient_wallet_balance",
+				required_usd: debit.toFixed(2),
+				available_usd: wallet.balance_usd,
+				shortfall_usd: (debit - balance).toFixed(2),
+			},
+		});
+	const runtime = Reflect.get(config, "runtime") === "openclaw" ? "openclaw" : "hermes";
+	const name = String(Reflect.get(config, "name") ?? "Wallet Agent");
+	const sequence = walletCheckouts.size + 1;
+	const deploymentId = `hdep_ParityWallet${sequence}`;
+	const agentId = `4e2e5000-0100-4c00-8000-${String(sequence).padStart(12, "0")}`;
+	const deployment = hostedDeployment(deploymentId, agentId, runtime, name, false);
+	const status = deployment.resource.status;
+	if (!status) throw new Error("Missing fixture deployment status");
+	status.summary_state = "starting";
+	deployment.current_plan_slug = planSlug === "compute_performance" ? planSlug : "compute_basic";
+	if (planSlug === "compute_basic")
+		deployment.resource.spec.resources = { vcpu: 1, memory_mib: 2048, disk_gib: 20 };
+	deployment.resource.metadata.createdAt = new Date().toISOString();
+	deployments.push(deployment);
+	const operation = {
+		name: `operations/op-${deploymentId}`,
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId,
+			verb: "create",
+			targetGeneration: 1,
+			manifestETag: deployment.resource.metadata.manifestETag,
+			createTime: new Date().toISOString(),
+			updateTime: new Date().toISOString(),
+		},
+		done: false,
+	} satisfies DeploySchemas["LongRunningOperation"];
+	deploymentOperations.push(operation);
+	hostedStateAgents.push({
+		...agents[2],
+		id: agentId,
+		name,
+		display_name: name,
+		agent_type: runtime,
+		machine_id: `machine-fixture-${deploymentId}`,
+		machine_name: "Clawdi Cloud",
+		sort_order: 20 + sequence,
+		last_seen_at: null,
+		last_sync_at: null,
+		explicit_identity: true,
+	});
+	setTimeout(() => {
+		status.summary_state = "running";
+		Object.assign(operation, {
+			done: true,
+			response: {
+				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+				deployment: deployment.resource,
+			},
+		});
+	}, 15_000);
+	wallet.balance_usd = (balance - debit).toFixed(2);
+	const response = {
+		flow_type: "subscription_activation",
+		funding_source: "wallet",
+		action_url: null,
+		checkout_url: "",
+		client_secret: null,
+		subscription_id: `csub_ParityWallet${sequence}`,
+		invoice_id: `in_ParityWallet${sequence}`,
+		deployment_id: deploymentId,
+		agent_id: agentId,
+		deployment_name: name,
+		metadata_generation: 1,
+		deploy_request_id: key,
+		debited_usd: debit.toFixed(2),
+		balance_after_usd: wallet.balance_usd,
+		current_period_start: new Date().toISOString(),
+		current_period_end: new Date(Date.now() + 30 * DAY).toISOString(),
+		entitled_until: new Date(Date.now() + 30 * DAY).toISOString(),
+	} satisfies DeploySchemas["V2SubscriptionActivationResponse"];
+	walletCheckouts.set(key, { body: JSON.stringify(body), response });
+	return new Reply(202, response);
 });
 
 // ---------------------------------------------------------------------------

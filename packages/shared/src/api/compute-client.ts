@@ -2,7 +2,9 @@ import createClient from "openapi-fetch";
 import type { components as DeployComponents, paths as DeployPaths } from "./deploy.generated";
 import {
 	buildHostedDeployCheckoutRequest,
+	type HostedDeployCheckoutRequest,
 	type HostedDeployRequest,
+	type HostedDeploySubscriptionQuote,
 	type HostedDeploySubscriptionQuoteRequest,
 	type HostedDeploySubscriptionSelection,
 	isHostedDeployComputePlan,
@@ -67,6 +69,24 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 			signal,
 		);
 	};
+	/** Card and Wallet subscription activation for a new Agent; a checkout session is never valid here. */
+	const activateSubscription = async (
+		body: HostedDeployCheckoutRequest,
+		idempotencyKey: string,
+		signal?: AbortSignal,
+	) => {
+		const result = await transport.read(
+			(init) =>
+				api.POST("/v2/subscription/checkout", {
+					...init,
+					body,
+					params: { header: { "Idempotency-Key": idempotencyKey } },
+				}),
+			signal,
+		);
+		if (result?.flow_type !== "subscription_activation") throw new ApiClientResponseError();
+		return result;
+	};
 	return {
 		/** Starts durable account termination, including hosted resources and Clerk identity.
 		 * A 204 acknowledges the request; asynchronous cleanup is not proven complete.
@@ -98,27 +118,54 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 			validateCreation(body, idempotencyKey);
 			if (subscription.planSlug !== body.compute_plan_slug)
 				throw new ApiClientError(409, "subscription_plan_mismatch");
-			const result = await transport.read(
-				(init) =>
-					api.POST("/v2/subscription/checkout", {
-						...init,
-						body: buildHostedDeployCheckoutRequest({
-							selection: subscription,
-							subscriptionSelection: {
-								mode: "existing",
-								subscription_id: readResourceId(subscription.subscriptionId),
-							},
-							target: { kind: "new_deployment", deployRequest: body },
-							idempotencyKey,
-							quote: null,
-							uiMode: "custom",
-						}),
-						params: { header: { "Idempotency-Key": idempotencyKey } },
-					}),
+			return activateSubscription(
+				buildHostedDeployCheckoutRequest({
+					selection: subscription,
+					subscriptionSelection: {
+						mode: "existing",
+						subscription_id: readResourceId(subscription.subscriptionId),
+					},
+					target: { kind: "new_deployment", deployRequest: body },
+					idempotencyKey,
+					quote: null,
+					uiMode: "custom",
+				}),
+				idempotencyKey,
 				signal,
 			);
-			if (result?.flow_type !== "subscription_activation") throw new ApiClientResponseError();
-			return result;
+		},
+		/**
+		 * Starts a new Wallet-funded subscription for a new Agent exactly like Web's Wallet
+		 * deploy: `subscription_selection.mode = "new"` with the server quote the user
+		 * confirmed. Hosted debits at most once per deploy request; the same key, payload and
+		 * quote replay the original activation. Never retried automatically.
+		 */
+		createWalletSubscriptionDeployment: async (
+			body: HostedDeployRequest,
+			idempotencyKey: string,
+			quote: HostedDeploySubscriptionQuote,
+			signal?: AbortSignal,
+		) => {
+			validateCreation(body, idempotencyKey);
+			if (quote.funding_source !== "wallet") throw new ApiClientError(400, "wallet_quote_required");
+			if (quote.plan_slug !== body.compute_plan_slug)
+				throw new ApiClientError(409, "subscription_plan_mismatch");
+			return activateSubscription(
+				buildHostedDeployCheckoutRequest({
+					selection: {
+						planSlug: quote.plan_slug,
+						billingTermMonths: quote.billing_term_months,
+						fundingSource: "wallet",
+					},
+					subscriptionSelection: { mode: "new" },
+					target: { kind: "new_deployment", deployRequest: body },
+					idempotencyKey,
+					quote,
+					uiMode: "custom",
+				}),
+				idempotencyKey,
+				signal,
+			);
 		},
 		/** Ownership protection only; this does not expose legacy product actions. */
 		getLegacyAgentIds: async (signal?: AbortSignal) => {

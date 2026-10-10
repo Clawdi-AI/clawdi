@@ -8,6 +8,7 @@ export function createAttemptStore(store: AttemptStore) {
 		sameIntent: (previous, next) =>
 			next.id === previous.id &&
 			JSON.stringify(next.request) === JSON.stringify(previous.request) &&
-			JSON.stringify(next.draft) === JSON.stringify(previous.draft),
+			JSON.stringify(next.draft) === JSON.stringify(previous.draft) &&
+			JSON.stringify(next.walletQuote) === JSON.stringify(previous.walletQuote),
 	});
 }

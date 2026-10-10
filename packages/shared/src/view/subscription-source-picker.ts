@@ -32,6 +32,14 @@ export const deployFormCopy = {
 	trialDescription: "No card required. Add a payment method to continue after your trial.",
 	walletTitle: "Wallet balance",
 	walletDescription: "Paid upfront from your wallet balance. Renews from wallet.",
+	payAndDeploy: "Pay & deploy",
+	topUpWallet: "Top up wallet",
+	walletLoading: "Loading your wallet balance.",
+	walletRetry: "Retry loading your wallet balance above.",
+	walletQuoteRetry: "Retry the wallet quote above.",
+	walletQuoteRefreshing: "Refreshing your wallet quote.",
+	walletQuoteWaiting: "Waiting for your wallet quote.",
+	walletTopUpRequired: "Top up your wallet to continue.",
 } as const;
 
 export function deployConfigurationSummary(runtime: string, ai: string, compute: string): string {

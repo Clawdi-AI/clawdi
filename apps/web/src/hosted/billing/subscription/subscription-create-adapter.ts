@@ -2,6 +2,8 @@ import {
 	buildHostedDeployCheckoutRequest,
 	buildHostedDeploySubscriptionQuoteRequest,
 	type HostedDeployCheckoutUiMode,
+	hostedSubscriptionActivationTarget,
+	hostedSubscriptionQuoteWalletDebit,
 } from "@clawdi/shared/api";
 import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
 import type { CheckoutReturnNavigationTarget } from "@/hosted/billing/checkout-return";
@@ -114,32 +116,17 @@ export function subscriptionCreateQuoteRequest(
 	return buildHostedDeploySubscriptionQuoteRequest(selection);
 }
 
-function decimalString(value: string | null | undefined, field: string): string {
-	if (value === null || value === undefined || value.trim() === "") {
-		throw new Error(`Subscription quote is missing ${field}.`);
-	}
-	return value;
-}
-
 export function subscriptionCreateQuoteView(
 	selection: SubscriptionCreateSelection,
 	quote: ComputeSubscriptionQuoteResponse,
 ): SubscriptionCreateQuoteView {
-	const walletDebit =
-		quote.funding_source === "wallet"
-			? {
-					balanceBeforeUsd: decimalString(quote.balance_before_usd, "the wallet balance"),
-					debitAmountUsd: decimalString(quote.debit_amount_usd, "the exact wallet debit"),
-					balanceAfterUsd: decimalString(quote.balance_after_usd, "the post-debit wallet balance"),
-				}
-			: null;
 	return {
 		selection,
 		termPriceCents: quote.term_price_cents,
 		currency: quote.currency,
 		previewId: quote.preview_invoice_id ?? null,
 		expiresAt: quote.expires_at,
-		walletDebit,
+		walletDebit: hostedSubscriptionQuoteWalletDebit(quote),
 		serverQuote: quote,
 	};
 }
@@ -183,16 +170,7 @@ export function subscriptionCreateOutcome(
 	if (result.flow_type !== "subscription_activation") {
 		return { flowType: "checkout", checkout: result };
 	}
-	const deploymentId = result.deployment_id?.trim();
-	const deployRequestId = result.deploy_request_id?.trim();
-	let target: CheckoutReturnNavigationTarget;
-	if (deploymentId) {
-		target = { kind: "deployment", deploymentId };
-	} else if (deployRequestId) {
-		target = { kind: "deploy_request", deployRequestId };
-	} else {
-		throw new Error("Activation did not return an agent request.");
-	}
+	const target: CheckoutReturnNavigationTarget = hostedSubscriptionActivationTarget(result);
 	return {
 		flowType: "subscription_activation",
 		target,

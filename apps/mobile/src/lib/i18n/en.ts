@@ -247,8 +247,9 @@ const creationEn = {
 		"This {store} subscription isn't free for a new agent from this account right now. Check Compute for its status.",
 	subscriptionUnavailable:
 		"Subscription no longer available. Choose a current reusable subscription or start a new one.",
-	newUnavailable:
-		"A new subscription can't be started from this option yet. Choose another option above.",
+	cardUnavailable:
+		"Card checkout isn't available in the app yet. Choose Wallet balance or another option above.",
+	walletQuoteChanged: "The wallet quote changed. Review the new amount, then confirm again.",
 	blocked:
 		"This compute choice isn't available for a new agent. Choose another subscription or plan.",
 	invalidRuntime: "Choose a supported runtime.",

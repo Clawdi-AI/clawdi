@@ -667,14 +667,13 @@ export function DeployWizard() {
 		}
 		if (subscriptionSource.mode === "new" && paidSelection && paymentMethod === "wallet") {
 			if (!wallet.data) {
-				return wallet.error
-					? "Retry loading your wallet balance above."
-					: "Loading your wallet balance.";
+				return wallet.error ? deployFormCopy.walletRetry : deployFormCopy.walletLoading;
 			}
-			if (visibleSubscriptionQuoteError) return "Retry the wallet quote above.";
-			if (visibleSubscriptionQuoteFetching && !walletDebit) return "Refreshing your wallet quote.";
-			if (!walletDebit) return "Waiting for your wallet quote.";
-			if (walletInsufficient) return "Top up your wallet to continue.";
+			if (visibleSubscriptionQuoteError) return deployFormCopy.walletQuoteRetry;
+			if (visibleSubscriptionQuoteFetching && !walletDebit)
+				return deployFormCopy.walletQuoteRefreshing;
+			if (!walletDebit) return deployFormCopy.walletQuoteWaiting;
+			if (walletInsufficient) return deployFormCopy.walletTopUpRequired;
 		}
 		return null;
 	})();
@@ -1045,8 +1044,8 @@ export function DeployWizard() {
 			: paidSelection
 				? paymentMethod === "wallet"
 					? walletInsufficient
-						? "Top up wallet"
-						: "Pay & deploy"
+						? deployFormCopy.topUpWallet
+						: deployFormCopy.payAndDeploy
 					: "Continue"
 				: "Deploy";
 	const primaryProvider = providerList.find(

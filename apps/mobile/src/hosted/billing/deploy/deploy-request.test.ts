@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	ApiClientError,
+	ApiClientNetworkError,
 	createHostedComputeClient,
 	type DeployComponents,
 	type HostedDeployPlan,
@@ -9,10 +10,13 @@ import {
 	type SavedAiProvider,
 	validateAndBuildHostedDeployRequest,
 } from "@clawdi/shared/api";
+import { deploySubmissionErrorCopy } from "@clawdi/shared/view";
 import {
 	type CreationAttempt,
 	canDiscardCreationAttempt,
+	canonicalWalletQuote,
 	canStartStorePurchase,
+	deploySubmissionFailure,
 	isDefinitiveAdmissionRejection,
 	offeredQuoteSelections,
 	parseCreationAttempt,
@@ -566,5 +570,180 @@ describe("store-only admission recovery", () => {
 		controller.abort(new Error("Account changed"));
 		await expect(result).rejects.toBe(controller.signal.reason);
 		expect(sends).toBe(1);
+	});
+});
+
+describe("new Wallet subscription creation", () => {
+	const id = "8e244ab3-3333-4333-8333-333333333333";
+	const draft: HostedDeployWizardDraft = {
+		runtime: "hermes",
+		computePlanSlug: "compute_basic",
+		agentName: "Wallet Agent",
+		language: "en",
+		timezone: "UTC",
+		ai: { mode: "unmanaged" },
+	};
+	const built = validateAndBuildHostedDeployRequest(draft);
+	if (!built.ok) throw new Error("Invalid fixture");
+	// Server field order differs from the canonical journal shape on purpose.
+	const serverQuote = {
+		balance_after_usd: "20.00",
+		balance_before_usd: "30.00",
+		billing_term_months: 1,
+		currency: "usd",
+		debit_amount_usd: "10.00",
+		expires_at: "2026-10-09T23:30:00Z",
+		funding_source: "wallet",
+		plan_slug: "compute_basic",
+		term_price_cents: 1000,
+	} as const;
+	const walletQuote = canonicalWalletQuote(serverQuote, "compute_basic");
+	if (!walletQuote) throw new Error("Invalid quote fixture");
+	const attempt: CreationAttempt = {
+		version: 1,
+		submission: "prepared",
+		id,
+		draft,
+		request: { ...built.request, deploy_request_id: id },
+		walletQuote,
+	};
+	const memoryJournal = () => {
+		const values = new Map<string, string>();
+		const store = {
+			getItemAsync: async (key: string) => values.get(key) ?? null,
+			setItemAsync: async (key: string, value: string) => {
+				values.set(key, value);
+			},
+			deleteItemAsync: async (key: string) => {
+				values.delete(key);
+			},
+		};
+		return { store, journal: createAttemptStore(store) };
+	};
+
+	test("only a complete Wallet quote for the draft's plan is journaled", () => {
+		expect(walletQuote.preview_invoice_id).toBeNull();
+		expect(
+			canonicalWalletQuote({ ...serverQuote, plan_slug: "compute_performance" }, "compute_basic"),
+		).toBeNull();
+		expect(
+			canonicalWalletQuote({ ...serverQuote, funding_source: "stripe" }, "compute_basic"),
+		).toBeNull();
+		expect(
+			canonicalWalletQuote({ ...serverQuote, debit_amount_usd: null }, "compute_basic"),
+		).toBeNull();
+		expect(
+			canonicalWalletQuote({ ...serverQuote, balance_after_usd: "-6" }, "compute_basic"),
+		).not.toBeNull();
+		expect(
+			canonicalWalletQuote({ ...serverQuote, balance_before_usd: "0E-8" }, "compute_basic"),
+		).not.toBeNull();
+		expect(parseCreationAttempt(JSON.stringify(attempt))).toEqual(attempt);
+		for (const invalid of [
+			{ ...attempt, walletQuote: { ...walletQuote, plan_slug: "compute_performance" } },
+			{ ...attempt, walletQuote: { ...walletQuote, expires_at: "soon" } },
+			{ ...attempt, storeFunding: "funded" },
+			{
+				...attempt,
+				subscription: {
+					id: "csub_K8fJ3pQm",
+					planSlug: "compute_basic",
+					billingTermMonths: 1,
+					fundingSource: "wallet",
+				},
+			},
+		])
+			expect(parseCreationAttempt(JSON.stringify(invalid))).toBeNull();
+	});
+
+	test("crash after the uncertain marker replays the identical checkout after restart", async () => {
+		const { store, journal } = memoryJournal();
+		// Journal before POST, then mark uncertainty before any send.
+		await journal.saveAttempt("account", attempt, () => true);
+		const submitting: CreationAttempt = { ...attempt, submission: "uncertain" };
+		await journal.replaceAttempt("account", attempt, submitting, () => true);
+		const sent: { key: string | null; body: unknown }[] = [];
+		const client = createHostedComputeClient({
+			baseUrl: "https://compute.example.test",
+			getToken: async () => "token",
+			fetch: async (request) => {
+				sent.push({ key: request.headers.get("Idempotency-Key"), body: await request.json() });
+				return Response.json({ detail: "lost" }, { status: 502 });
+			},
+		});
+		const send = (saved: CreationAttempt) => {
+			if (!saved.walletQuote) throw new Error("Missing quote");
+			return client
+				.createWalletSubscriptionDeployment(saved.request, saved.id, saved.walletQuote)
+				.catch(() => undefined);
+		};
+		await send(submitting);
+		// The app restarts: a new journal instance reads the same storage.
+		const restored = await createAttemptStore(store).readSavedAttempt("account");
+		if (!restored) throw new Error("Missing saved request");
+		expect(restored).toEqual(submitting);
+		expect(canDiscardCreationAttempt(restored)).toBe(false);
+		await send(restored);
+		expect(sent).toHaveLength(2);
+		expect(sent[1]).toEqual(sent[0]);
+		expect(sent[0]?.key).toBe(id);
+	});
+
+	test("a different quote is never written over a journaled request", async () => {
+		const { journal } = memoryJournal();
+		await journal.saveAttempt("account", attempt, () => true);
+		await expect(
+			journal.replaceAttempt(
+				"account",
+				attempt,
+				{ ...attempt, walletQuote: { ...walletQuote, balance_before_usd: "40.00" } },
+				() => true,
+			),
+		).rejects.toThrow("Request payload changed");
+		// Account switch: the old owner can no longer write.
+		await expect(
+			journal.replaceAttempt(
+				"account",
+				attempt,
+				{ ...attempt, submission: "uncertain" },
+				() => false,
+			),
+		).rejects.toThrow("Creation owner changed");
+		expect(await journal.readSavedAttempt("account")).toEqual(attempt);
+	});
+
+	test("refusals keep the request for same-key replay with Web's copy", () => {
+		const insufficient = new ApiClientError(402, "insufficient_wallet_balance");
+		// A Wallet request is never released as an entitlement rejection.
+		for (const error of [insufficient, new ApiClientError(409, "compute_entitlement_required")])
+			expect(isDefinitiveAdmissionRejection(attempt, error)).toBe(false);
+		expect(deploySubmissionFailure(new ApiClientNetworkError("timeout"))).toEqual({
+			kind: "timeout",
+			recovery: null,
+		});
+		expect(deploySubmissionFailure(new ApiClientError(503))).toEqual({
+			kind: "server",
+			recovery: null,
+		});
+		expect(deploySubmissionFailure(new ApiClientError(409, "idempotency_key_reused"))).toEqual({
+			kind: "rejected",
+			recovery: "This attempt couldn't be matched to the earlier request.",
+		});
+		expect(
+			deploySubmissionErrorCopy(
+				deploySubmissionFailure(new ApiClientError(401)),
+				"wallet_creation",
+			),
+		).toEqual({
+			title: "Payment and creation didn’t start",
+			description:
+				"Your session expired before this request could start. No wallet payment was made. Review your choices and retry.",
+		});
+		expect(
+			deploySubmissionErrorCopy(
+				deploySubmissionFailure(new ApiClientNetworkError("offline")),
+				"wallet_creation",
+			).description,
+		).toContain("Retry to safely resume the same attempt.");
 	});
 });

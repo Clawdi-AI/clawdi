@@ -1,11 +1,13 @@
 import {
 	ApiClientError,
+	ApiClientNetworkError,
 	buildHostedDeployRequest,
 	type DeployComponents,
 	type HostedDeployAiFields,
 	type HostedDeployComputePlanSlug,
 	type HostedDeployPlan,
 	type HostedDeployRequest,
+	type HostedDeploySubscriptionQuote,
 	type HostedDeploySubscriptionSelection,
 	type HostedDeployValidationIssue,
 	type HostedDeployWizardDraft,
@@ -18,6 +20,11 @@ import {
 	validateAndBuildHostedDeployRequest,
 	validateHostedDeployPersona,
 } from "@clawdi/shared/api";
+import {
+	DEPLOY_SESSION_EXPIRED_RECOVERY,
+	type DeploySubmissionFailure,
+	deploySubmissionRecoveryCopy,
+} from "@clawdi/shared/view";
 
 /**
  * Store-funded attempts send compute_source "store" at admission; hosted refuses
@@ -45,6 +52,11 @@ export type CreationAttempt = {
 	storeFunding?: StoreFunding;
 	/** Absent: hosted selects the entitlement (Included Basic or a store slot). */
 	subscription?: ReusableSubscriptionChoice;
+	/**
+	 * A new Wallet subscription funds this request, debited per this exact confirmed
+	 * quote. Every send repeats it so hosted replays, never re-quotes, an earlier POST.
+	 */
+	walletQuote?: HostedDeploySubscriptionQuote;
 };
 
 /** Card and Wallet rows are assigned by id; store rows use `reusableStoreRowPlan`. */
@@ -80,6 +92,54 @@ function parseSubscriptionChoice(
 		planSlug,
 		billingTermMonths: value.billingTermMonths,
 		fundingSource: value.fundingSource,
+	};
+}
+
+/** Hosted serializes Decimal amounts as strings, possibly in exponent form. */
+const QUOTE_DECIMAL = /^-?\d+(\.\d+)?(E[+-]?\d+)?$/i;
+
+function quoteDecimal(value: unknown): string | null {
+	return typeof value === "string" && QUOTE_DECIMAL.test(value) ? value : null;
+}
+
+/**
+ * The confirmed Wallet quote in one canonical shape, so the journal, its compare-and-set
+ * and every resend carry identical bytes. Null unless it is a complete Wallet quote.
+ */
+export function canonicalWalletQuote(
+	value: unknown,
+	planSlug: HostedDeployComputePlanSlug,
+): HostedDeploySubscriptionQuote | null {
+	if (
+		!record(value) ||
+		value.funding_source !== "wallet" ||
+		value.plan_slug !== planSlug ||
+		(value.billing_term_months !== 1 && value.billing_term_months !== 12) ||
+		typeof value.currency !== "string" ||
+		!value.currency ||
+		typeof value.term_price_cents !== "number" ||
+		!Number.isSafeInteger(value.term_price_cents) ||
+		value.term_price_cents < 0 ||
+		typeof value.expires_at !== "string" ||
+		Number.isNaN(Date.parse(value.expires_at)) ||
+		(value.preview_invoice_id != null && typeof value.preview_invoice_id !== "string")
+	)
+		return null;
+	const debit = quoteDecimal(value.debit_amount_usd);
+	const before = quoteDecimal(value.balance_before_usd);
+	const after = quoteDecimal(value.balance_after_usd);
+	if (!debit || !before || !after) return null;
+	return {
+		plan_slug: planSlug,
+		billing_term_months: value.billing_term_months,
+		funding_source: "wallet",
+		currency: value.currency,
+		term_price_cents: value.term_price_cents,
+		preview_invoice_id: value.preview_invoice_id ?? null,
+		expires_at: value.expires_at,
+		debit_amount_usd: debit,
+		balance_before_usd: before,
+		balance_after_usd: after,
 	};
 }
 
@@ -229,6 +289,13 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 				: parseSubscriptionChoice(value.subscription, restoredDraft.computePlanSlug);
 		// A store-funded request is admitted by its store row, never by a card or Wallet one.
 		if (subscription === null || (subscription && value.storeFunding !== undefined)) return null;
+		const walletQuote =
+			value.walletQuote === undefined
+				? undefined
+				: canonicalWalletQuote(value.walletQuote, restoredDraft.computePlanSlug);
+		// A new Wallet subscription is its own funding; it never assigns or uses the store.
+		if (walletQuote === null || (walletQuote && (subscription || value.storeFunding !== undefined)))
+			return null;
 		return {
 			version: 1,
 			submission,
@@ -237,6 +304,7 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 			request,
 			...(value.storeFunding !== undefined ? { storeFunding: value.storeFunding } : {}),
 			...(subscription ? { subscription } : {}),
+			...(walletQuote ? { walletQuote } : {}),
 		};
 	} catch {
 		return null;
@@ -377,11 +445,26 @@ export function isDefinitiveAdmissionRejection(attempt: CreationAttempt, error: 
 	return (
 		canDiscardCreationAttempt(attempt) &&
 		attempt.storeFunding === undefined &&
+		attempt.walletQuote === undefined &&
 		error instanceof ApiClientError &&
 		error.status === 409 &&
 		(error.code === "compute_entitlement_required" ||
 			(attempt.subscription !== undefined && error.code === "reusable_subscription_unavailable"))
 	);
+}
+
+/** The shared Deploy CTA reading of a mobile API failure, like Web's billing errors. */
+export function deploySubmissionFailure(error: unknown): DeploySubmissionFailure {
+	if (error instanceof ApiClientNetworkError) return { kind: error.kind, recovery: null };
+	if (!(error instanceof ApiClientError)) return { kind: "unknown", recovery: null };
+	if (error.status >= 500 || error.status === 429) return { kind: "server", recovery: null };
+	return {
+		kind: error.status >= 400 ? "rejected" : "unknown",
+		recovery:
+			error.status === 401
+				? DEPLOY_SESSION_EXPIRED_RECOVERY
+				: deploySubmissionRecoveryCopy({ code: error.code }),
+	};
 }
 
 /** Store admission failures preserve the purchase and direct recovery of the same request. */

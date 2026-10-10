@@ -9,6 +9,13 @@
  * from the upstream provider.
  */
 
+import {
+	DEPLOY_SESSION_EXPIRED_RECOVERY,
+	type DeploySubmissionContext,
+	type DeploySubmissionErrorPresentation,
+	deploySubmissionErrorCopy,
+	deploySubmissionRecoveryCopy,
+} from "@clawdi/shared/view";
 import { toast } from "sonner";
 import type {
 	ComputePlanChangeFundingSource,
@@ -216,16 +223,7 @@ export function isRetryableError(error: unknown): boolean {
 	return isNetworkError(error) || isServerError(error);
 }
 
-export type DeploySubmissionContext =
-	| "card_checkout"
-	| "included_creation"
-	| "subscription_assignment"
-	| "wallet_creation";
-
-export type DeploySubmissionErrorPresentation = {
-	description: string;
-	title: string;
-};
+export type { DeploySubmissionContext, DeploySubmissionErrorPresentation };
 
 function isDefinitiveBillingRejection(error: unknown): boolean {
 	return (
@@ -240,100 +238,32 @@ function isDefinitiveBillingRejection(error: unknown): boolean {
 function knownBillingRecovery(error: unknown): string | null {
 	if (error instanceof DeploymentConflictError) return DEPLOYMENT_CONFLICT_MESSAGE;
 	if (isInsufficientBalanceError(error)) return normalizeBillingError(error);
-	if (isAuthError(error)) return "Your session expired before this request could start.";
+	if (isAuthError(error)) return DEPLOY_SESSION_EXPIRED_RECOVERY;
 	if (!(error instanceof BillingApiError)) return null;
-
-	const code = billingErrorDetail(error)?.code;
-	if (code === "open_refund_debt") {
-		return "Top up your wallet before trying again.";
-	}
-	if (code === "deploy_request_funding_conflict") {
-		return "This agent request is already linked to a different payment flow.";
-	}
-	if (code === "idempotency_key_reused") {
-		return "This attempt couldn't be matched to the earlier request.";
-	}
-	if (error.detail === "payment_method_required") {
-		return "Add a payment method before trying again.";
-	}
-	return null;
+	return deploySubmissionRecoveryCopy({
+		code: billingErrorDetail(error)?.code,
+		detail: error.detail,
+	});
 }
 
-/**
- * Contextual, non-sensitive copy for the Deploy CTA. Card checkout has not
- * collected payment until its checkout UI opens, while wallet and create
- * transport failures can be ambiguous and must resume the same idempotent
- * attempt instead of claiming that nothing happened.
- */
+/** Web's reading of a Deploy failure for the shared Deploy CTA copy. */
 export function deploySubmissionErrorPresentation(
 	error: unknown,
 	context: DeploySubmissionContext,
 ): DeploySubmissionErrorPresentation {
-	const knownRecovery = knownBillingRecovery(error);
-	if (context === "card_checkout") {
-		const reason = isNetworkError(error)
-			? error.kind === "timeout"
-				? "The request timed out while opening secure checkout."
-				: "The connection dropped while opening secure checkout."
-			: isServerError(error)
-				? "Secure checkout is temporarily unavailable."
-				: (knownRecovery ?? "We couldn’t open secure checkout.");
-		return {
-			title: "Checkout didn’t open",
-			description: `${reason} No payment was submitted. Retry when you’re ready.`,
-		};
-	}
-	if (context === "subscription_assignment") {
-		if (isDefinitiveBillingRejection(error)) {
-			return {
-				title: "Subscription assignment didn’t start",
-				description: `${knownRecovery ?? "The request was rejected."} Review your choices and retry.`,
-			};
-		}
-		const reason = isNetworkError(error)
-			? error.kind === "timeout"
-				? "The request timed out before subscription assignment and agent creation were confirmed."
-				: "The connection dropped before subscription assignment and agent creation were confirmed."
-			: "The service didn’t confirm subscription assignment and agent creation.";
-		return {
-			title: "We couldn’t confirm this attempt",
-			description: `${reason} Retry to safely resume the same attempt.`,
-		};
-	}
-
-	if (context === "wallet_creation") {
-		if (isDefinitiveBillingRejection(error)) {
-			return {
-				title: "Payment and creation didn’t start",
-				description: `${knownRecovery ?? "The request was rejected."} No wallet payment was made. Review your choices and retry.`,
-			};
-		}
-		const reason = isNetworkError(error)
-			? error.kind === "timeout"
-				? "The request timed out before payment and creation were confirmed."
-				: "The connection dropped before payment and creation were confirmed."
-			: "The service didn’t confirm payment and creation.";
-		return {
-			title: "We couldn’t confirm this attempt",
-			description: `${reason} Retry to safely resume the same attempt.`,
-		};
-	}
-
-	if (isDefinitiveBillingRejection(error)) {
-		return {
-			title: "Agent creation didn’t start",
-			description: `${knownRecovery ?? "The request was rejected."} Your choices are unchanged. Review them and retry.`,
-		};
-	}
-	const reason = isNetworkError(error)
-		? error.kind === "timeout"
-			? "The request timed out before agent creation was confirmed."
-			: "The connection dropped before agent creation was confirmed."
-		: "The service didn’t confirm agent creation.";
-	return {
-		title: "We couldn’t confirm agent creation",
-		description: `${reason} Retry to safely resume the same attempt.`,
-	};
+	return deploySubmissionErrorCopy(
+		{
+			kind: isNetworkError(error)
+				? error.kind
+				: isServerError(error)
+					? "server"
+					: isDefinitiveBillingRejection(error)
+						? "rejected"
+						: "unknown",
+			recovery: knownBillingRecovery(error),
+		},
+		context,
+	);
 }
 
 /**
