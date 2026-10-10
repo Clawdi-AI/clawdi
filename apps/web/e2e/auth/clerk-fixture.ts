@@ -173,3 +173,7 @@ export function useUser() {
 	const auth = useAuth();
 	return { ...auth, user: auth.userId ? { id: auth.userId } : null };
 }
+// Lifecycle contracts never hit a route that requires reverification.
+export function useReverification<Fetcher>(fetcher: Fetcher): Fetcher {
+	return fetcher;
+}
