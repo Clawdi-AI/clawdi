@@ -429,6 +429,7 @@ export function DeploymentControls({
 					{deploymentLifecycleAvailable("delete", state) ? (
 						<ActionButton
 							label={t("runtime.deleteAgent")}
+							variant="destructive"
 							disabled={writeBlocked}
 							onPress={() =>
 								confirm({

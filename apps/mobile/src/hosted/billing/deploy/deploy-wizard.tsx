@@ -257,6 +257,8 @@ function CreationForm() {
 		null,
 	);
 	const [resolved, setResolved] = useState(false);
+	// An explicit Check status only reads; it never sends or charges.
+	const [checking, setChecking] = useState(false);
 	// Hosted refused a Wallet debit until the Wallet is topped up.
 	const [walletFundingRefused, setWalletFundingRefused] = useState(false);
 	// The reserved store request the user chose to finish on this device.
@@ -990,6 +992,8 @@ function CreationForm() {
 		setMessage("");
 	};
 	const locked = action.busy || Boolean(attempt) || !storageReady;
+	// A saved request is being sent, as opposed to a status read.
+	const sending = action.busy && !checking && attempt?.submission === "uncertain";
 
 	const comparison = computePlanComparisonView(
 		inventory.data?.plans ?? [],
@@ -1651,7 +1655,7 @@ function CreationForm() {
 							</WebView>
 						</SettingsSection>
 						{message ? <AppText>{message}</AppText> : null}
-						{attempt && action.busy && attempt.submission === "uncertain" ? (
+						{attempt && sending ? (
 							<AppText accessibilityLiveRegion="polite">{t("creation.creating")}</AppText>
 						) : attempt ? (
 							<>
@@ -1667,10 +1671,11 @@ function CreationForm() {
 								{/* Only a sent admission can be recovered; store funding uses the footer Check status. */}
 								{creationAttemptControls(attempt, resolved).checkStatus ? (
 									<ActionButton
-										label={t("creation.recover")}
+										label={t(checking ? "storeCompute.checkingStatus" : "creation.recover")}
 										disabled={action.busy}
 										onPress={() => {
 											void action.run(async (owns) => {
+												setChecking(true);
 												try {
 													await navigateRequest(attempt.id, owns, { journal: attempt });
 												} catch (error) {
@@ -1681,6 +1686,8 @@ function CreationForm() {
 													if (!current(owns)) return;
 													setAttempt(released);
 													setMessage(t("creation.walletNotFound"));
+												} finally {
+													setChecking(false);
 												}
 											});
 										}}
@@ -1799,7 +1806,7 @@ function CreationForm() {
 					) : (
 						<ActionButton
 							label={
-								action.busy && attempt?.submission === "uncertain"
+								sending
 									? deployFormCopy.deploying
 									: attempt && !walletRequestNeedsQuote(attempt)
 										? t("creation.retry")
