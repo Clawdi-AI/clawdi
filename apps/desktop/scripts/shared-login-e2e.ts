@@ -143,6 +143,7 @@ export function useClerk(){return {async signOut(callback){ document.cookie="moc
 	let dashboard = await waitForDashboard();
 	await dashboard.getByRole("heading", { name: "Signed in as user_fixture" }).waitFor();
 	assert.equal(readFileSync(join(state, "ticket-count"), "utf8"), "ticket\n");
+	console.info("First dashboard session verified; restarting Electron.");
 	// Persisted cookies must survive a complete Electron shutdown, not just closing the window.
 	await application.evaluate(async ({ session }) => {
 		await session.fromPartition("persist:clawdi-dashboard").cookies.flushStore();
@@ -150,6 +151,9 @@ export function useClerk(){return {async signOut(callback){ document.cookie="moc
 	await application.close();
 	application = await launch();
 	context = application.context();
+	const restartedConnector = await application.firstWindow();
+	await restartedConnector.getByRole("heading", { name: "Choose Agents" }).waitFor();
+	await restartedConnector.getByRole("button", { name: "Open dashboard", exact: false }).click();
 	dashboard = await waitForDashboard();
 	await dashboard.getByRole("heading", { name: "Signed in as user_fixture" }).waitFor();
 	assert.equal(

@@ -46,7 +46,7 @@ test("valid same-account sessions are compared before minting or consuming a tic
 	const requests: (DesktopWebSession | null)[] = [];
 	const consumed: string[] = [];
 	const desktop = bridge(async (current) => {
-		requests.push(current);
+		requests.push(current ?? null);
 		return current ? { status: "signed-in", accountId: session.userId } : ticket;
 	});
 	expect(
