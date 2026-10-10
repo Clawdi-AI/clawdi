@@ -135,21 +135,18 @@ export interface ClawdiDesktopBridge {
 	readonly version: 1;
 	openConnector(): void;
 	/** Available only on /desktop-auth; never accepts or reads a URL ticket. */
-	createDashboardSession(session: DesktopWebSession | null): Promise<DesktopDashboardSession>;
+	createDashboardSession(session?: DesktopWebSession | null): Promise<DesktopDashboardSession>;
 	signOut(): Promise<void>;
 }
 
+/** Capability detection for window.clawdiDesktop; browsers have no bridge. */
 export function isClawdiDesktopBridge(value: unknown): value is ClawdiDesktopBridge {
 	return (
 		typeof value === "object" &&
 		value !== null &&
-		"version" in value &&
-		value.version === 1 &&
-		"openConnector" in value &&
-		typeof value.openConnector === "function" &&
-		"createDashboardSession" in value &&
-		typeof value.createDashboardSession === "function" &&
-		"signOut" in value &&
-		typeof value.signOut === "function"
+		Reflect.get(value, "version") === 1 &&
+		typeof Reflect.get(value, "openConnector") === "function" &&
+		typeof Reflect.get(value, "createDashboardSession") === "function" &&
+		typeof Reflect.get(value, "signOut") === "function"
 	);
 }

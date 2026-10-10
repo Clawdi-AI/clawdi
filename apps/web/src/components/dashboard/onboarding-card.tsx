@@ -6,8 +6,7 @@ import { onboardingCardModel } from "@clawdi/shared/view";
 
 import { Link } from "@tanstack/react-router";
 import { Rocket, TerminalSquare } from "lucide-react";
-import { useState } from "react";
-import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
+import { useConnectAgent } from "@/components/dashboard/use-connect-agent";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -21,13 +20,13 @@ type OnboardingCardProps = {
  * primary slot when the user has zero agents, and as a secondary
  * side-panel card once at least one agent is registered. When Cloud agent
  * creation is available, both placements offer the same deploy-or-connect
- * choice. Every connect action opens the same dialog used by the sidebar.
+ * choice. Every connect action goes through `useConnectAgent`, like the sidebar.
  */
 export function OnboardingCard({
 	variant = "first-agent",
 	canDeployOnClawdi = false,
 }: OnboardingCardProps) {
-	const [connectOpen, setConnectOpen] = useState(false);
+	const { connect, dialog } = useConnectAgent();
 	const { isAdditionalAgent, title, description } = onboardingCardModel(variant, canDeployOnClawdi);
 
 	return (
@@ -63,14 +62,14 @@ export function OnboardingCard({
 							variant={canDeployOnClawdi ? "outline" : "default"}
 							size="lg"
 							className={onboardingCardClasses.connectAction}
-							onClick={() => setConnectOpen(true)}
+							onClick={connect}
 						>
 							<TerminalSquare data-icon="inline-start" /> Connect your own agent
 						</Button>
 					</div>
 				</CardContent>
 			</Card>
-			<AddAgentDialog open={connectOpen} onClose={() => setConnectOpen(false)} />
+			{dialog}
 		</>
 	);
 }
