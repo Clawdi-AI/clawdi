@@ -1,4 +1,5 @@
 import type { components, DeployComponents } from "../api";
+import { agentSurfaceCopy } from "./agent-surfaces";
 import { type FetchAllPagesOptions, fetchAllPages, type PaginatedPage } from "./api-pagination";
 
 export type AgentSkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -12,6 +13,16 @@ export const agentSkillInstallCopy = {
 	guardConfirmationRequiredTitle: "Hermes Skills Guard needs confirmation",
 	guardConfirmationRequired:
 		"Hermes's Skills Guard needs explicit confirmation for this skill. Retrying won't help.",
+	updateFailedTitle: "Couldn't update skills",
+	updateFailed: "We'll retry automatically.",
+} as const;
+
+/** Confirmation for removing a Library reference or a GitHub workspace Skill from an Agent. */
+export const agentSkillUninstallCopy = {
+	title: (name: string) => `Uninstall ${name} from agent?`,
+	description:
+		"This removes the skill from this agent. Your library and other agents keep their copies.",
+	confirm: agentSurfaceCopy.uninstallSkill,
 } as const;
 
 type AgentSkillInstallStatus = Pick<
@@ -36,6 +47,14 @@ export function agentSkillGuardPresentation(skill: AgentSkillInstallStatus | nul
 		} as const;
 	}
 	return null;
+}
+
+/** True when the Agent already has this Cloud Skill, from a Library reference or a linked Project. */
+export function agentHasCloudSkill(
+	managed: readonly Pick<components["schemas"]["AgentSkillDesiredResponse"], "skill_id">[],
+	skillId: string,
+): boolean {
+	return managed.some((skill) => skill.skill_id === skillId);
 }
 
 export function agentSkillsHaveRetryableInstallFailure(

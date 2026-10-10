@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { components } from "../api";
 import {
+	agentHasCloudSkill,
 	agentSkillGuardPresentation,
 	agentSkillInstallCopy,
 	agentSkillsHaveRetryableInstallFailure,
@@ -50,6 +51,19 @@ test.each(["library", "project", "github"] as const)(
 		);
 	},
 );
+
+test("a Cloud Skill counts as installed from a Library reference or a linked Project", () => {
+	const managed = [
+		{ source: "project", skill_id: "from-project" },
+		{ source: "library", skill_id: "from-library" },
+		{ source: "github", skill_id: null },
+		{ source: "bundled", skill_id: undefined },
+	] as const;
+	expect(agentHasCloudSkill(managed, "from-project")).toBe(true);
+	expect(agentHasCloudSkill(managed, "from-library")).toBe(true);
+	expect(agentHasCloudSkill(managed, "elsewhere")).toBe(false);
+	expect(agentHasCloudSkill([{ skill_id: null }, {}], "")).toBe(false);
+});
 
 test("other failures and unobserved or installed skills keep their existing presentation", () => {
 	for (const observation_error_code of ["reconcile_failed", null] as const) {
