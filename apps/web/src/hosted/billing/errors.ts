@@ -246,6 +246,11 @@ function knownBillingRecovery(error: unknown): string | null {
 	});
 }
 
+function deploySubmissionErrorCode(error: unknown): string | null {
+	const code = billingErrorDetail(error)?.code;
+	return typeof code === "string" ? code : null;
+}
+
 /** Web's reading of a Deploy failure for the shared Deploy CTA copy. */
 export function deploySubmissionErrorPresentation(
 	error: unknown,
@@ -261,6 +266,7 @@ export function deploySubmissionErrorPresentation(
 						? "rejected"
 						: "unknown",
 			recovery: knownBillingRecovery(error),
+			code: deploySubmissionErrorCode(error),
 		},
 		context,
 	);

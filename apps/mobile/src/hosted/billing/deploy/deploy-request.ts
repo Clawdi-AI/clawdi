@@ -453,6 +453,32 @@ export function isDefinitiveAdmissionRejection(attempt: CreationAttempt, error: 
 	);
 }
 
+/**
+ * Hosted's proof that an uncertain new-Wallet request was never charged and never can be.
+ * clawdi-hosted `place_wallet_subscription_create`
+ * (backend/app/v2/compute/subscription_creation_dispatch.py) first refuses a quote whose
+ * `expires_at` has passed, then stores the request's PendingDeployRequest
+ * (`attach_compute_deploy_metadata` -> `store_pending_hosted_deploy_request`) and the
+ * Wallet dispatch in one ordered transaction; the debit runs only from that committed
+ * dispatch. `get_deploy_request_status` (backend/app/v2/hosted/service.py) answers 404
+ * only when that row is absent. A 404 dated by the server after the quote expired
+ * therefore means no dispatch exists and none can be placed for this quote.
+ */
+export function walletRequestNeverCharged(attempt: CreationAttempt, error: unknown): boolean {
+	return (
+		attempt.walletQuote !== undefined &&
+		error instanceof ApiClientError &&
+		error.status === 404 &&
+		error.serverDateMs !== null &&
+		error.serverDateMs > Date.parse(attempt.walletQuote.expires_at)
+	);
+}
+
+/** A journaled Wallet request with no send that can still charge is confirmed on a fresh quote. */
+export function walletRequestNeedsQuote(attempt: CreationAttempt | null): boolean {
+	return attempt?.walletQuote !== undefined && attempt.submission === "prepared";
+}
+
 /** The shared Deploy CTA reading of a mobile API failure, like Web's billing errors. */
 export function deploySubmissionFailure(error: unknown): DeploySubmissionFailure {
 	if (error instanceof ApiClientNetworkError) return { kind: error.kind, recovery: null };
@@ -460,6 +486,7 @@ export function deploySubmissionFailure(error: unknown): DeploySubmissionFailure
 	if (error.status >= 500 || error.status === 429) return { kind: "server", recovery: null };
 	return {
 		kind: error.status >= 400 ? "rejected" : "unknown",
+		code: error.code,
 		recovery:
 			error.status === 401
 				? DEPLOY_SESSION_EXPIRED_RECOVERY

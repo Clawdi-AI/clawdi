@@ -9,6 +9,11 @@ export function createAttemptStore(store: AttemptStore) {
 			next.id === previous.id &&
 			JSON.stringify(next.request) === JSON.stringify(previous.request) &&
 			JSON.stringify(next.draft) === JSON.stringify(previous.draft) &&
-			JSON.stringify(next.walletQuote) === JSON.stringify(previous.walletQuote),
+			// A Wallet quote is replaced only while no send of the old one can still charge.
+			(JSON.stringify(next.walletQuote) === JSON.stringify(previous.walletQuote) ||
+				(previous.submission === "prepared" &&
+					next.submission === "prepared" &&
+					previous.walletQuote !== undefined &&
+					next.walletQuote !== undefined)),
 	});
 }

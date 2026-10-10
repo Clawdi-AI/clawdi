@@ -121,6 +121,8 @@ import {
 	storeAdmissionRecoveryAttempt,
 	storeFundingHoldsAttempt,
 	validationTranslationKeys,
+	walletRequestNeedsQuote,
+	walletRequestNeverCharged,
 } from "@/hosted/billing/deploy/deploy-request";
 import { readHostedStoreFunding } from "@/hosted/billing/deploy/store-funding";
 import { nextBillingCursor, uniqueBillingItems } from "@/hosted/billing/format";
@@ -400,6 +402,9 @@ function CreationForm() {
 			: null;
 	// A saved Wallet request replays its own confirmed quote; only a new one is quoted.
 	const walletNew = walletQuoteSelection !== null && !attempt;
+	// Quoted live: a new Wallet request, or a saved one no send of which can still charge.
+	const walletQuoting =
+		walletQuoteSelection !== null && (!attempt || walletRequestNeedsQuote(attempt));
 	const quoteKey = accountQueryKey(
 		scope,
 		"creation-quote",
@@ -427,12 +432,13 @@ function CreationForm() {
 			return fetchWalletQuote(walletQuoteSelection, signal);
 		},
 		// Like Web, the shown quote is not refreshed under an in-flight confirmation.
-		enabled: scope.isReady && Boolean(compute) && walletNew && !action.busy,
+		enabled: scope.isReady && Boolean(compute) && walletQuoting && !action.busy,
 		staleTime: 30_000,
 		retry: false,
 	});
-	const shownWalletQuote: HostedDeploySubscriptionQuote | null =
-		attempt?.walletQuote ?? (walletNew ? (quote.data ?? null) : null);
+	const shownWalletQuote: HostedDeploySubscriptionQuote | null = walletQuoting
+		? (quote.data ?? null)
+		: (attempt?.walletQuote ?? null);
 	const walletDebit: WalletDebitSummary | null = shownWalletQuote
 		? hostedSubscriptionQuoteWalletDebit(shownWalletQuote)
 		: null;
@@ -539,7 +545,7 @@ function CreationForm() {
 				if (current(owns)) setMessage(t("creation.blocked"));
 				return;
 			}
-			if (walletNew && walletQuoteSelection) {
+			if (walletQuoting && walletQuoteSelection) {
 				// Confirm only the terms the user saw: re-quote at the mutation boundary and
 				// persist that fresh quote, so the first send cannot carry an expired one.
 				const confirmed = quote.data;
@@ -567,6 +573,15 @@ function CreationForm() {
 				}
 				if (draft.computePlanSlug !== fresh.plan_slug) return;
 				setWalletFundingRefused(false);
+				if (attempt) {
+					// The same request id keeps hosted's one-dispatch-per-request guarantee.
+					const requoted: CreationAttempt = { ...attempt, walletQuote: fresh };
+					await replaceAttempt(storageKey, attempt, requoted, () => current(owns));
+					if (!current(owns)) return;
+					setAttempt(requoted);
+					await submit(requoted, true, owns);
+					return;
+				}
 				const prepared = prepareAttempt(draft, undefined, undefined, fresh);
 				if (prepared) await submit(prepared, false, owns);
 				return;
@@ -966,13 +981,13 @@ function CreationForm() {
 		walletQuoteSelection !== null
 			? walletDeployAmountPresentation({
 					billingTermMonths: walletQuoteSelection.billingTermMonths,
-					state: walletNew && quote.isError ? "error" : walletDebit ? "ready" : "loading",
+					state: walletQuoting && quote.isError ? "error" : walletDebit ? "ready" : "loading",
 					walletDebit,
 					format: formatWalletAmount,
 				})
 			: null;
 	// The amount line explains loading and shortfall states, like Web's.
-	const walletReady = walletNew && walletDebit !== null && !quote.isError && shortfall === null;
+	const walletReady = walletQuoting && walletDebit !== null && !quote.isError && shortfall === null;
 	const personaIssue = personaIssues[0];
 	const blockingReason =
 		attempt || resuming
@@ -985,7 +1000,7 @@ function CreationForm() {
 						? t("creation.cardUnavailable")
 						: source !== "store" && !creationEligible
 							? t("creation.blocked")
-							: walletNew && quote.isError
+							: walletQuoting && quote.isError
 								? deployFormCopy.walletQuoteRetry
 								: null;
 	return (
@@ -1516,7 +1531,7 @@ function CreationForm() {
 													))}
 											</WebView>
 										</WebView>
-										{walletNew && quote.isError ? (
+										{walletQuoting && quote.isError ? (
 											<ApiErrorPanel error={quote.error} onRetry={() => void quote.refetch()} />
 										) : walletDebit ? (
 											<WalletDebitEquation debit={walletDebit} format={formatWalletAmount} />
@@ -1608,7 +1623,20 @@ function CreationForm() {
 										label={t("creation.recover")}
 										disabled={action.busy}
 										onPress={() => {
-											void action.run((owns) => navigateRequest(attempt.id, owns));
+											void action.run(async (owns) => {
+												try {
+													await navigateRequest(attempt.id, owns);
+												} catch (error) {
+													if (!storageKey || !walletRequestNeverCharged(attempt, error))
+														throw error;
+													// Nothing was charged: confirm this request again on a fresh quote.
+													const released: CreationAttempt = { ...attempt, submission: "prepared" };
+													await replaceAttempt(storageKey, attempt, released, () => current(owns));
+													if (!current(owns)) return;
+													setAttempt(released);
+													setMessage(t("creation.walletNeverCharged"));
+												}
+											});
 										}}
 									/>
 								) : null}
@@ -1731,7 +1759,7 @@ function CreationForm() {
 					) : (
 						<ActionButton
 							label={
-								attempt
+								attempt && !walletRequestNeedsQuote(attempt)
 									? t("creation.retry")
 									: resuming
 										? t("creation.reservedAction")
@@ -1750,6 +1778,7 @@ function CreationForm() {
 											!(source === "existing" && selectedReusable) &&
 											!storeAdmission &&
 											!walletReady))) ||
+								(walletRequestNeedsQuote(attempt) && !walletReady) ||
 								!creationEligible ||
 								!storageReady ||
 								storageError ||

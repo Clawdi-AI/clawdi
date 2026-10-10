@@ -25,6 +25,8 @@ import {
 	storeAdmissionMessageKey,
 	storeAdmissionRecoveryAttempt,
 	storeFundingHoldsAttempt,
+	walletRequestNeedsQuote,
+	walletRequestNeverCharged,
 } from "@/hosted/billing/deploy/deploy-request";
 import { en } from "@/lib/i18n/en";
 import { createAttemptStore } from "@/platform/creation-attempt-store";
@@ -689,14 +691,18 @@ describe("new Wallet subscription creation", () => {
 		expect(sent[0]?.key).toBe(id);
 	});
 
-	test("a different quote is never written over a journaled request", async () => {
+	test("a different quote is never sent under a journaled request", async () => {
 		const { journal } = memoryJournal();
 		await journal.saveAttempt("account", attempt, () => true);
 		await expect(
 			journal.replaceAttempt(
 				"account",
 				attempt,
-				{ ...attempt, walletQuote: { ...walletQuote, balance_before_usd: "40.00" } },
+				{
+					...attempt,
+					submission: "uncertain",
+					walletQuote: { ...walletQuote, balance_before_usd: "40.00" },
+				},
 				() => true,
 			),
 		).rejects.toThrow("Request payload changed");
@@ -710,6 +716,63 @@ describe("new Wallet subscription creation", () => {
 			),
 		).rejects.toThrow("Creation owner changed");
 		expect(await journal.readSavedAttempt("account")).toEqual(attempt);
+	});
+
+	test("a 404 dated after the quote expired releases the request for a fresh quote", async () => {
+		const expiry = Date.parse(walletQuote.expires_at);
+		const uncertain: CreationAttempt = { ...attempt, submission: "uncertain" };
+		const notFound = (serverDateMs: number | null) =>
+			new ApiClientError(404, null, null, serverDateMs);
+		expect(walletRequestNeverCharged(uncertain, notFound(expiry + 1000))).toBe(true);
+		for (const error of [
+			notFound(expiry),
+			notFound(expiry - 1000),
+			notFound(null),
+			new ApiClientError(409, null, null, expiry + 1000),
+			new ApiClientNetworkError("offline"),
+		])
+			expect(walletRequestNeverCharged(uncertain, error)).toBe(false);
+		const { subscription: _none, walletQuote: _quote, ...included } = uncertain;
+		expect(walletRequestNeverCharged(included, notFound(expiry + 1000))).toBe(false);
+
+		const { journal } = memoryJournal();
+		await journal.saveAttempt("account", attempt, () => true);
+		await journal.replaceAttempt("account", attempt, uncertain, () => true);
+		const fresh = {
+			...walletQuote,
+			expires_at: "2026-10-10T00:30:00Z",
+			balance_before_usd: "25.00",
+			balance_after_usd: "15.00",
+		};
+		// While a send may still charge, the confirmed quote is immutable.
+		await expect(
+			journal.replaceAttempt(
+				"account",
+				uncertain,
+				{ ...uncertain, walletQuote: fresh },
+				() => true,
+			),
+		).rejects.toThrow("Request payload changed");
+		const released: CreationAttempt = { ...uncertain, submission: "prepared" };
+		await journal.replaceAttempt("account", uncertain, released, () => true);
+		expect(walletRequestNeedsQuote(released)).toBe(true);
+		expect(canDiscardCreationAttempt(released)).toBe(true);
+		// Re-quoted under the same request id, then sent as usual.
+		const requoted: CreationAttempt = { ...released, walletQuote: fresh };
+		await journal.replaceAttempt("account", released, requoted, () => true);
+		await journal.replaceAttempt(
+			"account",
+			requoted,
+			{ ...requoted, submission: "uncertain" },
+			() => true,
+		);
+		expect(await journal.readSavedAttempt("account")).toMatchObject({
+			id,
+			submission: "uncertain",
+			walletQuote: fresh,
+		});
+		expect(walletRequestNeedsQuote(uncertain)).toBe(false);
+		expect(walletRequestNeedsQuote(null)).toBe(false);
 	});
 
 	test("refusals keep the request for same-key replay with Web's copy", () => {
@@ -727,8 +790,17 @@ describe("new Wallet subscription creation", () => {
 		});
 		expect(deploySubmissionFailure(new ApiClientError(409, "idempotency_key_reused"))).toEqual({
 			kind: "rejected",
+			code: "idempotency_key_reused",
 			recovery: "This attempt couldn't be matched to the earlier request.",
 		});
+		// Hosted debited, then deferred acceptance: never claim nothing was paid.
+		const pending = deploySubmissionErrorCopy(
+			deploySubmissionFailure(new ApiClientError(409, "deployment_acceptance_pending")),
+			"wallet_creation",
+		);
+		expect(pending.title).toBe("Your payment may have gone through");
+		expect(pending.description).not.toContain("No wallet payment was made");
+		expect(pending.description).toContain("Check its status");
 		expect(
 			deploySubmissionErrorCopy(
 				deploySubmissionFailure(new ApiClientError(401)),

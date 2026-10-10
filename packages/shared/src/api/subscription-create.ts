@@ -99,3 +99,21 @@ export const HOSTED_WALLET_FUNDING_ERROR_COPY = {
 		refundDebt: "Top up before starting this wallet subscription.",
 	},
 } as const;
+
+/** Web's checkout transport policy: same key and body, at most three sends in total. */
+export const HOSTED_CHECKOUT_MAX_ATTEMPTS = 3;
+export const HOSTED_CHECKOUT_MAX_RETRY_AFTER_MS = 2_000;
+
+/**
+ * Delay before repeating a checkout POST with the same Idempotency-Key, or null to
+ * stop: hosted asks for a short wait on a busy billing lock (409) or an unavailable
+ * billing lease (503) through Retry-After. Longer waits are left to an explicit retry.
+ */
+export function hostedCheckoutRetryDelayMs(
+	status: number,
+	retryAfterMs: number | null,
+): number | null {
+	if (status !== 409 && status !== 503) return null;
+	if (retryAfterMs === null || !Number.isFinite(retryAfterMs) || retryAfterMs < 0) return null;
+	return retryAfterMs <= HOSTED_CHECKOUT_MAX_RETRY_AFTER_MS ? retryAfterMs : null;
+}

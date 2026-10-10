@@ -11,12 +11,33 @@ import {
 } from "./deploy-wizard";
 import {
 	ApiClientError,
+	ApiClientNetworkError,
 	type ApiClientOptions,
 	ApiClientResponseError,
 	createReadTransport,
 	readApiBaseUrl,
 	readResourceId,
 } from "./read-transport";
+import { HOSTED_CHECKOUT_MAX_ATTEMPTS, hostedCheckoutRetryDelayMs } from "./subscription-create";
+
+function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const cancelled = () => signal?.reason ?? new Error("API request cancelled");
+		if (signal?.aborted) {
+			reject(cancelled());
+			return;
+		}
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(cancelled());
+		};
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, delayMs);
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
+}
 
 export type ComputeSubscriptionsQuery =
 	DeployPaths["/v2/subscriptions"]["get"]["parameters"]["query"];
@@ -69,13 +90,41 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 			signal,
 		);
 	};
-	/** Card and Wallet subscription activation for a new Agent; a checkout session is never valid here. */
+	/**
+	 * Card and Wallet subscription activation for a new Agent; a checkout session is never
+	 * valid here. Like Web's checkout transport, a transport failure or a short 409/503
+	 * Retry-After repeats the identical request with the same key, three sends at most.
+	 */
 	const activateSubscription = async (
 		body: HostedDeployCheckoutRequest,
 		idempotencyKey: string,
 		signal?: AbortSignal,
 	) => {
-		const result = await transport.read(
+		for (let attempt = 1; ; attempt++) {
+			let result: Awaited<ReturnType<typeof sendCheckout>>;
+			try {
+				result = await sendCheckout(body, idempotencyKey, signal);
+			} catch (error) {
+				if (attempt >= HOSTED_CHECKOUT_MAX_ATTEMPTS || signal?.aborted) throw error;
+				if (error instanceof ApiClientNetworkError) continue;
+				const delay =
+					error instanceof ApiClientError
+						? hostedCheckoutRetryDelayMs(error.status, error.retryAfterMs)
+						: null;
+				if (delay === null) throw error;
+				await waitForRetry(delay, signal);
+				continue;
+			}
+			if (result?.flow_type !== "subscription_activation") throw new ApiClientResponseError();
+			return result;
+		}
+	};
+	const sendCheckout = (
+		body: HostedDeployCheckoutRequest,
+		idempotencyKey: string,
+		signal?: AbortSignal,
+	) =>
+		transport.read(
 			(init) =>
 				api.POST("/v2/subscription/checkout", {
 					...init,
@@ -84,9 +133,6 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 				}),
 			signal,
 		);
-		if (result?.flow_type !== "subscription_activation") throw new ApiClientResponseError();
-		return result;
-	};
 	return {
 		/** Starts durable account termination, including hosted resources and Clerk identity.
 		 * A 204 acknowledges the request; asynchronous cleanup is not proven complete.
@@ -138,7 +184,7 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 		 * Starts a new Wallet-funded subscription for a new Agent exactly like Web's Wallet
 		 * deploy: `subscription_selection.mode = "new"` with the server quote the user
 		 * confirmed. Hosted debits at most once per deploy request; the same key, payload and
-		 * quote replay the original activation. Never retried automatically.
+		 * quote replay the original activation, including Web's automatic same-key retries.
 		 */
 		createWalletSubscriptionDeployment: async (
 			body: HostedDeployRequest,

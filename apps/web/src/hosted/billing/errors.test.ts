@@ -246,6 +246,20 @@ describe("deploySubmissionErrorPresentation", () => {
 		expect(presentation.description).toContain("No wallet payment was made");
 		expect(presentation.description).not.toContain("internal validation trace");
 	});
+
+	test("acceptance pending after a funded checkout never claims nothing was paid", () => {
+		const error = new BillingApiError(409, "Acceptance pending", {
+			detail: { code: "deployment_acceptance_pending", message: "Acceptance pending" },
+		});
+		const wallet = deploySubmissionErrorPresentation(error, "wallet_creation");
+		const assignment = deploySubmissionErrorPresentation(error, "subscription_assignment");
+
+		expect(wallet.title).toBe("Your payment may have gone through");
+		expect(wallet.description).not.toContain("No wallet payment was made");
+		expect(wallet.description).toContain("Check its status before retrying");
+		expect(assignment.title).toBe("We're still setting up this agent");
+		expect(assignment.description).not.toContain("didn’t start");
+	});
 });
 
 describe("deployment request terminal outcome", () => {

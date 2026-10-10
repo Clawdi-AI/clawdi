@@ -12,7 +12,16 @@ export type DeploySubmissionFailure = {
 	kind: "timeout" | "offline" | "server" | "rejected" | "unknown";
 	/** Copy for a known public billing condition, from `deploySubmissionRecoveryCopy`. */
 	recovery: string | null;
+	/** Hosted's structured error code, when the response carried one. */
+	code?: string | null;
 };
+
+/**
+ * Hosted funded the subscription (a Wallet debit or an assignment) and then answered
+ * 409 because the new deployment's acceptance is still pending; the lifecycle consumer
+ * finishes it. Such a response must never read as "nothing happened".
+ */
+export const DEPLOY_ACCEPTANCE_PENDING_CODE = "deployment_acceptance_pending";
 
 export type DeploySubmissionErrorPresentation = {
 	description: string;
@@ -48,9 +57,23 @@ export function deploySubmissionRecoveryCopy({
  * attempt instead of claiming that nothing happened.
  */
 export function deploySubmissionErrorCopy(
-	{ kind, recovery }: DeploySubmissionFailure,
+	{ kind, recovery, code }: DeploySubmissionFailure,
 	context: DeploySubmissionContext,
 ): DeploySubmissionErrorPresentation {
+	if (code === DEPLOY_ACCEPTANCE_PENDING_CODE && context === "wallet_creation") {
+		return {
+			title: "Your payment may have gone through",
+			description:
+				"We're still setting up this agent after your wallet payment. Check its status before retrying. Retrying resumes the same attempt and won't charge you twice.",
+		};
+	}
+	if (code === DEPLOY_ACCEPTANCE_PENDING_CODE && context === "subscription_assignment") {
+		return {
+			title: "We're still setting up this agent",
+			description:
+				"The subscription may already be assigned. Check this agent's status before retrying. Retrying resumes the same attempt.",
+		};
+	}
 	if (context === "card_checkout") {
 		const reason =
 			kind === "timeout"
