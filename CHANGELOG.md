@@ -49,6 +49,11 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.7
+
+- **Hermes skill sync:** Skills Guard refusals are reported as `guard_blocked`,
+  with the refusal reason, instead of `reconcile_failed`.
+
 ### CLI 0.16.6
 
 - **Skill sync:** reconcile continues after a Skill directory disappears during
