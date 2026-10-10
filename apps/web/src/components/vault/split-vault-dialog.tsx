@@ -1,6 +1,6 @@
 "use client";
 
-import { errorMessage, identityFor } from "@clawdi/shared/view";
+import { errorMessage, formatCount, identityFor } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Scissors } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -163,7 +163,7 @@ export function SplitVaultDialog({
 			exit.beginClose();
 			toast.success(`Split into ${done} ${done === 1 ? "vault" : "vaults"}`, {
 				description:
-					`${affectedKeys} keys ${removeOriginals ? "moved" : "copied"} with clean names.` +
+					`${formatCount(affectedKeys, "key")} ${removeOriginals ? "moved" : "copied"} with clean names.` +
 					(failed.length > 0 ? ` Failed: ${failed.join(", ")}.` : ""),
 			});
 			setOpen(false);
@@ -231,7 +231,7 @@ export function SplitVaultDialog({
 									</span>
 									<span className="min-w-0 flex-1 truncate font-mono text-xs">{g.prefix}</span>
 									<span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-										{g.keys.length} keys → vault://{g.slug}
+										{formatCount(g.keys.length, "key")} → vault://{g.slug}
 									</span>
 								</label>
 							);

@@ -7,7 +7,7 @@ import {
 	publicSessionInput,
 } from "@clawdi/shared/api";
 import { detailLayoutClasses, publicSessionClasses as styles } from "@clawdi/shared/ui";
-import { publicSessionScopeLabel, relativeTime } from "@clawdi/shared/view";
+import { formatCount, publicSessionScopeLabel, relativeTime } from "@clawdi/shared/view";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
 import Clock from "lucide-react-native/icons/clock";
@@ -320,12 +320,7 @@ function PublicSession({ id }: { id: string | null }) {
 								<ModelBadge modelId={currentView.metadata.detail.model} />
 								<Stat
 									icon={MessageSquare}
-									label={t(
-										currentView.metadata.detail.message_count === 1
-											? "labels.messageCountOne"
-											: "labels.messageCount",
-										{ count: currentView.metadata.detail.message_count },
-									)}
+									label={formatCount(currentView.metadata.detail.message_count, "message")}
 								/>
 								<Stat
 									icon={Clock}

@@ -4,7 +4,13 @@ import {
 	skeletonClassName,
 	contributionGraphClasses as styles,
 } from "@clawdi/shared/ui";
-import { buildWeeks, clampLevel, computeMonthLabels, DASHBOARD_COPY } from "@clawdi/shared/view";
+import {
+	buildWeeks,
+	clampLevel,
+	computeMonthLabels,
+	DASHBOARD_COPY,
+	formatCount,
+} from "@clawdi/shared/view";
 import { useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
@@ -59,13 +65,10 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 										style={{ width: CELL, height: CELL }}
 										accessibilityLabel={
 											day.date
-												? t(
-														day.count === 1 ? "labels.sessionsOnDateOne" : "labels.sessionsOnDate",
-														{
-															count: day.count,
-															date: day.date,
-														},
-													)
+												? t("labels.sessionsOnDate", {
+														sessions: formatCount(day.count, "session"),
+														date: day.date,
+													})
 												: undefined
 										}
 									/>

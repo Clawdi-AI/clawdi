@@ -9,7 +9,7 @@ import {
 import { splitVaultDialogClasses as styles } from "@clawdi/shared/ui";
 import {
 	splitVaultCopy as copy,
-	formatResourceCount,
+	formatCount,
 	splitVaultRemoveLabel,
 	splitVaultSubmit,
 } from "@clawdi/shared/view";
@@ -133,7 +133,7 @@ export function VaultSplit({
 									<Checkbox
 										checked={included}
 										disabled={disabled}
-										accessibilityLabel={`${g.prefix}, ${formatResourceCount(g.keys.length, "key")}`}
+										accessibilityLabel={`${g.prefix}, ${formatCount(g.keys.length, "key")}`}
 										onCheckedChange={toggle}
 									/>
 									{/* Web's <label>: the caption toggles the named checkbox. */}
@@ -147,7 +147,7 @@ export function VaultSplit({
 										<WebText recipe={styles.prefix}>{g.prefix}</WebText>
 										<WebText
 											recipe={styles.count}
-										>{`${formatResourceCount(g.keys.length, "key")} →`}</WebText>
+										>{`${formatCount(g.keys.length, "key")} →`}</WebText>
 									</AppPressable>
 								</WebView>
 								<Input

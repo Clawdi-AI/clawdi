@@ -1,6 +1,7 @@
 import { validateSessionDetailSearch } from "@clawdi/shared/api";
 import { detailLayoutClasses, sessionDetailClasses as styles } from "@clawdi/shared/ui";
 import {
+	formatCount,
 	formatDuration,
 	formatNumber,
 	profileLabel,
@@ -94,18 +95,10 @@ export default function SessionDetailRoute() {
 							</>
 						) : null}
 						<ModelBadge modelId={session.model} />
-						<Stat
-							icon={MessageSquare}
-							label={t(
-								session.message_count === 1 ? "labels.messageCountOne" : "labels.messageCount",
-								{ count: session.message_count },
-							)}
-						/>
+						<Stat icon={MessageSquare} label={formatCount(session.message_count, "message")} />
 						<Stat
 							icon={Zap}
-							label={t(totalTokens === 1 ? "labels.tokenCountOne" : "labels.tokenCount", {
-								count: formatNumber(totalTokens),
-							})}
+							label={formatCount(totalTokens, "token", "tokens", formatNumber(totalTokens))}
 						/>
 						{session.duration_seconds ? (
 							<Stat icon={Clock} label={formatDuration(session.duration_seconds)} />

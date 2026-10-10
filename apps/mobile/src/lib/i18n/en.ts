@@ -522,11 +522,7 @@ import {
 } from "@clawdi/shared/view";
 export const en = {
 	labels: {
-		tokenCount: "{count} tokens",
-		tokenCountOne: "{count} token",
 		free: "Free",
-		messageCount: "{count} messages",
-		messageCountOne: "{count} message",
 		sharedTime: "Shared {time}",
 		usedBy: "used by {names}{remaining}",
 		openVault: "Open vault {name}",
@@ -535,8 +531,7 @@ export const en = {
 		removeFrom: "Remove {name} from {context}?",
 		hide: "Hide",
 		show: "Show",
-		sessionsOnDate: "{count} sessions on {date}",
-		sessionsOnDateOne: "{count} session on {date}",
+		sessionsOnDate: "{sessions} on {date}",
 		projectOwner: "by {name}",
 		uninstallSkill: "Uninstall {name} from agent",
 		openAgent: "Open {name}{status}",
@@ -546,8 +541,6 @@ export const en = {
 		message: "message",
 		messages: "messages",
 		shareProject: "Share {name}",
-		characterCount: " ({count} chars)",
-		characterCountOne: " ({count} char)",
 		shareDetails: "{scope} · {count} {unit} · Created {time}",
 		openMemory: "Open memory: {name}",
 		deleteMemory: "Delete memory: {name}",
@@ -793,8 +786,6 @@ export const en = {
 	},
 	skills: {
 		singular: "Skill",
-		file: "file",
-		files: "files",
 		projectContext: "Project Skill · in",
 		addedSeparator: "· added",
 		chooseProject:

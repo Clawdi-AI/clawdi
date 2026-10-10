@@ -2,7 +2,7 @@
 
 import type { components } from "@clawdi/shared/api";
 import { connectorDetailClasses } from "@clawdi/shared/ui";
-import { LIBRARY_COPY } from "@clawdi/shared/view";
+import { formatCount, LIBRARY_COPY } from "@clawdi/shared/view";
 import { AlertCircle, Check, Link2Off, Plug, Wrench } from "lucide-react";
 import { parseAsString, useQueryStates } from "nuqs";
 import {
@@ -540,7 +540,7 @@ function ConnectorToolsList({
 			<DashboardSectionHeader
 				icon={Wrench}
 				title={LIBRARY_COPY.tools}
-				count={`${tools.length} tools`}
+				count={formatCount(tools.length, "tool")}
 				description={
 					requiresConnection
 						? "Review the actions agents can request through this connector."

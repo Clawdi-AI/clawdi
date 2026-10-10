@@ -1,5 +1,5 @@
 import { publicSessionClasses } from "@clawdi/shared/ui";
-import { publicSessionScopeLabel, relativeTime } from "@clawdi/shared/view";
+import { formatCount, publicSessionScopeLabel, relativeTime } from "@clawdi/shared/view";
 import { Link } from "@tanstack/react-router";
 import { Clock, MessageSquare } from "lucide-react";
 import { ClawdiLogo } from "@/components/clawdi-logo";
@@ -53,7 +53,7 @@ export default function PublicSharePage({ result }: { result: PublicSharePageRes
 
 				<DetailStats>
 					<ModelBadge modelId={share.model} />
-					<Stat icon={MessageSquare} label={`${share.message_count} messages`} />
+					<Stat icon={MessageSquare} label={formatCount(share.message_count, "message")} />
 					<Stat icon={Clock} label={`Shared ${relativeTime(share.created_at)}`} />
 				</DetailStats>
 

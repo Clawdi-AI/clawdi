@@ -12,6 +12,8 @@ import {
 	decodeResourceRouteParam,
 	displayProjectName,
 	errorMessage,
+	formatCount,
+	formatResourceCount,
 	LIBRARY_COPY,
 	projectResourceHref,
 	relativeTime,
@@ -625,10 +627,9 @@ export function SkillDetailContent({
 
 					<DetailStats>
 						<Stat icon={Tag} label={`v${skill.version}`} />
-						<Stat
-							icon={FileText}
-							label={`${skill.file_count} file${skill.file_count === 1 ? "" : "s"}`}
-						/>
+						{skill.file_count !== null ? (
+							<Stat icon={FileText} label={formatCount(skill.file_count, "file")} />
+						) : null}
 					</DetailStats>
 
 					<DetailPanel className={skillDetailClasses.panel}>
@@ -721,9 +722,7 @@ export function SkillDetailContent({
 											: "This instruction file belongs to the project. Linked agents use updates automatically."}
 									</p>
 								</div>
-								<Badge variant="secondary">
-									{skill.file_count} file{skill.file_count === 1 ? "" : "s"}
-								</Badge>
+								<Badge variant="secondary">{formatResourceCount(skill.file_count, "file")}</Badge>
 							</div>
 							{skillBody ? (
 								<div className={skillDetailClasses.markdown}>
@@ -750,9 +749,7 @@ export function SkillDetailContent({
 											: "This project skill has no editable instruction body."}
 									</p>
 								</div>
-								<Badge variant="secondary">
-									{skill.file_count} file{skill.file_count === 1 ? "" : "s"}
-								</Badge>
+								<Badge variant="secondary">{formatResourceCount(skill.file_count, "file")}</Badge>
 							</div>
 							<EmptyState
 								variant="inset"

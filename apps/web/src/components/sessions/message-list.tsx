@@ -8,6 +8,7 @@ export { buildSessionTimelineRows, type SessionTimelineRow } from "@clawdi/share
 import {
 	agentTypeLabel,
 	formatAbsoluteTooltip,
+	formatCount,
 	formatGroupHeaderTime,
 	formatToolPayload,
 	isSkillExpansion,
@@ -348,7 +349,7 @@ function CollapsibleBlock({
 				<span>{label}</span>
 				{!visible && (
 					<span className={messageListClasses.muted}>
-						({content.length.toLocaleString()} chars)
+						({formatCount(content.length, "char", "chars", content.length.toLocaleString())})
 					</span>
 				)}
 			</Button>

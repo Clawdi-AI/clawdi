@@ -18,6 +18,7 @@ import {
 import {
 	skillFormCopy as copy,
 	createSkillDescription,
+	formatResourceCount,
 	identityFor,
 	isProjectOwner,
 	ownedProjectKindText,
@@ -534,10 +535,7 @@ function SkillEditor({
 							<Icon as={Tag} />
 							<Text>v{detail.data?.version}</Text>
 							<Icon as={FileText} />
-							<Text>
-								{detail.data?.file_count}{" "}
-								{t(detail.data?.file_count === 1 ? "skills.file" : "skills.files")}
-							</Text>
+							<Text>{formatResourceCount(detail.data?.file_count, "file")}</Text>
 						</DetailMeta>
 						{projectPanel}
 						<DetailPanel className={webView(skillDetailClasses.instructionPanel)}>
@@ -615,10 +613,7 @@ function SkillEditor({
 							<Icon as={Tag} />
 							<Text>v{detail.data.version}</Text>
 							<Icon as={FileText} />
-							<Text>
-								{detail.data.file_count}{" "}
-								{t(detail.data.file_count === 1 ? "skills.file" : "skills.files")}
-							</Text>
+							<Text>{formatResourceCount(detail.data.file_count, "file")}</Text>
 						</DetailMeta>
 						{projectPanel}
 						<DetailPanel className={webView(skillDetailClasses.instructionPanel)}>
@@ -634,10 +629,7 @@ function SkillEditor({
 								</WebText>
 							</WebView>
 							<Badge variant="secondary">
-								<Text>
-									{detail.data.file_count}{" "}
-									{t(detail.data.file_count === 1 ? "skills.file" : "skills.files")}
-								</Text>
+								<Text>{formatResourceCount(detail.data.file_count, "file")}</Text>
 							</Badge>
 							{detail.data.content !== null ? (
 								<Markdown content={stripFrontmatter(detail.data.content)} />

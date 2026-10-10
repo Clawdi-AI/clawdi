@@ -5,6 +5,7 @@ import { sessionFeedClasses } from "@clawdi/shared/ui";
 import {
 	agentIdentity,
 	formatAbsoluteTooltip,
+	formatCount,
 	formatNumber,
 	groupSessionsByRecency,
 	profileLabel,
@@ -239,9 +240,12 @@ export function SessionCard({
 			: null,
 		{
 			key: "messages",
-			value: `${session.message_count} ${session.message_count === 1 ? "message" : "messages"}`,
+			value: formatCount(session.message_count, "message"),
 		},
-		{ key: "tokens", value: `${formatNumber(totalTokens)} tokens` },
+		{
+			key: "tokens",
+			value: formatCount(totalTokens, "token", "tokens", formatNumber(totalTokens)),
+		},
 		{
 			key: "time",
 			value: relativeTime(session.last_activity_at),
