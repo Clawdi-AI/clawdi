@@ -3,7 +3,120 @@ import {
 	createDeploymentMutationClient,
 	type DeploymentMutation,
 } from "./deployment-mutation-client";
-import { FilesEndpointChangedError, filesHandoffFailure } from "./runtime-navigation";
+import { ApiClientResponseError } from "./read-transport";
+import {
+	FilesEndpointChangedError,
+	filesHandoffFailure,
+	hermesDashboardHandoffFailure,
+	RuntimeEndpointChangedError,
+	resolveHermesDashboardHandoff,
+} from "./runtime-navigation";
+
+test("Hermes handoff binds native auth and strong version to the configured Hosted origin", async () => {
+	const url = "https://hosted.example.test/v2/hermes/oidc/handoff?code=abc_123-XYZ";
+	const handoff = {
+		url,
+		expires_at: "2026-10-10T00:01:00Z",
+		deployment_resource_version: "v1",
+	};
+	const requests: Request[] = [];
+	let reply: unknown = handoff;
+	const client = createDeploymentMutationClient({
+		baseUrl: "https://hosted.example.test/v2/",
+		getToken: async () => "owner",
+		fetch: async (request) => {
+			requests.push(request);
+			return Response.json(reply);
+		},
+	});
+	expect(await client.createHermesDashboardHandoff("deployment", "v1")).toEqual(handoff);
+	expect(requests[0]?.url).toBe(
+		"https://hosted.example.test/v2/deployments/deployment/hermes-oidc/handoff",
+	);
+	expect(requests[0]?.method).toBe("POST");
+	expect(requests[0]?.headers.get("authorization")).toBe("Bearer owner");
+	expect(requests[0]?.headers.get("if-match")).toBe('"v1"');
+	expect(requests[0]?.headers.has("idempotency-key")).toBe(false);
+	for (const rejected of [
+		{ ...handoff, deployment_resource_version: "v2" },
+		...[
+			"https://other.example.test/v2/hermes/oidc/handoff?code=abc",
+			"http://hosted.example.test/v2/hermes/oidc/handoff?code=abc",
+			"https://hosted.example.test:444/v2/hermes/oidc/handoff?code=abc",
+			"https://hosted.example.test/v2/hermes/oidc/authorize?code=abc",
+			"https://hosted.example.test/v2/hermes/oidc/handoff/?code=abc",
+			`${url}&next=/`,
+			`${url}&code=def`,
+			"https://hosted.example.test/v2/hermes/oidc/handoff",
+			"https://hosted.example.test/v2/hermes/oidc/handoff?code=",
+			"https://hosted.example.test/v2/hermes/x/../oidc/handoff?code=abc",
+			"https://HOSTED.example.test/v2/hermes/oidc/handoff?code=abc",
+			"https://hosted.example.test:443/v2/hermes/oidc/handoff?code=abc",
+			"https://owner@hosted.example.test/v2/hermes/oidc/handoff?code=abc",
+			`${url}#token=secret`,
+			`${url}#`,
+		].map((url) => ({ ...handoff, url })),
+		null,
+		{},
+		{ ...handoff, expires_at: null },
+		{ ...handoff, url: null },
+	]) {
+		reply = rejected;
+		const count = requests.length;
+		await expect(client.createHermesDashboardHandoff("deployment", "v1")).rejects.toThrow(
+			ApiClientResponseError,
+		);
+		expect(requests).toHaveLength(count + 1);
+	}
+	expect(resolveHermesDashboardHandoff(handoff, "invalid-origin", "v1")).toBeNull();
+	expect(resolveHermesDashboardHandoff(handoff, "http://hosted.example.test", "v1")).toBeNull();
+	const count = requests.length;
+	await expect(client.createHermesDashboardHandoff("deployment", 'bad"version')).rejects.toThrow(
+		ApiClientResponseError,
+	);
+	const cancelled = new AbortController();
+	cancelled.abort();
+	await expect(
+		client.createHermesDashboardHandoff("deployment", "v1", cancelled.signal),
+	).rejects.toHaveProperty("name", "AbortError");
+	expect(requests).toHaveLength(count);
+});
+
+test("Hermes handoff maps errors safely and never retries issuance or falls back", async () => {
+	let calls = 0;
+	let status = 503;
+	const client = createDeploymentMutationClient({
+		baseUrl: "https://hosted.example.test",
+		getToken: async () => "owner",
+		fetch: async () => {
+			calls++;
+			if (status === 0) throw new Error("private network failure");
+			return Response.json({ detail: "private server failure" }, { status });
+		},
+	});
+	for (const [code, failure] of [
+		[412, "changed"],
+		[409, "unavailable"],
+		[503, "unavailable"],
+		[401, "signed_out"],
+		[429, "rate_limited"],
+		[403, "failed"],
+		[404, "failed"],
+		[500, "failed"],
+		[0, "offline"],
+	] as const) {
+		status = code;
+		const count = calls;
+		expect(
+			await client
+				.createHermesDashboardHandoff("deployment", "v1")
+				.catch(hermesDashboardHandoffFailure),
+		).toBe(failure);
+		expect(calls).toBe(count + 1);
+	}
+	expect(hermesDashboardHandoffFailure(new RuntimeEndpointChangedError())).toBe("changed");
+	expect(hermesDashboardHandoffFailure(new ApiClientResponseError())).toBe("failed");
+});
 
 test("runtime handoff issuance binds auth, version and exact published endpoint without retry", async () => {
 	const endpoint = "https://runtime.example.test/";

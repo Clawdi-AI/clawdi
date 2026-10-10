@@ -1935,6 +1935,20 @@ function hostedDeployment(
 		clawdi_cloud_environments: { [agentId]: agentId },
 		ai_provider_auth_kinds: { [runtime]: "managed" },
 		files_endpoint: { url: "https://files.example.test/" },
+		runtime_ui_endpoint:
+			runtime === "hermes"
+				? {
+						runtime,
+						role: "control_ui",
+						url: "https://hermes.example.test/",
+						auth_mode: "oidc",
+						browser_mode: "embedded_and_top_level",
+						browser_session_url: `https://compute.example.test/v2/deployments/${id}/hermes-oidc/session`,
+						access_revision: 1,
+						serving_ready: true,
+						serving_reason: "Ok",
+					}
+				: null,
 		provisioning_path: "standard",
 		current_plan_slug: included ? "compute_basic" : "compute_performance",
 		upgrade_available: included,
@@ -2552,6 +2566,19 @@ on("POST", "/v2/deployments/{deployment_id}/files/handoff", ({ params, request }
 		expires_at: new Date(Date.now() + 60_000).toISOString(),
 		deployment_resource_version: deployment.resource.metadata.resourceVersion,
 	} satisfies DeploySchemas["V2HostedFilesHandoff"];
+});
+// Hermes handoff stub; CI cancels confirmation and never opens the redeem URL.
+on("POST", "/v2/deployments/{deployment_id}/hermes-oidc/handoff", ({ params, request }) => {
+	const deployment = deployments.find((item) => item.resource.id === params.deployment_id);
+	if (deployment?.runtime_ui_endpoint?.runtime !== "hermes")
+		return notFound("Deployment not found");
+	if (request.headers.get("if-match") !== `"${deployment.resource.metadata.resourceVersion}"`)
+		return new Reply(412, { detail: "Dashboard handoff does not match the current deployment" });
+	return {
+		url: `https://compute.example.test/v2/hermes/oidc/handoff?code=${"A".repeat(43)}`,
+		expires_at: new Date(Date.now() + 60_000).toISOString(),
+		deployment_resource_version: deployment.resource.metadata.resourceVersion,
+	} satisfies DeploySchemas["V2HostedHermesDashboardHandoff"];
 });
 for (const [path, resume] of [
 	["/v2/subscription/cancel", false],

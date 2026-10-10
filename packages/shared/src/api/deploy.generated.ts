@@ -247,6 +247,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/deployments/{deployment_id}/hermes-oidc/handoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create V2 Hermes Dashboard Handoff */
+        post: operations["create_v2_hermes_dashboard_handoff_v2_deployments__deployment_id__hermes_oidc_handoff_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/deployments/{deployment_id}/terminal": {
         parameters: {
             query?: never;
@@ -2970,6 +2987,18 @@ export interface components {
             /** Deployment Resource Version */
             deployment_resource_version: string;
         };
+        /** V2HostedHermesDashboardHandoff */
+        V2HostedHermesDashboardHandoff: {
+            /** Url */
+            url: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Deployment Resource Version */
+            deployment_resource_version: string;
+        };
         /**
          * V2HostedProviderConflict
          * @description A Clawdi AI provider the runtime skipped to keep its native configuration.
@@ -4207,6 +4236,18 @@ export interface operations {
                     "application/json": components["schemas"]["V2HostedDeployRequestReadResponse"];
                 };
             };
+            /** @description No deploy request exists for this owner and ID: a typed problem with code deploy_request_not_found. Principal owner failures return the existing detail envelope without this code. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["LifecycleProblemDetails"];
+                    "application/json": {
+                        detail: string;
+                    };
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -4509,6 +4550,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2HostedFilesHandoff"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_v2_hermes_dashboard_handoff_v2_deployments__deployment_id__hermes_oidc_handoff_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "If-Match": string;
+            };
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2HostedHermesDashboardHandoff"];
                 };
             };
             /** @description Validation Error */

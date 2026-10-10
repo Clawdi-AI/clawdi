@@ -345,11 +345,18 @@ const runtimeEn = {
 const deploymentsEn = {
 	openDashboard: "Open Agent dashboard",
 	browserWarning:
-		"Open the runtime in the system browser. OpenClaw receives an access credential; the browser may retain access after you sign out of this app. Hermes may require a separate browser sign-in: use the same Clawdi account. Closing the browser does not revoke access; use Reset dashboard access when needed.",
+		"Open the runtime in the system browser. OpenClaw receives an access credential; the browser may retain access after you sign out of this app. Hermes signs in with your current Clawdi session. Closing the browser does not revoke access; use Reset dashboard access when needed.",
 	browserUnavailable:
 		"An authenticated browser endpoint is not available yet. Refresh deployment status.",
 	browserFailed:
 		"Could not open the dashboard. Refresh deployment status and try again. No credentials have been saved by this app.",
+	browserFailedChanged:
+		"This Agent changed. Refresh deployment status and review before trying again.",
+	browserFailedUnavailable:
+		"The dashboard is unavailable. Refresh deployment status and try again.",
+	browserFailedSignedOut: "Your session ended. Sign in again before opening the dashboard.",
+	browserFailedRateLimited: "Too many attempts. Wait a moment before opening the dashboard again.",
+	browserFailedOffline: "Couldn't connect. Check your connection and try again.",
 	unavailable: "Cloud deployment access is not configured.",
 	refresh: "Refresh status",
 	timeout: "Automatic status checks have paused. Refresh to check again.",

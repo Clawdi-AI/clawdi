@@ -50,6 +50,14 @@ mints hosted's one-time Files handoff URL (same Files origin, current resource
 version) and opens it with `expo-web-browser`, where Files ForwardAuth
 exchanges it for the browser's Files grant. Web's embedded Files frame and
 grant bootstrap need the dashboard origin, so mobile never embeds Files.
+Chat on the web keeps the reviewed dashboard URL in its native confirmation and
+re-reads the deployment before opening. Hermes mints a 60 s one-time handoff
+after confirmation, pinned to the configured Hosted API origin and current
+resource version. `openBrowserAsync` opens the redeem URL; Hosted sets the OIDC
+grant cookie and redirects through Hermes login into the signed-in dashboard.
+The handoff URL stays local to the action. OpenClaw keeps its existing
+runtime-credentials browser handoff. Real signed-in dashboard acceptance still
+requires an authorized device check after the Hosted handoff endpoint is deployed.
 The Account tab root `/settings` is a native grouped settings menu: General,
 Account (Clerk's native `UserProfileView`), API Keys, then Wallet, Compute and
 AI Usage when a compute API is configured. Each row pushes a natively headed
