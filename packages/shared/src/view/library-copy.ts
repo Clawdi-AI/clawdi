@@ -73,8 +73,8 @@ export const LIBRARY_COPY = {
 	noProjects: "No projects yet",
 	noProjectMatches: "No matching projects",
 	emptyProjects: "Create a project to bundle skills and vaults for your agents.",
-	noMemories:
-		"No memories yet. Create one above, or your agents will create them automatically as they work.",
+	noMemories: "No memories yet",
+	emptyMemories: "Create one, or your agents will create them automatically as they work.",
 	noMemoryMatches: "No matches — try a different search or category.",
 	noVaults: "No vaults yet",
 	emptyVaults: "Create a vault to group API keys for your agents.",

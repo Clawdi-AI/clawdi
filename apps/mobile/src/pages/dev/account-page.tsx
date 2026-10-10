@@ -5,6 +5,7 @@ import {
 	settingsDialogClasses,
 	transactionsSectionClasses,
 } from "@clawdi/shared/ui";
+import { transactionsCountLabel } from "@clawdi/shared/view";
 import { Redirect, useLocalSearchParams } from "expo-router";
 import { SettingsPanelHeader, SettingsSection } from "@/components/settings/settings-panel-header";
 import { SheetPage } from "@/components/ui/sheet-page";
@@ -217,7 +218,7 @@ function AccountStories() {
 										/>
 									</WebView>
 									<WebText recipe={transactionsSectionClasses.description}>
-										{t("billingParity.transactionsCount", { count: 1 })}
+										{transactionsCountLabel(1)}
 									</WebText>
 								</WebView>
 							</SettingsSection>

@@ -7,6 +7,7 @@ import {
 	transactionStatusLabel as statusLabel,
 	transactionStatusTone as statusTone,
 	transactionDocumentAction,
+	transactionsCountLabel,
 } from "@clawdi/shared/view";
 import { ExternalLink, Receipt } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -149,9 +150,11 @@ export function TransactionsSection() {
 									<div className={transactionsSectionClasses.mobileCopy}>
 										<TransactionDescription transaction={transaction} />
 										<div className={transactionsSectionClasses.mobileHeading}>
-											<Badge variant="outline">
-												{transactionPaymentSourceLabel(transaction.funding)}
-											</Badge>
+											{transaction.funding ? (
+												<Badge variant="outline">
+													{transactionPaymentSourceLabel(transaction.funding)}
+												</Badge>
+											) : null}
 											<StatusBadge status={statusTone(transaction.status)}>
 												{statusLabel(transaction.status)}
 											</StatusBadge>
@@ -213,7 +216,7 @@ export function TransactionsSection() {
 							</Table>
 						</div>
 						<p className={transactionsSectionClasses.description}>
-							{billingCopy.transactionsCount.replace("{count}", String(rows.length))}
+							{transactionsCountLabel(rows.length)}
 						</p>
 						{loadMore}
 					</>

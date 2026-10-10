@@ -1,6 +1,7 @@
 import { validateSessionDetailSearch } from "@clawdi/shared/api";
 import { detailLayoutClasses, sessionDetailClasses as styles } from "@clawdi/shared/ui";
 import {
+	formatCount,
 	formatDuration,
 	formatNumber,
 	profileLabel,
@@ -57,6 +58,7 @@ export default function SessionDetailRoute() {
 			</SafeAreaScreen>
 		);
 	const profile = profileLabel(session);
+	const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
 	const header = (
 		<WebView recipe={styles.header}>
 			<PageHeader
@@ -93,15 +95,10 @@ export default function SessionDetailRoute() {
 							</>
 						) : null}
 						<ModelBadge modelId={session.model} />
-						<Stat
-							icon={MessageSquare}
-							label={t("labels.messageCount", { count: session.message_count })}
-						/>
+						<Stat icon={MessageSquare} label={formatCount(session.message_count, "message")} />
 						<Stat
 							icon={Zap}
-							label={t("labels.tokenCount", {
-								count: formatNumber((session.input_tokens ?? 0) + (session.output_tokens ?? 0)),
-							})}
+							label={formatCount(totalTokens, "token", "tokens", formatNumber(totalTokens))}
 						/>
 						{session.duration_seconds ? (
 							<Stat icon={Clock} label={formatDuration(session.duration_seconds)} />

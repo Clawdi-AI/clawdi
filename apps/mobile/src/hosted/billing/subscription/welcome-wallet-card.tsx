@@ -85,7 +85,8 @@ export function WelcomeWalletCard() {
 	if (!compute) return null;
 	if (wallet.isPending || transactions.isPending)
 		return (
-			<Card accessibilityLabel={copy.loading}>
+			// Distinct keys remount the view: on Android the reused view kept the removed label.
+			<Card key="loading" accessibilityLabel={copy.loading}>
 				<CardContent>
 					<WebView recipe={styles.skeletonBody}>
 						<Skeleton className={webView(styles.skeletonTitle)} />
@@ -119,7 +120,7 @@ export function WelcomeWalletCard() {
 		: null;
 	const state = { grantApplied, grantPending, grantCheckTimedOut: timedOut, grantAmount };
 	return (
-		<Card className={webView(styles.card)}>
+		<Card key="loaded" className={webView(styles.card)}>
 			<CardContent className={webView(styles.content)}>
 				<WebView recipe={styles.summary} className="flex-row">
 					{/* RN has no `[&>svg]` child selector; the icon takes Web's size-6 directly. */}

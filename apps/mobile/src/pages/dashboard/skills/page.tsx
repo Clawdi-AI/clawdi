@@ -13,6 +13,7 @@ import {
 } from "@clawdi/shared/view";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { router, Stack } from "expo-router";
+import FolderKanban from "lucide-react-native/icons/folder-kanban";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -22,7 +23,7 @@ import { PageHeader } from "@/components/page-header";
 import { ProjectCardActions } from "@/components/projects/project-actions";
 import { ProjectResourceCard } from "@/components/projects/project-resource-card";
 import { ProjectResourceBoundary, ProjectScopeHeader } from "@/components/projects/project-scope";
-import { useCloudProjects } from "@/components/projects/projects-surface";
+import { CreateProjectButton, useCloudProjects } from "@/components/projects/projects-surface";
 import { SkillCardActions } from "@/components/skills/skill-actions";
 import { SkillCard } from "@/components/skills/skill-card";
 import { Button } from "@/components/ui/button";
@@ -109,7 +110,7 @@ function SkillsView({ project }: { project?: Project }) {
 				headerMenu={
 					project && writable
 						? {
-								label: t("skills.title"),
+								label: t("sessionDetail.more"),
 								items: [
 									{
 										id: "create",
@@ -198,15 +199,31 @@ function SkillsView({ project }: { project?: Project }) {
 					header={
 						<>
 							{pageHeader}
-							<WebText recipe={skillsPageClasses.projectChooserHeading}>
-								{t("libraryPort.chooseProject")}
-							</WebText>
+							{rows.length ? (
+								<WebText
+									recipe={skillsPageClasses.projectChooserHeading}
+									accessibilityRole="header"
+								>
+									{t("libraryPort.chooseProject")}
+								</WebText>
+							) : null}
 							{projects.error ? (
 								<ApiErrorPanel error={projects.error} onRetry={() => void projects.refetch()} />
 							) : null}
 						</>
 					}
-					empty={projects.isPending ? <HeroCardSkeleton /> : null}
+					empty={
+						projects.isPending ? (
+							<HeroCardSkeleton />
+						) : !projects.error ? (
+							// Same empty state as Web's Skills project chooser.
+							<EmptyState
+								icon={FolderKanban}
+								description={t("libraryPort.emptyProjects")}
+								action={<CreateProjectButton />}
+							/>
+						) : null
+					}
 				/>
 			)}
 		</SafeAreaScreen>

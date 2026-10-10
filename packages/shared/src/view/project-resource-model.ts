@@ -1,4 +1,5 @@
 import type { DashboardStats } from "../api";
+import { formatCount } from "./utils";
 
 export type ProjectResourceId =
 	| "projects"
@@ -213,6 +214,5 @@ export function formatResourceCount(
 	singular: string,
 	plural = `${singular}s`,
 ): string | null {
-	if (typeof value !== "number") return null;
-	return `${value} ${value === 1 ? singular : plural}`;
+	return typeof value === "number" ? formatCount(value, singular, plural) : null;
 }

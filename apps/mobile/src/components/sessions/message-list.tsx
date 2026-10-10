@@ -6,6 +6,7 @@ import {
 } from "@clawdi/shared/ui";
 import {
 	agentTypeLabel,
+	formatCount,
 	formatGroupHeaderTime,
 	formatToolPayload,
 	isSkillExpansion,
@@ -149,9 +150,12 @@ export function SessionTimelineRowView({
 											<WebText recipe={styles.skillTrigger}>
 												{t("sessionDetail.skill")}
 												{!skillVisible
-													? t("labels.characterCount", {
-															count: message.content.length.toLocaleString(),
-														})
+													? ` (${formatCount(
+															message.content.length,
+															"char",
+															"chars",
+															message.content.length.toLocaleString(),
+														)})`
 													: ""}
 											</WebText>
 										</Button>

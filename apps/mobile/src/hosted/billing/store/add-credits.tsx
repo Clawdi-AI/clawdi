@@ -12,6 +12,7 @@ import {
 	type StoreNotice,
 } from "@/hosted/billing/store/store-presentation";
 import { useI18n } from "@/lib/i18n";
+import type { TranslationKey } from "@/lib/i18n/en";
 import { accountQueryKey, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { usePaywall } from "@/platform/store/paywall-host";
@@ -31,6 +32,16 @@ function useRefreshWallet() {
 				cache.invalidateQueries({ queryKey: accountQueryKey(scope, key) }),
 			),
 		);
+}
+
+/**
+ * Footer copy: the purchase notice only while credits can be bought. Store builds
+ * otherwise rely on the neutral Add credits status; other builds explain the build.
+ */
+export function useCreditsNotice(): TranslationKey | null {
+	const { storeBuild, creditsAvailable } = useMobileStore();
+	if (creditsAvailable) return "store.creditsNotice";
+	return storeBuild ? null : "billing.noStore";
 }
 
 /** Start/foreground recovery can settle an earlier purchase; show its Wallet effect. */

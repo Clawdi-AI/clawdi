@@ -2,6 +2,7 @@ import { memoryDetailClasses } from "@clawdi/shared/ui";
 import {
 	memoryFormCopy as formCopy,
 	MEMORY_CATEGORY_COLORS,
+	memoryCategoryLabel,
 	memoryRecallLabel,
 	RESOURCE_TINT_CLASSES,
 	relativeTime,
@@ -111,7 +112,7 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 									variant="secondary"
 									className={webBoth(MEMORY_CATEGORY_COLORS[memory.category] ?? "")}
 								>
-									<Text>{memory.category}</Text>
+									<Text>{memoryCategoryLabel(memory.category)}</Text>
 								</Badge>
 								<Text>
 									{memory.source} {t("memories.savedSeparator")} {relativeTime(memory.created_at)} ·{" "}

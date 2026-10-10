@@ -2,7 +2,13 @@
 
 import { contributionGraphClasses } from "@clawdi/shared/ui";
 
-import { buildWeeks, clampLevel, computeMonthLabels, DASHBOARD_COPY } from "@clawdi/shared/view";
+import {
+	buildWeeks,
+	clampLevel,
+	computeMonthLabels,
+	DASHBOARD_COPY,
+	formatCount,
+} from "@clawdi/shared/view";
 
 import { useEffect, useRef, useState } from "react";
 import type { ContributionDay } from "@/lib/api-schemas";
@@ -81,7 +87,9 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 												: contributionGraphClasses.placeholder,
 										)}
 										style={{ width: CELL, height: CELL }}
-										title={day.date ? `${day.count} sessions on ${day.date}` : undefined}
+										title={
+											day.date ? `${formatCount(day.count, "session")} on ${day.date}` : undefined
+										}
 									/>
 								))}
 							</div>

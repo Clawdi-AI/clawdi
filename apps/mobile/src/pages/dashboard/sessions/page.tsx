@@ -325,9 +325,10 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 							{sessions.isFetchingNextPage ? (
 								<SessionFeed sessions={[]} isLoading emptyMessage="" />
 							) : null}
-							<WebText recipe={paginationStyles.results}>
-								{total === 0 ? "0 results" : `${rows.length} of ${total}`}
-							</WebText>
+							{/* The empty state already says there are no results. */}
+							{rows.length ? (
+								<WebText recipe={paginationStyles.results}>{`${rows.length} of ${total}`}</WebText>
+							) : null}
 						</WebView>
 					) : null
 				}

@@ -109,6 +109,19 @@ export function formatNumber(n: number): string {
 	return String(n);
 }
 
+/**
+ * A count with its noun in agreement, e.g. "1 file" / "3 files". `display` prints a
+ * formatted number ("1.2k", "1,024") while the exact `count` picks the noun.
+ */
+export function formatCount(
+	count: number,
+	singular: string,
+	plural = `${singular}s`,
+	display = String(count),
+): string {
+	return `${display} ${count === 1 ? singular : plural}`;
+}
+
 export function errorMessage(e: unknown): string {
 	if (e instanceof Error) return e.message;
 	if (typeof e === "string") return e;

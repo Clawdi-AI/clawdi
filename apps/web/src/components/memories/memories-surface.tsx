@@ -13,6 +13,7 @@ import {
 	memoryFormCopy as formCopy,
 	LIBRARY_COPY,
 	MEMORY_CATEGORY_COLORS,
+	memoryCategoryLabel,
 	memoryDisplayName,
 	relativeTime,
 } from "@clawdi/shared/view";
@@ -419,7 +420,7 @@ export function MemoryCard({
 						variant="secondary"
 						className={cn(MEMORY_CATEGORY_COLORS[memory.category])}
 					>
-						{memory.category}
+						{memoryCategoryLabel(memory.category)}
 					</Badge>,
 					...(memory.tags?.slice(0, 3).map((tag) => `#${tag}`) ?? []),
 					memory.created_at ? (

@@ -100,7 +100,7 @@ export default function SettingsMenuPage() {
 								"/settings/wallet",
 								WalletCards,
 								t("billingParity.wallet"),
-								t("billingParity.walletSummary"),
+								t(surfaces.cardBilling ? "billingParity.walletSummary" : "store.walletSummary"),
 							),
 							row(
 								"compute",

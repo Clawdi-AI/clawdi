@@ -227,7 +227,7 @@ function VaultCatalog({
 							headerMenu={
 								canCreate
 									? {
-											label: getProjectResourceDefinition("vaults").label,
+											label: t("sessionDetail.more"),
 											items: [
 												{
 													id: "add",

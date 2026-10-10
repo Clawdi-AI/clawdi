@@ -338,13 +338,21 @@ function VaultDetail({
 	};
 	const importKeys = () => {
 		if (!identity || !validImport) return;
-		confirm(t("vault.import"), t("vault.importWarning"), async (isCurrent) => {
-			setDraft("");
-			await read((s) =>
-				vault.upsert(identity, { section: normalizedSection, fields: preview.fields }, s),
-			);
-			if (isCurrent()) await refresh();
-		});
+		// Like Web's Add keys dialog, a successful save closes the sheet onto the updated Vault.
+		confirm(
+			t("vault.import"),
+			t("vault.importWarning"),
+			async (isCurrent) => {
+				setDraft("");
+				await read((s) =>
+					vault.upsert(identity, { section: normalizedSection, fields: preview.fields }, s),
+				);
+				if (isCurrent()) await refresh();
+				if (isCurrent()) await sheet.close(true);
+			},
+			false,
+			false,
+		);
 	};
 	const remove = () => {
 		if (!identity) return;

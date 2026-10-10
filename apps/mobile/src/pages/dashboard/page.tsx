@@ -64,7 +64,7 @@ export default function HomeRoute() {
 				title={OVERVIEW_COPY.title}
 				actions={wallet ? [wallet, notifications] : [notifications]}
 				menu={{
-					label: t("sessionFilters.options"),
+					label: t("sessionDetail.more"),
 					items: [
 						{
 							id: "agents",

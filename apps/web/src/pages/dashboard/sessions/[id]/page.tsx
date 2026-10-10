@@ -3,6 +3,7 @@
 import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/consts";
 import { sessionDetailClasses } from "@clawdi/shared/ui";
 import {
+	formatCount,
 	formatDuration,
 	formatNumber,
 	formatSessionSummary,
@@ -649,8 +650,11 @@ export function SessionDetailContent({
 								</>
 							) : null}
 							<ModelBadge modelId={session.model} />
-							<Stat icon={MessageSquare} label={`${session.message_count} messages`} />
-							<Stat icon={Zap} label={`${formatNumber(totalTokens)} tokens`} />
+							<Stat icon={MessageSquare} label={formatCount(session.message_count, "message")} />
+							<Stat
+								icon={Zap}
+								label={formatCount(totalTokens, "token", "tokens", formatNumber(totalTokens))}
+							/>
 							{session.duration_seconds ? (
 								<Stat icon={Clock} label={formatDuration(session.duration_seconds)} />
 							) : null}

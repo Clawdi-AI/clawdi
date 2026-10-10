@@ -18,6 +18,7 @@ import {
 	connectorConnectTitle,
 	connectorDisconnectTitle,
 	connectorFormCopy as copy,
+	formatCount,
 	getProjectResourceDefinition,
 } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -159,7 +160,7 @@ function Catalog() {
 		...(!search && (connectedNames.length || connections.error)
 			? [
 					<WebView recipe={connectorsSurfaceClasses.section} key="connected-heading">
-						<SectionLabel count={`${connectedNames.length} apps`}>
+						<SectionLabel count={formatCount(connectedNames.length, "app")}>
 							{t("libraryPort.yourConnections")}
 						</SectionLabel>
 						{connections.error ? (
@@ -440,7 +441,7 @@ function Detail({ name, form }: { name?: string; form: boolean }) {
 				<DashboardSectionHeader
 					icon={Wrench}
 					title={t("libraryPort.tools")}
-					count={`${tools.data?.length ?? 0} tools`}
+					count={formatCount(tools.data?.length ?? 0, "tool")}
 					description={t("libraryPort.toolsDescription")}
 				/>
 				{tools.error ? (

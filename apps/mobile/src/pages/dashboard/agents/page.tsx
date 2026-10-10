@@ -63,7 +63,7 @@ function AgentsView({ project }: { project?: Project }) {
 					{ id: "create", label: t("agents.create"), onPress: () => router.push("/deploy") },
 				]}
 				menu={{
-					label: t("projects.filter"),
+					label: t("projects.filterMenu"),
 					items: [
 						{
 							id: "all",

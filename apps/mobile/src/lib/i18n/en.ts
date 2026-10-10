@@ -150,6 +150,8 @@ const storeEn = {
 	recoveryStatus: "This subscription needs attention. Refresh to see its latest status.",
 	usdcInApp: "Browser-wallet USDC funding isn't available in this app.",
 	walletExplanation: "Pays for AI usage and credit-funded compute subscriptions.",
+	walletSummary: "Balance and transactions",
+	walletDescription: "Your credits balance and transaction history.",
 	usageSummary: "LLM spend in credits, paid from wallet",
 	purchasing: "Confirming purchase…",
 	credits: "credits",
@@ -486,7 +488,7 @@ const vaultEn = {
 		"Invalid import. Check key names, duplicates, and quoting. Nothing will be imported.",
 	clear: "Clear pasted secrets",
 	failed: "The operation could not be confirmed. Refresh before trying again.",
-	saved: "Operation completed.",
+	saved: "Changes saved.",
 	deleteKey: "Delete key",
 	deleteTitle: "Delete {name}?",
 	detach: "Detach Project",
@@ -520,9 +522,7 @@ import {
 } from "@clawdi/shared/view";
 export const en = {
 	labels: {
-		tokenCount: "{count} tokens",
 		free: "Free",
-		messageCount: "{count} messages",
 		sharedTime: "Shared {time}",
 		usedBy: "used by {names}{remaining}",
 		openVault: "Open vault {name}",
@@ -531,7 +531,7 @@ export const en = {
 		removeFrom: "Remove {name} from {context}?",
 		hide: "Hide",
 		show: "Show",
-		sessionsOnDate: "{count} sessions on {date}",
+		sessionsOnDate: "{sessions} on {date}",
 		projectOwner: "by {name}",
 		uninstallSkill: "Uninstall {name} from agent",
 		openAgent: "Open {name}{status}",
@@ -541,7 +541,6 @@ export const en = {
 		message: "message",
 		messages: "messages",
 		shareProject: "Share {name}",
-		characterCount: " ({count} chars)",
 		shareDetails: "{scope} · {count} {unit} · Created {time}",
 		openMemory: "Open memory: {name}",
 		deleteMemory: "Delete memory: {name}",
@@ -787,7 +786,6 @@ export const en = {
 	},
 	skills: {
 		singular: "Skill",
-		files: "files",
 		projectContext: "Project Skill · in",
 		addedSeparator: "· added",
 		chooseProject:
@@ -801,6 +799,7 @@ export const en = {
 			"Only owned cloud Projects can be edited. Agent-synced and shared Skills are read-only.",
 		noContent: "No text content is available.",
 		import: "Import from GitHub",
+		importSubmit: "Import skill",
 		github: "owner/repository/path or an HTTPS GitHub URL",
 		conflict:
 			"This Skill changed while you were editing. Your draft is preserved. Copy your changes before discarding and reloading.",
@@ -833,6 +832,7 @@ export const en = {
 		viewer: "Viewer",
 		open: "Open project",
 		filter: "Project scope",
+		filterMenu: "Project filter",
 		agentsScope: "Your Agents linked to this Project. Other members' Agents are not listed.",
 		all: "All projects",
 		choose: "Choose a project",
