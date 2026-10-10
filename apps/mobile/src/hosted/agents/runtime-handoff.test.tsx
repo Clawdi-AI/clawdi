@@ -107,7 +107,9 @@ mock.module("@/lib/api-provider", () => ({
 		},
 	}),
 }));
+// Bun keeps the first mock's export names for the whole run; other suites import accountQueryKey.
 mock.module("@/platform/account-lifecycle", () => ({
+	accountQueryKey: (...parts: unknown[]) => parts,
 	useAccountScope: () => ({
 		identity: "owner",
 		signal: h.controller.signal,

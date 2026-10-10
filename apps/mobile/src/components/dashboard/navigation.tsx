@@ -23,8 +23,15 @@ export function AgentSectionNavigation({
 	const inventory = useDashboardAgents();
 	const deployment = inventory.inventory.data?.find((d) => d.agent_id === agentId);
 	const agent = useCloudAgent(agentId);
-	// Web's top bar names the Agent on every section.
-	const title = deployment?.resource.name ?? (agent.data ? agentDisplayName(agent.data) : "");
+	// Web's top bar names the Agent on every section; the Agent's own name wins, like the overview.
+	const title = agent.data
+		? agentDisplayName(agent.data)
+		: deployment
+			? agentDisplayName({
+					default_name: deployment.resource.name,
+					agent_type: deployment.resource.spec.runtime,
+				})
+			: "";
 	return (
 		<NativeHeader
 			title={title}

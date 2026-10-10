@@ -89,19 +89,27 @@ export function createSkillAttemptStore(store: AttemptStore) {
 	});
 }
 
+const sourceRejections: Partial<Record<number, string[]>> = {
+	412: ["resource_version_mismatch"],
+	400: ["workspace_skill_source_invalid"],
+	404: ["workspace_skill_source_invalid"],
+	409: [
+		"workspace_skills_capability_unavailable",
+		"workspace_skill_source_conflict",
+		"workspace_skill_reserved",
+	],
+};
+
+/** Hosted returns a live receipt's result before any of these checks, so each of them
+ * proves the change was not applied: the rejections fail the same way on every replay,
+ * and an unavailable source also passed If-Match, so the change may be sent again.
+ */
 export function skillAttemptAfterFailure(attempt: SkillAttempt, error: unknown): SkillAttempt {
-	const preflight =
-		error instanceof ApiClientError &&
-		((error.status === 412 && error.code === "resource_version_mismatch") ||
-			(error.status === 400 && error.code === "workspace_skill_source_invalid") ||
-			(error.status === 409 &&
-				[
-					"workspace_skills_capability_unavailable",
-					"workspace_skill_source_conflict",
-					"workspace_skill_reserved",
-				].includes(error.code ?? "")));
-	return {
-		...attempt,
-		status: attempt.status === "prepared" && preflight ? "rejected" : "uncertain",
-	};
+	let status: SkillAttempt["status"] = "uncertain";
+	if (error instanceof ApiClientError) {
+		if (error.status === 503 && error.code === "workspace_skill_source_unavailable")
+			status = "prepared";
+		else if (sourceRejections[error.status]?.includes(error.code ?? "")) status = "rejected";
+	}
+	return { ...attempt, status };
 }

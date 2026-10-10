@@ -332,6 +332,9 @@ const runtimeEn = {
 	retry: "Retry last change",
 	conflict: "This agent changed since you started. Refresh and review before trying again.",
 	review: "Discard change",
+	discardUncertainTitle: "Discard unconfirmed change?",
+	discardUncertainWarning:
+		"We couldn't confirm whether this change was applied. Discarding only removes it from this device. Check the agent's status before making another change.",
 	failed: "We couldn't confirm this change. Refresh and try again.",
 	locale: "Language and timezone",
 	default: "Agent default",
@@ -402,9 +405,14 @@ const workspaceSkillsEn = {
 	accepted: "Change requested. It may take a moment to apply.",
 	open: "Read Skill",
 	uncertain: "We couldn't confirm the last change. Retry it before making another.",
+	notApplied: "This change wasn't applied. Retry it or discard it.",
+	conflict:
+		"This agent's Skills changed since this change was saved. Review them and try again if needed.",
 	retry: "Retry last change",
 	discard: "Discard change",
 	discardWarning: "Discard this change and reload this agent's Skills?",
+	discardUncertainWarning:
+		"We couldn't confirm whether this change was applied. Discarding only removes it from this device. Check the Skills list before trying again.",
 	storageError: "We couldn't read the last change saved on this device. Reload to continue.",
 	reload: "Reload",
 	error: "We couldn't confirm this change. Refresh and try again.",

@@ -146,7 +146,6 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 		scope.isReady &&
 		inventory.data?.deployment_id === id &&
 		workspaceSkillMutationsAvailable(inventory.data, inventory.error) &&
-		!inventory.isFetching &&
 		!deployment.isError &&
 		deployment.data?.resource.id === id &&
 		deployment.data.resource.spec.desired_lifecycle !== "deleted";
@@ -181,21 +180,29 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 				await refresh();
 				if (install && owns()) await installSheet.close(true);
 			} catch (error) {
-				const rejected = skillAttemptAfterFailure(attempt, error);
-				if (owns() && rejected.status === "rejected") {
-					await skillAttempts.replaceAttempt(storageKey, sending, rejected, owns);
-					if (owns()) setSaved(rejected);
-				}
-				throw error;
+				const settled = skillAttemptAfterFailure(attempt, error);
+				if (!owns() || settled.status === "uncertain") throw error;
+				// The saved request's status copy explains a resolved failure.
+				await skillAttempts.replaceAttempt(storageKey, sending, settled, owns);
+				if (!owns()) return;
+				setSaved(settled);
+				await refresh();
 			}
 		});
-	const confirm = (label: string, message: string, run: () => unknown) => {
+	const confirm = (
+		title: string,
+		message: string,
+		confirmLabel: string,
+		run: () => unknown,
+		destructive: boolean,
+	) => {
 		const ticket = ++confirmation.current;
 		const visible = capture();
 		confirmationDialog.request({
-			title: label,
+			title,
 			description: message,
-			confirmLabel: label,
+			confirmLabel,
+			destructive,
 			onConfirm: () => {
 				if (
 					ticket !== confirmation.current ||
@@ -220,8 +227,14 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 		};
 		// Failures close the confirmation: the journaled attempt's Retry/Discard controls drive
 		// recovery, since repeating a fresh save over that journal can only fail.
-		confirm(t("workspaceSkills.confirm"), t("workspaceSkills.warning"), () =>
-			submit(attempt, true),
+		confirm(
+			t("workspaceSkills.confirm"),
+			t("workspaceSkills.warning"),
+			mutation.action === "install"
+				? agentSurfaceCopy.installSkill
+				: agentSurfaceCopy.uninstallSkill,
+			() => submit(attempt, true),
+			mutation.action === "uninstall",
 		);
 	};
 	let installRequest: WorkspaceSkillMutation | null = null;
@@ -255,7 +268,15 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 			) : null}
 			{saved ? (
 				<>
-					<AppText>{t("workspaceSkills.uncertain")}</AppText>
+					<AppText>
+						{t(
+							saved.status === "rejected"
+								? "workspaceSkills.conflict"
+								: saved.status === "prepared"
+									? "workspaceSkills.notApplied"
+									: "workspaceSkills.uncertain",
+						)}
+					</AppText>
 					<AppText selectable>
 						{saved.mutation.action === "install"
 							? `${saved.mutation.request.repo}/${saved.mutation.request.path ?? ""}`
@@ -268,12 +289,19 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 						}
 						onPress={() => void submit(saved)}
 					/>
-					{saved.status !== "uncertain" ? (
-						<ActionButton
-							label={t("workspaceSkills.discard")}
-							disabled={action.busy || storageError}
-							onPress={() =>
-								confirm(t("workspaceSkills.discard"), t("workspaceSkills.discardWarning"), () =>
+					<ActionButton
+						label={t("workspaceSkills.discard")}
+						disabled={action.busy || storageError}
+						onPress={() =>
+							confirm(
+								t("workspaceSkills.discard"),
+								t(
+									saved.status === "uncertain"
+										? "workspaceSkills.discardUncertainWarning"
+										: "workspaceSkills.discardWarning",
+								),
+								t("workspaceSkills.discard"),
+								() =>
 									action.runOrThrow(async (current) => {
 										if (!storageKey) return;
 										await skillAttempts.clearAttempt(
@@ -286,10 +314,10 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 											await refresh();
 										}
 									}),
-								)
-							}
-						/>
-					) : null}
+								true,
+							)
+						}
+					/>
 				</>
 			) : null}
 			{storageError ? (

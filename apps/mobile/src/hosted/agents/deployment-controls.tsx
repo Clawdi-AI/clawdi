@@ -1,6 +1,5 @@
 import { isClawdiManagedProviderId } from "@clawdi/shared";
 import {
-	ApiClientError,
 	buildHostedAiBindingFields,
 	type DeploymentMutation,
 	type DeploymentRead,
@@ -25,7 +24,7 @@ import {
 	isManagedProviderId,
 	primaryModelValue,
 } from "@clawdi/shared/view";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
 import { useRouter } from "expo-router";
 import { type ReactNode, useEffect, useRef, useState } from "react";
@@ -44,7 +43,7 @@ import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { NativeSegments } from "@/platform/navigation/segmented-control";
-import type { RuntimeAttempt } from "@/platform/runtime-attempt";
+import { type RuntimeAttempt, runtimeAttemptAfterFailure } from "@/platform/runtime-attempt";
 import { runtimeAttempts } from "@/platform/runtime-attempt-storage";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
@@ -83,6 +82,7 @@ export function DeploymentControls({
 	const read = useAccountRead();
 	const capture = useForegroundLease();
 	const { deploymentMutations } = useMobileApi();
+	const cache = useQueryClient();
 	const action = useAuthAction(scope.identity);
 	useEffect(() => {
 		onBusyChange?.(action.busy);
@@ -137,6 +137,11 @@ export function DeploymentControls({
 		writeBlocked ||
 		transitioning ||
 		Boolean(deployment?.accepted_operation && !deployment.accepted_operation.done);
+	const refreshDeployment = () =>
+		Promise.all([
+			cache.invalidateQueries({ queryKey: accountQueryKey(scope, "deployment", deploymentId) }),
+			cache.invalidateQueries({ queryKey: accountQueryKey(scope, "deployments") }),
+		]);
 	const submit = (saved: RuntimeAttempt, fresh = false) =>
 		action.run(async (current) => {
 			const visible = capture();
@@ -172,20 +177,45 @@ export function DeploymentControls({
 				if ("status" in operation) await onAbsent();
 				else await onAccepted(operation);
 			} catch (error) {
-				if (
-					owns() &&
-					saved.status === "prepared" &&
-					error instanceof ApiClientError &&
-					error.status === 412 &&
-					error.code === "resource_version_mismatch"
-				) {
-					const refused: RuntimeAttempt = { ...saved, status: "rejected" };
-					await runtimeAttempts.replaceAttempt(storageKey, submitting, refused, owns);
-					if (owns()) setAttempt(refused);
-				}
-				throw error;
+				const settled = runtimeAttemptAfterFailure(saved, error);
+				if (!owns() || settled.status !== "rejected") throw error;
+				// The conflict copy explains a rejected replay; no generic failure is shown.
+				await runtimeAttempts.replaceAttempt(storageKey, submitting, settled, owns);
+				if (!owns()) return;
+				setAttempt(settled);
+				await refreshDeployment();
 			}
 		});
+	const discard = (saved: RuntimeAttempt) =>
+		action.run(async (current) => {
+			if (!storageKey) return;
+			const owns = () => current() && scope.isCurrent() && !scope.signal.aborted;
+			await runtimeAttempts.clearAttempt(storageKey, saved, owns);
+			if (!owns()) return;
+			setAttempt(null);
+			await refreshDeployment();
+		});
+	const confirmDiscard = (saved: RuntimeAttempt) => {
+		if (saved.status !== "uncertain") {
+			void discard(saved);
+			return;
+		}
+		const visible = capture();
+		nativeConfirmation.show(
+			t("runtime.discardUncertainTitle"),
+			t("runtime.discardUncertainWarning"),
+			[
+				{ text: t("account.cancel"), style: "cancel" },
+				{
+					text: t("runtime.review"),
+					style: "destructive",
+					onPress: () => {
+						if (scope.isCurrent() && !scope.signal.aborted && visible()) return discard(saved);
+					},
+				},
+			],
+		);
+	};
 	const subscription = deployment?.commercial_display?.compute_subscription;
 	const fundingMode = computeFundingMode(deployment?.current_plan_slug, subscription);
 	const { offerChoice, defaultChoice, storeNotice } =
@@ -285,21 +315,12 @@ export function DeploymentControls({
 						disabled={action.busy || rejected || !storageKey || storageError}
 						onPress={() => void submit(attempt)}
 					/>
-					{attempt.status !== "uncertain" ? (
+					{/* An uncertain delete may carry a subscription cancel; it settles only by replay. */}
+					{attempt.status !== "uncertain" || attempt.mutation.action !== "delete" ? (
 						<ActionButton
 							label={t("runtime.review")}
 							disabled={action.busy || !storageKey || storageError}
-							onPress={() =>
-								void action.run(async (current) => {
-									if (!storageKey) return;
-									await runtimeAttempts.clearAttempt(
-										storageKey,
-										attempt,
-										() => current() && scope.isCurrent() && !scope.signal.aborted,
-									);
-									if (current()) setAttempt(null);
-								})
-							}
+							onPress={() => confirmDiscard(attempt)}
 						/>
 					) : null}
 				</>
