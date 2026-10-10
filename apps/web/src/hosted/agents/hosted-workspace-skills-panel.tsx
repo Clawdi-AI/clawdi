@@ -2,6 +2,7 @@
 import {
 	agentSkillGuardPresentation,
 	agentSkillInstallCopy,
+	agentSkillUninstallCopy,
 	parseWorkspaceSkillGitHubInput,
 	workspaceSkillInstallCopy,
 	workspaceSkillMutationsAvailable,
@@ -410,6 +411,7 @@ function HostedWorkspaceSkillsPanelContent({
 						</TabsList>
 						<TabsContent value="library">
 							<LibrarySkillPicker
+								managed={managedSkills.data?.skills ?? []}
 								value={librarySkill}
 								onChange={setLibrarySkill}
 								disabled={mutateSkill.isPending}
@@ -533,14 +535,9 @@ function WorkspaceSkillCard({
 			actions={
 				removable ? (
 					<ConfirmAction
-						title={`Uninstall ${item.entity.name} from agent?`}
-						description={
-							<p>
-								This removes the skill from this agent. Your library and other agents keep their
-								copies.
-							</p>
-						}
-						confirmLabel="Uninstall skill"
+						title={agentSkillUninstallCopy.title(item.entity.name)}
+						description={<p>{agentSkillUninstallCopy.description}</p>}
+						confirmLabel={agentSkillUninstallCopy.confirm}
 						destructive
 						onConfirm={() =>
 							onRemove(

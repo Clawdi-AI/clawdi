@@ -20,25 +20,18 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { WebView, webView } from "@/components/ui/web-layout";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
-import { WorkspaceSkillsScreen } from "@/hosted/agents/hosted-workspace-skills-panel";
 import { HostedAgentLibrarySkillsScreen } from "@/hosted/agents/library-skill-picker";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 export function AgentLibrarySkillsScreen() {
-	const params = useLocalSearchParams<{ id?: string | string[]; tab?: string }>(),
+	const params = useLocalSearchParams<{ id?: string | string[] }>(),
 		id = routeParam(params.id);
 	const scope = useAccountScope();
-	return (
-		<WorkspaceSkills
-			key={`${scope.accountKey}:${scope.generation}:${id}`}
-			id={id}
-			workspaceTab={params.tab === "workspace"}
-		/>
-	);
+	return <WorkspaceSkills key={`${scope.accountKey}:${scope.generation}:${id}`} id={id} />;
 }
-function WorkspaceSkills({ id, workspaceTab }: { id?: string; workspaceTab?: boolean }) {
+function WorkspaceSkills({ id }: { id?: string }) {
 	const t = useI18n();
 	const scope = useAccountScope(),
 		read = useAccountRead(),
@@ -80,11 +73,7 @@ function WorkspaceSkills({ id, workspaceTab }: { id?: string; workspaceTab?: boo
 	});
 	const deployment = hosted.data?.find((item) => item.agent_id === id);
 	if (id && deployment)
-		return workspaceTab ? (
-			<WorkspaceSkillsScreen deploymentId={deployment.resource.id} />
-		) : (
-			<HostedAgentLibrarySkillsScreen />
-		);
+		return <HostedAgentLibrarySkillsScreen deploymentId={deployment.resource.id} />;
 	const failed = !id || agent.error || bindings.error || skills.error;
 	return (
 		<AgentCollection

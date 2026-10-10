@@ -352,6 +352,17 @@ test("Library skills use references from both entry points, show source content,
 	await page.getByRole("option", { name: "review-pr", exact: true }).click();
 	await dialog.getByRole("button", { name: "Install skill", exact: true }).click();
 	await expect(dialog).toBeHidden();
+	// The agent already has this Cloud Skill, so the picker marks it Installed and won't select it.
+	await page.getByRole("button", { name: "Install skill", exact: true }).click();
+	await dialog.getByRole("combobox", { name: "Library project" }).click();
+	await page.getByRole("option", { name: /Team Skills/ }).click();
+	await dialog.getByRole("combobox", { name: "Library skill" }).click();
+	await expect(
+		page.getByRole("option", { name: "review-pr · Installed", exact: true }),
+	).toHaveAttribute("aria-disabled", "true");
+	await page.keyboard.press("Escape");
+	await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+	await expect(dialog).toBeHidden();
 	await page.getByRole("link", { name: /review-pr/ }).click();
 	await expect(page.getByText("Skill instructions aren't available right now.")).toBeVisible();
 	await expect(page.getByRole("button", { name: "Copy skill" })).toBeDisabled();
