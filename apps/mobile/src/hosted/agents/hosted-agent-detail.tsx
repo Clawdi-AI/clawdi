@@ -5,7 +5,6 @@ import {
 } from "@clawdi/shared/api";
 import { agentsIndexClasses } from "@clawdi/shared/ui";
 import {
-	agentDisplayName,
 	agentFilesPresentation,
 	agentOverviewCopy,
 	agentSurfaceCopy,
@@ -55,6 +54,7 @@ import { Text as AppText } from "@/components/ui/text";
 import { AppScrollView } from "@/components/ui/view";
 import { WebView, webView } from "@/components/ui/web-layout";
 import { isNotFound, useCloudAgent } from "@/hooks/cloud-inventory";
+import { hostedAgentTitle } from "@/hosted/agent-title";
 import { ComputeStatusDetails } from "@/hosted/agents/compute-status-details";
 import { CancelOperation } from "@/hosted/agents/deployment-cancel-action";
 import { DeploymentControls } from "@/hosted/agents/deployment-controls";
@@ -463,17 +463,7 @@ function DeploymentDetail({
 				)}
 				{deployment && initial ? null : (
 					<PageHeader
-						title={
-							// Like Web, the Agent's own name wins so a rename shows at once.
-							agent.data
-								? agentDisplayName(agent.data)
-								: deployment
-									? agentDisplayName({
-											default_name: deployment.resource.name,
-											agent_type: deployment.resource.spec.runtime,
-										})
-									: t("navigation.home")
-						}
+						title={hostedAgentTitle(agent.data, deployment) ?? t("navigation.home")}
 						description={agentOverviewCopy.description}
 						titleAdornment={
 							deployment?.agent_id ? (

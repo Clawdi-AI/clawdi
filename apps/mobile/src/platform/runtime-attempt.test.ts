@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
+import { ApiClientError, ApiClientNetworkError, ApiClientResponseError } from "@clawdi/shared/api";
 import {
 	createRuntimeAttemptStore,
 	parseRuntimeAttempt,
 	type RuntimeAttempt,
+	runtimeAttemptAfterFailure,
 } from "@/platform/runtime-attempt";
 
 const attempt: RuntimeAttempt = {
@@ -117,4 +119,30 @@ test("corrupt journals and unsupported requests fail closed; write failures pres
 	await expect(journal.readSavedAttempt("key")).rejects.toThrow("Invalid saved attempt");
 	values.set("key", "");
 	await expect(journal.readSavedAttempt("key")).rejects.toThrow("Invalid saved attempt");
+});
+
+test("a replay the server refuses on version proves the change was not accepted", async () => {
+	const start: RuntimeAttempt = { ...attempt, mutation: { action: "start" }, status: "uncertain" };
+	const conflict = new ApiClientError(412, "resource_version_mismatch");
+	expect(runtimeAttemptAfterFailure(start, conflict).status).toBe("rejected");
+	expect(runtimeAttemptAfterFailure({ ...start, status: "prepared" }, conflict).status).toBe(
+		"rejected",
+	);
+	// These say nothing about an earlier send, which may have been accepted.
+	for (const error of [
+		new ApiClientError(503, "request_temporarily_busy"),
+		new ApiClientNetworkError("offline"),
+		new ApiClientResponseError(),
+		new ApiClientError(409, "idempotency_key_reused"),
+		new ApiClientError(412, "other_precondition"),
+	])
+		expect(runtimeAttemptAfterFailure(start, error).status).toBe("uncertain");
+
+	const { journal } = fixture();
+	await journal.saveAttempt("account-agent", start, () => true);
+	const rejected = runtimeAttemptAfterFailure(start, conflict);
+	await journal.replaceAttempt("account-agent", start, rejected, () => true);
+	expect(await journal.readSavedAttempt("account-agent")).toEqual(rejected);
+	await journal.clearAttempt("account-agent", rejected, () => true);
+	expect(await journal.readSavedAttempt("account-agent")).toBeNull();
 });

@@ -5,6 +5,8 @@ type Confirmation = {
 	title: string;
 	description: string;
 	confirmLabel: string;
+	/** Defaults to true; non-destructive confirmations use the default button style. */
+	destructive?: boolean;
 	onConfirm: () => unknown;
 };
 /** Present the existing account/foreground-guarded callback through the native confirmation helper. */
@@ -18,7 +20,7 @@ export function useAgentConfirmation() {
 				title={pending.title}
 				description={pending.description}
 				confirmLabel={pending.confirmLabel}
-				destructive
+				destructive={pending.destructive ?? true}
 				onConfirm={pending.onConfirm}
 				onOpenChange={(open) => {
 					if (!open) setPending(null);
