@@ -78,6 +78,19 @@ export function VirtualizedSessionTimelineList(props: VirtualizedSessionTimeline
 		return () => window.removeEventListener("resize", resolveScrollParent);
 	}, []);
 
+	// React Virtuoso compensates prepends itself; native CSS scroll anchoring
+	// on the same scroller double-compensates and moves the viewport on its own.
+	useIsomorphicLayoutEffect(() => {
+		if (!scrollParent) return;
+		const scroller = scrollParent instanceof HTMLElement ? scrollParent : document.scrollingElement;
+		if (!(scroller instanceof HTMLElement)) return;
+		const previousOverflowAnchor = scroller.style.overflowAnchor;
+		scroller.style.overflowAnchor = "none";
+		return () => {
+			scroller.style.overflowAnchor = previousOverflowAnchor;
+		};
+	}, [scrollParent]);
+
 	const windowKey = scrollParent
 		? `${scrollParent === window ? "window" : "container"}:${props.windowStartOffset}`
 		: null;
