@@ -1,5 +1,6 @@
 import {
 	type FilesHandoff,
+	type HermesDashboardHandoff,
 	isRuntimeUiCredentials,
 	type RuntimeUiCredentials,
 	type RuntimeUiEndpointInfo,
@@ -154,4 +155,63 @@ export function filesHandoffFailure(error: unknown): FilesHandoffFailure {
 	if (error.status === 401) return "signed_out";
 	if (error.status === 429) return "rate_limited";
 	return "failed";
+}
+
+/** Accepts only the canonical, single-code redeem URL on the trusted Hosted API origin. */
+export function resolveHermesDashboardHandoff(
+	handoff: unknown,
+	apiOrigin: string,
+	deploymentResourceVersion: string,
+): HermesDashboardHandoff | null {
+	if (
+		typeof handoff !== "object" ||
+		handoff === null ||
+		!("url" in handoff) ||
+		!("expires_at" in handoff) ||
+		!("deployment_resource_version" in handoff)
+	)
+		return null;
+	const { url, expires_at, deployment_resource_version } = handoff;
+	if (
+		typeof url !== "string" ||
+		typeof expires_at !== "string" ||
+		deployment_resource_version !== deploymentResourceVersion ||
+		url.includes("#")
+	)
+		return null;
+	try {
+		const target = new URL(url);
+		const api = new URL(apiOrigin);
+		if (
+			target.href !== url ||
+			api.protocol !== "https:" ||
+			target.protocol !== "https:" ||
+			target.origin !== api.origin ||
+			target.username ||
+			target.password ||
+			target.pathname !== "/v2/hermes/oidc/handoff" ||
+			[...target.searchParams.keys()].join() !== "code" ||
+			!target.searchParams.get("code")
+		)
+			return null;
+	} catch {
+		return null;
+	}
+	return { url, expires_at, deployment_resource_version };
+}
+
+/** The reviewed runtime endpoint no longer matches the deployment read before minting. */
+export class RuntimeEndpointChangedError extends Error {
+	constructor() {
+		super("Runtime endpoint changed");
+		this.name = "RuntimeEndpointChangedError";
+	}
+}
+
+export type HermesDashboardHandoffFailure = FilesHandoffFailure;
+
+/** Hermes and Files share the same browser-handoff failure statuses. */
+export function hermesDashboardHandoffFailure(error: unknown): HermesDashboardHandoffFailure {
+	if (error instanceof RuntimeEndpointChangedError) return "changed";
+	return filesHandoffFailure(error);
 }

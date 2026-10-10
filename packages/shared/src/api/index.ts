@@ -43,6 +43,7 @@ export type {
 	DeployPaths,
 	DeployRequestRead,
 	FilesHandoff,
+	HermesDashboardHandoff,
 	RuntimeUiAuthMode,
 	RuntimeUiCredentials,
 	RuntimeUiEndpointInfo,

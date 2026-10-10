@@ -8,7 +8,11 @@ import {
 	readApiBaseUrl,
 	readResourceId,
 } from "./read-transport";
-import { resolveFilesHandoff, resolveRuntimeUiCredentials } from "./runtime-navigation";
+import {
+	resolveFilesHandoff,
+	resolveHermesDashboardHandoff,
+	resolveRuntimeUiCredentials,
+} from "./runtime-navigation";
 
 export type DeploymentUpdate = DeployComponents["schemas"]["V2UpdateDeploymentRequest"];
 export type DeploymentMutation =
@@ -75,8 +79,9 @@ export function deploymentMutationHeaders(resourceVersion: string, key: string) 
 /** Caller owns confirmation and exact-attempt recovery; never refreshes ETags or retries writes. */
 export function createDeploymentMutationClient(options: ApiClientOptions) {
 	const transport = createReadTransport(options);
+	const baseUrl = readApiBaseUrl(options.baseUrl, true);
 	const api = createClient<DeployPaths>({
-		baseUrl: readApiBaseUrl(options.baseUrl, true),
+		baseUrl,
 		fetch: transport.fetch,
 	});
 	return {
@@ -116,6 +121,21 @@ export function createDeploymentMutationClient(options: ApiClientOptions) {
 				signal,
 			);
 			const handoff = resolveFilesHandoff(result, filesUrl, version);
+			if (!handoff) throw new ApiClientResponseError();
+			return handoff;
+		},
+		/** One-time Hermes browser handoff; never cache, persist or retry the returned URL. */
+		createHermesDashboardHandoff: async (id: string, version: string, signal?: AbortSignal) => {
+			const params = {
+				path: { deployment_id: readResourceId(id) },
+				header: { "If-Match": strongDeploymentEtag(version) },
+			};
+			const result = await transport.read(
+				(init) =>
+					api.POST("/v2/deployments/{deployment_id}/hermes-oidc/handoff", { ...init, params }),
+				signal,
+			);
+			const handoff = resolveHermesDashboardHandoff(result, baseUrl, version);
 			if (!handoff) throw new ApiClientResponseError();
 			return handoff;
 		},

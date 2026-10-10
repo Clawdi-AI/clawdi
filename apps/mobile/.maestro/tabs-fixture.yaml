@@ -39,6 +39,32 @@ name: Fixture tabs and details
 - runFlow: navigate-back.yaml
 
 # Agent hub: hosted overview rows reach Web's Tools and Settings sections.
+# Hermes Chat on the web reviews the dashboard; CI cancels before handoff minting.
+- scrollUntilVisible:
+    element:
+      id: agent-card-4e2e5000-0003-4c00-8000-000000000003
+    timeout: 30000
+- tapOn:
+    id: agent-card-4e2e5000-0003-4c00-8000-000000000003
+- scrollUntilVisible:
+    element:
+      text: Chat on the web
+    timeout: 30000
+- tapOn:
+    text: Chat on the web
+- extendedWaitUntil:
+    visible:
+      text: (?s)https://hermes\.example\.test.*
+    timeout: 10000
+- takeScreenshot: agent-hermes-dashboard-confirmation
+- tapOn:
+    text: (?i)cancel
+- assertNotVisible:
+    text: (?s)https://hermes\.example\.test.*
+- assertVisible:
+    text: Chat on the web
+- runFlow: navigate-back.yaml
+
 # Files offers the one-time browser handoff; CI cancels its native confirmation.
 - scrollUntilVisible:
     element:

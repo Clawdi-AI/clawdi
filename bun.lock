@@ -100,6 +100,7 @@
         "@types/bun": "catalog:",
         "@types/culori": "catalog:",
         "@types/react": "catalog:expo57",
+        "@types/react-dom": "catalog:",
         "culori": "catalog:",
         "sharp": "0.34.5",
         "typescript": "catalog:",
