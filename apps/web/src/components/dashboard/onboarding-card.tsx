@@ -10,6 +10,7 @@ import { useState } from "react";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useDesktopShell } from "@/lib/desktop-shell";
 
 type OnboardingCardProps = {
 	variant?: "first-agent" | "additional-agent";
@@ -21,12 +22,14 @@ type OnboardingCardProps = {
  * primary slot when the user has zero agents, and as a secondary
  * side-panel card once at least one agent is registered. When Cloud agent
  * creation is available, both placements offer the same deploy-or-connect
- * choice. Every connect action opens the same dialog used by the sidebar.
+ * choice. Every connect action opens the same dialog used by the sidebar, or
+ * Clawdi Desktop's Connect window inside Desktop.
  */
 export function OnboardingCard({
 	variant = "first-agent",
 	canDeployOnClawdi = false,
 }: OnboardingCardProps) {
+	const desktop = useDesktopShell();
 	const [connectOpen, setConnectOpen] = useState(false);
 	const { isAdditionalAgent, title, description } = onboardingCardModel(variant, canDeployOnClawdi);
 
@@ -63,7 +66,7 @@ export function OnboardingCard({
 							variant={canDeployOnClawdi ? "outline" : "default"}
 							size="lg"
 							className={onboardingCardClasses.connectAction}
-							onClick={() => setConnectOpen(true)}
+							onClick={() => (desktop.inDesktop ? desktop.openConnector() : setConnectOpen(true))}
 						>
 							<TerminalSquare data-icon="inline-start" /> Connect your own agent
 						</Button>

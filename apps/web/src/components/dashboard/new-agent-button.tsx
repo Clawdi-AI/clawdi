@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useDesktopShell } from "@/lib/desktop-shell";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useProductAccess } from "@/lib/product-access";
 import { useHydrated } from "@/lib/use-hydrated";
@@ -35,6 +36,7 @@ export function NewAgentButton({
 	const router = useRouter();
 	const hostedAccess = useProductAccess();
 	const hydrated = useHydrated();
+	const desktop = useDesktopShell();
 	const [chooserOpen, setChooserOpen] = useState(false);
 	const [connectOpen, setConnectOpen] = useState(false);
 	const canDeployOnClawdi = hydrated && IS_HOSTED && hostedAccess.canCreateCloudAgents;
@@ -47,12 +49,18 @@ export function NewAgentButton({
 			setChooserOpen(true);
 			return;
 		}
-		setConnectOpen(true);
+		connect();
 	}
 
 	function chooseConnect() {
 		setChooserOpen(false);
-		setConnectOpen(true);
+		connect();
+	}
+
+	function connect() {
+		// Clawdi Desktop's Connect window replaces the dialog's manual steps.
+		if (desktop.inDesktop) desktop.openConnector();
+		else setConnectOpen(true);
 	}
 
 	function chooseDeploy() {

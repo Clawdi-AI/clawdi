@@ -8,6 +8,7 @@ import {
 import { CalendarX2, Link2Off, RefreshCw } from "lucide-react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
+import { OpenInBrowserAction } from "@/components/open-in-browser-action";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Spinner } from "@/components/ui/spinner";
@@ -28,6 +29,7 @@ import {
 	type ComputeSubscriptionStartNewAction,
 } from "@/hosted/billing/subscription/compute-subscription-recovery-action";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import { useDesktopShell } from "@/lib/desktop-shell";
 
 export type ComputeSubscriptionActionTarget =
 	| { kind: "deployment"; deploymentId: string }
@@ -73,6 +75,7 @@ export function ComputeSubscriptionActionList({
 	const resumeSubscription = useResumeSubscription();
 	const cancelScheduledPlanChange = useCancelScheduledPlanChange();
 	const runAction = useActionLock();
+	const { inDesktop } = useDesktopShell();
 	const pending =
 		cancelSubscription.isPending ||
 		resumeSubscription.isPending ||
@@ -123,6 +126,14 @@ export function ComputeSubscriptionActionList({
 		switch (candidate.kind) {
 			case "upgrade":
 			case "manage":
+				// Inside Clawdi Desktop, plan changes run in the system browser.
+				if (inDesktop && onPlanChange && candidate.disabledReason === null) {
+					return (
+						<OpenInBrowserAction key={candidate.kind}>
+							{candidate.kind === "upgrade" ? "Upgrade" : "Manage"}
+						</OpenInBrowserAction>
+					);
+				}
 				return (
 					<ComputeSubscriptionPlanAction
 						key={candidate.kind}

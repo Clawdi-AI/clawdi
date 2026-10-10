@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { agentSetupPrompt } from "@/lib/agent-setup-prompt";
 import { useOpenApi } from "@/lib/api";
+import { useDesktopShell } from "@/lib/desktop-shell";
 import { publicSiteOrigin } from "@/lib/public-site";
 import { cn } from "@/lib/utils";
 
@@ -83,6 +84,7 @@ export function CopyButton({
  */
 export function AddAgentSetup() {
 	const api = useOpenApi();
+	const desktop = useDesktopShell();
 	const origin = useOrigin();
 	const prompt = agentSetupPrompt(publicSiteOrigin(origin));
 	const baseline = useRef<Set<string> | null>(null);
@@ -114,12 +116,17 @@ export function AddAgentSetup() {
 
 	return (
 		<div className={addAgentSetupClasses.root}>
-			<DesktopConnectHandoff />
-			<div className={addAgentSetupClasses.manualDivider}>
-				<span className={addAgentSetupClasses.manualDividerLine} />
-				{DESKTOP_HANDOFF_COPY.manualSetup}
-				<span className={addAgentSetupClasses.manualDividerLine} />
-			</div>
+			{/* Inside Clawdi Desktop, connect actions open its Connect window instead. */}
+			{desktop.inDesktop ? null : (
+				<>
+					<DesktopConnectHandoff />
+					<div className={addAgentSetupClasses.manualDivider}>
+						<span className={addAgentSetupClasses.manualDividerLine} />
+						{DESKTOP_HANDOFF_COPY.manualSetup}
+						<span className={addAgentSetupClasses.manualDividerLine} />
+					</div>
+				</>
+			)}
 			<Tabs defaultValue="prompt">
 				<TabsList className={addAgentSetupClasses.tabsList}>
 					<TabsTrigger value="commands">

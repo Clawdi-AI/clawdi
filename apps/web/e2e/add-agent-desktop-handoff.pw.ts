@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { desktopBridgeCalls, injectDesktopBridge } from "./support/desktop-bridge";
 
 const existingAgent = {
 	id: "22222222-2222-4222-8222-222222222222",
@@ -100,3 +101,28 @@ for (const width of [1440, 375]) {
 		await expect(dialog.getByText("Desktop Codex")).toBeVisible();
 	});
 }
+
+test("Inside Clawdi Desktop, every connect entry point opens its Connect window", async ({
+	context,
+	page,
+}) => {
+	await injectDesktopBridge(page);
+	let agents: unknown[] = [];
+	await context.route("**/v1/**", (route) =>
+		route.fulfill({ json: stubResponse(new URL(route.request().url()).pathname, agents) }),
+	);
+	await page.goto("/");
+
+	// Overview zero state, then the sidebar's New agent.
+	await page.getByRole("button", { name: "Connect your own agent" }).click();
+	await page.getByRole("button", { name: "New agent", exact: true }).click();
+	await expect.poll(() => desktopBridgeCalls(page)).toEqual([["openConnector"], ["openConnector"]]);
+	await expect(page.getByRole("dialog")).toHaveCount(0);
+
+	// "Connect another machine" once an agent exists. Reloading resets the recorded calls.
+	agents = [existingAgent];
+	await page.reload();
+	await page.getByRole("button", { name: "Add agent", exact: true }).click();
+	await expect.poll(() => desktopBridgeCalls(page)).toEqual([["openConnector"]]);
+	await expect(page.getByRole("dialog")).toHaveCount(0);
+});

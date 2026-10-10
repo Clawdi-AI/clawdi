@@ -4,6 +4,7 @@ import { billingCopy, paymentMethodPresentation, paymentMethodsCopy } from "@cla
 
 import { CreditCard, Pencil } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import { OpenInBrowserAction } from "@/components/open-in-browser-action";
 import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { useWalletPaymentMethods } from "@/hosted/billing/hooks";
+import { useDesktopShell } from "@/lib/desktop-shell";
 
 export function PaymentMethodsSection({
 	onManage,
@@ -20,6 +22,7 @@ export function PaymentMethodsSection({
 	managing: boolean;
 }) {
 	const methods = useWalletPaymentMethods();
+	const desktop = useDesktopShell();
 	return (
 		<SettingsSection
 			id="payment-methods"
@@ -28,16 +31,22 @@ export function PaymentMethodsSection({
 			title="Payment methods"
 			description="Cards saved to your billing account."
 			actions={
-				<Button
-					variant="outline"
-					size="sm"
-					onClick={onManage}
-					disabled={managing}
-					aria-busy={managing}
-					aria-label="Edit payment methods"
-				>
-					{managing ? <Spinner /> : <Pencil aria-hidden />} Edit
-				</Button>
+				desktop.inDesktop ? (
+					<OpenInBrowserAction align="end" aria-label="Edit payment methods">
+						Edit
+					</OpenInBrowserAction>
+				) : (
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={onManage}
+						disabled={managing}
+						aria-busy={managing}
+						aria-label="Edit payment methods"
+					>
+						{managing ? <Spinner /> : <Pencil aria-hidden />} Edit
+					</Button>
+				)
 			}
 		>
 			<div className={paymentMethodsSectionClasses.body}>

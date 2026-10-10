@@ -1,5 +1,6 @@
 import type { ApiKey } from "@clawdi/shared/api";
 import { expect, type Page, type Route, test } from "@playwright/test";
+import { desktopBridgeCalls, injectDesktopBridge } from "./support/desktop-bridge";
 
 const longLabel =
 	"Production automation key with a deliberately long descriptive name that must truncate";
@@ -230,4 +231,22 @@ test("API key list error is retryable and the empty state explains how to sign i
 	await expect(page.getByText(retiredNote, { exact: true })).toHaveCount(1);
 	await expect(page.getByRole("button", { name: /Create API key/ })).toHaveCount(0);
 	expect(api.createRequests).toEqual([]);
+});
+
+test("Inside Clawdi Desktop, API keys are managed in the system browser", async ({ page }) => {
+	await injectDesktopBridge(page);
+	await page.setViewportSize({ width: 1280, height: 900 });
+	const api = await stubApiKeys(page);
+
+	await openApiKeySettings(page);
+	await expect(page.getByRole("table").getByText("CI runner", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: /^Revoke / })).toHaveCount(0);
+	const manage = page.getByRole("button", { name: "Manage keys" });
+	await expect(manage).toHaveAccessibleDescription("Opens in your browser.");
+	await manage.click();
+	const calls = await desktopBridgeCalls(page);
+	expect(calls).toHaveLength(1);
+	expect(calls[0]?.[0]).toBe("openInBrowser");
+	expect(new URL(calls[0]?.[1] ?? "").searchParams.get("settings")).toBe("api-keys");
+	expect(api.deleteRequests).toEqual([]);
 });

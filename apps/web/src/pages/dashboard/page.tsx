@@ -25,6 +25,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOpenApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
+import { useDesktopShell } from "@/lib/desktop-shell";
 import { useProductAccess } from "@/lib/product-access";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -352,12 +353,17 @@ function ActivityGraphSkeleton() {
 /** Slim replacement for the embedded wizard duplicate (taste audit round
  * 2): one line + one button that opens the same Add-agent dialog. */
 function ConnectAnotherCard() {
+	const desktop = useDesktopShell();
 	const [open, setOpen] = useState(false);
 	return (
 		<Card className={dashboardPageClasses.connectCard}>
 			<CardContent className={dashboardPageClasses.connectCardContent}>
 				<div className={dashboardPageClasses.connectCardTitle}>{OVERVIEW_COPY.connectAnother}</div>
-				<Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+				<Button
+					size="sm"
+					variant="outline"
+					onClick={() => (desktop.inDesktop ? desktop.openConnector() : setOpen(true))}
+				>
 					{OVERVIEW_COPY.addAgent}
 				</Button>
 			</CardContent>
