@@ -239,10 +239,18 @@ describe("deploySubmissionErrorPresentation", () => {
 
 	test("states when an explicit wallet rejection did not start payment", () => {
 		const presentation = deploySubmissionErrorPresentation(
-			new BillingApiError(422, "internal validation trace"),
+			recordHostedCheckoutSends(new BillingApiError(422, "internal validation trace"), 1),
 			"wallet_creation",
 			{ firstSend: true },
 		);
+		// No recorded send count: never read as the first send, even when the caller says so.
+		expect(
+			deploySubmissionErrorPresentation(
+				new BillingApiError(422, "internal validation trace"),
+				"wallet_creation",
+				{ firstSend: true },
+			).description,
+		).toBe("We couldn’t confirm the payment — check status before trying again.");
 
 		expect(presentation.title).toBe("Payment and creation didn’t start");
 		expect(presentation.description).toContain("No wallet payment was made");

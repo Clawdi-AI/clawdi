@@ -920,7 +920,8 @@ export function createBillingClient(
 				return unwrapDeploy(result);
 			} catch (error) {
 				// Keep the transport's send count for the shared "nothing was paid" rule.
-				throw recordHostedCheckoutSends(error, hostedCheckoutSends(result.response));
+				const sends = hostedCheckoutSends(result.response);
+				throw sends === null ? error : recordHostedCheckoutSends(error, sends);
 			}
 		},
 		quoteSubscription: async (body: ComputeSubscriptionQuoteRequest) =>

@@ -7,6 +7,7 @@ import {
 	type HostedDeployPlan,
 	type HostedDeployWizardDraft,
 	type HostedIncludedBasicAvailability,
+	recordHostedCheckoutSends,
 	type SavedAiProvider,
 	validateAndBuildHostedDeployRequest,
 } from "@clawdi/shared/api";
@@ -754,7 +755,7 @@ describe("new Wallet subscription creation", () => {
 		expect(releaseWalletRequest(included, typed)).toBeNull();
 	});
 
-	test("a released request keeps its id, offers no Discard and is confirmed on a fresh quote", async () => {
+	test("a released request keeps its id, may be discarded and is confirmed on a fresh quote", async () => {
 		const uncertain: CreationAttempt = { ...attempt, submission: "uncertain" };
 		const released: CreationAttempt = { ...uncertain, submission: "released" };
 		expect(creationAttemptControls(attempt, false)).toEqual({ checkStatus: false, discard: true });
@@ -762,11 +763,13 @@ describe("new Wallet subscription creation", () => {
 			checkStatus: true,
 			discard: false,
 		});
+		// Hosted's typed 404 after the grace period proves no charge, so the wizard never locks.
 		expect(creationAttemptControls(released, false)).toEqual({
 			checkStatus: false,
-			discard: false,
+			discard: true,
 		});
-		expect(canDiscardCreationAttempt(released)).toBe(false);
+		expect(canDiscardCreationAttempt(released)).toBe(true);
+		expect(canDiscardCreationAttempt(uncertain)).toBe(false);
 		expect(walletRequestNeedsQuote(released)).toBe(true);
 		expect(walletRequestNeedsQuote(uncertain)).toBe(false);
 		expect(walletRequestNeedsQuote(null)).toBe(false);
@@ -832,8 +835,12 @@ describe("new Wallet subscription creation", () => {
 	test("'No wallet payment was made' only for a definitive refusal of the first and only send", async () => {
 		const noPayment = "No wallet payment was made";
 		const unconfirmed = "We couldn’t confirm the payment — check status before trying again.";
-		const refused = new ApiClientError(422, null);
+		const refused = recordHostedCheckoutSends(new ApiClientError(422, null), 1);
 		expect(walletCreationErrorCopy(attempt, refused).description).toContain(noPayment);
+		// Without a recorded send count the refusal is never treated as a first send.
+		expect(walletCreationErrorCopy(attempt, new ApiClientError(422, null)).description).toBe(
+			unconfirmed,
+		);
 		// Manual retry of an uncertain send, a replay conflict, or a released request's send.
 		for (const saved of [
 			{ ...attempt, submission: "uncertain" as const },
@@ -907,7 +914,9 @@ describe("new Wallet subscription creation", () => {
 		expect(pending.title).toBe("Your payment may have gone through");
 		expect(pending.description).not.toContain("No wallet payment was made");
 		expect(pending.description).toContain("Check its status");
-		expect(walletCreationErrorCopy(attempt, new ApiClientError(401))).toEqual({
+		expect(
+			walletCreationErrorCopy(attempt, recordHostedCheckoutSends(new ApiClientError(401), 1)),
+		).toEqual({
 			title: "Payment and creation didn’t start",
 			description:
 				"Your session expired before this request could start. No wallet payment was made. Review your choices and retry.",

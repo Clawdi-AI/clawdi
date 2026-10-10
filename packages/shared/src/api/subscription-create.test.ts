@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+	hostedCheckoutSends,
 	hostedSubscriptionActivationTarget,
 	hostedSubscriptionQuoteWalletDebit,
 	hostedWalletFundingErrorKind,
+	recordHostedCheckoutSends,
 	sameHostedSubscriptionQuoteTerms,
 } from "./subscription-create";
 
@@ -71,5 +73,13 @@ describe("subscription creation contract", () => {
 		expect(hostedWalletFundingErrorKind("open_refund_debt")).toBe("open_refund_debt");
 		expect(hostedWalletFundingErrorKind("idempotency_key_reused")).toBe("other");
 		expect(hostedWalletFundingErrorKind(null)).toBe("other");
+	});
+
+	test("an unrecorded checkout send count is unknown, never a first send", () => {
+		expect(hostedCheckoutSends(new Error("thrown before the shared retry"))).toBeNull();
+		expect(hostedCheckoutSends(null)).toBeNull();
+		expect(hostedCheckoutSends("refused")).toBeNull();
+		expect(hostedCheckoutSends(recordHostedCheckoutSends(new Error("refused"), 1))).toBe(1);
+		expect(hostedCheckoutSends(recordHostedCheckoutSends(new Error("refused"), 3))).toBe(3);
 	});
 });

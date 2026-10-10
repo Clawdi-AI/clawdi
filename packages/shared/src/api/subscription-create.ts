@@ -126,7 +126,10 @@ export function recordHostedCheckoutSends<T>(value: T, sends: number): T {
 	return value;
 }
 
-/** Sends behind a checkout result or error: more than one means the first went uncertain. */
-export function hostedCheckoutSends(value: unknown): number {
-	return typeof value === "object" && value !== null ? (checkoutSends.get(value) ?? 1) : 1;
+/**
+ * Sends behind a checkout result or error: more than one means the first went uncertain.
+ * Null when no count was recorded, which never counts as a first and only send.
+ */
+export function hostedCheckoutSends(value: unknown): number | null {
+	return typeof value === "object" && value !== null ? (checkoutSends.get(value) ?? null) : null;
 }

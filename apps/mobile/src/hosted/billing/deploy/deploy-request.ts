@@ -52,7 +52,7 @@ export type CreationAttempt = {
 	version: 1;
 	/**
 	 * `released`: an uncertain Wallet request hosted proved it never received, confirmed
-	 * again on a fresh quote under the same id. Like `uncertain`, it is never discarded.
+	 * again on a fresh quote under the same id. That proof also allows discarding it.
 	 */
 	submission: "prepared" | "uncertain" | "released" | "entitlement_rejected";
 	id: string;
@@ -326,7 +326,7 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 }
 
 export function canDiscardCreationAttempt(attempt: CreationAttempt): boolean {
-	return attempt.submission !== "uncertain" && attempt.submission !== "released";
+	return attempt.submission !== "uncertain";
 }
 
 /** Only a store-funded request whose purchase is funded (or covered by a slot) may be admitted. */
@@ -480,8 +480,9 @@ export const WALLET_RELEASE_GRACE_MS = 10 * 60_000;
  * only from that committed dispatch. `get_deploy_request_status`
  * (backend/app/v2/hosted/service.py) answers 404 without that row. Only hosted's typed
  * `deploy_request_not_found` 404 counts (a gateway or principal 404 does not), and only
- * once the server's clock is a grace period past the quote's expiry. The request keeps
- * its id, so hosted still admits at most one dispatch for it.
+ * once the server's clock is a grace period past the quote's expiry. Retries keep the
+ * request's id, so hosted still admits at most one dispatch for it; the proof of no
+ * charge also lets the user discard it.
  */
 export function releaseWalletRequest(
 	attempt: CreationAttempt,
