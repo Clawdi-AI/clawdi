@@ -120,22 +120,26 @@ export interface ClawdiDesktopConnectBridge {
 	openDashboard(): Promise<void>;
 }
 
-export interface DesktopDashboardSession {
-	ticket: string;
-	/** Verified Clerk subject, distinct from the local Clawdi account UUID. */
-	accountId: string;
+export interface DesktopWebSession {
+	userId: string;
+	sessionId: string;
 }
+
+/** accountId is the verified Clerk subject, not the local Clawdi account UUID. */
+export type DesktopDashboardSession =
+	| { status: "ticket"; ticket: string; accountId: string }
+	| { status: "signed-in" | "sign-out"; accountId: string };
 
 /** Minimal capability contract exposed only to the dashboard's main frame. */
 export interface ClawdiDesktopBridge {
 	readonly version: 1;
 	openConnector(): void;
 	/** Available only on /desktop-auth; never accepts or reads a URL ticket. */
-	createDashboardSession(): Promise<DesktopDashboardSession>;
+	createDashboardSession(session?: DesktopWebSession | null): Promise<DesktopDashboardSession>;
 	signOut(): Promise<void>;
 }
 
-/** Capability detection for `window.clawdiDesktop`; browsers have no bridge. */
+/** Capability detection for window.clawdiDesktop; browsers have no bridge. */
 export function isClawdiDesktopBridge(value: unknown): value is ClawdiDesktopBridge {
 	return (
 		typeof value === "object" &&

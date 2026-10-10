@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { app, BrowserWindow, Menu, type MenuItem, shell } from "electron";
+import { app, BrowserWindow, Menu, type MenuItem, session, shell } from "electron";
 
 const root = process.env.CLAWDI_DESKTOP_UPDATE_E2E_ROOT;
 const result = process.env.CLAWDI_DESKTOP_UPDATE_E2E_RESULT;
@@ -9,9 +9,18 @@ if (!root || !result) throw new Error("Missing Windows e2e paths.");
 app.setPath("userData", join(root, "userData"));
 app.setPath("home", join(root, "home"));
 app.disableHardwareAcceleration();
-// The account is a fixture. Suppress its external dashboard browser handoff;
-// the production main, updater, quit handling and service reconciliation run.
+// The account is a fixture. Keep dashboard traffic local while the production
+// main, updater, quit handling and service reconciliation run.
 shell.openExternal = async () => undefined;
+app.on("ready", () => {
+	session.fromPartition("persist:clawdi-dashboard").protocol.handle(
+		"https",
+		() =>
+			new Response("<!doctype html><title>Update fixture dashboard</title>", {
+				headers: { "Content-Type": "text/html" },
+			}),
+	);
+});
 const productionMain = "./desktop-main.js";
 await import(productionMain);
 

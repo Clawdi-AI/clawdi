@@ -33,6 +33,27 @@ export function registerAuth(program: Command): void {
 		);
 
 	authCmd
+		.command("desktop-session", { hidden: true })
+		.description("Restore the embedded Desktop dashboard session")
+		.option("--json", "Private machine-readable credential transport")
+		.option("--session-user <id>", "Current Clerk user")
+		.option("--session-id <id>", "Current Clerk session")
+		.action(async (opts: { sessionUser?: string; sessionId?: string }) => {
+			const { authDesktopSessionMachine } = await import("../../commands/auth.js");
+			await authDesktopSessionMachine(opts);
+		});
+
+	authCmd
+		.command("desktop-sign-out", { hidden: true })
+		.description("Revoke the embedded Desktop dashboard session")
+		.requiredOption("--session-id <id>", "Clerk session to revoke")
+		.option("--json", "Private machine-readable output")
+		.action(async (opts: { sessionId: string }) => {
+			const { authDesktopSignOutMachine } = await import("../../commands/auth.js");
+			await authDesktopSignOutMachine(opts.sessionId);
+		});
+
+	authCmd
 		.command("complete")
 		.description("Resume waiting for a pending sign-in")
 		.action(async () => {

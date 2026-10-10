@@ -37,6 +37,7 @@
 			"entry": [
 				"src/main.ts",
 				"src/connect-preload.ts",
+				"src/shell-preload.ts",
 				"src/connect-renderer.tsx",
 				"scripts/**/*.{ts,mjs,cjs}",
 				"src/**/*.test.ts"
