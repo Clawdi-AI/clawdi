@@ -194,8 +194,11 @@ async def test_shared_source_read_permission_is_rechecked_and_revocation_removes
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure_code", ["reconcile_failed", "guard_blocked", "guard_confirmation_required"]
+)
 async def test_canonical_observations_fence_revision_instance_generation_and_removed_readd(
-    client, db_session, seed_user, workspace_project, channel_agent
+    client, db_session, seed_user, workspace_project, channel_agent, failure_code
 ):
     skill = await source_skill(client, db_session, workspace_project)
     await _make_runtime_renderable(db_session, user=seed_user, agent_id=channel_agent.id)
@@ -222,6 +225,7 @@ async def test_canonical_observations_fence_revision_instance_generation_and_rem
         generation=None,
         capture=None,
         boot="boot-session-0001",
+        error_code="reconcile_failed",
     ):
         current_revision = revision or state.source_revision
         current_generation = generation or state.apply_generation or state.generation
@@ -248,7 +252,7 @@ async def test_canonical_observations_fence_revision_instance_generation_and_rem
                     "generation": current_generation,
                     "desiredState": desired,
                     "status": status,
-                    "errorCode": "reconcile_failed" if status == "failed" else None,
+                    "errorCode": error_code if status == "failed" else None,
                 }
             ],
         }
@@ -266,7 +270,11 @@ async def test_canonical_observations_fence_revision_instance_generation_and_rem
     assert (await client.get(inventory_path)).json()["skills"][0]["convergence"] == "not_observed"
     await observe(3, revision="f" * 64)
     assert (await client.get(inventory_path)).json()["skills"][0]["convergence"] == "not_observed"
-    await observe(4)
+    await observe(4, status="failed", error_code=failure_code)
+    failed = (await client.get(inventory_path)).json()["skills"][0]
+    assert failed["convergence"] == "failed"
+    assert failed["observation_error_code"] == failure_code
+    assert failed["observed_at"] is not None
     assert (await client.delete(path)).status_code == 202
     await observe(5, status="failed", desired="absent")
     removed = (await client.get(inventory_path)).json()
@@ -284,6 +292,7 @@ async def test_canonical_observations_fence_revision_instance_generation_and_rem
     assert (await client.get(inventory_path)).json()["skills"][0]["convergence"] == "not_observed"
     await observe(7)
     assert (await client.get(inventory_path)).json()["skills"][0]["convergence"] == "installed"
+    assert (await client.get(inventory_path)).json()["skills"][0]["observation_error_code"] is None
     await observe(1, boot="ambiguous-second-boot")
     assert (await client.get(inventory_path)).json()["skills"][0]["convergence"] == "not_observed"
     state.apply_generation = (state.apply_generation or state.generation) + 1

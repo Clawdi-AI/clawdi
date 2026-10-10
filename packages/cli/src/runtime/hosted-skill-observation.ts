@@ -91,7 +91,8 @@ export function readHostedSkillsObservation(
 		.slice(0, 2048);
 	const entries: SkillObservation[] = selected.map((evidence) => {
 		let status: SkillObservation["status"] = evidence.status;
-		let errorCode: SkillObservation["errorCode"] = status === "failed" ? "reconcile_failed" : null;
+		let errorCode: SkillObservation["errorCode"] =
+			status === "failed" ? (evidence.failureReason ?? "reconcile_failed") : null;
 		if (status !== "failed") {
 			try {
 				if (reservations === null) throw new Error("ownership evidence unavailable");

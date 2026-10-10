@@ -163,7 +163,13 @@ class HostedRuntimeObservedAgentPluginsV1(RuntimeObservationRequestModel):
                 raise ValueError("Agent Plugin observation must match applied identity")
 
 
-SkillObservationErrorCode = Literal["reconcile_failed", "evidence_missing", "evidence_mismatch"]
+SkillObservationErrorCode = Literal[
+    "reconcile_failed",
+    "guard_blocked",
+    "guard_confirmation_required",
+    "evidence_missing",
+    "evidence_mismatch",
+]
 
 
 class HostedRuntimeObservedSkillV1(RuntimeObservationRequestModel):
@@ -189,8 +195,12 @@ class HostedRuntimeObservedSkillV1(RuntimeObservationRequestModel):
             raise ValueError("installed Skill observation requires present intent and digest")
         if self.status == "removed" and self.desired_state != "absent":
             raise ValueError("removed Skill observation requires absent intent")
-        if self.status == "failed" and self.error_code != "reconcile_failed":
-            raise ValueError("failed Skill observation requires reconcile_failed")
+        if self.status == "failed" and self.error_code not in {
+            "reconcile_failed",
+            "guard_blocked",
+            "guard_confirmation_required",
+        }:
+            raise ValueError("failed Skill observation requires a reconciliation or guard error")
         if self.status == "unknown" and self.error_code not in {
             "evidence_missing",
             "evidence_mismatch",

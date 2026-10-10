@@ -12,6 +12,8 @@ const agentExtensionsEn = {
 	installed: agentSurfaceCopy.installed,
 	not_observed: "Installing…",
 	failedState: "Couldn't install",
+	guardBlockedTitle: agentSkillInstallCopy.guardBlockedTitle,
+	guardBlocked: agentSkillInstallCopy.guardBlocked,
 	removalFailed: "Couldn't remove this Skill. Check the agent, then refresh.",
 	view: "View Library Skill",
 };
@@ -515,6 +517,7 @@ const vaultEn = {
 
 import {
 	accountDeletionCopy,
+	agentSkillInstallCopy,
 	agentSurfaceCopy,
 	billingCopy,
 	LIBRARY_COPY,

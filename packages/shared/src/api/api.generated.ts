@@ -4049,7 +4049,7 @@ export interface components {
              */
             convergence: "installed" | "failed" | "not_observed";
             /** Observation Error Code */
-            observation_error_code?: string | null;
+            observation_error_code?: ("reconcile_failed" | "guard_blocked" | "guard_confirmation_required" | "evidence_missing" | "evidence_mismatch") | null;
             /** Observed At */
             observed_at?: string | null;
         };
@@ -6664,7 +6664,7 @@ export interface components {
              */
             status: "installed" | "removed" | "failed" | "unknown";
             /** Errorcode */
-            errorCode?: ("reconcile_failed" | "evidence_missing" | "evidence_mismatch") | null;
+            errorCode?: ("reconcile_failed" | "guard_blocked" | "guard_confirmation_required" | "evidence_missing" | "evidence_mismatch") | null;
         };
         /** HostedRuntimeObservedSkillsV1 */
         HostedRuntimeObservedSkillsV1: {

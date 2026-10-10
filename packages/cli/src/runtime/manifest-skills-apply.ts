@@ -63,7 +63,7 @@ type HostedSkillRuntime = "hermes" | "openclaw";
 export interface HostedSkillGuardRefusal {
 	runtime: "hermes";
 	skillKey: string;
-	reason: "guard_blocked" | "guard_confirmation_required";
+	reason: NonNullable<HostedSkillEvidence["failureReason"]>;
 	verdict: HermesSkillGuardRefusalError["verdict"];
 	trustLevel: HermesSkillGuardRefusalError["trustLevel"];
 	findingCount: number;
@@ -540,13 +540,16 @@ export function reconcileHostedSkillProjection(
 	},
 ): { errors: string[]; refusals: HostedSkillGuardRefusal[] } {
 	const before = managedSkillReservations("hosted-manifest");
+	let refusals: HostedSkillGuardRefusal[] = [];
 	try {
-		return input.preparationFailed
+		const result = input.preparationFailed
 			? { errors: [], refusals: [] }
 			: applyHostedSkillProjection(input);
+		refusals = result.refusals;
+		return result;
 	} finally {
 		if (input.onEvidence) {
-			input.onEvidence(collectHostedSkillEvidence(input, before));
+			input.onEvidence(collectHostedSkillEvidence(input, before, refusals));
 		}
 	}
 }
@@ -554,8 +557,12 @@ export function reconcileHostedSkillProjection(
 function collectHostedSkillEvidence(
 	input: Parameters<typeof reconcileHostedSkillProjection>[0],
 	before: readonly ManagedSkillReservationSnapshot[],
+	refusals: readonly HostedSkillGuardRefusal[],
 ): HostedSkillEvidence[] {
 	const after = managedSkillReservations("hosted-manifest");
+	const refusalReasons = new Map(
+		refusals.map((refusal) => [`${refusal.runtime}:${refusal.skillKey}`, refusal.reason]),
+	);
 	const evidence: HostedSkillEvidence[] = [];
 	for (const [runtime, driver] of hostedSkillProjectionDrivers(input)) {
 		const desiredEntries = input.manifest.projection?.skills?.entries ?? {};
@@ -604,6 +611,12 @@ function collectHostedSkillEvidence(
 				desiredState: "present",
 				status: "failed",
 			};
+			const failureReason = refusalReasons.get(`${runtime}:${skillKey}`);
+			if (failureReason) {
+				item.failureReason = failureReason;
+				evidence.push(item);
+				continue;
+			}
 			try {
 				const reservation = after.find((row) => row.id === skillKey && row.targetDir === targetDir);
 				if (

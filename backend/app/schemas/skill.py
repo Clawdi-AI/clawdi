@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.runtime_observation import SkillObservationErrorCode
 from app.services.tar_utils import validate_skill_name
 
 PersistedSkillAuthority = Literal["agent_sync", "cloud"]
@@ -171,7 +172,7 @@ class AgentSkillDesiredResponse(BaseModel):
     source_skill_key: str | None = None
     desired_state: Literal["present"] = "present"
     convergence: Literal["installed", "failed", "not_observed"] = "not_observed"
-    observation_error_code: str | None = None
+    observation_error_code: SkillObservationErrorCode | None = None
     observed_at: datetime | None = None
 
 

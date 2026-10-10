@@ -1,5 +1,7 @@
 "use client";
 import {
+	agentSkillGuardBlocked,
+	agentSkillInstallCopy,
 	parseWorkspaceSkillGitHubInput,
 	workspaceSkillInstallCopy,
 	workspaceSkillMutationsAvailable,
@@ -306,7 +308,9 @@ function HostedWorkspaceSkillsPanelContent({
 				</Alert>
 			) : null}
 			{status.data?.items?.some((skill) => skill.status === "failed") ||
-			managedSkills.data?.skills.some((skill) => skill.convergence === "failed") ? (
+			managedSkills.data?.skills.some(
+				(skill) => skill.convergence === "failed" && !agentSkillGuardBlocked(skill),
+			) ? (
 				<Alert variant="destructive">
 					<AlertTitle>Couldn't update skills</AlertTitle>
 					<AlertDescription>We'll retry automatically.</AlertDescription>
@@ -526,6 +530,9 @@ function WorkspaceSkillCard({
 			readOnlyLabel={item.projectionOnly ? "Read-only" : null}
 			provenanceLabel={provenance}
 			showVersion={Boolean(item.cloudProjection?.version)}
+			installationMessage={
+				agentSkillGuardBlocked(managed) ? agentSkillInstallCopy.guardBlocked : undefined
+			}
 			actions={
 				removable ? (
 					<ConfirmAction

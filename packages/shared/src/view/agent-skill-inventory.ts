@@ -3,6 +3,24 @@ import { type FetchAllPagesOptions, fetchAllPages, type PaginatedPage } from "./
 
 export type AgentSkillSummary = components["schemas"]["SkillSummaryResponse"];
 
+export const agentSkillInstallCopy = {
+	guardBlockedTitle: "Blocked by Hermes Skills Guard",
+	guardBlocked:
+		"Hermes's Skills Guard blocked this skill (it flagged risky code). Install it from its GitHub source to review it, or choose another skill.",
+} as const;
+
+export function agentSkillGuardBlocked(
+	skill:
+		| Pick<
+				components["schemas"]["AgentSkillDesiredResponse"],
+				"convergence" | "observation_error_code"
+		  >
+		| null
+		| undefined,
+): boolean {
+	return skill?.convergence === "failed" && skill.observation_error_code === "guard_blocked";
+}
+
 type FetchSkillPage = (
 	projectId: string,
 	page: number,

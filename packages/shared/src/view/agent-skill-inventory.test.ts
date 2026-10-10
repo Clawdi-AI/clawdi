@@ -1,8 +1,38 @@
 import { describe, expect, test } from "bun:test";
 import type { components } from "../api";
-import { fetchAgentProjectSkills } from "./agent-skill-inventory";
+import {
+	agentSkillGuardBlocked,
+	agentSkillInstallCopy,
+	fetchAgentProjectSkills,
+} from "./agent-skill-inventory";
 
 type Skill = components["schemas"]["SkillSummaryResponse"];
+
+test("guard-blocked presentation supplies review guidance only for a failed guard block", () => {
+	expect(
+		agentSkillGuardBlocked({ convergence: "failed", observation_error_code: "guard_blocked" }),
+	).toBe(true);
+	expect(agentSkillInstallCopy.guardBlocked).toBe(
+		"Hermes's Skills Guard blocked this skill (it flagged risky code). Install it from its GitHub source to review it, or choose another skill.",
+	);
+	for (const observation_error_code of [
+		"reconcile_failed",
+		"guard_confirmation_required",
+		null,
+	] as const) {
+		expect(agentSkillGuardBlocked({ convergence: "failed", observation_error_code })).toBe(false);
+	}
+	expect(agentSkillGuardBlocked({ convergence: "installed", observation_error_code: null })).toBe(
+		false,
+	);
+	expect(
+		agentSkillGuardBlocked({
+			convergence: "not_observed",
+			observation_error_code: "guard_blocked",
+		}),
+	).toBe(false);
+	expect(agentSkillGuardBlocked(null)).toBe(false);
+});
 
 function skill(id: string, skillKey: string, projectId: string): Skill {
 	return {
