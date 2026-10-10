@@ -1,4 +1,4 @@
-import { agentSkillsHaveRetryableInstallFailure } from "@clawdi/shared/view";
+import { agentSkillInstallCopy, agentSkillsHaveRetryableInstallFailure } from "@clawdi/shared/view";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 export function SkillUpdateFailureAlert({
@@ -11,8 +11,8 @@ export function SkillUpdateFailureAlert({
 	if (!agentSkillsHaveRetryableInstallFailure(managed, hosted)) return null;
 	return (
 		<Alert variant="destructive">
-			<AlertTitle>Couldn't update skills</AlertTitle>
-			<AlertDescription>We'll retry automatically.</AlertDescription>
+			<AlertTitle>{agentSkillInstallCopy.updateFailedTitle}</AlertTitle>
+			<AlertDescription>{agentSkillInstallCopy.updateFailed}</AlertDescription>
 		</Alert>
 	);
 }
