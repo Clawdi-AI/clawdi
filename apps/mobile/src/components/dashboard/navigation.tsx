@@ -1,5 +1,4 @@
 import {
-	agentDisplayName,
 	agentSurfaceCopy,
 	createProjectDialogCopy,
 	type MobileAgentSection,
@@ -7,6 +6,7 @@ import {
 import { router } from "expo-router";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
+import { hostedAgentTitle } from "@/hosted/agent-title";
 import { NativeHeader } from "@/platform/navigation/native-header";
 
 /**
@@ -24,7 +24,7 @@ export function AgentSectionNavigation({
 	const deployment = inventory.inventory.data?.find((d) => d.agent_id === agentId);
 	const agent = useCloudAgent(agentId);
 	// Web's top bar names the Agent on every section.
-	const title = deployment?.resource.name ?? (agent.data ? agentDisplayName(agent.data) : "");
+	const title = hostedAgentTitle(agent.data, deployment) ?? "";
 	return (
 		<NativeHeader
 			title={title}

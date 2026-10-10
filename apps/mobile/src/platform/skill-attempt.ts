@@ -3,6 +3,7 @@ import {
 	deploymentMutationHeaders,
 	type WorkspaceSkillMutation,
 } from "@clawdi/shared/api";
+import { workspaceSkillErrorMessage } from "@clawdi/shared/view";
 import { type AttemptStore, createSerializedAttemptStore } from "@/platform/attempt-store";
 
 export type SkillAttempt = {
@@ -12,6 +13,8 @@ export type SkillAttempt = {
 	version: string;
 	mutation: WorkspaceSkillMutation;
 	status: "prepared" | "uncertain" | "rejected";
+	/** The API error code that rejected the request. Older records don't have it. */
+	rejectionCode?: string;
 };
 function record(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -61,10 +64,20 @@ export function parseSkillAttempt(raw: string): SkillAttempt | null {
 			return null;
 		if (
 			Object.keys(value).some(
-				(key) => !["format", "deploymentId", "key", "version", "mutation", "status"].includes(key),
+				(key) =>
+					![
+						"format",
+						"deploymentId",
+						"key",
+						"version",
+						"mutation",
+						"status",
+						"rejectionCode",
+					].includes(key),
 			)
 		)
 			return null;
+		if (value.rejectionCode !== undefined && typeof value.rejectionCode !== "string") return null;
 		return {
 			format: 1,
 			deploymentId: value.deploymentId,
@@ -72,6 +85,7 @@ export function parseSkillAttempt(raw: string): SkillAttempt | null {
 			version: value.version,
 			mutation,
 			status: value.status,
+			...(value.rejectionCode === undefined ? {} : { rejectionCode: value.rejectionCode }),
 		};
 	} catch {
 		return null;
@@ -89,19 +103,39 @@ export function createSkillAttemptStore(store: AttemptStore) {
 	});
 }
 
+const sourceRejections: Partial<Record<number, string[]>> = {
+	412: ["resource_version_mismatch"],
+	400: ["workspace_skill_source_invalid"],
+	404: ["workspace_skill_source_invalid"],
+	409: [
+		"workspace_skills_capability_unavailable",
+		"workspace_skill_source_conflict",
+		"workspace_skill_reserved",
+	],
+};
+
+/** Hosted keeps a request's receipt for 24 h and answers a replay from it before any of
+ * these checks, so within that window each of them proves the change was not applied.
+ * After 24 h, a 412 or capability_unavailable can follow an applied change whose receipt
+ * expired; the request still can't be replayed, so it settles as rejected and the copy never
+ * claims nothing was applied. Source errors are raised after If-Match passed, so nothing
+ * changed since the saved version at any age, and an unavailable source may be sent again.
+ */
 export function skillAttemptAfterFailure(attempt: SkillAttempt, error: unknown): SkillAttempt {
-	const preflight =
-		error instanceof ApiClientError &&
-		((error.status === 412 && error.code === "resource_version_mismatch") ||
-			(error.status === 400 && error.code === "workspace_skill_source_invalid") ||
-			(error.status === 409 &&
-				[
-					"workspace_skills_capability_unavailable",
-					"workspace_skill_source_conflict",
-					"workspace_skill_reserved",
-				].includes(error.code ?? "")));
-	return {
-		...attempt,
-		status: attempt.status === "prepared" && preflight ? "rejected" : "uncertain",
-	};
+	const { format, deploymentId, key, version, mutation } = attempt;
+	const settled = { format, deploymentId, key, version, mutation };
+	if (error instanceof ApiClientError) {
+		if (error.status === 503 && error.code === "workspace_skill_source_unavailable")
+			return { ...settled, status: "prepared" };
+		if (error.code && sourceRejections[error.status]?.includes(error.code))
+			return { ...settled, status: "rejected", rejectionCode: error.code };
+	}
+	return { ...settled, status: "uncertain" };
+}
+
+/** The reason shown for a rejected request, or null for the conflict copy: a 412 only says
+ * the Skills changed, and older records without a code keep that copy.
+ */
+export function skillRejectionReason(code: string | undefined): string | null {
+	return workspaceSkillErrorMessage(code);
 }
