@@ -12,7 +12,6 @@ import {
 	normalizeHostedDeployLanguage,
 } from "@clawdi/shared/api";
 import {
-	agentDisplayName,
 	agentSurfaceCopy,
 	aiBindingCopy,
 	computeFundingMode,
@@ -36,6 +35,8 @@ import { Input as AppTextInput } from "@/components/ui/input";
 import { Text as AppText } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppView } from "@/components/ui/view";
+import { useCloudAgent } from "@/hooks/cloud-inventory";
+import { hostedAgentTitle } from "@/hosted/agent-title";
 import { ProviderCreate } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { AiBindingChoices } from "@/hosted/v2/ai-providers/ai-binding-choices";
 import { useMobileApi } from "@/lib/api-provider";
@@ -82,6 +83,7 @@ export function DeploymentControls({
 	const read = useAccountRead();
 	const capture = useForegroundLease();
 	const { deploymentMutations } = useMobileApi();
+	const agent = useCloudAgent(deployment?.agent_id ?? undefined);
 	const cache = useQueryClient();
 	const action = useAuthAction(scope.identity);
 	useEffect(() => {
@@ -223,12 +225,7 @@ export function DeploymentControls({
 	const periodEnd = formatShortDate(subscription?.current_period_end);
 	const periodEndLabel = periodEnd === "—" ? null : periodEnd;
 	const deleteTitle = deployment
-		? t("runtime.deleteTitle", {
-				name: agentDisplayName({
-					name: deployment.resource.name,
-					agent_type: deployment.resource.spec.runtime,
-				}),
-			})
+		? t("runtime.deleteTitle", { name: hostedAgentTitle(agent.data, deployment) ?? "" })
 		: "";
 	const [deleteChoice, setDeleteChoice] = useState<{
 		choice: SubscriptionChoice;
