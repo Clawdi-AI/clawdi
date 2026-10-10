@@ -9,6 +9,7 @@ import type {
 	DesktopDashboardSession,
 	DesktopDetectedAgent,
 	DesktopReconnectCandidate,
+	DesktopWebSession,
 } from "@clawdi/shared/desktop";
 import { isDesktopAgentType } from "@clawdi/shared/desktop";
 import type { App } from "electron";
@@ -149,28 +150,59 @@ export class DesktopCliService {
 		}
 	}
 
-	async createDashboardSession(): Promise<DesktopDashboardSession> {
+	async createDashboardSession(
+		session: DesktopWebSession | null = null,
+	): Promise<DesktopDashboardSession> {
 		try {
-			const result = await this.runJson(this.cli(), ["auth", "desktop-session", "--json"]);
+			const result = await this.runJson(this.cli(), [
+				"auth",
+				"desktop-session",
+				"--json",
+				...(session ? ["--session-user", session.userId, "--session-id", session.sessionId] : []),
+			]);
 			if (
-				result.schemaVersion !== "clawdi.desktopSession.v2" ||
+				result.schemaVersion !== "clawdi.desktopSession.v1" ||
+				typeof result.accountId !== "string" ||
+				!result.accountId ||
+				result.accountId.length > 256
+			)
+				throw new Error("Invalid Desktop session.");
+			if (result.status === "signed-in" || result.status === "sign-out") {
+				if (result.ticket != null || result.expiresIn !== 0)
+					throw new Error("Invalid Desktop session.");
+				return { status: result.status, accountId: result.accountId };
+			}
+			if (
+				result.status !== "ticket" ||
 				typeof result.ticket !== "string" ||
 				!result.ticket ||
 				result.ticket.length > 8192 ||
 				typeof result.expiresIn !== "number" ||
 				!Number.isSafeInteger(result.expiresIn) ||
 				result.expiresIn <= 0 ||
-				result.expiresIn > 60 ||
-				typeof result.accountId !== "string" ||
-				!result.accountId ||
-				result.accountId.length > 256
-			) {
+				result.expiresIn > 60
+			)
 				throw new Error("Invalid Desktop session.");
-			}
-			return { ticket: result.ticket, accountId: result.accountId };
+			return { status: "ticket", ticket: result.ticket, accountId: result.accountId };
 		} catch {
-			// Never propagate native stdout/stderr from this credential-bearing command.
+			// Never propagate native stdout/stderr from credential-bearing commands.
 			throw new Error("Couldn't create a Desktop session. Sign in again from Clawdi.");
+		}
+	}
+
+	async revokeDashboardSession(sessionId: string): Promise<void> {
+		try {
+			const result = await this.runJson(this.cli(), [
+				"auth",
+				"desktop-sign-out",
+				"--session-id",
+				sessionId,
+				"--json",
+			]);
+			if (result.schemaVersion !== "clawdi.desktopSignOut.v1" || result.status !== "revoked")
+				throw new Error("Invalid Desktop sign-out response.");
+		} catch {
+			throw new Error("Couldn't revoke the Desktop session. Try signing out again.");
 		}
 	}
 

@@ -14,7 +14,18 @@ case "$1 ${2:-}" in
     printf '%s\n' '{"schemaVersion":"clawdi.desktopLogin.v1","status":"authenticated","user":{"id":"cloud_fixture","email":"fixture@example.test"}}' ;;
   'auth desktop-session')
     test -f "$CLAWDI_HOME/auth.json"
-    printf '%s\n' '{"schemaVersion":"clawdi.desktopSession.v2","ticket":"mock-once","expiresIn":60,"accountId":"user_fixture"}' ;;
+    if [ "$#" -gt 3 ]; then
+      printf '%s\n' '{"schemaVersion":"clawdi.desktopSession.v1","status":"signed-in","expiresIn":0,"accountId":"user_fixture"}'
+    else
+      printf '%s\n' ticket >> "$CLAWDI_HOME/ticket-count"
+      printf '%s\n' '{"schemaVersion":"clawdi.desktopSession.v1","status":"ticket","ticket":"mock-once","expiresIn":60,"accountId":"user_fixture"}'
+    fi ;;
+  'auth desktop-sign-out')
+    test "$3" = --session-id
+    test "$4" = sess_fixture
+    if [ -f "$CLAWDI_HOME/fail-revoke" ]; then exit 1; fi
+    printf '%s\n' revoked >> "$CLAWDI_HOME/revoked"
+    printf '%s\n' '{"schemaVersion":"clawdi.desktopSignOut.v1","status":"revoked"}' ;;
   'auth logout') rm -f "$CLAWDI_HOME/auth.json" ;;
   'daemon doctor')
     if [ -f "$CLAWDI_HOME/sync" ]; then running=true; else running=false; fi

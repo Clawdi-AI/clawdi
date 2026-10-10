@@ -1,11 +1,15 @@
 import { expect, test } from "bun:test";
 import {
 	allowsDashboardNavigation,
+	allowsDashboardPermission,
 	assertDashboardSender,
 	DASHBOARD_PARTITION,
-	dashboardBrowserUrl,
+	dashboardAuthRedirect,
+	dashboardClerkOrigins,
 	dashboardOrigin,
+	dashboardSessionIds,
 	dashboardWindowOptions,
+	readDesktopWebSession,
 	strictHttpsUrl,
 } from "./dashboard-window";
 
@@ -19,7 +23,7 @@ test("remote dashboard is isolated from Connect and has no Node access", () => {
 		nodeIntegration: false,
 		sandbox: true,
 	});
-	expect(DASHBOARD_PARTITION.startsWith("persist:")).toBe(false);
+	expect(DASHBOARD_PARTITION.startsWith("persist:")).toBe(true);
 });
 
 test("navigation trusts exact Clawdi and first-party Clerk origins only", () => {
@@ -59,31 +63,13 @@ test("external URLs reject credentials and unsafe protocols", () => {
 	}
 });
 
-test("browser handoff stays on our HTTPS origin and excludes the ticket page", () => {
-	expect(dashboardBrowserUrl("https://cloud.clawdi.ai/settings")).toBe(
-		"https://cloud.clawdi.ai/settings",
-	);
-	for (const raw of [
-		null,
-		{},
-		42,
-		"https://evil.test",
-		"https://cloud.clawdi.ai:444",
-		"https://cloud.clawdi.ai/desktop-auth#ticket=x",
-		"https://cloud.clawdi.ai/desktop-auth/",
-		"https://u:p@cloud.clawdi.ai",
-		"http://cloud.clawdi.ai",
-	])
-		expect(() => dashboardBrowserUrl(raw)).toThrow();
-});
-
 test("configured web origin is used for navigation, bridge and window security", () => {
 	const origin = dashboardOrigin("https://preview.example.test");
 	expect(allowsDashboardNavigation(`${origin}/desktop-auth`, origin)).toBe(true);
 	expect(allowsDashboardNavigation("https://cloud.clawdi.ai", origin)).toBe(false);
-	expect(dashboardBrowserUrl(`${origin}/settings`, origin)).toBe(`${origin}/settings`);
+
 	for (const raw of [
-		"http://localhost:3000",
+		"http://example.test:3000",
 		"https://cloud.clawdi.ai/path",
 		"https://cloud.clawdi.ai?q=x",
 		"https://cloud.clawdi.ai/#x",
@@ -111,4 +97,78 @@ test("IPC requires the dashboard main frame; tickets require the exact auth page
 		frame.url = url;
 		expect(() => assertDashboardSender(event, sender, true)).toThrow();
 	}
+});
+
+test("loopback web and configured Clerk origins work without trusting other tenants", () => {
+	for (const value of ["http://localhost:3000", "http://127.0.0.1:3000", "http://[::1]:3000"])
+		expect(dashboardOrigin(value)).toBe(value);
+	const origins = dashboardClerkOrigins("https://clerk.staging.test,http://localhost:4000");
+	expect(
+		allowsDashboardNavigation(
+			"https://clerk.staging.test/sign-in",
+			"https://staging.test",
+			origins,
+		),
+	).toBe(true);
+	expect(
+		allowsDashboardNavigation("https://clerk.clawdi.ai", "https://staging.test", origins),
+	).toBe(false);
+	expect(() => dashboardClerkOrigins("https://clerk.test/path")).toThrow();
+});
+
+test("subframes match web HTTPS CSP while the main frame stays restricted", () => {
+	for (const url of [
+		"https://js.stripe.com/v3/",
+		"https://bank.test/3ds",
+		"https://app.chatwoot.com/widget",
+		"https://challenges.cloudflare.com/",
+		"about:blank",
+	]) {
+		expect(allowsDashboardNavigation(url, undefined, undefined, false)).toBe(true);
+		expect(allowsDashboardNavigation(url)).toBe(false);
+	}
+	for (const url of ["file:///tmp/x", "javascript:alert(1)", "http://evil.test/"])
+		expect(allowsDashboardNavigation(url, undefined, undefined, false)).toBe(false);
+});
+
+test("only the web main frame may write sanitized clipboard content", () => {
+	expect(
+		allowsDashboardPermission("clipboard-sanitized-write", "https://cloud.clawdi.ai", true),
+	).toBe(true);
+	expect(allowsDashboardPermission("clipboard-read", "https://cloud.clawdi.ai", true)).toBe(false);
+	expect(
+		allowsDashboardPermission("clipboard-sanitized-write", "https://cloud.clawdi.ai", false),
+	).toBe(false);
+	expect(allowsDashboardPermission("clipboard-sanitized-write", "https://evil.test", true)).toBe(
+		false,
+	);
+	expect(dashboardAuthRedirect("https://cloud.clawdi.ai/sign-in?redirect=x")).toBe(
+		"https://cloud.clawdi.ai/desktop-auth",
+	);
+	expect(dashboardAuthRedirect("https://evil.test/sign-in")).toBeNull();
+});
+
+test("session inputs and cookie ID hints are bounded and validated", () => {
+	const current = { userId: "user_fixture", sessionId: "sess_fixture" };
+	expect(readDesktopWebSession(current)).toEqual(current);
+	expect(readDesktopWebSession(null)).toBeNull();
+	for (const value of [
+		undefined,
+		{},
+		{ ...current, sessionId: "../revoke" },
+		{ ...current, userId: "x".repeat(257) },
+	])
+		expect(() => readDesktopWebSession(value)).toThrow();
+	const jwt =
+		"header." +
+		Buffer.from(JSON.stringify({ sid: "sess_fixture" })).toString("base64url") +
+		".signature";
+	expect(
+		dashboardSessionIds([
+			{ name: "__session", value: jwt },
+			{ name: "__session_suffix", value: jwt },
+		]),
+	).toEqual(["sess_fixture"]);
+	expect(dashboardSessionIds([{ name: "unrelated", value: "secret" }])).toEqual([]);
+	expect(() => dashboardSessionIds([{ name: "__session", value: "malformed" }])).toThrow();
 });

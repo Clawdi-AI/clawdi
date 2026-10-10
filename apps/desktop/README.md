@@ -141,50 +141,58 @@ with `CSPProvider` and the equivalent rule lives in `connect-renderer.css`.
 Screen headings and window titles share one Title Case page title.
 
 Clawdi Desktop loads the live Dashboard inside a separate, sandboxed window at
-`https://cloud.clawdi.ai`. `CLAWDI_DESKTOP_WEB_URL` accepts an HTTPS origin without
-credentials, path, query or fragment. The Connect window keeps its local renderer
-and dedicated IPC. Dashboard navigation accepts only the configured web origin and
-`https://clerk.clawdi.ai` / `https://accounts.clawdi.ai`; permissions, device access,
-webviews and downloads are denied. New-window links open via validated HTTPS OS
-handoffs. The dashboard has context isolation and no Node integration.
+`https://cloud.clawdi.ai`. `CLAWDI_DESKTOP_WEB_URL` accepts an HTTPS origin or
+HTTP loopback origin (`localhost`, `127.0.0.1`, `[::1]`) without credentials,
+path, query or fragment. Configure `CLAWDI_DESKTOP_CLERK_ORIGINS` as comma-separated
+origins for staging or self-hosted instances; production defaults are
+`https://clerk.clawdi.ai` and `https://accounts.clawdi.ai`.
+Main-frame navigation accepts only these origins. Subframes match the web app's
+`frame-src https:` CSP, supporting Stripe Elements/bank-specific 3DS, Chatwoot,
+Clerk and Turnstile. Only the web main frame may write sanitized clipboard
+content; other permissions, device access, webviews and downloads are denied.
+New-window HTTPS links open in the system browser. Dashboard has context
+isolation, sandboxing and no Node integration; Connect keeps its local renderer
+and dedicated IPC.
 
 The bundled CLI owns credentials, Agent registration and daemon lifecycle.
 `clawdi auth login --desktop` runs device authorization in the system browser.
-One approval signs in the CLI and Desktop. Opening Dashboard requests
-`clawdi auth desktop-session --json`, returning `clawdi.desktopSession.v2` with
-`ticket`, `expiresIn` and `accountId`. The backend accepts only CLI OAuth access
-tokens and requests a one-use Clerk sign-in token with a 60-second lifetime.
-Tickets travel privately through the preload at `/desktop-auth`, never through
-a URL or diagnostics. The web route refuses normal browsers and mismatched
-accounts. Dashboard cookies live in an in-memory partition and are removed on
-Desktop sign-out, along with the shared CLI credential and daemon registration.
+One approval signs in CLI and Desktop. Dashboard's `persist:clawdi-dashboard`
+partition survives restarts. On `/desktop-auth`, the hidden
+`clawdi auth desktop-session --json` command compares the current Clerk account
+and verifies its session through Clerk's Backend API before minting anything.
+Its `clawdi.desktopSession.v1` result has `status`, `expiresIn`, `accountId`,
+and a `ticket` only when a new session is needed. Valid same-account sessions
+reuse their cookies without another ticket. Account mismatch or an inactive
+session triggers Clerk sign-out before a fresh ticket is requested.
+Signed-out dashboard routes return to `/desktop-auth`.
 
-The dashboard-only `window.clawdiDesktop` capability contract is:
+The backend accepts only CLI OAuth access tokens and requests a one-use Clerk
+sign-in token with a 60-second lifetime. Tickets travel privately through the
+preload, never URLs or diagnostics; normal browsers cannot consume them.
+Desktop sign-out revokes the embedded Clerk session server-side before clearing
+the partition, CLI credentials and daemon registration. Cookie session IDs are
+untrusted hints; the backend checks ownership against Clerk before revocation.
+A revocation failure retains credentials so sign-out can be retried.
+
+The canonical dashboard-only capability contract is in
+`packages/shared/src/desktop.ts`:
 
 ```ts
 interface ClawdiDesktopBridge {
   readonly version: 1;
   openConnector(): void;
-  openInBrowser(url: string): void;
-  createDashboardSession(): Promise<{ ticket: string; accountId: string }>;
+  createDashboardSession(session: DesktopWebSession | null): Promise<DesktopDashboardSession>;
   signOut(): Promise<void>;
 }
 ```
 
-`openConnector` follows the native Connect deep-link path. `openInBrowser` accepts
-only HTTPS URLs on the configured Clawdi web origin and excludes `/desktop-auth`.
-Every IPC validates the window, main frame and origin; ticket exchange additionally
-checks the exact auth page before and after the async exchange.
+`openConnector` follows the native Connect deep-link path. Every IPC validates
+the window, main frame and origin; session exchange additionally checks the
+exact auth page before and after the asynchronous request.
 
-Clerk documents server-enforceable factor verification age in the signed `fva`
-claim ([session tokens](https://clerk.com/docs/guides/sessions/session-tokens),
-[reverification](https://clerk.com/docs/guides/secure/reverification)). Cloud key
-listing and revocation enforce the upstream `strict` policy: second factor below
-10 minutes, falling back to first factor when no second factor was verified.
-Missing or malformed claims fail closed with Clerk's standard 403 hint. Key
-creation remains retired (410). Hosted must apply the same gate to payment
-methods, auto-reload and plan changes, and its browser UI must handle the hint
-through `useReverification`; those changes belong to the Hosted repository.
+The embedded dashboard has the same account permissions as the browser.
+No Desktop-specific Clerk reverification gate or browser-only action policy is
+applied in Cloud; no corresponding Hosted change is required.
 
 Native shell changes require an application update; dashboard deployments appear
 on the next load. `scripts/shared-login-e2e.sh` walks the real Electron app with a

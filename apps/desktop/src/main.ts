@@ -46,11 +46,15 @@ import {
 } from "./connect-ipc";
 import {
 	allowsDashboardNavigation,
+	allowsDashboardPermission,
 	assertDashboardSender,
 	DASHBOARD_PARTITION,
-	dashboardBrowserUrl,
+	dashboardAuthRedirect,
+	dashboardClerkOrigins,
 	dashboardOrigin,
+	dashboardSessionIds,
 	dashboardWindowOptions,
+	readDesktopWebSession,
 	strictHttpsUrl,
 } from "./dashboard-window";
 import { connectViewFromArgv, connectViewFromDeepLink } from "./deep-link";
@@ -97,6 +101,7 @@ const SUPPORT_URL = "mailto:support@clawdi.ai";
 // --background from packages/shared/src/style/theme.css, shown before the renderer paints.
 const WINDOW_BACKGROUND = { light: "#fafaf8", dark: "#11100f" } as const;
 const WEB_ORIGIN = dashboardOrigin(process.env.CLAWDI_DESKTOP_WEB_URL);
+const CLERK_ORIGINS = dashboardClerkOrigins(process.env.CLAWDI_DESKTOP_CLERK_ORIGINS);
 const cli = new DesktopCliService(app);
 let connectWindow: BrowserWindow | null = null;
 let dashboardWindow: BrowserWindow | null = null;
@@ -476,23 +481,14 @@ function restartToInstallUpdate(): void {
 }
 
 function registerIpc(): void {
-	ipcMain.on(DESKTOP_IPC.openInBrowser, (event, raw: unknown) => {
-		runAsync(
-			"open the browser link",
-			(async () => {
-				assertDashboardSender(event, dashboardWindow?.webContents, false, WEB_ORIGIN);
-				await shell.openExternal(dashboardBrowserUrl(raw, WEB_ORIGIN));
-			})(),
-		);
-	});
-	ipcMain.handle(DESKTOP_IPC.createDashboardSession, async (event) => {
+	ipcMain.handle(DESKTOP_IPC.createDashboardSession, async (event, raw: unknown) => {
 		assertDashboardSender(event, dashboardWindow?.webContents, true, WEB_ORIGIN);
 		try {
 			const state = await cli.bootstrapState();
 			if (signingOut || !state.auth.authenticated || state.auth.user?.id !== dashboardAccountId) {
 				throw new Error("Local account changed.");
 			}
-			const result = await cli.createDashboardSession();
+			const result = await cli.createDashboardSession(readDesktopWebSession(raw));
 			// Recheck after the exchange: concurrent CLI logout/account switching cannot restore stale cookies.
 			const current = await cli.bootstrapState();
 			if (
@@ -733,8 +729,22 @@ function readAgentConnections(value: unknown): DesktopAgentConnection[] {
 
 function configurePermissions(): void {
 	const dashboard = session.fromPartition(DASHBOARD_PARTITION);
-	dashboard.setPermissionCheckHandler(() => false);
-	dashboard.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+	dashboard.setPermissionCheckHandler(
+		(contents, permission, requestingOrigin, details) =>
+			contents === dashboardWindow?.webContents &&
+			allowsDashboardPermission(permission, requestingOrigin, details.isMainFrame, WEB_ORIGIN),
+	);
+	dashboard.setPermissionRequestHandler((contents, permission, callback, details) =>
+		callback(
+			contents === dashboardWindow?.webContents &&
+				allowsDashboardPermission(
+					permission,
+					details.requestingUrl,
+					details.isMainFrame,
+					WEB_ORIGIN,
+				),
+		),
+	);
 	dashboard.setDevicePermissionHandler(() => false);
 	dashboard.on("will-download", (event) => event.preventDefault());
 	session.defaultSession.setPermissionCheckHandler(() => false);
@@ -970,7 +980,9 @@ async function refreshTrayState(): Promise<void> {
 				dashboardAccountId &&
 				(!state.auth.authenticated || state.auth.user?.id !== dashboardAccountId)
 			) {
-				await clearDashboardSession();
+				dashboardAccountId = state.auth.authenticated ? (state.auth.user?.id ?? null) : null;
+				if (dashboardWindow && !dashboardWindow.isDestroyed())
+					await dashboardWindow.loadURL(`${WEB_ORIGIN}/desktop-auth`);
 			}
 			setTrayState(state);
 		} catch (error) {
@@ -1222,13 +1234,14 @@ async function openDashboardWindow(): Promise<void> {
 		await showConnectWindow();
 		return;
 	}
-	if (dashboardAccountId !== state.auth.user.id) await clearDashboardSession();
+	const accountChanged = dashboardAccountId !== state.auth.user.id;
 	if (signingOut) return;
 	dashboardAccountId = state.auth.user.id;
 	if (dashboardWindow && !dashboardWindow.isDestroyed()) {
 		if (dashboardWindow.isMinimized()) dashboardWindow.restore();
 		dashboardWindow.show();
 		dashboardWindow.focus();
+		if (accountChanged) await dashboardWindow.loadURL(`${WEB_ORIGIN}/desktop-auth`);
 		return;
 	}
 	if (process.platform === "darwin") await app.dock?.show();
@@ -1244,13 +1257,24 @@ async function openDashboardWindow(): Promise<void> {
 		if (external) runAsync("open the external link", shell.openExternal(external.href));
 		return { action: "deny" };
 	});
-	const preventUntrustedNavigation = (event: Electron.Event, url: string) => {
-		if (!allowsDashboardNavigation(url, WEB_ORIGIN)) event.preventDefault();
+	const navigate = (event: Electron.Event, url: string, mainFrame: boolean) => {
+		const redirect = mainFrame && dashboardAuthRedirect(url, WEB_ORIGIN);
+		if (redirect) {
+			event.preventDefault();
+			runAsync("restore dashboard sign-in", window.loadURL(redirect));
+		} else if (!allowsDashboardNavigation(url, WEB_ORIGIN, CLERK_ORIGINS, mainFrame))
+			event.preventDefault();
 	};
-	window.webContents.on("will-navigate", preventUntrustedNavigation);
-	window.webContents.on("will-redirect", preventUntrustedNavigation);
-	window.webContents.on("will-frame-navigate", (event) => {
-		if (!allowsDashboardNavigation(event.url, WEB_ORIGIN)) event.preventDefault();
+	window.webContents.on("will-frame-navigate", (event) =>
+		navigate(event, event.url, event.isMainFrame),
+	);
+	window.webContents.on("will-redirect", (event, url, _inPlace, mainFrame) =>
+		navigate(event, url, mainFrame),
+	);
+	// SPA history changes don't emit will-frame-navigate.
+	window.webContents.on("did-navigate-in-page", (_event, url, mainFrame) => {
+		const redirect = mainFrame && dashboardAuthRedirect(url, WEB_ORIGIN);
+		if (redirect) runAsync("restore dashboard sign-in", window.loadURL(redirect));
 	});
 	window.webContents.on("will-attach-webview", (event) => event.preventDefault());
 	window.webContents.on("render-process-gone", () => {
@@ -1285,6 +1309,10 @@ async function signOutOfDesktop(): Promise<void> {
 	if (signingOut) return;
 	signingOut = true;
 	try {
+		// Revoke first; retain local credentials if revocation fails so the user can retry.
+		const partition = session.fromPartition(DASHBOARD_PARTITION);
+		for (const id of dashboardSessionIds(await partition.cookies.get({ url: WEB_ORIGIN })))
+			await cli.revokeDashboardSession(id);
 		// Remove local credentials even when Chromium storage or daemon cleanup fails.
 		try {
 			await clearDashboardSession();

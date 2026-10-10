@@ -212,7 +212,7 @@
 	{
 		"path": "clawdi auth desktop-session",
 		"aliases": [],
-		"description": "Create a one-use session for the embedded Desktop dashboard",
+		"description": "Restore the embedded Desktop dashboard session",
 		"hidden": true,
 		"arguments": [],
 		"options": [
@@ -222,11 +222,57 @@
 				"hidden": false,
 				"required": false,
 				"optional": false,
-				"mandatory": true,
+				"mandatory": false,
+				"variadic": false
+			},
+			{
+				"flags": "--session-user <id>",
+				"description": "Current Clerk user",
+				"hidden": false,
+				"required": true,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			},
+			{
+				"flags": "--session-id <id>",
+				"description": "Current Clerk session",
+				"hidden": false,
+				"required": true,
+				"optional": false,
+				"mandatory": false,
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi auth desktop-session [options]\n\nCreate a one-use session for the embedded Desktop dashboard\n\nOptions:\n  --json      Private machine-readable credential transport\n  -h, --help  display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi auth desktop-session [options]\n\nRestore the embedded Desktop dashboard session\n\nOptions:\n  --json               Private machine-readable credential transport\n  --session-user <id>  Current Clerk user\n  --session-id <id>    Current Clerk session\n  -h, --help           display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+	},
+	{
+		"path": "clawdi auth desktop-sign-out",
+		"aliases": [],
+		"description": "Revoke the embedded Desktop dashboard session",
+		"hidden": true,
+		"arguments": [],
+		"options": [
+			{
+				"flags": "--session-id <id>",
+				"description": "Clerk session to revoke",
+				"hidden": false,
+				"required": true,
+				"optional": false,
+				"mandatory": true,
+				"variadic": false
+			},
+			{
+				"flags": "--json",
+				"description": "Private machine-readable output",
+				"hidden": false,
+				"required": false,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			}
+		],
+		"help": "Usage: clawdi auth desktop-sign-out [options]\n\nRevoke the embedded Desktop dashboard session\n\nOptions:\n  --session-id <id>  Clerk session to revoke\n  --json             Private machine-readable output\n  -h, --help         display help for command\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi auth complete",

@@ -982,6 +982,7 @@ async def test_oauth_desktop_ticket_is_short_lived_and_not_cached(
 
     assert response.status_code == 200
     assert response.json() == {
+        "status": "ticket",
         "ticket": "desktop_ticket",
         "expires_in": 60,
         "clerk_user_id": clerk_sub,
@@ -1026,54 +1027,6 @@ async def test_desktop_ticket_refuses_session_and_api_key(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "fva, allowed",
-    [
-        (None, False),
-        ([], False),
-        ([0], False),
-        ([0, 0, 0], False),
-        ([True, -1], False),
-        (["0", -1], False),
-        ([-2, -1], False),
-        ([-1, -1], False),
-        ([10, -1], False),
-        ([0, 10], False),
-        ([0, -1], True),
-        ([9, -1], True),
-        ([20, 0], True),
-        ([-1, 0], True),
-    ],
-)
-async def test_signed_session_sensitive_routes_require_recent_factors(
-    raw_auth_client, clerk_oauth_signing_key, fva, allowed
-):
-    token = _session_token(
-        clerk_oauth_signing_key,
-        f"user_stepup_{uuid.uuid4().hex}",
-        {"iss": _ISSUER, "fva": fva, "v": 2, "sid": "sess_fixture"},
-    )
-    headers = {"Authorization": f"Bearer {token}"}
-    for prefix in ["/v1", "/api"]:
-        listed = await raw_auth_client.get(f"{prefix}/auth/keys", headers=headers)
-        revoked = await raw_auth_client.delete(
-            f"{prefix}/auth/keys/{uuid.uuid4()}", headers=headers
-        )
-        assert listed.status_code == (200 if allowed else 403)
-        assert revoked.status_code == (404 if allowed else 403)
-        if not allowed:
-            assert listed.json() == {
-                "clerk_error": {
-                    "type": "forbidden",
-                    "reason": "reverification-error",
-                    "metadata": {"reverification": "strict"},
-                }
-            }
-    # Normal signed-in reads do not require recent verification.
-    assert (await raw_auth_client.get("/v1/auth/me", headers=headers)).status_code == 200
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
     "upstream_status, content",
     [
         (200, b"{}"),
@@ -1099,3 +1052,86 @@ async def test_desktop_ticket_hides_invalid_upstream_responses(
     assert "private" not in response.text
     assert "private" not in caplog.text
     assert token not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "same_user,session_status,expected",
+    [
+        (True, "active", "signed-in"),
+        (True, "revoked", "sign-out"),
+        (False, "active", "sign-out"),
+    ],
+)
+async def test_desktop_compares_session_before_minting(
+    raw_auth_client, clerk_oauth_signing_key, monkeypatch, same_user, session_status, expected
+):
+    clerk_sub = f"user_desktop_{uuid.uuid4().hex}"
+
+    class FakeClient:
+        async def get(self, url, **kwargs):
+            assert url.endswith("/sessions/sess_fixture")
+            return httpx.Response(200, json={"user_id": clerk_sub, "status": session_status})
+
+        async def post(self, *args, **kwargs):
+            pytest.fail("An existing session must be compared before minting")
+
+    monkeypatch.setattr(cli_auth_module, "get_clerk_backend_client", lambda: FakeClient())
+    response = await raw_auth_client.post(
+        "/v1/cli/auth/oauth/desktop-ticket",
+        headers={
+            "Authorization": f"Bearer {_oauth_access_token(clerk_oauth_signing_key, clerk_sub)}"
+        },
+        json={"user_id": clerk_sub if same_user else "user_other", "session_id": "sess_fixture"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": expected,
+        "ticket": None,
+        "expires_in": 0,
+        "clerk_user_id": clerk_sub,
+    }
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner,status_code", [(True, 200), (False, 403)])
+async def test_desktop_revokes_only_the_cli_accounts_session(
+    raw_auth_client, clerk_oauth_signing_key, monkeypatch, owner, status_code
+):
+    clerk_sub = f"user_desktop_{uuid.uuid4().hex}"
+    revoked = []
+
+    class FakeClient:
+        async def get(self, url, **kwargs):
+            return httpx.Response(
+                200, json={"user_id": clerk_sub if owner else "user_other", "status": "active"}
+            )
+
+        async def post(self, url, **kwargs):
+            revoked.append(url)
+            return httpx.Response(200, json={"status": "revoked"})
+
+    monkeypatch.setattr(cli_auth_module, "get_clerk_backend_client", lambda: FakeClient())
+    response = await raw_auth_client.post(
+        "/v1/cli/auth/oauth/desktop-session/revoke",
+        headers={
+            "Authorization": f"Bearer {_oauth_access_token(clerk_oauth_signing_key, clerk_sub)}"
+        },
+        json={"session_id": "sess_fixture"},
+    )
+    assert response.status_code == status_code
+    assert revoked == (["https://api.clerk.com/v1/sessions/sess_fixture/revoke"] if owner else [])
+
+
+@pytest.mark.asyncio
+async def test_desktop_session_revoke_refuses_browser_session(
+    raw_auth_client, clerk_oauth_signing_key
+):
+    token = _session_token(clerk_oauth_signing_key, "user_browser", {"iss": _ISSUER})
+    response = await raw_auth_client.post(
+        "/v1/cli/auth/oauth/desktop-session/revoke",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"session_id": "sess_fixture"},
+    )
+    assert response.status_code == 403

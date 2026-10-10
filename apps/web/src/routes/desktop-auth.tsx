@@ -1,7 +1,9 @@
-"use client";
-
-import type { ClawdiDesktopBridge } from "@clawdi/shared/desktop";
-import { useAuth, useSignIn } from "@clerk/tanstack-react-start";
+import {
+	type ClawdiDesktopBridge,
+	type DesktopWebSession,
+	isClawdiDesktopBridge,
+} from "@clawdi/shared/desktop";
+import { useAuth, useClerk, useSignIn } from "@clerk/tanstack-react-start";
 import { createFileRoute } from "@tanstack/react-router";
 import { LoaderCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -18,7 +20,7 @@ export function DesktopAuthPage() {
 	const [loaded, setLoaded] = useState(false);
 	useEffect(() => {
 		const candidate = "clawdiDesktop" in window ? window.clawdiDesktop : undefined;
-		setDesktopBridge(isDesktopBridge(candidate) ? candidate : null);
+		setDesktopBridge(isClawdiDesktopBridge(candidate) ? candidate : null);
 		setLoaded(true);
 	}, []);
 	if (!loaded) return null;
@@ -38,8 +40,9 @@ export function DesktopAuthPage() {
 }
 
 function DesktopTicketSignIn({ desktopBridge }: { desktopBridge: ClawdiDesktopBridge }) {
-	const { isLoaded: authLoaded, isSignedIn, userId } = useAuth();
+	const { isLoaded: authLoaded, isSignedIn, userId, sessionId } = useAuth();
 	const { signIn } = useSignIn();
+	const clerk = useClerk();
 	const attempted = useRef(false);
 	const [failed, setFailed] = useState(false);
 	const [recovering, setRecovering] = useState<"retry" | "sign-in" | null>(null);
@@ -63,7 +66,8 @@ function DesktopTicketSignIn({ desktopBridge }: { desktopBridge: ClawdiDesktopBr
 		window.history.replaceState(null, "", window.location.pathname);
 		void restoreDesktopSession({
 			bridge: desktopBridge,
-			userId: isSignedIn ? userId : null,
+			session: isSignedIn && userId && sessionId ? { userId, sessionId } : null,
+			signOut: () => clerk.signOut(() => undefined),
 			consumeTicket: async (ticket) => {
 				const { error } = await signIn.ticket({ ticket });
 				if (error || signIn.status !== "complete") throw new Error("Sign-in failed.");
@@ -71,9 +75,9 @@ function DesktopTicketSignIn({ desktopBridge }: { desktopBridge: ClawdiDesktopBr
 				if (finalized.error) throw new Error("Sign-in finalization failed.");
 			},
 		})
-			.then(() => window.location.replace("/"))
+			.then((consumed) => window.location.replace(consumed ? "/desktop-auth" : "/"))
 			.catch(() => setFailed(true));
-	}, [authLoaded, desktopBridge, isSignedIn, signIn, userId]);
+	}, [authLoaded, desktopBridge, isSignedIn, signIn, userId, sessionId, clerk]);
 
 	return (
 		<main className="flex min-h-dvh items-center justify-center bg-background p-6">
@@ -105,37 +109,30 @@ function DesktopTicketSignIn({ desktopBridge }: { desktopBridge: ClawdiDesktopBr
 	);
 }
 
-/** Capability detection only; tickets in the URL never authorize this route. */
-function isDesktopBridge(value: unknown): value is ClawdiDesktopBridge {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		"version" in value &&
-		value.version === 1 &&
-		"createDashboardSession" in value &&
-		typeof value.createDashboardSession === "function" &&
-		"openConnector" in value &&
-		typeof value.openConnector === "function" &&
-		"openInBrowser" in value &&
-		typeof value.openInBrowser === "function" &&
-		"signOut" in value &&
-		typeof value.signOut === "function"
-	);
-}
-
 /** The preload is the only ticket source. Clerk consumes each token once. */
 export async function restoreDesktopSession(options: {
 	bridge: ClawdiDesktopBridge | null;
-	userId: string | null | undefined;
+	session: DesktopWebSession | null;
+	signOut: () => Promise<void>;
 	consumeTicket: (ticket: string) => Promise<void>;
-}): Promise<void> {
+}): Promise<boolean> {
 	if (!options.bridge) throw new Error("Open this page in Clawdi Desktop.");
-	const { ticket, accountId } = await options.bridge.createDashboardSession();
-	if (!ticket || ticket.length > 8192 || !accountId || accountId.length > 256)
-		throw new Error("Invalid Desktop session.");
-	if (options.userId) {
-		if (options.userId !== accountId) throw new Error("Dashboard account mismatch.");
-		return;
+	let result = await options.bridge.createDashboardSession(options.session);
+	if (result.status === "sign-out") {
+		if (!options.session) throw new Error("Invalid Desktop session.");
+		// Revoke the previous account's Clerk session before minting a new ticket.
+		await options.signOut();
+		result = await options.bridge.createDashboardSession(null);
 	}
-	await options.consumeTicket(ticket);
+	if (!result.accountId || result.accountId.length > 256)
+		throw new Error("Invalid Desktop session.");
+	if (result.status === "signed-in") {
+		if (options.session?.userId !== result.accountId)
+			throw new Error("Dashboard account mismatch.");
+		return false;
+	}
+	if (result.status !== "ticket" || !result.ticket || result.ticket.length > 8192)
+		throw new Error("Invalid Desktop session.");
+	await options.consumeTicket(result.ticket);
+	return true;
 }

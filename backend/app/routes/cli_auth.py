@@ -10,6 +10,8 @@ from app.core.auth import AuthContext, require_oauth_cli_auth
 from app.core.config import settings
 from app.core.database import get_session
 from app.schemas.cli_auth import (
+    DesktopSessionRequest,
+    DesktopSessionRevokeRequest,
     DesktopSessionTicketResponse,
     OAuthConfigResponse,
     OAuthRevokeRequest,
@@ -123,6 +125,7 @@ async def revoke_oauth_refresh_grant(
 @router.post("/oauth/desktop-ticket", response_model=DesktopSessionTicketResponse)
 async def create_desktop_session_ticket(
     response: Response,
+    body: DesktopSessionRequest | None = None,
     auth: AuthContext = Depends(require_oauth_cli_auth),
 ) -> DesktopSessionTicketResponse:
     """Exchange the first-party CLI identity for a one-use browser session ticket."""
@@ -131,6 +134,18 @@ async def create_desktop_session_ticket(
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Desktop sign-in is not configured",
+        )
+
+    response.headers["Cache-Control"] = "no-store"
+    if body is not None:
+        current = (
+            await _desktop_clerk_session(body.session_id) if body.user_id == clerk_id else None
+        )
+        valid = current is not None and current.user_id == clerk_id and current.status == "active"
+        return DesktopSessionTicketResponse(
+            status="signed-in" if valid else "sign-out",
+            expires_in=0,
+            clerk_user_id=clerk_id,
         )
 
     try:
@@ -167,7 +182,66 @@ async def create_desktop_session_ticket(
 
     response.headers["Cache-Control"] = "no-store"
     return DesktopSessionTicketResponse(
+        status="ticket",
         ticket=sign_in.token,
         expires_in=_DESKTOP_SESSION_TTL_SEC,
         clerk_user_id=clerk_id,
     )
+
+
+class _ClerkSession(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    user_id: str
+    status: str
+
+
+async def _desktop_clerk_session(session_id: str) -> _ClerkSession | None:
+    try:
+        upstream = await get_clerk_backend_client().get(
+            clerk_backend_url(f"sessions/{quote(session_id, safe='')}"),
+            headers=clerk_backend_headers(),
+        )
+    except (ClerkBackendTimeoutError, ClerkBackendTransportError):
+        raise HTTPException(503, "Desktop session is temporarily unavailable") from None
+    if upstream.status_code == 404:
+        return None
+    if upstream.status_code >= 500:
+        raise HTTPException(503, "Desktop session is temporarily unavailable")
+    if upstream.status_code != 200:
+        raise HTTPException(502, "Desktop session verification failed")
+    try:
+        return _ClerkSession.model_validate_json(upstream.content)
+    except ValidationError:
+        raise HTTPException(502, "Desktop session verification failed") from None
+
+
+@router.post("/oauth/desktop-session/revoke", response_model=OAuthRevokeResponse)
+async def revoke_desktop_session(
+    body: DesktopSessionRevokeRequest,
+    response: Response,
+    auth: AuthContext = Depends(require_oauth_cli_auth),
+) -> OAuthRevokeResponse:
+    """Revoke only a Clerk session owned by the authenticated CLI account."""
+    response.headers["Cache-Control"] = "no-store"
+    if not settings.clerk_secret_key:
+        raise HTTPException(503, "Desktop sign-out is not configured")
+    current = await _desktop_clerk_session(body.session_id)
+    if current is None:
+        return OAuthRevokeResponse(status="revoked")
+    if current.user_id != auth.user.clerk_id:
+        raise HTTPException(403, "Desktop session belongs to another account")
+    if current.status != "active":
+        return OAuthRevokeResponse(status="revoked")
+    try:
+        upstream = await get_clerk_backend_client().post(
+            clerk_backend_url(f"sessions/{quote(body.session_id, safe='')}/revoke"),
+            headers=clerk_backend_headers(),
+        )
+    except (ClerkBackendTimeoutError, ClerkBackendTransportError):
+        raise HTTPException(503, "Desktop sign-out is temporarily unavailable") from None
+    if upstream.status_code >= 500:
+        raise HTTPException(503, "Desktop sign-out is temporarily unavailable")
+    if not 200 <= upstream.status_code < 300:
+        raise HTTPException(502, "Desktop sign-out failed")
+    return OAuthRevokeResponse(status="revoked")

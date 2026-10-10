@@ -6,6 +6,7 @@ import * as prompts from "@clack/prompts";
 import {
 	authComplete,
 	authDesktopSessionMachine,
+	authDesktopSignOutMachine,
 	authLogin,
 	authLoginDesktop,
 } from "../../src/commands/auth";
@@ -487,6 +488,7 @@ describe("authLogin authentication boundary", () => {
 				path: "/v1/cli/auth/oauth/desktop-ticket",
 				response: () =>
 					jsonResponse({
+						status: "ticket",
 						ticket: "single-use-fixture",
 						expires_in: 60,
 						clerk_user_id: "user_fixture",
@@ -501,7 +503,8 @@ describe("authLogin authentication boundary", () => {
 			await authDesktopSessionMachine();
 			expect(stdout).toHaveLength(1);
 			expect(JSON.parse(stdout[0] ?? "")).toEqual({
-				schemaVersion: "clawdi.desktopSession.v2",
+				schemaVersion: "clawdi.desktopSession.v1",
+				status: "ticket",
 				ticket: "single-use-fixture",
 				expiresIn: 60,
 				accountId: "user_fixture",
@@ -509,6 +512,49 @@ describe("authLogin authentication boundary", () => {
 			expect(stderr).toEqual([]);
 			expect(openSpy).not.toHaveBeenCalled();
 			expect(captured.at(-1)?.path).toBe("/v1/cli/auth/oauth/desktop-ticket");
+		} finally {
+			restore();
+		}
+	});
+
+	it("Desktop compares the current Clerk account without another ticket and revokes its session", async () => {
+		clearAuth();
+		const { captured, restore } = mockFetch([
+			...startHandlers(),
+			tokenHandler(),
+			profileHandler(),
+			{
+				method: "POST",
+				path: "/v1/cli/auth/oauth/desktop-ticket",
+				response: () =>
+					jsonResponse({ status: "signed-in", expires_in: 0, clerk_user_id: "user_fixture" }),
+			},
+			{
+				method: "POST",
+				path: "/v1/cli/auth/oauth/desktop-session/revoke",
+				response: () => jsonResponse({ status: "revoked" }),
+			},
+		]);
+		try {
+			await authLoginDesktop();
+			stdout.length = 0;
+			await authDesktopSessionMachine({ sessionUser: "user_fixture", sessionId: "sess_fixture" });
+			expect(JSON.parse(stdout[0] ?? "")).toEqual({
+				schemaVersion: "clawdi.desktopSession.v1",
+				status: "signed-in",
+				expiresIn: 0,
+				accountId: "user_fixture",
+			});
+			expect(captured.at(-1)?.body).toEqual({
+				user_id: "user_fixture",
+				session_id: "sess_fixture",
+			});
+			await authDesktopSignOutMachine("sess_fixture");
+			expect(captured.at(-1)?.body).toEqual({ session_id: "sess_fixture" });
+			expect(JSON.parse(stdout.at(-1) ?? "")).toEqual({
+				schemaVersion: "clawdi.desktopSignOut.v1",
+				status: "revoked",
+			});
 		} finally {
 			restore();
 		}

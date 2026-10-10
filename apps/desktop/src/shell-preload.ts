@@ -6,8 +6,8 @@ const bridge: ClawdiDesktopBridge = {
 	version: 1,
 	signOut: () => ipcRenderer.invoke(DESKTOP_IPC.signOut),
 	openConnector: () => ipcRenderer.send(DESKTOP_IPC.openConnector),
-	createDashboardSession: () => ipcRenderer.invoke(DESKTOP_IPC.createDashboardSession),
-	openInBrowser: (url) => ipcRenderer.send(DESKTOP_IPC.openInBrowser, url),
+	createDashboardSession: (session) =>
+		ipcRenderer.invoke(DESKTOP_IPC.createDashboardSession, session),
 };
 
 const origin = process.argv

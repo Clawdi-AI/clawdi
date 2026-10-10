@@ -379,32 +379,66 @@ export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<
 }
 
 /** Machine-only credential transport: stdout is read privately by Desktop, never diagnostics. */
-export async function authDesktopSessionMachine(): Promise<void> {
+export async function authDesktopSessionMachine(
+	options: { sessionUser?: string; sessionId?: string } = {},
+): Promise<void> {
 	if (!isClerkOAuthAuth(getAuth())) {
 		throw new Error("Desktop sign-in requires Clerk OAuth. Sign in from Clawdi Desktop.");
 	}
+	if (Boolean(options.sessionUser) !== Boolean(options.sessionId))
+		throw new Error("Provide both the Desktop session user and session ID.");
 	try {
-		const payload = unwrap(await new ApiClient().POST("/v1/cli/auth/oauth/desktop-ticket"));
-		if (
-			typeof payload.ticket !== "string" ||
-			!payload.ticket ||
-			payload.ticket.length > 8192 ||
-			typeof payload.clerk_user_id !== "string" ||
-			!payload.clerk_user_id ||
-			payload.clerk_user_id.length > 256 ||
-			!Number.isSafeInteger(payload.expires_in) ||
-			payload.expires_in <= 0 ||
-			payload.expires_in > 60
-		)
+		const payload = unwrap(
+			await new ApiClient().POST("/v1/cli/auth/oauth/desktop-ticket", {
+				...(options.sessionId && options.sessionUser
+					? { body: { user_id: options.sessionUser, session_id: options.sessionId } }
+					: {}),
+			}),
+		);
+		if (!payload.clerk_user_id || payload.clerk_user_id.length > 256)
 			throw new Error("Invalid Desktop session.");
+		if (payload.status === "ticket") {
+			if (
+				!payload.ticket ||
+				payload.ticket.length > 8192 ||
+				!Number.isSafeInteger(payload.expires_in) ||
+				payload.expires_in <= 0 ||
+				payload.expires_in > 60
+			)
+				throw new Error("Invalid Desktop session.");
+		} else if (
+			!["signed-in", "sign-out"].includes(payload.status) ||
+			payload.ticket != null ||
+			payload.expires_in !== 0
+		) {
+			throw new Error("Invalid Desktop session.");
+		}
 		emit({
-			schemaVersion: "clawdi.desktopSession.v2",
-			ticket: payload.ticket,
+			schemaVersion: "clawdi.desktopSession.v1",
+			status: payload.status,
+			...(payload.status === "ticket" ? { ticket: payload.ticket } : {}),
 			expiresIn: payload.expires_in,
 			accountId: payload.clerk_user_id,
 		});
 	} catch {
 		throw new Error("Couldn't create a Desktop session. Sign in again from Clawdi Desktop.");
+	}
+}
+
+export async function authDesktopSignOutMachine(sessionId: string): Promise<void> {
+	if (!isClerkOAuthAuth(getAuth())) throw new Error("Desktop sign-out requires Clerk OAuth.");
+	if (!/^sess_[A-Za-z0-9]+$/.test(sessionId) || sessionId.length > 256)
+		throw new Error("Invalid Desktop session ID.");
+	try {
+		const result = unwrap(
+			await new ApiClient().POST("/v1/cli/auth/oauth/desktop-session/revoke", {
+				body: { session_id: sessionId },
+			}),
+		);
+		if (result.status !== "revoked") throw new Error("Invalid Desktop sign-out response.");
+		emit({ schemaVersion: "clawdi.desktopSignOut.v1", status: "revoked" });
+	} catch {
+		throw new Error("Couldn't revoke the Desktop session. Try signing out again.");
 	}
 }
 

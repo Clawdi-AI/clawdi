@@ -51,10 +51,11 @@ const signIn = {
    document.cookie='mock_used=1; Secure; SameSite=Strict; Path=/';
    return {error:null};
  },
- async finalize() { document.cookie='mock_signed_in=user_fixture; Secure; SameSite=Strict; Path=/'; return {error:null}; }
+ async finalize() { document.cookie='mock_signed_in=user_fixture; Max-Age=3600; Secure; SameSite=Strict; Path=/'; document.cookie='__session=header.eyJzaWQiOiJzZXNzX2ZpeHR1cmUifQ.signature; Max-Age=3600; Secure; SameSite=Strict; Path=/'; return {error:null}; }
 };
-export function useAuth(){const signedIn=document.cookie.includes("mock_signed_in=user_fixture");return {isLoaded:true,isSignedIn:signedIn,userId:signedIn?"user_fixture":null};}
+export function useAuth(){const signedIn=document.cookie.includes("mock_signed_in=user_fixture");return {isLoaded:true,isSignedIn:signedIn,userId:signedIn?"user_fixture":null,sessionId:signedIn?"sess_fixture":null};}
 export function useSignIn(){return {signIn};}
+export function useClerk(){return {async signOut(callback){ document.cookie="mock_signed_in=; Max-Age=0; Path=/"; document.cookie="__session=; Max-Age=0; Path=/"; callback?.(); } };}
 `,
 					}));
 				},
@@ -64,48 +65,53 @@ export function useSignIn(){return {signIn};}
 	assert.equal(bundle.success, true, "Could not bundle the Desktop auth fixture");
 	const script = await bundle.outputs[0]?.text();
 	assert.ok(script);
-	application = await _electron.launch({
-		args: [
-			join(repo, "apps/desktop"),
-			`--user-data-dir=${join(root, "electron")}`,
-			// Linux test containers lack Chromium's OS sandbox support; production options are covered by dashboard-window.test.ts.
-			...(process.platform === "linux" ? ["--no-sandbox"] : []),
-			"--use-mock-keychain",
-		],
-		env: {
-			...process.env,
-			HOME: join(root, "home"),
-			XDG_CONFIG_HOME: join(root, "config"),
-			CLAWDI_HOME: state,
-			CLAWDI_DESKTOP_CLI: join(repo, "apps/desktop/scripts/shared-login-native.sh"),
-			CLAWDI_DESKTOP_SMOKE_TARGET: `${process.platform}-${process.arch}`,
-			CLAWDI_NO_AUTO_UPDATE: "1",
-			CLAWDI_NO_UPDATE_CHECK: "1",
-		},
-	});
-	const context = application.context();
-	context.setDefaultTimeout(15_000);
-	await application.evaluate(({ app, shell }) => {
-		const testApp = app as typeof app & { openedUrls: string[] };
-		testApp.openedUrls = [];
-		shell.openExternal = async (url) => {
-			testApp.openedUrls.push(url);
-		};
-	});
-	await context.route("https://cloud.clawdi.ai/**", async (route) => {
-		const url = new URL(route.request().url());
-		if (url.pathname === "/mock-auth.js") {
-			await route.fulfill({ status: 200, contentType: "application/javascript", body: script });
-			return;
-		}
-		let html = "<!doctype html><div id='root'></div>";
-		if (url.pathname === "/desktop-auth")
-			html += `<script type="module" src="/mock-auth.js"></script>`;
-		else if (route.request().headers().cookie?.includes("mock_signed_in=user_fixture"))
-			html += `<h1>Signed in as user_fixture</h1><button onclick='window.clawdiDesktop.signOut()'>Sign out</button>`;
-		else html += "<h1>Signed out</h1>";
-		await route.fulfill({ status: 200, contentType: "text/html", body: html });
-	});
+	async function launch() {
+		const launched = await _electron.launch({
+			args: [
+				join(repo, "apps/desktop"),
+				`--user-data-dir=${join(root, "electron")}`,
+				// Linux test containers lack Chromium's OS sandbox support; production options are covered by dashboard-window.test.ts.
+				...(process.platform === "linux" ? ["--no-sandbox"] : []),
+				"--use-mock-keychain",
+			],
+			env: {
+				...process.env,
+				HOME: join(root, "home"),
+				XDG_CONFIG_HOME: join(root, "config"),
+				CLAWDI_HOME: state,
+				CLAWDI_DESKTOP_CLI: join(repo, "apps/desktop/scripts/shared-login-native.sh"),
+				CLAWDI_DESKTOP_SMOKE_TARGET: `${process.platform}-${process.arch}`,
+				CLAWDI_NO_AUTO_UPDATE: "1",
+				CLAWDI_NO_UPDATE_CHECK: "1",
+			},
+		});
+		const context = launched.context();
+		context.setDefaultTimeout(15_000);
+		await launched.evaluate(({ app, shell }) => {
+			const testApp = app as typeof app & { openedUrls: string[] };
+			testApp.openedUrls = [];
+			shell.openExternal = async (url) => {
+				testApp.openedUrls.push(url);
+			};
+		});
+		await context.route("https://cloud.clawdi.ai/**", async (route) => {
+			const url = new URL(route.request().url());
+			if (url.pathname === "/mock-auth.js") {
+				await route.fulfill({ status: 200, contentType: "application/javascript", body: script });
+				return;
+			}
+			let html = "<!doctype html><div id='root'></div>";
+			if (url.pathname === "/desktop-auth")
+				html += `<script type="module" src="/mock-auth.js"></script>`;
+			else if (route.request().headers().cookie?.includes("mock_signed_in=user_fixture"))
+				html += `<h1>Signed in as user_fixture</h1><button onclick='window.clawdiDesktop.signOut()'>Sign out</button>`;
+			else html += "<h1>Signed out</h1>";
+			await route.fulfill({ status: 200, contentType: "text/html", body: html });
+		});
+		return launched;
+	}
+	application = await launch();
+	let context = application.context();
 	const connect = await application.firstWindow();
 	await connect.getByRole("heading", { name: "Welcome to Clawdi" }).waitFor();
 	console.info("First launch verified; checking browser ticket refusal.");
@@ -136,16 +142,27 @@ export function useSignIn(){return {signIn};}
 	await connect.getByRole("button", { name: "Open dashboard", exact: false }).click();
 	let dashboard = await waitForDashboard();
 	await dashboard.getByRole("heading", { name: "Signed in as user_fixture" }).waitFor();
-	// Replay the same mocked Clerk ticket after removing only its session cookie.
-	await dashboard.evaluate(() => {
-		document.cookie = "mock_signed_in=; Max-Age=0; Secure; SameSite=Strict; Path=/";
+	assert.equal(readFileSync(join(state, "ticket-count"), "utf8"), "ticket\n");
+	// Persisted cookies must survive a complete Electron shutdown, not just closing the window.
+	await application.evaluate(async ({ session }) => {
+		await session.fromPartition("persist:clawdi-dashboard").cookies.flushStore();
 	});
-	await dashboard.goto("https://cloud.clawdi.ai/desktop-auth");
-	await dashboard.getByRole("heading", { name: "Desktop sign-in expired" }).waitFor();
+	await application.close();
+	application = await launch();
+	context = application.context();
+	dashboard = await waitForDashboard();
+	await dashboard.getByRole("heading", { name: "Signed in as user_fixture" }).waitFor();
+	assert.equal(
+		readFileSync(join(state, "ticket-count"), "utf8"),
+		"ticket\n",
+		"Restart must not mint a second ticket",
+	);
+	// Signed-out SPA routes return to the handshake rather than blocked OAuth redirects.
 	await dashboard.evaluate(() => {
-		document.cookie = "mock_signed_in=user_fixture; Secure; SameSite=Strict; Path=/";
+		history.pushState(null, "", "/sign-in");
 	});
-	await dashboard.goto("https://cloud.clawdi.ai/");
+	await dashboard.waitForURL("https://cloud.clawdi.ai/");
+	await dashboard.getByRole("heading", { name: "Signed in as user_fixture" }).waitFor();
 	console.info("Embedded dashboard signed in; checking IPC and sign-out.");
 	await application.evaluate(({ app }) => {
 		(app as typeof app & { openedUrls: string[] }).openedUrls = [];
@@ -165,12 +182,13 @@ export function useSignIn(){return {signIn};}
 	assert.deepEqual(await dashboard.evaluate(() => Object.keys(window.clawdiDesktop ?? {}).sort()), [
 		"createDashboardSession",
 		"openConnector",
-		"openInBrowser",
 		"signOut",
 		"version",
 	]);
 	assert.equal(await dashboard.evaluate(() => Object.isFrozen(window.clawdiDesktop)), true);
-	await assert.rejects(dashboard.evaluate(() => window.clawdiDesktop?.createDashboardSession()));
+	await assert.rejects(
+		dashboard.evaluate(() => window.clawdiDesktop?.createDashboardSession(null)),
+	);
 	const original = dashboard.url();
 	await dashboard.evaluate(() => {
 		window.location.href = "https://evil.test/";
@@ -179,16 +197,6 @@ export function useSignIn(){return {signIn};}
 	assert.equal(dashboard.url(), original);
 	// Electron cancels navigation; reset Playwright's navigation signal before locator actions.
 	await dashboard.goto(original, { waitUntil: "domcontentloaded" });
-	await dashboard.evaluate(() =>
-		window.clawdiDesktop?.openInBrowser("https://cloud.clawdi.ai/settings"),
-	);
-	await dashboard.evaluate(() => window.clawdiDesktop?.openInBrowser("file:///etc/passwd"));
-	await dashboard.evaluate(() => window.clawdiDesktop?.openInBrowser("https://evil.test/"));
-	await dashboard.waitForTimeout(100);
-	const opened = await application.evaluate(
-		({ app }) => (app as typeof app & { openedUrls: string[] }).openedUrls,
-	);
-	assert.deepEqual(opened, ["https://cloud.clawdi.ai/settings"]);
 	await dashboard.evaluate(() => {
 		window.open("https://docs.clawdi.ai/start");
 		window.open("file:///etc/passwd");
@@ -198,9 +206,15 @@ export function useSignIn(){return {signIn};}
 		await application.evaluate(
 			({ app }) => (app as typeof app & { openedUrls: string[] }).openedUrls,
 		),
-		["https://cloud.clawdi.ai/settings", "https://docs.clawdi.ai/start"],
+		["https://docs.clawdi.ai/start"],
 	);
 	assert.equal(await dashboard.evaluate(() => Notification.requestPermission()), "denied");
+	await dashboard.bringToFront();
+	await dashboard.evaluate(() => navigator.clipboard.writeText("clawdi clipboard fixture"));
+	await context.route("https://bank.test/**", (route) =>
+		route.fulfill({ contentType: "text/html", body: "<h1>3DS fixture</h1>" }),
+	);
+
 	await dashboard.evaluate(() => {
 		const iframe = document.createElement("iframe");
 		iframe.name = "dashboard-child";
@@ -212,6 +226,21 @@ export function useSignIn(){return {signIn};}
 	assert.ok(child);
 	await child.waitForLoadState();
 	assert.equal(await child.evaluate(() => typeof window.clawdiDesktop), "undefined");
+	await dashboard.evaluate(() => {
+		const iframe = document.createElement("iframe");
+		iframe.name = "stripe-3ds";
+		iframe.src = "https://bank.test/challenge";
+		document.body.append(iframe);
+	});
+	await dashboard
+		.frameLocator('iframe[name="stripe-3ds"]')
+		.getByRole("heading", { name: "3DS fixture" })
+		.waitFor();
+	writeFileSync(join(state, "fail-revoke"), "");
+	await assert.rejects(dashboard.evaluate(() => window.clawdiDesktop?.signOut()));
+	assert.equal(existsSync(join(state, "auth.json")), true);
+	assert.equal(await dashboard.evaluate(() => document.cookie.includes("__session=")), true);
+	rmSync(join(state, "fail-revoke"));
 	const nextWindow = application.waitForEvent("window");
 	await dashboard.getByRole("button", { name: "Sign out", exact: true }).click();
 	const welcome = await nextWindow;
@@ -219,14 +248,15 @@ export function useSignIn(){return {signIn};}
 	assert.equal(existsSync(join(state, "auth.json")), false);
 	assert.equal(existsSync(join(state, "sync")), false);
 	const cookies = await application.evaluate(async ({ session }) =>
-		session.fromPartition("clawdi-dashboard").cookies.get({}),
+		session.fromPartition("persist:clawdi-dashboard").cookies.get({}),
 	);
 	assert.deepEqual(cookies, []);
+	assert.equal(readFileSync(join(state, "revoked"), "utf8"), "revoked\n");
 	const logs = await application.evaluate(({ app }) => app.getPath("logs"));
 	if (existsSync(join(logs, "main.log")))
 		assert.doesNotMatch(readFileSync(join(logs, "main.log"), "utf8"), /mock-once|mock-only/);
 	console.info(
-		"Verified real Electron: device sign-in → Connect → embedded signed-in dashboard → shared sign-out; security and IPC gates passed.",
+		"Verified real Electron: device sign-in → Connect → embedded signed-in dashboard → persisted restart (one ticket) → openConnector → server revoke and shared sign-out; security and IPC gates passed.",
 	);
 
 	async function waitForDashboard() {

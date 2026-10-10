@@ -589,14 +589,14 @@ async def client(db_session: AsyncSession, seed_user: User) -> AsyncIterator[htt
         yield db_session
 
     async def _override_get_auth() -> AuthContext:
-        return AuthContext(user=seed_user, factor_verification_age=(0, -1))
+        return AuthContext(user=seed_user)
 
     async def _override_optional_web_auth() -> AuthContext:
         # The dashboard `client` fixture represents a signed-in browser
         # session — public routes that take `optional_web_auth` should
         # see the same identity as `get_auth` would, so owner-detection
         # in the public route works in tests.
-        return AuthContext(user=seed_user, factor_verification_age=(0, -1))
+        return AuthContext(user=seed_user)
 
     overrides = {
         get_control_session: _override_get_session,

@@ -13,7 +13,7 @@ app.disableHardwareAcceleration();
 // main, updater, quit handling and service reconciliation run.
 shell.openExternal = async () => undefined;
 app.on("ready", () => {
-	session.fromPartition("clawdi-dashboard").protocol.handle(
+	session.fromPartition("persist:clawdi-dashboard").protocol.handle(
 		"https",
 		() =>
 			new Response("<!doctype html><title>Update fixture dashboard</title>", {

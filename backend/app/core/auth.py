@@ -269,7 +269,6 @@ class AuthContext:
         oauth_access_expires_at: datetime | None = None,
         credential_expires_at: datetime | None = None,
         dev_bypass: bool = False,
-        factor_verification_age: tuple[int, int] | None = None,
     ):
         self.user = user
         self.api_key = api_key
@@ -281,7 +280,6 @@ class AuthContext:
         # separate marker so routes can explicitly opt into that identity.
         self.oauth_cli = oauth_cli
         self.dev_bypass = dev_bypass
-        self.factor_verification_age = factor_verification_age
         if oauth_cli and (
             oauth_access_expires_at is None
             or oauth_access_expires_at.tzinfo is None
@@ -1046,7 +1044,6 @@ async def auth_via_verified_clerk_jwt(
         oauth_cli=oauth_cli,
         oauth_access_expires_at=oauth_access_expires_at,
         credential_expires_at=credential_expires_at,
-        factor_verification_age=clerk_factor_verification_age(payload.get("fva")),
     )
 
 
@@ -1359,56 +1356,6 @@ async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "This endpoint requires dashboard authentication"
         )
-    return auth
-
-
-def clerk_factor_verification_age(value: JsonValue | None) -> tuple[int, int] | None:
-    """Clerk v2 fva is [first, second] ages in minutes; -1 means unverified.
-
-    https://clerk.com/docs/guides/sessions/session-tokens
-    """
-    if not isinstance(value, list) or len(value) != 2:
-        return None
-    first, second = value
-    if type(first) is not int or type(second) is not int or first < -1 or second < -1:
-        return None
-    return first, second
-
-
-class ReverificationRequiredHTTPException(HTTPException):
-    def __init__(self):
-        # Clerk's documented authorization error, returned without FastAPI's detail wrapper.
-        super().__init__(
-            status.HTTP_403_FORBIDDEN,
-            {
-                "clerk_error": {
-                    "type": "forbidden",
-                    "reason": "reverification-error",
-                    "metadata": {"reverification": "strict"},
-                }
-            },
-            headers={"Cache-Control": "no-store"},
-        )
-
-
-async def require_reverified_web_auth(
-    auth: AuthContext = Depends(require_web_auth),
-) -> AuthContext:
-    """Equivalent to Clerk has({reverification: 'strict'}), after JWT validation.
-
-    Prefer the second factor; use the first when the second is unavailable.
-    https://github.com/clerk/javascript/blob/main/packages/shared/src/authorization.ts
-    Missing/malformed fva fails closed. Dev bypass remains development-only.
-    """
-    if auth.principal == AuthPrincipal.DEV_BYPASS:
-        return auth
-    ages = auth.factor_verification_age
-    if ages is None:
-        raise ReverificationRequiredHTTPException()
-    first_age, second_age = ages
-    age = first_age if second_age == -1 else second_age
-    if age < 0 or age >= 10:
-        raise ReverificationRequiredHTTPException()
     return auth
 
 

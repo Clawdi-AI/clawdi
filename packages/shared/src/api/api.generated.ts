@@ -767,6 +767,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/cli/auth/oauth/desktop-session/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke Desktop Session
+         * @description Revoke only a Clerk session owned by the authenticated CLI account.
+         */
+        post: operations["revoke_desktop_session_v1_cli_auth_oauth_desktop_session_revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sessions/{session_id}/content-events": {
         parameters: {
             query?: never;
@@ -5931,13 +5951,30 @@ export interface components {
             /** Project Id */
             project_id: string;
         };
+        /** DesktopSessionRequest */
+        DesktopSessionRequest: {
+            /** User Id */
+            user_id: string;
+            /** Session Id */
+            session_id: string;
+        };
+        /** DesktopSessionRevokeRequest */
+        DesktopSessionRevokeRequest: {
+            /** Session Id */
+            session_id: string;
+        };
         /**
          * DesktopSessionTicketResponse
          * @description One-use Clerk sign-in token transported privately through Desktop's preload.
          */
         DesktopSessionTicketResponse: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ticket" | "signed-in" | "sign-out";
             /** Ticket */
-            ticket: string;
+            ticket?: string | null;
             /** Expires In */
             expires_in: number;
             /** Clerk User Id */
@@ -11855,7 +11892,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DesktopSessionRequest"] | null;
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -11864,6 +11905,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DesktopSessionTicketResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_desktop_session_v1_cli_auth_oauth_desktop_session_revoke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DesktopSessionRevokeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthRevokeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
