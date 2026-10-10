@@ -22,6 +22,7 @@ import {
 	readHostedHermesSkillRecords,
 	removeHostedHermesSkill,
 } from "./hosted-hermes-skill";
+import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import {
 	hostedSkillArchiveSourceIdentity,
 	type PreparedHostedSkill,
@@ -113,7 +114,11 @@ function prepared(sourceDir: string, source: HostedSkillSource): PreparedHostedS
 	};
 }
 
-function projection(home: string, bundle?: PreparedHostedSkill) {
+function projection(
+	home: string,
+	bundle?: PreparedHostedSkill,
+	onEvidence?: (evidence: HostedSkillEvidence[]) => void,
+) {
 	const manifest: RuntimeManifest = {
 		schemaVersion: "clawdi.runtimeDesiredState.v1",
 		deploymentId: "hdep_test",
@@ -154,6 +159,7 @@ function projection(home: string, bundle?: PreparedHostedSkill) {
 		managedResourceRoot: join(root, "resources"),
 		openClawWorkspaceRoot: null,
 		preparedSourcedSkills: bundle ? new Map([["review", bundle]]) : new Map(),
+		onEvidence,
 	});
 }
 
@@ -294,18 +300,31 @@ describe("Hermes public native Skill pipeline", () => {
 		}
 		expect(failure).toBeInstanceOf(ManagedSkillResourceError);
 		expect(failure).not.toBeInstanceOf(HermesSkillGuardRefusalError);
+		let evidence: HostedSkillEvidence[] = [];
+		const result = projection(home, prepared(skill(), project), (value) => {
+			evidence = value;
+		});
+		expect(result.refusals).toEqual([]);
+		expect(result.errors).not.toHaveLength(0);
+		expect(evidence[0]?.status).toBe("failed");
+		expect(evidence[0]?.failureReason).toBeUndefined();
 		expect(existsSync(target)).toBe(false);
 	});
 
 	test("structured confirmation requests report a refusal without claiming installation", () => {
 		const { home, target } = setup();
+		let evidence: HostedSkillEvidence[] = [];
 		nativeResponse(home, {
 			ok: false,
 			error: "Confirmation needed",
 			targetMutationStarted: false,
 			guard: { decision: "ask", verdict: "caution", trustLevel: "trusted", findingCount: 2 },
 		});
-		expect(projection(home, prepared(skill(), github))).toEqual({
+		expect(
+			projection(home, prepared(skill(), github), (value) => {
+				evidence = value;
+			}),
+		).toEqual({
 			errors: [],
 			refusals: [
 				{
@@ -321,7 +340,39 @@ describe("Hermes public native Skill pipeline", () => {
 		});
 		expect(existsSync(target)).toBe(false);
 		expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(0);
+		expect(evidence).toMatchObject([
+			{ status: "failed", failureReason: "guard_confirmation_required" },
+		]);
 	});
+
+	test.each(["caution", "dangerous"])(
+		"community %s block produces typed failure evidence",
+		(verdict) => {
+			const { home, target } = setup();
+			let evidence: HostedSkillEvidence[] = [];
+			nativeResponse(home, {
+				ok: false,
+				error: "Blocked (community source + guard verdict)",
+				targetMutationStarted: false,
+				guard: { decision: "block", verdict, trustLevel: "community", findingCount: 7 },
+			});
+			expect(
+				projection(home, prepared(skill(), project), (value) => {
+					evidence = value;
+				}),
+			).toMatchObject({ errors: [], refusals: [{ reason: "guard_blocked", verdict }] });
+			expect(evidence).toMatchObject([
+				{
+					runtime: "hermes",
+					desiredState: "present",
+					status: "failed",
+					failureReason: "guard_blocked",
+				},
+			]);
+			expect(existsSync(target)).toBe(false);
+			expect(pendingManagedSkillReservations("hosted-manifest")).toHaveLength(0);
+		},
+	);
 
 	test.each(["hub", "legacy"])(
 		"refused updates preserve every byte of a locally modified receipt-owned %s copy",

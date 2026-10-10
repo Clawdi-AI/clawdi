@@ -12,6 +12,7 @@ export const hostedSkillEvidenceSchema = z
 			.nullable(),
 		desiredState: z.enum(["present", "absent"]),
 		status: z.enum(["installed", "removed", "failed"]),
+		failureReason: z.enum(["guard_blocked", "guard_confirmation_required"]).optional(),
 		targetDir: z.string().refine(isAbsolute).nullable(),
 		treeDigest: z
 			.string()

@@ -1,6 +1,11 @@
 import type { components } from "@clawdi/shared/api";
 import { HERO_GRID_CLASS } from "@clawdi/shared/ui";
-import { agentSurfaceCopy, identityFor, workspaceSkillInstallCopy } from "@clawdi/shared/view";
+import {
+	agentSkillGuardPresentation,
+	agentSurfaceCopy,
+	identityFor,
+	workspaceSkillInstallCopy,
+} from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
@@ -208,6 +213,7 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 			onRefresh={refresh}
 			renderItem={({ item }) => {
 				const identity = identityFor(item.name || item.skill_key);
+				const guardPresentation = agentSkillGuardPresentation(item);
 				return (
 					<HeroCard
 						key={item.skill_key}
@@ -220,11 +226,13 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 						footer={[
 							item.source,
 							t(
-								item.convergence === "failed"
-									? "agentExtensions.failedState"
-									: item.convergence === "installed"
-										? "agentExtensions.installed"
-										: "agentExtensions.not_observed",
+								guardPresentation
+									? `agentExtensions.${guardPresentation.title}`
+									: item.convergence === "failed"
+										? "agentExtensions.failedState"
+										: item.convergence === "installed"
+											? "agentExtensions.installed"
+											: "agentExtensions.not_observed",
 							),
 						]}
 						badges={
@@ -260,7 +268,13 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 								</>
 							) : undefined
 						}
-					/>
+					>
+						{guardPresentation ? (
+							<AppText className="text-sm text-destructive">
+								{t(`agentExtensions.${guardPresentation.message}`)}
+							</AppText>
+						) : null}
+					</HeroCard>
 				);
 			}}
 			title={t("skills.title")}

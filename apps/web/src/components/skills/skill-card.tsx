@@ -51,6 +51,7 @@ export function SkillCard({
 	skillLink,
 	entityLink,
 	searchQuery,
+	installationMessage,
 }: {
 	skill: SkillCardEntity;
 	/** Real Cloud entity backing navigation/selection/Project mutations. */
@@ -71,6 +72,7 @@ export function SkillCard({
 	entityLink?: EntityCardLinkOptions;
 	/** Collection-local search context; highlights and explains the matching field. */
 	searchQuery?: string;
+	installationMessage?: string;
 }) {
 	const id = identityFor(skill.name || skill.skill_key);
 	const canUninstall = !readOnly && !!onUninstall && !!cloudSkill?.project_id;
@@ -170,7 +172,13 @@ export function SkillCard({
 			actions={cardActions}
 			link={detailLink}
 			ariaLabel={`Open ${skill.name}`}
-		/>
+		>
+			{installationMessage ? (
+				<p className="text-sm text-destructive" role="status">
+					{installationMessage}
+				</p>
+			) : null}
+		</HeroCard>
 	);
 }
 

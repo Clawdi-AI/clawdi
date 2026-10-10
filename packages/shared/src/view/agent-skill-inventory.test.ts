@@ -1,8 +1,124 @@
 import { describe, expect, test } from "bun:test";
 import type { components } from "../api";
-import { fetchAgentProjectSkills } from "./agent-skill-inventory";
+import {
+	agentSkillGuardPresentation,
+	agentSkillInstallCopy,
+	agentSkillsHaveRetryableInstallFailure,
+	fetchAgentProjectSkills,
+} from "./agent-skill-inventory";
 
 type Skill = components["schemas"]["SkillSummaryResponse"];
+
+test.each(["library", "project", "bundled"] as const)(
+	"blocked %s skills suggest reviewing the GitHub source",
+	(source) => {
+		const presentation = agentSkillGuardPresentation({
+			source,
+			convergence: "failed",
+			observation_error_code: "guard_blocked",
+		});
+		if (!presentation) throw new Error("Missing guard presentation");
+		expect(agentSkillInstallCopy[presentation.message]).toBe(
+			"Hermes's Skills Guard blocked this skill (it flagged risky code). Install it from its GitHub source to review it, or choose another skill.",
+		);
+	},
+);
+
+test("already GitHub-sourced skills suggest choosing another skill instead of reinstalling", () => {
+	const presentation = agentSkillGuardPresentation({
+		source: "github",
+		convergence: "failed",
+		observation_error_code: "guard_blocked",
+	});
+	if (!presentation) throw new Error("Missing guard presentation");
+	expect(agentSkillInstallCopy[presentation.message]).toBe(
+		"Hermes's Skills Guard flagged this skill's code as risky and blocked installation. Choose another skill.",
+	);
+});
+
+test.each(["library", "project", "github"] as const)(
+	"confirmation-required %s skills explain that retries will not help",
+	(source) => {
+		const presentation = agentSkillGuardPresentation({
+			source,
+			convergence: "failed",
+			observation_error_code: "guard_confirmation_required",
+		});
+		if (!presentation) throw new Error("Missing guard presentation");
+		expect(agentSkillInstallCopy[presentation.message]).toBe(
+			"Hermes's Skills Guard needs explicit confirmation for this skill. Retrying won't help.",
+		);
+	},
+);
+
+test("other failures and unobserved or installed skills keep their existing presentation", () => {
+	for (const observation_error_code of ["reconcile_failed", null] as const) {
+		expect(
+			agentSkillGuardPresentation({
+				source: "project",
+				convergence: "failed",
+				observation_error_code,
+			}),
+		).toBeNull();
+	}
+	for (const convergence of ["installed", "not_observed"] as const) {
+		for (const observation_error_code of [
+			"guard_blocked",
+			"guard_confirmation_required",
+		] as const) {
+			expect(
+				agentSkillGuardPresentation({ source: "github", convergence, observation_error_code }),
+			).toBeNull();
+		}
+	}
+	expect(agentSkillGuardPresentation(null)).toBeNull();
+	expect(agentSkillGuardPresentation(undefined)).toBeNull();
+});
+
+test.each(["guard_blocked", "guard_confirmation_required"] as const)(
+	"%s suppresses the retry banner for both Cloud and duplicate workspace failure status",
+	(observation_error_code) => {
+		const guard = {
+			skill_key: "review",
+			source: "github" as const,
+			convergence: "failed" as const,
+			observation_error_code,
+		};
+		expect(agentSkillsHaveRetryableInstallFailure([guard])).toBe(false);
+		expect(
+			agentSkillsHaveRetryableInstallFailure([guard], [{ skill_key: "review", status: "failed" }]),
+		).toBe(false);
+		expect(
+			agentSkillsHaveRetryableInstallFailure([
+				guard,
+				{ ...guard, skill_key: "other", observation_error_code: "reconcile_failed" },
+			]),
+		).toBe(true);
+		expect(
+			agentSkillsHaveRetryableInstallFailure([guard], [{ skill_key: "other", status: "failed" }]),
+		).toBe(true);
+	},
+);
+
+test("retry banner retains ordinary Cloud and workspace failures", () => {
+	expect(agentSkillsHaveRetryableInstallFailure([])).toBe(false);
+	expect(
+		agentSkillsHaveRetryableInstallFailure([], [{ skill_key: "review", status: "requested" }]),
+	).toBe(false);
+	expect(
+		agentSkillsHaveRetryableInstallFailure([], [{ skill_key: "review", status: "failed" }]),
+	).toBe(true);
+	expect(
+		agentSkillsHaveRetryableInstallFailure([
+			{
+				skill_key: "review",
+				source: "project",
+				convergence: "failed",
+				observation_error_code: "reconcile_failed",
+			},
+		]),
+	).toBe(true);
+});
 
 function skill(id: string, skillKey: string, projectId: string): Skill {
 	return {
