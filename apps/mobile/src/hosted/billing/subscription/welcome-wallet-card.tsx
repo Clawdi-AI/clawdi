@@ -7,7 +7,7 @@ import {
 	welcomeWalletDescription,
 	welcomeWalletTitle,
 } from "@clawdi/shared/view";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import Gift from "lucide-react-native/icons/gift";
 import PartyPopper from "lucide-react-native/icons/party-popper";
 import RefreshCw from "lucide-react-native/icons/refresh-cw";
@@ -21,9 +21,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { nextBillingCursor } from "@/hosted/billing/format";
+import { useWallet } from "@/hosted/billing/hooks";
 import { formatCredits } from "@/hosted/billing/store/store-presentation";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
+import { transientQueryRetry } from "@/lib/query-retry";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useStoreSurfaces } from "@/platform/store/store-provider";
 
@@ -41,16 +43,7 @@ export function WelcomeWalletCard() {
 	const [checkStartedAt, setCheckStartedAt] = useState(() => Date.now());
 	const [timedOut, setTimedOut] = useState(false);
 	// Same keys as the Wallet page, so both screens share one cache entry.
-	const wallet = useQuery({
-		queryKey: accountQueryKey(scope, "billing-wallet"),
-		queryFn: ({ signal }) =>
-			read((s) => {
-				if (!compute) throw new Error("Compute API unavailable");
-				return compute.getWallet(s);
-			}, signal),
-		enabled: scope.isReady && Boolean(compute),
-		retry: false,
-	});
+	const wallet = useWallet();
 	const transactions = useInfiniteQuery({
 		queryKey: accountQueryKey(scope, "billing-transactions"),
 		initialPageParam: undefined as string | undefined,
@@ -61,7 +54,7 @@ export function WelcomeWalletCard() {
 			}, signal),
 		getNextPageParam: nextBillingCursor,
 		enabled: scope.isReady && Boolean(compute),
-		retry: false,
+		...transientQueryRetry,
 		refetchInterval: (query) => {
 			const pending = query.state.data?.pages
 				.flatMap((page) => page.items)

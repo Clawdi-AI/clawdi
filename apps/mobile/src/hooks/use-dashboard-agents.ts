@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRef } from "react";
 import { useCloudAgents } from "@/hooks/cloud-inventory";
 import { useMobileApi } from "@/lib/api-provider";
+import { transientQueryRetry } from "@/lib/query-retry";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 /** Both inventories are account-fenced. Unresolved membership never claims an empty account. */
 export function useDashboardAgents() {
@@ -25,7 +26,7 @@ export function useDashboardAgents() {
 				return hosted.listDeployments(lease);
 			}, signal),
 		enabled: scope.isReady && Boolean(hosted),
-		retry: false,
+		...transientQueryRetry,
 		refetchInterval: (query) => {
 			if (query.state.error) return false;
 			const polling = deploymentPollingState(query.state.data, trackers.current, Date.now());
@@ -42,7 +43,7 @@ export function useDashboardAgents() {
 				return compute.getProductCapabilities(lease);
 			}, signal),
 		enabled: scope.isReady && Boolean(compute),
-		retry: false,
+		...transientQueryRetry,
 	});
 	const envs = agents.data ?? [],
 		envById = new Map(envs.map((env) => [env.id.toLowerCase(), env]));
@@ -53,7 +54,7 @@ export function useDashboardAgents() {
 	const legacy = useQuery({
 		queryKey: accountQueryKey(scope, "legacy-agent-ids"),
 		enabled: scope.isReady && Boolean(compute) && Boolean(capabilities.data?.can_use_v1),
-		retry: false,
+		...transientQueryRetry,
 		queryFn: ({ signal }) =>
 			read((lease) => {
 				if (!compute) throw new Error("Compute API unavailable");

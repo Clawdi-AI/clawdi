@@ -3,30 +3,23 @@ import {
 	headerWalletBalanceControlPresentation,
 	headerWalletBalancePresentation,
 } from "@clawdi/shared/view";
-import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
+import { useWallet } from "@/hosted/billing/hooks";
 import { formatCredits } from "@/hosted/billing/store/store-presentation";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
-import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { accountQueryKey, useAccountScope } from "@/platform/account-lifecycle";
 import { useStoreSurfaces } from "@/platform/store/store-provider";
+import { useRefreshOnFocus } from "@/platform/use-refresh-on-focus";
 
 function useWalletPresentation() {
 	const { compute } = useMobileApi();
 	const scope = useAccountScope();
-	const read = useAccountRead();
 	const t = useI18n();
 	const { creditUnits } = useStoreSurfaces();
-	const wallet = useQuery({
-		queryKey: accountQueryKey(scope, "billing-wallet"),
-		enabled: scope.isReady && Boolean(compute),
-		retry: false,
-		queryFn: ({ signal }) =>
-			read((lease) => {
-				if (!compute) throw new Error("Compute unavailable");
-				return compute.getWallet(lease);
-			}, signal),
-	});
+	// The header outlives tab switches; revalidate a stale balance whenever its screen returns.
+	useRefreshOnFocus([accountQueryKey(scope, "billing-wallet")]);
+	const wallet = useWallet();
 	const state = wallet.isPending ? "loading" : wallet.data ? "ready" : "unavailable";
 	const balance = wallet.data?.balance_usd;
 	const credits = creditUnits && balance ? formatCredits(balance, t("store.credits")) : null;

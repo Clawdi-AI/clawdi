@@ -1,6 +1,6 @@
 import { billingPageClass, transactionsSectionClasses } from "@clawdi/shared/ui";
 import { transactionsCountLabel } from "@clawdi/shared/view";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -10,14 +10,17 @@ import { SettingsShell } from "@/components/settings/shell";
 import { NativeList } from "@/components/ui/native-list";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { nextBillingCursor, uniqueBillingItems } from "@/hosted/billing/format";
+import { useWallet } from "@/hosted/billing/hooks";
 import { useCreditsNotice, useStoreRecoveryRefresh } from "@/hosted/billing/store/add-credits";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
 import { TransactionRow } from "@/hosted/billing/wallet/transactions-section";
 import { WalletSettingsSections } from "@/hosted/billing/wallet/wallet-sections";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
+import { transientQueryRetry } from "@/lib/query-retry";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useStoreSurfaces } from "@/platform/store/store-provider";
+import { useRefreshOnFocus } from "@/platform/use-refresh-on-focus";
 
 function initialCursor(): string | undefined {
 	return undefined;
@@ -34,18 +37,12 @@ function WalletView() {
 	const surfaces = useStoreSurfaces();
 	const creditsNotice = useCreditsNotice();
 	useStoreRecoveryRefresh();
-	const wallet = useQuery({
-		queryKey: accountQueryKey(scope, "billing-wallet"),
-		queryFn: ({ signal }) =>
-			read((s) => {
-				if (!compute) throw new Error("Compute API unavailable");
-				return compute.getWallet(s);
-			}, signal),
-		enabled: scope.isReady && Boolean(compute),
-		retry: false,
-	});
+	const walletKey = accountQueryKey(scope, "billing-wallet");
+	const transactionsKey = accountQueryKey(scope, "billing-transactions");
+	useRefreshOnFocus([walletKey, transactionsKey]);
+	const wallet = useWallet();
 	const transactions = useInfiniteQuery({
-		queryKey: accountQueryKey(scope, "billing-transactions"),
+		queryKey: transactionsKey,
 		initialPageParam: initialCursor(),
 		queryFn: ({ signal, pageParam }) =>
 			read((s) => {
@@ -54,7 +51,7 @@ function WalletView() {
 			}, signal),
 		getNextPageParam: nextBillingCursor,
 		enabled: scope.isReady && Boolean(compute),
-		retry: false,
+		...transientQueryRetry,
 	});
 	const rows = uniqueBillingItems(
 		transactions.data?.pages.flatMap((page) => page.items) ?? [],
