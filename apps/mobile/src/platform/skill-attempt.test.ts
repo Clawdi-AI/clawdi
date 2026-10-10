@@ -9,6 +9,7 @@ import {
 	parseSkillAttempt,
 	type SkillAttempt,
 	skillAttemptAfterFailure,
+	skillRejectionReason,
 } from "@/platform/skill-attempt";
 
 test("Workspace Skill recovery preserves uncertain intent and rejects stale destructive journal changes", async () => {
@@ -111,7 +112,9 @@ test("a failed send settles by what the server proves, whether or not an earlier
 		status: "uncertain",
 	};
 	for (const saved of [uncertain, { ...uncertain, status: "prepared" as const }]) {
-		// A live receipt answers before any of these, so none of them follows an applied change.
+		// Within the 24 h receipt retention a replay is answered before any of these, so none
+		// follows an applied change. After 24 h a 412 or capability_unavailable can; the request
+		// still can't be replayed, so it settles as rejected either way.
 		for (const [status, code] of [
 			[412, "resource_version_mismatch"],
 			[400, "workspace_skill_source_invalid"],
@@ -145,4 +148,36 @@ test("a failed send settles by what the server proves, whether or not an earlier
 	expect(await store.readSavedAttempt("account-dep")).toEqual(retryable);
 	await store.replaceAttempt("account-dep", retryable, uncertain, () => true);
 	expect(await store.readSavedAttempt("account-dep")).toEqual(uncertain);
+});
+
+test("a rejected request explains the server's reason; only a 412 says the Skills changed", () => {
+	const rejected: SkillAttempt = {
+		format: 1,
+		deploymentId: "dep",
+		key: "fixed-key",
+		version: "rv1",
+		mutation: { action: "install", request: { repo: "owner/repo", path: "skills/missing" } },
+		status: "rejected",
+	};
+	expect(
+		skillRejectionReason(rejected, new ApiClientError(404, "workspace_skill_source_invalid")),
+	).toContain("Couldn't find a valid skill at this GitHub path");
+	for (const code of [
+		"workspace_skill_source_conflict",
+		"workspace_skill_reserved",
+		"workspace_skills_capability_unavailable",
+	])
+		expect(skillRejectionReason(rejected, new ApiClientError(409, code))).not.toBeNull();
+	// A version conflict keeps the "Skills changed" copy.
+	expect(
+		skillRejectionReason(rejected, new ApiClientError(412, "resource_version_mismatch")),
+	).toBeNull();
+	// Without the failure (e.g. after a restart) the reason is unknown.
+	expect(skillRejectionReason(rejected, null)).toBeNull();
+	expect(
+		skillRejectionReason(
+			{ ...rejected, status: "uncertain" },
+			new ApiClientError(404, "workspace_skill_source_invalid"),
+		),
+	).toBeNull();
 });

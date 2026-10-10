@@ -34,7 +34,11 @@ import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import { NativeSegments } from "@/platform/navigation/segmented-control";
 import { useSheet } from "@/platform/navigation/use-sheet";
-import { type SkillAttempt, skillAttemptAfterFailure } from "@/platform/skill-attempt";
+import {
+	type SkillAttempt,
+	skillAttemptAfterFailure,
+	skillRejectionReason,
+} from "@/platform/skill-attempt";
 import { skillAttempts } from "@/platform/skill-attempt-storage";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
@@ -74,6 +78,8 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 	const focused = useIsFocused();
 	const [startedAt, setStartedAt] = useState(Date.now);
 	const [accepted, setAccepted] = useState(false);
+	// The last send's failure; the journal stores only its status, not the server's reason.
+	const [failure, setFailure] = useState<unknown>(null);
 	const confirmation = useRef(0);
 	const inventory = useQuery<DeployComponents["schemas"]["V2WorkspaceSkillListResponse"]>({
 		queryKey: accountQueryKey(scope, "workspace-skills", id),
@@ -159,6 +165,7 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 			const owns = () => current() && scope.isCurrent() && !scope.signal.aborted;
 			if (!visible()) return;
 			setAccepted(false);
+			setFailure(null);
 			if (fresh) await skillAttempts.saveAttempt(storageKey, attempt, owns);
 			if (!owns()) return;
 			setSaved(attempt);
@@ -182,10 +189,11 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 			} catch (error) {
 				const settled = skillAttemptAfterFailure(attempt, error);
 				if (!owns() || settled.status === "uncertain") throw error;
-				// The saved request's status copy explains a resolved failure.
+				// The saved request's status copy or the server's reason explains a resolved failure.
 				await skillAttempts.replaceAttempt(storageKey, sending, settled, owns);
 				if (!owns()) return;
 				setSaved(settled);
+				setFailure(error);
 				await refresh();
 			}
 		});
@@ -237,6 +245,7 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 			mutation.action === "uninstall",
 		);
 	};
+	const reason = saved ? skillRejectionReason(saved, failure) : null;
 	let installRequest: WorkspaceSkillMutation | null = null;
 	try {
 		installRequest = { action: "install", request: parseWorkspaceSkillGitHubInput(source) };
@@ -268,15 +277,23 @@ function WorkspaceSkills({ id, install }: { id: string; install: boolean }) {
 			) : null}
 			{saved ? (
 				<>
-					<AppText>
-						{t(
-							saved.status === "rejected"
-								? "workspaceSkills.conflict"
-								: saved.status === "prepared"
-									? "workspaceSkills.notApplied"
-									: "workspaceSkills.uncertain",
-						)}
-					</AppText>
+					{reason ? (
+						<ApiErrorPanel
+							error={failure}
+							title={t("workspaceSkills.updateError")}
+							normalizer={{ isAuthError: () => false, normalizeError: () => reason }}
+						/>
+					) : (
+						<AppText>
+							{t(
+								saved.status === "rejected"
+									? "workspaceSkills.conflict"
+									: saved.status === "prepared"
+										? "workspaceSkills.notApplied"
+										: "workspaceSkills.uncertain",
+							)}
+						</AppText>
+					)}
 					<AppText selectable>
 						{saved.mutation.action === "install"
 							? `${saved.mutation.request.repo}/${saved.mutation.request.path ?? ""}`

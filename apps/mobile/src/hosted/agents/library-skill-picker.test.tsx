@@ -1,4 +1,4 @@
-import { beforeEach, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, expect, mock, test } from "bun:test";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { en } from "@/lib/i18n/en";
@@ -35,11 +35,15 @@ function harness() {
 }
 
 let h: ReturnType<typeof harness>;
+let active = true;
 const passthrough = ({ children }: { children?: ReactNode }) => <>{children}</>;
+// Bun's module mocks last for the whole run: keep every real export, and let useQuery fall
+// back to the real hook once this file's tests are done.
+const reactQuery = { ...(await import("@tanstack/react-query")) };
 mock.module("@tanstack/react-query", () => ({
-	focusManager: { isFocused: () => true },
-	onlineManager: { isOnline: () => true },
-	useQuery: () => h.inventory,
+	...reactQuery,
+	useQuery: (...args: Parameters<typeof reactQuery.useQuery>) =>
+		active ? h.inventory : reactQuery.useQuery(...args),
 }));
 mock.module("expo-router", () => ({
 	Stack: { Screen: () => null },
@@ -140,6 +144,9 @@ const install = () => h.buttons.find((button) => button.label === en.agentExtens
 
 beforeEach(() => {
 	h = harness();
+});
+afterAll(() => {
+	active = false;
 });
 
 test("Install stays usable while the inventory polls, sends one PUT and closes the sheet", async () => {

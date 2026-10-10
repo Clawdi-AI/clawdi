@@ -3,6 +3,7 @@ import {
 	deploymentMutationHeaders,
 	type WorkspaceSkillMutation,
 } from "@clawdi/shared/api";
+import { workspaceSkillErrorMessage } from "@clawdi/shared/view";
 import { type AttemptStore, createSerializedAttemptStore } from "@/platform/attempt-store";
 
 export type SkillAttempt = {
@@ -100,9 +101,12 @@ const sourceRejections: Partial<Record<number, string[]>> = {
 	],
 };
 
-/** Hosted returns a live receipt's result before any of these checks, so each of them
- * proves the change was not applied: the rejections fail the same way on every replay,
- * and an unavailable source also passed If-Match, so the change may be sent again.
+/** Hosted keeps a request's receipt for 24 h and answers a replay from it before any of
+ * these checks, so within that window each of them proves the change was not applied.
+ * After 24 h, a 412 or capability_unavailable can follow an applied change whose receipt
+ * expired; the request still can't be replayed, so it settles as rejected and the copy never
+ * claims nothing was applied. Source errors are raised after If-Match passed, so nothing
+ * changed since the saved version at any age, and an unavailable source may be sent again.
  */
 export function skillAttemptAfterFailure(attempt: SkillAttempt, error: unknown): SkillAttempt {
 	let status: SkillAttempt["status"] = "uncertain";
@@ -112,4 +116,12 @@ export function skillAttemptAfterFailure(attempt: SkillAttempt, error: unknown):
 		else if (sourceRejections[error.status]?.includes(error.code ?? "")) status = "rejected";
 	}
 	return { ...attempt, status };
+}
+
+/** The reason shown for a rejected request. A 412 only says the Skills changed, so it keeps
+ * the conflict copy; the reason is unknown once the error is gone (e.g. after a restart).
+ */
+export function skillRejectionReason(attempt: SkillAttempt, error: unknown): string | null {
+	if (attempt.status !== "rejected" || !(error instanceof ApiClientError)) return null;
+	return workspaceSkillErrorMessage(error.code);
 }
