@@ -64,7 +64,7 @@
 		"@types/react": "catalog:expo57",
 		"@types/react-dom": "catalog:",
 		"culori": "catalog:",
-		"sharp": "0.34.5",
+		"sharp": "0.35.5",
 		"typescript": "catalog:"
 	},
 	"expo": {
