@@ -41,13 +41,14 @@ export function computeSubscriptionCancellationCopy({
 	isTrial: boolean;
 	periodEndLabel: string | null;
 	hasRetainedDeployment: boolean;
-}): { description: string; confirmLabel: string } {
+}): { description: string; confirmLabel: string; dismissLabel: string } {
 	if (isTrial) {
 		return {
 			description: hasRetainedDeployment
 				? "The trial ends immediately and the agent stops. Your saved data is kept."
 				: "The trial ends immediately. This cannot restore a deleted agent.",
 			confirmLabel: "End trial now",
+			dismissLabel: "Keep trial",
 		};
 	}
 	const ending = periodEndLabel
@@ -58,6 +59,8 @@ export function computeSubscriptionCancellationCopy({
 			? `${ending} The agent stops when the period ends. Your saved data is kept.`
 			: `${ending} This cannot restore a deleted agent.`,
 		confirmLabel: "Cancel at period end",
+		// Dismissing keeps the subscription; a bare "Cancel" reads like the confirm action.
+		dismissLabel: "Keep subscription",
 	};
 }
 

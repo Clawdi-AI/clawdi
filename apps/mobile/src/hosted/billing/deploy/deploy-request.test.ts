@@ -5,6 +5,7 @@ import {
 	createHostedComputeClient,
 	type DeployComponents,
 	type HostedDeployPlan,
+	type HostedDeployRequestStatus,
 	type HostedDeployWizardDraft,
 	type HostedIncludedBasicAvailability,
 	recordHostedCheckoutSends,
@@ -29,6 +30,7 @@ import {
 	storeAdmissionRecoveryAttempt,
 	storeFundingHoldsAttempt,
 	WALLET_RELEASE_GRACE_MS,
+	waitForDeployRequest,
 	walletCreationErrorCopy,
 	walletQuoteConfirmation,
 	walletRequestNeedsQuote,
@@ -927,5 +929,102 @@ describe("new Wallet subscription creation", () => {
 				"wallet_creation",
 			).description,
 		).toContain("Retry to safely resume the same attempt.");
+	});
+});
+
+describe("accepted request follow-up", () => {
+	const pending: HostedDeployRequestStatus = {
+		deploy_request_id: "request-stable",
+		request_status: "pending",
+	};
+	const linked: HostedDeployRequestStatus = {
+		deploy_request_id: "request-stable",
+		request_status: "processing",
+		lineage_tail: {
+			deployment_id: "hdep_new",
+			lineage_version: 1,
+			lineage_state: "processing",
+		},
+	};
+	function clock() {
+		let time = 0;
+		return {
+			now: () => time,
+			sleep: async (ms: number) => {
+				time += ms;
+			},
+		};
+	}
+
+	test("reads past lag and transient failures until hosted links the deployment", async () => {
+		const reads: (HostedDeployRequestStatus | Error)[] = [
+			new ApiClientError(404, "deploy_request_not_found"),
+			new ApiClientNetworkError("timeout"),
+			new ApiClientError(503),
+			pending,
+			linked,
+		];
+		let calls = 0;
+		const projection = await waitForDeployRequest(
+			async () => {
+				const next = reads[calls++];
+				if (next instanceof Error) throw next;
+				if (!next) throw new Error("unexpected read");
+				return next;
+			},
+			() => true,
+			clock(),
+		);
+		expect(calls).toBe(5);
+		expect(projection).toMatchObject({ kind: "deployment", deploymentId: "hdep_new" });
+	});
+
+	test("ends on terminal status, leaves pending requests to Check status at the deadline", async () => {
+		expect(
+			await waitForDeployRequest(
+				async () => ({ ...pending, request_status: "failed" }),
+				() => true,
+				clock(),
+			),
+		).toEqual({ kind: "terminal", requestStatus: "failed" });
+		let calls = 0;
+		expect(
+			await waitForDeployRequest(
+				async () => {
+					calls++;
+					return pending;
+				},
+				() => true,
+				{ ...clock(), intervalMs: 1_000, timeoutMs: 5_000 },
+			),
+		).toEqual({ kind: "wait" });
+		expect(calls).toBe(6);
+	});
+
+	test("surfaces definitive read failures and stops once the screen is gone", async () => {
+		const forbidden = new ApiClientError(403);
+		await expect(
+			waitForDeployRequest(
+				async () => {
+					throw forbidden;
+				},
+				() => true,
+				clock(),
+			),
+		).rejects.toBe(forbidden);
+		let owned = true;
+		let calls = 0;
+		expect(
+			await waitForDeployRequest(
+				async () => {
+					calls++;
+					owned = false;
+					return pending;
+				},
+				() => owned,
+				clock(),
+			),
+		).toBeNull();
+		expect(calls).toBe(1);
 	});
 });
