@@ -122,6 +122,13 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 						}
 						headerActions={[
 							{
+								id: "edit",
+								label: t("libraryPort.edit"),
+								disabled: action.busy,
+								onPress: () =>
+									router.push({ pathname: "/memories/[id]/edit", params: { id: memory.id } }),
+							},
+							{
 								id: "delete",
 								label: t("libraryPort.delete"),
 								destructive: true,

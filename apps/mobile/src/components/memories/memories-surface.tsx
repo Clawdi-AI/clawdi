@@ -196,9 +196,6 @@ function MemoriesView() {
 						memory={memory}
 						searchQuery={searchQuery}
 						onDelete={() => remove(memory)}
-						onEdit={() => {
-							router.push({ pathname: "/memories/[id]/edit", params: { id: memory.id } });
-						}}
 					/>
 				)}
 				empty={

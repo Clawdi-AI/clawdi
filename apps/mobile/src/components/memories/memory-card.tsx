@@ -25,12 +25,10 @@ import { useAgentRouteId } from "@/platform/navigation/use-agent-route";
 export function MemoryCard({
 	memory,
 	onDelete,
-	onEdit,
 	searchQuery = "",
 }: {
 	memory: components["schemas"]["MemoryResponse"];
 	onDelete?: () => void;
-	onEdit?: () => void;
 	searchQuery?: string;
 }) {
 	const t = useI18n();
@@ -52,7 +50,8 @@ export function MemoryCard({
 				}
 				ariaLabel={t("labels.openMemory", { name: memoryDisplayName(memory.content) })}
 			/>
-			<WebView recipe="">
+			{/* Read-only content must not capture touches meant for the stretched link behind it. */}
+			<WebView recipe="" pointerEvents="none">
 				<WebText recipe={memoriesSurfaceClasses.content} numberOfLines={8}>
 					<SearchHighlightedText text={visibleContent} query={searchQuery} />
 				</WebText>
@@ -86,7 +85,6 @@ export function MemoryCard({
 						size="icon-sm"
 						className={webView(memoriesSurfaceClasses.deleteAction)}
 						onPress={onDelete}
-						onLongPress={onEdit}
 						accessibilityLabel={t("labels.deleteMemory", {
 							name: memoryDisplayName(memory.content),
 						})}

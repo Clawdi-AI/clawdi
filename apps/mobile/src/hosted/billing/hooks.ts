@@ -1,6 +1,7 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { nextBillingCursor } from "@/hosted/billing/format";
 import { useMobileApi } from "@/lib/api-provider";
+import { transientQueryRetry } from "@/lib/query-retry";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 
 function initialCursor(): string | undefined {
@@ -22,5 +23,22 @@ export function useSubscriptions(enabled = true) {
 		getNextPageParam: nextBillingCursor,
 		enabled: scope.isReady && Boolean(compute) && enabled,
 		retry: false,
+	});
+}
+
+/** One Wallet read for the Overview header, welcome card and Wallet page. */
+export function useWallet() {
+	const { compute } = useMobileApi();
+	const scope = useAccountScope();
+	const read = useAccountRead();
+	return useQuery({
+		queryKey: accountQueryKey(scope, "billing-wallet"),
+		queryFn: ({ signal }) =>
+			read((s) => {
+				if (!compute) throw new Error("Compute API unavailable");
+				return compute.getWallet(s);
+			}, signal),
+		enabled: scope.isReady && Boolean(compute),
+		...transientQueryRetry,
 	});
 }
