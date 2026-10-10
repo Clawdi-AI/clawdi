@@ -1,6 +1,6 @@
 "use client";
 import {
-	agentSkillGuardBlocked,
+	agentSkillGuardPresentation,
 	agentSkillInstallCopy,
 	parseWorkspaceSkillGitHubInput,
 	workspaceSkillInstallCopy,
@@ -39,6 +39,7 @@ import {
 import { useAgentManagedSkills } from "@/hosted/agents/agent-skills-query";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { LibrarySkillPicker } from "@/hosted/agents/library-skill-picker";
+import { SkillUpdateFailureAlert } from "@/hosted/agents/skill-update-failure-alert";
 import {
 	normalizeWorkspaceSkillError,
 	workspaceSkillErrorNormalizer,
@@ -307,15 +308,10 @@ function HostedWorkspaceSkillsPanelContent({
 					</AlertDescription>
 				</Alert>
 			) : null}
-			{status.data?.items?.some((skill) => skill.status === "failed") ||
-			managedSkills.data?.skills.some(
-				(skill) => skill.convergence === "failed" && !agentSkillGuardBlocked(skill),
-			) ? (
-				<Alert variant="destructive">
-					<AlertTitle>Couldn't update skills</AlertTitle>
-					<AlertDescription>We'll retry automatically.</AlertDescription>
-				</Alert>
-			) : null}
+			<SkillUpdateFailureAlert
+				managed={managedSkills.data?.skills ?? []}
+				hosted={status.data?.items ?? []}
+			/>
 			{managedSkills.data?.removal_failures?.length ? (
 				<Alert variant="destructive">
 					<AlertTitle>Couldn't remove skills</AlertTitle>
@@ -501,6 +497,7 @@ function WorkspaceSkillCard({
 	onRemove: (mutation: WorkspaceSkillMutation) => Promise<unknown>;
 }) {
 	const managed = item.managed;
+	const guardPresentation = agentSkillGuardPresentation(managed);
 	const libraryReference = managed?.source === "library" && !managed.read_only && managed.skill_id;
 	const removable = Boolean(
 		(libraryReference && canManageLibrary) || (item.desired && canMutate && !managed?.read_only),
@@ -531,7 +528,7 @@ function WorkspaceSkillCard({
 			provenanceLabel={provenance}
 			showVersion={Boolean(item.cloudProjection?.version)}
 			installationMessage={
-				agentSkillGuardBlocked(managed) ? agentSkillInstallCopy.guardBlocked : undefined
+				guardPresentation ? agentSkillInstallCopy[guardPresentation.message] : undefined
 			}
 			actions={
 				removable ? (

@@ -1,7 +1,7 @@
 import type { components } from "@clawdi/shared/api";
 import { HERO_GRID_CLASS } from "@clawdi/shared/ui";
 import {
-	agentSkillGuardBlocked,
+	agentSkillGuardPresentation,
 	agentSurfaceCopy,
 	identityFor,
 	workspaceSkillInstallCopy,
@@ -213,6 +213,7 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 			onRefresh={refresh}
 			renderItem={({ item }) => {
 				const identity = identityFor(item.name || item.skill_key);
+				const guardPresentation = agentSkillGuardPresentation(item);
 				return (
 					<HeroCard
 						key={item.skill_key}
@@ -225,8 +226,8 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 						footer={[
 							item.source,
 							t(
-								agentSkillGuardBlocked(item)
-									? "agentExtensions.guardBlockedTitle"
+								guardPresentation
+									? `agentExtensions.${guardPresentation.title}`
 									: item.convergence === "failed"
 										? "agentExtensions.failedState"
 										: item.convergence === "installed"
@@ -268,9 +269,9 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 							) : undefined
 						}
 					>
-						{agentSkillGuardBlocked(item) ? (
+						{guardPresentation ? (
 							<AppText className="text-sm text-destructive">
-								{t("agentExtensions.guardBlocked")}
+								{t(`agentExtensions.${guardPresentation.message}`)}
 							</AppText>
 						) : null}
 					</HeroCard>

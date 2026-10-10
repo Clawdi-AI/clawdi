@@ -14,6 +14,9 @@ const agentExtensionsEn = {
 	failedState: "Couldn't install",
 	guardBlockedTitle: agentSkillInstallCopy.guardBlockedTitle,
 	guardBlocked: agentSkillInstallCopy.guardBlocked,
+	guardBlockedGitHub: agentSkillInstallCopy.guardBlockedGitHub,
+	guardConfirmationRequiredTitle: agentSkillInstallCopy.guardConfirmationRequiredTitle,
+	guardConfirmationRequired: agentSkillInstallCopy.guardConfirmationRequired,
 	removalFailed: "Couldn't remove this Skill. Check the agent, then refresh.",
 	view: "View Library Skill",
 };

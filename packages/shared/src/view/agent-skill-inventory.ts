@@ -1,4 +1,4 @@
-import type { components } from "../api";
+import type { components, DeployComponents } from "../api";
 import { type FetchAllPagesOptions, fetchAllPages, type PaginatedPage } from "./api-pagination";
 
 export type AgentSkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -7,18 +7,51 @@ export const agentSkillInstallCopy = {
 	guardBlockedTitle: "Blocked by Hermes Skills Guard",
 	guardBlocked:
 		"Hermes's Skills Guard blocked this skill (it flagged risky code). Install it from its GitHub source to review it, or choose another skill.",
+	guardBlockedGitHub:
+		"Hermes's Skills Guard flagged this skill's code as risky and blocked installation. Choose another skill.",
+	guardConfirmationRequiredTitle: "Hermes Skills Guard needs confirmation",
+	guardConfirmationRequired:
+		"Hermes's Skills Guard needs explicit confirmation for this skill. Retrying won't help.",
 } as const;
 
-export function agentSkillGuardBlocked(
-	skill:
-		| Pick<
-				components["schemas"]["AgentSkillDesiredResponse"],
-				"convergence" | "observation_error_code"
-		  >
-		| null
-		| undefined,
+type AgentSkillInstallStatus = Pick<
+	components["schemas"]["AgentSkillDesiredResponse"],
+	"source" | "convergence" | "observation_error_code"
+>;
+type AgentSkillInstallItem = AgentSkillInstallStatus &
+	Pick<components["schemas"]["AgentSkillDesiredResponse"], "skill_key">;
+
+export function agentSkillGuardPresentation(skill: AgentSkillInstallStatus | null | undefined) {
+	if (skill?.convergence !== "failed") return null;
+	if (skill.observation_error_code === "guard_confirmation_required") {
+		return {
+			title: "guardConfirmationRequiredTitle",
+			message: "guardConfirmationRequired",
+		} as const;
+	}
+	if (skill.observation_error_code === "guard_blocked") {
+		return {
+			title: "guardBlockedTitle",
+			message: skill.source === "github" ? "guardBlockedGitHub" : "guardBlocked",
+		} as const;
+	}
+	return null;
+}
+
+export function agentSkillsHaveRetryableInstallFailure(
+	managed: readonly AgentSkillInstallItem[],
+	hosted: readonly Pick<
+		DeployComponents["schemas"]["V2WorkspaceSkillDesiredItem"],
+		"skill_key" | "status"
+	>[] = [],
 ): boolean {
-	return skill?.convergence === "failed" && skill.observation_error_code === "guard_blocked";
+	const guardKeys = new Set(
+		managed.filter((skill) => agentSkillGuardPresentation(skill)).map((skill) => skill.skill_key),
+	);
+	return (
+		managed.some((skill) => skill.convergence === "failed" && !guardKeys.has(skill.skill_key)) ||
+		hosted.some((skill) => skill.status === "failed" && !guardKeys.has(skill.skill_key))
+	);
 }
 
 type FetchSkillPage = (
