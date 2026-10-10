@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * Inside Clawdi Desktop, stands in for an action that must run in the system
- * browser (payment details, API keys, plan changes). It opens the current
+ * browser (payment details, auto-reload, plan changes). It opens the current
  * page there; renders nothing in a normal browser.
  */
 export function OpenInBrowserAction({

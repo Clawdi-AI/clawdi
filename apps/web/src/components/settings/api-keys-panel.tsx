@@ -1,12 +1,11 @@
 "use client";
 
 import { formatShortDate } from "@clawdi/shared/view";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Terminal, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { OpenInBrowserAction } from "@/components/open-in-browser-action";
 import {
 	API_KEYS_QUERY_KEY,
 	activeApiKeys,
@@ -39,10 +38,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { useDialogExitLifecycle } from "@/components/ui/use-dialog-exit-lifecycle";
-import { toastApiError, unwrap, useApi, useOpenApi } from "@/lib/api";
+import { toastApiError, useApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
-import { useDesktopShell } from "@/lib/desktop-shell";
 import { shouldBlockQueryError } from "@/lib/query-state";
+import { unwrapReverifiable, useReverifiedRequest } from "@/lib/reverification";
 
 const REVOKE_API_KEY_MUTATION_KEY = ["revoke-api-key"] as const;
 
@@ -53,9 +52,7 @@ type RevokeContext = {
 /** API Keys settings — review and revoke existing bearer tokens; new keys are internal only. */
 export function ApiKeysPanel() {
 	const api = useApi();
-	const $api = useOpenApi();
 	const queryClient = useQueryClient();
-	const desktop = useDesktopShell();
 	const [revokeOpen, setRevokeOpen] = useState(false);
 	const [revokeTarget, setRevokeTarget] = useState<ApiKey | null>(null);
 	const revokeExit = useDialogExitLifecycle({
@@ -65,17 +62,31 @@ export function ApiKeysPanel() {
 	});
 	const renderedRevokeTarget = revokeExit.renderedValue;
 
-	const { data: listedKeys, error, isLoading, refetch } = $api.useQuery("get", "/v1/auth/keys");
+	// Listing and revoking keys require a recently verified session; Clerk prompts, then retries.
+	const listKeys = useReverifiedRequest(async (signal: AbortSignal) =>
+		unwrapReverifiable(await api.GET("/v1/auth/keys", { signal })),
+	);
+	const revoke = useReverifiedRequest(async (keyId: string) =>
+		unwrapReverifiable(
+			await api.DELETE("/v1/auth/keys/{key_id}", { params: { path: { key_id: keyId } } }),
+		),
+	);
+	const {
+		data: listedKeys,
+		error,
+		isLoading,
+		refetch,
+	} = useQuery({
+		queryKey: API_KEYS_QUERY_KEY,
+		queryFn: ({ signal }) => listKeys(signal),
+		// Listing can prompt for verification, so don't refetch behind the user's back.
+		refetchOnWindowFocus: false,
+	});
 	const keys = useMemo(() => activeApiKeys(listedKeys), [listedKeys]);
 
 	const revokeKey = useMutation({
 		mutationKey: REVOKE_API_KEY_MUTATION_KEY,
-		mutationFn: async (keyId: string) =>
-			unwrap(
-				await api.DELETE("/v1/auth/keys/{key_id}", {
-					params: { path: { key_id: keyId } },
-				}),
-			),
+		mutationFn: revoke,
 		onMutate: async (keyId): Promise<RevokeContext> => {
 			await queryClient.cancelQueries({ queryKey: API_KEYS_QUERY_KEY });
 			const currentKeys = queryClient.getQueryData<ApiKey[]>(API_KEYS_QUERY_KEY);
@@ -109,12 +120,10 @@ export function ApiKeysPanel() {
 		},
 	});
 
-	const revoke = useCallback((key: ApiKey) => {
+	const handleRevoke = useCallback((key: ApiKey) => {
 		setRevokeTarget(key);
 		setRevokeOpen(true);
 	}, []);
-	// Inside Clawdi Desktop, keys are managed in the system browser.
-	const handleRevoke = desktop.inDesktop ? undefined : revoke;
 	const listBlocked = shouldBlockQueryError(error, listedKeys);
 	const isEmpty = !listBlocked && !isLoading && keys.length === 0;
 	const showExpiration = keys.some((key) => key.expires_at !== null);
@@ -128,11 +137,6 @@ export function ApiKeysPanel() {
 			<SettingsPanelHeader
 				title="API Keys"
 				description="Review and revoke bearer tokens created for servers and automation."
-				actions={
-					listBlocked || isEmpty ? null : (
-						<OpenInBrowserAction align="end">Manage keys</OpenInBrowserAction>
-					)
-				}
 			/>
 
 			{isEmpty ? null : (
@@ -218,7 +222,7 @@ function apiKeyColumns({
 	onRevoke,
 }: {
 	showExpiration: boolean;
-	onRevoke: ((key: ApiKey) => void) | undefined;
+	onRevoke: (key: ApiKey) => void;
 }): DataTableColumnDef<ApiKey>[] {
 	const columns: DataTableColumnDef<ApiKey>[] = [
 		{
@@ -263,7 +267,6 @@ function apiKeyColumns({
 		});
 	}
 
-	if (!onRevoke) return columns;
 	columns.push({
 		id: "actions",
 		header: "",
@@ -376,7 +379,7 @@ function ApiKeysMobileList({
 	onRevoke,
 }: {
 	keys: ApiKey[];
-	onRevoke: ((key: ApiKey) => void) | undefined;
+	onRevoke: (key: ApiKey) => void;
 }) {
 	return (
 		<div className="flex flex-col gap-3">
@@ -391,7 +394,7 @@ function ApiKeysMobileList({
 								<KeyIdentifier prefix={key.key_prefix} />
 							</div>
 						</div>
-						{onRevoke ? <RevokeApiKeyAction apiKey={key} onRevoke={onRevoke} /> : null}
+						<RevokeApiKeyAction apiKey={key} onRevoke={onRevoke} />
 					</div>
 
 					<dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-3 text-xs">

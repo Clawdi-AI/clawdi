@@ -30,6 +30,15 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 	});
 }
 
+// The 403 body the API returns when a route needs a recently verified Clerk session.
+const reverificationRequired = {
+	clerk_error: {
+		type: "forbidden",
+		reason: "reverification-error",
+		metadata: { reverification: "strict" },
+	},
+};
+
 function deferred() {
 	let resolve = () => {};
 	const promise = new Promise<void>((nextResolve) => {
@@ -53,7 +62,11 @@ async function openApiKeySettings(page: Page) {
 
 async function stubApiKeys(
 	page: Page,
-	options: { initialKeys?: ApiKey[]; failFirstList?: boolean } = {},
+	options: {
+		initialKeys?: ApiKey[];
+		failFirstList?: boolean;
+		requireReverification?: { list?: boolean; revoke?: boolean };
+	} = {},
 ) {
 	let keys = options.initialKeys ?? [
 		apiKey("active-long", longLabel, { last_used_at: "2026-07-27T08:00:00.000Z" }),
@@ -81,6 +94,10 @@ async function stubApiKeys(
 		const method = route.request().method();
 		if (url.pathname === "/v1/auth/keys" && method === "GET") {
 			listRequests += 1;
+			if (options.requireReverification?.list && listRequests === 1) {
+				await fulfillJson(route, reverificationRequired, 403);
+				return;
+			}
 			if (options.failFirstList && listRequests === 1) {
 				await fulfillJson(route, { detail: "Mock list failure" }, 400);
 				return;
@@ -98,6 +115,10 @@ async function stubApiKeys(
 			deleteRequests.push(keyId);
 			const pendingDelete = nextDelete;
 			if (pendingDelete) await pendingDelete.gate.promise;
+			if (options.requireReverification?.revoke) {
+				await fulfillJson(route, reverificationRequired, 403);
+				return;
+			}
 			if (pendingDelete?.fail) {
 				await fulfillJson(route, { detail: "Mock revoke failure" }, 500);
 				return;
@@ -233,20 +254,34 @@ test("API key list error is retryable and the empty state explains how to sign i
 	expect(api.createRequests).toEqual([]);
 });
 
-test("Inside Clawdi Desktop, API keys are managed in the system browser", async ({ page }) => {
+test("API keys surface Clerk's reverification requirement when it isn't met", async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 900 });
+	const api = await stubApiKeys(page, { requireReverification: { list: true, revoke: true } });
+
+	// Dev auth bypass has no Clerk session to verify, so the requirement surfaces as an error.
+	await openApiKeySettings(page);
+	await expect(page.getByText("Couldn’t load API keys", { exact: true })).toBeVisible();
+	await expect(page.getByText("Verify your identity to continue.", { exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Retry" }).click();
+	const table = page.getByRole("table");
+	await expect(table.getByText("CI runner", { exact: true })).toBeVisible();
+
+	await page.getByRole("button", { name: "Revoke CI runner" }).click();
+	await page.getByRole("button", { name: "Revoke key", exact: true }).click();
+	await expect(page.getByText("Couldn’t revoke API key", { exact: true })).toBeVisible();
+	await expect(page.getByText("Verify your identity to continue.", { exact: true })).toBeVisible();
+	await page.getByRole("alertdialog").getByRole("button", { name: "Cancel" }).click();
+	await expect(table.getByText("CI runner", { exact: true })).toBeVisible();
+	expect(api.deleteRequests).toEqual(["active-short"]);
+});
+
+test("Inside Clawdi Desktop, API keys stay in the dashboard", async ({ page }) => {
 	await injectDesktopBridge(page);
 	await page.setViewportSize({ width: 1280, height: 900 });
-	const api = await stubApiKeys(page);
+	await stubApiKeys(page);
 
 	await openApiKeySettings(page);
-	await expect(page.getByRole("table").getByText("CI runner", { exact: true })).toBeVisible();
-	await expect(page.getByRole("button", { name: /^Revoke / })).toHaveCount(0);
-	const manage = page.getByRole("button", { name: "Manage keys" });
-	await expect(manage).toHaveAccessibleDescription("Opens in your browser.");
-	await manage.click();
-	const calls = await desktopBridgeCalls(page);
-	expect(calls).toHaveLength(1);
-	expect(calls[0]?.[0]).toBe("openInBrowser");
-	expect(new URL(calls[0]?.[1] ?? "").searchParams.get("settings")).toBe("api-keys");
-	expect(api.deleteRequests).toEqual([]);
+	await expect(page.getByRole("button", { name: "Revoke CI runner" })).toBeVisible();
+	await expect(page.getByText("Opens in your browser.")).toHaveCount(0);
+	expect(await desktopBridgeCalls(page)).toEqual([]);
 });
