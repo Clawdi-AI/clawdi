@@ -5,9 +5,9 @@ const agentExtensionsEn = {
 	pluginRemoveWarning:
 		"Remove this plugin and its Skills and MCP servers from the Agent? Runtime cleanup may finish later.",
 	install: "Install",
-	remove: "Remove Library reference",
-	removeWarning:
-		"Remove this reference from the Agent? The original Library Skill is preserved. Runtime cleanup may finish later.",
+	uninstallTitle: agentSkillUninstallCopy.title("{name}"),
+	uninstallWarning: agentSkillUninstallCopy.description,
+	uninstallConfirm: agentSkillUninstallCopy.confirm,
 	accepted: "Change requested. It may take a moment to apply.",
 	installed: agentSurfaceCopy.installed,
 	not_observed: "Installing…",
@@ -17,6 +17,8 @@ const agentExtensionsEn = {
 	guardBlockedGitHub: agentSkillInstallCopy.guardBlockedGitHub,
 	guardConfirmationRequiredTitle: agentSkillInstallCopy.guardConfirmationRequiredTitle,
 	guardConfirmationRequired: agentSkillInstallCopy.guardConfirmationRequired,
+	updateFailedTitle: agentSkillInstallCopy.updateFailedTitle,
+	updateFailed: agentSkillInstallCopy.updateFailed,
 	removalFailed: "Couldn't remove this Skill. Check the agent, then refresh.",
 	view: "View Library Skill",
 };
@@ -399,9 +401,6 @@ const workspaceSkillsEn = {
 	warning:
 		"This updates the Skills installed on this agent. It may take a moment to apply. Your Library Skills aren't changed.",
 	unavailable: "Changes are unavailable until this agent finishes loading. Refresh to try again.",
-	managed: "Managed",
-	requested: "Installing…",
-	failed: "Couldn't install — refresh to check",
 	accepted: "Change requested. It may take a moment to apply.",
 	open: "Read Skill",
 	uncertain: "We couldn't confirm the last change. Retry it before making another.",
@@ -538,6 +537,7 @@ const vaultEn = {
 import {
 	accountDeletionCopy,
 	agentSkillInstallCopy,
+	agentSkillUninstallCopy,
 	agentSurfaceCopy,
 	billingCopy,
 	LIBRARY_COPY,

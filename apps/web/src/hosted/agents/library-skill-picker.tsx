@@ -1,5 +1,6 @@
 "use client";
 
+import { agentHasCloudSkill, agentSurfaceCopy } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -19,10 +20,12 @@ import type { components } from "@/lib/api-schemas";
 type Skill = components["schemas"]["SkillSummaryResponse"];
 
 export function LibrarySkillPicker({
+	managed,
 	value,
 	onChange,
 	disabled = false,
 }: {
+	managed: Parameters<typeof agentHasCloudSkill>[0];
 	value: Skill | null;
 	onChange: (skill: Skill | null) => void;
 	disabled?: boolean;
@@ -88,11 +91,15 @@ export function LibrarySkillPicker({
 							<SelectValue placeholder="Choose a skill" />
 						</SelectTrigger>
 						<SelectContent>
-							{(skills.data ?? []).map((skill) => (
-								<SelectItem key={skill.id} value={skill.id}>
-									{skill.name}
-								</SelectItem>
-							))}
+							{(skills.data ?? []).map((skill) => {
+								// A Library reference or linked Project already provides it; selecting it would be a no-op.
+								const installed = agentHasCloudSkill(managed, skill.id);
+								return (
+									<SelectItem key={skill.id} value={skill.id} disabled={installed}>
+										{installed ? `${skill.name} · ${agentSurfaceCopy.installed}` : skill.name}
+									</SelectItem>
+								);
+							})}
 						</SelectContent>
 					</Select>
 					{!skills.isLoading && !skills.error && skills.data?.length === 0 ? (

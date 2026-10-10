@@ -43,7 +43,7 @@ import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import { useHeaderSearch } from "@/platform/navigation/native-header";
+import { NativeHeader, useHeaderSearch } from "@/platform/navigation/native-header";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
@@ -140,6 +140,7 @@ function AgentVaultCatalog({ agentId, projectId }: { agentId: string; projectId?
 		return (
 			<LibraryPage>
 				<AgentSectionNavigation agentId={agentId} section="vaults" />
+				<NativeHeader title={getProjectResourceDefinition("vaults").label} />
 				{error ? (
 					<ApiErrorPanel
 						error={error}
