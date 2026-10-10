@@ -1,4 +1,5 @@
 import {
+	ApiClientError,
 	type DeploymentMutation,
 	type DeploymentUpdate,
 	deploymentMutationHeaders,
@@ -154,4 +155,19 @@ export function createRuntimeAttemptStore(store: AttemptStore) {
 			previous.version === next.version &&
 			JSON.stringify(previous.mutation) === JSON.stringify(next.mutation),
 	});
+}
+
+/** Hosted matches a replay by Idempotency-Key before it checks If-Match, so a 412 on the
+ * original key proves no operation exists for it: the change was never accepted. Any
+ * other failure (including 503 busy, raised before that lookup) may follow an accepted send.
+ */
+export function runtimeAttemptAfterFailure(
+	attempt: RuntimeAttempt,
+	error: unknown,
+): RuntimeAttempt {
+	const superseded =
+		error instanceof ApiClientError &&
+		error.status === 412 &&
+		error.code === "resource_version_mismatch";
+	return { ...attempt, status: superseded ? "rejected" : "uncertain" };
 }

@@ -91,3 +91,21 @@ export const workspaceSkillInstallCopy = {
 	library: "Library",
 	github: "GitHub",
 } as const;
+
+/** Explains hosted Workspace Skill error codes without exposing server internals. */
+export function workspaceSkillErrorMessage(code: unknown): string | null {
+	switch (code) {
+		case "workspace_skill_source_invalid":
+			return "Couldn't find a valid skill at this GitHub path. Check the repository and try again.";
+		case "workspace_skill_source_unavailable":
+			return "GitHub is temporarily unavailable. Try again.";
+		case "workspace_skill_source_conflict":
+			return "A skill with this name is installed from another repository. Uninstall it first.";
+		case "workspace_skill_reserved":
+			return "This skill is built in and can't be changed.";
+		case "workspace_skills_capability_unavailable":
+			return "Skill installation will be available when your agent is ready and up to date.";
+		default:
+			return null;
+	}
+}

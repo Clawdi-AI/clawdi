@@ -79,8 +79,13 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 		refetchOnWindowFocus: false,
 		refetchOnReconnect: false,
 	});
-	const disabled =
-		action.busy || !id || !inventory.data || inventory.isError || inventory.isFetching;
+	// Background polling keeps the last inventory; only a missing or failed load blocks changes.
+	const ready = Boolean(id) && Boolean(inventory.data) && !inventory.isError;
+	const disabled = action.busy || !ready;
+	const sheet = useSheet<boolean>({
+		fallback: `/agents/${id}/skills`,
+		busy: browse && action.busy,
+	});
 	const refresh = () => {
 		setStartedAt(Date.now());
 		void inventory.refetch();
@@ -88,12 +93,14 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 	};
 	const mutate = (skillId: string, present: boolean, guarded = false) =>
 		(guarded ? action.runOrThrow : action.run)(async (current) => {
-			if (disabled) return;
+			if (!ready) throw new Error(agentSurfaceCopy.unavailable);
 			await read((signal) => client.setLibraryReference(id, skillId, present, signal));
 			if (!current()) return;
 			setAccepted(true);
 			setStartedAt(Date.now());
 			await inventory.refetch();
+			// Like Web, an accepted install closes the sheet onto the refreshed Skills list.
+			if (browse && current()) await sheet.close(true);
 		});
 	const remove = (skillId: string) => {
 		const foreground = capture();
@@ -121,7 +128,6 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 		placeholder: t("workspaceSkills.search"),
 		maxLength: 200,
 	});
-	const sheet = useSheet({ fallback: `/agents/${id}/skills`, busy: browse && action.busy });
 	const [closeError, setCloseError] = useState<unknown>();
 	if (browse)
 		return (
@@ -163,6 +169,15 @@ function AgentLibrarySkills({ id, browse }: { id: string; browse: boolean }) {
 								}}
 							/>
 
+							{!id || inventory.isError ? (
+								<ApiErrorPanel
+									error={inventory.error}
+									title={t("workspaceSkills.loadError")}
+									onRetry={refresh}
+								/>
+							) : inventory.isPending ? (
+								<AppText>{t("workspaceSkills.unavailable")}</AppText>
+							) : null}
 							{closeError ? <ApiErrorPanel error={closeError} /> : null}
 							{action.error ? (
 								<ApiErrorPanel error={action.error} title={t("workspaceSkills.updateError")} />
