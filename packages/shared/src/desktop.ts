@@ -119,3 +119,20 @@ export interface ClawdiDesktopConnectBridge {
 	moveToApplicationsFolder(): Promise<DesktopMoveToApplicationsResult>;
 	openDashboard(): Promise<void>;
 }
+
+export interface DesktopDashboardSession {
+	ticket: string;
+	/** Verified Clerk subject, distinct from the local Clawdi account UUID. */
+	accountId: string;
+}
+
+/** Minimal capability contract exposed only to the dashboard's main frame. */
+export interface ClawdiDesktopBridge {
+	readonly version: 1;
+	openConnector(): void;
+	/** Opens HTTPS pages on the configured Clawdi web origin in the system browser. */
+	openInBrowser(url: string): void;
+	/** Available only on /desktop-auth; never accepts or reads a URL ticket. */
+	createDashboardSession(): Promise<DesktopDashboardSession>;
+	signOut(): Promise<void>;
+}

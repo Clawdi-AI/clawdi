@@ -19,6 +19,7 @@ from httpx import ASGITransport
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.routes.cli_auth as cli_auth_module
 import app.services.clerk_backend as clerk_backend_module
 from app.core.auth import _auth_via_clerk_jwt, get_auth, require_cli_auth, require_user_cli
 from app.core.config import settings
@@ -954,3 +955,147 @@ async def test_memory_update_cli_preserves_metadata_and_enforces_scope_owner_and
     assert (await raw_auth_client.patch(path, json={"content": "   "})).status_code == 422
     await db_session.refresh(memory)
     assert memory.content == "Keep tabs"
+
+
+@pytest.mark.asyncio
+async def test_oauth_desktop_ticket_is_short_lived_and_not_cached(
+    raw_auth_client: httpx.AsyncClient,
+    clerk_oauth_signing_key: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict[str, Any] = {}
+    clerk_sub = f"user_desktop_{uuid.uuid4().hex}"
+
+    class FakeClient:
+        async def post(self, url, **kwargs):
+            captured["url"] = url
+            captured.update(kwargs)
+            return httpx.Response(200, json={"token": "desktop_ticket"})
+
+    monkeypatch.setattr(cli_auth_module, "get_clerk_backend_client", lambda: FakeClient())
+    response = await raw_auth_client.post(
+        "/v1/cli/auth/oauth/desktop-ticket",
+        headers={
+            "Authorization": f"Bearer {_oauth_access_token(clerk_oauth_signing_key, clerk_sub)}"
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ticket": "desktop_ticket",
+        "expires_in": 60,
+        "clerk_user_id": clerk_sub,
+    }
+    assert response.headers["cache-control"] == "no-store"
+    assert captured["url"] == "https://api.clerk.com/v1/sign_in_tokens"
+    assert captured["json"] == {"user_id": clerk_sub, "expires_in_seconds": 60}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["/v1", "/api"])
+async def test_desktop_ticket_refuses_session_and_api_key(
+    raw_auth_client, db_session, seed_user, clerk_oauth_signing_key, monkeypatch, prefix
+):
+    def unexpected_clerk_client():
+        pytest.fail("Untrusted credentials must not mint tickets")
+
+    monkeypatch.setattr(cli_auth_module, "get_clerk_backend_client", unexpected_clerk_client)
+    session = _session_token(
+        clerk_oauth_signing_key, f"user_session_{uuid.uuid4().hex}", {"iss": _ISSUER}
+    )
+    raw_key = "clawdi_desktop_exchange_legacy"
+    db_session.add(
+        ApiKey(
+            user_id=seed_user.id,
+            key_hash=hashlib.sha256(raw_key.encode()).hexdigest(),
+            key_prefix=raw_key[:16],
+            label="fixture",
+        )
+    )
+    await db_session.commit()
+    for token in [session, raw_key]:
+        response = await raw_auth_client.post(
+            f"{prefix}/cli/auth/oauth/desktop-ticket", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert response.status_code == 403
+    assert (await raw_auth_client.post(f"{prefix}/cli/auth/oauth/desktop-ticket")).status_code in {
+        401,
+        403,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fva, allowed",
+    [
+        (None, False),
+        ([], False),
+        ([0], False),
+        ([0, 0, 0], False),
+        ([True, -1], False),
+        (["0", -1], False),
+        ([-2, -1], False),
+        ([-1, -1], False),
+        ([10, -1], False),
+        ([0, 10], False),
+        ([0, -1], True),
+        ([9, -1], True),
+        ([20, 0], True),
+        ([-1, 0], True),
+    ],
+)
+async def test_signed_session_sensitive_routes_require_recent_factors(
+    raw_auth_client, clerk_oauth_signing_key, fva, allowed
+):
+    token = _session_token(
+        clerk_oauth_signing_key,
+        f"user_stepup_{uuid.uuid4().hex}",
+        {"iss": _ISSUER, "fva": fva, "v": 2, "sid": "sess_fixture"},
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    for prefix in ["/v1", "/api"]:
+        listed = await raw_auth_client.get(f"{prefix}/auth/keys", headers=headers)
+        revoked = await raw_auth_client.delete(
+            f"{prefix}/auth/keys/{uuid.uuid4()}", headers=headers
+        )
+        assert listed.status_code == (200 if allowed else 403)
+        assert revoked.status_code == (404 if allowed else 403)
+        if not allowed:
+            assert listed.json() == {
+                "clerk_error": {
+                    "type": "forbidden",
+                    "reason": "reverification-error",
+                    "metadata": {"reverification": "strict"},
+                }
+            }
+    # Normal signed-in reads do not require recent verification.
+    assert (await raw_auth_client.get("/v1/auth/me", headers=headers)).status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "upstream_status, content",
+    [
+        (200, b"{}"),
+        (200, b'{"token":""}'),
+        (200, b"not json"),
+        (403, b"private"),
+        (500, b"private"),
+    ],
+)
+async def test_desktop_ticket_hides_invalid_upstream_responses(
+    raw_auth_client, clerk_oauth_signing_key, monkeypatch, caplog, upstream_status, content
+):
+    class FakeClient:
+        async def post(self, *args, **kwargs):
+            return httpx.Response(upstream_status, content=content)
+
+    monkeypatch.setattr(cli_auth_module, "get_clerk_backend_client", lambda: FakeClient())
+    token = _oauth_access_token(clerk_oauth_signing_key, f"user_bad_ticket_{uuid.uuid4().hex}")
+    response = await raw_auth_client.post(
+        "/v1/cli/auth/oauth/desktop-ticket", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == (503 if upstream_status >= 500 else 502)
+    assert "private" not in response.text
+    assert "private" not in caplog.text
+    assert token not in caplog.text

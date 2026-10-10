@@ -378,6 +378,36 @@ export async function authLoginDesktop(opts: { force?: boolean } = {}): Promise<
 	});
 }
 
+/** Machine-only credential transport: stdout is read privately by Desktop, never diagnostics. */
+export async function authDesktopSessionMachine(): Promise<void> {
+	if (!isClerkOAuthAuth(getAuth())) {
+		throw new Error("Desktop sign-in requires Clerk OAuth. Sign in from Clawdi Desktop.");
+	}
+	try {
+		const payload = unwrap(await new ApiClient().POST("/v1/cli/auth/oauth/desktop-ticket"));
+		if (
+			typeof payload.ticket !== "string" ||
+			!payload.ticket ||
+			payload.ticket.length > 8192 ||
+			typeof payload.clerk_user_id !== "string" ||
+			!payload.clerk_user_id ||
+			payload.clerk_user_id.length > 256 ||
+			!Number.isSafeInteger(payload.expires_in) ||
+			payload.expires_in <= 0 ||
+			payload.expires_in > 60
+		)
+			throw new Error("Invalid Desktop session.");
+		emit({
+			schemaVersion: "clawdi.desktopSession.v2",
+			ticket: payload.ticket,
+			expiresIn: payload.expires_in,
+			accountId: payload.clerk_user_id,
+		});
+	} catch {
+		throw new Error("Couldn't create a Desktop session. Sign in again from Clawdi Desktop.");
+	}
+}
+
 export async function authLogout() {
 	if (!isLoggedIn()) {
 		p.log.info("Not signed in.", { output: process.stderr });

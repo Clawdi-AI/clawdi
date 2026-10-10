@@ -122,3 +122,7 @@ describe("Desktop file logging", () => {
 		expect(paths).toEqual(["logs"]);
 	});
 });
+
+test("desktop tickets are redacted from structured diagnostics", () => {
+	expect(redactDesktopLog('ticket="sensitive-fixture"')).not.toContain("sensitive-fixture");
+});

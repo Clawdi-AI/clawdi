@@ -6,7 +6,7 @@ import type { App } from "electron";
 const LOG_METHODS = ["debug", "log", "info", "warn", "error"] as const;
 type LogLevel = (typeof LOG_METHODS)[number];
 const SECRET_KEYS =
-	"access[_ -]?token|refresh[_ -]?token|id[_ -]?token|token|authorization|api[_ -]?key|client[_ -]?secret|password|user[_ -]?code|device[_ -]?code|verification[_ -]?(?:code|uri)|code";
+	"access[_ -]?token|refresh[_ -]?token|id[_ -]?token|token|ticket|authorization|api[_ -]?key|client[_ -]?secret|password|user[_ -]?code|device[_ -]?code|verification[_ -]?(?:code|uri)|code";
 const SECRET_ASSIGNMENT = new RegExp(
 	`(["']?(?:${SECRET_KEYS})["']?\\s*[:=]\\s*)(?:\\[redacted\\]|"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|[^,\\s;&}\\]]+)`,
 	"gi",

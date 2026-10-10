@@ -20,3 +20,11 @@ class OAuthRevokeRequest(BaseModel):
 
 class OAuthRevokeResponse(BaseModel):
     status: Literal["revoked"]
+
+
+class DesktopSessionTicketResponse(BaseModel):
+    """One-use Clerk sign-in token transported privately through Desktop's preload."""
+
+    ticket: str = Field(repr=False)
+    expires_in: int
+    clerk_user_id: str

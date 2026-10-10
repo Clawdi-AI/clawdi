@@ -45,6 +45,9 @@ function serviceFixture(
 		live: false,
 		executable: join(resourcesPath, "native", cliName),
 		excludedProjects: [] as string[],
+		ticketSchema: "clawdi.desktopSession.v2",
+		ticketTtl: 60,
+		failUninstall: false,
 	};
 	const execute: typeof runCommand = async (_command, args, options) => {
 		const command = args.join(" ");
@@ -95,6 +98,14 @@ function serviceFixture(
 				break;
 			case "update --native-identity":
 				return { stdout: `${state.cliVersion}\t${process.platform}-${process.arch}\n`, stderr: "" };
+			case "auth desktop-session --json":
+				result = {
+					schemaVersion: state.ticketSchema,
+					ticket: "fixture-ticket",
+					expiresIn: state.ticketTtl,
+					accountId: "user_fixture",
+				};
+				break;
 			case "auth status --json":
 				result = {
 					schemaVersion: state.authStatusSchema,
@@ -128,6 +139,11 @@ function serviceFixture(
 				}
 				state.daemonVersion = state.cliVersion;
 				state.executable = _command;
+				break;
+			case "daemon uninstall":
+				if (state.failUninstall) throw new Error("fixture service failure");
+				break;
+			case "auth logout":
 				break;
 			case "daemon restart":
 				break;
@@ -368,4 +384,35 @@ test.each([
 	const { service, calls } = serviceFixture();
 	await expect(service.setExcludedProjects([path])).rejects.toThrow();
 	expect(calls.some((command) => command.startsWith("config set"))).toBe(false);
+});
+
+test("Desktop requests its ticket through the hidden machine command", async () => {
+	const fixture = serviceFixture();
+	expect(await fixture.service.createDashboardSession()).toEqual({
+		ticket: "fixture-ticket",
+		accountId: "user_fixture",
+	});
+	expect(fixture.calls).toContain("auth desktop-session --json");
+});
+
+test("Desktop rejects unsupported ticket contracts and TTLs", async () => {
+	const { service, state } = serviceFixture();
+	state.ticketSchema = "clawdi.desktopSession.v1";
+	await expect(service.createDashboardSession()).rejects.toThrow(
+		"Couldn't create a Desktop session",
+	);
+	state.ticketSchema = "clawdi.desktopSession.v2";
+	for (const ttl of [0, -1, 61, Number.NaN]) {
+		state.ticketTtl = ttl;
+		await expect(service.createDashboardSession()).rejects.toThrow(
+			"Couldn't create a Desktop session",
+		);
+	}
+});
+
+test("Desktop still removes the CLI credential when daemon removal fails", async () => {
+	const { service, state, calls } = serviceFixture();
+	state.failUninstall = true;
+	await expect(service.logout()).rejects.toThrow("fixture service failure");
+	expect(calls.slice(-2)).toEqual(["daemon uninstall", "auth logout"]);
 });

@@ -3,7 +3,12 @@ import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as prompts from "@clack/prompts";
-import { authComplete, authLogin, authLoginDesktop } from "../../src/commands/auth";
+import {
+	authComplete,
+	authDesktopSessionMachine,
+	authLogin,
+	authLoginDesktop,
+} from "../../src/commands/auth";
 import * as browser from "../../src/lib/browser";
 import { browserOpenCommand } from "../../src/lib/browser";
 import {
@@ -470,6 +475,69 @@ describe("authLogin authentication boundary", () => {
 		expect(captured.some((request) => request.path === "/oauth/device_authorization")).toBe(true);
 		expect(captured.some((request) => request.path === "/oauth/token")).toBe(true);
 		expect(getPendingAuth()).toBeNull();
+	});
+	it("Desktop ticket command uses the saved OAuth credential without another approval", async () => {
+		clearAuth();
+		const { captured, restore } = mockFetch([
+			...startHandlers(),
+			tokenHandler(),
+			profileHandler(),
+			{
+				method: "POST",
+				path: "/v1/cli/auth/oauth/desktop-ticket",
+				response: () =>
+					jsonResponse({
+						ticket: "single-use-fixture",
+						expires_in: 60,
+						clerk_user_id: "user_fixture",
+					}),
+			},
+		]);
+		try {
+			await authLoginDesktop();
+			stdout.length = 0;
+			stderr.length = 0;
+			openSpy.mockClear();
+			await authDesktopSessionMachine();
+			expect(stdout).toHaveLength(1);
+			expect(JSON.parse(stdout[0] ?? "")).toEqual({
+				schemaVersion: "clawdi.desktopSession.v2",
+				ticket: "single-use-fixture",
+				expiresIn: 60,
+				accountId: "user_fixture",
+			});
+			expect(stderr).toEqual([]);
+			expect(openSpy).not.toHaveBeenCalled();
+			expect(captured.at(-1)?.path).toBe("/v1/cli/auth/oauth/desktop-ticket");
+		} finally {
+			restore();
+		}
+	});
+	it("Desktop ticket command refuses legacy API keys and suppresses upstream ticket errors", async () => {
+		setAuth({ apiKey: "clawdi_legacy" });
+		await expect(authDesktopSessionMachine()).rejects.toThrow("requires Clerk OAuth");
+		clearAuth();
+		const { restore } = mockFetch([
+			...startHandlers(),
+			tokenHandler(),
+			profileHandler(),
+			{
+				method: "POST",
+				path: "/v1/cli/auth/oauth/desktop-ticket",
+				response: () => jsonResponse({ detail: "private-ticket-value" }, 502),
+			},
+		]);
+		try {
+			await authLoginDesktop();
+			stdout.length = 0;
+			stderr.length = 0;
+			await expect(authDesktopSessionMachine()).rejects.toThrow(
+				"Couldn't create a Desktop session",
+			);
+			expect(stdout.concat(stderr).join("\n")).not.toContain("private-ticket-value");
+		} finally {
+			restore();
+		}
 	});
 	it("Desktop reuses an existing Clerk session unless force requests new authorization", async () => {
 		clearAuth();

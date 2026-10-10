@@ -123,6 +123,7 @@ GATES = (
     ("require_user_cli", {"cli_oauth"} | WIDE_KEYS),
     ("require_user_session", USER_PRINCIPALS),
     ("require_web_auth", {"web_session", "dev_bypass"}),
+    ("require_reverified_web_auth", {"web_session", "dev_bypass"}),
     ("require_scope", SCOPED_GATE_PASSES),
     ("require_scope_short_session", SCOPED_GATE_PASSES),
     ("require_any_scope", SCOPED_GATE_PASSES),
@@ -150,6 +151,7 @@ def context_for(case: PrincipalCase) -> AuthContext:
             datetime.now(UTC) + timedelta(hours=1) if case.name == "cli_oauth" else None
         ),
         dev_bypass=case.name == "dev_bypass",
+        factor_verification_age=(0, -1),
     )
 
 

@@ -44,8 +44,17 @@ import {
 	readExcludedProjectRemoval,
 	verificationPageToOpen,
 } from "./connect-ipc";
-import { openDashboardInBrowser } from "./dashboard-browser";
+import {
+	allowsDashboardNavigation,
+	assertDashboardSender,
+	DASHBOARD_PARTITION,
+	dashboardBrowserUrl,
+	dashboardOrigin,
+	dashboardWindowOptions,
+	strictHttpsUrl,
+} from "./dashboard-window";
 import { connectViewFromArgv, connectViewFromDeepLink } from "./deep-link";
+
 import {
 	applicationMenuTemplate,
 	type DesktopMenuActions,
@@ -87,8 +96,13 @@ const DOCS_URL = "https://docs.clawdi.ai";
 const SUPPORT_URL = "mailto:support@clawdi.ai";
 // --background from packages/shared/src/style/theme.css, shown before the renderer paints.
 const WINDOW_BACKGROUND = { light: "#fafaf8", dark: "#11100f" } as const;
+const WEB_ORIGIN = dashboardOrigin(process.env.CLAWDI_DESKTOP_WEB_URL);
 const cli = new DesktopCliService(app);
 let connectWindow: BrowserWindow | null = null;
+let dashboardWindow: BrowserWindow | null = null;
+let dashboardOpening: Promise<void> | null = null;
+let dashboardAccountId: string | null = null;
+let signingOut = false;
 // Cleared only when the renderer takes it, so a request survives window creation.
 let requestedConnectView: DesktopConnectView | null = null;
 // A clawdi-desktop:// link that launched the app: argv on Windows and Linux,
@@ -116,7 +130,9 @@ function runAsync(label: string, operation: Promise<unknown>): void {
 function activeDialogParent(preferred?: BrowserWindow | null): BrowserWindow | null {
 	if (preferred && !preferred.isDestroyed()) return preferred;
 	return (
-		[connectWindow].find((window) => window && !window.isDestroyed() && window.isVisible()) ?? null
+		[dashboardWindow, connectWindow].find(
+			(window) => window && !window.isDestroyed() && window.isVisible(),
+		) ?? null
 	);
 }
 
@@ -433,7 +449,7 @@ async function maybePromptForUpdate(): Promise<void> {
 	) {
 		return;
 	}
-	const parent = [connectWindow].find(
+	const parent = [dashboardWindow, connectWindow].find(
 		(window) => window && !window.isDestroyed() && window.isVisible(),
 	);
 	if (!parent) return;
@@ -460,6 +476,55 @@ function restartToInstallUpdate(): void {
 }
 
 function registerIpc(): void {
+	ipcMain.on(DESKTOP_IPC.openInBrowser, (event, raw: unknown) => {
+		runAsync(
+			"open the browser link",
+			(async () => {
+				assertDashboardSender(event, dashboardWindow?.webContents, false, WEB_ORIGIN);
+				await shell.openExternal(dashboardBrowserUrl(raw, WEB_ORIGIN));
+			})(),
+		);
+	});
+	ipcMain.handle(DESKTOP_IPC.createDashboardSession, async (event) => {
+		assertDashboardSender(event, dashboardWindow?.webContents, true, WEB_ORIGIN);
+		try {
+			const state = await cli.bootstrapState();
+			if (signingOut || !state.auth.authenticated || state.auth.user?.id !== dashboardAccountId) {
+				throw new Error("Local account changed.");
+			}
+			const result = await cli.createDashboardSession();
+			// Recheck after the exchange: concurrent CLI logout/account switching cannot restore stale cookies.
+			const current = await cli.bootstrapState();
+			if (
+				signingOut ||
+				current.auth.user?.id !== dashboardAccountId ||
+				!current.auth.authenticated
+			) {
+				throw new Error("Local account changed.");
+			}
+			assertDashboardSender(event, dashboardWindow?.webContents, true, WEB_ORIGIN);
+			return result;
+		} catch {
+			throw new Error("Couldn't restore dashboard sign-in. Reopen Dashboard from Clawdi.");
+		}
+	});
+	ipcMain.handle(DESKTOP_IPC.signOut, async (event) => {
+		assertDashboardSender(event, dashboardWindow?.webContents, false, WEB_ORIGIN);
+		try {
+			await signOutOfDesktop();
+		} catch {
+			throw new Error("Couldn't finish signing out. Retry from the Clawdi menu.");
+		}
+	});
+	ipcMain.on(DESKTOP_IPC.openConnector, (event) => {
+		runAsync(
+			"open Connect",
+			(async () => {
+				assertDashboardSender(event, dashboardWindow?.webContents, false, WEB_ORIGIN);
+				await showAvailableWindow("connect");
+			})(),
+		);
+	});
 	ipcMain.handle(DESKTOP_IPC.bootstrapState, (event) =>
 		safeConnectAction(event, "prepare the local runtime", async () => {
 			assertRuntimeLocation();
@@ -563,7 +628,7 @@ function registerIpc(): void {
 			const window = connectWindow;
 			await openDashboard();
 			runAsync("reconcile sync after opening Dashboard", reconcileBackgroundSyncAfterStartup());
-			if (window && !window.isDestroyed()) window.destroy();
+			if (dashboardWindow && window && !window.isDestroyed()) window.destroy();
 		}),
 	);
 }
@@ -667,6 +732,11 @@ function readAgentConnections(value: unknown): DesktopAgentConnection[] {
 }
 
 function configurePermissions(): void {
+	const dashboard = session.fromPartition(DASHBOARD_PARTITION);
+	dashboard.setPermissionCheckHandler(() => false);
+	dashboard.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+	dashboard.setDevicePermissionHandler(() => false);
+	dashboard.on("will-download", (event) => event.preventDefault());
 	session.defaultSession.setPermissionCheckHandler(() => false);
 	session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) =>
 		callback(false),
@@ -895,7 +965,14 @@ async function refreshTrayState(): Promise<void> {
 	renderTrayMenu();
 	const refresh = (async () => {
 		try {
-			setTrayState(await cli.bootstrapState());
+			const state = await cli.bootstrapState();
+			if (
+				dashboardAccountId &&
+				(!state.auth.authenticated || state.auth.user?.id !== dashboardAccountId)
+			) {
+				await clearDashboardSession();
+			}
+			setTrayState(state);
 		} catch (error) {
 			console.error("Could not refresh sync status", error);
 			setTrayState(null);
@@ -1075,6 +1152,15 @@ async function promptToMove(detail: string): Promise<void> {
 }
 
 async function showAvailableWindow(view?: DesktopConnectView): Promise<void> {
+	if (view) {
+		await showConnectWindow(view);
+		return;
+	}
+	if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+		await openDashboard();
+		return;
+	}
+
 	if (connectWindow) {
 		await showConnectWindow(view);
 		return;
@@ -1116,34 +1202,107 @@ async function openDashboardAfterFirstConnection(): Promise<void> {
 }
 
 async function openDashboard(): Promise<void> {
-	await openDashboardInBrowser(
-		(url) => shell.openExternal(url),
-		process.env.CLAWDI_DESKTOP_WEB_URL,
-	);
+	if (signingOut) return;
+	if (dashboardOpening) return dashboardOpening;
+	const opening = openDashboardWindow();
+	dashboardOpening = opening;
+	try {
+		await opening;
+	} finally {
+		if (dashboardOpening === opening) dashboardOpening = null;
+	}
+}
+
+async function openDashboardWindow(): Promise<void> {
+	const state = await cli.bootstrapState();
+	setTrayState(state);
+	if (signingOut) return;
+	if (!state.auth.authenticated || !state.auth.user) {
+		await clearDashboardSession();
+		await showConnectWindow();
+		return;
+	}
+	if (dashboardAccountId !== state.auth.user.id) await clearDashboardSession();
+	if (signingOut) return;
+	dashboardAccountId = state.auth.user.id;
+	if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+		if (dashboardWindow.isMinimized()) dashboardWindow.restore();
+		dashboardWindow.show();
+		dashboardWindow.focus();
+		return;
+	}
+	if (process.platform === "darwin") await app.dock?.show();
+	const preload = join(fileURLToPath(new URL(".", import.meta.url)), "shell-preload.cjs");
+	const window = new BrowserWindow({
+		...dashboardWindowOptions(preload, WEB_ORIGIN),
+		backgroundColor: windowBackground(),
+		...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
+	});
+	dashboardWindow = window;
+	window.webContents.setWindowOpenHandler(({ url }) => {
+		const external = strictHttpsUrl(url);
+		if (external) runAsync("open the external link", shell.openExternal(external.href));
+		return { action: "deny" };
+	});
+	const preventUntrustedNavigation = (event: Electron.Event, url: string) => {
+		if (!allowsDashboardNavigation(url, WEB_ORIGIN)) event.preventDefault();
+	};
+	window.webContents.on("will-navigate", preventUntrustedNavigation);
+	window.webContents.on("will-redirect", preventUntrustedNavigation);
+	window.webContents.on("will-frame-navigate", (event) => {
+		if (!allowsDashboardNavigation(event.url, WEB_ORIGIN)) event.preventDefault();
+	});
+	window.webContents.on("will-attach-webview", (event) => event.preventDefault());
+	window.webContents.on("render-process-gone", () => {
+		if (!window.isDestroyed()) window.destroy();
+	});
+	window.once("ready-to-show", () => {
+		if (!signingOut && !window.isDestroyed()) window.show();
+	});
+	window.on("closed", () => {
+		if (dashboardWindow === window) dashboardWindow = null;
+	});
+	try {
+		await window.loadURL(`${WEB_ORIGIN}/desktop-auth`);
+	} catch {
+		if (!window.isDestroyed()) window.destroy();
+		await showMessageBox({
+			type: "warning",
+			message: "Dashboard couldn't load",
+			detail: "Check your connection and open Dashboard again from Clawdi.",
+		});
+		throw new DesktopConnectError("Dashboard couldn't load.");
+	}
+}
+
+async function clearDashboardSession(): Promise<void> {
+	dashboardAccountId = null;
+	if (dashboardWindow && !dashboardWindow.isDestroyed()) dashboardWindow.destroy();
+	await session.fromPartition(DASHBOARD_PARTITION).clearData();
 }
 
 async function signOutOfDesktop(): Promise<void> {
-	await withCriticalOperation(async () => {
-		await cli.cancelAuthentication();
-		await cli.logout();
-	});
-	setTrayState(
-		trayState
-			? {
-					...trayState,
-					auth: { authenticated: false, user: null },
-					daemon: { installed: false, running: false },
+	if (signingOut) return;
+	signingOut = true;
+	try {
+		// Remove local credentials even when Chromium storage or daemon cleanup fails.
+		try {
+			await clearDashboardSession();
+		} finally {
+			await withCriticalOperation(async () => {
+				try {
+					await cli.cancelAuthentication();
+				} finally {
+					await cli.logout();
 				}
-			: null,
-	);
-	if (connectWindow && !connectWindow.isDestroyed()) connectWindow.webContents.reload();
-	await showConnectWindow();
-	await showMessageBox({
-		type: "info",
-		message: "Signed out of Clawdi Desktop",
-		detail:
-			"Sync is off. Your browser stays signed in; sign out of the dashboard in your browser separately.",
-	});
+			});
+		}
+		setTrayState(await cli.bootstrapState());
+		if (connectWindow && !connectWindow.isDestroyed()) connectWindow.webContents.reload();
+		await showConnectWindow();
+	} finally {
+		signingOut = false;
+	}
 }
 
 function windowBackground(): string {

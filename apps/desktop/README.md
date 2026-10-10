@@ -140,26 +140,57 @@ The CSP has no inline styles, so Base UI's injected style element is disabled
 with `CSPProvider` and the equivalent rule lives in `connect-renderer.css`.
 Screen headings and window titles share one Title Case page title.
 
-Clawdi Desktop opens the Dashboard in the system browser at `https://cloud.clawdi.ai`.
-Set `CLAWDI_DESKTOP_WEB_URL` to a self-hosted HTTPS dashboard URL (or an HTTP
-loopback URL for local development). Dashboard entry points never load remote
-content into Electron. Only the bundled Connect wizard has a renderer and IPC.
+Clawdi Desktop loads the live Dashboard inside a separate, sandboxed window at
+`https://cloud.clawdi.ai`. `CLAWDI_DESKTOP_WEB_URL` accepts an HTTPS origin without
+credentials, path, query or fragment. The Connect window keeps its local renderer
+and dedicated IPC. Dashboard navigation accepts only the configured web origin and
+`https://clerk.clawdi.ai` / `https://accounts.clawdi.ai`; permissions, device access,
+webviews and downloads are denied. New-window links open via validated HTTPS OS
+handoffs. The dashboard has context isolation and no Node integration.
 
-The bundled CLI owns credentials, Agent registration, and daemon lifecycle.
-Desktop sign-in runs the CLI's device authorization flow through
-`clawdi auth login --desktop`. The CLI opens the prefilled verification page
-(`verification_uri_complete`, falling back to `verification_uri`) in the system
-browser. Desktop shows the short-lived code so the user can confirm it matches
-the browser before approving. The CLI completes and saves its credentials on
-approval; no local callback listener is used. Desktop never receives
-tokens or creates a Clerk browser session; the Dashboard uses normal browser
-sign-in independently. Signing out of Desktop uninstalls the daemon and signs the
-CLI out. It leaves the browser's Dashboard session signed in.
+The bundled CLI owns credentials, Agent registration and daemon lifecycle.
+`clawdi auth login --desktop` runs device authorization in the system browser.
+One approval signs in the CLI and Desktop. Opening Dashboard requests
+`clawdi auth desktop-session --json`, returning `clawdi.desktopSession.v2` with
+`ticket`, `expiresIn` and `accountId`. The backend accepts only CLI OAuth access
+tokens and requests a one-use Clerk sign-in token with a 60-second lifetime.
+Tickets travel privately through the preload at `/desktop-auth`, never through
+a URL or diagnostics. The web route refuses normal browsers and mismatched
+accounts. Dashboard cookies live in an in-memory partition and are removed on
+Desktop sign-out, along with the shared CLI credential and daemon registration.
 
-Native shell and CLI changes require an application update. Dashboard deployments
-take effect in the browser as normal. Packaged smoke tests verify the bundled
-wizard and remote navigation rejection without contacting the hosted Dashboard.
-Unit tests verify the system-browser handoff.
+The dashboard-only `window.clawdiDesktop` capability contract is:
+
+```ts
+interface ClawdiDesktopBridge {
+  readonly version: 1;
+  openConnector(): void;
+  openInBrowser(url: string): void;
+  createDashboardSession(): Promise<{ ticket: string; accountId: string }>;
+  signOut(): Promise<void>;
+}
+```
+
+`openConnector` follows the native Connect deep-link path. `openInBrowser` accepts
+only HTTPS URLs on the configured Clawdi web origin and excludes `/desktop-auth`.
+Every IPC validates the window, main frame and origin; ticket exchange additionally
+checks the exact auth page before and after the async exchange.
+
+Clerk documents server-enforceable factor verification age in the signed `fva`
+claim ([session tokens](https://clerk.com/docs/guides/sessions/session-tokens),
+[reverification](https://clerk.com/docs/guides/secure/reverification)). Cloud key
+listing and revocation enforce the upstream `strict` policy: second factor below
+10 minutes, falling back to first factor when no second factor was verified.
+Missing or malformed claims fail closed with Clerk's standard 403 hint. Key
+creation remains retired (410). Hosted must apply the same gate to payment
+methods, auto-reload and plan changes, and its browser UI must handle the hint
+through `useReverification`; those changes belong to the Hosted repository.
+
+Native shell changes require an application update; dashboard deployments appear
+on the next load. `scripts/shared-login-e2e.sh` walks the real Electron app with a
+mock CLI, Clerk and web response: device sign-in, Connect, embedded dashboard,
+bridge calls, browser refusal and shared sign-out. The Linux update e2e also runs
+this flow after verifying AppImage N → N+1.
 
 ## Main-process diagnostics and login items
 

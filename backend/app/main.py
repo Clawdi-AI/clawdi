@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 
-from app.core.auth import AccountSuspendedHTTPException, warm_clerk_jwks
+from app.core.auth import (
+    AccountSuspendedHTTPException,
+    ReverificationRequiredHTTPException,
+    warm_clerk_jwks,
+)
 from app.core.cleanup import finish_cleanup
 from app.core.config import settings
 from app.core.database import (
@@ -515,7 +519,11 @@ async def clawdi_http_exception_handler(
     request: Request,
     exc: StarletteHTTPException,
 ):
-    if isinstance(exc, AccountSuspendedHTTPException):
+    if isinstance(exc, ReverificationRequiredHTTPException):
+        response = JSONResponse(
+            status_code=exc.status_code, content=exc.detail, headers=exc.headers
+        )
+    elif isinstance(exc, AccountSuspendedHTTPException):
         response = JSONResponse(
             status_code=exc.status_code,
             content=exc.problem.model_dump(mode="json"),

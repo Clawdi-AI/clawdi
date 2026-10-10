@@ -6,6 +6,7 @@ import type {
 	DesktopAuthenticationProgress,
 	DesktopBootstrapState,
 	DesktopConnectResult,
+	DesktopDashboardSession,
 	DesktopDetectedAgent,
 	DesktopReconnectCandidate,
 } from "@clawdi/shared/desktop";
@@ -148,10 +149,38 @@ export class DesktopCliService {
 		}
 	}
 
+	async createDashboardSession(): Promise<DesktopDashboardSession> {
+		try {
+			const result = await this.runJson(this.cli(), ["auth", "desktop-session", "--json"]);
+			if (
+				result.schemaVersion !== "clawdi.desktopSession.v2" ||
+				typeof result.ticket !== "string" ||
+				!result.ticket ||
+				result.ticket.length > 8192 ||
+				typeof result.expiresIn !== "number" ||
+				!Number.isSafeInteger(result.expiresIn) ||
+				result.expiresIn <= 0 ||
+				result.expiresIn > 60 ||
+				typeof result.accountId !== "string" ||
+				!result.accountId ||
+				result.accountId.length > 256
+			) {
+				throw new Error("Invalid Desktop session.");
+			}
+			return { ticket: result.ticket, accountId: result.accountId };
+		} catch {
+			// Never propagate native stdout/stderr from this credential-bearing command.
+			throw new Error("Couldn't create a Desktop session. Sign in again from Clawdi.");
+		}
+	}
+
 	async logout(): Promise<void> {
 		const cli = this.cli();
-		await this.run(cli, ["daemon", "uninstall"], { timeoutMs: 60_000 });
-		await this.run(cli, ["auth", "logout"], { timeoutMs: 30_000 });
+		try {
+			await this.run(cli, ["daemon", "uninstall"], { timeoutMs: 60_000 });
+		} finally {
+			await this.run(cli, ["auth", "logout"], { timeoutMs: 30_000 });
+		}
 	}
 
 	async detectAgents(): Promise<DesktopDetectedAgent[]> {
