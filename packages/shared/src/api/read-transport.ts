@@ -13,6 +13,8 @@ export class ApiClientError extends Error {
 		public readonly status: number,
 		public readonly code: string | null = null,
 		public readonly retryAfterMs: number | null = null,
+		/** The server's clock from the response `Date` header (RFC 9110 §6.6.1), when sent. */
+		public readonly serverDateMs: number | null = null,
 	) {
 		super(`API request failed (${status})`);
 		this.name = "ApiClientError";
@@ -63,6 +65,13 @@ function retryAfterMs(response: Response): number | null {
 			: Number.NaN;
 	// Timers cannot represent longer delays. Leave those responses for an explicit retry.
 	return Number.isFinite(delay) && delay >= 0 && delay <= 2_147_483_647 ? delay : null;
+}
+
+function serverDateMs(response: Response): number | null {
+	const header = response.headers.get("Date")?.trim();
+	if (!header || !HTTP_DATE_PATTERN.test(header)) return null;
+	const date = Date.parse(header);
+	return Number.isFinite(date) ? date : null;
 }
 
 function errorCode(value: unknown): string | null {
@@ -179,6 +188,7 @@ export function createReadTransport(options: ApiClientOptions) {
 					result.response.status,
 					errorCode(result.error),
 					retryAfterMs(result.response),
+					serverDateMs(result.response),
 				);
 			}
 			if (result.data === undefined) throw new ApiClientResponseError();

@@ -103,18 +103,12 @@ export function NativeMenu({
 				typeof (entry.action.attributes?.destructive ? destructive : foreground) === "string"
 					? String(entry.action.attributes?.destructive ? destructive : foreground)
 					: undefined,
+			// A disabled menu also disables every action through MenuView's documented attribute.
+			attributes: disabled
+				? { ...entry.action.attributes, disabled: true }
+				: entry.action.attributes,
 			subactions: entry.children ? actions(entry.children) : undefined,
 		}));
-	if (disabled)
-		return (
-			<AppView
-				accessibilityState={{ disabled }}
-				pointerEvents="none"
-				className={fullWidth ? "w-full" : undefined}
-			>
-				{children}
-			</AppView>
-		);
 	const menu = (
 		<MenuView
 			style={fullWidth && width ? { width } : undefined}
@@ -124,7 +118,7 @@ export function NativeMenu({
 			onCloseMenu={() => onOpenChange?.(false)}
 			onPressAction={({ nativeEvent }) => {
 				const entry = findEntry(entries, nativeEvent.event);
-				if (!entry || entry.action.attributes?.disabled) return;
+				if (disabled || !entry || entry.action.attributes?.disabled) return;
 				entry.onPress?.();
 				onOpenChange?.(false);
 			}}
@@ -135,11 +129,24 @@ export function NativeMenu({
 		</MenuView>
 	);
 	// Compose's matchContents host needs a concrete width for percentage-width triggers.
-	return fullWidth ? (
+	const trigger = fullWidth ? (
 		<AppView className="w-full" onLayout={({ nativeEvent }) => setWidth(nativeEvent.layout.width)}>
 			{menu}
 		</AppView>
 	) : (
 		menu
+	);
+	// MenuView has no disabled prop. Keep its host so the trigger measures exactly as when
+	// enabled, stop touches from reaching it, and disable each action above.
+	return disabled ? (
+		<AppView
+			accessibilityState={{ disabled }}
+			pointerEvents="none"
+			className={fullWidth ? "w-full" : undefined}
+		>
+			{trigger}
+		</AppView>
+	) : (
+		trigger
 	);
 }

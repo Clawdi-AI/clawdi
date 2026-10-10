@@ -1,23 +1,35 @@
 import {
 	ApiClientError,
+	ApiClientNetworkError,
 	buildHostedDeployRequest,
 	type DeployComponents,
 	type HostedDeployAiFields,
 	type HostedDeployComputePlanSlug,
 	type HostedDeployPlan,
 	type HostedDeployRequest,
+	type HostedDeploySubscriptionQuote,
 	type HostedDeploySubscriptionSelection,
 	type HostedDeployValidationIssue,
 	type HostedDeployWizardDraft,
 	type HostedIncludedBasicAvailability,
+	hostedCheckoutSends,
+	hostedSubscriptionQuoteWalletDebit,
 	isHostedDeployBillingTerm,
 	isHostedDeployComputePlan,
 	isHostedDeployRuntime,
 	type StoreComputeSlot,
 	type StorePurchaseAttempt,
+	sameHostedSubscriptionQuoteTerms,
 	validateAndBuildHostedDeployRequest,
 	validateHostedDeployPersona,
 } from "@clawdi/shared/api";
+import {
+	DEPLOY_SESSION_EXPIRED_RECOVERY,
+	type DeploySubmissionFailure,
+	deploySubmissionErrorCopy,
+	deploySubmissionRecoveryCopy,
+	walletDebitShortfallUsd,
+} from "@clawdi/shared/view";
 
 /**
  * Store-funded attempts send compute_source "store" at admission; hosted refuses
@@ -38,13 +50,22 @@ export type ReusableSubscriptionChoice = {
 
 export type CreationAttempt = {
 	version: 1;
-	submission: "prepared" | "uncertain" | "entitlement_rejected";
+	/**
+	 * `released`: an uncertain Wallet request hosted proved it never received, confirmed
+	 * again on a fresh quote under the same id. That proof also allows discarding it.
+	 */
+	submission: "prepared" | "uncertain" | "released" | "entitlement_rejected";
 	id: string;
 	draft: HostedDeployWizardDraft;
 	request: HostedDeployRequest;
 	storeFunding?: StoreFunding;
 	/** Absent: hosted selects the entitlement (Included Basic or a store slot). */
 	subscription?: ReusableSubscriptionChoice;
+	/**
+	 * A new Wallet subscription funds this request, debited per this exact confirmed
+	 * quote. Every send repeats it so hosted replays, never re-quotes, an earlier POST.
+	 */
+	walletQuote?: HostedDeploySubscriptionQuote;
 };
 
 /** Card and Wallet rows are assigned by id; store rows use `reusableStoreRowPlan`. */
@@ -80,6 +101,54 @@ function parseSubscriptionChoice(
 		planSlug,
 		billingTermMonths: value.billingTermMonths,
 		fundingSource: value.fundingSource,
+	};
+}
+
+/** Hosted serializes Decimal amounts as strings, possibly in exponent form. */
+const QUOTE_DECIMAL = /^-?\d+(\.\d+)?(E[+-]?\d+)?$/i;
+
+function quoteDecimal(value: unknown): string | null {
+	return typeof value === "string" && QUOTE_DECIMAL.test(value) ? value : null;
+}
+
+/**
+ * The confirmed Wallet quote in one canonical shape, so the journal, its compare-and-set
+ * and every resend carry identical bytes. Null unless it is a complete Wallet quote.
+ */
+export function canonicalWalletQuote(
+	value: unknown,
+	planSlug: HostedDeployComputePlanSlug,
+): HostedDeploySubscriptionQuote | null {
+	if (
+		!record(value) ||
+		value.funding_source !== "wallet" ||
+		value.plan_slug !== planSlug ||
+		(value.billing_term_months !== 1 && value.billing_term_months !== 12) ||
+		typeof value.currency !== "string" ||
+		!value.currency ||
+		typeof value.term_price_cents !== "number" ||
+		!Number.isSafeInteger(value.term_price_cents) ||
+		value.term_price_cents < 0 ||
+		typeof value.expires_at !== "string" ||
+		Number.isNaN(Date.parse(value.expires_at)) ||
+		(value.preview_invoice_id != null && typeof value.preview_invoice_id !== "string")
+	)
+		return null;
+	const debit = quoteDecimal(value.debit_amount_usd);
+	const before = quoteDecimal(value.balance_before_usd);
+	const after = quoteDecimal(value.balance_after_usd);
+	if (!debit || !before || !after) return null;
+	return {
+		plan_slug: planSlug,
+		billing_term_months: value.billing_term_months,
+		funding_source: "wallet",
+		currency: value.currency,
+		term_price_cents: value.term_price_cents,
+		preview_invoice_id: value.preview_invoice_id ?? null,
+		expires_at: value.expires_at,
+		debit_amount_usd: debit,
+		balance_before_usd: before,
+		balance_after_usd: after,
 	};
 }
 
@@ -219,6 +288,7 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 		if (
 			submission !== "prepared" &&
 			submission !== "uncertain" &&
+			submission !== "released" &&
 			submission !== "entitlement_rejected"
 		)
 			return null;
@@ -229,6 +299,17 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 				: parseSubscriptionChoice(value.subscription, restoredDraft.computePlanSlug);
 		// A store-funded request is admitted by its store row, never by a card or Wallet one.
 		if (subscription === null || (subscription && value.storeFunding !== undefined)) return null;
+		const walletQuote =
+			value.walletQuote === undefined
+				? undefined
+				: canonicalWalletQuote(value.walletQuote, restoredDraft.computePlanSlug);
+		// A new Wallet subscription is its own funding; it never assigns or uses the store.
+		if (
+			walletQuote === null ||
+			(walletQuote && (subscription || value.storeFunding !== undefined)) ||
+			(submission === "released" && !walletQuote)
+		)
+			return null;
 		return {
 			version: 1,
 			submission,
@@ -237,6 +318,7 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 			request,
 			...(value.storeFunding !== undefined ? { storeFunding: value.storeFunding } : {}),
 			...(subscription ? { subscription } : {}),
+			...(walletQuote ? { walletQuote } : {}),
 		};
 	} catch {
 		return null;
@@ -256,7 +338,7 @@ export function canAdmitCreationAttempt(attempt: Pick<CreationAttempt, "storeFun
 export function canStartStorePurchase(attempt: CreationAttempt | null): boolean {
 	return (
 		!attempt ||
-		(attempt.submission !== "uncertain" &&
+		(canDiscardCreationAttempt(attempt) &&
 			(attempt.storeFunding === undefined || attempt.storeFunding === "awaiting_purchase"))
 	);
 }
@@ -377,11 +459,107 @@ export function isDefinitiveAdmissionRejection(attempt: CreationAttempt, error: 
 	return (
 		canDiscardCreationAttempt(attempt) &&
 		attempt.storeFunding === undefined &&
+		attempt.walletQuote === undefined &&
 		error instanceof ApiClientError &&
 		error.status === 409 &&
 		(error.code === "compute_entitlement_required" ||
 			(attempt.subscription !== undefined && error.code === "reusable_subscription_unavailable"))
 	);
+}
+
+/** Hosted's structured by-request 404 for a deploy request it holds no record of. */
+export const DEPLOY_REQUEST_NOT_FOUND_CODE = "deploy_request_not_found";
+/** Far beyond hosted's longest Wallet create transaction, including its 2 s lock waits. */
+export const WALLET_RELEASE_GRACE_MS = 10 * 60_000;
+
+/**
+ * Releases an uncertain new-Wallet request hosted never received. clawdi-hosted
+ * `place_wallet_subscription_create` (backend/app/v2/compute/subscription_creation_dispatch.py)
+ * refuses a quote whose `expires_at` has passed, then stores the request's
+ * PendingDeployRequest and the Wallet dispatch in one ordered transaction; the debit runs
+ * only from that committed dispatch. `get_deploy_request_status`
+ * (backend/app/v2/hosted/service.py) answers 404 without that row. Only hosted's typed
+ * `deploy_request_not_found` 404 counts (a gateway or principal 404 does not), and only
+ * once the server's clock is a grace period past the quote's expiry. Retries keep the
+ * request's id, so hosted still admits at most one dispatch for it; the proof of no
+ * charge also lets the user discard it.
+ */
+export function releaseWalletRequest(
+	attempt: CreationAttempt,
+	error: unknown,
+): CreationAttempt | null {
+	if (
+		attempt.submission !== "uncertain" ||
+		attempt.walletQuote === undefined ||
+		!(error instanceof ApiClientError) ||
+		error.status !== 404 ||
+		error.code !== DEPLOY_REQUEST_NOT_FOUND_CODE ||
+		error.serverDateMs === null ||
+		error.serverDateMs < Date.parse(attempt.walletQuote.expires_at) + WALLET_RELEASE_GRACE_MS
+	)
+		return null;
+	return { ...attempt, submission: "released" };
+}
+
+/** A Wallet request no send of which can still charge is confirmed on a fresh quote. */
+export function walletRequestNeedsQuote(attempt: CreationAttempt | null): boolean {
+	return (
+		attempt?.walletQuote !== undefined &&
+		(attempt.submission === "prepared" || attempt.submission === "released")
+	);
+}
+
+/**
+ * The wizard's confirmation of a fresh Wallet quote against the one the user saw: send
+ * only identical terms with no shortfall; otherwise show the new amount and send nothing.
+ */
+export function walletQuoteConfirmation(
+	shown: HostedDeploySubscriptionQuote | null | undefined,
+	fresh: HostedDeploySubscriptionQuote,
+): "confirmed" | "changed" {
+	return shown &&
+		sameHostedSubscriptionQuoteTerms(fresh, shown) &&
+		walletDebitShortfallUsd(hostedSubscriptionQuoteWalletDebit(fresh)) === null
+		? "confirmed"
+		: "changed";
+}
+
+/** The saved request's recovery controls. */
+export function creationAttemptControls(attempt: CreationAttempt, resolved: boolean) {
+	return {
+		checkStatus: attempt.submission === "uncertain",
+		discard: resolved || (canDiscardCreationAttempt(attempt) && !storeFundingHoldsAttempt(attempt)),
+	};
+}
+
+/**
+ * Copy for a failed new-Wallet send. "No wallet payment was made" only for a definitive
+ * refusal of the request's first send: never after an earlier uncertain or released send,
+ * nor when the shared transport already repeated it.
+ */
+export function walletCreationErrorCopy(saved: CreationAttempt, error: unknown) {
+	return deploySubmissionErrorCopy(
+		{
+			...deploySubmissionFailure(error),
+			firstSend: saved.submission === "prepared" && hostedCheckoutSends(error) === 1,
+		},
+		"wallet_creation",
+	);
+}
+
+/** The shared Deploy CTA reading of a mobile API failure, like Web's billing errors. */
+export function deploySubmissionFailure(error: unknown): DeploySubmissionFailure {
+	if (error instanceof ApiClientNetworkError) return { kind: error.kind, recovery: null };
+	if (!(error instanceof ApiClientError)) return { kind: "unknown", recovery: null };
+	if (error.status >= 500 || error.status === 429) return { kind: "server", recovery: null };
+	return {
+		kind: error.status >= 400 ? "rejected" : "unknown",
+		code: error.code,
+		recovery:
+			error.status === 401
+				? DEPLOY_SESSION_EXPIRED_RECOVERY
+				: deploySubmissionRecoveryCopy({ code: error.code }),
+	};
 }
 
 /** Store admission failures preserve the purchase and direct recovery of the same request. */

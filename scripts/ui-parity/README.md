@@ -79,6 +79,7 @@ Additional CLI flags:
 | `--whatsapp-state` | `ready` | State returned by new/retried/repaired sessions: `generating`, `ready`, `scanned`, `connected`, `expired`, `canceled`, or `error`. |
 | `--account-state` | `active` | `suspended` answers every authenticated request with the `account_suspended` problem: 401 on cloud paths, 403 on hosted paths (`/v2/*` except `/v2/runtime/*`, `/v1/me`, `/v1/agent-environments`, `/v1/me/notifications*`), as the two APIs do. Exercises the full-screen suspended state on Web and mobile. |
 | `--reusable-subscriptions` | `none` | `mixed` lists unassigned card, Wallet and store subscriptions in the deploy wizard's Compute section. |
+| `--included-basic` | `available` | `none` reports no free Included Basic slot, so the deploy wizard offers only paid compute. |
 | `--subscription-actions` | `false` | `true` adds hosted's per-row `actions` (cancel or resume) to paid subscriptions and answers `POST /v2/subscription/{cancel,resume}`. |
 
 Settings PATCH persists the provider and configured/unconfigured toggle.
@@ -101,6 +102,7 @@ in `mem0_api_key` (plus `mem0_api_key_configured`) for the existing clients.
 | OAuth result | Provider accept/device-start/device-poll return a synthetic ChatGPT device flow and ready OpenAI result. The verification URL is the exact official `https://auth.openai.com/codex/device` URL required by the native guard. The screenshot script never opens it; no external authorization occurs and the code is synthetic. |
 | Connected Agent disconnect | Additional agent `c1a0de00-0005-4c00-8000-000000000005`, Disconnect Demo, has `explicit_identity=false` and no hosted ownership. This enables the existing mobile disconnect gate; Web's platform capability remains unchanged. |
 | Session shares | Default session has snapshot `5a4e0000-0001-4000-8000-000000000001` and live permission `9ea10000-0001-4000-8000-000000000001`. Share dialog/inventory can render existing links and revoke/replace them. Public detail/message endpoints serve both share kinds. |
+| New Wallet subscription | `POST /v2/subscription/quote` quotes the Wallet debit from the 42.50 fixture balance. `POST /v2/subscription/checkout` with `subscription_selection.mode = "new"` and that quote debits once per `Idempotency-Key`/`deploy_request_id`, creates `hdep_ParityWallet<N>` (starting, ready after about 15 s) and returns its activation; the same key and body replay it. A changed or expired quote answers 409, a shortfall 402 `insufficient_wallet_balance`. Deploy wizard → New paid subscription → Wallet balance. |
 
 Fixed WhatsApp session IDs are
 `fa000000-000N-4000-8000-00000000000N`: N=1 ready, 2 generating,

@@ -5,7 +5,11 @@ import {
 	type AiProviderRemovalResult,
 	type DeployPaths,
 	extractApiDetail,
+	HOSTED_CHECKOUT_MAX_ATTEMPTS,
+	hostedCheckoutRetryDelayMs,
+	hostedCheckoutSends,
 	projectHostedDeployRequest,
+	recordHostedCheckoutSends,
 	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
@@ -64,8 +68,6 @@ export const BILLING_API_ORIGIN = new URL(ROOT_BASE_URL).origin;
 
 const REQUEST_TIMEOUT_MS = 20_000;
 const CHECKOUT_PATH = "/v2/subscription/checkout";
-const MAX_CHECKOUT_ATTEMPTS = 3;
-const MAX_CHECKOUT_RETRY_AFTER_MS = 2_000;
 const RETRYABLE_IDEMPOTENT_POST_PATHS = new Set([
 	CHECKOUT_PATH,
 	"/v2/wallet/topup",
@@ -125,13 +127,11 @@ function fetchWithTimeout(request: Request, init?: RequestInit): Promise<Respons
 }
 
 function checkoutRetryDelay(response: Response): number | null {
-	if (response.status !== 409 && response.status !== 503) return null;
 	const retryAfter = response.headers.get("Retry-After");
-	if (retryAfter === null) return null;
-	const seconds = Number(retryAfter);
-	if (!Number.isFinite(seconds) || seconds < 0) return null;
-	const delayMs = seconds * 1_000;
-	return delayMs <= MAX_CHECKOUT_RETRY_AFTER_MS ? delayMs : null;
+	return hostedCheckoutRetryDelayMs(
+		response.status,
+		retryAfter === null ? null : Number(retryAfter) * 1_000,
+	);
 }
 
 function throwIfAborted(signal: AbortSignal): void {
@@ -152,7 +152,7 @@ export function retryIdempotentBillingTransport(
 			!!request.headers.get("Idempotency-Key")?.trim();
 		if (!retryable) return fetcher(request);
 
-		const maxAttempts = path === CHECKOUT_PATH ? MAX_CHECKOUT_ATTEMPTS : 2;
+		const maxAttempts = path === CHECKOUT_PATH ? HOSTED_CHECKOUT_MAX_ATTEMPTS : 2;
 		const attempts = Array.from({ length: maxAttempts }, (_, index) =>
 			index === 0 ? request : request.clone(),
 		);
@@ -167,13 +167,14 @@ export function retryIdempotentBillingTransport(
 					request.signal.aborted ||
 					attempt === attempts.length - 1
 				) {
-					throw error;
+					throw recordHostedCheckoutSends(error, attempt + 1);
 				}
 				continue;
 			}
 
 			const delayMs = path === CHECKOUT_PATH ? checkoutRetryDelay(response) : null;
-			if (delayMs === null || attempt === attempts.length - 1) return response;
+			if (delayMs === null || attempt === attempts.length - 1)
+				return recordHostedCheckoutSends(response, attempt + 1);
 			await sleep(delayMs);
 		}
 		throw new BillingNetworkError("offline");
@@ -910,13 +911,19 @@ export function createBillingClient(
 			unwrapDeploy(
 				await api.GET("/v2/subscription/trial-offer", { params: { query: { channel } } }),
 			),
-		checkout: async (body: CheckoutRequest, idempotencyKey: string) =>
-			unwrapDeploy(
-				await api.POST("/v2/subscription/checkout", {
-					params: { header: { "Idempotency-Key": idempotencyKey } },
-					body,
-				}),
-			),
+		checkout: async (body: CheckoutRequest, idempotencyKey: string) => {
+			const result = await api.POST("/v2/subscription/checkout", {
+				params: { header: { "Idempotency-Key": idempotencyKey } },
+				body,
+			});
+			try {
+				return unwrapDeploy(result);
+			} catch (error) {
+				// Keep the transport's send count for the shared "nothing was paid" rule.
+				const sends = hostedCheckoutSends(result.response);
+				throw sends === null ? error : recordHostedCheckoutSends(error, sends);
+			}
+		},
 		quoteSubscription: async (body: ComputeSubscriptionQuoteRequest) =>
 			unwrapDeploy(await api.POST("/v2/subscription/quote", { body })),
 		quotePlanChange: async (body: ComputePlanChangeQuoteRequest) =>

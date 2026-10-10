@@ -3,6 +3,7 @@ import { createHostedComputeClient } from "./compute-client";
 import type { components } from "./deploy.generated";
 import type { HostedDeployRequest, HostedDeploySubscriptionQuoteRequest } from "./deploy-wizard";
 import { ApiClientError, type ApiClientOptions, ApiClientResponseError } from "./read-transport";
+import { hostedCheckoutSends } from "./subscription-create";
 
 const body: HostedDeployRequest = {
 	compute_plan_slug: "compute_basic",
@@ -136,6 +137,184 @@ describe("Hosted compute client", () => {
 		await expect(
 			client.assignReusableSubscription(request, "reuse-key", subscription),
 		).rejects.toBeInstanceOf(ApiClientResponseError);
+	});
+
+	test("starts a new Wallet subscription with Web's request and the confirmed quote", async () => {
+		const requests: { url: string; body: unknown; key: string | null }[] = [];
+		let response: unknown = {
+			flow_type: "subscription_activation",
+			funding_source: "wallet",
+			action_url: null,
+			checkout_url: "",
+			client_secret: null,
+			subscription_id: "csub_w",
+			invoice_id: "in_w",
+			deployment_id: "hdep_w",
+			deploy_request_id: "wallet-key",
+		};
+		let sends = 0;
+		const client = createHostedComputeClient({
+			...options,
+			fetch: async (request) => {
+				sends++;
+				requests.push({
+					url: request.url,
+					body: await request.json(),
+					key: request.headers.get("Idempotency-Key"),
+				});
+				return response instanceof Response ? response : Response.json(response);
+			},
+		});
+		const request = { ...body, deploy_request_id: "wallet-key" };
+		const walletQuote = {
+			plan_slug: "compute_basic",
+			billing_term_months: 1,
+			funding_source: "wallet",
+			currency: "usd",
+			term_price_cents: 1000,
+			preview_invoice_id: "upcoming_in",
+			expires_at: "2026-10-09T00:15:00Z",
+			debit_amount_usd: "10.00",
+			balance_before_usd: "30.00",
+			balance_after_usd: "20.00",
+		} as const;
+		await expect(
+			client.createWalletSubscriptionDeployment(request, "wallet-key", walletQuote),
+		).resolves.toMatchObject({ deployment_id: "hdep_w" });
+		expect(requests).toEqual([
+			{
+				url: "https://compute.example.test/v2/subscription/checkout",
+				key: "wallet-key",
+				body: {
+					plan_slug: "compute_basic",
+					billing_term_months: 1,
+					funding_source: "wallet",
+					ui_mode: "custom",
+					subscription_selection: { mode: "new" },
+					deploy_config: request,
+					quote: walletQuote,
+				},
+			},
+		]);
+		await expect(
+			client.createWalletSubscriptionDeployment(request, "wallet-key", {
+				...walletQuote,
+				plan_slug: "compute_performance",
+			}),
+		).rejects.toMatchObject({ code: "subscription_plan_mismatch" });
+		await expect(
+			client.createWalletSubscriptionDeployment(request, "wallet-key", {
+				...walletQuote,
+				funding_source: "stripe",
+			}),
+		).rejects.toMatchObject({ code: "wallet_quote_required" });
+		await expect(
+			client.createWalletSubscriptionDeployment(request, "other-key", walletQuote),
+		).rejects.toMatchObject({ code: "deploy_request_id_mismatch" });
+		expect(sends).toBe(1);
+		response = Response.json(
+			{ detail: { code: "insufficient_wallet_balance", shortfall_usd: "5.00" } },
+			{ status: 402 },
+		);
+		await expect(
+			client.createWalletSubscriptionDeployment(request, "wallet-key", walletQuote),
+		).rejects.toMatchObject({ status: 402, code: "insufficient_wallet_balance" });
+		response = { flow_type: "checkout_session", checkout_url: "https://checkout.example" };
+		await expect(
+			client.createWalletSubscriptionDeployment(request, "wallet-key", walletQuote),
+		).rejects.toBeInstanceOf(ApiClientResponseError);
+		expect(sends).toBe(3);
+	});
+
+	test("retries checkout like Web: same key and body, short Retry-After or transport loss, three sends", async () => {
+		const activation = {
+			flow_type: "subscription_activation",
+			funding_source: "wallet",
+			action_url: null,
+			checkout_url: "",
+			client_secret: null,
+			subscription_id: "csub_w",
+			invoice_id: null,
+			deployment_id: "hdep_w",
+			deploy_request_id: "retry-key",
+		};
+		const request = { ...body, deploy_request_id: "retry-key" };
+		const walletQuote = {
+			plan_slug: "compute_basic",
+			billing_term_months: 1,
+			funding_source: "wallet",
+			currency: "usd",
+			term_price_cents: 1000,
+			expires_at: "2026-10-09T00:15:00Z",
+			debit_amount_usd: "10.00",
+			balance_before_usd: "30.00",
+			balance_after_usd: "20.00",
+		} as const;
+		const run = async (replies: (() => Response)[]) => {
+			const sent: { key: string | null; body: string }[] = [];
+			const client = createHostedComputeClient({
+				...options,
+				fetch: async (sentRequest) => {
+					sent.push({
+						key: sentRequest.headers.get("Idempotency-Key"),
+						body: await sentRequest.text(),
+					});
+					const reply = replies[sent.length - 1];
+					if (!reply) throw new Error("Unexpected send");
+					return reply();
+				},
+			});
+			const result = await client
+				.createWalletSubscriptionDeployment(request, "retry-key", walletQuote)
+				.then(
+					(value) => value,
+					(error: unknown) => error,
+				);
+			expect(new Set(sent.map((item) => JSON.stringify(item))).size).toBe(1);
+			return { result, sends: sent.length };
+		};
+		const busy = (status: number, retryAfter: string | null) => () =>
+			Response.json(
+				{ detail: "A billing operation is already in progress" },
+				{ status, headers: retryAfter === null ? {} : { "Retry-After": retryAfter } },
+			);
+		const ok = () => Response.json(activation, { status: 202 });
+		const lost = () => {
+			throw new TypeError("Network request failed");
+		};
+		expect(await run([busy(409, "0"), busy(503, "0"), ok])).toEqual({
+			result: activation,
+			sends: 3,
+		});
+		expect(await run([lost, ok])).toEqual({ result: activation, sends: 2 });
+		const exhausted = await run([busy(503, "0"), busy(503, "0"), busy(503, "0")]);
+		expect(exhausted.sends).toBe(3);
+		expect(exhausted.result).toMatchObject({ status: 503 });
+		expect(hostedCheckoutSends(exhausted.result)).toBe(3);
+		expect(hostedCheckoutSends((await run([busy(422, null)])).result)).toBe(1);
+		for (const reply of [busy(409, null), busy(409, "3"), busy(502, "0"), busy(402, "0")])
+			expect((await run([reply])).sends).toBe(1);
+	});
+
+	test("errors carry the server's HTTP Date, and only a valid one", async () => {
+		for (const [date, expected] of [
+			["Sat, 10 Oct 2026 00:30:00 GMT", Date.parse("2026-10-10T00:30:00Z")],
+			["2026-10-10T00:30:00Z", null],
+			[null, null],
+		] as const) {
+			const client = createHostedComputeClient({
+				...options,
+				fetch: async () =>
+					Response.json(
+						{ detail: "Deployment request not found" },
+						{ status: 404, headers: date === null ? {} : { Date: date } },
+					),
+			});
+			await expect(client.listPlans()).rejects.toMatchObject({
+				status: 404,
+				serverDateMs: expected,
+			});
+		}
 	});
 
 	test("sends card and Wallet subscription commands once, to Web's endpoints", async () => {

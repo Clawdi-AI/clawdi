@@ -1,26 +1,37 @@
 import { describe, expect, test } from "bun:test";
 import {
 	ApiClientError,
+	ApiClientNetworkError,
 	createHostedComputeClient,
 	type DeployComponents,
 	type HostedDeployPlan,
 	type HostedDeployWizardDraft,
 	type HostedIncludedBasicAvailability,
+	recordHostedCheckoutSends,
 	type SavedAiProvider,
 	validateAndBuildHostedDeployRequest,
 } from "@clawdi/shared/api";
+import { deploySubmissionErrorCopy } from "@clawdi/shared/view";
 import {
 	type CreationAttempt,
 	canDiscardCreationAttempt,
+	canonicalWalletQuote,
 	canStartStorePurchase,
+	creationAttemptControls,
+	deploySubmissionFailure,
 	isDefinitiveAdmissionRejection,
 	offeredQuoteSelections,
 	parseCreationAttempt,
+	releaseWalletRequest,
 	retryStoreAdmission,
 	serverAllowsEntitledCreation,
 	storeAdmissionMessageKey,
 	storeAdmissionRecoveryAttempt,
 	storeFundingHoldsAttempt,
+	WALLET_RELEASE_GRACE_MS,
+	walletCreationErrorCopy,
+	walletQuoteConfirmation,
+	walletRequestNeedsQuote,
 } from "@/hosted/billing/deploy/deploy-request";
 import { en } from "@/lib/i18n/en";
 import { createAttemptStore } from "@/platform/creation-attempt-store";
@@ -566,5 +577,355 @@ describe("store-only admission recovery", () => {
 		controller.abort(new Error("Account changed"));
 		await expect(result).rejects.toBe(controller.signal.reason);
 		expect(sends).toBe(1);
+	});
+});
+
+describe("new Wallet subscription creation", () => {
+	const id = "8e244ab3-3333-4333-8333-333333333333";
+	const draft: HostedDeployWizardDraft = {
+		runtime: "hermes",
+		computePlanSlug: "compute_basic",
+		agentName: "Wallet Agent",
+		language: "en",
+		timezone: "UTC",
+		ai: { mode: "unmanaged" },
+	};
+	const built = validateAndBuildHostedDeployRequest(draft);
+	if (!built.ok) throw new Error("Invalid fixture");
+	// Server field order differs from the canonical journal shape on purpose.
+	const serverQuote = {
+		balance_after_usd: "20.00",
+		balance_before_usd: "30.00",
+		billing_term_months: 1,
+		currency: "usd",
+		debit_amount_usd: "10.00",
+		expires_at: "2026-10-09T23:30:00Z",
+		funding_source: "wallet",
+		plan_slug: "compute_basic",
+		term_price_cents: 1000,
+	} as const;
+	const walletQuote = canonicalWalletQuote(serverQuote, "compute_basic");
+	if (!walletQuote) throw new Error("Invalid quote fixture");
+	const attempt: CreationAttempt = {
+		version: 1,
+		submission: "prepared",
+		id,
+		draft,
+		request: { ...built.request, deploy_request_id: id },
+		walletQuote,
+	};
+	const memoryJournal = () => {
+		const values = new Map<string, string>();
+		const store = {
+			getItemAsync: async (key: string) => values.get(key) ?? null,
+			setItemAsync: async (key: string, value: string) => {
+				values.set(key, value);
+			},
+			deleteItemAsync: async (key: string) => {
+				values.delete(key);
+			},
+		};
+		return { store, journal: createAttemptStore(store) };
+	};
+
+	test("only a complete Wallet quote for the draft's plan is journaled", () => {
+		expect(walletQuote.preview_invoice_id).toBeNull();
+		expect(
+			canonicalWalletQuote({ ...serverQuote, plan_slug: "compute_performance" }, "compute_basic"),
+		).toBeNull();
+		expect(
+			canonicalWalletQuote({ ...serverQuote, funding_source: "stripe" }, "compute_basic"),
+		).toBeNull();
+		expect(
+			canonicalWalletQuote({ ...serverQuote, debit_amount_usd: null }, "compute_basic"),
+		).toBeNull();
+		expect(
+			canonicalWalletQuote({ ...serverQuote, balance_after_usd: "-6" }, "compute_basic"),
+		).not.toBeNull();
+		expect(
+			canonicalWalletQuote({ ...serverQuote, balance_before_usd: "0E-8" }, "compute_basic"),
+		).not.toBeNull();
+		expect(parseCreationAttempt(JSON.stringify(attempt))).toEqual(attempt);
+		for (const invalid of [
+			{ ...attempt, walletQuote: { ...walletQuote, plan_slug: "compute_performance" } },
+			{ ...attempt, walletQuote: { ...walletQuote, expires_at: "soon" } },
+			{ ...attempt, storeFunding: "funded" },
+			{
+				...attempt,
+				subscription: {
+					id: "csub_K8fJ3pQm",
+					planSlug: "compute_basic",
+					billingTermMonths: 1,
+					fundingSource: "wallet",
+				},
+			},
+		])
+			expect(parseCreationAttempt(JSON.stringify(invalid))).toBeNull();
+	});
+
+	test("crash after the uncertain marker replays the identical checkout after restart", async () => {
+		const { store, journal } = memoryJournal();
+		// Journal before POST, then mark uncertainty before any send.
+		await journal.saveAttempt("account", attempt, () => true);
+		const submitting: CreationAttempt = { ...attempt, submission: "uncertain" };
+		await journal.replaceAttempt("account", attempt, submitting, () => true);
+		const sent: { key: string | null; body: unknown }[] = [];
+		const client = createHostedComputeClient({
+			baseUrl: "https://compute.example.test",
+			getToken: async () => "token",
+			fetch: async (request) => {
+				sent.push({ key: request.headers.get("Idempotency-Key"), body: await request.json() });
+				return Response.json({ detail: "lost" }, { status: 502 });
+			},
+		});
+		const send = (saved: CreationAttempt) => {
+			if (!saved.walletQuote) throw new Error("Missing quote");
+			return client
+				.createWalletSubscriptionDeployment(saved.request, saved.id, saved.walletQuote)
+				.catch(() => undefined);
+		};
+		await send(submitting);
+		// The app restarts: a new journal instance reads the same storage.
+		const restored = await createAttemptStore(store).readSavedAttempt("account");
+		if (!restored) throw new Error("Missing saved request");
+		expect(restored).toEqual(submitting);
+		expect(canDiscardCreationAttempt(restored)).toBe(false);
+		await send(restored);
+		expect(sent).toHaveLength(2);
+		expect(sent[1]).toEqual(sent[0]);
+		expect(sent[0]?.key).toBe(id);
+	});
+
+	test("a different quote is never sent under a journaled request", async () => {
+		const { journal } = memoryJournal();
+		await journal.saveAttempt("account", attempt, () => true);
+		await expect(
+			journal.replaceAttempt(
+				"account",
+				attempt,
+				{
+					...attempt,
+					submission: "uncertain",
+					walletQuote: { ...walletQuote, balance_before_usd: "40.00" },
+				},
+				() => true,
+			),
+		).rejects.toThrow("Request payload changed");
+		// Account switch: the old owner can no longer write.
+		await expect(
+			journal.replaceAttempt(
+				"account",
+				attempt,
+				{ ...attempt, submission: "uncertain" },
+				() => false,
+			),
+		).rejects.toThrow("Creation owner changed");
+		expect(await journal.readSavedAttempt("account")).toEqual(attempt);
+	});
+
+	test("only hosted's typed 404, past the quote's expiry plus grace, releases the request", () => {
+		const expiry = Date.parse(walletQuote.expires_at);
+		const uncertain: CreationAttempt = { ...attempt, submission: "uncertain" };
+		const notFound = (code: string | null, serverDateMs: number | null) =>
+			new ApiClientError(404, code, null, serverDateMs);
+		const graceEnd = expiry + WALLET_RELEASE_GRACE_MS;
+		expect(WALLET_RELEASE_GRACE_MS).toBe(10 * 60_000);
+		const released = releaseWalletRequest(
+			uncertain,
+			notFound("deploy_request_not_found", graceEnd),
+		);
+		// Same request id and payload; only the submission marker changes.
+		expect(released).toEqual({ ...uncertain, submission: "released" });
+		for (const error of [
+			// Untyped 404s: a gateway, or hosted's principal/owner check.
+			notFound(null, graceEnd + 60_000),
+			notFound("owner_not_found", graceEnd + 60_000),
+			// Hosted's typed 404, but within the grace period or without a server clock.
+			notFound("deploy_request_not_found", graceEnd - 1),
+			notFound("deploy_request_not_found", expiry + 60_000),
+			notFound("deploy_request_not_found", null),
+			new ApiClientError(409, "deploy_request_not_found", null, graceEnd),
+			new ApiClientNetworkError("offline"),
+		])
+			expect(releaseWalletRequest(uncertain, error)).toBeNull();
+		// Only an uncertain Wallet request can be released.
+		const typed = notFound("deploy_request_not_found", graceEnd);
+		expect(releaseWalletRequest(attempt, typed)).toBeNull();
+		const { walletQuote: _quote, ...included } = uncertain;
+		expect(releaseWalletRequest(included, typed)).toBeNull();
+	});
+
+	test("a released request keeps its id, may be discarded and is confirmed on a fresh quote", async () => {
+		const uncertain: CreationAttempt = { ...attempt, submission: "uncertain" };
+		const released: CreationAttempt = { ...uncertain, submission: "released" };
+		expect(creationAttemptControls(attempt, false)).toEqual({ checkStatus: false, discard: true });
+		expect(creationAttemptControls(uncertain, false)).toEqual({
+			checkStatus: true,
+			discard: false,
+		});
+		// Hosted's typed 404 after the grace period proves no charge, so the wizard never locks.
+		expect(creationAttemptControls(released, false)).toEqual({
+			checkStatus: false,
+			discard: true,
+		});
+		expect(canDiscardCreationAttempt(released)).toBe(true);
+		expect(canDiscardCreationAttempt(uncertain)).toBe(false);
+		expect(walletRequestNeedsQuote(released)).toBe(true);
+		expect(walletRequestNeedsQuote(uncertain)).toBe(false);
+		expect(walletRequestNeedsQuote(null)).toBe(false);
+		expect(parseCreationAttempt(JSON.stringify(released))).toEqual(released);
+		const { walletQuote: _quote, ...withoutQuote } = released;
+		expect(parseCreationAttempt(JSON.stringify(withoutQuote))).toBeNull();
+		expect(en.creation.walletNotFound).toBe("We couldn't find this payment — you can try again.");
+		expect(en.creation.walletNotFound).not.toMatch(/charged|no payment|nothing/i);
+
+		const { journal } = memoryJournal();
+		await journal.saveAttempt("account", attempt, () => true);
+		await journal.replaceAttempt("account", attempt, uncertain, () => true);
+		const fresh = {
+			...walletQuote,
+			expires_at: "2026-10-10T00:30:00Z",
+			balance_before_usd: "25.00",
+			balance_after_usd: "15.00",
+		};
+		// While a send may still charge, the confirmed quote is immutable.
+		await expect(
+			journal.replaceAttempt(
+				"account",
+				uncertain,
+				{ ...uncertain, walletQuote: fresh },
+				() => true,
+			),
+		).rejects.toThrow("Request payload changed");
+		await journal.replaceAttempt("account", uncertain, released, () => true);
+		const requoted: CreationAttempt = { ...released, walletQuote: fresh };
+		await journal.replaceAttempt("account", released, requoted, () => true);
+		await journal.replaceAttempt(
+			"account",
+			requoted,
+			{ ...requoted, submission: "uncertain" },
+			() => true,
+		);
+		expect(await journal.readSavedAttempt("account")).toEqual({
+			...attempt,
+			submission: "uncertain",
+			walletQuote: fresh,
+		});
+	});
+
+	test("the wizard sends only the quote terms the user saw", () => {
+		const fresh = {
+			...walletQuote,
+			expires_at: "2026-10-10T00:30:00Z",
+			preview_invoice_id: "in_2",
+		};
+		expect(walletQuoteConfirmation(walletQuote, fresh)).toBe("confirmed");
+		expect(walletQuoteConfirmation(null, fresh)).toBe("changed");
+		expect(
+			walletQuoteConfirmation(walletQuote, {
+				...fresh,
+				balance_before_usd: "29.00",
+				balance_after_usd: "19.00",
+			}),
+		).toBe("changed");
+		const short = { ...fresh, balance_before_usd: "4.00", balance_after_usd: "-6.00" };
+		expect(walletQuoteConfirmation(short, short)).toBe("changed");
+	});
+
+	test("'No wallet payment was made' only for a definitive refusal of the first and only send", async () => {
+		const noPayment = "No wallet payment was made";
+		const unconfirmed = "We couldn’t confirm the payment — check status before trying again.";
+		const refused = recordHostedCheckoutSends(new ApiClientError(422, null), 1);
+		expect(walletCreationErrorCopy(attempt, refused).description).toContain(noPayment);
+		// Without a recorded send count the refusal is never treated as a first send.
+		expect(walletCreationErrorCopy(attempt, new ApiClientError(422, null)).description).toBe(
+			unconfirmed,
+		);
+		// Manual retry of an uncertain send, a replay conflict, or a released request's send.
+		for (const saved of [
+			{ ...attempt, submission: "uncertain" as const },
+			{ ...attempt, submission: "released" as const },
+		])
+			for (const error of [refused, new ApiClientError(409, "idempotency_key_reused")])
+				expect(walletCreationErrorCopy(saved, error).description).toBe(unconfirmed);
+
+		// A slow first send, then "billing operation in progress" on the shared retries.
+		const replies = [
+			() => {
+				throw new TypeError("Network request failed");
+			},
+			() =>
+				Response.json(
+					{ detail: "A billing operation is already in progress" },
+					{ status: 409, headers: { "Retry-After": "0" } },
+				),
+			() =>
+				Response.json(
+					{ detail: "A billing operation is already in progress" },
+					{ status: 409, headers: { "Retry-After": "0" } },
+				),
+		];
+		let sends = 0;
+		const client = createHostedComputeClient({
+			baseUrl: "https://compute.example.test",
+			getToken: async () => "token",
+			fetch: async () => {
+				const reply = replies[sends++];
+				if (!reply) throw new Error("Unexpected send");
+				return reply();
+			},
+		});
+		const error = await client
+			.createWalletSubscriptionDeployment(attempt.request, attempt.id, walletQuote)
+			.then(
+				() => null,
+				(failure: unknown) => failure,
+			);
+		expect(sends).toBe(3);
+		expect(error).toMatchObject({ status: 409 });
+		const copy = walletCreationErrorCopy(attempt, error);
+		expect(copy.description).toBe(unconfirmed);
+		expect(copy.description).not.toContain(noPayment);
+	});
+
+	test("refusals keep the request for same-key replay with Web's copy", () => {
+		const insufficient = new ApiClientError(402, "insufficient_wallet_balance");
+		// A Wallet request is never released as an entitlement rejection.
+		for (const error of [insufficient, new ApiClientError(409, "compute_entitlement_required")])
+			expect(isDefinitiveAdmissionRejection(attempt, error)).toBe(false);
+		expect(deploySubmissionFailure(new ApiClientNetworkError("timeout"))).toEqual({
+			kind: "timeout",
+			recovery: null,
+		});
+		expect(deploySubmissionFailure(new ApiClientError(503))).toEqual({
+			kind: "server",
+			recovery: null,
+		});
+		expect(deploySubmissionFailure(new ApiClientError(409, "idempotency_key_reused"))).toEqual({
+			kind: "rejected",
+			code: "idempotency_key_reused",
+			recovery: "This attempt couldn't be matched to the earlier request.",
+		});
+		// Hosted debited, then deferred acceptance: never claim nothing was paid.
+		const pending = deploySubmissionErrorCopy(
+			deploySubmissionFailure(new ApiClientError(409, "deployment_acceptance_pending")),
+			"wallet_creation",
+		);
+		expect(pending.title).toBe("Your payment may have gone through");
+		expect(pending.description).not.toContain("No wallet payment was made");
+		expect(pending.description).toContain("Check its status");
+		expect(
+			walletCreationErrorCopy(attempt, recordHostedCheckoutSends(new ApiClientError(401), 1)),
+		).toEqual({
+			title: "Payment and creation didn’t start",
+			description:
+				"Your session expired before this request could start. No wallet payment was made. Review your choices and retry.",
+		});
+		expect(
+			deploySubmissionErrorCopy(
+				deploySubmissionFailure(new ApiClientNetworkError("offline")),
+				"wallet_creation",
+			).description,
+		).toContain("Retry to safely resume the same attempt.");
 	});
 });

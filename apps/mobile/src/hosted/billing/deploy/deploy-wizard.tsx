@@ -1,10 +1,16 @@
 import {
+	ApiClientError,
 	buildHostedDeploySubscriptionQuoteRequest,
 	HOSTED_DEPLOY_LANGUAGE_OPTIONS,
+	HOSTED_WALLET_FUNDING_ERROR_COPY,
+	type HostedDeploySubscriptionQuote,
 	type HostedDeploySubscriptionSelection,
 	type HostedDeployWizardDraft,
 	hostedDeployAgentNameAfterRuntimeChange,
 	hostedDeployRuntimeLabel,
+	hostedSubscriptionActivationTarget,
+	hostedSubscriptionQuoteWalletDebit,
+	hostedWalletFundingErrorKind,
 	projectHostedDeployRequest,
 	validateAndBuildHostedDeployRequest,
 	validateHostedDeployPersona,
@@ -95,13 +101,15 @@ import {
 	admitWithStoreSlotRefresh,
 	type CreationAttempt,
 	canAdmitCreationAttempt,
-	canDiscardCreationAttempt,
+	canonicalWalletQuote,
 	canStartStorePurchase,
+	creationAttemptControls,
 	finishReservedRequest,
 	isDefinitiveAdmissionRejection,
 	offeredQuoteSelections,
 	type ReservedDeployResume,
 	type ReusableSubscriptionChoice,
+	releaseWalletRequest,
 	reservedDeployResume,
 	retryStoreAdmission,
 	reusableStoreRowPlan,
@@ -109,8 +117,10 @@ import {
 	serverAllowsEntitledCreation,
 	storeAdmissionMessageKey,
 	storeAdmissionRecoveryAttempt,
-	storeFundingHoldsAttempt,
 	validationTranslationKeys,
+	walletCreationErrorCopy,
+	walletQuoteConfirmation,
+	walletRequestNeedsQuote,
 } from "@/hosted/billing/deploy/deploy-request";
 import { readHostedStoreFunding } from "@/hosted/billing/deploy/store-funding";
 import { nextBillingCursor, uniqueBillingItems } from "@/hosted/billing/format";
@@ -246,6 +256,8 @@ function CreationForm() {
 		null,
 	);
 	const [resolved, setResolved] = useState(false);
+	// Hosted refused a Wallet debit until the Wallet is topped up.
+	const [walletFundingRefused, setWalletFundingRefused] = useState(false);
 	// The reserved store request the user chose to finish on this device.
 	const [resume, setResume] = useState<ReservedDeployResume | null>(null);
 	const inventory = useQuery({
@@ -303,8 +315,25 @@ function CreationForm() {
 					setProviderChoice(providerChoiceFor(saved.draft.ai));
 					// A store-funded request stays on the store path until its purchase is funded.
 					// Other saved requests replay as saved; only an exact subscription is shown.
-					setSource(saved.storeFunding ? "store" : saved.subscription ? "existing" : null);
+					setSource(
+						saved.storeFunding
+							? "store"
+							: saved.subscription
+								? "existing"
+								: saved.walletQuote
+									? "new"
+									: null,
+					);
 					setSubscriptionId(saved.subscription?.id ?? null);
+					// A new Wallet subscription resumes with the exact quote it was confirmed with.
+					if (saved.walletQuote) {
+						setQuoteSelection({
+							planSlug: saved.walletQuote.plan_slug,
+							billingTermMonths: saved.walletQuote.billing_term_months,
+							fundingSource: "wallet",
+						});
+						setPreviewTerm(saved.walletQuote.billing_term_months);
+					}
 				}
 				setStorageReady(true);
 			} catch {
@@ -345,6 +374,10 @@ function CreationForm() {
 		selectedPlan,
 		{ reusable: reusableItems, hasSavedAttempt: hasRequest },
 	);
+	// A new Wallet subscription buys its compute; like Web, it needs only product access.
+	const walletSelected = source === "new" && quoteSelection?.fundingSource === "wallet";
+	const creationEligible =
+		walletSelected && !hasRequest ? inventory.data?.capabilities.can_use_v2 === true : eligible;
 	const quoteOptions = offeredQuoteSelections(inventory.data?.plans ?? []).map((option) => ({
 		...option,
 		fundingSource: fundingDefault,
@@ -365,37 +398,48 @@ function CreationForm() {
 		source === "new" && quoteAvailable && quoteSelection?.fundingSource === "wallet"
 			? quoteSelection
 			: null;
+	// A saved Wallet request replays its own confirmed quote; only a new one is quoted.
+	const walletNew = walletQuoteSelection !== null && !attempt;
+	// Quoted live: a new Wallet request, or a saved one no send of which can still charge.
+	const walletQuoting =
+		walletQuoteSelection !== null && (!attempt || walletRequestNeedsQuote(attempt));
+	const quoteKey = accountQueryKey(
+		scope,
+		"creation-quote",
+		walletQuoteSelection?.planSlug,
+		walletQuoteSelection?.billingTermMonths,
+	);
+	const fetchWalletQuote = async (
+		selection: HostedDeploySubscriptionSelection,
+		signal?: AbortSignal,
+	) => {
+		if (!compute) throw new Error("Quote unavailable");
+		const quoted = await read(
+			(s) => compute.quoteSubscription(buildHostedDeploySubscriptionQuoteRequest(selection), s),
+			signal,
+		);
+		const canonical = canonicalWalletQuote(quoted, selection.planSlug);
+		if (!canonical || canonical.billing_term_months !== selection.billingTermMonths)
+			throw new Error("Invalid wallet quote");
+		return canonical;
+	};
 	const quote = useQuery({
-		queryKey: accountQueryKey(
-			scope,
-			"creation-quote",
-			walletQuoteSelection?.planSlug,
-			walletQuoteSelection?.billingTermMonths,
-		),
-		queryFn: ({ signal }) =>
-			read((s) => {
-				if (!compute || !walletQuoteSelection) throw new Error("Quote unavailable");
-				return compute.quoteSubscription(
-					buildHostedDeploySubscriptionQuoteRequest(walletQuoteSelection),
-					s,
-				);
-			}, signal),
-		enabled: scope.isReady && Boolean(compute) && walletQuoteSelection !== null,
+		queryKey: quoteKey,
+		queryFn: ({ signal }) => {
+			if (!walletQuoteSelection) throw new Error("Quote unavailable");
+			return fetchWalletQuote(walletQuoteSelection, signal);
+		},
+		// Like Web, the shown quote is not refreshed under an in-flight confirmation.
+		enabled: scope.isReady && Boolean(compute) && walletQuoting && !action.busy,
 		staleTime: 30_000,
 		retry: false,
 	});
-	const walletDebit: WalletDebitSummary | null =
-		walletQuoteSelection &&
-		quote.data?.funding_source === "wallet" &&
-		quote.data.balance_before_usd &&
-		quote.data.debit_amount_usd &&
-		quote.data.balance_after_usd
-			? {
-					balanceBeforeUsd: quote.data.balance_before_usd,
-					debitAmountUsd: quote.data.debit_amount_usd,
-					balanceAfterUsd: quote.data.balance_after_usd,
-				}
-			: null;
+	const shownWalletQuote: HostedDeploySubscriptionQuote | null = walletQuoting
+		? (quote.data ?? null)
+		: (attempt?.walletQuote ?? null);
+	const walletDebit: WalletDebitSummary | null = shownWalletQuote
+		? hostedSubscriptionQuoteWalletDebit(shownWalletQuote)
+		: null;
 	const formatWalletAmount = (usd: string) =>
 		surfaces.creditUnits ? formatCredits(usd, credits) : formatUsdExact(usd);
 	const personaIssues = validateHostedDeployPersona({
@@ -465,8 +509,9 @@ function CreationForm() {
 				(!attempt &&
 					source !== "included" &&
 					!(source === "existing" && selectedReusable) &&
-					!storeAdmission) ||
-				!eligible ||
+					!storeAdmission &&
+					!walletNew) ||
+				!creationEligible ||
 				!current(owns)
 			)
 				return;
@@ -479,22 +524,59 @@ function CreationForm() {
 				]),
 			);
 			if (!current(owns)) return;
-			const refreshedReusable = hasRequest
-				? undefined
-				: await reusable.refetch({ throwOnError: true });
+			const refreshedReusable =
+				hasRequest || walletNew ? undefined : await reusable.refetch({ throwOnError: true });
 			if (
 				!current(owns) ||
-				!serverAllowsEntitledCreation(
-					capabilities,
-					included,
-					plans.find((p) => p.slug === draft.computePlanSlug),
-					{
-						reusable: refreshedReusable?.data?.pages.flatMap((page) => page.items ?? []),
-						hasSavedAttempt: hasRequest,
-					},
-				)
+				!(walletNew
+					? capabilities.can_use_v2 === true
+					: serverAllowsEntitledCreation(
+							capabilities,
+							included,
+							plans.find((p) => p.slug === draft.computePlanSlug),
+							{
+								reusable: refreshedReusable?.data?.pages.flatMap((page) => page.items ?? []),
+								hasSavedAttempt: hasRequest,
+							},
+						))
 			) {
 				if (current(owns)) setMessage(t("creation.blocked"));
+				return;
+			}
+			if (walletQuoting && walletQuoteSelection) {
+				// Confirm only the terms the user saw: re-quote at the mutation boundary and
+				// persist that fresh quote, so the first send cannot carry an expired one.
+				const confirmed = quote.data;
+				let fresh: HostedDeploySubscriptionQuote;
+				try {
+					fresh = await fetchWalletQuote(walletQuoteSelection);
+				} catch {
+					// Nothing was saved or sent; show the quote's own error and retry.
+					if (current(owns)) {
+						setMessage(deployFormCopy.walletQuoteRetry);
+						void quote.refetch();
+					}
+					return;
+				}
+				if (!current(owns)) return;
+				cache.setQueryData(quoteKey, fresh);
+				if (walletQuoteConfirmation(confirmed, fresh) === "changed") {
+					setMessage(t("creation.walletQuoteChanged"));
+					return;
+				}
+				if (draft.computePlanSlug !== fresh.plan_slug) return;
+				setWalletFundingRefused(false);
+				if (attempt) {
+					// The same request id keeps hosted's one-dispatch-per-request guarantee.
+					const requoted: CreationAttempt = { ...attempt, walletQuote: fresh };
+					await replaceAttempt(storageKey, attempt, requoted, () => current(owns));
+					if (!current(owns)) return;
+					setAttempt(requoted);
+					await submit(requoted, true, owns);
+					return;
+				}
+				const prepared = prepareAttempt(draft, undefined, undefined, fresh);
+				if (prepared) await submit(prepared, false, owns);
 				return;
 			}
 			if (!attempt && resuming) {
@@ -557,6 +639,7 @@ function CreationForm() {
 		next: HostedDeployWizardDraft,
 		id: string = Crypto.randomUUID(),
 		subscription?: ReusableSubscriptionChoice,
+		walletQuote?: HostedDeploySubscriptionQuote,
 	): CreationAttempt | null => {
 		const validated = validateAndBuildHostedDeployRequest(
 			next,
@@ -578,6 +661,7 @@ function CreationForm() {
 			draft: next,
 			request: { ...validated.request, deploy_request_id: id },
 			...(subscription ? { subscription } : {}),
+			...(walletQuote ? { walletQuote } : {}),
 		};
 	};
 	/** Explicit admission of a persisted request; the server is the final permission boundary. */
@@ -599,10 +683,24 @@ function CreationForm() {
 			const bootstrap = await read((s) => storeClient.bootstrap(platform, s));
 			return current(owns) ? bootstrap.compute_slot : null;
 		};
+		let accepted: ReturnType<typeof hostedSubscriptionActivationTarget> | null = null;
 		try {
 			const subscription = submitting.subscription;
+			const walletQuote = submitting.walletQuote;
 			// The same request id and payload: hosted admits it at most once.
-			if (subscription)
+			if (walletQuote)
+				accepted = hostedSubscriptionActivationTarget(
+					await read((s) => {
+						if (!current(owns)) throw new Error("Creation action expired");
+						return compute.createWalletSubscriptionDeployment(
+							submitting.request,
+							submitting.id,
+							walletQuote,
+							s,
+						);
+					}),
+				);
+			else if (subscription)
 				await read((s) => {
 					if (!current(owns)) throw new Error("Creation action expired");
 					return compute.assignReusableSubscription(
@@ -637,6 +735,24 @@ function CreationForm() {
 					productPlan,
 				);
 		} catch (error) {
+			if (current(owns) && saved.walletQuote) {
+				// Like Web: a funding refusal asks for a top-up; the same request then replays.
+				const funding = hostedWalletFundingErrorKind(
+					error instanceof ApiClientError ? error.code : null,
+				);
+				if (funding !== "other") {
+					setWalletFundingRefused(true);
+					setMessage(
+						funding === "insufficient_balance"
+							? `${HOSTED_WALLET_FUNDING_ERROR_COPY.insufficientBalanceTitle}\n${HOSTED_WALLET_FUNDING_ERROR_COPY.subscription.insufficientBalance}`
+							: `${HOSTED_WALLET_FUNDING_ERROR_COPY.refundDebtTitle}\n${HOSTED_WALLET_FUNDING_ERROR_COPY.subscription.refundDebt}`,
+					);
+					return;
+				}
+				const copy = walletCreationErrorCopy(saved, error);
+				setMessage(`${copy.title}\n${copy.description}`);
+				return;
+			}
 			const storeMessage = storeAdmissionMessageKey(saved, error);
 			if (current(owns) && storeMessage) {
 				const recovered = storeAdmissionRecoveryAttempt(saved, error);
@@ -663,7 +779,24 @@ function CreationForm() {
 		}
 		// The admitted request no longer holds a store reservation.
 		if (saved.storeFunding) void refreshStore({ recover: false });
-		if (current(owns)) await navigateRequest(saved.id, owns);
+		if (accepted) {
+			// Web refreshes every read a new paid subscription changes.
+			for (const key of [
+				"billing-wallet",
+				"billing-transactions",
+				"billing-subscriptions",
+				"creation-inventory",
+				"creation-reusable",
+				"cloud-agents",
+			])
+				void cache.invalidateQueries({ queryKey: accountQueryKey(scope, key) });
+			setWalletFundingRefused(false);
+		}
+		if (!current(owns)) return;
+		if (accepted?.kind === "deployment") {
+			setResolved(true);
+			await navigateDeployment(accepted.deploymentId, owns);
+		} else await navigateRequest(accepted?.deployRequestId ?? saved.id, owns);
 	};
 	/** Read hosted funding for the exact saved request without starting recovery. */
 	const readStoreFunding = async (saved: CreationAttempt, owns: () => boolean) => {
@@ -841,11 +974,13 @@ function CreationForm() {
 		walletQuoteSelection !== null
 			? walletDeployAmountPresentation({
 					billingTermMonths: walletQuoteSelection.billingTermMonths,
-					state: quote.isError ? "error" : walletDebit ? "ready" : "loading",
+					state: walletQuoting && quote.isError ? "error" : walletDebit ? "ready" : "loading",
 					walletDebit,
 					format: formatWalletAmount,
 				})
 			: null;
+	// The amount line explains loading and shortfall states, like Web's.
+	const walletReady = walletQuoting && walletDebit !== null && !quote.isError && shortfall === null;
 	const personaIssue = personaIssues[0];
 	const blockingReason =
 		attempt || resuming
@@ -854,11 +989,13 @@ function CreationForm() {
 				? deployFormCopy.chooseSource
 				: personaIssue
 					? t(validationTranslationKeys[personaIssue.field])
-					: source === "new"
-						? t("creation.newUnavailable")
-						: source !== "store" && !eligible
+					: source === "new" && !walletSelected
+						? t("creation.cardUnavailable")
+						: source !== "store" && !creationEligible
 							? t("creation.blocked")
-							: null;
+							: walletQuoting && quote.isError
+								? deployFormCopy.walletQuoteRetry
+								: null;
 	return (
 		<AppView className="flex-1">
 			<AppScrollView
@@ -1387,16 +1524,18 @@ function CreationForm() {
 													))}
 											</WebView>
 										</WebView>
-										{walletQuoteSelection && quote.isError ? (
+										{walletQuoting && quote.isError ? (
 											<ApiErrorPanel error={quote.error} onRetry={() => void quote.refetch()} />
 										) : walletDebit ? (
 											<WalletDebitEquation debit={walletDebit} format={formatWalletAmount} />
 										) : null}
-										{shortfall && surfaces.addCredits ? (
+										{(shortfall || walletFundingRefused) && surfaces.addCredits ? (
 											<>
-												<AppText>
-													{t("store.shortfall", { amount: formatWalletAmount(shortfall) })}
-												</AppText>
+												{shortfall ? (
+													<AppText>
+														{t("store.shortfall", { amount: formatWalletAmount(shortfall) })}
+													</AppText>
+												) : null}
 												<AddCreditsAction onFunded={() => void quote.refetch()} />
 											</>
 										) : null}
@@ -1472,17 +1611,28 @@ function CreationForm() {
 							<>
 								<AppText>{t("creation.saved")}</AppText>
 								{/* Only a sent admission can be recovered; store funding uses the footer Check status. */}
-								{attempt.submission === "uncertain" ? (
+								{creationAttemptControls(attempt, resolved).checkStatus ? (
 									<ActionButton
 										label={t("creation.recover")}
 										disabled={action.busy}
 										onPress={() => {
-											void action.run((owns) => navigateRequest(attempt.id, owns));
+											void action.run(async (owns) => {
+												try {
+													await navigateRequest(attempt.id, owns);
+												} catch (error) {
+													const released = releaseWalletRequest(attempt, error);
+													if (!storageKey || !released) throw error;
+													// Hosted holds no record of it: confirm the same request on a fresh quote.
+													await replaceAttempt(storageKey, attempt, released, () => current(owns));
+													if (!current(owns)) return;
+													setAttempt(released);
+													setMessage(t("creation.walletNotFound"));
+												}
+											});
 										}}
 									/>
 								) : null}
-								{resolved ||
-								(canDiscardCreationAttempt(attempt) && !storeFundingHoldsAttempt(attempt)) ? (
+								{creationAttemptControls(attempt, resolved).discard ? (
 									<ActionButton
 										label={t(resolved ? "creation.clear" : "creation.discard")}
 										disabled={action.busy}
@@ -1600,11 +1750,13 @@ function CreationForm() {
 					) : (
 						<ActionButton
 							label={
-								attempt
+								attempt && !walletRequestNeedsQuote(attempt)
 									? t("creation.retry")
 									: resuming
 										? t("creation.reservedAction")
-										: deployFormCopy.deploy
+										: walletSelected
+											? deployFormCopy.payAndDeploy
+											: deployFormCopy.deploy
 							}
 							icon={<Icon as={Rocket} />}
 							variant="default"
@@ -1615,8 +1767,10 @@ function CreationForm() {
 									(personaIssue !== undefined ||
 										(source !== "included" &&
 											!(source === "existing" && selectedReusable) &&
-											!storeAdmission))) ||
-								!eligible ||
+											!storeAdmission &&
+											!walletReady))) ||
+								(walletRequestNeedsQuote(attempt) && !walletReady) ||
+								!creationEligible ||
 								!storageReady ||
 								storageError ||
 								inventory.isError

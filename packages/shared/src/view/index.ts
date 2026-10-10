@@ -42,6 +42,7 @@ export * from "./create-project-dialog";
 export * from "./daemon-status";
 export * from "./dashboard";
 export * from "./deploy-locale";
+export * from "./deploy-submission-error";
 export * from "./deployment-failure";
 export * from "./deployment-polling";
 export * from "./deployment-status";

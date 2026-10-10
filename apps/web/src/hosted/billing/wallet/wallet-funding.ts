@@ -1,5 +1,6 @@
 "use client";
 
+import { HOSTED_WALLET_FUNDING_ERROR_COPY, hostedWalletFundingErrorKind } from "@clawdi/shared/api";
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { billingErrorDetail } from "@/hosted/billing/errors";
@@ -16,10 +17,8 @@ export type WalletFundingErrorCopy = {
 	refundDebt: string;
 };
 
-export const SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY: WalletFundingErrorCopy = {
-	insufficientBalance: "Top up the shortfall, then review a fresh wallet quote.",
-	refundDebt: "Top up before starting this wallet subscription.",
-};
+export const SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY: WalletFundingErrorCopy =
+	HOSTED_WALLET_FUNDING_ERROR_COPY.subscription;
 
 export function decimalUsd(value: unknown): string | null {
 	const parsed = canonicalDecimal(value);
@@ -28,13 +27,11 @@ export function decimalUsd(value: unknown): string | null {
 
 export function classifyWalletFundingError(error: unknown): WalletFundingError {
 	const detail = billingErrorDetail(error);
-	if (detail?.code === "insufficient_wallet_balance" || detail?.code === "insufficient_balance") {
-		return { kind: "insufficient_balance", shortfallUsd: decimalUsd(detail.shortfall_usd) };
+	const kind = hostedWalletFundingErrorKind(detail?.code);
+	if (kind === "insufficient_balance") {
+		return { kind, shortfallUsd: decimalUsd(detail?.shortfall_usd) };
 	}
-	if (detail?.code === "open_refund_debt") {
-		return { kind: "open_refund_debt", shortfallUsd: null };
-	}
-	return { kind: "other", shortfallUsd: null };
+	return { kind, shortfallUsd: null };
 }
 
 export function useWalletTopUpDialog(errorCopy: WalletFundingErrorCopy) {
@@ -59,11 +56,13 @@ export function useWalletTopUpDialog(errorCopy: WalletFundingErrorCopy) {
 			if (fundingError.kind === "other") return false;
 			show(fundingError.shortfallUsd);
 			if (fundingError.kind === "insufficient_balance") {
-				toast.error("Not enough wallet balance", {
+				toast.error(HOSTED_WALLET_FUNDING_ERROR_COPY.insufficientBalanceTitle, {
 					description: errorCopy.insufficientBalance,
 				});
 			} else {
-				toast.error("Refund debt must be repaid", { description: errorCopy.refundDebt });
+				toast.error(HOSTED_WALLET_FUNDING_ERROR_COPY.refundDebtTitle, {
+					description: errorCopy.refundDebt,
+				});
 			}
 			return true;
 		},

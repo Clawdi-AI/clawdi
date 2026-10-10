@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { recordHostedCheckoutSends } from "@clawdi/shared/api";
 import {
 	BillingApiError,
 	BillingNetworkError,
@@ -238,13 +239,58 @@ describe("deploySubmissionErrorPresentation", () => {
 
 	test("states when an explicit wallet rejection did not start payment", () => {
 		const presentation = deploySubmissionErrorPresentation(
-			new BillingApiError(422, "internal validation trace"),
+			recordHostedCheckoutSends(new BillingApiError(422, "internal validation trace"), 1),
 			"wallet_creation",
+			{ firstSend: true },
 		);
+		// No recorded send count: never read as the first send, even when the caller says so.
+		expect(
+			deploySubmissionErrorPresentation(
+				new BillingApiError(422, "internal validation trace"),
+				"wallet_creation",
+				{ firstSend: true },
+			).description,
+		).toBe("We couldn’t confirm the payment — check status before trying again.");
 
 		expect(presentation.title).toBe("Payment and creation didn’t start");
 		expect(presentation.description).toContain("No wallet payment was made");
 		expect(presentation.description).not.toContain("internal validation trace");
+	});
+
+	test("a refusal after an earlier or repeated wallet send never claims nothing was paid", () => {
+		const unconfirmed = "We couldn’t confirm the payment — check status before trying again.";
+		const busy = new BillingApiError(409, "A billing operation is already in progress");
+		const conflict = new BillingApiError(409, "Conflict", {
+			detail: { code: "idempotency_key_reused" },
+		});
+		// A manual retry of the same attempt (its key was not minted for this send).
+		for (const error of [busy, conflict])
+			expect(deploySubmissionErrorPresentation(error, "wallet_creation").description).toBe(
+				unconfirmed,
+			);
+		// A first send the shared checkout retry already repeated.
+		const repeated = recordHostedCheckoutSends(
+			new BillingApiError(409, "A billing operation is already in progress"),
+			3,
+		);
+		expect(
+			deploySubmissionErrorPresentation(repeated, "wallet_creation", { firstSend: true })
+				.description,
+		).toBe(unconfirmed);
+	});
+
+	test("acceptance pending after a funded checkout never claims nothing was paid", () => {
+		const error = new BillingApiError(409, "Acceptance pending", {
+			detail: { code: "deployment_acceptance_pending", message: "Acceptance pending" },
+		});
+		const wallet = deploySubmissionErrorPresentation(error, "wallet_creation");
+		const assignment = deploySubmissionErrorPresentation(error, "subscription_assignment");
+
+		expect(wallet.title).toBe("Your payment may have gone through");
+		expect(wallet.description).not.toContain("No wallet payment was made");
+		expect(wallet.description).toContain("Check its status before retrying");
+		expect(assignment.title).toBe("We're still setting up this agent");
+		expect(assignment.description).not.toContain("didn’t start");
 	});
 });
 
