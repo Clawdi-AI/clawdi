@@ -13,15 +13,15 @@ import { useAgentConfirmation } from "@/components/dashboard/confirmation";
 import { ActionButton } from "@/components/dashboard/controls";
 import { Text as AppText } from "@/components/ui/text";
 import { skillsRefetchPolicy } from "@/hosted/agents/agent-desired-skills-query";
+import {
+	createWorkspaceSkillJournal,
+	newSkillAttempt,
+} from "@/hosted/agents/workspace-skill-journal";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
-import {
-	type SkillAttempt,
-	skillAttemptAfterFailure,
-	skillRejectionReason,
-} from "@/platform/skill-attempt";
+import { type SkillAttempt, skillRejectionReason } from "@/platform/skill-attempt";
 import { skillAttempts } from "@/platform/skill-attempt-storage";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
@@ -47,6 +47,7 @@ export function useWorkspaceSkillChanges(
 	const [epoch, setEpoch] = useState(0);
 	const focused = useIsFocused();
 	const [accepted, setAccepted] = useState(false);
+	const [journalStore] = useState(() => createWorkspaceSkillJournal(skillAttempts));
 	const confirmation = useRef(0);
 	const inventory = useQuery<DeployComponents["schemas"]["V2WorkspaceSkillListResponse"]>({
 		queryKey: accountQueryKey(scope, "workspace-skills", id),
@@ -86,10 +87,10 @@ export function useWorkspaceSkillChanges(
 				);
 				if (!current()) return;
 				const key = `clawdi.workspace-skills.v1.${digest}`;
-				const attempt = await skillAttempts.readSavedAttempt(key);
+				const { attempt, stale } = await journalStore.read(key, id);
 				if (!current()) return;
-				if (attempt && attempt.deploymentId !== id) throw new Error("Wrong saved request");
-				setSaved(attempt);
+				// A change journaled during this read already reported the newer state.
+				if (!stale) setSaved(attempt);
 				setStorageKey(key);
 			} catch {
 				if (current()) setStorageError(true);
@@ -98,7 +99,7 @@ export function useWorkspaceSkillChanges(
 		return () => {
 			mounted = false;
 		};
-	}, [scope, id, epoch, focused]);
+	}, [scope, id, epoch, focused, journalStore]);
 	const enabled =
 		!action.busy &&
 		!saved &&
@@ -120,34 +121,20 @@ export function useWorkspaceSkillChanges(
 			const owns = () => current() && scope.isCurrent() && !scope.signal.aborted;
 			if (!visible()) return;
 			setAccepted(false);
-			if (fresh) await skillAttempts.saveAttempt(storageKey, attempt, owns);
-			if (!owns()) return;
-			setSaved(attempt);
-			const sending: SkillAttempt = { ...attempt, status: "uncertain" };
-			await skillAttempts.replaceAttempt(storageKey, attempt, sending, () => owns() && visible());
-			if (!owns()) return;
-			setSaved(sending);
-			if (!visible()) return;
-			try {
-				await read((signal) =>
-					client.apply(id, attempt.version, attempt.key, attempt.mutation, signal),
-				);
-				if (!owns()) return;
-				await skillAttempts.clearAttempt(storageKey, sending, owns);
-				if (!owns()) return;
-				setSaved(null);
+			const outcome = await journalStore.send(attempt, {
+				key: storageKey,
+				fresh,
+				owns,
+				visible,
+				onJournal: setSaved,
+				apply: (sent) =>
+					read((signal) => client.apply(id, sent.version, sent.key, sent.mutation, signal)),
+			});
+			if (outcome === "accepted") {
 				setAccepted(true);
 				await refresh();
 				if (onAccepted && owns()) await onAccepted();
-			} catch (error) {
-				const settled = skillAttemptAfterFailure(attempt, error);
-				if (!owns() || settled.status === "uncertain") throw error;
-				// The saved request's status copy or its rejection reason explains a resolved failure.
-				await skillAttempts.replaceAttempt(storageKey, sending, settled, owns);
-				if (!owns()) return;
-				setSaved(settled);
-				await refresh();
-			}
+			} else if (outcome === "settled") await refresh();
 		});
 	const confirm = (
 		title: string,
@@ -178,14 +165,12 @@ export function useWorkspaceSkillChanges(
 	/** `name` labels an uninstall confirmation; it defaults to the Skill key. */
 	const prepare = (mutation: WorkspaceSkillMutation, name?: string) => {
 		if (!enabled || !inventory.data) return;
-		const attempt: SkillAttempt = {
-			format: 1,
-			deploymentId: id,
-			version: inventory.data.deployment_resource_version,
-			key: randomUUID(),
+		const attempt = newSkillAttempt(
+			id,
+			inventory.data.deployment_resource_version,
 			mutation,
-			status: "prepared",
-		};
+			randomUUID(),
+		);
 		// Failures close the confirmation: the journaled attempt's Retry/Discard controls drive
 		// recovery, since repeating a fresh save over that journal can only fail.
 		if (mutation.action === "install")
@@ -254,7 +239,7 @@ export function useWorkspaceSkillChanges(
 								() =>
 									action.runOrThrow(async (current) => {
 										if (!storageKey) return;
-										await skillAttempts.clearAttempt(
+										await journalStore.discard(
 											storageKey,
 											saved,
 											() => current() && scope.isCurrent(),

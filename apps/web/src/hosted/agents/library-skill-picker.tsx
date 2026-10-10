@@ -25,7 +25,7 @@ export function LibrarySkillPicker({
 	onChange,
 	disabled = false,
 }: {
-	managed: Parameters<typeof agentHasCloudSkill>[0];
+	managed: readonly Pick<components["schemas"]["AgentSkillDesiredResponse"], "skill_id">[];
 	value: Skill | null;
 	onChange: (skill: Skill | null) => void;
 	disabled?: boolean;

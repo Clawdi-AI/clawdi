@@ -319,9 +319,12 @@ test("the focused Skills list keeps polling past two minutes until the row shows
 		skills: [skill({ skill_key: "pending", name: "Pending", convergence: "installed" })],
 	};
 	// The observation lands only after the old 120 s polling window has passed.
-	h.listSkills.mockImplementation(async () =>
-		h.listSkills.mock.calls.length > 13 ? installed : polling,
-	);
+	let elapsed = 0;
+	const requestedAt: number[] = [];
+	h.listSkills.mockImplementation(async () => {
+		requestedAt.push(elapsed);
+		return elapsed > 150_000 ? installed : polling;
+	});
 	jest.useFakeTimers();
 	environmentManager.setIsServer(() => false);
 	focusManager.setFocused(true);
@@ -329,12 +332,12 @@ test("the focused Skills list keeps polling past two minutes until the row shows
 	const query = observeSkillsQuery();
 	try {
 		await flush();
-		expect(h.listSkills).toHaveBeenCalledTimes(1);
-		for (let elapsed = 0; elapsed < 180_000; elapsed += 1_000) {
+		while (elapsed < 180_000) {
+			elapsed += 1_000;
 			jest.advanceTimersByTime(1_000);
 			await flush();
 		}
-		expect(h.listSkills.mock.calls.length).toBeGreaterThan(13);
+		expect(requestedAt.some((at) => at > 120_000)).toBe(true);
 		expect(query.observer.getCurrentResult().data).toEqual(installed);
 		h.inventory.data = installed;
 		expect(
