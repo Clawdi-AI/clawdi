@@ -242,7 +242,7 @@ async function startApplication(): Promise<void> {
 		await admission.drained;
 		const failed = await cleanupDesktop(
 			desktopCleanupActions(),
-			process.env.CLAWDI_UNINSTALL_KEEP_CLI !== "1",
+			process.env.CLAWDI_UNINSTALL_KEEP_CLI !== "1" && (await cli.installedByDesktop()),
 		);
 		if (failed.length) console.error("Desktop uninstall cleanup incomplete", failed);
 		app.exit(failed.length ? 1 : 0);
