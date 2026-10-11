@@ -10,7 +10,6 @@ export {
 	agentPluginActionState,
 	agentPluginComponentSummary,
 	agentPluginInstallability,
-	agentPluginIsStalled,
 	agentPluginMatches,
 	agentPluginOverviewState,
 	agentPluginStatusPresentation,
