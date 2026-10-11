@@ -4,6 +4,12 @@ on:
   pull_request:
     paths:
       - "packages/cli/package.json"
+      - "package.json"
+      - "bun.lock"
+      - "patches/**"
+      - "tsconfig.base.json"
+      - "packages/shared/**"
+      - "packages/cli/tests/runtime-*.test.ts"
       - "packages/cli/src/**"
       - "packages/cli/tests/e2e/runtime-official-installer-systemd.e2e.test.ts"
       - "packages/cli/tests/e2e/daemon-systemd-user.e2e.test.ts"
