@@ -17,6 +17,7 @@ import {
 	computeSubscriptionCancellationSuccessCopy,
 	computeSubscriptionId,
 	computeSubscriptionLifecycle,
+	computeSubscriptionsRecoveryRefetchInterval,
 	computeTierLabel,
 	isBasicCompute,
 	isComputeSubscriptionRenewing,
@@ -483,4 +484,23 @@ describe("compute subscription lifecycle presentation", () => {
 			"Basic scheduled for Aug 1, 2026.",
 		);
 	});
+});
+
+test("subscription lists poll pending commands and payments until they settle", () => {
+	type Item = NonNullable<
+		Parameters<typeof computeSubscriptionsRecoveryRefetchInterval>[0]
+	>[number];
+	const settled: Item = { actions: null, recovery_blocked_reason: null };
+	for (const [items, expected] of [
+		[undefined, false],
+		[null, false],
+		[[], false],
+		[[settled], false],
+		[[{ actions: { cancel: null, resume: false, command_state: "pending" } }], 30_000],
+		[[{ actions: { cancel: null, resume: false, command_state: "reconciling" } }], 30_000],
+		[[settled, { recovery_blocked_reason: "payment_pending" }], 30_000],
+		[[{ recovery_blocked_reason: "paused" }], false],
+	] satisfies [readonly Item[] | null | undefined, number | false][]) {
+		expect(computeSubscriptionsRecoveryRefetchInterval(items)).toBe(expected);
+	}
 });

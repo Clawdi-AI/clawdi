@@ -369,7 +369,6 @@ const deploymentsEn = {
 	browserFailedOffline: "Couldn't connect. Check your connection and try again.",
 	unavailable: "Cloud deployment access is not configured.",
 	refresh: "Refresh status",
-	timeout: "Automatic status checks have paused. Refresh to check again.",
 	operation: "Operation",
 	complete: "Complete",
 	operationCancelled: "Operation cancelled",

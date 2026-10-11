@@ -1,3 +1,4 @@
+import { vaultRequestsRefetchInterval } from "@clawdi/shared/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -30,8 +31,7 @@ export function VaultSecretRequests({
 					params: { query: { slug, vault_id: vaultId, project_id: projectId } },
 				}),
 			),
-		refetchInterval: (query) =>
-			query.state.data?.some((row) => row.status === "pending") ? 10000 : false,
+		refetchInterval: (query) => vaultRequestsRefetchInterval(query.state.data),
 	});
 	useEffect(() => {
 		if (requests.data?.some((row) => row.status === "supplied")) {

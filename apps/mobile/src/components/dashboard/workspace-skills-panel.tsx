@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { WebView, webView } from "@/components/ui/web-layout";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
+import { useDashboardDeployments } from "@/hooks/use-dashboard-agents";
 import { HostedAgentLibrarySkillsScreen } from "@/hosted/agents/library-skill-picker";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
@@ -61,16 +62,7 @@ function WorkspaceSkills({ id }: { id?: string }) {
 			),
 	});
 	// A hosted runtime retains its existing desired-state mutation surface.
-	const hosted = useQuery({
-		queryKey: accountQueryKey(scope, "deployments"),
-		enabled: scope.isReady && Boolean(api.hosted),
-		retry: false,
-		queryFn: ({ signal }) =>
-			read((s) => {
-				if (!api.hosted) throw new Error("Hosted API unavailable");
-				return api.hosted.listDeployments(s);
-			}, signal),
-	});
+	const hosted = useDashboardDeployments();
 	const deployment = hosted.data?.find((item) => item.agent_id === id);
 	if (id && deployment)
 		return <HostedAgentLibrarySkillsScreen deploymentId={deployment.resource.id} />;

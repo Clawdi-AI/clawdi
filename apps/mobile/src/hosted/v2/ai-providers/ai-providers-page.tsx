@@ -36,6 +36,7 @@ import { NativeList } from "@/components/ui/native-list";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Text } from "@/components/ui/text";
 import { WebView, webView } from "@/components/ui/web-layout";
+import { useDashboardDeployments } from "@/hooks/use-dashboard-agents";
 import { DeploymentControls } from "@/hosted/agents/deployment-controls";
 import { ProviderEdit } from "@/hosted/v2/ai-providers/edit-provider-dialog";
 import { ProviderOAuth } from "@/hosted/v2/ai-providers/provider-oauth-flow";
@@ -225,19 +226,8 @@ function ProviderCard({ provider }: { provider: SavedAiProvider }) {
 function AgentProviders({ agentId }: { agentId: string }) {
 	const t = useI18n();
 	const scope = useAccountScope(),
-		read = useAccountRead(),
-		{ hosted } = useMobileApi(),
 		cache = useQueryClient();
-	const inventory = useQuery({
-		queryKey: accountQueryKey(scope, "deployments"),
-		enabled: scope.isReady && Boolean(hosted),
-		retry: false,
-		queryFn: ({ signal }) =>
-			read((lease) => {
-				if (!hosted) throw new Error("Hosted API unavailable");
-				return hosted.listDeployments(lease);
-			}, signal),
-	});
+	const inventory = useDashboardDeployments();
 	const deployment = inventory.data?.find((item) => item.agent_id === agentId);
 	return (
 		<AgentCollection

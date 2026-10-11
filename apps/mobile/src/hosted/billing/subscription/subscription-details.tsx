@@ -199,9 +199,11 @@ function SubscriptionActions({ item }: { item: Subscription }) {
 					);
 			}
 			if (current())
-				await cache.invalidateQueries({
-					queryKey: accountQueryKey(scope, "billing-subscriptions"),
-				});
+				await Promise.all(
+					["deployments", "billing-subscriptions", "creation-inventory", "creation-reusable"].map(
+						(key) => cache.invalidateQueries({ queryKey: accountQueryKey(scope, key) }),
+					),
+				);
 		});
 	return (
 		<AppView className="gap-2">

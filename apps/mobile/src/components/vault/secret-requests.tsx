@@ -1,4 +1,9 @@
-import { buildVaultSecretRequest, type components, safeVaultRequestUrl } from "@clawdi/shared/api";
+import {
+	buildVaultSecretRequest,
+	type components,
+	safeVaultRequestUrl,
+	vaultRequestsRefetchInterval,
+} from "@clawdi/shared/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect } from "expo-router";
 import { useCallback, useRef, useState } from "react";
@@ -36,10 +41,8 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 	const [focused, setFocused] = useState(false);
 	const [canReshare, setCanReshare] = useState(false);
 	const lastLink = useRef<{ url: string; expiresAt: number } | null>(null);
-	const started = useRef(Date.now());
 	useFocusEffect(
 		useCallback(() => {
-			started.current = Date.now();
 			setFocused(true);
 			const clearLink = () => {
 				lastLink.current = null;
@@ -68,12 +71,7 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 		},
 		enabled: scope.isReady && current.is_owner && focused,
 		retry: false,
-		refetchInterval: (query) =>
-			focused &&
-			Date.now() - started.current < 120000 &&
-			query.state.data?.some((row) => row.status === "pending")
-				? 10000
-				: false,
+		refetchInterval: (query) => (focused ? vaultRequestsRefetchInterval(query.state.data) : false),
 		refetchIntervalInBackground: false,
 	});
 	const attached = (projects.data ?? []).filter(
@@ -123,7 +121,6 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 				keyExtractor={(row) => row.id}
 				refreshing={requests.isRefetching}
 				onRefresh={() => {
-					started.current = Date.now();
 					void requests.refetch();
 				}}
 				renderItem={({ item: row }) => (
@@ -179,7 +176,6 @@ export function VaultRequests({ current }: { current: components["schemas"]["Vau
 							size="sm"
 							disabled={requests.isFetching || action.busy}
 							onPress={() => {
-								started.current = Date.now();
 								void requests.refetch();
 							}}
 						>

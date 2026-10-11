@@ -150,6 +150,18 @@ export function agentPluginIsStalled(
 	);
 }
 
+export function agentPluginRefetchInterval(
+	plugins: readonly AgentPluginDesiredState[] | null | undefined,
+	now: Date = new Date(),
+): number | false {
+	if (!plugins?.some((plugin) => plugin.convergence === "not_observed")) return false;
+	return plugins.some(
+		(plugin) => plugin.convergence === "not_observed" && !agentPluginIsStalled(plugin, now),
+	)
+		? 5_000
+		: 60_000;
+}
+
 export function agentPluginInstallability(
 	entry: AgentPluginCatalogEntry,
 	runtime: HostedRuntime,

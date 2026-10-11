@@ -2,6 +2,7 @@ import type {
 	HostedDeployOperation as DeploymentOperation,
 	DeploymentRead as HostedDeployment,
 } from "../api";
+import { COMPUTE_BILLING_RECOVERY_POLL_MS } from "./compute-subscriptions";
 import { type DeploymentStatus, deploymentStatusFromResource } from "./deployment-status";
 import { deploymentRuntimeUiWithdrawn, deploymentWebChatIsUsable } from "./runtime-ui-readiness";
 
@@ -238,4 +239,85 @@ function deploymentTransitionFallbackKey(deployment: HostedDeployment): string {
 
 function exhaustive(value: never): never {
 	throw new Error(`Unhandled deployment status: ${JSON.stringify(value)}`);
+}
+
+export function billingRecoveryRefetchIntervalFor(
+	deployments: readonly HostedDeployment[] | undefined,
+	targetId: string | null | undefined,
+): number | false {
+	const target = targetId?.toLowerCase();
+	if (!target) return false;
+	const deployment = (deployments ?? []).find((candidate) => {
+		const matchesTarget =
+			candidate.resource.id.toLowerCase() === target || candidate.agent_id.toLowerCase() === target;
+		return matchesTarget;
+	});
+	if (deployment?.start_action === "wait") return COMPUTE_BILLING_RECOVERY_POLL_MS;
+	const subscription = deployment?.commercial_display?.compute_subscription;
+	if (!subscription) return false;
+	return subscription.payment_state === "past_due" ||
+		subscription.payment_state === "requires_action" ||
+		subscription.actions?.command_state != null ||
+		subscription.recovery_blocked_reason === "payment_pending"
+		? COMPUTE_BILLING_RECOVERY_POLL_MS
+		: false;
+}
+
+export function shortestRefetchInterval(...intervals: readonly (number | false)[]): number | false {
+	let shortest: number | false = false;
+	for (const interval of intervals) {
+		if (typeof interval !== "number") continue;
+		shortest = typeof shortest === "number" ? Math.min(shortest, interval) : interval;
+	}
+	return shortest;
+}
+
+export function reconcileDeploymentSnapshots(
+	previous: readonly HostedDeployment[] | undefined,
+	incoming: HostedDeployment[],
+): HostedDeployment[] {
+	const previousById = new Map(
+		(previous ?? []).map((deployment) => [deployment.resource.id, deployment]),
+	);
+	const reconciled = incoming.map((deployment) => {
+		const acceptedOperation = previousById.get(deployment.resource.id)?.accepted_operation;
+		if (acceptedOperation?.metadata.verb === "delete" && !acceptedOperation.done) {
+			if (
+				deployment.accepted_operation?.name === acceptedOperation.name ||
+				deployment.resource.metadata.generation > acceptedOperation.metadata.targetGeneration
+			) {
+				return deployment;
+			}
+			return { ...deployment, accepted_operation: acceptedOperation };
+		}
+		if (deployment.accepted_operation) return deployment;
+		if (!acceptedOperation) return deployment;
+
+		const resourceStatus = deployment.resource.status;
+		const status = deploymentStatusFromResource(resourceStatus);
+		const failure = resourceStatus === null ? null : resourceStatus.failure;
+		const operationApplies = isTransitionalStatus(status)
+			? true
+			: status.kind === "failed" &&
+				failure !== null &&
+				failure !== undefined &&
+				failure.observedGeneration >= acceptedOperation.metadata.targetGeneration;
+		return operationApplies ? { ...deployment, accepted_operation: acceptedOperation } : deployment;
+	});
+	return reconciled;
+}
+
+export function upsertAuthoritativeDeployment(
+	deployments: readonly HostedDeployment[] | undefined,
+	authoritative: HostedDeployment,
+): HostedDeployment[] {
+	if (!deployments) return [authoritative];
+	const deploymentId = authoritative.resource.id;
+	const existingIndex = deployments.findIndex(
+		(deployment) => deployment.resource.id === deploymentId,
+	);
+	if (existingIndex === -1) return [...deployments, authoritative];
+	return deployments.map((deployment, index) =>
+		index === existingIndex ? authoritative : deployment,
+	);
 }

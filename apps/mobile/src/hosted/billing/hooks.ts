@@ -1,4 +1,6 @@
+import { computeSubscriptionsRecoveryRefetchInterval } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useIsFocused } from "expo-router/react-navigation";
 import { nextBillingCursor } from "@/hosted/billing/format";
 import { useMobileApi } from "@/lib/api-provider";
 import { transientQueryRetry } from "@/lib/query-retry";
@@ -9,6 +11,7 @@ function initialCursor(): string | undefined {
 }
 
 export function useSubscriptions(enabled = true) {
+	const focused = useIsFocused();
 	const { compute } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
@@ -21,6 +24,13 @@ export function useSubscriptions(enabled = true) {
 				return compute.getSubscriptions({ limit: 25, cursor: pageParam }, s);
 			}, signal),
 		getNextPageParam: nextBillingCursor,
+		refetchInterval: (query) =>
+			focused
+				? computeSubscriptionsRecoveryRefetchInterval(
+						query.state.data?.pages.flatMap((page) => page.items ?? []),
+					)
+				: false,
+		refetchIntervalInBackground: false,
 		enabled: scope.isReady && Boolean(compute) && enabled,
 		...transientQueryRetry,
 	});
