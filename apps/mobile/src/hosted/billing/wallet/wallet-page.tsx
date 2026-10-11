@@ -1,4 +1,4 @@
-import { billingPageClass, transactionsSectionClasses } from "@clawdi/shared/ui";
+import { billingPageStackClass, transactionsSectionClasses } from "@clawdi/shared/ui";
 import { nextBillingCursor, transactionsCountLabel } from "@clawdi/shared/view";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { cn } from "cn";
@@ -62,9 +62,9 @@ function WalletView() {
 			<NativeList
 				data={wallet.data && !wallet.isError ? rows : []}
 				keyExtractor={(item) => item.id}
-				// Rows, states and footer share the header's inset, so they align with the balance card.
+				// NativeList pads the page; rows, states and footer share the header stack so they align.
 				renderItem={({ item }) => (
-					<WebView recipe={billingPageClass}>
+					<WebView recipe={billingPageStackClass}>
 						<TransactionRow item={item} />
 					</WebView>
 				)}
@@ -77,7 +77,7 @@ function WalletView() {
 				loadingMore={transactions.isFetching}
 				onLoadMore={() => void transactions.fetchNextPage()}
 				header={
-					<WebView recipe={billingPageClass}>
+					<WebView recipe={billingPageStackClass}>
 						<SettingsPanelHeader
 							title={t("billingParity.wallet")}
 							description={t(
@@ -106,7 +106,7 @@ function WalletView() {
 				}
 				empty={
 					wallet.data && !wallet.isError ? (
-						<WebView recipe={billingPageClass}>
+						<WebView recipe={billingPageStackClass}>
 							{transactions.isPending ? (
 								<RouteLoadingSkeleton />
 							) : transactions.isError ? (
@@ -125,7 +125,7 @@ function WalletView() {
 					) : null
 				}
 				footer={
-					<WebView recipe={cn(billingPageClass, transactionsSectionClasses.section)}>
+					<WebView recipe={cn(billingPageStackClass, transactionsSectionClasses.section)}>
 						{transactions.isFetchingNextPage ? <RouteLoadingSkeleton /> : null}
 						{transactions.isError && transactions.data ? (
 							<ApiErrorPanel

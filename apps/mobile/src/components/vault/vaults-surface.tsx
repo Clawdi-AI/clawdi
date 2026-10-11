@@ -330,7 +330,6 @@ function VaultCreate({ projectId }: { projectId?: string }) {
 	const action = useAuthAction(scope);
 	const [name, setName] = useState("");
 	const [slug, setSlug] = useState("");
-	const [closeError, setCloseError] = useState<unknown>();
 	const catalog = useCompleteVaultCatalog();
 	const slugTaken = Boolean(
 		slug && catalog.data?.items.some((item) => item.is_owner !== false && item.slug === slug),
@@ -387,13 +386,6 @@ function VaultCreate({ projectId }: { projectId?: string }) {
 				{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 				<WebView recipe={vaultsSurfaceClasses.form}>
 					<Button
-						variant="ghost"
-						disabled={action.busy}
-						onPress={() => void sheet.close().catch(setCloseError)}
-					>
-						<Text>{copy.cancel}</Text>
-					</Button>
-					<Button
 						disabled={
 							action.busy ||
 							!name.trim() ||
@@ -409,7 +401,6 @@ function VaultCreate({ projectId }: { projectId?: string }) {
 					</Button>
 				</WebView>
 			</WebView>
-			{closeError ? <ApiErrorPanel error={closeError} /> : null}
 		</SheetPage>
 	);
 }

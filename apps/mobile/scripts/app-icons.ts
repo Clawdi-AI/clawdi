@@ -3,7 +3,8 @@
  * from the brand artwork (docs/images/logo.png, 800px, the largest master; the
  * Web dashboard ships the same artwork at 512px). Sizes above 800px are
  * upscaled with Lanczos3; no artwork is redrawn. Splash backgrounds come from
- * the shared `--background` tokens so launch surfaces match the first app frame.
+ * the shared `--background` tokens so launch surfaces match the first app frame;
+ * native alert dialog colors come from the popover and primary tokens.
  *
  * Run `bun run icons` after changing the artwork or the shared background tokens;
  * `app-icons.test.ts` fails when the committed theme colors are stale.
@@ -27,12 +28,22 @@ const ADAPTIVE_ARTWORK = Math.round(CANVAS * 0.76);
 const SPLASH_CORNER_RATIO = 0.2237;
 
 export function buildAppColors(css: string) {
-	const background = (selector: string) => {
-		const value = declarations(block(css, selector)).get("--background");
-		if (!value) throw new Error(`Shared theme is missing --background in ${selector}`);
+	const token = (selector: string, name: string) => {
+		const value = declarations(block(css, selector)).get(name);
+		if (!value) throw new Error(`Shared theme is missing ${name} in ${selector}`);
 		return hexColor(value);
 	};
-	return { light: background(":root"), dark: background(".dark") };
+	// Android's native alert dialogs use the popover surface and primary accent, like Web dialogs.
+	const dialog = (selector: string) => ({
+		surface: token(selector, "--popover"),
+		text: token(selector, "--popover-foreground"),
+		accent: token(selector, "--primary"),
+	});
+	return {
+		light: token(":root", "--background"),
+		dark: token(".dark", "--background"),
+		dialog: { light: dialog(":root"), dark: dialog(".dark") },
+	};
 }
 
 async function generate() {

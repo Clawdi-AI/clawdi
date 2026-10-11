@@ -244,7 +244,6 @@ function MemoryEditor({ id: editing }: { id?: string }) {
 	const action = useAuthAction(scope);
 	const [content, setContent] = useState("");
 	const [addCategory, setAddCategory] = useState("fact");
-	const [closeError, setCloseError] = useState<unknown>();
 	const secretFinding = findLikelySecret(content);
 	const memory = useQuery({
 		queryKey: accountQueryKey(scope, "memory-detail", editing),
@@ -330,13 +329,6 @@ function MemoryEditor({ id: editing }: { id?: string }) {
 					{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 					<WebView recipe={memoriesSurfaceClasses.section}>
 						<Button
-							variant="ghost"
-							disabled={action.busy}
-							onPress={() => void sheet.close().catch(setCloseError)}
-						>
-							<Text>{copy.cancel}</Text>
-						</Button>
-						<Button
 							disabled={action.busy || !content.trim() || Boolean(secretFinding)}
 							onPress={() => void save()}
 						>
@@ -346,7 +338,6 @@ function MemoryEditor({ id: editing }: { id?: string }) {
 					</WebView>
 				</WebView>
 			)}
-			{closeError ? <ApiErrorPanel error={closeError} /> : null}
 		</SheetPage>
 	);
 }

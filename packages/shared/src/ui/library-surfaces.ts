@@ -267,7 +267,9 @@ export const CONNECTOR_ICON_SIZES = {
 
 export const connectorIconClasses = {
 	root: "relative flex shrink-0 items-center justify-center overflow-hidden border",
-	loaded: "bg-background",
+	// Third-party logos are drawn for light surfaces (Outlook's glyph is black), so a loaded logo
+	// keeps a white tile in dark mode, like the official brand-asset treatments.
+	loaded: "bg-background dark:bg-white",
 	placeholder: "bg-muted",
 	letter: "font-semibold text-muted-foreground",
 	image: "absolute inset-0 h-full w-full object-contain transition-opacity",

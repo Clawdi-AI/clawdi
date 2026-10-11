@@ -38,9 +38,9 @@ function stripDateSuffix(tokens: string[]): string[] {
  *   claude-opus-4-20250514       → Opus 4
  *   claude-3-5-sonnet-20241022   → Sonnet 3.5
  *   claude-haiku-4-5             → Haiku 4.5
- *   gpt-5.4-codex                → GPT 5.4 Codex
- *   gpt-5.4-codex-preview        → GPT 5.4 Codex Preview
- *   gpt-4o-2024-08-06            → GPT 4o
+ *   gpt-5.4-codex                → GPT-5.4 Codex
+ *   gpt-5.4-codex-preview        → GPT-5.4 Codex Preview
+ *   gpt-4o-2024-08-06            → GPT-4o
  *   o3                           → O3
  *   o4-mini                      → O4 Mini
  *
@@ -73,10 +73,11 @@ export function formatModelLabel(modelId: string | null | undefined): string {
 	if (lower.startsWith("gpt-")) {
 		const tokens = stripDateSuffix(lower.slice("gpt-".length).split("-"));
 		if (tokens.length === 0) return modelId;
-		// Version is the first token; everything after is variant labels.
+		// Version is the first token; everything after is variant labels. OpenAI and the managed
+		// model catalog write the family hyphenated: "GPT-5.4 Codex", "GPT-4o".
 		const [version, ...variants] = tokens;
 		const variantPart = variants.map(titleCase).join(" ");
-		return variantPart ? `GPT ${version} ${variantPart}` : `GPT ${version}`;
+		return variantPart ? `GPT-${version} ${variantPart}` : `GPT-${version}`;
 	}
 
 	// --- OpenAI o-series --- `o3`, `o4-mini`, `o3-pro`...

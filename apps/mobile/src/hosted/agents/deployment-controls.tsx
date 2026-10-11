@@ -302,79 +302,87 @@ export function DeploymentControls({
 	const stable = state === "running" || state === "stopped" || state === "failed";
 	const controls = (
 		<>
-			{section === "settings" ? <AppText>{t("runtime.warning")}</AppText> : null}
+			{section === "settings" ? (
+				<AppText className="text-sm text-muted-foreground">{t("runtime.warning")}</AppText>
+			) : null}
 			{storageError ? (
 				<AppText accessibilityRole="alert">{t("runtime.storageError")}</AppText>
 			) : null}
-			{section === "settings" || attempt || storageError ? (
-				<ActionButton
-					label={t("runtime.reloadAttempt")}
-					disabled={action.busy}
-					onPress={() => setRestoreEpoch((value) => value + 1)}
-				/>
-			) : null}
 			{attempt ? (
-				<>
-					<AppText accessibilityRole="alert">
-						{t(
-							rejected
-								? "runtime.conflict"
-								: attempt.status === "prepared"
-									? "runtime.prepared"
-									: "runtime.uncertain",
-						)}
-					</AppText>
-					<ActionButton
-						label={t("runtime.retry")}
-						disabled={action.busy || rejected || !storageKey || storageError}
-						onPress={() => void submit(attempt)}
-					/>
-					{/* An uncertain delete may carry a subscription cancel; it settles only by replay. */}
-					{attempt.status !== "uncertain" || attempt.mutation.action !== "delete" ? (
-						<ActionButton
-							label={t("runtime.review")}
-							disabled={action.busy || !storageKey || storageError}
-							onPress={() => confirmDiscard(attempt)}
-						/>
-					) : null}
-				</>
+				<AppText accessibilityRole="alert">
+					{t(
+						rejected
+							? "runtime.conflict"
+							: attempt.status === "prepared"
+								? "runtime.prepared"
+								: "runtime.uncertain",
+					)}
+				</AppText>
 			) : null}
 			{action.error ? <AppText accessibilityRole="alert">{t("runtime.failed")}</AppText> : null}
-			{section !== "ai" &&
-			deploymentLifecycleAvailable("start", state) &&
-			deployment?.start_action === "start" ? (
-				<ActionButton
-					label={
-						startLabel ?? (section === "startup" ? initialDeploymentCopy.retry : t("runtime.start"))
-					}
-					disabled={busy}
-					onPress={() => confirm({ action: "start" })}
-				/>
-			) : null}
 			{section === "settings" && state === "stopped" && deployment?.start_action !== "start" ? (
-				<AppText>{t("runtime.paymentRequired")}</AppText>
+				<AppText className="text-sm text-muted-foreground">{t("runtime.paymentRequired")}</AppText>
 			) : null}
-			{section === "settings" && deploymentLifecycleAvailable("stop", state) ? (
-				<ActionButton
-					label={t("runtime.stop")}
-					disabled={busy}
-					onPress={() => confirm({ action: "stop" })}
-				/>
-			) : null}
-			{section === "settings" && deploymentLifecycleAvailable("restart", state) ? (
-				<ActionButton
-					label={t("runtime.restart")}
-					disabled={busy}
-					onPress={() => confirm({ action: "restart" })}
-				/>
-			) : null}
-			{section === "settings" && stable ? (
-				<ActionButton
-					label={t("runtime.resetAccess")}
-					disabled={busy}
-					onPress={() => confirm({ action: "reset_runtime_ui_access" })}
-				/>
-			) : null}
+			{/* Settings lays its actions out like Web's Agent controls: a wrapping row of small buttons. */}
+			<AppView className={section === "settings" ? "flex-row flex-wrap gap-2.5" : "gap-3"}>
+				{section === "settings" || attempt || storageError ? (
+					<ActionButton
+						label={t("runtime.reloadAttempt")}
+						disabled={action.busy}
+						onPress={() => setRestoreEpoch((value) => value + 1)}
+					/>
+				) : null}
+				{attempt ? (
+					<>
+						<ActionButton
+							label={t("runtime.retry")}
+							disabled={action.busy || rejected || !storageKey || storageError}
+							onPress={() => void submit(attempt)}
+						/>
+						{/* An uncertain delete may carry a subscription cancel; it settles only by replay. */}
+						{attempt.status !== "uncertain" || attempt.mutation.action !== "delete" ? (
+							<ActionButton
+								label={t("runtime.review")}
+								disabled={action.busy || !storageKey || storageError}
+								onPress={() => confirmDiscard(attempt)}
+							/>
+						) : null}
+					</>
+				) : null}
+				{section !== "ai" &&
+				deploymentLifecycleAvailable("start", state) &&
+				deployment?.start_action === "start" ? (
+					<ActionButton
+						label={
+							startLabel ??
+							(section === "startup" ? initialDeploymentCopy.retry : t("runtime.start"))
+						}
+						disabled={busy}
+						onPress={() => confirm({ action: "start" })}
+					/>
+				) : null}
+				{section === "settings" && deploymentLifecycleAvailable("stop", state) ? (
+					<ActionButton
+						label={t("runtime.stop")}
+						disabled={busy}
+						onPress={() => confirm({ action: "stop" })}
+					/>
+				) : null}
+				{section === "settings" && deploymentLifecycleAvailable("restart", state) ? (
+					<ActionButton
+						label={t("runtime.restart")}
+						disabled={busy}
+						onPress={() => confirm({ action: "restart" })}
+					/>
+				) : null}
+				{section === "settings" && stable ? (
+					<ActionButton
+						label={t("runtime.resetAccess")}
+						disabled={busy}
+						onPress={() => confirm({ action: "reset_runtime_ui_access" })}
+					/>
+				) : null}
+			</AppView>
 		</>
 	);
 	return (

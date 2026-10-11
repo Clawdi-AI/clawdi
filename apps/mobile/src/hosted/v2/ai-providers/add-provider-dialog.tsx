@@ -222,7 +222,8 @@ function ProviderCreateView() {
 			) : null}
 			{uncertain ? <AppText accessibilityRole="alert">{t("providers.uncertain")}</AppText> : null}
 			<WebView
-				recipe={dialogStyles.body}
+				// The chooser's NativeList already pads the page; the dialog body inset would double it.
+				recipe={step === "choose" ? "min-h-0" : dialogStyles.body}
 				className={step === "choose" ? "flex-1" : "flex-none"}
 				style={
 					step === "choose" ? undefined : { flex: 0, flexGrow: 0, flexShrink: 0, flexBasis: "auto" }

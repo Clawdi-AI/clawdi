@@ -87,7 +87,6 @@ function SharingView({ project }: { project: Project }) {
 	const action = useAuthAction(scope);
 	const [email, setEmail] = useState("");
 	const [label, setLabel] = useState("");
-	const [showLabel, setShowLabel] = useState(false);
 	const [manageOpen, setManageOpen] = useState(false);
 	const [freshLink, setFreshLink] = useState<{ id: string; url: string } | null>(null);
 	const presentation = useRef(0);
@@ -289,20 +288,14 @@ function SharingView({ project }: { project: Project }) {
 					</Button>
 				</WebView>
 				<WebText recipe={shareProjectClasses.description}>{SHARING_COPY.linkDescription}</WebText>
-				{showLabel ? (
-					<Input
-						accessibilityLabel={t("sharing.label")}
-						placeholder={t("sharing.label")}
-						value={label}
-						onChangeText={setLabel}
-						maxLength={200}
-						editable={!action.busy}
-					/>
-				) : (
-					<Button variant="ghost" size="sm" onPress={() => setShowLabel(true)}>
-						<Text>{t("sharing.label")}</Text>
-					</Button>
-				)}
+				<Input
+					accessibilityLabel={t("sharing.label")}
+					placeholder={t("sharing.label")}
+					value={label}
+					onChangeText={setLabel}
+					maxLength={200}
+					editable={!action.busy}
+				/>
 				{freshLink ? (
 					<WebView recipe={shareProjectClasses.section}>
 						<Text>{t("sharing.once")}</Text>

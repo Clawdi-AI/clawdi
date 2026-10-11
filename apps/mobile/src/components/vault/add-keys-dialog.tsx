@@ -47,7 +47,6 @@ export function AddKeysScreen() {
 		cache = useQueryClient();
 	const catalog = useCompleteVaultCatalog(undefined, true);
 	const [saving, setSaving] = useState(false);
-	const [closeError, setCloseError] = useState<unknown>();
 	const sheet = useSheet<boolean>({ fallback: "/vault", busy: saving });
 	const [choice, setChoice] = useState(""),
 		[name, setName] = useState(""),
@@ -107,12 +106,6 @@ export function AddKeysScreen() {
 		(newVault
 			? !!name.trim() && !!slug && !taken
 			: !!selected && sections.isSuccess && !sections.error && !sections.isFetching);
-	const close = () => {
-		if (!saving) {
-			reset();
-			void sheet.close().catch(setCloseError);
-		}
-	};
 	return (
 		<>
 			<SheetPage
@@ -128,7 +121,6 @@ export function AddKeysScreen() {
 				busy={saving}
 				sheet={sheet}
 			>
-				{closeError ? <ApiErrorPanel error={closeError} /> : null}
 				<WebView recipe={addKeysDialogClasses.body}>
 					<Input
 						value={text}
@@ -264,9 +256,6 @@ export function AddKeysScreen() {
 							{addKeysDetectedCopy(preview.parsed.entries.length, preview.summary.skipped)}
 						</WebText>
 						<WebView recipe={addKeysDialogClasses.footer}>
-							<Button variant="ghost" disabled={saving} onPress={close}>
-								<Text>{t("libraryPort.cancel")}</Text>
-							</Button>
 							<Button
 								disabled={!valid || saving}
 								onPress={() => {

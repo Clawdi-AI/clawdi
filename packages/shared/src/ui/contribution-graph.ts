@@ -1,6 +1,7 @@
 /** Verbatim Web recipes, shared with the native phone layout. */
 export const contributionGraphClasses = {
-	inactiveActivity: "bg-primary/10",
+	// 10% primary disappears on the dark card; empty days stay visible as a grid.
+	inactiveActivity: "bg-primary/10 dark:bg-primary/20",
 	lowActivity: "bg-primary/30",
 	mediumActivity: "bg-primary/50",
 	highActivity: "bg-primary/75",

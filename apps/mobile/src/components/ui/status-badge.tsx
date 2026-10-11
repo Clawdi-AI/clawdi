@@ -4,7 +4,7 @@ import { cn } from "cn";
 import type { ViewProps } from "react-native";
 import { TextClassContext } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
-import { resolveWebClasses } from "@/lib/web-classes";
+import { minHeightClasses, resolveWebClasses } from "@/lib/web-classes";
 
 type StatusTone = NonNullable<VariantProps<typeof statusBadgeVariants>["status"]>;
 
@@ -20,7 +20,7 @@ function StatusBadge({
 	const own = resolveWebClasses(className ?? "");
 	return (
 		<TextClassContext.Provider value={cn(classes.text, own.text)}>
-			<AppView className={cn(classes.view, own.view)} {...props}>
+			<AppView className={minHeightClasses(cn(classes.view, own.view))} {...props}>
 				{withDot ? <StatusDot status={status} /> : null}
 				{children}
 			</AppView>

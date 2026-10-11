@@ -1,7 +1,9 @@
 "use client";
 import {
+	type AgentSkillInventoryItem,
 	agentSkillGuardPresentation,
 	agentSkillInstallCopy,
+	agentSkillInventory,
 	agentSkillUninstallCopy,
 	parseWorkspaceSkillGitHubInput,
 	workspaceSkillInstallCopy,
@@ -33,10 +35,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-	type AgentSkillInventoryItem,
-	agentSkillInventory,
-} from "@/hosted/agents/agent-skills-inventory";
 import { useAgentManagedSkills } from "@/hosted/agents/agent-skills-query";
 import { useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { LibrarySkillPicker } from "@/hosted/agents/library-skill-picker";

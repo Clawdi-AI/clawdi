@@ -149,6 +149,7 @@ module.exports = ({ config }) => {
 			// Keep native hooks stable for Build/Update; upload scripts read org/project/token from env.
 			"@sentry/react-native/expo",
 			["@clerk/expo", { theme: "./clerk-theme.generated.json" }],
+			["./plugins/with-alert-dialog-theme", appColors.dialog],
 		],
 		ios: associatedDomains.length ? { ...ios, associatedDomains } : ios,
 		android,

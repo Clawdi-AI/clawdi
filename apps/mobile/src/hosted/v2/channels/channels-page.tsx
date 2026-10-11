@@ -135,7 +135,7 @@ function ChannelsView() {
 														? null
 														: "Unavailable";
 											return (
-												<WebView key={bot.id} recipe="flex h-full min-w-0 flex-col gap-2">
+												<WebView key={bot.id} recipe="flex min-w-0 flex-col gap-2">
 													{bot.provider === "discord" ? (
 														<DiscordConnectionIssueAlert issue={bot.connection_issue} />
 													) : null}

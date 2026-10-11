@@ -412,6 +412,7 @@ function DeploymentDetail({
 						{deployment ? <StoreUpgradeAction deployment={deployment} /> : null}
 						<ActionButton
 							label={t("deployments.refresh")}
+							className="self-start"
 							disabled={query.isFetching || operation.isFetching}
 							onPress={() => {
 								void query.refetch();
@@ -421,7 +422,7 @@ function DeploymentDetail({
 						{query.isError ? <ResourceError missing={isNotFound(query.error)} /> : null}
 						{query.isPending ? <AppText>{t("loading.app")}</AppText> : null}
 						{operation.data ? (
-							<AppText>
+							<AppText className="text-sm text-muted-foreground">
 								{t("deployments.operation")}:{" "}
 								{operation.data.done ? t("deployments.complete") : t("deployments.progress")}
 							</AppText>
@@ -450,7 +451,7 @@ function DeploymentDetail({
 							/>
 						) : null}
 						{transition === "timed_out" || transition === "escalated" ? (
-							<AppText>
+							<AppText className="text-sm text-muted-foreground">
 								{transition === "escalated"
 									? computeStatusDetailsCopy.stuck
 									: computeStatusDetailsCopy.slow}

@@ -1,5 +1,17 @@
 {
 	"light": "#fafaf8",
 	"dark": "#11100f",
+	"dialog": {
+		"light": {
+			"surface": "#fffefe",
+			"text": "#1f1e1a",
+			"accent": "#c96442"
+		},
+		"dark": {
+			"surface": "#1a1917",
+			"text": "#e5e4e2",
+			"accent": "#d97757"
+		}
+	},
 	"brand": "#ca3d33"
 }
