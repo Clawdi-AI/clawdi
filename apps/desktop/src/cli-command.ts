@@ -47,6 +47,46 @@ export class DesktopCliCommandConflictError extends Error {
 	}
 }
 
+/** Free the native launcher only when the old symlink belongs to Desktop.
+ * lstat/readlink also recognize links to an app bundle that has been removed. */
+export function removeDesktopCliSymlink(options: {
+	home: string;
+	userData: string;
+	bundledCli: string;
+}): void {
+	const launcher = join(options.home, ".local", "bin", "clawdi");
+	try {
+		if (!lstatSync(launcher).isSymbolicLink()) return;
+		const target = resolve(dirname(launcher), readlinkSync(launcher));
+		if (
+			target === resolve(options.bundledCli) ||
+			isDesktopManagedTarget(target, options.userData)
+		) {
+			rmSync(launcher);
+		}
+	} catch (error) {
+		if (!isMissing(error)) throw error;
+	}
+}
+
+/** Keep an existing Desktop PATH entry working without editing PATH or
+ * replacing a foreign command. New native installs already own their launcher. */
+export function migrateWindowsDesktopCliCommand(options: {
+	localAppData?: string;
+	target: string;
+}): void {
+	if (!options.localAppData || !isValidAbsolutePath(options.localAppData)) return;
+	const launcher = join(options.localAppData, "Clawdi", "bin", "clawdi.cmd");
+	try {
+		const existing = readFileSync(launcher, "utf8");
+		if (!existing.startsWith(`${WINDOWS_LAUNCHER_MARKER}\r\n`)) return;
+		const content = `${WINDOWS_LAUNCHER_MARKER}\r\n@echo off\r\n"${escapeCmdPath(options.target)}" %*\r\n`;
+		if (existing !== content) writeLauncher(launcher, content);
+	} catch (error) {
+		if (!isMissing(error)) throw error;
+	}
+}
+
 export async function installDesktopCliCommand(
 	options: DesktopCliCommandOptions,
 ): Promise<DesktopCliCommandResult> {
@@ -242,7 +282,9 @@ function stripPathQuotes(value: string): string {
 }
 
 function isAppImageRuntimeTarget(target: string, userData: string): boolean {
-	const root = normalize(resolve(realpathSync(userData), "runtimes"));
+	const root = normalize(
+		resolve(existsSync(userData) ? realpathSync(userData) : userData, "runtimes"),
+	);
 	const normalized = normalize(existsSync(target) ? realpathSync(target) : resolve(target));
 	return dirname(dirname(normalized)) === root && basename(normalized) === "clawdi";
 }

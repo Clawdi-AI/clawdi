@@ -38,7 +38,12 @@ import {
 	prepareDesktopStartup,
 	reconcileDesktopStartupSync,
 } from "./auth-orchestrator";
-import { type DesktopCliCommandOptions, installDesktopCliCommand } from "./cli-command";
+import {
+	type DesktopCliCommandOptions,
+	installDesktopCliCommand,
+	migrateWindowsDesktopCliCommand,
+} from "./cli-command";
+import { DesktopCliCompatibilityError } from "./cli-compat";
 import {
 	assertConnectSender,
 	readExcludedProjectRemoval,
@@ -193,7 +198,14 @@ if (!app.requestSingleInstanceLock()) {
 	);
 	void applicationStarted.catch((error) => {
 		console.error("Could not start Clawdi", error);
-		dialog.showErrorBox("Clawdi couldn't start", "Reinstall Clawdi and try again.");
+		dialog.showErrorBox(
+			error instanceof DesktopCliCompatibilityError
+				? "Update Clawdi Desktop"
+				: "Clawdi couldn't start",
+			error instanceof DesktopCliCompatibilityError
+				? error.message
+				: "Reinstall Clawdi and try again.",
+		);
 		app.quit();
 	});
 }
@@ -809,6 +821,16 @@ async function showLogs(): Promise<void> {
 
 async function reconcileDesktopCliCommand(daemonInstalled: boolean): Promise<void> {
 	if (!app.isPackaged) return;
+	if (await cli.usesNativeCli()) {
+		if (process.platform === "win32") {
+			migrateWindowsDesktopCliCommand({
+				localAppData: process.env.LOCALAPPDATA,
+				target: await cli.shellCommandTarget(),
+			});
+		}
+		if (!daemonInstalled) await cli.pruneUnusedAppImageRuntimes();
+		return;
+	}
 	const result = await installDesktopCliCommand(
 		desktopCliCommandOptions(await cli.shellCommandTarget()),
 	);

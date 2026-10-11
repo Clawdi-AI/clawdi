@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync } from "node:fs";
+import {
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	readFileSync,
+	readlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { chromium } from "@playwright/test";
 
@@ -18,6 +25,17 @@ const cliLog = join(runtimeRoot, "native-cli.log");
 mkdirSync(home, { recursive: true });
 mkdirSync(clawdiHome, { recursive: true });
 mkdirSync(localAppData, { recursive: true });
+if (process.platform === "win32" && surface === "welcome") {
+	// Exercise migration of a previous Desktop-owned PATH shim. Fresh native
+	// installs use current/clawdi.exe; Desktop only retargets existing shims.
+	const shim = join(localAppData, "Clawdi", "bin", "clawdi.cmd");
+	if (existsSync(shim)) throw new Error("Refusing to replace an existing smoke launcher.");
+	mkdirSync(dirname(shim), { recursive: true });
+	writeFileSync(
+		shim,
+		'@rem Clawdi Desktop CLI launcher v1\r\n@echo off\r\n"old-desktop-cli.exe" %*\r\n',
+	);
+}
 
 const output = [];
 const desktop = spawn(
@@ -32,6 +50,7 @@ const desktop = spawn(
 		env: {
 			...process.env,
 			HOME: home,
+			USERPROFILE: home,
 			CLAWDI_HOME: clawdiHome,
 			LOCALAPPDATA: localAppData,
 			CLAWDI_DESKTOP_SMOKE_SURFACE: surface,

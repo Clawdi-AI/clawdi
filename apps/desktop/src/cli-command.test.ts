@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
 	chmodSync,
+	existsSync,
 	lstatSync,
 	mkdirSync,
 	mkdtempSync,
@@ -12,7 +13,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { installDesktopCliCommand } from "./cli-command";
+import {
+	installDesktopCliCommand,
+	migrateWindowsDesktopCliCommand,
+	removeDesktopCliSymlink,
+} from "./cli-command";
 
 const roots: string[] = [];
 
@@ -21,6 +26,59 @@ afterEach(() => {
 });
 
 describe("Desktop CLI command", () => {
+	test.skipIf(process.platform === "win32")(
+		"migration removes only symlinks into Desktop bundles or owned AppImage runtimes",
+		() => {
+			const fixture = createFixture();
+			const launcher = join(fixture.home, ".local", "bin", "clawdi");
+			mkdirSync(dirname(launcher), { recursive: true });
+			const migrate = () =>
+				removeDesktopCliSymlink({
+					home: fixture.home,
+					userData: fixture.userData,
+					bundledCli: fixture.target,
+				});
+			for (const target of [
+				fixture.target,
+				"/removed/Clawdi.app/Contents/Resources/native/clawdi",
+				"/opt/Clawdi/resources/native/clawdi",
+				join(fixture.userData, "runtimes", "0.1.0", "clawdi"),
+			]) {
+				symlinkSync(target, launcher);
+				migrate();
+				expect(() => lstatSync(launcher)).toThrow();
+			}
+			for (const target of [
+				"/opt/homebrew/bin/clawdi",
+				"../lib/node_modules/clawdi/dist/index.js",
+				"../share/clawdi/versions/0.16.9-linux-x64/clawdi",
+			]) {
+				symlinkSync(target, launcher);
+				migrate();
+				expect(readlinkSync(launcher)).toBe(target);
+				rmSync(launcher);
+			}
+			writeFileSync(launcher, "foreign command");
+			migrate();
+			expect(readFileSync(launcher, "utf8")).toBe("foreign command");
+		},
+	);
+
+	test("Windows migration repoints a marker shim to the stable launcher without adding a new shim", () => {
+		const fixture = createFixture();
+		const target = join(fixture.home, ".local", "share", "clawdi", "current", "clawdi.exe");
+		const launcher = join(fixture.root, "Clawdi", "bin", "clawdi.cmd");
+		const migrate = () => migrateWindowsDesktopCliCommand({ localAppData: fixture.root, target });
+		migrate();
+		expect(existsSync(launcher)).toBe(false);
+		mkdirSync(dirname(launcher), { recursive: true });
+		writeFileSync(launcher, '@rem Clawdi Desktop CLI launcher v1\r\n@echo off\r\n"old.exe" %*\r\n');
+		migrate();
+		expect(readFileSync(launcher, "utf8")).toContain(`"${target}" %*`);
+		writeFileSync(launcher, "foreign command");
+		migrate();
+		expect(readFileSync(launcher, "utf8")).toBe("foreign command");
+	});
 	test.skipIf(process.platform === "win32")(
 		"installs one Linux launcher without copying the bundled CLI",
 		async () => {

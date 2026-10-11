@@ -67,10 +67,10 @@ export async function activateAppImageRuntime(
  * are left untouched. */
 export async function pruneAppImageRuntimes(
 	userData: string,
-	activeVersion: string,
+	activeVersion: string | null,
 	protectedVersions: ReadonlySet<string> = new Set(),
 ): Promise<void> {
-	if (!DESKTOP_VERSION.test(activeVersion)) return;
+	if (activeVersion !== null && !DESKTOP_VERSION.test(activeVersion)) return;
 	const root = join(userData, "runtimes");
 	if (!existsSync(root)) return;
 	for (const entry of await readdir(root, { withFileTypes: true })) {

@@ -1,11 +1,21 @@
 import { afterEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { DesktopAuthenticationProgress } from "@clawdi/shared/desktop";
 import { emit } from "../../../packages/cli/src/lib/command-output";
+import { writeFixtureNativeMetadata } from "../scripts/fixtures/native-layout";
+import { nativeLauncherPath } from "./cli-compat";
 import type { runCommand } from "./command-runner";
-import { DesktopCliService } from "./native-cli";
+import { cliEnvironment, DesktopCliService } from "./native-cli";
 
 const roots: string[] = [];
 const originalAppImage = process.env.APPIMAGE;
@@ -36,11 +46,19 @@ function serviceFixture(
 		mkdirSync(dirname(path), { recursive: true });
 		writeFileSync(path, "fixture", { mode: 0o755 });
 	}
+	const home = join(root, "home");
+	const launcher = nativeLauncherPath(process.platform, home);
 	const calls: string[] = [];
+	const invocations: Array<{ path: string; args: readonly string[]; env?: NodeJS.ProcessEnv }> = [];
 	const state = {
 		detectionSchema: "clawdi.agentDetection.v1" as string | undefined,
 		authStatusSchema: "clawdi.authStatus.v1" as string | undefined,
 		cliVersion: "1.2.0",
+		nativeVersion: null as string | null,
+		bootstrapStatus: "failed",
+		nativeUpdateMode: "local-self-update",
+		capabilitiesSchema: "clawdi.capabilities.v1",
+		changeVersionDuringDoctor: false,
 		daemonVersion: "1.2.0",
 		live: false,
 		executable: join(resourcesPath, "native", cliName),
@@ -50,11 +68,51 @@ function serviceFixture(
 		ticketTtl: 60,
 		failUninstall: false,
 	};
+	const seedNative = (version: string) => {
+		const directory = join(
+			home,
+			".local",
+			"share",
+			"clawdi",
+			"versions",
+			`${version}-${process.platform}-${process.arch}`,
+		);
+		mkdirSync(directory, { recursive: true });
+		writeFileSync(join(directory, cliName), "native fixture", { mode: 0o755 });
+		writeFixtureNativeMetadata(directory, version);
+		mkdirSync(dirname(launcher), { recursive: true });
+		if (process.platform === "win32") {
+			rmSync(dirname(launcher), { recursive: true, force: true });
+			symlinkSync(directory, dirname(launcher), "junction");
+		} else {
+			rmSync(launcher, { force: true });
+			symlinkSync(join(directory, cliName), launcher);
+		}
+		state.nativeVersion = version;
+	};
 	const execute: typeof runCommand = async (_command, args, options) => {
+		invocations.push({ path: _command, args, env: options?.env });
+		const version = _command === launcher ? state.nativeVersion : state.cliVersion;
 		const command = args.join(" ");
 		calls.push(command);
 		let result: unknown;
 		switch (command) {
+			case "update --native-bootstrap --min-version 0.16.8 --json":
+				if (state.bootstrapStatus === "offline") throw new Error("Fixture network unavailable");
+				if (["installed", "upgraded", "already-current"].includes(state.bootstrapStatus))
+					seedNative("0.16.8");
+				result = {
+					schemaVersion: "clawdi.nativeBootstrap.v1",
+					status: state.bootstrapStatus,
+					launcher,
+				};
+				break;
+			case "capabilities --json":
+				result = {
+					schemaVersion: state.capabilitiesSchema,
+					capabilities: { updateMode: state.nativeUpdateMode },
+				};
+				break;
 			case "auth login --desktop":
 				if (loginProgress)
 					emit(loginProgress, (output) => {
@@ -98,7 +156,7 @@ function serviceFixture(
 				};
 				break;
 			case "update --native-identity":
-				return { stdout: `${state.cliVersion}\t${process.platform}-${process.arch}\n`, stderr: "" };
+				return { stdout: `${version}\t${process.platform}-${process.arch}\n`, stderr: "" };
 			case "auth desktop-session --json":
 				result = {
 					schemaVersion: state.ticketSchema,
@@ -129,10 +187,14 @@ function serviceFixture(
 				};
 				break;
 			case "daemon doctor --json":
+				if (_command === launcher && state.changeVersionDuringDoctor) {
+					state.changeVersionDuringDoctor = false;
+					seedNative("0.16.9");
+				}
 				// A stopped installed unit has no live health to identify its old path.
 				result = {
 					schemaVersion: "clawdi.daemonDoctor.v2",
-					cli_version: state.cliVersion,
+					cli_version: _command === launcher ? state.nativeVersion : state.cliVersion,
 					singleton_unit_installed: true,
 					singleton_unit_running: state.live,
 					agents: state.live
@@ -151,8 +213,8 @@ function serviceFixture(
 					failFirstInstall = false;
 					throw new Error("Fixture activation failed");
 				}
-				state.daemonVersion = state.cliVersion;
-				state.executable = _command;
+				state.daemonVersion = version ?? "invalid";
+				state.executable = realpathSync(_command);
 				break;
 			case "daemon uninstall":
 				if (state.failUninstall) throw new Error("fixture service failure");
@@ -179,19 +241,25 @@ function serviceFixture(
 		}
 		return { stdout: JSON.stringify(result ?? {}), stderr: "" };
 	};
-	const service = new DesktopCliService(
-		{
-			isPackaged: true,
-			getAppPath: () => root,
-			getPath: () => join(root, "data"),
-			getVersion: () => "2.0.0",
-		},
-		execute,
-		resourcesPath,
-	);
+	const newService = () =>
+		new DesktopCliService(
+			{
+				isPackaged: true,
+				getAppPath: () => root,
+				getPath: (name) => (name === "home" ? home : join(root, "data")),
+				getVersion: () => "2.0.0",
+			},
+			execute,
+			resourcesPath,
+		);
+	const service = newService();
 	return {
 		service,
 		calls,
+		invocations,
+		seedNative,
+		newService,
+		launcher,
 		state,
 		resourcesPath,
 		appImagePath,
@@ -256,7 +324,9 @@ test.each([undefined, "clawdi.agentDetection.v2"])(
 	async (schemaVersion) => {
 		const { service, state } = serviceFixture();
 		state.detectionSchema = schemaVersion;
-		await expect(service.detectAgents()).rejects.toThrow("invalid agent detection data");
+		await expect(service.detectAgents()).rejects.toThrow(
+			schemaVersion ? "Update Clawdi Desktop" : "invalid agent detection data",
+		);
 	},
 );
 
@@ -265,7 +335,9 @@ test.each([undefined, "clawdi.authStatus.v2"])(
 	async (schemaVersion) => {
 		const { service, state } = serviceFixture();
 		state.authStatusSchema = schemaVersion;
-		await expect(service.bootstrapState()).rejects.toThrow("invalid authentication data");
+		await expect(service.bootstrapState()).rejects.toThrow(
+			schemaVersion ? "Update Clawdi Desktop" : "invalid authentication data",
+		);
 	},
 );
 
@@ -356,7 +428,7 @@ test("Desktop forwards device code progress to the UI while the CLI owns sign-in
 		status: "authenticated",
 		user: { id: "fixture" },
 	});
-	expect(calls).toEqual(["auth login --desktop"]);
+	expect(calls.at(-1)).toBe("auth login --desktop");
 	expect(progress).toEqual([
 		{
 			verificationUri: deviceProgress.verificationUri,
@@ -442,4 +514,144 @@ test("Desktop compares an existing session and revokes it without exposing nativ
 	await expect(service.revokeDashboardSession("sess_fixture")).rejects.toThrow(
 		"Couldn't revoke the Desktop session",
 	);
+});
+
+test("uses a newer native CLI without bootstrapping or downgrading", async () => {
+	const { service, seedNative, calls, invocations, launcher } = serviceFixture();
+	seedNative("0.16.9");
+	const state = await service.bootstrapState();
+	expect(state.cli.version).toBe("0.16.9");
+	expect(await service.shellCommandTarget()).toBe(launcher);
+	expect(calls.some((command) => command.includes("--native-bootstrap"))).toBe(false);
+	expect(invocations.every((call) => call.path === launcher)).toBe(true);
+	expect(invocations.every((call) => call.env?.CLAWDI_NO_AUTO_UPDATE === undefined)).toBe(true);
+	expect(invocations.every((call) => call.env?.CLAWDI_DESKTOP_RUNTIME === undefined)).toBe(true);
+});
+
+test.each(["installed", "upgraded", "already-current"])(
+	"bootstrap %s rechecks the native CLI before using it",
+	async (status) => {
+		const { service, state, calls, launcher, seedNative, invocations } = serviceFixture();
+		seedNative("0.16.7");
+		state.bootstrapStatus = status;
+		await Promise.all([service.bootstrapState(), service.bootstrapState()]);
+		expect(calls.filter((command) => command.includes("--native-bootstrap"))).toHaveLength(1);
+		expect(await service.shellCommandTarget()).toBe(launcher);
+		const nativeAuth = invocations.find(
+			(call) => call.path === launcher && call.args.join(" ") === "auth status --json",
+		);
+		expect(nativeAuth).toBeDefined();
+		expect(nativeAuth?.env?.CLAWDI_NO_AUTO_UPDATE).toBeUndefined();
+	},
+);
+
+test.each(["failed", "foreign-owner", "offline"])(
+	"bootstrap %s uses bundled for the session and keeps a foreign command",
+	async (status) => {
+		const { service, state, seedNative, launcher, calls, invocations } = serviceFixture();
+		delete process.env.APPIMAGE;
+		seedNative("0.16.7");
+		state.bootstrapStatus = status;
+		expect((await service.bootstrapState()).cli.version).toBe(state.cliVersion);
+		await service.bootstrapState();
+		expect(calls.filter((command) => command.includes("--native-bootstrap"))).toHaveLength(1);
+		expect(existsSync(launcher)).toBe(true);
+		expect(invocations.find((call) => call.args[0] === "auth")?.env?.CLAWDI_NO_AUTO_UPDATE).toBe(
+			"1",
+		);
+	},
+);
+
+test("a failed bootstrap is retried by the next Desktop launch", async () => {
+	const { service, calls, state, newService } = serviceFixture();
+	await service.bootstrapState();
+	await service.bootstrapState();
+	expect(calls.filter((command) => command.includes("--native-bootstrap"))).toHaveLength(1);
+	state.bootstrapStatus = "installed";
+	expect((await newService().bootstrapState()).cli.version).toBe("0.16.8");
+	expect(calls.filter((command) => command.includes("--native-bootstrap"))).toHaveLength(2);
+});
+
+test("does not adopt a CLI whose capabilities report another update owner", async () => {
+	const { service, state, seedNative } = serviceFixture();
+	seedNative("1.0.0");
+	state.nativeUpdateMode = "desktop-managed";
+	expect(await service.usesNativeCli()).toBe(false);
+});
+
+test("native daemon reconciliation follows current after a CLI self-update", async () => {
+	const { service, state, seedNative, launcher, calls } = serviceFixture();
+	seedNative("0.16.8");
+	state.live = true;
+	state.daemonVersion = "0.16.8";
+	state.executable = realpathSync(launcher);
+	expect(await service.reconcileDaemonRuntime("fixture")).toBe(false);
+	seedNative("0.16.9");
+	state.daemonVersion = "0.16.9";
+	state.executable = realpathSync(launcher);
+	expect((await service.bootstrapState()).cli.version).toBe("0.16.9");
+	expect(await service.reconcileDaemonRuntime("fixture")).toBe(false);
+	expect(calls).not.toContain("daemon install");
+});
+
+test("native reconciliation rewrites a stopped old unit without update suppression", async () => {
+	const { service, seedNative, calls, invocations, launcher } = serviceFixture();
+	seedNative("0.16.8");
+	expect(await service.reconcileDaemonRuntime("fixture")).toBe(true);
+	expect(await service.reconcileDaemonRuntime("fixture")).toBe(false);
+	expect(calls.filter((command) => command === "daemon install")).toHaveLength(1);
+	const install = invocations.find((call) => call.args.join(" ") === "daemon install");
+	expect(install?.path).toBe(launcher);
+	expect(install?.env?.CLAWDI_NO_AUTO_UPDATE).toBeUndefined();
+});
+
+test("retries identity and doctor once when the native launcher advances", async () => {
+	const { service, seedNative, state, calls } = serviceFixture();
+	seedNative("0.16.8");
+	state.changeVersionDuringDoctor = true;
+	expect((await service.bootstrapState()).cli.version).toBe("0.16.9");
+	expect(calls.filter((command) => command === "daemon doctor --json")).toHaveLength(2);
+});
+
+test("unknown native contract majors keep the Update Desktop error through sanitization", async () => {
+	const { service, state, seedNative } = serviceFixture();
+	seedNative("0.16.9");
+	state.ticketSchema = "clawdi.desktopSession.v2";
+	await expect(service.createDashboardSession()).rejects.toThrow("Update Clawdi Desktop");
+	state.authStatusSchema = "clawdi.authStatus.v2";
+	await expect(service.bootstrapState()).rejects.toThrow("Update Clawdi Desktop");
+});
+
+test("unknown capability major asks for Desktop update without attempting bootstrap", async () => {
+	const { service, state, seedNative, calls } = serviceFixture();
+	seedNative("0.16.9");
+	state.capabilitiesSchema = "clawdi.capabilities.v2";
+	await expect(service.bootstrapState()).rejects.toThrow("Update Clawdi Desktop");
+	expect(calls.some((command) => command.includes("--native-bootstrap"))).toBe(false);
+});
+
+test("environment suppression is restricted to bundled fallback and leaves the parent intact", () => {
+	const inherited = {
+		PATH: "/bin",
+		CLAWDI_NO_AUTO_UPDATE: "1",
+		CLAWDI_NO_UPDATE_CHECK: "1",
+		CLAWDI_DESKTOP_RUNTIME: "/old/runtime",
+	};
+	expect(cliEnvironment(inherited, true)).toEqual({ PATH: "/bin" });
+	expect(cliEnvironment({ PATH: "/bin" }, false, "/fallback/runtime")).toEqual({
+		PATH: "/bin",
+		CLAWDI_NO_AUTO_UPDATE: "1",
+		CLAWDI_NO_UPDATE_CHECK: "1",
+		CLAWDI_DESKTOP_RUNTIME: "/fallback/runtime",
+	});
+	expect(inherited.CLAWDI_NO_AUTO_UPDATE).toBe("1");
+});
+
+test("a compiled foreign CLI with local-self-update capabilities is not adopted", async () => {
+	const { service, state, seedNative, launcher } = serviceFixture();
+	seedNative("0.16.9");
+	rmSync(join(dirname(realpathSync(launcher)), "clawdi-native-install.txt"));
+	state.bootstrapStatus = "foreign-owner";
+	expect(await service.usesNativeCli()).toBe(false);
+	expect(existsSync(launcher)).toBe(true);
 });

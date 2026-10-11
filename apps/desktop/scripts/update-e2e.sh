@@ -11,6 +11,7 @@ if [[ "${1:-}" == --in-container ]]; then
   xvfb-run -a bun apps/desktop/scripts/update-e2e.ts
   node apps/desktop/node_modules/electron/install.js
   bun run --cwd apps/desktop build
+  xvfb-run -a bun apps/desktop/scripts/shared-native-cli-e2e.ts
   xvfb-run -a bun apps/desktop/scripts/shared-login-e2e.ts
   exit
 fi

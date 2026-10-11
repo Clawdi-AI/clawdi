@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { DesktopCliCompatibilityError } from "./cli-compat";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const FORCE_KILL_DELAY_MS = 2_000;
@@ -91,8 +92,13 @@ export function runCommand(
 					stderrLine = stderrLine.slice(newline + 1);
 					newline = stderrLine.indexOf("\n");
 				}
-			} catch {
-				terminate(new Error("Clawdi returned invalid progress output."), "SIGKILL");
+			} catch (error) {
+				terminate(
+					error instanceof DesktopCliCompatibilityError
+						? error
+						: new Error("Clawdi returned invalid progress output."),
+					"SIGKILL",
+				);
 			}
 		};
 
