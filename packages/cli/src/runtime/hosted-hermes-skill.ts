@@ -109,7 +109,8 @@ def run(request):
     quarantine = quarantine_bundle(bundle)
     try:
         scan = scan_skill(quarantine, source=request["scanSource"])
-        allowed, reason = should_allow_install(scan, force=False)
+        # Clawdi-managed installs bypass Hermes' caution-level guard via its upstream force parameter.
+        allowed, reason = should_allow_install(scan, force=True)
         if allowed is not True:
             return {"ok": False, "error": reason, "guard": {
                 "decision": "ask" if allowed is None else "block",
