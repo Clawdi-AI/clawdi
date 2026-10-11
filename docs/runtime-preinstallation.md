@@ -68,8 +68,11 @@ failures emit `warm_pool_resource_leak`.
 
 ## First apply
 
-Warm-up rejects tenant inputs. OpenClaw starts an anonymous gateway with a private
-random token/CA; Hermes prepares assets and stops anonymous services.
+Warm-up rejects tenant inputs. OpenClaw initializes its first-run state through
+an anonymous gateway with a private random token/CA, then stops the gateway when
+hot apply is disabled. Only `CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY=1` retains the
+running gateway and writes its adoption marker. Hermes prepares assets and stops
+anonymous services.
 
 With a receipt carrying `egressEngine`, warm-up generates the CA inside this
 single-use instance under the egress UID's private run directory and starts the
@@ -156,7 +159,8 @@ pool qualification. Production and real model/chat/channel traffic remain
 outside this qualification.
 
 Focused coverage is in `preinstallation.test.ts`,
-`tests/runtime-warm-egress.test.ts` and `manifest-reconciliation.test.ts`.
+`tests/runtime-warm-egress.test.ts`, `tests/runtime-warm-openclaw.test.ts` and
+`manifest-reconciliation.test.ts`.
 CA generation and anonymous HTTP 503 policy run in the unprivileged clean
 runner; `bash scripts/test.sh runtime-systemd` also runs the claim orchestration
 cases as isolated root to exercise root-owned markers and UID handoffs.
@@ -172,8 +176,10 @@ downloads or sidecar invocation change on a matching claim. Check the private
 instance-local CA, anonymous HTTP 503 policy, claimed snapshot ACK before any
 user unit, Hermes dashboard overlap, identity-mismatch restart fallback and
 receipt compatibility without the pins. Keep ordinary hosted gateway/dashboard
-program revisions unchanged. Hosted owns supplying the optional pins; CLI
-support alone does not change pool fill specs.
+program revisions unchanged. With OpenClaw hot apply disabled, verify the warm
+gateway is stopped, its adoption marker is absent, first-run files remain, and
+claim starts the gateway once through the normal transaction. Hosted owns
+supplying the optional pins; CLI support alone does not change pool fill specs.
 
 The CLI, systemd and changed-file lint suites pass. Paired native fill/claim
 qualification remains a release gate and requires the Hosted/OSS source pair

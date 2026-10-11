@@ -49,7 +49,7 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
-### CLI 0.16.8
+### CLI 0.16.9
 
 - **Cloud Agent startup:** warm preparation can cache the pinned egress engine
   and Files binary before claim. Anonymous warm-up prepares the instance-local
@@ -58,6 +58,12 @@ only renames unmerged PR series and never-emitted definitions. See
 - **Anonymous managed egress:** intercepted HTTPS requests without SNI now
   receive HTTP 503 before claim. Claimed agents retain their existing selective
   TLS interception and default-allow behavior.
+- **OpenClaw warm preparation:** when hot apply is disabled, warm-up stops the
+  anonymous gateway after first-run initialization. Claim starts it once through
+  normal service activation. Hot apply still supports running gateway adoption.
+
+### CLI 0.16.8
+
 - **Native CLI releases:** macOS native CLI releases are signed with Clawdi's Apple Developer ID and notarized.
 - **Desktop native CLI:** Desktop can bootstrap and safely activate the shared native CLI while preserving user-owned launchers and existing installations.
 
