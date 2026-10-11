@@ -396,6 +396,13 @@ if (Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq "$env:C
 		"stable",
 	]);
 	assert.ok(existsSync(join(feed, "latest-win32-x64.yml")));
+	// A real uninstall must invoke the new cleanup command while the CLI still
+	// exists, and stop/remove the task without the harness doing it first.
+	await run(join(installed, "Uninstall Clawdi.exe"), ["/S", `_?=${installed}`], 60_000);
+	installedApp = false;
+	assert.match(readFileSync(join(root, "cli.log"), "utf8"), /^uninstall --yes$/m);
+	assert.ok(!windowsTaskInstalled(), "NSIS uninstall must remove the Sync task.");
+	taskCreated = false;
 	console.log(
 		"Windows update e2e passed: trusted HTTPS, SHA-512, unsigned NSIS/blockmap, stop before install, N+1 launch and Task Scheduler resume.",
 	);

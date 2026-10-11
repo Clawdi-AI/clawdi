@@ -15,6 +15,10 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import {
+	validateNativeInstallIdentity,
+	writeNativeInstallIdentity,
+} from "../../src/lib/native-distribution";
+import {
 	NATIVE_BUILD_TARGET_CATALOG,
 	nativeAssetName,
 } from "../../src/lib/native-release-manifest";
@@ -77,6 +81,22 @@ const enabled = process.platform === "win32" && testRoot && nativeBinary;
 				]);
 				expect(install.code, `${install.stdout}\n${install.stderr}`).toBe(0);
 				expect(run(launcher, ["--version"]).trim()).toBe(selected);
+				const activeDirectory = realpathSync.native(current);
+				const manifest = readFileSync(join(activeDirectory, "clawdi-cli-manifest-v2.txt"), "utf8");
+				if (selected === versions[0])
+					writeNativeInstallIdentity(
+						activeDirectory,
+						{ version: selected, target: "win32-x64" },
+						manifest,
+						"desktop",
+					);
+				expect(
+					validateNativeInstallIdentity(
+						activeDirectory,
+						{ version: selected, target: "win32-x64" },
+						manifest,
+					),
+				).toBe("desktop");
 				expect(lstatSync(current).isSymbolicLink()).toBeTrue();
 				expect(realpathSync.native(current)).toBe(
 					realpathSync.native(join(nativeRoot, "versions", `${selected}-win32-x64`)),
@@ -180,6 +200,21 @@ const enabled = process.platform === "win32" && testRoot && nativeBinary;
 			expect(invalid.code).not.toBe(0);
 			expect(run(launcher, ["--version"]).trim()).toBe(version);
 			expect(readdirSync(nativeRoot).some((entry) => entry.startsWith(".stage-"))).toBeFalse();
+			delete process.env.CLAWDI_AUTH_TOKEN;
+			const removed = await runAsync(launcher, ["uninstall", "--yes", "--remove-cli", "--json"]);
+			expect(removed.code, `${removed.stdout}\n${removed.stderr}`).toBe(0);
+			const summary = JSON.parse(removed.stdout);
+			expect(summary.schemaVersion).toBe("clawdi.uninstall.v1");
+			expect(summary.status).toBe("completed");
+			expect(windowsTaskInstalled()).toBeFalse();
+			installedDaemon = false;
+			const deadline = Date.now() + 30_000;
+			while (existsSync(nativeRoot) && Date.now() < deadline) await Bun.sleep(100);
+			expect(existsSync(nativeRoot)).toBeFalse();
+			expect(
+				powershell("[Environment]::GetEnvironmentVariable('Path', 'User')").split(";"),
+			).not.toContain(current);
+			expect(existsSync(process.env.CLAWDI_HOME)).toBeFalse();
 		} finally {
 			try {
 				if (installedDaemon && existsSync(launcher)) run(launcher, ["daemon", "uninstall"]);

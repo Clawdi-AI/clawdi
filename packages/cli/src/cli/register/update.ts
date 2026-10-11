@@ -17,6 +17,7 @@ export function registerUpdate(program: Command): void {
 		.addOption(new Option("--min-version <version>").hideHelp())
 		.addOption(new Option("--native-activate").hideHelp())
 		.addOption(new Option("--native-auto-update").hideHelp())
+		.addOption(new Option("--native-installed-by-desktop").hideHelp())
 		.addOption(new Option("--native-stage <path>").hideHelp())
 		.addOption(new Option("--native-prefix <path>").hideHelp())
 		.addOption(new Option("--native-version <version>").hideHelp())
@@ -71,6 +72,7 @@ export function registerUpdate(program: Command): void {
 							version: opts.nativeVersion,
 							target: opts.nativeTarget,
 							automatic: opts.nativeAutoUpdate,
+							installedBy: opts.nativeInstalledByDesktop ? "desktop" : undefined,
 						},
 						timeoutMs === undefined ? undefined : { timeoutMs },
 					);

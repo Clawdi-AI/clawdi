@@ -23,6 +23,7 @@ export interface NativeInstallOwnership {
 	target: NativeBuildTarget;
 	executable: string;
 	launcher: string;
+	installedBy?: "desktop";
 }
 
 export interface NativeCompiledIdentity {
@@ -76,6 +77,7 @@ export function detectNativeInstall(
 	) {
 		return null;
 	}
+	let installedBy: "desktop" | undefined;
 	try {
 		const manifestPath = nativeInstallManifestPath(versionDir);
 		const manifestFile = lstatSync(manifestPath);
@@ -87,7 +89,7 @@ export function detectNativeInstall(
 		) {
 			return null;
 		}
-		validateNativeInstallIdentity(versionDir, compiledIdentity, manifest);
+		installedBy = validateNativeInstallIdentity(versionDir, compiledIdentity, manifest);
 		if (!lstatSync(join(versionDir, "egress-addon")).isDirectory()) return null;
 		if (!lstatSync(join(versionDir, "skills")).isDirectory()) return null;
 		if (!lstatSync(join(versionDir, "egress-addon", "clawdi_egress_addon.py")).isFile())
@@ -114,6 +116,7 @@ export function detectNativeInstall(
 		target: identity.target,
 		executable,
 		launcher,
+		...(installedBy ? { installedBy } : {}),
 	};
 }
 
@@ -121,6 +124,7 @@ export function writeNativeInstallIdentity(
 	directory: string,
 	identity: NativeCompiledIdentity,
 	manifestContent: string,
+	installedBy?: "desktop",
 ): void {
 	const manifest = parseNativeReleaseManifestV2(manifestContent);
 	const artifact = manifest.artifacts.find((entry) => entry.target === identity.target);
@@ -135,6 +139,7 @@ export function writeNativeInstallIdentity(
 			`target\t${identity.target}`,
 			`asset\t${artifact.asset}`,
 			`sha256\t${artifact.sha256}`,
+			...(installedBy ? [`installedBy\t${installedBy}`] : []),
 			"",
 		].join("\n"),
 		{ mode: 0o644 },
@@ -145,7 +150,7 @@ export function validateNativeInstallIdentity(
 	directory: string,
 	identity: NativeCompiledIdentity,
 	manifestContent: string | ReturnType<typeof parseNativeReleaseManifestV2>,
-): void {
+): "desktop" | undefined {
 	const manifest =
 		typeof manifestContent === "string"
 			? parseNativeReleaseManifestV2(manifestContent)
@@ -161,17 +166,20 @@ export function validateNativeInstallIdentity(
 		throw new Error("native install identity exceeds the size limit");
 	}
 	const lines = readFileSync(path, "utf8").split("\n");
+	const installedBy = lines[5] === "installedBy\tdesktop" ? "desktop" : undefined;
 	const expected = [
 		NATIVE_INSTALL_IDENTITY_SCHEMA,
 		`version\t${identity.version}`,
 		`target\t${identity.target}`,
 		`asset\t${artifact.asset}`,
 		`sha256\t${artifact.sha256}`,
+		...(installedBy ? [`installedBy\t${installedBy}`] : []),
 		"",
 	];
 	if (lines.length !== expected.length || lines.some((line, index) => line !== expected[index])) {
 		throw new Error("native install identity is invalid");
 	}
+	return installedBy;
 }
 
 export function currentNativeCompiledIdentity(): NativeCompiledIdentity | null {

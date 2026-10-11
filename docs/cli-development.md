@@ -72,6 +72,15 @@ network or activation failures leave the active version untouched.
 Done: `bun run --cwd packages/cli test -- tests/commands/update.test.ts` passes
 in the isolated runner.
 
+## Uninstall
+
+`clawdi uninstall` composes daemon uninstall, teardown, OAuth sign-out, and local
+state removal. See [Uninstall](uninstall.md) for ownership and Desktop behavior.
+Native install metadata adds optional `installedBy\tdesktop`; normal updates preserve it.
+Desktop passes `CLAWDI_UNINSTALL_KEEP_CLI=1` when the user unchecks CLI removal.
+
+Done: `scripts/test.sh cli tests/commands/uninstall.test.ts` exits 0 in the isolated runner.
+
 ## Machine output
 
 All commands and every `--json` surface follow this contract:
@@ -165,6 +174,7 @@ successful mutations emit their command-specific success status.
 | `inbox decline`, `inbox forget` | `clawdi.inboxDecline.v1` (`id`, `status`); `clawdi.inboxForget.v1` (`project_id`, `status`, `removed_skill_count`) |
 | `daemon status` | `clawdi.daemonStatus.v1` (`agents`, each containing `agent`, `state_dir`, `health`, `supervisor`) |
 | `setup` | `clawdi.setup.v1` (`status`, `agents`, `daemon: {installed}`, `dashboard_url`) |
+| `uninstall` | `clawdi.uninstall.v1` (`status`, `steps`) |
 | `teardown` | `clawdi.teardown.v1` (`status`, `agents`) |
 
 Project share-link inventories display the complete link UUID. Revocation uses

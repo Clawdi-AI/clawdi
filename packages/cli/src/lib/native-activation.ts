@@ -216,6 +216,7 @@ export async function activateStagedNativeRelease(
 		version: string;
 		target: NativeBuildTarget;
 		automatic?: boolean;
+		installedBy?: "desktop";
 	},
 	lockOptions?: PrivateDirectoryLockOptions,
 ): Promise<{ launcher: string; previousVersion: string | null; skipped?: boolean }> {
@@ -236,6 +237,7 @@ async function activateStagedNativeReleaseWithLease(
 		version: string;
 		target: NativeBuildTarget;
 		automatic?: boolean;
+		installedBy?: "desktop";
 	},
 	lease: PrivateDirectoryLockLease,
 ): Promise<{ launcher: string; previousVersion: string | null; skipped?: boolean }> {
@@ -262,7 +264,17 @@ async function activateStagedNativeReleaseWithLease(
 	const manifestContent = validateVersionManifest(stageDir, compiled);
 	validateStagedResources(stageDir);
 	lease.assertOwned();
-	writeNativeInstallIdentity(stageDir, compiled, manifestContent);
+	// The previous active install carries ownership across normal updates.
+	const previousLauncher = join(prefix, windows ? "share/clawdi/current" : "bin/clawdi");
+	const previousOwned = readOwnedLauncher(previousLauncher, versionsRoot);
+	const installedBy = previousOwned
+		? validateNativeInstallIdentity(
+				dirname(previousOwned.executable),
+				previousOwned,
+				readFileSync(nativeInstallManifestPath(dirname(previousOwned.executable)), "utf8"),
+			)
+		: input.installedBy;
+	writeNativeInstallIdentity(stageDir, compiled, manifestContent, installedBy);
 	lease.assertOwned();
 	normalizeNativeTreeModes(stageDir);
 
@@ -273,7 +285,7 @@ async function activateStagedNativeReleaseWithLease(
 	mkdirSync(binDir, { recursive: true, mode: 0o755 });
 	accessSync(binDir, constants.W_OK);
 	const launcher = join(binDir, windows ? "current" : executableName);
-	const previous = readOwnedLauncher(launcher, versionsRoot);
+	const previous = previousOwned;
 	// Check the stable launcher while holding the same lock as manual activation.
 	if (input.automatic && previous && compareSemver(previous.version, input.version) >= 0) {
 		return {

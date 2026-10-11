@@ -16,7 +16,7 @@
 				"variadic": false
 			}
 		],
-		"help": "Usage: clawdi [options] [command]\n\nThe best home for all your AI agents. Run them in the cloud or connect your\nown—with their context and tools in one place.\n\nOptions:\n  -V, --version               output the version number\n  -h, --help                  display help for command\n\nGet started\n  auth                        Sign in to Clawdi\n  status [options]            Show current auth and module activity\n  setup [options]             Detect installed agents, register this machine,\n                              and install daemons\n  doctor [options]            Diagnose auth, agents, vault, and MCP connectivity\n\nSync\n  push [options]              Push local data (sessions, skills) to the cloud\n  pull [options]              Mirror sessions, or explicitly import skills from\n                              a Clawdi-owned workspace or personal project\n  daemon [options]            Manage the background sync daemon — syncs local\n                              agent skills to Clawdi and mirrors sessions\n  session                     Inspect local and uploaded agent sessions\n\nContext\n  vault                       Manage secrets\n  skill                       Manage skills\n  memory                      Manage memories\n  project                     Manage projects, people, invites, links, and\n                              shared access\n  inbox [options]             Incoming project invites and share links\n\nSecrets\n  read [options] <reference>  Read one clawdi:// secret reference\n  inject [options]            Render clawdi:// references in a template\n  run [options] <command...>  Run a command with clawdi:// references resolved\n\nCloud Agents\n  deploy [options]            Create a Cloud Agent with an interactive,\n                              payment-aware wizard\n  wallet                      Inspect Clawdi wallet\n  ai-provider                 Manage AI providers\n  channel                     Manage channel bots and pair external chats to\n                              agents\n  agent                       Manage agents\n\nMaintenance\n  config                      Read or write CLI configuration\n                              (~/.clawdi/config.json)\n  teardown [options]          Reverse setup: remove env file, bundled skill, and\n                              MCP entry\n  update [options]            Install the latest CLI through the current\n                              installation owner\n  mcp [options]               Start MCP server (stdio transport, used by agents)\n\nCommands:\n  help [command]              display help for command\n\nExamples:\n  $ clawdi auth login               Sign in to Clawdi\n  $ clawdi deploy                   Create a Cloud Agent with the deploy wizard\n  $ clawdi auth status --json       Inspect credential source without printing secrets\n  $ clawdi setup                    Detect agents and register the current machine\n  $ clawdi session list             Preview local sessions before pushing\n  $ clawdi push --all               Upload everything (every agent, project, module)\n  $ clawdi pull --all               Mirror sessions for all registered agents\n  $ clawdi skill list --json        Machine-readable skill listing\n  $ clawdi memory search \"redis\"    Search memories by text\n  $ clawdi vault set OPENAI_API_KEY Store a secret\n  $ clawdi project folder link --project engineering  Use this folder with a project\n  $ clawdi run --env-file .env.clawdi -- npm run dev  Resolve clawdi:// refs at runtime\n\nEnvironment:\n  CLAWDI_API_URL           Override the Clawdi API endpoint\n  CLAWDI_DEPLOY_API_URL    Override the deploy API endpoint\n  CLAWDI_AUTH_TOKEN_ORIGIN CLAWDI_API_URL origin that CLAWDI_AUTH_TOKEN is bound to\n  CLAWDI_DEBUG             Print stack traces on error\n  CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check\n  CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via `config set autoUpdate false`)\n  CLAWDI_AUTH_TOKEN        Authenticate non-interactive Cloud API requests\n  NO_COLOR                Disable color output when non-empty\n  CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)\n  CODEX_HOME               Custom Codex home (else ~/.codex)\n  HERMES_HOME              Custom Hermes home (else ~/.hermes)\n  OPENCLAW_STATE_DIR       Custom OpenClaw state dir (else auto-detect)\n  OPENCLAW_AGENT_ID        OpenClaw agent id (else \"main\")\n  PI_CODING_AGENT_DIR      Custom Pi agent home (else ~/.pi/agent)\n  OPENCODE_DB              Custom OpenCode SQLite path (else XDG data/opencode/opencode.db)\n  CI / GITHUB_ACTIONS / …  Disable interactive prompts in known CI\n\nDocs: https://github.com/Clawdi-AI/clawdi\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+		"help": "Usage: clawdi [options] [command]\n\nThe best home for all your AI agents. Run them in the cloud or connect your\nown—with their context and tools in one place.\n\nOptions:\n  -V, --version               output the version number\n  -h, --help                  display help for command\n\nGet started\n  auth                        Sign in to Clawdi\n  status [options]            Show current auth and module activity\n  setup [options]             Detect installed agents, register this machine,\n                              and install daemons\n  doctor [options]            Diagnose auth, agents, vault, and MCP connectivity\n\nSync\n  push [options]              Push local data (sessions, skills) to the cloud\n  pull [options]              Mirror sessions, or explicitly import skills from\n                              a Clawdi-owned workspace or personal project\n  daemon [options]            Manage the background sync daemon — syncs local\n                              agent skills to Clawdi and mirrors sessions\n  session                     Inspect local and uploaded agent sessions\n\nContext\n  vault                       Manage secrets\n  skill                       Manage skills\n  memory                      Manage memories\n  project                     Manage projects, people, invites, links, and\n                              shared access\n  inbox [options]             Incoming project invites and share links\n\nSecrets\n  read [options] <reference>  Read one clawdi:// secret reference\n  inject [options]            Render clawdi:// references in a template\n  run [options] <command...>  Run a command with clawdi:// references resolved\n\nCloud Agents\n  deploy [options]            Create a Cloud Agent with an interactive,\n                              payment-aware wizard\n  wallet                      Inspect Clawdi wallet\n  ai-provider                 Manage AI providers\n  channel                     Manage channel bots and pair external chats to\n                              agents\n  agent                       Manage agents\n\nMaintenance\n  config                      Read or write CLI configuration\n                              (~/.clawdi/config.json)\n  teardown [options]          Reverse setup: remove env file, bundled skill, and\n                              MCP entry\n  uninstall [options]         Remove local Clawdi services, integrations,\n                              sign-in, and state\n  update [options]            Install the latest CLI through the current\n                              installation owner\n  mcp [options]               Start MCP server (stdio transport, used by agents)\n\nCommands:\n  help [command]              display help for command\n\nExamples:\n  $ clawdi auth login               Sign in to Clawdi\n  $ clawdi deploy                   Create a Cloud Agent with the deploy wizard\n  $ clawdi auth status --json       Inspect credential source without printing secrets\n  $ clawdi setup                    Detect agents and register the current machine\n  $ clawdi session list             Preview local sessions before pushing\n  $ clawdi push --all               Upload everything (every agent, project, module)\n  $ clawdi pull --all               Mirror sessions for all registered agents\n  $ clawdi skill list --json        Machine-readable skill listing\n  $ clawdi memory search \"redis\"    Search memories by text\n  $ clawdi vault set OPENAI_API_KEY Store a secret\n  $ clawdi project folder link --project engineering  Use this folder with a project\n  $ clawdi run --env-file .env.clawdi -- npm run dev  Resolve clawdi:// refs at runtime\n\nEnvironment:\n  CLAWDI_API_URL           Override the Clawdi API endpoint\n  CLAWDI_DEPLOY_API_URL    Override the deploy API endpoint\n  CLAWDI_AUTH_TOKEN_ORIGIN CLAWDI_API_URL origin that CLAWDI_AUTH_TOKEN is bound to\n  CLAWDI_DEBUG             Print stack traces on error\n  CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check\n  CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via `config set autoUpdate false`)\n  CLAWDI_AUTH_TOKEN        Authenticate non-interactive Cloud API requests\n  NO_COLOR                Disable color output when non-empty\n  CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)\n  CODEX_HOME               Custom Codex home (else ~/.codex)\n  HERMES_HOME              Custom Hermes home (else ~/.hermes)\n  OPENCLAW_STATE_DIR       Custom OpenClaw state dir (else auto-detect)\n  OPENCLAW_AGENT_ID        OpenClaw agent id (else \"main\")\n  PI_CODING_AGENT_DIR      Custom Pi agent home (else ~/.pi/agent)\n  OPENCODE_DB              Custom OpenCode SQLite path (else XDG data/opencode/opencode.db)\n  CI / GITHUB_ACTIONS / …  Disable interactive prompts in known CI\n\nDocs: https://github.com/Clawdi-AI/clawdi\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi deploy",
@@ -662,6 +662,43 @@
 			}
 		],
 		"help": "Usage: clawdi teardown [options]\n\nReverse setup: remove env file, bundled skill, and MCP entry\n\nOptions:\n  --agent <type>  Tear down a single agent (claude_code, codex, openclaw,\n                  hermes, pi, opencode, dsh)\n  --all           Tear down every registered agent\n  --keep-skill    Don't remove the bundled clawdi skill from the agent\n  --keep-mcp      Don't remove the MCP server registration\n  -y, --yes       Skip the confirmation prompt\n  --json          Output as JSON\n  -h, --help      display help for command\n\nExamples:\n  $ clawdi teardown --agent claude_code --yes\n  $ clawdi teardown --all --yes\n  $ clawdi teardown --agent hermes --keep-skill\n\nTeardown in a non-interactive shell requires --yes.\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
+	},
+	{
+		"path": "clawdi uninstall",
+		"aliases": [],
+		"description": "Remove local Clawdi services, integrations, sign-in, and state",
+		"hidden": false,
+		"arguments": [],
+		"options": [
+			{
+				"flags": "--remove-cli",
+				"description": "Also remove a native CLI installation (npm and Homebrew are kept)",
+				"hidden": false,
+				"required": false,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			},
+			{
+				"flags": "-y, --yes",
+				"description": "Skip the confirmation prompt",
+				"hidden": false,
+				"required": false,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			},
+			{
+				"flags": "--json",
+				"description": "Output as JSON",
+				"hidden": false,
+				"required": false,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			}
+		],
+		"help": "Usage: clawdi uninstall [options]\n\nRemove local Clawdi services, integrations, sign-in, and state\n\nOptions:\n  --remove-cli  Also remove a native CLI installation (npm and Homebrew are\n                kept)\n  -y, --yes     Skip the confirmation prompt\n  --json        Output as JSON\n  -h, --help    display help for command\n\nAccount data stays. Native CLIs installed by Desktop are removed automatically.\n\nExamples:\n  $ clawdi uninstall\n  $ clawdi uninstall --remove-cli --yes --json\n\nGlobal options:\n  --no-color  Disable color output (accepted by every command, before --)\n\nExit codes:\n  0  success\n  1  command or API error\n  2  session extract is not configured\n  4  authorization required\n"
 	},
 	{
 		"path": "clawdi push",
@@ -4251,6 +4288,15 @@
 			},
 			{
 				"flags": "--native-auto-update",
+				"description": "",
+				"hidden": true,
+				"required": false,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			},
+			{
+				"flags": "--native-installed-by-desktop",
 				"description": "",
 				"hidden": true,
 				"required": false,

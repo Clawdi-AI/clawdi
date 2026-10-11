@@ -34,6 +34,7 @@ export interface DesktopMenuActions {
 	openDocs(): void;
 	contactSupport(): void;
 	showLogs(): void;
+	uninstall(): void;
 	signOut(): void;
 	quit(): void;
 }
@@ -74,6 +75,7 @@ export function trayMenuTemplate(
 	template.push(
 		{ type: "separator" },
 		{ label: "Help", submenu: helpItems(actions) },
+		{ label: "Uninstall Clawdi…", enabled: !state.busy, click: actions.uninstall },
 		...signOutItems(state, actions),
 		{ label: "Quit Clawdi", enabled: !state.busy, click: actions.quit },
 	);
@@ -98,6 +100,7 @@ export function applicationMenuTemplate(
 						...withSeparator(state.updateItems),
 						...withSeparator(loginItems(state, actions)),
 						{ type: "separator" as const },
+						{ label: "Uninstall Clawdi…", enabled: !state.busy, click: actions.uninstall },
 						quit,
 					]),
 		],
@@ -135,7 +138,14 @@ export function applicationMenuTemplate(
 				...(mac ? ([{ type: "separator" }, { role: "front" }] as const) : []),
 			],
 		},
-		{ role: "help", submenu: helpItems(actions) },
+		{
+			role: "help",
+			submenu: [
+				...helpItems(actions),
+				{ type: "separator" },
+				{ label: "Uninstall Clawdi…", enabled: !state.busy, click: actions.uninstall },
+			],
+		},
 	];
 	if (mac) {
 		template.unshift({

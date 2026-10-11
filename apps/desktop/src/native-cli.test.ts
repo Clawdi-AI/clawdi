@@ -3,6 +3,7 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readFileSync,
 	realpathSync,
 	rmSync,
 	symlinkSync,
@@ -57,6 +58,7 @@ function serviceFixture(
 		nativeVersion: null as string | null,
 		bootstrapStatus: "failed",
 		nativeUpdateMode: "local-self-update",
+		nativeCommands: ["uninstall"],
 		capabilitiesSchema: "clawdi.capabilities.v1",
 		changeVersionDuringDoctor: false,
 		daemonVersion: "1.2.0",
@@ -110,7 +112,7 @@ function serviceFixture(
 			case "capabilities --json":
 				result = {
 					schemaVersion: state.capabilitiesSchema,
-					capabilities: { updateMode: state.nativeUpdateMode },
+					capabilities: { updateMode: state.nativeUpdateMode, commands: state.nativeCommands },
 				};
 				break;
 			case "auth login --desktop":
@@ -215,6 +217,11 @@ function serviceFixture(
 				}
 				state.daemonVersion = version ?? "invalid";
 				state.executable = realpathSync(_command);
+				break;
+			case "uninstall --yes --remove-cli --json":
+			case "uninstall --yes --json":
+				if (state.failUninstall) throw new Error("fixture private cleanup error");
+				result = { schemaVersion: "clawdi.uninstall.v1", status: "completed", steps: [] };
 				break;
 			case "daemon uninstall":
 				if (state.failUninstall) throw new Error("fixture service failure");
@@ -655,4 +662,46 @@ test("a compiled foreign CLI with local-self-update capabilities is not adopted"
 	state.bootstrapStatus = "foreign-owner";
 	expect(await service.usesNativeCli()).toBe(false);
 	expect(existsSync(launcher)).toBe(true);
+});
+
+test("Desktop delegates full uninstall to the resolved CLI and preserves an unchecked CLI choice", async () => {
+	const { service, seedNative, invocations, launcher } = serviceFixture();
+	seedNative("0.16.9");
+	await service.uninstall(false);
+	expect(invocations.at(-1)).toMatchObject({
+		path: launcher,
+		args: ["uninstall", "--yes", "--json"],
+		env: { CLAWDI_UNINSTALL_KEEP_CLI: "1" },
+	});
+	await service.uninstall(true);
+	expect(invocations.at(-1)).toMatchObject({
+		path: launcher,
+		args: ["uninstall", "--yes", "--remove-cli", "--json"],
+		env: { CLAWDI_UNINSTALL_KEEP_CLI: "0" },
+	});
+});
+
+test("Desktop uninstall reports failed CLI cleanup without exposing raw output", async () => {
+	const { service, state } = serviceFixture();
+	state.failUninstall = true;
+	await expect(service.uninstall(false)).rejects.toThrow("Some local cleanup failed");
+});
+
+test("Desktop uses the bundled uninstall implementation when a released native CLI predates it", async () => {
+	const { service, state, seedNative, invocations, launcher } = serviceFixture();
+	seedNative("0.16.9");
+	state.nativeCommands = [];
+	await service.uninstall(false);
+	expect(invocations.at(-1)?.path).not.toBe(launcher);
+	expect(invocations.at(-1)?.args).toEqual(["uninstall", "--yes", "--json"]);
+});
+
+test("Desktop checkbox ownership reads the validated native install metadata", async () => {
+	const { service, seedNative, launcher } = serviceFixture();
+	expect(await service.installedByDesktop()).toBe(false);
+	seedNative("0.16.9");
+	expect(await service.installedByDesktop()).toBe(false);
+	const marker = join(dirname(realpathSync(launcher)), "clawdi-native-install.txt");
+	writeFileSync(marker, readFileSync(marker, "utf8").replace(/\n$/, "\ninstalledBy\tdesktop\n"));
+	expect(await service.installedByDesktop()).toBe(true);
 });

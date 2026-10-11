@@ -36,6 +36,9 @@ afterEach(() => {
 		writeNativeInstallIdentity(versionDir, identity, manifest);
 		expect(detectNativeInstall(executable, identity)?.launcher).toBe(join(prefix, "bin", "clawdi"));
 
+		writeNativeInstallIdentity(versionDir, identity, manifest, "desktop");
+		expect(detectNativeInstall(executable, identity)?.installedBy).toBe("desktop");
+
 		rmSync(join(versionDir, "clawdi-cli-manifest-v2.txt"));
 		writeFileSync(
 			join(versionDir, "clawdi-cli-manifest.txt"),

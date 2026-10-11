@@ -25,6 +25,7 @@ import {
 } from "../lib/clerk-oauth";
 import { emit, wantsJson } from "../lib/command-output";
 import { getAuth, getConfig, getPendingAuth, isLoggedIn, type PendingAuth } from "../lib/config";
+import { progress } from "../lib/progress";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
 
 type MeResponse = components["schemas"]["CurrentUserResponse"];
@@ -444,7 +445,7 @@ export async function authDesktopSignOutMachine(sessionId: string): Promise<void
 
 export async function authLogout() {
 	if (!isLoggedIn()) {
-		p.log.info("Not signed in.", { output: process.stderr });
+		progress.log.info("Not signed in.", { output: process.stderr });
 		return;
 	}
 
@@ -452,7 +453,7 @@ export async function authLogout() {
 	// keeps its captured credential until it is uninstalled explicitly.
 	const { isSingletonDaemonInstalled } = await import("../serve/installer");
 	if (isSingletonDaemonInstalled()) {
-		p.log.warn(
+		progress.log.warn(
 			"A daemon is still installed. " +
 				`They keep running after sign-out and will fail to authenticate. ` +
 				`Run \`clawdi daemon uninstall\` to stop them.`,
@@ -462,20 +463,23 @@ export async function authLogout() {
 
 	const result = await logoutClawdiCredentials(getConfig().apiUrl);
 	if (result.environmentCredential) {
-		p.log.warn(
+		progress.log.warn(
 			"CLAWDI_AUTH_TOKEN controls this process. Unset it in the environment to sign out; persisted credentials were not changed.",
 			{ output: process.stderr },
 		);
-		return;
+		return result;
 	}
-	if (result.remoteRevoked) p.log.success("Remote Clerk OAuth grant revoked.");
+	if (result.remoteRevoked) progress.log.success("Remote Clerk OAuth grant revoked.");
 	else if (result.loggedOut) {
-		p.log.warn(
+		progress.log.warn(
 			"Couldn't revoke the remote OAuth grant. The local credential was removed; revoke the Clawdi app in your Clerk account if needed.",
 			{ output: process.stderr },
 		);
 	}
-	p.log.success("Signed out. Credentials removed; this account's agent registrations were kept.");
+	progress.log.success(
+		"Signed out. Credentials removed; this account's agent registrations were kept.",
+	);
+	return result;
 }
 
 type AuthStatusSource = "auth.json" | "CLAWDI_AUTH_TOKEN" | "runtime-auth-token" | "none";

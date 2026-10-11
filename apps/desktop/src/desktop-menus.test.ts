@@ -18,6 +18,7 @@ function actions(): DesktopMenuActions {
 		openDocs: mock(),
 		contactSupport: mock(),
 		showLogs: mock(),
+		uninstall: mock(),
 		signOut: mock(),
 		quit: mock(),
 	};
@@ -121,6 +122,8 @@ test.each(["darwin", "win32", "linux"] as const)(
 			"Contact Support",
 			undefined,
 			"Show Logs",
+			undefined,
+			"Uninstall Clawdi…",
 		]);
 		expect(template[0]?.label).toBe(platform === "darwin" ? "Clawdi" : "File");
 	},
@@ -150,3 +153,18 @@ test("menus omit the login item where it is unsupported", () => {
 	expect(find(trayMenuTemplate(linux, actions()), "Open Clawdi at Login")).toBeUndefined();
 	expect(find(applicationMenuTemplate(linux, actions()), "Open Clawdi at Login")).toBeUndefined();
 });
+
+test.each(["darwin", "win32", "linux"] as const)(
+	"%s menus offer Uninstall Clawdi and disable it during critical operations",
+	(platform) => {
+		const handlers = actions();
+		for (const build of [trayMenuTemplate, applicationMenuTemplate]) {
+			const menu = build(state({ platform }), handlers);
+			click(find(menu, "Uninstall Clawdi…"));
+			expect(
+				find(build(state({ platform, busy: true }), handlers), "Uninstall Clawdi…")?.enabled,
+			).toBe(false);
+		}
+		expect(handlers.uninstall).toHaveBeenCalledTimes(2);
+	},
+);

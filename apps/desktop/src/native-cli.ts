@@ -48,6 +48,7 @@ const PRODUCTION_DEPLOY_API_URL = "https://api.clawdi.ai";
 const LOGGED_CLI_COMMANDS = new Set([
 	"auth login",
 	"auth logout",
+	"uninstall",
 	"auth status",
 	"daemon install",
 	"daemon uninstall",
@@ -232,6 +233,52 @@ export class DesktopCliService {
 			await this.run(cli, ["daemon", "uninstall"], { timeoutMs: 60_000 });
 		} finally {
 			await this.run(cli, ["auth", "logout"], { timeoutMs: 30_000 });
+		}
+	}
+
+	async installedByDesktop(): Promise<boolean> {
+		// Inspect the existing install without bootstrapping a CLI just to show the dialog.
+		const launcher = nativeLauncherPath(process.platform, this.home);
+		if (!existsSync(launcher)) return false;
+		try {
+			const identity = await this.readIdentity(launcher);
+			return detectNativeInstall(launcher, identity)?.installedBy === "desktop";
+		} catch {
+			return false;
+		}
+	}
+
+	async uninstall(removeCli: boolean): Promise<void> {
+		let cli = await this.resolveCli();
+		// Released native CLIs can predate uninstall. Use the bundled implementation
+		// when the supported capabilities surface does not advertise the command.
+		if (this.cliSource === "native") {
+			const capabilities = await this.runJson(cli, ["capabilities", "--json"]);
+			if (
+				!isRecord(capabilities.capabilities) ||
+				!Array.isArray(capabilities.capabilities.commands) ||
+				!capabilities.capabilities.commands.includes("uninstall")
+			)
+				cli = this.resolveBundledCli();
+		}
+		try {
+			const result = await this.runJson(
+				cli,
+				["uninstall", "--yes", ...(removeCli ? ["--remove-cli"] : []), "--json"],
+				{
+					timeoutMs: 3 * 60_000,
+					env: { CLAWDI_UNINSTALL_KEEP_CLI: removeCli ? "0" : "1" },
+				},
+			);
+			if (
+				result.schemaVersion !== "clawdi.uninstall.v1" ||
+				result.status !== "completed" ||
+				!Array.isArray(result.steps)
+			) {
+				throw new Error("Invalid uninstall response");
+			}
+		} catch {
+			throw new DesktopCliError("Some local cleanup failed. Run clawdi uninstall --yes to retry.");
 		}
 	}
 
@@ -710,6 +757,7 @@ export class DesktopCliService {
 						cli === nativeLauncherPath(process.platform, this.home),
 						this.runtimeRoot,
 					),
+					...opts.env,
 					...(this.application.isPackaged
 						? {
 								CLAWDI_API_URL: PRODUCTION_CLOUD_API_URL,

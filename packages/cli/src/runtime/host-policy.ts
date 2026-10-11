@@ -46,6 +46,7 @@ function hostedPolicy(): HostPolicy {
 		deniedCommands: [
 			{ command: "setup", reason: "runtime setup is managed by clawdi runtime init" },
 			{ command: "teardown", reason: "runtime teardown is managed by the host lifecycle" },
+			{ command: "uninstall", reason: "runtime removal is managed by the host lifecycle" },
 			{
 				command: "agent reconnect",
 				reason: "Connected Agent identity can't be managed inside a Cloud Agent",

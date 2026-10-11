@@ -580,6 +580,7 @@ export async function nativeBootstrap(
 	};
 	const result = await runNativeUpdateInstall({
 		automatic: true,
+		installedBy: inspected.ownership ? undefined : "desktop",
 		current: identity.version,
 		latest: requested,
 		ownership,
@@ -963,7 +964,7 @@ function isLongLivedDaemonInvocation(args = process.argv.slice(2)): boolean {
 
 function isAutoUpdateControlInvocation(args = process.argv.slice(2)): boolean {
 	const first = args.find((arg) => !arg.startsWith("-"));
-	return first === "update" || first === "config";
+	return first === "update" || first === "config" || first === "uninstall";
 }
 
 function isInformationalInvocation(args = process.argv.slice(2)): boolean {
@@ -1194,6 +1195,7 @@ async function runUpdateInstallWorker(input: {
 
 async function runNativeUpdateInstall(input: {
 	automatic?: boolean;
+	installedBy?: "desktop";
 	current: string;
 	latest: string;
 	ownership: NativeInstallOwnership;
@@ -1225,6 +1227,7 @@ async function runNativeUpdateInstall(input: {
 			"update",
 			"--native-activate",
 			...(input.automatic ? ["--native-auto-update"] : []),
+			...(input.installedBy ? ["--native-installed-by-desktop"] : []),
 			"--native-stage",
 			staged.stageDir,
 			"--native-prefix",

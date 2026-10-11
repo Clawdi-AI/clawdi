@@ -87,6 +87,7 @@ if (args[0] === "--serve") {
 		case "daemon stop":
 			stopWindowsTask();
 			break;
+		case "uninstall --yes":
 		case "daemon uninstall":
 			uninstallWindowsTask(root);
 			break;

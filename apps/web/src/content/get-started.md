@@ -121,7 +121,8 @@ failures; only say background sync is on if setup installed it:
 > To skip a project: `clawdi config set excludeProjects <path>`.
 > To exclude projects before the first upload: `clawdi setup --exclude-project <path>[,<path>]`.
 > To stop background sync: `clawdi daemon uninstall`. You can delete uploaded sessions in the
-> dashboard.
+> dashboard. To remove local Clawdi services, integrations, sign-in, and state: `clawdi uninstall`.
+> Your account data stays.
 
 ## Optional: back up authored skills
 

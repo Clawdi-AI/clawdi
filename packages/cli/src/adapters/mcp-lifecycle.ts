@@ -24,7 +24,7 @@ function commandTimedOut(error: unknown): boolean {
 
 export interface McpLifecycle {
 	register(opts?: { json?: boolean }): Promise<boolean>;
-	unregister(opts?: { json?: boolean }): Promise<void>;
+	unregister(opts?: { json?: boolean; strict?: boolean }): Promise<void>;
 }
 
 type CommandArgv = readonly [command: string, ...args: string[]];
@@ -164,7 +164,12 @@ function commandLifecycle(input: {
 			const invocation = resolveCurrentCliInvocation(["mcp"]);
 			try {
 				const [command, ...args] = resolveCommand(input.unregisterCommand, invocation);
-				execFileSync(command, args, { stdio: "pipe", env: process.env });
+				execFileSync(command, args, {
+					stdio: "pipe",
+					env: process.env,
+					timeout: MCP_COMMAND_TIMEOUT_MS,
+					killSignal: "SIGKILL",
+				});
 				log(chalk.green(`${input.label}: removed MCP server registration`));
 			} catch {
 				try {
@@ -176,6 +181,19 @@ function commandLifecycle(input: {
 					// Fall through to the usual absent/manual hint.
 				}
 				log(chalk.gray(`${input.label}: MCP server already absent (or removal not supported)`));
+				if (opts?.strict) {
+					if (input.listCommand && (input.registeredPattern || input.isRegistered)) {
+						const [command, ...args] = resolveCommand(input.listCommand, invocation);
+						const listed = execFileSync(command, args, {
+							encoding: "utf8",
+							stdio: "pipe",
+							timeout: MCP_COMMAND_TIMEOUT_MS,
+							killSignal: "SIGKILL",
+						});
+						if (!input.isRegistered?.(listed) && !input.registeredPattern?.test(listed)) return;
+					}
+					throw new Error(`Could not remove MCP registration in ${input.label}`);
+				}
 				if (input.manualUnregister) {
 					log(chalk.gray(`  Remove manually: ${input.manualUnregister(invocation)}`));
 				}
@@ -319,6 +337,7 @@ export const hermesMcpLifecycle: McpLifecycle = {
 				chalk.yellow(`Hermes: could not remove MCP server registration (${errMessage(error)})`),
 			);
 			console.error(chalk.gray("  Check with: hermes config get mcp_servers --json"));
+			if (opts?.strict) throw error;
 		}
 	},
 };
