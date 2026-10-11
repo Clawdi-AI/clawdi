@@ -483,7 +483,7 @@ export function AgentOverview({
 					)}
 					icon={Brain}
 					tint={RESOURCE_TINT_CLASSES.memories}
-					onPress={() => router.push("/memories")}
+					onPress={() => router.push(agentSectionHref(agent.id, "memories"))}
 				/>
 				<OverviewNavigationCard
 					title={agentSectionCopy.connectors.label}
@@ -497,7 +497,7 @@ export function AgentOverview({
 					)}
 					icon={Plug}
 					tint={RESOURCE_TINT_CLASSES.connectors}
-					onPress={() => router.push("/connectors")}
+					onPress={() => router.push(agentSectionHref(agent.id, "connectors"))}
 				/>
 			</WebView>
 			{deployment ? (

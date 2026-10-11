@@ -391,6 +391,34 @@ test("Library skills a linked Project already provides read Installed and can't 
 	expect(h.setLibraryReference).not.toHaveBeenCalled();
 });
 
+test.each([
+	["failed", "guard_blocked", "Blocked by Hermes Skills Guard"],
+	["not_observed", null, "Installing…"],
+	["installed", null, "Installed"],
+] as const)(
+	"a desired %s Skill with error %p reads %s in the browse sheet and on the list, and can't be installed",
+	(convergence, observation_error_code, label) => {
+		const row = skill({
+			skill_key: "skill-creator",
+			source: "project",
+			skill_id: "s1",
+			read_only: true,
+			convergence,
+			observation_error_code,
+		});
+		h.inventory.data = { skills: [row] };
+		h.library = [{ id: "s1", name: "skill-creator", authority: "cloud" }];
+		renderToStaticMarkup(<HostedAgentLibrarySkillsScreen browse />);
+		const sheetButton = h.buttons.find((button) => button.row === "skill-creator");
+		expect(sheetButton).toMatchObject({ label, disabled: true });
+		sheetButton?.onPress?.();
+		expect(h.setLibraryReference).not.toHaveBeenCalled();
+		expect(renderToStaticMarkup(<HostedAgentLibrarySkillsScreen deploymentId="d" />)).toContain(
+			html(`skill-creator|project|${label}|`),
+		);
+	},
+);
+
 test("the Skills list offers Uninstall for GitHub and Library rows with Web's confirmation", async () => {
 	h.inventory.data = {
 		skills: [
@@ -451,7 +479,7 @@ test("a reconcile_failed Skill shows Web's automatic retry notice; guard failure
 	const failed = renderToStaticMarkup(<HostedAgentLibrarySkillsScreen deploymentId="d" />);
 	expect(retryNotice).toBe("Couldn't update skills|We'll retry automatically.");
 	expect(failed).toContain(html(retryNotice));
-	expect(failed).toContain(html(`skill-creator|project|${en.agentExtensions.failedState}|`));
+	expect(failed).toContain(html(`skill-creator|project|${en.agentExtensions.installFailed}|`));
 
 	h.inventory.data = {
 		skills: [
