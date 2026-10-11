@@ -213,7 +213,7 @@ jobs:
           name: ${{ env.CLI_ARTIFACT_NAME }}
           path: release
 
-      - name: Sign and notarize macOS native CLI archives when credentials are available
+      - name: Sign and notarize macOS native CLI archives
         env:
           CLI_VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -223,14 +223,13 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
           set -euo pipefail
-          # Feature branches and previews may not have release credentials. Keep
-          # the unsigned artifact in that case so build and test workflows remain
-          # useful; protected releases use the exact Desktop signing secrets.
+          # Every successful run of this job can reach the publisher. Missing
+          # credentials must fail before a final release artifact is uploaded.
           if [ -z "${CSC_LINK:-}" ] || [ -z "${CSC_KEY_PASSWORD:-}" ] || \
              [ -z "${APPLE_API_KEY_CONTENT:-}" ] || [ -z "${APPLE_API_KEY_ID:-}" ] || \
              [ -z "${APPLE_API_ISSUER:-}" ]; then
-            echo "Apple CLI signing secrets are unavailable; retaining unsigned native archives."
-            exit 0
+            echo "Apple CLI signing credentials are incomplete; refusing to publish unsigned native archives." >&2
+            exit 1
           fi
 
           bash ./apps/desktop/scripts/with-signing-keychain.sh bash -s <<'SIGN'
