@@ -39,7 +39,7 @@ describe("store build surfaces", () => {
 		).toBe(true);
 	});
 
-	test("store builds hide card-only surfaces and always show Add credits, even when unavailable", () => {
+	test("store builds hide card-only surfaces and always show the purchase entry, even when unavailable", () => {
 		for (const available of [true, false])
 			expect(storeSurfaces(true, available)).toEqual({
 				cardBilling: false,
