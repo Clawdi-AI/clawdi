@@ -12,6 +12,8 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { detectNativeInstall } from "../../../../packages/cli/src/lib/native-distribution";
+import { nativeBuildTargetForPlatform } from "../../../../packages/cli/src/lib/native-release-manifest";
 import { nativeLauncherPath } from "../../src/cli-compat";
 import { writeFixtureNativeMetadata } from "./native-layout";
 
@@ -25,7 +27,9 @@ const prefix = join(home, ".local");
 const launcher = nativeLauncherPath(process.platform, home);
 const unit = join(root, "unit.json");
 const auth = join(root, "signed-in");
-const native = process.execPath.startsWith(join(prefix, "share", "clawdi", "versions"));
+const target = nativeBuildTargetForPlatform();
+if (!target) throw new Error("Unsupported native CLI fixture target.");
+const native = detectNativeInstall(process.execPath, { version, target }) !== null;
 const args = process.argv.slice(2);
 appendFileSync(
 	join(root, "calls.jsonl"),

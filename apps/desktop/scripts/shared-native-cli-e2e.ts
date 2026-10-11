@@ -26,7 +26,9 @@ declare global {
 }
 
 const desktop = resolve(import.meta.dir, "..");
-const root = mkdtempSync(join(tmpdir(), "clawdi-shared-native-"));
+// Windows temp paths can use an 8.3 alias while executable paths use the long
+// name. Keep fixture paths canonical for launcher/unit comparisons.
+const root = realpathSync(mkdtempSync(join(tmpdir(), "clawdi-shared-native-")));
 const extension = process.platform === "win32" ? ".exe" : "";
 const bundledResource = join(desktop, "resources", "native", `clawdi${extension}`);
 const hadNativeDirectory = existsSync(dirname(bundledResource));
