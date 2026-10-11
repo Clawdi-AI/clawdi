@@ -645,6 +645,8 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	await page.goto(`/sessions/${SESSION_ID}`);
 	const scrollContainer = page.locator("#dashboard-scroll-container");
 	await expect.poll(() => requestedOffsets.size).toBeGreaterThan(0);
+	// Virtuoso keeps the list `visibility: hidden` until its initial scroll-to-last settles.
+	await expect(page.getByText(/^Timeline message 499 /)).toBeVisible();
 	await expect(page.getByText(/^Timeline message 499 /)).toBeInViewport();
 	const sessionContextHeader = page.getByTestId("session-context-header");
 	await expect(sessionContextHeader).toBeInViewport();
@@ -684,6 +686,7 @@ test("keeps a long anchored timeline windowed across desktop and mobile", async 
 	const current = page.locator('[data-search-match="true"]');
 	await expect(current).toContainText(`Current ${query} result stays mounted`);
 	await expect(current.locator("mark")).toHaveText(["virtualized needle"]);
+	await expect(current).toBeVisible();
 	await expect(current).toBeInViewport();
 	await waitForTimelineLayout();
 	expect(await mountedRows.count()).toBeLessThan(80);
