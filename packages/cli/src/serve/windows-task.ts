@@ -70,19 +70,40 @@ try { $task = $folder.GetTask($name) } catch {
 `;
 const stop = `
 if ($task) {
+  $failedKills = @()
   foreach ($instance in @($task.GetInstances(0))) {
     $enginePid = [int]$instance.EnginePID
     if ($enginePid -le 0) { throw 'Clawdi task reported an invalid engine PID.' }
-    & "$env:SystemRoot\\System32\\taskkill.exe" /PID $enginePid /T /F | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-      if (Get-Process -Id $enginePid -ErrorAction SilentlyContinue) {
-        throw "Unable to stop Clawdi task process tree ($enginePid)."
+    $engine = Get-Process -Id $enginePid -ErrorAction SilentlyContinue
+    if (!$engine) { continue }
+    # Windows PowerShell 5.1 turns native stderr into ErrorRecords. Capture it
+    # without aborting stop when a child exits during taskkill.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      $taskkillOutput = & "$env:SystemRoot\\System32\\taskkill.exe" /PID $enginePid /T /F 2>&1
+      $taskkillExitCode = $LASTEXITCODE
+    } finally {
+      $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($taskkillExitCode -ne 0) {
+      $failedKills += [pscustomobject]@{
+        Process = $engine
+        Diagnostic = "taskkill PID $enginePid exited $taskkillExitCode : $($taskkillOutput | Out-String)"
       }
     }
   }
+  # TerminateProcess is asynchronous and may report ACCESS_DENIED for an
+  # already-terminated process with open handles. Wait for actual exit.
+  # https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess
   $deadline = [DateTime]::UtcNow.AddSeconds(20)
-  while ($task.GetInstances(0).Count -gt 0) {
-    if ([DateTime]::UtcNow -gt $deadline) { throw 'Clawdi task did not stop.' }
+  while ($true) {
+    $remainingEngines = @($failedKills | Where-Object { !$_.Process.WaitForExit(0) })
+    if ($task.GetInstances(0).Count -eq 0 -and $remainingEngines.Count -eq 0) { break }
+    if ([DateTime]::UtcNow -gt $deadline) {
+      $diagnostics = ($failedKills | ForEach-Object { $_.Diagnostic }) -join [Environment]::NewLine
+      throw "Clawdi task did not stop within 20 seconds. $diagnostics"
+    }
     Start-Sleep -Milliseconds 200
   }
 }

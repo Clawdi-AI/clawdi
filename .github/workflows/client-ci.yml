@@ -192,6 +192,8 @@ jobs:
         if: needs.changes.outputs.cli == 'true'
         run: bun run --cwd packages/cli check:publish-manifest
       - name: Test routed client packages
+        env:
+          CLAWDI_CLI_TEST_JOBS: "4"
         run: |
           package_dirs=()
           [[ "$RUN_MOBILE" == "true" ]] && package_dirs+=(apps/mobile)

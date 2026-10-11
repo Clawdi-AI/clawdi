@@ -751,6 +751,22 @@ only for those test files, their containing runtime group, name-filtered runs,
 or the full suite; it never uses or changes a user's Hermes install. The
 fixture source and venv are removed when the runner exits.
 
+The full CLI suite uses a separate Bun process per file, with tests inside each
+file kept serial. Client CI runs four file workers; the isolated local runner
+defaults to one. `CLAWDI_CLI_TEST_JOBS` accepts integers from 1 to 8. Inside a
+prepared Docker runner or CI checkout:
+
+```bash
+CLAWDI_CLI_TEST_JOBS=4 bun run --cwd packages/cli test:internal
+```
+
+Done: the command exits 0 and the final summary includes `4 workers`.
+Each worker's output is collected by file, and any failed file fails the suite.
+Fixtures use private temporary directories; HTTP readiness fixtures bind
+ephemeral listening ports. Tests of fixed native readiness
+URLs route real curl connections to their ephemeral servers with
+[`--connect-to`](https://curl.se/docs/manpage.html#--connect-to).
+
 On a Linux Docker host, verify native systemd command deadlines and crash-loop
 readiness through the official suite:
 
