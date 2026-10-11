@@ -262,11 +262,38 @@ describe("CLI publish workflow contract", () => {
 			signRun.indexOf("if ! spctl --assess --type execute"),
 		);
 		expect(signRun).toContain("Bare executables cannot be stapled");
+		expect(signRun).toContain("for target in darwin-x64 darwin-arm64; do");
+		expect(signRun).toContain('tar -xpzf "$archive" -C "$stage"');
+		expect(signRun).toContain(
+			'CLAWDI_NATIVE_TARGET="$target" bun run packages/cli/scripts/package-native-release.mjs',
+		);
+		expect(signRun).toContain('"$stage" "$PWD/release"');
+		expect(signRun.indexOf("if ! spctl --assess --type execute")).toBeLessThan(
+			signRun.indexOf("package-native-release.mjs"),
+		);
 		expect(signRun).toContain("refresh-native-release-manifest.mjs");
-		expect(signRun.indexOf("codesign --force")).toBeLessThan(
+		expect(signRun.indexOf("package-native-release.mjs")).toBeLessThan(
 			signRun.indexOf("refresh-native-release-manifest.mjs"),
 		);
+		expect(signRun.indexOf("refresh-native-release-manifest.mjs")).toBeLessThan(
+			signRun.indexOf("check-native-release.mjs"),
+		);
+		const buildScript = readFileSync(
+			resolve(import.meta.dir, "../scripts/build-native-release.mjs"),
+			"utf8",
+		);
+		expect(buildScript).toContain('run(resolve(scriptDir, "package-native-release.mjs")');
 		expect(signRun).toContain("retaining unsigned native archives");
+	});
+
+	test("keeps every macOS shell step free of GNU-only commands", () => {
+		const sign = workflowDocument.jobs["sign-macos-native"];
+		for (const step of sign.steps ?? []) {
+			if (typeof step.run !== "string") continue;
+			expect(step.run).not.toMatch(/--(?:owner|group|numeric-owner|sort|mtime)(?:[=\s]|$)/);
+			expect(step.run).not.toMatch(/\b(?:sha256sum|mapfile|readarray)\b|\bsed\s+-i\b/);
+			expect(step.run).not.toMatch(/\btar\s[^\n]*\s-\w*c\w*/);
+		}
 	});
 
 	test("builds and publishes the same verified tarball exactly once", () => {

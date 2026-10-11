@@ -254,7 +254,8 @@ jobs:
             log="$RUNNER_TEMP/clawdi-cli-$target-notary-log.json"
             rm -rf "$stage" "$zip" "$result" "$submit_stderr" "$log"
             mkdir -p "$stage"
-            tar -xzf "$archive" -C "$stage"
+            # Preserve payload modes despite the signing key's restrictive umask.
+            tar -xpzf "$archive" -C "$stage"
             cli="$stage/clawdi"
 
             # Bun documents these hardened-runtime exceptions for compiled
@@ -309,8 +310,8 @@ jobs:
               echo "spctl informational assessment rejected the bare CLI; codesign and notarytool gates passed." >&2
             fi
 
-            tar -C "$stage" --owner=0 --group=0 --numeric-owner -czf "$archive" \
-              clawdi egress-addon/clawdi_egress_addon.py skills
+            CLAWDI_NATIVE_TARGET="$target" bun run packages/cli/scripts/package-native-release.mjs \
+              "$stage" "$PWD/release"
             rm -rf "$stage" "$zip"
           done
 
