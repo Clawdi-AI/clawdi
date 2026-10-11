@@ -4,11 +4,12 @@ import { createActionGate } from "@/platform/auth/action-gate";
 export function useAuthAction(owner?: unknown) {
 	const [gate] = useState(createActionGate);
 	const [busy, setBusy] = useState(false);
-	const [error, setError] = useState(false);
+	// The last failure, kept so a surface can show its specific reason like Web's toasts.
+	const [failure, setFailure] = useState<{ error: unknown } | null>(null);
 	useLayoutEffect(() => {
 		gate.activate(owner);
 		setBusy(false);
-		setError(false);
+		setFailure(null);
 		return () => gate.deactivate();
 	}, [gate, owner]);
 
@@ -19,12 +20,12 @@ export function useAuthAction(owner?: unknown) {
 		const lease = gate.acquire();
 		if (!lease) return;
 		setBusy(true);
-		setError(false);
+		setFailure(null);
 		try {
 			await action(lease.isCurrent);
-		} catch (failure) {
-			if (lease.isCurrent()) setError(true);
-			if (propagate) throw failure;
+		} catch (error) {
+			if (lease.isCurrent()) setFailure({ error });
+			if (propagate) throw error;
 		} finally {
 			if (lease.isCurrent()) setBusy(false);
 			lease.release();
@@ -32,9 +33,10 @@ export function useAuthAction(owner?: unknown) {
 	};
 	return {
 		busy,
-		error,
+		error: failure !== null,
+		failure: failure?.error,
 		run: (action: (isCurrent: () => boolean) => Promise<void>) => runAction(action),
 		runOrThrow: (action: (isCurrent: () => boolean) => Promise<void>) => runAction(action, true),
-		clearError: () => setError(false),
+		clearError: () => setFailure(null),
 	};
 }

@@ -550,7 +550,7 @@ function NewVaultDialog({ navigationScope }: { navigationScope: ResourceNavigati
 					<ApiErrorPanel
 						error={vaultsQuery.error}
 						onRetry={() => void vaultsQuery.refetch()}
-						title="Couldn't load vault catalog"
+						title={LIBRARY_COPY.loadVaultCatalogFailed}
 					/>
 				) : null}
 				<form

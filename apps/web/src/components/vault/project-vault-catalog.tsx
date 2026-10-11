@@ -4,6 +4,7 @@ import { projectVaultCatalogClasses } from "@clawdi/shared/ui";
 import {
 	displayProjectName,
 	isCustomProject,
+	LIBRARY_COPY,
 	PROJECT_VAULT_COPY,
 	projectVaultCatalogDescription,
 	projectVaultCatalogRows,
@@ -164,7 +165,7 @@ export function ProjectVaultCatalog({
 				<ApiErrorPanel
 					error={catalog.error}
 					onRetry={() => void catalog.refetch()}
-					title="Couldn't load vault catalog"
+					title={LIBRARY_COPY.loadVaultCatalogFailed}
 				/>
 			) : null}
 			{rows.length ? (

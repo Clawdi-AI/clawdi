@@ -161,7 +161,7 @@ export function ProjectVaultCatalog({
 						<WebText recipe={projectDetailClasses.error}>{PROJECT_VAULT_COPY.invalidName}</WebText>
 					) : null}
 				</WebView>
-				{action.error ? <ApiErrorPanel error={action.error} /> : null}
+				{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 				<WebView recipe={projectDetailClasses.form}>
 					<Button
 						variant="ghost"
@@ -271,7 +271,7 @@ export function ProjectVaultCatalog({
 									title={t("vault.catalogError")}
 								/>
 							) : null}
-							{action.error ? <ApiErrorPanel error={action.error} /> : null}
+							{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 						</WebView>
 					</>
 				}

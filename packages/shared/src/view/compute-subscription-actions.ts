@@ -11,6 +11,7 @@ import {
 	type ComputeSubscriptionActionResult,
 	computeFundingMode,
 	computeFundingSource,
+	computeSubscriptionCancellationCopy,
 	isComputeSubscriptionActionUnconfirmed,
 	isComputeSubscriptionRenewing,
 } from "./compute-subscriptions";
@@ -248,6 +249,84 @@ export function deploymentDeleteSubscriptionPolicy(deployment: DeleteTarget | nu
 		storeNotice: null,
 	};
 }
+
+/**
+ * Web's delete-agent dialog: the subscription choice when the policy offers one,
+ * otherwise the store or scheduled-cancellation notice.
+ */
+export function deploymentDeleteCopy({
+	name,
+	choice,
+	offerChoice,
+	storeNotice,
+	cancelAtPeriodEnd,
+	isTrial,
+	periodEndLabel,
+}: {
+	name: string;
+	choice: SubscriptionChoice;
+	offerChoice: boolean;
+	storeNotice: string | null;
+	cancelAtPeriodEnd: boolean;
+	isTrial: boolean;
+	periodEndLabel: string | null;
+}): {
+	title: string;
+	warning: string;
+	notice: string | null;
+	choices: { value: SubscriptionChoice; title: string; description: string }[];
+	confirmLabel: string;
+	dismissLabel: string;
+} {
+	const keepDescription = `Keep subscription — it becomes available to choose for a future agent.${
+		periodEndLabel ? ` Valid through ${periodEndLabel}.` : ""
+	}`;
+	return {
+		title: `Delete ${name}?`,
+		warning: "This permanently deletes the agent and its saved data. This can’t be undone.",
+		notice: offerChoice
+			? null
+			: (storeNotice ??
+				(cancelAtPeriodEnd
+					? "The subscription is already scheduled to stop at period end; deleting the agent does not undo that cancellation."
+					: null)),
+		choices: offerChoice
+			? [
+					{ value: "keep_subscription", title: "Delete agent", description: keepDescription },
+					{
+						value: "cancel_subscription",
+						title: "Delete agent and cancel subscription",
+						description: computeSubscriptionCancellationCopy({
+							isTrial,
+							periodEndLabel,
+							hasRetainedDeployment: false,
+						}).description,
+					},
+				]
+			: [],
+		confirmLabel: !offerChoice
+			? "Delete agent"
+			: choice === "keep_subscription"
+				? "Delete agent (keep subscription)"
+				: "Delete agent and cancel subscription",
+		dismissLabel: "Go back",
+	};
+}
+
+/** Web's per-action lifecycle confirmations. */
+export const deploymentLifecycleConfirmCopy = {
+	restart: {
+		title: "Restart agent?",
+		description: "This restarts the whole agent.",
+		confirmLabel: "Restart agent",
+	},
+	stop: {
+		title: "Stop agent?",
+		description:
+			"This pauses its browser tools, terminal, sessions, and channels until you start it again.",
+		confirmLabel: "Stop agent",
+	},
+} as const;
 
 export function scheduledPlanCancellationNotice(result: ComputeSubscriptionActionResult): {
 	kind: "success" | "info";

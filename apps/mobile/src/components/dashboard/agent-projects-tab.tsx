@@ -245,7 +245,9 @@ function BindingsView({ agentId }: { agentId?: string }) {
 					))}
 				</WebView>
 			) : null}
-			{action.error ? <ApiErrorPanel error={action.error} title={t("projects.linkError")} /> : null}
+			{action.error ? (
+				<ApiErrorPanel error={action.failure} title={t("projects.linkError")} />
+			) : null}
 			{confirmationDialog.dialog}
 		</AgentCollection>
 	);

@@ -15,12 +15,14 @@ import {
 	agentSurfaceCopy,
 	aiBindingCopy,
 	computeFundingMode,
-	computeSubscriptionCancellationCopy,
+	deploymentDeleteCopy,
 	deploymentDeleteSubscriptionPolicy,
+	deploymentLifecycleConfirmCopy,
 	firstModelForProvider,
 	formatShortDate,
 	initialDeploymentCopy,
 	isManagedProviderId,
+	MANAGED_AI_CHOICE,
 	primaryModelValue,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -223,14 +225,19 @@ export function DeploymentControls({
 	const { offerChoice, defaultChoice, storeNotice } =
 		deploymentDeleteSubscriptionPolicy(deployment);
 	const periodEnd = formatShortDate(subscription?.current_period_end);
-	const periodEndLabel = periodEnd === "—" ? null : periodEnd;
-	const deleteTitle = deployment
-		? t("runtime.deleteTitle", { name: hostedAgentTitle(agent.data, deployment) ?? "" })
-		: "";
 	const [deleteChoice, setDeleteChoice] = useState<{
 		choice: SubscriptionChoice;
 		confirm: (choice: SubscriptionChoice) => unknown;
 	} | null>(null);
+	const deleteCopy = deploymentDeleteCopy({
+		name: (deployment && hostedAgentTitle(agent.data, deployment)) ?? "",
+		choice: deleteChoice?.choice ?? "cancel_subscription",
+		offerChoice,
+		storeNotice,
+		cancelAtPeriodEnd: Boolean(subscription?.cancel_at_period_end),
+		isTrial: subscription?.status === "trialing",
+		periodEndLabel: periodEnd === "—" ? null : periodEnd,
+	});
 	const confirm = (mutation: DeploymentMutation) => {
 		if ((mutation.action === "delete" ? writeBlocked : busy) || !deploymentMutations || !deployment)
 			return;
@@ -263,20 +270,30 @@ export function DeploymentControls({
 			});
 			return;
 		}
+		if (mutation.action === "delete") {
+			nativeConfirmation.show(
+				deleteCopy.title,
+				deleteCopy.notice ? `${deleteCopy.warning}\n\n${deleteCopy.notice}` : deleteCopy.warning,
+				[
+					{ text: deleteCopy.dismissLabel, style: "cancel" },
+					{ text: deleteCopy.confirmLabel, style: "destructive", onPress: () => run(mutation) },
+				],
+			);
+			return;
+		}
+		// Restart and stop use Web's per-action confirmations.
+		const lifecycle =
+			mutation.action === "restart" || mutation.action === "stop"
+				? deploymentLifecycleConfirmCopy[mutation.action]
+				: null;
 		nativeConfirmation.show(
-			mutation.action === "delete" ? deleteTitle : t("runtime.confirm"),
-			mutation.action === "delete"
-				? storeNotice
-					? `${t("runtime.deleteWarning")}\n\n${storeNotice}`
-					: subscription?.cancel_at_period_end
-						? `${t("runtime.deleteWarning")}\n\n${t("runtime.deleteScheduledCancel")}`
-						: t("runtime.deleteWarning")
-				: t("runtime.warning"),
+			lifecycle?.title ?? t("runtime.confirm"),
+			lifecycle?.description ?? t("runtime.warning"),
 			[
 				{ text: t("account.cancel"), style: "cancel" },
 				{
-					text: t(mutation.action === "delete" ? "runtime.deleteAgent" : "runtime.apply"),
-					style: mutation.action === "delete" ? "destructive" : "default",
+					text: lifecycle?.confirmLabel ?? t("runtime.apply"),
+					style: "default",
 					onPress: () => run(mutation),
 				},
 			],
@@ -372,10 +389,10 @@ export function DeploymentControls({
 							setDeleteChoice(null);
 						}
 					}}
-					title={deleteTitle}
+					title={deleteCopy.title}
 					description={
 						<AppView className="gap-3">
-							<AppText>{t("runtime.deleteWarning")}</AppText>
+							<AppText>{deleteCopy.warning}</AppText>
 							<NativeSegments
 								value={deleteChoice?.choice ?? "cancel_subscription"}
 								disabled={action.busy}
@@ -389,24 +406,16 @@ export function DeploymentControls({
 								}}
 							/>
 							<AppText>
-								{deleteChoice?.choice === "keep_subscription"
-									? periodEndLabel
-										? `${t("runtime.deleteKeepDescription")} ${t("runtime.deleteValidThrough", { date: periodEndLabel })}`
-										: t("runtime.deleteKeepDescription")
-									: computeSubscriptionCancellationCopy({
-											isTrial: subscription?.status === "trialing",
-											periodEndLabel,
-											hasRetainedDeployment: false,
-										}).description}
+								{
+									deleteCopy.choices.find(
+										(option) => option.value === (deleteChoice?.choice ?? "cancel_subscription"),
+									)?.description
+								}
 							</AppText>
 						</AppView>
 					}
-					cancelLabel={t("account.cancel")}
-					confirmLabel={t(
-						deleteChoice?.choice === "keep_subscription"
-							? "runtime.deleteKeepConfirm"
-							: "runtime.deleteCancelConfirm",
-					)}
+					cancelLabel={deleteCopy.dismissLabel}
+					confirmLabel={deleteCopy.confirmLabel}
 					destructive
 					onConfirm={() => deleteChoice?.confirm(deleteChoice.choice)}
 				/>
@@ -461,8 +470,8 @@ export function DeploymentControls({
 						<AppText accessibilityRole="alert">
 							{attempt.mutation.body.subscription_choice === "cancel_subscription" &&
 							fundingMode !== "included_basic"
-								? `${t("runtime.deleteWarning")} ${t("runtime.deleteCancelsSubscription")}`
-								: t("runtime.deleteWarning")}
+								? `${deleteCopy.warning} ${t("runtime.deleteCancelsSubscription")}`
+								: deleteCopy.warning}
 						</AppText>
 					) : null}
 				</SettingsSection>
@@ -561,7 +570,7 @@ function ModelSettings({
 	const initialChoice = !initialProvider
 		? "__unmanaged__"
 		: isManagedProviderId(initialProvider)
-			? "__managed__"
+			? MANAGED_AI_CHOICE
 			: initialProvider;
 	const initialModel = primaryModelValue(config.primary_model);
 	const [choice, setChoice] = useState(initialChoice);
@@ -658,13 +667,13 @@ function ModelSettings({
 					!catalog.data ||
 					catalog.isError ||
 					!choice ||
-					(choice === "__managed__" && !model) ||
+					(choice === MANAGED_AI_CHOICE && !model) ||
 					(Boolean(selected) && !agentOwnsModels && !model)
 				}
 				onPress={() =>
 					void action.run(async () => {
 						if (!catalog.data) return;
-						if (choice !== "__managed__" && choice !== "__unmanaged__" && !selected)
+						if (choice !== MANAGED_AI_CHOICE && choice !== "__unmanaged__" && !selected)
 							throw new Error(agentSurfaceCopy.providerUnavailable);
 						apply(
 							buildHostedAiBindingFields({
@@ -675,7 +684,7 @@ function ModelSettings({
 								selection:
 									choice === "__unmanaged__"
 										? { mode: "unmanaged" }
-										: choice === "__managed__"
+										: choice === MANAGED_AI_CHOICE
 											? { mode: "managed", model }
 											: { mode: "saved", providerId: choice, model },
 							}),

@@ -160,7 +160,7 @@ function ProviderRemoveForm({
 						? t("providers.removedPending")
 						: t("providers.removedConfirmed")}
 				</AppText>
-				{action.error ? <ApiErrorPanel error={action.error} /> : null}
+				{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 				<ActionButton
 					label={settingsCopy.done}
 					disabled={action.busy}
@@ -226,7 +226,7 @@ function ProviderRemoveForm({
 			) : null}
 			{action.error && !attempt.current && !uncertain ? (
 				<ApiErrorPanel
-					error={action.error}
+					error={action.failure}
 					title={copy.impactError}
 					onRetry={() => void review()}
 				/>

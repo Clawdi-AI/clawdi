@@ -146,7 +146,7 @@ export function ProjectsSurface({
 			toast.success(linked ? "Project unlinked" : "Project linked");
 		},
 		onError: (error) =>
-			toast.error("Couldn't update project link", { description: normalizeApiError(error) }),
+			toast.error(LIBRARY_COPY.updateProjectLinkFailed, { description: normalizeApiError(error) }),
 		onSettled: () => {
 			linkLocked.current = false;
 		},
@@ -170,7 +170,7 @@ export function ProjectsSurface({
 				titleAdornment={headerAdornment}
 				description={
 					agentId
-						? "Choose the projects this agent can use."
+						? LIBRARY_COPY.agentProjectsDescription
 						: getProjectResourceDefinition("projects").managementDescription
 				}
 				actions={
@@ -225,7 +225,7 @@ export function ProjectsSurface({
 				<ApiErrorPanel
 					error={projects.error}
 					onRetry={() => void projects.refetch()}
-					title="Couldn't load projects"
+					title={LIBRARY_COPY.loadProjectsFailed}
 				/>
 			) : null}
 			{projects.isLoading ? (

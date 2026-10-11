@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { fetchAllPages } from "./api-pagination";
+import { fetchAllPages, nextBillingCursor } from "./api-pagination";
 
 describe("fetchAllPages", () => {
 	test("walks pages until total is reached", async () => {
@@ -35,5 +35,22 @@ describe("fetchAllPages", () => {
 				{ pageSize: 1, maxPages: 2, resourceName: "numbers" },
 			),
 		).rejects.toThrow("Too many numbers pages");
+	});
+});
+
+describe("nextBillingCursor", () => {
+	test("continues only with a complete server cursor and keeps it opaque", () => {
+		const first = { has_more: true, next_cursor: "a &+/?" };
+		expect(nextBillingCursor(first, [first])).toBe("a &+/?");
+		expect(nextBillingCursor({ has_more: true, next_cursor: null }, [])).toBeUndefined();
+		expect(nextBillingCursor({ has_more: true, next_cursor: " " }, [])).toBeUndefined();
+		expect(nextBillingCursor({ has_more: false, next_cursor: "b" }, [])).toBeUndefined();
+	});
+
+	test("stops when the server repeats an earlier cursor", () => {
+		const first = { has_more: true, next_cursor: "a" };
+		expect(
+			nextBillingCursor(first, [first, { has_more: true, next_cursor: "b" }, first]),
+		).toBeUndefined();
 	});
 });

@@ -10,6 +10,7 @@ import {
 	addKeysSummaryCopy,
 	errorMessage,
 	identityFor,
+	LIBRARY_COPY,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Plus } from "lucide-react";
@@ -308,7 +309,7 @@ export function AddKeysDialog({
 							onRetry={() => {
 								if (vaultsQuery.error) void vaultsQuery.refetch();
 							}}
-							title="Couldn't load destinations"
+							title={LIBRARY_COPY.loadDestinationsFailed}
 						/>
 					) : null}
 					{importPlan.parsed.errors.length > 0 ? (
@@ -330,7 +331,7 @@ export function AddKeysDialog({
 							onRetry={() => {
 								void existingItems.refetch();
 							}}
-							title="Couldn't check existing keys"
+							title={LIBRARY_COPY.checkExistingKeysFailed}
 						/>
 					) : null}
 					{importPlan.conflicts.length > 0 && importPlan.parsed.errors.length === 0 ? (

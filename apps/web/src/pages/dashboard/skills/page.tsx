@@ -270,7 +270,7 @@ function SkillsPageInner() {
 				<ApiErrorPanel
 					error={projectError}
 					onRetry={() => void projectsQuery.refetch()}
-					title="Couldn't load projects"
+					title={LIBRARY_COPY.loadProjectsFailed}
 				/>
 			) : null}
 

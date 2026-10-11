@@ -371,7 +371,7 @@ function ProjectEditor({ id: editing }: { id?: string }) {
 							/>
 						</WebView>
 					</WebView>
-					{action.error ? <ApiErrorPanel error={action.error} /> : null}
+					{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 					<WebView recipe={createProjectDialogClasses.form}>
 						<Button
 							variant="ghost"

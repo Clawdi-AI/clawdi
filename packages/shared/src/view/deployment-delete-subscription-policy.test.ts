@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { DeploymentRead } from "@clawdi/shared/api";
-import { deploymentDeleteSubscriptionPolicy } from "./compute-subscription-actions";
+import {
+	deploymentDeleteCopy,
+	deploymentDeleteSubscriptionPolicy,
+} from "./compute-subscription-actions";
 
 type HostedComputeSubscription = NonNullable<
 	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
@@ -80,5 +83,61 @@ describe("Agent delete subscription policy", () => {
 				storeNotice: `Deleting this agent doesn't cancel your ${store} subscription. Manage it on your device.`,
 			});
 		}
+	});
+});
+
+describe("Agent delete copy", () => {
+	const base = {
+		name: "Research bot",
+		choice: "cancel_subscription",
+		offerChoice: true,
+		storeNotice: null,
+		cancelAtPeriodEnd: false,
+		isTrial: false,
+		periodEndLabel: "Nov 7, 2026",
+	} as const;
+
+	test("offers keep and cancel with the matching confirm label", () => {
+		const cancel = deploymentDeleteCopy(base);
+		expect(cancel.title).toBe("Delete Research bot?");
+		expect(cancel.notice).toBeNull();
+		expect(cancel.choices.map((option) => option.value)).toEqual([
+			"keep_subscription",
+			"cancel_subscription",
+		]);
+		expect(cancel.choices[0]?.description).toBe(
+			"Keep subscription — it becomes available to choose for a future agent. Valid through Nov 7, 2026.",
+		);
+		expect(cancel.choices[1]?.description).toContain("remain active through Nov 7, 2026");
+		expect(cancel.confirmLabel).toBe("Delete agent and cancel subscription");
+		expect(deploymentDeleteCopy({ ...base, choice: "keep_subscription" }).confirmLabel).toBe(
+			"Delete agent (keep subscription)",
+		);
+	});
+
+	test("a trial ends immediately and an unknown period end is left out", () => {
+		const copy = deploymentDeleteCopy({ ...base, isTrial: true, periodEndLabel: null });
+		expect(copy.choices[0]?.description).toBe(
+			"Keep subscription — it becomes available to choose for a future agent.",
+		);
+		expect(copy.choices[1]?.description).toBe(
+			"The trial ends immediately. This cannot restore a deleted agent.",
+		);
+	});
+
+	test("without a choice it shows the store or scheduled-cancellation notice", () => {
+		const store = deploymentDeleteCopy({
+			...base,
+			offerChoice: false,
+			storeNotice: "Deleting this agent doesn't cancel your App Store subscription.",
+			cancelAtPeriodEnd: true,
+		});
+		expect(store.choices).toEqual([]);
+		expect(store.notice).toBe("Deleting this agent doesn't cancel your App Store subscription.");
+		expect(store.confirmLabel).toBe("Delete agent");
+		expect(
+			deploymentDeleteCopy({ ...base, offerChoice: false, cancelAtPeriodEnd: true }).notice,
+		).toContain("already scheduled to stop at period end");
+		expect(deploymentDeleteCopy({ ...base, offerChoice: false }).notice).toBeNull();
 	});
 });

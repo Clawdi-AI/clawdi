@@ -212,7 +212,7 @@ export function AddAgentSetup() {
 							<span className={addAgentSetupClasses.waitingPulse} />
 							<span className={addAgentSetupClasses.waitingDot} />
 						</span>
-						Waiting for your agent to connect…
+						{agentSurfaceCopy.waitingForYourAgentToConnect}
 					</div>
 				)}
 			</div>

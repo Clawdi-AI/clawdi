@@ -1,6 +1,7 @@
 "use client";
 
 import { apiErrorPanelClasses } from "@clawdi/shared/ui";
+import { API_ERROR_COPY } from "@clawdi/shared/view";
 
 import { AlertCircle, LogIn, type LucideIcon, RefreshCw } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -30,7 +31,7 @@ function reauthenticate() {
 export function ApiErrorPanel({
 	error,
 	onRetry,
-	title = "Couldn't load this",
+	title = API_ERROR_COPY.errorTitle,
 	normalizer = DEFAULT_API_ERROR_NORMALIZER,
 	icon: Icon = AlertCircle,
 }: {
@@ -44,18 +45,18 @@ export function ApiErrorPanel({
 	return (
 		<Alert variant="destructive">
 			<Icon />
-			<AlertTitle>{expired ? "Your session expired" : title}</AlertTitle>
+			<AlertTitle>{expired ? API_ERROR_COPY.expiredTitle : title}</AlertTitle>
 			<AlertDescription className={apiErrorPanelClasses.description}>
 				<span className={apiErrorPanelClasses.message}>{normalizer.normalizeError(error)}</span>
 				<div className={apiErrorPanelClasses.actions}>
 					{expired ? (
 						<Button size="sm" onClick={reauthenticate}>
-							<LogIn /> Sign in again
+							<LogIn /> {API_ERROR_COPY.signInAgain}
 						</Button>
 					) : null}
 					{onRetry ? (
 						<Button size="sm" variant="outline" onClick={onRetry}>
-							<RefreshCw /> Retry
+							<RefreshCw /> {API_ERROR_COPY.retry}
 						</Button>
 					) : null}
 				</div>

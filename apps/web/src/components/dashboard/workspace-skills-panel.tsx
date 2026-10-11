@@ -136,7 +136,7 @@ export function ConnectedWorkspaceSkillsPanel({
 					<DialogHeader>
 						<DialogTitle>{agentSurfaceCopy.installSkill}</DialogTitle>
 						<DialogDescription>
-							Enter a GitHub skill path, then run the generated command on the agent machine.
+							{agentSurfaceCopy.enterAGitHubSkillPathThenRunTheGeneratedCommand}
 						</DialogDescription>
 					</DialogHeader>
 					<div className={workspaceSkillsPanelClasses.form}>

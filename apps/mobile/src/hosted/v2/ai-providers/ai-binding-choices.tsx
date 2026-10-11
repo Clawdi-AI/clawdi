@@ -12,6 +12,7 @@ import {
 import {
 	agentSurfaceCopy,
 	aiBindingCopy as copy,
+	MANAGED_AI_CHOICE,
 	MANAGED_PROVIDER_ID,
 	providerAuthLabel,
 	providerAvailabilityIssue,
@@ -67,9 +68,9 @@ export function AiBindingChoices({
 		<WebView recipe={styles.providerChoices}>
 			<WebView recipe={ENTITY_CHOICE_GRID_CLASS}>
 				<EntityChoiceCard
-					selected={choice === "__managed__"}
+					selected={choice === MANAGED_AI_CHOICE}
 					disabled={disabled}
-					onClick={() => onChoice("__managed__")}
+					onClick={() => onChoice(MANAGED_AI_CHOICE)}
 					title={copy.managed}
 					description={copy.managedDescription}
 					icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
@@ -133,7 +134,7 @@ export function AiBindingChoices({
 					/>
 				)}
 			</WebView>
-			{choice === "__managed__" ? (
+			{choice === MANAGED_AI_CHOICE ? (
 				<ManagedModelPicker
 					models={models}
 					value={model}

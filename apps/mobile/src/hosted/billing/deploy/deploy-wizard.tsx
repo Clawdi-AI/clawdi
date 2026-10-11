@@ -1,6 +1,9 @@
 import {
 	ApiClientError,
 	buildHostedDeploySubscriptionQuoteRequest,
+	DEFAULT_HOSTED_DEPLOY_COMPUTE_PLAN,
+	DEFAULT_HOSTED_DEPLOY_PRIMARY_MODEL,
+	DEFAULT_HOSTED_DEPLOY_RUNTIME,
 	HOSTED_DEPLOY_LANGUAGE_OPTIONS,
 	HOSTED_WALLET_FUNDING_ERROR_COPY,
 	type HostedDeploySubscriptionQuote,
@@ -35,9 +38,11 @@ import {
 	formatUsdExact,
 	hostedDeployLanguageFromLocales,
 	isValidTimezone,
+	MANAGED_AI_CHOICE,
 	mergeTimezoneOptions,
 	modelDisplayName,
 	modelOptionsForProvider,
+	nextBillingCursor,
 	planOffers,
 	providerAvailabilityIssue,
 	providerDisplayLabel,
@@ -118,14 +123,13 @@ import {
 	serverAllowsEntitledCreation,
 	storeAdmissionMessageKey,
 	storeAdmissionRecoveryAttempt,
-	validationTranslationKeys,
 	waitForDeployRequest,
 	walletCreationErrorCopy,
 	walletQuoteConfirmation,
 	walletRequestNeedsQuote,
 } from "@/hosted/billing/deploy/deploy-request";
 import { readHostedStoreFunding } from "@/hosted/billing/deploy/store-funding";
-import { nextBillingCursor, uniqueBillingItems } from "@/hosted/billing/format";
+import { uniqueBillingItems } from "@/hosted/billing/format";
 import { AddCreditsAction } from "@/hosted/billing/store/add-credits";
 import {
 	useComputePaywallPurchase,
@@ -164,12 +168,12 @@ import { useMobileStore, useStoreSurfaces } from "@/platform/store/store-provide
 /** A new draft seeded like Web: the device language and timezone, when supported. */
 function newDraft(): HostedDeployWizardDraft {
 	return {
-		runtime: "hermes",
-		computePlanSlug: "compute_basic",
-		agentName: "Hermes",
+		runtime: DEFAULT_HOSTED_DEPLOY_RUNTIME,
+		computePlanSlug: DEFAULT_HOSTED_DEPLOY_COMPUTE_PLAN,
+		agentName: hostedDeployRuntimeLabel(DEFAULT_HOSTED_DEPLOY_RUNTIME),
 		language: hostedDeployLanguageFromLocales([resolvedLocale()]),
 		timezone: resolvedTimezone(),
-		ai: { mode: "managed", model: "" },
+		ai: { mode: "managed", model: DEFAULT_HOSTED_DEPLOY_PRIMARY_MODEL },
 	};
 }
 
@@ -186,7 +190,7 @@ function timezoneMenuGroups(options: readonly string[]) {
 
 function providerChoiceFor(ai: HostedDeployWizardDraft["ai"]): string {
 	return ai.mode === "managed"
-		? "__managed__"
+		? MANAGED_AI_CHOICE
 		: ai.mode === "unmanaged"
 			? "__unmanaged__"
 			: ai.providerId;
@@ -247,7 +251,7 @@ function CreationForm() {
 	const purchaseCompute = useComputePaywallPurchase();
 	const { flow: storeFlow, refresh: refreshStore, computeSlot } = useMobileStore();
 	const [storeNotice, setStoreNotice] = useState<StoreNotice | null>(null);
-	const [providerChoice, setProviderChoice] = useState("__managed__");
+	const [providerChoice, setProviderChoice] = useState(MANAGED_AI_CHOICE);
 	const [previewTerm, setPreviewTerm] = useState(1);
 	const [attempt, setAttempt] = useState<CreationAttempt | null>(null);
 	const [storageKey, setStorageKey] = useState<string | null>(null);
@@ -359,7 +363,7 @@ function CreationForm() {
 						...previous,
 						ai: {
 							mode: "managed",
-							model: firstModelForProvider("__managed__", [], inventory.data.catalog.models),
+							model: firstModelForProvider(MANAGED_AI_CHOICE, [], inventory.data.catalog.models),
 						},
 					}
 				: previous,
@@ -467,7 +471,7 @@ function CreationForm() {
 		setDraft(newDraft());
 		setSource(null);
 		setSubscriptionId(null);
-		setProviderChoice("__managed__");
+		setProviderChoice(MANAGED_AI_CHOICE);
 		setResolved(false);
 		setMessage("");
 	};
@@ -690,9 +694,7 @@ function CreationForm() {
 			inventory.data?.providers ?? [],
 		);
 		if (!validated.ok) {
-			setMessage(
-				validated.issues.map((issue) => t(validationTranslationKeys[issue.field])).join("\n"),
-			);
+			setMessage(validated.issues.map((issue) => issue.message).join("\n"));
 			return null;
 		}
 		const ai = next.ai;
@@ -1037,7 +1039,7 @@ function CreationForm() {
 			: source === null || (source === "existing" && !selectedReusable)
 				? deployFormCopy.chooseSource
 				: personaIssue
-					? t(validationTranslationKeys[personaIssue.field])
+					? personaIssue.message
 					: source === "new" && !walletSelected
 						? t("creation.cardUnavailable")
 						: source !== "store" && !creationEligible
@@ -1106,7 +1108,7 @@ function CreationForm() {
 														runtime,
 														environmentId: null,
 													}) !== null);
-											if (providerUnusable) setProviderChoice("__managed__");
+											if (providerUnusable) setProviderChoice(MANAGED_AI_CHOICE);
 											update({
 												runtime,
 												agentName: hostedDeployAgentNameAfterRuntimeChange({
@@ -1119,7 +1121,7 @@ function CreationForm() {
 													? {
 															ai: {
 																mode: "managed" as const,
-																model: firstModelForProvider("__managed__", [], models),
+																model: firstModelForProvider(MANAGED_AI_CHOICE, [], models),
 															},
 														}
 													: {}),
@@ -1159,7 +1161,7 @@ function CreationForm() {
 									const providers = inventory.data?.providers ?? [];
 									update({
 										ai:
-											choice === "__managed__"
+											choice === MANAGED_AI_CHOICE
 												? { mode: "managed", model: firstModelForProvider(choice, [], models) }
 												: choice === "__unmanaged__"
 													? { mode: "unmanaged" }
@@ -1720,7 +1722,7 @@ function CreationForm() {
 							providerChoice === "__unmanaged__"
 								? aiBindingCopy.unmanaged
 								: [
-										providerChoice === "__managed__"
+										providerChoice === MANAGED_AI_CHOICE
 											? aiBindingCopy.managed
 											: providerDisplayLabel(providerChoice, inventory.data?.providers ?? []),
 										selectedModel

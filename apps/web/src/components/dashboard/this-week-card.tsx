@@ -40,7 +40,7 @@ export function ThisWeekCard({
 									<div className={thisWeekCardClasses.sessionCount}>{formatNumber(manualWeek)}</div>
 									{automatedWeek !== undefined && automatedWeek > 0 ? (
 										<div className={thisWeekCardClasses.automatedCount}>
-											+ {formatNumber(automatedWeek)} automated (cron, heartbeat)
+											+ {formatNumber(automatedWeek)} {DASHBOARD_COPY.automatedSessions}
 										</div>
 									) : null}
 								</>

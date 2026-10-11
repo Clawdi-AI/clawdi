@@ -92,6 +92,15 @@ export const agentSurfaceCopy = {
 		"Run this command on the agent machine. The skill belongs to that workspace.",
 	noSetupRequired: "No setup required",
 	walletBilled: "Wallet billed",
+	waitingForYourAgentToConnect: "Waiting for your agent to connect…",
+	restartStopOrStartThisAgent: "Restart, stop, or start this agent.",
+	permanentlyDeleteThisAgent: "Permanently delete this agent.",
+	languageAndTimeZoneUsedByThisAgent: "Language and time zone used by this agent.",
+	filesCouldnTBeOpened: "Files couldn't be opened",
+	enterAGitHubSkillPathThenRunTheGeneratedCommand:
+		"Enter a GitHub skill path, then run the generated command on the agent machine.",
+	skillsAvailableInThisAgentSWorkspace:
+		"Skills available in this agent's workspace. Skills synced from the agent are read-only.",
 } as const;
 
 export const agentDisconnectConfirmationCopy = {

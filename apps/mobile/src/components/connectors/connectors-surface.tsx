@@ -423,7 +423,7 @@ function Detail({ name, form }: { name?: string; form: boolean }) {
 							) : null}
 						</WebView>
 					) : null}
-					{action.error ? <ApiErrorPanel error={action.error} /> : null}
+					{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 				</WebView>
 				<WebView recipe={credentialsDialogClasses.body}>
 					<Button
@@ -617,7 +617,7 @@ function Account({ connection }: { connection: Connection }) {
 					<Text>{t("connectors.disconnect")}</Text>
 				</Button>
 			</WebView>
-			{action.error ? <ApiErrorPanel error={action.error} /> : null}
+			{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 			{confirmationDialog.dialog}
 		</WebView>
 	);

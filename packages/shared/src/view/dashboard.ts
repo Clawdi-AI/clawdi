@@ -27,6 +27,7 @@ export const DASHBOARD_COPY = {
 	weeklyDescription: "Agent activity, measured in UTC.",
 	weeklyError: "Couldn't load weekly activity",
 	yourSessions: "Your sessions",
+	automatedSessions: "automated (cron, heartbeat)",
 	today: "Today",
 	streak: "Streak",
 	topModel: "Top model",

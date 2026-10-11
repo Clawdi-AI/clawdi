@@ -3,6 +3,7 @@
 import {
 	billingRecoveryRefetchIntervalFor,
 	computeSubscriptionsRecoveryRefetchInterval,
+	nextBillingCursor,
 	reconcileDeploymentSnapshots,
 	shortestRefetchInterval,
 } from "@clawdi/shared/view";
@@ -142,13 +143,6 @@ function useBillingQuery<TData>(
 	return useQuery({ enabled: isDeployApiConfigured(), retry: billingQueryRetry, ...options });
 }
 
-export function billingNextPageParam(page: {
-	has_more: boolean;
-	next_cursor?: string | null;
-}): string | undefined {
-	return page.has_more && page.next_cursor ? page.next_cursor : undefined;
-}
-
 export function useHostedUser() {
 	const client = useBillingClient();
 	return useBillingQuery({
@@ -185,7 +179,7 @@ export function useWalletTransactions() {
 		queryKey: billingKeys.transactions,
 		queryFn: ({ pageParam }) => client.getTransactions(50, pageParam),
 		initialPageParam: null as string | null,
-		getNextPageParam: billingNextPageParam,
+		getNextPageParam: nextBillingCursor,
 		enabled: isDeployApiConfigured(),
 		retry: billingQueryRetry,
 	});
@@ -218,7 +212,7 @@ export function useSubscriptions() {
 		queryKey: billingKeys.subscriptions,
 		queryFn: ({ pageParam }) => client.getSubscriptions(20, pageParam),
 		initialPageParam: null as string | null,
-		getNextPageParam: billingNextPageParam,
+		getNextPageParam: nextBillingCursor,
 		enabled: isDeployApiConfigured(),
 		retry: billingQueryRetry,
 		refetchIntervalInBackground: false,

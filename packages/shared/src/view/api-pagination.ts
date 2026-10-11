@@ -39,3 +39,17 @@ export async function fetchAllPages<T>(
 		}
 	}
 }
+
+type CursorPage = { has_more: boolean; next_cursor?: string | null };
+
+/** TanStack `getNextPageParam` for cursor pages: stops at the end or on a repeated cursor. */
+export function nextBillingCursor(
+	page: CursorPage,
+	pages: readonly CursorPage[],
+): string | undefined {
+	const cursor = page.next_cursor;
+	if (!page.has_more || !cursor?.trim()) return undefined;
+	return pages.slice(0, -1).some((previous) => previous.next_cursor === cursor)
+		? undefined
+		: cursor;
+}

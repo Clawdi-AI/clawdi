@@ -1,5 +1,5 @@
 import { billingPageClass, transactionsSectionClasses } from "@clawdi/shared/ui";
-import { transactionsCountLabel } from "@clawdi/shared/view";
+import { nextBillingCursor, transactionsCountLabel } from "@clawdi/shared/view";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -9,7 +9,7 @@ import { SettingsPanelHeader, SettingsSection } from "@/components/settings/sett
 import { SettingsShell } from "@/components/settings/shell";
 import { NativeList } from "@/components/ui/native-list";
 import { WebText, WebView } from "@/components/ui/web-layout";
-import { nextBillingCursor, uniqueBillingItems } from "@/hosted/billing/format";
+import { uniqueBillingItems } from "@/hosted/billing/format";
 import { useWallet } from "@/hosted/billing/hooks";
 import { useCreditsNotice, useStoreRecoveryRefresh } from "@/hosted/billing/store/add-credits";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";

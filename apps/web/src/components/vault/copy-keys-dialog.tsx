@@ -1,6 +1,6 @@
 "use client";
 
-import { errorMessage, identityFor } from "@clawdi/shared/view";
+import { errorMessage, identityFor, LIBRARY_COPY } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
@@ -297,7 +297,7 @@ export function CopyKeysDialog({
 							onRetry={() => {
 								if (vaultsQuery.error) void vaultsQuery.refetch();
 							}}
-							title="Couldn't load destinations"
+							title={LIBRARY_COPY.loadDestinationsFailed}
 						/>
 					) : null}
 					{mode === "move" && attachedCount > 1 ? (

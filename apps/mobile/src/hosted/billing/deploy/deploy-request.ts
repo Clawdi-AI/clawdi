@@ -11,7 +11,6 @@ import {
 	type HostedDeployRequestStatus,
 	type HostedDeploySubscriptionQuote,
 	type HostedDeploySubscriptionSelection,
-	type HostedDeployValidationIssue,
 	type HostedDeployWizardDraft,
 	type HostedIncludedBasicAvailability,
 	hostedCheckoutSends,
@@ -780,13 +779,3 @@ export function offeredQuoteSelections(
 			}));
 	});
 }
-
-export const validationTranslationKeys = {
-	runtime: "creation.invalidRuntime",
-	compute: "creation.invalidCompute",
-	agentName: "creation.invalidName",
-	language: "creation.invalidLanguage",
-	timezone: "creation.invalidTimezone",
-	"ai.model": "creation.invalidModel",
-	"ai.provider": "creation.invalidProvider",
-} as const satisfies Record<HostedDeployValidationIssue["field"], string>;
