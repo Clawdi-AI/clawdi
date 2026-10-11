@@ -49,6 +49,14 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.10
+
+- **Hermes startup:** runtime initialization gives Hermes config and version
+  launches the runtime install timeout (30 minutes by default, configurable with
+  `CLAWDI_RUNTIME_INSTALL_TIMEOUT`) so interrupted updates and first-launch
+  maintenance can finish before convergence continues. Async config discovery
+  uses graceful termination when this timeout expires.
+
 ### CLI 0.16.9
 
 - **Cloud Agent startup:** warm preparation can cache the pinned egress engine

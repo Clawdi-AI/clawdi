@@ -1876,6 +1876,9 @@ discovery, while `mcp list` has no machine-readable output and does not expose
 the complete native map. Hosted therefore resolves the official config path
 with `hermes config path` and atomically reconciles only `mcp_servers`; it does
 not scrape CLI output or inject answers into interactive prompts.
+Hermes CLI launches during convergence use the runtime install timeout (30 minutes
+by default, overridden by `CLAWDI_RUNTIME_INSTALL_TIMEOUT` in milliseconds), because
+upstream finishes an interrupted `hermes update` before running the next command.
 These paths and transports are pinned to official fixed-commit sources:
 OpenClaw's
 [`mcp-config.ts` read path](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/config/mcp-config.ts#L51-L65),

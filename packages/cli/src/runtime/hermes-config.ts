@@ -4,7 +4,7 @@ import { isAbsolute } from "node:path";
 import { parseDocument } from "yaml";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { stripTerminalEscapes } from "../lib/sanitize";
-import { runtimeFileCurrentRevision } from "./manifest-install";
+import { runtimeFileCurrentRevision, runtimeInstallTimeoutMs } from "./manifest-install";
 import { preinstalledHermesConfigPath } from "./preinstalled-probes";
 import {
 	execRuntimeUserCommand,
@@ -12,7 +12,12 @@ import {
 	spawnRuntimeUserCommand,
 } from "./runtime-user-command";
 
-const HERMES_CONFIG_COMMAND_TIMEOUT_MS = 30_000;
+// Any `hermes` launch may first finish an interrupted source update (PM
+// dependency sync and product builds) before running its command, so a
+// launch shares the runtime install bound instead of a probe bound.
+function hermesLaunchTimeoutMs(): number {
+	return runtimeInstallTimeoutMs();
+}
 
 export interface HermesConfigCommandContext {
 	profile?: string;
@@ -95,10 +100,10 @@ function commandText(value: string | Buffer | null | undefined): string {
 
 function commandFailure(
 	operation: string,
-	result: ReturnType<typeof spawnRuntimeUserCommand>,
+	result: ReturnType<typeof runHermesConfigCommand>,
 ): Error {
 	if (result.error && "code" in result.error && result.error.code === "ETIMEDOUT") {
-		return new RuntimeUserCommandTimeoutError(operation, HERMES_CONFIG_COMMAND_TIMEOUT_MS);
+		return new RuntimeUserCommandTimeoutError(operation, result.timeoutMs);
 	}
 	const detail =
 		commandText(result.stderr) || commandText(result.stdout) || commandText(result.error?.message);
@@ -108,17 +113,19 @@ function commandFailure(
 function runHermesConfigCommand(
 	context: HermesConfigCommandContext,
 	args: string[],
-): ReturnType<typeof spawnRuntimeUserCommand> {
-	return spawnRuntimeUserCommand(
+): ReturnType<typeof spawnRuntimeUserCommand> & { timeoutMs: number } {
+	const timeoutMs = hermesLaunchTimeoutMs();
+	const result = spawnRuntimeUserCommand(
 		context.command,
 		[...(context.profile ? ["-p", context.profile] : []), "config", ...args],
 		context.home,
 		context.cwd,
 		{
 			environment: context.environment,
-			timeoutMs: HERMES_CONFIG_COMMAND_TIMEOUT_MS,
+			timeoutMs,
 		},
 	);
+	return { ...result, timeoutMs };
 }
 
 export function getHermesResolvedConfigValue(
@@ -342,7 +349,9 @@ export async function beginHermesConfigTransactionAsync(
 		{
 			environment: context.environment,
 			maxBufferBytes: 64 * 1024,
-			timeoutMs: HERMES_CONFIG_COMMAND_TIMEOUT_MS,
+			timeoutMs: hermesLaunchTimeoutMs(),
+			// Match the official installer's spawnSync timeout termination.
+			killSignal: "SIGTERM",
 			signal,
 		},
 	);

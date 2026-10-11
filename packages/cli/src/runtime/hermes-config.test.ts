@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import {
 	beginHermesConfigTransaction,
+	beginHermesConfigTransactionAsync,
 	commitHermesConfigTransaction,
 	reconcileHermesConfigValue,
 } from "./hermes-config";
@@ -15,6 +16,7 @@ import {
 	preinstalledHermesConfigPath,
 	resetPreinstalledProbesForTest,
 } from "./preinstalled-probes";
+import { RuntimeUserCommandTimeoutError } from "./runtime-user-command";
 
 const savedEnv = { ...process.env };
 afterEach(() => {
@@ -26,6 +28,62 @@ const root = mkdtempSync(join(tmpdir(), "clawdi-hermes-config-test-"));
 const mock = fileURLToPath(new URL("../test-support/hermes-config-cli-mock.ts", import.meta.url));
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+function slowHermesConfigContext(delay: number) {
+	const home = mkdtempSync(join(root, "slow-launch-"));
+	const command = join(home, "hermes");
+	writeFileSync(
+		command,
+		`#!/usr/bin/env python3
+import os, time
+from pathlib import Path
+time.sleep(${delay})
+print(Path(os.environ['HOME']) / 'config.yaml')
+`,
+		{ mode: 0o755 },
+	);
+	return { command, home, cwd: home };
+}
+
+test("allows config path first-launch work within the runtime install timeout", () => {
+	process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT = "5000";
+	const context = slowHermesConfigContext(0.3);
+	expect(beginHermesConfigTransaction(context).path).toBe(join(context.home, "config.yaml"));
+});
+
+test("reports the runtime install timeout used for config path", () => {
+	process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT = "200";
+	const context = slowHermesConfigContext(2);
+	try {
+		beginHermesConfigTransaction(context);
+		throw new Error("Expected config path to time out");
+	} catch (error) {
+		expect(error).toBeInstanceOf(RuntimeUserCommandTimeoutError);
+		expect(error).toHaveProperty("message", "Hermes config path timed out after 200ms");
+	}
+});
+
+test("async config path allows first-launch work within the runtime install timeout", async () => {
+	process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT = "5000";
+	const context = slowHermesConfigContext(0.3);
+	expect((await beginHermesConfigTransactionAsync(context)).path).toBe(
+		join(context.home, "config.yaml"),
+	);
+});
+
+test("async config path sends SIGTERM at the runtime install timeout", async () => {
+	process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT = "200";
+	const context = slowHermesConfigContext(2);
+	writeFileSync(
+		context.command,
+		`#!/bin/sh
+trap 'printf SIGTERM > "$HOME/terminated"; exit 23' TERM
+while :; do :; done
+`,
+	);
+	await expect(beginHermesConfigTransactionAsync(context)).rejects.toThrow();
+	expect(readFileSync(join(context.home, "terminated"), "utf8")).toBe("SIGTERM");
+});
 
 test("merges a round of config patches into one comment-preserving write", () => {
 	const commandLog = join(root, "commands.log");

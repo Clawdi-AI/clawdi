@@ -81,7 +81,7 @@ const runtimeCommandRevisions = new Map<
 	string,
 	{ executableRevision: string; commandRevision: string; version: string }
 >();
-function runtimeInstallTimeoutMs(): number {
+export function runtimeInstallTimeoutMs(): number {
 	const raw = process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT;
 	if (raw === undefined) return DEFAULT_RUNTIME_INSTALL_TIMEOUT_MS;
 	const timeout = Number(raw);
@@ -489,9 +489,10 @@ export function runtimeCommandVersion(command: string, home: string, cwd: string
 		});
 		return preinstalled;
 	}
-	// Hermes --version synchronously checks updates: git fetch and the compare API
-	// each allow 10 seconds upstream. Leave room for both plus native startup.
-	const timeoutMs = command === runtimeCommandPath("hermes", home) ? 30_000 : 10_000;
+	// Hermes --version skips update completion but still pays first-launch maintenance
+	// after a code change: bytecode sweep and the state.db integrity check.
+	const timeoutMs =
+		command === runtimeCommandPath("hermes", home) ? runtimeInstallTimeoutMs() : 10_000;
 	try {
 		const versionResult = spawnRuntimeUserCommand(command, ["--version"], home, cwd, {
 			timeoutMs,
