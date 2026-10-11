@@ -370,7 +370,8 @@ bun run --cwd apps/mobile test
 Done: the clean Docker runner installs the frozen workspace lock, completes
 the Mobile TypeScript 7 check, and reports passing tests without modifying
 the checkout. `test:internal` is only for the disposable runner and CI.
-`scripts/test.sh ci` also includes the Mobile tests.
+It runs each file with Bun's `--isolate`, so a file's `mock.module` mocks
+never leak into another file. `scripts/test.sh ci` also includes the Mobile tests.
 
 The read surfaces use generated API types and account-fenced queries. Agent
 inventory is virtualized; Sessions use explicit load-more and pull-to-refresh.

@@ -12,8 +12,6 @@ export type StoreSurfaces = Readonly<{
 	cardBilling: boolean;
 	/** The official RevenueCat Paywall entry for the `credits` offering. */
 	addCredits: boolean;
-	/** Wallet amounts and compute prices are shown as credits, never as dollars. */
-	creditUnits: boolean;
 }>;
 
 /**
@@ -25,7 +23,6 @@ export function storeSurfaces(storeBuild: boolean, purchasesAvailable: boolean):
 	return {
 		cardBilling: !storeBuild,
 		addCredits: storeBuild || purchasesAvailable,
-		creditUnits: storeBuild,
 	};
 }
 

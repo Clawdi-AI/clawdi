@@ -31,7 +31,6 @@ import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import type { Subscription } from "@/hosted/billing/format";
 import { AddCreditsAction } from "@/hosted/billing/store/add-credits";
 import { StoreSubscriptionPanel } from "@/hosted/billing/store/compute-store";
-import { creditPrice } from "@/hosted/billing/store/store-presentation";
 import {
 	ComputeSubscriptionCard,
 	useSubscriptionAgent,
@@ -263,8 +262,8 @@ export function SubscriptionDetails({
 	onDeployment: () => void;
 }) {
 	const t = useI18n();
-	// Store builds: credits instead of dollars, and no card management instructions.
-	const { cardBilling, creditUnits } = useStoreSurfaces();
+	// Store builds: no card management instructions.
+	const { cardBilling } = useStoreSurfaces();
 	const agent = useSubscriptionAgent(item);
 	if (item.funding_source === "store")
 		return <StoreSubscriptionDetails item={item} onDeployment={onDeployment} />;
@@ -284,11 +283,9 @@ export function SubscriptionDetails({
 			<BillingFact
 				label={t("billing.price")}
 				value={
-					(creditUnits
-						? creditPrice(item, t("store.credits"))
-						: item.price_cents == null
-							? null
-							: formatCurrencyCents(item.price_cents, item.currency)) ?? t("billing.unknown")
+					item.price_cents == null
+						? t("billing.unknown")
+						: formatCurrencyCents(item.price_cents, item.currency)
 				}
 			/>
 			<BillingFact label={t("billing.term")} value={billingTermLabel(item.billing_term_months)} />
@@ -308,9 +305,7 @@ export function SubscriptionDetails({
 				label={t("billing.periodEnd")}
 				value={formatShortDate(item.current_period_end)}
 			/>
-			{item.funding_source === "wallet" ? (
-				<Text>{t(cardBilling ? "billing.walletNotice" : "store.walletNotice")}</Text>
-			) : null}
+			{item.funding_source === "wallet" ? <Text>{t("billing.walletNotice")}</Text> : null}
 			{cardBilling ? (
 				<Text className="text-muted-foreground">{t("billing.management")}</Text>
 			) : item.funding_source === "stripe" ? (
