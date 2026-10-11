@@ -206,11 +206,24 @@ const enabled = process.platform === "win32" && testRoot && nativeBinary;
 			const summary = JSON.parse(removed.stdout);
 			expect(summary.schemaVersion).toBe("clawdi.uninstall.v1");
 			expect(summary.status).toBe("completed");
+			expect(summary.steps, removed.stdout).toContainEqual(
+				expect.objectContaining({ step: "cli", status: "scheduled" }),
+			);
+			expect(existsSync(current), removed.stdout).toBeFalse();
 			expect(windowsTaskInstalled()).toBeFalse();
 			installedDaemon = false;
 			const deadline = Date.now() + 30_000;
 			while (existsSync(nativeRoot) && Date.now() < deadline) await Bun.sleep(100);
-			expect(existsSync(nativeRoot)).toBeFalse();
+			expect(
+				existsSync(nativeRoot),
+				JSON.stringify({
+					summary,
+					remaining: existsSync(nativeRoot) ? readdirSync(nativeRoot, { recursive: true }) : [],
+					helpers: powershell(
+						`Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq ${removed.pid} } | Select-Object ProcessId, ParentProcessId, CommandLine | ConvertTo-Json`,
+					),
+				}),
+			).toBeFalse();
 			expect(
 				powershell("[Environment]::GetEnvironmentVariable('Path', 'User')").split(";"),
 			).not.toContain(current);
@@ -308,7 +321,7 @@ async function runAsync(command: string, args: string[]) {
 			new Response(child.stdout).text(),
 			new Response(child.stderr).text(),
 		]);
-		return { code, stdout, stderr };
+		return { code, stdout, stderr, pid: child.pid };
 	} finally {
 		clearTimeout(timer);
 	}
