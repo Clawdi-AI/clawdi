@@ -56,6 +56,7 @@ import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { useHeaderSearch } from "@/platform/navigation/native-header";
+import { useAgentRouteId } from "@/platform/navigation/use-agent-route";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
@@ -92,6 +93,7 @@ export function ConnectorCatalogScreen() {
 
 function Catalog() {
 	const t = useI18n();
+	const agentId = useAgentRouteId();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { connectors } = useMobileApi();
@@ -132,7 +134,11 @@ function Catalog() {
 	});
 	const total = catalog.data?.pages[0]?.total ?? 0;
 	const open = (name: string) =>
-		router.push({ pathname: "/connectors/[name]", params: { name: name } });
+		router.push(
+			agentId
+				? { pathname: "/agents/[id]/connectors/[name]", params: { id: agentId, name } }
+				: { pathname: "/connectors/[name]", params: { name } },
+		);
 
 	const searchOptions = useHeaderSearch({
 		value: search,

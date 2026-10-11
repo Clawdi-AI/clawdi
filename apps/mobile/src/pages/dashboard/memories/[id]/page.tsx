@@ -24,11 +24,13 @@ import { Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { isNotFound } from "@/hooks/cloud-inventory";
+import { agentSectionHref } from "@/lib/agent-routes";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
+import { useAgentRouteId } from "@/platform/navigation/use-agent-route";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 export function MemoryDetailScreen() {
@@ -45,6 +47,7 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 	const read = useAccountRead();
 	const { cloud } = useMobileApi();
 	const router = useRouter();
+	const agentId = useAgentRouteId();
 	const queries = useQueryClient();
 	const action = useAuthAction(scope.identity);
 	const capture = useForegroundLease();
@@ -81,7 +84,9 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 						if (!scope.isCurrent()) return;
 						queries.removeQueries({ queryKey: key, exact: true });
 						await queries.invalidateQueries({ queryKey: accountQueryKey(scope, "cloud-memories") });
-						if (current() && visible() && scope.isCurrent()) router.replace("/memories");
+						if (!current() || !visible() || !scope.isCurrent()) return;
+						if (router.canGoBack()) router.back();
+						else router.replace(agentId ? agentSectionHref(agentId, "memories") : "/memories");
 					});
 				},
 			},

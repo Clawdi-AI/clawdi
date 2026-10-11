@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { components } from "../api";
 import {
-	agentHasCloudSkill,
+	agentCloudSkill,
 	agentSkillGuardPresentation,
 	agentSkillInstallCopy,
+	agentSkillStateKey,
 	agentSkillsHaveRetryableInstallFailure,
 	fetchAgentProjectSkills,
 } from "./agent-skill-inventory";
@@ -52,18 +53,35 @@ test.each(["library", "project", "github"] as const)(
 	},
 );
 
-test("a Cloud Skill counts as installed from a Library reference or a linked Project", () => {
+test("a Cloud Skill is desired from a Library reference or a linked Project", () => {
 	const managed = [
 		{ source: "project", skill_id: "from-project" },
 		{ source: "library", skill_id: "from-library" },
 		{ source: "github", skill_id: null },
 		{ source: "bundled", skill_id: undefined },
 	] as const;
-	expect(agentHasCloudSkill(managed, "from-project")).toBe(true);
-	expect(agentHasCloudSkill(managed, "from-library")).toBe(true);
-	expect(agentHasCloudSkill(managed, "elsewhere")).toBe(false);
-	expect(agentHasCloudSkill([{ skill_id: null }, {}], "")).toBe(false);
+	expect(agentCloudSkill(managed, "from-project")).toBe(managed[0]);
+	expect(agentCloudSkill(managed, "from-library")).toBe(managed[1]);
+	expect(agentCloudSkill(managed, "elsewhere")).toBeUndefined();
+	expect(agentCloudSkill([{ skill_id: null }, {}], "")).toBeUndefined();
 });
+
+test.each([
+	["installed", null, "Installed"],
+	["not_observed", null, "Installing…"],
+	["failed", "guard_blocked", "Blocked by Hermes Skills Guard"],
+	["failed", "guard_confirmation_required", "Hermes Skills Guard needs confirmation"],
+	["failed", "reconcile_failed", "Couldn't install"],
+	["failed", null, "Couldn't install"],
+] as const)(
+	"a %s skill with error %p reads %s wherever its state is shown",
+	(convergence, code, label) => {
+		for (const source of ["library", "project", "github"] as const) {
+			const key = agentSkillStateKey({ source, convergence, observation_error_code: code });
+			expect(agentSkillInstallCopy[key]).toBe(label);
+		}
+	},
+);
 
 test("other failures and unobserved or installed skills keep their existing presentation", () => {
 	for (const observation_error_code of ["reconcile_failed", null] as const) {

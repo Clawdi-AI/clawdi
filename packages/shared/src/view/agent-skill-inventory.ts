@@ -5,6 +5,9 @@ import { type FetchAllPagesOptions, fetchAllPages, type PaginatedPage } from "./
 export type AgentSkillSummary = components["schemas"]["SkillSummaryResponse"];
 
 export const agentSkillInstallCopy = {
+	installed: agentSurfaceCopy.installed,
+	installing: "Installing…",
+	installFailed: "Couldn't install",
 	guardBlockedTitle: "Blocked by Hermes Skills Guard",
 	guardBlocked:
 		"Hermes's Skills Guard blocked this skill (it flagged risky code). Install it from its GitHub source to review it, or choose another skill.",
@@ -49,12 +52,29 @@ export function agentSkillGuardPresentation(skill: AgentSkillInstallStatus | nul
 	return null;
 }
 
-/** True when the Agent already has this Cloud Skill, from a Library reference or a linked Project. */
-export function agentHasCloudSkill(
-	managed: readonly Pick<components["schemas"]["AgentSkillDesiredResponse"], "skill_id">[],
-	skillId: string,
-): boolean {
-	return managed.some((skill) => skill.skill_id === skillId);
+export type AgentSkillStateKey =
+	| "installed"
+	| "installing"
+	| "installFailed"
+	| "guardBlockedTitle"
+	| "guardConfirmationRequiredTitle";
+
+/** Row state label, the same on the Skills list and the Library picker. */
+export function agentSkillStateKey(skill: AgentSkillInstallStatus): AgentSkillStateKey {
+	const guard = agentSkillGuardPresentation(skill);
+	if (guard) return guard.title;
+	return skill.convergence === "failed"
+		? "installFailed"
+		: skill.convergence === "installed"
+			? "installed"
+			: "installing";
+}
+
+/** The Agent's desired row for this Cloud Skill (Library reference or linked Project), if any. */
+export function agentCloudSkill<
+	T extends Pick<components["schemas"]["AgentSkillDesiredResponse"], "skill_id">,
+>(managed: readonly T[], skillId: string): T | undefined {
+	return managed.find((skill) => skill.skill_id === skillId);
 }
 
 export function agentSkillsHaveRetryableInstallFailure(

@@ -352,13 +352,13 @@ test("Library skills use references from both entry points, show source content,
 	await page.getByRole("option", { name: "review-pr", exact: true }).click();
 	await dialog.getByRole("button", { name: "Install skill", exact: true }).click();
 	await expect(dialog).toBeHidden();
-	// The agent already has this Cloud Skill, so the picker marks it Installed and won't select it.
+	// The agent already wants this Cloud Skill, so the picker shows its observed state and won't select it.
 	await page.getByRole("button", { name: "Install skill", exact: true }).click();
 	await dialog.getByRole("combobox", { name: "Library project" }).click();
 	await page.getByRole("option", { name: /Team Skills/ }).click();
 	await dialog.getByRole("combobox", { name: "Library skill" }).click();
 	await expect(
-		page.getByRole("option", { name: "review-pr · Installed", exact: true }),
+		page.getByRole("option", { name: "review-pr · Installing…", exact: true }),
 	).toHaveAttribute("aria-disabled", "true");
 	await page.keyboard.press("Escape");
 	await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -412,4 +412,106 @@ test("Library skills use references from both entry points, show source content,
 	await dialog.getByRole("button", { name: "Install skill", exact: true }).click();
 	await expect(dialog).toBeHidden();
 	expect(installs).toBe(2);
+});
+
+test("the Library picker labels each desired skill by its observation and keeps it disabled", async ({
+	page,
+}) => {
+	await workspace(page);
+	const libraryProjectId = "project-library";
+	const project: components["schemas"]["ProjectResponse"] = {
+		id: libraryProjectId,
+		name: "Team Skills",
+		slug: "team-skills",
+		kind: "workspace",
+		description: null,
+		origin_environment_id: null,
+		archived_at: null,
+		created_at: "2026-07-15T00:00:00Z",
+		is_owner: true,
+		skill_count: 4,
+		vault_count: 0,
+		agent_count: 0,
+		member_count: 1,
+	};
+	const names = ["skill-creator", "smoke-qa-checklist", "review-pr", "fresh-skill"];
+	const librarySkill = (name: string) => ({
+		id: `skill-${name}`,
+		skill_key: name,
+		name,
+		description: null,
+		authority: "cloud",
+		project_id: libraryProjectId,
+		project_kind: "workspace",
+		source: "cloud",
+		version: 1,
+		file_count: 1,
+		content_hash: "b".repeat(64),
+		created_at: project.created_at,
+		updated_at: project.created_at,
+	});
+	const desired = (
+		name: string,
+		source: "project" | "library",
+		convergence: "installed" | "not_observed" | "failed",
+		observation_error_code: "guard_blocked" | null = null,
+	): ManagedSkillList["skills"][number] => ({
+		skill_key: name,
+		name,
+		description: null,
+		source,
+		authority: "cloud",
+		read_only: source === "project",
+		skill_id: `skill-${name}`,
+		project_id: libraryProjectId,
+		source_skill_key: name,
+		content_hash: "b".repeat(64),
+		source_identity: "c".repeat(64),
+		desired_state: "present",
+		convergence,
+		observation_error_code,
+	});
+	await page.route(apiPath, (route) => route.fulfill({ json: inventory() }));
+	await page.route("http://127.0.0.1:8000/v1/projects", (route) =>
+		route.fulfill({ json: [project] }),
+	);
+	await page.route("http://127.0.0.1:8000/v1/skills?**", (route) => {
+		const library =
+			new URL(route.request().url()).searchParams.get("project_id") === libraryProjectId;
+		const items = library ? names.map(librarySkill) : [];
+		return route.fulfill({ json: { items, total: items.length, page: 1, page_size: 200 } });
+	});
+	await page.route(`http://127.0.0.1:8000/v1/agents/${agentId}/skills`, (route) =>
+		route.fulfill({
+			json: {
+				agent_id: agentId,
+				removal_failures: [],
+				skills: [
+					desired("skill-creator", "project", "failed", "guard_blocked"),
+					desired("smoke-qa-checklist", "project", "installed"),
+					desired("review-pr", "library", "not_observed"),
+				],
+			} satisfies ManagedSkillList,
+		}),
+	);
+	await page.goto(listPath);
+	await page.getByRole("button", { name: "Install skill", exact: true }).click();
+	const dialog = page.getByRole("dialog");
+	await dialog.getByRole("combobox", { name: "Library project" }).click();
+	await page.getByRole("option", { name: /Team Skills/ }).click();
+	await dialog.getByRole("combobox", { name: "Library skill" }).click();
+	for (const label of [
+		"skill-creator · Blocked by Hermes Skills Guard",
+		"smoke-qa-checklist · Installed",
+		"review-pr · Installing…",
+	]) {
+		await expect(page.getByRole("option", { name: label, exact: true })).toHaveAttribute(
+			"aria-disabled",
+			"true",
+		);
+	}
+	await expect(page.getByRole("option", { name: "fresh-skill", exact: true })).not.toHaveAttribute(
+		"aria-disabled",
+		"true",
+	);
 });

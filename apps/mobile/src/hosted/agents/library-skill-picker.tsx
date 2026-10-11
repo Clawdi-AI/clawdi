@@ -1,7 +1,8 @@
 import { HERO_GRID_CLASS } from "@clawdi/shared/ui";
 import {
-	agentHasCloudSkill,
+	agentCloudSkill,
 	agentSkillGuardPresentation,
+	agentSkillStateKey,
 	agentSkillsHaveRetryableInstallFailure,
 	agentSurfaceCopy,
 	identityFor,
@@ -200,7 +201,7 @@ function AgentLibrarySkills({
 					}
 					renderItem={({ item }) => {
 						// A Library reference or linked Project already provides it, so Install would be a no-op.
-						const installed = agentHasCloudSkill(inventory.data?.skills ?? [], item.id);
+						const desired = agentCloudSkill(inventory.data?.skills ?? [], item.id);
 						return (
 							<HeroCard
 								key={item.id}
@@ -213,10 +214,14 @@ function AgentLibrarySkills({
 								description={item.description}
 								actions={
 									<ActionButton
-										label={t(installed ? "agentExtensions.installed" : "agentExtensions.install")}
-										disabled={disabled || installed}
+										label={t(
+											desired
+												? `agentExtensions.${agentSkillStateKey(desired)}`
+												: "agentExtensions.install",
+										)}
+										disabled={disabled || Boolean(desired)}
 										onPress={() => {
-											if (!installed) void mutate(item.id, true);
+											if (!desired) void mutate(item.id, true);
 										}}
 									/>
 								}
@@ -244,18 +249,7 @@ function AgentLibrarySkills({
 							</IconChip>
 						}
 						title={item.name}
-						footer={[
-							item.source,
-							t(
-								guardPresentation
-									? `agentExtensions.${guardPresentation.title}`
-									: item.convergence === "failed"
-										? "agentExtensions.failedState"
-										: item.convergence === "installed"
-											? "agentExtensions.installed"
-											: "agentExtensions.not_observed",
-							),
-						]}
+						footer={[item.source, t(`agentExtensions.${agentSkillStateKey(item)}`)]}
 						badges={
 							item.read_only ? (
 								<Badge variant="secondary">
