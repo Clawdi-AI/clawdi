@@ -83,6 +83,12 @@ import {
 } from "./login-item";
 import { DesktopCliError, DesktopCliService } from "./native-cli";
 import { requireDesktopPlatform } from "./platform";
+import {
+	clearDesktopDirectories,
+	launchWindowsUninstaller,
+	macApplicationBundle,
+	uninstallDesktop,
+} from "./uninstall";
 import { DesktopUpdateController } from "./update-controller";
 import { DesktopUpdateInstallation } from "./update-install";
 import { desktopUpdateDownloadUrl, desktopUpdateNotification } from "./update-notification";
@@ -131,6 +137,9 @@ let updateState: DesktopUpdateState = { status: "disabled", reason: "development
 let updatePromptedVersion: string | null = null;
 let activeCriticalOperations = 0;
 let quitting = false;
+let uninstalling = false;
+let disableUpdateOnQuit: (() => void) | undefined;
+let stopDesktopLogging: (() => void) | undefined;
 
 class DesktopConnectError extends Error {}
 function runAsync(label: string, operation: Promise<unknown>): void {
@@ -220,7 +229,7 @@ async function startApplication(): Promise<void> {
 	} catch {
 		// Logging still redacts console output if Electron cannot create its directory.
 	}
-	initializeDesktopLogging(logDirectory);
+	stopDesktopLogging = initializeDesktopLogging(logDirectory);
 	console.info("Desktop starting", { platform: process.platform, version: app.getVersion() });
 	registerDeepLinkProtocol();
 	const startHidden = !launchConnectView && wasOpenedAtLogin();
@@ -235,7 +244,7 @@ async function startApplication(): Promise<void> {
 			connectWindow.setBackgroundColor(windowBackground());
 	});
 	app.on("before-quit", (event) => {
-		if (updateInstallation?.shouldDeferQuit()) {
+		if (!uninstalling && updateInstallation?.shouldDeferQuit()) {
 			event.preventDefault();
 			runAsync("install the update on quit", updateInstallation.install(true));
 			return;
@@ -318,6 +327,9 @@ async function initializeUpdates(): Promise<void> {
 	// https://www.electron.build/docs/features/auto-update/
 	const updater = policy.enabled ? electronUpdater.autoUpdater : new electronUpdater.DebUpdater();
 	updater.logger = console;
+	disableUpdateOnQuit = () => {
+		updater.autoInstallOnAppQuit = false;
+	};
 	updateController = new DesktopUpdateController({
 		policy,
 		updater,
@@ -661,7 +673,7 @@ async function withCriticalOperation<T>(action: () => Promise<T>): Promise<T> {
 	} finally {
 		activeCriticalOperations -= 1;
 		renderUpdateMenus();
-		if (activeCriticalOperations === 0) {
+		if (activeCriticalOperations === 0 && !uninstalling && !quitting) {
 			if (updateInstallation)
 				runAsync("finish the requested quit", updateInstallation.resumePendingQuit());
 			runAsync("offer the downloaded update", maybePromptForUpdate());
@@ -676,6 +688,7 @@ async function safeConnectAction<T>(
 ): Promise<T> {
 	try {
 		assertConnectSender(event, connectWindow?.webContents, CONNECT_URL);
+		if (uninstalling) throw new DesktopConnectError("Clawdi is uninstalling.");
 		return await action();
 	} catch (error) {
 		console.error(`Could not ${label}`, error);
@@ -809,6 +822,7 @@ const menuActions: DesktopMenuActions = {
 	openDocs: () => runAsync("open the docs", shell.openExternal(DOCS_URL)),
 	contactSupport: () => runAsync("contact support", shell.openExternal(SUPPORT_URL)),
 	showLogs: () => runAsync("show logs", showLogs()),
+	uninstall: () => runAsync("uninstall Clawdi", uninstallClawdi()),
 	signOut: () => runAsync("sign out of Desktop", signOutOfDesktop()),
 	quit: () => app.quit(),
 };
@@ -988,6 +1002,7 @@ function setTrayState(state: DesktopBootstrapState | null): void {
 }
 
 async function refreshTrayState(): Promise<void> {
+	if (quitting || uninstalling) return;
 	if (trayStateRefresh) return trayStateRefresh;
 	if (installationState().requiresMove) {
 		setTrayState(null);
@@ -1186,6 +1201,7 @@ async function promptToMove(detail: string): Promise<void> {
 }
 
 async function showAvailableWindow(view?: DesktopConnectView): Promise<void> {
+	if (quitting || uninstalling) return;
 	if (view) {
 		await showConnectWindow(view);
 		return;
@@ -1226,7 +1242,8 @@ async function showWindowFromTrayState(): Promise<void> {
 }
 
 async function reconcileBackgroundSyncAfterStartup(): Promise<void> {
-	const recovery = await reconcileDesktopStartupSync(cli);
+	if (quitting || uninstalling) return;
+	const recovery = await withCriticalOperation(() => reconcileDesktopStartupSync(cli));
 	setTrayState(recovery.state);
 }
 
@@ -1236,7 +1253,7 @@ async function openDashboardAfterFirstConnection(): Promise<void> {
 }
 
 async function openDashboard(): Promise<void> {
-	if (signingOut) return;
+	if (signingOut || quitting || uninstalling) return;
 	if (dashboardOpening) return dashboardOpening;
 	const opening = openDashboardWindow();
 	dashboardOpening = opening;
@@ -1325,6 +1342,68 @@ async function clearDashboardSession(): Promise<void> {
 	dashboardAccountId = null;
 	if (dashboardWindow && !dashboardWindow.isDestroyed()) dashboardWindow.destroy();
 	await session.fromPartition(DASHBOARD_PARTITION).clearData();
+}
+
+async function uninstallClawdi(): Promise<void> {
+	if (uninstalling || signingOut || activeCriticalOperations > 0) return;
+	uninstalling = true;
+	try {
+		await withCriticalOperation(() =>
+			uninstallDesktop({
+				platform: process.platform,
+				installedByDesktop: () => cli.installedByDesktop(),
+				showMessageBox,
+				prepare: async () => {
+					quitting = true;
+					updateController?.stop();
+					disableUpdateOnQuit?.();
+					await cli.cancelAuthentication();
+					// Drain reads/window openings that started before confirmation. New
+					// actions are blocked until quit so they cannot restore deleted state.
+					for (const pending of [trayStateRefresh, availableWindowOpening, dashboardOpening]) {
+						if (pending) await pending.catch(() => undefined);
+					}
+					for (const window of BrowserWindow.getAllWindows()) window.destroy();
+				},
+				revokeSessions: async () => {
+					const partition = session.fromPartition(DASHBOARD_PARTITION);
+					for (const id of dashboardSessionIds(await partition.cookies.get({ url: WEB_ORIGIN })))
+						await cli.revokeDashboardSession(id);
+				},
+				uninstallCli: (removeCli) => cli.uninstall(removeCli),
+				removeLoginItem: () => setDesktopLaunchAtLogin(app, false),
+				clearData: async () => {
+					for (const window of BrowserWindow.getAllWindows()) window.destroy();
+					try {
+						try {
+							await session.fromPartition(DASHBOARD_PARTITION).clearData();
+						} finally {
+							await session.defaultSession.clearData();
+						}
+					} finally {
+						stopDesktopLogging?.();
+						await clearDesktopDirectories([
+							app.getPath("userData"),
+							app.getPath("sessionData"),
+							getDesktopLogDirectory(app),
+						]);
+					}
+				},
+				removeApplication: async (removeCli) => {
+					if (!app.isPackaged) return;
+					if (process.platform === "darwin")
+						await shell.trashItem(macApplicationBundle(process.execPath));
+					if (process.platform === "win32") {
+						await launchWindowsUninstaller(process.execPath, removeCli);
+					}
+				},
+				quit: () => app.quit(),
+			}),
+		);
+	} finally {
+		uninstalling = false;
+		renderUpdateMenus();
+	}
 }
 
 async function signOutOfDesktop(): Promise<void> {

@@ -28,6 +28,7 @@ import { registerSetup } from "./cli/register/setup.js";
 import { registerSkill } from "./cli/register/skill.js";
 import { registerStatus } from "./cli/register/status.js";
 import { registerTeardown } from "./cli/register/teardown.js";
+import { registerUninstall } from "./cli/register/uninstall.js";
 import { registerUpdate } from "./cli/register/update.js";
 import { registerVault } from "./cli/register/vault.js";
 import { registerWallet } from "./cli/register/wallet.js";
@@ -135,6 +136,7 @@ registerWallet(program);
 registerConfig(program);
 registerSetup(program);
 registerTeardown(program);
+registerUninstall(program);
 registerPush(program);
 registerPull(program);
 registerDaemon(program);
@@ -165,7 +167,7 @@ const TOP_LEVEL_HELP_GROUPS: Readonly<Record<string, readonly string[]>> = {
 	Context: ["skill", "memory", "vault", "project", "inbox"],
 	Secrets: ["run", "read", "inject"],
 	"Cloud Agents": ["deploy", "agent", "ai-provider", "channel", "wallet"],
-	Maintenance: ["config", "update", "teardown", "mcp"],
+	Maintenance: ["config", "update", "teardown", "uninstall", "mcp"],
 };
 
 class TopLevelHelp extends Help {

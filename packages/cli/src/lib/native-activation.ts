@@ -216,6 +216,7 @@ export async function activateStagedNativeRelease(
 		version: string;
 		target: NativeBuildTarget;
 		automatic?: boolean;
+		installedBy?: "desktop";
 	},
 	lockOptions?: PrivateDirectoryLockOptions,
 ): Promise<{ launcher: string; previousVersion: string | null; skipped?: boolean }> {
@@ -236,6 +237,7 @@ async function activateStagedNativeReleaseWithLease(
 		version: string;
 		target: NativeBuildTarget;
 		automatic?: boolean;
+		installedBy?: "desktop";
 	},
 	lease: PrivateDirectoryLockLease,
 ): Promise<{ launcher: string; previousVersion: string | null; skipped?: boolean }> {
@@ -262,18 +264,25 @@ async function activateStagedNativeReleaseWithLease(
 	const manifestContent = validateVersionManifest(stageDir, compiled);
 	validateStagedResources(stageDir);
 	lease.assertOwned();
-	writeNativeInstallIdentity(stageDir, compiled, manifestContent);
-	lease.assertOwned();
-	normalizeNativeTreeModes(stageDir);
-
-	lease.assertOwned();
 	mkdirSync(versionsRoot, { recursive: true, mode: 0o755 });
 	const binDir = windows ? nativeRoot : join(prefix, "bin");
 	lease.assertOwned();
 	mkdirSync(binDir, { recursive: true, mode: 0o755 });
 	accessSync(binDir, constants.W_OK);
 	const launcher = join(binDir, windows ? "current" : executableName);
+	// The previous active install carries ownership across normal updates.
 	const previous = readOwnedLauncher(launcher, versionsRoot);
+	const installedBy = previous
+		? validateNativeInstallIdentity(
+				dirname(previous.executable),
+				previous,
+				readFileSync(nativeInstallManifestPath(dirname(previous.executable)), "utf8"),
+			)
+		: input.installedBy;
+	writeNativeInstallIdentity(stageDir, compiled, manifestContent, installedBy);
+	lease.assertOwned();
+	normalizeNativeTreeModes(stageDir);
+
 	// Check the stable launcher while holding the same lock as manual activation.
 	if (input.automatic && previous && compareSemver(previous.version, input.version) >= 0) {
 		return {

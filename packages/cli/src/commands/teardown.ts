@@ -23,6 +23,8 @@ export async function teardown(opts: {
 	keepMcp?: boolean;
 	yes?: boolean;
 	json?: boolean;
+	reportFailures?: boolean;
+	silentResult?: boolean;
 }) {
 	p.intro(chalk.bold("clawdi teardown"), { output: process.stderr });
 
@@ -34,8 +36,11 @@ export async function teardown(opts: {
 	}
 	if (targets.length === 0) {
 		p.outro(chalk.gray("Nothing to tear down."));
-		commandResult(opts.json, "clawdi.teardown.v1", { status: "nothing_to_teardown", agents: [] });
-		return;
+		commandResult(opts.json && !opts.silentResult, "clawdi.teardown.v1", {
+			status: "nothing_to_teardown",
+			agents: [],
+		});
+		return [];
 	}
 
 	if (!opts.yes) {
@@ -47,7 +52,10 @@ export async function teardown(opts: {
 		});
 		if (!ok) {
 			p.outro(chalk.gray("Cancelled."));
-			commandResult(opts.json, "clawdi.teardown.v1", { status: "cancelled", agents: [] });
+			commandResult(opts.json && !opts.silentResult, "clawdi.teardown.v1", {
+				status: "cancelled",
+				agents: [],
+			});
 			return;
 		}
 	}
@@ -59,12 +67,17 @@ export async function teardown(opts: {
 				keepSkill: opts.keepSkill ?? false,
 				keepMcp: opts.keepMcp ?? false,
 				json: opts.json,
+				reportFailures: opts.reportFailures,
 			}),
 		);
 	}
 
 	p.outro(chalk.green("✓ Teardown complete"));
-	commandResult(opts.json, "clawdi.teardown.v1", { status: "completed", agents });
+	commandResult(opts.json && !opts.silentResult, "clawdi.teardown.v1", {
+		status: "completed",
+		agents,
+	});
+	return agents;
 }
 
 /**
@@ -127,11 +140,12 @@ async function resolveTargets(opts: {
 
 async function teardownOne(
 	agentType: AgentType,
-	opts: { keepSkill: boolean; keepMcp: boolean; json?: boolean },
+	opts: { keepSkill: boolean; keepMcp: boolean; json?: boolean; reportFailures?: boolean },
 ) {
 	const label = adapterRegistry[agentType].displayName;
 	const adapter = adapterRegistry[agentType].create();
 	let skillResult = "unsupported";
+	const errors: string[] = [];
 
 	// 1. Local env file
 	const envPath = join(getClawdiDir(), "environments", `${agentType}.json`);
@@ -141,6 +155,7 @@ async function teardownOne(
 			p.log.success(`${label}: removed environment registration`);
 		}
 	} catch (e) {
+		errors.push("Could not remove environment registration");
 		p.log.warn(`${label}: could not remove env file (${errMessage(e)})`, {
 			output: process.stderr,
 		});
@@ -165,20 +180,34 @@ async function teardownOne(
 			});
 			skillResult = opts.keepSkill ? "kept" : "removed";
 			if (!opts.keepSkill) {
-				if (result === "absent") throw new Error("Skill is not owned by local setup");
-				p.log.success(`${label}: removed bundled skill (${skillDir})`);
+				if (result === "absent") {
+					if (!opts.reportFailures) throw new Error("Skill is not owned by local setup");
+					skillResult = existsSync(skillDir) ? "unowned" : "absent";
+				}
+				if (result !== "absent") p.log.success(`${label}: removed bundled skill (${skillDir})`);
+				else p.log.info(`${label}: bundled skill ${skillResult}`);
 			}
 		} catch (e) {
 			skillResult = "failed";
+			errors.push("Could not remove bundled skill");
 			p.log.warn(`${label}: could not remove skill (${errMessage(e)})`, { output: process.stderr });
 		}
 	}
 
 	// 4. MCP registration
 	if (!opts.keepMcp) {
-		await adapterRegistry[agentType].mcpLifecycle?.unregister(opts);
+		try {
+			await adapterRegistry[agentType].mcpLifecycle?.unregister({
+				...opts,
+				strict: opts.reportFailures,
+			});
+		} catch (error) {
+			if (!opts.reportFailures) throw error;
+			errors.push("Could not remove MCP registration");
+		}
 	}
 	return {
+		...(opts.reportFailures ? { errors } : {}),
 		agent_type: agentType,
 		registration_removed: !existsSync(envPath),
 		skill: skillResult,

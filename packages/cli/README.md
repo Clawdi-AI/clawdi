@@ -64,3 +64,10 @@ bun run --cwd packages/cli build
 ```
 
 The package manager is Bun; do not use `pdm` for CLI dependencies or tests.
+
+## Uninstall
+
+Run `clawdi uninstall` to remove local services, agent integrations, sign-in, and
+state. Add `--remove-cli` to remove a native CLI; npm and Homebrew packages stay.
+Desktop offers **Uninstall Clawdi…** in its app/Help menu and tray. Account data stays.
+See [Uninstall](../../docs/uninstall.md) for details and scripted cleanup.
