@@ -70,7 +70,7 @@ export function removeDesktopCliSymlink(options: {
 }
 
 /** Keep an existing Desktop PATH entry working without editing PATH or
- * replacing a foreign command. New native installs already own their launcher. */
+ * replacing a foreign command. Fresh native installs use the same ownership-marked launcher and PATH helper. */
 export function migrateWindowsDesktopCliCommand(options: {
 	localAppData?: string;
 	target: string;
@@ -80,10 +80,23 @@ export function migrateWindowsDesktopCliCommand(options: {
 	try {
 		const existing = readFileSync(launcher, "utf8");
 		if (!existing.startsWith(`${WINDOWS_LAUNCHER_MARKER}\r\n`)) return;
-		const content = `${WINDOWS_LAUNCHER_MARKER}\r\n@echo off\r\n"${escapeCmdPath(options.target)}" %*\r\n`;
+		const content = windowsLauncherContent(options.target);
 		if (existing !== content) writeLauncher(launcher, content);
 	} catch (error) {
 		if (!isMissing(error)) throw error;
+	}
+}
+
+export async function reconcileWindowsNativeCliCommand(
+	options: DesktopCliCommandOptions,
+): Promise<void> {
+	const launcher = defaultLauncherPath(options);
+	try {
+		lstatSync(launcher);
+		migrateWindowsDesktopCliCommand({ localAppData: options.localAppData, target: options.target });
+	} catch (error) {
+		if (!isMissing(error)) throw error;
+		await installDesktopCliCommand(options);
 	}
 }
 
@@ -112,6 +125,39 @@ export async function installDesktopCliCommand(
 		path: launcher,
 		pathReady: pathContains(dirname(launcher), options.environmentPath, options.platform),
 	};
+}
+
+/** Retain only our exact launcher for a native target whose ownership was verified. */
+export async function removeWindowsDesktopCliCommand(options: {
+	localAppData: string;
+	windowsPathScript: string;
+	retainedNativeTarget?: string;
+	execute?: DesktopCliCommandOptions["execute"];
+}): Promise<void> {
+	const launcher = join(options.localAppData, "Clawdi", "bin", "clawdi.cmd");
+	if (options.retainedNativeTarget) {
+		try {
+			if (readFileSync(launcher, "utf8") === windowsLauncherContent(options.retainedNativeTarget))
+				return;
+		} catch (error) {
+			if (!isMissing(error)) throw error;
+		}
+	}
+	await (options.execute ?? runCommand)("powershell.exe", [
+		"-NoLogo",
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		options.windowsPathScript,
+		"-Action",
+		"Remove",
+		"-BinPath",
+		dirname(launcher),
+		"-LauncherPath",
+		launcher,
+	]);
 }
 
 export function managedAppImageCliCommandTarget(options: {
@@ -177,7 +223,7 @@ async function installWindowsLauncher(
 	launcher: string,
 	options: DesktopCliCommandOptions,
 ): Promise<void> {
-	const content = `${WINDOWS_LAUNCHER_MARKER}\r\n@echo off\r\n"${escapeCmdPath(options.target)}" %*\r\n`;
+	const content = windowsLauncherContent(options.target);
 	if (existsSync(launcher)) {
 		const existing = readFileSync(launcher, "utf8");
 		if (!existing.startsWith(`${WINDOWS_LAUNCHER_MARKER}\r\n`)) {
@@ -210,6 +256,10 @@ async function installWindowsLauncher(
 		"-LauncherPath",
 		launcher,
 	]);
+}
+
+function windowsLauncherContent(target: string): string {
+	return `${WINDOWS_LAUNCHER_MARKER}\r\n@echo off\r\n"${escapeCmdPath(target)}" %*\r\n`;
 }
 
 function writeLauncher(path: string, content: string): void {

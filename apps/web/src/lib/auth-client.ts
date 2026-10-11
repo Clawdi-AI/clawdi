@@ -1,5 +1,6 @@
 "use client";
 
+import { isClawdiDesktopBridge } from "@clawdi/shared/desktop";
 import { useAuth, useClerk, useSession, useUser } from "@clerk/tanstack-react-start";
 import { useCallback } from "react";
 import { ApiError } from "@/lib/api-errors";
@@ -87,6 +88,7 @@ export function useAuthActions() {
 	if (env.VITE_DEV_AUTH_BYPASS) {
 		return {
 			signOut: async ({ redirectUrl }: { redirectUrl?: string } = {}) => {
+				if (await signOutOfDesktop()) return;
 				resetChatwoot();
 				if (typeof window !== "undefined" && redirectUrl) {
 					window.location.href = redirectUrl;
@@ -98,6 +100,7 @@ export function useAuthActions() {
 	return {
 		...clerk,
 		signOut: async ({ redirectUrl }: { redirectUrl?: string } = {}) => {
+			if (await signOutOfDesktop()) return;
 			resetChatwoot();
 			await clerk.signOut({ redirectUrl });
 		},
@@ -110,4 +113,13 @@ export function useSessionIdentity() {
 	if (env.VITE_DEV_AUTH_BYPASS) return JSON.stringify([DEV_USER.id, "dev_browser_session"]);
 	const { isLoaded, session } = useSession();
 	return isLoaded && session ? JSON.stringify([session.user.id, session.id]) : null;
+}
+
+async function signOutOfDesktop(): Promise<boolean> {
+	const bridge =
+		typeof window !== "undefined" && "clawdiDesktop" in window ? window.clawdiDesktop : undefined;
+	if (!isClawdiDesktopBridge(bridge)) return false;
+	await bridge.signOut();
+	resetChatwoot();
+	return true;
 }

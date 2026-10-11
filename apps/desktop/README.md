@@ -53,14 +53,18 @@ and the command line on Windows and Linux
 
 ## Terminal command
 
-Packaged builds include the matching native `clawdi` CLI. On each packaged
-application launch, Desktop reconciles a lightweight launcher after startup checks:
-macOS and Linux use
-`~/.local/bin/clawdi`, while Windows uses a per-user launcher directory added to
-the user PATH. An existing `clawdi` from another installation is never replaced.
-The command continues to use the Desktop-managed binary, so native CLI updates
-arrive with Desktop rather than through a second updater. AppImage builds refresh
-an existing Desktop-owned launcher after an application update.
+Desktop first adopts a compatible shared native `clawdi` installation, or
+bootstraps it with the existing native installer. This CLI updates independently
+through the native CLI updater. Windows reconciles a Desktop-owned shim in the
+per-user PATH, including on fresh native installs. Existing foreign launchers
+and commands are preserved.
+
+Packaged builds also include a matching CLI for offline/bootstrap fallback.
+In that case macOS and Linux use `~/.local/bin/clawdi` pointing to the bundle
+or durable AppImage runtime; Windows uses the same marked shim and PATH helper.
+Fallback binaries update with Desktop. AppImage updates retarget existing owned
+launchers. Desktop uninstall removes these launchers before deleting their target;
+a bundled fallback CLI cannot be retained after the app is removed.
 
 On macOS, move Clawdi to Applications first so the launcher points to a stable
 application path. macOS and Linux do not edit shell startup files; when
@@ -154,7 +158,7 @@ New-window HTTPS links open in the system browser. Dashboard has context
 isolation, sandboxing and no Node integration; Connect keeps its local renderer
 and dedicated IPC.
 
-The bundled CLI owns credentials, Agent registration and daemon lifecycle.
+The selected CLI owns credentials, Agent registration and daemon lifecycle.
 `clawdi auth login --desktop` runs device authorization in the system browser.
 One approval signs in CLI and Desktop. Dashboard's `persist:clawdi-dashboard`
 partition survives restarts. On `/desktop-auth`, the hidden
@@ -169,10 +173,13 @@ Signed-out dashboard routes return to `/desktop-auth`.
 The backend accepts only CLI OAuth access tokens and requests a one-use Clerk
 sign-in token with a 60-second lifetime. Tickets travel privately through the
 preload, never URLs or diagnostics; normal browsers cannot consume them.
-Desktop sign-out revokes the embedded Clerk session server-side before clearing
+The shared web user menu calls native sign-out inside Desktop. Desktop attempts
+to revoke the embedded Clerk session server-side before clearing
 the partition, CLI credentials and daemon registration. Cookie session IDs are
 untrusted hints; the backend checks ownership against Clerk before revocation.
-A revocation failure retains credentials so sign-out can be retried.
+Remote revocation failure is reported separately; it never prevents clearing the
+local partition, CLI credentials and sync service. Detecting CLI account loss
+closes the Dashboard, clears its persistent partition and returns to Connect.
 
 The canonical dashboard-only capability contract is in
 `packages/shared/src/desktop.ts`:
@@ -514,3 +521,20 @@ signs `Clawdi.exe` and the NSIS installer. No custom signing hook is used. The
 release script checks all three signatures and the complete Subject. The default
 electron-updater 6.8.9 verifier compares the configured DN fields; no custom
 verifier or weaker CN-only fallback is installed.
+
+Real Windows Settings/NSIS uninstall invokes `--clawdi-uninstall-cleanup` in the
+installed Desktop before CLI credentials are deleted. It reuses application-menu
+cleanup for session revocation, login item removal, profile/partition/cache/log
+removal and owned launcher cleanup. Upgrade uninstall excludes this entry and
+preserves user data. An old installed uninstaller gains this hook only after
+installing a version that contains it.
+On Windows, keeping the shared native CLI also keeps its marked terminal launcher
+and PATH entry after native ownership validation. Launchers targeting the bundled
+app are removed with the app; foreign commands remain untouched.
+
+Update preparation closes mutation admission and drains accepted operations.
+Connect/auth, sign-out, menu mutations and uninstall share that guard. Windows
+then stops sync to release executable locks; failed installation restores sync
+and reopens admission, including native updater errors after `quitAndInstall`
+has returned. Successful quit installation keeps admission closed;
+sync resumes when the updated Desktop next launches.

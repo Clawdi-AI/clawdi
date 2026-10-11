@@ -30,6 +30,7 @@ export interface DesktopUpdateControllerOptions {
 	onStateChange: (state: DesktopUpdateState) => void;
 	onUpdateReady: (version: string) => void;
 	onUpdateAvailable?: (version: string) => void;
+	onInstallError?: (error: Error) => void;
 	updater: DesktopUpdater;
 }
 
@@ -88,9 +89,12 @@ export class DesktopUpdateController {
 			}
 		});
 		this.updater.on("error", (error: Error) => {
+			const installationFailed = this.installing || this.state.status === "ready";
 			if (this.installing) this.installError = error;
+			this.installing = false;
 			console.error("Desktop update failed", error);
 			this.transition({ type: "error" });
+			if (installationFailed) this.options.onInstallError?.(error);
 		});
 		this.initialCheck = setTimeout(() => {
 			this.initialCheck = null;

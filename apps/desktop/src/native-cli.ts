@@ -20,7 +20,11 @@ import {
 } from "../../../packages/cli/src/lib/native-distribution";
 import { isNativeBuildTarget } from "../../../packages/cli/src/lib/native-release-manifest";
 import { activateAppImageRuntime, pruneAppImageRuntimes } from "./appimage-runtime";
-import { managedAppImageCliCommandTarget, removeDesktopCliSymlink } from "./cli-command";
+import {
+	managedAppImageCliCommandTarget,
+	removeDesktopCliSymlink,
+	removeWindowsDesktopCliCommand,
+} from "./cli-command";
 import {
 	assertCompatibleCliSchema,
 	DESKTOP_MIN_CLI_VERSION,
@@ -93,6 +97,13 @@ export class DesktopCliService {
 	private runtimeVersion: string | null = null;
 	private runtimeReconciliation: Promise<void> | null = null;
 	private nativeIdentity: Promise<NativeIdentity> | null = null;
+
+	/** NSIS cleanup uses the installed bundle without installing another CLI. */
+	useBundledCliForCleanup(): void {
+		this.cliPath = this.resolveBundledCli();
+		this.cliSource = "bundled";
+		this.cliResolution = Promise.resolve(this.cliPath);
+	}
 
 	async bootstrapState(): Promise<DesktopBootstrapState> {
 		const cli = await this.resolveCli();
@@ -426,6 +437,36 @@ export class DesktopCliService {
 	async shellCommandTarget(): Promise<string> {
 		const cli = await this.prepareDaemonCli();
 		return this.cliSource === "native" ? cli : realpathSync(cli);
+	}
+
+	async removeDesktopCommand(removeCli: boolean): Promise<void> {
+		if (process.platform === "win32") {
+			const localAppData = process.env.LOCALAPPDATA;
+			if (!localAppData || !isAbsolute(localAppData))
+				throw new Error("The Windows user application directory is unavailable.");
+			let retainedNativeTarget: string | undefined;
+			if (!removeCli) {
+				const launcher = nativeLauncherPath(process.platform, this.home);
+				try {
+					const identity = await this.readIdentity(launcher);
+					if (detectNativeInstall(launcher, identity)) retainedNativeTarget = launcher;
+				} catch {
+					// A missing or unverified target cannot keep a working terminal entry.
+				}
+			}
+			await removeWindowsDesktopCliCommand({
+				localAppData,
+				windowsPathScript: join(this.resourcesPath, "support", "windows-cli-path.ps1"),
+				retainedNativeTarget,
+				execute: this.execute,
+			});
+			return;
+		}
+		removeDesktopCliSymlink({
+			home: this.home,
+			userData: this.application.getPath("userData"),
+			bundledCli: this.cliPath ?? this.resolveBundledCli(),
+		});
 	}
 
 	async pruneUnusedAppImageRuntimes(): Promise<void> {

@@ -213,7 +213,8 @@ $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new("$
 	const feedUrl = `https://127.0.0.1:${address.port}/`;
 	await run("bun", ["run", "build"]);
 	await run("node", [join(desktopRoot, "node_modules/electron/install.js")]);
-	await run("bun", [join(import.meta.dir, "shared-native-cli-e2e.ts")]);
+	// Includes an NSIS build plus four serial install/uninstall scenarios.
+	await run("bun", [join(import.meta.dir, "shared-native-cli-e2e.ts")], 10 * 60_000);
 	renameSync(join(desktopRoot, "dist/main.js"), join(desktopRoot, "dist/desktop-main.js"));
 	const bundle = await Bun.build({
 		entrypoints: [join(import.meta.dir, "fixtures/update-e2e-windows-main.ts")],
@@ -377,7 +378,12 @@ if (Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq "$env:C
 		CLAWDI_DESKTOP_UPDATE_E2E_PREVIOUS_STARTS: String(download.serviceStarts),
 	});
 	const verified: unknown = JSON.parse(readFileSync(join(root, "verified.json"), "utf8"));
-	assert.ok(record(verified) && verified.version === "0.0.2" && verified.serviceResumed === true);
+	assert.ok(
+		record(verified) &&
+			verified.version === "0.0.2" &&
+			verified.serviceResumed === true &&
+			verified.upgradeDataPreserved === true,
+	);
 	assert.match(readFileSync(join(root, "cli.log"), "utf8"), /^daemon restart$/m);
 	assert.ok(windowsTaskRunning(), "Production N+1 startup must restart the real Windows task.");
 	assert.ok(requests.includes("latest.yml") && requests.includes(nextName));
@@ -402,6 +408,29 @@ if (Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq "$env:C
 	installedApp = false;
 	assert.match(readFileSync(join(root, "cli.log"), "utf8"), /^uninstall --yes$/m);
 	assert.ok(!windowsTaskInstalled(), "NSIS uninstall must remove the Sync task.");
+	assert.match(
+		readFileSync(join(root, "cli.log"), "utf8"),
+		/^auth desktop-sign-out --session-id sess_fixture --json$/m,
+	);
+	assert.ok(
+		readFileSync(join(root, "cli.log"), "utf8").indexOf("auth desktop-sign-out") <
+			readFileSync(join(root, "cli.log"), "utf8").indexOf("uninstall --yes"),
+		"Desktop revocation must precede CLI credential deletion",
+	);
+	await waitFor(
+		"Desktop profile/session/cache/log deletion",
+		() => !existsSync(join(root, "userData")),
+	);
+	await powershell(`
+$run = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\\Microsoft\\Windows\\CurrentVersion\\Run')
+try {
+  if ($run) {
+    foreach ($name in $run.GetValueNames()) {
+      if ([string]$run.GetValue($name) -like "*$env:CLAWDI_DESKTOP_UPDATE_E2E_ROOT\\installed\\Clawdi.exe*") { throw 'NSIS left Desktop login startup entry.' }
+    }
+  }
+} finally { if ($run) { $run.Dispose() } }
+`);
 	taskCreated = false;
 	console.log(
 		"Windows update e2e passed: trusted HTTPS, SHA-512, unsigned NSIS/blockmap, stop before install, N+1 launch and Task Scheduler resume.",

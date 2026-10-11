@@ -6,6 +6,7 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	realpathSync,
 	rmSync,
@@ -36,6 +37,30 @@ const hadNativeDirectory = existsSync(dirname(bundledResource));
 const hadBundledResource = existsSync(bundledResource);
 let application: ChildProcess | undefined;
 let browser: Browser | undefined;
+const uninstallScenarios = ["keep-native", "remove-native", "keep-bundled", "foreign-command"];
+
+async function removeTestShim(shim: string): Promise<void> {
+	if (!existsSync(shim)) return;
+	// The foreign test command is ours, in this private test root. Mark it for
+	// the existing helper so finally also removes its test-only registry entry.
+	if (shim.includes("foreign-command"))
+		writeFileSync(shim, "@rem Clawdi Desktop CLI launcher v1\r\n");
+	await runCommand("powershell.exe", [
+		"-NoLogo",
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-File",
+		join(desktop, "build/windows-cli-path.ps1"),
+		"-Action",
+		"Remove",
+		"-BinPath",
+		dirname(shim),
+		"-LauncherPath",
+		shim,
+	]);
+}
 
 async function stopDesktop(): Promise<void> {
 	await browser
@@ -285,6 +310,29 @@ try {
 					),
 				);
 			if (scenario === "fresh") {
+				if (process.platform === "win32") {
+					const shim = join(env.LOCALAPPDATA, "Clawdi/bin/clawdi.cmd");
+					assert.match(readFileSync(shim, "utf8"), /Clawdi Desktop CLI launcher v1/);
+					const verified = await runCommand(
+						"powershell.exe",
+						[
+							"-NoProfile",
+							"-NonInteractive",
+							"-Command",
+							`
+$ErrorActionPreference = 'Stop'
+$env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine')
+(Get-Command clawdi -CommandType Application -ErrorAction Stop).Source
+`,
+						],
+						{ env },
+					);
+					assert.equal(
+						verified.stdout.trim().toLowerCase(),
+						shim.toLowerCase(),
+						"New terminal must resolve fresh-native Desktop shim",
+					);
+				}
 				await runCommand(launcher, ["update", "--fixture-auto-update"], { env });
 				const state = await page.evaluate(() => window.clawdiConnect?.getBootstrapState());
 				assert.equal(state?.cli.version, "0.16.9");
@@ -305,7 +353,155 @@ try {
 			}
 		}
 		await stopDesktop();
+		if (process.platform === "win32")
+			await removeTestShim(join(env.LOCALAPPDATA, "Clawdi/bin/clawdi.cmd"));
 		console.info(`Real Electron shared native CLI: ${scenario} passed`);
+	}
+	if (process.platform === "win32") {
+		// Use the real NSIS hook, installed production main and PATH helper.
+		await runCommand(
+			"node",
+			[
+				join(desktop, "node_modules/electron-builder/cli.js"),
+				"--projectDir",
+				desktop,
+				"--win",
+				"nsis",
+				`--${process.arch}`,
+				"--publish",
+				"never",
+				`--config.directories.output=${join(root, "nsis")}`,
+				`--config.afterPack=${join(desktop, "scripts/after-pack.mjs")}`,
+			],
+			{ timeoutMs: 180_000 },
+		);
+		const installerName = readdirSync(join(root, "nsis")).find((name) => name.endsWith(".exe"));
+		assert.ok(installerName, "Missing fixture NSIS installer");
+		for (const scenario of uninstallScenarios) {
+			const directory = join(root, scenario);
+			const home = join(directory, "home");
+			const userData = join(directory, "electron");
+			const destination = join(directory, "installed");
+			const localAppData = join(directory, "local");
+			const shim = join(localAppData, "Clawdi/bin/clawdi.cmd");
+			mkdirSync(userData, { recursive: true });
+			writeFileSync(join(userData, "first-connection"), "fixture");
+			mkdirSync(home);
+			for (const version of ["0.16.8", "0.16.9"])
+				cpSync(join(root, `fixture-${version}.exe`), join(directory, `fixture-${version}.exe`));
+			const env = {
+				...process.env,
+				HOME: home,
+				USERPROFILE: home,
+				LOCALAPPDATA: localAppData,
+				CLAWDI_HOME: join(home, ".clawdi"),
+				CLAWDI_NATIVE_E2E_ROOT: directory,
+				CLAWDI_NO_AUTO_UPDATE: "1",
+				CLAWDI_NO_UPDATE_CHECK: "1",
+			};
+			if (scenario === "keep-bundled" || scenario === "foreign-command")
+				writeFileSync(join(directory, "offline"), "fixture");
+			if (scenario === "foreign-command") {
+				mkdirSync(dirname(shim), { recursive: true });
+				writeFileSync(shim, "@echo off\r\necho foreign-command\r\n");
+				await runCommand(
+					"powershell.exe",
+					[
+						"-NoProfile",
+						"-NonInteractive",
+						"-ExecutionPolicy",
+						"Bypass",
+						"-File",
+						join(desktop, "build/windows-cli-path.ps1"),
+						"-Action",
+						"Add",
+						"-BinPath",
+						dirname(shim),
+						"-LauncherPath",
+						shim,
+					],
+					{ env },
+				);
+			}
+			await runCommand(join(root, "nsis", installerName), ["/S", `/D=${destination}`], {
+				env,
+				timeoutMs: 120_000,
+			});
+			try {
+				application = spawn(
+					join(destination, "Clawdi.exe"),
+					[`--user-data-dir=${userData}`, "--remote-debugging-port=0", "--use-mock-keychain"],
+					{ env, stdio: ["ignore", "pipe", "pipe"] },
+				);
+				browser = await connectToDesktop(application);
+				const context = browser.contexts()[0];
+				assert.ok(context);
+				const page = context.pages()[0] ?? (await context.waitForEvent("page"));
+				await page.getByRole("heading", { name: "Welcome to Clawdi" }).waitFor();
+				await page.getByRole("button", { name: "Sign in", exact: true }).click();
+				await page.getByRole("button", { name: /Connect/ }).click();
+				await page.getByRole("heading", { name: "Agents Connected" }).waitFor();
+				const launcher = nativeLauncherPath("win32", home);
+				if (scenario.endsWith("native")) {
+					assert.ok(existsSync(launcher), "Fresh Desktop must bootstrap native CLI");
+					assert.ok(readFileSync(shim, "utf8").includes(`"${launcher}" %*`));
+				} else if (scenario === "keep-bundled") {
+					assert.ok(readFileSync(shim, "utf8").includes(destination), "Fallback points at app");
+				}
+				await stopDesktop();
+				await runCommand(
+					join(destination, "Uninstall Clawdi.exe"),
+					["/S", ...(scenario === "remove-native" ? [] : ["/KEEPCLI"]), `_?=${destination}`],
+					{ env, timeoutMs: 120_000 },
+				);
+				assert.equal(existsSync(join(destination, "Clawdi.exe")), false);
+				const keepCommand = scenario === "keep-native" || scenario === "foreign-command";
+				assert.equal(existsSync(shim), keepCommand);
+				assert.equal(existsSync(launcher), scenario === "keep-native");
+				const command = await runCommand(
+					"powershell.exe",
+					[
+						"-NoProfile",
+						"-NonInteractive",
+						"-Command",
+						`
+$ErrorActionPreference = 'Stop'
+$env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine')
+$command = Get-Command clawdi -CommandType Application -ErrorAction SilentlyContinue
+if ($env:CLAWDI_TEST_KEEP_COMMAND -eq '1') {
+  if (!$command -or $command.Source -ne $env:CLAWDI_TEST_SHIM) { throw 'New terminal lost kept CLI command' }
+  $command.Source
+  clawdi --version
+  if ($LASTEXITCODE -ne 0) { throw 'Kept terminal command cannot execute' }
+} elseif ($command -and $command.Source -eq $env:CLAWDI_TEST_SHIM) { throw 'Removed CLI still resolves' }
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
+if (($userPath -contains (Split-Path $env:CLAWDI_TEST_SHIM)) -ne ($env:CLAWDI_TEST_KEEP_COMMAND -eq '1')) { throw 'Incorrect PATH cleanup' }
+`,
+					],
+					{
+						env: {
+							...env,
+							CLAWDI_TEST_KEEP_COMMAND: keepCommand ? "1" : "0",
+							CLAWDI_TEST_SHIM: shim,
+						},
+					},
+				);
+				if (keepCommand)
+					assert.equal(
+						command.stdout.trim().split(/\r?\n/).at(-1),
+						scenario === "keep-native" ? "0.16.8" : "foreign-command",
+					);
+				console.info(`Real Windows NSIS uninstall: ${scenario} passed`);
+			} finally {
+				await stopDesktop();
+				if (existsSync(join(destination, "Clawdi.exe")))
+					await runCommand(join(destination, "Uninstall Clawdi.exe"), ["/S", `_?=${destination}`], {
+						env,
+						timeoutMs: 120_000,
+					});
+				await removeTestShim(shim);
+			}
+		}
 	}
 } catch (error) {
 	console.error("Shared native CLI e2e failed", error);
@@ -313,23 +509,12 @@ try {
 } finally {
 	await stopDesktop();
 	if (process.platform === "win32") {
-		const shim = join(root, "offline", "local", "Clawdi", "bin", "clawdi.cmd");
-		if (existsSync(shim)) {
-			await runCommand("powershell.exe", [
-				"-NoLogo",
-				"-NoProfile",
-				"-NonInteractive",
-				"-ExecutionPolicy",
-				"Bypass",
-				"-File",
-				join(desktop, "build/windows-cli-path.ps1"),
-				"-Action",
-				"Remove",
-				"-BinPath",
-				dirname(shim),
-				"-LauncherPath",
-				shim,
-			]);
+		for (const scenario of ["fresh", "newer", "migration", "offline", ...uninstallScenarios]) {
+			const shim = join(root, scenario, "local", "Clawdi", "bin", "clawdi.cmd");
+			if (existsSync(shim)) {
+				await removeTestShim(shim);
+				assert.equal(existsSync(shim), false, "Remove only the owned shim");
+			}
 		}
 	}
 	if (hadBundledResource && existsSync(join(root, "original-cli")))

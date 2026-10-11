@@ -40,7 +40,7 @@ export function reduceDesktopUpdateState(
 		case "not-available":
 			return state.status === "checking" ? { status: "idle" } : state;
 		case "error":
-			return state.status === "ready" || state.status === "error" ? state : { status: "error" };
+			return state.status === "error" ? state : { status: "error" };
 	}
 }
 

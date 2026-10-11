@@ -19,15 +19,19 @@
     ${ifNot} ${Errors}
       System::Call 'Kernel32::SetEnvironmentVariable(t "CLAWDI_UNINSTALL_KEEP_CLI", t "1")i.r0'
     ${endif}
+    ; Run the shared Desktop cleanup before deleting CLI credentials. The executable
+    ; is still installed, and no cleanup entry is invoked in the upgrade branch.
+    nsExec::ExecToStack /TIMEOUT=240000 '"$INSTDIR\Clawdi.exe" --clawdi-uninstall-cleanup'
+    Pop $0
+    Pop $1
     ; The bundled native CLI is available before NSIS removes app files. It removes
     ; the shared CLI only when its validated metadata records installedBy=desktop.
     ; CLI failures are best effort and must never prevent NSIS from completing.
     nsExec::ExecToStack '"$INSTDIR\resources\native\clawdi.exe" uninstall --yes'
     Pop $0
     Pop $1
-    nsExec::ExecToStack 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\support\windows-cli-path.ps1" -Action Remove -BinPath "$LOCALAPPDATA\Clawdi\bin" -LauncherPath "$LOCALAPPDATA\Clawdi\bin\clawdi.cmd"'
-    Pop $0
-    Pop $1
+    ; Desktop cleanup owns launcher/PATH removal too: KEEPCLI preserves only
+    ; a marked shim targeting an ownership-verified shared native CLI.
     ; Registered by app.setAsDefaultProtocolClient("clawdi-desktop") on launch.
     DeleteRegKey HKCU "Software\Classes\clawdi-desktop"
   ${endif}

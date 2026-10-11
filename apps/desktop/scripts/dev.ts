@@ -6,7 +6,16 @@ import { fileURLToPath } from "node:url";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(scriptDir, "..");
 
-if (!existsSync(join(desktopRoot, "resources", "native", "clawdi"))) {
+if (
+	!existsSync(
+		join(
+			desktopRoot,
+			"resources",
+			"native",
+			process.platform === "win32" ? "clawdi.exe" : "clawdi",
+		),
+	)
+) {
 	await runToCompletion("bun", ["run", "prepare:native"]);
 }
 await runToCompletion("bun", ["run", "build"]);

@@ -1,8 +1,18 @@
 import { expect, mock, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readlinkSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MessageBoxOptions } from "electron";
+import { removeDesktopCliSymlink } from "./cli-command";
 import {
 	clearDesktopDirectories,
 	macApplicationBundle,
@@ -34,6 +44,9 @@ function fixture(
 		uninstallCli: mock(async (remove: boolean) => {
 			calls.push(`cli:${remove}`);
 		}),
+		removeCliCommand: () => {
+			calls.push("cli-command");
+		},
 		clearData: async () => {
 			calls.push("data");
 		},
@@ -71,6 +84,7 @@ test.each([true, false])(
 			"prepare",
 			"revoke",
 			`cli:${removeCli}`,
+			"cli-command",
 			"login-item",
 			"data",
 			"application",
@@ -137,3 +151,46 @@ test("Desktop still quits when a post-cleanup native dialog fails", async () => 
 	await expect(uninstallDesktop(actions)).rejects.toThrow("dialog failed");
 	expect(calls.at(-1)).toBe("quit");
 });
+
+test.skipIf(process.platform === "win32")(
+	"offline Desktop uninstall removes bundle, AppImage and dangling owned launchers before targets; keeps foreign links",
+	async () => {
+		for (const targetKind of ["bundle", "AppImage", "dangling", "foreign"]) {
+			const root = mkdtempSync(join(tmpdir(), "desktop-fallback-uninstall-"));
+			try {
+				const home = join(root, "home");
+				const userData = join(root, "data");
+				const bundle = join(root, "Clawdi.app/Contents/Resources/native/clawdi");
+				const target =
+					targetKind === "AppImage"
+						? join(userData, "runtimes/0.1.0/clawdi")
+						: targetKind === "foreign"
+							? join(root, "other/clawdi")
+							: bundle;
+				const launcher = join(home, ".local/bin/clawdi");
+				mkdirSync(join(home, ".local/bin"), { recursive: true });
+				mkdirSync(join(target, ".."), { recursive: true });
+				if (targetKind !== "dangling") writeFileSync(target, "fixture");
+				symlinkSync(target, launcher);
+				const { actions } = fixture(targetKind === "bundle" ? "darwin" : "linux", false, false);
+				actions.removeCliCommand = () =>
+					removeDesktopCliSymlink({ home, userData, bundledCli: bundle });
+				actions.clearData = async () => {
+					if (targetKind !== "foreign") expect(() => lstatSync(launcher)).toThrow();
+					await clearDesktopDirectories([userData], "linux");
+				};
+				actions.removeApplication = async () => {
+					if (targetKind !== "foreign") expect(() => lstatSync(launcher)).toThrow();
+					rmSync(join(root, "Clawdi.app"), { recursive: true, force: true });
+				};
+				await uninstallDesktop(actions);
+				if (targetKind === "foreign") {
+					expect(readlinkSync(launcher)).toBe(target);
+					expect(existsSync(target)).toBe(true);
+				}
+			} finally {
+				rmSync(root, { recursive: true, force: true });
+			}
+		}
+	},
+);

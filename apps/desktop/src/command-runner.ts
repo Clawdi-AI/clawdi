@@ -38,6 +38,7 @@ export function runCommand(
 		});
 		let stdout = "";
 		let stderr = "";
+		const stdoutDecoder = new StringDecoder("utf8");
 		const stderrDecoder = new StringDecoder("utf8");
 		let stderrLine = "";
 		let settled = false;
@@ -103,7 +104,7 @@ export function runCommand(
 		};
 
 		child.stdout.on("data", (chunk: Buffer) => {
-			stdout = append(stdout, chunk.toString("utf8"));
+			stdout = append(stdout, stdoutDecoder.write(chunk));
 		});
 		child.stderr.on("data", (chunk: Buffer) => {
 			consumeStderr(stderrDecoder.write(chunk));
@@ -111,6 +112,7 @@ export function runCommand(
 		child.stdin.on("error", () => {});
 		child.on("error", (error) => finish(error));
 		child.on("close", (code, signal) => {
+			stdout = append(stdout, stdoutDecoder.end());
 			consumeStderr(stderrDecoder.end());
 			if (terminationError) {
 				finish(terminationError);

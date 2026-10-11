@@ -1,7 +1,9 @@
+import type { DesktopMutations } from "./mutations";
+
 export interface DesktopUpdateInstallationOptions {
 	platform: NodeJS.Platform;
 	isReady: () => boolean;
-	isBusy: () => boolean;
+	mutations: DesktopMutations;
 	stopBackgroundServices: () => Promise<boolean>;
 	restoreBackgroundServices: () => Promise<void>;
 	install: (onQuit: boolean) => boolean;
@@ -13,13 +15,9 @@ export interface DesktopUpdateInstallationOptions {
 export class DesktopUpdateInstallation {
 	private inProgress = false;
 	private allowQuit = false;
-	private quitPending = false;
+	private recoverFailure: (() => Promise<void>) | null = null;
 
 	constructor(private readonly options: DesktopUpdateInstallationOptions) {}
-
-	get isInProgress(): boolean {
-		return this.inProgress;
-	}
 
 	shouldDeferQuit(): boolean {
 		// macOS/Linux normally use the updater's quit listener directly. Calling
@@ -27,37 +25,51 @@ export class DesktopUpdateInstallation {
 		return (
 			!this.allowQuit &&
 			(this.inProgress ||
-				(this.options.isReady() && (this.options.platform === "win32" || this.options.isBusy())))
+				(this.options.isReady() &&
+					(this.options.platform === "win32" ||
+						this.options.mutations.activeCount > 0 ||
+						this.options.mutations.blocked)))
 		);
-	}
-
-	async resumePendingQuit(): Promise<void> {
-		if (this.quitPending) await this.install(true);
 	}
 
 	async install(onQuit: boolean): Promise<void> {
 		if (this.inProgress || !this.options.isReady()) return;
-		if (this.options.isBusy()) {
-			if (onQuit) this.quitPending = true;
-			return;
-		}
-		this.quitPending = false;
+		const admission = this.options.mutations.block(
+			"Clawdi is preparing an update. Try again after it finishes.",
+		);
 		this.inProgress = true;
 		let stopped = false;
+		let recovery: Promise<void> | null = null;
+		const recover = (): Promise<void> => {
+			this.allowQuit = false;
+			if (!recovery)
+				recovery = (async () => {
+					try {
+						if (stopped) await this.options.restoreBackgroundServices();
+					} finally {
+						this.inProgress = false;
+						this.recoverFailure = null;
+						admission.release();
+					}
+				})();
+			return recovery;
+		};
 		try {
+			await admission.drained;
 			if (this.options.platform === "win32") stopped = await this.options.stopBackgroundServices();
 			// Allow the updater's own quit, rather than intercepting it again.
 			this.allowQuit = true;
+			this.recoverFailure = recover;
 			if (!this.options.install(onQuit))
 				throw new Error("The downloaded update is no longer ready.");
 		} catch (error) {
-			this.allowQuit = false;
-			try {
-				if (stopped) await this.options.restoreBackgroundServices();
-			} finally {
-				this.inProgress = false;
-			}
+			await recover();
 			throw error;
 		}
+	}
+
+	/** quitAndInstall returns before native installation; later errors must recover too. */
+	recoverAfterFailure(): Promise<void> {
+		return this.recoverFailure?.() ?? Promise.resolve();
 	}
 }

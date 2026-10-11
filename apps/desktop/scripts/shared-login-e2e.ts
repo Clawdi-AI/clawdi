@@ -1,38 +1,150 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	cpSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ClawdiDesktopBridge } from "@clawdi/shared/desktop";
+import type { ClawdiDesktopBridge, ClawdiDesktopConnectBridge } from "@clawdi/shared/desktop";
 import { _electron } from "@playwright/test";
+import type { App, BaseWindow, MessageBoxOptions } from "electron";
 
 declare global {
 	interface Window {
 		clawdiDesktop?: ClawdiDesktopBridge;
+		clawdiConnect?: ClawdiDesktopConnectBridge;
 	}
 }
 
 const repo = resolve(import.meta.dir, "../../..");
 const root = mkdtempSync(join(tmpdir(), "clawdi-shared-login-"));
 const state = join(root, "home/.clawdi");
+type AcceptanceApp = App & {
+	openedUrls: string[];
+	signOutWarnings: MessageBoxOptions[];
+	desktopAcceptance: {
+		refreshTrayState(): Promise<void>;
+		beginUpdate(): void;
+		releaseStop(): void;
+		finishUpdate(): Promise<void>;
+		beginDeferredUpdate(): Promise<void>;
+		failDeferredUpdate(): Promise<void>;
+	};
+};
 mkdirSync(state, { recursive: true });
 mkdirSync(join(root, "electron"), { recursive: true });
 writeFileSync(join(root, "electron", "first-connection"), "fixture");
 let application: Awaited<ReturnType<typeof _electron.launch>> | undefined;
 try {
 	// Render the actual web /desktop-auth component with only Clerk replaced by a mock.
+	cpSync(join(repo, "apps/desktop/dist"), join(root, "dist"), { recursive: true });
+	symlinkSync(join(repo, "apps/desktop/node_modules"), join(root, "node_modules"), "dir");
+	writeFileSync(
+		join(root, "package.json"),
+		JSON.stringify({ name: "desktop-acceptance", type: "module", main: "dist/main.js" }),
+	);
+	// The fixture exports only a handle to production state; IPC handlers and CLI calls remain real.
+	const main = await Bun.build({
+		entrypoints: [join(repo, "apps/desktop/src/main.ts")],
+		target: "node",
+		format: "esm",
+		external: ["electron", "electron-updater", "builder-util-runtime"],
+		outdir: join(root, "dist"),
+		naming: "main.js",
+		plugins: [
+			{
+				name: "acceptance-handles",
+				setup(build) {
+					build.onLoad({ filter: /[/\\]src[/\\]main\.ts$/ }, () => ({
+						loader: "ts",
+						contents:
+							readFileSync(join(repo, "apps/desktop/src/main.ts"), "utf8") +
+							`
+let releaseStop: (() => void) | undefined;
+let updateFinished: Promise<void> | undefined;
+import { autoUpdater as fixtureNativeUpdater } from 'electron';
+let deferredController: DesktopUpdateController | undefined;
+let deferredInstallation: DesktopUpdateInstallation | undefined;
+let deferredRecovery: Promise<void> | undefined;
+let deferredState: DesktopUpdateState = {status:'idle'};
+let deferredUpdater: InstanceType<typeof electronUpdater.MacUpdater> | undefined;
+const acceptanceApp = app as typeof app & {desktopAcceptance: {
+ refreshTrayState: typeof refreshTrayState; beginUpdate(): void; releaseStop(): void; finishUpdate(): Promise<void>;
+ beginDeferredUpdate(): Promise<void>; failDeferredUpdate(): Promise<void>;
+}};
+acceptanceApp.desktopAcceptance = {
+ refreshTrayState,
+ beginUpdate() {
+   const stop = Promise.withResolvers<void>(); releaseStop = stop.resolve;
+   const installer = new DesktopUpdateInstallation({platform:'win32', isReady:()=>true, mutations,
+     stopBackgroundServices:async()=>{await stop.promise; await cli.stopDaemon(); return true;},
+     restoreBackgroundServices:()=>cli.restartDaemon(), install:()=>false});
+   updateFinished = installer.install(false).catch(error=>{if(!error.message.includes('no longer ready')) throw error;});
+ },
+ releaseStop(){if (!releaseStop) throw new Error('Update was not started'); releaseStop();},
+ finishUpdate(){if (!updateFinished) throw new Error('Update was not started'); return updateFinished;},
+ async beginDeferredUpdate() {
+   if (!deferredUpdater) {
+     deferredUpdater = new electronUpdater.MacUpdater(undefined, {
+       version:'1.0.0', name:'deferred-error-fixture', isPackaged:true,
+       appUpdateConfigPath:'unused', userDataPath:app.getPath('userData'), baseCachePath:app.getPath('cache'),
+       whenReady:async()=>undefined, relaunch:()=>{throw new Error('Unexpected relaunch');},
+       quit:()=>{throw new Error('Unexpected quit');}, onQuit:()=>undefined
+     });
+     deferredUpdater.logger = null;
+     deferredController = new DesktopUpdateController({policy:{enabled:true,channel:'stable'}, updater:deferredUpdater,
+       onStateChange:state=>{deferredState=state;}, onUpdateReady:()=>undefined,
+       onInstallError:()=>{deferredRecovery=deferredInstallation?.recoverAfterFailure();}});
+     deferredInstallation = new DesktopUpdateInstallation({platform:'win32', mutations,
+       isReady:()=>deferredState.status==='ready', stopBackgroundServices:async()=>{await cli.stopDaemon(); return true;},
+       restoreBackgroundServices:()=>cli.restartDaemon(), install:()=>deferredController?.installDownloadedUpdate()??false});
+     deferredController.start();
+   }
+   deferredUpdater.emit('checking-for-update');
+   deferredUpdater.emit('update-available',{version:'1.1.0'});
+   deferredUpdater.emit('update-downloaded',{version:'1.1.0'});
+   await deferredInstallation?.install(false);
+   if (!mutations.blocked) throw new Error('Install retry was not accepted');
+ },
+ async failDeferredUpdate() {
+   fixtureNativeUpdater.emit('error',new Error('Squirrel validation failed after quitAndInstall returned'));
+   await deferredRecovery;
+   if (mutations.blocked || deferredState.status!=='error') throw new Error('Deferred install failed to recover');
+   deferredController?.stop();
+ }
+};`,
+					}));
+				},
+			},
+		],
+	});
+	assert.equal(main.success, true, "Could not bundle production Desktop acceptance entry");
 	const entry = join(root, "entry.tsx");
 	writeFileSync(
 		entry,
 		`import React from '${repo}/apps/web/node_modules/react';
 import {createRoot} from '${repo}/apps/web/node_modules/react-dom/client';
 import {DesktopAuthPage} from '${repo}/apps/web/src/routes/desktop-auth';
-createRoot(document.getElementById('root')).render(React.createElement(DesktopAuthPage));`,
+import {UserMenuItems} from '${repo}/apps/web/src/components/user-menu';
+import {DropdownMenu,DropdownMenuTrigger,DropdownMenuContent} from '${repo}/apps/web/src/components/ui/dropdown-menu';
+import {ThemeProvider} from '${repo}/apps/web/src/components/theme-provider';
+const dashboard = <ThemeProvider><h1>Signed in as user_fixture</h1><DropdownMenu><DropdownMenuTrigger>User menu</DropdownMenuTrigger><DropdownMenuContent><UserMenuItems/></DropdownMenuContent></DropdownMenu></ThemeProvider>;
+createRoot(document.getElementById('root')).render(location.pathname === '/desktop-auth' ? <DesktopAuthPage/> : dashboard);`,
 	);
 	const bundle = await Bun.build({
 		entrypoints: [entry],
 		target: "browser",
 		minify: true,
-		define: { "process.env.NODE_ENV": JSON.stringify("production") },
+		define: {
+			"process.env.NODE_ENV": JSON.stringify("production"),
+			"import.meta.env": JSON.stringify({ VITE_CLERK_PUBLISHABLE_KEY: "pk_test_fixture" }),
+		},
 		plugins: [
 			{
 				name: "mock-clerk",
@@ -55,7 +167,9 @@ const signIn = {
 };
 export function useAuth(){const signedIn=document.cookie.includes("mock_signed_in=user_fixture");return {isLoaded:true,isSignedIn:signedIn,userId:signedIn?"user_fixture":null,sessionId:signedIn?"sess_fixture":null};}
 export function useSignIn(){return {signIn};}
-export function useClerk(){return {async signOut(callback){ document.cookie="mock_signed_in=; Max-Age=0; Path=/"; document.cookie="__session=; Max-Age=0; Path=/"; callback?.(); } };}
+export function useClerk(){return {async signOut(options){ document.cookie="mock_signed_in=; Max-Age=0; Path=/"; document.cookie="__session=; Max-Age=0; Path=/"; if(typeof options === 'function') options(); else if(options?.redirectUrl) location.href=options.redirectUrl; } };}
+export function useUser(){return {user:{fullName:'Fixture User',primaryEmailAddress:{emailAddress:'fixture@example.test'}}};}
+export function useSession(){return {session:null};}
 `,
 					}));
 				},
@@ -68,7 +182,7 @@ export function useClerk(){return {async signOut(callback){ document.cookie="moc
 	async function launch() {
 		const launched = await _electron.launch({
 			args: [
-				join(repo, "apps/desktop"),
+				root,
 				`--user-data-dir=${join(root, "electron")}`,
 				// Linux test containers lack Chromium's OS sandbox support; production options are covered by dashboard-window.test.ts.
 				...(process.platform === "linux" ? ["--no-sandbox"] : []),
@@ -87,8 +201,18 @@ export function useClerk(){return {async signOut(callback){ document.cookie="moc
 		});
 		const context = launched.context();
 		context.setDefaultTimeout(15_000);
-		await launched.evaluate(({ app, shell }) => {
-			const testApp = app as typeof app & { openedUrls: string[] };
+		await launched.evaluate(({ app, shell, dialog }) => {
+			const testApp = app as AcceptanceApp;
+			testApp.signOutWarnings = [];
+			dialog.showMessageBox = async (
+				parentOrOptions: BaseWindow | MessageBoxOptions,
+				maybeOptions?: MessageBoxOptions,
+			) => {
+				const options =
+					maybeOptions ?? ("message" in parentOrOptions ? parentOrOptions : undefined);
+				if (options) testApp.signOutWarnings.push(options);
+				return { response: 0, checkboxChecked: false };
+			};
 			testApp.openedUrls = [];
 			shell.openExternal = async (url) => {
 				testApp.openedUrls.push(url);
@@ -104,7 +228,7 @@ export function useClerk(){return {async signOut(callback){ document.cookie="moc
 			if (url.pathname === "/desktop-auth")
 				html += `<script type="module" src="/mock-auth.js"></script>`;
 			else if (route.request().headers().cookie?.includes("mock_signed_in=user_fixture"))
-				html += `<h1>Signed in as user_fixture</h1><button onclick='window.clawdiDesktop.signOut()'>Sign out</button>`;
+				html += `<script type="module" src="/mock-auth.js"></script>`;
 			else html += "<h1>Signed out</h1>";
 			await route.fulfill({ status: 200, contentType: "text/html", body: html });
 		});
@@ -129,6 +253,18 @@ export function useClerk(){return {async signOut(callback){ document.cookie="moc
 	assert.equal(
 		await normalBrowser.evaluate(() => document.cookie.includes("mock_signed_in=")),
 		false,
+	);
+	await normalBrowser.evaluate(async () => {
+		await window.cookieStore.set({ name: "mock_signed_in", value: "user_fixture", path: "/" });
+	});
+	await normalBrowser.goto("https://cloud.clawdi.ai/");
+	await normalBrowser.getByRole("button", { name: "User menu" }).click();
+	await normalBrowser.getByRole("menuitem", { name: "Sign out", exact: true }).click();
+	await normalBrowser.waitForURL("https://cloud.clawdi.ai/sign-in");
+	assert.equal(
+		await normalBrowser.evaluate(() => document.cookie.includes("mock_signed_in=")),
+		false,
+		"Normal browser user menu must retain Clerk sign-out",
 	);
 	await normalBrowser.close();
 	console.info("Browser ticket refusal verified; approving mock device sign-in.");
@@ -240,22 +376,163 @@ export function useClerk(){return {async signOut(callback){ document.cookie="moc
 		.frameLocator('iframe[name="stripe-3ds"]')
 		.getByRole("heading", { name: "3DS fixture" })
 		.waitFor();
-	writeFileSync(join(state, "fail-revoke"), "");
-	await assert.rejects(dashboard.evaluate(() => window.clawdiDesktop?.signOut()));
-	assert.equal(existsSync(join(state, "auth.json")), true);
-	assert.equal(await dashboard.evaluate(() => document.cookie.includes("__session=")), true);
-	rmSync(join(state, "fail-revoke"));
+
+	await dashboard.getByRole("button", { name: "User menu" }).click();
 	const nextWindow = application.waitForEvent("window");
-	await dashboard.getByRole("button", { name: "Sign out", exact: true }).click();
-	const welcome = await nextWindow;
-	await welcome.getByRole("heading", { name: "Welcome to Clawdi" }).waitFor();
-	assert.equal(existsSync(join(state, "auth.json")), false);
-	assert.equal(existsSync(join(state, "sync")), false);
-	const cookies = await application.evaluate(async ({ session }) =>
-		session.fromPartition("persist:clawdi-dashboard").cookies.get({}),
-	);
-	assert.deepEqual(cookies, []);
+	await dashboard
+		.getByRole("menuitem", { name: "Sign out", exact: true })
+		.click({ noWaitAfter: true })
+		.catch((error) => {
+			if (!dashboard.isClosed()) throw error;
+		});
+	let welcome = await nextWindow;
+	await assertLocalSignOut(welcome);
 	assert.equal(readFileSync(join(state, "revoked"), "utf8"), "revoked\n");
+	assert.equal(
+		readFileSync(join(state, "ticket-count"), "utf8"),
+		"ticket\n",
+		"UserMenu sign-out must not request another ticket",
+	);
+
+	for (const scenario of ["terminal logout", "deleted credentials", "network failure"]) {
+		await welcome.getByRole("button", { name: "Sign in", exact: true }).click();
+		await welcome.getByRole("button", { name: /Connect/ }).click();
+		await welcome.getByRole("heading", { name: "Agents Connected" }).waitFor();
+		// Delayed Windows shutdown uses the production guard and actual Connect preload/IPC.
+		if (scenario === "terminal logout") {
+			await application.evaluate(({ app }) =>
+				(app as AcceptanceApp).desktopAcceptance.beginUpdate(),
+			);
+			await assert.rejects(
+				welcome.evaluate(() => window.clawdiConnect?.connectAgents([{ type: "codex" }])),
+				/preparing an update/,
+			);
+			await application.evaluate(async ({ app }) => {
+				const handle = (app as AcceptanceApp).desktopAcceptance;
+				handle.releaseStop();
+				await handle.finishUpdate();
+			});
+			await welcome.evaluate(() => window.clawdiConnect?.connectAgents([{ type: "codex" }]));
+			assert.equal(
+				existsSync(join(state, "sync")),
+				true,
+				"Failure must restore sync and mutation admission",
+			);
+			// Real MacUpdater returns while Squirrel is pending. Emit its error in
+			// the next IPC turn, then exercise production Connect and sign-out.
+			await application.evaluate(async ({ app }) =>
+				(app as AcceptanceApp).desktopAcceptance.beginDeferredUpdate(),
+			);
+			await assert.rejects(
+				welcome.evaluate(() => window.clawdiConnect?.connectAgents([{ type: "codex" }])),
+				/preparing an update/,
+			);
+			await application.evaluate(async ({ app }) =>
+				(app as AcceptanceApp).desktopAcceptance.failDeferredUpdate(),
+			);
+			await welcome.evaluate(() => window.clawdiConnect?.connectAgents([{ type: "codex" }]));
+			assert.equal(existsSync(join(state, "sync")), true);
+			await application.evaluate(async ({ app }) => {
+				const handle = (app as AcceptanceApp).desktopAcceptance;
+				await handle.beginDeferredUpdate();
+				await handle.failDeferredUpdate();
+			});
+			await welcome.getByRole("button", { name: "Open dashboard", exact: false }).click();
+			dashboard = await waitForDashboard();
+			await dashboard.getByRole("button", { name: "User menu", exact: true }).click();
+			const recoveredWindow = application.waitForEvent("window");
+			await dashboard
+				.getByRole("menuitem", { name: "Sign out", exact: true })
+				.click({ noWaitAfter: true })
+				.catch((error) => {
+					if (!dashboard.isClosed()) throw error;
+				});
+			welcome = await recoveredWindow;
+			await assertLocalSignOut(welcome);
+			await welcome.getByRole("button", { name: "Sign in", exact: true }).click();
+			await welcome.getByRole("button", { name: /Connect/ }).click();
+			await welcome.getByRole("heading", { name: "Agents Connected" }).waitFor();
+		}
+		await welcome.getByRole("button", { name: "Open dashboard", exact: false }).click();
+		dashboard = await waitForDashboard();
+		await dashboard.getByRole("heading", { name: "Signed in as user_fixture" }).waitFor();
+		await dashboard.evaluate(() => localStorage.setItem("private-fixture", "old-account"));
+		const ticketCount = readFileSync(join(state, "ticket-count"), "utf8");
+		const nextConnect = application.waitForEvent("window");
+		if (scenario === "network failure") {
+			writeFileSync(join(state, "fail-revoke"), "");
+			await dashboard.getByRole("button", { name: "User menu" }).click();
+			await dashboard
+				.getByRole("menuitem", { name: "Sign out", exact: true })
+				.click({ noWaitAfter: true })
+				.catch((error) => {
+					if (!dashboard.isClosed()) throw error;
+				});
+		} else {
+			if (scenario === "terminal logout") {
+				const logout = Bun.spawn(
+					[join(repo, "apps/desktop/scripts/shared-login-native.sh"), "auth", "logout"],
+					{ env: { ...process.env, CLAWDI_HOME: state } },
+				);
+				assert.equal(await logout.exited, 0);
+			} else rmSync(join(state, "auth.json"));
+			await application.evaluate(({ app }) =>
+				(app as AcceptanceApp).desktopAcceptance.refreshTrayState(),
+			);
+		}
+		welcome = await nextConnect;
+		await assertLocalSignOut(welcome);
+		assert.equal(readFileSync(join(state, "ticket-count"), "utf8"), ticketCount);
+		const warnings: MessageBoxOptions[] = await application.evaluate(
+			({ app }) => (app as AcceptanceApp).signOutWarnings,
+		);
+		assert.ok(
+			warnings.some((options) =>
+				options.detail?.includes("remote Dashboard session could not be revoked"),
+			),
+		);
+		rmSync(join(state, "fail-revoke"), { force: true });
+		console.info(`Local sign-out verified: ${scenario}`);
+	}
+
+	async function assertLocalSignOut(connectPage: import("@playwright/test").Page) {
+		await connectPage.getByRole("heading", { name: "Welcome to Clawdi" }).waitFor();
+		assert.equal(existsSync(join(state, "auth.json")), false);
+		assert.equal(existsSync(join(state, "sync")), false);
+		assert.deepEqual(
+			await application?.evaluate(async ({ session }) =>
+				session.fromPartition("persist:clawdi-dashboard").cookies.get({}),
+			),
+			[],
+		);
+		assert.ok(
+			context.pages().every((page) => !page.url().startsWith("https://cloud.clawdi.ai/")),
+			"Old Dashboard must be closed",
+		);
+		assert.equal(
+			await application?.evaluate(async ({ BrowserWindow }) => {
+				const probe = new BrowserWindow({
+					show: false,
+					webPreferences: {
+						partition: "persist:clawdi-dashboard",
+						sandbox: true,
+						contextIsolation: true,
+						nodeIntegration: false,
+					},
+				});
+				try {
+					await probe.loadURL("https://cloud.clawdi.ai/storage-check");
+					return await probe.webContents.executeJavaScript(
+						'localStorage.getItem("private-fixture")',
+					);
+				} finally {
+					probe.destroy();
+				}
+			}),
+			null,
+			"Sign-out must clear persistent storage as well as cookies",
+		);
+	}
 	const logs = await application.evaluate(({ app }) => app.getPath("logs"));
 	if (existsSync(join(logs, "main.log")))
 		assert.doesNotMatch(readFileSync(join(logs, "main.log"), "utf8"), /mock-once|mock-only/);

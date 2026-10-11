@@ -3,15 +3,19 @@ import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { MessageBoxOptions, MessageBoxReturnValue } from "electron";
 
-interface DesktopUninstallActions {
-	platform: NodeJS.Platform;
-	installedByDesktop(): Promise<boolean>;
-	showMessageBox(options: MessageBoxOptions): Promise<MessageBoxReturnValue>;
+export interface DesktopCleanupActions {
 	prepare(): Promise<void>;
 	revokeSessions(): Promise<void>;
 	uninstallCli(removeCli: boolean): Promise<void>;
+	removeCliCommand(removeCli: boolean): void | Promise<void>;
 	clearData(): Promise<void>;
 	removeLoginItem(): void;
+}
+
+interface DesktopUninstallActions extends DesktopCleanupActions {
+	platform: NodeJS.Platform;
+	installedByDesktop(): Promise<boolean>;
+	showMessageBox(options: MessageBoxOptions): Promise<MessageBoxReturnValue>;
 	removeApplication(removeCli: boolean): Promise<void>;
 	quit(): void;
 }
@@ -23,7 +27,7 @@ export async function uninstallDesktop(actions: DesktopUninstallActions): Promis
 		title: "Uninstall Clawdi",
 		message: "Uninstall Clawdi from this computer?",
 		detail:
-			"Removes background sync, agent integrations, sign-in, and local app data. Your account data stays.",
+			"Removes background sync, agent integrations, sign-in, and local app data. Your account data stays. A bundled fallback CLI is removed with the app.",
 		checkboxLabel: "Also remove the Clawdi command-line tool",
 		checkboxChecked: await actions.installedByDesktop(),
 		buttons: ["Cancel", "Uninstall Clawdi"],
@@ -32,22 +36,12 @@ export async function uninstallDesktop(actions: DesktopUninstallActions): Promis
 		noLink: true,
 	});
 	if (choice.response !== 1) return false;
-	const failed: string[] = [];
-	const step = async (label: string, action: () => void | Promise<void>) => {
-		try {
-			await action();
-		} catch {
-			failed.push(label);
-		}
-	};
-	await step("Stop app activity", actions.prepare);
-	await step("Revoke Desktop sign-in", actions.revokeSessions);
-	await step("Remove local services and integrations", () =>
-		actions.uninstallCli(choice.checkboxChecked),
-	);
-	await step("Remove login item", actions.removeLoginItem);
-	await step("Clear local app data", actions.clearData);
-	await step("Remove application", () => actions.removeApplication(choice.checkboxChecked));
+	const failed = await cleanupDesktop(actions, choice.checkboxChecked);
+	try {
+		await actions.removeApplication(choice.checkboxChecked);
+	} catch {
+		failed.push("Remove application");
+	}
 	try {
 		if (failed.length) {
 			await actions.showMessageBox({
@@ -70,6 +64,28 @@ export async function uninstallDesktop(actions: DesktopUninstallActions): Promis
 		actions.quit();
 	}
 	return true;
+}
+
+/** Shared by the application menu and the real NSIS uninstall entry, never upgrades. */
+export async function cleanupDesktop(
+	actions: DesktopCleanupActions,
+	removeCli: boolean,
+): Promise<string[]> {
+	const failed: string[] = [];
+	const step = async (label: string, action: () => void | Promise<void>) => {
+		try {
+			await action();
+		} catch {
+			failed.push(label);
+		}
+	};
+	await step("Stop app activity", actions.prepare);
+	await step("Revoke Desktop sign-in", actions.revokeSessions);
+	await step("Remove local services and integrations", () => actions.uninstallCli(removeCli));
+	await step("Remove Desktop CLI launcher", () => actions.removeCliCommand(removeCli));
+	await step("Remove login item", actions.removeLoginItem);
+	await step("Clear local app data", actions.clearData);
+	return failed;
 }
 
 export function macApplicationBundle(executable: string): string {
