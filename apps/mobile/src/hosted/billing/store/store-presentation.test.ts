@@ -2,32 +2,11 @@ import { describe, expect, test } from "bun:test";
 import {
 	computePurchaseErrorNotice,
 	computePurchaseNotice,
-	creditPrice,
-	formatCreditCents,
-	formatCredits,
 	pendingCheckNotice,
 	purchaseErrorNotice,
 	purchaseOutcomeNotice,
 	restorePurchasesNotices,
-	signedCredits,
 } from "./store-presentation";
-
-describe("credit units", () => {
-	test("never render a dollar sign", () => {
-		expect(formatCredits("1234.5", "credits")).toBe("1,234.50 credits");
-		expect(formatCredits("-3.004", "credits")).toBe("-3.00 credits");
-		expect(formatCredits("0.001", "credits")).toBe("<0.01 credits");
-		expect(formatCredits("invalid", "credits")).toBe("—");
-		expect(formatCreditCents(2500, "credits")).toBe("25.00 credits");
-		expect(signedCredits("−$25.00", "credits")).toBe("−25.00 credits");
-	});
-
-	test("only USD prices have a credit equivalent", () => {
-		expect(creditPrice({ price_cents: 999, currency: "USD" }, "credits")).toBe("9.99 credits");
-		expect(creditPrice({ price_cents: 999, currency: "eur" }, "credits")).toBeNull();
-		expect(creditPrice({ price_cents: null, currency: "usd" }, "credits")).toBeNull();
-	});
-});
 
 describe("purchase notices", () => {
 	const outcome = (

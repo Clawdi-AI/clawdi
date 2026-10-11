@@ -10,7 +10,6 @@ import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { AddCreditsAction, CheckPendingPurchasesAction } from "@/hosted/billing/store/add-credits";
-import { formatCredits } from "@/hosted/billing/store/store-presentation";
 import { useI18n } from "@/lib/i18n";
 import { useStoreSurfaces } from "@/platform/store/store-provider";
 
@@ -28,21 +27,13 @@ export function BalanceCard({ wallet }: { wallet: Pick<Wallet, "balance_usd"> })
 						<Text>{t("billingParity.walletBalance")}</Text>
 					</WebView>
 					<WebText recipe={low ? balance.negativeBalance : balance.balance}>
-						{surfaces.creditUnits
-							? formatCredits(wallet.balance_usd, t("store.credits"))
-							: formatUsdExact(wallet.balance_usd)}
+						{formatUsdExact(wallet.balance_usd)}
 					</WebText>
-					<WebText recipe={balance.meta}>
-						{t(
-							surfaces.cardBilling ? "billingParity.walletExplanation" : "store.walletExplanation",
-						)}
-					</WebText>
+					<WebText recipe={balance.meta}>{t("billingParity.walletExplanation")}</WebText>
 					{low ? (
 						<WebView recipe={balance.warning} className="flex-row">
 							<Icon as={TriangleAlert} />
-							<Text>
-								{t(surfaces.addCredits ? "store.lowBalance" : "billingParity.lowBalance")}
-							</Text>
+							<Text>{t("billingParity.lowBalance")}</Text>
 						</WebView>
 					) : null}
 				</WebView>

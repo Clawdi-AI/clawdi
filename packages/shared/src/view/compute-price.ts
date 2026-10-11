@@ -40,22 +40,17 @@ export function cardTrialPricePresentation(
 	};
 }
 
-function monthlyPrice(
-	offer: BillingOffer,
-	format: (cents: number) => string = formatCents,
-): string {
-	return `${format(offer.effective_monthly_price_cents)}/mo`;
+function monthlyPrice(offer: BillingOffer): string {
+	return `${formatCents(offer.effective_monthly_price_cents)}/mo`;
 }
 
-/** `format` renders an amount in minor units; mobile store builds pass a credits formatter. */
 export function computePricePresentation(
 	offer: BillingOffer,
 	offers: readonly BillingOffer[],
-	format: (cents: number) => string = formatCents,
 ): ComputePricePresentation {
 	if (offer.billing_term_months === 1) {
 		return {
-			primary: monthlyPrice(offer, format),
+			primary: monthlyPrice(offer),
 			secondary: "Billed monthly",
 			savings: null,
 		};
@@ -73,9 +68,9 @@ export function computePricePresentation(
 			? undiscountedTermPrice - offer.price_cents
 			: 0;
 	return {
-		primary: `${format(offer.price_cents)}${billingTermSuffix(offer.billing_term_months)}`,
-		secondary: monthlyPrice(offer, format),
-		savings: savingsCents > 0 ? `save ${format(savingsCents)}` : null,
+		primary: `${formatCents(offer.price_cents)}${billingTermSuffix(offer.billing_term_months)}`,
+		secondary: monthlyPrice(offer),
+		savings: savingsCents > 0 ? `save ${formatCents(savingsCents)}` : null,
 	};
 }
 
@@ -126,24 +121,18 @@ export const walletDebitEquationCopy = {
 	balanceAfter: "Balance after",
 } as const;
 
-/** `format` renders exact decimal USD strings (default `$`); store builds pass credits. */
-export function walletDebitEquationLabel(
-	summary: WalletDebitSummary,
-	format: (usd: string) => string = formatUsdExact,
-): string {
-	return `${format(summary.balanceBeforeUsd)} minus ${format(summary.debitAmountUsd)} equals ${format(summary.balanceAfterUsd)}`;
+export function walletDebitEquationLabel(summary: WalletDebitSummary): string {
+	return `${formatUsdExact(summary.balanceBeforeUsd)} minus ${formatUsdExact(summary.debitAmountUsd)} equals ${formatUsdExact(summary.balanceAfterUsd)}`;
 }
 
 export function walletDeployAmountPresentation({
 	billingTermMonths,
 	state,
 	walletDebit,
-	format = formatUsdExact,
 }: {
 	billingTermMonths: number;
 	state: "loading" | "error" | "ready";
 	walletDebit: WalletDebitSummary | null;
-	format?: (usd: string) => string;
 }): DeployAmountPresentation {
 	if (state === "error") {
 		return { amount: "Quote unavailable", caption: null, detail: null };
@@ -154,11 +143,11 @@ export function walletDeployAmountPresentation({
 
 	const shortfallUsd = walletDebitShortfallUsd(walletDebit);
 	return {
-		amount: `Debit today: ${format(walletDebit.debitAmountUsd)}`,
+		amount: `Debit today: ${formatUsdExact(walletDebit.debitAmountUsd)}`,
 		caption: `From wallet · renews ${billingTermMonths === 12 ? "yearly" : "monthly"}`,
 		detail:
 			shortfallUsd === null
 				? null
-				: `Available ${format(walletDebit.balanceBeforeUsd)} · short ${format(shortfallUsd)}`,
+				: `Available ${formatUsdExact(walletDebit.balanceBeforeUsd)} · short ${formatUsdExact(shortfallUsd)}`,
 	};
 }

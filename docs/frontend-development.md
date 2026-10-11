@@ -249,3 +249,25 @@ removed; additions require a concrete owner and retention reason.
 `dist/_build/common.mjs` calls `nf3.traceNodeModules`. The Web direct dependency
 and its unused lock entries were removed along with redundant `remark-breaks`
 and `remark-gfm` declarations; Shared still owns the Markdown plugins.
+
+## CI packaging and deploy contract
+
+Desktop Platform Packages and Desktop Preview build pull requests that change
+packaging inputs. Desktop Release builds the channel artifacts after merge.
+The Windows platform legs install only Desktop, CLI and Shared dependencies
+with Bun's documented workspace filters and the frozen lockfile.
+
+macOS preview packaging creates the app and ZIP once, then builds the DMG from
+the packaged app. `scripts/build-desktop-dmg.sh` retries that DMG command once
+only when hdiutil reports `Resource busy`, detaching newly mounted temporary
+images first. Other packaging failures fail immediately.
+
+The PR deploy contract drift job stays visible but is informational: it compares
+against a live Hosted deployment outside the PR. `Client CI OK` does not depend
+on it; the daily drift job still fails on drift or fetch errors.
+
+```bash
+bun test packages/cli/tests/ci-workflows.test.ts
+```
+
+Done: the workflow routing and required-check contracts pass.

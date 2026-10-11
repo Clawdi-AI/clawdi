@@ -23,26 +23,7 @@ on:
       - "patches/**"
       - "tsconfig.base.json"
       - ".github/actions/setup-bun-ci/**"
-      - ".github/workflows/desktop-preview.yml"
-  push:
-    branches: [main]
-    paths:
-      - "apps/desktop/**"
-      - "apps/web/public/clawdi-logo-transparent.png"
-      - "packages/cli/src/**"
-      - "packages/cli/scripts/build-native.mjs"
-      - "packages/cli/package.json"
-      - "packages/cli/tsconfig.json"
-      - "packages/cli/skills/**"
-      - "packages/cli/egress-addon/clawdi_egress_addon.py"
-      - "packages/shared/src/**"
-      - "packages/shared/package.json"
-      - "packages/shared/tsconfig.json"
-      - "package.json"
-      - "bun.lock"
-      - "patches/**"
-      - "tsconfig.base.json"
-      - ".github/actions/setup-bun-ci/**"
+      - "scripts/build-desktop-dmg.sh"
       - ".github/workflows/desktop-preview.yml"
 
 permissions:
@@ -74,11 +55,12 @@ jobs:
           CLAWDI_NATIVE_TARGET=darwin-arm64 bun run --cwd apps/desktop prepare:native
           CSC_FOR_PULL_REQUEST=true node apps/desktop/node_modules/electron-builder/cli.js \
             --projectDir apps/desktop \
-            --mac dmg zip \
+            --mac zip \
             --arm64 \
             --publish never \
             --config.mac.identity=- \
             --config.mac.hardenedRuntime=false
+          bash scripts/build-desktop-dmg.sh arm64
           cd apps/desktop/release
           dmg=(Clawdi-*.dmg)
           test "${#dmg[@]}" -eq 1

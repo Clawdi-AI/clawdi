@@ -147,6 +147,7 @@ jobs:
       RUN_SHARED: ${{ needs.changes.outputs.shared }}
       RUN_CLI: ${{ needs.changes.outputs.cli }}
       RUN_SIDECAR: ${{ needs.changes.outputs.sidecar }}
+      CLAWDI_TEST_HERMES_SOURCE: ${{ github.workspace }}/.paseo/hermes-test-source
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-bun-ci
@@ -174,6 +175,15 @@ jobs:
         with:
           version: "0.12.5"
           python-version: "3.12"
+      # Authenticated Git fetch avoids anonymous codeload 429s on shared runner IPs.
+      - name: Check out pinned Hermes native test source
+        if: needs.changes.outputs.cli == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: NousResearch/hermes-agent
+          ref: a0425672960e2f6dda132bf7323c31edca54585a
+          path: .paseo/hermes-test-source
+          persist-credentials: false
       # Smoke tests exercise the compiled bin wrapper, built above by Turbo.
       - name: Build native CLI
         if: needs.changes.outputs.cli == 'true'
@@ -265,6 +275,7 @@ jobs:
       - name: Reject new unused files, exports, and dependencies
         run: bun run check:unused
 
+  # Informational: a PR cannot change the live Hosted deployment. Daily drift stays strict.
   deploy-contract-drift:
     needs: changes
     if: >-
@@ -360,16 +371,22 @@ jobs:
       needs.changes.outputs.whatsapp_native_e2e == 'true')
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 30
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v7
-      - name: Set up Docker Hub mirror
-        id: docker-hub-mirror
-        uses: ./.github/actions/setup-docker-hub-mirror
+      # #1659 addressed anonymous Hub limits; #1668 provisioned these credentials.
+      # Use direct authenticated pulls while investigating the mirrored builder crashes.
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v4
         with:
-          dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
-          prefetch-images: |
-            moby/buildkit:buildx-stable-1
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Check Docker availability
         run: docker version
       - name: Restore pinned upstream artifacts
@@ -431,7 +448,7 @@ jobs:
   # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#always
   ci-ok:
     name: Client CI OK
-    needs: [changes, verify, unused-code, deploy-contract-drift, web-e2e, whatsapp-native-e2e, deploy-contract-drift-daily]
+    needs: [changes, verify, unused-code, web-e2e, whatsapp-native-e2e, deploy-contract-drift-daily]
     if: always()
     runs-on: ubuntu-latest
     steps:

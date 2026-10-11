@@ -66,8 +66,8 @@ carries Web's Help menu (Docs, email support, Telegram) plus the Privacy Policy
 and Terms of Use from the shared `CLAWDI_HELP_URLS`/`CLAWDI_LEGAL_URLS`; links
 open in `expo-web-browser` and email in the mail app. AI Usage is
 read-only; its Agent and time-range filters are native menus (a deleted Agent
-shows a "· Deleted" suffix instead of Web's badge), and store builds show
-amounts as credits. Web's `?settings=<panel>` opens the matching
+shows a "· Deleted" suffix instead of Web's badge), and amounts are USD like
+Web in every build. Web's `?settings=<panel>` opens the matching
 `/settings/<panel>`. Because the Account row is the account entry,
 mobile General shows only Appearance (mobile-only row subtitle and panel
 description; Web's General keeps its Account section). `SettingsShell` is only
@@ -102,7 +102,8 @@ available. Dynamic titles and accessibility labels use named interpolation
 values with `useI18n`; brand names and protocol examples remain identifiers.
 Unused local keys are removed only after checking static and dynamic references.
 
-Store builds show Wallet amounts and AI Usage as credits and open the official
+Every build, including store builds, shows Wallet, compute and AI Usage amounts
+in USD with Web's shared formatters. Store builds open the official
 RevenueCat `credits` Paywall for Add credits. Hosted purchase attempts and
 settlement remain authoritative; Check pending purchases recovers an earlier
 transaction without starting another charge. Consumable credits cannot be
