@@ -10,6 +10,7 @@ const passthrough = ({ children }: { children?: ReactNode }) => <>{children}</>;
 const none = () => null;
 for (const icon of ["coins", "credit-card", "external-link", "triangle-alert"])
 	mock.module(`lucide-react-native/icons/${icon}`, () => ({ default: none }));
+mock.module("@tanstack/react-query", () => ({ useQueryClient: () => ({}) }));
 mock.module("expo-router", () => ({ router: { push: () => undefined } }));
 mock.module("expo-web-browser", () => ({ openBrowserAsync: async () => undefined }));
 mock.module("@/components/agent-framework-icon", () => ({ AgentFrameworkIcon: none }));
@@ -20,6 +21,7 @@ mock.module("@/components/ui/card", () => ({ Card: passthrough, CardContent: pas
 mock.module("@/components/ui/icon", () => ({ Icon: none }));
 mock.module("@/components/ui/status-badge", () => ({ StatusBadge: passthrough }));
 mock.module("@/components/ui/text", () => ({ Text: passthrough }));
+mock.module("@/components/ui/view", () => ({ AppView: passthrough }));
 mock.module("@/components/ui/web-layout", () => ({
 	WebText: passthrough,
 	WebView: ({
@@ -42,10 +44,6 @@ mock.module("@/hooks/use-dashboard-agents", () => ({
 mock.module("@/hosted/billing/hooks", () => ({
 	useWallet: () => ({ isPending: false, data: { balance_usd: "10" } }),
 }));
-mock.module("@/hosted/billing/store/add-credits", () => ({
-	AddCreditsAction: () => <>Add credits</>,
-	CheckPendingPurchasesAction: none,
-}));
 mock.module("@/hosted/billing/store/compute-store", () => ({ StoreSubscriptionNotice: none }));
 mock.module("@/lib/api-provider", () => ({ useMobileApi: () => ({ compute: {} }) }));
 mock.module("@/platform/account-lifecycle", () => ({
@@ -55,8 +53,11 @@ mock.module("@/platform/account-lifecycle", () => ({
 mock.module("@/platform/auth/use-auth-action", () => ({
 	useAuthAction: () => ({ busy: false, error: null, run: async () => undefined }),
 }));
+mock.module("@/platform/store/paywall-host", () => ({ usePaywall: () => null }));
+mock.module("@/platform/store/revenuecat", () => ({ loadCreditsOffering: async () => null }));
 mock.module("@/platform/store/store-provider", () => ({
 	// A production store build with purchases unavailable.
+	useMobileStore: () => ({ creditsAvailable: false, flow: null, storeBuild: true }),
 	useStoreSurfaces: () => storeSurfaces(true, false),
 }));
 mock.module("@/platform/use-foreground-lease", () => ({
@@ -72,7 +73,7 @@ const { ComputeSubscriptionCard } = await import(
 const { BalanceCard } = await import("@/hosted/billing/wallet/balance-card");
 const { TransactionRow } = await import("@/hosted/billing/wallet/transactions-section");
 
-/** Credits as a unit, e.g. `10.00 credits`; "Add credits" names the purchase. */
+/** Credits as a unit, e.g. `10.00 credits`. */
 const creditUnit = /\d\s*credits/i;
 
 function HeaderBalance() {
@@ -129,11 +130,26 @@ test("store builds show Wallet amounts and wallet-funded prices in USD, like Web
 	const [header, balance, row, equation, card] = markup;
 	expect(header).toBe("$10.00|Wallet balance $10.00. Open Wallet settings");
 	expect(balance).toContain("$10.00");
-	// The store purchase entry keeps its name.
-	expect(balance).toContain("Add credits");
+	// The store purchase entry uses Web's Top up label.
+	expect(balance).toContain("Top up");
 	expect(row).toContain("−$19.88");
 	expect(equation).toContain("$19.88");
 	expect(equation).toContain("$10.00 minus $19.88 equals");
 	expect(card).toContain("$19.88/mo");
 	for (const html of markup) expect(html).not.toMatch(creditUnit);
+});
+
+test("store builds never mention card payments on the Wallet", () => {
+	const markup = [
+		renderToStaticMarkup(<HeaderBalance />),
+		renderToStaticMarkup(<BalanceCard wallet={{ balance_usd: "10" }} />),
+		renderToStaticMarkup(<BalanceCard wallet={{ balance_usd: "0.5" }} />),
+		renderToStaticMarkup(<TransactionRow item={transaction} />),
+		renderToStaticMarkup(<ComputeSubscriptionCard item={subscription} />),
+	];
+	expect(markup[1]).toContain("Pays for AI usage and wallet-funded compute subscriptions.");
+	for (const html of markup) {
+		expect(html).not.toContain("Card-paid subscriptions do not use this balance.");
+		expect(html).not.toMatch(/\bcards?\b|card-paid/i);
+	}
 });

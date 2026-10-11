@@ -36,7 +36,7 @@ function useRefreshWallet() {
 
 /**
  * Footer copy: the purchase notice only while credits can be bought. Store builds
- * otherwise rely on the neutral Add credits status; other builds explain the build.
+ * otherwise rely on the neutral Top up status; other builds explain the build.
  */
 export function useCreditsNotice(): TranslationKey | null {
 	const { storeBuild, creditsAvailable } = useMobileStore();
@@ -97,7 +97,7 @@ export function CheckPendingPurchasesAction() {
 }
 
 /**
- * Explicit "Add credits" intent: opens the official RevenueCat Paywall for the
+ * Explicit Top up intent: opens the official RevenueCat Paywall for the
  * `credits` offering through the M1 purchase flow. Only hosted settlement adds credits.
  */
 export function AddCreditsAction({
@@ -145,7 +145,7 @@ export function AddCreditsAction({
 		<AppView className="gap-2">
 			<Button size={size} disabled={!available || action.busy} onPress={() => void buy()}>
 				<Icon as={Coins} />
-				<Text>{t(action.busy ? "store.purchasing" : "store.addCredits")}</Text>
+				<Text>{t(action.busy ? "store.purchasing" : "billingParity.topUp")}</Text>
 			</Button>
 			{!available ? (
 				<Text className="text-muted-foreground">{t("store.unavailable")}</Text>

@@ -137,12 +137,12 @@ const connectorsEn = {
 		"Authorize in the system browser, then close it and return here. Refresh accounts to check the result; opening or closing the browser does not mean authorization succeeded.",
 } as const;
 const storeEn = {
-	addCredits: "Add credits",
 	checkPending: "Check pending purchases",
 	checkingPending: "Checking pending purchases…",
 	noPending: "No pending purchases found.",
 	recoveryStatus: "This subscription needs attention. Refresh to see its latest status.",
 	usdcInApp: "Browser-wallet USDC funding isn't available in this app.",
+	walletExplanation: "Pays for AI usage and wallet-funded compute subscriptions.",
 	walletSummary: "Balance and transactions",
 	purchasing: "Confirming purchase…",
 	unavailable: "Purchases aren't available right now. Your Wallet balance is unaffected.",
@@ -167,7 +167,7 @@ const storeEn = {
 	cardDunning:
 		"Payment for this subscription needs attention. Card payments can't be updated in this app.",
 	walletDunning:
-		"Your Wallet balance is too low to renew this subscription. Add credits; billing updates automatically after funding.",
+		"Your Wallet balance is too low to renew this subscription. Top up; billing updates automatically after funding.",
 	cardSource: "Card",
 	quoteBalance: "Wallet balance after payment",
 	shortfall:

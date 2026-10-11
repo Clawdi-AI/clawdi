@@ -13,7 +13,7 @@ import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 /**
- * Web StartComputeAction. Store policy: top-ups use Add credits, and card payment recovery stays a
+ * Web StartComputeAction. Store policy: top-ups use the store purchase, and card payment recovery stays a
  * status (ComputeDunningBanner) with no action.
  */
 export function StartComputeAction({

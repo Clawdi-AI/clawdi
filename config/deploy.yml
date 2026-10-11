@@ -275,7 +275,7 @@ accessories:
   postgres:
     # Immutable authority: config/postgres-image.txt. The parity contract keeps
     # this literal copy aligned because Kamal cannot import that plain-text file.
-    image: &postgres-image ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:db8d1af12ebac7fe10c57730502a31e9b34586ac1ed32852639007dd77eda449 # pgvector pg18 + pgBackRest (WAL archiving to R2)
+    image: &postgres-image ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:3b6f3a170e4da3e2489c878fc0f54a359ae3f476e568b489c0c7120799fe15e4 # pgvector pg18 + pgBackRest (WAL archiving to R2)
     host: <%= ENV.fetch("DEPLOY_HOST") %>
     options:
       ulimit: nofile=65536:65536
