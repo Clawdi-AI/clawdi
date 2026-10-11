@@ -214,6 +214,16 @@ function nativeInstall(installedBy?: "desktop") {
 		expect(existsSync(launcher)).toBe(false);
 	});
 
+	test("refuses a CLAWDI_HOME override that would remove the user's home", async () => {
+		process.env.CLAWDI_HOME = home;
+		const ownFile = join(home, "keep.txt");
+		writeFileSync(ownFile, "keep personal data");
+		const result = await uninstall({ yes: true }, { home, uninstallDaemon: noDaemon });
+		expect(result.steps.find((step) => step.step === "local-state")?.status).toBe("failed");
+		expect(readFileSync(ownFile, "utf8")).toBe("keep personal data");
+		expect(result.status).toBe("failed");
+	});
+
 	test("continues after a service failure and exits nonzero", async () => {
 		mkdirSync(join(home, ".clawdi"));
 		const result = await uninstall(

@@ -64,7 +64,11 @@ try {
 		rmdirSync(current); // Remove the junction only, never its target through the junction.
 		if (running) {
 			// Windows locks the running image. A separate OS process waits for exit before deletion.
-			const cleanup = `$ErrorActionPreference = 'Stop'; Wait-Process -Id ${process.pid} -ErrorAction SilentlyContinue; Remove-Item -LiteralPath ${powershellQuote(nativeRoot)} -Recurse -Force`;
+			const cleanup = `$ErrorActionPreference = 'Stop'; Wait-Process -Id ${process.pid} -ErrorAction SilentlyContinue
+for ($attempt = 0; $attempt -lt 40; $attempt++) {
+  try { if (Test-Path -LiteralPath ${powershellQuote(nativeRoot)}) { Remove-Item -LiteralPath ${powershellQuote(nativeRoot)} -Recurse -Force }; break }
+  catch { if ($attempt -eq 39) { throw }; Start-Sleep -Milliseconds 250 }
+}`;
 			await new Promise<void>((resolve, reject) => {
 				const child = spawn(
 					"powershell.exe",
@@ -86,7 +90,7 @@ try {
 			return {
 				status: "scheduled",
 				message:
-					"Native CLI and PATH entry removed; locked version files will be deleted after this command exits.",
+					"Native launcher and PATH entry removed. Version-file removal scheduled after this command exits.",
 			};
 		}
 	} else {

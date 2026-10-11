@@ -181,6 +181,7 @@ async function teardownOne(
 			skillResult = opts.keepSkill ? "kept" : "removed";
 			if (!opts.keepSkill) {
 				if (result === "absent") {
+					if (!opts.reportFailures) throw new Error("Skill is not owned by local setup");
 					skillResult = existsSync(skillDir) ? "unowned" : "absent";
 				}
 				if (result !== "absent") p.log.success(`${label}: removed bundled skill (${skillDir})`);
@@ -200,7 +201,8 @@ async function teardownOne(
 				...opts,
 				strict: opts.reportFailures,
 			});
-		} catch {
+		} catch (error) {
+			if (!opts.reportFailures) throw error;
 			errors.push("Could not remove MCP registration");
 		}
 	}

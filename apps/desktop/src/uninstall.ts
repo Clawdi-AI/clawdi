@@ -110,7 +110,11 @@ export async function clearDesktopDirectories(
 		return;
 	}
 	const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
-	const script = `$ErrorActionPreference = 'Stop'; Wait-Process -Id ${process.pid} -ErrorAction SilentlyContinue; ${[...new Set(paths)].map((path) => `if (Test-Path -LiteralPath ${quote(path)}) { Remove-Item -LiteralPath ${quote(path)} -Recurse -Force }`).join("; ")}`;
+	const script = `$ErrorActionPreference = 'Stop'; Wait-Process -Id ${process.pid} -ErrorAction SilentlyContinue
+for ($attempt = 0; $attempt -lt 40; $attempt++) {
+  try { ${[...new Set(paths)].map((path) => `if (Test-Path -LiteralPath ${quote(path)}) { Remove-Item -LiteralPath ${quote(path)} -Recurse -Force }`).join("; ")}; break }
+  catch { if ($attempt -eq 39) { throw }; Start-Sleep -Milliseconds 250 }
+}`;
 	await new Promise<void>((resolve, reject) => {
 		const child = spawn(
 			"powershell.exe",

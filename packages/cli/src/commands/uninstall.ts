@@ -1,5 +1,6 @@
 import { existsSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
+import { isAbsolute, parse, relative, resolve, sep } from "node:path";
 import { isClerkOAuthAuth } from "../lib/clerk-oauth";
 import { emit } from "../lib/command-output";
 import { getClawdiDir, getStoredAuth } from "../lib/config";
@@ -125,7 +126,18 @@ export async function uninstall(
 		};
 	});
 	await run("local-state", () => {
-		const directory = getClawdiDir();
+		const directory = resolve(getClawdiDir());
+		const homeFromState = relative(directory, resolve(home));
+		if (
+			directory === parse(directory).root ||
+			(!isAbsolute(homeFromState) && homeFromState.split(sep)[0] !== "..")
+		) {
+			return {
+				status: "failed",
+				message:
+					"Refusing to remove your home directory or its parents. Set CLAWDI_HOME to Clawdi's local state directory.",
+			};
+		}
 		const present = existsSync(directory);
 		rmSync(directory, { recursive: true, force: true });
 		return {
