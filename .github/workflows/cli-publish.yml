@@ -131,10 +131,7 @@ jobs:
           version: "0.12.5"
           python-version: "3.12"
 
-      - name: Test (ephemeral internal suite)
-        timeout-minutes: 20
-        run: bun run --cwd packages/cli test:internal
-
+      # Client CI runs the full suite for this SHA; publishing verifies the built artifacts.
       - name: Build package and native release matrix
         id: build_native_release
         working-directory: packages/cli

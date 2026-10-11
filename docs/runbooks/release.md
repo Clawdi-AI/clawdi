@@ -154,7 +154,7 @@ before the executable is removed. No root cleanup script is installed.
    the publish workflow. Rerun the original workflow run after an incomplete
    release; do not create a new commit with the same version.
    For the managed agent-v2 release line, this repository's release workflow must
-   build, typecheck, run the full CLI suite, pack one immutable npm tarball, and
+   build, typecheck, check the native lifecycle, pack one immutable npm tarball, and
    build the native matrix once. It installs the npm tarball and exercises the
    compiled Linux artifact through the native installer/daemon lifecycle. The
    exact-version release manifest is the sole checksum contract for native

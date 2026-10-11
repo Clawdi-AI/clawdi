@@ -848,7 +848,7 @@ published; an existing version is never republished and must have the same
 `dist.integrity` as the artifact built by this run.
 
 Managed agent-v2 releases are repository-autonomous. The CLI workflow builds,
-typechecks, runs the full CLI suite, packs one immutable npm tarball, and builds
+typechecks, checks the native lifecycle, packs one immutable npm tarball, and builds
 the native target matrix once. It verifies the npm package after installation
 and runs the compiled Linux artifact through the installer/daemon lifecycle.
 The exact-version native manifest is the checksum contract for all native
@@ -941,8 +941,8 @@ releases are automatic.
 
 1. Bump `version` in `packages/cli/package.json` (follow semver).
 2. Merge to `main`.
-3. The workflow builds, typechecks, runs the full CLI suite, packs and installs
-   one artifact, and verifies its SHA-256 in both jobs. It creates or completes
+3. Client CI runs the full CLI suite. The publish workflow builds, typechecks,
+   checks the native lifecycle, packs and installs one artifact, and verifies its SHA-256 in both jobs. It creates or completes
    `clawdi-cli-v<version>` as a draft, uploads the verified native assets and
    installers, then publishes the GitHub release.
 4. Only after the GitHub release is complete does the job publish the npm tarball
