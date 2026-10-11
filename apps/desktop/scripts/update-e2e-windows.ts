@@ -213,7 +213,8 @@ $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new("$
 	const feedUrl = `https://127.0.0.1:${address.port}/`;
 	await run("bun", ["run", "build"]);
 	await run("node", [join(desktopRoot, "node_modules/electron/install.js")]);
-	await run("bun", [join(import.meta.dir, "shared-native-cli-e2e.ts")]);
+	// Includes an NSIS build plus four serial install/uninstall scenarios.
+	await run("bun", [join(import.meta.dir, "shared-native-cli-e2e.ts")], 10 * 60_000);
 	renameSync(join(desktopRoot, "dist/main.js"), join(desktopRoot, "dist/desktop-main.js"));
 	const bundle = await Bun.build({
 		entrypoints: [join(import.meta.dir, "fixtures/update-e2e-windows-main.ts")],
