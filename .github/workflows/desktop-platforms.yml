@@ -231,6 +231,7 @@ jobs:
             if (@($userPath -split ';') -contains $launcherBin) { throw 'NSIS left the CLI directory in PATH' }
           }
       - uses: actions/upload-artifact@v7
+        if: github.event_name != 'push'
         with:
           name: clawdi-${{ matrix.platform }}-${{ matrix.arch }}-preview
           path: |
@@ -241,4 +242,4 @@ jobs:
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.exe
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
