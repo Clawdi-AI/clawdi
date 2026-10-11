@@ -688,6 +688,7 @@ async function safeConnectAction<T>(
 ): Promise<T> {
 	try {
 		assertConnectSender(event, connectWindow?.webContents, CONNECT_URL);
+		if (uninstalling) throw new DesktopConnectError("Clawdi is uninstalling.");
 		return await action();
 	} catch (error) {
 		console.error(`Could not ${label}`, error);
@@ -1001,6 +1002,7 @@ function setTrayState(state: DesktopBootstrapState | null): void {
 }
 
 async function refreshTrayState(): Promise<void> {
+	if (quitting || uninstalling) return;
 	if (trayStateRefresh) return trayStateRefresh;
 	if (installationState().requiresMove) {
 		setTrayState(null);
@@ -1199,6 +1201,7 @@ async function promptToMove(detail: string): Promise<void> {
 }
 
 async function showAvailableWindow(view?: DesktopConnectView): Promise<void> {
+	if (quitting || uninstalling) return;
 	if (view) {
 		await showConnectWindow(view);
 		return;
@@ -1239,7 +1242,8 @@ async function showWindowFromTrayState(): Promise<void> {
 }
 
 async function reconcileBackgroundSyncAfterStartup(): Promise<void> {
-	const recovery = await reconcileDesktopStartupSync(cli);
+	if (quitting || uninstalling) return;
+	const recovery = await withCriticalOperation(() => reconcileDesktopStartupSync(cli));
 	setTrayState(recovery.state);
 }
 
@@ -1249,7 +1253,7 @@ async function openDashboardAfterFirstConnection(): Promise<void> {
 }
 
 async function openDashboard(): Promise<void> {
-	if (signingOut) return;
+	if (signingOut || quitting || uninstalling) return;
 	if (dashboardOpening) return dashboardOpening;
 	const opening = openDashboardWindow();
 	dashboardOpening = opening;
@@ -1354,6 +1358,12 @@ async function uninstallClawdi(): Promise<void> {
 					updateController?.stop();
 					disableUpdateOnQuit?.();
 					await cli.cancelAuthentication();
+					// Drain reads/window openings that started before confirmation. New
+					// actions are blocked until quit so they cannot restore deleted state.
+					for (const pending of [trayStateRefresh, availableWindowOpening, dashboardOpening]) {
+						if (pending) await pending.catch(() => undefined);
+					}
+					for (const window of BrowserWindow.getAllWindows()) window.destroy();
 				},
 				revokeSessions: async () => {
 					const partition = session.fromPartition(DASHBOARD_PARTITION);
