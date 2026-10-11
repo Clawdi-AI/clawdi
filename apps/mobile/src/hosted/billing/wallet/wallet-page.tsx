@@ -19,7 +19,6 @@ import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { transientQueryRetry } from "@/lib/query-retry";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
-import { useStoreSurfaces } from "@/platform/store/store-provider";
 import { useRefreshOnFocus } from "@/platform/use-refresh-on-focus";
 
 function initialCursor(): string | undefined {
@@ -34,7 +33,6 @@ function WalletView() {
 	const { compute } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
-	const surfaces = useStoreSurfaces();
 	const creditsNotice = useCreditsNotice();
 	useStoreRecoveryRefresh();
 	const walletKey = accountQueryKey(scope, "billing-wallet");
@@ -80,11 +78,7 @@ function WalletView() {
 					<WebView recipe={billingPageStackClass}>
 						<SettingsPanelHeader
 							title={t("billingParity.wallet")}
-							description={t(
-								surfaces.cardBilling
-									? "billingParity.walletDescription"
-									: "store.walletDescription",
-							)}
+							description={t("billingParity.walletDescription")}
 						/>
 						{!compute ? (
 							<EmptyState variant="inset" title={t("billing.unavailable")} />

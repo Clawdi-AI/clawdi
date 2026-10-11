@@ -18,7 +18,6 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import type { Transaction } from "@/hosted/billing/format";
-import { signedCredits } from "@/hosted/billing/store/store-presentation";
 import { useI18n } from "@/lib/i18n";
 import { useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
@@ -87,9 +86,7 @@ export function TransactionRow({ item }: { item: Transaction }) {
 				recipe={transactions.amount}
 				className={item.direction === "credit" ? "text-success-muted-foreground" : undefined}
 			>
-				{surfaces.creditUnits
-					? signedCredits(transactionSignedAmount(item), t("store.credits"))
-					: transactionSignedAmount(item)}
+				{transactionSignedAmount(item)}
 			</WebText>
 		</WebView>
 	);

@@ -139,9 +139,6 @@ import { StoreNoticeText } from "@/hosted/billing/store/store-notice";
 import {
 	computePurchaseErrorNotice,
 	computePurchaseNotice,
-	creditPrice,
-	formatCreditCents,
-	formatCredits,
 	type StoreNotice,
 } from "@/hosted/billing/store/store-presentation";
 import { operationIdFromName } from "@/hosted/deployment-status";
@@ -237,9 +234,8 @@ function CreationForm() {
 	const t = useI18n();
 	const router = useRouter();
 	const action = useAuthAction(scope);
-	// Store builds fund new compute only from Wallet credits; card checkout is hidden.
+	// Store builds fund new compute only from the Wallet; card checkout is hidden.
 	const surfaces = useStoreSurfaces();
-	const credits = t("store.credits");
 	const fundingDefault: HostedDeploySubscriptionSelection["fundingSource"] = surfaces.cardBilling
 		? "stripe"
 		: "wallet";
@@ -449,8 +445,6 @@ function CreationForm() {
 	const walletDebit: WalletDebitSummary | null = shownWalletQuote
 		? hostedSubscriptionQuoteWalletDebit(shownWalletQuote)
 		: null;
-	const formatWalletAmount = (usd: string) =>
-		surfaces.creditUnits ? formatCredits(usd, credits) : formatUsdExact(usd);
 	const personaIssues = validateHostedDeployPersona({
 		agentName: draft.agentName,
 		language: draft.language,
@@ -999,11 +993,7 @@ function CreationForm() {
 	// A saved request is being sent, as opposed to a status read.
 	const sending = action.busy && !checking && attempt?.submission === "uncertain";
 
-	const comparison = computePlanComparisonView(
-		inventory.data?.plans ?? [],
-		previewTerm,
-		surfaces.creditUnits ? (cents) => formatCreditCents(cents, credits) : undefined,
-	);
+	const comparison = computePlanComparisonView(inventory.data?.plans ?? [], previewTerm);
 	const previewPlan =
 		draft.computePlanSlug === "compute_performance" ? comparison.performance : comparison.basic;
 	const billingOffers = previewPlan
@@ -1028,7 +1018,6 @@ function CreationForm() {
 					billingTermMonths: walletQuoteSelection.billingTermMonths,
 					state: walletQuoting && quote.isError ? "error" : walletDebit ? "ready" : "loading",
 					walletDebit,
-					format: formatWalletAmount,
 				})
 			: null;
 	// The amount line explains loading and shortfall states, like Web's.
@@ -1216,11 +1205,7 @@ function CreationForm() {
 													<AppText>{subscriptionSourceCopy.included}</AppText>
 												</Badge>
 											}
-											details={
-												<AppText>
-													{surfaces.creditUnits ? t("store.dueNow") : subscriptionSourceCopy.dueNow}
-												</AppText>
-											}
+											details={<AppText>{subscriptionSourceCopy.dueNow}</AppText>}
 											className={webView(subscriptionSourcePickerClasses.choice)}
 										/>
 									) : null}
@@ -1262,9 +1247,7 @@ function CreationForm() {
 														? t("creation.storeRowUnavailable", {
 																store: storeProviderLabel(item.store_management),
 															})
-														: surfaces.creditUnits
-															? t("store.dueNow")
-															: subscriptionSourceCopy.dueNow
+														: subscriptionSourceCopy.dueNow
 												}
 												badge={
 													<StatusBadge status={view.status.tone}>
@@ -1315,9 +1298,7 @@ function CreationForm() {
 																				: subscriptionSourcePickerClasses.factValue
 																		}
 																	>
-																		{fact.id === "price" && surfaces.creditUnits
-																			? (creditPrice(item, credits) ?? fact.value)
-																			: fact.value}
+																		{fact.value}
 																	</WebText>
 																)}
 															</WebView>
@@ -1579,13 +1560,13 @@ function CreationForm() {
 										{walletQuoting && quote.isError ? (
 											<ApiErrorPanel error={quote.error} onRetry={() => void quote.refetch()} />
 										) : walletDebit ? (
-											<WalletDebitEquation debit={walletDebit} format={formatWalletAmount} />
+											<WalletDebitEquation debit={walletDebit} />
 										) : null}
 										{(shortfall || walletFundingRefused) && surfaces.addCredits ? (
 											<>
 												{shortfall ? (
 													<AppText>
-														{t("store.shortfall", { amount: formatWalletAmount(shortfall) })}
+														{t("store.shortfall", { amount: formatUsdExact(shortfall) })}
 													</AppText>
 												) : null}
 												<AddCreditsAction onFunded={() => void quote.refetch()} />
@@ -1775,11 +1756,7 @@ function CreationForm() {
 					) : null}
 					{!resolved && (source === "included" || source === "existing") ? (
 						<WebText recipe={styles.amountValue}>
-							{source === "included"
-								? t("labels.free")
-								: surfaces.creditUnits
-									? t("store.dueNow")
-									: subscriptionSourceCopy.dueNow}
+							{source === "included" ? t("labels.free") : subscriptionSourceCopy.dueNow}
 						</WebText>
 					) : null}
 

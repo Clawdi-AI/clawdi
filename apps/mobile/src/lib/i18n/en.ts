@@ -141,16 +141,11 @@ const storeEn = {
 	checkPending: "Check pending purchases",
 	checkingPending: "Checking pending purchases…",
 	noPending: "No pending purchases found.",
-	lowBalance: "Low — add credits before Clawdi AI pauses",
 	recoveryStatus: "This subscription needs attention. Refresh to see its latest status.",
 	usdcInApp: "Browser-wallet USDC funding isn't available in this app.",
-	walletExplanation: "Pays for AI usage and credit-funded compute subscriptions.",
 	walletSummary: "Balance and transactions",
-	walletDescription: "Your credits balance and transaction history.",
-	usageSummary: "LLM spend in credits, paid from wallet",
 	purchasing: "Confirming purchase…",
-	credits: "credits",
-	unavailable: "Purchases aren't available right now. Your credits balance is unaffected.",
+	unavailable: "Purchases aren't available right now. Your Wallet balance is unaffected.",
 	fundingApplied: "Credits were added to your Wallet.",
 	submitted: "Purchase submitted; credits will arrive in your Wallet.",
 	processing:
@@ -173,9 +168,7 @@ const storeEn = {
 		"Payment for this subscription needs attention. Card payments can't be updated in this app.",
 	walletDunning:
 		"Your Wallet balance is too low to renew this subscription. Add credits; billing updates automatically after funding.",
-	walletNotice: "This subscription is paid with Wallet credits.",
 	cardSource: "Card",
-	dueNow: "Nothing due now",
 	quoteBalance: "Wallet balance after payment",
 	shortfall:
 		"Add {amount} to cover this plan. The price preview refreshes after your credits arrive.",
