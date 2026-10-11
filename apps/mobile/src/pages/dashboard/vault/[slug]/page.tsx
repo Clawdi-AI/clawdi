@@ -211,7 +211,6 @@ function VaultDetail({
 	const [section, setSection] = useState("");
 	const [draft, setDraft] = useState("");
 	const [replace, setReplace] = useState(false);
-	const [showSection, setShowSection] = useState(false);
 	const [targetId, setTargetId] = useState("");
 	const transferMode = mode;
 	const [newVaultName, setNewVaultName] = useState("");
@@ -499,21 +498,16 @@ function VaultDetail({
 							autoComplete="off"
 							textContentType="none"
 						/>
-						<Button variant="ghost" size="sm" onPress={() => setShowSection(!showSection)}>
-							<Text>{t("vault.section")}</Text>
-						</Button>
-						{showSection ? (
-							<Input
-								accessibilityLabel={t("vault.section")}
-								placeholder={t("vault.section")}
-								value={section}
-								maxLength={200}
-								onChangeText={setSection}
-								editable={!action.busy}
-								autoCapitalize="none"
-								autoCorrect={false}
-							/>
-						) : null}
+						<Input
+							accessibilityLabel={t("vault.section")}
+							placeholder={t("vault.section")}
+							value={section}
+							maxLength={200}
+							onChangeText={setSection}
+							editable={!action.busy}
+							autoCapitalize="none"
+							autoCorrect={false}
+						/>
 						{preview.parsed.errors.length ? (
 							<Alert variant="destructive" icon={AlertCircle} title={formCopy.invalid}>
 								<WebView recipe={addKeysDialogClasses.errors}>
@@ -602,17 +596,6 @@ function VaultDetail({
 							{vaultImportDetectedCount(preview.parsed.entries.length, preview.summary.skipped)}
 						</WebText>
 						<WebView recipe={addKeysDialogClasses.footer}>
-							<Button
-								variant="ghost"
-								disabled={action.busy}
-								onPress={() => {
-									void sheet.close().catch(setCloseError);
-									setDraft("");
-									setReplace(false);
-								}}
-							>
-								<Text>{t("account.cancel")}</Text>
-							</Button>
 							<Button
 								variant="default"
 								size="sm"

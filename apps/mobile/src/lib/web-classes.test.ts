@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { possibleNativeClasses, resolveWebClasses } from "@/lib/web-classes";
+import { minHeightClasses, possibleNativeClasses, resolveWebClasses } from "@/lib/web-classes";
 
 test("native borders inherit Web's global theme color", () => {
 	expect(resolveWebClasses("border-y bg-card").view).toContain("border-border");
@@ -29,4 +29,9 @@ test("Web viewport translations do not offset native modal centering", () => {
 	expect(result).not.toContain("translate");
 	expect(result).toContain("-mx-4");
 	expect(result).toContain("p-6");
+});
+
+test("text controls turn fixed Web heights into scalable minimums", () => {
+	expect(minHeightClasses("h-9 w-full dark:h-8 h-px")).toBe("min-h-9 w-full dark:min-h-8 h-px");
+	expect(possibleNativeClasses("h-5")).toContain("min-h-5");
 });

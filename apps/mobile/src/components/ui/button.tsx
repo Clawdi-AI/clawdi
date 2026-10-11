@@ -6,7 +6,7 @@ import type { PressableProps } from "react-native";
 import { TextClassContext } from "@/components/ui/text";
 import { TouchTargetContext } from "@/platform/touch-target";
 import { AppPressable } from "@/components/ui/view";
-import { resolveWebClasses } from "@/lib/web-classes";
+import { minHeightClasses, resolveWebClasses } from "@/lib/web-classes";
 
 type ButtonProps = PressableProps &
 	VariantProps<typeof buttonVariants> & {
@@ -26,11 +26,13 @@ function Button({ className, textClassName, variant, size, ...props }: ButtonPro
 		<TextClassContext.Provider value={cn(inherited, classes.text, own.text, textClassName)}>
 			<AppPressable
 				accessibilityRole="button"
-				className={cn(
-					classes.view,
-					touchTarget.button,
-					(size?.startsWith("icon") || props.accessibilityLabel) && touchTarget.icon,
-					own.view,
+				className={minHeightClasses(
+					cn(
+						classes.view,
+						touchTarget.button,
+						(size?.startsWith("icon") || props.accessibilityLabel) && touchTarget.icon,
+						own.view,
+					),
 				)}
 				{...props}
 			/>

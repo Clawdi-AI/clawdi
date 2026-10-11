@@ -6,7 +6,8 @@ export type NativeSegmentsProps = {
 	options: { value: string; label: string }[];
 	onChange: (value: string) => void;
 	disabled?: boolean;
-	scrollable?: boolean;
+	/** Web's `text-xs` tab labels, for five options sharing one phone-width row. */
+	compact?: boolean;
 };
 
 /** Native single-choice control; options retain the Web labels and ordering. */

@@ -1,9 +1,11 @@
 import { Redirect } from "expo-router";
 import { NativeTabs } from "expo-router/unstable-native-tabs";
+import { Platform, useWindowDimensions } from "react-native";
 import { useCSSVariable } from "uniwind";
 import { LoadingScreen } from "@/components/ui/feedback";
 import { useI18n } from "@/lib/i18n";
 import { useAppAuth } from "@/platform/auth/auth-client";
+import { barFontSize } from "@/platform/navigation/bar-font-size";
 
 export default function TabsLayout() {
 	const t = useI18n();
@@ -17,9 +19,16 @@ function themeColor(value: string | number | undefined) {
 	return typeof value === "string" ? value : undefined;
 }
 
+/** Material's bottom navigation label size (`design_bottom_navigation_text_size`, sp). */
+const TAB_LABEL_FONT_SIZE = 12;
+
 /** Native bottom tabs standing in for the Web sidebar's primary groups. */
 function AppTabs() {
 	const t = useI18n();
+	const { fontScale } = useWindowDimensions();
+	// iOS keeps its own tab bar label size; Android stops growing labels once five would truncate.
+	const fontSize =
+		Platform.OS === "android" ? barFontSize(TAB_LABEL_FONT_SIZE, fontScale) : undefined;
 	const [background, foreground, muted, accent] = useCSSVariable([
 		"--color-background",
 		"--color-foreground",
@@ -34,8 +43,8 @@ function AppTabs() {
 			iconColor={{ default: themeColor(muted), selected: themeColor(foreground) }}
 			indicatorColor={themeColor(accent)}
 			labelStyle={{
-				default: { color: themeColor(muted), fontFamily: "Geist-Medium" },
-				selected: { color: themeColor(foreground), fontFamily: "Geist-Medium" },
+				default: { color: themeColor(muted), fontFamily: "Geist-Medium", fontSize },
+				selected: { color: themeColor(foreground), fontFamily: "Geist-Medium", fontSize },
 			}}
 		>
 			<NativeTabs.Trigger name="(overview)" testID="tab-overview">

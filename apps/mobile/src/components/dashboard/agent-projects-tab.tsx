@@ -172,7 +172,7 @@ function BindingsView({ agentId }: { agentId?: string }) {
 								<>
 									<ActionButton
 										label={linked ? "Unlink" : "Link"}
-										variant={linked ? "ghost" : "default"}
+										variant={linked ? "outline" : "default"}
 										disabled={disabled || (!linked && project.kind !== "workspace")}
 										onPress={() => {
 											if (binding) unlink(binding);

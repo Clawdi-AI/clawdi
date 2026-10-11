@@ -131,7 +131,7 @@ describe("SessionTimelineList", () => {
 			},
 		]);
 
-		expect(markup).toContain("GPT 5");
+		expect(markup).toContain("GPT-5");
 		expect(markup).toContain("Sonnet 4.5");
 	});
 

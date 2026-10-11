@@ -57,6 +57,8 @@ import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
+const shareIcon = require("../../../assets/icons/share.xml");
+
 type SessionShare = components["schemas"]["SessionShareListItemResponse"];
 
 export function SessionShareActions({
@@ -93,6 +95,8 @@ export function SessionShareActions({
 					{
 						id: "share",
 						label: t("sessionDetail.share"),
+						// The platform share glyph leaves the native title room beside More and search.
+						icon: { ios: "square.and.arrow.up", android: shareIcon },
 						onPress: () =>
 							router.push({ pathname: "/sessions/[id]/sharing", params: { id: sessionId } }),
 					},

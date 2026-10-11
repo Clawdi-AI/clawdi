@@ -106,7 +106,8 @@ function Terminal({ deploymentId }: { deploymentId: string | undefined }) {
 				style={{ flex: 1 }}
 				behavior={Platform.OS === "ios" ? "padding" : "height"}
 			>
-				<AppView className="gap-2 p-3">
+				{/* The page inset every other screen uses (dashboard page `px-4`, list `pt-5`). */}
+				<AppView className="gap-3 px-4 pt-5 pb-3">
 					<AppText>{t(`terminal.${status}`)}</AppText>
 					{!connection ? (
 						<>

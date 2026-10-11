@@ -220,6 +220,13 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 								<ListToolbar
 									filters={
 										<>
+											{/* The Agent scope is an applied filter, cleared like the profile chip. */}
+											{agentId ? (
+												<FilterChip active onClick={() => router.replace("/sessions")}>
+													<Text>{t("sessions.clearFilter")}</Text>
+													<Icon as={X} />
+												</FilterChip>
+											) : null}
 											{profileChipLabel ? (
 												<FilterChip active onClick={profileFilter.clear}>
 													<Text>{`${AGENT_PROFILES_COPY.filterTitle} · ${profileChipLabel}`}</Text>
@@ -277,11 +284,6 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 										{t("sessionFilters.searchInvalid")}
 									</WebText>
 								) : null}
-								{agentId ? (
-									<FilterChip active onClick={() => router.replace("/sessions")}>
-										{t("sessions.clearFilter")}
-									</FilterChip>
-								) : null}
 								{agents.isError ? (
 									<ApiErrorPanel
 										error={agents.error}
@@ -327,7 +329,9 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 							) : null}
 							{/* The empty state already says there are no results. */}
 							{rows.length ? (
-								<WebText recipe={paginationStyles.results}>{`${rows.length} of ${total}`}</WebText>
+								<WebText
+									recipe={paginationStyles.results}
+								>{`1–${rows.length} of ${total}`}</WebText>
 							) : null}
 						</WebView>
 					) : null

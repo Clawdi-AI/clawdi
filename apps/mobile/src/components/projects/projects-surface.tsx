@@ -284,8 +284,7 @@ export function ProjectEditorScreen() {
 	);
 }
 function ProjectEditor({ id: editing }: { id?: string }) {
-	const t = useI18n(),
-		scope = useAccountScope(),
+	const scope = useAccountScope(),
 		read = useAccountRead(),
 		capture = useForegroundLease();
 	const { cloud } = useMobileApi();
@@ -294,7 +293,6 @@ function ProjectEditor({ id: editing }: { id?: string }) {
 	const action = useAuthAction(scope);
 	const [name, setName] = useState("");
 	const [description, setDescription] = useState("");
-	const [closeError, setCloseError] = useState<unknown>();
 	const project = projects.data?.find((p) => p.id === editing);
 	const initialized = useRef(false);
 	useEffect(() => {
@@ -373,13 +371,6 @@ function ProjectEditor({ id: editing }: { id?: string }) {
 					</WebView>
 					{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 					<WebView recipe={createProjectDialogClasses.form}>
-						<Button
-							variant="ghost"
-							disabled={action.busy}
-							onPress={() => void sheet.close().catch(setCloseError)}
-						>
-							<Text>{t("libraryPort.cancel")}</Text>
-						</Button>
 						<Button disabled={action.busy || !name.trim()} onPress={() => void save()}>
 							<Icon as={editing ? Pencil : Plus} />
 							<Text>{editing ? formCopy.saveChanges : formCopy.title}</Text>
@@ -387,7 +378,6 @@ function ProjectEditor({ id: editing }: { id?: string }) {
 					</WebView>
 				</>
 			)}
-			{closeError ? <ApiErrorPanel error={closeError} /> : null}
 		</SheetPage>
 	);
 }

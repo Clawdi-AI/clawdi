@@ -27,6 +27,10 @@ const colors = [
 	styles.highActivity,
 	styles.peakActivity,
 ];
+/**
+ * Axis letters and month labels are pinned to the 11dp cell grid, so they keep their size at
+ * large text settings instead of clipping; each cell carries its full accessibility label.
+ */
 export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 	const t = useI18n();
 	const [maxWeeks, setMaxWeeks] = useState(52);
@@ -49,7 +53,12 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 			>
 				<WebView recipe={styles.weekdays} style={{ width: 12 }}>
 					{["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-						<WebText key={i} recipe={styles.weekdays} style={{ height: CELL, lineHeight: CELL }}>
+						<WebText
+							key={i}
+							recipe={styles.weekdays}
+							style={{ height: CELL, lineHeight: CELL }}
+							maxFontSizeMultiplier={1}
+						>
 							{d}
 						</WebText>
 					))}
@@ -83,6 +92,7 @@ export function ContributionGraph({ data }: { data: ContributionDay[] }) {
 									key={i}
 									recipe={`${styles.months} ${styles.monthLabel}`}
 									style={{ left: Math.min(i * STRIDE, weeks.length * STRIDE - 24), marginTop: 0 }}
+									maxFontSizeMultiplier={1}
 								>
 									{label}
 								</WebText>

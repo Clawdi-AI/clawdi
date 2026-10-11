@@ -73,7 +73,10 @@ export function SessionTimelineRowView({
 			{row.dividerTimestamp ? (
 				<WebView recipe={styles.dateDivider}>
 					<WebView recipe={styles.hairline} />
-					<WebText recipe={webText(styles.dateDivider)}>
+					{/* Android lays out tracked text narrower than it draws it, so this label, sized
+					exactly to its text between two hairlines, lost its last glyph ("YESTERDA").
+					Web's 0.025em tracking is imperceptible at text-xs; drop it here. */}
+					<WebText recipe={webText(styles.dateDivider)} className="tracking-normal">
 						{sessionDateLabel(row.dividerTimestamp)}
 					</WebText>
 					<WebView recipe={styles.hairline} />

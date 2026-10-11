@@ -1,4 +1,5 @@
 import { sectionLabelClasses as styles } from "@clawdi/shared/ui";
+import { cn } from "cn";
 import type { ReactNode } from "react";
 import { WebContent, WebText, WebView } from "@/components/ui/web-layout";
 export function SectionLabel({
@@ -13,7 +14,8 @@ export function SectionLabel({
 	className?: string;
 }) {
 	return (
-		<WebView recipe={styles.root} className={className}>
+		// Wrap instead of running off the row when large text no longer fits one line.
+		<WebView recipe={styles.root} className={cn("flex-wrap", className)}>
 			{leading ? (
 				<WebView recipe={styles.leading}>
 					<WebContent recipe={styles.leading}>{leading}</WebContent>

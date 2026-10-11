@@ -4,7 +4,7 @@ import {
 	SingleChoiceSegmentedButtonRow,
 	Text,
 } from "@expo/ui/jetpack-compose";
-import { horizontalScroll } from "@expo/ui/jetpack-compose/modifiers";
+import { fillMaxWidth, weight } from "@expo/ui/jetpack-compose/modifiers";
 import { useCSSVariable, useUniwind } from "uniwind";
 import { AppView } from "@/components/ui/view";
 import type { NativeSegmentsProps } from "@/platform/navigation/segmented-control";
@@ -15,7 +15,7 @@ export function NativeSegments({
 	options,
 	onChange,
 	disabled = false,
-	scrollable = false,
+	compact = false,
 }: NativeSegmentsProps) {
 	const { theme } = useUniwind();
 	const [foreground, accent, background, border] = useCSSVariable([
@@ -29,12 +29,13 @@ export function NativeSegments({
 		// Keep a native parent so list subview clipping never attaches the Host mid-layout (0×0 Host).
 		<AppView collapsable={false}>
 			<Host matchContents={{ vertical: true }} colorScheme={theme === "dark" ? "dark" : "light"}>
-				<SingleChoiceSegmentedButtonRow modifiers={scrollable ? [horizontalScroll()] : undefined}>
+				<SingleChoiceSegmentedButtonRow modifiers={[fillMaxWidth()]}>
 					{options.map((option) => (
 						<SegmentedButton
 							key={option.value}
 							selected={option.value === value}
 							enabled={!disabled}
+							modifiers={[weight(1)]}
 							onClick={() => onChange(option.value)}
 							colors={{
 								activeContainerColor: color(accent),
@@ -46,7 +47,14 @@ export function NativeSegments({
 							}}
 						>
 							<SegmentedButton.Label>
-								<Text maxLines={1} style={{ fontFamily: "Geist-Medium", fontSize: 14 }}>
+								<Text
+									maxLines={compact ? 1 : 2}
+									overflow="ellipsis"
+									style={{
+										fontFamily: compact ? "Geist-Regular" : "Geist-Medium",
+										fontSize: compact ? 12 : 14,
+									}}
+								>
 									{option.label}
 								</Text>
 							</SegmentedButton.Label>

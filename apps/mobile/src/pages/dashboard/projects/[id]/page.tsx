@@ -185,7 +185,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 						}}
 					/>
 					<NativeSegments
-						scrollable
+						compact
 						value={tab}
 						onChange={navigate}
 						options={PROJECT_LOCAL_TABS.map((item) => ({ value: item.id, label: item.label }))}

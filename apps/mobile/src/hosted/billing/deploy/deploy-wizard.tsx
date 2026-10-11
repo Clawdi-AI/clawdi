@@ -88,7 +88,7 @@ import { SettingsSection } from "@/components/settings-section";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
-import { Input as AppTextInput } from "@/components/ui/input";
+import { Input as AppTextInput, Label } from "@/components/ui/input";
 import {
 	Select,
 	SelectContent,
@@ -204,7 +204,8 @@ export function CreateAgentScreen() {
 	return (
 		<SafeAreaScreen>
 			<WebView recipe={agentsIndexClasses.page}>
-				<PageHeader title={tab === "deploy" ? agentSurfaceCopy.deployAnAgent : t("agents.add")} />
+				{/* One screen hosts both segments, so its title stays Web's "Add an agent". */}
+				<PageHeader title={t("agents.add")} />
 				<NativeSegments
 					value={tab}
 					onChange={setTab}
@@ -1595,66 +1596,73 @@ function CreationForm() {
 							</WebView>
 						</SettingsSection>
 						<SettingsSection title={agentSurfaceCopy.personalize}>
-							<WebView recipe={styles.personalize} className="items-stretch">
-								<AppText>{deployFormCopy.name}</AppText>
-								<AppTextInput
-									accessibilityLabel={deployFormCopy.name}
-									value={draft.agentName}
-									editable={!locked}
-									maxLength={64}
-									onChangeText={(agentName) => update({ agentName })}
-								/>
-								<AppText>{t("creation.language")}</AppText>
-								<NativePicker
-									value={draft.language}
-									options={[
-										{ value: "", label: agentSurfaceCopy.default },
-										...HOSTED_DEPLOY_LANGUAGE_OPTIONS.map((language) => ({
-											value: language.code,
-											label: language.label,
-										})),
-									]}
-									disabled={locked}
-									onValueChange={(language) => {
-										if (
-											language === "" ||
-											HOSTED_DEPLOY_LANGUAGE_OPTIONS.some((option) => option.code === language)
-										)
-											update({ language });
-									}}
-								/>
-								<AppText>{deployFormCopy.timezone}</AppText>
-								{/* Hundreds of IANA zones: region submenus keep the native menu short. */}
-								<Select
-									value={draft.timezone}
-									disabled={locked}
-									onValueChange={(timezone) => {
-										if (isValidTimezone(timezone)) update({ timezone });
-									}}
-								>
-									<SelectTrigger className="w-full">
-										<SelectValue placeholder={t("creation.selectTimezone")} />
-									</SelectTrigger>
-									<SelectContent>
-										{timezoneMenuGroups(timezoneOptions).map(([region, zones]) =>
-											region ? (
-												<SelectSub key={region} label={region}>
-													{zones.map((zone) => (
+							{/* Web's label/control field groups; phone width gives each its own row. */}
+							<WebView recipe={styles.personalize}>
+								<WebView recipe={styles.languageField} className="w-full">
+									<Label>{deployFormCopy.name}</Label>
+									<AppTextInput
+										accessibilityLabel={deployFormCopy.name}
+										value={draft.agentName}
+										editable={!locked}
+										maxLength={64}
+										onChangeText={(agentName) => update({ agentName })}
+									/>
+								</WebView>
+								<WebView recipe={styles.languageField} className="w-full">
+									<Label>{t("creation.language")}</Label>
+									<NativePicker
+										value={draft.language}
+										options={[
+											{ value: "", label: agentSurfaceCopy.default },
+											...HOSTED_DEPLOY_LANGUAGE_OPTIONS.map((language) => ({
+												value: language.code,
+												label: language.label,
+											})),
+										]}
+										disabled={locked}
+										onValueChange={(language) => {
+											if (
+												language === "" ||
+												HOSTED_DEPLOY_LANGUAGE_OPTIONS.some((option) => option.code === language)
+											)
+												update({ language });
+										}}
+									/>
+								</WebView>
+								<WebView recipe={styles.languageField} className="w-full">
+									<Label>{deployFormCopy.timezone}</Label>
+									{/* Hundreds of IANA zones: region submenus keep the native menu short. */}
+									<Select
+										value={draft.timezone}
+										disabled={locked}
+										onValueChange={(timezone) => {
+											if (isValidTimezone(timezone)) update({ timezone });
+										}}
+									>
+										<SelectTrigger className="w-full">
+											<SelectValue placeholder={t("creation.selectTimezone")} />
+										</SelectTrigger>
+										<SelectContent>
+											{timezoneMenuGroups(timezoneOptions).map(([region, zones]) =>
+												region ? (
+													<SelectSub key={region} label={region}>
+														{zones.map((zone) => (
+															<SelectItem key={zone} value={zone} label={timezoneLabel(zone)}>
+																{timezoneLabel(zone)}
+															</SelectItem>
+														))}
+													</SelectSub>
+												) : (
+													zones.map((zone) => (
 														<SelectItem key={zone} value={zone} label={timezoneLabel(zone)}>
 															{timezoneLabel(zone)}
 														</SelectItem>
-													))}
-												</SelectSub>
-											) : (
-												zones.map((zone) => (
-													<SelectItem key={zone} value={zone} label={timezoneLabel(zone)}>
-														{timezoneLabel(zone)}
-													</SelectItem>
-												))
-											),
-										)}
-									</SelectContent>
-								</Select>
+													))
+												),
+											)}
+										</SelectContent>
+									</Select>
+								</WebView>
 							</WebView>
 						</SettingsSection>
 						{message ? <AppText>{message}</AppText> : null}
