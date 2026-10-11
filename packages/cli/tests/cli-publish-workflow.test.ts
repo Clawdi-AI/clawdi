@@ -343,14 +343,10 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain('tarball="$CLI_TARBALL_FILENAME"');
 		expect(workflow).toContain(`name: \${{ env.CLI_ARTIFACT_NAME }}`);
 		expect(workflow).toContain("run: bun run typecheck");
-		const testStep = build.steps?.find((step) => step.name === "Test (ephemeral internal suite)");
-		expect(testStep).toMatchObject({
-			"timeout-minutes": 20,
-			run: "bun run --cwd packages/cli test:internal",
-		});
+		expect(build.steps?.some((step) => String(step.run).includes("test:internal"))).toBe(false);
 		expect(workflow).toContain("- name: Native lifecycle (ephemeral internal suite)");
-		expect(workflow.indexOf("- name: Test")).toBeLessThan(
-			workflow.indexOf("- name: Build package and native release matrix"),
+		expect(workflow.indexOf("- name: Build package and native release matrix")).toBeLessThan(
+			workflow.indexOf("- name: Native lifecycle"),
 		);
 		expect(workflow).toContain('npm install "$tarball_path" --ignore-scripts --no-audit --no-fund');
 		expect(workflow).toContain('sha256sum --check "$tarball.sha256"');
