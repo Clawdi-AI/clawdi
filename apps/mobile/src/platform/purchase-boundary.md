@@ -136,11 +136,12 @@ store charge) and refreshes the Wallet.
 
 `storeSurfaces()` (`store-policy.ts`) gates presentation. Store builds hide
 auto-reload, saved cards/card setup, browser-wallet USDC funding, Stripe
-receipt/invoice links, card `fix_payment` and card-only management copy, and
-keep the Add credits entry visible (disabled with a
-neutral status while purchases are unavailable). Preview/development builds keep
-Web parity; they show Add credits only when a debug build has a usable store
-flow (Test Store key plus enabled hosted bootstrap). Every build shows Wallet
+receipt/invoice links, card `fix_payment` and card-only management copy (the
+Wallet balance copy omits card-paid subscriptions), and keep the Top up entry
+visible (disabled with a neutral status while purchases are unavailable).
+Preview/development builds keep Web parity; they show the store Top up only
+when a debug build has a usable store flow (Test Store key plus enabled hosted
+bootstrap). Every build shows Wallet
 amounts and compute prices in USD, exactly as Web does.
 
 ## Compute subscriptions (P2-M2)

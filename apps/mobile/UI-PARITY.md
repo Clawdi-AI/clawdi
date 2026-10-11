@@ -104,12 +104,13 @@ Unused local keys are removed only after checking static and dynamic references.
 
 Every build, including store builds, shows Wallet, compute and AI Usage amounts
 in USD with Web's shared formatters. Store builds open the official
-RevenueCat `credits` Paywall for Add credits. Hosted purchase attempts and
+RevenueCat `credits` Paywall from Web's Top up button. Hosted purchase attempts and
 settlement remain authoritative; Check pending purchases recovers an earlier
 transaction without starting another charge. Consumable credits cannot be
 restored. Customer Center management is planned for store subscriptions and is
 not wired yet. Store builds hide the approved card-only and browser-wallet
-purchase surfaces; new paid compute subscriptions remain disabled.
+purchase surfaces, and their balance copy omits Web's card-paid subscription
+sentence; new paid compute subscriptions remain disabled.
 
 Development galleries remain available through `/dev/ui` and `/dev/account` in
 development. Their route entrypoints use Expo's documented `__DEV__` code removal
