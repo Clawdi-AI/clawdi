@@ -17,10 +17,13 @@ import {
 	resolveOpenClawSdkExport,
 } from "../lib/codex-oauth-native-store";
 import { applyRuntimeCliDesiredState } from "./cli-update";
+import { egressEngineSchema } from "./egress-engine";
+import { prefetchFileBrowserAsset } from "./file-browser-companion";
 import { resolveHostedOpenClawWorkspace } from "./hosted-openclaw-context";
 import { ensureHostedCodexCli } from "./managed-codex-provider";
 import { OFFICIAL_INSTALL_URLS, officialInstallArgs } from "./manifest-contract";
 import { observeRuntimeInstall, runtimeFileCurrentRevision } from "./manifest-install";
+import { ensureRuntimeMitmproxy } from "./mitmproxy-fetch";
 import {
 	prepareAnonymousOpenClawGateway,
 	seedAnonymousOpenClawAuthProbes,
@@ -41,6 +44,18 @@ export const preinstallationSpecSchema = z
 		imageFingerprint: sha256,
 		architecture: z.enum(["x64", "arm64"]),
 		cliPackageSpec: z.string().regex(/^clawdi@\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/),
+		egressEngine: egressEngineSchema.strict().optional(),
+		fileBrowserAsset: z
+			.object({
+				url: z
+					.string()
+					.regex(
+						/^https:\/\/github\.com\/gtsteffaniak\/filebrowser\/releases\/download\/[A-Za-z0-9._-]+\/linux-(?:amd64|arm64)-filebrowser$/,
+					),
+				sha256,
+			})
+			.strict()
+			.optional(),
 		runtime: z.enum(["openclaw", "hermes"]),
 	})
 	.strict();
@@ -184,6 +199,12 @@ export function prepareRuntimePreinstallation(
 	};
 	if (probes.configPath !== undefined && !isAbsolute(probes.configPath))
 		throw new Error("installed Hermes config path is not absolute");
+	if (spec.fileBrowserAsset) prefetchFileBrowserAsset(paths, spec.fileBrowserAsset);
+	if (spec.egressEngine) {
+		const egress = ensureRuntimeMitmproxy(spec.egressEngine, paths);
+		if (egress.status !== "ready")
+			throw new Error(`egress engine preparation failed: ${egress.error}`);
+	}
 	if (!ensureHostedCodexCli(paths)) throw new Error("Codex preparation is disabled");
 	if (spec.runtime === "openclaw") {
 		prepareAnonymousOpenClawGateway(paths, identity);

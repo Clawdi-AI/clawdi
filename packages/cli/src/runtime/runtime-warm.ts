@@ -15,7 +15,11 @@ import {
 	seedAnonymousOpenClawAuthProbes,
 } from "./openclaw-preinstallation";
 import { applyOpenClawConfigMergePatch } from "./openclaw-provider-config";
-import { recordWarmOpenClawGateway, warmOpenClawGatewayEnvironment } from "./openclaw-warm-gateway";
+import {
+	openClawHotApplyEnabled,
+	recordWarmOpenClawGateway,
+	warmOpenClawGatewayEnvironment,
+} from "./openclaw-warm-gateway";
 import type { RuntimePaths } from "./paths";
 import {
 	flushPersistedStepRevisions,
@@ -82,7 +86,16 @@ export async function warmHostedOpenClawRuntime(
 	resolveHostedOpenClawWorkspace(paths.userHome);
 	seedAnonymousOpenClawAuthProbes(paths, command);
 	flushPersistedStepRevisions(paths);
-	recordWarmOpenClawGateway(paths);
+	if (openClawHotApplyEnabled()) {
+		recordWarmOpenClawGateway(paths);
+	} else {
+		const stopped = spawnSync("systemctl", ["--user", "-M", `${runtimeUser}@`, "stop", unit], {
+			stdio: "ignore",
+			timeout: 60_000,
+		});
+		if (stopped.error || stopped.status !== 0)
+			throw new Error("anonymous OpenClaw gateway did not stop");
+	}
 }
 
 async function waitForGatewayHealth(): Promise<void> {

@@ -15,9 +15,21 @@ The prepare command runs inside the eventual pool instance. npm installs the
 current global CLI selector using its ordinary integrity checks, without Cloud or
 tenant identity. The CLI then uses the normal official runtime installer path.
 The root-only command requires empty homes and a small
-`clawdi.runtime-preinstallation.v1` spec containing only image, architecture,
-selector and runtime. A root-owned receipt records the installed probes and
-home digest; tenant inputs are never accepted.
+`clawdi.runtime-preinstallation.v1` spec containing image, architecture,
+selector and runtime, plus optional tenant-independent `egressEngine` and
+`fileBrowserAsset` pins. A root-owned receipt records the spec, installed probes
+and home digest; tenant inputs are never accepted.
+
+The optional pins match the ordinary cold manifest. `egressEngine` uses the
+strict mitmproxy pin schema (`type`, `version`, `url`, `sha256`) and the existing
+official download validation. `fileBrowserAsset` accepts only `url` and a
+lowercase 64-character SHA256; its URL must match
+`https://github.com/gtsteffaniak/filebrowser/releases/download/<release>/linux-<amd64|arm64>-filebrowser`.
+Unknown fields are rejected. Preparation caches both artifacts through the
+ordinary claim-time installers; a checksum mismatch or unavailable engine fails
+the fill before a receipt is sealed. Files reuses its verified content-addressed
+candidate without downloading at claim. Specs and receipts without the optional
+pins retain the ordinary installation and warm-up behavior.
 
 ## Trust model: same as cold install
 
@@ -56,13 +68,26 @@ failures emit `warm_pool_resource_leak`.
 
 ## First apply
 
-Warm-up rejects tenant inputs. OpenClaw starts an anonymous gateway with a private
-random token/CA; Hermes prepares assets and stops anonymous services.
+Warm-up rejects tenant inputs. OpenClaw initializes its first-run state through
+an anonymous gateway with a private random token/CA, then stops the gateway when
+hot apply is disabled. Only `CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY=1` retains the
+running gateway and writes its adoption marker. Hermes prepares assets and stops
+anonymous services.
 
-Anonymous egress denies managed traffic until one atomic snapshot publishes the
-claimed policy and credentials. Adoption proves hash ACK, idle invocation, units,
-environment and CA. A one-second metadata watcher reads changed files; requests
-perform no snapshot I/O. Transient I/O errors retain valid policy; invalid replacements
+With a receipt carrying `egressEngine`, warm-up generates the CA inside this
+single-use instance under the egress UID's private run directory and starts the
+anonymous sidecar. No CA is shared across instances. The root-owned
+`egress-warmed.json` marker binds the unit, environment, CA and live invocation.
+
+Anonymous mode answers intercepted HTTP(S) requests with HTTP 503 and never
+sends managed requests until one atomic snapshot publishes the claimed policy
+and credentials. It is not a network firewall: other ports and UDP are not
+redirected. Adoption proves hash ACK, idle invocation, units,
+environment and CA before user units start. A matching sidecar keeps its
+invocation; an identity mismatch uses ordinary restart reconciliation. Hermes
+dashboard startup can overlap platform activation only with acknowledged warm
+egress and the private Hermes warm marker. A one-second metadata watcher reads
+changed files; requests perform no snapshot I/O. Transient I/O errors retain valid policy; invalid replacements
 revoke credentials/ACK and stop the engine. First readiness removes snapshot
 selection; the next projection restores legacy inputs and sidecar reconciliation.
 
@@ -133,6 +158,29 @@ The normal installer path is verified by the CLI suites and the paired Hosted
 pool qualification. Production and real model/chat/channel traffic remain
 outside this qualification.
 
+Focused coverage is in `preinstallation.test.ts`,
+`tests/runtime-warm-egress.test.ts`, `tests/runtime-warm-openclaw.test.ts` and
+`manifest-reconciliation.test.ts`.
+CA generation and anonymous HTTP 503 policy run in the unprivileged clean
+runner; `bash scripts/test.sh runtime-systemd` also runs the claim orchestration
+cases as isolated root to exercise root-owned markers and UID handoffs.
+`runtime-anonymous-egress-native.test.ts` uses the SHA-verified mitmproxy pin and
+real nft redirect in that container: runtime-UID no-SNI HTTPS receives 503 while
+the local TLS upstream records no decrypted HTTP request bytes. Upstream TCP/TLS
+handshakes are allowed; the test retains the engine's default connection strategy.
+Gateway/dashboard revision regressions remain covered by `manifest-services.test.ts`.
+
+Paired native qualification must supply both optional pins from the cold
+manifest, verify fill failure on artifact mismatch, then prove no artifact
+downloads or sidecar invocation change on a matching claim. Check the private
+instance-local CA, anonymous HTTP 503 policy, claimed snapshot ACK before any
+user unit, Hermes dashboard overlap, identity-mismatch restart fallback and
+receipt compatibility without the pins. Keep ordinary hosted gateway/dashboard
+program revisions unchanged. With OpenClaw hot apply disabled, verify the warm
+gateway is stopped, its adoption marker is absent, first-run files remain, and
+claim starts the gateway once through the normal transaction. Hosted owns
+supplying the optional pins; CLI support alone does not change pool fill specs.
+
 The CLI, systemd and changed-file lint suites pass. Paired native fill/claim
 qualification remains a release gate and requires the Hosted/OSS source pair
-(`CLAWDI_POOL_OSS_SOURCE`); it was not run without that checkout.
+(`CLAWDI_POOL_OSS_SOURCE`); run it separately from the CLI/systemd suites.

@@ -79,6 +79,45 @@ def bundle(profiles):
 
 
 class AddonProfileInterpreterTest(unittest.TestCase):
+    def test_anonymous_clienthello_intercepts_with_or_without_sni(self):
+        engine = addon.ClawdiEgressAddon()
+        engine.snapshot_claimed = False
+        for sni in (None, "", "arbitrary.test"):
+            with self.subTest(sni=sni):
+                hello = SimpleNamespace(
+                    client_hello=SimpleNamespace(sni=sni), ignore_connection=False
+                )
+                engine.tls_clienthello(hello)
+                self.assertFalse(hello.ignore_connection)
+
+    def test_claimed_clienthello_preserves_selective_interception(self):
+        engine = self.load([
+            {
+                "id": "profiled-host",
+                "kind": "http",
+                "match": {"host": "profiled.test"},
+                "rewrite": {"upstreamBaseUrl": "https://relay.test"},
+            },
+            {
+                "id": "passthrough-host",
+                "kind": "passthrough",
+                "match": {"host": "passthrough.test"},
+            },
+        ])
+        for sni, ignored in (
+            (None, True),
+            ("", True),
+            ("unprofiled.test", True),
+            ("passthrough.test", True),
+            ("profiled.test", False),
+        ):
+            with self.subTest(sni=sni):
+                hello = SimpleNamespace(
+                    client_hello=SimpleNamespace(sni=sni), ignore_connection=False
+                )
+                engine.tls_clienthello(hello)
+                self.assertEqual(hello.ignore_connection, ignored)
+
     def test_anonymous_snapshot_denies_then_atomically_adopts_and_rotates_credentials(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
