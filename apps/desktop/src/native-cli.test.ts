@@ -251,6 +251,7 @@ function serviceFixture(
 			},
 			execute,
 			resourcesPath,
+			home,
 		);
 	const service = newService();
 	return {

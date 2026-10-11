@@ -282,11 +282,15 @@ function stripPathQuotes(value: string): string {
 }
 
 function isAppImageRuntimeTarget(target: string, userData: string): boolean {
-	const root = normalize(
-		resolve(existsSync(userData) ? realpathSync(userData) : userData, "runtimes"),
-	);
+	const root = normalize(resolve(userData, "runtimes"));
+	const canonicalRoot = existsSync(userData)
+		? normalize(resolve(realpathSync(userData), "runtimes"))
+		: root;
 	const normalized = normalize(existsSync(target) ? realpathSync(target) : resolve(target));
-	return dirname(dirname(normalized)) === root && basename(normalized) === "clawdi";
+	const runtimeRoot = dirname(dirname(normalized));
+	return (
+		(runtimeRoot === root || runtimeRoot === canonicalRoot) && basename(normalized) === "clawdi"
+	);
 }
 
 function isDesktopManagedTarget(target: string, userData: string): boolean {

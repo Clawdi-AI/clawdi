@@ -27,6 +27,19 @@ afterEach(() => {
 
 describe("Desktop CLI command", () => {
 	test.skipIf(process.platform === "win32")(
+		"migration recognizes a removed runtime when userdata has a directory alias",
+		() => {
+			const fixture = createFixture();
+			const alias = join(fixture.root, "data-alias");
+			symlinkSync(fixture.userData, alias);
+			const launcher = join(fixture.home, ".local", "bin", "clawdi");
+			mkdirSync(dirname(launcher), { recursive: true });
+			symlinkSync(join(alias, "runtimes", "0.1.0", "clawdi"), launcher);
+			removeDesktopCliSymlink({ home: fixture.home, userData: alias, bundledCli: fixture.target });
+			expect(() => lstatSync(launcher)).toThrow();
+		},
+	);
+	test.skipIf(process.platform === "win32")(
 		"migration removes only symlinks into Desktop bundles or owned AppImage runtimes",
 		() => {
 			const fixture = createFixture();

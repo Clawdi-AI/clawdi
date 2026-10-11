@@ -44,7 +44,21 @@ async function stopDesktop(): Promise<void> {
 	if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
 	const exited = once(child, "exit");
 	if (process.platform === "win32") {
-		await runCommand("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"]);
+		// Match smoke-packaged.mjs: Electron closes its Chromium children on
+		// shutdown. taskkill /T can race processes already closed by CDP.
+		child.kill("SIGTERM");
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const graceful = await Promise.race([
+				exited.then(() => true),
+				new Promise<boolean>((done) => {
+					timer = setTimeout(() => done(false), 5_000);
+				}),
+			]);
+			if (!graceful) child.kill("SIGKILL");
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
 	} else {
 		try {
 			process.kill(-child.pid, "SIGKILL");
@@ -284,6 +298,9 @@ try {
 		await stopDesktop();
 		console.info(`Real Electron shared native CLI: ${scenario} passed`);
 	}
+} catch (error) {
+	console.error("Shared native CLI e2e failed", error);
+	throw error;
 } finally {
 	await stopDesktop();
 	if (process.platform === "win32") {

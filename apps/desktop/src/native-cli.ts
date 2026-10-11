@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type {
 	DesktopAgentConnection,
@@ -77,6 +78,9 @@ export class DesktopCliService {
 		private readonly application: Pick<App, "isPackaged" | "getAppPath" | "getPath" | "getVersion">,
 		private readonly execute: typeof runCommand = runCommand,
 		private readonly resourcesPath = process.resourcesPath,
+		// Use the same home authority as the CLI bootstrap/installers. On
+		// Windows Electron's known-folder API may ignore USERPROFILE overrides.
+		private readonly home = homedir(),
 	) {}
 
 	private authentication: AuthenticationOperation | null = null;
@@ -312,7 +316,7 @@ export class DesktopCliService {
 			try {
 				const userData = this.application.getPath("userData");
 				const launcherTarget = managedAppImageCliCommandTarget({
-					home: this.application.getPath("home"),
+					home: this.home,
 					userData,
 				});
 				const protectedVersions = launcherTarget
@@ -455,7 +459,7 @@ export class DesktopCliService {
 
 	private async selectCli(): Promise<string> {
 		const platform = requireDesktopPlatform();
-		const home = this.application.getPath("home");
+		const home = this.home;
 		const launcher = nativeLauncherPath(platform, home);
 		if (await this.usableNativeCli(launcher)) {
 			this.cliSource = "native";
@@ -703,7 +707,7 @@ export class DesktopCliService {
 				env: {
 					...cliEnvironment(
 						process.env,
-						cli === nativeLauncherPath(process.platform, this.application.getPath("home")),
+						cli === nativeLauncherPath(process.platform, this.home),
 						this.runtimeRoot,
 					),
 					...(this.application.isPackaged
