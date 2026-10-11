@@ -76,8 +76,10 @@ single-use instance under the egress UID's private run directory and starts the
 anonymous sidecar. No CA is shared across instances. The root-owned
 `egress-warmed.json` marker binds the unit, environment, CA and live invocation.
 
-Anonymous egress denies all traffic with HTTP 503 until one atomic snapshot
-publishes the claimed policy and credentials. Adoption proves hash ACK, idle invocation, units,
+Anonymous mode answers intercepted HTTP(S) requests with HTTP 503 and never
+sends managed requests until one atomic snapshot publishes the claimed policy
+and credentials. It is not a network firewall: other ports and UDP are not
+redirected. Adoption proves hash ACK, idle invocation, units,
 environment and CA before user units start. A matching sidecar keeps its
 invocation; an identity mismatch uses ordinary restart reconciliation. Hermes
 dashboard startup can overlap platform activation only with acknowledged warm
@@ -158,6 +160,10 @@ Focused coverage is in `preinstallation.test.ts`,
 CA generation and anonymous HTTP 503 policy run in the unprivileged clean
 runner; `bash scripts/test.sh runtime-systemd` also runs the claim orchestration
 cases as isolated root to exercise root-owned markers and UID handoffs.
+`runtime-anonymous-egress-native.test.ts` uses the SHA-verified mitmproxy pin and
+real nft redirect in that container: runtime-UID no-SNI HTTPS receives 503 while
+the local TLS upstream records no decrypted HTTP request bytes. Upstream TCP/TLS
+handshakes are allowed; the test retains the engine's default connection strategy.
 Gateway/dashboard revision regressions remain covered by `manifest-services.test.ts`.
 
 Paired native qualification must supply both optional pins from the cold

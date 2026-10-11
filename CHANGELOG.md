@@ -55,6 +55,9 @@ only renames unmerged PR series and never-emitted definitions. See
   and Files binary before claim. Anonymous warm-up prepares the instance-local
   egress CA and sidecar so matching claims can reuse them and overlap Hermes
   dashboard startup. Existing agents keep their gateway and dashboard revisions.
+- **Anonymous managed egress:** intercepted HTTPS requests without SNI now
+  receive HTTP 503 before claim. Claimed agents retain their existing selective
+  TLS interception and default-allow behavior.
 - **Native CLI releases:** macOS native CLI releases are signed with Clawdi's Apple Developer ID and notarized.
 - **Desktop native CLI:** Desktop can bootstrap and safely activate the shared native CLI while preserving user-owned launchers and existing installations.
 
