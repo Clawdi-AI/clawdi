@@ -77,7 +77,6 @@ export function ProjectVaultCatalog({
 		capture = useForegroundLease();
 	const [search, setSearch] = useState(""),
 		[name, setName] = useState("");
-	const [closeError, setCloseError] = useState<unknown>();
 	const sheet = useSheet<boolean>({
 		fallback: { pathname: "/projects/[id]", params: { id: project.id, tab: "vaults" } },
 		busy: action.busy,
@@ -164,16 +163,6 @@ export function ProjectVaultCatalog({
 				{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 				<WebView recipe={projectDetailClasses.form}>
 					<Button
-						variant="ghost"
-						disabled={action.busy}
-						onPress={() => {
-							void sheet.close().catch(setCloseError);
-							setName("");
-						}}
-					>
-						<Text>{t("libraryPort.cancel")}</Text>
-					</Button>
-					<Button
 						disabled={action.busy || !name.trim() || !slugFromVaultName(name)}
 						onPress={() => {
 							const visible = capture();
@@ -200,7 +189,6 @@ export function ProjectVaultCatalog({
 						<Text>{t("libraryPort.createVault")}</Text>
 					</Button>
 				</WebView>
-				{closeError ? <ApiErrorPanel error={closeError} /> : null}
 			</SheetPage>
 		);
 	const listRows = groups.flatMap((group) =>

@@ -1,19 +1,22 @@
 import { Stack } from "expo-router";
 import type { NativeStackNavigationOptions } from "expo-router/native-stack";
 import { useEffect, useRef } from "react";
+import { useWindowDimensions } from "react-native";
 import type { SearchBarCommands } from "react-native-screens";
 import { useCSSVariable } from "uniwind";
+import { barFontSize } from "@/platform/navigation/bar-font-size";
 import { HeaderActions } from "@/platform/navigation/header-actions";
 import type { HeaderAction, HeaderMenu } from "@/platform/navigation/native-header-types";
 
 export function useNativeStackOptions(): NativeStackNavigationOptions {
 	const [background, foreground] = useCSSVariable(["--color-background", "--color-foreground"]);
+	const { fontScale } = useWindowDimensions();
 	const color = (value: string | number | undefined) =>
 		typeof value === "string" ? value : undefined;
 	return {
 		headerStyle: { backgroundColor: color(background) },
 		headerTintColor: color(foreground),
-		headerTitleStyle: { fontFamily: "Geist-SemiBold", fontSize: 20 },
+		headerTitleStyle: { fontFamily: "Geist-SemiBold", fontSize: barFontSize(20, fontScale) },
 		headerLargeTitleStyle: { fontFamily: "Geist-SemiBold", color: color(foreground) },
 		contentStyle: { backgroundColor: color(background) },
 	};

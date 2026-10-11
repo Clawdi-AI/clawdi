@@ -109,3 +109,41 @@ export function workspaceSkillErrorMessage(code: unknown): string | null {
 			return null;
 	}
 }
+
+type ManagedAgentSkill = components["schemas"]["AgentSkillDesiredResponse"];
+export type AgentSkillInventoryItem = WorkspaceRuntimeSkill & { managed: ManagedAgentSkill | null };
+
+/**
+ * One row per skill an Agent's Skills page lists: managed skills plus the workspace's agent-synced
+ * projections and hosted GitHub desired state, as Web's Skills tab and both overviews count them.
+ */
+export function agentSkillInventory(
+	managed: readonly ManagedAgentSkill[],
+	projections: readonly SkillSummary[],
+	hosted: readonly HostedWorkspaceSkillDesiredItem[],
+): AgentSkillInventoryItem[] {
+	const rows = new Map<string, AgentSkillInventoryItem>(
+		mergeWorkspaceRuntimeSkills(projections, hosted).map((row) => [
+			row.entity.skill_key,
+			{ ...row, managed: null },
+		]),
+	);
+	for (const skill of managed) {
+		const existing = rows.get(skill.skill_key);
+		rows.set(skill.skill_key, {
+			entity: {
+				...existing?.entity,
+				skill_key: skill.skill_key,
+				name: skill.name,
+				description: skill.description ?? null,
+			},
+			cloudProjection: existing?.cloudProjection ?? null,
+			desired: existing?.desired ?? null,
+			projectionOnly: false,
+			managed: skill,
+		});
+	}
+	return [...rows.values()].sort((left, right) =>
+		left.entity.name.localeCompare(right.entity.name),
+	);
+}

@@ -27,12 +27,12 @@ describe("formatModelLabel", () => {
 		["claude-3-5-sonnet-20241022", "Sonnet 3.5"],
 		["claude-3-7-sonnet-20250219", "Sonnet 3.7"],
 		// GPT family
-		["gpt-5.4", "GPT 5.4"],
-		["gpt-5.4-codex", "GPT 5.4 Codex"],
-		["gpt-5.3-codex-preview", "GPT 5.3 Codex Preview"],
+		["gpt-5.4", "GPT-5.4"],
+		["gpt-5.4-codex", "GPT-5.4 Codex"],
+		["gpt-5.3-codex-preview", "GPT-5.3 Codex Preview"],
 		// 4o + dated suffix (YYYY-MM-DD form)
-		["gpt-4o", "GPT 4o"],
-		["gpt-4o-2024-08-06", "GPT 4o"],
+		["gpt-4o", "GPT-4o"],
+		["gpt-4o-2024-08-06", "GPT-4o"],
 		// OpenAI o-series
 		["o3", "O3"],
 		["o3-mini", "O3 Mini"],

@@ -23,9 +23,10 @@ export function LibraryPage({
 			<AppScrollView
 				keyboardShouldPersistTaps="handled"
 				contentInsetAdjustmentBehavior="automatic"
-				contentContainerClassName={webView(
+				// The same top and bottom insets as NativeList pages, so content clears the header.
+				contentContainerClassName={`${webView(
 					detail ? detailLayoutClasses.detailPage : detailLayoutClasses.page,
-				)}
+				)} pt-5 pb-6`}
 			>
 				{children}
 			</AppScrollView>

@@ -327,8 +327,10 @@ const runtimeEn = {
 };
 const deploymentsEn = {
 	openDashboard: "Open Agent dashboard",
-	browserWarning:
-		"Open the runtime in the system browser. OpenClaw receives an access credential; the browser may retain access after you sign out of this app. Hermes signs in with your current Clawdi session. Closing the browser does not revoke access; use Reset dashboard access when needed.",
+	browserWarningOpenClaw:
+		"Open the runtime in the system browser. OpenClaw receives an access credential; the browser may retain access after you sign out of this app. Closing the browser does not revoke access; use Reset dashboard access when needed.",
+	browserWarningHermes:
+		"Open the runtime in the system browser. Hermes signs in with your current Clawdi session. Closing the browser does not revoke access; use Reset dashboard access when needed.",
 	browserUnavailable:
 		"An authenticated browser endpoint is not available yet. Refresh deployment status.",
 	browserFailed:

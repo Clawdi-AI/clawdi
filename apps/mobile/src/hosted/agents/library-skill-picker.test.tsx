@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, expect, jest, mock, test } from "bun:test";
 import type { components } from "@clawdi/shared/api";
+import { agentSurfaceCopy } from "@clawdi/shared/view";
 import {
 	environmentManager,
 	focusManager,
@@ -52,9 +53,17 @@ const polling: Inventory = {
 	skills: [skill({ skill_key: "pending", name: "Pending", convergence: "not_observed" })],
 };
 
+const githubSource = { url: "https://github.com/acme/skills", path: "brand-guidelines" };
+
 function harness() {
 	const library: LibrarySkill[] = [{ id: "skill-1", name: "Demo", authority: "cloud" }];
 	return {
+		projections: {
+			workspace: "workspace-1" as string | null,
+			data: [] as { skill_key: string; name: string; authority: "agent_sync" }[],
+			error: null as unknown,
+			refetch: mock(() => undefined),
+		},
 		inventory: {
 			data: polling as Inventory | undefined,
 			error: null as unknown,
@@ -91,8 +100,8 @@ function harness() {
 		),
 		changes: {
 			inventory: {
-				data: { items: [{ skill_key: "brand-guidelines" }] } as
-					| { items: { skill_key: string }[] }
+				data: { items: [{ skill_key: "brand-guidelines", source: githubSource }] } as
+					| { items: { skill_key: string; source: typeof githubSource }[] }
 					| undefined,
 				refetch: async () => undefined,
 			},
@@ -241,6 +250,22 @@ mock.module("@/components/ui/native-list", () => ({
 }));
 mock.module("@/components/ui/text", () => ({ Text: passthrough }));
 mock.module("@/components/ui/web-layout", () => ({ WebView: passthrough }));
+mock.module("@/components/skills/skill-card", () => ({
+	SkillCard: ({
+		skill,
+		provenanceLabel,
+	}: {
+		skill: { name: string };
+		provenanceLabel?: string;
+	}) => (
+		<p>
+			{skill.name}|{provenanceLabel}
+		</p>
+	),
+}));
+mock.module("@/hosted/agents/agent-workspace-projections-query", () => ({
+	useAgentWorkspaceProjections: () => h.projections,
+}));
 mock.module("@/hosted/agents/workspace-skill-changes", () => ({
 	useWorkspaceSkillChanges: () => h.changes,
 }));
@@ -605,4 +630,13 @@ test("a reconcile_failed Skill shows Web's automatic retry notice; guard failure
 	expect(renderToStaticMarkup(<HostedAgentLibrarySkillsScreen deploymentId="d" />)).not.toContain(
 		html(retryNotice),
 	);
+});
+
+test("the Skills list includes agent-synced workspace skills, as Web's tab and the overview count", () => {
+	h.projections.data = [{ skill_key: "plan", name: "Plan", authority: "agent_sync" }];
+	const markup = renderToStaticMarkup(
+		<HostedAgentLibrarySkillsScreen deploymentId="deployment-1" />,
+	);
+	expect(markup).toContain(`Plan|${agentSurfaceCopy.syncedFromAgent}`);
+	expect(markup).toContain("Pending|");
 });

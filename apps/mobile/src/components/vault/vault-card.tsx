@@ -79,7 +79,7 @@ export function VaultCard({
 				actions !== undefined ? (
 					actions
 				) : vault.is_owner !== false ? (
-					<Button variant="ghost" size="sm" onPress={open}>
+					<Button variant="outline" size="sm" onPress={open}>
 						<Text>{t("libraryPort.addKeys")}</Text>
 					</Button>
 				) : undefined

@@ -35,7 +35,9 @@ export function agentOverviewSummary(
 				? `${total} ${total === 1 ? "memory" : "memories"} · all agents`
 				: "No memories yet · all agents";
 		case "connectors":
-			return total ? `${total} ${total === 1 ? "app" : "apps"} · all agents` : "No apps available";
+			return total
+				? `${total} ${total === 1 ? "app" : "apps"} · all agents`
+				: "No apps connected · all agents";
 	}
 }
 

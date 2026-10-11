@@ -153,7 +153,7 @@ describe("model binding", () => {
 			"Label",
 		);
 		expect(modelDisplayName("model", [{ id: "model", alias: "Alias" }])).toBe("Alias");
-		expect(modelDisplayName("gpt-5.4", [])).toBe("GPT 5.4");
+		expect(modelDisplayName("gpt-5.4", [])).toBe("GPT-5.4");
 		expect(modelDisplayName("unknown/model", [])).toBe("unknown/model");
 	});
 

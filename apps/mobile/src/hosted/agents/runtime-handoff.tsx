@@ -65,7 +65,11 @@ export function RuntimeBrowser({
 		const ticket = ++confirmation.current;
 		nativeConfirmation.show(
 			t("deployments.openDashboard"),
-			`${reviewedUrl}\n\n${t("deployments.browserWarning")}`,
+			`${reviewedUrl}\n\n${t(
+				endpoint.runtime === "hermes"
+					? "deployments.browserWarningHermes"
+					: "deployments.browserWarningOpenClaw",
+			)}`,
 			[
 				{ text: t("account.cancel"), style: "cancel" },
 				{

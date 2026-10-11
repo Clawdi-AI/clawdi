@@ -68,7 +68,8 @@ export default function LibraryRoute() {
 								<IconChip size="xs" tint={item.tint}>
 									<Icon as={icons[id]} />
 								</IconChip>
-								<WebView recipe={libraryNavigationClasses.body}>
+								{/* DOM flex items shrink by default; RN items need flex-1 to wrap within the row. */}
+								<WebView recipe={libraryNavigationClasses.body} className="flex-1">
 									<WebText recipe={webText(libraryNavigationClasses.item)}>{item.label}</WebText>
 									<WebText recipe={libraryNavigationClasses.subtitle}>{item.description}</WebText>
 								</WebView>

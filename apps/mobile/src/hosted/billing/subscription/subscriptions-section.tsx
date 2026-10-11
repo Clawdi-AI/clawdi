@@ -1,4 +1,4 @@
-import { billingPageClass, transactionsSectionClasses } from "@clawdi/shared/ui";
+import { billingPageStackClass, transactionsSectionClasses } from "@clawdi/shared/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "expo-router";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -59,7 +59,7 @@ function BillingView() {
 				loadingMore={subscriptions.isFetching}
 				onLoadMore={() => void subscriptions.fetchNextPage()}
 				header={
-					<WebView recipe={billingPageClass}>
+					<WebView recipe={billingPageStackClass}>
 						<SettingsPanelHeader
 							title={t("billingParity.compute")}
 							description={t("billingParity.computeDescription")}
@@ -107,7 +107,7 @@ function BillingView() {
 					/>
 				)}
 				footer={
-					<WebView recipe={billingPageClass}>
+					<WebView recipe={billingPageStackClass}>
 						{subscriptions.isFetchingNextPage ? <RouteLoadingSkeleton /> : null}
 						{subscriptions.isError && subscriptions.data ? (
 							<ApiErrorPanel

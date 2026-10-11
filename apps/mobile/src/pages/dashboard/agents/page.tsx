@@ -5,6 +5,7 @@ import {
 	agentSurfaceCopy,
 	hostedAgentCountLabel,
 	hostedAgentGroupsCopy,
+	projectPickerGroups,
 	selfManagedAgentTiles,
 } from "@clawdi/shared/view";
 import { router } from "expo-router";
@@ -68,14 +69,29 @@ function AgentsView({ project }: { project?: Project }) {
 						{
 							id: "all",
 							label: t("projects.all"),
+							selected: !project,
 							onPress: () => router.setParams({ projectId: undefined }),
 						},
-						...(projects.data ?? []).map((item) => ({
-							id: item.id,
-							label: item.name,
-							onPress: () => router.setParams({ projectId: item.id }),
-						})),
 					],
+					// Web's project picker groups: projects, agent workspaces, shared; no Personal project.
+					sections: projectPickerGroups(
+						(projects.data ?? []).filter((item) => item.kind !== "personal"),
+					).map((group) => ({
+						id: group.id,
+						title: group.label,
+						items: group.projects.flatMap(({ id, name }) =>
+							id
+								? [
+										{
+											id,
+											label: name,
+											selected: id === project?.id,
+											onPress: () => router.setParams({ projectId: id }),
+										},
+									]
+								: [],
+						),
+					})),
 				}}
 			/>
 			<NativeList

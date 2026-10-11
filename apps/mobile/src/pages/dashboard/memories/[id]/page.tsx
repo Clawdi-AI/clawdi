@@ -149,14 +149,16 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 								{t("libraryPort.recallDescription")}
 							</WebText>
 						</WebView>
-						<WebView recipe={memoryDetailClasses.tags}>
-							<WebText recipe={memoryDetailClasses.subtitle}>{t("memories.tags")}</WebText>
-							{memory.tags?.map((tag) => (
-								<Badge key={tag} variant="outline">
-									<Text>#{tag}</Text>
-								</Badge>
-							))}
-						</WebView>
+						{memory.tags?.length ? (
+							<WebView recipe={memoryDetailClasses.tags}>
+								<WebText recipe={memoryDetailClasses.subtitle}>{t("memories.tags")}</WebText>
+								{memory.tags.map((tag) => (
+									<Badge key={tag} variant="outline">
+										<Text>#{tag}</Text>
+									</Badge>
+								))}
+							</WebView>
+						) : null}
 						{memory.source_session_id || memory.source_machine_name ? (
 							<WebView recipe={memoryDetailClasses.provenance}>
 								<Icon as={Laptop} className={webBoth(memoryDetailClasses.sourceIcon)} />

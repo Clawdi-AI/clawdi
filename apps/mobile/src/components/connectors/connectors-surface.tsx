@@ -219,18 +219,25 @@ function Catalog() {
 							title={t("connectors.title")}
 							description={getProjectResourceDefinition("connectors").managementDescription}
 							status={
-								<WebView recipe={connectorsSurfaceClasses.filters}>
-									<Badge variant="secondary">
-										<Text>
-											{total} {t("connectors.availableCount")}
-										</Text>
-									</Badge>
-									<Badge>
-										<Text>
-											{connectedNames.length} {t("connectors.activeCount")}
-										</Text>
-									</Badge>
-								</WebView>
+								// Like Web, each count badge shows only when it has something to count.
+								total > 0 || connectedNames.length > 0 ? (
+									<WebView recipe={connectorsSurfaceClasses.filters}>
+										{total > 0 ? (
+											<Badge variant="secondary">
+												<Text>
+													{total.toLocaleString()} {t("connectors.availableCount")}
+												</Text>
+											</Badge>
+										) : null}
+										{connectedNames.length > 0 ? (
+											<Badge>
+												<Text>
+													{connectedNames.length} {t("connectors.activeCount")}
+												</Text>
+											</Badge>
+										) : null}
+									</WebView>
+								) : undefined
 							}
 						/>
 						{catalog.error ? (

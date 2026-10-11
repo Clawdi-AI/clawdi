@@ -506,8 +506,14 @@ export function EntityChoiceCard({
 				)}
 			>
 				<AppView className={webView(entityCardClasses.body)}>
-					<AppView className={webView(entityCardClasses.headerTitleRow)}>
-						<AppView className={webView(entityCardClasses.body)}>
+					{/* At large text sizes the badge wraps below the title instead of truncating it.
+					Yoga shrinks before it wraps, so the title keeps its content width (no shrink) and
+					is capped at the row width, where a title too long for a line still truncates. */}
+					<AppView className={cn(webView(entityCardClasses.headerTitleRow), "flex-wrap")}>
+						<AppView
+							className="min-w-0"
+							style={{ flexGrow: 1, flexShrink: 0, flexBasis: "auto", maxWidth: "100%" }}
+						>
 							<Content className={webText(entityCardClasses.title)}>
 								{typeof title === "string" || typeof title === "number" ? (
 									<TruncatedText>{title}</TruncatedText>

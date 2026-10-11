@@ -137,6 +137,21 @@ export function resolveWebClasses(
 	return result;
 }
 
+const FIXED_HEIGHT = /^h-(?:\d+(?:\.\d+)?|\[[^\]]+\])$/;
+
+/**
+ * Text-bearing controls keep Web's fixed height as a floor, so a larger system
+ * font size grows them instead of clipping their label.
+ */
+export function minHeightClasses(viewClasses: string): string {
+	return tokens(viewClasses)
+		.map((token) => {
+			const { variants, utility } = splitVariants(token);
+			return FIXED_HEIGHT.test(utility) ? [...variants, `min-${utility}`].join(":") : token;
+		})
+		.join(" ");
+}
+
 /** Every class `resolveWebClasses` can emit for these sources, for the safelist. */
 export function possibleNativeClasses(className: string): string[] {
 	const all = tokens(className);
@@ -149,6 +164,7 @@ export function possibleNativeClasses(className: string): string[] {
 		if (resolved) result.add(resolved);
 		const mapped = mapUtility(utility, hasColumn);
 		if (mapped) result.add(mapped);
+		if (mapped && FIXED_HEIGHT.test(mapped)) result.add(`min-${mapped}`);
 	}
 	return withBaseBorder([...result]);
 }

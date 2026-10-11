@@ -14,7 +14,9 @@ import {
 import { semantics } from "@expo/ui/jetpack-compose/modifiers";
 import { Stack } from "expo-router";
 import { useState } from "react";
+import { useWindowDimensions } from "react-native";
 import { useCSSVariable, useUniwind } from "uniwind";
+import { barFontSize } from "@/platform/navigation/bar-font-size";
 import { headerMenuGroups } from "@/platform/navigation/header-menu";
 import type { HeaderAction, HeaderMenu } from "@/platform/navigation/native-header-types";
 
@@ -31,6 +33,7 @@ export function HeaderActions({
 }) {
 	const [expanded, setExpanded] = useState(false);
 	const { theme } = useUniwind();
+	const { fontScale } = useWindowDimensions();
 	const [foreground, destructive, popover, destructiveForeground] = useCSSVariable([
 		"--color-foreground",
 		"--color-destructive",
@@ -80,7 +83,13 @@ export function HeaderActions({
 										containerColor={color(destructive)}
 										contentColor={color(destructiveForeground)}
 									>
-										<Text style={{ typography: "labelSmall", fontFamily: "Geist-Medium" }}>
+										<Text
+											style={{
+												typography: "labelSmall",
+												fontFamily: "Geist-Medium",
+												fontSize: barFontSize(11, fontScale),
+											}}
+										>
 											{action.badge}
 										</Text>
 									</Badge>
@@ -96,7 +105,9 @@ export function HeaderActions({
 								]}
 								colors={{ contentColor: color(action.destructive ? destructive : foreground) }}
 							>
-								<Text style={{ fontFamily: "Geist-Medium", fontSize: 14 }}>{action.label}</Text>
+								<Text style={{ fontFamily: "Geist-Medium", fontSize: barFontSize(14, fontScale) }}>
+									{action.label}
+								</Text>
 							</TextButton>
 						),
 					)}
@@ -112,7 +123,7 @@ export function HeaderActions({
 									colors={{ contentColor: color(foreground) }}
 									modifiers={[semantics({ contentDescription: menu.label })]}
 								>
-									<Text style={{ fontSize: 24 }}>…</Text>
+									<Text style={{ fontSize: barFontSize(24, fontScale) }}>…</Text>
 								</TextButton>
 							</DropdownMenu.Trigger>
 							<DropdownMenu.Items>

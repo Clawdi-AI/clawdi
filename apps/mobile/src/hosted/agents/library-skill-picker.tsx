@@ -2,6 +2,7 @@ import { HERO_GRID_CLASS } from "@clawdi/shared/ui";
 import {
 	agentCloudSkill,
 	agentSkillGuardPresentation,
+	agentSkillInventory,
 	agentSkillStateKey,
 	agentSkillsHaveRetryableInstallFailure,
 	agentSurfaceCopy,
@@ -21,12 +22,14 @@ import { EmptyState } from "@/components/empty-state";
 import { HeroCard, HeroCardSkeleton } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
 import { useCloudProjects } from "@/components/projects/projects-surface";
+import { SkillCard } from "@/components/skills/skill-card";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { NativeList } from "@/components/ui/native-list";
 import { Text as AppText } from "@/components/ui/text";
 import { WebView } from "@/components/ui/web-layout";
 import { useAgentDesiredSkills } from "@/hosted/agents/agent-desired-skills-query";
+import { useAgentWorkspaceProjections } from "@/hosted/agents/agent-workspace-projections-query";
 import { useWorkspaceSkillChanges } from "@/hosted/agents/workspace-skill-changes";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
@@ -109,6 +112,7 @@ function AgentLibrarySkills({
 			}, signal),
 	});
 	const inventory = useAgentDesiredSkills(id);
+	const projections = useAgentWorkspaceProjections(id, !browse);
 	// GitHub workspace uninstalls reuse the install sheet's journal; the browse sheet has none.
 	const changes = useWorkspaceSkillChanges(deploymentId);
 	// Background polling keeps the last inventory; only a missing or failed load blocks changes.
@@ -121,6 +125,7 @@ function AgentLibrarySkills({
 	});
 	const refresh = () => {
 		void inventory.refetch();
+		if (!browse) projections.refetch();
 		if (browse) {
 			void projects.refetch();
 			void library.refetch();
@@ -257,13 +262,43 @@ function AgentLibrarySkills({
 				/>
 			</SafeAreaScreen>
 		);
+	// Like Web's Skills tab: managed skills plus the workspace's agent-synced and GitHub rows.
+	const rows = agentSkillInventory(
+		inventory.data?.skills ?? [],
+		projections.data ?? [],
+		changes.inventory.data?.items ?? [],
+	);
 	return (
 		<AgentCollection
-			data={!id || inventory.isPending || inventory.isError ? [] : (inventory.data?.skills ?? [])}
-			keyExtractor={(item) => item.skill_key}
+			data={!id || inventory.isPending || inventory.isError ? [] : rows}
+			keyExtractor={(row) => row.entity.skill_key}
 			refreshing={inventory.isRefetching}
 			onRefresh={refresh}
-			renderItem={({ item }) => {
+			renderItem={({ item: row }) => {
+				const item = row.managed;
+				if (!item)
+					return (
+						<SkillCard
+							key={row.entity.skill_key}
+							skill={row.entity}
+							readOnly={row.projectionOnly}
+							provenanceLabel={row.projectionOnly ? agentSurfaceCopy.syncedFromAgent : undefined}
+							link={
+								projections.workspace
+									? {
+											to: {
+												pathname: "/agents/[id]/skills/[...key]",
+												params: {
+													id,
+													project: projections.workspace,
+													key: row.entity.skill_key.split("/"),
+												},
+											},
+										}
+									: undefined
+							}
+						/>
+					);
 				const identity = identityFor(item.name || item.skill_key);
 				const guardPresentation = agentSkillGuardPresentation(item);
 				return (
@@ -369,6 +404,13 @@ function AgentLibrarySkills({
 					{t("agentExtensions.updateFailed")}
 				</Alert>
 			) : null}
+			{projections.error ? (
+				<ApiErrorPanel
+					error={projections.error}
+					title={agentSurfaceCopy.couldnTLoadSyncedSkills}
+					onRetry={projections.refetch}
+				/>
+			) : null}
 			{!id || inventory.isError ? (
 				<ApiErrorPanel
 					error={inventory.error}
@@ -381,7 +423,7 @@ function AgentLibrarySkills({
 						<HeroCardSkeleton key={i} />
 					))}
 				</WebView>
-			) : !inventory.data?.skills.length ? (
+			) : !rows.length ? (
 				<EmptyState variant="inset" description={t("workspaceSkills.inventoryEmpty")} />
 			) : null}
 
