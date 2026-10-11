@@ -499,6 +499,7 @@ export async function execRuntimeUserCommand(
 	options: RuntimeUserCommandOptions & {
 		maxBufferBytes: number;
 		timeoutMs: number;
+		killSignal?: NodeJS.Signals;
 		signal?: AbortSignal;
 	},
 ): Promise<{ stdout: string; stderr: string }> {
@@ -511,7 +512,7 @@ export async function execRuntimeUserCommand(
 			maxBuffer: options.maxBufferBytes,
 			timeout: options.timeoutMs,
 			signal: options.signal,
-			killSignal: "SIGKILL",
+			killSignal: options.killSignal ?? "SIGKILL",
 		}),
 	);
 }

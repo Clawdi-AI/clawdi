@@ -5864,6 +5864,49 @@ del list_profile_names
 		}
 	});
 
+	test("runtime init converges in one attempt after Hermes first-launch update completion", () => {
+		process.env.CLAWDI_RUNTIME_INSTALL_TIMEOUT = "5000";
+		const fixture = hermesProfileMcpFixture(["default"]);
+		const launcher = readFileSync(fixture.command, "utf8");
+		writeFileSync(
+			fixture.command,
+			launcher.replace(
+				"#!/usr/bin/env bash\n",
+				`#!/usr/bin/env bash
+if [ ! -e "$HOME/.hermes/update-started" ]; then
+    touch "$HOME/.hermes/update-started"
+    sleep 0.3
+    touch "$HOME/.hermes/update-finished"
+fi
+`,
+			),
+		);
+		// Observe the real launcher calls to distinguish the install budget from
+		// the former 30-second probe without waiting 30 seconds in this regression.
+		const spawn = spyOn(runtimeUserCommand, "spawnRuntimeUserCommand");
+		let commits = 0;
+		try {
+			const result = fixture.converge(fixture.manifest, {
+				commitAuthority: () => {
+					commits += 1;
+				},
+			});
+			expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+			expect(result.deferredReason).toBeUndefined();
+			expect(commits).toBe(1);
+			expect(existsSync(join(fixture.root, "update-started"))).toBe(true);
+			expect(existsSync(join(fixture.root, "update-finished"))).toBe(true);
+			expect(fixture.configs()[0]?.mcp_servers).toHaveProperty("clawdi");
+			const configPathCalls = spawn.mock.calls.filter(
+				([command, args]) => fixture.command === command && args.join(" ") === "config path",
+			);
+			expect(configPathCalls.length).toBeGreaterThan(0);
+			for (const call of configPathCalls) expect(call[4]?.timeoutMs).toBe(5000);
+		} finally {
+			spawn.mockRestore();
+		}
+	});
+
 	test.each(["mcp-disabled", "runtime-disabled"])(
 		"removes managed profile MCP entries when %s and preserves user servers",
 		(mode) => {
