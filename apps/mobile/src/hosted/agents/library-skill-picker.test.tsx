@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, expect, jest, mock, test } from "bun:test";
+import type { components } from "@clawdi/shared/api";
 import {
 	environmentManager,
 	focusManager,
@@ -29,6 +30,13 @@ type ManagedSkill = {
 	observation_error_code?: string | null;
 };
 type Inventory = { skills: ManagedSkill[]; removal_failures?: unknown[] };
+type CloudSkill = components["schemas"]["SkillSummaryResponse"];
+type LibrarySkill = {
+	id: string;
+	name: string;
+	authority: CloudSkill["authority"];
+	description?: string | null;
+};
 
 const skill = (overrides: Partial<ManagedSkill> & Pick<ManagedSkill, "skill_key">) =>
 	({
@@ -45,6 +53,7 @@ const polling: Inventory = {
 };
 
 function harness() {
+	const library: LibrarySkill[] = [{ id: "skill-1", name: "Demo", authority: "cloud" }];
 	return {
 		inventory: {
 			data: polling as Inventory | undefined,
@@ -57,7 +66,29 @@ function harness() {
 		},
 		queries: [] as QueryObserverOptions[],
 		focused: true,
-		library: [{ id: "skill-1", name: "Demo", authority: "cloud" }],
+		library,
+		projects: {
+			data: [
+				{ id: "environment-1", kind: "environment" },
+				{ id: "workspace-1", kind: "workspace" },
+			],
+			error: null as unknown,
+			isError: false,
+			isPending: false,
+			isRefetching: false,
+			refetch: mock(async () => undefined),
+		},
+		cloudListSkills: mock(
+			async (
+				_query: { project_id?: string; page?: number; page_size?: number; q?: string },
+				_signal?: AbortSignal,
+			): Promise<{ items: CloudSkill[]; total: number; page: number; page_size: number }> => ({
+				items: [],
+				total: 0,
+				page: 1,
+				page_size: 200,
+			}),
+		),
 		changes: {
 			inventory: {
 				data: { items: [{ skill_key: "brand-guidelines" }] } as
@@ -99,7 +130,18 @@ mock.module("@tanstack/react-query", () => ({
 	...reactQuery,
 	useQuery: (...args: Parameters<typeof reactQuery.useQuery>) => {
 		if (!active) return reactQuery.useQuery(...args);
-		h.queries.push(args[0] as QueryObserverOptions);
+		const options = args[0] as QueryObserverOptions;
+		h.queries.push(options);
+		if (options.queryKey?.includes("library-picker-skills"))
+			return {
+				data: h.library,
+				error: null,
+				isError: false,
+				isPending: false,
+				isFetching: false,
+				isRefetching: false,
+				refetch: async () => undefined,
+			};
 		return h.inventory;
 	},
 }));
@@ -144,7 +186,9 @@ mock.module("@/components/dashboard/controls", () => ({
 	},
 }));
 mock.module("@/components/dashboard/navigation", () => ({ AgentSectionNavigation: () => null }));
-mock.module("@/components/empty-state", () => ({ EmptyState: () => null }));
+mock.module("@/components/empty-state", () => ({
+	EmptyState: ({ title }: { title?: ReactNode }) => <p>{title}</p>,
+}));
 mock.module("@/components/entity-card", () => ({
 	HeroCard: ({
 		title,
@@ -168,6 +212,9 @@ mock.module("@/components/entity-card", () => ({
 	HeroCardSkeleton: () => null,
 }));
 mock.module("@/components/icon-chip", () => ({ IconChip: () => null }));
+mock.module("@/components/projects/projects-surface", () => ({
+	useCloudProjects: () => h.projects,
+}));
 mock.module("@/components/ui/alert", () => ({
 	Alert: ({ title, children }: { title?: ReactNode; children?: ReactNode }) => (
 		<aside>
@@ -200,18 +247,7 @@ mock.module("@/hosted/agents/workspace-skill-changes", () => ({
 mock.module("@/lib/api-provider", () => ({
 	useMobileApi: () => ({
 		agentExtensions: { listSkills: h.listSkills, setLibraryReference: h.setLibraryReference },
-	}),
-}));
-mock.module("@/pages/dashboard/skills/page", () => ({
-	useCloudSkills: () => ({
-		data: { pages: [{ items: h.library }] },
-		isError: false,
-		isPending: false,
-		isFetching: false,
-		isRefetching: false,
-		hasNextPage: false,
-		refetch: async () => undefined,
-		fetchNextPage: async () => undefined,
+		cloud: { listSkills: h.cloudListSkills },
 	}),
 }));
 mock.module("@/platform/account-lifecycle", () => ({
@@ -259,6 +295,33 @@ const flush = async () => {
 		await Promise.resolve();
 	}
 };
+
+function cloudSkill(
+	id: string,
+	name: string,
+	projectId: string,
+	authority: CloudSkill["authority"],
+): CloudSkill {
+	return {
+		id,
+		skill_key: id,
+		name,
+		description: null,
+		version: 1,
+		source: "cloud",
+		authority,
+		source_repo: null,
+		agent_types: null,
+		file_count: 1,
+		content_hash: "a".repeat(64),
+		is_active: true,
+		created_at: "2026-08-01T00:00:00Z",
+		updated_at: "2026-08-01T00:00:00Z",
+		project_id: projectId,
+		project_name: projectId,
+		project_kind: projectId === "workspace-1" ? "workspace" : "environment",
+	};
+}
 
 /** Runs the list's own Skills query options against a real QueryClient. */
 function observeSkillsQuery() {
@@ -389,6 +452,49 @@ test("Library skills a linked Project already provides read Installed and can't 
 	expect(other).toMatchObject({ label: en.agentExtensions.install, disabled: false });
 	provided?.onPress?.();
 	expect(h.setLibraryReference).not.toHaveBeenCalled();
+});
+
+test("the Library sheet lists workspace cloud skills even when agent-synced skills sort first", async () => {
+	const workspaceSkills = [
+		cloudSkill("workspace-1", "Workspace One", "workspace-1", "cloud"),
+		cloudSkill("workspace-2", "Workspace Two", "workspace-1", "cloud"),
+	];
+	const agentSkills = Array.from({ length: 25 }, (_, index) =>
+		cloudSkill(`agent-${index}`, `Agent Skill ${index}`, "environment-1", "agent_sync"),
+	);
+	h.cloudListSkills.mockImplementation(async (query) => {
+		if (query.project_id === "workspace-1")
+			return { items: workspaceSkills, total: 2, page: 1, page_size: query.page_size ?? 200 };
+		return {
+			items: agentSkills,
+			total: agentSkills.length,
+			page: 1,
+			page_size: query.page_size ?? 200,
+		};
+	});
+	h.library = [];
+	renderToStaticMarkup(<HostedAgentLibrarySkillsScreen browse />);
+	const options = h.queries.find((query) => query.queryKey?.includes("library-picker-skills"));
+	if (!options) throw new Error("Missing Library skills query");
+	const query = options as QueryObserverOptions<CloudSkill[]>;
+	if (typeof query.queryFn !== "function") throw new Error("Missing Library skills query function");
+	const result = await query.queryFn({
+		client: new QueryClient(),
+		queryKey: query.queryKey,
+		signal: h.controller.signal,
+		meta: undefined,
+		pageParam: undefined,
+		direction: undefined,
+	});
+	h.library = result;
+	const markup = renderToStaticMarkup(<HostedAgentLibrarySkillsScreen browse />);
+	expect(markup).toContain("Workspace One");
+	expect(markup).toContain("Workspace Two");
+	expect(markup).not.toContain("No Skills found");
+	expect(h.cloudListSkills).toHaveBeenCalledTimes(1);
+	for (const [queryArgs] of h.cloudListSkills.mock.calls) {
+		expect(queryArgs.project_id).toBe("workspace-1");
+	}
 });
 
 test.each([
