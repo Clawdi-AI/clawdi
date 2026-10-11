@@ -8,6 +8,7 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,6 +22,7 @@ import { validateNativeArchive } from "../src/lib/native-activation";
 import {
 	NATIVE_BUILD_TARGET_CATALOG,
 	NATIVE_RELEASE_MANIFEST_V2_NAME,
+	type NativeBuildTarget,
 	nativeAssetName,
 	parseNativeReleaseManifestV2,
 } from "../src/lib/native-release-manifest";
@@ -46,6 +48,121 @@ function payload(executableName = "clawdi"): string {
 	}
 	return root;
 }
+
+const nativePackager = resolve(import.meta.dir, "../scripts/package-native-release.mjs");
+
+function packagePayload(root: string, outdir: string, target: NativeBuildTarget, bin: string) {
+	const result = spawnSync(process.execPath, [nativePackager, root, outdir], {
+		encoding: "utf8",
+		env: {
+			...process.env,
+			CLAWDI_NATIVE_TARGET: target,
+			PATH: `${bin}:${process.env.PATH ?? ""}`,
+		},
+	});
+	expect(result.status, result.stderr).toBe(0);
+	return readFileSync(join(outdir, nativeAssetName(target)));
+}
+
+async function archiveEntries(archive: Buffer) {
+	const entries: Array<{
+		path: string;
+		type: string;
+		mode: number | undefined;
+		uid: number | undefined;
+		gid: number | undefined;
+		mtime: Date | undefined;
+	}> = [];
+	await new Promise<void>((resolvePromise, reject) => {
+		const stream = tar.list({
+			strict: true,
+			onReadEntry(entry) {
+				entries.push({
+					path: entry.path,
+					type: entry.type,
+					mode: entry.mode,
+					uid: entry.uid,
+					gid: entry.gid,
+					mtime: entry.mtime,
+				});
+				entry.resume();
+			},
+		});
+		stream.on("end", resolvePromise);
+		stream.on("error", reject);
+		stream.end(archive);
+	});
+	return entries;
+}
+
+describe("shared native release packaging", () => {
+	test.each(["darwin-x64", "darwin-arm64"] as const)(
+		"reproduces %s after extraction and changes only the signed payload",
+		async (target) => {
+			const root = payload();
+			chmodSync(join(root, "clawdi"), 0o755);
+			const bin = join(root, "bin");
+			mkdirSync(bin);
+			// Packaging must work even when the host tar cannot create archives.
+			writeFileSync(join(bin, "tar"), "#!/bin/sh\nexit 99\n", { mode: 0o755 });
+			const outdir = join(root, "release");
+			const original = packagePayload(root, outdir, target, bin);
+			const originalEntries = await archiveEntries(original);
+			expect(originalEntries.map((entry) => entry.path)).toEqual([
+				"clawdi",
+				"egress-addon/clawdi_egress_addon.py",
+				"skills/",
+				"skills/clawdi/",
+				"skills/clawdi/SKILL.md",
+				"skills/future-skill/",
+				"skills/future-skill/SKILL.md",
+				"skills/hosted-versions/",
+				"skills/hosted-versions/1/",
+				"skills/hosted-versions/1/clawdi/",
+				"skills/hosted-versions/1/clawdi/SKILL.md",
+			]);
+			for (const entry of originalEntries) {
+				expect(entry.mode).toBe(
+					entry.path === "clawdi" || entry.type === "Directory" ? 0o755 : 0o644,
+				);
+				expect(entry.uid).toBeUndefined();
+				expect(entry.gid).toBeUndefined();
+			}
+			const stage = join(root, "stage");
+			mkdirSync(stage);
+			const extracted = spawnSync(
+				"bash",
+				[
+					"-c",
+					'umask 077; exec tar -xpzf "$1" -C "$2"',
+					"extract",
+					join(outdir, nativeAssetName(target)),
+					stage,
+				],
+				{ encoding: "utf8" },
+			);
+			expect(extracted.status, extracted.stderr).toBe(0);
+			for (const { path } of originalEntries) {
+				utimesSync(join(stage, path), new Date("2020-01-01"), new Date("2021-01-01"));
+			}
+			expect(packagePayload(stage, outdir, target, bin)).toEqual(original);
+			writeFileSync(join(stage, "clawdi"), "signed fixture\n");
+			const signed = packagePayload(stage, outdir, target, bin);
+			expect(signed).not.toEqual(original);
+			expect(await archiveEntries(signed)).toEqual(originalEntries);
+			expect(packagePayload(stage, outdir, target, bin)).toEqual(signed);
+			const unpacked = join(root, "signed");
+			mkdirSync(unpacked);
+			await tar.extract({ file: join(outdir, nativeAssetName(target)), cwd: unpacked });
+			for (const { path, type } of originalEntries) {
+				if (type !== "File") continue;
+				expect(readFileSync(join(unpacked, path), "utf8")).toBe(
+					path === "clawdi" ? "signed fixture\n" : readFileSync(join(root, path), "utf8"),
+				);
+			}
+		},
+	);
+});
 
 async function archive(root: string, executableName = "clawdi"): Promise<Buffer> {
 	const file = join(root, "artifact.tar.gz");
