@@ -472,17 +472,29 @@ async def test_admin_workload_scopes_revision_grant_and_immediate_revoke(
     audits = list(
         (
             await db_session.scalars(
-                select(ControlPlaneAuditEvent).where(
+                select(ControlPlaneAuditEvent)
+                .where(
                     ControlPlaneAuditEvent.action == "platform.workload_client.scopes",
                     ControlPlaneAuditEvent.resource_id == str(credential_id),
+                )
+                .order_by(
+                    ControlPlaneAuditEvent.created_at,
+                    ControlPlaneAuditEvent.id,
                 )
             )
         ).all()
     )
     assert len(audits) == 2
     assert all(event.actor_type == "admin" for event in audits)
-    assert audits[0].details["before_revision"] == revision
-    assert audits[0].details["after_revision"] == granted.json()["revision"]
+    # now() is transaction-stable, so rollback-isolated audit rows can share
+    # created_at. Verify the revision chain without relying on UUID tie order.
+    audits_by_revision = {event.details["before_revision"]: event for event in audits}
+    granted_revision = granted.json()["revision"]
+    assert set(audits_by_revision) == {revision, granted_revision}
+    assert audits_by_revision[revision].details["after_revision"] == granted_revision
+    assert (
+        audits_by_revision[granted_revision].details["after_revision"] == revoked.json()["revision"]
+    )
 
 
 @pytest.mark.asyncio

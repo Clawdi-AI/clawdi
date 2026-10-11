@@ -4,6 +4,7 @@ import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { runtimeWatchEventForOutcome } from "../commands/runtime";
 import { getCliVersion } from "../lib/version";
+import { routeRuntimeReadinessPort } from "../test-support/runtime-readiness-port";
 import {
 	readRuntimeAppliedState,
 	runtimeAppliedApplyIdentity,
@@ -561,7 +562,7 @@ esac
 			let statusRequests = 0;
 			const server = Bun.serve({
 				hostname: "127.0.0.1",
-				port: unit === "openclaw-gateway.service" ? 0 : 9119,
+				port: 0,
 				async fetch(request) {
 					if (probeWait) await probeWait;
 					const mutate = mutateParent;
@@ -588,6 +589,10 @@ esac
 					});
 				},
 			});
+			const restoreReadinessPort =
+				runtime === "hermes"
+					? routeRuntimeReadinessPort(paths.userHome, 9119, server.port)
+					: () => {};
 			const configPath = join(paths.userHome, ".openclaw", "openclaw.json");
 			mkdirSync(dirname(configPath), { recursive: true });
 			const config = `{ // Native OpenClaw configuration supports JSON5.
@@ -919,8 +924,12 @@ esac
 			} finally {
 				releaseProbe?.();
 				await server.stop(true);
+				try {
+					expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
+				} finally {
+					restoreReadinessPort();
+				}
 			}
-			expect((await readHostedRuntimeObserved(paths))?.status).toBe("unknown");
 		},
 	);
 
@@ -1138,7 +1147,7 @@ printf '\n'
 			| "unit-config" = "healthy";
 		const server = Bun.serve({
 			hostname: "127.0.0.1",
-			port: runtime === "hermes" ? 9119 : 18789,
+			port: 0,
 			async fetch(request) {
 				const path = new URL(request.url).pathname;
 				if (path === "/login" || path === "/") return new Response("<!doctype html><html></html>");
@@ -1174,6 +1183,11 @@ printf '\n'
 				);
 			},
 		});
+		const restoreReadinessPort = routeRuntimeReadinessPort(
+			paths.userHome,
+			runtime === "hermes" ? 9119 : 18789,
+			server.port,
+		);
 		try {
 			for (const nextMode of [
 				"healthy",
@@ -1208,6 +1222,7 @@ printf '\n'
 		} finally {
 			releaseTimedOutRequest?.();
 			await server.stop(true);
+			restoreReadinessPort();
 		}
 	},
 );

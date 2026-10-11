@@ -73,8 +73,19 @@ if ($task) {
   foreach ($instance in @($task.GetInstances(0))) {
     $enginePid = [int]$instance.EnginePID
     if ($enginePid -le 0) { throw 'Clawdi task reported an invalid engine PID.' }
-    & "$env:SystemRoot\\System32\\taskkill.exe" /PID $enginePid /T /F | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    if (!(Get-Process -Id $enginePid -ErrorAction SilentlyContinue)) { continue }
+    # Windows PowerShell 5.1 turns native stderr into ErrorRecords. A child
+    # can exit during taskkill; inspect its exit code and the remaining engine
+    # instead of allowing expected "no running instance" stderr to abort stop.
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      & "$env:SystemRoot\\System32\\taskkill.exe" /PID $enginePid /T /F 2>$null | Out-Null
+      $taskkillExitCode = $LASTEXITCODE
+    } finally {
+      $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($taskkillExitCode -ne 0) {
       if (Get-Process -Id $enginePid -ErrorAction SilentlyContinue) {
         throw "Unable to stop Clawdi task process tree ($enginePid)."
       }

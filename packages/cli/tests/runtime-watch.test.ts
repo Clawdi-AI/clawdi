@@ -43,7 +43,6 @@ import {
 import { log } from "../src/serve/log";
 import { installHermesNativeFixture } from "../src/test-support/hermes-native-fixture";
 import { writeFakeOpenClawConfigMutationSdk } from "../src/test-support/openclaw-config-mutation";
-
 import {
 	applyRuntimeBundleChannelsToManifestLoad,
 	CANONICAL_TEST_CONTEXT,
@@ -94,6 +93,7 @@ import {
 	writeOpenClawConfigMutationFixture,
 	writeTestRuntimeAppliedState,
 } from "../src/test-support/runtime-harness";
+import { routeRuntimeReadinessPort } from "../src/test-support/runtime-readiness-port";
 
 import { mockFetch } from "./commands/helpers";
 
@@ -205,7 +205,7 @@ describe("runtime manifest datasource", () => {
 		const etag = testBundleEtag("guard-refusal");
 		const dashboard = Bun.serve({
 			hostname: "127.0.0.1",
-			port: 9119,
+			port: 0,
 			fetch(request) {
 				return new URL(request.url).pathname === "/api/status"
 					? Response.json({
@@ -217,6 +217,7 @@ describe("runtime manifest datasource", () => {
 					: new Response("<html>Hermes login fixture</html>");
 			},
 		});
+		const restoreReadinessPort = routeRuntimeReadinessPort(home, 9119, dashboard.port);
 		const abort = new AbortController();
 		const previousLog = console.log;
 		const previousExitCode = process.exitCode;
@@ -273,6 +274,7 @@ describe("runtime manifest datasource", () => {
 			expect(await readHostedRuntimeObserved(paths)).toMatchObject({ status: "ok" });
 		} finally {
 			dashboard.stop(true);
+			restoreReadinessPort();
 			clearTimeout(deadline);
 			fetchMock.restore();
 			warnings.mockRestore();
@@ -853,7 +855,9 @@ describe("runtime manifest datasource", () => {
 		const previousLog = console.log;
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
-		writeOpenClawConfigMutationFixture(home, { gateway: startHealthyOpenClawGateway(18789) });
+		const gateway = startHealthyOpenClawGateway();
+		writeOpenClawConfigMutationFixture(home, { gateway: { port: 18789 } });
+		const restoreReadinessPort = routeRuntimeReadinessPort(home, 18789, gateway.port);
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
 			openclawBin,
@@ -1064,6 +1068,7 @@ exit 64
 			restore();
 			console.log = previousLog;
 			process.exitCode = previousExitCode;
+			restoreReadinessPort();
 		}
 	});
 
