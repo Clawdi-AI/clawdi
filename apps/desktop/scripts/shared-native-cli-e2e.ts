@@ -9,6 +9,7 @@ import {
 	readFileSync,
 	realpathSync,
 	rmSync,
+	statSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -26,8 +27,8 @@ declare global {
 }
 
 const desktop = resolve(import.meta.dir, "..");
-// Windows temp paths can use an 8.3 alias while executable paths use the long
-// name. Keep fixture paths canonical for launcher/unit comparisons.
+// Resolve directory symlinks before setting fixture homes. Windows may still
+// retain 8.3 aliases; bundled executable comparisons use file identity below.
 const root = realpathSync(mkdtempSync(join(tmpdir(), "clawdi-shared-native-")));
 const extension = process.platform === "win32" ? ".exe" : "";
 const bundledResource = join(desktop, "resources", "native", `clawdi${extension}`);
@@ -252,7 +253,13 @@ try {
 		const unit = Object.fromEntries(Object.entries(installed));
 		const invocations = calls(directory);
 		if (scenario === "offline") {
-			assert.equal(unit.command, bundled);
+			assert.ok(typeof unit.command === "string");
+			// The executable can report Windows' long path while Bun's temp
+			// directory retains an 8.3 alias. Both must identify the same file.
+			const actualFile = statSync(unit.command, { bigint: true });
+			const bundledFile = statSync(bundled, { bigint: true });
+			assert.equal(actualFile.dev, bundledFile.dev);
+			assert.equal(actualFile.ino, bundledFile.ino);
 			assert.equal(unit.noAutoUpdate, "1");
 			assert.ok(invocations.every((call) => call.native === false));
 		} else {
