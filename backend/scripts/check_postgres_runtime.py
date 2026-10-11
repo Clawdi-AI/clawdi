@@ -8,8 +8,8 @@ from urllib.parse import urlparse
 
 import asyncpg
 
-EXPECTED_SERVER_VERSION_NUM = 180004
-EXPECTED_VECTOR_VERSION = "0.8.6"
+EXPECTED_SERVER_VERSION_NUM = 180006
+EXPECTED_VECTOR_VERSION = "0.8.7"
 EXPECTED_DATA_DIRECTORY = "/var/lib/postgresql/18/docker"
 
 
@@ -29,7 +29,7 @@ async def check_runtime() -> None:
         server_version_num = int(await connection.fetchval("SHOW server_version_num"))
         if server_version_num != EXPECTED_SERVER_VERSION_NUM:
             raise RuntimeError(
-                f"expected PostgreSQL 18.4 ({EXPECTED_SERVER_VERSION_NUM}), "
+                f"expected PostgreSQL 18.6 ({EXPECTED_SERVER_VERSION_NUM}), "
                 f"got {server_version_num}"
             )
 
