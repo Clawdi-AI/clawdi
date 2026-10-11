@@ -51,6 +51,10 @@ only renames unmerged PR series and never-emitted definitions. See
 
 ### CLI 0.16.8
 
+- **Cloud Agent startup:** warm preparation can cache the pinned egress engine
+  and Files binary before claim. Anonymous warm-up prepares the instance-local
+  egress CA and sidecar so matching claims can reuse them and overlap Hermes
+  dashboard startup. Existing agents keep their gateway and dashboard revisions.
 - **Native CLI releases:** macOS native CLI releases are signed with Clawdi's Apple Developer ID and notarized.
 - **Desktop native CLI:** Desktop can bootstrap and safely activate the shared native CLI while preserving user-owned launchers and existing installations.
 
