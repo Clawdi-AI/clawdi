@@ -48,24 +48,27 @@ export async function uninstallDesktop(actions: DesktopUninstallActions): Promis
 	await step("Remove login item", actions.removeLoginItem);
 	await step("Clear local app data", actions.clearData);
 	await step("Remove application", () => actions.removeApplication(choice.checkboxChecked));
-	if (failed.length) {
-		await actions.showMessageBox({
-			type: "warning",
-			message: "Some uninstall steps couldn't finish",
-			detail: `${failed.join("\n")}\nRun clawdi uninstall --yes to retry local cleanup. Your account data stays.`,
-			buttons: ["Quit Clawdi"],
-		});
+	try {
+		if (failed.length) {
+			await actions.showMessageBox({
+				type: "warning",
+				message: "Some uninstall steps couldn't finish",
+				detail: `${failed.join("\n")}\nReinstall the CLI if needed, then run clawdi uninstall --yes. Your account data stays.`,
+				buttons: ["Quit Clawdi"],
+			});
+		}
+		if (actions.platform === "linux") {
+			await actions.showMessageBox({
+				type: "info",
+				message: "Remove the Clawdi app",
+				detail:
+					"For a package install, run sudo apt remove clawdi-desktop or sudo dnf remove clawdi-desktop. For an AppImage, delete the downloaded file.",
+				buttons: ["Quit Clawdi"],
+			});
+		}
+	} finally {
+		actions.quit();
 	}
-	if (actions.platform === "linux") {
-		await actions.showMessageBox({
-			type: "info",
-			message: "Remove the Clawdi app",
-			detail:
-				"For a package install, run sudo apt remove clawdi-desktop or sudo dnf remove clawdi-desktop. For an AppImage, delete the downloaded file.",
-			buttons: ["Quit Clawdi"],
-		});
-	}
-	actions.quit();
 	return true;
 }
 

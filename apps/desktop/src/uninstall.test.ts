@@ -126,3 +126,14 @@ test("clears settings, partition files, and logs without touching adjacent data"
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+test("Desktop still quits when a post-cleanup native dialog fails", async () => {
+	const { actions, calls } = fixture("linux");
+	const confirm = actions.showMessageBox;
+	actions.showMessageBox = async (options) => {
+		if (options.message === "Remove the Clawdi app") throw new Error("dialog failed");
+		return confirm(options);
+	};
+	await expect(uninstallDesktop(actions)).rejects.toThrow("dialog failed");
+	expect(calls.at(-1)).toBe("quit");
+});

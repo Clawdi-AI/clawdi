@@ -72,7 +72,7 @@ export async function uninstall(
 			steps.push({
 				step,
 				status: "failed",
-				message: `Could not complete ${step}. Check permissions and retry; see the preceding cleanup messages.`,
+				message: `Could not complete ${step}. Check permissions and retry.`,
 			});
 		}
 	};
