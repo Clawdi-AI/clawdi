@@ -72,7 +72,7 @@ describe("clean runner suite contract", () => {
 		});
 		expect(mobileScripts).toMatchObject({
 			test: "../../scripts/test.sh mobile",
-			"test:internal": "bun test src",
+			"test:internal": "bun test --isolate src",
 		});
 		expect(sidecarScripts).toMatchObject({
 			test: "../../scripts/test.sh sidecar",
