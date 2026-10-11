@@ -9,6 +9,7 @@ import {
 } from "../adapters/registry";
 import { commandResult } from "../lib/command-output";
 import { getClawdiDir } from "../lib/config";
+import { readEnvironmentRegistrationForCleanup } from "../lib/environment-registration";
 import { errMessage } from "../lib/errors";
 import { progress as p } from "../lib/progress";
 import { askMulti, confirmOrRequireYes } from "../lib/prompts";
@@ -16,7 +17,7 @@ import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
 import { releaseManagedSkill } from "../runtime/managed-skill-reservation";
 
-export async function teardown(opts: {
+interface TeardownOptions {
 	agent?: string;
 	all?: boolean;
 	keepSkill?: boolean;
@@ -25,10 +26,24 @@ export async function teardown(opts: {
 	json?: boolean;
 	reportFailures?: boolean;
 	silentResult?: boolean;
-}) {
+}
+
+export async function teardown(opts: TeardownOptions) {
+	return teardownTargets(opts);
+}
+
+/** Uninstall follows local ownership, including registrations from a prior account. */
+export async function teardownLocalIntegrationsForUninstall(opts: TeardownOptions) {
+	return teardownTargets(
+		opts,
+		AGENT_TYPES.filter((type) => readEnvironmentRegistrationForCleanup(type) !== null),
+	);
+}
+
+async function teardownTargets(opts: TeardownOptions, localTargets?: AgentType[]) {
 	p.intro(chalk.bold("clawdi teardown"), { output: process.stderr });
 
-	const targets = await resolveTargets(opts);
+	const targets = localTargets ?? (await resolveTargets(opts));
 	if (targets === null) {
 		// resolveTargets already printed + set exitCode
 		p.outro(chalk.red("Aborted."), { output: process.stderr });
@@ -147,26 +162,9 @@ async function teardownOne(
 	let skillResult = "unsupported";
 	const errors: string[] = [];
 
-	// 1. Local env file
 	const envPath = join(getClawdiDir(), "environments", `${agentType}.json`);
-	try {
-		if (existsSync(envPath)) {
-			unlinkSync(envPath);
-			p.log.success(`${label}: removed environment registration`);
-		}
-	} catch (e) {
-		errors.push("Could not remove environment registration");
-		p.log.warn(`${label}: could not remove env file (${errMessage(e)})`, {
-			output: process.stderr,
-		});
-	}
 
-	// 2. Backend env row — intentionally left as dangling metadata.
-	//    With the local env file gone, push --agent X already errors out.
-	//    A future --remote flag could DELETE /api/agents/{id}; backend
-	//    needs to add that endpoint first.
-
-	// 3. Bundled skill
+	// Bundled skill
 	const skillDir = adapter.skills ? builtinSkillTargetDir(agentType) : null;
 	if (skillDir) {
 		try {
@@ -194,7 +192,7 @@ async function teardownOne(
 		}
 	}
 
-	// 4. MCP registration
+	// MCP registration
 	if (!opts.keepMcp) {
 		try {
 			await adapterRegistry[agentType].mcpLifecycle?.unregister({
@@ -204,6 +202,21 @@ async function teardownOne(
 		} catch (error) {
 			if (!opts.reportFailures) throw error;
 			errors.push("Could not remove MCP registration");
+		}
+	}
+	// Keep target discovery until every integration has been cleaned. The skill
+	// ledger and MCP provenance remain available when an operation fails.
+	if (!opts.reportFailures || errors.length === 0) {
+		try {
+			if (existsSync(envPath)) {
+				unlinkSync(envPath);
+				p.log.success(`${label}: removed environment registration`);
+			}
+		} catch (error) {
+			errors.push("Could not remove environment registration");
+			p.log.warn(`${label}: could not remove env file (${errMessage(error)})`, {
+				output: process.stderr,
+			});
 		}
 	}
 	return {

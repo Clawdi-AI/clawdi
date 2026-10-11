@@ -18,7 +18,10 @@ to remove those packages.
 For scripts, use `clawdi uninstall --yes --json`. Non-interactive shells require
 `--yes`; `--json` alone does not confirm removal. The `clawdi.uninstall.v1` envelope
 contains a `steps` array with each step's status and message. Cleanup continues after
-a failure and exits nonzero if any step failed. Repeating the command is safe.
+a failure and exits nonzero if any step failed. Integration cleanup uses local ownership
+records even after sign-out or an account switch, and preserves user-owned Skills.
+If an integration cannot be removed, its registration and remaining ownership state
+are kept for a retry; local state removal is skipped. Repeating the command is safe.
 On Windows, a running native executable's version files are deleted after it exits;
 that step reports `scheduled`.
 
