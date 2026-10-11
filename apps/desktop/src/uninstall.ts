@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { MessageBoxOptions, MessageBoxReturnValue } from "electron";
@@ -115,22 +115,16 @@ for ($attempt = 0; $attempt -lt 40; $attempt++) {
   try { ${[...new Set(paths)].map((path) => `if (Test-Path -LiteralPath ${quote(path)}) { Remove-Item -LiteralPath ${quote(path)} -Recurse -Force }`).join("; ")}; break }
   catch { if ($attempt -eq 39) { throw }; Start-Sleep -Milliseconds 250 }
 }`;
-	await new Promise<void>((resolve, reject) => {
-		const child = spawn(
-			"powershell.exe",
-			[
-				"-NoLogo",
-				"-NoProfile",
-				"-NonInteractive",
-				"-EncodedCommand",
-				Buffer.from(script, "utf16le").toString("base64"),
-			],
-			{ detached: true, stdio: "ignore", windowsHide: true },
-		);
-		child.once("error", reject);
-		child.once("spawn", () => {
-			child.unref();
-			resolve();
-		});
-	});
+	const launch = `$ErrorActionPreference = 'Stop'; Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList '-NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(script, "utf16le").toString("base64")}' -WindowStyle Hidden`;
+	execFileSync(
+		"powershell.exe",
+		[
+			"-NoLogo",
+			"-NoProfile",
+			"-NonInteractive",
+			"-EncodedCommand",
+			Buffer.from(launch, "utf16le").toString("base64"),
+		],
+		{ stdio: "pipe", timeout: 30_000, windowsHide: true },
+	);
 }

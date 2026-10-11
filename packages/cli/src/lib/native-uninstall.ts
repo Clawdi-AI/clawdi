@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
 	lstatSync,
 	readFileSync,
@@ -69,24 +69,20 @@ for ($attempt = 0; $attempt -lt 40; $attempt++) {
   try { if (Test-Path -LiteralPath ${powershellQuote(nativeRoot)}) { Remove-Item -LiteralPath ${powershellQuote(nativeRoot)} -Recurse -Force }; break }
   catch { if ($attempt -eq 39) { throw }; Start-Sleep -Milliseconds 250 }
 }`;
-			await new Promise<void>((resolve, reject) => {
-				const child = spawn(
-					"powershell.exe",
-					[
-						"-NoLogo",
-						"-NoProfile",
-						"-NonInteractive",
-						"-EncodedCommand",
-						Buffer.from(cleanup, "utf16le").toString("base64"),
-					],
-					{ detached: true, stdio: "ignore", windowsHide: true },
-				);
-				child.once("error", reject);
-				child.once("spawn", () => {
-					child.unref();
-					resolve();
-				});
-			});
+			// Start-Process gives Windows PowerShell an independent host. Launching
+			// it directly with detached/ignored handles can exit before cleanup runs.
+			const launch = `$ErrorActionPreference = 'Stop'; Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList '-NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(cleanup, "utf16le").toString("base64")}' -WindowStyle Hidden`;
+			execFileSync(
+				"powershell.exe",
+				[
+					"-NoLogo",
+					"-NoProfile",
+					"-NonInteractive",
+					"-EncodedCommand",
+					Buffer.from(launch, "utf16le").toString("base64"),
+				],
+				{ stdio: "pipe", timeout: 30_000, windowsHide: true },
+			);
 			return {
 				status: "scheduled",
 				message:
