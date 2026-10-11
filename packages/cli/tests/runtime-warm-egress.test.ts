@@ -31,10 +31,12 @@ import {
 	generateAnonymousEgressCa,
 	warmAnonymousEgressSidecar,
 } from "../src/runtime/runtime-warm-egress";
+import { ensureRuntimeStateDirs } from "../src/runtime/state";
 import * as systemd from "../src/runtime/systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-user";
 
 const environment = { ...process.env };
+const originalUmask = process.umask();
 const roots: string[] = [];
 const sidecar = "clawdi-runtime-sidecar.service";
 const dashboard = "clawdi-hermes-dashboard.service";
@@ -49,11 +51,12 @@ const pin = {
 afterEach(() => {
 	mock.restore();
 	process.env = { ...environment };
+	process.umask(originalUmask);
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 function write(path: string, contents: string, mode = 0o600) {
-	mkdirSync(dirname(path), { recursive: true });
+	mkdirSync(dirname(path), { recursive: true, mode: 0o755 });
 	writeFileSync(path, contents, { mode });
 }
 
@@ -77,10 +80,9 @@ function fixture(withPin = true) {
 	});
 	delete process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY;
 	const paths = getRuntimePaths({ mode: "hosted" });
-	mkdirSync(paths.userHome, { recursive: true });
-	mkdirSync(paths.runRoot, { recursive: true, mode: 0o711 });
-	mkdirSync(paths.systemdSystemRoot, { recursive: true });
-	mkdirSync(paths.systemdUserRoot, { recursive: true });
+	ensureRuntimeStateDirs(paths);
+	mkdirSync(paths.userHome, { recursive: true, mode: 0o755 });
+	mkdirSync(paths.systemdUserRoot, { recursive: true, mode: 0o755 });
 	const files = egressSnapshotPaths(paths);
 	write(
 		join(paths.serviceStateRoot, "preinstallation/receipt.json"),
@@ -112,7 +114,7 @@ exec /bin/sleep 30
 	);
 	const log = join(root, "commands");
 	const manager = join(root, "manager");
-	mkdirSync(manager);
+	mkdirSync(manager, { mode: 0o755 });
 	write(join(root, "bin/curl"), "#!/bin/sh\necho 200\n", 0o755);
 	write(
 		join(root, "bin/systemctl"),
@@ -218,6 +220,8 @@ test("receipt without optional assets keeps egress warm-up inactive", async () =
 test.skipIf(process.getuid?.() !== 0).each([false, true])(
 	"claim reuses only matching warm egress and overlaps Hermes: identity mismatch=%s",
 	async (mismatch) => {
+		// CI can use a permissive umask; fixture paths must remain trusted.
+		process.umask(0);
 		const f = fixture();
 		await generateAnonymousEgressCa(f.paths, f.identity.gid);
 		warmAnonymousEgressSidecar(f.paths, f.identity);

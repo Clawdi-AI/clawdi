@@ -9,24 +9,29 @@ import type { RuntimeManifestLoad } from "../src/runtime/manifest-source";
 import { adoptableWarmOpenClawGatewayUnits } from "../src/runtime/openclaw-warm-gateway";
 import { getRuntimePaths } from "../src/runtime/paths";
 import { warmHostedOpenClawRuntime } from "../src/runtime/runtime-warm";
+import { ensureRuntimeStateDirs } from "../src/runtime/state";
 import { writeFakeOpenClawConfigMutationSdk } from "../src/test-support/openclaw-config-mutation";
 
 const environment = { ...process.env };
+const originalUmask = process.umask();
 const roots: string[] = [];
 const gateway = "openclaw-gateway.service";
 
 afterEach(() => {
 	mock.restore();
 	process.env = { ...environment };
+	process.umask(originalUmask);
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 function write(path: string, contents: string, mode = 0o600) {
-	mkdirSync(dirname(path), { recursive: true });
+	mkdirSync(dirname(path), { recursive: true, mode: 0o755 });
 	writeFileSync(path, contents, { mode });
 }
 
 function fixture(hotApply: string | undefined) {
+	// Exercise the same permissive umask as privileged CI for every warm path.
+	process.umask(0);
 	const root = mkdtempSync(join(tmpdir(), "clawdi-warm-openclaw-"));
 	roots.push(root);
 	const runtimeUser = String(process.getuid?.() ?? 1000);
@@ -44,6 +49,7 @@ function fixture(hotApply: string | undefined) {
 	if (hotApply === undefined) delete process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY;
 	else process.env.CLAWDI_RUNTIME_OPENCLAW_HOT_APPLY = hotApply;
 	const paths = getRuntimePaths({ mode: "hosted" });
+	ensureRuntimeStateDirs(paths);
 	const command = join(paths.userHome, ".local/bin/openclaw");
 	const config = writeFakeOpenClawConfigMutationSdk(paths.userHome);
 	write(
@@ -58,7 +64,6 @@ esac
 		0o755,
 	);
 	write(join(paths.systemdUserRoot, gateway), `[Service]\nExecStart=${command} gateway run\n`);
-	mkdirSync(paths.systemdSystemRoot, { recursive: true });
 	write(
 		join(paths.serviceStateRoot, "preinstallation/receipt.json"),
 		JSON.stringify({
