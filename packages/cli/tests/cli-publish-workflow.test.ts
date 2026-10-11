@@ -242,6 +242,9 @@ describe("CLI publish workflow contract", () => {
 			expect(signRun).toContain(secret);
 		}
 		expect(signRun).toContain("with-signing-keychain.sh");
+		expect(signRun).toContain(
+			"bash ./apps/desktop/scripts/with-signing-keychain.sh bash -s <<'SIGN'",
+		);
 		expect(signRun).toContain("codesign --force --options runtime --timestamp");
 		expect(signRun).toContain("--identifier ai.clawdi.cli");
 		expect(signRun).toContain("--entitlements");
