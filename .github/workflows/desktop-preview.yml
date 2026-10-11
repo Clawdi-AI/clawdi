@@ -148,6 +148,7 @@ jobs:
 
       - name: Upload ad-hoc signed preview
         uses: actions/upload-artifact@v7
+        if: github.event_name != 'push'
         with:
           name: clawdi-macos-arm64-ad-hoc-preview
           path: |
@@ -155,4 +156,4 @@ jobs:
             apps/desktop/release/Clawdi-*.dmg.sha256
             apps/desktop/release/Clawdi-*.zip
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
