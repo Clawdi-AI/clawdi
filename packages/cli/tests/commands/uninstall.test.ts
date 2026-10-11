@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
+	chmodSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -12,12 +13,17 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { uninstall } from "../../src/commands/uninstall";
 import { setAuth } from "../../src/lib/config";
+import { readEnvironmentRegistrationForCleanup } from "../../src/lib/environment-registration";
 import { writeNativeInstallIdentity } from "../../src/lib/native-distribution";
 import {
 	NATIVE_BUILD_TARGET_CATALOG,
 	nativeAssetName,
 } from "../../src/lib/native-release-manifest";
-import { reserveManagedSkill } from "../../src/runtime/managed-skill-reservation";
+import { listRegisteredAgentTypes } from "../../src/lib/select-adapter";
+import {
+	managedSkillReservationState,
+	reserveManagedSkill,
+} from "../../src/runtime/managed-skill-reservation";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let home: string;
@@ -31,6 +37,7 @@ beforeEach(() => {
 	delete process.env.ZDOTDIR;
 	delete process.env.XDG_CONFIG_HOME;
 	delete process.env.CLAUDE_CONFIG_DIR;
+	delete process.env.CODEX_HOME;
 });
 afterEach(() => {
 	process.env = { ...saved };
@@ -68,6 +75,35 @@ function nativeInstall(installedBy?: "desktop") {
 	mkdirSync(dirname(launcher), { recursive: true });
 	symlinkSync(join(directory, "clawdi"), launcher);
 	return { prefix, directory, launcher };
+}
+
+function localIntegration(agent: "claude_code" | "codex", owned = true) {
+	const registration = join(home, ".clawdi/environments", `${agent}.json`);
+	mkdirSync(dirname(registration), { recursive: true });
+	writeFileSync(
+		registration,
+		JSON.stringify({ id: `old-${agent}`, agentType: agent, userId: "old-account" }),
+	);
+	const skill = join(home, agent === "claude_code" ? ".claude" : ".codex", "skills/clawdi");
+	mkdirSync(skill, { recursive: true });
+	writeFileSync(join(skill, "SKILL.md"), owned ? "managed skill" : "user skill");
+	if (owned)
+		reserveManagedSkill({
+			targetDir: skill,
+			id: "clawdi",
+			version: 1,
+			digest: "a".repeat(64),
+			manager: "local-setup",
+		});
+	const userFile = join(dirname(skill), "user.txt");
+	writeFileSync(userFile, "keep user file");
+	const bin = join(home, "bin");
+	mkdirSync(bin, { recursive: true });
+	writeFileSync(join(bin, agent === "claude_code" ? "claude" : "codex"), "#!/bin/sh\nexit 0\n", {
+		mode: 0o755,
+	});
+	process.env.PATH = `${bin}:${saved.PATH ?? ""}`;
+	return { registration, skill, userFile };
 }
 
 (process.platform === "win32" ? describe.skip : describe)("uninstall", () => {
@@ -121,6 +157,50 @@ function nativeInstall(installedBy?: "desktop") {
 		} finally {
 			output.mockRestore();
 		}
+	});
+
+	test.each(["signed-out", "switched-account"])(
+		"cleans old-account ownership while %s and preserves user content",
+		async (state) => {
+			const owned = localIntegration("claude_code");
+			const foreign = localIntegration("codex", false);
+			if (state === "switched-account") setAuth({ apiKey: "fixture-key", userId: "new-account" });
+			expect(listRegisteredAgentTypes()).toEqual([]);
+			const result = await uninstall({ yes: true }, { home, uninstallDaemon: noDaemon });
+			expect(result.status).toBe("completed");
+			expect(result.steps.find((step) => step.step === "integrations")?.status).toBe("removed");
+			expect(existsSync(owned.skill)).toBe(false);
+			expect(readFileSync(join(foreign.skill, "SKILL.md"), "utf8")).toBe("user skill");
+			for (const item of [owned, foreign])
+				expect(readFileSync(item.userFile, "utf8")).toBe("keep user file");
+		},
+	);
+
+	test("retains failed integration discovery and ownership for a signed-out retry", async () => {
+		const successful = localIntegration("claude_code");
+		const failed = localIntegration("codex");
+		const parent = dirname(failed.skill);
+		chmodSync(parent, 0o500);
+		try {
+			const result = await uninstall({ yes: true }, { home, uninstallDaemon: noDaemon });
+			expect(result.status).toBe("failed");
+			expect(result.steps.find((step) => step.step === "integrations")?.status).toBe("failed");
+			expect(result.steps.find((step) => step.step === "local-state")?.message).toContain("kept");
+			expect(existsSync(successful.skill)).toBe(false);
+			expect(existsSync(successful.registration)).toBe(false);
+			expect(readEnvironmentRegistrationForCleanup("codex")?.id).toBe("old-codex");
+			expect(managedSkillReservationState(failed.skill)).toBe("reserved");
+			expect(existsSync(failed.skill)).toBe(true);
+		} finally {
+			chmodSync(parent, 0o700);
+		}
+		process.exitCode = 0;
+		const retry = await uninstall({ yes: true }, { home, uninstallDaemon: noDaemon });
+		expect(retry.status).toBe("completed");
+		expect(retry.steps.find((step) => step.step === "integrations")?.status).toBe("removed");
+		expect(existsSync(failed.skill)).toBe(false);
+		expect(existsSync(failed.registration)).toBe(false);
+		expect(readFileSync(failed.userFile, "utf8")).toBe("keep user file");
 	});
 
 	test.each([200, 503])(

@@ -30,7 +30,11 @@ with the Desktop Developer ID identity and Bun's JIT entitlements, then submit
 a zip containing each executable to `notarytool`. The published asset remains a
 tar archive containing the signed executable; bare executables cannot carry a
 stapled notarization ticket, so release verification uses `codesign`,
-`spctl`, and the `notarytool` submission log.
+the `notarytool` Accepted status and submission log. `spctl` is informational for
+bare executables. The publishing workflow requires all signing and notarization
+credentials; missing or incomplete credentials fail before final artifact upload.
+
+Done: `scripts/test.sh cli tests/cli-publish-workflow.test.ts` exits 0.
 
 Read-only local commands (`skill init`, `config *`, `status --json` while
 unauthenticated) work without a backend. Anything that hits the API
