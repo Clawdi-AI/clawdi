@@ -250,8 +250,9 @@ jobs:
             stage="$RUNNER_TEMP/clawdi-cli-$target"
             zip="$RUNNER_TEMP/clawdi-cli-$target.zip"
             result="$RUNNER_TEMP/clawdi-cli-$target-notary.json"
+            submit_stderr="$RUNNER_TEMP/clawdi-cli-$target-notary.stderr"
             log="$RUNNER_TEMP/clawdi-cli-$target-notary-log.json"
-            rm -rf "$stage" "$zip" "$result" "$log"
+            rm -rf "$stage" "$zip" "$result" "$submit_stderr" "$log"
             mkdir -p "$stage"
             tar -xzf "$archive" -C "$stage"
             cli="$stage/clawdi"
@@ -266,18 +267,47 @@ jobs:
             printf '%s\n' "$signature" | grep -q '^Authority=Developer ID Application:'
             printf '%s\n' "$signature" | grep -Eq '^TeamIdentifier=[A-Z0-9]{10}$'
 
+            # Apple documents notarytool for release submissions:
+            # https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution
+            # TN2206 validates standalone command-line binaries with codesign
+            # (its example uses /sbin/md5):
+            # https://developer.apple.com/library/archive/technotes/tn2206/_index.html
             # Bare executables cannot be stapled. Submit a zip to Apple's
             # notary service, then retain the signed executable in its tarball.
             ditto -c -k --keepParent "$cli" "$zip"
+            set +e
             xcrun notarytool submit "$zip" --wait --timeout 30m --output-format json \
               --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" \
-              --issuer "$APPLE_API_ISSUER" > "$result"
-            submission_id="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (value.status !== "Accepted") process.exit(1); process.stdout.write(value.id)' "$result")"
-            test -n "$submission_id"
+              --issuer "$APPLE_API_ISSUER" > "$result" 2> "$submit_stderr"
+            submit_exit=$?
+            set -e
+            submission_id="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(typeof value.id === "string" ? value.id : "")' "$result" 2>/dev/null || true)"
+            submission_status="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(typeof value.status === "string" ? value.status : "")' "$result" 2>/dev/null || true)"
+            if [ "$submit_exit" -ne 0 ] || [ "$submission_status" != "Accepted" ] || [ -z "$submission_id" ]; then
+              echo "Apple notarization did not succeed for $asset (status=${submission_status:-unknown}, exit=$submit_exit)." >&2
+              if [ -n "$submission_id" ]; then
+                if ! xcrun notarytool log "$submission_id" --output-format json \
+                  --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" \
+                  --issuer "$APPLE_API_ISSUER" > "$log"; then
+                  echo "Unable to retrieve the Apple notarization log." >&2
+                fi
+                cat "$log" >&2 || true
+              else
+                cat "$result" >&2 || true
+                cat "$submit_stderr" >&2 || true
+              fi
+              exit 1
+            fi
             xcrun notarytool log "$submission_id" --output-format json \
               --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" \
               --issuer "$APPLE_API_ISSUER" > "$log"
-            spctl --assess --type execute --verbose=4 "$cli"
+            # Gatekeeper's spctl assessment is app-oriented and may reject a
+            # correctly signed bare CLI as “does not seem to be an app”. Keep
+            # it as an informational diagnostic; codesign and notarytool are
+            # the release gates for this standalone executable.
+            if ! spctl --assess --type execute --verbose=4 "$cli"; then
+              echo "spctl informational assessment rejected the bare CLI; codesign and notarytool gates passed." >&2
+            fi
 
             tar -C "$stage" --owner=0 --group=0 --numeric-owner -czf "$archive" \
               clawdi egress-addon/clawdi_egress_addon.py skills

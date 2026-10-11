@@ -247,7 +247,17 @@ describe("CLI publish workflow contract", () => {
 		expect(signRun).toContain("--entitlements");
 		expect(signRun).toContain("xcrun notarytool submit");
 		expect(signRun).toContain("xcrun notarytool log");
+		expect(signRun).toContain("submission_status");
+		expect(signRun).toContain("status=$" + "{submission_status:-unknown}");
+		expect(signRun).toContain("Apple notarization did not succeed");
+		expect(signRun).toContain("notarizing_macos_software_before_distribution");
+		expect(signRun).toContain("TN2206");
 		expect(signRun).toContain("spctl --assess --type execute");
+		expect(signRun).toContain("if ! spctl --assess --type execute");
+		expect(signRun).toContain("informational assessment rejected the bare CLI");
+		expect(signRun.indexOf("xcrun notarytool log")).toBeLessThan(
+			signRun.indexOf("if ! spctl --assess --type execute"),
+		);
 		expect(signRun).toContain("Bare executables cannot be stapled");
 		expect(signRun).toContain("refresh-native-release-manifest.mjs");
 		expect(signRun.indexOf("codesign --force")).toBeLessThan(
