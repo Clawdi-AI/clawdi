@@ -2,10 +2,15 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { app, BrowserWindow, Menu, type MenuItem, session, shell } from "electron";
+import { readDesktopLoginItemSettings, setDesktopLaunchAtLogin } from "../../src/login-item";
 
-const root = process.env.CLAWDI_DESKTOP_UPDATE_E2E_ROOT;
-const result = process.env.CLAWDI_DESKTOP_UPDATE_E2E_RESULT;
-if (!root || !result) throw new Error("Missing Windows e2e paths.");
+function requiredRoot(): string {
+	const value = process.env.CLAWDI_DESKTOP_UPDATE_E2E_ROOT;
+	if (!value) throw new Error("Missing Windows e2e root.");
+	return value;
+}
+const root = requiredRoot();
+const result = process.env.CLAWDI_DESKTOP_UPDATE_E2E_RESULT ?? join(root, "cleanup.json");
 app.setPath("userData", join(root, "userData"));
 app.setPath("home", join(root, "home"));
 app.disableHardwareAcceleration();
@@ -36,7 +41,15 @@ function installers(directory: string): string[] {
 }
 
 const deadline = Date.now() + 120_000;
+let checking = false;
 const timer = setInterval(() => {
+	if (checking) return;
+	checking = true;
+	void check().finally(() => {
+		checking = false;
+	});
+}, 500);
+async function check(): Promise<void> {
 	try {
 		if (Date.now() > deadline)
 			throw new Error("Timed out waiting for Windows production updater/recovery.");
@@ -57,6 +70,17 @@ const timer = setInterval(() => {
 			const serviceStarts = readFileSync(join(root, "home/.clawdi/service-starts.log"), "utf8")
 				.trim()
 				.split("\n").length;
+			const partition = session.fromPartition("persist:clawdi-dashboard");
+			await partition.cookies.set({
+				url: "https://cloud.clawdi.ai",
+				name: "__session",
+				value: "header.eyJzaWQiOiJzZXNzX2ZpeHR1cmUifQ.signature",
+				expirationDate: Date.now() / 1000 + 3600,
+			});
+			await partition.cookies.flushStore();
+			setDesktopLaunchAtLogin(app, true);
+			writeFileSync(join(app.getPath("logs"), "uninstall-fixture.log"), "owned log");
+			writeFileSync(join(root, "userData", "upgrade-fixture"), "must survive upgrade");
 			writeFileSync(
 				result,
 				JSON.stringify({ version: app.getVersion(), downloaded, serviceStarts }),
@@ -75,7 +99,25 @@ const timer = setInterval(() => {
 					Number(process.env.CLAWDI_DESKTOP_UPDATE_E2E_PREVIOUS_STARTS)
 			)
 				return;
-			writeFileSync(result, JSON.stringify({ version: app.getVersion(), serviceResumed: true }));
+			const cookies = await session
+				.fromPartition("persist:clawdi-dashboard")
+				.cookies.get({ url: "https://cloud.clawdi.ai" });
+			if (!cookies.some((cookie) => cookie.name === "__session"))
+				throw new Error("Upgrade deleted Dashboard cookie.");
+			if (!existsSync(join(root, "userData", "upgrade-fixture")))
+				throw new Error("Upgrade deleted profile.");
+			if (!existsSync(join(app.getPath("logs"), "uninstall-fixture.log")))
+				throw new Error("Upgrade deleted logs.");
+			if (!readDesktopLoginItemSettings(app)?.openAtLogin)
+				throw new Error("Upgrade removed login item.");
+			writeFileSync(
+				result,
+				JSON.stringify({
+					version: app.getVersion(),
+					serviceResumed: true,
+					upgradeDataPreserved: true,
+				}),
+			);
 			clearInterval(timer);
 			app.exit(0);
 		}
@@ -84,4 +126,4 @@ const timer = setInterval(() => {
 		clearInterval(timer);
 		app.exit(1);
 	}
-}, 500);
+}

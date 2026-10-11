@@ -87,9 +87,16 @@ if (args[0] === "--serve") {
 		case "daemon stop":
 			stopWindowsTask();
 			break;
+		case "auth desktop-sign-out":
+			console.log(JSON.stringify({ schemaVersion: "clawdi.desktopSignOut.v1", status: "revoked" }));
+			break;
 		case "uninstall --yes":
 		case "daemon uninstall":
 			uninstallWindowsTask(root);
+			if (args[0] === "uninstall")
+				console.log(
+					JSON.stringify({ schemaVersion: "clawdi.uninstall.v1", status: "completed", steps: [] }),
+				);
 			break;
 		default:
 			throw new Error(`Unexpected Windows e2e CLI call: ${args.join(" ")}`);

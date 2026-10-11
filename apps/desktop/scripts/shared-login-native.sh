@@ -21,6 +21,7 @@ case "$1 ${2:-}" in
       printf '%s\n' '{"schemaVersion":"clawdi.desktopSession.v1","status":"ticket","ticket":"mock-once","expiresIn":60,"accountId":"user_fixture"}'
     fi ;;
   'auth desktop-sign-out')
+    test -f "$CLAWDI_HOME/auth.json"
     test "$3" = --session-id
     test "$4" = sess_fixture
     if [ -f "$CLAWDI_HOME/fail-revoke" ]; then exit 1; fi
@@ -36,6 +37,8 @@ case "$1 ${2:-}" in
   'agent reconnect') printf '%s\n' '{"schemaVersion":"clawdi.agentReconnectCandidates.v1","agents":[]}' ;;
   'setup --agent') : ;;
   'daemon install') touch "$CLAWDI_HOME/sync" ;;
+  'daemon stop') rm -f "$CLAWDI_HOME/sync" ;;
+  'daemon restart') touch "$CLAWDI_HOME/sync" ;;
   'daemon uninstall') rm -f "$CLAWDI_HOME/sync" ;;
   *) echo 'Unexpected mock CLI command' >&2; exit 2 ;;
 esac

@@ -19,6 +19,11 @@
     ${ifNot} ${Errors}
       System::Call 'Kernel32::SetEnvironmentVariable(t "CLAWDI_UNINSTALL_KEEP_CLI", t "1")i.r0'
     ${endif}
+    ; Run the shared Desktop cleanup before deleting CLI credentials. The executable
+    ; is still installed, and no cleanup entry is invoked in the upgrade branch.
+    nsExec::ExecToStack /TIMEOUT=240000 '"$INSTDIR\Clawdi.exe" --clawdi-uninstall-cleanup'
+    Pop $0
+    Pop $1
     ; The bundled native CLI is available before NSIS removes app files. It removes
     ; the shared CLI only when its validated metadata records installedBy=desktop.
     ; CLI failures are best effort and must never prevent NSIS from completing.

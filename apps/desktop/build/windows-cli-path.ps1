@@ -12,6 +12,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $marker = "@rem Clawdi Desktop CLI launcher v1"
+# A foreign launcher also owns its PATH entry. Only remove our marked shim.
+if ($Action -eq "Remove") {
+  if (-not (Test-Path -LiteralPath $LauncherPath -PathType Leaf)) { return }
+  if ((Get-Content -LiteralPath $LauncherPath -TotalCount 1) -ne $marker) { return }
+}
 $environment = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Environment", $true)
 
 try {

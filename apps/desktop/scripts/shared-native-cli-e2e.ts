@@ -285,6 +285,29 @@ try {
 					),
 				);
 			if (scenario === "fresh") {
+				if (process.platform === "win32") {
+					const shim = join(env.LOCALAPPDATA, "Clawdi/bin/clawdi.cmd");
+					assert.match(readFileSync(shim, "utf8"), /Clawdi Desktop CLI launcher v1/);
+					const verified = await runCommand(
+						"powershell.exe",
+						[
+							"-NoProfile",
+							"-NonInteractive",
+							"-Command",
+							`
+$ErrorActionPreference = 'Stop'
+$env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine')
+(Get-Command clawdi -CommandType Application -ErrorAction Stop).Source
+`,
+						],
+						{ env },
+					);
+					assert.equal(
+						verified.stdout.trim().toLowerCase(),
+						shim.toLowerCase(),
+						"New terminal must resolve fresh-native Desktop shim",
+					);
+				}
 				await runCommand(launcher, ["update", "--fixture-auto-update"], { env });
 				const state = await page.evaluate(() => window.clawdiConnect?.getBootstrapState());
 				assert.equal(state?.cli.version, "0.16.9");
@@ -313,23 +336,26 @@ try {
 } finally {
 	await stopDesktop();
 	if (process.platform === "win32") {
-		const shim = join(root, "offline", "local", "Clawdi", "bin", "clawdi.cmd");
-		if (existsSync(shim)) {
-			await runCommand("powershell.exe", [
-				"-NoLogo",
-				"-NoProfile",
-				"-NonInteractive",
-				"-ExecutionPolicy",
-				"Bypass",
-				"-File",
-				join(desktop, "build/windows-cli-path.ps1"),
-				"-Action",
-				"Remove",
-				"-BinPath",
-				dirname(shim),
-				"-LauncherPath",
-				shim,
-			]);
+		for (const scenario of ["fresh", "newer", "migration", "offline"]) {
+			const shim = join(root, scenario, "local", "Clawdi", "bin", "clawdi.cmd");
+			if (existsSync(shim)) {
+				await runCommand("powershell.exe", [
+					"-NoLogo",
+					"-NoProfile",
+					"-NonInteractive",
+					"-ExecutionPolicy",
+					"Bypass",
+					"-File",
+					join(desktop, "build/windows-cli-path.ps1"),
+					"-Action",
+					"Remove",
+					"-BinPath",
+					dirname(shim),
+					"-LauncherPath",
+					shim,
+				]);
+				assert.equal(existsSync(shim), false, "Remove only the owned shim");
+			}
 		}
 	}
 	if (hadBundledResource && existsSync(join(root, "original-cli")))

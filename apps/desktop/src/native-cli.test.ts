@@ -664,6 +664,18 @@ test("a compiled foreign CLI with local-self-update capabilities is not adopted"
 	expect(existsSync(launcher)).toBe(true);
 });
 
+test("NSIS cleanup uses the installed bundle without bootstrapping a missing CLI", async () => {
+	const { service, calls, invocations, state } = serviceFixture();
+	service.useBundledCliForCleanup();
+	await service.revokeDashboardSession("sess_fixture");
+	await service.uninstall(true);
+	expect(calls).toEqual([
+		"auth desktop-sign-out --session-id sess_fixture --json",
+		"uninstall --yes --remove-cli --json",
+	]);
+	expect(invocations.every((call) => call.path === state.executable)).toBe(true);
+});
+
 test("Desktop delegates full uninstall to the resolved CLI and preserves an unchecked CLI choice", async () => {
 	const { service, seedNative, invocations, launcher } = serviceFixture();
 	seedNative("0.16.9");

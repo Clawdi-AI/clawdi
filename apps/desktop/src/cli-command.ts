@@ -70,7 +70,7 @@ export function removeDesktopCliSymlink(options: {
 }
 
 /** Keep an existing Desktop PATH entry working without editing PATH or
- * replacing a foreign command. New native installs already own their launcher. */
+ * replacing a foreign command. Fresh native installs use the same ownership-marked launcher and PATH helper. */
 export function migrateWindowsDesktopCliCommand(options: {
 	localAppData?: string;
 	target: string;
@@ -84,6 +84,19 @@ export function migrateWindowsDesktopCliCommand(options: {
 		if (existing !== content) writeLauncher(launcher, content);
 	} catch (error) {
 		if (!isMissing(error)) throw error;
+	}
+}
+
+export async function reconcileWindowsNativeCliCommand(
+	options: DesktopCliCommandOptions,
+): Promise<void> {
+	const launcher = defaultLauncherPath(options);
+	try {
+		lstatSync(launcher);
+		migrateWindowsDesktopCliCommand({ localAppData: options.localAppData, target: options.target });
+	} catch (error) {
+		if (!isMissing(error)) throw error;
+		await installDesktopCliCommand(options);
 	}
 }
 

@@ -12,6 +12,42 @@ afterEach(() => {
 });
 
 describe("desktop command cancellation", () => {
+	test("preserves JSON UTF-8 across a real child pipe split inside a character", async () => {
+		const expected = JSON.stringify({ machineName: "中文电脑", path: "/项目/测试" });
+		const result = await runCommand(process.execPath, [
+			"-e",
+			`
+			const bytes = Buffer.from(${JSON.stringify(expected)});
+			const split = bytes.indexOf(Buffer.from("中")) + 1;
+			process.stdout.write(bytes.subarray(0, split));
+			setTimeout(() => process.stdout.write(bytes.subarray(split)), 50);
+		`,
+		]);
+		expect(result.stdout).toBe(expected);
+		expect(JSON.parse(result.stdout)).toEqual({ machineName: "中文电脑", path: "/项目/测试" });
+	});
+
+	test.each(["stdout", "stderr"])(
+		"limits %s output and waits for child termination",
+		async (stream) => {
+			await expect(
+				runCommand(process.execPath, [
+					"-e",
+					`process.${stream}.write("x".repeat(1024 * 1024 + 1)); setInterval(() => {}, 1000)`,
+				]),
+			).rejects.toThrow("too much output");
+		},
+	);
+
+	test("reports child failures", async () => {
+		await expect(
+			runCommand(process.execPath, [
+				"-e",
+				'process.stderr.write("fixture failure"); process.exit(2)',
+			]),
+		).rejects.toThrow("fixture failure");
+	});
+
 	test("preserves the safe Desktop update message when progress uses an unknown major", async () => {
 		await expect(
 			runCommand(

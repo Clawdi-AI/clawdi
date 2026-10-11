@@ -41,7 +41,7 @@ import {
 import {
 	type DesktopCliCommandOptions,
 	installDesktopCliCommand,
-	migrateWindowsDesktopCliCommand,
+	reconcileWindowsNativeCliCommand,
 } from "./cli-command";
 import { DesktopCliCompatibilityError } from "./cli-compat";
 import {
@@ -81,10 +81,13 @@ import {
 	supportsDesktopLoginItems,
 	wasDesktopOpenedAtLogin,
 } from "./login-item";
+import { DesktopMutationBlockedError, DesktopMutations } from "./mutations";
 import { DesktopCliError, DesktopCliService } from "./native-cli";
 import { requireDesktopPlatform } from "./platform";
 import {
+	cleanupDesktop,
 	clearDesktopDirectories,
+	type DesktopCleanupActions,
 	launchWindowsUninstaller,
 	macApplicationBundle,
 	uninstallDesktop,
@@ -135,7 +138,9 @@ let updateInstallation: DesktopUpdateInstallation | null = null;
 let updateNotification: Notification | null = null;
 let updateState: DesktopUpdateState = { status: "disabled", reason: "development" };
 let updatePromptedVersion: string | null = null;
-let activeCriticalOperations = 0;
+const mutations = new DesktopMutations(() => {
+	renderUpdateMenus();
+});
 let quitting = false;
 let uninstalling = false;
 let disableUpdateOnQuit: (() => void) | undefined;
@@ -231,6 +236,18 @@ async function startApplication(): Promise<void> {
 	}
 	stopDesktopLogging = initializeDesktopLogging(logDirectory);
 	console.info("Desktop starting", { platform: process.platform, version: app.getVersion() });
+	if (process.argv.includes("--clawdi-uninstall-cleanup")) {
+		cli.useBundledCliForCleanup();
+		const admission = mutations.block("Clawdi is uninstalling.");
+		await admission.drained;
+		const failed = await cleanupDesktop(
+			desktopCleanupActions(),
+			process.env.CLAWDI_UNINSTALL_KEEP_CLI !== "1",
+		);
+		if (failed.length) console.error("Desktop uninstall cleanup incomplete", failed);
+		app.exit(failed.length ? 1 : 0);
+		return;
+	}
 	registerDeepLinkProtocol();
 	const startHidden = !launchConnectView && wasOpenedAtLogin();
 	if (startHidden && process.platform === "darwin") app.dock?.hide();
@@ -258,7 +275,7 @@ async function startApplication(): Promise<void> {
 		setTrayState(null);
 		if (!startHidden) await showConnectWindow(launchConnectView ?? undefined);
 	} else {
-		const startup = await prepareDesktopStartup(cli);
+		const startup = await withCriticalOperation(() => prepareDesktopStartup(cli));
 		setTrayState(startup.state);
 		// The dashboard opens after sign-in and on explicit clicks, not on every launch.
 		if (!startHidden) await showConnectWindow(launchConnectView ?? undefined);
@@ -268,11 +285,14 @@ async function startApplication(): Promise<void> {
 		setImmediate(() =>
 			runAsync(
 				"reconcile the CLI command",
-				reconcileDesktopCliCommand(startup.state.daemon.installed),
+				withCriticalOperation(() => reconcileDesktopCliCommand(startup.state.daemon.installed)),
 			),
 		);
 	}
-	runAsync("initialize Desktop updates", initializeUpdates());
+	runAsync(
+		"initialize Desktop updates",
+		withCriticalOperation(() => initializeUpdates()),
+	);
 
 	app.on("activate", () => runAsync("show the active window", showAvailableWindow()));
 }
@@ -347,14 +367,13 @@ async function initializeUpdates(): Promise<void> {
 	updateInstallation = new DesktopUpdateInstallation({
 		platform: process.platform,
 		isReady: () => updateState.status === "ready",
-		isBusy: () => activeCriticalOperations > 0,
-		stopBackgroundServices: () =>
-			withCriticalOperation(async () => {
-				const state = await cli.bootstrapState();
-				// Release executable locks. Retain the installed unit as durable Sync intent.
-				if (state.daemon.installed) await cli.stopDaemon();
-				return state.daemon.installed;
-			}),
+		mutations,
+		stopBackgroundServices: async () => {
+			const state = await cli.bootstrapState();
+			// Release executable locks. Retain the installed unit as durable Sync intent.
+			if (state.daemon.installed) await cli.stopDaemon();
+			return state.daemon.installed;
+		},
 		restoreBackgroundServices: () => cli.restartDaemon(),
 		install: (onQuit) => {
 			if (onQuit) {
@@ -424,7 +443,7 @@ function updateActionMenuItems(): MenuItemConstructorOptions[] {
 	if (updateState.status === "ready") {
 		items.push({
 			label: "Restart to Update",
-			enabled: activeCriticalOperations === 0 && !updateInstallation?.isInProgress,
+			enabled: mutations.activeCount === 0 && !mutations.blocked,
 			click: restartToInstallUpdate,
 		});
 	} else if (updateState.status === "available") {
@@ -445,7 +464,11 @@ function updateActionMenuItems(): MenuItemConstructorOptions[] {
 	) {
 		items.push({
 			label: "Check for Updates…",
-			click: () => runAsync("check for updates", checkForUpdatesManually()),
+			click: () =>
+				runAsync(
+					"check for updates",
+					withCriticalOperation(() => checkForUpdatesManually()),
+				),
 		});
 	}
 	return items;
@@ -472,8 +495,8 @@ async function checkForUpdatesManually(): Promise<void> {
 async function maybePromptForUpdate(): Promise<void> {
 	if (
 		updateState.status !== "ready" ||
-		updateInstallation?.isInProgress ||
-		activeCriticalOperations > 0 ||
+		mutations.blocked ||
+		mutations.activeCount > 0 ||
 		updatePromptedVersion === updateState.version
 	) {
 		return;
@@ -508,22 +531,24 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.createDashboardSession, async (event, raw: unknown) => {
 		assertDashboardSender(event, dashboardWindow?.webContents, true, WEB_ORIGIN);
 		try {
-			const state = await cli.bootstrapState();
-			if (signingOut || !state.auth.authenticated || state.auth.user?.id !== dashboardAccountId) {
-				throw new Error("Local account changed.");
-			}
-			const result = await cli.createDashboardSession(readDesktopWebSession(raw));
-			// Recheck after the exchange: concurrent CLI logout/account switching cannot restore stale cookies.
-			const current = await cli.bootstrapState();
-			if (
-				signingOut ||
-				current.auth.user?.id !== dashboardAccountId ||
-				!current.auth.authenticated
-			) {
-				throw new Error("Local account changed.");
-			}
-			assertDashboardSender(event, dashboardWindow?.webContents, true, WEB_ORIGIN);
-			return result;
+			return await withCriticalOperation(async () => {
+				const state = await cli.bootstrapState();
+				if (signingOut || !state.auth.authenticated || state.auth.user?.id !== dashboardAccountId) {
+					throw new Error("Local account changed.");
+				}
+				const result = await cli.createDashboardSession(readDesktopWebSession(raw));
+				// Recheck after the exchange: concurrent CLI logout/account switching cannot restore stale cookies.
+				const current = await cli.bootstrapState();
+				if (
+					signingOut ||
+					current.auth.user?.id !== dashboardAccountId ||
+					!current.auth.authenticated
+				) {
+					throw new Error("Local account changed.");
+				}
+				assertDashboardSender(event, dashboardWindow?.webContents, true, WEB_ORIGIN);
+				return result;
+			});
 		} catch {
 			throw new Error("Couldn't restore dashboard sign-in. Reopen Dashboard from Clawdi.");
 		}
@@ -628,9 +653,7 @@ function registerIpc(): void {
 	ipcMain.handle(DESKTOP_IPC.connectAgents, (event, rawConnections: unknown) =>
 		safeConnectAction(event, "connect the selected agents", async () => {
 			assertSafeDaemonMutation();
-			const result = await withCriticalOperation(() =>
-				cli.connectAgents(readAgentConnections(rawConnections)),
-			);
+			const result = await cli.connectAgents(readAgentConnections(rawConnections));
 			runAsync("refresh sync status", refreshTrayState());
 			runAsync(
 				"open the dashboard after the first connection",
@@ -646,7 +669,7 @@ function registerIpc(): void {
 		safeConnectAction(event, "open the dashboard", async () => {
 			assertRuntimeLocation();
 			const window = connectWindow;
-			await openDashboard();
+			await openDashboard(true);
 			runAsync("reconcile sync after opening Dashboard", reconcileBackgroundSyncAfterStartup());
 			if (dashboardWindow && window && !window.isDestroyed()) window.destroy();
 		}),
@@ -666,18 +689,11 @@ async function authenticateAccount(): Promise<DesktopAuthenticationResult> {
 }
 
 async function withCriticalOperation<T>(action: () => Promise<T>): Promise<T> {
-	activeCriticalOperations += 1;
-	renderUpdateMenus();
 	try {
-		return await action();
+		return await mutations.run(action);
 	} finally {
-		activeCriticalOperations -= 1;
-		renderUpdateMenus();
-		if (activeCriticalOperations === 0 && !uninstalling && !quitting) {
-			if (updateInstallation)
-				runAsync("finish the requested quit", updateInstallation.resumePendingQuit());
+		if (mutations.activeCount === 0 && !mutations.blocked && !uninstalling && !quitting)
 			runAsync("offer the downloaded update", maybePromptForUpdate());
-		}
 	}
 }
 
@@ -689,10 +705,15 @@ async function safeConnectAction<T>(
 	try {
 		assertConnectSender(event, connectWindow?.webContents, CONNECT_URL);
 		if (uninstalling) throw new DesktopConnectError("Clawdi is uninstalling.");
-		return await action();
+		return await withCriticalOperation(action);
 	} catch (error) {
 		console.error(`Could not ${label}`, error);
-		if (error instanceof DesktopCliError || error instanceof DesktopConnectError) throw error;
+		if (
+			error instanceof DesktopCliError ||
+			error instanceof DesktopConnectError ||
+			error instanceof DesktopMutationBlockedError
+		)
+			throw error;
 		throw new Error(`Couldn't ${label}. Try again.`);
 	}
 }
@@ -793,14 +814,15 @@ function menuState(): DesktopMenuState {
 		account: trayState?.auth.authenticated ? { email: trayState.auth.user?.email ?? null } : null,
 		syncStatus: syncStatus(),
 		syncChecked: trayState?.daemon.installed === true,
-		syncToggleEnabled: trayState !== null && !trayStateChecking && activeCriticalOperations === 0,
-		busy: activeCriticalOperations > 0,
+		syncToggleEnabled:
+			trayState !== null && !trayStateChecking && mutations.activeCount === 0 && !mutations.blocked,
+		busy: mutations.activeCount > 0 || mutations.blocked,
 		updateItems: updateActionMenuItems(),
 		...(supportsDesktopLoginItems()
 			? {
 					loginItem: {
 						checked: loginItem?.openAtLogin === true,
-						enabled: app.isPackaged && loginItem !== null,
+						enabled: app.isPackaged && loginItem !== null && !mutations.blocked,
 						note: !loginItem
 							? "Login Item: Unavailable"
 							: loginItem.status === "requires-approval"
@@ -814,11 +836,27 @@ function menuState(): DesktopMenuState {
 
 const menuActions: DesktopMenuActions = {
 	openDashboard: () => runAsync("open the dashboard", openDashboard()),
-	connectAgents: () => runAsync("open Connect Agents", showConnectWindow("connect")),
-	fixSync: () => runAsync("open Fix Sync", showConnectWindow("fix-sync")),
-	excludeProjects: () => runAsync("open Exclude Projects", showConnectWindow("exclude-projects")),
+	connectAgents: () =>
+		runAsync(
+			"open Connect Agents",
+			withCriticalOperation(() => showConnectWindow("connect")),
+		),
+	fixSync: () =>
+		runAsync(
+			"open Fix Sync",
+			withCriticalOperation(() => showConnectWindow("fix-sync")),
+		),
+	excludeProjects: () =>
+		runAsync(
+			"open Exclude Projects",
+			withCriticalOperation(() => showConnectWindow("exclude-projects")),
+		),
 	setSync: (enabled) => runAsync("change sync", setSyncEnabled(enabled)),
-	setLaunchAtLogin: (enabled) => runAsync("change the login item", setLaunchAtLogin(enabled)),
+	setLaunchAtLogin: (enabled) =>
+		runAsync(
+			"change the login item",
+			withCriticalOperation(() => setLaunchAtLogin(enabled)),
+		),
 	openDocs: () => runAsync("open the docs", shell.openExternal(DOCS_URL)),
 	contactSupport: () => runAsync("contact support", shell.openExternal(SUPPORT_URL)),
 	showLogs: () => runAsync("show logs", showLogs()),
@@ -837,10 +875,9 @@ async function reconcileDesktopCliCommand(daemonInstalled: boolean): Promise<voi
 	if (!app.isPackaged) return;
 	if (await cli.usesNativeCli()) {
 		if (process.platform === "win32") {
-			migrateWindowsDesktopCliCommand({
-				localAppData: process.env.LOCALAPPDATA,
-				target: await cli.shellCommandTarget(),
-			});
+			await reconcileWindowsNativeCliCommand(
+				desktopCliCommandOptions(await cli.shellCommandTarget()),
+			);
 		}
 		if (!daemonInstalled) await cli.pruneUnusedAppImageRuntimes();
 		return;
@@ -970,7 +1007,7 @@ function createTray(): void {
 	tray.setToolTip("Clawdi");
 	renderTrayMenu();
 	const statusRefresh = setInterval(() => {
-		if (!quitting && activeCriticalOperations === 0) {
+		if (!quitting && mutations.activeCount === 0) {
 			runAsync("refresh sync status", refreshTrayState());
 		}
 	}, 60_000);
@@ -1002,7 +1039,7 @@ function setTrayState(state: DesktopBootstrapState | null): void {
 }
 
 async function refreshTrayState(): Promise<void> {
-	if (quitting || uninstalling) return;
+	if (quitting || uninstalling || mutations.blocked) return;
 	if (trayStateRefresh) return trayStateRefresh;
 	if (installationState().requiresMove) {
 		setTrayState(null);
@@ -1012,7 +1049,11 @@ async function refreshTrayState(): Promise<void> {
 	renderTrayMenu();
 	const refresh = (async () => {
 		try {
-			const state = await cli.bootstrapState();
+			const state = await withCriticalOperation(() => cli.bootstrapState());
+			if (dashboardAccountId && !state.auth.authenticated) {
+				await signOutOfDesktop();
+				return;
+			}
 			if (
 				dashboardAccountId &&
 				(!state.auth.authenticated || state.auth.user?.id !== dashboardAccountId)
@@ -1201,7 +1242,7 @@ async function promptToMove(detail: string): Promise<void> {
 }
 
 async function showAvailableWindow(view?: DesktopConnectView): Promise<void> {
-	if (quitting || uninstalling) return;
+	if (quitting || uninstalling || mutations.blocked) return;
 	if (view) {
 		await showConnectWindow(view);
 		return;
@@ -1215,8 +1256,6 @@ async function showAvailableWindow(view?: DesktopConnectView): Promise<void> {
 		await showConnectWindow(view);
 		return;
 	}
-	// The new window takes the request when its renderer starts.
-	if (view) requestedConnectView = view;
 	if (availableWindowOpening) return availableWindowOpening;
 
 	const opening = showWindowFromTrayState();
@@ -1233,7 +1272,7 @@ async function showWindowFromTrayState(): Promise<void> {
 		await showConnectWindow();
 		return;
 	}
-	const startup = await prepareDesktopStartup(cli);
+	const startup = await withCriticalOperation(() => prepareDesktopStartup(cli));
 	setTrayState(startup.state);
 	await showConnectWindow();
 	if (!startup.requiresWizard) {
@@ -1242,7 +1281,7 @@ async function showWindowFromTrayState(): Promise<void> {
 }
 
 async function reconcileBackgroundSyncAfterStartup(): Promise<void> {
-	if (quitting || uninstalling) return;
+	if (quitting || uninstalling || mutations.blocked) return;
 	const recovery = await withCriticalOperation(() => reconcileDesktopStartupSync(cli));
 	setTrayState(recovery.state);
 }
@@ -1252,10 +1291,12 @@ async function openDashboardAfterFirstConnection(): Promise<void> {
 		await openDashboard();
 }
 
-async function openDashboard(): Promise<void> {
-	if (signingOut || quitting || uninstalling) return;
+async function openDashboard(admitted = false): Promise<void> {
+	if (signingOut || quitting || uninstalling || (!admitted && mutations.blocked)) return;
 	if (dashboardOpening) return dashboardOpening;
-	const opening = openDashboardWindow();
+	const opening = admitted
+		? openDashboardWindow()
+		: withCriticalOperation(() => openDashboardWindow());
 	dashboardOpening = opening;
 	try {
 		await opening;
@@ -1288,7 +1329,6 @@ async function openDashboardWindow(): Promise<void> {
 	const window = new BrowserWindow({
 		...dashboardWindowOptions(preload, WEB_ORIGIN),
 		backgroundColor: windowBackground(),
-		...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const } : {}),
 	});
 	dashboardWindow = window;
 	window.webContents.setWindowOpenHandler(({ url }) => {
@@ -1344,93 +1384,128 @@ async function clearDashboardSession(): Promise<void> {
 	await session.fromPartition(DASHBOARD_PARTITION).clearData();
 }
 
+function desktopCleanupActions(): DesktopCleanupActions {
+	return {
+		prepare: async () => {
+			quitting = true;
+			updateController?.stop();
+			disableUpdateOnQuit?.();
+			await cli.cancelAuthentication();
+			for (const pending of [trayStateRefresh, availableWindowOpening, dashboardOpening]) {
+				if (pending) await pending.catch(() => undefined);
+			}
+			for (const window of BrowserWindow.getAllWindows()) window.destroy();
+		},
+		revokeSessions: revokeDashboardSessions,
+		uninstallCli: (removeCli) => cli.uninstall(removeCli),
+		removeCliCommand: () => cli.removeDesktopCommand(),
+		removeLoginItem: () => setDesktopLaunchAtLogin(app, false),
+		clearData: async () => {
+			for (const window of BrowserWindow.getAllWindows()) window.destroy();
+			try {
+				try {
+					await session.fromPartition(DASHBOARD_PARTITION).clearData();
+				} finally {
+					await session.defaultSession.clearData();
+				}
+			} finally {
+				stopDesktopLogging?.();
+				await clearDesktopDirectories([
+					app.getPath("userData"),
+					app.getPath("sessionData"),
+					getDesktopLogDirectory(app),
+				]);
+			}
+		},
+	};
+}
+
+async function revokeDashboardSessions(): Promise<void> {
+	const partition = session.fromPartition(DASHBOARD_PARTITION);
+	const failed: string[] = [];
+	for (const id of dashboardSessionIds(await partition.cookies.get({ url: WEB_ORIGIN }))) {
+		try {
+			await cli.revokeDashboardSession(id);
+		} catch {
+			failed.push(id);
+		}
+	}
+	if (failed.length) throw new Error("Remote Dashboard session revocation failed.");
+}
+
 async function uninstallClawdi(): Promise<void> {
-	if (uninstalling || signingOut || activeCriticalOperations > 0) return;
+	const admission = mutations.block("Clawdi is uninstalling.");
 	uninstalling = true;
 	try {
-		await withCriticalOperation(() =>
-			uninstallDesktop({
-				platform: process.platform,
-				installedByDesktop: () => cli.installedByDesktop(),
-				showMessageBox,
-				prepare: async () => {
-					quitting = true;
-					updateController?.stop();
-					disableUpdateOnQuit?.();
-					await cli.cancelAuthentication();
-					// Drain reads/window openings that started before confirmation. New
-					// actions are blocked until quit so they cannot restore deleted state.
-					for (const pending of [trayStateRefresh, availableWindowOpening, dashboardOpening]) {
-						if (pending) await pending.catch(() => undefined);
-					}
-					for (const window of BrowserWindow.getAllWindows()) window.destroy();
-				},
-				revokeSessions: async () => {
-					const partition = session.fromPartition(DASHBOARD_PARTITION);
-					for (const id of dashboardSessionIds(await partition.cookies.get({ url: WEB_ORIGIN })))
-						await cli.revokeDashboardSession(id);
-				},
-				uninstallCli: (removeCli) => cli.uninstall(removeCli),
-				removeLoginItem: () => setDesktopLaunchAtLogin(app, false),
-				clearData: async () => {
-					for (const window of BrowserWindow.getAllWindows()) window.destroy();
-					try {
-						try {
-							await session.fromPartition(DASHBOARD_PARTITION).clearData();
-						} finally {
-							await session.defaultSession.clearData();
-						}
-					} finally {
-						stopDesktopLogging?.();
-						await clearDesktopDirectories([
-							app.getPath("userData"),
-							app.getPath("sessionData"),
-							getDesktopLogDirectory(app),
-						]);
-					}
-				},
-				removeApplication: async (removeCli) => {
-					if (!app.isPackaged) return;
-					if (process.platform === "darwin")
-						await shell.trashItem(macApplicationBundle(process.execPath));
-					if (process.platform === "win32") {
-						await launchWindowsUninstaller(process.execPath, removeCli);
-					}
-				},
-				quit: () => app.quit(),
-			}),
-		);
+		await cli.cancelAuthentication();
+		await admission.drained;
+		await uninstallDesktop({
+			...desktopCleanupActions(),
+			platform: process.platform,
+			installedByDesktop: () => cli.installedByDesktop(),
+			showMessageBox,
+			removeApplication: async (removeCli) => {
+				if (!app.isPackaged) return;
+				if (process.platform === "darwin")
+					await shell.trashItem(macApplicationBundle(process.execPath));
+				if (process.platform === "win32")
+					await launchWindowsUninstaller(process.execPath, removeCli);
+			},
+			quit: () => app.quit(),
+		});
 	} finally {
 		uninstalling = false;
-		renderUpdateMenus();
+		if (!quitting) admission.release();
 	}
 }
 
 async function signOutOfDesktop(): Promise<void> {
 	if (signingOut) return;
+	const admission = mutations.block("Clawdi is signing out.");
 	signingOut = true;
+	// Isolate the old account immediately, while accepted operations drain.
+	if (dashboardWindow && !dashboardWindow.isDestroyed()) dashboardWindow.destroy();
+	let remoteFailed = false;
+	let localFailed = false;
 	try {
-		// Revoke first; retain local credentials if revocation fails so the user can retry.
-		const partition = session.fromPartition(DASHBOARD_PARTITION);
-		for (const id of dashboardSessionIds(await partition.cookies.get({ url: WEB_ORIGIN })))
-			await cli.revokeDashboardSession(id);
-		// Remove local credentials even when Chromium storage or daemon cleanup fails.
+		try {
+			await cli.cancelAuthentication();
+		} catch {
+			localFailed = true;
+		}
+		await admission.drained;
+		try {
+			await revokeDashboardSessions();
+		} catch {
+			remoteFailed = true;
+		}
 		try {
 			await clearDashboardSession();
-		} finally {
-			await withCriticalOperation(async () => {
-				try {
-					await cli.cancelAuthentication();
-				} finally {
-					await cli.logout();
-				}
-			});
+		} catch {
+			localFailed = true;
 		}
-		setTrayState(await cli.bootstrapState());
+		try {
+			await cli.logout();
+		} catch {
+			localFailed = true;
+		}
+		setTrayState(null);
+		admission.release();
 		if (connectWindow && !connectWindow.isDestroyed()) connectWindow.webContents.reload();
 		await showConnectWindow();
+		if (remoteFailed || localFailed)
+			await showMessageBox({
+				type: "warning",
+				message: localFailed
+					? "Some local sign-out steps couldn't finish"
+					: "Signed out on this computer",
+				detail: remoteFailed
+					? "The remote Dashboard session could not be revoked. Sign out of that session from your browser."
+					: "Retry Sign Out from the Clawdi menu to finish local cleanup.",
+			});
 	} finally {
 		signingOut = false;
+		admission.release();
 	}
 }
 

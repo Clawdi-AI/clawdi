@@ -94,6 +94,13 @@ export class DesktopCliService {
 	private runtimeReconciliation: Promise<void> | null = null;
 	private nativeIdentity: Promise<NativeIdentity> | null = null;
 
+	/** NSIS cleanup uses the installed bundle without installing another CLI. */
+	useBundledCliForCleanup(): void {
+		this.cliPath = this.resolveBundledCli();
+		this.cliSource = "bundled";
+		this.cliResolution = Promise.resolve(this.cliPath);
+	}
+
 	async bootstrapState(): Promise<DesktopBootstrapState> {
 		const cli = await this.resolveCli();
 		const { identity, doctor } = await this.runtimeState(cli);
@@ -426,6 +433,15 @@ export class DesktopCliService {
 	async shellCommandTarget(): Promise<string> {
 		const cli = await this.prepareDaemonCli();
 		return this.cliSource === "native" ? cli : realpathSync(cli);
+	}
+
+	removeDesktopCommand(): void {
+		if (process.platform === "win32") return;
+		removeDesktopCliSymlink({
+			home: this.home,
+			userData: this.application.getPath("userData"),
+			bundledCli: this.cliPath ?? this.resolveBundledCli(),
+		});
 	}
 
 	async pruneUnusedAppImageRuntimes(): Promise<void> {

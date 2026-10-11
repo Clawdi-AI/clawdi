@@ -16,6 +16,7 @@ import { dirname, join, resolve } from "node:path";
 import {
 	installDesktopCliCommand,
 	migrateWindowsDesktopCliCommand,
+	reconcileWindowsNativeCliCommand,
 	removeDesktopCliSymlink,
 } from "./cli-command";
 
@@ -76,6 +77,36 @@ describe("Desktop CLI command", () => {
 			expect(readFileSync(launcher, "utf8")).toBe("foreign command");
 		},
 	);
+
+	test("fresh Windows native reconciliation uses the existing marked shim and PATH helper", async () => {
+		const fixture = createFixture();
+		const launcher = join(fixture.root, "Clawdi", "bin", "clawdi.cmd");
+		const helper = join(fixture.root, "windows-cli-path.ps1");
+		writeFileSync(helper, "fixture");
+		const argumentsReceived: string[][] = [];
+		const options = {
+			platform: "win32" as const,
+			target: fixture.target,
+			home: fixture.home,
+			userData: fixture.userData,
+			localAppData: fixture.root,
+			environmentPath: "",
+			windowsPathScript: helper,
+			execute: async (_command: string, args: readonly string[]) => {
+				argumentsReceived.push([...args]);
+				return { stdout: "", stderr: "" };
+			},
+		};
+		await reconcileWindowsNativeCliCommand(options);
+		expect(readFileSync(launcher, "utf8")).toContain("@rem Clawdi Desktop CLI launcher v1");
+		expect(argumentsReceived[0]).toContain(helper);
+		expect(argumentsReceived[0]).toContain("Add");
+		await reconcileWindowsNativeCliCommand(options);
+		expect(argumentsReceived).toHaveLength(1);
+		writeFileSync(launcher, "foreign command");
+		await reconcileWindowsNativeCliCommand(options);
+		expect(readFileSync(launcher, "utf8")).toBe("foreign command");
+	});
 
 	test("Windows migration repoints a marker shim to the stable launcher without adding a new shim", () => {
 		const fixture = createFixture();

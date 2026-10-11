@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { DesktopMutations } from "./mutations";
 import { DesktopUpdateController, type DesktopUpdater } from "./update-controller";
 import { DesktopUpdateInstallation } from "./update-install";
 import { desktopUpdateDownloadUrl, desktopUpdateNotification } from "./update-notification";
@@ -104,7 +105,7 @@ describe("background services during update installation", () => {
 		const controller = new DesktopUpdateInstallation({
 			platform,
 			isReady: () => true,
-			isBusy: () => false,
+			mutations: new DesktopMutations(),
 			stopBackgroundServices: async () => {
 				calls.push("stop");
 				return true;
@@ -157,12 +158,14 @@ describe("background services during update installation", () => {
 	test.each(["darwin", "linux", "win32"] as const)(
 		"%s quit during a critical operation waits, then follows install-on-quit",
 		async (platform) => {
-			let busy = true;
+			const mutations = new DesktopMutations();
+			const pending = Promise.withResolvers<void>();
+			const accepted = mutations.run(() => pending.promise);
 			const calls: string[] = [];
 			const installation = new DesktopUpdateInstallation({
 				platform,
 				isReady: () => true,
-				isBusy: () => busy,
+				mutations,
 				stopBackgroundServices: async () => {
 					calls.push("stop");
 					return false;
@@ -176,10 +179,12 @@ describe("background services during update installation", () => {
 				},
 			});
 			expect(installation.shouldDeferQuit()).toBe(true);
-			await installation.install(true);
+			const installing = installation.install(true);
 			expect(calls).toEqual([]);
-			busy = false;
-			await installation.resumePendingQuit();
+			await expect(mutations.run(async () => undefined)).rejects.toThrow("preparing an update");
+			pending.resolve();
+			await accepted;
+			await installing;
 			expect(calls).toEqual(platform === "win32" ? ["stop", "quit"] : ["quit"]);
 		},
 	);
@@ -188,7 +193,7 @@ describe("background services during update installation", () => {
 		const installation = new DesktopUpdateInstallation({
 			platform: "win32",
 			isReady: () => true,
-			isBusy: () => false,
+			mutations: new DesktopMutations(),
 			stopBackgroundServices: () => Promise.reject(new Error("stop failed")),
 			restoreBackgroundServices: async () => {
 				calls.push("restore");
